@@ -36,12 +36,14 @@ Thumbs.db
 Desktop.ini
 
 # Project specific
+.old/
 installer/
 NetSpeedTray-Portable/
 NetSpeedTray-Portable.zip
 checksums.txt
 *.log
 config.json
+NetSpeedTray.ico
 
 # Don't ignore these specific files
 !network-monitor.spec
