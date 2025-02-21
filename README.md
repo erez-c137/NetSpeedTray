@@ -10,7 +10,7 @@ A lightweight system tray application that monitors and displays real-time netwo
 </div>
 
 <div align="center">
-  <img src="screenshots/settings.png" alt="Settings" width="600"/><br/>
+  <img src="screenshots/settings_1.0.1.png" alt="Settings" width="600"/><br/>
   <p><em>Settings dialog with customization options</em></p>
 </div>
 
