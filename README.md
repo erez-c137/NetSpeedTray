@@ -5,17 +5,17 @@ A lightweight system tray application that monitors and displays real-time netwo
 ## Screenshots
 
 <div align="center">
-  <img src="screenshots/main.png" alt="Main Interface" width="600"/><br/>
+  <img src="screenshots/main.png" alt="Main Interface"/><br/>
   <p><em>Main interface in system tray</em></p>
 </div>
 
 <div align="center">
-  <img src="screenshots/settings_1.0.1.png" alt="Settings" width="600"/><br/>
+  <img src="screenshots/settings_1.0.1.png" alt="Settings"/><br/>
   <p><em>Settings dialog with customization options</em></p>
 </div>
 
 <div align="center">
-  <img src="screenshots/graph.png" alt="Graph View" width="600"/><br/>
+  <img src="screenshots/graph.png" alt="Graph View"/><br/>
   <p><em>Optional speed history graph</em></p>
 </div>
 
