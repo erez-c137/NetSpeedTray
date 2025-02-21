@@ -54,14 +54,8 @@ I’m aiming to hit **$100** to upgrade my **dev tools & AI setup**. If just **2
 👉 **[Buy Me a Coffee Here!](https://www.buymeacoffee.com/YOURUSERNAME)**
 
 Even if you can’t donate, **sharing this tool** helps a ton. Thanks for your support! ❤️
-
----
-
-### ☕ **Support My Work**
-
-If you like this tool, consider supporting me on **Buy Me a Coffee**!
-
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-Support%20Me-yellow?style=flat&logo=buy-me-a-coffee)](https://buymeacoffee.com/erez.c137)
+---
 
 ## Installation
 
