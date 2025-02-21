@@ -51,10 +51,10 @@ If you enjoy this tool and want to **support its development**, consider **buyin
 
 I’m aiming to hit **$100** to upgrade my **dev tools & AI setup**. If just **20 people** buy me a coffee, we’ll get there!
 
-👉 **[Buy Me a Coffee Here!](https://www.buymeacoffee.com/YOURUSERNAME)**
+👉 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-Support%20Me-yellow?style=flat&logo=buy-me-a-coffee)](https://buymeacoffee.com/erez.c137)
 
 Even if you can’t donate, **sharing this tool** helps a ton. Thanks for your support! ❤️
-[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-Support%20Me-yellow?style=flat&logo=buy-me-a-coffee)](https://buymeacoffee.com/erez.c137)
+
 ---
 
 ## Installation
