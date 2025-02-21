@@ -35,6 +35,34 @@ A lightweight system tray application that monitors and displays real-time netwo
   - **NetSpeedTray-Portable.zip** - Portable version, just extract and run
   - **NetSpeedTray-Setup.exe** - Windows installer
 
+## ☕ Support My Work
+
+I built this tool because, let’s be honest — Windows **should have had this feature** from the start. Instead of waiting for Microsoft, I made a lightweight, seamless solution that **blends perfectly with Windows 11**.
+
+If you enjoy this tool and want to **support its development**, consider **buying me a coffee!** ☕
+
+### **Why Donate?**
+
+💻 **Helps me improve the app** (bug fixes, optimizations, new features).  
+🔧 **Keeps it 100% free & bloat-free** (no ads, no nonsense).  
+🤖 **Funds AI tools & development costs** (because AI helps accelerate development, but isn’t free 😅).
+
+### **🎯 Goal: $100**
+
+I’m aiming to hit **$100** to upgrade my **dev tools & AI setup**. If just **20 people** buy me a coffee, we’ll get there!
+
+👉 **[Buy Me a Coffee Here!](https://www.buymeacoffee.com/YOURUSERNAME)**
+
+Even if you can’t donate, **sharing this tool** helps a ton. Thanks for your support! ❤️
+
+---
+
+### ☕ **Support My Work**
+
+If you like this tool, consider supporting me on **Buy Me a Coffee**!
+
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-Support%20Me-yellow?style=flat&logo=buy-me-a-coffee)](https://buymeacoffee.com/erez.c137)
+
 ## Installation
 
 ### Option 1: Portable Version (Recommended)
