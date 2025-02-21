@@ -6,7 +6,7 @@ a = Analysis(
     ['network-monitor.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('NetSpeedTray.ico', '.')],  # Add this line
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

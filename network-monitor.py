@@ -4,10 +4,12 @@ import sys
 import json
 import re
 import logging
+import platform
 from datetime import datetime, timedelta
 from logging.handlers import RotatingFileHandler
 from typing import Dict
 import winreg
+import traceback
 
 # Third-party imports
 import win32gui
@@ -25,24 +27,54 @@ from PyQt6.QtWidgets import (
     QApplication, QWidget, QMenu, QDialog,
     QVBoxLayout, QGridLayout, QGroupBox,
     QCheckBox, QSpinBox, QDoubleSpinBox,
-    QLabel, QPushButton, QColorDialog
+    QLabel, QPushButton, QColorDialog, QComboBox,
+    QMessageBox, QFileDialog
 )
 
-# Constants
+def get_app_data_path():
+    """
+    Returns the application data directory path, creating it if it doesn't exist.
+    
+    Returns:
+        str: Path to NetSpeedTray application data directory
+    """
+    app_data = os.path.join(os.getenv('APPDATA'), 'NetSpeedTray')
+    if not os.path.exists(app_data):
+        os.makedirs(app_data)
+    return app_data
 
 APP_NAME = "NetSpeedTray"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.1"
 DEFAULT_FONT = "Segoe UI"
 DEFAULT_FONT_SIZE = 9
 DEFAULT_UPDATE_RATE = 1
-MAX_HISTORY_POINTS = 3600  # Maximum points to store in memory
-MAX_GRAPH_POINTS = 1000   # Maximum points to display on graph
+MAX_HISTORY_POINTS = 3600
+MAX_GRAPH_POINTS = 1000
 
-# Default configuration with documentation
+LOG_FORMAT = '%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s'
+ERROR_LOG_FILE = os.path.join(get_app_data_path(), 'error.log')
+MAX_LOG_SIZE = 10 * 1024 * 1024
+MAX_LOG_FILES = 3
+
+TIME_INTERVALS = [
+    (5, "5 mins"),
+    (10, "10 mins"),
+    (15, "15 mins"),
+    (30, "30 mins"),
+    (60, "1 hour"),
+    (120, "2 hours"),
+    (180, "3 hours"),
+    (240, "4 hours"),
+    (300, "5 hours"),
+    (360, "6 hours"),
+    (720, "12 hours"),
+    (1440, "24 hours")
+]
+
 DEFAULT_CONFIG = {
     'color_coding': False,          # Enable/disable speed color coding
-    'high_speed_threshold': 1.0,    # Threshold for high speed in Mbps
-    'low_speed_threshold': 0.1,     # Threshold for low speed in Mbps
+    'high_speed_threshold': 5.0,    # Threshold for high speed in Mbps
+    'low_speed_threshold': 1.0,     # Threshold for low speed in Mbps
     'high_speed_color': '#00FF00',  # Color for high speed (green)
     'low_speed_color': '#FFA500',   # Color for low speed (orange)
     'default_color': '#FFFFFF',     # Default text color (white)
@@ -51,15 +83,34 @@ DEFAULT_CONFIG = {
     'update_rate': DEFAULT_UPDATE_RATE,  # Update interval in seconds
     'position_x': None,             # Last X position on screen
     'position_y': None,             # Last Y position on screen
-    'start_with_windows': False     # Start application with Windows
+    'start_with_windows': False,    # Start application with Windows
+    'interface_mode': 'all',        # 'all', 'include', or 'exclude'
+    'selected_interfaces': []       # List of interface names to include/exclude
 }
 
-def get_app_data_path():
-    """Returns path to user's AppData/NetSpeedTray directory, creates if not exists"""
-    app_data = os.path.join(os.getenv('APPDATA'), 'NetSpeedTray')
-    if not os.path.exists(app_data):
-        os.makedirs(app_data)
-    return app_data
+def setup_error_logging():
+    """
+    Configures application-wide error logging with rotation.
+    
+    Returns:
+        logging.Logger: Configured logger instance or None if setup fails
+    """
+    try:
+        handler = RotatingFileHandler(
+            ERROR_LOG_FILE,
+            maxBytes=MAX_LOG_SIZE,
+            backupCount=MAX_LOG_FILES
+        )
+        formatter = logging.Formatter(LOG_FORMAT)
+        handler.setFormatter(formatter)
+        
+        logger = logging.getLogger('NetSpeedTray')
+        logger.setLevel(logging.ERROR)
+        logger.addHandler(handler)
+        return logger
+    except Exception as e:
+        print(f"Failed to setup logging: {e}")
+        return None
 
 class NetworkMonitorError(Exception):
     """Base exception for all NetworkMonitor errors."""
@@ -73,55 +124,67 @@ class NetworkSpeedWidget(QWidget):
     """
     Main widget that displays network speed in the Windows taskbar.
     
-    This widget shows real-time upload and download speeds, with optional
-    color coding based on speed thresholds and a graph view of speed history.
+    Features:
+    - Real-time upload/download speed monitoring
+    - Color-coded speed indicators
+    - Interface selection
+    - Speed history graphing
+    - Error logging and diagnostics
     
     Attributes:
         upload_speed (float): Current upload speed in bytes/sec
         download_speed (float): Current download speed in bytes/sec
-        speed_history (list): List of historical speed measurements
-        config (dict): Widget configuration settings
+        speed_history (list): Historical speed measurements
+        config (dict): Widget configuration
     """
     
     def __init__(self) -> None:
         super().__init__(None)
+        self.logger = setup_error_logging()
         self._init_icon()
         self._init_screen_handling()
         self._init_config()
         self._init_data()
         self._init_ui()
-        self._init_logging()
 
     def _init_icon(self):
         """Initialize application icon from ico file."""
         try:
-            icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'NetSpeedTray.ico')
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            icon_path = os.path.join(script_dir, 'NetSpeedTray.ico')
+            
             if os.path.exists(icon_path):
                 self.app_icon = QIcon(icon_path)
                 self.setWindowIcon(self.app_icon)
                 QApplication.setWindowIcon(self.app_icon)
             else:
-                print(f"Icon file not found: {icon_path}")
+                pass
+                
         except Exception as e:
             print(f"Failed to load icon: {e}")
+            import traceback
+            traceback.print_exc()
 
     def _init_screen_handling(self):
-        self.taskbar_hwnd = win32gui.FindWindow("Shell_TrayWnd", None)
-        if self.taskbar_hwnd:
-            self.setParent(QWidget.find(self.taskbar_hwnd))
+        """Initialize screen handling and window behavior"""
+        self.taskbar_hwnd = win32gui.FindWindow("Shell_TrayWnd", None)# Set proper window flags for taskbar-like behavior
+
         
+# Set proper window flags for taskbar-like behavior
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint | 
             Qt.WindowType.Tool |
-            Qt.WindowType.WindowStaysOnTopHint |
             Qt.WindowType.SubWindow
         )
         
+# Set window attributes
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
+        
         self.dragging = False
         self.offset = QPoint()
-        self.settings_file = os.path.join(os.path.expanduser('~'), '.networkmonitor_settings.json')
         
-        # Add screen change detection
         QApplication.primaryScreen().geometryChanged.connect(self.handle_screen_change)
         QApplication.primaryScreen().availableGeometryChanged.connect(self.handle_screen_change)
 
@@ -142,23 +205,6 @@ class NetworkSpeedWidget(QWidget):
         self.last_time = datetime.now()
         self.speed_history = []
         self.graph_window = None
-    
-    def _init_logging(self) -> None:
-        try:
-            handler = RotatingFileHandler(
-                self.log_file,
-                maxBytes=self.config.get('max_log_size_mb', 10) * 1024 * 1024,
-                backupCount=3
-            )
-            formatter = logging.Formatter(
-                '%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s'
-            )
-            handler.setFormatter(formatter)
-            self.logger = logging.getLogger(__name__)
-            self.logger.setLevel(logging.ERROR)
-            self.logger.addHandler(handler)
-        except Exception as e:
-            print(f"Failed to setup logging: {e}")
 
     def setAttributes(self):
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
@@ -184,7 +230,7 @@ class NetworkSpeedWidget(QWidget):
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_stats)
         update_rate = self.config.get('update_rate', DEFAULT_UPDATE_RATE)
-        # Use max to prevent negative or zero intervals
+# Use max to prevent negative or zero intervals
         self.timer.start(max(50, update_rate * 1000) if update_rate > 0 else 50)
         
         self.keep_alive_timer = QTimer()
@@ -223,22 +269,18 @@ class NetworkSpeedWidget(QWidget):
     
     def contextMenuEvent(self, event):
         """Handle right-click events and show context menu centered above the widget"""
-        # Get widget position and dimensions
         widget_pos = self.mapToGlobal(QPoint(0, 0))
         widget_width = self.width()
         menu_width = self.context_menu.sizeHint().width()
         menu_height = self.context_menu.sizeHint().height()
         
-        # Calculate menu position (centered horizontally above widget)
         menu_x = widget_pos.x() + (widget_width // 2) - (menu_width // 2)
         menu_y = widget_pos.y() - menu_height
         
-        # Ensure menu stays on screen
         screen = QApplication.primaryScreen().geometry()
         menu_x = max(0, min(menu_x, screen.width() - menu_width))
         menu_y = max(0, menu_y)
         
-        # Show menu at calculated position
         self.context_menu.exec(QPoint(menu_x, menu_y))
         event.accept()
     
@@ -251,12 +293,11 @@ class NetworkSpeedWidget(QWidget):
                 self.graph_window.close()
                 matplotlib.pyplot.close('all')  # Clean up matplotlib resources
         except Exception as e:
-            self.logger.error(f"Error during shutdown: {e}")  # Keep error logging
+            self.logger.error(f"Error during shutdown: {e}")
         finally:
             QApplication.quit()
 
     def _draw_background(self, painter):
-        # Fill entire widget area with a fully transparent color
         painter.fillRect(self.rect(), QColor(0, 0, 0, 1))
     
     def _draw_graph(self, painter):
@@ -264,15 +305,13 @@ class NetworkSpeedWidget(QWidget):
             graph_width = self.width()
             graph_height = self.height()
             
-            # Get recent history points
-            history_points = self.speed_history[-60:]  # Last 60 points
+            history_points = self.speed_history[-60:]
             if history_points:
                 max_speed = max(
                     max(point['upload'] for point in history_points),
                     max(point['download'] for point in history_points)
                 )
                 if max_speed > 0:
-                    # Draw upload line
                     painter.setPen(QColor(0, 255, 0, 128))
                     for i in range(len(history_points) - 1):
                         x1 = i * graph_width / (len(history_points) - 1)
@@ -281,7 +320,6 @@ class NetworkSpeedWidget(QWidget):
                         y2 = graph_height * (1 - history_points[i + 1]['upload'] / max_speed)
                         painter.drawLine(int(x1), int(y1), int(x2), int(y2))
                     
-                    # Draw download line
                     painter.setPen(QColor(0, 120, 255, 128))
                     for i in range(len(history_points) - 1):
                         x1 = i * graph_width / (len(history_points) - 1)
@@ -330,10 +368,9 @@ class NetworkSpeedWidget(QWidget):
             self.set_default_position()
     
     def set_default_position(self):
-        """Position widget on taskbar to the left of system tray"""
         if self.taskbar_hwnd:
             try:
-                # Get screen dimensions
+# Get screen dimensions
                 screen = QApplication.primaryScreen().geometry()
                 taskbar_rect = win32gui.GetWindowRect(self.taskbar_hwnd)
                 
@@ -342,28 +379,24 @@ class NetworkSpeedWidget(QWidget):
                 
                 if tray and chevron:
                     chevron_rect = win32gui.GetWindowRect(chevron)
-                    x = chevron_rect[0] - self.width() - 5  # 5px padding
+                    x = chevron_rect[0] - self.width() - 5
                 else:
-                    # Fallback: position near right edge
+# Fallback: position near right edge
                     x = screen.width() - self.width() - 200  # 200px from right edge
                 
-                # Set Y position to taskbar height
                 y = taskbar_rect[1]
                 
-                # Ensure position is valid
                 x = max(0, min(x, screen.width() - self.width()))
                 
                 self.move(x, y)
                 
             except Exception as e:
-                # Final fallback
                 screen = QApplication.primaryScreen().geometry()
                 x = screen.width() - self.width() - 100
                 y = taskbar_rect[1] if self.taskbar_hwnd else screen.height() - self.height()
                 self.move(x, y)
 
     def ensure_on_screen(self):
-        """Ensure widget stays within screen boundaries"""
         screen = QApplication.primaryScreen().geometry()
         current_pos = self.pos()
         new_x = max(0, min(current_pos.x(), screen.width() - self.width()))
@@ -374,7 +407,6 @@ class NetworkSpeedWidget(QWidget):
             self.save_position()
 
     def recover_position(self):
-        """Recover widget position after screen changes"""
         try:
             if self.taskbar_hwnd:
                 taskbar_rect = win32gui.GetWindowRect(self.taskbar_hwnd)
@@ -414,7 +446,6 @@ class NetworkSpeedWidget(QWidget):
         try:
             validated = config.copy()
             
-            # Validate numerical values
             for key, (min_val, max_val, default) in {
                 'update_rate': (0, 60, 1),
                 'high_speed_threshold': (0.1, 1000.0, 1.0),
@@ -423,7 +454,6 @@ class NetworkSpeedWidget(QWidget):
             }.items():
                 validated[key] = max(min_val, min(max_val, config.get(key, default)))
             
-            # Validate colors
             for color_key in ['high_speed_color', 'low_speed_color', 'default_color']:
                 color = config.get(color_key, '#FFFFFF')
                 if not re.match(r'^#(?:[0-9a-fA-F]{3}){1,2}$', color):
@@ -434,54 +464,52 @@ class NetworkSpeedWidget(QWidget):
             raise ConfigError(f"Configuration validation failed: {e}")
     
     def update_stats(self):
-        """
-    Update network speed statistics.
-    
-    Calculates current upload and download speeds based on bytes
-    transferred since last update. If graph is enabled, maintains
-    a history of speed measurements for graphing.
-    
-    Handles:
-    - Speed calculation from bytes transferred
-    - History maintenance for graphing
-    - Memory optimization by limiting stored points
-        """
         try:
-            net_stats = psutil.net_io_counters()
             current_time = datetime.now()
+            total_upload = 0
+            total_download = 0
             
-            # Calculate speeds
-            time_diff = (current_time - self.last_time).total_seconds()
-            if time_diff > 0:
-                self.upload_speed = (net_stats.bytes_sent - self.last_upload) / time_diff
-                self.download_speed = (net_stats.bytes_recv - self.last_download) / time_diff
+            net_stats = psutil.net_io_counters(pernic=True)
+            
+            mode = self.config.get('interface_mode', 'all')
+            selected = self.config.get('selected_interfaces', [])
+            
+            for iface, stats in net_stats.items():
+                include_interface = (
+                    mode == 'all' or
+                    (mode == 'include' and iface in selected) or
+                    (mode == 'exclude' and iface not in selected)
+                )
                 
-                # Update history if graph is enabled
-                if self.config.get('graph_enabled', False):
-                    self.speed_history.append({
-                        'timestamp': current_time,
-                        'upload': self.upload_speed,
-                        'download': self.download_speed
-                    })
+                if include_interface:
+                    last_up = getattr(self, f'last_upload_{iface}', 0)
+                    last_down = getattr(self, f'last_download_{iface}', 0)
                     
-                    # Cleanup old history
-                    cutoff = current_time - timedelta(hours=self.config.get('history_hours', 1))
-                    self.speed_history = [x for x in self.speed_history if x['timestamp'] > cutoff]
+                    time_diff = (current_time - self.last_time).total_seconds()
+                    if time_diff > 0:
+                        total_upload += (stats.bytes_sent - last_up) / time_diff
+                        total_download += (stats.bytes_recv - last_down) / time_diff
                     
-                    # Optimize memory usage by limiting history points
-                    if len(self.speed_history) > MAX_HISTORY_POINTS:
-                        self.speed_history = self.speed_history[-MAX_HISTORY_POINTS:]
-                    
-                    if len(self.speed_history) > MAX_GRAPH_POINTS:
-                        # Keep one point per (points/max_points) points
-                        step = len(self.speed_history) // MAX_GRAPH_POINTS
-                        self.speed_history = self.speed_history[::step]
+                    setattr(self, f'last_upload_{iface}', stats.bytes_sent)
+                    setattr(self, f'last_download_{iface}', stats.bytes_recv)
             
-            self.last_upload = net_stats.bytes_sent
-            self.last_download = net_stats.bytes_recv
+            self.upload_speed = total_upload
+            self.download_speed = total_download
             self.last_time = current_time
             
+            if self.config.get('graph_enabled', False):
+                self.speed_history.append({
+                    'timestamp': current_time,
+                    'upload': total_upload,
+                    'download': total_download
+                })
+                
+                max_points = MAX_HISTORY_POINTS
+                if len(self.speed_history) > max_points:
+                    self.speed_history = self.speed_history[-max_points:]
+            
             self.update()
+            
         except Exception as e:
             self.logger.error(f"Error updating stats: {e}")
     
@@ -521,7 +549,6 @@ class NetworkSpeedWidget(QWidget):
     def show_settings(self):
         dialog = SettingsDialog(self, self.config)
         
-        # Center dialog above widget horizontally and position above taskbar
         widget_pos = self.mapToGlobal(QPoint(0, 0))
         widget_width = self.width()
         dialog_width = dialog.sizeHint().width()
@@ -530,7 +557,7 @@ class NetworkSpeedWidget(QWidget):
         dialog_x = widget_pos.x() + (widget_width // 2) - (dialog_width // 2)
         
         taskbar_rect = win32gui.GetWindowRect(self.taskbar_hwnd)
-        dialog_y = taskbar_rect[1] - dialog_height - 5  # Position just above taskbar with 5px padding
+        dialog_y = taskbar_rect[1] - dialog_height - 5
         
         screen = QApplication.primaryScreen().geometry()
         dialog_x = max(0, min(dialog_x, screen.width() - dialog_width))
@@ -543,7 +570,6 @@ class NetworkSpeedWidget(QWidget):
             self.config = dialog.get_settings()
             self.save_config()
             
-            # Update timer interval if changed
             new_rate = self.config['update_rate']
             self.timer.setInterval(50 if new_rate == 0 else new_rate * 1000)
 
@@ -577,36 +603,43 @@ class NetworkSpeedWidget(QWidget):
             print("No history data available")
 
     def handle_screen_change(self, geometry):
-        """Adjusts widget position when screen resolution or configuration changes"""
         try:
-            # Wait briefly for display to stabilize (explains the delay)
             QTimer.singleShot(500, self.recover_position)
         except Exception as e:
             print(f"Screen change error: {e}")
             self.set_default_position()
 
     def ensure_visibility(self):
-        if self.isVisible():
-            try:
-                current_pos = self.pos()
+        if not self.isVisible():
+            return
+            
+        try:
+            if self.taskbar_hwnd and win32gui.IsWindowVisible(self.taskbar_hwnd):
                 taskbar_rect = win32gui.GetWindowRect(self.taskbar_hwnd)
+                current_pos = self.pos()
                 
-                if (current_pos.y() != taskbar_rect[1]):
+                if current_pos.y() != taskbar_rect[1]:
                     x = self.config.get('position_x')
-                    y = self.config.get('position_y')
-                    if x is not None and y is not None:
+                    y = taskbar_rect[1]
+                    if x is not None:
                         self.move(x, y)
                     else:
                         self.set_default_position()
                 
+                taskbar_z = win32gui.GetWindow(self.taskbar_hwnd, win32con.GW_HWNDPREV)
                 win32gui.SetWindowPos(
                     int(self.winId()),
-                    win32con.HWND_TOPMOST,
+                    taskbar_z,
                     0, 0, 0, 0,
                     win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE
                 )
-            except Exception as e:
-                self.load_position()
+                
+                self.show()
+            else:
+                self.hide()
+                
+        except Exception as e:
+            self.logger.error(f"Error in ensure_visibility: {e}")
     
     def get_taskbar_height(self):
         if self.taskbar_hwnd:
@@ -631,11 +664,9 @@ class NetworkSpeedWidget(QWidget):
             key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_ALL_ACCESS)
             try:
                 winreg.QueryValueEx(key, app_name)
-                # Key exists, remove it
                 winreg.DeleteValue(key, app_name)
                 return False
             except WindowsError:
-                # Key doesn't exist, add it
                 exe_path = sys.executable if getattr(sys, 'frozen', False) else sys.argv[0]
                 winreg.SetValueEx(key, app_name, 0, winreg.REG_SZ, f'"{exe_path}"')
                 return True
@@ -662,12 +693,69 @@ class NetworkSpeedWidget(QWidget):
         except Exception:
             return False
 
+    def show_error_log(self):
+        """Open error log file with default text editor"""
+        try:
+            if os.path.exists(ERROR_LOG_FILE):
+                os.startfile(ERROR_LOG_FILE)
+            else:
+                QMessageBox.information(self, "Error Log", "No errors have been logged.")
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Could not open error log: {e}")
+
+    def export_error_log(self):
+        """Export error log to user-selected location"""
+        try:
+            if not os.path.exists(ERROR_LOG_FILE):
+                QMessageBox.information(self, "Error Log", "No errors have been logged.")
+                return
+            
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            suggested_name = f"NetSpeedTray_ErrorLog_{timestamp}.log"
+            
+            file_path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Export Error Log",
+                suggested_name,
+                "Log Files (*.log);;All Files (*.*)"
+            )
+            
+            if file_path:
+                import shutil
+                shutil.copy2(ERROR_LOG_FILE, file_path)
+                QMessageBox.information(
+                    self,
+                    "Success",
+                    f"Error log exported to:\n{file_path}"
+                )
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to export error log: {e}")
+
+    def log_error(self, error_msg, exc_info=None):
+        """Enhanced error logging with system information"""
+        try:
+            error_details = {
+                'message': error_msg,
+                'timestamp': datetime.now().isoformat(),
+                'app_version': APP_VERSION,
+                'os_version': platform.platform(),
+                'python_version': sys.version,
+                'stack_trace': traceback.format_exc() if exc_info else None,
+                'config': {k: v for k, v in self.config.items() if k not in ['selected_interfaces']},
+                'screen_info': {
+                    'resolution': QApplication.primaryScreen().geometry().getRect(),
+                    'taskbar_visible': bool(self.taskbar_hwnd and win32gui.IsWindowVisible(self.taskbar_hwnd))
+                }
+            }
+            self.logger.error(f"{json.dumps(error_details, indent=2)}")
+        except Exception as e:
+            print(f"Failed to log error: {e}")
+
 class SettingsDialog(QDialog):
     def __init__(self, parent=None, config=None):
         super().__init__(parent)
         self.config = config or {}
         self.setWindowTitle(f"{APP_NAME} Settings v{APP_VERSION}")
-        # Set the icon for the settings dialog
         if hasattr(parent, 'app_icon'):
             self.setWindowIcon(parent.app_icon)
         self.setup_ui()
@@ -675,11 +763,9 @@ class SettingsDialog(QDialog):
     def setup_ui(self):
         layout = QVBoxLayout()
         
-        # General settings group
         general_group = QGroupBox("General Settings")
         general_layout = QGridLayout()
         
-        # Update rate settings
         self.update_rate = QSpinBox()
         self.update_rate.setRange(0, 60)
         self.update_rate.setValue(self.config.get('update_rate', 0))
@@ -689,7 +775,6 @@ class SettingsDialog(QDialog):
         general_layout.addWidget(QLabel("Update Rate:"), 0, 0)
         general_layout.addWidget(self.update_rate, 0, 1)
 
-        # Start with Windows checkbox
         self.start_with_windows = QCheckBox("Start with Windows")
         start_with_windows_enabled = False
         if hasattr(self.parent(), 'is_startup_enabled'):
@@ -700,13 +785,16 @@ class SettingsDialog(QDialog):
         general_group.setLayout(general_layout)
         layout.addWidget(general_group)
 
-        # Color coding settings group
         color_group = QGroupBox("Speed Color Coding")
         color_layout = QGridLayout()
         
         self.enable_colors = QCheckBox("Enable Color Coding")
         self.enable_colors.setChecked(self.config.get('color_coding', False))
         color_layout.addWidget(self.enable_colors, 0, 0, 1, 2)
+        
+        self.color_settings = QWidget()
+        color_settings_layout = QGridLayout()
+        color_settings_layout.setSpacing(8)
         
         self.high_speed_threshold = QDoubleSpinBox()
         self.high_speed_threshold.setRange(0.1, 1000.0)
@@ -718,11 +806,11 @@ class SettingsDialog(QDialog):
         self.low_speed_threshold.setValue(self.config.get('low_speed_threshold', 0.1))
         self.low_speed_threshold.setSuffix(" Mbps")
         
-        color_layout.addWidget(QLabel("High Speed Threshold:"), 1, 0)
-        color_layout.addWidget(self.high_speed_threshold, 1, 1)
+        color_settings_layout.addWidget(QLabel("High Speed Threshold:"), 1, 0)
+        color_settings_layout.addWidget(self.high_speed_threshold, 1, 1)
         
-        color_layout.addWidget(QLabel("Low Speed Threshold:"), 2, 0)
-        color_layout.addWidget(self.low_speed_threshold, 2, 1)
+        color_settings_layout.addWidget(QLabel("Low Speed Threshold:"), 2, 0)
+        color_settings_layout.addWidget(self.low_speed_threshold, 2, 1)
         
         self.high_speed_color = QPushButton()
         self.high_speed_color.setStyleSheet(f"background-color: {self.config.get('high_speed_color', '#00FF00')}")
@@ -736,19 +824,51 @@ class SettingsDialog(QDialog):
         self.default_color.setStyleSheet(f"background-color: {self.config.get('default_color', '#FFFFFF')}")
         self.default_color.clicked.connect(lambda: self.choose_color(self.default_color))
         
-        color_layout.addWidget(QLabel("High Speed Color:"), 3, 0)
-        color_layout.addWidget(self.high_speed_color, 3, 1)
+        color_settings_layout.addWidget(QLabel("High Speed Color:"), 3, 0)
+        color_settings_layout.addWidget(self.high_speed_color, 3, 1)
         
-        color_layout.addWidget(QLabel("Low Speed Color:"), 4, 0)
-        color_layout.addWidget(self.low_speed_color, 4, 1)
+        color_settings_layout.addWidget(QLabel("Low Speed Color:"), 4, 0)
+        color_settings_layout.addWidget(self.low_speed_color, 4, 1)
         
-        color_layout.addWidget(QLabel("Default Color:"), 5, 0)
-        color_layout.addWidget(self.default_color, 5, 1)
+        color_settings_layout.addWidget(QLabel("Default Color:"), 5, 0)
+        color_settings_layout.addWidget(self.default_color, 5, 1)
         
+        self.color_settings.setLayout(color_settings_layout)
+        color_layout.addWidget(self.color_settings, 1, 0, 1, 2)
         color_group.setLayout(color_layout)
+        
+        self.color_settings.setVisible(self.enable_colors.isChecked())
+        self.original_pos = None
+        
+        def toggle_color_settings(checked):
+            screen = QApplication.primaryScreen().geometry()
+            current_pos = self.pos()
+            
+            if checked:
+                self.original_pos = current_pos
+                old_height = self.height()
+                self.color_settings.setVisible(True)
+                self.adjustSize()
+                new_height = self.sizeHint().height()
+                
+                new_y = current_pos.y() - (new_height - old_height)
+                new_y = max(0, min(new_y, screen.height() - new_height))
+                self.move(current_pos.x(), new_y)
+            else:
+                self.color_settings.setVisible(False)
+                self.color_settings.setMaximumHeight(0)
+                color_group.adjustSize()
+                self.adjustSize()
+                
+                if self.original_pos:
+                    self.move(self.original_pos)
+                
+                self.color_settings.setMaximumHeight(16777215)
+        
+        self.enable_colors.toggled.connect(toggle_color_settings)
+
         layout.addWidget(color_group)
         
-        # Graph settings group
         graph_group = QGroupBox("Graph Settings")
         graph_layout = QGridLayout()
         
@@ -756,18 +876,72 @@ class SettingsDialog(QDialog):
         self.enable_graph.setChecked(self.config.get('graph_enabled', False))
         graph_layout.addWidget(self.enable_graph, 0, 0, 1, 2)
         
-        self.history_hours = QSpinBox()
-        self.history_hours.setRange(1, 24)
-        self.history_hours.setValue(self.config.get('history_hours', 1))
-        self.history_hours.setSuffix(" hours")
+        self.history_duration = QComboBox()
+        current_minutes = self.config.get('history_hours', 1) * 60
+        
+        for minutes, label in TIME_INTERVALS:
+            self.history_duration.addItem(label, minutes)
+            if minutes == current_minutes:
+                self.history_duration.setCurrentIndex(self.history_duration.count() - 1)
         
         graph_layout.addWidget(QLabel("History Duration:"), 1, 0)
-        graph_layout.addWidget(self.history_hours, 1, 1)
+        graph_layout.addWidget(self.history_duration, 1, 1)
         
         graph_group.setLayout(graph_layout)
         layout.addWidget(graph_group)
+
+        interface_group = QGroupBox("Network Interfaces")
+        interface_layout = QGridLayout()
         
-        # Buttons
+        self.interfaces = self.get_network_interfaces()
+        
+        self.interface_mode = QComboBox()
+        self.interface_mode.addItems(['Monitor All', 'Monitor Selected', 'Exclude Selected'])
+        current_mode = self.config.get('interface_mode', 'all')
+        self.interface_mode.setCurrentText({
+            'all': 'Monitor All',
+            'include': 'Monitor Selected',
+            'exclude': 'Exclude Selected'
+        }.get(current_mode, 'Monitor All'))
+        
+        interface_layout.addWidget(QLabel("Mode:"), 0, 0)
+        interface_layout.addWidget(self.interface_mode, 0, 1)
+        
+        self.interface_list = QWidget()
+        list_layout = QVBoxLayout()
+        self.interface_checkboxes = {}
+        
+        selected_interfaces = self.config.get('selected_interfaces', [])
+        
+        for iface in self.interfaces:
+            checkbox = QCheckBox(iface)
+            checkbox.setChecked(iface in selected_interfaces)
+            self.interface_checkboxes[iface] = checkbox
+            list_layout.addWidget(checkbox)
+        
+        self.interface_list.setLayout(list_layout)
+        interface_layout.addWidget(self.interface_list, 1, 0, 1, 2)
+        
+        def update_interface_list_state(text):
+            enabled = text != 'Monitor All'
+            self.interface_list.setEnabled(enabled)
+        
+        self.interface_mode.currentTextChanged.connect(update_interface_list_state)
+        update_interface_list_state(self.interface_mode.currentText())
+        
+        interface_group.setLayout(interface_layout)
+        layout.addWidget(interface_group)
+        
+        error_group = QGroupBox("Troubleshooting")
+        error_layout = QVBoxLayout()
+        
+        export_button = QPushButton("Export Error Log")
+        export_button.clicked.connect(self.export_error_log)
+        error_layout.addWidget(export_button)
+        
+        error_group.setLayout(error_layout)
+        layout.addWidget(error_group)
+        
         buttons = QVBoxLayout()
         save_button = QPushButton("Save")
         save_button.clicked.connect(self.accept)
@@ -787,6 +961,9 @@ class SettingsDialog(QDialog):
             button.setStyleSheet(f"background-color: {color.name()}")
 
     def get_settings(self):
+        selected_minutes = self.history_duration.currentData()
+        hours = selected_minutes / 60
+        
         settings = {
             'update_rate': self.update_rate.value(),
             'color_coding': self.enable_colors.isChecked(),
@@ -796,17 +973,63 @@ class SettingsDialog(QDialog):
             'low_speed_color': self.low_speed_color.palette().button().color().name(),
             'default_color': self.default_color.palette().button().color().name(),
             'graph_enabled': self.enable_graph.isChecked(),
-            'history_hours': self.history_hours.value(),
+            'history_hours': hours,
             'logging_enabled': False,
             'max_log_size_mb': 10,
-            'start_with_windows': self.start_with_windows.isChecked()
+            'start_with_windows': self.start_with_windows.isChecked(),
+            'interface_mode': {
+                'Monitor All': 'all',
+                'Monitor Selected': 'include',
+                'Exclude Selected': 'exclude'
+            }[self.interface_mode.currentText()],
+            'selected_interfaces': [
+                iface for iface, cb in self.interface_checkboxes.items() 
+                if cb.isChecked()
+            ]
         }
         
-        # Handle startup setting
         if self.start_with_windows.isChecked() != self.parent().is_startup_enabled():
             self.parent().toggle_startup()
         
         return settings
+
+    def get_network_interfaces(self):
+        """Get list of available network interfaces"""
+        interfaces = []
+        try:
+            stats = psutil.net_if_stats()
+            interfaces = [iface for iface, stats in stats.items() if stats.isup]
+        except Exception as e:
+            print(f"Error getting network interfaces: {e}")
+        return sorted(interfaces)
+
+    def export_error_log(self):
+        """Export error log to user-selected location"""
+        try:
+            if not os.path.exists(ERROR_LOG_FILE):
+                QMessageBox.information(self, "Error Log", "No errors have been logged.")
+                return
+            
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            suggested_name = f"NetSpeedTray_ErrorLog_{timestamp}.log"
+            
+            file_path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Export Error Log",
+                suggested_name,
+                "Log Files (*.log);;All Files (*.*)"
+            )
+            
+            if file_path:
+                import shutil
+                shutil.copy2(ERROR_LOG_FILE, file_path)
+                QMessageBox.information(
+                    self,
+                    "Success",
+                    f"Error log exported to:\n{file_path}"
+                )
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to export error log: {e}")
 
 class GraphWindow(QWidget):
     def __init__(self, parent=None):
@@ -837,8 +1060,8 @@ class GraphWindow(QWidget):
         ax = self.figure.add_subplot(111)
         
         times = [x['timestamp'] for x in history]
-        upload = [x['upload']*8/1000000 for x in history]  # Convert to Mbps (explains the math)
-        download = [x['download']*8/1000000 for x in history]  # Convert to Mbps
+        upload = [x['upload']*8/1000000 for x in history]
+        download = [x['download']*8/1000000 for x in history]
         
         ax.plot(times, upload, label='Upload (Mbps)', color='green', linewidth=2)
         ax.plot(times, download, label='Download (Mbps)', color='blue', linewidth=2)
@@ -868,7 +1091,8 @@ if __name__ == "__main__":
     monitor = NetworkMonitor()
     sys.exit(monitor.run())
 
-# TODO: Add network interface selection
+# Development roadmap
 # TODO: Implement data export functionality
-# TODO: Add bandwidth alerts
+# TODO: Add bandwidth alerts and usage tracking
 # TODO: Implement automatic updates
+# TODO: Implement smart taskbar positioning

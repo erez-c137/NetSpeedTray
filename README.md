@@ -51,10 +51,40 @@ A lightweight system tray application that monitors and displays real-time netwo
 
 ## Usage
 
-- Right-click the tray icon for settings
-- Left-click and drag to reposition
-- Settings are automatically saved
-- Speed updates in real-time
+- **Widget Positioning**:
+  - Left-click and drag horizontally to position anywhere on the taskbar
+  - Position is automatically saved and restored on restart
+  - Widget stays aligned with taskbar even after resolution changes
+- **Context Menu**:
+  - Right-click to access settings and options
+  - Quick access to graph view toggle
+  - Exit option available
+- **Speed Display**:
+  - Real-time updates based on configured interval
+  - Color coding indicates speed thresholds (customizable)
+  - Upload (↑) and Download (↓) speeds shown separately
+- **Settings**:
+  - Customize update frequency
+  - Set color thresholds for speed indicators
+  - Configure graph display options
+  - Enable/disable auto-start with Windows
+- **Persistence**:
+  - All settings and position preferences are automatically saved
+  - Configuration stored in AppData folder (Run->%AppData%\NetSpeedTray\)
+
+### Speed Color Coding
+
+When enabled, the speed display uses color coding based on thresholds:
+
+- **Green** (> 5 Mbps): High speed connection
+- **Orange** (1-5 Mbps): Medium speed connection
+- **White** (< 1 Mbps): Low speed connection
+
+These thresholds and colors can be customized in the settings dialog:
+
+1. Right-click the widget
+2. Select "Settings"
+3. Under "Speed Color Coding", adjust the threshold values
 
 ## Building from Source
 
