@@ -2,7 +2,16 @@
 
 A lightweight system tray application that monitors and displays real-time network speeds with customizable features.
 
-![Screenshot](screenshot.png)
+## Screenshots
+
+![Main Interface](screenshots/main.png)
+_Main interface in system tray_
+
+![Settings](screenshots/settings.png)
+_Settings dialog with customization options_
+
+![Graph View](screenshots/graph.png)
+_Optional speed history graph_
 
 ## Features
 

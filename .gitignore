@@ -48,3 +48,7 @@ NetSpeedTray.ico
 # Don't ignore these specific files
 !network-monitor.spec
 !requirements.txt
+
+# Don't ignore screenshots
+!screenshots/
+!screenshots/*.png
