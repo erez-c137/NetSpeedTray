@@ -7,7 +7,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.2 Beta] - 2024-02-23
+## [1.0.2-beta2] - 2024-02-24
+
+### Enhanced
+
+- **The fullscreen detection**
+  - Improved fetection during system transitions (e.g., no active window, screen locked, etc.).
+  - Using UPX compression to reduce the installation size.
+- **Code Cleanup**:
+  - Eliminated redundant timer initialization, ensuring consistent behavior.
+  - Fixed unused variable warnings (e.g., font, content_width, old_config) by either utilizing them (e.g., right-aligned text in \_draw_speed_text) or removing them where appropriate.
+- **Multi-Screen Support**:
+  - Enhanced handling for multiple monitors, allowing the widget to stay on the taskbar of the screen it’s dragged to, with proper alignment for vertical and horizontal taskbars.
+- **Reduced "Flickering"**:
+  - Optimized z-order management using GW_HWNDPREV to keep the widget consistently above the taskbar without flicker when interacting with taskbar elements or switching apps.
+  - Minimized unnecessary redraws by conditionally updating position and refreshing the widget only when needed.
+- **Changed the install path**:
+  - App installer will now place at a more appropriate location (C:\Program Files\NetSpeedTray).
+  - Using UPX compression to reduce the installation size.
+
+### Fixed
+
+- **Reduced "Flickering"**:
+  - Optimized z-order management using GW_HWNDPREV to keep the widget consistently above the taskbar without flicker when interacting with taskbar elements or switching apps.
+  - Minimized unnecessary redraws by conditionally updating position and refreshing the widget only when needed.
+- **"Ensured only a single instance of the application can run at a time to prevent conflicts and improve stability"**
+
+## [1.0.2-beta1] - 2024-02-23
 
 ### Fix
 
@@ -19,6 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Cleaned up and improved logging-related code** to improve efficiency.
 
 ### Known Issues
+
 - **The UI "flickers" once when clicking on the taskbar after activity in another app**:
   - This is due to the change in the way the app is drawn over the taskbar, trying to resolve the issue some users reported, but before I continue down this path trying to fix it, I'd like some feedback that this fix works.
 
