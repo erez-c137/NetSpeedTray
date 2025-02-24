@@ -7,7 +7,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.2-beta2] - 2024-02-24
+### NetSpeedTray 1.0.2-beta.3 - February 24, 2025
+
+**Overview:** This beta release resolves critical issues with widget positioning, DPI scaling, and settings stability, ensuring the widget embeds seamlessly on the taskbar and works reliably across different display scales.
+
+#### Enhancements
+- **Taskbar Embedding**: 
+   - Adjusted widget positioning to sit **on the taskbar**, aligning its top edge with the taskbar’s top edge for a seamless, embedded look similar to the clock and date.  
+     Previously positioned above the taskbar; now fully contained within its height.
+- **DPI Scaling Support**: Improved handling of high-DPI displays (e.g., 125%, 150% on 1080p, 200% on 4K) to ensure the widget remains visible and correctly positioned.
+  - Widget no longer renders off-screen at non-standard scaling factors.
+
+#### Bug Fixes
+- **Widget Visibility at High DPI**: 
+   - Fixed an issue where the widget became invisible at 150% scaling on 1080p displays and was pushed down at 125% scaling.  
+   - Corrected Y-position calculations to use `taskbar_top` and bounds checking to keep the widget within the taskbar and screen.
+
+- **Widget Movement**:
+  - Fixed a `TypeError` in `mouseMoveEvent` where `new_pos.setY()` expected an integer but received a float.  
+  - Added `int()` to ensure proper type.
+  - Ensured horizontal dragging locks Y to the taskbar’s top edge, preventing vertical drift.
+  
+- **Settings Dialog Positioning**: 
+   - Adjusted the Settings dialog to shrink and reposition correctly above the taskbar when disabling color coding, instead of moving to the upper-left corner.
+
+#### Technical Notes
+- Positioning now uses `y = taskbar_top` with a bounds check (`taskbar_bottom - self.height()`) to embed the widget within the taskbar’s logical height.
+- Widget height is set to match the taskbar’s logical height via `get_taskbar_height()`, ensuring consistent scaling.
+- All coordinates are adjusted with `devicePixelRatioF()` for DPI-aware rendering.
+
+### Known Issues
+
+    None reported in this release. Please test on multi-monitor setups with mixed DPI settings to confirm behavior.
+
+## Acknowledgments
+
+   Special thanks to the user community for detailed feedback on scaling and positioning issues, driving these improvements!
+
+## [1.0.2-beta2] - February 24, 2025
 
 ### Enhanced
 
@@ -33,7 +70,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Minimized unnecessary redraws by conditionally updating position and refreshing the widget only when needed.
 - **"Ensured only a single instance of the application can run at a time to prevent conflicts and improve stability"**
 
-## [1.0.2-beta1] - 2024-02-23
+## [1.0.2-beta1] - February 23, 2025
 
 ### Fix
 
@@ -49,7 +86,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The UI "flickers" once when clicking on the taskbar after activity in another app**:
   - This is due to the change in the way the app is drawn over the taskbar, trying to resolve the issue some users reported, but before I continue down this path trying to fix it, I'd like some feedback that this fix works.
 
-## [1.0.1] - 2024-02-21
+## [1.0.1] - February 21, 2025
 
 ### Added
 
@@ -86,7 +123,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Consistent spacing and alignment
   - Better visual hierarchy
 
-## [1.0.0] - 2024-02-21
+## [1.0.0] - February 21, 2025
 
 ### Added
 
