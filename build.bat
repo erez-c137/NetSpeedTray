@@ -1,6 +1,10 @@
 @echo off
 echo Building NetSpeedTray...
 
+rem Define version from MyAppVersion in installer.iss
+set "VERSION=1.0.2-beta4"
+set "OUTPUT_DIR=NetSpeedTray-%VERSION%"
+
 rem Check for required files
 if not exist "LICENSE" (
     echo ERROR: LICENSE file is missing
@@ -25,6 +29,7 @@ rmdir /s /q "dist" 2>nul
 rmdir /s /q "build" 2>nul
 rmdir /s /q "installer" 2>nul
 rmdir /s /q "NetSpeedTray-Portable" 2>nul
+rmdir /s /q "%OUTPUT_DIR%" 2>nul
 del /f /q "NetSpeedTray-Portable.zip" 2>nul
 
 rem Build executable
@@ -35,16 +40,33 @@ if errorlevel 1 (
     exit /b 1
 )
 
+rem Create output directory
+echo Creating output directory...
+mkdir "%OUTPUT_DIR%" 2>nul
+
 rem Create portable version
 echo Creating portable version...
-mkdir NetSpeedTray-Portable
-copy dist\NetSpeedTray.exe NetSpeedTray-Portable\
-copy README.md NetSpeedTray-Portable\
-copy LICENSE NetSpeedTray-Portable\
+mkdir "%OUTPUT_DIR%\NetSpeedTray-Portable" 2>nul
+copy dist\NetSpeedTray.exe "%OUTPUT_DIR%\NetSpeedTray-Portable\" || (
+    echo ERROR: Failed to copy portable executable
+    exit /b 1
+)
+copy README.md "%OUTPUT_DIR%\NetSpeedTray-Portable\" || (
+    echo ERROR: Failed to copy README.md
+    exit /b 1
+)
+copy LICENSE "%OUTPUT_DIR%\NetSpeedTray-Portable\" || (
+    echo ERROR: Failed to copy LICENSE
+    exit /b 1
+)
 
 rem Create ZIP file for portable version
 echo Creating portable ZIP...
-powershell Compress-Archive -Path NetSpeedTray-Portable\* -DestinationPath NetSpeedTray-Portable.zip -Force
+powershell Compress-Archive -Path "%OUTPUT_DIR%\NetSpeedTray-Portable\*" -DestinationPath "%OUTPUT_DIR%\NetSpeedTray-Portable.zip" -Force
+if errorlevel 1 (
+    echo ERROR: Failed to create portable ZIP
+    exit /b 1
+)
 
 rem Create installer
 echo Creating installer...
@@ -54,20 +76,30 @@ if errorlevel 1 (
     exit /b 1
 )
 
+rem Move installer to output directory
+move "installer\NetSpeedTray-%VERSION%-Setup.exe" "%OUTPUT_DIR%\NetSpeedTray-%VERSION%-Setup.exe" || (
+    echo ERROR: Failed to move installer
+    exit /b 1
+)
+
 rem Generate checksums
 echo.
 echo Generating checksums...
-echo # SHA-256 Checksums > checksums.txt
-echo. >> checksums.txt
-echo ## NetSpeedTray-Portable.zip >> checksums.txt
-certutil -hashfile NetSpeedTray-Portable.zip SHA256 | findstr /v "hash" >> checksums.txt
-echo. >> checksums.txt
-echo ## NetSpeedTray-Setup.exe >> checksums.txt
-certutil -hashfile installer\NetSpeedTray-Setup.exe SHA256 | findstr /v "hash" >> checksums.txt
+echo # SHA-256 Checksums > "%OUTPUT_DIR%\checksums.txt"
+echo. >> "%OUTPUT_DIR%\checksums.txt"
+echo ## NetSpeedTray-Portable.zip >> "%OUTPUT_DIR%\checksums.txt"
+certutil -hashfile "%OUTPUT_DIR%\NetSpeedTray-Portable.zip" SHA256 | findstr /v "hash" >> "%OUTPUT_DIR%\checksums.txt" || (
+    echo ERROR: Failed to generate checksum for portable ZIP
+)
+echo. >> "%OUTPUT_DIR%\checksums.txt"
+echo ## NetSpeedTray-%VERSION%-Setup.exe >> "%OUTPUT_DIR%\checksums.txt"
+certutil -hashfile "%OUTPUT_DIR%\NetSpeedTray-%VERSION%-Setup.exe" SHA256 | findstr /v "hash" >> "%OUTPUT_DIR%\checksums.txt" || (
+    echo ERROR: Failed to generate checksum for installer
+)
 
 echo.
 echo Build completed successfully!
-echo Portable version: NetSpeedTray-Portable\NetSpeedTray.exe
-echo Portable ZIP: NetSpeedTray-Portable.zip
-echo Installer: installer\NetSpeedTray-Setup.exe
-echo Checksums: checksums.txt
+echo Portable version: %OUTPUT_DIR%\NetSpeedTray-Portable\NetSpeedTray.exe
+echo Portable ZIP: %OUTPUT_DIR%\NetSpeedTray-Portable.zip
+echo Installer: %OUTPUT_DIR%\NetSpeedTray-%VERSION%-Setup.exe
+echo Checksums: %OUTPUT_DIR%\checksums.txt
