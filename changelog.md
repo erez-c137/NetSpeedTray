@@ -7,31 +7,65 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-### NetSpeedTray 1.0.2-beta.3 - February 24, 2025
+## [1.0.2-beta4]- - February 25, 2025
+
+# Changelog
+
+## v1.0.2-beta.4 (2025-02-24)
+
+### Added
+
+- **Automatic positioning**
+  -Auto position to the left of the taskbar overflow menu or leftmost icon.
+- **Initial speed display delay**
+  - Added a small delay to ensure accurate rates only are displayed.
+
+### Changed
+
+- **Enhanced taskbar height matching**
+  - Now at high DPI (e.g 200% on 4K) by using exact taskbar height.
+- **Improved dragging stability**
+  - Should now work better with stricter bounds checking.
+- **Strengthened KVM switch position recovery**
+  - App should now return to the correct positon by prioritizing saved X coordinate.
+
+### Fixed
+
+- **Prevented crashes during dragging**
+  - Hoping this would fix the issue users reported, by adding error handling.
+- **Corrected fullscreen app detection**
+  - Changes were made to work correctly on multi-monitor setups with `QRect` intersection check.
+- **Fixed graph poping over the taskbar**
+  - The slicing errors should be resolved.
+
+## [1.0.2-beta3]- February 24, 2025
 
 **Overview:** This beta release resolves critical issues with widget positioning, DPI scaling, and settings stability, ensuring the widget embeds seamlessly on the taskbar and works reliably across different display scales.
 
 #### Enhancements
-- **Taskbar Embedding**: 
-   - Adjusted widget positioning to sit **on the taskbar**, aligning its top edge with the taskbar’s top edge for a seamless, embedded look similar to the clock and date.  
-     Previously positioned above the taskbar; now fully contained within its height.
+
+- **Taskbar Embedding**:
+  - Adjusted widget positioning to sit **on the taskbar**, aligning its top edge with the taskbar’s top edge for a seamless, embedded look similar to the clock and date.  
+    Previously positioned above the taskbar; now fully contained within its height.
 - **DPI Scaling Support**: Improved handling of high-DPI displays (e.g., 125%, 150% on 1080p, 200% on 4K) to ensure the widget remains visible and correctly positioned.
   - Widget no longer renders off-screen at non-standard scaling factors.
 
 #### Bug Fixes
-- **Widget Visibility at High DPI**: 
-   - Fixed an issue where the widget became invisible at 150% scaling on 1080p displays and was pushed down at 125% scaling.  
-   - Corrected Y-position calculations to use `taskbar_top` and bounds checking to keep the widget within the taskbar and screen.
+
+- **Widget Visibility at High DPI**:
+
+  - Fixed an issue where the widget became invisible at 150% scaling on 1080p displays and was pushed down at 125% scaling.
+  - Corrected Y-position calculations to use `taskbar_top` and bounds checking to keep the widget within the taskbar and screen.
 
 - **Widget Movement**:
-  - Fixed a `TypeError` in `mouseMoveEvent` where `new_pos.setY()` expected an integer but received a float.  
+  - Fixed a `TypeError` in `mouseMoveEvent` where `new_pos.setY()` expected an integer but received a float.
   - Added `int()` to ensure proper type.
   - Ensured horizontal dragging locks Y to the taskbar’s top edge, preventing vertical drift.
-  
-- **Settings Dialog Positioning**: 
-   - Adjusted the Settings dialog to shrink and reposition correctly above the taskbar when disabling color coding, instead of moving to the upper-left corner.
+- **Settings Dialog Positioning**:
+  - Adjusted the Settings dialog to shrink and reposition correctly above the taskbar when disabling color coding, instead of moving to the upper-left corner.
 
 #### Technical Notes
+
 - Positioning now uses `y = taskbar_top` with a bounds check (`taskbar_bottom - self.height()`) to embed the widget within the taskbar’s logical height.
 - Widget height is set to match the taskbar’s logical height via `get_taskbar_height()`, ensuring consistent scaling.
 - All coordinates are adjusted with `devicePixelRatioF()` for DPI-aware rendering.
@@ -42,7 +76,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Acknowledgments
 
-   Special thanks to the user community for detailed feedback on scaling and positioning issues, driving these improvements!
+Special thanks to the user community for detailed feedback on scaling and positioning issues, driving these improvements!
 
 ## [1.0.2-beta2] - February 24, 2025
 
