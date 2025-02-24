@@ -33,6 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Changes were made to work correctly on multi-monitor setups with `QRect` intersection check.
 - **Fixed graph poping over the taskbar**
   - The slicing errors should be resolved.
+ 
+## Acknowledgments
+
+Special thanks to the user community for detailed feedback on scaling and positioning issues, driving these improvements!
 
 ## [1.0.2-beta3]- February 24, 2025
 
@@ -65,10 +69,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Positioning now uses `y = taskbar_top` with a bounds check (`taskbar_bottom - self.height()`) to embed the widget within the taskbar’s logical height.
 - Widget height is set to match the taskbar’s logical height via `get_taskbar_height()`, ensuring consistent scaling.
 - All coordinates are adjusted with `devicePixelRatioF()` for DPI-aware rendering.
-
-### Known Issues
-
-    None reported in this release. Please test on multi-monitor setups with mixed DPI settings to confirm behavior.
 
 ## Acknowledgments
 
