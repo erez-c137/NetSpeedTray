@@ -1,6 +1,6 @@
 # Standard library imports
 import os, sys, json, re, logging, winreg, traceback
-from datetime import datetime
+from datetime import datetime, timedelta
 from logging.handlers import RotatingFileHandler
 from typing import Dict
 from collections import deque
@@ -38,7 +38,7 @@ def get_app_data_path():
 
 
 APP_NAME = "NetSpeedTray"
-APP_VERSION = "1.0.2-beta.4"
+APP_VERSION = "1.0.2-b.5"
 DEFAULT_FONT = "Segoe UI"
 DEFAULT_FONT_SIZE = 9
 DEFAULT_UPDATE_RATE = 2
@@ -61,23 +61,23 @@ TIME_INTERVALS = [
     (720, "12 hours"),
     (1440, "24 hours")
 ]
-DEFAULT_CONFIG = {
-    'color_coding': False,          # Enable/disable speed color coding
-    'high_speed_threshold': 5.0,    # Threshold for high speed in Mbps
-    'low_speed_threshold': 1.0,     # Threshold for low speed in Mbps
-    'high_speed_color': '#00FF00',  # Color for high speed (green)
-    'low_speed_color': '#FFA500',   # Color for low speed (orange)
-    'default_color': '#FFFFFF',     # Default text color (white)
-    'graph_enabled': False,         # Enable/disable speed graph
-    'history_hours': 0.5,             # Hours of history to keep
-    'update_rate': DEFAULT_UPDATE_RATE,  # Update interval in seconds
-    'position_x': None,             # Last X position on screen
-    'position_y': None,             # Last Y position on screen
-    'start_with_windows': False,    # Start application with Windows
-    'interface_mode': 'all',        # 'all', 'include', or 'exclude'
-    'selected_interfaces': []       # List of interface names to include/exclude
-}
 
+DEFAULT_CONFIG = {
+    'color_coding': False,
+    'high_speed_threshold': 5.0,
+    'low_speed_threshold': 1.0,
+    'high_speed_color': '#00FF00',
+    'low_speed_color': '#FFA500',
+    'default_color': '#FFFFFF',
+    'graph_enabled': False,
+    'history_minutes': 30,
+    'update_rate': DEFAULT_UPDATE_RATE,
+    'position_x': None,
+    'position_y': None,
+    'start_with_windows': False,
+    'interface_mode': 'all',
+    'selected_interfaces': []
+}
 
 def setup_error_logging():
 
@@ -148,18 +148,17 @@ class NetworkSpeedWidget(QWidget):
         self.high_color = QColor('#00FF00')
         self.low_color = QColor('#FFA500')
         
-        dpr = self.devicePixelRatioF()
-        font_size = int(DEFAULT_FONT_SIZE * dpr)
-        self.font = QFont(DEFAULT_FONT, font_size)
+        # Use logical pixels consistently
+        self.font = QFont(DEFAULT_FONT, DEFAULT_FONT_SIZE)  # Logical size
         self.setFont(self.font)
         self.metrics = QFontMetrics(self.font)
         self.arrow_width = self.metrics.horizontalAdvance("↑ ")
         
+        # Calculate size in logical pixels
         max_text_width = self.metrics.horizontalAdvance("↑ 999.9 Mb/s") + self.metrics.averageCharWidth()
-        taskbar_height = self.get_taskbar_height()
-        self.setFixedSize(int(max_text_width * dpr), taskbar_height)  # Match taskbar height exactly
-        self.logger.debug(f"DPR: {dpr}, Size: {self.size()}, Taskbar Height: {taskbar_height}")
-        self.first_update = True # Add flag for initial update
+        taskbar_height = self.get_taskbar_height()  # Ensure this returns logical pixels
+        self.setFixedSize(max_text_width, taskbar_height)
+        self.first_update = True
 
     def _init_icon(self):
 
@@ -190,22 +189,16 @@ class NetworkSpeedWidget(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.dragging = False
-        self.taskbar_y = None
         self.offset = QPoint()
         self.current_screen = QApplication.primaryScreen()
         for screen in QApplication.screens():
             screen.geometryChanged.connect(self.handle_screen_change)
             screen.availableGeometryChanged.connect(self.handle_screen_change)
-        self.load_position()
-        self.show()
+        self.initialize_position()
         if self.taskbar_hwnd:
             taskbar_z = win32gui.GetWindow(self.taskbar_hwnd, win32con.GW_HWNDPREV)
             win32gui.SetWindowPos(self.winId(), taskbar_z, 0, 0, 0, 0,
                                 win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE)
-        self.keep_alive_timer = QTimer()
-        self.keep_alive_timer.timeout.connect(self.ensure_visibility)
-        self.keep_alive_timer.start(100)  # Set to 100ms as tested
-        # self.logger.debug(f"Initial position: {self.pos()}, Visible: {self.isVisible()}, State: {self.windowState()}")
 
     def _init_config(self):
 
@@ -252,17 +245,18 @@ class NetworkSpeedWidget(QWidget):
     def setupTimers(self):
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_stats)
-        update_rate = self.config.get('update_rate', DEFAULT_UPDATE_RATE)
-        self.timer.start(max(50, update_rate * 1000))
-        # Remove keep_alive_timer initialization here; it's handled in _init_screen_handling
+        self.timer.start(max(50, self.config.get('update_rate', DEFAULT_UPDATE_RATE) * 1000))
+        
+        self.keep_alive_timer = QTimer()
+        self.keep_alive_timer.timeout.connect(self.ensure_visibility)
+        self.keep_alive_timer.start(100)  # Set to 100ms as tested
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             try:
                 self.dragging = True
                 self.offset = event.position().toPoint()
-                self.keep_alive_timer.stop()
-                self.update_taskbar_y()
+                self.keep_alive_timer.stop()  # Stop timer while dragging
                 event.accept()
             except Exception as e:
                 self.logger.error(f"Mouse press error: {e}")
@@ -274,18 +268,17 @@ class NetworkSpeedWidget(QWidget):
                 new_pos = event.globalPosition().toPoint() - self.offset
                 if self.taskbar_hwnd:
                     taskbar_rect = win32gui.GetWindowRect(self.taskbar_hwnd)
-                    dpr = self.devicePixelRatioF()
-                    taskbar_top = taskbar_rect[1] / dpr
-                    taskbar_height = (taskbar_rect[3] - taskbar_rect[1]) / dpr
-                    taskbar_width = (taskbar_rect[2] - taskbar_rect[0]) / dpr
-                    taskbar_bottom = taskbar_rect[3] / dpr
-                    taskbar_left = taskbar_rect[0] / dpr
-                    taskbar_right = taskbar_rect[2] / dpr
+                    screen = self.current_screen.availableGeometry()  # Logical pixels
+                    taskbar_top = taskbar_rect[1]
+                    taskbar_height = taskbar_rect[3] - taskbar_rect[1]
+                    taskbar_width = taskbar_rect[2] - taskbar_rect[0]
+                    taskbar_left = taskbar_rect[0]
+                    taskbar_right = taskbar_rect[2]
                     if taskbar_height > taskbar_width:  # Vertical
                         y = max(0, min(new_pos.y(), screen.height() - self.height()))
                         x = max(taskbar_left, min(new_pos.x(), taskbar_right - self.width()))
                     else:  # Horizontal
-                        y = max(taskbar_top, min(taskbar_bottom - self.height(), new_pos.y()))
+                        y = max(taskbar_top, min(taskbar_rect[3] - self.height(), new_pos.y()))
                         x = max(taskbar_left, min(new_pos.x(), taskbar_right - self.width()))
                     new_pos.setX(int(x))
                     new_pos.setY(int(y))
@@ -308,29 +301,6 @@ class NetworkSpeedWidget(QWidget):
             self.ensure_visibility()  # Final adjustment
             event.accept()
 
-    def update_taskbar_y(self):
-        """Calculate the taskbar-aligned Y position based on current screen and orientation."""
-        try:
-            screen = self.current_screen.availableGeometry()
-            if self.taskbar_hwnd and win32gui.IsWindowVisible(self.taskbar_hwnd):
-                taskbar_rect = win32gui.GetWindowRect(self.taskbar_hwnd)
-                taskbar_width = taskbar_rect[2] - taskbar_rect[0]
-                taskbar_height = taskbar_rect[3] - taskbar_rect[1]
-                
-                if taskbar_height > taskbar_width:  # Vertical taskbar
-                    # For vertical, allow Y movement but default to center initially
-                    current_pos = self.pos()
-                    self.taskbar_y = max(0, min(current_pos.y(), screen.height() - self.height()))
-                else:  # Horizontal taskbar
-                    if taskbar_rect[1] < screen.height() // 2:  # Top
-                        self.taskbar_y = taskbar_rect[1] + (taskbar_height - self.height()) // 2
-                    else:  # Bottom
-                        self.taskbar_y = taskbar_rect[3] - self.height() - (taskbar_height - self.height()) // 2
-            else:
-                self.taskbar_y = screen.height() - self.height() - 40  # Fallback
-        except Exception as e:
-            self.logger.error(f"Error calculating taskbar Y: {e}")
-            self.taskbar_y = 100  # Safe default
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -376,10 +346,9 @@ class NetworkSpeedWidget(QWidget):
                 self.graph_window = None
             plt.close('all')
         except Exception as e:
-            self.logger.error(f"Error during shutdown: {e}")
+            self.logger.error(f"Error during shutdown: {e}", exc_info=True)
         finally:
             QApplication.quit()
-            # self.logger.debug("QApplication quit called")
 
     def _draw_background(self, painter):
         painter.fillRect(self.rect(), QColor(0, 0, 0, 1))
@@ -448,133 +417,54 @@ class NetworkSpeedWidget(QWidget):
         # Don't save position_y since it's fixed to taskbar
         self.save_config()
 
-    def load_position(self):
-        x = self.config.get('position_x')
-        if x is not None:
-            # Set initial position with saved X, let Y be adjusted by ensure_visibility
-            self.move(int(x), self.pos().y())
-            # Delay visibility check to ensure screen state stabilizes post-KVM switch
-            QTimer.singleShot(1000, self.ensure_visibility)  # 1-second delay
-        else:
-            self.set_default_position()
-
-    def set_default_position(self):
+    def initialize_position(self):
         try:
-            screen = self.current_screen.availableGeometry()  # Logical pixels
-            dpr = self.devicePixelRatioF()
-            if self.taskbar_hwnd:
-                taskbar_rect = win32gui.GetWindowRect(self.taskbar_hwnd)
-                taskbar_left = taskbar_rect[0] / dpr
-                taskbar_top = taskbar_rect[1] / dpr
-                taskbar_width = (taskbar_rect[2] - taskbar_rect[0]) / dpr
-                taskbar_height = (taskbar_rect[3] - taskbar_rect[1]) / dpr
-                taskbar_bottom = taskbar_rect[3] / dpr
-                
-                # Find the system tray (TrayNotifyWnd)
-                tray_hwnd = win32gui.FindWindowEx(self.taskbar_hwnd, None, "TrayNotifyWnd", None)
-                if tray_hwnd:
-                    tray_rect = win32gui.GetWindowRect(tray_hwnd)
-                    tray_left = tray_rect[0] / dpr
-                    tray_width = (tray_rect[2] - tray_rect[0]) / dpr
-                    
-                    # Estimate overflow menu position (leftmost part of tray)
-                    overflow_x = tray_left  # Left edge of tray area
-                    x = overflow_x - self.width() - 5  # 5 pixels padding to the left
-                    
-                    # Adjust Y based on taskbar orientation
-                    if taskbar_height > taskbar_width:  # Vertical taskbar
-                        if taskbar_left < screen.width() / 2:  # Left
-                            y = screen.height() / 2 - self.height() / 2
-                        else:  # Right
-                            y = screen.height() / 2 - self.height() / 2
-                    else:  # Horizontal taskbar
-                        if taskbar_top < screen.height() / 2:  # Top
-                            y = taskbar_top
-                        else:  # Bottom
-                            y = taskbar_bottom - self.height()
-                else:
-                    # Fallback if tray not found
-                    x = screen.width() - self.width() - 50
-                    y = screen.height() - self.height() - 40 / dpr
-                
-                # Use saved X if available, but ensure it’s within bounds
-                saved_x = self.config.get('position_x')
-                if saved_x is not None:
-                    x = max(taskbar_left, min(saved_x, screen.width() - self.width()))
-                
-                self.move(int(x), int(y))
-                self.show()
+            x = self.config.get('position_x')
+            screen = self.current_screen.availableGeometry()
+            if x is not None and 0 <= x <= screen.width() - self.width():
+                self.move(x, screen.height())  # Y will be adjusted by ensure_visibility
             else:
-                self.move(100, 100)
-                self.show()
+                tray_hwnd = win32gui.FindWindowEx(self.taskbar_hwnd, None, "TrayNotifyWnd", None)
+                if tray_hwnd and self.taskbar_hwnd:
+                    tray_rect = win32gui.GetWindowRect(tray_hwnd)
+                    taskbar_rect = win32gui.GetWindowRect(self.taskbar_hwnd)
+                    x = tray_rect[0] - self.width() - 5
+                    y = taskbar_rect[3] - self.height() if taskbar_rect[1] > screen.height() / 2 else taskbar_rect[1]
+                    self.move(max(0, min(x, screen.width() - self.width())), y)
+                else:
+                    self.move(screen.width() - self.width() - 50, screen.height() - self.height() - 40)
+            self.show()
+            QTimer.singleShot(500, self.ensure_visibility)
         except Exception as e:
-            self.logger.error(f"Error in set_default_position: {e}")
+            self.logger.error(f"Error initializing position: {e}")
             self.move(100, 100)
             self.show()
 
-    def ensure_on_screen(self):
-
-        screen = QApplication.primaryScreen().geometry()
-        current_pos = self.pos()
-        new_x = max(0, min(current_pos.x(), screen.width() - self.width()))
-        new_y = current_pos.y()
-
-        if new_x != current_pos.x():
-
-            self.move(new_x, new_y)
-            self.save_position()
-
-    def recover_position(self):
-
-        try:
-
-            if self.taskbar_hwnd:
-
-                taskbar_rect = win32gui.GetWindowRect(self.taskbar_hwnd)
-                self.move(self.config.get('position_x'), taskbar_rect[1])
-
-        except Exception:
-
-            self.set_default_position()
-
     def load_config(self):
-
         try:
-
             if os.path.exists(self.config_file):
-
                 with open(self.config_file, 'r') as f:
-
                     config = json.load(f)
+                    if 'history_hours' in config:
+                        self.logger.info("Migrating history_hours to history_minutes")
+                        config['history_minutes'] = int(config.pop('history_hours') * 60)
                     # Ensure position values are integers or None
                     for key in ['position_x', 'position_y']:
-
                         if key in config and config[key] is not None:
-
-                            config[key] = int(config[key])  # Cast to int
-
+                            config[key] = int(config[key])
                     return self.validate_config({**DEFAULT_CONFIG, **config})
-                
         except Exception as e:
-
             print(f"Error loading config: {e}")
-
         return DEFAULT_CONFIG
 
     def save_config(self):
-
         try:
-
             with open(self.config_file, 'w') as f:
-
                 json.dump(self.config, f, indent=4)
-
         except Exception as e:
-
             print(f"Error saving config: {e}")
 
     def validate_config(self, config: Dict) -> Dict:
-
         """
         Validate and sanitize configuration values.
         Args:
@@ -584,34 +474,21 @@ class NetworkSpeedWidget(QWidget):
         Raises:
             ConfigError: If configuration validation fails
         """
-
         try:
-
             validated = config.copy()
-
             for key, (min_val, max_val, default) in {
-
                 'update_rate': (0, 60, 1),
                 'high_speed_threshold': (0.1, 1000.0, 1.0),
                 'low_speed_threshold': (0.0, 999.9, 0.1),
-                'history_hours': (1, 24, 1)
-
+                'history_minutes': (5, 1440, 30)  # Min = 5 mins, Max = 24 hours, Default = 30 mins
             }.items():
-
                 validated[key] = max(min_val, min(max_val, config.get(key, default)))
-
             for color_key in ['high_speed_color', 'low_speed_color', 'default_color']:
-
                 color = config.get(color_key, '#FFFFFF')
-
                 if not re.match(r'^#(?:[0-9a-fA-F]{3}){1,2}$', color):
-
                     validated[color_key] = '#FFFFFF'
-
             return validated
-
         except Exception as e:
-
             raise ConfigError(f"Configuration validation failed: {e}")
 
     def update_stats(self):
@@ -719,30 +596,23 @@ class NetworkSpeedWidget(QWidget):
                             win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE)
 
     def show_graph(self):
-
         """Opens a window displaying network speed history graph if data is available"""
-
         if not self.graph_window:
-            self.graph_window = GraphWindow()  
+            self.graph_window = GraphWindow(self)  # Pass self as parent
         if self.speed_history:
             self.graph_window.update_graph(self.speed_history)
             self.graph_window.show()
-
         else:
-
             print("No history data available")
 
     def handle_screen_change(self, geometry):
         for screen in QApplication.screens():
             if screen.geometry().contains(self.pos()):
-                self.current_screen = screen
+                if screen != self.current_screen:
+                    self.current_screen = screen
+                    self.ensure_visibility()
                 break
-        # Only reapply if position is invalid
-        current_x = self.pos().x()
-        saved_x = self.config.get('position_x')
-        if saved_x is not None and current_x != saved_x:
-            self.load_position()
-        QTimer.singleShot(500, self.ensure_visibility) # Delayed visibility check
+        QTimer.singleShot(100, self.ensure_visibility)  # Reduced delay for responsiveness
 
     def is_admin(self):
 
@@ -759,104 +629,91 @@ class NetworkSpeedWidget(QWidget):
     def is_fullscreen_app_active(self):
         try:
             hwnd = win32gui.GetForegroundWindow()
-            if not hwnd or not win32gui.IsWindow(hwnd):
+            if not hwnd or not win32gui.IsWindow(hwnd) or hwnd == self.winId():
                 return False
             
-            # Avoid self, taskbar, desktop
-            class_name = win32gui.GetClassName(hwnd)
-            if (hwnd == self.winId() or hwnd == self.taskbar_hwnd or 
-                class_name in ["WorkerW", "Progman"]):
-                return False
-            
+            # Check if fullscreen app is on the widget's screen
             rect = win32gui.GetWindowRect(hwnd)
-            # Check if fullscreen app is on the same screen as the widget
-            widget_screen = self.current_screen.geometry()
-            if not widget_screen.intersects(QRect(rect[0], rect[1], rect[2] - rect[0], rect[3] - rect[1])):
+            widget_screen = self.current_screen.geometry()  # Logical pixels
+            hwnd_rect = QRect(rect[0], rect[1], rect[2] - rect[0], rect[3] - rect[1])
+            
+            if not widget_screen.intersects(hwnd_rect):
                 return False
             
-            screen = QApplication.primaryScreen().geometry()
-            return (rect[0] <= 0 and rect[1] <= 0 and 
-                    rect[2] >= screen.width() and rect[3] >= screen.height())
+            # Convert to logical pixels for comparison
+            dpr = self.devicePixelRatioF()
+            screen = self.current_screen.geometry()
+            return (rect[0] <= screen.x() * dpr and 
+                    rect[1] <= screen.y() * dpr and 
+                    rect[2] >= (screen.width() + screen.x()) * dpr and 
+                    rect[3] >= (screen.height() + screen.y()) * dpr)
         except Exception as e:
             self.logger.error(f"Error checking fullscreen: {e}")
             return False  # Default to not hiding the widget
 
     def ensure_visibility(self):
-        if self.dragging:
+        if self.dragging or not self.taskbar_hwnd or not win32gui.IsWindowVisible(self.taskbar_hwnd):
             return
-
-        if self.is_fullscreen_app_active():
-            if self.isVisible():
-                self.hide()
-            return
-
+        
         try:
-            screen = self.current_screen.availableGeometry()  # Logical pixels
-            dpr = self.devicePixelRatioF()
-            current_pos = self.pos()
+            if self.is_fullscreen_app_active():
+                if self.isVisible():
+                    self.hide()
+                return
             
-            if self.taskbar_hwnd and win32gui.IsWindowVisible(self.taskbar_hwnd):
-                taskbar_rect = win32gui.GetWindowRect(self.taskbar_hwnd)
-                taskbar_width = (taskbar_rect[2] - taskbar_rect[0]) / dpr
-                taskbar_height = (taskbar_rect[3] - taskbar_rect[1]) / dpr
-                taskbar_left = taskbar_rect[0] / dpr
-                taskbar_top = taskbar_rect[1] / dpr
-                taskbar_bottom = taskbar_rect[3] / dpr
-                
-                if taskbar_height > taskbar_width:  # Vertical taskbar
-                    if taskbar_left < screen.width() / 2:  # Left
-                        x = taskbar_left + taskbar_width + 5
-                        y = max(0, min(current_pos.y(), screen.height() - self.height()))
-                    else:  # Right
-                        x = taskbar_left - self.width() - 5
-                        y = max(0, min(current_pos.y(), screen.height() - self.height()))
-                else:  # Horizontal taskbar
-                    x = current_pos.x()
-                    tray_width_estimate = 150 / dpr
-                    x_max = screen.width() - tray_width_estimate - self.width()
-                    x_min = taskbar_left
-                    x = max(x_min, min(int(x), x_max))
-                    if taskbar_top < screen.height() / 2:  # Top
-                        y = taskbar_top
-                    else:  # Bottom
-                        y = taskbar_top
-                        y = max(0, min(int(y), taskbar_bottom - self.height()))
-            else:
-                x = current_pos.x()
-                y = screen.height() - self.height() - 40 / dpr
-                x = max(0, min(int(x), screen.width() - self.width()))
-
-            if current_pos.x() != x or current_pos.y() != y:
-                self.move(int(x), int(y))
-
+            screen = self.current_screen.availableGeometry()  # Logical pixels
+            taskbar_rect = win32gui.GetWindowRect(self.taskbar_hwnd)
+            taskbar_height = taskbar_rect[3] - taskbar_rect[1]
+            taskbar_width = taskbar_rect[2] - taskbar_rect[0]
+            taskbar_left = taskbar_rect[0]
+            taskbar_top = taskbar_rect[1]
+            taskbar_bottom = taskbar_rect[3]
+            
+            current_pos = self.pos()
+            x = current_pos.x()
+            y = current_pos.y()
+            
+            if taskbar_height > taskbar_width:  # Vertical taskbar
+                if taskbar_left < screen.width() / 2:  # Left
+                    x = taskbar_left + taskbar_width
+                else:  # Right
+                    x = taskbar_left - self.width()
+                y = max(0, min(y, screen.height() - self.height()))
+            else:  # Horizontal taskbar
+                tray_width_estimate = 150  # Logical pixels
+                x_max = screen.width() - tray_width_estimate - self.width()
+                x = max(0, min(x, x_max))
+                y = taskbar_top if taskbar_top < screen.height() / 2 else taskbar_bottom - self.height()
+            
+            if current_pos != QPoint(x, y):
+                self.move(x, y)
+                self.save_position()
+            
             if not self.isVisible():
                 self.show()
             
-            if self.taskbar_hwnd and win32gui.IsWindowVisible(self.taskbar_hwnd):
-                taskbar_z = win32gui.GetWindow(self.taskbar_hwnd, win32con.GW_HWNDPREV)
-                win32gui.SetWindowPos(self.winId(), taskbar_z, 0, 0, 0, 0,
-                                    win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE)
+            # Maintain z-order relative to taskbar
+            taskbar_z = win32gui.GetWindow(self.taskbar_hwnd, win32con.GW_HWNDPREV)
+            win32gui.SetWindowPos(self.winId(), taskbar_z, 0, 0, 0, 0,
+                                win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE)
             
-            if self.isVisible():
-                self.update()
-
+            self.update()
         except Exception as e:
             self.logger.error(f"Error in ensure_visibility: {e}")
-            self.set_default_position()
+            # Fallback to a safe position instead of calling set_default_position()
+            self.move(100, 100)  # Simple fallback to a visible location
             self.show()
-            #self.logger.debug(f"After: Visible={self.isVisible()}, Pos={self.pos()}")
+            QTimer.singleShot(500, self.ensure_visibility)  # Retry after a delay to stabilize
 
     def get_taskbar_height(self):
         if self.taskbar_hwnd:
             rect = win32gui.GetWindowRect(self.taskbar_hwnd)
             height = rect[3] - rect[1]  # Physical pixels
-            dpr = self.devicePixelRatioF()
-            logical_height = int(height / dpr)  # Convert to logical pixels
-            return logical_height
-        return 40  # Fallback
+            logical_height = self.current_screen.logicalDotsPerInchY() / 96.0  # Base DPI
+            return int(height / logical_height)  # Convert to logical pixels
+        return 40  # Fallback in logical pixels
 
     def toggle_startup(self):
-
         """
         Toggle application startup with Windows.
         Returns:
@@ -864,66 +721,38 @@ class NetworkSpeedWidget(QWidget):
         Raises:
             WindowsError: If registry access fails
         """
-
         key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
         app_name = "NetSpeedTray"
-
-        
         try:
-
             key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_ALL_ACCESS)
-
             try:
-
                 winreg.QueryValueEx(key, app_name)
                 winreg.DeleteValue(key, app_name)
-
                 return False
-
             except WindowsError:
-
                 exe_path = sys.executable if getattr(sys, 'frozen', False) else sys.argv[0]
                 winreg.SetValueEx(key, app_name, 0, winreg.REG_SZ, f'"{exe_path}"')
-
                 return True
-
             finally:
-
                 key.Close()
-
         except Exception as e:
-
-            # self.logger.error(f"Failed to toggle startup: {str(e)}")
-
+            self.logger.error(f"Failed to toggle startup: {e}", exc_info=True)
             return False
 
     def is_startup_enabled(self):
-
         """Check if application is set to start with Windows"""
-
         key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
-        app_name = "NetSpeedTray"   
-
+        app_name = "NetSpeedTray"
         try:
-
             key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_READ)
-
             try:
-
                 winreg.QueryValueEx(key, app_name)
-
                 return True
-
             except WindowsError:
-
                 return False
-
             finally:
-
                 key.Close()
-
         except Exception:
-
             return False
 
     def show_error_log(self):
@@ -1012,6 +841,8 @@ class SettingsDialog(QDialog):
 
     def setupUI(self):
         layout = QVBoxLayout()
+        
+        # General Settings
         general_group = QGroupBox("General Settings")
         general_layout = QGridLayout()
         self.update_rate = QSpinBox()
@@ -1030,7 +861,7 @@ class SettingsDialog(QDialog):
         general_group.setLayout(general_layout)
         layout.addWidget(general_group)
 
-        # Color settings
+        # Color Settings
         color_group = QGroupBox("Speed Color Coding")
         color_layout = QGridLayout()
         self.enable_colors = QCheckBox("Enable Color Coding")
@@ -1088,7 +919,6 @@ class SettingsDialog(QDialog):
                 self.color_settings.setMaximumHeight(0)
                 color_group.adjustSize()
                 self.adjustSize()
-                # Reposition bottom edge just above taskbar
                 if self.parent() and hasattr(self.parent(), 'taskbar_hwnd'):
                     taskbar_rect = win32gui.GetWindowRect(self.parent().taskbar_hwnd)
                     dpr = self.parent().devicePixelRatioF() if hasattr(self.parent(), 'devicePixelRatioF') else 1.0
@@ -1108,17 +938,16 @@ class SettingsDialog(QDialog):
         layout.addWidget(color_group)
 
         # Graph Settings
-
         graph_group = QGroupBox("Graph Settings")
         graph_layout = QGridLayout()
         self.enable_graph = QCheckBox("Enable Graph")
         self.enable_graph.setChecked(self.config.get('graph_enabled', False))
         graph_layout.addWidget(self.enable_graph, 0, 0, 1, 2)
         self.history_duration = StayOnTopComboBox()
-        current_minutes = self.config.get('history_hours', 1) * 60
+        current_minutes = self.config.get('history_minutes', 30)  # Direct minutes value
         for minutes, label in TIME_INTERVALS:
             self.history_duration.addItem(label, minutes)
-            if minutes == current_minutes:
+            if minutes == current_minutes:  # Simple integer comparison
                 self.history_duration.setCurrentIndex(self.history_duration.count() - 1)
         self.history_duration.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         graph_layout.addWidget(QLabel("History Duration:"), 1, 0)
@@ -1127,7 +956,6 @@ class SettingsDialog(QDialog):
         layout.addWidget(graph_group)
 
         # Network Interfaces
-
         interface_group = QGroupBox("Network Interfaces")
         interface_layout = QGridLayout()
         self.interfaces = self.get_network_interfaces()
@@ -1146,9 +974,7 @@ class SettingsDialog(QDialog):
         list_layout = QVBoxLayout()
         self.interface_checkboxes = {}
         selected_interfaces = self.config.get('selected_interfaces', [])
-
         for iface in self.interfaces:
-
             checkbox = QCheckBox(iface)
             checkbox.setChecked(iface in selected_interfaces)
             self.interface_checkboxes[iface] = checkbox
@@ -1157,19 +983,15 @@ class SettingsDialog(QDialog):
         interface_layout.addWidget(self.interface_list, 1, 0, 1, 2)
         
         def update_interface_list_state(text):
-
             enabled = text != 'Monitor All'
             self.interface_list.setEnabled(enabled)
 
-            # self.logger.debug(f"Mode changed to: {text}, Enabled: {enabled}, ComboBox focused: {self.interface_mode.hasFocus()}")
-
         self.interface_mode.currentTextChanged.connect(update_interface_list_state)
-
-        # self.interface_mode.activated.connect(lambda: self.logger.debug("Mode dropdown activated"))
-
         update_interface_list_state(self.interface_mode.currentText())   
         interface_group.setLayout(interface_layout)
         layout.addWidget(interface_group)
+
+        # Troubleshooting
         error_group = QGroupBox("Troubleshooting")
         error_layout = QVBoxLayout()
         export_button = QPushButton("Export Error Log")
@@ -1177,6 +999,8 @@ class SettingsDialog(QDialog):
         error_layout.addWidget(export_button)
         error_group.setLayout(error_layout)
         layout.addWidget(error_group)
+
+        # Buttons
         buttons = QVBoxLayout()
         save_button = QPushButton("Save")
         save_button.clicked.connect(self.accept)
@@ -1185,6 +1009,7 @@ class SettingsDialog(QDialog):
         cancel_button.clicked.connect(self.reject)
         buttons.addWidget(cancel_button)
         layout.addLayout(buttons)
+        
         self.setLayout(layout)
 
     def choose_color(self, button):
@@ -1196,12 +1021,9 @@ class SettingsDialog(QDialog):
             button.setStyleSheet(f"background-color: {color.name()}")
 
     def get_settings(self):
-
-        selected_minutes = self.history_duration.currentData()
-        hours = selected_minutes / 60
+        selected_minutes = self.history_duration.currentData()  # Already in minutes
 
         settings = {
-
             'update_rate': self.update_rate.value(),
             'color_coding': self.enable_colors.isChecked(),
             'high_speed_threshold': self.high_speed_threshold.value(),
@@ -1210,7 +1032,7 @@ class SettingsDialog(QDialog):
             'low_speed_color': self.low_speed_color.palette().button().color().name(),
             'default_color': self.default_color.palette().button().color().name(),
             'graph_enabled': self.enable_graph.isChecked(),
-            'history_hours': hours,
+            'history_minutes': selected_minutes,  # Direct integer value
             'start_with_windows': self.start_with_windows.isChecked(),
             'interface_mode': {
                 'Monitor All': 'all',
@@ -1224,7 +1046,6 @@ class SettingsDialog(QDialog):
         }    
 
         if self.start_with_windows.isChecked() != self.parent().is_startup_enabled():
-
             self.parent().toggle_startup()
 
         return settings
@@ -1286,6 +1107,7 @@ class SettingsDialog(QDialog):
 class GraphWindow(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._parent = parent  # Store parent explicitly
         self.setWindowTitle("Network Speed History")
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.WindowStaysOnTopHint)
         layout = QVBoxLayout()
@@ -1311,41 +1133,40 @@ class GraphWindow(QWidget):
     def update_graph(self, history):
         if not history:
             return
-        history = history[-600:]  # Limit to last 10 minutes
-        times = [datetime.now()] * len(history)  # Placeholder; no timestamp in tuple
+        if self._parent and 'history_minutes' in self._parent.config:
+            max_points = int(self._parent.config['history_minutes'] * 60)
+        else:
+            max_points = MAX_HISTORY_POINTS
+        history = list(history)[-max_points:]
         upload = [x[0] * 8 / 1000000 for x in history]
         download = [x[1] * 8 / 1000000 for x in history]
+        # Approximate time axis (assuming 1-second intervals)
+        times = [datetime.now() - timedelta(seconds=(len(history) - i - 1)) for i in range(len(history))]
         self.upload_line.set_data(times, upload)
         self.download_line.set_data(times, download)
         self.ax.relim()
         self.ax.autoscale_view()
-        self.figure.autofmt_xdate()
+        self.figure.autofmt_xdate()  # Rotate and format dates
         self.canvas.draw()
 
 
 class NetworkMonitor:
 
     def __init__(self):
-            # Use environment variables for high-DPI scaling (optional, as Qt 6 may handle this automatically)
-            os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "1"  # Enable high-DPI scaling
-            os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"  # Automatic scaling factor
-            # Note: These might be redundant in Qt 6.8, but they ensure compatibility
-            
-            # Create a unique mutex name
-            mutex_name = "Global\\NetSpeedTray_SingleInstanceMutex"
-            self.mutex = win32event.CreateMutex(None, False, mutex_name)
-            last_error = win32api.GetLastError()
-            
-            if last_error == winerror.ERROR_ALREADY_EXISTS:
-                print("Another instance of NetSpeedTray is already running.")
-                sys.exit(1)
-            
-            self.app = QApplication(sys.argv)
-            self.widget = NetworkSpeedWidget()
-            self.widget.load_position()
-            self.widget.show()
-            signal.signal(signal.SIGINT, self.signal_handler)
-            self.logger = logging.getLogger('NetSpeedTray')
+        mutex_name = "Global\\NetSpeedTray_SingleInstanceMutex"
+        self.mutex = win32event.CreateMutex(None, False, mutex_name)
+        last_error = win32api.GetLastError()
+        
+        if last_error == winerror.ERROR_ALREADY_EXISTS:
+            print("Another instance of NetSpeedTray is already running.")
+            sys.exit(1)
+        
+        self.app = QApplication(sys.argv)
+        self.widget = NetworkSpeedWidget()
+        self.widget.initialize_position()
+        self.widget.show()
+        signal.signal(signal.SIGINT, self.signal_handler)
+        self.logger = logging.getLogger('NetSpeedTray')
 
     def signal_handler(self, sig, frame):
         self.logger.debug("Received SIGINT, shutting down")
@@ -1369,3 +1190,4 @@ if __name__ == "__main__":
 # TODO: Add bandwidth alerts and usage tracking
 # TODO: Implement automatic updates
 # TODO: Implement smart taskbar positioning
+# TODO: double click on widget to open detailed graph & stats
