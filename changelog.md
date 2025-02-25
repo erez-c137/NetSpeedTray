@@ -7,7 +7,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.2-beta4]- February 24, 2025
+## [1.0.2-beta5]- - February 25, 2025
+
+### Fixed
+
+- **High-DPI Scaling Issues**
+  - Resolved oversized widget and visibility problems on 4K monitors with 200% scaling by improving DPI handling and ensuring consistent use of logical pixels.
+- **Multi-Monitor Behavior**
+  -Fixed widget hiding when moving the mouse between monitors in dual-monitor setups by refining screen detection and visibility logic.
+- **Configuration Persistence**
+  -Corrected an issue where `history_hours` reset to 1 hour on restart; now uses `history_minutes` with proper validation to persist user settings (e.g., 30 minutes).
+- **Timer Management**
+  - Removed duplicate `keep_alive_timer` initialization to prevent potential double-execution of visibility checks.
+
+### Changed
+
+- **History Units**
+  -Switched from `history_hours` (fractional) to `history_minutes` (integer) for simpler, more readable configuration and UI consistency.
+- **Positioning Logic**
+  - Consolidated `load_position()`, `set_default_position()`, and `recover_position()` into `initialize_position()` for cleaner code and reliable taskbar alignment.
+- **User-Specific Install**
+  - Switched to per-user installation (`HKEY_CURRENT_USER`) and removed admin requirement to avoid UAC prompts and enhance compatibility with standard user accounts.
+
+### Notes
+
+- This beta includes significant improvements for high-DPI and multi-monitor environments. Please test on varied setups and report any issues.
+- Old config files with `history_hours` will be automatically migrated to `history_minutes` on first load.
+
+## Acknowledgments
+
+Special thanks to the user community for detailed feedback on scaling and positioning issues, driving these improvements!
+
+## [1.0.2-beta4]- - February 24, 2025
 
 ### Added
 
@@ -33,10 +64,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Changes were made to work correctly on multi-monitor setups with `QRect` intersection check.
 - **Fixed graph poping over the taskbar**
   - The slicing errors should be resolved.
- 
-## Acknowledgments
-
-Special thanks to the user community for detailed feedback on scaling and positioning issues, driving these improvements!
 
 ## [1.0.2-beta3]- February 24, 2025
 
@@ -69,10 +96,6 @@ Special thanks to the user community for detailed feedback on scaling and positi
 - Positioning now uses `y = taskbar_top` with a bounds check (`taskbar_bottom - self.height()`) to embed the widget within the taskbar’s logical height.
 - Widget height is set to match the taskbar’s logical height via `get_taskbar_height()`, ensuring consistent scaling.
 - All coordinates are adjusted with `devicePixelRatioF()` for DPI-aware rendering.
-
-## Acknowledgments
-
-Special thanks to the user community for detailed feedback on scaling and positioning issues, driving these improvements!
 
 ## [1.0.2-beta2] - February 24, 2025
 
@@ -179,7 +202,3 @@ Special thanks to the user community for detailed feedback on scaling and positi
 - **Two processes appearing in Task Manager**
 - **Startup delay when loading application**
 - **Application does not reappear when the taskbar auto-hides**
-
-[1.0.2]: https://github.com/erez-c137/NetSpeedTray/compare/v1.0.1...v1.0.2
-[1.0.1]: https://github.com/erez-c137/NetSpeedTray/compare/v1.0.0...v1.0.1
-[1.0.0]: https://github.com/erez-c137/NetSpeedTray/releases/tag/v1.0.0
