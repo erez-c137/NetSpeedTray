@@ -2,7 +2,7 @@
 echo Building NetSpeedTray...
 
 rem Define version from MyAppVersion in installer.iss
-set "VERSION=1.0.2-beta4"
+set "VERSION=1.0.2-beta.5"
 set "OUTPUT_DIR=NetSpeedTray-%VERSION%"
 
 rem Check for required files
@@ -16,6 +16,10 @@ if not exist "README.md" (
 )
 if not exist "network-monitor.spec" (
     echo ERROR: network-monitor.spec file is missing
+    exit /b 1
+)
+if not exist "installer.iss" (
+    echo ERROR: installer.iss file is missing
     exit /b 1
 )
 if not exist "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" (
@@ -64,7 +68,7 @@ rem Create ZIP file for portable version
 echo Creating portable ZIP...
 powershell Compress-Archive -Path "%OUTPUT_DIR%\NetSpeedTray-Portable\*" -DestinationPath "%OUTPUT_DIR%\NetSpeedTray-Portable.zip" -Force
 if errorlevel 1 (
-    echo ERROR: Failed to create portable ZIP
+    echo ERROR: Failed to create portable ZIP with PowerShell
     exit /b 1
 )
 
