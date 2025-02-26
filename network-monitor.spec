@@ -18,7 +18,7 @@ pyqt6_plugins = [
 ]
 
 a = Analysis(
-    ['network-monitor.py'],
+    ['NetSpeedTray.py'],
     pathex=[],
     binaries=[],
     datas=[
