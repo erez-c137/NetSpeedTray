@@ -7,6 +7,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.2] - February 26, 2025
+
+### Added
+
+- **Startup Synchronization**: Added command-line arguments (`--set-startup`, `--unset-startup`) to sync "Start with Windows" between the installer and app settings.
+
+### Fixed
+
+- **Invisible Widget Issue**: Resolved the issue where the app runs but the `Widget` remains invisible, ensuring proper display on the taskbar after launch, even after system restarts or environment changes (e.g., multi-monitor setups, fullscreen apps).
+- **Dragging Error**:
+  -Fixed and improving mouse event handling.
+
+### Known Limitations
+
+- **Multi-Monitor Support**:
+  - Supports multi-monitor setups by detecting the taskbar screen, but may experience positioning or sizing issues if monitors have different DPI scaling levels (e.g., 125%, 150%, 200%, 300%).
+  - Handles resolution mismatches between monitors, but scaling mismatches can cause issues.
+- **KVM Switches**:
+  - Should return to the correct position after switching via a KVM, but temporary mispositioning or scaling issues may occur if the new monitor setup differs (resolution, scaling, taskbar position).
+- **Start Menu Interaction Issue**:
+  - The `Widget` may hide or become unresponsive when the Windows Start menu is opened, particularly on multi-monitor setups or with custom taskbar configurations. This issue arises due to a Windows limitation where `Shell_TrayWnd` (the taskbar window) and related UI elements (e.g., Start menu) can obscure or temporarily disable overlay windows like the widget.
+  - Windows does not provide a reliable API or event to distinguish Start menu activation from other fullscreen or taskbar-related states, leading to potential misdetection in `is_fullscreen_app_active` or `check_and_update`. This behavior is outside NetSpeedTray’s control but may be mitigated in future updates by enhancing taskbar and Start menu state tracking.
+  - Functionally - when clicking on the start menu, the widget 'hides' and when clicking anywhere but on the taskbar, it will reappear
+- **Edge Cases**:
+  - Multiple or docked taskbars, monitor hot-plugging, high DPI scaling on small monitors, fullscreen apps on non-taskbar monitors, low-performance systems, KVM switches to non-Windows OS, and custom taskbar positions may cause issues or misbehavior.
+
+### Future Improvements
+
+- Enhanced multi-monitor support with per-monitor DPI scaling awareness.
+- Robust handling of KVM switches, monitor hot-plugging, and custom taskbar positions.
+- Performance optimizations for low-end systems.
+
+[1.0.2]: https://github.com/erez-c137/NetSpeedTray/releases/tag/v1.0.2
+
 ## [1.0.2-beta5]- - February 25, 2025
 
 ### Fixed
