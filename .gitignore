@@ -44,6 +44,9 @@ checksums.txt
 *.log
 config.json
 NetSpeedTray.ico
+installer.iss.bak
+installer.iss
+release-template.txt
 
 # Don't ignore these specific files
 !network-monitor.spec

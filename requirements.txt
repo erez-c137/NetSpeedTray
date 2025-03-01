@@ -1,6 +1,5 @@
-pywin32>=227
-psutil>=5.8.0
-matplotlib>=3.3.0,<4.0.0
-PyQt6>=6.0.0,<7.0.0
-numpy>=1.19.0
-pyinstaller>=6.0.0
+PyInstaller>=6.0.0
+psutil>=5.9.0
+pywin32>=306
+matplotlib>=3.8.0
+PyQt6>=6.7.0
