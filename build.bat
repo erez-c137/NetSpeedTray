@@ -2,7 +2,7 @@
 setlocal EnableDelayedExpansion
 
 rem Set version number here
-set VERSION=1.0.2
+set VERSION=1.0.3
 set CODENAME=NetSpeedTray.py
 
 echo Compiling %CODENAME% v%VERSION%
@@ -53,6 +53,7 @@ if not exist "NetSpeedTray.ico" (echo ERROR: NetSpeedTray.ico missing & exit /b 
 if not exist "netspeedtray.spec" (echo ERROR: netspeedtray.spec missing & exit /b 1)
 if not exist "installer.iss" (echo ERROR: installer.iss missing & exit /b 1)
 if not exist "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" (echo ERROR: Inno Setup 6 not installed & exit /b 1)
+if not exist "C:\Program Files\7-Zip\7z.exe" (echo ERROR: 7-Zip not installed & exit /b 1)
 set "end_time=%TIME%"
 call :time_diff "%start_time%" "%end_time%"
 echo Verifying dependencies completed in !elapsed!
@@ -60,13 +61,12 @@ echo Verifying dependencies completed in !elapsed!
 rem Stage 2: Clean Build Artifacts
 echo Cleaning build artifacts...
 set "start_time=%TIME%"
-rmdir /s /q "dist" 2>nul
-rmdir /s /q "build" 2>nul
-rmdir /s /q "installer" 2>nul
-rmdir /s /q "NetSpeedTray-Portable" 2>nul
-del /f /q "NetSpeedTray-%VERSION%-Portable.zip" 2>nul
-del /f /q "checksums.txt" 2>nul
-rmdir /s /q "NetSpeedTray-Latest" 2>nul
+if exist "dist" rmdir /s /q "dist" 2>nul
+if exist "build" rmdir /s /q "build" 2>nul
+if exist "installer" rmdir /s /q "installer" 2>nul
+if exist "NetSpeedTray-Latest" rmdir /s /q "NetSpeedTray-Latest" 2>nul
+if exist "NetSpeedTray-%VERSION%-Portable.7z" del /f /q "NetSpeedTray-%VERSION%-Portable.7z" 2>nul
+if exist "checksums.txt" del /f /q "checksums.txt" 2>nul
 set "end_time=%TIME%"
 call :time_diff "%start_time%" "%end_time%"
 echo Cleaning build artifacts completed in !elapsed!
@@ -76,8 +76,7 @@ echo Compiling executable...
 set "start_time=%TIME%"
 python -m PyInstaller netspeedtray.spec >nul 2>nul
 if errorlevel 1 (echo ERROR: PyInstaller failed & exit /b 1)
-copy "NetSpeedTray.ico" "dist\NetSpeedTray.ico" >nul 2>nul
-if errorlevel 1 (echo ERROR: Icon copy failed & exit /b 1)
+if not exist "dist\NetSpeedTray.exe" (echo ERROR: Executable not found after compilation & exit /b 1)
 set "end_time=%TIME%"
 call :time_diff "%start_time%" "%end_time%"
 echo Compiling executable completed in !elapsed!
@@ -85,13 +84,10 @@ echo Compiling executable completed in !elapsed!
 rem Stage 4: Package Portable
 echo Packaging portable version...
 set "start_time=%TIME%"
-mkdir NetSpeedTray-Portable >nul 2>nul
-copy "dist\NetSpeedTray.exe" "NetSpeedTray-Portable\" >nul 2>nul
-if errorlevel 1 (echo ERROR: Portable copy failed & exit /b 1)
-powershell Compress-Archive -Path "NetSpeedTray-Portable\*" -DestinationPath "NetSpeedTray-%VERSION%-Portable.zip" -Force >nul 2>nul
-if errorlevel 1 (echo ERROR: ZIP creation failed & exit /b 1)
-rmdir /s /q "NetSpeedTray-Portable" 2>nul
-if errorlevel 1 (echo WARNING: Temp folder cleanup failed)
+cd dist
+"C:\Program Files\7-Zip\7z.exe" a "..\NetSpeedTray-%VERSION%-Portable.7z" "NetSpeedTray.exe" >nul 2>nul
+cd ..
+if errorlevel 1 (echo ERROR: 7z creation failed & exit /b 1)
 set "end_time=%TIME%"
 call :time_diff "%start_time%" "%end_time%"
 echo Packaging portable version completed in !elapsed!
@@ -100,7 +96,8 @@ rem Stage 5: Generate Installer
 echo Generating installer...
 set "start_time=%TIME%"
 "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss >nul 2>nul
-if errorlevel 1 (echo ERROR: Installer failed & exit /b 1)
+if errorlevel 1 (echo ERROR: Installer creation failed & exit /b 1)
+if not exist "installer\NetSpeedTray-%VERSION%-Setup.exe" (echo ERROR: Setup file not found after compilation & exit /b 1)
 set "end_time=%TIME%"
 call :time_diff "%start_time%" "%end_time%"
 echo Generating installer completed in !elapsed!
@@ -108,10 +105,11 @@ echo Generating installer completed in !elapsed!
 rem Stage 6: Organize Deliverables
 echo Organizing deliverables...
 set "start_time=%TIME%"
-mkdir NetSpeedTray-Latest >nul 2>nul
-move "NetSpeedTray-%VERSION%-Portable.zip" "NetSpeedTray-Latest\" >nul 2>nul
+if not exist "NetSpeedTray-Latest" mkdir "NetSpeedTray-Latest" >nul 2>nul
+move "NetSpeedTray-%VERSION%-Portable.7z" "NetSpeedTray-Latest\" >nul 2>nul
+if errorlevel 1 (echo ERROR: Moving portable 7z failed & exit /b 1)
 move "installer\NetSpeedTray-%VERSION%-Setup.exe" "NetSpeedTray-Latest\" >nul 2>nul
-if errorlevel 1 (echo ERROR: Moving outputs failed & exit /b 1)
+if errorlevel 1 (echo ERROR: Moving setup executable failed & exit /b 1)
 set "end_time=%TIME%"
 call :time_diff "%start_time%" "%end_time%"
 echo Organizing deliverables completed in !elapsed!
@@ -121,8 +119,8 @@ echo Computing checksums...
 set "start_time=%TIME%"
 echo # SHA-256 Checksums > checksums.txt 2>nul
 echo. >> checksums.txt 2>nul
-echo ## NetSpeedTray-%VERSION%-Portable.zip >> checksums.txt 2>nul
-certutil -hashfile "NetSpeedTray-Latest\NetSpeedTray-%VERSION%-Portable.zip" SHA256 | findstr /v "hash" >> checksums.txt 2>nul
+echo ## NetSpeedTray-%VERSION%-Portable.7z >> checksums.txt 2>nul
+certutil -hashfile "NetSpeedTray-Latest\NetSpeedTray-%VERSION%-Portable.7z" SHA256 | findstr /v "hash" >> checksums.txt 2>nul
 echo. >> checksums.txt 2>nul
 echo ## NetSpeedTray-%VERSION%-Setup.exe >> checksums.txt 2>nul
 certutil -hashfile "NetSpeedTray-Latest\NetSpeedTray-%VERSION%-Setup.exe" SHA256 | findstr /v "hash" >> checksums.txt 2>nul
@@ -136,9 +134,11 @@ echo Computing checksums completed in !elapsed!
 rem Stage 8: Final Cleanup
 echo Final cleanup...
 set "start_time=%TIME%"
-rmdir /s /q "build" 2>nul
-rmdir /s /q "dist" 2>nul
-rmdir /s /q "installer" 2>nul
+if exist "build" rmdir /s /q "build" 2>nul
+if exist "dist" rmdir /s /q "dist" 2>nul
+if exist "installer" rmdir /s /q "installer" 2>nul
+if exist "__pycache__" rmdir /s /q "__pycache__" 2>nul
+for %%i in (*.pyc) do del /f /q "%%i" 2>nul
 set "end_time=%TIME%"
 call :time_diff "%start_time%" "%end_time%"
 echo Final cleanup completed in !elapsed!
