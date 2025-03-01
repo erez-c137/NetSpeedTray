@@ -41,8 +41,6 @@ I built this tool because, let’s be honest — Windows **should have had this 
 
 If you enjoy this tool and want to **support its development**, consider **buying me a coffee!** ☕
 
-<script type="text/javascript" src="https://cdnjs.buymeacoffee.com/1.0.0/button.prod.min.js" data-name="bmc-button" data-slug="Erez.C137" data-color="#FFDD00" data-emoji="☕"  data-font="Comic" data-text="Buy me a coffee" data-outline-color="#000000" data-font-color="#000000" data-coffee-color="#ffffff" ></script>
-
 ### **Why Donate?**
 
 💻 **Helps me improve the app** (bug fixes, optimizations, new features).  
