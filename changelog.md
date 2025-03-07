@@ -7,6 +7,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.4] - March 7, 2025
+
+#### Added
+- **Double-Click Full Graph**:
+  - Double-clicking the widget now opens the detailed `GraphWindow` for network speed history.
+- **GraphWindow Features**:
+  - **Live Updates**: Toggleable real-time updates (2-second interval).
+  - **Dark Mode**: Switch between light and dark themes for better visibility.
+  - **Legend Positioning**: Options include Off, Left, Middle, Right.
+  - **Export Options**: Save graph as PNG or history as CSV.
+  - **History Periods**: Select from Session, 24h, 1 Week, 1 Month, All, or System Uptime.
+  - **Data Retention**: Configurable retention periods (1 day to 1 year).
+- **Settings Dialog Enhancements**:
+  - Replaced checkboxes with modern `ToggleSwitch` controls for a cleaner UI.
+  - Added live preview for font size and weight adjustments.
+  - Improved network interface selection with a scrollable list and "All Interfaces" toggle.
+
+#### Changed
+- **UI Improvements**:
+  - Modernized `SettingsDialog` with toggle switches and better layout spacing.
+  - Increased `GraphWindow` default size to 802x602 pixels for improved readability.
+  - Enhanced mini-graph rendering with configurable opacity.
+- **Performance**:
+  - Throttled `GraphWindow` updates to 500ms intervals to reduce UI lag.
+- **Configuration**:
+  - Updated default font to "Segoe UI Variable Small" for consistency.
+
+#### Fixed
+- **Stability**:
+  - Improved error handling in `GraphWindow` and CSV logging with thread-safe locking.
+- **Layout**:
+  - Ensured dialogs (Settings, Graph) stay within screen bounds and anchor correctly relative to the widget.
+- **Visibility**:
+  - Refined fullscreen app detection to prevent widget hiding issues.
+
+#### Known Issues
+- **Multi-Monitor**: Limited to the primary taskbar’s screen; doesn’t fully support multiple taskbars or dynamic monitor changes without manual repositioning.
+- **High-Frequency Updates**: May still impact performance on low-end systems despite throttling.
+- **False Flagging** - [VirusTotal report](https://www.virustotal.com/gui/file/3c045c40ae2dd077fa66f5881649763b11b2584419f9e35b4421bee4f17fc3cf)
+- 
 ## [1.0.3] - March 1, 2025
 
 ### Bug Fixes
