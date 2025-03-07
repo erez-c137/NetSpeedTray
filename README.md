@@ -136,4 +136,4 @@ Contributions are welcome! Please feel free to submit pull requests.
 
 ## License
 
-[MIT License](LICENSE)
+[GPL-3.0 License](LICENSE)
