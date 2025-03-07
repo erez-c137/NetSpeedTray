@@ -1,39 +1,46 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+block_cipher = None
+
 a = Analysis(
     ['NetSpeedTray.py'],
     pathex=[],
     binaries=[],
-    datas=[],
-    hiddenimports=[],
+    datas=[('NetSpeedTray.ico', '.')],
+    hiddenimports=[
+        'PyQt6.QtCore',
+        'PyQt6.QtGui',
+        'PyQt6.QtWidgets',
+        'psutil',
+        'pywin32',
+        'win32com.shell.shell',  # Only shell.shell needed
+        'matplotlib.backends.backend_qtagg',
+        'numpy',
+        'signal'
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['matplotlib.pyplot'],  # Exclude unused matplotlib parts
     noarchive=False,
     optimize=0,
 )
 
-pyz = PYZ(a.pure)
+pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 exe = EXE(
     pyz,
     a.scripts,
     a.binaries,
-    a.datas + [('NetSpeedTray.ico', 'NetSpeedTray.ico', 'DATA')],
+    a.datas,
     [],
     name='NetSpeedTray',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
-    upx_exclude=[],
-    runtime_tmpdir=None,
+    upx=False,
     console=False,
-    disable_windowed_traceback=False,
-    argv_emulation=False,
-    target_arch=None,
-    codesign_identity=None,
-    entitlements_file=None,
+    disable_windowed_traceback=False,  # Avoid hiding errors
     icon='NetSpeedTray.ico',
+    version='version_info.txt',
 )
