@@ -5,7 +5,7 @@ A lightweight system tray application that monitors and displays real-time netwo
 ## Screenshots
 
 <div align="center">
-  <img src="screenshots/main.png" alt="Main Interface"/><br/>
+  <img src="screenshots/main_new.png" alt="Main Interface"/><br/>
   <p><em>Main interface in system tray</em></p>
 </div>
 
