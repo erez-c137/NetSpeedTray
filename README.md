@@ -15,7 +15,7 @@ A lightweight system tray application that monitors and displays real-time netwo
 </div>
 
 <div align="center">
-  <img src="screenshots/graph.png" alt="Graph View"/><br/>
+  <img src="screenshots/mini_graph.png" alt="Graph View"/><br/>
   <p><em>Optional speed history graph</em></p>
 </div>
 
