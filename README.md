@@ -19,6 +19,11 @@ A lightweight system tray application that monitors and displays real-time netwo
   <p><em>Optional speed history graph</em></p>
 </div>
 
+<div align="center">
+  <img src="screenshots/main_graph.png" alt="Full Graph View"/><br/>
+  <p><em>Full graph view</em></p>
+</div>
+
 ## Features
 
 - 💻 System tray integration
