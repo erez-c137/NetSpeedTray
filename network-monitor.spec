@@ -13,7 +13,9 @@ a = Analysis(
         'PyQt6.QtWidgets',
         'psutil',
         'pywin32',
-        'win32com.shell.shell',  # Only shell.shell needed
+        'win32com.shell.shell',
+        'matplotlib',              # Broad import for safety
+        'matplotlib.pyplot',       # Explicitly include pyplot
         'matplotlib.backends.backend_qtagg',
         'numpy',
         'signal'
@@ -21,7 +23,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['matplotlib.pyplot'],  # Exclude unused matplotlib parts
+    excludes=[],                   # Remove matplotlib.pyplot from excludes
     noarchive=False,
     optimize=0,
 )
@@ -40,7 +42,7 @@ exe = EXE(
     strip=False,
     upx=False,
     console=False,
-    disable_windowed_traceback=False,  # Avoid hiding errors
+    disable_windowed_traceback=False,
     icon='NetSpeedTray.ico',
     version='version_info.txt',
 )
