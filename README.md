@@ -33,6 +33,8 @@ A lightweight system tray application that monitors and displays real-time netwo
 - 🚀 Drag-and-drop positioning
 - ⚙️ Configurable update rates
 - 🔄 Auto-start with Windows option
+- 🤓 "Smart" update rate
+  dynamically adjusts the update speed to reduce CPU usage when the network is idle while staying responsive during activity. 🚀
 
 ## Download
 
