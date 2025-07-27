@@ -5,18 +5,18 @@ A lightweight system tray application that monitors and displays real-time netwo
 ## Screenshots
 
 <div align="center">
-  <img src="screenshots/main.png" alt="Main Interface"/><br/>
+  <img src="screenshots/main_new_105b.png" alt="Main Interface"/><br/>
   <p><em>Main interface in system tray</em></p>
 </div>
 
 <div align="center">
-  <img src="screenshots/settings_1.0.3.png" alt="Settings"/><br/>
+  <img src="screenshots/settings_1.0.5b1.png" alt="Settings"/><br/>
   <p><em>Settings dialog with customization options</em></p>
 </div>
 
 <div align="center">
-  <img src="screenshots/graph.png" alt="Graph View"/><br/>
-  <p><em>Optional speed history graph</em></p>
+  <img src="screenshots/main_graph_1.0.5b1.png" alt="Graph View"/><br/>
+  <p><em>Main history graph</em></p>
 </div>
 
 ## Features
@@ -45,9 +45,9 @@ If you enjoy NetSpeedTray, if it saves you time, frustration, or even just a few
 
 ### Why Donate?
 
-- 💻 Keeps the app improving (bug fixes, new features, less rage at Windows)
-- 🔧 Guarantees it stays 100% free & bloat-free (no ads, no crypto miners, no nonsense)
-- 🤖 Funds AI tools & dev costs (because even robots need to eat... electricity)
+- 💻 Keeps the app improving (bug fixes, new features)
+- 🔧 Guarantees it stays 100% free & bloat-free (no ads, pro version, no nonsense)
+- 🤖 Funds AI tools & dev costs
 
 **Goal:** $100 for better dev tools & AI magic. If just 20 people chip in for a coffee, we’re there!
 
