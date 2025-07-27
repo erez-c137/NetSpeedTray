@@ -165,16 +165,23 @@ All notable changes to this project will be documented in this file.
 - **Network interface selection feature:**
   - Interface monitoring modes (**All / Selected / Exclude**)
   - Dynamic detection and status of active interfaces
+- **Network interface selection feature:**
+  - Interface monitoring modes (**All / Selected / Exclude**)
+  - Dynamic detection and status of active interfaces
   - Per-interface bandwidth monitoring
   - Interface selection persists between sessions
 - **Enhanced error logging system:**
+  - Interface selection persists between sessions
+- **Enhanced error logging system:**
   - Detailed error reporting with system information
+  - Error log rotation (**10MB limit, 3 files**)
   - Error log rotation (**10MB limit, 3 files**)
   - Error log export functionality in settings
   - Comprehensive system diagnostics in logs
 
 ### Enhanced
 
+- **Settings dialog improvements:**
 - **Settings dialog improvements:**
   - Streamlined layout and organization
   - Smart collapsible sections
@@ -183,9 +190,18 @@ All notable changes to this project will be documented in this file.
 - **Default speed thresholds adjusted:**
   - High speed threshold: **5 Mbps** (was **1 Mbps**)
   - Low speed threshold: **1 Mbps** (was **0.1 Mbps**)
+  - Improved interface selection controls
+- **Default speed thresholds adjusted:**
+  - High speed threshold: **5 Mbps** (was **1 Mbps**)
+  - Low speed threshold: **1 Mbps** (was **0.1 Mbps**)
 
 ### Bug Fixes
+### Bug Fixes
 
+- **Settings dialog now properly shows the application icon in the title bar.**
+- **Application visibility now properly syncs with taskbar:**
+  - Widget auto-hides when taskbar is hidden (fullscreen mode).
+- **Settings dialog behavior:**
 - **Settings dialog now properly shows the application icon in the title bar.**
 - **Application visibility now properly syncs with taskbar:**
   - Widget auto-hides when taskbar is hidden (fullscreen mode).
@@ -208,10 +224,22 @@ All notable changes to this project will be documented in this file.
 - **Optional speed history graph**
 - **Drag-and-drop positioning**
 - **Settings dialog with:**
+- **Initial release**
+- **Real-time network speed monitoring in system tray**
+- **Upload and download speed display**
+- **Customizable color coding based on speed thresholds**
+- **Optional speed history graph**
+- **Drag-and-drop positioning**
+- **Settings dialog with:**
   - Update rate configuration
   - Color coding options
   - Graph settings
   - Auto-start with Windows
+- **Portable and installer versions**
+- **Windows taskbar integration**
+- **System tray context menu**
+- **Configuration file saving/loading**
+- **Error logging system**
 - **Portable and installer versions**
 - **Windows taskbar integration**
 - **System tray context menu**
