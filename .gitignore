@@ -7,7 +7,6 @@ __pycache__/
 *.so
 
 # Python Build and Distribution
-build/
 dist/
 develop-eggs/
 eggs/
@@ -21,10 +20,6 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-
-# PyInstaller
-*.spec
-!network-monitor.spec
 
 # Virtual Environments
 venv/
