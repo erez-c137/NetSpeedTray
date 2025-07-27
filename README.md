@@ -10,7 +10,7 @@ A lightweight system tray application that monitors and displays real-time netwo
 </div>
 
 <div align="center">
-  <img src="screenshots/settings_1.0.1.png" alt="Settings"/><br/>
+  <img src="screenshots/settings_1.0.3.png" alt="Settings"/><br/>
   <p><em>Settings dialog with customization options</em></p>
 </div>
 
@@ -37,23 +37,21 @@ A lightweight system tray application that monitors and displays real-time netwo
 
 ## ☕ Support My Work
 
-I built this tool because, let’s be honest — Windows **should have had this feature** from the start. Instead of waiting for Microsoft, I made a lightweight, seamless solution that **blends perfectly with Windows 11**.
+Let’s be real: Windows should have had this feature built-in, but here we are! Instead of waiting for Microsoft to notice, I brewed up a lightweight, bloat-free solution that fits right in with Windows 11.
 
-If you enjoy this tool and want to **support its development**, consider **buying me a coffee!** ☕
+If you enjoy NetSpeedTray, if it saves you time, frustration, or even just a few brain cells, why not buy me a coffee? ☕ (I promise to spend it on code, not caffeine-induced bug creation.)
 
-### **Why Donate?**
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-Support%20Me-yellow?style=flat&logo=buy-me-a-coffee)](https://buymeacoffee.com/erez.c137)
 
-💻 **Helps me improve the app** (bug fixes, optimizations, new features).  
-🔧 **Keeps it 100% free & bloat-free** (no ads, no nonsense).  
-🤖 **Funds AI tools & development costs** (because AI helps accelerate development, but isn’t free 😅).
+### Why Donate?
 
-### **🎯 Goal: $100**
+- 💻 Keeps the app improving (bug fixes, new features, less rage at Windows)
+- 🔧 Guarantees it stays 100% free & bloat-free (no ads, no crypto miners, no nonsense)
+- 🤖 Funds AI tools & dev costs (because even robots need to eat... electricity)
 
-I’m aiming to hit **$100** to upgrade my **dev tools & AI setup**. If just **20 people** buy me a coffee, we’ll get there!
+**Goal:** $100 for better dev tools & AI magic. If just 20 people chip in for a coffee, we’re there!
 
-👉 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-Support%20Me-yellow?style=flat&logo=buy-me-a-coffee)](https://buymeacoffee.com/erez.c137)
-
-Even if you can’t donate, **sharing this tool** helps a ton. Thanks for your support! ❤️
+If you can’t donate, sharing the project or leaving feedback is just as awesome. Thanks for helping keep Windows a little more sane! ❤️
 
 ---
 
@@ -78,57 +76,57 @@ Even if you can’t donate, **sharing this tool** helps a ton. Thanks for your s
   - Position is automatically saved and restored on restart
   - Widget stays aligned with taskbar even after resolution changes
 - **Context Menu**:
-  - Right-click to access settings and options
-  - Quick access to graph view toggle
-  - Exit option available
+  - Right-click to access settings and exit
+  - Double click on the widget to access the full graph view
 - **Speed Display**:
   - Real-time updates based on configured interval
   - Color coding indicates speed thresholds (customizable)
   - Upload (↑) and Download (↓) speeds shown separately
 - **Settings**:
-  - Customize update frequency
+  - Show mini-graph on the taskbar
   - Set color thresholds for speed indicators
   - Configure graph display options
   - Enable/disable auto-start with Windows
 - **Persistence**:
   - All settings and position preferences are automatically saved
-  - Configuration stored in AppData folder (Run->%AppData%\NetSpeedTray\)
-
-### Speed Color Coding
-
-When enabled, the speed display uses color coding based on thresholds:
-
-- **Green** (> 5 Mbps): High speed connection
-- **Orange** (1-5 Mbps): Medium speed connection
-- **White** (< 1 Mbps): Low speed connection
-
-These thresholds and colors can be customized in the settings dialog:
-
-1. Right-click the widget
-2. Select "Settings"
-3. Under "Speed Color Coding", adjust the threshold values
+  - Configuration stored in AppData folder (Run->%AppData%\NetSpeedTray)
 
 ## Building from Source
 
 ### Prerequisites
 
-- Windows OS
-- Python 3.11+
-- Inno Setup (for installer)
+### Project Code Structure
 
-### Setup
+```
+src/
+└── netspeedtray/
+    ├── constants/                  # Constants and internationalization
+    ├── core/                       # Core application components
+    ├── tests/                      # Test suites
+    ├── utils/                      # Utility functions
+    ├── views/                      # User interface components
+    └── monitor.py                  # Main monitoring module
+```
+
+### Build & Run from Source
 
 ```bash
 # Clone repository
 git clone https://github.com/erez-c137/NetSpeedTray.git
 cd NetSpeedTray
 
-# Install requirements
-pip install -r requirements.txt
+# (Recommended) Create and activate a virtual environment
+python -m venv venv
+venv\Scripts\activate
 
-# Build all distributions
-build.bat
-```
+# Install requirements
+pip install -r [requirements.txt]
+
+# Run the app (development mode)
+python [monitor.py]
+
+# (Optional) Build Windows executables
+[build.bat]
 
 ## Contributing
 
@@ -136,4 +134,5 @@ Contributions are welcome! Please feel free to submit pull requests.
 
 ## License
 
-[MIT License](LICENSE)
+This project is licensed under the [GNU GPL v3.0](LICENSE).
+```

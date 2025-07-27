@@ -4,8 +4,88 @@ CHANGELOG.md
 
 All notable changes to this project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## [1.0.5-Beta1] - July 27, 2025
+
+#### Major Overhaul
+
+- **Full Modular Refactor:**  
+  Migrated from a single-file script to a modern, maintainable package structure (`src/netspeedtray/`). All logic is now organized into `core`, `views`, `utils`, `constants`, and `tests` modules.
+
+#### Added
+
+- **Modern UI/UX:**
+  - Redesigned settings and graph windows with PyQt6, custom dark mode and improved layout.
+  - Hamburger menu for quick access to graph settings.
+  - New icons and centralized asset management.
+- **Testing:**
+  - Added unit tests for configuration, constants, and core logic.
+
+#### Changed
+
+- **Code Quality:**
+  - Improved type hints, docstrings, and error handling throughout.
+  - Enhanced logging and configuration management.
+- **User Experience:**
+  - Graph and settings dialogs now always open centered and within screen bounds.
+
+#### Fixed
+
+- **Stability & Layout:**
+  - Fixed window icon issues and theme inconsistencies.
+  - Improved error overlays and ensured dialogs respect minimum sizes and DPI scaling.
+
+#### Known Issues
+
+- **App Usage Tab:** Temporarily disabled pending further development.
+- **Multi-Monitor:** Still limited to primary taskbar’s screen; multi-monitor support improvements planned.
+
+---
+
+## [1.0.4] - March 7, 2025
+
+#### Added
+
+- **Double-Click Full Graph**:
+  - Double-clicking the widget now opens the detailed `GraphWindow` for network speed history.
+- **GraphWindow Features**:
+  - **Live Updates**: Toggleable real-time updates (2-second interval).
+  - **Dark Mode**: Switch between light and dark themes for better visibility.
+  - **Legend Positioning**: Options include Off, Left, Middle, Right.
+  - **Export Options**: Save graph as PNG or history as CSV.
+  - **History Periods**: Select from Session, 24h, 1 Week, 1 Month, All, or System Uptime.
+  - **Data Retention**: Configurable retention periods (1 day to 1 year).
+- **Settings Dialog Enhancements**:
+  - Replaced checkboxes with modern `ToggleSwitch` controls for a cleaner UI.
+  - Added live preview for font size and weight adjustments.
+  - Improved network interface selection with a scrollable list and "All Interfaces" toggle.
+
+#### Changed
+
+- **UI Improvements**:
+  - Modernized `SettingsDialog` with toggle switches and better layout spacing.
+  - Increased `GraphWindow` default size to 802x602 pixels for improved readability.
+  - Enhanced mini-graph rendering with configurable opacity.
+- **Performance**:
+  - Throttled `GraphWindow` updates to 500ms intervals to reduce UI lag.
+- **Configuration**:
+  - Updated default font to "Segoe UI Variable Small" for consistency.
+
+#### Fixed
+
+- **Stability**:
+  - Improved error handling in `GraphWindow` and CSV logging with thread-safe locking.
+- **Layout**:
+  - Ensured dialogs (Settings, Graph) stay within screen bounds and anchor correctly relative to the widget.
+- **Visibility**:
+  - Refined fullscreen app detection to prevent widget hiding issues.
+
+#### Known Issues
+
+- **Multi-Monitor**: Limited to the primary taskbar’s screen; doesn’t fully support multiple taskbars or dynamic monitor changes without manual repositioning.
+- **High-Frequency Updates**: May still impact performance on low-end systems despite throttling.
+- **False Flagging** - [VirusTotal report](https://www.virustotal.com/gui/file/3c045c40ae2dd077fa66f5881649763b11b2584419f9e35b4421bee4f17fc3cf)
+
+---
 
 ## [1.0.3] - March 1, 2025
 
@@ -30,7 +110,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Windows does not provide a reliable API or event to distinguish Start menu activation from other fullscreen or taskbar-related states, leading to potential misdetection in `is_fullscreen_app_active` or `check_and_update`. This behavior is outside NetSpeedTray’s control but may be mitigated in future updates by enhancing taskbar and Start menu state tracking.
   - What this all means to the avarage user - when clicking on the start menu, the widget 'hides' and when clicking anywhere other than the taskbar, it will reappear
 
-  ### Detailed Bug Fixes (for those intrested)
+  ### Detailed Bug Fixes (for those interested)
 
 - **Enhanced Position Persistence**
   - Modified `NetworkSpeedWidget.initialize_with_saved_position` and `use_saved_position` to prioritize loading and applying the last saved position (`position_x`, `position_y`) from `netspeedtray.conf` on startup, ensuring the widget appears exactly where the user left it after each Windows logon.
@@ -42,7 +122,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Configuration Validation**:
   - Enhanced `load_config` and `validate_config` to ensure `position_x` and `position_y` are integers and within valid screen bounds, preventing corrupted or invalid position data from causing positioning errors.
 
-[1.0.3]: https://github.com/erez-c137/NetSpeedTray/releases/tag/v1.0.3
+---
 
 ## [1.0.2] - February 26, 2025
 
@@ -76,7 +156,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Robust handling of KVM switches, monitor hot-plugging, and custom taskbar positions.
 - Performance optimizations for low-end systems.
 
-[1.0.2]: https://github.com/erez-c137/NetSpeedTray/releases/tag/v1.0.2
+---
 
 ## [1.0.1] - February 21, 2025
 
@@ -115,6 +195,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Consistent spacing and alignment
   - Better visual hierarchy
 
+---
+
 ## [1.0.0] - February 21, 2025
 
 ### Added
@@ -141,7 +223,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Two processes appearing in Task Manager**
 - **Startup delay when loading application**
 - **Application does not reappear when the taskbar auto-hides**
-
-[1.0.2]: https://github.com/erez-c137/NetSpeedTray/compare/v1.0.1...v1.0.2
-[1.0.1]: https://github.com/erez-c137/NetSpeedTray/compare/v1.0.0...v1.0.1
-[1.0.0]: https://github.com/erez-c137/NetSpeedTray/releases/tag/v1.0.0
