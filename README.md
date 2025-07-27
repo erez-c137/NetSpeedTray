@@ -115,10 +115,6 @@ src/
 git clone https://github.com/erez-c137/NetSpeedTray.git
 cd NetSpeedTray
 
-# (Recommended) Create and activate a virtual environment
-python -m venv venv
-venv\Scripts\activate
-
 # Install requirements
 pip install -r [requirements.txt]
 
