@@ -5,18 +5,18 @@ A lightweight system tray application that monitors and displays real-time netwo
 ## Screenshots
 
 <div align="center">
-  <img src="screenshots/main_new_105b.png" alt="Main Interface"/><br/>
+  <img src="screenshots/main.png" alt="Main Interface"/><br/>
   <p><em>Main interface in system tray</em></p>
 </div>
 
 <div align="center">
-  <img src="screenshots/settings_1.0.5b1" alt="Settings"/><br/>
+  <img src="screenshots/settings_1.0.3.png" alt="Settings"/><br/>
   <p><em>Settings dialog with customization options</em></p>
 </div>
 
 <div align="center">
-  <img src="screenshots/main_graph_1.0.5b1" alt="Full Graph View"/><br/>
-  <p><em>Full graph view</em></p>
+  <img src="screenshots/graph.png" alt="Graph View"/><br/>
+  <p><em>Optional speed history graph</em></p>
 </div>
 
 ## Features
@@ -28,8 +28,6 @@ A lightweight system tray application that monitors and displays real-time netwo
 - 🚀 Drag-and-drop positioning
 - ⚙️ Configurable update rates
 - 🔄 Auto-start with Windows option
-- 🤓 "Smart" update rate
-  dynamically adjusts the update speed to reduce CPU usage when the network is idle while staying responsive during activity. 🚀
 
 ## Download
 
@@ -116,6 +114,10 @@ src/
 # Clone repository
 git clone https://github.com/erez-c137/NetSpeedTray.git
 cd NetSpeedTray
+
+# (Recommended) Create and activate a virtual environment
+python -m venv venv
+venv\Scripts\activate
 
 # Install requirements
 pip install -r [requirements.txt]

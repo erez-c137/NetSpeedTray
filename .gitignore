@@ -1,13 +1,15 @@
-# Python
+# Python and Bytecode
 __pycache__/
 *.py[cod]
-*$py.class
-*.so
+*.pyo
+*.pyd
 .Python
+*.so
+
+# Python Build and Distribution
 build/
-develop-eggs/
 dist/
-downloads/
+develop-eggs/
 eggs/
 .eggs/
 lib/
@@ -21,37 +23,65 @@ wheels/
 *.egg
 
 # PyInstaller
-build/
-dist/
 *.spec
+!network-monitor.spec
 
-# IDE
+# Virtual Environments
+venv/
+env/
+.venv/
+
+# Testing
+.pytest_cache/
+coverage/
+*.cover
+.hypothesis/
+
+# IDEs and Editors
 .vscode/
 .idea/
 *.swp
 *.swo
 
+# Operating Systems
 # Windows
 Thumbs.db
 Desktop.ini
+# macOS
+.DS_Store
 
-# Project specific
+# Logs
+*.log
+logs/
+
+# Environment Variables
+.env
+.env.local
+.env.*.local
+.snapshots
+
+# Project-Specific
 .old/
 installer/
 NetSpeedTray-Portable/
 NetSpeedTray-Portable.zip
 checksums.txt
-*.log
 config.json
 NetSpeedTray.ico
 installer.iss.bak
 installer.iss
 release-template.txt
 
-# Don't ignore these specific files
-!network-monitor.spec
+# Explicitly Included Files
 !requirements.txt
-
-# Don't ignore screenshots
 !screenshots/
 !screenshots/*.png
+- user files -.lnk
+.flake8
+build_log.txt
+.snapshots/readme.md
+.snapshots/sponsors.md
+src/structure.txt
+src/.snapshots/readme.md
+src/.snapshots/sponsors.md
+.gitignore
