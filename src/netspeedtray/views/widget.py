@@ -39,7 +39,7 @@ import win32com.client
 from ..constants.constants import (
     AppConstants, ConfigConstants, HelperConstants, PositionConstants,
     RendererConstants, TimerConstants, TaskbarEdge, UIConstants, LayoutConstants,
-    FontConstants
+    FontConstants, UnitConstants
 )
 from ..constants.i18n_strings import I18nStrings as CoreI18nStrings
 from ..core.controller import NetworkController as CoreController
@@ -226,18 +226,21 @@ class NetworkSpeedWidget(QWidget):
         if not hasattr(self, 'position_manager') or not self.position_manager:
             self.logger.error("PositionManager not initialized")
             self._init_position_manager()
+        
         try:
-            # Try to use saved position
+            use_saved_position = self.config.get("free_move", False)
             pos_x = self.config.get("position_x")
             pos_y = self.config.get("position_y")
-            if isinstance(pos_x, int) and isinstance(pos_y, int) and pos_x >= 0 and pos_y >= 0:
+
+            if use_saved_position and isinstance(pos_x, int) and isinstance(pos_y, int):
+                # Only use saved position if free_move is ON and coordinates are valid
                 self.move(pos_x, pos_y)
-                self.logger.info(f"Restored saved position: ({pos_x}, {pos_y})")
+                self.logger.info(f"Restored saved 'Free Move' position: ({pos_x}, {pos_y})")
             else:
-                # Fallback to calculated position
-                self.position_manager.update_position()
-                self._adjust_position_with_margin()
-            self.logger.info(f"Initial position set to: ({self.pos().x()}, {self.pos().y()})")
+                # Fallback to calculated default position if free_move is OFF or no valid coordinates exist
+                self.logger.info("Placing widget at default taskbar position.")
+                self.reset_to_default_position()
+
         except Exception as e:
             self.logger.error("Failed to set initial position: %s", e, exc_info=True)
             raise RuntimeError("Initial position setup failed") from e
@@ -246,6 +249,9 @@ class NetworkSpeedWidget(QWidget):
         """
         Adjust widget position to include a margin from the tray overflow menu.
         """
+        if self.config.get("free_move", False):
+            self.logger.debug("Skipping margin adjustment: Free Move is enabled.")
+            return
         self.logger.debug("Adjusting position with margin...")
         try:
             current_pos = self.pos()
@@ -330,88 +336,41 @@ class NetworkSpeedWidget(QWidget):
 
     def update_stats(self, upload_mbps: float, download_mbps: float) -> None:
         """
-        Slot to receive raw network speeds from NetworkController in Mbps.
-
-        Applies debouncing to prevent updates faster than MIN_UPDATE_INTERVAL.
-
-        Args:
-            upload_mbps: Raw upload speed in Mbps.
-            download_mbps: Raw download speed in Mbps.
+        Receives raw speeds, adds them to the state manager, updates the
+        renderer's history with smoothed data, and triggers a repaint.
         """
         current_time = time.monotonic()
         if current_time - self._last_update_time < self.MIN_UPDATE_INTERVAL:
-            self.logger.debug(
-                "Skipping update_stats due to debouncing (last update %.3fs ago)",
-                current_time - self._last_update_time
-            )
             return
         self._last_update_time = current_time
 
         upload_bytes_sec = upload_mbps * 1_000_000 / 8
         download_bytes_sec = download_mbps * 1_000_000 / 8
-        self.logger.debug(f"Converted to bytes/s - Upload: {upload_bytes_sec:.2f}, Download: {download_bytes_sec:.2f}")
+        
+        # 1. Add raw data to the state manager for smoothing and long-term history.
         self.widget_state.add_speed_data(upload_bytes_sec, download_bytes_sec)
-        self._update_display_speeds()
+        
+        # 2. Get the latest smoothed data back from the state manager.
+        smoothed_upload, smoothed_download = self.widget_state.get_smoothed_speeds()
+        
+        # 3. Create a data object for the renderer's visual history.
+        speed_data = CoreSpeedData(
+            upload=smoothed_upload,
+            download=smoothed_download,
+            timestamp=datetime.now()
+        )
+        # 4. Pass the correct, smoothed byte/sec data to the renderer's history.
+        self.renderer.update_speed_history(speed_data)
+        
+        # 5. Trigger a repaint. The paintEvent will handle all drawing.
+        self.update()
 
     def _update_display_speeds(self) -> None:
         """
-        Updates the displayed speeds, applying smoothing and formatting.
-        Handles MBps, Mbps, KBps, and Kbps robustly based on config.
-        Fallbacks to KBps if config is missing or invalid.
+        This method is now deprecated and kept to prevent crashes if called by old code.
+        All logic has been moved to update_stats and paintEvent.
         """
-        upload_speed, download_speed = self.widget_state.get_smoothed_speeds()  # bytes/sec
-        self.logger.debug(f"Smoothed speeds - Upload: {upload_speed:.2f} B/s, Download: {download_speed:.2f} B/s")
-        self.upload_speed = upload_speed
-        self.download_speed = download_speed
-
-        # Robust unit selection
-        unit_pref = self.config.get("speed_unit")
-        if not unit_pref:
-            # Backward compatibility: use use_megabytes if present
-            if self.config.get("use_megabytes", False):
-                unit_pref = "MBps"
-            else:
-                unit_pref = "KBps"  # Original default
-
-        if unit_pref == "MBps":
-            upload_display = upload_speed / 1_000_000
-            download_display = download_speed / 1_000_000
-            unit = "MB/s"
-        elif unit_pref == "Mbps":
-            upload_display = upload_speed * 8 / 1_000_000
-            download_display = download_speed * 8 / 1_000_000
-            unit = "Mbps"
-        elif unit_pref == "Kbps":
-            upload_display = upload_speed * 8 / 1_000
-            download_display = download_speed * 8 / 1_000
-            unit = "Kbps"
-        elif unit_pref == "KBps":
-            upload_display = upload_speed / 1_000
-            download_display = download_speed / 1_000
-            unit = "KB/s"
-        else:
-            self.logger.warning(f"Unknown speed_unit '{unit_pref}' in config, defaulting to KBps.")
-            upload_display = upload_speed / 1_000
-            download_display = download_speed / 1_000
-            unit = "KB/s"
-
-        # Always show at least two decimals for MB/s and Mbps for small values
-        if unit in ("MB/s", "Mbps"):
-            upload_display = round(upload_display, 2)
-            download_display = round(download_display, 2)
-        else:
-            upload_display = round(upload_display)
-            download_display = round(download_display)
-
-        # Avoid showing 0 if there is a small value
-        if upload_speed > 0 and upload_display == 0:
-            upload_display = max(upload_display, 0.01)
-        if download_speed > 0 and download_display == 0:
-            download_display = max(download_display, 0.01)
-
-        self.logger.debug(f"Display speeds - Upload: {upload_display} {unit}, Download: {download_display} {unit}")
-        self.renderer.set_speeds(upload_display, download_display, unit)
-        self.update()
+        self.update() # Just trigger a repaint.
 
     def _load_initial_config(self, taskbar_height: int) -> Dict[str, Any]:
         """Load configuration and inject taskbar height."""
@@ -595,31 +554,39 @@ class NetworkSpeedWidget(QWidget):
             v_padding = self.config.get("vertical_padding", 0)
             calculated_height = max(logical_taskbar_height + v_padding, 10)
 
-            # If vertical taskbar, swap width/height logic
+            # If vertical taskbar, recalculate width and height for a vertical layout
             if edge in (TaskbarEdge.LEFT, TaskbarEdge.RIGHT) and taskbar_info:
-                # Use the taskbar's width (in logical pixels)
-                tb_left, tb_top, tb_right, tb_bottom = taskbar_info.rect
-                tb_width = int(round((tb_right - tb_left) / (taskbar_info.dpi_scale if taskbar_info.dpi_scale > 0 else 1.0)))
+                self.logger.debug("Vertical taskbar detected, calculating vertical layout size.")
+                
+                # For a vertical layout, width is determined by the longest possible line.
+                # Example: "↑ 999.9 Mbps"
+                longest_line_width = (
+                    margin +
+                    arrow_width +
+                    arrow_num_gap +
+                    max_number_width +
+                    value_unit_gap +
+                    max_unit_width +
+                    margin
+                )
+                calculated_width = math.ceil(longest_line_width)
 
-                # Height: based on font metrics, graph, and padding
-                # Estimate text height for 2 lines
+                # Height is determined by two lines of text plus padding.
                 line_gap = getattr(LayoutConstants, 'LINE_GAP', 2)
-                single_line_height = self.metrics.height()
-                text_height = 2 * single_line_height + line_gap
-                renderer_padding = getattr(RendererConstants, 'TEXT_MARGIN', 5)
-                content_height = text_height + 2 * renderer_padding
-                v_padding = int(self.config.get("vertical_padding", 4) * dpi_scale)
-                calculated_height = content_height + v_padding
-                calculated_width = tb_width
-                self.logger.debug(f"Vertical taskbar: width set to {tb_width}, height set to {calculated_height}")
+                text_height = (self.metrics.height() * 2) + line_gap
+                renderer_padding = getattr(RendererConstants, 'TEXT_MARGIN', 5) * 2
+                calculated_height = text_height + renderer_padding
+                
+                self.logger.debug(f"Vertical layout calculated size: {calculated_width}x{calculated_height}")
 
             self.setFixedSize(int(calculated_width), int(calculated_height))
             self.logger.info(f"Widget resized to: {calculated_width}x{calculated_height}px")
 
-            if self.isVisible() and hasattr(self, 'position_manager') and self.position_manager:
-                self.position_manager.update_position()
-                self._adjust_position_with_margin()
-                self.logger.debug("Position updated after resize.")
+            if self.isVisible() and not self.config.get("free_move", False):
+                if hasattr(self, 'position_manager') and self.position_manager:
+                    self.position_manager.update_position()
+                    self._adjust_position_with_margin()
+                    self.logger.debug("Position updated after resize.")
         except Exception as e:
             self.logger.error(f"Failed to resize widget: {e}", exc_info=True)
             raise RuntimeError("Failed to resize widget based on font") from e
@@ -634,57 +601,29 @@ class NetworkSpeedWidget(QWidget):
 
     def paintEvent(self, event: QPaintEvent) -> None:
         """
-        Handles painting the widget by rendering network speeds using WidgetRenderer.
-
-        Uses WidgetRenderer's draw_network_speeds to display upload and download speeds,
-        and optionally draws a mini graph if enabled in the configuration.
+        Handles all painting for the widget. It gets the latest smoothed speeds
+        from the widget_state and passes them to the renderer for drawing.
         """
-        self.logger.debug("paintEvent triggered")
         if not self.isVisible():
-            self.logger.debug("Skipping paintEvent: widget is not visible")
             return
-
         try:
             painter = QPainter(self)
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
             painter.fillRect(self.rect(), QColor(0, 0, 0, 1))
-            self.logger.debug("Background filled with nearly transparent color (0, 0, 0, 1)")
 
-            if not self.renderer:
-                self.logger.error("Renderer not initialized during paintEvent")
-                self._draw_paint_error(painter, "Renderer Error")
+            if not self.renderer or not self.metrics:
+                self.logger.error("Renderer or metrics not initialized during paintEvent")
+                self._draw_paint_error(painter, "Render Error")
                 return
-
-            if not self.metrics:
-                self.logger.warning("Font metrics not available during paintEvent, initializing default font")
-                self._init_font()
 
             painter.setFont(self.font)
 
-            # Get speeds and unit from renderer (set by set_speeds)
-            upload, download, unit = self.renderer._last_speeds
+            # Get the LATEST smoothed speeds (raw bytes/sec) from the single source of truth.
+            upload_bytes, download_bytes = self.widget_state.get_smoothed_speeds()
 
-            # Convert back to bytes/sec for draw_network_speeds if needed
-            if unit == "MB/s":
-                upload_bytes = upload * 1_000_000
-                download_bytes = download * 1_000_000
-            elif unit == "Mbps":
-                upload_bytes = upload * 1_000_000 / 8
-                download_bytes = download * 1_000_000 / 8
-            elif unit == "KB/s":
-                upload_bytes = upload * 1_000
-                download_bytes = download * 1_000
-            elif unit == "Kbps":
-                upload_bytes = upload * 1_000 / 8
-                download_bytes = download * 1_000 / 8
-            else:
-                upload_bytes = upload
-                download_bytes = download
-
-            # Create RenderConfig for rendering
             render_config = RenderConfig.from_dict(self.config)
 
-            # Draw network speeds
+            # Draw the text, passing the raw byte values for formatting.
             self.renderer.draw_network_speeds(
                 painter=painter,
                 upload=upload_bytes,
@@ -693,9 +632,8 @@ class NetworkSpeedWidget(QWidget):
                 height=self.height(),
                 config=render_config
             )
-            self.logger.debug(f"Speeds rendered - Upload: {upload:.2f} {unit}, Download: {download:.2f} {unit}")
 
-            # Draw mini graph if enabled
+            # Draw the mini graph if enabled.
             if render_config.graph_enabled:
                 self.renderer.draw_mini_graph(
                     painter=painter,
@@ -703,15 +641,11 @@ class NetworkSpeedWidget(QWidget):
                     height=self.height(),
                     config=render_config
                 )
-                self.logger.debug("Mini graph rendered")
-
+            
             painter.end()
-            self.logger.debug("paintEvent completed successfully")
         except Exception as e:
             self.logger.error(f"Error in paintEvent: {e}", exc_info=True)
-            self._draw_paint_error(painter, "Paint Error")
-            if not painter.isActive():
-                painter.begin(self)
+            if painter.isActive():
                 painter.end()
 
     def _draw_paint_error(self, painter: Optional[QPainter], text: str) -> None:
@@ -807,19 +741,24 @@ class NetworkSpeedWidget(QWidget):
 
         try:
             new_global_pos = event.globalPosition().toPoint() - self._drag_offset
-            taskbar_info = get_taskbar_info()
-            if not taskbar_info:
-                self.logger.warning("Cannot constrain drag move: Taskbar info unavailable.")
+            free_move_enabled = self.config.get("free_move", False)
+
+            if free_move_enabled:
+                # If free move is on, just move the widget without constraints
                 self.move(new_global_pos)
-                event.accept()
-                return
+            elif self.position_manager and hasattr(self.position_manager, '_calculator'):
+                # Otherwise, use the existing constraint logic
+                taskbar_info = get_taskbar_info()
+                if not taskbar_info:
+                    self.logger.warning("Cannot constrain drag move: Taskbar info unavailable.")
+                    self.move(new_global_pos)
+                    event.accept()
+                    return
 
-            calculator = self.position_manager._calculator
-            constrained_pos = calculator.constrain_drag_position(new_global_pos, taskbar_info, self.size())
-
-            if constrained_pos:
-                self.move(constrained_pos)
-            event.accept()
+                calculator = self.position_manager._calculator
+                constrained_pos = calculator.constrain_drag_position(new_global_pos, taskbar_info, self.size())
+                if constrained_pos:
+                    self.move(constrained_pos)
 
         except Exception as e:
             self.logger.error(f"Error processing mouseMoveEvent: {e}", exc_info=True)
@@ -1028,6 +967,11 @@ class NetworkSpeedWidget(QWidget):
         """
         if not self.isVisible():
             return
+        
+        if self.config.get("free_move", False):
+            self.logger.debug("Position check skipped: Free Move is enabled.")
+            return
+
         if not self.position_manager:
             if hasattr(self, 'position_manager'):
                 self.logger.warning("Position check skipped: PositionManager not available.")
@@ -1039,6 +983,28 @@ class NetworkSpeedWidget(QWidget):
             self.logger.debug("Topmost status ensured")
         except Exception as e:
             self.logger.error(f"Error in _check_position: {e}", exc_info=True)
+
+    def reset_to_default_position(self) -> None:
+        """
+        Invalidates any saved position and snaps the widget back to its
+        default, auto-detected location next to the taskbar.
+        """
+        self.logger.info("Resetting widget to default auto-detected position.")
+        if not self.position_manager:
+            self.logger.warning("Cannot reset position, PositionManager is not available.")
+            return
+
+        # 1. Invalidate the stored position in the config.
+        #    Setting to None ensures the initial positioning logic is used on next launch.
+        self.update_config({"position_x": None, "position_y": None})
+
+        # 2. Immediately trigger the auto-positioning logic to snap it back visually.
+        #    These methods already respect the "free_move" flag (which is now false).
+        self.position_manager.update_position()
+        self._adjust_position_with_margin()
+
+        # 3. Save the current (newly snapped) position so it's remembered.
+        self.save_position()
 
     def apply_all_settings(self) -> None:
         """
@@ -1092,20 +1058,38 @@ class NetworkSpeedWidget(QWidget):
             raise RuntimeError(f"Failed to apply settings: {e}") from e
 
     def handle_settings_changed(self, updated_config: Dict[str, Any]) -> None:
-        """Handles configuration changes from the settings dialog."""
+        """
+        Handles configuration changes from the settings dialog. It now modifies the
+        incoming configuration directly when 'free_move' is disabled to ensure
+        saved positions are cleared before any repositioning logic is triggered.
+        """
         self.logger.info("Handling settings change request...")
+        
+        # Create a reliable snapshot of the config BEFORE any changes.
         old_config = self.config.copy()
+
         try:
+            # 1. Check if 'free_move' is being turned OFF.
+            free_move_was_enabled = old_config.get('free_move', False)
+            free_move_is_now_enabled = updated_config.get('free_move', False)
+
+            if free_move_was_enabled and not free_move_is_now_enabled:
+                self.logger.info("Free Move was disabled. Clearing saved coordinates from the incoming settings.")
+                # 2. Modify the incoming config to remove the old position. This is the crucial step.
+                updated_config['position_x'] = None
+                updated_config['position_y'] = None
+
+            # 3. Now, apply the potentially modified configuration.
             self.update_config(updated_config)
-            try:
-                self.apply_all_settings()
-                self.logger.info("Settings successfully changed and applied.")
-            except Exception as apply_err:
-                self.logger.error(f"Failed to APPLY settings: {apply_err}", exc_info=True)
-                self._rollback_config(old_config)
-                raise RuntimeError(f"Failed to apply settings: {apply_err}") from apply_err
+            self.apply_all_settings()
+
+            # 4. If the position was just reset, the call to apply_all_settings above will have
+            #    triggered a reposition to the default location because the saved coords were None.
+            self.logger.info("Settings successfully changed and applied.")
+
         except Exception as e:
             self.logger.error(f"Failed to handle settings change: {e}", exc_info=True)
+            self._rollback_config(old_config)
             raise
 
     def show_settings(self) -> None:
@@ -1205,15 +1189,26 @@ class NetworkSpeedWidget(QWidget):
             raise RuntimeError(f"Failed to save configuration: {e}") from e
 
     def save_position(self) -> None:
-        """Saves the widget's current position to the configuration."""
+        """
+        Saves the widget's current position to the configuration ONLY if
+        free_move is enabled. Otherwise, it clears any saved position.
+        """
         if not self.position_manager:
             self.logger.warning("Cannot save position: PositionManager not available.")
             return
+        
         try:
-            current_pos = self.pos()
-            pos_dict = {"position_x": current_pos.x(), "position_y": current_pos.y()}
-            self.update_config(pos_dict)
-            self.logger.debug(f"Widget position saved: ({current_pos.x()}, {current_pos.y()})")
+            if self.config.get("free_move", False):
+                # If free move is ON, save the current position.
+                current_pos = self.pos()
+                pos_dict = {"position_x": current_pos.x(), "position_y": current_pos.y()}
+                self.update_config(pos_dict)
+                self.logger.debug(f"Free Move ON. Widget position saved: ({current_pos.x()}, {current_pos.y()})")
+            else:
+                # If free move is OFF, clear any saved position to force auto-placement on next launch.
+                if "position_x" in self.config or "position_y" in self.config:
+                    self.update_config({"position_x": None, "position_y": None})
+                    self.logger.debug("Free Move OFF. Cleared saved widget position.")
         except Exception as e:
             self.logger.error(f"Error saving widget position: %s", e, exc_info=True)
 

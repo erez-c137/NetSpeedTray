@@ -2,7 +2,7 @@
 setlocal EnableDelayedExpansion
 
 rem Set version number here (sync with __init__.py and setup.iss)
-set VERSION=1.0.5-Beta1
+set VERSION=1.0.5-Beta2
 
 rem Get the parent directory of build.bat as an absolute path
 pushd %~dp0..

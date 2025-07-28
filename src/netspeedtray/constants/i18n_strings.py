@@ -110,6 +110,7 @@ class I18nStrings:
                 "FONT_SETTINGS_GROUP_TITLE": "Font Settings",
                 "SMART_THRESHOLD_LABEL": "Enable Smart Threshold",
                 "START_WITH_WINDOWS_LABEL": "Start with Windows",
+                "FREE_MOVE_LABEL": "Enable Free Move (No Snapping)",
                 "FONT_SIZE_LABEL": "Font Size:",
                 "FONT_FAMILY_LABEL": "Font:",
                 "FONT_WEIGHT_LABEL": "Weight:",
@@ -126,11 +127,21 @@ class I18nStrings:
                 "HISTORY_DURATION_LABEL": "Graph Timespan:",
                 "GRAPH_OPACITY_LABEL": "Graph Opacity:",
                 "UNITS_GROUP": "Speed Units",
-                "UNITS_INFO_TEXT": "Display speed in Megabytes (MB/s) or Megabits (Mbps).",
+                "SPEED_DISPLAY_MODE_LABEL": "Speed Display Mode",
+                "SPEED_DISPLAY_MODE_AUTO": "Auto",
+                "SPEED_DISPLAY_MODE_MBPS": "Mbps only",
+                "DECIMAL_PLACES_LABEL": "Decimal Places",
+                "TEXT_ALIGNMENT_LABEL": "Text Alignment",
+                "FORCE_DECIMALS_LABEL": "Always Show Decimals",
+                "ALIGN_LEFT": "Left",
+                "ALIGN_CENTER": "Center",
+                "ALIGN_RIGHT": "Right",
                 "NETWORK_INTERFACES_GROUP": "Network Interfaces",
                 "ALL_INTERFACES_LABEL": "Monitor All Interfaces",
                 "NO_INTERFACES_FOUND": "No network interfaces detected.",
                 "TROUBLESHOOTING_GROUP": "Troubleshooting",
+                "LOG_FILES_FILTER": "Log Files",
+                "ALL_FILES_FILTER": "All Files",
                 "UPLOAD_ARROW": "\u2191",
                 "DOWNLOAD_ARROW": "\u2193",
 
@@ -155,6 +166,7 @@ class I18nStrings:
                 "EXPORT_ERROR_LOG_BUTTON": "Export Error Log",
                 "SAVE_BUTTON": "&Save",
                 "CANCEL_BUTTON": "&Cancel",
+                "SMART_MODE_LABEL": "Smart Mode",
 
                 # --- Units and Formatting ---
                 "BPS_LABEL": "B/s",
@@ -202,9 +214,9 @@ class I18nStrings:
             "fr_FR": {
                 # --- Window and dialog titles ---
                 "SETTINGS_WINDOW_TITLE": "Paramètres",
-                "GRAPH_WINDOW_TITLE": "Historique des Vitesses Réseau", # Changed for clarity
+                "GRAPH_WINDOW_TITLE": "Historique des Vitesses Réseau",
                 "EXPORT_CSV_TITLE": "Exporter l'Historique",
-                "EXPORT_GRAPH_IMAGE_TITLE": "Enregistrer le Graphique (Image)", # Changed
+                "EXPORT_GRAPH_IMAGE_TITLE": "Enregistrer le Graphique (Image)",
                 "EXPORT_ERROR_LOG_TITLE": "Exporter le Journal d'Erreurs",
                 "SELECT_COLOR_TITLE": "Sélectionner une Couleur",
                 "SELECT_FONT_TITLE": "Sélectionner une Police",
@@ -217,53 +229,53 @@ class I18nStrings:
 
                 # --- Messages ---
                 "NO_DATA_MESSAGE": "Aucune donnée disponible pour la période sélectionnée.",
-                "GRAPH_ERROR_MESSAGE": "Échec de l'affichage de la fenêtre du graphique. Veuillez consulter les journaux.", # Changed for clarity
-                "APP_USAGE_ERROR_MESSAGE": "Échec du chargement des données d'utilisation des applications. Veuillez consulter les journaux.", # Changed
+                "GRAPH_ERROR_MESSAGE": "Échec de l'affichage de la fenêtre du graphique. Veuillez consulter les journaux.",
+                "APP_USAGE_ERROR_MESSAGE": "Échec du chargement des données d'utilisation des applications. Veuillez consulter les journaux.",
                 "SETTINGS_ERROR_MESSAGE": "Échec de l'application d'un ou plusieurs paramètres.",
                 "SAVE_ERROR_MESSAGE": "Échec de l'enregistrement des paramètres :\n{error}",
-                "SETUP_ERROR_MESSAGE": "Erreur critique lors de l'initialisation de l'interface utilisateur.", # Changed
+                "SETUP_ERROR_MESSAGE": "Erreur critique lors de l'initialisation de l'interface utilisateur.",
                 "COLOR_PICKER_ERROR_MESSAGE": "Impossible d'ouvrir le sélecteur de couleurs.",
                 "FONT_SELECTOR_ERROR_MESSAGE": "Impossible d'ouvrir le sélecteur de polices.",
                 "DEFAULT_TEXT": "N/A", # Or "Indisponible"
-                "EXPORT_SUCCESS_MESSAGE": "Exportation réussie vers :\n{file_path}", # Changed
-                "NO_HISTORY_DATA_MESSAGE": "Aucune donnée d'historique disponible pour l'exportation.", # Changed
+                "EXPORT_SUCCESS_MESSAGE": "Exportation réussie vers :\n{file_path}",
+                "NO_HISTORY_DATA_MESSAGE": "Aucune donnée d'historique disponible pour l'exportation.",
                 "EXPORT_ERROR_MESSAGE": "Échec de l'exportation des données :\n{error}",
                 "LOG_COPY_ERROR_MESSAGE": "Impossible de copier le fichier journal :\n{error}",
-                "DATA_RETENTION_ERROR": "Rétention des données : {days} jours (erreur de calcul de la taille)", # Changed
+                "DATA_RETENTION_ERROR": "Rétention des données : {days} jours (erreur de calcul de la taille)",
                 "NO_LOG_MESSAGE": "Le fichier journal d'erreurs n'existe pas ou est introuvable.",
                 "LOG_EXPORT_SUCCESS_MESSAGE": "Journal d'erreurs exporté avec succès vers :\n{file_path}",
                 "PERMISSION_DENIED_MESSAGE": "Permission refusée lors de l'exportation du journal.",
                 "LOG_EXPORT_ERROR_MESSAGE": "Échec de l'exportation du journal d'erreurs :\n{error}",
                 "NO_INTERFACES_DETECTED": "Aucune interface réseau active n'a été détectée.",
-                "ERROR_UI_SETUP_FAILED": "Échec de la configuration de la boîte de dialogue des paramètres : {error}", # Changed
-                "ERROR_GETTING_SETTINGS": "Échec de la récupération des paramètres actuels depuis l'interface utilisateur.", # Changed
+                "ERROR_UI_SETUP_FAILED": "Échec de la configuration de la boîte de dialogue des paramètres : {error}",
+                "ERROR_GETTING_SETTINGS": "Échec de la récupération des paramètres actuels depuis l'interface utilisateur.",
                 "ERROR_SAVING_CONFIG": "Échec de l'enregistrement du fichier de configuration :\n{error}",
                 "NO_APP_DATA_MESSAGE": "Aucune donnée d'utilisation par application disponible pour cette période.",
-                "APP_USAGE_CONFIG_ERROR": "Erreur de chargement de l'utilisation des applications : Problème de configuration ou de données.", # Changed
+                "APP_USAGE_CONFIG_ERROR": "Erreur de chargement de l'utilisation des applications : Problème de configuration ou de données.",
                 "GRAPH_DATA_ERROR": "Erreur d'affichage du graphique : Données invalides.",
-                "GRAPH_INVALID_DATA_FORMAT": "Format de données invalide pour le tracé du graphique.", # ADDED
-                "GRAPH_UPDATE_ERROR_MESSAGE": "Erreur lors de la mise à jour de l'affichage du graphique : {error}", # ADDED
+                "GRAPH_INVALID_DATA_FORMAT": "Format de données invalide pour le tracé du graphique.",
+                "GRAPH_UPDATE_ERROR_MESSAGE": "Erreur lors de la mise à jour de l'affichage du graphique : {error}",
 
                 # --- Labels ---
-                "SPEED_GRAPH_TAB_LABEL": "Graphique des Vitesses", # Changed
+                "SPEED_GRAPH_TAB_LABEL": "Graphique des Vitesses",
                 "APP_USAGE_TAB_LABEL": "Utilisation par Application",
                 "DARK_MODE_LABEL": "Mode Sombre",
                 "LIVE_UPDATE_LABEL": "Mise à Jour en Direct",
-                "HISTORY_PERIOD_LABEL": "Chronologie : {period}", # Changed
-                "HISTORY_PERIOD_LABEL_NO_VALUE": "Chronologie", # Changed
+                "HISTORY_PERIOD_LABEL": "Chronologie : {period}",
+                "HISTORY_PERIOD_LABEL_NO_VALUE": "Chronologie",
                 "GRAPH_SETTINGS_LABEL": "Paramètres du Graphique",
-                "DATA_RETENTION_LABEL_DAYS": "Rétention des données : {days} jour{plural}", # Changed
+                "DATA_RETENTION_LABEL_DAYS": "Rétention des données : {days} jour{plural}",
                 "REALTIME_LABEL": "Temps réel",
-                "DATA_RETENTION_LABEL_NO_VALUE": "Rétention des Données", # Changed
-                "DATA_RETENTION_LABEL_YEAR": "Rétention : 1 An (Taille BD : {size_mb:.1f} Mo)", # Changed
-                "LEGEND_POSITION_LABEL": "Position de la Légende", # Changed
+                "DATA_RETENTION_LABEL_NO_VALUE": "Rétention des Données",
+                "DATA_RETENTION_LABEL_YEAR": "Rétention : 1 An (Taille BD : {size_mb:.1f} Mo)",
+                "LEGEND_POSITION_LABEL": "Position de la Légende",
                 "TIME_LABEL": "Temps",
                 "SPEED_LABEL": "Vitesse ({unit})",
                 "UPLOAD_LABEL": "Envoi",
                 "DOWNLOAD_LABEL": "Réception",
                 "FILTER_BY_LABEL": "Filtrer par :",
-                "LAST_30_DAYS_LABEL": "30 Derniers Jours", # Changed
-                "LAST_7_DAYS_LABEL": "7 Derniers Jours", # Changed
+                "LAST_30_DAYS_LABEL": "30 Derniers Jours",
+                "LAST_7_DAYS_LABEL": "7 Derniers Jours",
                 "SESSION_LABEL": "Session Actuelle",
                 "GENERAL_SETTINGS_GROUP": "Général",
                 "UPDATE_RATE_GROUP_TITLE": "Fréquence de Mise à Jour",
@@ -271,28 +283,39 @@ class I18nStrings:
                 "OPTIONS_GROUP_TITLE": "Options",
                 "FONT_SETTINGS_GROUP_TITLE": "Paramètres de Police",
                 "SMART_THRESHOLD_LABEL": "Activer le Seuil Intelligent",
-                "START_WITH_WINDOWS_LABEL": "Lancer avec Windows", # Changed
-                "FONT_SIZE_LABEL": "Taille de Police :", # Changed
+                "START_WITH_WINDOWS_LABEL": "Lancer avec Windows",
+                "FREE_MOVE_LABEL": "Activer le Déplacement Libre (Pas de Collage)",
+                "FONT_SIZE_LABEL": "Taille de Police :",
                 "FONT_FAMILY_LABEL": "Police :",
                 "FONT_WEIGHT_LABEL": "Graisse :",
-                "COLOR_CODING_GROUP": "Codage Couleur des Vitesses", # Changed
+                "COLOR_CODING_GROUP": "Codage Couleur des Vitesses",
                 "ENABLE_COLOR_CODING_LABEL": "Activer Codage Couleur",
                 "DEFAULT_COLOR_LABEL": "Couleur par Défaut :",
-                "HIGH_SPEED_THRESHOLD_LABEL": "Vitesse Élevée :", # Changed
-                "LOW_SPEED_THRESHOLD_LABEL": "Vitesse Basse :", # Changed
-                "HIGH_SPEED_COLOR_LABEL": "Couleur Vitesse Élevée :", # Changed
-                "LOW_SPEED_COLOR_LABEL": "Couleur Vitesse Basse :", # Changed
+                "HIGH_SPEED_THRESHOLD_LABEL": "Vitesse Élevée :",
+                "LOW_SPEED_THRESHOLD_LABEL": "Vitesse Basse :",
+                "HIGH_SPEED_COLOR_LABEL": "Couleur Vitesse Élevée :",
+                "LOW_SPEED_COLOR_LABEL": "Couleur Vitesse Basse :",
                 "MINI_GRAPH_SETTINGS_GROUP": "Mini Graphique (Widget)",
                 "ENABLE_GRAPH_LABEL": "Afficher Mini Graphique",
-                "GRAPH_NOTE_TEXT": "Note : Affiche un petit graphique en temps réel dans la zone du widget.", # Changed
-                "HISTORY_DURATION_LABEL": "Durée de l'Historique :", # Changed
-                "GRAPH_OPACITY_LABEL": "Opacité du Graphique :", # Changed
+                "GRAPH_NOTE_TEXT": "Note : Affiche un petit graphique en temps réel dans la zone du widget.",
+                "HISTORY_DURATION_LABEL": "Durée de l'Historique :",
+                "GRAPH_OPACITY_LABEL": "Opacité du Graphique :",
                 "UNITS_GROUP": "Unités de Vitesse",
-                "UNITS_INFO_TEXT": "Afficher la vitesse en Mégaoctets (Mo/s) ou Mégabits (Mbit/s).", # Changed "Mbps" to "Mbit/s" for consistency with French "o"
+                "SPEED_DISPLAY_MODE_LABEL": "Mode d'Affichage Vitesse",
+                "SPEED_DISPLAY_MODE_AUTO": "Auto",
+                "SPEED_DISPLAY_MODE_MBPS": "Mbit/s Seulement",
+                "DECIMAL_PLACES_LABEL": "Décimales",
+                "TEXT_ALIGNMENT_LABEL": "Alignement du Texte",
+                "FORCE_DECIMALS_LABEL": "Toujours Afficher les Décimales",
+                "ALIGN_LEFT": "Gauche",
+                "ALIGN_CENTER": "Centre",
+                "ALIGN_RIGHT": "Droite",
                 "NETWORK_INTERFACES_GROUP": "Interfaces Réseau",
                 "ALL_INTERFACES_LABEL": "Surveiller Toutes les Interfaces",
                 "NO_INTERFACES_FOUND": "Aucune interface réseau détectée.",
                 "TROUBLESHOOTING_GROUP": "Dépannage",
+                "LOG_FILES_FILTER": "Fichiers Journaux",
+                "ALL_FILES_FILTER": "Tous les Fichiers",
                 "UPLOAD_ARROW": "\u2191",
                 "DOWNLOAD_ARROW": "\u2193",
 
@@ -308,19 +331,20 @@ class I18nStrings:
                 "EXPORT_CSV_BUTTON": "Exporter Historique (CSV)",
                 "EXPORT_GRAPH_IMAGE_BUTTON": "Enregistrer Graphique (PNG)",
                 "SETTINGS_MENU_ITEM": "&Paramètres",
-                "SHOW_GRAPH_MENU_ITEM": "Afficher Fenêtre du &Graphique", # Changed
+                "SHOW_GRAPH_MENU_ITEM": "Afficher Fenêtre du &Graphique",
                 "STARTUP_MENU_ITEM": "Lancer au Démarrage",
                 "PAUSE_MENU_ITEM": "&Pause",
                 "RESUME_MENU_ITEM": "&Reprendre",
                 "EXIT_MENU_ITEM": "&Quitter",
-                "SELECT_FONT_BUTTON": "Sélectionner", # Changed
+                "SELECT_FONT_BUTTON": "Sélectionner",
                 "EXPORT_ERROR_LOG_BUTTON": "Exporter Journal d'Erreurs",
                 "SAVE_BUTTON": "&Enregistrer",
                 "CANCEL_BUTTON": "A&nnuler",
+                "SMART_MODE_LABEL": "Mode Intelligent",
 
                 # --- Units and Formatting ---
                 "BPS_LABEL": "o/s",       # octets par seconde
-                "BITS_LABEL": "bit/s",    # bits par seconde (more explicit than bps)
+                "BITS_LABEL": "bit/s",    # bits par seconde
                 "KBPS_LABEL": "Ko/s",
                 "KBITS_LABEL": "Kbit/s",  # Kilobits par seconde
                 "MBPS_LABEL": "Mo/s",

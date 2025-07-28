@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import re
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 # Use TYPE_CHECKING to avoid circular import issues at runtime
@@ -18,7 +19,7 @@ if TYPE_CHECKING:
     from netspeedtray.views.widget import NetworkSpeedWidget
 
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QSize, QPoint
-from PyQt6.QtGui import QColor, QFont, QFontDatabase, QIcon # Added QFontDatabase and QIcon
+from PyQt6.QtGui import QColor, QFont, QFontDatabase, QIcon
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QListWidget, QStackedWidget, QLabel,
     QPushButton, QFileDialog, QMessageBox, QColorDialog, QGroupBox,
@@ -32,7 +33,7 @@ from netspeedtray.utils.styles import dialog_style, sidebar_style, button_style,
 from netspeedtray.utils.components import Win11Toggle, Win11Slider
 from netspeedtray.constants import (
     AppConstants, HelperConstants, HistoryConstants, DialogConstants, FontConstants,
-    SliderConstants, LayoutConstants, InterfaceGroupConstants, ConfigConstants, # Ensure InterfaceGroupConstants
+    SliderConstants, LayoutConstants, InterfaceGroupConstants, ConfigConstants,
     LogConstants, UIStyleConstants, ExportConstants, HistoryPeriodConstants, TimerConstants
 )
 from netspeedtray.constants.i18n_strings import I18nStrings
@@ -45,6 +46,10 @@ class SettingsDialog(QDialog):
     and custom Win11-styled controls.
     """
     settings_changed = pyqtSignal(dict) #: Signal emitted when settings are changed (throttled).
+
+    # Mappings for config strings to slider integer values
+    SPEED_DISPLAY_MODE_MAP = {"auto": 0, "always_mbps": 1}
+    TEXT_ALIGNMENT_MAP = {"left": 0, "center": 1, "right": 2}
 
     def __init__(
         self,
@@ -69,6 +74,10 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.logger = logging.getLogger(f"NetSpeedTray.{self.__class__.__name__}")
         self.logger.debug("Initializing SettingsDialog...")
+
+        # Inverse mappings for saving config
+        self.SPEED_DISPLAY_MODE_MAP_INV = {v: k for k, v in self.SPEED_DISPLAY_MODE_MAP.items()}
+        self.TEXT_ALIGNMENT_MAP_INV = {v: k for k, v in self.TEXT_ALIGNMENT_MAP.items()}
 
         self.parent_widget = parent
         self.config = config.copy() # Work on a copy to allow cancellation
@@ -245,6 +254,16 @@ class SettingsDialog(QDialog):
             options_layout.addWidget(sww_label, 1, 0, Qt.AlignmentFlag.AlignVCenter)
             options_layout.addWidget(self.start_with_windows, 1, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             
+            fm_label = QLabel(self.i18n.FREE_MOVE_LABEL)
+            self.free_move = Win11Toggle(label_text="")
+            options_layout.addWidget(fm_label, 2, 0, Qt.AlignmentFlag.AlignVCenter)
+            options_layout.addWidget(self.free_move, 2, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
+            options_layout.setColumnStretch(0, 0)
+            options_layout.setColumnStretch(1, 1)
+            options_layout.setRowStretch(3, 1)
+            page_layout.addWidget(options_group)
+
             options_layout.setColumnStretch(0, 0) # Label column (col 0)
             options_layout.setColumnStretch(1, 1) # Toggle control column (col 1)
             options_layout.setRowStretch(2, 1) # Add stretch after the last row of toggles
@@ -299,6 +318,14 @@ class SettingsDialog(QDialog):
             self.stack.addWidget(page)
         except Exception as e:
             self.logger.error(f"Error setting up General page: {e}", exc_info=True)
+
+    def _on_free_move_toggled(self, checked: bool) -> None:
+        """
+        Handles the "Free Move" toggle event. If unchecked, snaps the widget
+        back to its default position.
+        """
+        self.logger.debug(f"Free Move toggled to: {checked}. Scheduling update.")
+        self._schedule_settings_update()
 
     def _setup_color_page(self) -> None:
         self.logger.debug("Setting up Color page")
@@ -414,26 +441,40 @@ class SettingsDialog(QDialog):
             page_layout.setSpacing(15)
 
             units_group = QGroupBox(self.i18n.UNITS_GROUP)
-            units_layout = QGridLayout(units_group) # Use QGridLayout
+            units_layout = QGridLayout(units_group)
             units_layout.setVerticalSpacing(10)
             units_layout.setHorizontalSpacing(8)
-            
-            # Create an external label for the "Use Megabytes" toggle.
-            # Its text will be set dynamically (Mbps/MB/s) by update_units_and_thresholds.
-            self.use_megabytes_label = QLabel() # Text set in _init_ui_state / update_units_and_thresholds
-            self.use_megabytes = Win11Toggle(label_text="") # No internal label
 
-            units_layout.addWidget(self.use_megabytes_label, 0, 0, Qt.AlignmentFlag.AlignVCenter)
-            units_layout.addWidget(self.use_megabytes, 0, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-            
-            info = QLabel(self.i18n.UNITS_INFO_TEXT)
-            info.setWordWrap(True)
-            info.setStyleSheet(f"font-size: {FontConstants.NOTE_FONT_SIZE}pt; color: grey;")
-            units_layout.addWidget(info, 1, 0, 1, 2) # Info spans 2 columns
+            # Row 0: Speed Display Mode (Auto/Mbps only)
+            self.speed_display_mode_label = QLabel(self.i18n.SPEED_DISPLAY_MODE_LABEL)
+            self.speed_display_mode = Win11Slider()
+            self.speed_display_mode.setRange(0, 1)  # 0 for auto, 1 for always_mbps
+            units_layout.addWidget(self.speed_display_mode_label, 0, 0, Qt.AlignmentFlag.AlignVCenter)
+            units_layout.addWidget(self.speed_display_mode, 0, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
+            # Row 1: Decimal Places (0, 1, 2)
+            self.decimal_places_label = QLabel(self.i18n.DECIMAL_PLACES_LABEL)
+            self.decimal_places = Win11Slider()
+            self.decimal_places.setRange(0, 2)
+            units_layout.addWidget(self.decimal_places_label, 1, 0, Qt.AlignmentFlag.AlignVCenter)
+            units_layout.addWidget(self.decimal_places, 1, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
+            # Row 2: Text Alignment (Left, Center, Right)
+            self.text_alignment_label = QLabel(self.i18n.TEXT_ALIGNMENT_LABEL)
+            self.text_alignment = Win11Slider()
+            self.text_alignment.setRange(0, 2)  # 0 for left, 1 for center, 2 for right
+            units_layout.addWidget(self.text_alignment_label, 2, 0, Qt.AlignmentFlag.AlignVCenter)
+            units_layout.addWidget(self.text_alignment, 2, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
+            # Row 3: Force Decimals
+            self.force_decimals_label = QLabel(self.i18n.FORCE_DECIMALS_LABEL)
+            self.force_decimals = Win11Toggle(label_text="")
+            units_layout.addWidget(self.force_decimals_label, 3, 0, Qt.AlignmentFlag.AlignVCenter)
+            units_layout.addWidget(self.force_decimals, 3, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
             units_layout.setColumnStretch(0, 0)
             units_layout.setColumnStretch(1, 1)
-            units_layout.setRowStretch(2, 1) # Stretch after info text
+            units_layout.setRowStretch(4, 1) 
 
             page_layout.addWidget(units_group)
             page_layout.addStretch()
@@ -738,6 +779,7 @@ class SettingsDialog(QDialog):
         self.font_weight.valueChanged.connect(self._schedule_settings_update) # For live preview
 
         self.default_color_button.clicked.connect(lambda: self.choose_color(self.default_color_button))
+        self.free_move.toggled.connect(self._on_free_move_toggled)
 
     def _connect_color_signals(self) -> None:
         self.enable_colors.toggled.connect(self.toggle_color_settings)
@@ -761,8 +803,16 @@ class SettingsDialog(QDialog):
         self.graph_opacity.valueChanged.connect(self._schedule_settings_update)
 
     def _connect_units_signals(self) -> None:
-        self.use_megabytes.toggled.connect(self._schedule_settings_update)
-        self.use_megabytes.toggled.connect(self.update_units_and_thresholds)
+        self.speed_display_mode.valueChanged.connect(self._on_speed_display_mode_changed)
+        self.speed_display_mode.valueChanged.connect(self._schedule_settings_update)
+        
+        self.decimal_places.valueChanged.connect(self._on_decimal_places_changed)
+        self.decimal_places.valueChanged.connect(self._schedule_settings_update)
+        
+        self.text_alignment.valueChanged.connect(self._on_text_alignment_changed)
+        self.text_alignment.valueChanged.connect(self._schedule_settings_update)
+        
+        self.force_decimals.toggled.connect(self._schedule_settings_update)
 
     def _connect_interfaces_signals(self) -> None:
         self.all_interfaces.toggled.connect(self.toggle_all_interfaces_action)
@@ -776,7 +826,6 @@ class SettingsDialog(QDialog):
         self.logger.debug("Initializing UI state from configuration.")
 
         # --- General Page ---
-        # ... (as before) ...
         update_rate_val_raw = self.config.get("update_rate")
         update_rate_val_config = ConfigConstants.DEFAULT_UPDATE_RATE if update_rate_val_raw is None else float(update_rate_val_raw)
         update_rate_slider_val = int(update_rate_val_config * 2) 
@@ -788,6 +837,7 @@ class SettingsDialog(QDialog):
         self.smart_threshold.setChecked(smart_thresh_config)
         
         self.start_with_windows.setChecked(self.startup_enabled_initial_state)
+        self.free_move.setChecked(self.config.get("free_move", False))
 
         font_family_config = self.config.get("font_family")
         initial_font_family = ConfigConstants.DEFAULT_FONT_FAMILY if not font_family_config else str(font_family_config)
@@ -809,7 +859,6 @@ class SettingsDialog(QDialog):
         self._set_color_button_style(self.default_color_button, initial_default_color_hex)
         
         # --- Color Page ---
-        # ... (as before) ...
         color_coding_raw = self.config.get("color_coding")
         color_coding_enabled = ConfigConstants.DEFAULT_COLOR_CODING if color_coding_raw is None else bool(color_coding_raw)
         self.enable_colors.setChecked(color_coding_enabled)
@@ -830,9 +879,9 @@ class SettingsDialog(QDialog):
         initial_low_color_hex = ConfigConstants.DEFAULT_LOW_SPEED_COLOR if not low_color_config or not low_color_config.startswith("#") else str(low_color_config)
         self._set_color_button_style(self.low_speed_color_button, initial_low_color_hex)
         
-        # self.update_threshold_labels() will be called by update_units_and_thresholds later
         self.toggle_color_settings(color_coding_enabled)
 
+        # --- Graph Page ---
         graph_enabled_raw = self.config.get("graph_enabled")
         graph_enabled_config = ConfigConstants.DEFAULT_GRAPH_ENABLED if graph_enabled_raw is None else bool(graph_enabled_raw)
         self.enable_graph.setChecked(graph_enabled_config)
@@ -852,16 +901,29 @@ class SettingsDialog(QDialog):
         self.graph_opacity.setValueText(f"{self.graph_opacity.value()}%")
 
         # --- Units Page ---
-        use_mb_raw = self.config.get("use_megabytes")
-        use_mb_config = ConfigConstants.DEFAULT_USE_MEGABYTES if use_mb_raw is None else bool(use_mb_raw)
-        
-        # Set the Win11Toggle state
-        self.use_megabytes.setChecked(use_mb_config)
-        # Call update_units_and_thresholds which will set the external label text
-        # and also update threshold labels based on the unit.
-        self.update_units_and_thresholds(use_mb_config)
-        # Note: update_threshold_labels was called for Color page, but update_units_and_thresholds
-        # calls it again, which is fine as it ensures consistency if units change.
+
+        self.update_threshold_labels() # Directly update threshold labels with fixed unit
+
+        # Speed Display Mode
+        sdm_raw = self.config.get("speed_display_mode", "auto") # Default to "auto"
+        sdm_val = self.SPEED_DISPLAY_MODE_MAP.get(str(sdm_raw).lower(), self.SPEED_DISPLAY_MODE_MAP["auto"])
+        self.speed_display_mode.setValue(sdm_val)
+        self._on_speed_display_mode_changed(sdm_val) # Set initial text
+
+        # Decimal Places
+        dp_raw = self.config.get("decimal_places")
+        dp_val = 2 if dp_raw is None else int(dp_raw)
+        self.decimal_places.setValue(dp_val)
+        self._on_decimal_places_changed(dp_val) # Set initial text
+
+        # Text Alignment
+        ta_raw = self.config.get("text_alignment", "center") # Default to "center"
+        ta_val = self.TEXT_ALIGNMENT_MAP.get(str(ta_raw).lower(), self.TEXT_ALIGNMENT_MAP["center"])
+        self.text_alignment.setValue(ta_val)
+        self._on_text_alignment_changed(ta_val) # Set initial text
+        fd_raw = self.config.get("force_decimals")
+        fd_val = False if fd_raw is None else bool(fd_raw) # Default to False
+        self.force_decimals.setChecked(fd_val)
 
         # --- Interfaces Page ---
         interface_mode_config = self.config.get("interface_mode")
@@ -876,6 +938,7 @@ class SettingsDialog(QDialog):
 
         self.adjustSize()
         self.logger.debug("UI state initialization complete.")
+
     def toggle_color_settings(self, enabled: bool) -> None:
         is_enabled = bool(enabled)
         self.color_container.setVisible(is_enabled)
@@ -1008,14 +1071,26 @@ class SettingsDialog(QDialog):
         else:
             self.logger.debug("Font selection cancelled.")
 
-    def update_units_and_thresholds(self, state: int | bool) -> None:
-        is_megabytes = bool(state)
-        # Update the external label's text
-        if hasattr(self, 'use_megabytes_label'):
-            self.use_megabytes_label.setText(self.i18n.MBPS_LABEL if is_megabytes else self.i18n.MBITS_LABEL)
-        else:
-            self.logger.warning("use_megabytes_label not found in update_units_and_thresholds")
-        self.update_threshold_labels()
+    # --- New Handler Methods for Units Page ---
+    def _on_speed_display_mode_changed(self, value: int) -> None:
+        """Updates the text for the speed display mode slider."""
+        if value == self.SPEED_DISPLAY_MODE_MAP["auto"]:
+            self.speed_display_mode.setValueText(self.i18n.SPEED_DISPLAY_MODE_AUTO)
+        else: # "always_mbps"
+            self.speed_display_mode.setValueText(self.i18n.SPEED_DISPLAY_MODE_MBPS)
+
+    def _on_decimal_places_changed(self, value: int) -> None:
+        """Updates the text for the decimal places slider."""
+        self.decimal_places.setValueText(str(value))
+
+    def _on_text_alignment_changed(self, value: int) -> None:
+        """Updates the text for the text alignment slider."""
+        if value == self.TEXT_ALIGNMENT_MAP["left"]:
+            self.text_alignment.setValueText(self.i18n.ALIGN_LEFT)
+        elif value == self.TEXT_ALIGNMENT_MAP["right"]:
+            self.text_alignment.setValueText(self.i18n.ALIGN_RIGHT)
+        else: # "center"
+            self.text_alignment.setValueText(self.i18n.ALIGN_CENTER)
 
     def update_threshold_labels(self) -> None:
         try:
@@ -1029,10 +1104,11 @@ class SettingsDialog(QDialog):
 
             high_value = high_value_raw / 10.0
             low_value = low_value_raw / 10.0
-            unit = self.i18n.MBPS_UNIT if self.use_megabytes.isChecked() else self.i18n.MBITS_UNIT
+            unit = self.i18n.MBITS_UNIT
 
             self.high_speed_threshold.setValueText(f"{high_value:.1f} {unit}")
             self.low_speed_threshold.setValueText(f"{low_value:.1f} {unit}")
+            
         except AttributeError as e:
              self.logger.error(f"Error updating threshold labels: Missing UI element? {e}")
         except Exception as e:
@@ -1124,8 +1200,10 @@ class SettingsDialog(QDialog):
             settings["update_rate"] = max(ConfigConstants.MINIMUM_UPDATE_RATE, self.update_rate.value() / 2.0) if self.update_rate.value() > 0 else 0.0
             settings["font_size"] = self.font_size.value()
             settings["font_family"] = self.font_family_label.text()
-            settings["font_weight"] = self.font_weight.value() # Current (snapped) value from slider
+            settings["font_weight"] = self.font_weight.value()
             settings["smart_threshold"] = self.smart_threshold.isChecked()
+            settings["free_move"] = self.free_move.isChecked()
+            settings["start_with_windows"] = self.start_with_windows.isChecked() if hasattr(self, 'start_with_windows') else self.startup_enabled_initial_state
             settings["default_color"] = self._get_color_from_button(self.default_color_button, ConfigConstants.DEFAULT_COLOR)
 
             # Color Coding Page
@@ -1140,22 +1218,21 @@ class SettingsDialog(QDialog):
             settings["history_minutes"] = self.history_duration.value()
             settings["graph_opacity"] = self.graph_opacity.value()
 
-            # Units Page
-            settings["use_megabytes"] = self.use_megabytes.isChecked()
-
+            # Units Page (CORRECTED LOGIC)
+            settings["speed_display_mode"] = self.SPEED_DISPLAY_MODE_MAP_INV.get(self.speed_display_mode.value(), "auto")
+            settings["decimal_places"] = self.decimal_places.value()
+            settings["text_alignment"] = self.TEXT_ALIGNMENT_MAP_INV.get(self.text_alignment.value(), "center")
+            settings["force_decimals"] = self.force_decimals.isChecked()
+            
             # Network Interfaces Page
             is_all_mode_active_at_save = self.all_interfaces.isChecked()
             settings["interface_mode"] = "all" if is_all_mode_active_at_save else "selected"
 
             if is_all_mode_active_at_save:
-                # If "all" mode is active, the 'selected_interfaces' list should be empty,
-                # as the application logic will monitor all available interfaces.
                 settings["selected_interfaces"] = []
             else:
-                # If in "selected" mode, gather all checked and enabled interfaces.
-                # Checkboxes are only enabled if not in "all" mode.
                 settings["selected_interfaces"] = [
-                    iface_name for iface_name, cb in self.interface_checkboxes.items() if cb.isChecked() # and cb.isEnabled() implicit by not is_all_mode
+                    iface_name for iface_name, cb in self.interface_checkboxes.items() if cb.isChecked()
                 ]
             
             self.logger.debug(
@@ -1165,27 +1242,25 @@ class SettingsDialog(QDialog):
             return settings
         except AttributeError as e:
              self.logger.error(f"Error getting settings: Missing UI element? {e}", exc_info=True)
-             return {} # Return empty dict on failure
+             return {}
         except Exception as e:
              self.logger.error(f"Unexpected error getting settings: {e}", exc_info=True)
-             return {} # Return empty dict on failure
+             return {}
 
     def _get_color_from_button(self, button: QPushButton, default: str) -> str:
         try:
             style = button.styleSheet()
-            # More robust parsing for "background-color: #RRGGBB;" or "background-color: #RRGGBBAA;"
-            import re
             match = re.search(r"background-color:\s*(#[0-9a-fA-F]{6,8})\s*;", style)
             if match:
                 return match.group(1).upper()
-            else: # Fallback for simple cases or if regex fails
+            else:
                 start_idx = style.find("background-color:")
                 if start_idx == -1: return default
                 start = start_idx + len("background-color:")
                 end = style.find(";", start)
                 if end == -1: end = len(style)
                 color_hex = style[start:end].strip()
-                if color_hex.startswith("#") and len(color_hex) in (7, 9): # #RRGGBB or #RRGGBBAA
+                if color_hex.startswith("#") and len(color_hex) in (7, 9):
                     return color_hex.upper()
                 self.logger.warning(f"Could not parse color '{color_hex}' from button '{button.objectName()}', using default '{default}'. Style: '{style}'")
                 return default
@@ -1196,21 +1271,19 @@ class SettingsDialog(QDialog):
     def accept(self) -> None:
         self.logger.info("Accept button clicked. Saving settings...")
         final_settings = self.get_settings()
-        if not final_settings: # Handles case where get_settings returns {} on error
+        if not final_settings:
             QMessageBox.critical(self, self.i18n.ERROR_TITLE, self.i18n.ERROR_GETTING_SETTINGS)
             return
 
-        self.config.update(final_settings) # Update the internal config copy
+        self.config.update(final_settings)
         try:
-            ConfigManager().save(self.config) # Save the updated config
+            ConfigManager().save(self.config)
             self.logger.info("Configuration saved successfully.")
         except Exception as e:
             self.logger.error(f"Failed to save configuration file: {e}", exc_info=True)
             QMessageBox.critical(self, self.i18n.ERROR_TITLE, self.i18n.ERROR_SAVING_CONFIG.format(error=str(e)))
-            # Do not proceed if save failed
             return
 
-        # Handle startup task update
         if self.should_update_startup_task():
             requested_state = self.is_startup_requested()
             self.logger.info(f"Startup setting changed. Requesting toggle to: {requested_state}")
@@ -1219,20 +1292,18 @@ class SettingsDialog(QDialog):
             else:
                  self.logger.error("Parent widget missing 'toggle_startup' method.")
 
-        # Apply final settings to parent
         if hasattr(self.parent_widget, 'handle_settings_changed'):
-            self.parent_widget.handle_settings_changed(self.config) # Pass the fully updated config
+            self.parent_widget.handle_settings_changed(self.config)
         else:
             self.logger.warning("Parent lacks handle_settings_changed, cannot apply final settings directly.")
         super().accept()
 
     def reject(self) -> None:
         self.logger.info("Reject (Cancel) button clicked.")
-        # Revert any live-previewed changes on the parent widget to their original state
         if hasattr(self.parent_widget, 'update_config') and hasattr(self.parent_widget, 'apply_all_settings'):
             self.logger.debug("Restoring original configuration on parent widget due to reject.")
             try:
-                self.parent_widget.update_config(self.original_config.copy()) # Ensure a fresh copy
+                self.parent_widget.update_config(self.original_config.copy())
                 self.parent_widget.apply_all_settings()
             except Exception as e:
                  self.logger.error(f"Error reverting parent widget state on reject: {e}", exc_info=True)
@@ -1246,8 +1317,6 @@ class SettingsDialog(QDialog):
         seconds = value / 2.0
         return f"{seconds:.1f} {self.i18n.SECONDS_LABEL}"
 
-    # Removed weight_to_text as dynamic logic is now in _update_font_weight_text_live
-
     def get_config(self) -> Dict[str, Any]:
         return self.config.copy()
 
@@ -1256,5 +1325,5 @@ class SettingsDialog(QDialog):
         return self.start_with_windows.isChecked() != self.startup_enabled_initial_state
 
     def is_startup_requested(self) -> bool:
-        if not self._ui_setup_done: return False # Should ideally not be called if UI not ready
+        if not self._ui_setup_done: return False
         return self.start_with_windows.isChecked()

@@ -1467,13 +1467,14 @@ class GraphWindow(QWidget):
 
             unit_suffix = self._get_speed_unit()
             now = datetime.now()
-            period_value = 0  # Default to "System Uptime" index if slider is missing
+            period_value = 0
             if hasattr(self, 'history_period') and self.history_period:
                 period_value = self.history_period.value()
             period_str = HistoryPeriodConstants.PERIOD_MAP.get(period_value, HistoryPeriodConstants.DEFAULT_PERIOD)
-            # Calculate start time based on selected period
+            
             start_time: datetime
-            if period_str == "System Uptime":
+
+            if period_str in ("System Uptime", "All"):
                 start_time = min(entry[0] for entry in history_data) if history_data else now - timedelta(hours=1)
             elif "3 Hours" in period_str:
                 start_time = now - timedelta(hours=3)
@@ -1496,6 +1497,7 @@ class GraphWindow(QWidget):
             elif "Session" in period_str:
                 start_time = self.app_start_time
             else:
+                # This fallback should now rarely be used.
                 start_time = now - timedelta(hours=1)
 
             # Update the stats bar with the correct period data
@@ -1504,14 +1506,12 @@ class GraphWindow(QWidget):
             # Filter data for the selected time period
             filtered_data = [(ts, up, down, iface) for ts, up, down, iface in history_data if ts >= start_time]
 
-            # X axis limits: always show full period
             if xlim is not None:
                 x_start, x_end = xlim
             else:
                 x_start, x_end = start_time, now
 
             if not filtered_data:
-                # No data: clear lines, set xlim, show message
                 self.upload_line.set_data([], [])
                 self.download_line.set_data([], [])
                 self.upload_line.set_visible(True)
@@ -1520,7 +1520,6 @@ class GraphWindow(QWidget):
                 self.ax.set_ylim(0, GraphConstants.MIN_Y_AXIS_LIMIT)
                 self._show_graph_error(getattr(self.i18n, 'NO_DATA_MESSAGE', "No data to display."))
             else:
-                # Convert speeds to correct units for plotting
                 timestamps = [entry[0] for entry in filtered_data]
                 upload_speeds = [self._convert_speed(entry[1]) for entry in filtered_data]
                 download_speeds = [self._convert_speed(entry[2]) for entry in filtered_data]
@@ -1531,17 +1530,11 @@ class GraphWindow(QWidget):
                 self.download_line.set_visible(True)
                 self.ax.set_xlim(x_start, x_end)
                 max_speed = max(max(upload_speeds, default=1), max(download_speeds, default=1))
-                if max_speed < 1:
-                    max_speed = 1
-                self.ax.set_ylim(0, max_speed * 1.1)  # Add 10% padding
+                self.ax.set_ylim(0, max_speed * 1.1 if max_speed > 0 else GraphConstants.MIN_Y_AXIS_LIMIT)
 
-            # Update y-axis label
             self.ax.set_ylabel(self._get_speed_unit())
-            # Remove timeline label under stats bar
             self.ax.set_title("")
-            # Format dates on x-axis based on the selected period
-            import matplotlib.dates as mdates
-            # --- X axis formatting fix ---
+            
             total_seconds = (x_end - x_start).total_seconds()
             if ("Hour" in period_str) or ("Session" in period_str) or (total_seconds <= 24*3600):
                 self.ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
@@ -1549,13 +1542,13 @@ class GraphWindow(QWidget):
             else:
                 self.ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
                 self.ax.xaxis.set_major_locator(mdates.AutoDateLocator(maxticks=6))
+            
             self.figure.autofmt_xdate(rotation=30, ha='right')
-            # Update the legend if it exists
+
             if self.ax.get_legend():
                 for text in self.ax.get_legend().get_texts():
                     text.set_color(UIStyleConstants.DARK_MODE_TEXT_COLOR if self.dark_mode.isChecked() else UIStyleConstants.LIGHT_MODE_TEXT_COLOR)
 
-            # Redraw the canvas
             self.canvas.draw_idle()
         except Exception as e:
             self.logger.error(f"Error updating graph: {e}", exc_info=True)

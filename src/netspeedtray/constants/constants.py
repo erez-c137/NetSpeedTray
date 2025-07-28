@@ -24,7 +24,7 @@ class AppConstants:
     APP_NAME: Final[str] = "NetSpeedTray"
     """The name of the application."""
 
-    VERSION: Final[str] = "1.0.5-BETA1"
+    VERSION: Final[str] = "1.0.5-BETA2"
     """The current version of the application."""
 
     MUTEX_NAME: Final[str] = "Global\\NetSpeedTray_SingleInstanceMutex"
@@ -233,6 +233,7 @@ class ConfigConstants:
     Constants for application configuration defaults and constraints.
     """
     # --- Default Values for Individual Settings ---
+    DEFAULT_START_WITH_WINDOWS: Final[bool] = True
     DEFAULT_UPDATE_RATE: Final[float] = 1.0
     MINIMUM_UPDATE_RATE: Final[float] = TimerConstants.MINIMUM_INTERVAL_MS / 1000.0
     DEFAULT_FONT_FAMILY: Final[str] = 'Segoe UI'
@@ -244,14 +245,13 @@ class ConfigConstants:
     DEFAULT_LOW_SPEED_THRESHOLD: Final[float] = 1.0
     DEFAULT_HIGH_SPEED_COLOR: Final[str] = "#00FF00"
     DEFAULT_LOW_SPEED_COLOR: Final[str] = "#FFA500"
-    DEFAULT_GRAPH_ENABLED: Final[bool] = True # For debugging, was False
+    DEFAULT_GRAPH_ENABLED: Final[bool] = False
     DEFAULT_HISTORY_MINUTES: Final[int] = 30
     DEFAULT_GRAPH_OPACITY: Final[int] = 30
-    DEFAULT_USE_MEGABYTES: Final[bool] = False
     DEFAULT_INTERFACE_MODE: Final[str] = "all"
-    DEFAULT_SMART_THRESHOLD: Final[int] = 100000
+    DEFAULT_SMART_THRESHOLD: Final[bool] = True
     DEFAULT_HISTORY_PERIOD_DAYS: Final[int] = DataRetentionConstants.DAYS_MAP[6]  # 1 Year
-    DEFAULT_DARK_MODE: Final[bool] = False
+    DEFAULT_DARK_MODE: Final[bool] = True
     DEFAULT_LEGEND_POSITION: Final[str] = LegendPositionConstants.DEFAULT_LEGEND_POSITION
     VALID_INTERFACE_MODES: Final[Set[str]] = {"all", "selected"}
     CONFIG_FILENAME: Final[str] = "netspeedtray.conf"
@@ -267,8 +267,14 @@ class ConfigConstants:
     UI_TEXT_COLOR: Final[str] = "#1F1F1F"
     UI_ACCENT_FALLBACK: Final[str] = "#0078D4"
     UI_BORDER_COLOR: Final[str] = "#A0A0A0"
+    DEFAULT_SPEED_DISPLAY_MODE: Final[str] = "always_mbps"  # 'auto' or 'always_mbps'
+    DEFAULT_DECIMAL_PLACES: Final[int] = 2  # 0, 1, or 2
+    DEFAULT_TEXT_ALIGNMENT: Final[str] = "center"  # 'left', 'center', 'right'
+    DEFAULT_FREE_MOVE: Final[bool] = False
+    DEFAULT_FORCE_DECIMALS: Final[bool] = True
 
     DEFAULT_CONFIG: Final[Dict[str, Any]] = {
+        "start_with_windows": DEFAULT_START_WITH_WINDOWS,
         "update_rate": DEFAULT_UPDATE_RATE,
         "font_family": DEFAULT_FONT_FAMILY,
         "font_size": DEFAULT_FONT_SIZE,
@@ -282,7 +288,6 @@ class ConfigConstants:
         "graph_enabled": DEFAULT_GRAPH_ENABLED,
         "history_minutes": DEFAULT_HISTORY_MINUTES,
         "graph_opacity": DEFAULT_GRAPH_OPACITY,
-        "use_megabytes": DEFAULT_USE_MEGABYTES,
         "interface_mode": DEFAULT_INTERFACE_MODE,
         "selected_interfaces": [],
         "smart_threshold": DEFAULT_SMART_THRESHOLD,
@@ -296,6 +301,11 @@ class ConfigConstants:
         "dynamic_update_enabled": DEFAULT_DYNAMIC_UPDATE_ENABLED,
         "min_update_rate": DEFAULT_MIN_UPDATE_RATE,
         "max_update_rate": DEFAULT_MAX_UPDATE_RATE,
+        "speed_display_mode": DEFAULT_SPEED_DISPLAY_MODE,
+        "decimal_places": DEFAULT_DECIMAL_PLACES,
+        "text_alignment": DEFAULT_TEXT_ALIGNMENT,
+        "free_move": DEFAULT_FREE_MOVE,
+        "force_decimals": DEFAULT_FORCE_DECIMALS,
     }
 
     def validate(self) -> None:
@@ -322,8 +332,11 @@ class ConfigConstants:
             raise ValueError("DEFAULT_HISTORY_MINUTES must be positive")
         if not (0 <= self.DEFAULT_GRAPH_OPACITY <= 100):
             raise ValueError("DEFAULT_GRAPH_OPACITY must be between 0 and 100")
-        if self.DEFAULT_SMART_THRESHOLD < 0:
-            raise ValueError("DEFAULT_SMART_THRESHOLD must be non-negative")
+        
+        # Validate smart_threshold as a boolean
+        if not isinstance(self.DEFAULT_SMART_THRESHOLD, bool):
+            raise ValueError("DEFAULT_SMART_THRESHOLD must be a boolean")
+            
         if not (1 <= self.DEFAULT_HISTORY_PERIOD_DAYS <= DataRetentionConstants.MAX_RETENTION_DAYS):
             raise ValueError(f"DEFAULT_HISTORY_PERIOD_DAYS ('{self.DEFAULT_HISTORY_PERIOD_DAYS}') must be between 1 and {DataRetentionConstants.MAX_RETENTION_DAYS}")
         if not self.VALID_INTERFACE_MODES:
@@ -367,10 +380,12 @@ class ConfigConstants:
         expected_keys_in_default_config = {
             "update_rate", "font_family", "font_size", "font_weight", "color_coding", "default_color",
             "high_speed_threshold", "low_speed_threshold", "high_speed_color", "low_speed_color",
-            "graph_enabled", "history_minutes", "graph_opacity", "use_megabytes", "interface_mode",
+            "graph_enabled", "history_minutes", "graph_opacity", "interface_mode",
             "selected_interfaces", "smart_threshold", "keep_data", "dark_mode", "history_period",
-            "legend_position", "position_x", "position_y", "paused",
-            "dynamic_update_enabled", "min_update_rate", "max_update_rate"
+            "legend_position", "position_x", "position_y", "paused", "start_with_windows",
+            "dynamic_update_enabled", "min_update_rate", "max_update_rate",
+            "speed_display_mode", "decimal_places", "text_alignment",
+            "free_move", "force_decimals"
         }
         actual_keys_in_default_config = set(self.DEFAULT_CONFIG.keys())
         if actual_keys_in_default_config != expected_keys_in_default_config:
@@ -380,7 +395,7 @@ class ConfigConstants:
             if missing: error_msg += f" Missing keys in DEFAULT_CONFIG definition: {missing}."
             if extra: error_msg += f" Extra keys found in DEFAULT_CONFIG instance: {extra}."
             raise ValueError(error_msg)
-
+        
 
 class SliderConstants:
     """
@@ -457,7 +472,6 @@ class ConfigMessages:
     INVALID_INTERFACE_MODE: str = "Invalid interface_mode %s, setting to 'all'"
     INVALID_HISTORY_PERIOD: str = "Invalid history_period %s, setting to default"
     INVALID_LEGEND_POSITION: str = "Invalid legend_position %s, setting to 'off'"
-    INVALID_USE_MEGABYTES: str = "Invalid use_megabytes %s, setting to False"
     INVALID_COLOR_CODING: str = "Invalid color_coding %s, setting to False"
     INVALID_GRAPH_ENABLED: str = "Invalid graph_enabled %s, setting to False"
     INVALID_PAUSED: str = "Invalid paused %s, setting to False"
@@ -476,7 +490,7 @@ class ConfigMessages:
             "INVALID_KEEP_DATA": "keep_data", "INVALID_SMART_THRESHOLD": "smart_threshold",
             "INVALID_DARK_MODE": "dark_mode", "INVALID_INTERFACES": "selected_interfaces",
             "INVALID_INTERFACE_MODE": "interface_mode", "INVALID_HISTORY_PERIOD": "history_period",
-            "INVALID_LEGEND_POSITION": "legend_position", "INVALID_USE_MEGABYTES": "use_megabytes",
+            "INVALID_LEGEND_POSITION": "legend_position",
             "INVALID_COLOR_CODING": "color_coding", "INVALID_GRAPH_ENABLED": "graph_enabled",
             "INVALID_PAUSED": "paused", "INVALID_DYNAMIC_UPDATE_ENABLED": "dynamic_update_enabled",
             "INVALID_MIN_UPDATE_RATE": "min_update_rate", "INVALID_MAX_UPDATE_RATE": "max_update_rate",

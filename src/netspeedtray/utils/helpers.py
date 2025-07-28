@@ -161,7 +161,7 @@ def setup_logging() -> logging.Logger:
     return logger
 
 
-def format_speed(speed: float, use_megabytes: bool) -> str:
+def format_speed(speed: float, use_megabytes: bool, *, always_mbps: bool = False, decimal_places: int = 1) -> str:
     """
     Format a speed value (in bytes/sec) into a human-readable string with dynamic units.
 
@@ -173,6 +173,8 @@ def format_speed(speed: float, use_megabytes: bool) -> str:
         speed: Speed value in bytes/sec.
         use_megabytes: If True, formats in byte-based units (Bps, KBps, MBps, GBps);
                        if False, formats in bit-based units (bps, Kbps, Mbps, Gbps).
+        always_mbps: If True, always show Mbps (or MB/s if use_megabytes) regardless of value.
+        decimal_places: Number of decimal places to show (0, 1, or 2).
 
     Returns:
         str: Formatted speed string (e.g., "1.2 Mbps", "500 KBps", "0 Kbps").
@@ -188,7 +190,6 @@ def format_speed(speed: float, use_megabytes: bool) -> str:
     """
     
     if not isinstance(speed, (int, float)):
-        # logger_instance.error("Invalid type for speed: %s. Must be int or float.", type(speed))
         raise TypeError(f"Speed must be a number (int or float), got {type(speed)}")
 
     # Ensure speed is non-negative
@@ -196,52 +197,63 @@ def format_speed(speed: float, use_megabytes: bool) -> str:
 
     # Handle speeds below the minimum display threshold
     if current_speed < UnitConstants.MINIMUM_DISPLAY_SPEED:
+        # Always show 0 Mbps/MBps if always_mbps is set
+        if always_mbps:
+            if use_megabytes:
+                return f"0 {UnitConstants.MBPS_LABEL}"
+            else:
+                return f"0 {UnitConstants.MBITS_LABEL}"
         return f"0 {UnitConstants.KBPS_LABEL}" if use_megabytes else f"0 {UnitConstants.KBITS_LABEL}"
 
     val: float
     unit: str
 
-    if use_megabytes: # Byte-based units (B/s, KB/s, MB/s, GB/s)
-        if current_speed >= UnitConstants.GIGA_DIVISOR: # Assuming GIGA_DIVISOR is 1024^3 for bytes
-            val = current_speed / UnitConstants.GIGA_DIVISOR
-            unit = UnitConstants.GBPS_LABEL # Should ideally be "GB/s"
-        elif current_speed >= UnitConstants.MEGA_DIVISOR: # Assuming MEGA_DIVISOR is 1024^2
+    if always_mbps:
+        if use_megabytes:
             val = current_speed / UnitConstants.MEGA_DIVISOR
-            unit = UnitConstants.MBPS_LABEL # Should be "MB/s"
-        elif current_speed >= UnitConstants.KILO_DIVISOR: # Assuming KILO_DIVISOR is 1024
-            val = current_speed / UnitConstants.KILO_DIVISOR
-            unit = UnitConstants.KBPS_LABEL # Should be "KB/s"
+            unit = UnitConstants.MBPS_LABEL
         else:
-            val = current_speed
-            unit = UnitConstants.BPS_LABEL # Should be "B/s"
-    else: # Bit-based units (bps, Kbps, Mbps, Gbps)
-        speed_bits = current_speed * UnitConstants.BITS_PER_BYTE
-        KILO_BITS_DIVISOR = 1000.0
-        MEGA_BITS_DIVISOR = 1000.0**2
-        GIGA_BITS_DIVISOR = 1000.0**3
-        
-        if speed_bits >= GIGA_BITS_DIVISOR:
-            val = speed_bits / GIGA_BITS_DIVISOR
-            unit = UnitConstants.GBITS_LABEL # e.g., "Gbps"
-        elif speed_bits >= MEGA_BITS_DIVISOR:
-            val = speed_bits / MEGA_BITS_DIVISOR
-            unit = UnitConstants.MBITS_LABEL # e.g., "Mbps"
-        elif speed_bits >= KILO_BITS_DIVISOR:
-            val = speed_bits / KILO_BITS_DIVISOR
-            unit = UnitConstants.KBITS_LABEL # e.g., "Kbps"
-        else:
-            val = speed_bits
-            unit = UnitConstants.BITS_LABEL   # e.g., "bps"
+            val = current_speed * UnitConstants.BITS_PER_BYTE / 1_000_000
+            unit = UnitConstants.MBITS_LABEL
+    else:
+        if use_megabytes: # Byte-based units (B/s, KB/s, MB/s, GB/s)
+            if current_speed >= UnitConstants.GIGA_DIVISOR:
+                val = current_speed / UnitConstants.GIGA_DIVISOR
+                unit = UnitConstants.GBPS_LABEL
+            elif current_speed >= UnitConstants.MEGA_DIVISOR:
+                val = current_speed / UnitConstants.MEGA_DIVISOR
+                unit = UnitConstants.MBPS_LABEL
+            elif current_speed >= UnitConstants.KILO_DIVISOR:
+                val = current_speed / UnitConstants.KILO_DIVISOR
+                unit = UnitConstants.KBPS_LABEL
+            else:
+                val = current_speed
+                unit = UnitConstants.BPS_LABEL
+        else: # Bit-based units (bps, Kbps, Mbps, Gbps)
+            speed_bits = current_speed * UnitConstants.BITS_PER_BYTE
+            KILO_BITS_DIVISOR = 1000.0
+            MEGA_BITS_DIVISOR = 1000.0**2
+            GIGA_BITS_DIVISOR = 1000.0**3
+            if speed_bits >= GIGA_BITS_DIVISOR:
+                val = speed_bits / GIGA_BITS_DIVISOR
+                unit = UnitConstants.GBITS_LABEL
+            elif speed_bits >= MEGA_BITS_DIVISOR:
+                val = speed_bits / MEGA_BITS_DIVISOR
+                unit = UnitConstants.MBITS_LABEL
+            elif speed_bits >= KILO_BITS_DIVISOR:
+                val = speed_bits / KILO_BITS_DIVISOR
+                unit = UnitConstants.KBITS_LABEL
+            else:
+                val = speed_bits
+                unit = UnitConstants.BITS_LABEL
 
     # Formatting the output value
-    # Generally, for base units (B/s, bps), no decimal. For others, one decimal place.
+    # For base units (B/s, bps), no decimal. For others, use decimal_places.
     if unit in (UnitConstants.BPS_LABEL, UnitConstants.BITS_LABEL):
         return f"{val:.0f} {unit}"
     else:
-        # For values like 999.99 KBps, rounding to .1f might show 1000.0 KBps.
-        # Consider if this behavior is desired or if it should roll over to MBps.
-        # The current logic is fine; it will show e.g. "999.9 KBps".
-        return f"{val:.1f} {unit}"
+        fmt = f"{{val:.{decimal_places}f}} {{unit}}"
+        return fmt.format(val=val, unit=unit)
 
 # --- NEW FUNCTION TO BE ADDED ---
 def format_data_size(data_bytes: int | float, precision: int = 2) -> Tuple[float, str]:

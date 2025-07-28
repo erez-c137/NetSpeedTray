@@ -43,7 +43,6 @@ class RenderConfig:
         high_speed_color: High speed color (hex).
         low_speed_color: Low speed color (hex).
     """
-    use_megabytes: bool
     color_coding: bool
     graph_enabled: bool
     high_speed_threshold: float
@@ -56,6 +55,11 @@ class RenderConfig:
     high_speed_color: str
     low_speed_color: str
     graph_opacity: float = field(default_factory=lambda: ConfigConstants.DEFAULT_GRAPH_OPACITY / 100.0)
+    # New display customization
+    speed_display_mode: str = ConfigConstants.DEFAULT_SPEED_DISPLAY_MODE
+    decimal_places: int = ConfigConstants.DEFAULT_DECIMAL_PLACES
+    text_alignment: str = ConfigConstants.DEFAULT_TEXT_ALIGNMENT
+    force_decimals: bool = False
 
     @classmethod
     def from_dict(cls, config: Dict[str, Any]) -> 'RenderConfig':
@@ -83,7 +87,6 @@ class RenderConfig:
                 weight = ConfigConstants.DEFAULT_FONT_WEIGHT
 
             return cls(
-                use_megabytes=config.get('use_megabytes', ConfigConstants.DEFAULT_USE_MEGABYTES),
                 color_coding=config.get('color_coding', ConfigConstants.DEFAULT_COLOR_CODING),
                 graph_enabled=config.get('graph_enabled', ConfigConstants.DEFAULT_GRAPH_ENABLED),
                 high_speed_threshold=float(config.get('high_speed_threshold', ConfigConstants.DEFAULT_HIGH_SPEED_THRESHOLD)),
@@ -95,7 +98,11 @@ class RenderConfig:
                 default_color=config.get('default_color', ConfigConstants.DEFAULT_COLOR),
                 high_speed_color=config.get('high_speed_color', ConfigConstants.DEFAULT_HIGH_SPEED_COLOR),
                 low_speed_color=config.get('low_speed_color', ConfigConstants.DEFAULT_LOW_SPEED_COLOR),
-                graph_opacity=max(0.0, min(1.0, opacity))
+                graph_opacity=max(0.0, min(1.0, opacity)),
+                speed_display_mode=config.get('speed_display_mode', ConfigConstants.DEFAULT_SPEED_DISPLAY_MODE),
+                decimal_places=int(config.get('decimal_places', ConfigConstants.DEFAULT_DECIMAL_PLACES)),
+                text_alignment=config.get('text_alignment', ConfigConstants.DEFAULT_TEXT_ALIGNMENT),
+                force_decimals=config.get('force_decimals', False)
             )
         except Exception as e:
             logger.error("Failed to create RenderConfig: %s", e)
@@ -328,38 +335,76 @@ class WidgetRenderer:
             top_y = (height - total_height) // 2 + ascent
             bottom_y = top_y + line_height
 
-            # Format speed values
-            upload_text = format_speed(upload, config.use_megabytes)
-            download_text = format_speed(download, config.use_megabytes)
-            up_num, up_unit = upload_text.split(" ", 1) if " " in upload_text else (upload_text, "")
-            down_num, down_unit = download_text.split(" ", 1) if " " in download_text else (download_text, "")
+            # Determine formatting options
+            always_mbps = config.speed_display_mode == "always_mbps"
+            decimal_places = max(0, min(2, config.decimal_places))
+            force_decimals = config.force_decimals
+            align_map = {
+                "left": Qt.AlignmentFlag.AlignLeft,
+                "center": Qt.AlignmentFlag.AlignHCenter,
+                "right": Qt.AlignmentFlag.AlignRight
+            }
+            alignment = align_map.get(config.text_alignment, Qt.AlignmentFlag.AlignHCenter)
 
-            # Calculate widths for horizontal centering
+            # 1. Get the initial formatted strings and split them
+            upload_full_text = format_speed(upload, False, always_mbps=always_mbps, decimal_places=decimal_places)
+            download_full_text = format_speed(download, False, always_mbps=always_mbps, decimal_places=decimal_places)
+
+            up_val_str, up_unit = upload_full_text.split(" ", 1)
+            down_val_str, down_unit = download_full_text.split(" ", 1)
+            
+            # 2. Convert the number part to float for comparison
+            up_val_num = float(up_val_str)
+            down_val_num = float(down_val_str)
+            
+            # 3. Apply the 'force_decimals' logic to get the final number string
+            if force_decimals:
+                up_num_final = f"{up_val_num:.{decimal_places}f}"
+                down_num_final = f"{down_val_num:.{decimal_places}f}"
+            else:
+                # Let Python simplify if no decimal part (e.g., 25.0 -> "25")
+                up_num_final = f"{up_val_num:g}"
+                if up_val_num == 0.0: up_num_final = "0"
+
+                down_num_final = f"{down_val_num:g}"
+                if down_val_num == 0.0: down_num_final = "0"
+            
+            # Calculate widths for horizontal centering using the final strings
             arrow_width = self.metrics.horizontalAdvance(RendererConstants.UPLOAD_ARROW)
-            max_num_width = max(self.metrics.horizontalAdvance(up_num), self.metrics.horizontalAdvance(down_num))
+            max_num_width = max(self.metrics.horizontalAdvance(up_num_final), self.metrics.horizontalAdvance(down_num_final))
             max_unit_width = max(self.metrics.horizontalAdvance(up_unit), self.metrics.horizontalAdvance(down_unit))
 
             # Calculate total content width
             content_width = arrow_width + RendererConstants.ARROW_NUMBER_GAP + max_num_width + RendererConstants.VALUE_UNIT_GAP + max_unit_width
 
-            # Calculate left margin to center the content horizontally
-            margin = max((width - content_width) // 2, RendererConstants.TEXT_MARGIN)
+            # Calculate left margin or alignment
+            if alignment == Qt.AlignmentFlag.AlignLeft:
+                margin = RendererConstants.TEXT_MARGIN
+            elif alignment == Qt.AlignmentFlag.AlignRight:
+                margin = max(width - content_width - RendererConstants.TEXT_MARGIN, RendererConstants.TEXT_MARGIN)
+            else:  # Center
+                margin = max((width - content_width) // 2, RendererConstants.TEXT_MARGIN)
 
-            # Calculate positions for text elements
             number_x = margin + arrow_width + RendererConstants.ARROW_NUMBER_GAP
             unit_x = number_x + max_num_width + RendererConstants.VALUE_UNIT_GAP
 
             painter.setPen(self._get_speed_color(upload, config) if config.color_coding else self.default_color)
             painter.drawText(margin, top_y, RendererConstants.UPLOAD_ARROW)
-            painter.drawText(number_x, top_y, up_num)
+            painter.drawText(number_x, top_y, up_num_final)
             painter.drawText(unit_x, top_y, up_unit)
 
             painter.setPen(self._get_speed_color(download, config) if config.color_coding else self.default_color)
             painter.drawText(margin, bottom_y, RendererConstants.DOWNLOAD_ARROW)
-            painter.drawText(number_x, bottom_y, down_num)
+            painter.drawText(number_x, bottom_y, down_num_final)
             painter.drawText(unit_x, bottom_y, down_unit)
 
-            self._last_text_rect = QRect(margin, top_y - ascent, unit_x + self.metrics.horizontalAdvance(up_unit), total_height)
+            # Use the final width for the bounding rect calculation
+            final_up_width = self.metrics.horizontalAdvance(up_num_final) + RendererConstants.VALUE_UNIT_GAP + self.metrics.horizontalAdvance(up_unit)
+            final_down_width = self.metrics.horizontalAdvance(down_num_final) + RendererConstants.VALUE_UNIT_GAP + self.metrics.horizontalAdvance(down_unit)
+            max_line_width = margin + arrow_width + RendererConstants.ARROW_NUMBER_GAP + max(final_up_width, final_down_width)
+            self.logger.info(f"[DEBUG] Creating text rect with: x={margin}, y={int(top_y - ascent)}, w={int(max_line_width)}, h={int(total_height)}")
+            
+            self._last_text_rect = QRect(margin, int(top_y - ascent), int(max_line_width), int(total_height))
         except Exception as e:
             self.logger.error("Failed to draw speeds: %s", e)
             self._last_text_rect = QRect()
@@ -381,83 +426,71 @@ class WidgetRenderer:
 
         # Apply color coding if enabled
         divisor = UnitConstants.MEGA_DIVISOR  # 1,000,000 for MBps or Mbps
-        factor = 1 if config.use_megabytes else UnitConstants.BITS_PER_BYTE  # 1 for MBps, 8 for Mbps
+        factor = UnitConstants.BITS_PER_BYTE
         high = config.high_speed_threshold * divisor / factor
         low = config.low_speed_threshold * divisor / factor
         return self.high_color if speed >= high else self.low_color if speed >= low else self.default_color
 
     def draw_mini_graph(self, painter: QPainter, width: int, height: int, config: RenderConfig) -> None:
         """
-        Draws mini graph of speed history.
-
-        Args:
-            painter: The QPainter object used for rendering.
-            width: Widget width in pixels.
-            height: Widget height in pixels.
-            config: RenderConfig object with rendering settings.
+        Draws a mini graph of speed history behind the text.
         """
         if len(self.speed_history) < RendererConstants.MIN_GRAPH_POINTS:
             return
 
         try:
-            margin = RendererConstants.GRAPH_MARGIN
-            graph_rect = QRect(margin, margin, width - 2 * margin, height - 2 * margin)
+            text_rect = self.get_last_text_rect()
+            if not text_rect.isValid():
+                self.logger.debug("Cannot draw mini-graph: text rect is invalid.")
+                return
+
+            vertical_padding = 10
+            graph_rect = text_rect.adjusted(0, -vertical_padding, 0, vertical_padding)
             if graph_rect.width() <= 0 or graph_rect.height() <= 0:
                 return
 
             current_hash = hash(tuple((data.upload, data.download) for data in self.speed_history))
             if self._last_widget_size != (width, height) or self._last_history_hash != current_hash:
-                # Calculate the actual maximum speed from the data
-                actual_max_speed = max(max(data.upload for data in self.speed_history),
-                                      max(data.download for data in self.speed_history), 1.0)
+                num_points = len(self.speed_history)
+                if num_points < 2: return # Should be caught by the first check, but for safety
 
-                # Set a minimum threshold for the Y-axis scale (defined in RendererConstants.MIN_Y_SCALE)
-                # Default is 100 Kbps = 12.5 KB/s = 12500 bytes/sec
-                min_y_scale = RendererConstants.MIN_Y_SCALE
-
-                # Use the larger of actual max speed or minimum scale for the Y-axis
-                max_speed = max(actual_max_speed, min_y_scale)
-
-                # Set a minimum threshold below which speeds will be treated as zero (defined in RendererConstants.MIN_SPEED_THRESHOLD)
-                # Now using the same threshold as the activity display (10,000 bytes/sec = 80 Kbps)
+                actual_max_speed = max(max(d.upload for d in self.speed_history), max(d.download for d in self.speed_history), 1.0)
+                max_speed = max(actual_max_speed, RendererConstants.MIN_Y_SCALE)
                 min_speed_threshold = RendererConstants.MIN_SPEED_THRESHOLD
+                step_x = graph_rect.width() / (num_points - 1)
 
-                step_x = graph_rect.width() / (len(self.speed_history) - 1)
                 self._cached_upload_points = [
-                    QPointF(margin + i * step_x,
-                            # If speed is below threshold, draw at bottom (flat line)
+                    QPointF(graph_rect.left() + i * step_x,
                             graph_rect.bottom() if data.upload < min_speed_threshold else
-                            # Otherwise, scale normally
                             graph_rect.bottom() - min(1.0, data.upload / max_speed) * graph_rect.height())
                     for i, data in enumerate(self.speed_history)
                 ]
                 self._cached_download_points = [
-                    QPointF(margin + i * step_x,
-                            # If speed is below threshold, draw at bottom (flat line)
+                    QPointF(graph_rect.left() + i * step_x,
                             graph_rect.bottom() if data.download < min_speed_threshold else
-                            # Otherwise, scale normally
                             graph_rect.bottom() - min(1.0, data.download / max_speed) * graph_rect.height())
                     for i, data in enumerate(self.speed_history)
                 ]
+                
                 self._last_widget_size = (width, height)
                 self._last_history_hash = current_hash
-                self.logger.debug("Recalculated graph points.")
 
+            # The painter expects the list of points itself, not the unpacked list.
             painter.save()
             painter.setOpacity(config.graph_opacity)
-            # Use the same colors as the main graph
             upload_color = QColor(GraphConstants.UPLOAD_LINE_COLOR)
             pen = QPen(upload_color, RendererConstants.LINE_WIDTH, cap=Qt.PenCapStyle.RoundCap, join=Qt.PenJoinStyle.RoundJoin)
             painter.setPen(pen)
-            painter.drawPolyline(*self._cached_upload_points)
-            # Use the same colors as the main graph
+            painter.drawPolyline(self._cached_upload_points)
+            
             download_color = QColor(GraphConstants.DOWNLOAD_LINE_COLOR)
             pen.setColor(download_color)
             painter.setPen(pen)
-            painter.drawPolyline(*self._cached_download_points)
+            painter.drawPolyline(self._cached_download_points)
             painter.restore()
+
         except Exception as e:
-            self.logger.error("Failed to draw mini graph: %s", e)
+            self.logger.error("Failed to draw mini graph: %s", e, exc_info=True)
 
     def update_config(self, config_dict: Dict[str, Any]) -> None:
         """
@@ -480,12 +513,12 @@ class WidgetRenderer:
         except Exception as e:
             self.logger.error("Failed to update config: %s", e)
 
-    def update_speed_history(self, speed_data: AggregatedSpeedData) -> None:
+    def update_speed_history(self, speed_data: CoreSpeedData) -> None:
         """
         Updates graph history unless paused.
 
         Args:
-            speed_data: AggregatedSpeedData object to add to history.
+            speed_data: CoreSpeedData object to add to history.
         """
         if not self.paused:
             self.speed_history.append(speed_data)

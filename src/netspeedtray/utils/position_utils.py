@@ -164,11 +164,16 @@ class PositionManager:
 
     def _apply_saved_position(self) -> bool:
         """
-        Attempts to retrieve, validate, and apply a saved position from configuration.
-
-        Returns:
-            bool: True if a valid saved position was successfully applied, False otherwise.
+        Attempts to retrieve, validate, and apply a saved position from configuration,
+        but ONLY if 'free_move' mode is enabled.
         """
+        # 1. Check the 'free_move' flag first. If it's disabled, there is no
+        #    valid saved position to apply, regardless of what's in the file.
+        if not self._state.config.get('free_move', False):
+            logger.debug("Skipping saved position because 'free_move' is disabled.")
+            return False
+
+        # 2. If free_move is enabled, proceed with the original logic.
         saved_x = self._state.config.get('position_x')
         saved_y = self._state.config.get('position_y')
 
@@ -465,29 +470,18 @@ class ScreenUtils:
     @staticmethod
     def is_position_valid(x: int, y: int, widget_size: Tuple[int, int], screen: QScreen) -> bool:
         """
-        Checks if a given position (logical coordinates) is fully within the
-        available geometry of the specified screen.
-
-        Args:
-            x: X-coordinate to check (logical pixels).
-            y: Y-coordinate to check (logical pixels).
-            widget_size: Tuple (width, height) of the widget (logical pixels).
-            screen: The QScreen object representing the target screen.
-
-        Returns:
-            bool: True if the entire widget at the given position fits within
-                  the screen's available geometry, False otherwise.
+        Checks if a given position is at least partially visible on the specified screen.
+        Uses the full screen geometry to allow for free placement, including over taskbars.
         """
         try:
-            screen_rect: QRect = screen.availableGeometry()
+            # Use the full screen geometry, not just the available work area.
+            screen_rect: QRect = screen.geometry()
             widget_width, widget_height = widget_size
+            widget_rect = QRect(x, y, widget_width, widget_height)
 
-            valid = (x >= screen_rect.left() and
-                     y >= screen_rect.top() and
-                     x + widget_width <= screen_rect.right() + 1 and
-                     y + widget_height <= screen_rect.bottom() + 1)
+            # Check if the widget's rectangle intersects with the screen's rectangle.
+            return screen_rect.intersects(widget_rect)
 
-            return valid
         except Exception as e:
             logger.error("Error checking position validity (%s,%s) on screen '%s': %s", x, y, screen.name(), e, exc_info=True)
             return False
