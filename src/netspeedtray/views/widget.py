@@ -538,7 +538,7 @@ class NetworkSpeedWidget(QWidget):
 
     def _resize_widget_for_font(self) -> None:
         """
-        Calculates and sets the widget's fixed dimensions based on current font metrics.
+        Calculates and sets the widget's fixed dimensions based on current font metrics and taskbar orientation.
 
         Raises:
             RuntimeError: If FontMetrics or screen data is unavailable.
@@ -558,6 +558,14 @@ class NetworkSpeedWidget(QWidget):
                 dpi_scale = screen.devicePixelRatio()
                 self.logger.debug(f"DPI scaling factor: {dpi_scale}")
 
+            # Try to get taskbar info and orientation
+            taskbar_info = None
+            edge = None
+            if hasattr(self, 'position_manager') and self.position_manager and hasattr(self.position_manager, '_state'):
+                taskbar_info = getattr(self.position_manager._state, 'taskbar_info', None)
+                if taskbar_info:
+                    edge = taskbar_info.get_edge_position()
+
             precision = self.config.get("speed_precision", 2)
             max_number_str = f"{999.99:.{precision}f}"
 
@@ -572,6 +580,7 @@ class NetworkSpeedWidget(QWidget):
             possible_units = [" Kbps", " Mbps", " Gbps", " KB/s", " MB/s", " GB/s"]
             max_unit_width = max(self.metrics.horizontalAdvance(unit) for unit in possible_units)
 
+            # Default: horizontal taskbar sizing
             calculated_width = (
                 margin +
                 arrow_width +
@@ -582,17 +591,27 @@ class NetworkSpeedWidget(QWidget):
                 margin
             )
             calculated_width = math.ceil(calculated_width)
-
-            self.logger.debug(
-                f"Width calc: margin({margin}) + arrow({arrow_width}) + "
-                f"gap1({arrow_num_gap}) + number({max_number_width}) + "
-                f"gap2({value_unit_gap}) + unit({max_unit_width}) + margin({margin}) "
-                f"= {calculated_width}"
-            )
-
             logical_taskbar_height = self.taskbar_height
             v_padding = self.config.get("vertical_padding", 0)
             calculated_height = max(logical_taskbar_height + v_padding, 10)
+
+            # If vertical taskbar, swap width/height logic
+            if edge in (TaskbarEdge.LEFT, TaskbarEdge.RIGHT) and taskbar_info:
+                # Use the taskbar's width (in logical pixels)
+                tb_left, tb_top, tb_right, tb_bottom = taskbar_info.rect
+                tb_width = int(round((tb_right - tb_left) / (taskbar_info.dpi_scale if taskbar_info.dpi_scale > 0 else 1.0)))
+
+                # Height: based on font metrics, graph, and padding
+                # Estimate text height for 2 lines
+                line_gap = getattr(LayoutConstants, 'LINE_GAP', 2)
+                single_line_height = self.metrics.height()
+                text_height = 2 * single_line_height + line_gap
+                renderer_padding = getattr(RendererConstants, 'TEXT_MARGIN', 5)
+                content_height = text_height + 2 * renderer_padding
+                v_padding = int(self.config.get("vertical_padding", 4) * dpi_scale)
+                calculated_height = content_height + v_padding
+                calculated_width = tb_width
+                self.logger.debug(f"Vertical taskbar: width set to {tb_width}, height set to {calculated_height}")
 
             self.setFixedSize(int(calculated_width), int(calculated_height))
             self.logger.info(f"Widget resized to: {calculated_width}x{calculated_height}px")

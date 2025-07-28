@@ -594,7 +594,7 @@ class PositionCalculator:
     def constrain_drag_position(self, desired_pos: QPoint, taskbar_info: TaskbarInfo, widget_size_q: QSize) -> Optional[QPoint]:
         """
         Constrains a desired widget position (during dragging) to allow movement only
-        left and right, keeping the y-coordinate centered on the taskbar.
+        along the taskbar edge: left/right for horizontal, up/down for vertical taskbars.
 
         Args:
             desired_pos: The desired new top-left position of the widget (logical pixels).
@@ -614,21 +614,31 @@ class PositionCalculator:
             widget_height = widget_size_q.height()
             widget_size_tuple = (widget_width, widget_height)
 
-            # Calculate the default position to get the centered y-coordinate
+            edge = taskbar_info.get_edge_position() if taskbar_info else None
             default_pos = self.calculate_position(taskbar_info, widget_size_tuple)
-            fixed_y = default_pos.y
 
-            # Constrain x-coordinate to stay within screen geometry
-            screen_rect = screen.geometry()
-            min_x = screen_rect.left()
-            max_x = screen_rect.right() - widget_width + 1
-            constrained_x = max(min_x, min(desired_pos.x(), max_x))
-
-            # Use validated position to ensure compliance with screen bounds
-            validated_pos = ScreenUtils.validate_position(
-                constrained_x, fixed_y, widget_size_tuple, screen
-            )
-            constrained_point = QPoint(validated_pos.x, validated_pos.y)
+            if edge in (TaskbarEdge.LEFT, TaskbarEdge.RIGHT):
+                # Allow vertical drag, keep x fixed
+                fixed_x = default_pos.x
+                screen_rect = screen.geometry()
+                min_y = screen_rect.top()
+                max_y = screen_rect.bottom() - widget_height + 1
+                constrained_y = max(min_y, min(desired_pos.y(), max_y))
+                validated_pos = ScreenUtils.validate_position(
+                    fixed_x, constrained_y, widget_size_tuple, screen
+                )
+                constrained_point = QPoint(validated_pos.x, validated_pos.y)
+            else:
+                # Default: horizontal drag, keep y fixed
+                fixed_y = default_pos.y
+                screen_rect = screen.geometry()
+                min_x = screen_rect.left()
+                max_x = screen_rect.right() - widget_width + 1
+                constrained_x = max(min_x, min(desired_pos.x(), max_x))
+                validated_pos = ScreenUtils.validate_position(
+                    constrained_x, fixed_y, widget_size_tuple, screen
+                )
+                constrained_point = QPoint(validated_pos.x, validated_pos.y)
 
             current_time = time.monotonic()
             if current_time - self._last_drag_log_time >= self._drag_log_interval:
