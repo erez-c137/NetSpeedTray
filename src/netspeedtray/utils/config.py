@@ -171,8 +171,8 @@ class ConfigManager:
 
         # --- Apply Validations ---
         # Boolean toggles
-        for key in ["color_coding", "graph_enabled", "smart_threshold", "free_move", 
-                    "force_decimals", "dark_mode", "dynamic_update_enabled", "paused"]:
+        for key in ["color_coding", "graph_enabled", "dynamic_update_enabled", "free_move", 
+                    "force_decimals", "dark_mode", "paused", "start_with_windows"]:
             validated[key] = self._validate_boolean(key, validated[key], ConfigConstants.DEFAULT_CONFIG[key])
 
         # Numeric values with ranges

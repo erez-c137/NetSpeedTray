@@ -244,10 +244,10 @@ class SettingsDialog(QDialog):
             options_layout.setVerticalSpacing(10)
             options_layout.setHorizontalSpacing(8)
 
-            st_label = QLabel(self.i18n.SMART_THRESHOLD_LABEL)
-            self.smart_threshold = Win11Toggle(label_text="") # No internal label
-            options_layout.addWidget(st_label, 0, 0, Qt.AlignmentFlag.AlignVCenter)
-            options_layout.addWidget(self.smart_threshold, 0, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            du_label = QLabel(self.i18n.DYNAMIC_UPDATE_RATE_LABEL)
+            self.dynamic_update_rate = Win11Toggle(label_text="")
+            options_layout.addWidget(du_label, 0, 0, Qt.AlignmentFlag.AlignVCenter)
+            options_layout.addWidget(self.dynamic_update_rate, 0, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
             sww_label = QLabel(self.i18n.START_WITH_WINDOWS_LABEL)
             self.start_with_windows = Win11Toggle(label_text="") # No internal label
@@ -767,7 +767,7 @@ class SettingsDialog(QDialog):
     def _connect_general_signals(self) -> None:
         self.update_rate.valueChanged.connect(lambda v: self.update_rate.setValueText(self.rate_to_text(v)))
         self.update_rate.valueChanged.connect(self._schedule_settings_update)
-        self.smart_threshold.toggled.connect(self._schedule_settings_update)
+        self.dynamic_update_rate.toggled.connect(self._schedule_settings_update)
         self.start_with_windows.toggled.connect(self._schedule_settings_update) # Actual toggle on accept
         self.font_size.valueChanged.connect(lambda v: self.font_size.setValueText(str(v)))
         self.font_size.valueChanged.connect(self._schedule_settings_update)
@@ -832,9 +832,9 @@ class SettingsDialog(QDialog):
         self.update_rate.setValue(max(0, update_rate_slider_val)) 
         self.update_rate.setValueText(self.rate_to_text(self.update_rate.value()))
 
-        smart_thresh_raw = self.config.get("smart_threshold")
-        smart_thresh_config = ConfigConstants.DEFAULT_SMART_THRESHOLD if smart_thresh_raw is None else bool(smart_thresh_raw)
-        self.smart_threshold.setChecked(smart_thresh_config)
+        dynamic_update_raw = self.config.get("dynamic_update_enabled")
+        dynamic_update_config = ConfigConstants.DEFAULT_DYNAMIC_UPDATE_ENABLED if dynamic_update_raw is None else bool(dynamic_update_raw)
+        self.dynamic_update_rate.setChecked(dynamic_update_config)
         
         self.start_with_windows.setChecked(self.startup_enabled_initial_state)
         self.free_move.setChecked(self.config.get("free_move", False))
@@ -1201,7 +1201,7 @@ class SettingsDialog(QDialog):
             settings["font_size"] = self.font_size.value()
             settings["font_family"] = self.font_family_label.text()
             settings["font_weight"] = self.font_weight.value()
-            settings["smart_threshold"] = self.smart_threshold.isChecked()
+            settings["dynamic_update_enabled"] = self.dynamic_update_rate.isChecked()
             settings["free_move"] = self.free_move.isChecked()
             settings["start_with_windows"] = self.start_with_windows.isChecked() if hasattr(self, 'start_with_windows') else self.startup_enabled_initial_state
             settings["default_color"] = self._get_color_from_button(self.default_color_button, ConfigConstants.DEFAULT_COLOR)
