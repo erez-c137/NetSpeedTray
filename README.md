@@ -41,9 +41,9 @@ A lightweight, highly customizable system tray application that monitors and dis
 
 ## ☕ Support My Work
 
-Let’s be real: Windows should have had this feature built-in, but here we are! Instead of waiting for Microsoft to notice, I brewed up a lightweight, bloat-free solution that fits right in with Windows 11.
+Let’s be real: Windows should have had this feature built-in. Instead of waiting, I brewed up a lightweight, bloat-free solution that feels like it belongs.
 
-If you enjoy NetSpeedTray and it makes your workflow a little better, please consider buying me a coffee. Your support helps me dedicate more time to improving the app and keeping it 100% free and open-source.
+If you enjoy NetSpeedTray and it makes your workflow a little better, please consider supporting its development. Your contribution directly helps me dedicate more time to the project and keep it a high-quality tool for everyone.
 
 <p align="center">
   <a href="https://github.com/sponsors/erez-c137">
@@ -58,6 +58,15 @@ If you enjoy NetSpeedTray and it makes your workflow a little better, please con
     <img src="https://img.shields.io/badge/Buy%20Me%20a%20Coffee-Support%20Me-yellow?style=for-the-badge&logo=buy-me-a-coffee">
   </a>
 </p>
+
+### Why Support NetSpeedTray?
+
+- **🚀 Fund New Features:** Your support helps me build the features you want to see next.
+- **🔧 Ensure Long-Term Maintenance:** Guarantees the app stays compatible with future Windows updates.
+- **🚫 Keep it 100% Free & Ad-Free:** NetSpeedTray will always be free, without ads, tracking, or "pro" versions.
+- **🤖 Fuel Development:** Contributions help cover the costs of development tools and services.
+
+Every little bit helps and is deeply appreciated. If you can’t contribute financially, starring the repo or sharing the project is just as awesome. Thank you! ❤️```
 
 ---
 
