@@ -4,6 +4,41 @@ CHANGELOG.md
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.5-Beta2] - July 29, 2025
+
+This release introduces powerful new customization features for the taskbar widget and resolves a series of critical bugs that were discovered following the major refactor in Beta1.
+
+#### Added
+
+- **Free Move Feature:**
+
+  - Introduced the **Free Move** feature, allowing users to unlock the widget from the taskbar and place it anywhere on the screen.
+  - The widget's position is now saved when Free Move is enabled and it automatically and reliably snaps back to its default location when disabled.
+
+- **Speed Units Customization:**
+  - Added a new **Speed Units** section to the settings for granular control over the text display.
+  - **Speed Display Mode:** Choose between 'Auto' scaling (bps/Kbps/Mbps) and 'Always Mbps'.
+  - **Decimal Places:** Set the precision of the speed values (0, 1, or 2).
+  - **Text Alignment:** Align the speed text to the left, center, or right of the widget.
+  - **Force Decimals:** An option to always show decimal points (e.g., '5.0' or '5.00' instead of '5').
+
+#### Changed
+
+- **Speed Unit Logic:** The old 'Use MB/s' toggle has been removed and replaced by the more flexible and powerful Speed Display Mode.
+- **Configuration Management:** Refactored the `ConfigManager` to be more robust and declarative, preventing future issues with unsaved settings.
+- **Data Flow:** Streamlined the data pipeline between the widget and the renderer to prevent data corruption and improve stability.
+
+#### Fixed
+
+- **Main Graph Stats:** Improved the accuracy of the main graph's status bar; statistics for the 'All' timeline are now calculated correctly.
+- **Mini-Graph Rendering:** Fixed a critical bug where the **Mini-Graph would not render** on the widget. This was caused by a series of silent failures, including a `NameError`, a data corruption issue in the renderer's data flow, and an incorrect drawing call.
+- **State Persistence:**
+  - Resolved an issue where the **'toggle states were not being saved** across application restarts.
+  - Fixed a state management bug that required clicking 'Save' twice to disable Free Move; the widget now snaps back instantly.
+- **Settings Not Saving:** Corrected a validation issue that prevented several settings (`force_decimals`, `start_with_windows`, etc.) from being saved to the configuration file.
+
+---
+
 ## [1.0.5-Beta1] - July 27, 2025
 
 #### Major Overhaul
