@@ -151,10 +151,12 @@ class PositionManager:
                 logger.warning("Cannot calculate position: Invalid widget size %s.", widget_size)
                 return None
 
+            # Pass the config from the state into the calculator method.
             screen_pos: ScreenPosition = self._calculator.calculate_position(
                 self._state.taskbar_info,
                 widget_size,
-                self._state.font_metrics  # Pass font metrics for text height calculation
+                self._state.config,  # Pass the config dictionary
+                self._state.font_metrics
             )
             return QPoint(screen_pos.x, screen_pos.y)
 
@@ -502,22 +504,8 @@ class PositionCalculator:
         self._drag_log_interval: float = getattr(PositionConstants, 'DRAG_LOG_INTERVAL_SECONDS', 1.0)
         logger.debug("PositionCalculator initialized.")
 
-    def calculate_position(self, taskbar_info: TaskbarInfo, widget_size: Tuple[int, int], font_metrics: Optional[QFontMetrics] = None) -> ScreenPosition:
-        """
-        Calculates the target position for the widget relative to the taskbar/tray.
-
-        Positions the widget so that the rendered text's vertical center aligns with the
-        taskbar's vertical center, mimicking the Windows date and time placement.
-
-        Args:
-            taskbar_info: Information about the target taskbar (rect, edge, screen, DPI).
-            widget_size: Tuple (width, height) of the widget in logical pixels.
-            font_metrics: QFontMetrics for calculating the rendered text height (optional).
-
-        Returns:
-            ScreenPosition: The calculated optimal position in logical pixels. Returns
-                            a safe fallback position if calculation fails.
-        """
+    def calculate_position(self, taskbar_info: TaskbarInfo, widget_size: Tuple[int, int], config: Dict[str, Any], font_metrics: Optional[QFontMetrics] = None) -> ScreenPosition:
+        """Calculates the target position for the widget relative to the taskbar/tray."""
         try:
             edge = taskbar_info.get_edge_position()
             tray_rect_phys = taskbar_info.get_tray_rect()
@@ -531,7 +519,6 @@ class PositionCalculator:
             dpi_scale = taskbar_info.dpi_scale if taskbar_info.dpi_scale > 0 else 1.0
             widget_width, widget_height = widget_size
 
-            # Convert physical taskbar rect to logical coordinates
             tb_left_log = taskbar_rect_phys[0] / dpi_scale
             tb_top_log = taskbar_rect_phys[1] / dpi_scale
             tb_right_log = taskbar_rect_phys[2] / dpi_scale
@@ -541,17 +528,13 @@ class PositionCalculator:
 
             tray_left_log = tray_rect_phys[0] / dpi_scale if tray_rect_phys else None
             tray_top_log = tray_rect_phys[1] / dpi_scale if tray_rect_phys else None
+            
+            offset = config.get('tray_offset_x', PositionConstants.DEFAULT_PADDING)
 
-            padding = PositionConstants.DEFAULT_PADDING
-            fallback_padding = PositionConstants.FALLBACK_PADDING
-
-            # Estimate text height for vertical alignment
-            text_height = 40  # Default for 2 lines
+            text_height = 40
             if font_metrics:
                 try:
-                    line_gap = getattr(LayoutConstants, 'LINE_GAP', 2)
-                    single_line_height = font_metrics.height()
-                    text_height = 2 * single_line_height + line_gap
+                    text_height = 2 * font_metrics.height() + getattr(LayoutConstants, 'LINE_GAP', 2)
                 except Exception as e:
                     logger.debug("Error calculating text height: %s", e)
 
@@ -559,18 +542,14 @@ class PositionCalculator:
             content_height = text_height + 2 * renderer_padding
 
             if edge in (TaskbarEdge.BOTTOM, TaskbarEdge.TOP):
-                # Align text center with taskbar center
                 tb_center_y = tb_top_log + tb_height_log / 2
                 text_center_y = renderer_padding + text_height / 2
                 y = round(tb_center_y - text_center_y)
-                # Position to the left of tray or taskbar
-                x = round((tray_left_log if tray_left_log is not None else tb_right_log) - widget_width - padding)
+                x = round((tray_left_log if tray_left_log is not None else tb_right_log) - widget_width - offset)
             elif edge in (TaskbarEdge.LEFT, TaskbarEdge.RIGHT):
-                # Center horizontally
                 x = round(tb_left_log + (tb_width_log - widget_width) / 2)
-                # Align text center with tray or taskbar bottom
                 boundary_y = tray_top_log if tray_top_log is not None else tb_bottom_log
-                tb_center_y = boundary_y - padding - content_height / 2
+                tb_center_y = boundary_y - offset - content_height / 2
                 text_center_y = renderer_padding + text_height / 2
                 y = round(tb_center_y - text_center_y)
             else:
@@ -578,25 +557,17 @@ class PositionCalculator:
                 return self._get_safe_fallback_position(widget_size)
 
             validated_pos = ScreenUtils.validate_position(x, y, widget_size, screen)
-            logger.debug("Calculated position: (%s, %s) for edge %s", validated_pos.x, validated_pos.y, edge)
+            logger.debug("Calculated position: (%s, %s) for edge %s with offset %d", validated_pos.x, validated_pos.y, edge, offset)
             return validated_pos
 
         except Exception as e:
             logger.error("Error calculating position: %s", e, exc_info=True)
             return self._get_safe_fallback_position(widget_size)
 
-    def constrain_drag_position(self, desired_pos: QPoint, taskbar_info: TaskbarInfo, widget_size_q: QSize) -> Optional[QPoint]:
+    def constrain_drag_position(self, desired_pos: QPoint, taskbar_info: TaskbarInfo, widget_size_q: QSize, config: Dict[str, Any]) -> Optional[QPoint]:
         """
         Constrains a desired widget position (during dragging) to allow movement only
-        along the taskbar edge: left/right for horizontal, up/down for vertical taskbars.
-
-        Args:
-            desired_pos: The desired new top-left position of the widget (logical pixels).
-            taskbar_info: Information about the taskbar (used for screen and position info).
-            widget_size_q: The size of the widget as QSize (logical pixels).
-
-        Returns:
-            Optional[QPoint]: The constrained QPoint position (logical pixels), or None if constraints fail.
+        along the taskbar edge.
         """
         try:
             screen = taskbar_info.get_screen() or QApplication.primaryScreen()
@@ -609,29 +580,24 @@ class PositionCalculator:
             widget_size_tuple = (widget_width, widget_height)
 
             edge = taskbar_info.get_edge_position() if taskbar_info else None
-            default_pos = self.calculate_position(taskbar_info, widget_size_tuple)
+            # --- FIX 2: Pass the 'config' dictionary into the call ---
+            default_pos = self.calculate_position(taskbar_info, widget_size_tuple, config)
 
             if edge in (TaskbarEdge.LEFT, TaskbarEdge.RIGHT):
-                # Allow vertical drag, keep x fixed
                 fixed_x = default_pos.x
                 screen_rect = screen.geometry()
                 min_y = screen_rect.top()
                 max_y = screen_rect.bottom() - widget_height + 1
                 constrained_y = max(min_y, min(desired_pos.y(), max_y))
-                validated_pos = ScreenUtils.validate_position(
-                    fixed_x, constrained_y, widget_size_tuple, screen
-                )
+                validated_pos = ScreenUtils.validate_position(fixed_x, constrained_y, widget_size_tuple, screen)
                 constrained_point = QPoint(validated_pos.x, validated_pos.y)
             else:
-                # Default: horizontal drag, keep y fixed
                 fixed_y = default_pos.y
                 screen_rect = screen.geometry()
                 min_x = screen_rect.left()
                 max_x = screen_rect.right() - widget_width + 1
                 constrained_x = max(min_x, min(desired_pos.x(), max_x))
-                validated_pos = ScreenUtils.validate_position(
-                    constrained_x, fixed_y, widget_size_tuple, screen
-                )
+                validated_pos = ScreenUtils.validate_position(constrained_x, fixed_y, widget_size_tuple, screen)
                 constrained_point = QPoint(validated_pos.x, validated_pos.y)
 
             current_time = time.monotonic()

@@ -99,6 +99,7 @@ class NetworkSpeedWidget(QWidget):
         self.is_paused: bool = False
         self.visibility_timer = QTimer(self)
         self.position_timer = QTimer(self)
+        self._tray_watcher_timer = QTimer(self)
         self._context_menu_shown: bool = False
 
         # Ensure the attribute is initialized
@@ -144,6 +145,12 @@ class NetworkSpeedWidget(QWidget):
             # Step 9: Configure timers
             self.visibility_timer.timeout.connect(self._check_visibility)
             self.visibility_timer.start(TimerConstants.VISIBILITY_CHECK_INTERVAL_MS)
+
+            self._tray_watcher_timer.timeout.connect(self._check_and_update_position)
+            # Check every 2 seconds - a good balance between responsiveness and performance.
+            self._tray_watcher_timer.start(2000)
+            self.logger.debug("Tray watcher timer started.")
+
             self.logger.debug(f"Visibility timer started (interval: {TimerConstants.VISIBILITY_CHECK_INTERVAL_MS} ms)")
 
             self.position_timer.timeout.connect(self._check_position)
@@ -244,6 +251,16 @@ class NetworkSpeedWidget(QWidget):
         except Exception as e:
             self.logger.error("Failed to set initial position: %s", e, exc_info=True)
             raise RuntimeError("Initial position setup failed") from e
+
+    def _check_and_update_position(self) -> None:
+        """Periodically checks and updates the widget's position if not in Free Move mode."""
+        if self.config.get("free_move", False) or not self.isVisible() or self._dragging:
+            return
+
+        # Simply tell the position manager to re-evaluate the position.
+        # It will use the latest tray geometry and the user's stored offset.
+        if self.position_manager:
+            self.position_manager.update_position()
 
     def _adjust_position_with_margin(self) -> None:
         """
@@ -735,7 +752,7 @@ class NetworkSpeedWidget(QWidget):
             super().mouseMoveEvent(event)
             return
 
-        if not self.position_manager or not hasattr(self.position_manager, '_calculator'):
+        if not self.position_manager or not hasattr(self.position_manager, 'calculator'):
             self.logger.warning("Cannot process drag move: PositionManager or calculator unavailable.")
             return
 
@@ -744,10 +761,8 @@ class NetworkSpeedWidget(QWidget):
             free_move_enabled = self.config.get("free_move", False)
 
             if free_move_enabled:
-                # If free move is on, just move the widget without constraints
                 self.move(new_global_pos)
-            elif self.position_manager and hasattr(self.position_manager, '_calculator'):
-                # Otherwise, use the existing constraint logic
+            else:
                 taskbar_info = get_taskbar_info()
                 if not taskbar_info:
                     self.logger.warning("Cannot constrain drag move: Taskbar info unavailable.")
@@ -755,8 +770,10 @@ class NetworkSpeedWidget(QWidget):
                     event.accept()
                     return
 
-                calculator = self.position_manager._calculator
-                constrained_pos = calculator.constrain_drag_position(new_global_pos, taskbar_info, self.size())
+                calculator = self.position_manager.calculator
+                # --- THIS IS THE FIX ---
+                # Pass self.config as the last argument to the updated method.
+                constrained_pos = calculator.constrain_drag_position(new_global_pos, taskbar_info, self.size(), self.config)
                 if constrained_pos:
                     self.move(constrained_pos)
 
@@ -764,12 +781,33 @@ class NetworkSpeedWidget(QWidget):
             self.logger.error(f"Error processing mouseMoveEvent: {e}", exc_info=True)
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
-        """Stops dragging on left mouse button release and saves the position."""
+        """Stops dragging and, if not in free move, calculates and saves the new tray offset."""
         try:
             if event.button() == Qt.MouseButton.LeftButton and self._dragging:
                 self._dragging = False
-                self.logger.debug(f"Drag finished. Final position: {self.pos().x()},{self.pos().y()}")
-                self.save_position()
+                
+                # --- THIS IS THE "LEARNING" LOGIC ---
+                if not self.config.get("free_move", False):
+                    self.logger.debug("Constrained drag finished. Calculating new tray offset.")
+                    try:
+                        taskbar_info = get_taskbar_info()
+                        if taskbar_info and taskbar_info.get_tray_rect():
+                            dpi_scale = taskbar_info.dpi_scale or 1.0
+                            tray_left_logical = taskbar_info.get_tray_rect()[0] / dpi_scale
+                            widget_right_edge = self.pos().x() + self.width()
+                            
+                            new_offset = round(tray_left_logical - widget_right_edge)
+                            
+                            # Only save if it's a reasonable offset
+                            if 0 < new_offset < 200:
+                                self.update_config({"tray_offset_x": new_offset})
+                                self.logger.info(f"User set new tray offset to {new_offset}px.")
+                    except Exception as e:
+                        self.logger.error(f"Could not calculate or save new tray offset: {e}")
+                else:
+                    # In free move mode, just save the absolute position
+                    self.save_position()
+
                 event.accept()
             else:
                 super().mouseReleaseEvent(event)

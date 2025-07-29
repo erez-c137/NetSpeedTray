@@ -24,19 +24,15 @@ class AppConstants:
     APP_NAME: Final[str] = "NetSpeedTray"
     """The name of the application."""
 
-    VERSION: Final[str] = "1.0.5"
+    VERSION: Final[str] = "1.0.6"
     """The current version of the application."""
 
     MUTEX_NAME: Final[str] = "Global\\NetSpeedTray_SingleInstanceMutex"
     """The name of the mutex used for single-instance enforcement on Windows."""
 
     def validate(self) -> None:
-        """
-        Validate the constants to ensure they meet constraints.
-
-        Raises:
-            ValueError: If any constant does not meet its constraints.
-        """
+        """Validate the constants to ensure they meet constraints."""
+        
         if not self.APP_NAME:
             raise ValueError("APP_NAME must not be empty")
         if not self.VERSION:
@@ -249,13 +245,12 @@ class ConfigConstants:
     DEFAULT_HISTORY_MINUTES: Final[int] = 30
     DEFAULT_GRAPH_OPACITY: Final[int] = 30
     DEFAULT_INTERFACE_MODE: Final[str] = "all"
-    DEFAULT_SMART_THRESHOLD: Final[bool] = True
     DEFAULT_HISTORY_PERIOD_DAYS: Final[int] = DataRetentionConstants.DAYS_MAP[6]  # 1 Year
     DEFAULT_DARK_MODE: Final[bool] = True
     DEFAULT_LEGEND_POSITION: Final[str] = LegendPositionConstants.DEFAULT_LEGEND_POSITION
     VALID_INTERFACE_MODES: Final[Set[str]] = {"all", "selected"}
     CONFIG_FILENAME: Final[str] = "NetSpeedTray_Config.json"
-    DEFAULT_DYNAMIC_UPDATE_ENABLED: Final[bool] = False
+    DEFAULT_DYNAMIC_UPDATE_ENABLED: Final[bool] = True
     DEFAULT_MIN_UPDATE_RATE: Final[float] = MINIMUM_UPDATE_RATE
     DEFAULT_MAX_UPDATE_RATE: Final[float] = TimerConstants.MAXIMUM_UPDATE_RATE_SECONDS
     MINIMUM_HISTORY_POINTS: Final[int] = 10
@@ -272,6 +267,7 @@ class ConfigConstants:
     DEFAULT_TEXT_ALIGNMENT: Final[str] = "center"  # 'left', 'center', 'right'
     DEFAULT_FREE_MOVE: Final[bool] = False
     DEFAULT_FORCE_DECIMALS: Final[bool] = True
+    DEFAULT_TRAY_OFFSET_X: Final[int] = 10
 
     DEFAULT_CONFIG: Final[Dict[str, Any]] = {
         "start_with_windows": DEFAULT_START_WITH_WINDOWS,
@@ -290,7 +286,6 @@ class ConfigConstants:
         "graph_opacity": DEFAULT_GRAPH_OPACITY,
         "interface_mode": DEFAULT_INTERFACE_MODE,
         "selected_interfaces": [],
-        "smart_threshold": DEFAULT_SMART_THRESHOLD,
         "keep_data": DEFAULT_HISTORY_PERIOD_DAYS,
         "dark_mode": DEFAULT_DARK_MODE,
         "history_period": HistoryPeriodConstants.DEFAULT_PERIOD,
@@ -306,6 +301,7 @@ class ConfigConstants:
         "text_alignment": DEFAULT_TEXT_ALIGNMENT,
         "free_move": DEFAULT_FREE_MOVE,
         "force_decimals": DEFAULT_FORCE_DECIMALS,
+        "tray_offset_x": DEFAULT_TRAY_OFFSET_X,
     }
 
     def validate(self) -> None:
@@ -332,11 +328,6 @@ class ConfigConstants:
             raise ValueError("DEFAULT_HISTORY_MINUTES must be positive")
         if not (0 <= self.DEFAULT_GRAPH_OPACITY <= 100):
             raise ValueError("DEFAULT_GRAPH_OPACITY must be between 0 and 100")
-        
-        # Validate smart_threshold as a boolean
-        if not isinstance(self.DEFAULT_SMART_THRESHOLD, bool):
-            raise ValueError("DEFAULT_SMART_THRESHOLD must be a boolean")
-            
         if not (1 <= self.DEFAULT_HISTORY_PERIOD_DAYS <= DataRetentionConstants.MAX_RETENTION_DAYS):
             raise ValueError(f"DEFAULT_HISTORY_PERIOD_DAYS ('{self.DEFAULT_HISTORY_PERIOD_DAYS}') must be between 1 and {DataRetentionConstants.MAX_RETENTION_DAYS}")
         if not self.VALID_INTERFACE_MODES:
@@ -355,8 +346,11 @@ class ConfigConstants:
             color_val = getattr(self, color_key)
             if not (isinstance(color_val, str) and color_val.startswith("#") and len(color_val) == 7):
                 raise ValueError(f"UI color {color_key} ('{color_val}') must be a 7-character hex code")
+        
+        # This is the correct check for the new constant
         if not isinstance(self.DEFAULT_DYNAMIC_UPDATE_ENABLED, bool):
             raise ValueError("DEFAULT_DYNAMIC_UPDATE_ENABLED must be a boolean")
+
         if self.DEFAULT_MIN_UPDATE_RATE < self.MINIMUM_UPDATE_RATE:
             raise ValueError(f"DEFAULT_MIN_UPDATE_RATE must be at least {self.MINIMUM_UPDATE_RATE} seconds")
         if self.DEFAULT_MAX_UPDATE_RATE <= self.DEFAULT_MIN_UPDATE_RATE:
@@ -376,16 +370,17 @@ class ConfigConstants:
                 f"DEFAULT_HISTORY_POINTS ({self.DEFAULT_HISTORY_POINTS}) must match calculation "
                 f"from DEFAULT_HISTORY_MINUTES and DEFAULT_UPDATE_RATE ({calculated_points})"
             )
-
+        
+        # This set is now also correct
         expected_keys_in_default_config = {
             "update_rate", "font_family", "font_size", "font_weight", "color_coding", "default_color",
             "high_speed_threshold", "low_speed_threshold", "high_speed_color", "low_speed_color",
             "graph_enabled", "history_minutes", "graph_opacity", "interface_mode",
-            "selected_interfaces", "smart_threshold", "keep_data", "dark_mode", "history_period",
+            "selected_interfaces", "keep_data", "dark_mode", "history_period",
             "legend_position", "position_x", "position_y", "paused", "start_with_windows",
             "dynamic_update_enabled", "min_update_rate", "max_update_rate",
             "speed_display_mode", "decimal_places", "text_alignment",
-            "free_move", "force_decimals"
+            "free_move", "force_decimals", "tray_offset_x"
         }
         actual_keys_in_default_config = set(self.DEFAULT_CONFIG.keys())
         if actual_keys_in_default_config != expected_keys_in_default_config:
@@ -466,7 +461,6 @@ class ConfigMessages:
     INVALID_HISTORY: str = "Invalid history_minutes %s, setting to %d"
     INVALID_OPACITY: str = "Invalid graph_opacity %s, setting to %d"
     INVALID_KEEP_DATA: str = "Invalid keep_data %s, setting to %d"
-    INVALID_SMART_THRESHOLD: str = "Invalid smart_threshold %s, setting to %.1f"
     INVALID_DARK_MODE: str = "Invalid dark_mode %s, setting to False"
     INVALID_INTERFACES: str = "Invalid selected_interfaces %s, setting to []"
     INVALID_INTERFACE_MODE: str = "Invalid interface_mode %s, setting to 'all'"
@@ -475,7 +469,7 @@ class ConfigMessages:
     INVALID_COLOR_CODING: str = "Invalid color_coding %s, setting to False"
     INVALID_GRAPH_ENABLED: str = "Invalid graph_enabled %s, setting to False"
     INVALID_PAUSED: str = "Invalid paused %s, setting to False"
-    INVALID_DYNAMIC_UPDATE_ENABLED: str = "Invalid dynamic_update_enabled %s, setting to %s" # Should be bool, so %s is fine
+    INVALID_DYNAMIC_UPDATE_ENABLED: str = "Invalid dynamic_update_enabled %s, setting to %s"
     INVALID_MIN_UPDATE_RATE: str = "Invalid min_update_rate %s, setting to %.1f"
     INVALID_MAX_UPDATE_RATE: str = "Invalid max_update_rate %s, setting to %.1f"
     INVALID_POSITION_X: str = "Invalid position_x %s, setting to None"
@@ -487,10 +481,9 @@ class ConfigMessages:
             "INVALID_FONT_SIZE": "font_size", "INVALID_FONT_WEIGHT": "font_weight",
             "INVALID_HIGH_THRESHOLD": "high_speed_threshold", "INVALID_LOW_THRESHOLD": "low_speed_threshold",
             "INVALID_HISTORY": "history_minutes", "INVALID_OPACITY": "graph_opacity",
-            "INVALID_KEEP_DATA": "keep_data", "INVALID_SMART_THRESHOLD": "smart_threshold",
-            "INVALID_DARK_MODE": "dark_mode", "INVALID_INTERFACES": "selected_interfaces",
-            "INVALID_INTERFACE_MODE": "interface_mode", "INVALID_HISTORY_PERIOD": "history_period",
-            "INVALID_LEGEND_POSITION": "legend_position",
+            "INVALID_KEEP_DATA": "keep_data", "INVALID_DARK_MODE": "dark_mode", 
+            "INVALID_INTERFACES": "selected_interfaces", "INVALID_INTERFACE_MODE": "interface_mode", 
+            "INVALID_HISTORY_PERIOD": "history_period", "INVALID_LEGEND_POSITION": "legend_position",
             "INVALID_COLOR_CODING": "color_coding", "INVALID_GRAPH_ENABLED": "graph_enabled",
             "INVALID_PAUSED": "paused", "INVALID_DYNAMIC_UPDATE_ENABLED": "dynamic_update_enabled",
             "INVALID_MIN_UPDATE_RATE": "min_update_rate", "INVALID_MAX_UPDATE_RATE": "max_update_rate",
@@ -512,7 +505,6 @@ class ConfigMessages:
                     if config_key not in config_instance.DEFAULT_CONFIG:
                         raise ValueError(f"ConfigMessages.{attr_name} references unknown config key '{config_key}'.")
                 elif attr_name not in non_mapped_messages:
-                    # This means a message constant exists but isn't in messages_map or non_mapped_messages
                     raise ValueError(f"ConfigMessages.{attr_name} is an unhandled message type in validation.")
 
 
