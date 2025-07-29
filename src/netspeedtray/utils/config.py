@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from .helpers import get_app_data_path
 from ..constants import HelperConstants
 from ..constants.constants import (
+    LogConstants,
     ConfigConstants,
     ConfigMessages,
     DataRetentionConstants,
@@ -62,7 +63,7 @@ class ConfigManager:
     @classmethod
     def get_log_file_path(cls) -> Path:
         """Returns the absolute path to the log file."""
-        return cls.BASE_DIR / 'netspeedtray.log'
+        return cls.BASE_DIR / LogConstants.LOG_FILENAME
 
     @classmethod
     def setup_logging(cls, log_level: str = 'INFO') -> None:

@@ -1162,12 +1162,12 @@ class SettingsDialog(QDialog):
             )
 
     def export_error_log(self) -> None:
-        log_path = os.path.join(get_app_data_path(), LogConstants.ERROR_LOG_FILENAME)
+        log_path = os.path.join(get_app_data_path(), LogConstants.LOG_FILENAME)
         if not os.path.exists(log_path):
             QMessageBox.warning(self, self.i18n.NO_LOG_TITLE, self.i18n.NO_LOG_MESSAGE)
             return
 
-        default_filename = f"{os.path.splitext(LogConstants.ERROR_LOG_FILENAME)[0]}_export.log"
+        default_filename = f"{os.path.splitext(LogConstants.LOG_FILENAME)[0]}_export.log"
         default_path = os.path.join(os.path.expanduser("~"), "Documents", default_filename)
         dest_path, _ = QFileDialog.getSaveFileName(
             self, self.i18n.EXPORT_ERROR_LOG_TITLE, default_path,

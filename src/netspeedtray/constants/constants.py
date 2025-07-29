@@ -254,7 +254,7 @@ class ConfigConstants:
     DEFAULT_DARK_MODE: Final[bool] = True
     DEFAULT_LEGEND_POSITION: Final[str] = LegendPositionConstants.DEFAULT_LEGEND_POSITION
     VALID_INTERFACE_MODES: Final[Set[str]] = {"all", "selected"}
-    CONFIG_FILENAME: Final[str] = "netspeedtray.conf"
+    CONFIG_FILENAME: Final[str] = "NetSpeedTray_Config.json"
     DEFAULT_DYNAMIC_UPDATE_ENABLED: Final[bool] = False
     DEFAULT_MIN_UPDATE_RATE: Final[float] = MINIMUM_UPDATE_RATE
     DEFAULT_MAX_UPDATE_RATE: Final[float] = TimerConstants.MAXIMUM_UPDATE_RATE_SECONDS
@@ -1180,7 +1180,7 @@ class LogConstants:
     """
     Constants related to logging configuration and file management.
     """
-    ERROR_LOG_FILENAME: Final[str] = "nst_error.log"
+    LOG_FILENAME: Final[str] = "NetSpeedTray_Log.log"
     LOG_FORMAT: Final[str] = "%(asctime)s - %(name)s - %(levelname)s - %(module)s.%(funcName)s:%(lineno)d - %(message)s"
     LOG_DATE_FORMAT: Final[str] = "%Y-%m-%d %H:%M:%S"
     FILE_LOG_LEVEL: Final[int] = logging.DEBUG # For more detailed file logs
@@ -1188,10 +1188,9 @@ class LogConstants:
     PRODUCTION_LOG_LEVEL: Final[int] = logging.WARNING # For production builds
 
     def validate(self) -> None:
-        if not self.ERROR_LOG_FILENAME: raise ValueError("ERROR_LOG_FILENAME must not be empty")
+        if not self.LOG_FILENAME: raise ValueError("LOG_FILENAME must not be empty") # Check the new constant
         if not self.LOG_FORMAT: raise ValueError("LOG_FORMAT must not be empty")
         if not self.LOG_DATE_FORMAT: raise ValueError("LOG_DATE_FORMAT must not be empty")
-        # Validate log levels are actual logging levels
         valid_levels = [logging.DEBUG, logging.INFO, logging.WARNING, logging.ERROR, logging.CRITICAL]
         if self.FILE_LOG_LEVEL not in valid_levels: raise ValueError(f"Invalid FILE_LOG_LEVEL: {self.FILE_LOG_LEVEL}")
         if self.CONSOLE_LOG_LEVEL not in valid_levels: raise ValueError(f"Invalid CONSOLE_LOG_LEVEL: {self.CONSOLE_LOG_LEVEL}")
