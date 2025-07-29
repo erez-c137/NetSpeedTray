@@ -1,6 +1,6 @@
 #define MyAppName "NetSpeedTray"
-#define MyAppVersion "1.0.5.3"
-#define MyAppVersionDisplay "1.0.5"
+#define MyAppVersion "1.0.6.0"
+#define MyAppVersionDisplay "1.0.6"
 #define MyAppPublisher "Erez C137"
 #define MyAppURL "https://github.com/erez-c137/NetSpeedTray"
 #define MyAppExeName "NetSpeedTray.exe"
@@ -24,6 +24,11 @@ WizardStyle=modern
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 VersionInfoVersion={#MyAppVersion}
+
+; --- allow silent installation ---
+DisableDirPage=auto
+UsePreviousAppDir=no
+SetupLogging=yes
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
