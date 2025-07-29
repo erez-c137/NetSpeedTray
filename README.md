@@ -51,15 +51,28 @@ If you enjoy NetSpeedTray and it makes your workflow a little better, please con
 
 ## Installation
 
-### Option 1: Windows Installer (Recommended)
+### With a Package Manager (Recommended)
 
-1.  Download the `NetSpeedTray-x.x.x-Setup.exe` file from the latest release.
-2.  Run the installer and follow the on-screen instructions.
+The easiest way to install and receive automatic updates is by using a command-line package manager.
 
-### Option 2: Portable Version
+**Using [Winget](https://docs.microsoft.com/en-us/windows/package-manager/winget/) (built into Windows):**
+```powershell
+winget install erez-c137.NetSpeedTray
+```
+**Using [Scoop](https://scoop.sh/):**
 
-1.  Download the `NetSpeedTray.exe` file from the latest release.
-2.  Place it anywhere on your computer and run it. No installation is needed.
+```powershell
+scoop bucket add extras
+scoop install netspeedtray
+```
+*(Note: It may take 24-48 hours after a new release for it to be available via package managers.)*
+
+### Manual Installation
+
+If you prefer not to use a package manager, you can download the latest files directly from the [**Releases Page**](https://github.com/erez-c137/NetSpeedTray/releases/latest).
+
+- **`NetSpeedTray-x.x.x-Setup.exe`:** The standard Windows installer.
+- **`NetSpeedTray.exe`:** The standalone portable version (no installation needed).
 
 ## Usage
 
