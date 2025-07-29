@@ -1,8 +1,56 @@
-CHANGELOG.md
-
 # Changelog
 
 All notable changes to this project will be documented in this file.
+
+## [1.0.6] - July 29, 2025
+
+This release focuses on quality-of-life improvements, introducing intelligent widget positioning and overhauling the installation process for seamless future updates.
+
+#### ✨ Added
+
+- **Intelligent Adaptive Positioning:**
+  - The widget now learns and maintains your preferred distance from the system tray.
+  - It automatically shifts its position to prevent being overlapped by new application icons appearing in the tray.
+  - Your custom spacing is "learned" simply by dragging the widget while _Free Move_ is disabled.
+
+#### 🛠️ Improved
+
+- **Seamless Upgrades & WinGet Compatibility:** The Windows installer has been overhauled. It now correctly replaces the previous version's files, ensuring a clean and reliable upgrade experience. This change also prepares the application for distribution via the Windows Package Manager (WinGet).
+- **UI Clarity:** Renamed the confusing "Smart Threshold" toggle to **"Dynamic Update Rate"** to more accurately describe its power-saving function.
+- **User-Friendly File Naming:** The configuration and log files have been renamed to be more descriptive (`NetSpeedTray_Config.json` and `NetSpeedTray_Log.log`), making them easier for users to identify.
+
+---
+
+## [1.0.5] - July 29, 2025
+
+### ✨ New Features
+
+- **Free Move is Here!**
+
+  - You can now unlock the widget from the taskbar and place it **anywhere on your screen**.
+  - The widget's position is automatically saved when Free Move is enabled and it reliably snaps back to its default location when disabled.
+
+- **Total Control Over Speed Units:**
+  - A new **Speed Units** panel has been added to the settings for granular control over the text display.
+  - **Display Mode:** Choose between 'Auto' scaling (bps, Kbps, Mbps) and 'Always Mbps'.
+  - **Decimal Places:** Set the speed value precision from 0 to 2 decimal places.
+  - **Text Alignment:** Align the speed text left, center, or right within the widget.
+  - **Force Decimals:** A new option to always show decimal points (e.g., `5.0` instead of `5`).
+
+### 🛠️ Improvements & Refinements
+
+- **Smarter Installer:** The Windows installer now automatically replaces the old executable, ensuring a clean and seamless upgrade experience. Old version files are removed.
+- **Improved Configuration:** The configuration file has been renamed to `NetSpeedTray_Config.json` for clarity. The management system is now more robust, preventing settings from being accidentally discarded.
+- **Cleaner Log Files:** The log file has been unified and renamed to `NetSpeedTray_Log.log` to make troubleshooting easier.
+- **Accurate Graph Stats:** The statistics in the main graph's status bar are now calculated correctly for all timelines, including "All".
+
+### 🐛 Bug Fixes
+
+- **CRITICAL: Mini-Graph Now Renders Correctly:** Fixed a series of silent failures that were preventing the mini-graph from appearing on the widget. This was the most significant bug from the beta and is now fully resolved.
+- **CRITICAL: State Persistence Fixed:** Resolved a major bug where toggle states (like **Free Move**, **Force Decimals**, and **Start with Windows**) were not being saved correctly across application restarts.
+- **"Snap-Back" Bug Fixed:** Corrected a state management flaw where disabling "Free Move" sometimes required clicking "Save" twice. The widget now snaps back to its default position instantly and reliably on the first click.
+
+---
 
 ## [1.0.5-Beta2] - July 29, 2025
 
