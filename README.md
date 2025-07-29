@@ -45,7 +45,19 @@ Let’s be real: Windows should have had this feature built-in, but here we are!
 
 If you enjoy NetSpeedTray and it makes your workflow a little better, please consider buying me a coffee. Your support helps me dedicate more time to improving the app and keeping it 100% free and open-source.
 
-[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-Support%20Me-yellow?style=flat&logo=buy-me-a-coffee)](https://buymeacoffee.com/erez.c137)
+<p align="center">
+  <a href="https://github.com/sponsors/erez-c137">
+    <img src="https://img.shields.io/badge/GitHub%20Sponsors-Support%20Me-white?style=for-the-badge&logo=githubsponsors">
+  </a>
+   
+  <a href="https://ko-fi.com/erezc137">
+    <img src="https://img.shields.io/badge/Ko--fi-Buy%20me%20a%20coffee-29abe0?style=for-the-badge&logo=ko-fi&logoColor=white">
+  </a>
+   
+  <a href="https://buymeacoffee.com/erez.c137">
+    <img src="https://img.shields.io/badge/Buy%20Me%20a%20Coffee-Support%20Me-yellow?style=for-the-badge&logo=buy-me-a-coffee">
+  </a>
+</p>
 
 ---
 
@@ -56,16 +68,19 @@ If you enjoy NetSpeedTray and it makes your workflow a little better, please con
 The easiest way to install and receive automatic updates is by using a command-line package manager.
 
 **Using [Winget](https://docs.microsoft.com/en-us/windows/package-manager/winget/) (built into Windows):**
+
 ```powershell
 winget install erez-c137.NetSpeedTray
 ```
+
 **Using [Scoop](https://scoop.sh/):**
 
 ```powershell
 scoop bucket add extras
 scoop install netspeedtray
 ```
-*(Note: It may take 24-48 hours after a new release for it to be available via package managers.)*
+
+_(Note: It may take 24-48 hours after a new release for it to be available via package managers.)_
 
 ### Manual Installation
 
