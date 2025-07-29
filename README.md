@@ -5,7 +5,7 @@ A lightweight, highly customizable system tray application that monitors and dis
 ## Screenshots
 
 <div align="center">
-  <img src="screenshots/main_new_105b.png" alt="Main Interface" width="200"/><br/>
+  <img src="screenshots/main_new_105b.png" alt="Main Interface"/><br/>
   <p><em>The widget, docked to the taskbar.</em></p>
 </div>
 <br>
