@@ -24,7 +24,7 @@ class AppConstants:
     APP_NAME: Final[str] = "NetSpeedTray"
     """The name of the application."""
 
-    VERSION: Final[str] = "1.0.5-BETA2"
+    VERSION: Final[str] = "1.0.5"
     """The current version of the application."""
 
     MUTEX_NAME: Final[str] = "Global\\NetSpeedTray_SingleInstanceMutex"
