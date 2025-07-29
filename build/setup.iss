@@ -1,11 +1,9 @@
-
-
 #define MyAppName "NetSpeedTray"
 #define MyAppVersion "1.0.5.2"
 #define MyAppVersionDisplay "1.0.5-Beta2"
 #define MyAppPublisher "Erez C137"
 #define MyAppURL "https://github.com/erez-c137/NetSpeedTray"
-#define MyAppExeName "NetSpeedTray-" + MyAppVersionDisplay + "-Portable.exe"
+#define MyAppExeName "NetSpeedTray.exe"
 
 [Setup]
 AppId={{D3A32B89-C533-4F2C-9F87-23B2395B5B89}}
@@ -35,15 +33,16 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Name: "startupicon"; Description: "Start with Windows"; GroupDescription: "Windows Startup"; Flags: unchecked
 
 [Files]
-Source: "..\dist\NetSpeedTray-{#MyAppVersionDisplay}\NetSpeedTray-{#MyAppVersionDisplay}-Portable.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\assets\NetSpeedTray.ico"; DestDir: "{app}"; Flags: ignoreversion onlyifdoesntexist
+Source: "..\dist\NetSpeedTray.exe"; DestDir: "{app}"; DestName: "{#MyAppExeName}"; Flags: ignoreversion
 
 [Icons]
-
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
-Name: "{autostartup}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\NetSpeedTray.ico"; Tasks: startupicon
+Name: "{autostartup}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: startupicon
+
+[InstallDelete]
+Type: files; Name: "{app}\NetSpeedTray-*-Portable.exe"
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
