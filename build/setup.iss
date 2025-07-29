@@ -1,6 +1,6 @@
 #define MyAppName "NetSpeedTray"
-#define MyAppVersion "1.0.5.2"
-#define MyAppVersionDisplay "1.0.5-Beta2"
+#define MyAppVersion "1.0.5.3"
+#define MyAppVersionDisplay "1.0.5"
 #define MyAppPublisher "Erez C137"
 #define MyAppURL "https://github.com/erez-c137/NetSpeedTray"
 #define MyAppExeName "NetSpeedTray.exe"
