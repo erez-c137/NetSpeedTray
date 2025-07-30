@@ -25,7 +25,7 @@ from PyQt6.QtGui import QScreen, QFontMetrics
 from PyQt6.QtWidgets import QApplication
 
 # Local Imports
-from ..constants.constants import PositionConstants, TaskbarEdge, TaskbarConstants, LayoutConstants, RendererConstants  # Added RendererConstants
+from ..constants.constants import PositionConstants, TaskbarEdge, TaskbarConstants, LayoutConstants, RendererConstants
 from .taskbar_utils import TaskbarInfo
 
 # Logger Setup
@@ -155,7 +155,7 @@ class PositionManager:
             screen_pos: ScreenPosition = self._calculator.calculate_position(
                 self._state.taskbar_info,
                 widget_size,
-                self._state.config,  # Pass the config dictionary
+                self._state.config,
                 self._state.font_metrics
             )
             return QPoint(screen_pos.x, screen_pos.y)
@@ -504,8 +504,22 @@ class PositionCalculator:
         self._drag_log_interval: float = getattr(PositionConstants, 'DRAG_LOG_INTERVAL_SECONDS', 1.0)
         logger.debug("PositionCalculator initialized.")
 
+class PositionCalculator:
+    """
+    Calculates the optimal widget position relative to a specified taskbar.
+
+    Takes into account the taskbar's edge (top, bottom, left, right), the
+    location of the system tray (if available), DPI scaling, and configured padding.
+    Also provides logic for constraining drag movements along the taskbar edge.
+    """
+    def __init__(self) -> None:
+        """Initializes the calculator with logging throttle state."""
+        self._last_drag_log_time: float = 0.0
+        self._drag_log_interval: float = getattr(PositionConstants, 'DRAG_LOG_INTERVAL_SECONDS', 1.0)
+        logger.debug("PositionCalculator initialized.")
+
     def calculate_position(self, taskbar_info: TaskbarInfo, widget_size: Tuple[int, int], config: Dict[str, Any], font_metrics: Optional[QFontMetrics] = None) -> ScreenPosition:
-        """Calculates the target position for the widget relative to the taskbar/tray."""
+        """Calculates the final target position for the widget using a single, user-defined offset."""
         try:
             edge = taskbar_info.get_edge_position()
             tray_rect_phys = taskbar_info.get_tray_rect()
@@ -527,47 +541,43 @@ class PositionCalculator:
             tb_width_log = tb_right_log - tb_left_log
 
             tray_left_log = tray_rect_phys[0] / dpi_scale if tray_rect_phys else None
-            tray_top_log = tray_rect_phys[1] / dpi_scale if tray_rect_phys else None
-            
-            offset = config.get('tray_offset_x', PositionConstants.DEFAULT_PADDING)
+            tray_top_log = tray_rect_phys[1] / dpi_scale if tray_rect_phys else None            
+            total_offset = config.get('tray_offset_x', PositionConstants.DEFAULT_PADDING + 5) # Default to 5px if not set
 
-            text_height = 40
+            text_height, content_height = 40, 50
             if font_metrics:
                 try:
                     text_height = 2 * font_metrics.height() + getattr(LayoutConstants, 'LINE_GAP', 2)
+                    renderer_padding = getattr(RendererConstants, 'TEXT_MARGIN', 5)
+                    content_height = text_height + 2 * renderer_padding
                 except Exception as e:
-                    logger.debug("Error calculating text height: %s", e)
-
-            renderer_padding = getattr(RendererConstants, 'TEXT_MARGIN', 5)
-            content_height = text_height + 2 * renderer_padding
+                    logger.debug(f"Error calculating text height: {e}")
 
             if edge in (TaskbarEdge.BOTTOM, TaskbarEdge.TOP):
-                tb_center_y = tb_top_log + tb_height_log / 2
-                text_center_y = renderer_padding + text_height / 2
-                y = round(tb_center_y - text_center_y)
-                x = round((tray_left_log if tray_left_log is not None else tb_right_log) - widget_width - offset)
+                y = round(tb_top_log + (tb_height_log - widget_height) / 2)
+                x = round((tray_left_log if tray_left_log is not None else tb_right_log) - widget_width - total_offset)
+
             elif edge in (TaskbarEdge.LEFT, TaskbarEdge.RIGHT):
                 x = round(tb_left_log + (tb_width_log - widget_width) / 2)
                 boundary_y = tray_top_log if tray_top_log is not None else tb_bottom_log
-                tb_center_y = boundary_y - offset - content_height / 2
-                text_center_y = renderer_padding + text_height / 2
-                y = round(tb_center_y - text_center_y)
+                y = round(boundary_y - widget_height - total_offset)
             else:
                 logger.error("Unknown taskbar edge: %s", edge)
                 return self._get_safe_fallback_position(widget_size)
 
             validated_pos = ScreenUtils.validate_position(x, y, widget_size, screen)
-            logger.debug("Calculated position: (%s, %s) for edge %s with offset %d", validated_pos.x, validated_pos.y, edge, offset)
+            logger.debug("Calculated final position: (%s, %s) for edge %s with total offset %d",
+                         validated_pos.x, validated_pos.y, edge, total_offset)
             return validated_pos
 
         except Exception as e:
-            logger.error("Error calculating position: %s", e, exc_info=True)
+            logger.error(f"Error calculating position: {e}", exc_info=True)
             return self._get_safe_fallback_position(widget_size)
 
     def constrain_drag_position(self, desired_pos: QPoint, taskbar_info: TaskbarInfo, widget_size_q: QSize, config: Dict[str, Any]) -> Optional[QPoint]:
         """
         Constrains a desired widget position (during dragging) to allow movement only
-        along the taskbar edge.
+        along the taskbar edge. It uses the final calculated position as its reference.
         """
         try:
             screen = taskbar_info.get_screen() or QApplication.primaryScreen()
@@ -580,26 +590,25 @@ class PositionCalculator:
             widget_size_tuple = (widget_width, widget_height)
 
             edge = taskbar_info.get_edge_position() if taskbar_info else None
-            # --- FIX 2: Pass the 'config' dictionary into the call ---
-            default_pos = self.calculate_position(taskbar_info, widget_size_tuple, config)
+            final_target_pos = self.calculate_position(taskbar_info, widget_size_tuple, config)
 
             if edge in (TaskbarEdge.LEFT, TaskbarEdge.RIGHT):
-                fixed_x = default_pos.x
+                # Constrain to a vertical line. The X is fixed.
+                fixed_x = final_target_pos.x
                 screen_rect = screen.geometry()
                 min_y = screen_rect.top()
                 max_y = screen_rect.bottom() - widget_height + 1
                 constrained_y = max(min_y, min(desired_pos.y(), max_y))
-                validated_pos = ScreenUtils.validate_position(fixed_x, constrained_y, widget_size_tuple, screen)
-                constrained_point = QPoint(validated_pos.x, validated_pos.y)
+                constrained_point = QPoint(fixed_x, constrained_y)
             else:
-                fixed_y = default_pos.y
+                # Constrain to a horizontal line. The Y is fixed.
+                fixed_y = final_target_pos.y
                 screen_rect = screen.geometry()
                 min_x = screen_rect.left()
                 max_x = screen_rect.right() - widget_width + 1
                 constrained_x = max(min_x, min(desired_pos.x(), max_x))
-                validated_pos = ScreenUtils.validate_position(constrained_x, fixed_y, widget_size_tuple, screen)
-                constrained_point = QPoint(validated_pos.x, validated_pos.y)
-
+                constrained_point = QPoint(constrained_x, fixed_y)
+            
             current_time = time.monotonic()
             if current_time - self._last_drag_log_time >= self._drag_log_interval:
                 logger.debug("Drag constrained to: (%s, %s)", constrained_point.x(), constrained_point.y())
@@ -608,7 +617,7 @@ class PositionCalculator:
             return constrained_point
 
         except Exception as e:
-            logger.error("Error constraining drag position: %s", e, exc_info=True)
+            logger.error(f"Error constraining drag position: {e}", exc_info=True)
             return None
 
     @staticmethod

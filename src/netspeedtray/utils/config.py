@@ -263,16 +263,19 @@ class ConfigManager:
         Atomically saves the provided configuration to the file.
 
         The configuration is first validated. The save is skipped if the new
-        configuration is identical to the last one saved.
-
-        Args:
-            config: The configuration dictionary to save.
-
-        Raises:
-            ConfigError: If saving fails due to permissions or other OS errors.
+        configuration is identical to the last one saved. Keys with a value of None
+        are removed before saving.
         """
         validated_config = self._validate_config(config)
-        if self._last_config == validated_config:
+
+        # Create a copy to modify for saving, removing keys with None values.
+        config_to_save = {
+            key: value for key, value in validated_config.items()
+            if value is not None
+        }
+
+        # Compare the cleaned config to the last saved state (if it exists)
+        if self._last_config and {k: v for k, v in self._last_config.items() if v is not None} == config_to_save:
             self.logger.debug("Skipping save, configuration is unchanged.")
             return
 
@@ -282,9 +285,12 @@ class ConfigManager:
             with tempfile.NamedTemporaryFile(
                 "w", delete=False, dir=self.config_path.parent, encoding="utf-8"
             ) as temp_f:
-                json.dump(validated_config, temp_f, indent=4)
+                # Save the cleaned dictionary
+                json.dump(config_to_save, temp_f, indent=4)
                 temp_path = temp_f.name
             shutil.move(temp_path, self.config_path)
+            
+            # Store the full validated config (including Nones) for internal comparison
             self._last_config = validated_config.copy()
             self.logger.info("Configuration saved successfully to %s", self.config_path)
         except (PermissionError, OSError) as e:

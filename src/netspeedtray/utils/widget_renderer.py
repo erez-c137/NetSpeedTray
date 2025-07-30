@@ -316,68 +316,38 @@ class WidgetRenderer:
     def draw_network_speeds(self, painter: QPainter, upload: float, download: float, width: int, height: int, config: RenderConfig) -> None:
         """
         Draws upload/download speeds with arrows.
-
-        Args:
-            painter: The QPainter object used for rendering.
-            upload: Upload speed in bytes/sec.
-            download: Download speed in bytes/sec.
-            width: Widget width in pixels.
-            height: Widget height in pixels.
-            config: RenderConfig object with rendering settings.
         """
-        try:
-            # Calculate metrics for layout
+        try:         
             line_height = self.metrics.height()
             ascent = self.metrics.ascent()
             total_height = line_height * 2
-
-            # Calculate vertical position to center the text
             top_y = (height - total_height) // 2 + ascent
             bottom_y = top_y + line_height
-
-            # Determine formatting options
             always_mbps = config.speed_display_mode == "always_mbps"
             decimal_places = max(0, min(2, config.decimal_places))
             force_decimals = config.force_decimals
-            align_map = {
-                "left": Qt.AlignmentFlag.AlignLeft,
-                "center": Qt.AlignmentFlag.AlignHCenter,
-                "right": Qt.AlignmentFlag.AlignRight
-            }
+            align_map = {"left": Qt.AlignmentFlag.AlignLeft, "center": Qt.AlignmentFlag.AlignHCenter, "right": Qt.AlignmentFlag.AlignRight}
             alignment = align_map.get(config.text_alignment, Qt.AlignmentFlag.AlignHCenter)
-
-            # 1. Get the initial formatted strings and split them
             upload_full_text = format_speed(upload, False, always_mbps=always_mbps, decimal_places=decimal_places)
             download_full_text = format_speed(download, False, always_mbps=always_mbps, decimal_places=decimal_places)
-
             up_val_str, up_unit = upload_full_text.split(" ", 1)
             down_val_str, down_unit = download_full_text.split(" ", 1)
-            
-            # 2. Convert the number part to float for comparison
             up_val_num = float(up_val_str)
             down_val_num = float(down_val_str)
-            
-            # 3. Apply the 'force_decimals' logic to get the final number string
             if force_decimals:
                 up_num_final = f"{up_val_num:.{decimal_places}f}"
                 down_num_final = f"{down_val_num:.{decimal_places}f}"
             else:
-                # Let Python simplify if no decimal part (e.g., 25.0 -> "25")
                 up_num_final = f"{up_val_num:g}"
                 if up_val_num == 0.0: up_num_final = "0"
-
                 down_num_final = f"{down_val_num:g}"
                 if down_val_num == 0.0: down_num_final = "0"
             
-            # Calculate widths for horizontal centering using the final strings
             arrow_width = self.metrics.horizontalAdvance(RendererConstants.UPLOAD_ARROW)
             max_num_width = max(self.metrics.horizontalAdvance(up_num_final), self.metrics.horizontalAdvance(down_num_final))
             max_unit_width = max(self.metrics.horizontalAdvance(up_unit), self.metrics.horizontalAdvance(down_unit))
-
-            # Calculate total content width
             content_width = arrow_width + RendererConstants.ARROW_NUMBER_GAP + max_num_width + RendererConstants.VALUE_UNIT_GAP + max_unit_width
 
-            # Calculate left margin or alignment
             if alignment == Qt.AlignmentFlag.AlignLeft:
                 margin = RendererConstants.TEXT_MARGIN
             elif alignment == Qt.AlignmentFlag.AlignRight:
@@ -397,14 +367,11 @@ class WidgetRenderer:
             painter.drawText(margin, bottom_y, RendererConstants.DOWNLOAD_ARROW)
             painter.drawText(number_x, bottom_y, down_num_final)
             painter.drawText(unit_x, bottom_y, down_unit)
-
-            # Use the final width for the bounding rect calculation
-            final_up_width = self.metrics.horizontalAdvance(up_num_final) + RendererConstants.VALUE_UNIT_GAP + self.metrics.horizontalAdvance(up_unit)
-            final_down_width = self.metrics.horizontalAdvance(down_num_final) + RendererConstants.VALUE_UNIT_GAP + self.metrics.horizontalAdvance(down_unit)
-            max_line_width = margin + arrow_width + RendererConstants.ARROW_NUMBER_GAP + max(final_up_width, final_down_width)
-            self.logger.info(f"[DEBUG] Creating text rect with: x={margin}, y={int(top_y - ascent)}, w={int(max_line_width)}, h={int(total_height)}")
             
-            self._last_text_rect = QRect(margin, int(top_y - ascent), int(max_line_width), int(total_height))
+            # The width of the text block is just `content_width`. The `x` position is `margin`.
+            self.logger.debug(f"[DEBUG] Creating text rect with: x={margin}, y={int(top_y - ascent)}, w={int(content_width)}, h={int(total_height)}")
+            self._last_text_rect = QRect(margin, int(top_y - ascent), int(content_width), int(total_height))
+
         except Exception as e:
             self.logger.error("Failed to draw speeds: %s", e)
             self._last_text_rect = QRect()

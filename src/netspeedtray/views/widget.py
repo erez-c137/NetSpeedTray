@@ -253,57 +253,44 @@ class NetworkSpeedWidget(QWidget):
             raise RuntimeError("Initial position setup failed") from e
 
     def _check_and_update_position(self) -> None:
-        """Periodically checks and updates the widget's position if not in Free Move mode."""
+        """
+        Periodically checks if the widget's position needs correction and updates it
+        ONLY if it has drifted from the calculated target position.
+        """
         if self.config.get("free_move", False) or not self.isVisible() or self._dragging:
             return
 
-        # Simply tell the position manager to re-evaluate the position.
-        # It will use the latest tray geometry and the user's stored offset.
-        if self.position_manager:
-            self.position_manager.update_position()
-
-    def _adjust_position_with_margin(self) -> None:
-        """
-        Adjust widget position to include a margin from the tray overflow menu.
-        """
-        if self.config.get("free_move", False):
-            self.logger.debug("Skipping margin adjustment: Free Move is enabled.")
+        if not self.position_manager:
             return
-        self.logger.debug("Adjusting position with margin...")
+
         try:
+            # 1. Get the widget's current position
             current_pos = self.pos()
-            taskbar_info = get_taskbar_info()
-            if not taskbar_info:
-                self.logger.warning("Cannot adjust position: Taskbar info unavailable")
-                return
-            edge = taskbar_info.get_edge_position()
-            margin = getattr(UIConstants, 'WIDGET_MARGIN_FROM_TRAY', 5)
+            
+            # 2. Calculate where the widget SHOULD be
+            target_pos = self.position_manager.get_calculated_position()
 
-            if edge == TaskbarEdge.BOTTOM or edge == TaskbarEdge.TOP:
-                adjusted_x = current_pos.x() - margin
-                self.move(max(0, adjusted_x), current_pos.y())
-            elif edge == TaskbarEdge.RIGHT:
-                adjusted_x = current_pos.x() - margin
-                self.move(max(0, adjusted_x), current_pos.y())
-            elif edge == TaskbarEdge.LEFT:
-                adjusted_x = current_pos.x() + margin
-                self.move(adjusted_x, current_pos.y())
+            # 3. Only trigger an update if the position is actually incorrect
+            if target_pos and current_pos != target_pos:
+                self.logger.info(
+                    f"Position drift detected. Current: {current_pos}, Target: {target_pos}. Correcting."
+                )
+                # The position manager's update function will perform the move
+                self.position_manager.update_position()
+            else:
+                self.logger.debug(f"Position check OK. Current: {current_pos}, Target: {target_pos}.")
 
-            self.save_position()
-            self.logger.debug(f"Position adjusted with {margin}px margin: {self.pos()}")
         except Exception as e:
-            self.logger.error(f"Error adjusting position: {e}", exc_info=True)
+            self.logger.error(f"Error during periodic position check: {e}", exc_info=True)
 
     def _delayed_initial_show(self) -> None:
         """
         Delays showing the widget until its position and size are stabilized.
+        The initial positioning is now handled entirely by _initialize_position.
+        This method is now only responsible for making the widget visible.
         """
         self.logger.debug("Executing delayed initial show...")
         try:
-            if self.position_manager:
-                self.position_manager.update_position()
-                self._adjust_position_with_margin()
-                self.logger.debug(f"Position updated: {self.pos()}")
 
             if self.upload_speed == 0.0 and self.download_speed == 0.0:
                 self.upload_speed = 0.0
@@ -317,6 +304,7 @@ class NetworkSpeedWidget(QWidget):
                 self.logger.debug("Widget remains hidden due to visibility conditions")
         except Exception as e:
             self.logger.error(f"Error in delayed initial show: {e}", exc_info=True)
+            # Ensure it stays hidden on error.
             self.setVisible(False)
 
     def pause(self) -> None:
@@ -477,9 +465,6 @@ class NetworkSpeedWidget(QWidget):
     def _setup_connections(self) -> None:
         """
         Connects signals from core components to widget slots.
-
-        Raises:
-            RuntimeError: If core components are missing during setup.
         """
         self.logger.debug("Setting up signal connections...")
         if not all([self.widget_state, self.timer_manager, self.controller]):
@@ -495,13 +480,11 @@ class NetworkSpeedWidget(QWidget):
             else:
                 self.logger.warning("speeds_updated signal unavailable; speed updates may not work.")
 
-            self.font_updated.connect(self._update_font)
-
             self.logger.debug("Signal connections established successfully.")
         except Exception as e:
             self.logger.error("Error setting up signal connections: %s", e, exc_info=True)
             raise RuntimeError("Failed to establish critical signal connections") from e
-
+        
     def _validate_lazy_imports(self) -> None:
         """Validates lazy imports to catch potential issues early."""
         self.logger.debug("Validating lazy imports...")
@@ -514,10 +497,8 @@ class NetworkSpeedWidget(QWidget):
 
     def _resize_widget_for_font(self) -> None:
         """
-        Calculates and sets the widget's fixed dimensions based on current font metrics and taskbar orientation.
-
-        Raises:
-            RuntimeError: If FontMetrics or screen data is unavailable.
+        Calculates and sets the widget's fixed dimensions based on current font metrics
+        and taskbar orientation. This method should ONLY resize, not reposition.
         """
         self.logger.debug("Resizing widget based on renderer layout...")
         if not self.metrics:
@@ -525,7 +506,6 @@ class NetworkSpeedWidget(QWidget):
             raise RuntimeError("FontMetrics not initialized.")
 
         try:
-            self.logger.info("Calculating widget size...")
             screen = self.screen() or QApplication.primaryScreen()
             if not screen:
                 self.logger.warning("No screen available; assuming DPI scaling of 1.0")
@@ -534,7 +514,6 @@ class NetworkSpeedWidget(QWidget):
                 dpi_scale = screen.devicePixelRatio()
                 self.logger.debug(f"DPI scaling factor: {dpi_scale}")
 
-            # Try to get taskbar info and orientation
             taskbar_info = None
             edge = None
             if hasattr(self, 'position_manager') and self.position_manager and hasattr(self.position_manager, '_state'):
@@ -544,66 +523,33 @@ class NetworkSpeedWidget(QWidget):
 
             precision = self.config.get("speed_precision", 2)
             max_number_str = f"{999.99:.{precision}f}"
-
             margin = int(RendererConstants.TEXT_MARGIN * dpi_scale)
             arrow_num_gap = int(RendererConstants.ARROW_NUMBER_GAP * dpi_scale)
             value_unit_gap = int(RendererConstants.VALUE_UNIT_GAP * dpi_scale)
-
             arrow_char = RendererConstants.UPLOAD_ARROW
             arrow_width = self.metrics.horizontalAdvance(arrow_char)
             max_number_width = self.metrics.horizontalAdvance(max_number_str)
-
             possible_units = [" Kbps", " Mbps", " Gbps", " KB/s", " MB/s", " GB/s"]
             max_unit_width = max(self.metrics.horizontalAdvance(unit) for unit in possible_units)
-
-            # Default: horizontal taskbar sizing
-            calculated_width = (
-                margin +
-                arrow_width +
-                arrow_num_gap +
-                max_number_width +
-                value_unit_gap +
-                max_unit_width +
-                margin
-            )
+            calculated_width = (margin + arrow_width + arrow_num_gap + max_number_width + value_unit_gap + max_unit_width + margin)
             calculated_width = math.ceil(calculated_width)
             logical_taskbar_height = self.taskbar_height
             v_padding = self.config.get("vertical_padding", 0)
             calculated_height = max(logical_taskbar_height + v_padding, 10)
 
-            # If vertical taskbar, recalculate width and height for a vertical layout
             if edge in (TaskbarEdge.LEFT, TaskbarEdge.RIGHT) and taskbar_info:
                 self.logger.debug("Vertical taskbar detected, calculating vertical layout size.")
-                
-                # For a vertical layout, width is determined by the longest possible line.
-                # Example: "↑ 999.9 Mbps"
-                longest_line_width = (
-                    margin +
-                    arrow_width +
-                    arrow_num_gap +
-                    max_number_width +
-                    value_unit_gap +
-                    max_unit_width +
-                    margin
-                )
+                longest_line_width = (margin + arrow_width + arrow_num_gap + max_number_width + value_unit_gap + max_unit_width + margin)
                 calculated_width = math.ceil(longest_line_width)
-
-                # Height is determined by two lines of text plus padding.
                 line_gap = getattr(LayoutConstants, 'LINE_GAP', 2)
                 text_height = (self.metrics.height() * 2) + line_gap
                 renderer_padding = getattr(RendererConstants, 'TEXT_MARGIN', 5) * 2
                 calculated_height = text_height + renderer_padding
-                
                 self.logger.debug(f"Vertical layout calculated size: {calculated_width}x{calculated_height}")
 
             self.setFixedSize(int(calculated_width), int(calculated_height))
             self.logger.info(f"Widget resized to: {calculated_width}x{calculated_height}px")
 
-            if self.isVisible() and not self.config.get("free_move", False):
-                if hasattr(self, 'position_manager') and self.position_manager:
-                    self.position_manager.update_position()
-                    self._adjust_position_with_margin()
-                    self.logger.debug("Position updated after resize.")
         except Exception as e:
             self.logger.error(f"Failed to resize widget: {e}", exc_info=True)
             raise RuntimeError("Failed to resize widget based on font") from e
@@ -771,8 +717,6 @@ class NetworkSpeedWidget(QWidget):
                     return
 
                 calculator = self.position_manager.calculator
-                # --- THIS IS THE FIX ---
-                # Pass self.config as the last argument to the updated method.
                 constrained_pos = calculator.constrain_drag_position(new_global_pos, taskbar_info, self.size(), self.config)
                 if constrained_pos:
                     self.move(constrained_pos)
@@ -781,31 +725,56 @@ class NetworkSpeedWidget(QWidget):
             self.logger.error(f"Error processing mouseMoveEvent: {e}", exc_info=True)
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
-        """Stops dragging and, if not in free move, calculates and saves the new tray offset."""
+        """
+        Stops dragging. Calculates and saves the new TOTAL offset from the tray.
+        If the user drags too far right (into the tray), it snaps to a minimum
+        safe distance instead of reverting to the last position.
+        """
         try:
             if event.button() == Qt.MouseButton.LeftButton and self._dragging:
                 self._dragging = False
                 
-                # --- THIS IS THE "LEARNING" LOGIC ---
                 if not self.config.get("free_move", False):
-                    self.logger.debug("Constrained drag finished. Calculating new tray offset.")
+                    self.logger.debug("Constrained drag finished. Calculating and saving new total offset.")
                     try:
                         taskbar_info = get_taskbar_info()
                         if taskbar_info and taskbar_info.get_tray_rect():
-                            dpi_scale = taskbar_info.dpi_scale or 1.0
-                            tray_left_logical = taskbar_info.get_tray_rect()[0] / dpi_scale
+                            screen = taskbar_info.get_screen()
+                            if not screen:
+                                self.logger.warning("Cannot validate new offset: No screen found.")
+                                event.accept()
+                                return
+
+                            dpi_scale = self.devicePixelRatioF() or 1.0
+                            tray_left_logical = round(taskbar_info.get_tray_rect()[0] / dpi_scale)
                             widget_right_edge = self.pos().x() + self.width()
                             
-                            new_offset = round(tray_left_logical - widget_right_edge)
+                            # This is the offset calculated from the user's drop position.
+                            calculated_offset = tray_left_logical - widget_right_edge                            
+                            is_on_screen = self.pos().x() >= screen.geometry().left()
                             
-                            # Only save if it's a reasonable offset
-                            if 0 < new_offset < 200:
-                                self.update_config({"tray_offset_x": new_offset})
-                                self.logger.info(f"User set new tray offset to {new_offset}px.")
+                            # 1. Define the minimum allowed offset (5px system margin).
+                            from ..constants.constants import UIConstants
+                            min_offset = getattr(UIConstants, 'WIDGET_MARGIN_FROM_TRAY', 5)
+
+                            # 2. Determine the final offset to be saved.
+                            if calculated_offset >= min_offset and is_on_screen:
+                                # User dropped it in a valid location to the left of the tray.
+                                final_offset = calculated_offset
+                                self.logger.info(f"User set new total tray offset to {final_offset}px.")
+                            else:
+                                # User dropped it too far right (offset < min_offset) or off-screen.
+                                # Snap to the minimum safe distance.
+                                final_offset = min_offset
+                                self.logger.info(f"User dragged too far right. Snapping to minimum offset of {final_offset}px.")
+
+                            # 3. Save and apply the final, validated offset.
+                            self.update_config({"tray_offset_x": final_offset})
+                            self.update_position()
+                                
                     except Exception as e:
-                        self.logger.error(f"Could not calculate or save new tray offset: {e}")
+                        self.logger.error(f"Could not calculate or save new tray offset: {e}", exc_info=True)
                 else:
-                    # In free move mode, just save the absolute position
                     self.save_position()
 
                 event.accept()
@@ -1024,110 +993,92 @@ class NetworkSpeedWidget(QWidget):
 
     def reset_to_default_position(self) -> None:
         """
-        Invalidates any saved position and snaps the widget back to its
-        default, auto-detected location next to the taskbar.
+        Resets the widget to its default position, including the system margin.
         """
         self.logger.info("Resetting widget to default auto-detected position.")
         if not self.position_manager:
             self.logger.warning("Cannot reset position, PositionManager is not available.")
             return
 
-        # 1. Invalidate the stored position in the config.
-        #    Setting to None ensures the initial positioning logic is used on next launch.
-        self.update_config({"position_x": None, "position_y": None})
+        # Set the offset in the config to its default value, which includes the margin.
+        from ..constants.constants import UIConstants
+        default_offset = PositionConstants.DEFAULT_PADDING + getattr(UIConstants, 'WIDGET_MARGIN_FROM_TRAY', 5)
+        self.update_config({
+            "position_x": None,
+            "position_y": None,
+            "tray_offset_x": default_offset
+        })
 
-        # 2. Immediately trigger the auto-positioning logic to snap it back visually.
-        #    These methods already respect the "free_move" flag (which is now false).
-        self.position_manager.update_position()
-        self._adjust_position_with_margin()
-
-        # 3. Save the current (newly snapped) position so it's remembered.
-        self.save_position()
+        self.update_position()
 
     def apply_all_settings(self) -> None:
         """
-        Applies all relevant settings from the current config to the widget and its components.
-
-        Raises:
-            RuntimeError: If configuration is missing or applying settings fails.
+        Applies all settings from the current config in a specific, synchronous order
+        to prevent race conditions: update components -> set font & resize -> reposition -> repaint.
         """
         self.logger.info("Applying all settings from current configuration...")
         if not self.config:
             raise RuntimeError("Configuration not loaded.")
 
         try:
+            # Step 1: Update all non-visual components.
             if self.renderer:
-                try:
-                    self.renderer.update_config(self.config)
-                    self.logger.debug("Renderer configuration updated.")
-                except Exception as e:
-                    self.logger.error(f"Failed to update renderer config: {e}", exc_info=True)
-
+                self.renderer.update_config(self.config)
             if self.controller:
-                try:
-                    self.controller.update_interface_settings(
-                        mode=self.config.get("interface_mode", ConfigConstants.DEFAULT_INTERFACE_MODE),
-                        selected=self.config.get("selected_interfaces", []),
-                    )
-                    self.logger.debug("Controller interface settings updated.")
-                except Exception as e:
-                    self.logger.error(f"Failed to update controller settings: {e}", exc_info=True)
-
+                self.controller.update_interface_settings(
+                    mode=self.config.get("interface_mode", ConfigConstants.DEFAULT_INTERFACE_MODE),
+                    selected=self.config.get("selected_interfaces", []),
+                )
             if self.timer_manager:
-                try:
-                    update_rate = self.config.get("update_rate", ConfigConstants.DEFAULT_UPDATE_RATE)
-                    self.timer_manager.update_speed_rate(update_rate)
-                    self.logger.debug(f"TimerManager speed update rate set to {update_rate}s")
-                except Exception as e:
-                    self.logger.error(f"Failed to update timer rates: {e}", exc_info=True)
-
+                update_rate = self.config.get("update_rate", ConfigConstants.DEFAULT_UPDATE_RATE)
+                self.timer_manager.update_speed_rate(update_rate)
             if self.widget_state:
-                try:
-                    self.widget_state.apply_config(self.config)
-                    self.logger.debug("WidgetState configuration updated.")
-                except Exception as e:
-                    self.logger.error(f"Failed to update WidgetState config: {e}", exc_info=True)
+                self.widget_state.apply_config(self.config)
 
-            self.font_updated.emit()
+            # Step 2: Directly set the font, which also triggers the resize.
+            self._set_font(resize=True)
+            
+            # Step 3: AFTER resizing, update the position. This is the crucial order.
+            self.update_position()
+            
+            # Step 4: Schedule a repaint to reflect all changes.
             self.update()
+            
             self.logger.info("All settings applied successfully.")
         except Exception as e:
             self.logger.error(f"Error applying settings to components: {e}", exc_info=True)
             raise RuntimeError(f"Failed to apply settings: {e}") from e
 
-    def handle_settings_changed(self, updated_config: Dict[str, Any]) -> None:
+    def handle_settings_changed(self, updated_config: Dict[str, Any], save_to_disk: bool = True) -> None:
         """
-        Handles configuration changes from the settings dialog. It now modifies the
-        incoming configuration directly when 'free_move' is disabled to ensure
-        saved positions are cleared before any repositioning logic is triggered.
+        Handles configuration changes. Applies them to the widget and optionally saves them.
         """
-        self.logger.info("Handling settings change request...")
+        self.logger.info(f"Handling settings change request... (Save to disk: {save_to_disk})")
         
-        # Create a reliable snapshot of the config BEFORE any changes.
         old_config = self.config.copy()
 
         try:
-            # 1. Check if 'free_move' is being turned OFF.
             free_move_was_enabled = old_config.get('free_move', False)
             free_move_is_now_enabled = updated_config.get('free_move', False)
 
             if free_move_was_enabled and not free_move_is_now_enabled:
-                self.logger.info("Free Move was disabled. Clearing saved coordinates from the incoming settings.")
-                # 2. Modify the incoming config to remove the old position. This is the crucial step.
+                self.logger.info("Free Move was disabled. Clearing saved coordinates.")
                 updated_config['position_x'] = None
                 updated_config['position_y'] = None
 
-            # 3. Now, apply the potentially modified configuration.
-            self.update_config(updated_config)
+            if save_to_disk:
+                self.update_config(updated_config)
+            else:
+                self.config.update(updated_config)
+            
+            # apply_all_settings now handles the entire visual update transaction correctly.
             self.apply_all_settings()
 
-            # 4. If the position was just reset, the call to apply_all_settings above will have
-            #    triggered a reposition to the default location because the saved coords were None.
-            self.logger.info("Settings successfully changed and applied.")
+            self.logger.info("Settings successfully handled and applied.")
 
         except Exception as e:
             self.logger.error(f"Failed to handle settings change: {e}", exc_info=True)
-            self._rollback_config(old_config)
+            self.config = old_config # Rollback in-memory config
             raise
 
     def show_settings(self) -> None:
@@ -1150,29 +1101,7 @@ class NetworkSpeedWidget(QWidget):
             )
 
             dialog.adjustSize()
-            accepted = dialog.exec()
-            if accepted:
-                self.logger.info("Settings dialog accepted by user.")
-                try:
-                    new_config = dialog.get_config()
-                    if not new_config:
-                        raise RuntimeError("Failed to retrieve settings from dialog UI.")
-                    self.handle_settings_changed(new_config)
-                    if dialog.should_update_startup_task():
-                        requested_startup_state = dialog.is_startup_requested()
-                        self.logger.info(f"Startup setting changed to: {requested_startup_state}")
-                        self.toggle_startup(requested_startup_state)
-                except Exception as e:
-                    self.logger.error(f"Error applying settings: {e}", exc_info=True)
-                    QMessageBox.warning(
-                        self,
-                        self.i18n.ERROR_TITLE,
-                        f"Could not apply the new settings:\n\n{e}"
-                    )
-            else:
-                self.logger.info("Settings dialog cancelled by user.")
-
-            QTimer.singleShot(0, self._check_position)
+            dialog.exec() # Simplified: The accept/reject methods handle everything now.
 
         except Exception as e:
             self.logger.error(f"Error showing settings: {e}", exc_info=True)
@@ -1284,11 +1213,13 @@ class NetworkSpeedWidget(QWidget):
         self.logger.debug(f"Application version set to: {version}")
 
     def update_position(self) -> None:
-        self.logger.debug("External request to update widget position.")
+        """
+        The single, authoritative method to reposition the widget based on its current state.
+        """
+        self.logger.debug("Authoritative request to update widget position.")
         if self.position_manager:
             try:
                 self.position_manager.update_position()
-                self._adjust_position_with_margin()
             except Exception as e:
                 self.logger.error(f"Error during position update: {e}", exc_info=True)
 
