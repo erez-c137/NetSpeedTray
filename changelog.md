@@ -2,13 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.7] - July 30, 2025
+
+This is a landmark stability release that perfects the core user experience of the widget. Through a comprehensive overhaul of the positioning and state management logic, the widget now behaves with the rock-solid predictability of a native Windows UI element. All visual "flickering," "jumping," and "drifting" issues have been eliminated.
+
+### ✨ Core Experience & Stability Overhaul
+
+- **Perfectly Stable Positioning:** Resolved a complex series of deep-seated bugs that caused the widget to flicker or jump. The widget's position is now completely stable during application startup, after closing the settings window, and while the system tray icons change.
+- **Smooth & Intuitive Dragging:** The widget no longer "fights" the user's cursor or snaps to a slightly different spot after being moved. The position where you release the mouse is now its final, pixel-perfect location.
+- **Intelligent Snap-to-Edge:** When dragging the widget near the system tray, it now intelligently snaps to a minimum safe distance if moved too far, gracefully respecting the user's intent to place it as close as possible.
+- **Unrestricted Placement:** The arbitrary limit on how far the widget could be dragged along the taskbar has been removed. Placement is now constrained only by the edges of your screen.
+
+### 🐛 Bug Fixes & Refinements
+
+- **Graph Window:** Fixed a critical `AttributeError` that could prevent the Graph Window from opening correctly.
+- **Configuration File:** The app's config file is now cleaner and no longer stores unnecessary `position_x` and `position_y` fields when they are not in use.
+- **UI Text:** The "Enable Free Move" label in settings has been simplified to "Free Move (No Snapping)" for better clarity.
+
+---
+
 ## [1.0.6] - July 29, 2025
 
-This release focuses on quality-of-life improvements, introducing intelligent widget positioning and overhauling the installation process for seamless future updates.
+This release focused on quality-of-life improvements, introducing the initial version of the adaptive widget positioning and overhauling the installation process for seamless future updates.
 
 #### ✨ Added
 
-- **Intelligent Adaptive Positioning:**
+- **Adaptive Positioning (Beta):**
   - The widget now learns and maintains your preferred distance from the system tray.
   - It automatically shifts its position to prevent being overlapped by new application icons appearing in the tray.
   - Your custom spacing is "learned" simply by dragging the widget while _Free Move_ is disabled.

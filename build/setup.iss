@@ -1,6 +1,6 @@
 #define MyAppName "NetSpeedTray"
-#define MyAppVersion "1.0.6.0"
-#define MyAppVersionDisplay "1.0.6"
+#define MyAppVersion "1.0.7.0"
+#define MyAppVersionDisplay "1.0.7"
 #define MyAppPublisher "Erez C137"
 #define MyAppURL "https://github.com/erez-c137/NetSpeedTray"
 #define MyAppExeName "NetSpeedTray.exe"
@@ -24,8 +24,6 @@ WizardStyle=modern
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 VersionInfoVersion={#MyAppVersion}
-
-; --- allow silent installation ---
 DisableDirPage=auto
 UsePreviousAppDir=no
 SetupLogging=yes
@@ -46,8 +44,8 @@ Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 Name: "{autostartup}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: startupicon
 
-[InstallDelete]
-Type: files; Name: "{app}\NetSpeedTray-*-Portable.exe"
-
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
+
+[InstallDelete]
+Type: files; Name: "{app}\NetSpeedTray-*-Portable.exe"
