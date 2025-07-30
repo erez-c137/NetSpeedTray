@@ -1101,7 +1101,16 @@ class NetworkSpeedWidget(QWidget):
             )
 
             dialog.adjustSize()
-            dialog.exec() # Simplified: The accept/reject methods handle everything now.
+            result = dialog.exec()
+
+            if result == QDialog.DialogCode.Accepted:
+                self.logger.info("Settings dialog accepted by user.")
+                if dialog.should_update_startup_task():
+                    requested_startup_state = dialog.is_startup_requested()
+                    self.logger.info(f"Startup setting changed. Requesting toggle to: {requested_startup_state}")
+                    self.toggle_startup(requested_startup_state)
+            else:
+                self.logger.info("Settings dialog cancelled by user.")
 
         except Exception as e:
             self.logger.error(f"Error showing settings: {e}", exc_info=True)
@@ -1245,10 +1254,15 @@ class NetworkSpeedWidget(QWidget):
             )
 
     def _get_executable_path(self) -> str:
+        """Gets the correct, quoted executable path or command for the registry."""        
         if getattr(sys, 'frozen', False):
-            return sys.executable
+            # Production: The executable path itself.
+            return f'"{sys.executable}"'
         else:
-            return os.path.abspath(sys.argv[0])
+            # Development: The python interpreter followed by the script path.
+            python_executable = sys.executable
+            script_path = os.path.abspath(sys.argv[0])
+            return f'"{python_executable}" "{script_path}"'
 
     def _check_startup_registry(self) -> bool:
         if sys.platform != 'win32':
@@ -1270,7 +1284,7 @@ class NetworkSpeedWidget(QWidget):
             return False
 
     def _set_startup_registry(self, enable: bool) -> None:
-        if sys.platform != 'win32':
+        if sys.platform != 'win32':  # pragma: no cover
             raise NotImplementedError("Startup registry modification only implemented for Windows.")
         registry_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
         app_name = AppConstants.APP_NAME
@@ -1279,10 +1293,9 @@ class NetworkSpeedWidget(QWidget):
             key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, registry_path, 0, winreg.KEY_WRITE)
             with key:
                 if enable:
-                    executable_path = self._get_executable_path()
-                    quoted_path = f'"{executable_path}"'
-                    winreg.SetValueEx(key, app_name, 0, winreg.REG_SZ, quoted_path)
-                    self.logger.info(f"Added startup entry '{app_name}' pointing to {quoted_path}.")
+                    executable_command = self._get_executable_path()
+                    winreg.SetValueEx(key, app_name, 0, winreg.REG_SZ, executable_command)
+                    self.logger.info(f"Added startup entry '{app_name}' pointing to: {executable_command}")
                 else:
                     try:
                         winreg.DeleteValue(key, app_name)
