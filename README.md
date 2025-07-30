@@ -1,49 +1,88 @@
 # NetSpeedTray
 
-A lightweight, highly customizable system tray application that monitors and displays real-time network speeds for Windows.
+![GitHub release (latest by date)](https://img.shields.io/github/v/release/erez-c137/NetSpeedTray) ![GitHub all releases](https://img.shields.io/github/downloads/erez-c137/NetSpeedTray/total) ![GitHub license](https://img.shields.io/github/license/erez-c137/NetSpeedTray) ![GitHub stars](https://img.shields.io/github/stars/erez-c137/NetSpeedTray?style=social)
 
-## Screenshots
+![NetSpeedTray Banner](./screenshots/netspeedtray-hero.jpg)
 
-<div align="center">
-  <img src="screenshots/main_new_105b.png" alt="Main Interface"/><br/>
-  <p><em>The widget, docked to the taskbar.</em></p>
-</div>
-<br>
-<div align="center">
-  <img src="screenshots/settings_1.0.5b2.png" alt="Settings Dialog"/><br/>
-  <p><em>The modern settings dialog with extensive customization options.</em></p>
-</div>
-<br>
-<div align="center">
-  <img src="screenshots/main_graph_1.0.5b1.png" alt="Graph View"/><br/>
-  <p><em>The detailed network history graph.</em></p>
-</div>
+A lightweight, open-source network monitor for Windows that displays live upload/download speeds directly on the Taskbar with a native look and feel.
 
-## Features
+---
+
+## Installation
+
+The easiest way to install and get automatic updates is with a package manager.
+
+**Using [Winget](https://docs.microsoft.com/en-us/windows/package-manager/winget/) (Recommended, built into Windows):**
+
+```powershell
+winget install --id erez-c137.NetSpeedTray
+```
+
+### Manual Download
+
+If you prefer, you can download the latest files directly from the [**Releases Page**](https://github.com/erez-c137/NetSpeedTray/releases/latest).
+
+- **`NetSpeedTray-x.x.x-Setup.exe`:** The standard Windows installer.
+- **`NetSpeedTray.exe`:** The standalone portable version (no installation needed).
+
+---
+
+## Key Features
 
 - 💻 **Lightweight & Efficient:** Sits quietly in your system tray without hogging resources.
-- 📊 **Real-time Monitoring:** Displays upload and download speeds with a clean, modern look.
-- 🚀 **Intelligent Positioning:**
+- ✨ **Windows Native Look & Feel:** Designed to blend in perfectly with the Windows 10/11 UI.
+- 🚀 **Intelligent & Stable Positioning:** Rock-solid positioning logic ensures no flickering or "fighting" with the cursor.
+- 🎨 **Total Customization:**
   - **Free Move Mode:** Unlock the widget and place it anywhere on your screen.
-  - **Adaptive Tray Mode:** Remembers your preferred spacing from the system tray and automatically shifts to avoid being covered by new icons.
-- ✨ **Total Customization:**
   - **Mini-Graph:** An optional, real-time graph displayed directly on the widget.
-  - **Color Coding:** Set custom colors and speed thresholds to see your network status at a glance.
+  - **Color Coding:** Set custom colors and speed thresholds.
   - **Text Control:** Fine-tune the text alignment, decimal precision, and number format.
 - 📈 **Detailed History Graph:** Double-click the widget to open a full history of your network activity.
 - ⚙️ **Highly Configurable:** Adjust the update rate, enable/disable auto-start, and more.
 
-## Download
+---
 
-- Go to the [**Latest Release**](https://github.com/erez-c137/NetSpeedTray/releases/latest) page.
-  - **`NetSpeedTray-x.x.x-Setup.exe`:** The recommended Windows installer.
-  - **`NetSpeedTray.exe`:** The standalone portable version.
+## Usage & Screenshots
 
-## ☕ Support My Work
+#### The Widget
+
+The core of NetSpeedTray. It sits on your taskbar, showing your live network speeds.
+
+- **Right-click** to access Settings or Exit.
+- **Double-click** to open the full history graph.
+
+<div align="center">
+  <img src="screenshots/main_new_105b.png" alt="Main Interface" width="600"/><br/>
+</div>
+
+#### Positioning Modes
+
+- **Adaptive Tray Mode (Default):** The widget is locked to your taskbar. Left-click and drag it horizontally to set your preferred distance from the system tray icons.
+- **Free Move Mode:** Enable this in the settings to unlock the widget and place it anywhere.
+
+#### Modern Settings
+
+A clean, modern UI to control every aspect of the widget's appearance and behavior.
+
+<div align="center">
+  <img src="screenshots/settings_1.0.5b2.png" alt="Settings Dialog" width="600"/><br/>
+</div>
+
+#### Detailed History Graph
+
+Double-click the widget to see a detailed, zoomable graph of your network history.
+
+<div align="center">
+  <img src="screenshots/main_graph_1.0.5b1.png" alt="Graph View" width="600"/><br/>
+</div>
+
+---
+
+## ☕ Support This Project
 
 Let’s be real: Windows should have had this feature built-in. Instead of waiting, I brewed up a lightweight, bloat-free solution that feels like it belongs.
 
-If you enjoy NetSpeedTray and it makes your workflow a little better, please consider supporting its development. Your contribution directly helps me dedicate more time to the project and keep it a high-quality tool for everyone.
+If you enjoy NetSpeedTray and it makes your workflow a little better, please consider supporting its development. Your contribution helps me dedicate more time to the project and keep it a high-quality, ad-free tool for everyone.
 
 <p align="center">
   <a href="https://github.com/sponsors/erez-c137">
@@ -59,90 +98,20 @@ If you enjoy NetSpeedTray and it makes your workflow a little better, please con
   </a>
 </p>
 
-### Why Support NetSpeedTray?
-
-- **🚀 Fund New Features:** Your support helps me build the features you want to see next.
-- **🔧 Ensure Long-Term Maintenance:** Guarantees the app stays compatible with future Windows updates.
-- **🚫 Keep it 100% Free & Ad-Free:** NetSpeedTray will always be free, without ads, tracking, or "pro" versions.
-- **🤖 Fuel Development:** Contributions help cover the costs of development tools and services.
-
-Every little bit helps and is deeply appreciated. If you can’t contribute financially, starring the repo or sharing the project is just as awesome. Thank you! ❤️```
+Sharing and Starring the repo is also a huge and deeply appreciated way to show support! ❤️
 
 ---
 
-## Installation
-
-### With a Package Manager (Recommended)
-
-The easiest way to install and receive automatic updates is by using a command-line package manager.
-
-**Using [Winget](https://docs.microsoft.com/en-us/windows/package-manager/winget/) (built into Windows):**
-
-```powershell
-winget install erez-c137.NetSpeedTray
-```
-
-**Using [Scoop](https://scoop.sh/):**
-
-```powershell
-scoop bucket add extras
-scoop install netspeedtray
-```
-
-_(Note: It may take 24-48 hours after a new release for it to be available via package managers.)_
-
-### Manual Installation
-
-If you prefer not to use a package manager, you can download the latest files directly from the [**Releases Page**](https://github.com/erez-c137/NetSpeedTray/releases/latest).
-
-- **`NetSpeedTray-x.x.x-Setup.exe`:** The standard Windows installer.
-- **`NetSpeedTray.exe`:** The standalone portable version (no installation needed).
-
-## Usage
-
-- **Widget Positioning (Two Modes):**
-
-  - **Adaptive Tray Mode (Default):** The widget is locked to your taskbar. Left-click and drag it to set your preferred distance from the system tray icons. It will automatically move to maintain that spacing as new icons appear.
-  - **Free Move Mode:** Enable this in the settings to unlock the widget. You can then drag and drop it anywhere on your screen, and its position will be saved.
-
-- **Context Menu & Shortcuts:**
-
-  - **Right-click** the widget to access Settings or Exit.
-  - **Double-click** the widget to open the full history graph.
-
-- **Speed Display & Customization:**
-
-  - Upload (↑) and Download (↓) speeds are shown separately.
-  - **Settings -> Color Coding:** Set speed thresholds and custom colors for when the widget _is_ visible.
-  - **Settings -> Mini-Graph:** Toggle the real-time graph background on the widget.
-  - **Settings -> Speed Units:** Control text alignment, decimal places, and display format (e.g., always show Mbps).
-  - **Settings -> General:** Enable/disable auto-start with Windows.
-  - **Dynamic Update Rate (in General settings):** An intelligent power-saving feature. When enabled, the app reduces its update frequency during network inactivity to save resources, and instantly returns to the normal update rate as soon as activity is detected.
-
-- **Persistence:**
-  - All settings and position preferences are automatically saved.
-  - Configuration is stored in your AppData folder (`%appdata%\NetSpeedTray`).
-
 ## Building from Source
+
+<details>
+<summary>Click to expand</summary>
 
 ### Prerequisites
 
 - [Python 3.9+](https://www.python.org/downloads/)
 - [Git](https://git-scm.com/downloads/)
 - (Optional) [Inno Setup 6](https://jrsoftware.org/isinfo.php) for building the installer.
-
-### Project Structure
-
-```
-src/
-└── netspeedtray/
-    ├── constants/      # Constants and internationalization
-    ├── core/           # Core application components
-    ├── tests/          # Test suites
-    ├── utils/          # Utility functions
-    ├── views/          # User interface components
-    └── monitor.py      # Main application entry point
-```
 
 ### Build & Run Instructions
 
@@ -180,6 +149,8 @@ src/
     ```
     - The final installer and portable executable will be placed in the `dist` folder.
 
+</details>
+
 ## Contributing
 
 Contributions, issues, and feature requests are welcome! Please feel free to open an issue or submit a pull request.
@@ -187,3 +158,7 @@ Contributions, issues, and feature requests are welcome! Please feel free to ope
 ## License
 
 This project is licensed under the [GNU GPL v3.0](LICENSE).
+
+```
+
+```
