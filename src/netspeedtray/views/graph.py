@@ -456,8 +456,7 @@ class GraphWindow(QWidget):
             if self._parent and hasattr(self._parent, 'widget_state'):
                 history = self._parent.widget_state.get_speed_history()
                 self.update_graph(history)
-            # Update the app usage stats bar and list
-            self._update_app_usage()
+                
             self._reposition_overlay_elements()  # Ensure proper positioning
             if hasattr(self, 'canvas'):
                 self.canvas.draw()
