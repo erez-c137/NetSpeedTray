@@ -988,18 +988,17 @@ class SettingsDialog(QDialog):
             self.logger.warning("Attempted to emit settings before UI setup complete.")
             return
 
-        self.logger.debug("Throttled update: Emitting settings_changed.")
+        self.logger.debug("Throttled preview: Applying settings without saving.")
         current_settings = self.get_settings()
         if current_settings:
-            self.settings_changed.emit(current_settings)
-            if hasattr(self.parent_widget, 'update_config') and hasattr(self.parent_widget, 'apply_all_settings'):
+            if hasattr(self.parent_widget, 'handle_settings_changed'):
                 try:
-                    self.parent_widget.update_config(current_settings)
-                    self.parent_widget.apply_all_settings()
+                    # This applies the settings for a live preview WITHOUT saving to disk.
+                    self.parent_widget.handle_settings_changed(current_settings, save_to_disk=False)
                 except Exception as e:
-                    self.logger.error(f"Error applying live settings update to parent: {e}", exc_info=True)
+                    self.logger.error(f"Error applying live settings preview to parent: {e}", exc_info=True)
             else:
-                 self.logger.warning("Parent widget lacks methods for live update.")
+                 self.logger.warning("Parent widget lacks handle_settings_changed for live update.")
         self._pending_update = False
 
     def _set_color_button_style(self, button: QPushButton, color_hex: str) -> None:
@@ -1269,21 +1268,24 @@ class SettingsDialog(QDialog):
             return default
 
     def accept(self) -> None:
-        self.logger.info("Accept button clicked. Saving settings...")
+        self.logger.info("Accept button clicked. Finalizing and saving settings...")
         final_settings = self.get_settings()
         if not final_settings:
             QMessageBox.critical(self, self.i18n.ERROR_TITLE, self.i18n.ERROR_GETTING_SETTINGS)
             return
 
-        self.config.update(final_settings)
-        try:
-            ConfigManager().save(self.config)
-            self.logger.info("Configuration saved successfully.")
-        except Exception as e:
-            self.logger.error(f"Failed to save configuration file: {e}", exc_info=True)
-            QMessageBox.critical(self, self.i18n.ERROR_TITLE, self.i18n.ERROR_SAVING_CONFIG.format(error=str(e)))
-            return
+        if hasattr(self.parent_widget, 'handle_settings_changed'):
+            try:
+                # This call will update the config, save it, and apply all settings.
+                self.parent_widget.handle_settings_changed(final_settings, save_to_disk=True)
+            except Exception as e:
+                self.logger.error(f"Failed to apply final settings: {e}", exc_info=True)
+                QMessageBox.critical(self, self.i18n.ERROR_TITLE, f"Failed to apply settings: {e}")
+                return
+        else:
+            self.logger.warning("Parent lacks handle_settings_changed, cannot apply final settings directly.")
 
+        # Startup task logic is now separate from the main config application
         if self.should_update_startup_task():
             requested_state = self.is_startup_requested()
             self.logger.info(f"Startup setting changed. Requesting toggle to: {requested_state}")
@@ -1292,23 +1294,20 @@ class SettingsDialog(QDialog):
             else:
                  self.logger.error("Parent widget missing 'toggle_startup' method.")
 
-        if hasattr(self.parent_widget, 'handle_settings_changed'):
-            self.parent_widget.handle_settings_changed(self.config)
-        else:
-            self.logger.warning("Parent lacks handle_settings_changed, cannot apply final settings directly.")
         super().accept()
 
     def reject(self) -> None:
-        self.logger.info("Reject (Cancel) button clicked.")
-        if hasattr(self.parent_widget, 'update_config') and hasattr(self.parent_widget, 'apply_all_settings'):
+        self.logger.info("Reject (Cancel) button clicked. Reverting preview changes.")
+        
+        if hasattr(self.parent_widget, 'handle_settings_changed'):
             self.logger.debug("Restoring original configuration on parent widget due to reject.")
             try:
-                self.parent_widget.update_config(self.original_config.copy())
-                self.parent_widget.apply_all_settings()
+                # This reverts the widget's in-memory state to how it was before the dialog was opened.
+                self.parent_widget.handle_settings_changed(self.original_config, save_to_disk=False)
             except Exception as e:
                  self.logger.error(f"Error reverting parent widget state on reject: {e}", exc_info=True)
         else:
-            self.logger.debug("Parent widget lacks methods for revert, no action taken on parent.")
+            self.logger.warning("Parent widget lacks handle_settings_changed, cannot revert preview.")
         super().reject()
 
     # --- Helper Methods ---
