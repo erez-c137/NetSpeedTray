@@ -22,16 +22,6 @@ _logging_lock: threading.Lock = threading.Lock()
 def get_app_asset_path(asset_name: str) -> Path:
     """
     Get the path to an application asset in the assets directory.
-
-    Args:
-        asset_name: Name of the asset file to locate.
-
-    Returns:
-        Path: Absolute path to the asset.
-
-    Examples:
-        >>> path = get_app_asset_path('NetSpeedTray.ico')
-        >>> str(path)  # e.g., "E:\\path\\to\\NetSpeedTray\\assets\\NetSpeedTray.ico"
     """
     import sys
     # Support PyInstaller (_MEIPASS) and dev mode
@@ -48,22 +38,6 @@ def get_app_asset_path(asset_name: str) -> Path:
 def get_app_data_path() -> Path:
     """
     Retrieve the application data directory path on Windows.
-
-    Uses the APPDATA environment variable to determine the app data directory
-    (e.g., C:\\Users\\User\\AppData\\Roaming\\NetSpeedTray).
-    Creates the directory if it doesn't exist. Falls back to the user's home directory
-    if APPDATA is not set. Verifies the directory is writable.
-
-    Returns:
-        Path: Path to the NetSpeedTray directory in APPDATA or home directory.
-
-    Raises:
-        PermissionError: If the directory cannot be created or written to due to permissions.
-        OSError: If the directory cannot be created or written to due to other issues.
-
-    Examples:
-        >>> path = get_app_data_path()
-        >>> str(path)  # e.g., "C:\\Users\\User\\AppData\\Roaming\\NetSpeedTray"
     """
     logger: logging.Logger = logging.getLogger(__name__) # Use __name__ for module-specific logger
     appdata: Optional[str] = os.getenv("APPDATA")
@@ -92,24 +66,6 @@ def get_app_data_path() -> Path:
 def setup_logging() -> logging.Logger:
     """
     Configure logging with both a rotating file handler and a console handler in a thread-safe manner.
-
-    Sets up a logger with:
-    - A rotating file handler writing to a log file in the app data directory, with a maximum size
-      defined in `HelperConstants.MAX_LOG_SIZE` and up to `HelperConstants.LOG_BACKUP_COUNT` backups.
-      Uses `LogConstants.ERROR_LOG_FILENAME` for the filename and `LogConstants.FILE_LOG_LEVEL`
-      or `LogConstants.PRODUCTION_LOG_LEVEL` based on environment.
-    - A console handler writing to stderr with level `LogConstants.CONSOLE_LOG_LEVEL` or
-      `LogConstants.PRODUCTION_LOG_LEVEL` based on environment.
-    Ensures logging is configured only once using a thread-safe lock.
-
-    Uses `NETSPEEDTRAY_ENV=production` environment variable to set production log levels.
-
-    Returns:
-        logging.Logger: Configured logger instance for 'NetSpeedTray'.
-
-    Raises:
-        PermissionError: If the log file cannot be created due to permissions.
-        OSError: If the log file cannot be created or written to due to other issues.
     """
     logger: logging.Logger = logging.getLogger(AppConstants.APP_NAME) # Use app name consistently for logger
     with _logging_lock:
@@ -168,25 +124,6 @@ def format_speed(speed: float, use_megabytes: bool, *, always_mbps: bool = False
     Speeds below `UnitConstants.MINIMUM_DISPLAY_SPEED` bytes/sec are displayed as '0 KBps' or '0 Kbps'.
     For higher speeds, the function selects the appropriate unit (Bps/KBps/MBps/GBps or bps/Kbps/Mbps/Gbps)
     based on the magnitude and the `use_megabytes` flag.
-
-    Args:
-        speed: Speed value in bytes/sec.
-        use_megabytes: If True, formats in byte-based units (Bps, KBps, MBps, GBps);
-                       if False, formats in bit-based units (bps, Kbps, Mbps, Gbps).
-        always_mbps: If True, always show Mbps (or MB/s if use_megabytes) regardless of value.
-        decimal_places: Number of decimal places to show (0, 1, or 2).
-
-    Returns:
-        str: Formatted speed string (e.g., "1.2 Mbps", "500 KBps", "0 Kbps").
-
-    Raises:
-        TypeError: If `speed` is not a number.
-
-    Examples:
-        >>> format_speed(125000, False)  # 125000 B/s = 1000000 bps = 1.0 Mbps
-        '1.0 Mbps'
-        >>> format_speed(100, False) # Assuming MINIMUM_DISPLAY_SPEED is higher
-        '0 Kbps'
     """
     
     if not isinstance(speed, (int, float)):
@@ -255,33 +192,11 @@ def format_speed(speed: float, use_megabytes: bool, *, always_mbps: bool = False
         fmt = f"{{val:.{decimal_places}f}} {{unit}}"
         return fmt.format(val=val, unit=unit)
 
-# --- NEW FUNCTION TO BE ADDED ---
 def format_data_size(data_bytes: int | float, precision: int = 2) -> Tuple[float, str]:
     """
     Formats a byte count into a human-readable string with units (B, KB, MB, GB, etc.).
 
     Uses base 1024 for units (KiB, MiB, etc. conceptually, though labels are KB, MB).
-
-    Args:
-        data_bytes: The number of bytes. Can be int or float.
-        precision: The number of decimal places for the formatted value.
-
-    Returns:
-        A tuple containing the formatted numerical value and its unit string
-        (e.g., (10.5, "MB")). Returns (0.0, "B") for invalid or zero input.
-
-    Raises:
-        TypeError: If `data_bytes` is not a number.
-
-    Examples:
-        >>> format_data_size(0)
-        (0.0, 'B')
-        >>> format_data_size(1024)
-        (1.0, 'KB')
-        >>> format_data_size(1500000)
-        (1.43, 'MB')
-        >>> format_data_size(1500000, precision=1)
-        (1.4, 'MB')
     """
     logger_instance: logging.Logger = logging.getLogger(__name__) # Or AppConstants.APP_NAME
 

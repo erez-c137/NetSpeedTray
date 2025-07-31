@@ -4,4 +4,4 @@ NetSpeedTray package initialization.
 A system tray application for monitoring network speed on Windows.
 """
 
-__version__ = "1.0.7"
+__version__ = "1.0.8"

@@ -49,63 +49,65 @@ class GraphWindow(QWidget):
     (Docstring remains largely the same as provided)
     """
 
-    def __init__(self, parent=None, logger=None, i18n=None):
-        """ Initialize the GraphWindow with its UI components. """
-        super().__init__()
-        self._parent = parent
-        self.logger = logger or logging.getLogger(__name__)
-        # Set i18n, fallback to parent's i18n if not provided
-        if i18n is not None:
-            self.i18n = i18n
-        elif parent is not None and hasattr(parent, 'i18n'):
-            self.i18n = parent.i18n
-        else:
-            self.i18n = None
-        self._is_closing = False
-        self._current_data = None
-        self._last_stats_update = time.time()
-        self._stats_update_interval = GraphConstants.STATS_UPDATE_INTERVAL
-        self._cached_stats = {}
-
-        # Setup timers
-        self._realtime_timer = QTimer(self)
-        self._update_timer = QTimer(self)
-        self._db_size_update_timer = QTimer(self)
-        self._db_size_update_timer.timeout.connect(self._update_db_size)
-        
-        # Setup UI
-        self.setupUi(self)
-        self.setWindowTitle(GraphConstants.WINDOW_TITLE)
-
-        # Set window icon
-        try:
-            icon_filename = getattr(AppConstants, 'ICON_FILENAME', 'NetSpeedTray.ico')
-            icon_path = helpers.get_app_asset_path(icon_filename)
-            if icon_path.exists():
-                self.setWindowIcon(QIcon(str(icon_path)))
+    def __init__(self, parent=None, logger=None, i18n=None, session_start_time: Optional[datetime] = None):
+            """ Initialize the GraphWindow with its UI components. """
+            super().__init__()
+            self._parent = parent
+            self.logger = logger or logging.getLogger(__name__)
+            if i18n is not None:
+                self.i18n = i18n
+            elif parent is not None and hasattr(parent, 'i18n'):
+                self.i18n = parent.i18n
             else:
-                self.logger.warning(f"Icon file not found at {icon_path}")
-        except Exception as e:
-            self.logger.error(f"Error setting window icon: {e}", exc_info=True)
-        
-        # Initialize matplotlib components first
-        self._init_matplotlib()
-        
-        # Initialize overlay elements
-        self._init_overlay_elements()
-        
-        # Initialize settings panel
-        self._init_settings_panel()
-        
-        # Apply initial theme
-        initial_dark_mode = self._parent.config.get("dark_mode", False) if self._parent else False
-        self.toggle_dark_mode(initial_dark_mode)
-        
-        # Connect signals
-        self._connect_signals()
-        
-        # Initial update
-        self._perform_initial_update()
+                self.i18n = None
+            self._is_closing = False
+            self._current_data = None
+            self._last_stats_update = time.time()
+            self._stats_update_interval = GraphConstants.STATS_UPDATE_INTERVAL
+            self._cached_stats = {}
+
+            # The graph window now uses the time passed from its parent, with a fallback.
+            self.session_start_time = session_start_time or datetime.now()
+
+            # Setup timers
+            self._realtime_timer = QTimer(self)
+            self._update_timer = QTimer(self)
+            self._db_size_update_timer = QTimer(self)
+            self._db_size_update_timer.timeout.connect(self._update_db_size)
+            
+            # Setup UI
+            self.setupUi(self)
+            self.setWindowTitle(GraphConstants.WINDOW_TITLE)
+
+            # Set window icon
+            try:
+                icon_filename = getattr(AppConstants, 'ICON_FILENAME', 'NetSpeedTray.ico')
+                icon_path = helpers.get_app_asset_path(icon_filename)
+                if icon_path.exists():
+                    self.setWindowIcon(QIcon(str(icon_path)))
+                else:
+                    self.logger.warning(f"Icon file not found at {icon_path}")
+            except Exception as e:
+                self.logger.error(f"Error setting window icon: {e}", exc_info=True)
+            
+            # Initialize matplotlib components first
+            self._init_matplotlib()
+            
+            # Initialize overlay elements
+            self._init_overlay_elements()
+            
+            # Initialize settings panel
+            self._init_settings_panel()
+            
+            # Apply initial theme
+            initial_dark_mode = self._parent.config.get("dark_mode", False) if self._parent else False
+            self.toggle_dark_mode(initial_dark_mode)
+            
+            # Connect signals
+            self._connect_signals()
+            
+            # Initial update
+            self._perform_initial_update()
     
     def setupUi(self, parent=None):
         """Constructs the main layout and widgets for the GraphWindow (manual, not Qt Designer)."""
@@ -187,9 +189,6 @@ class GraphWindow(QWidget):
         self._last_history = None
         self._no_data_text_obj = None
         self._current_date_formatter_type = None
-
-        # App start time (for session period)
-        self.app_start_time = datetime.now()
 
         # Call window positioning after UI is set up
         self._position_window()
@@ -450,14 +449,15 @@ class GraphWindow(QWidget):
 
 
     def _perform_initial_update(self):
-        """ Perform initial graph and stats update so UI is populated immediately on load. """
+        """
+        Performs the initial graph update by triggering the standard
+        history period update logic, which respects the initial slider state.
+        """
         try:
-            # Update the graph with the current history period (as if the slider was just set)
-            if self._parent and hasattr(self._parent, 'widget_state'):
-                history = self._parent.widget_state.get_speed_history()
-                self.update_graph(history)
-                
-            self._reposition_overlay_elements()  # Ensure proper positioning
+            if hasattr(self, 'history_period'):
+                self.update_history_period(self.history_period.value(), initial_setup=True)
+
+            self._reposition_overlay_elements()
             if hasattr(self, 'canvas'):
                 self.canvas.draw()
         except Exception as e:
@@ -1090,74 +1090,41 @@ class GraphWindow(QWidget):
             self.logger.error(f"Error updating history period text: {e}", exc_info=True)
 
     def update_history_period(self, value: int, initial_setup: bool = False) -> None:
-        """Update the graph and stats for the selected history period."""
+        """
+        Determines the correct time range for the selected history period and
+        triggers a graph update. It does NOT fetch data itself.
+        """
         try:
-            if not self._parent or not self._parent.widget_state:
-                return
-            history_data = self._parent.widget_state.get_speed_history()
             now = datetime.now()
             period = HistoryPeriodConstants.PERIOD_MAP.get(value, HistoryPeriodConstants.DEFAULT_PERIOD)
-            # Filtering logic for each period
-            if "3 Hours" in period:
-                cutoff = now - timedelta(hours=3)
-                filtered_history = [entry for entry in history_data if entry[0] >= cutoff]
-                start_time = cutoff
-            elif "6 Hours" in period:
-                cutoff = now - timedelta(hours=6)
-                filtered_history = [entry for entry in history_data if entry[0] >= cutoff]
-                start_time = cutoff
-            elif "12 Hours" in period:
-                cutoff = now - timedelta(hours=12)
-                filtered_history = [entry for entry in history_data if entry[0] >= cutoff]
-                start_time = cutoff
-            elif "24 Hours" in period or "Day" in period:
-                cutoff = now - timedelta(days=1)
-                filtered_history = [entry for entry in history_data if entry[0] >= cutoff]
-                start_time = cutoff
-            elif "Week" in period:
-                cutoff = now - timedelta(weeks=1)
-                filtered_history = [entry for entry in history_data if entry[0] >= cutoff]
-                start_time = cutoff
-            elif "Month" in period and "3" not in period and "6" not in period:
-                cutoff = now - timedelta(days=30)
-                filtered_history = [entry for entry in history_data if entry[0] >= cutoff]
-                start_time = cutoff
-            elif "3 Months" in period:
-                cutoff = now - timedelta(days=90)
-                filtered_history = [entry for entry in history_data if entry[0] >= cutoff]
-                start_time = cutoff
-            elif "6 Months" in period:
-                cutoff = now - timedelta(days=180)
-                filtered_history = [entry for entry in history_data if entry[0] >= cutoff]
-                start_time = cutoff
-            elif "Year" in period:
-                cutoff = now - timedelta(days=365)
-                filtered_history = [entry for entry in history_data if entry[0] >= cutoff]
-                start_time = cutoff
+            
+            start_time: Optional[datetime] = None
+
+            if "System Uptime" in period:
+                boot_timestamp = psutil.boot_time()
+                start_time = datetime.fromtimestamp(boot_timestamp)
             elif "Session" in period:
-                start_time = self.app_start_time
-                filtered_history = [entry for entry in history_data if entry[0] >= start_time]
-            elif "System Uptime" in period:
-                if history_data:
-                    start_time = min(entry[0] for entry in history_data)
-                else:
-                    start_time = now - timedelta(hours=1)
-                filtered_history = history_data
-            else:
-                # Default: show all data
-                filtered_history = history_data
-                start_time = min(entry[0] for entry in history_data) if history_data else now - timedelta(hours=1)
-            # Update stats bar and graph with filtered data
-            self._update_stats_bar(filtered_history, start_time)
-            self.update_graph(filtered_history, xlim=(start_time, now))
-            # Remove any timeline label/title if it was set by matplotlib
-            if hasattr(self, 'ax') and self.ax.get_title():
-                self.ax.set_title("")
-                if hasattr(self, 'canvas'):
-                    self.canvas.draw_idle()
+                start_time = self.session_start_time
+            elif "3 Hours" in period:
+                start_time = now - timedelta(hours=3)
+            elif "6 Hours" in period:
+                start_time = now - timedelta(hours=6)
+            elif "12 Hours" in period:
+                start_time = now - timedelta(hours=12)
+            elif "24 Hours" in period or "Day" in period:
+                start_time = now - timedelta(days=1)
+            elif "Week" in period:
+                start_time = now - timedelta(weeks=1)
+            elif "Month" in period and "3" not in period and "6" not in period:
+                start_time = now - timedelta(days=30)
+            else: # "All"
+                start_time = None
+            
+            self.update_graph(xlim=(start_time, now) if start_time else None)
+
             self.logger.debug(f"History period updated to: {period}")
         except Exception as e:
-            self.logger.error(f"Error updating history period (timeline label removal): {e}", exc_info=True)
+            self.logger.error(f"Error updating history period: {e}", exc_info=True)
 
     def export_history(self) -> None:
         """Export network speed history to CSV."""
@@ -1400,51 +1367,12 @@ class GraphWindow(QWidget):
         else:
             return "Mbps"
 
-    def update_graph(self, history_data: List, xlim: Optional[Tuple[datetime, datetime]] = None) -> None:
+    def update_graph(self, history_data: Optional[List] = None, xlim: Optional[Tuple[datetime, datetime]] = None) -> None:
         """
-        Schedules an update for the graph with new speed history data.
-        Assumes upload/download are already in Kbps (no conversion applied).
+        Schedules a throttled update for the graph. It only passes the time range.
         """
         if self._is_closing:
             return
-
-        if not history_data:
-            no_data_msg = getattr(self.i18n, 'NO_DATA_MESSAGE', "No data to display.")
-            self._show_graph_error(no_data_msg)
-            # Even if no data, still update the graph to show empty timeline
-            self._last_history = []
-            self._graph_update_pending = True
-            self._update_timer.singleShot(
-                GraphConstants.GRAPH_UPDATE_THROTTLE_MS,
-                lambda: self._perform_graph_update([], xlim)
-            )
-            return
-
-        # Convert upload/download from bytes/sec to Kbps before plotting or calculating stats
-        def convert_entry(entry):
-            ts, up_bps, down_bps, iface = entry
-            up_kbps = up_bps * 8 / 1000.0
-            down_kbps = down_bps * 8 / 1000.0
-            return (ts, up_kbps, down_kbps, iface)
-
-        converted = [convert_entry(e) for e in history_data]
-
-        self._last_history = converted
-
-        # Validate format
-        first_item = converted[0]
-        if not (isinstance(first_item, tuple) and len(first_item) == 4 and
-                isinstance(first_item[0], datetime) and
-                isinstance(first_item[1], (int, float)) and
-                isinstance(first_item[2], (int, float)) and
-                isinstance(first_item[3], str)):
-            self.logger.error(f"Invalid data format in history_data. First item: {first_item}")
-            error_msg = getattr(self.i18n, 'GRAPH_INVALID_DATA_FORMAT', "Invalid data format for graph.")
-            self._show_graph_error(error_msg)
-            return
-
-        if not self._parent.config.get("graph_enabled", True):
-            self.logger.warning("Graph is disabled in config. Update might be for internal/debug reasons.")
 
         if self._graph_update_pending:
             return
@@ -1452,63 +1380,51 @@ class GraphWindow(QWidget):
         self._graph_update_pending = True
         self._update_timer.singleShot(
             GraphConstants.GRAPH_UPDATE_THROTTLE_MS,
-            lambda: self._perform_graph_update(converted, xlim)
+            lambda: self._perform_graph_update(xlim=xlim)
         )
 
-    def _perform_graph_update(self, history_data: List[Tuple[datetime, float, float, str]], xlim: Optional[Tuple[datetime, datetime]] = None) -> None:
+    def _perform_graph_update(self, xlim: Optional[Tuple[datetime, datetime]] = None) -> None:
         """
-        Performs the actual rendering of the graph with the provided speed history data.
+        Performs the actual rendering of the graph. It fetches the latest data,
+        filters it, and handles cases where no data exists for the selected period.
         """
         try:
-            self._graph_update_pending = False 
+            self._graph_update_pending = False
             if self._is_closing or not self.isVisible():
                 return
-
-            unit_suffix = self._get_speed_unit()
-            now = datetime.now()
-            period_value = 0
-            if hasattr(self, 'history_period') and self.history_period:
-                period_value = self.history_period.value()
-            period_str = HistoryPeriodConstants.PERIOD_MAP.get(period_value, HistoryPeriodConstants.DEFAULT_PERIOD)
             
-            start_time: datetime
+            if not self._parent or not self._parent.widget_state:
+                self._show_graph_error("Data source not available.")
+                return
+            
+            all_history = self._parent.widget_state.get_speed_history()
 
-            if period_str in ("System Uptime", "All"):
-                start_time = min(entry[0] for entry in history_data) if history_data else now - timedelta(hours=1)
-            elif "3 Hours" in period_str:
-                start_time = now - timedelta(hours=3)
-            elif "6 Hours" in period_str:
-                start_time = now - timedelta(hours=6)
-            elif "12 Hours" in period_str:
-                start_time = now - timedelta(hours=12)
-            elif "24 Hours" in period_str or "Day" in period_str:
-                start_time = now - timedelta(days=1)
-            elif "Week" in period_str:
-                start_time = now - timedelta(weeks=1)
-            elif "Month" in period_str and "3" not in period_str and "6" not in period_str:
-                start_time = now - timedelta(days=30)
-            elif "3 Months" in period_str:
-                start_time = now - timedelta(days=90)
-            elif "6 Months" in period_str:
-                start_time = now - timedelta(days=180)
-            elif "Year" in period_str:
-                start_time = now - timedelta(days=365)
-            elif "Session" in period_str:
-                start_time = self.app_start_time
-            else:
-                # This fallback should now rarely be used.
-                start_time = now - timedelta(hours=1)
+            if not all_history:
+                self._show_graph_error(getattr(self.i18n, 'NO_DATA_MESSAGE', "No data to display."))
+                return
 
-            # Update the stats bar with the correct period data
-            self._update_stats_bar(history_data, start_time)
+            def convert_entry(entry):
+                ts, up_bps, down_bps, iface = entry
+                up_kbps = up_bps * 8 / 1000.0
+                down_kbps = down_bps * 8 / 1000.0
+                return (ts, up_kbps, down_kbps, iface)
+            
+            history_data = [convert_entry(e) for e in all_history]
 
-            # Filter data for the selected time period
-            filtered_data = [(ts, up, down, iface) for ts, up, down, iface in history_data if ts >= start_time]
-
-            if xlim is not None:
+            x_start, x_end = None, datetime.now()
+            if xlim:
                 x_start, x_end = xlim
+
+            if x_start:
+                filtered_data = [(ts, up, down, iface) for ts, up, down, iface in history_data if ts >= x_start]
             else:
-                x_start, x_end = start_time, now
+                filtered_data = history_data
+                if filtered_data:
+                    x_start = min(entry[0] for entry in filtered_data)
+                else:
+                    x_start = x_end - timedelta(hours=1)
+            
+            self._update_stats_bar(filtered_data)
 
             if not filtered_data:
                 self.upload_line.set_data([], [])
@@ -1517,8 +1433,12 @@ class GraphWindow(QWidget):
                 self.download_line.set_visible(True)
                 self.ax.set_xlim(x_start, x_end)
                 self.ax.set_ylim(0, GraphConstants.MIN_Y_AXIS_LIMIT)
-                self._show_graph_error(getattr(self.i18n, 'NO_DATA_MESSAGE', "No data to display."))
+                if self._no_data_text_obj:
+                    self._no_data_text_obj.set_visible(False)
             else:
+                if self._no_data_text_obj:
+                    self._no_data_text_obj.set_visible(False)
+                
                 timestamps = [entry[0] for entry in filtered_data]
                 upload_speeds = [self._convert_speed(entry[1]) for entry in filtered_data]
                 download_speeds = [self._convert_speed(entry[2]) for entry in filtered_data]
@@ -1533,6 +1453,11 @@ class GraphWindow(QWidget):
 
             self.ax.set_ylabel(self._get_speed_unit())
             self.ax.set_title("")
+            
+            period_value = 0
+            if hasattr(self, 'history_period') and self.history_period:
+                period_value = self.history_period.value()
+            period_str = HistoryPeriodConstants.PERIOD_MAP.get(period_value, HistoryPeriodConstants.DEFAULT_PERIOD)
             
             total_seconds = (x_end - x_start).total_seconds()
             if ("Hour" in period_str) or ("Session" in period_str) or (total_seconds <= 24*3600):
@@ -1553,48 +1478,30 @@ class GraphWindow(QWidget):
             self.logger.error(f"Error updating graph: {e}", exc_info=True)
             self._show_graph_error(f"Error updating graph: {str(e)}")
 
-    def _calculate_period_stats(self, history_data: List[Tuple[datetime, float, float, str]], start_time: datetime) -> Dict[str, float]:
-        """Calculate statistics for the selected time period.
-        
-        Args:
-            history_data: List of (timestamp, upload, download, interface) tuples
-            start_time: Starting timestamp for the period to calculate
-            
-        Returns:
-            Dictionary containing max_upload, max_download, avg_upload, avg_down
+    def _calculate_period_stats(self, period_data: List[Tuple[datetime, float, float, str]]) -> Dict[str, Any]:
+        """
+        Calculates statistics for a pre-filtered list of data points.
+        This method performs no filtering itself.
         """
         try:
-            period_data = [(ts, up, down, iface) for ts, up, down, iface in history_data if ts >= start_time]
             if not period_data or len(period_data) < 2:
                 return {"max_upload": 0, "max_download": 0, "avg_upload": 0, "avg_download": 0, "total_upload": 0, "total_download": 0, "total_unit": "MB"}
 
             uploads = [self._convert_speed(up) for _, up, _, _ in period_data]
             downloads = [self._convert_speed(down) for _, _, down, _ in period_data]
 
-            # Calculate time deltas in seconds between samples
-            time_deltas = [
-                (period_data[i][0] - period_data[i-1][0]).total_seconds()
-                for i in range(1, len(period_data))
-            ]
-            # Use the average interval if all intervals are similar, else use per-interval
-            avg_interval = sum(time_deltas) / len(time_deltas) if time_deltas else 1
-
-            # Calculate total data transferred (in Megabits or Megabytes)
             total_upload_bits = 0.0
             total_download_bits = 0.0
             for i in range(1, len(period_data)):
-                up_speed = period_data[i][1]  # in Kbps
-                down_speed = period_data[i][2]  # in Kbps
+                up_speed = period_data[i][1]
+                down_speed = period_data[i][2]
                 dt = (period_data[i][0] - period_data[i-1][0]).total_seconds()
-                # Data = speed (Kbps) * seconds / 8 (for KB) / 1000 (for MB)
                 total_upload_bits += up_speed * dt
                 total_download_bits += down_speed * dt
 
-            # Convert total bits to MB or GB as appropriate
             use_megabytes = self._parent and self._parent.config.get("use_megabytes", False)
-            # 1 byte = 8 bits, 1 MB = 1,000,000 bytes, 1 GB = 1,000 MB
             if use_megabytes:
-                total_upload_MB = total_upload_bits / 8 / 1000  # Kbps * s / 8 / 1000 = KB / 1000 = MB
+                total_upload_MB = total_upload_bits / 8 / 1000
                 total_download_MB = total_download_bits / 8 / 1000
                 total_unit = "MB"
                 if total_upload_MB > 1000 or total_download_MB > 1000:
@@ -1604,8 +1511,7 @@ class GraphWindow(QWidget):
                 total_upload = total_upload_MB
                 total_download = total_download_MB
             else:
-                # Default: show in Megabits (Mb) or Gigabits (Gb)
-                total_upload_Mb = total_upload_bits / 1000  # Kbps * s / 1000 = Mb
+                total_upload_Mb = total_upload_bits / 1000
                 total_download_Mb = total_download_bits / 1000
                 total_unit = "Mb"
                 if total_upload_Mb > 1000 or total_download_Mb > 1000:
@@ -1629,19 +1535,16 @@ class GraphWindow(QWidget):
             self.logger.error(f"Error calculating period stats: {e}", exc_info=True)
             return {"max_upload": 0, "max_download": 0, "total_upload": 0, "total_download": 0, "total_unit": "MB"}
 
-    def _update_stats_bar(self, history_data: List[Tuple[datetime, float, float, str]], start_time: datetime) -> None:
-        """Update the stats bar with statistics for the selected period.
-        
-        Args:
-            history_data: List of (timestamp, upload, download, interface) tuples
-            start_time: Starting timestamp for the period to calculate
+    def _update_stats_bar(self, history_data: List[Tuple[datetime, float, float, str]]) -> None:
+        """
+        Update the stats bar with statistics for the provided (pre-filtered) period.
         """
         try:
             if not history_data:
-                self.stats_bar.setText("No data available")
+                self.stats_bar.setText("No data available for this period")
                 return
 
-            stats = self._calculate_period_stats(history_data, start_time)
+            stats = self._calculate_period_stats(history_data)
             unit = self._get_speed_unit()
             total_unit = stats.get('total_unit', 'MB')
             stats_text = (
@@ -1652,7 +1555,6 @@ class GraphWindow(QWidget):
             self.stats_bar.setMinimumHeight(28)
             self.stats_bar.setWordWrap(False)
             self.stats_bar.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            # Always set a consistent, non-bold, no-background style for the stats bar
             is_dark = self.dark_mode.isChecked() if hasattr(self, 'dark_mode') else False
             text_color = UIStyleConstants.DARK_MODE_TEXT_COLOR if is_dark else UIStyleConstants.LIGHT_MODE_TEXT_COLOR
             self.stats_bar.setStyleSheet(f"color: {text_color}; font-size: 13px; background: none; font-weight: normal;")

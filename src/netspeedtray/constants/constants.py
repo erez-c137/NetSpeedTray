@@ -24,7 +24,7 @@ class AppConstants:
     APP_NAME: Final[str] = "NetSpeedTray"
     """The name of the application."""
 
-    VERSION: Final[str] = "1.0.7"
+    VERSION: Final[str] = "1.0.8"
     """The current version of the application."""
 
     MUTEX_NAME: Final[str] = "Global\\NetSpeedTray_SingleInstanceMutex"
@@ -302,6 +302,8 @@ class ConfigConstants:
         "free_move": DEFAULT_FREE_MOVE,
         "force_decimals": DEFAULT_FORCE_DECIMALS,
         "tray_offset_x": DEFAULT_TRAY_OFFSET_X,
+        "graph_window_pos": None,
+        "history_period_slider_value": 0,
     }
 
     def validate(self) -> None:
@@ -380,7 +382,8 @@ class ConfigConstants:
             "legend_position", "position_x", "position_y", "paused", "start_with_windows",
             "dynamic_update_enabled", "min_update_rate", "max_update_rate",
             "speed_display_mode", "decimal_places", "text_alignment",
-            "free_move", "force_decimals", "tray_offset_x"
+            "free_move", "force_decimals", "tray_offset_x",
+            "graph_window_pos", "history_period_slider_value"
         }
         actual_keys_in_default_config = set(self.DEFAULT_CONFIG.keys())
         if actual_keys_in_default_config != expected_keys_in_default_config:

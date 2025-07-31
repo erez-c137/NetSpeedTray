@@ -218,6 +218,16 @@ class ConfigManager:
                 self.logger.warning(ConfigMessages.INVALID_POSITION.format(key=key, value=validated[key]))
                 validated[key] = None
 
+        if validated["history_period_slider_value"] is not None and not isinstance(validated["history_period_slider_value"], int):
+            self.logger.warning("Invalid history_period_slider_value %s, setting to 0", validated["history_period_slider_value"])
+            validated["history_period_slider_value"] = 0
+            
+        if validated["graph_window_pos"] is not None:
+            pos = validated["graph_window_pos"]
+            if not (isinstance(pos, dict) and 'x' in pos and 'y' in pos and isinstance(pos['x'], int) and isinstance(pos['y'], int)):
+                self.logger.warning("Invalid graph_window_pos format %s, setting to None", pos)
+                validated["graph_window_pos"] = None
+        
         return validated
 
     def load(self) -> Dict[str, Any]:

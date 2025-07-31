@@ -97,10 +97,12 @@ class NetworkSpeedWidget(QWidget):
         self._dragging: bool = False
         self._drag_offset: QPoint = QPoint()
         self.is_paused: bool = False
+        self.session_start_time = datetime.now() 
         self.visibility_timer = QTimer(self)
         self.position_timer = QTimer(self)
         self._tray_watcher_timer = QTimer(self)
         self._context_menu_shown: bool = False
+      
 
         # Ensure the attribute is initialized
         self._context_menu_shown = False
@@ -1200,7 +1202,11 @@ class NetworkSpeedWidget(QWidget):
             from .graph import GraphWindow
             if self.graph_window is None or not self.graph_window.isVisible():
                 self.logger.info("Creating new GraphWindow instance.")
-                self.graph_window = GraphWindow(parent=self, i18n=self.i18n)
+                self.graph_window = GraphWindow(
+                    parent=self,
+                    i18n=self.i18n,
+                    session_start_time=self.session_start_time
+                )
                 self.graph_window.show()
             else:
                 self.logger.debug("Graph window already exists. Activating.")
