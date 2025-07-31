@@ -70,7 +70,7 @@ A clean, modern UI to control every aspect of the widget's appearance and behavi
 
 #### Detailed History Graph
 
-Double-click the widget to see a detailed, zoomable graph of your network history.
+Double-click the widget to see a detailed graph of your network history.
 
 <div align="center">
   <img src="screenshots/main_graph_1.0.5b1.png" alt="Graph View" width="600"/><br/>
