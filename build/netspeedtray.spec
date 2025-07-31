@@ -1,10 +1,10 @@
 block_cipher = None
 
 a = Analysis(
-    ['../src/monitor.py'],
-    pathex=['E:\\Erez\\OneDrive\\Documents\\- My Projects -\\NetSpeedTray'],
+    ['..\\src\\monitor.py'],
+    pathex=[],
     binaries=[],
-    datas=[('../assets/*', 'assets')],
+    datas=[('..\\assets', 'assets')],
     hiddenimports=[
         'PyQt6.QtCore',
         'PyQt6.QtGui',
@@ -19,28 +19,32 @@ a = Analysis(
         'signal',
     ],
     hookspath=[],
-    hooksconfig={},
     runtime_hooks=[],
     excludes=[],
-    noarchive=False,
-    optimize=0,
+    win_no_prefer_redirects=False,
+    win_private_assemblies=False,
+    cipher=block_cipher,
+    noarchive=False
 )
-
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 exe = EXE(
     pyz,
     a.scripts,
+    [],
     a.binaries,
     a.datas,
-    [],
     name='NetSpeedTray',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=False,
+    upx=True,
+    runtime_tmpdir=None,
     console=False,
     disable_windowed_traceback=False,
-    icon='../assets/NetSpeedTray.ico',
-    version='version_info.txt',
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
+    icon='..\\assets\\NetSpeedTray.ico',
+    version='version_info.txt'
 )
