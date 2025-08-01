@@ -1,0 +1,17 @@
+[MESSAGES CONTROL]
+
+# C0413: wrong-import-position (We use delayed imports for performance, which is intentional)
+# W1203: logging-fstring-interpolation (F-strings are more readable and the performance cost is negligible for this app)
+disable=C0413, W1203
+
+[TYPECHECK]
+
+
+# These C-extension libraries have the members we are using,
+# fix all the "no-name-in-module" errors for PyQt and pywin32.
+generated-members=PyQt6.QtCore.pyqtSignal, PyQt6.QtCore.QPoint, PyQt6.QtCore.QRect, PyQt6.QtCore.QEvent, PyQt6.QtCore.QObject, PyQt6.QtCore.QSize, PyQt6.QtCore.QTimer, PyQt6.QtCore.Qt, win32gui.*, win32con.*, win32api.*
+
+[MAIN]
+
+# Tells Pylint not to complain about module-level constants that are uppercase (which is correct).
+const-name-rgx=([A-Z_][A-Z0-9_]{2,30}|_)$```

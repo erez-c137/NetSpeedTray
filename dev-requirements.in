@@ -1,0 +1,6 @@
+# Development and testing dependencies
+-r requirements.in
+pyinstaller
+pytest
+pytest-mock
+freezegun

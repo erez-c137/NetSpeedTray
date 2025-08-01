@@ -1,0 +1,6 @@
+# Core application dependencies for NetSpeedTray
+PyQt6
+pywin32
+psutil
+matplotlib
+numpy
