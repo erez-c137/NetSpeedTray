@@ -111,43 +111,57 @@ Sharing and Starring the repo is also a huge and deeply appreciated way to show 
 
 - [Python 3.9+](https://www.python.org/downloads/)
 - [Git](https://git-scm.com/downloads/)
-- (Optional) [Inno Setup 6](https://jrsoftware.org/isinfo.php) for building the installer.
+- (Optional but Recommended) [Inno Setup 6](https://jrsoftware.org/isinfo.php) for building the final Windows installer.
 
-### Build & Run Instructions
+### Development & Build Instructions
 
-1.  **Clone the repository:**
+1.  **Clone the Repository:**
 
     ```bash
     git clone https://github.com/erez-c137/NetSpeedTray.git
     cd NetSpeedTray
     ```
 
-2.  **Create and activate a virtual environment:**
+2.  **Create and Activate a Virtual Environment:**
 
-    ```bash
+    ```powershell
+    # PowerShell (Recommended on Windows)
     python -m venv .venv
-    .\.venv\Scripts\activate
+    .\.venv\Scripts\Activate.ps1
     ```
-
-3.  **Install the required packages:**
 
     ```bash
-    pip install -r requirements.txt
+    # CMD
+    python -m venv .venv
+    .\.venv\Scripts\activate.bat
     ```
 
-4.  **Run the application from source:**
+3.  **Install All Dependencies:**
+    This project uses `pip-tools` for robust dependency management. The following command will install all necessary packages for running, testing, and building the application.
+
+    ```bash
+    pip install -r dev-requirements.txt
+    ```
+
+4.  **Run the Application from Source:**
 
     ```bash
     python src/monitor.py
     ```
 
-5.  **(Optional) Build the executable and installer:**
-    - Ensure [Inno Setup 6](https://jrsoftware.org/isinfo.php) is installed.
-    - Run the build script located in the `build` directory:
+5.  **Run the Test Suite (Optional):**
+
+    ```bash
+    pytest -v
+    ```
+
+6.  **Build the Executable and Installer (Optional):**
+    - Ensure Inno Setup 6 is installed and in your system's PATH.
+    - Run the automated build script:
     ```bash
     .\build\build.bat
     ```
-    - The final installer and portable executable will be placed in the `dist` folder.
+    - The final installer and portable executable will be created in the `dist` folder.
 
 </details>
 
