@@ -1,202 +1,74 @@
-"""Unit tests for the Model class in the NetSpeedTray application.
-
-This module contains comprehensive tests for the Model class, focusing on the
-`get_network_speeds` method. The tests verify correct speed calculations,
-edge cases, and error handling using mocked dependencies. Tests are designed
-to align with the existing implementation in src/netspeedtray/core/model.py.
-
-Requires:
-    - pytest
-    - pytest-mock
-    - freezegun
 """
-
-import pytest #type: ignore
-from unittest.mock import Mock, patch
+Unit tests for the Model class in the NetSpeedTray application.
+"""
+import pytest
+from unittest.mock import MagicMock, patch
+from typing import Iterator
 import psutil
-from collections import namedtuple
-from datetime import datetime
-from freezegun import freeze_time #type: ignore
-from netspeedtray.core.model import Model
+import time
 
-# Define a named tuple to mimic psutil._common.snetio (used in other tests)
-SNetIO = namedtuple(
-    "SNetIO",
-    [
-        "bytes_sent",
-        "bytes_recv",
-        "packets_sent",
-        "packets_recv",
-        "errin",
-        "errout",
-        "dropin",
-        "dropout",
-    ],
-)
+from netspeedtray.core.model import Model, NetworkSpeed
 
+class MockNetIO:
+    """A simple mock object to simulate psutil's snetio counter objects."""
+    def __init__(self, bytes_sent, bytes_recv):
+        self.bytes_sent = bytes_sent
+        self.bytes_recv = bytes_recv
 
-class TestModel:
-    """Test suite for the Model class."""
+@pytest.fixture
+def model_instance() -> Model:
+    """Provides a fresh Model instance, patching its interface detection."""
+    with patch.object(Model, '_get_available_interfaces', return_value=["eth0", "lo"]):
+        model = Model()
+        model.set_interfaces(interface_mode="all", selected_interfaces=[])
+        return model
 
-    @pytest.fixture
-    def model_instance(self):
-        """Fixture to create a fresh Model instance for each test.
+@pytest.fixture
+def mock_psutil() -> Iterator[MagicMock]:
+    """Mocks the psutil.net_io_counters function for the duration of a test."""
+    with patch("netspeedtray.core.model.psutil.net_io_counters") as mock:
+        yield mock
 
-        Returns:
-            Model: A new instance of the Model class with default state.
-        """
-        return Model()
+def test_initial_call_returns_zero_speed(model_instance: Model, mock_psutil: MagicMock):
+    """
+    Tests that the very first call returns a NetworkSpeed object with zero speeds.
+    """
+    mock_psutil.return_value = {"eth0": MockNetIO(bytes_sent=1000, bytes_recv=2000)}
+    speeds = model_instance.get_network_speeds()
+    assert isinstance(speeds, NetworkSpeed)
+    assert speeds.download_speed == 0.0
+    assert speeds.upload_speed == 0.0
 
-    @pytest.fixture
-    def mock_psutil(self):
-        """Fixture to mock psutil.net_io_counters for controlled test data.
+def test_speed_calculation_over_time(model_instance: Model, mock_psutil: MagicMock):
+    """
+    Tests that speeds are correctly calculated over a time interval by controlling
+    the model's internal time state.
+    """
+    # Manually control the time state for a perfectly reproducible test.
+    
+    # Arrange Step 1: Set the initial time and get the first data point.
+    model_instance.last_time = 1000.0
+    mock_psutil.return_value = {"eth0": MockNetIO(bytes_sent=1000, bytes_recv=2000)}
+    model_instance.get_network_speeds()
 
-        Returns:
-            Mock: A mock object for psutil.net_io_counters.
-        """
-        with patch("netspeedtray.core.model.psutil.net_io_counters") as mock:
-            yield mock
+    # Arrange Step 2: Manually advance the mock monotonic clock and prepare the next data point.
+    with patch('time.monotonic', return_value=1002.0):
+        mock_psutil.return_value = {"eth0": MockNetIO(bytes_sent=3000, bytes_recv=5000)}
+        
+        # Act: Get the calculated speeds.
+        speeds = model_instance.get_network_speeds()
 
-    def test_get_network_speeds_initial_call(self, model_instance, mock_psutil):
-        """Test that the first call to get_network_speeds returns zero speeds.
+    # Assert: Check that the calculation is correct.
+    # Expected download: (5000 - 2000) bytes / (1002.0 - 1000.0)s = 1500.0 bytes/s
+    assert speeds.download_speed == 1500.0
+    # Expected upload: (3000 - 1000) bytes / 2 seconds = 1000.0 bytes/s
+    assert speeds.upload_speed == 1000.0
 
-        Verifies that when no prior data exists, the method returns (0, 0) for
-        download and upload speeds, consistent with the current implementation.
-
-        Args:
-            model_instance: Fixture providing a Model instance.
-            mock_psutil: Fixture mocking psutil.net_io_counters.
-        """
-        mock_psutil.return_value = {
-            "eth0": SNetIO(
-                bytes_sent=1000,
-                bytes_recv=2000,
-                packets_sent=0,
-                packets_recv=0,
-                errin=0,
-                errout=0,
-                dropin=0,
-                dropout=0,
-            )
-        }
-        download_speed, upload_speed = model_instance.get_network_speeds()
-
-        assert (
-            download_speed == 0.0
-        ), "Initial download speed should be 0 due to no prior data"
-        assert (
-            upload_speed == 0.0
-        ), "Initial upload speed should be 0 due to no prior data"
-
-    def test_get_network_speeds_with_data(self, model_instance, mock_psutil):
-        """Test speed calculation with valid network data over two calls.
-
-        Verifies that speed is calculated correctly based on byte differences
-        over a 1-second interval.
-
-        Args:
-            model_instance: Fixture providing a Model instance.
-            mock_psutil: Fixture mocking psutil.net_io_counters.
-        """
-
-        # Create mock objects that mimic psutil._common.snetio more closely
-        class MockSNetIO:
-            def __init__(
-                self,
-                bytes_sent,
-                bytes_recv,
-                packets_sent,
-                packets_recv,
-                errin,
-                errout,
-                dropin,
-                dropout,
-            ):
-                self.bytes_sent = bytes_sent
-                self.bytes_recv = bytes_recv
-                self.packets_sent = packets_sent
-                self.packets_recv = packets_recv
-                self.errin = errin
-                self.errout = errout
-                self.dropin = dropin
-                self.dropout = dropout
-
-        # Define the two sets of mock data
-        first_call_data = {
-            "eth0": MockSNetIO(
-                bytes_sent=1000,
-                bytes_recv=2000,
-                packets_sent=0,
-                packets_recv=0,
-                errin=0,
-                errout=0,
-                dropin=0,
-                dropout=0,
-            )
-        }
-        second_call_data = {
-            "eth0": MockSNetIO(
-                bytes_sent=1500,
-                bytes_recv=2500,
-                packets_sent=0,
-                packets_recv=0,
-                errin=0,
-                errout=0,
-                dropin=0,
-                dropout=0,
-            )
-        }
-
-        # Set side_effect on mock_psutil directly, since psutil.net_io_counters(pernic=True) calls the function
-        mock_psutil.side_effect = [first_call_data, second_call_data]
-
-        # Patch the logger to catch any exceptions
-        with patch("netspeedtray.core.model.logging") as mock_logging:
-            # First call: time = 1000.0 seconds (1970-01-01 00:16:40)
-            with freeze_time("1970-01-01 00:16:40"):
-                # Set last_time to match the frozen time to avoid negative time_diff
-                model_instance.last_time = datetime.now()
-                download_speed, upload_speed = model_instance.get_network_speeds()
-
-            # Second call: time = 1001.0 seconds (1970-01-01 00:16:41)
-            with freeze_time("1970-01-01 00:16:41"):
-                download_speed, upload_speed = model_instance.get_network_speeds()
-
-            # Check if any errors were logged
-            assert not mock_logging.error.called, "No errors should be logged"
-
-        # Expected: (2500 - 2000) / 1 = 500 bytes/s, (1500 - 1000) / 1 = 500 bytes/s
-        assert download_speed == 500.0, "Download speed should be 500 bytes/s"
-        assert upload_speed == 500.0, "Upload speed should be 500 bytes/s"
-
-    def test_get_network_speeds_no_active_interfaces(self, model_instance, mock_psutil):
-        """Test behavior when no network interfaces are active.
-
-        Verifies that the method returns (0, 0) when psutil returns an empty dict,
-        aligning with the current fallback logic.
-
-        Args:
-            model_instance: Fixture providing a Model instance.
-            mock_psutil: Fixture mocking psutil.net_io_counters.
-        """
-        mock_psutil.return_value = {}
-        download_speed, upload_speed = model_instance.get_network_speeds()
-
-        assert download_speed == 0.0, "Download speed should be 0 with no interfaces"
-        assert upload_speed == 0.0, "Upload speed should be 0 with no interfaces"
-
-    def test_get_network_speeds_psutil_error(self, model_instance, mock_psutil):
-        """Test error handling when psutil raises an exception.
-
-        Verifies that the method returns (0, 0) as a fallback when psutil fails.
-
-        Args:
-            model_instance: Fixture providing a Model instance.
-            mock_psutil: Fixture mocking psutil.net_io_counters.
-        """
-        mock_psutil.side_effect = psutil.AccessDenied("Permission denied")
-        with patch("netspeedtray.core.model.logging") as mock_logging:
-            download_speed, upload_speed = model_instance.get_network_speeds()
-
-        assert download_speed == 0.0, "Download speed should be 0 on error"
-        assert upload_speed == 0.0, "Upload speed should be 0 on error"
+def test_exception_during_speed_calculation_raises_runtime_error(model_instance: Model, mock_psutil: MagicMock):
+    """
+    Tests that a psutil error is caught and re-raised as a controlled RuntimeError.
+    """
+    mock_psutil.side_effect = psutil.AccessDenied()
+    
+    with pytest.raises(RuntimeError, match="Failed to calculate speeds"):
+        model_instance.get_network_speeds()

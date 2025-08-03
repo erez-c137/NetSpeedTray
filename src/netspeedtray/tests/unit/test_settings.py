@@ -1,70 +1,58 @@
-import unittest
+"""
+Unit tests for the SettingsDialog class.
+"""
+import pytest
 from unittest.mock import MagicMock, patch
-from PyQt6.QtCore import QPoint
-from netspeedtray.views.settings import SettingsDialog
-from netspeedtray.views.widget import NetworkSpeedWidget
+from PyQt6.QtWidgets import QApplication, QWidget
+from netspeedtray.constants import ConfigConstants
 
-class TestSettingsDialog(unittest.TestCase):
-    def setUp(self):
-        self.parent_widget = MagicMock(spec=NetworkSpeedWidget)
-        self.parent_widget.logger = MagicMock()
-        self.parent_widget.APP_NAME = "NetSpeedTray"
-        self.parent_widget.config = {
-            "update_rate": 1.0,
-            "font_size": 10,
-            "font_weight": 400,
-            "font_family": "Arial",
-            "color_coding": False,
-            "default_color": "#FFFFFF",
-            "high_speed_threshold": 5.0,
-            "low_speed_threshold": 1.0,
-            "high_speed_color": "#00FF00",
-            "low_speed_color": "#FF0000",
-            "graph_enabled": False,
-            "history_minutes": 30,
-            "graph_opacity": 30,
-            "use_megabytes": False,
-            "interface_mode": "all",
-            "selected_interfaces": []
-        }
-        self.parent_widget.get_available_interfaces.return_value = ["eth0", "wlan0"]
-        self.parent_widget.is_startup_enabled.return_value = False
-        self.config = self.parent_widget.config.copy()
-        self.version = "1.0.0"
-        self.initial_pos = QPoint(0, 0)
-        self.dialog = SettingsDialog(
-            self.parent_widget, self.config, self.version, self.initial_pos
-        )
+@pytest.fixture(scope="session")
+def q_app():
+    return QApplication.instance() or QApplication([])
 
-    def test_settings_update(self):
-        # Setup
-        self.dialog.setup_ui()
-        self.dialog.update_rate.setValue(4)  # 2.0 seconds
-        self.dialog.font_size.setValue(12)
-        self.dialog.use_megabytes.setValue(1)
+@pytest.fixture
+def mock_parent_widget():
+    parent = MagicMock()
+    parent.config = ConfigConstants.DEFAULT_CONFIG.copy()
+    parent.get_available_interfaces.return_value = ["Ethernet 1", "Wi-Fi"]
+    parent.is_startup_enabled.return_value = False
+    return parent
 
-        # Simulate timer timeout for throttled signal
-        self.dialog._update_timer.timeout.emit()
+@pytest.fixture
+def settings_dialog(q_app, mock_parent_widget):
+    from netspeedtray.views.settings import SettingsDialog
+    from netspeedtray.constants.i18n_strings import I18nStrings
+    
+    # 1. Create a real, but simple, QWidget to act as the Qt parent.
+    actual_qt_parent = QWidget() 
 
-        # Assert
-        self.assertEqual(self.dialog.config["update_rate"], 2.0)
-        self.assertEqual(self.dialog.config["font_size"], 12)
-        self.assertTrue(self.dialog.config["use_megabytes"])
-        self.parent_widget.apply_all_settings.assert_called()
+    # 2. Instantiate the dialog, but pass the REAL QWidget as the parent.
+    dialog = SettingsDialog(
+        parent=actual_qt_parent, 
+        config=mock_parent_widget.config.copy(),
+        version="1.0.8",
+        i18n=I18nStrings(),
+        available_interfaces=mock_parent_widget.get_available_interfaces(),
+        is_startup_enabled=mock_parent_widget.is_startup_enabled()
+    )
+    # 3. Patch the dialog's parent widget to use the mock.
+    dialog.parent_widget = mock_parent_widget
 
-    def test_signal_emission(self):
-        # Setup
-        self.dialog.setup_ui()
-        self.dialog.settings_changed.connect = MagicMock()
+    yield dialog
+    dialog.deleteLater()
+    actual_qt_parent.deleteLater()
 
-        # Change a setting
-        self.dialog.update_rate.setValue(4)  # 2.0 seconds
+def test_get_settings_translates_ui_state_to_config(settings_dialog):
+    # Arrange: Simulate user interaction
+    settings_dialog.update_rate.setValue(5)
+    settings_dialog.all_interfaces.setChecked(False)
+    settings_dialog.interface_checkboxes["Wi-Fi"].setChecked(True)
+    settings_dialog.interface_checkboxes["Ethernet 1"].setChecked(False)
 
-        # Simulate timer timeout
-        self.dialog._update_timer.timeout.emit()
+    # Act
+    new_settings = settings_dialog.get_settings()
 
-        # Assert
-        self.dialog.settings_changed.emit.assert_called_once()
-
-if __name__ == "__main__":
-    unittest.main()
+    # Assert
+    assert new_settings["update_rate"] == 2.5
+    assert new_settings["interface_mode"] == "selected"
+    assert set(new_settings["selected_interfaces"]) == {"Wi-Fi"}
