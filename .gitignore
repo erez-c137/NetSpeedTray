@@ -73,7 +73,7 @@ build_log.txt
 installer/
 installer.iss.bak
 
-# Packaged release artifacts (if they end up in root)
+# Packaged release artifacts
 NetSpeedTray-Portable/
 NetSpeedTray-Portable.zip
 
@@ -87,4 +87,4 @@ config.json
 src/structure.txt
 release-template.md
 *.lnk
-.flake8
+.pylintrc

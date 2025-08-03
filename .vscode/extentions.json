@@ -1,7 +1,6 @@
 {
   "recommendations": [
     "ms-python.python",
-    "ms-python.pylint",
     "ms-python.debugpy",
     "ms-python.vscode-pylance"
   ]
