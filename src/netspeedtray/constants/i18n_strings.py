@@ -388,10 +388,11 @@ class I18nStrings:
 
         # --- Determine and set language ---
         try:
-            default_locale = locale.getdefaultlocale()
-            language_code = default_locale[0].replace('-', '_') if default_locale and default_locale[0] else "en_US"
+            detected_locale = locale.getlocale(locale.LC_CTYPE)
+            language_code = detected_locale[0] if detected_locale and detected_locale[0] else "en_US"
+            language_code = language_code.replace('-', '_')
+            
             self.language = language_code # Initial detected language
-            # logger.debug(f"Detected system locale: {language_code}") # Can be verbose
         except Exception as e:
             logger.warning(f"Failed to get default locale: {e}, falling back to en_US.")
             self.language = "en_US"

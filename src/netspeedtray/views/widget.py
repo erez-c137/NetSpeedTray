@@ -19,13 +19,16 @@ from datetime import datetime
 if TYPE_CHECKING:
     from ..views.graph import GraphWindow
     from ..views.settings import SettingsDialog
+    from PyQt6.QtGui import QScreen
+    from ..utils.position_utils import PositionCalculator
+    from ..utils.taskbar_utils import TaskbarInfo
 
 from PyQt6.QtCore import (
-    QPoint, QRect, QEvent, QObject, QSize, QTimer, Qt, pyqtSignal, QCoreApplication
+    QPoint, QRect, QEvent, QObject, QSize, QTimer, Qt
 )
 from PyQt6.QtGui import (
     QCloseEvent, QColor, QContextMenuEvent, QFont, QFontMetrics, QHideEvent,
-    QIcon, QMouseEvent, QPaintEvent, QPainter, QScreen, QShowEvent
+    QIcon, QMouseEvent, QPaintEvent, QPainter, QShowEvent
 )
 from PyQt6.QtWidgets import (
     QApplication, QMenu, QMessageBox, QWidget, QDialog
@@ -34,59 +37,47 @@ from PyQt6.QtWidgets import (
 import win32api
 import win32con
 import win32gui
-import win32com.client
 
 from ..constants.constants import (
     AppConstants, ConfigConstants, HelperConstants, PositionConstants,
-    RendererConstants, TimerConstants, TaskbarEdge, UIConstants, LayoutConstants,
-    FontConstants, UnitConstants
+    RendererConstants, TimerConstants, TaskbarEdge, UIConstants, LayoutConstants
 )
-from ..constants.i18n_strings import I18nStrings as CoreI18nStrings
+from ..constants.i18n_strings import I18nStrings
 from ..core.controller import NetworkController as CoreController
 from ..core.timer_manager import SpeedTimerManager
 from ..core.widget_state import WidgetState as CoreWidgetState, AggregatedSpeedData as CoreSpeedData
 from ..utils.config import ConfigManager as CoreConfigManager
-from ..utils.helpers import format_speed
-from ..utils.position_utils import PositionManager as CorePositionManager, WindowState as CoreWindowState, PositionCalculator
-from ..utils.taskbar_utils import TaskbarEdge, TaskbarInfo, get_taskbar_info, is_fullscreen_active, is_taskbar_visible
+from ..utils.position_utils import PositionManager as CorePositionManager, WindowState as CoreWindowState
+from ..utils.taskbar_utils import get_taskbar_info, is_fullscreen_active, is_taskbar_visible
 from ..utils.widget_renderer import WidgetRenderer as CoreWidgetRenderer, RenderConfig
 
 
 class NetworkSpeedWidget(QWidget):
     """Main widget for displaying network speeds near the Windows system tray."""
 
-    font_updated = pyqtSignal()
     MIN_UPDATE_INTERVAL = 0.5  # Minimum seconds between updates
 
     def __init__(self, taskbar_height: int = 40, config: Optional[Dict[str, Any]] = None, parent: QObject | None = None) -> None:
-        """Initialize the NetworkSpeedWidget with core components and UI setup.
-
-        Args:
-            taskbar_height: Height of the taskbar in logical pixels (default: 40).
-            config: Application configuration dictionary (optional; loads from ConfigManager if None).
-            parent: Parent object in the Qt hierarchy (optional).
-
-        Raises:
-            RuntimeError: If initialization of core components fails.
-        """
+        """Initialize the NetworkSpeedWidget with core components and UI setup."""
         super().__init__(parent)
         self.logger = logging.getLogger(f"{AppConstants.APP_NAME}.{self.__class__.__name__}")
         self.logger.info("Initializing NetworkSpeedWidget...")
-        self._last_update_time: float = 0.0
 
-        # Instance Attributes
-        self.i18n: CoreI18nStrings
-        self.config_manager: CoreConfigManager
-        self.config: Dict[str, Any] = ConfigConstants.DEFAULT_CONFIG.copy()
+        # --- Core Application State ---
+        self.session_start_time = datetime.now()
+        self.config_manager = CoreConfigManager()
+        self.config: Dict[str, Any] = config or self._load_initial_config(taskbar_height)
+        self.i18n = I18nStrings()
+
+        # --- Core Functional Components ---
         self.widget_state: CoreWidgetState
         self.timer_manager: SpeedTimerManager
         self.controller: CoreController
         self.renderer: CoreWidgetRenderer
         self.position_manager: CorePositionManager
+        
+        # --- UI Components & State ---
         self.graph_window: Optional[GraphWindow] = None
-        self.upload_speed: float = 0.0
-        self.download_speed: float = 0.0
-        self.taskbar_height: int = taskbar_height
         self.app_icon: QIcon
         self.context_menu: QMenu
         self.font: QFont
@@ -94,89 +85,63 @@ class NetworkSpeedWidget(QWidget):
         self.default_color: QColor
         self.high_color: QColor
         self.low_color: QColor
+        self.upload_speed: float = 0.0
+        self.download_speed: float = 0.0
+        self.taskbar_height: int = taskbar_height
         self._dragging: bool = False
         self._drag_offset: QPoint = QPoint()
         self.is_paused: bool = False
-        self.session_start_time = datetime.now() 
+        self._context_menu_shown: bool = False
+        self._last_update_time: float = 0.0
+        
+        # --- Timers ---
         self.visibility_timer = QTimer(self)
         self.position_timer = QTimer(self)
         self._tray_watcher_timer = QTimer(self)
-        self._context_menu_shown: bool = False
-      
-
-        # Ensure the attribute is initialized
-        self._context_menu_shown = False
-        self._startup_time = None
-
+        
         # Keep the widget hidden initially
         self.setVisible(False)
-        self.logger.debug("Widget initially hidden to stabilize position and size")
+        self.logger.debug("Widget initially hidden to stabilize position and size.")
 
-        # Initialization Steps
+        # --- Initialization Steps ---
         try:
-            # Step 1: Setup i18n and config manager
-            self.i18n = CoreI18nStrings()
-            self.config_manager = CoreConfigManager()
-            self.logger.debug("I18n and ConfigManager initialized")
-
-            # Step 2: Load configuration
-            if config is not None:
-                self.config = config
-                self.logger.debug("Using provided configuration")
-            else:
-                self.config = self._load_initial_config(taskbar_height)
-
-            # Step 3: Configure window properties
             self._setup_window_properties()
-
-            # Step 4: Initialize UI components
             self._init_ui_components()
-
-            # Step 5: Initialize core logic components
             self._init_core_components()
-
-            # Step 6: Setup position manager
             self._init_position_manager()
-
-            # Step 7: Connect signals and slots
-            self._setup_connections()
-
-            # Step 8: Initialize context menu
             self._init_context_menu()
-
-            # Step 9: Configure timers
-            self.visibility_timer.timeout.connect(self._check_visibility)
-            self.visibility_timer.start(TimerConstants.VISIBILITY_CHECK_INTERVAL_MS)
-
-            self._tray_watcher_timer.timeout.connect(self._check_and_update_position)
-            # Check every 2 seconds - a good balance between responsiveness and performance.
-            self._tray_watcher_timer.start(2000)
-            self.logger.debug("Tray watcher timer started.")
-
-            self.logger.debug(f"Visibility timer started (interval: {TimerConstants.VISIBILITY_CHECK_INTERVAL_MS} ms)")
-
-            self.position_timer.timeout.connect(self._check_position)
-            self.position_check_interval_ms = getattr(TimerConstants, 'POSITION_CHECK_INTERVAL_MS', 1500)
-            if self.position_check_interval_ms > 0:
-                self.position_timer.start(self.position_check_interval_ms)
-                self.logger.debug("Position timer started")
-            else:
-                self.logger.debug("Position timer disabled")
-
-            # Step 10: Set initial position
+            self._setup_connections()
+            self._setup_timers()
             self._initialize_position()
+            
+            # Defer the final "show" call to ensure the event loop has started
+            QTimer.singleShot(0, self._delayed_initial_show)
 
-            # Step 11: Delay showing the widget until position and size are stable
-            QTimer.singleShot(1000, self._delayed_initial_show)
-
-            # Step 12: Validate lazy imports
-            self._validate_lazy_imports()
-
-            self.logger.info("NetworkSpeedWidget initialized successfully")
+            self.logger.info("NetworkSpeedWidget initialized successfully.")
 
         except Exception as e:
             self.logger.critical("Initialization failed: %s", e, exc_info=True)
             raise RuntimeError(f"Failed to initialize NetworkSpeedWidget: {e}") from e
+
+    def _setup_timers(self) -> None:
+        """Configures and starts all application timers."""
+        self.logger.debug("Setting up timers...")
+        
+        self.visibility_timer.timeout.connect(self._check_visibility)
+        self.visibility_timer.start(TimerConstants.VISIBILITY_CHECK_INTERVAL_MS)
+        self.logger.debug(f"Visibility timer started (interval: {TimerConstants.VISIBILITY_CHECK_INTERVAL_MS} ms)")
+
+        self._tray_watcher_timer.timeout.connect(self._check_and_update_position)
+        self._tray_watcher_timer.start(2000) # Check every 2 seconds
+        self.logger.debug("Tray watcher timer started.")
+
+        self.position_timer.timeout.connect(self._check_position)
+        position_check_interval = getattr(TimerConstants, 'POSITION_CHECK_INTERVAL_MS', 500)
+        if position_check_interval > 0:
+            self.position_timer.start(position_check_interval)
+            self.logger.debug("Position timer (topmost check) started.")
+        else:
+            self.logger.debug("Position timer (topmost check) is disabled.")
 
     def _init_core_components(self) -> None:
         """
@@ -949,7 +914,13 @@ class NetworkSpeedWidget(QWidget):
                 self.logger.warning("Hiding widget due to persistent visibility check errors.")
 
     def _ensure_win32_topmost(self) -> None:
-        """Uses the Windows API to assert the widget's topmost status."""
+        """
+        Uses the Windows API to forcefully re-assert the widget's topmost status.
+
+        This uses the "re-promotion" technique (setting NOTOPMOST then TOPMOST)
+        to handle edge cases where the window manager's Z-order gets "stuck,"
+        for instance after the Start Menu or Action Center is closed.
+        """
         widget_hwnd_ptr = self.winId()
         if not widget_hwnd_ptr:
             return
@@ -961,37 +932,35 @@ class NetworkSpeedWidget(QWidget):
                     self.logger.warning("Cannot ensure Win32 topmost: Widget HWND %d is invalid.", widget_hwnd)
                 return
 
+            # Define the flags to prevent moving, resizing, or activating the window.
             flags = win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE
-            result = win32gui.SetWindowPos(widget_hwnd, win32con.HWND_TOPMOST, 0, 0, 0, 0, flags)
-            if result == 0:
-                error_code = win32api.GetLastError()
-                if error_code != 0:
-                    self.logger.error("SetWindowPos HWND_TOPMOST failed for HWND %d. Error: %d", widget_hwnd, error_code)
+
+            # --- The "Re-Promotion" Technique ---
+            # 1. Briefly drop the window from the topmost layer.
+            win32gui.SetWindowPos(widget_hwnd, win32con.HWND_NOTOPMOST, 0, 0, 0, 0, flags)
+            # 2. Immediately promote it back to the topmost layer.
+            win32gui.SetWindowPos(widget_hwnd, win32con.HWND_TOPMOST, 0, 0, 0, 0, flags)
+            
+            self.logger.debug("Forcefully re-asserted HWND_TOPMOST status for HWND %d.", widget_hwnd)
+
         except Exception as e:
             self.logger.error("Error in _ensure_win32_topmost for HWND %s: %s", widget_hwnd_ptr, e, exc_info=True)
 
     def _check_position(self) -> None:
         """
-        Ensures the widget's topmost status without resetting its position.
+        Periodically ensures the widget's topmost status. This is the safety net
+        for cases where event-driven checks fail, like after the Start Menu closes.
+        It forcefully re-asserts the topmost state to fix Z-order issues.
         """
-        if not self.isVisible():
-            return
-        
-        if self.config.get("free_move", False):
-            self.logger.debug("Position check skipped: Free Move is enabled.")
-            return
-
-        if not self.position_manager:
-            if hasattr(self, 'position_manager'):
-                self.logger.warning("Position check skipped: PositionManager not available.")
+        if not self.isVisible() or self.config.get("free_move", False):
             return
 
         try:
-            # Only ensure topmost status, do not reset position
+            self.logger.debug("Periodically re-asserting topmost status.")
             self._ensure_win32_topmost()
-            self.logger.debug("Topmost status ensured")
+
         except Exception as e:
-            self.logger.error(f"Error in _check_position: {e}", exc_info=True)
+            self.logger.error(f"Error in periodic topmost check: {e}", exc_info=True)
 
     def reset_to_default_position(self) -> None:
         """
@@ -1088,6 +1057,7 @@ class NetworkSpeedWidget(QWidget):
         self.logger.debug("Showing settings dialog...")
         try:
             from .settings import SettingsDialog
+            
             config_copy = self.config.copy()
             interfaces = self.get_available_interfaces()
             startup_status = self.is_startup_enabled()
@@ -1199,7 +1169,12 @@ class NetworkSpeedWidget(QWidget):
             return
 
         try:
+            # --- Optimization ---
+            # By placing the import here, the large matplotlib and numpy libraries
+            # are only loaded into memory when the user double-clicks the widget.
+            # This dramatically reduces the application's initial startup time and memory usage.
             from .graph import GraphWindow
+
             if self.graph_window is None or not self.graph_window.isVisible():
                 self.logger.info("Creating new GraphWindow instance.")
                 self.graph_window = GraphWindow(

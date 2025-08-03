@@ -24,7 +24,7 @@ class AppConstants:
     APP_NAME: Final[str] = "NetSpeedTray"
     """The name of the application."""
 
-    VERSION: Final[str] = "1.0.8"
+    VERSION: Final[str] = "1.0.9"
     """The current version of the application."""
 
     MUTEX_NAME: Final[str] = "Global\\NetSpeedTray_SingleInstanceMutex"
@@ -451,65 +451,25 @@ class SliderConstants:
 
 class ConfigMessages:
     """
-    Log message templates for configuration validation.
+    Log message templates for configuration validation. Uses modern .format() style.
     """
-    INVALID_UPDATE_RATE: str = "Invalid update_rate %s, setting to %.1f"
-    INVALID_FONT_FAMILY: str = "Invalid font_family %s, setting to %s"
-    INVALID_FONT_SIZE: str = "Invalid font_size %s, setting to %d"
-    INVALID_FONT_WEIGHT: str = "Invalid font_weight %s, setting to %d"
-    INVALID_COLOR: str = "Invalid color {value} for {key}, resetting to default"
-    INVALID_HIGH_THRESHOLD: str = "Invalid high_speed_threshold %s, setting to %.1f"
-    INVALID_LOW_THRESHOLD: str = "Invalid low_speed_threshold %s, setting to %.1f"
-    THRESHOLD_SWAP: str = "low_speed_threshold exceeds high_speed_threshold, swapping values"
-    INVALID_HISTORY: str = "Invalid history_minutes %s, setting to %d"
-    INVALID_OPACITY: str = "Invalid graph_opacity %s, setting to %d"
-    INVALID_KEEP_DATA: str = "Invalid keep_data %s, setting to %d"
-    INVALID_DARK_MODE: str = "Invalid dark_mode %s, setting to False"
-    INVALID_INTERFACES: str = "Invalid selected_interfaces %s, setting to []"
-    INVALID_INTERFACE_MODE: str = "Invalid interface_mode %s, setting to 'all'"
-    INVALID_HISTORY_PERIOD: str = "Invalid history_period %s, setting to default"
-    INVALID_LEGEND_POSITION: str = "Invalid legend_position %s, setting to 'off'"
-    INVALID_COLOR_CODING: str = "Invalid color_coding %s, setting to False"
-    INVALID_GRAPH_ENABLED: str = "Invalid graph_enabled %s, setting to False"
-    INVALID_PAUSED: str = "Invalid paused %s, setting to False"
-    INVALID_DYNAMIC_UPDATE_ENABLED: str = "Invalid dynamic_update_enabled %s, setting to %s"
-    INVALID_MIN_UPDATE_RATE: str = "Invalid min_update_rate %s, setting to %.1f"
-    INVALID_MAX_UPDATE_RATE: str = "Invalid max_update_rate %s, setting to %.1f"
-    INVALID_POSITION_X: str = "Invalid position_x %s, setting to None"
-    INVALID_POSITION_Y: str = "Invalid position_y %s, setting to None"
+    # Templates for different validation failure types
+    INVALID_NUMERIC: Final[str] = "Invalid {key} '{value}', resetting to default '{default}'"
+    INVALID_BOOLEAN: Final[str] = "Invalid {key} '{value}', resetting to boolean default '{default}'"
+    INVALID_COLOR: Final[str] = "Invalid color '{value}' for {key}, resetting to default '{default}'"
+    INVALID_CHOICE: Final[str] = "Invalid {key} '{value}', resetting to default '{default}'. Valid choices: {choices}"
+    INVALID_INTERFACES: Final[str] = "Invalid selected_interfaces value '{value}', resetting to default []"
+    THRESHOLD_SWAP: Final[str] = "low_speed_threshold > high_speed_threshold, setting low to high's value"
+    INVALID_POSITION: Final[str] = "Invalid {key} '{value}', resetting to None"
 
     def validate(self) -> None:
-        messages_map = {
-            "INVALID_UPDATE_RATE": "update_rate", "INVALID_FONT_FAMILY": "font_family",
-            "INVALID_FONT_SIZE": "font_size", "INVALID_FONT_WEIGHT": "font_weight",
-            "INVALID_HIGH_THRESHOLD": "high_speed_threshold", "INVALID_LOW_THRESHOLD": "low_speed_threshold",
-            "INVALID_HISTORY": "history_minutes", "INVALID_OPACITY": "graph_opacity",
-            "INVALID_KEEP_DATA": "keep_data", "INVALID_DARK_MODE": "dark_mode", 
-            "INVALID_INTERFACES": "selected_interfaces", "INVALID_INTERFACE_MODE": "interface_mode", 
-            "INVALID_HISTORY_PERIOD": "history_period", "INVALID_LEGEND_POSITION": "legend_position",
-            "INVALID_COLOR_CODING": "color_coding", "INVALID_GRAPH_ENABLED": "graph_enabled",
-            "INVALID_PAUSED": "paused", "INVALID_DYNAMIC_UPDATE_ENABLED": "dynamic_update_enabled",
-            "INVALID_MIN_UPDATE_RATE": "min_update_rate", "INVALID_MAX_UPDATE_RATE": "max_update_rate",
-            "INVALID_POSITION_X": "position_x", "INVALID_POSITION_Y": "position_y",
-        }
-        # Non-mapped messages (no direct config key equivalent for the %s part)
-        non_mapped_messages = ["INVALID_COLOR", "THRESHOLD_SWAP"]
-
-        config_instance = ConfigConstants() # To access DEFAULT_CONFIG for key checking
-
+        """Validate that all message templates are non-empty strings."""
         for attr_name in dir(self):
-            if not attr_name.startswith('_') and attr_name != 'validate':
+            # We only care about the uppercase, public constant attributes
+            if not attr_name.startswith('_') and attr_name.isupper():
                 value = getattr(self, attr_name)
                 if not isinstance(value, str) or not value:
                     raise ValueError(f"ConfigMessages.{attr_name} must be a non-empty string.")
-                
-                if attr_name in messages_map:
-                    config_key = messages_map[attr_name]
-                    if config_key not in config_instance.DEFAULT_CONFIG:
-                        raise ValueError(f"ConfigMessages.{attr_name} references unknown config key '{config_key}'.")
-                elif attr_name not in non_mapped_messages:
-                    raise ValueError(f"ConfigMessages.{attr_name} is an unhandled message type in validation.")
-
 
 # Helper-related constants
 class HelperConstants:

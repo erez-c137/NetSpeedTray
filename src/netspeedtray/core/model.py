@@ -19,6 +19,7 @@ from ..constants.constants import (
     NetworkSpeedConstants,
     ControllerConstants,
     UnitConstants,
+    ConfigConstants,
 )
 
 
@@ -136,35 +137,16 @@ class Model:
     def set_interfaces(self, interface_mode: str, selected_interfaces: List[str]) -> None:
         """
         Configure the network interfaces to monitor.
-
-        Args:
-            interface_mode: Mode for interface selection ("all" or "selected").
-            selected_interfaces: List of interface names to monitor if mode is "selected".
-
-        Raises:
-            ValueError: If `interface_mode` is invalid or `selected_interfaces` is invalid
-                in "selected" mode.
-
-        Examples:
-            >>> model = Model()
-            >>> model.set_interfaces("selected", ["Ethernet"])
-            >>> model.interface_mode
-            'selected'
-            >>> model.selected_interfaces
-            ['Ethernet']
-            >>> model.set_interfaces("all", [])
-            >>> model.interface_mode
-            'all'
         """
-        if interface_mode not in InterfaceConstants.VALID_MODES:
+        if interface_mode not in ConfigConstants.VALID_INTERFACE_MODES:
             self.logger.error("Invalid interface mode: %s, expected one of %s",
-                             interface_mode, InterfaceConstants.VALID_MODES)
-            raise ValueError(f"Invalid interface mode: {interface_mode}. Must be one of {InterfaceConstants.VALID_MODES}")
+                             interface_mode, ConfigConstants.VALID_INTERFACE_MODES)
+            raise ValueError(f"Invalid interface mode: {interface_mode}. Must be one of {ConfigConstants.VALID_INTERFACE_MODES}")
 
         if interface_mode == "selected":
             if not selected_interfaces:
-                self.logger.error("Selected interfaces list is empty in 'selected' mode")
-                raise ValueError("Selected interfaces list cannot be empty in 'selected' mode")
+                self.logger.warning("Selected interfaces list is empty in 'selected' mode; will monitor nothing.")
+            
             invalid_interfaces = [iface for iface in selected_interfaces if iface not in self.available_interfaces]
             if invalid_interfaces:
                 self.logger.error("Invalid interfaces provided: %s", invalid_interfaces)

@@ -9,20 +9,17 @@ affecting the application.
 
 import json
 import logging
-import os
 import re
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Union
 
 from .helpers import get_app_data_path
-from ..constants import HelperConstants
 from ..constants.constants import (
     LogConstants,
     ConfigConstants,
     ConfigMessages,
-    DataRetentionConstants,
     HistoryPeriodConstants,
     LegendPositionConstants,
 )
@@ -35,28 +32,15 @@ class ConfigError(Exception):
 class ConfigManager:
     """
     Manages loading, saving, and validation of NetSpeedTray's configuration.
-
-    This class handles all interactions with the `netspeedtray.conf` file, ensuring
-    that the application always works with a valid and complete set of settings.
-    It uses atomic writes to prevent data corruption during saves.
-
-    Attributes:
-        config_path: The full path to the configuration file.
-        logger: A dedicated logger instance for configuration operations.
     """
-
     BASE_DIR = Path(get_app_data_path())
     LOG_DIR = BASE_DIR
 
     def __init__(self, config_path: Optional[Union[str, Path]] = None) -> None:
         """
         Initializes the ConfigManager.
-
-        Args:
-            config_path: Optional path to the config file. Defaults to 'netspeedtray.conf'
-                         in the application's data directory.
         """
-        self.config_path = Path(config_path or ConfigManager.BASE_DIR / ConfigConstants.CONFIG_FILENAME)
+        self.config_path = Path(config_path or self.BASE_DIR / ConfigConstants.CONFIG_FILENAME)
         self.logger = logging.getLogger("NetSpeedTray.Config")
         self._last_config: Optional[Dict[str, Any]] = None
 
@@ -69,9 +53,6 @@ class ConfigManager:
     def setup_logging(cls, log_level: str = 'INFO') -> None:
         """
         Initializes logging with handlers for both a file and the console.
-
-        Args:
-            log_level: The minimum logging level to capture (e.g., 'INFO', 'DEBUG').
         """
         try:
             cls.ensure_directories()
@@ -79,7 +60,6 @@ class ConfigManager:
             logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
             logger.handlers.clear()
 
-            # File handler (logs INFO and above)
             file_handler = logging.FileHandler(cls.get_log_file_path(), encoding='utf-8')
             file_handler.setLevel(logging.INFO)
             file_formatter = logging.Formatter(
@@ -89,14 +69,12 @@ class ConfigManager:
             file_handler.setFormatter(file_formatter)
             logger.addHandler(file_handler)
 
-            # Console handler (for critical errors, logs ERROR and above)
             console_handler = logging.StreamHandler()
             console_handler.setLevel(logging.ERROR)
             console_formatter = logging.Formatter('%(name)s - %(levelname)s - %(message)s')
             console_handler.setFormatter(console_formatter)
             logger.addHandler(console_handler)
         except Exception as e:
-            # Fallback to basic console logging if setup fails
             logging.basicConfig(level=logging.ERROR)
             logging.error("Failed to initialize file logging, falling back to console: %s", e)
 
@@ -136,7 +114,6 @@ class ConfigManager:
     def _validate_choice(self, key: str, value: Any, default: str, choices: List[str]) -> str:
         """Validates a value is one of the allowed choices (case-insensitive)."""
         if isinstance(value, str) and value.lower() in [c.lower() for c in choices]:
-            # Return the canonical casing from the choices list
             for choice in choices:
                 if choice.lower() == value.lower():
                     return choice
@@ -146,36 +123,21 @@ class ConfigManager:
     def _validate_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
         """
         Validates the configuration, merges with defaults, and sanitizes values.
-
-        This method ensures every setting is of the correct type and within valid
-        bounds. Unknown keys from the loaded file are logged and ignored.
-
-        Args:
-            config: The raw configuration dictionary loaded from the file.
-
-        Returns:
-            A sanitized, complete, and valid configuration dictionary.
         """
-        # Start with a full set of default values
         validated = ConfigConstants.DEFAULT_CONFIG.copy()
-
-        # Log any keys from the file that are not in our default template
         unknown_keys = set(config.keys()) - set(validated.keys())
         if unknown_keys:
             self.logger.warning("Ignoring unknown config fields: %s", ", ".join(unknown_keys))
-
-        # Update defaults with values from the loaded config, only for known keys
+        
         for key in validated:
             if key in config:
                 validated[key] = config[key]
 
         # --- Apply Validations ---
-        # Boolean toggles
         for key in ["color_coding", "graph_enabled", "dynamic_update_enabled", "free_move", 
                     "force_decimals", "dark_mode", "paused", "start_with_windows"]:
             validated[key] = self._validate_boolean(key, validated[key], ConfigConstants.DEFAULT_CONFIG[key])
 
-        # Numeric values with ranges
         validated["update_rate"] = self._validate_numeric("update_rate", validated["update_rate"], ConfigConstants.DEFAULT_UPDATE_RATE, ConfigConstants.MINIMUM_UPDATE_RATE, 300.0)
         validated["font_size"] = self._validate_numeric("font_size", validated["font_size"], ConfigConstants.DEFAULT_FONT_SIZE, 5, 72)
         validated["font_weight"] = self._validate_numeric("font_weight", validated["font_weight"], ConfigConstants.DEFAULT_FONT_WEIGHT, 1, 1000)
@@ -188,17 +150,15 @@ class ConfigManager:
         validated["min_update_rate"] = self._validate_numeric("min_update_rate", validated["min_update_rate"], ConfigConstants.DEFAULT_MIN_UPDATE_RATE, 0.1, 10.0)
         validated["max_update_rate"] = self._validate_numeric("max_update_rate", validated["max_update_rate"], ConfigConstants.DEFAULT_MAX_UPDATE_RATE, 0.1, 10.0)
 
-        # Colors
         for key in ["default_color", "high_speed_color", "low_speed_color"]:
             validated[key] = self._validate_color_hex(key, validated[key], ConfigConstants.DEFAULT_CONFIG[key])
 
-        # String choices
-        validated["interface_mode"] = self._validate_choice("interface_mode", validated["interface_mode"], ConfigConstants.DEFAULT_INTERFACE_MODE, ConfigConstants.VALID_INTERFACE_MODES)
+        validated["interface_mode"] = self._validate_choice("interface_mode", validated["interface_mode"], ConfigConstants.DEFAULT_INTERFACE_MODE, list(ConfigConstants.VALID_INTERFACE_MODES))
         validated["legend_position"] = self._validate_choice("legend_position", validated["legend_position"], ConfigConstants.DEFAULT_LEGEND_POSITION, LegendPositionConstants.UI_OPTIONS)
         validated["history_period"] = self._validate_choice("history_period", validated["history_period"], HistoryPeriodConstants.DEFAULT_PERIOD, list(HistoryPeriodConstants.PERIOD_MAP.values()))
         validated["text_alignment"] = self._validate_choice("text_alignment", validated["text_alignment"], ConfigConstants.DEFAULT_TEXT_ALIGNMENT, ["left", "center", "right"])
         validated["speed_display_mode"] = self._validate_choice("speed_display_mode", validated["speed_display_mode"], ConfigConstants.DEFAULT_SPEED_DISPLAY_MODE, ["auto", "always_mbps"])
-
+        validated["history_period_slider_value"] = self._validate_numeric("history_period_slider_value", validated["history_period_slider_value"], 0, 0, 10) # Simple range check
 
         # Special cases and cross-field validation
         if not isinstance(validated["selected_interfaces"], list) or not all(isinstance(i, str) for i in validated["selected_interfaces"]):
@@ -209,41 +169,21 @@ class ConfigManager:
             self.logger.warning(ConfigMessages.THRESHOLD_SWAP)
             validated["low_speed_threshold"] = validated["high_speed_threshold"]
 
-        if validated["min_update_rate"] > validated["max_update_rate"]:
-            self.logger.warning(f"min_update_rate ({validated['min_update_rate']}) > max_update_rate ({validated['max_update_rate']}). Swapping.")
-            validated["min_update_rate"], validated["max_update_rate"] = validated["max_update_rate"], validated["min_update_rate"]
-
         for key in ["position_x", "position_y"]:
             if validated[key] is not None and not isinstance(validated[key], int):
                 self.logger.warning(ConfigMessages.INVALID_POSITION.format(key=key, value=validated[key]))
                 validated[key] = None
-
-        if validated["history_period_slider_value"] is not None and not isinstance(validated["history_period_slider_value"], int):
-            self.logger.warning("Invalid history_period_slider_value %s, setting to 0", validated["history_period_slider_value"])
-            validated["history_period_slider_value"] = 0
-            
+        
         if validated["graph_window_pos"] is not None:
             pos = validated["graph_window_pos"]
             if not (isinstance(pos, dict) and 'x' in pos and 'y' in pos and isinstance(pos['x'], int) and isinstance(pos['y'], int)):
-                self.logger.warning("Invalid graph_window_pos format %s, setting to None", pos)
+                self.logger.warning(ConfigMessages.INVALID_POSITION.format(key='graph_window_pos', value=pos))
                 validated["graph_window_pos"] = None
         
         return validated
 
     def load(self) -> Dict[str, Any]:
-        """
-        Loads the configuration from the file, validates it, and returns it.
-
-        If the file doesn't exist, a default configuration is created and saved.
-        If the file is corrupt, it's backed up and replaced with defaults.
-
-        Returns:
-            A dictionary containing the full, validated application configuration.
-
-        Raises:
-            ConfigError: If the config file cannot be read due to permissions or OS errors.
-        """
-        config = {}
+        """Loads and validates the configuration from the file."""
         if not self.config_path.exists():
             self.logger.info("Configuration file not found. Creating with default settings.")
             return self.reset_to_defaults()
@@ -252,13 +192,12 @@ class ConfigManager:
                 config = json.load(f)
         except json.JSONDecodeError:
             self.logger.error("Configuration file is corrupt. Backing it up and using defaults.")
-            corrupt_path = self.config_path.with_suffix(".corrupt")
-            shutil.move(self.config_path, corrupt_path)
+            try:
+                corrupt_path = self.config_path.with_name(f"{self.config_path.name}.corrupt")
+                shutil.move(self.config_path, corrupt_path)
+            except Exception:
+                self.logger.exception("Failed to back up corrupt config file.")
             return self.reset_to_defaults()
-        except PermissionError as e:
-            msg = f"Permission denied reading config file: {self.config_path}"
-            self.logger.critical(msg)
-            raise ConfigError(msg) from e
         except OSError as e:
             msg = f"OS error reading config file {self.config_path}: {e}"
             self.logger.critical(msg)
@@ -269,41 +208,27 @@ class ConfigManager:
         return validated_config
 
     def save(self, config: Dict[str, Any]) -> None:
-        """
-        Atomically saves the provided configuration to the file.
-
-        The configuration is first validated. The save is skipped if the new
-        configuration is identical to the last one saved. Keys with a value of None
-        are removed before saving.
-        """
+        """Atomically saves the provided configuration to the file."""
         validated_config = self._validate_config(config)
+        
+        config_to_save = { key: value for key, value in validated_config.items() if value is not None }
+        last_config_to_compare = { k: v for k, v in self._last_config.items() if v is not None } if self._last_config else None
 
-        # Create a copy to modify for saving, removing keys with None values.
-        config_to_save = {
-            key: value for key, value in validated_config.items()
-            if value is not None
-        }
-
-        # Compare the cleaned config to the last saved state (if it exists)
-        if self._last_config and {k: v for k, v in self._last_config.items() if v is not None} == config_to_save:
+        if last_config_to_compare == config_to_save:
             self.logger.debug("Skipping save, configuration is unchanged.")
             return
 
         try:
             self.config_path.parent.mkdir(parents=True, exist_ok=True)
-            # Atomic write using a temporary file
             with tempfile.NamedTemporaryFile(
                 "w", delete=False, dir=self.config_path.parent, encoding="utf-8"
             ) as temp_f:
-                # Save the cleaned dictionary
                 json.dump(config_to_save, temp_f, indent=4)
                 temp_path = temp_f.name
             shutil.move(temp_path, self.config_path)
-            
-            # Store the full validated config (including Nones) for internal comparison
             self._last_config = validated_config.copy()
             self.logger.info("Configuration saved successfully to %s", self.config_path)
-        except (PermissionError, OSError) as e:
+        except OSError as e:
             msg = f"Failed to save configuration to {self.config_path}: {e}"
             self.logger.error(msg)
             raise ConfigError(msg) from e
