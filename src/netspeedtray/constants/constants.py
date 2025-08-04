@@ -563,6 +563,23 @@ class TaskbarConstants:
         if self.DPI_DEFAULT <= 0: raise ValueError("DPI_DEFAULT must be positive")
 
 
+class ShellConstants:
+    """
+    Constants related to Windows Shell interaction, for identifying special UI elements.
+    """
+    # Class names of shell flyouts that should cause the widget to hide.
+    # Start Menu, Search, Action Center, Calendar, Network/Volume flyouts all use these.
+    UI_CLASS_NAMES_TO_HIDE: Final[Set[str]] = {
+        "Windows.UI.Core.CoreWindow",
+        "ApplicationFrameWindow", # Used by some modern shell elements
+    }
+
+    def validate(self) -> None:
+        """Validate the shell constants."""
+        if not self.UI_CLASS_NAMES_TO_HIDE:
+            raise ValueError("UI_CLASS_NAMES_TO_HIDE must not be empty.")
+
+
 class TaskbarEdge(Enum):
     """
     Enum for taskbar edge positions relative to the screen.
@@ -1089,7 +1106,7 @@ class GraphConstants:
     DATE_FORMAT_SWITCH_WEEKS_DAYS: Final[int] = 7
     DATE_FORMAT_SECONDS: Final[str] = "%H:%M:%S"
     DATE_FORMAT_DAY_ABBREV_TIME: Final[str] = "%a %H:%M"
-    MIN_TIME_RANGE_SECONDS: Final[int] = 60
+    MIN_TIME_RANGE_SECONDS: Final[int] = 300 # 5 minutes
     X_AXIS_LABEL_ROTATION: Final[int] = 45
     X_AXIS_TICKS: Final[int] = 6
     WINDOW_TITLE: Final[str] = AppConstants.APP_NAME + " - Network Speed Graph"
