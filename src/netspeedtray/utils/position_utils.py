@@ -519,7 +519,10 @@ class PositionCalculator:
         logger.debug("PositionCalculator initialized.")
 
     def calculate_position(self, taskbar_info: TaskbarInfo, widget_size: Tuple[int, int], config: Dict[str, Any], font_metrics: Optional[QFontMetrics] = None) -> ScreenPosition:
-        """Calculates the final target position for the widget using a single, user-defined offset."""
+        """
+        Calculates the final target position for the widget using a single,
+        user-defined offset, ensuring all calculations are in logical pixels.
+        """
         try:
             edge = taskbar_info.get_edge_position()
             tray_rect_phys = taskbar_info.get_tray_rect()
@@ -533,35 +536,35 @@ class PositionCalculator:
             dpi_scale = taskbar_info.dpi_scale if taskbar_info.dpi_scale > 0 else 1.0
             widget_width, widget_height = widget_size
 
-            tb_left_log = taskbar_rect_phys[0] / dpi_scale
-            tb_top_log = taskbar_rect_phys[1] / dpi_scale
-            tb_right_log = taskbar_rect_phys[2] / dpi_scale
-            tb_bottom_log = taskbar_rect_phys[3] / dpi_scale
+            # Convert all physical pixel values from the OS to logical pixels for calculation.
+            tb_left_log = round(taskbar_rect_phys[0] / dpi_scale)
+            tb_top_log = round(taskbar_rect_phys[1] / dpi_scale)
+            tb_right_log = round(taskbar_rect_phys[2] / dpi_scale)
+            tb_bottom_log = round(taskbar_rect_phys[3] / dpi_scale)
             tb_height_log = tb_bottom_log - tb_top_log
             tb_width_log = tb_right_log - tb_left_log
 
-            tray_left_log = tray_rect_phys[0] / dpi_scale if tray_rect_phys else None
-            tray_top_log = tray_rect_phys[1] / dpi_scale if tray_rect_phys else None            
-            total_offset = config.get('tray_offset_x', PositionConstants.DEFAULT_PADDING + 5) # Default to 5px if not set
-
-            text_height, content_height = 40, 50
-            if font_metrics:
-                try:
-                    text_height = 2 * font_metrics.height() + getattr(LayoutConstants, 'LINE_GAP', 2)
-                    renderer_padding = getattr(RendererConstants, 'TEXT_MARGIN', 5)
-                    content_height = text_height + 2 * renderer_padding
-                except Exception as e:
-                    logger.debug(f"Error calculating text height: {e}")
-
-            if edge in (TaskbarEdge.BOTTOM, TaskbarEdge.TOP):
-                y = round(tb_top_log + (tb_height_log - widget_height) / 2)
-                x = round((tray_left_log if tray_left_log is not None else tb_right_log) - widget_width - total_offset)
-
-            elif edge in (TaskbarEdge.LEFT, TaskbarEdge.RIGHT):
-                x = round(tb_left_log + (tb_width_log - widget_width) / 2)
-                boundary_y = tray_top_log if tray_top_log is not None else tb_bottom_log
-                y = round(boundary_y - widget_height - total_offset)
+            # The tray rectangle is our primary anchor point.
+            if tray_rect_phys:
+                tray_left_log = round(tray_rect_phys[0] / dpi_scale)
+                tray_top_log = round(tray_rect_phys[1] / dpi_scale)
             else:
+                # If we can't find the tray, fall back to the edge of the taskbar itself.
+                tray_left_log = tb_right_log
+                tray_top_log = tb_bottom_log
+
+            # The user-configurable offset from the tray.
+            total_offset = config.get('tray_offset_x', PositionConstants.DEFAULT_PADDING + 5)
+
+            # Calculate position based on the taskbar's edge
+            if edge in (TaskbarEdge.BOTTOM, TaskbarEdge.TOP):
+                y = tb_top_log + (tb_height_log - widget_height) // 2
+                x = tray_left_log - widget_width - total_offset
+            elif edge in (TaskbarEdge.LEFT, TaskbarEdge.RIGHT):
+                x = tb_left_log + (tb_width_log - widget_width) // 2
+                y = tray_top_log - widget_height - total_offset
+            else:
+                # This should not happen with the edge detection, but it's a safe fallback.
                 logger.error("Unknown taskbar edge: %s", edge)
                 return self._get_safe_fallback_position(widget_size)
 
@@ -573,7 +576,8 @@ class PositionCalculator:
         except Exception as e:
             logger.error(f"Error calculating position: {e}", exc_info=True)
             return self._get_safe_fallback_position(widget_size)
-
+        
+    
     def constrain_drag_position(self, desired_pos: QPoint, taskbar_info: TaskbarInfo, widget_size_q: QSize, config: Dict[str, Any]) -> Optional[QPoint]:
         """
         Constrains a desired widget position (during dragging) to allow movement only
