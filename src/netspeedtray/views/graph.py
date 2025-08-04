@@ -10,6 +10,7 @@ import logging
 import os
 import psutil
 import time
+import warnings
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple, Any
 
@@ -108,6 +109,9 @@ class GraphWindow(QWidget):
             
             # Initial update
             self._perform_initial_update()
+
+            # Start the live update timer by default
+            self.toggle_live_update(True)
     
     def setupUi(self, parent=None):
         """Constructs the main layout and widgets for the GraphWindow (manual, not Qt Designer)."""
@@ -937,6 +941,7 @@ class GraphWindow(QWidget):
 
     def _connect_signals(self):
         """Connect all relevant signals for UI interactivity."""
+        self._realtime_timer.timeout.connect(self._update_realtime)
         if hasattr(self, 'dark_mode') and self.dark_mode:
             self.dark_mode.toggled.connect(self.toggle_dark_mode)
         if hasattr(self, 'realtime') and self.realtime:
@@ -1028,13 +1033,9 @@ class GraphWindow(QWidget):
         if self._is_closing: return
         try:
             if checked:
+                # The timer is now connected in __init__, so we just need to start it.
                 self._realtime_timer.start(GraphConstants.REALTIME_UPDATE_INTERVAL_MS)
                 self.logger.info("Live updates enabled.")
-                if self._parent and self._parent.widget_state: # Trigger immediate update
-                    if self.tab_widget.currentIndex() == 0:
-                        self.update_graph(self._parent.widget_state.get_speed_history())
-                    elif self.tab_widget.currentIndex() == 1:
-                        self._update_app_usage()
             else:
                 self._realtime_timer.stop()
                 self.logger.info("Live updates disabled.")
@@ -1046,26 +1047,19 @@ class GraphWindow(QWidget):
         """ Slot for _realtime_timer. Fetches latest data and updates the active view. """
         if self._is_closing or not self.isVisible() or not self.realtime.isChecked():
             if not self.realtime.isChecked() and self._realtime_timer.isActive():
-                self._realtime_timer.stop() # Ensure timer stops if toggle is off
+                self._realtime_timer.stop()
             return
         
         try:
             if not self._parent or not self._parent.widget_state:
                 self.logger.warning("Parent or widget_state missing for real-time update.")
                 return
+            
+            current_slider_value = self.history_period.value()
+            self.update_history_period(current_slider_value)
 
-            if self.tab_widget.currentIndex() == 0: # Graph tab
-                history = self._parent.widget_state.get_speed_history() # Consider get_latest_points if available
-                # self.logger.debug(f"Real-time update: fetched {len(history)} speed history records for graph")
-                self.update_graph(history)
-            elif self.tab_widget.currentIndex() == 1: # App Usage tab
-                # App usage might not need 1-sec updates unless data changes that fast.
-                # Consider a separate, slower timer or update less frequently for app usage.
-                # For now, updating it as per original logic.
-                self._update_app_usage()
         except Exception as e:
-            self.logger.error(f"Error in real-time update: {e}", exc_info=True)            # self._realtime_timer.stop() # Potentially stop if error is critical
-            # QMessageBox.critical(self, self.i18n.ERROR_TITLE, self.i18n.GRAPH_ERROR_MESSAGE.format(error=str(e)))
+            self.logger.error(f"Error in real-time update: {e}", exc_info=True)
 
     def _update_history_period_text(self, value: int) -> None:
         """Update the history period slider's value text.
@@ -1091,8 +1085,8 @@ class GraphWindow(QWidget):
 
     def update_history_period(self, value: int, initial_setup: bool = False) -> None:
         """
-        Determines the correct time range for the selected history period and
-        triggers a graph update. It does NOT fetch data itself.
+        Determines the correct time range for the selected history period,
+        pads it if necessary, and triggers a graph update.
         """
         try:
             now = datetime.now()
@@ -1101,8 +1095,7 @@ class GraphWindow(QWidget):
             start_time: Optional[datetime] = None
 
             if "System Uptime" in period:
-                boot_timestamp = psutil.boot_time()
-                start_time = datetime.fromtimestamp(boot_timestamp)
+                start_time = datetime.fromtimestamp(psutil.boot_time())
             elif "Session" in period:
                 start_time = self.session_start_time
             elif "3 Hours" in period:
@@ -1115,12 +1108,17 @@ class GraphWindow(QWidget):
                 start_time = now - timedelta(days=1)
             elif "Week" in period:
                 start_time = now - timedelta(weeks=1)
-            elif "Month" in period and "3" not in period and "6" not in period:
+            elif "Month" in period:
                 start_time = now - timedelta(days=30)
             else: # "All"
                 start_time = None
             
-            self.update_graph(xlim=(start_time, now) if start_time else None)
+            # For all time-bound periods, we pass a definitive xlim.
+            # For "All", we pass None and let the graph decide its own limits.
+            if start_time:
+                self.update_graph(xlim=(start_time, now))
+            else:
+                self.update_graph(xlim=None)
 
             self.logger.debug(f"History period updated to: {period}")
         except Exception as e:
@@ -1399,79 +1397,63 @@ class GraphWindow(QWidget):
             
             all_history = self._parent.widget_state.get_speed_history()
 
-            if not all_history:
+            if len(all_history) < 2:
                 self._show_graph_error(getattr(self.i18n, 'NO_DATA_MESSAGE', "No data to display."))
                 return
 
-            def convert_entry(entry):
-                ts, up_bps, down_bps, iface = entry
-                up_kbps = up_bps * 8 / 1000.0
-                down_kbps = down_bps * 8 / 1000.0
-                return (ts, up_kbps, down_kbps, iface)
+            history_data = [
+                (entry.timestamp, entry.upload, entry.download, entry.interface)
+                for entry in all_history
+            ]
+
+            # If an explicit time limit is passed, use it. Otherwise, use the full data range.
+            x_start, x_end = (xlim[0], xlim[1]) if xlim else (min(e[0] for e in history_data), datetime.now())
             
-            history_data = [convert_entry(e) for e in all_history]
-
-            x_start, x_end = None, datetime.now()
-            if xlim:
-                x_start, x_end = xlim
-
-            if x_start:
-                filtered_data = [(ts, up, down, iface) for ts, up, down, iface in history_data if ts >= x_start]
-            else:
-                filtered_data = history_data
-                if filtered_data:
-                    x_start = min(entry[0] for entry in filtered_data)
-                else:
-                    x_start = x_end - timedelta(hours=1)
+            filtered_data = [entry for entry in history_data if x_start <= entry[0] <= x_end]
             
-            self._update_stats_bar(filtered_data)
-
-            if not filtered_data:
+            if len(filtered_data) < 2:
+                # Still show "no data" if the filter results in too few points
+                self._show_graph_error(getattr(self.i18n, 'NO_DATA_MESSAGE', "No data for this period."))
                 self.upload_line.set_data([], [])
                 self.download_line.set_data([], [])
-                self.upload_line.set_visible(True)
-                self.download_line.set_visible(True)
-                self.ax.set_xlim(x_start, x_end)
-                self.ax.set_ylim(0, GraphConstants.MIN_Y_AXIS_LIMIT)
-                if self._no_data_text_obj:
-                    self._no_data_text_obj.set_visible(False)
-            else:
-                if self._no_data_text_obj:
-                    self._no_data_text_obj.set_visible(False)
-                
-                timestamps = [entry[0] for entry in filtered_data]
-                upload_speeds = [self._convert_speed(entry[1]) for entry in filtered_data]
-                download_speeds = [self._convert_speed(entry[2]) for entry in filtered_data]
+                self.ax.set_xlim(x_start, x_end) # Keep the requested axis limits
+                self.canvas.draw_idle()
+                return
 
-                self.upload_line.set_data(timestamps, upload_speeds)
-                self.download_line.set_data(timestamps, download_speeds)
-                self.upload_line.set_visible(True)
-                self.download_line.set_visible(True)
-                self.ax.set_xlim(x_start, x_end)
-                max_speed = max(max(upload_speeds, default=1), max(download_speeds, default=1))
-                self.ax.set_ylim(0, max_speed * 1.1 if max_speed > 0 else GraphConstants.MIN_Y_AXIS_LIMIT)
+            self._update_stats_bar(filtered_data)
 
+            if self._no_data_text_obj: self._no_data_text_obj.set_visible(False)
+            
+            timestamps = [entry[0] for entry in filtered_data]
+            upload_speeds = [self._convert_speed(entry[1]) for entry in filtered_data]
+            download_speeds = [self._convert_speed(entry[2]) for entry in filtered_data]
+
+            self.upload_line.set_data(timestamps, upload_speeds)
+            self.download_line.set_data(timestamps, download_speeds)
+            
+            max_speed = max(max(upload_speeds, default=1), max(download_speeds, default=1))
+            self.ax.set_ylim(0, max_speed * 1.1 if max_speed > 0 else GraphConstants.MIN_Y_AXIS_LIMIT)
+            self.ax.set_xlim(x_start, x_end)
             self.ax.set_ylabel(self._get_speed_unit())
             self.ax.set_title("")
             
-            period_value = 0
-            if hasattr(self, 'history_period') and self.history_period:
-                period_value = self.history_period.value()
-            period_str = HistoryPeriodConstants.PERIOD_MAP.get(period_value, HistoryPeriodConstants.DEFAULT_PERIOD)
-            
             total_seconds = (x_end - x_start).total_seconds()
-            if ("Hour" in period_str) or ("Session" in period_str) or (total_seconds <= 24*3600):
+            if total_seconds <= timedelta(days=1).total_seconds():
                 self.ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
-                self.ax.xaxis.set_major_locator(mdates.AutoDateLocator(maxticks=8))
             else:
                 self.ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
-                self.ax.xaxis.set_major_locator(mdates.AutoDateLocator(maxticks=6))
             
-            self.figure.autofmt_xdate(rotation=30, ha='right')
-
+            self.ax.xaxis.set_major_locator(mdates.AutoDateLocator(maxticks=8))
+            
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                self.figure.autofmt_xdate(rotation=30, ha='right')
+            
             if self.ax.get_legend():
+                is_dark = self.dark_mode.isChecked()
+                text_color = UIStyleConstants.DARK_MODE_TEXT_COLOR if is_dark else UIStyleConstants.LIGHT_MODE_TEXT_COLOR
                 for text in self.ax.get_legend().get_texts():
-                    text.set_color(UIStyleConstants.DARK_MODE_TEXT_COLOR if self.dark_mode.isChecked() else UIStyleConstants.LIGHT_MODE_TEXT_COLOR)
+                    text.set_color(text_color)
 
             self.canvas.draw_idle()
         except Exception as e:
@@ -1481,59 +1463,47 @@ class GraphWindow(QWidget):
     def _calculate_period_stats(self, period_data: List[Tuple[datetime, float, float, str]]) -> Dict[str, Any]:
         """
         Calculates statistics for a pre-filtered list of data points.
-        This method performs no filtering itself.
         """
         try:
             if not period_data or len(period_data) < 2:
-                return {"max_upload": 0, "max_download": 0, "avg_upload": 0, "avg_download": 0, "total_upload": 0, "total_download": 0, "total_unit": "MB"}
+                return {"max_upload": 0.0, "max_download": 0.0, "total_upload": 0.0, "total_download": 0.0, "total_upload_unit": "B", "total_download_unit": "B"}
 
-            uploads = [self._convert_speed(up) for _, up, _, _ in period_data]
-            downloads = [self._convert_speed(down) for _, _, down, _ in period_data]
+            # Calculate Max speeds in display units (Mbps or MB/s)
+            uploads_kbps = [up for _, up, _, _ in period_data]
+            downloads_kbps = [down for _, _, down, _ in period_data]
+            max_upload_display = self._convert_speed(max(uploads_kbps) if uploads_kbps else 0)
+            max_download_display = self._convert_speed(max(downloads_kbps) if downloads_kbps else 0)
 
-            total_upload_bits = 0.0
-            total_download_bits = 0.0
+            # Calculate Total data transferred
+            total_upload_kbits = 0.0
+            total_download_kbits = 0.0
             for i in range(1, len(period_data)):
-                up_speed = period_data[i][1]
-                down_speed = period_data[i][2]
-                dt = (period_data[i][0] - period_data[i-1][0]).total_seconds()
-                total_upload_bits += up_speed * dt
-                total_download_bits += down_speed * dt
+                dt_seconds = (period_data[i][0] - period_data[i-1][0]).total_seconds()
+                if dt_seconds > 0:
+                    total_upload_kbits += period_data[i][1] * dt_seconds
+                    total_download_kbits += period_data[i][2] * dt_seconds
 
-            use_megabytes = self._parent and self._parent.config.get("use_megabytes", False)
-            if use_megabytes:
-                total_upload_MB = total_upload_bits / 8 / 1000
-                total_download_MB = total_download_bits / 8 / 1000
-                total_unit = "MB"
-                if total_upload_MB > 1000 or total_download_MB > 1000:
-                    total_upload_MB /= 1000
-                    total_download_MB /= 1000
-                    total_unit = "GB"
-                total_upload = total_upload_MB
-                total_download = total_download_MB
-            else:
-                total_upload_Mb = total_upload_bits / 1000
-                total_download_Mb = total_download_bits / 1000
-                total_unit = "Mb"
-                if total_upload_Mb > 1000 or total_download_Mb > 1000:
-                    total_upload_Mb /= 1000
-                    total_download_Mb /= 1000
-                    total_unit = "Gb"
-                total_upload = total_upload_Mb
-                total_download = total_download_Mb
+            # --- THE DEFINITIVE FIX ---
+            # Convert total Kilobits to total BYTES
+            total_upload_bytes = (total_upload_kbits * 1000) / 8
+            total_download_bytes = (total_download_kbits * 1000) / 8
+
+            # Delegate formatting to the robust helper function
+            total_upload_display, total_upload_unit = helpers.format_data_size(total_upload_bytes)
+            total_download_display, total_download_unit = helpers.format_data_size(total_download_bytes)
 
             stats = {
-                "max_upload": max(uploads) if uploads else 0,
-                "max_download": max(downloads) if downloads else 0,
-                "avg_upload": sum(uploads) / len(uploads) if uploads else 0,
-                "avg_download": sum(downloads) / len(downloads) if downloads else 0,
-                "total_upload": total_upload,
-                "total_download": total_download,
-                "total_unit": total_unit
+                "max_upload": max_upload_display,
+                "max_download": max_download_display,
+                "total_upload": total_upload_display,
+                "total_download": total_download_display,
+                "total_upload_unit": total_upload_unit,
+                "total_download_unit": total_download_unit,
             }
             return stats
         except Exception as e:
             self.logger.error(f"Error calculating period stats: {e}", exc_info=True)
-            return {"max_upload": 0, "max_download": 0, "total_upload": 0, "total_download": 0, "total_unit": "MB"}
+            return {"max_upload": 0, "max_download": 0, "total_upload": 0, "total_download": 0, "total_upload_unit": "B", "total_download_unit": "B"}
 
     def _update_stats_bar(self, history_data: List[Tuple[datetime, float, float, str]]) -> None:
         """
@@ -1545,20 +1515,16 @@ class GraphWindow(QWidget):
                 return
 
             stats = self._calculate_period_stats(history_data)
-            unit = self._get_speed_unit()
-            total_unit = stats.get('total_unit', 'MB')
+            speed_unit = self._get_speed_unit()
+            
+            # This format string now correctly uses the unit provided by the stats dictionary
             stats_text = (
-                f"Max: ↑{stats['max_upload']:.2f} {unit} ↓{stats['max_download']:.2f} {unit} | "
-                f"Total: ↑{stats['total_upload']:.2f} {total_unit} ↓{stats['total_download']:.2f} {total_unit}"
+                f"Max: ↑{stats['max_upload']:.2f} {speed_unit} ↓{stats['max_download']:.2f} {speed_unit} | "
+                f"Total: ↑{stats['total_upload']:.2f} {stats['total_upload_unit']} ↓{stats['total_download']:.2f} {stats['total_download_unit']}"
             )
             self.stats_bar.setText(stats_text)
-            self.stats_bar.setMinimumHeight(28)
-            self.stats_bar.setWordWrap(False)
-            self.stats_bar.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            is_dark = self.dark_mode.isChecked() if hasattr(self, 'dark_mode') else False
-            text_color = UIStyleConstants.DARK_MODE_TEXT_COLOR if is_dark else UIStyleConstants.LIGHT_MODE_TEXT_COLOR
-            self.stats_bar.setStyleSheet(f"color: {text_color}; font-size: 13px; background: none; font-weight: normal;")
             self.stats_bar.adjustSize()
+            
         except Exception as e:
             self.logger.error(f"Error updating stats bar: {e}", exc_info=True)
             self.stats_bar.setText("Error calculating statistics")
