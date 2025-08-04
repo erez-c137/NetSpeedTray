@@ -3,6 +3,7 @@ Manages network speed and bandwidth history for the NetworkSpeedWidget.
 
 This module defines the `WidgetState` class, which handles:
 - Storing and smoothing network speeds provided by NetworkController.
+- Maintaining an in-memory deque of recent speeds for the mini-graph.
 - Persisting speed data (bytes/sec) to `speed_history` table in SQLite (`speed_history.db`).
 - Aggregating speed data older than 7 days into `speed_history_aggregated`.
 - Vacuuming the database periodically to reclaim disk space.
@@ -22,7 +23,7 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Deque, Dict, List, Optional, Tuple
 
 # --- Qt Imports ---
 from PyQt6.QtCore import QObject
@@ -44,7 +45,6 @@ from ..utils.db_utils import (
     get_app_bandwidth_usage
 )
 from ..utils.helpers import get_app_data_path
-from ..core.speed_history import SpeedHistory
 
 logger = logging.getLogger("NetSpeedTray.WidgetState")
 
@@ -83,34 +83,7 @@ class AggregatedSpeedData:
 
 class WidgetState(QObject):
     """
-    Manages network speed and bandwidth history for the NetworkSpeedWidget.
-
-    Responsibilities include:
-    - Storing and smoothing network speeds provided by NetworkController.
-    - Persisting speed data (bytes/sec) to `speed_history` and bandwidth (bytes) to `bandwidth_history`.
-    - Aggregating old speed data and vacuuming the database.
-    - Tracking per-application bandwidth in `app_bandwidth`.
-    - Supporting dynamic bandwidth intervals (per-minute for 7 days, per-hour for older).
-    - Adapting to user-configured update rates and interface selections.
-
-    Attributes:
-        config: Application configuration dictionary.
-        max_history_points: Maximum points for in-memory graph history.
-        speed_history: SpeedHistory instance for managing in-memory speed data.
-        _ema_upload: EMA-smoothed upload speed (bytes/sec).
-        _ema_download: EMA-smoothed download speed (bytes/sec).
-        _update_counter: Counter for periodic tasks (DB writes, pruning).
-        _prune_counter: Counter for periodic VACUUM operations.
-        db_path: Path to SQLite database (`speed_history.db`).
-        _db_lock: Lock for thread-safe database access.
-        _db_batch: Buffer for batched speed writes.
-        _bandwidth_batch: Buffer for batched bandwidth writes per interface.
-        _app_bandwidth_batch: Buffer for batched app bandwidth writes.
-        _minute_counters: Accumulated bytes per minute per interface.
-        _hour_counters: Accumulated bytes per hour per interface.
-        _app_counters: Accumulated bytes per minute per app and interface.
-        _last_minute: Timestamp of last minute boundary.
-        _last_hour: Timestamp of last hour boundary.
+    Manages all network speed and bandwidth history for the NetworkSpeedWidget.
     """
     EMA_ALPHA: float = 0.2
     DB_BATCH_WRITE_INTERVAL: int = 10
@@ -119,21 +92,16 @@ class WidgetState(QObject):
     def __init__(self, config: Dict[str, Any]) -> None:
         """
         Initialize the WidgetState with configuration settings.
-
-        Args:
-            config: Configuration with keys like `history_minutes`, `update_rate`, `interface_mode`.
-
-        Sets up in-memory buffers, EMA state, batch buffers, and SQLite database.
         """
         super().__init__()
         self.logger = logging.getLogger(f"NetSpeedTray.{self.__class__.__name__}")
         self.config = config.copy()
 
-        # Configuration
-        self.max_history_points = self._get_max_history_points()
+        # Configuration Dependent State
+        self.max_history_points: int = self._get_max_history_points()
 
         # In-Memory Storage & State
-        self.speed_history = SpeedHistory(self.config)
+        self.in_memory_history: Deque[AggregatedSpeedData] = deque(maxlen=self.max_history_points)
         self._ema_upload: float = 0.0
         self._ema_download: float = 0.0
         self._update_counter: int = 0
@@ -153,15 +121,13 @@ class WidgetState(QObject):
         self._init_database()
 
         self.logger.debug(
-            "WidgetState initialized: Max History=%d, EMA Alpha=%.2f, DB Batch=%d",
-            self.max_history_points, self.EMA_ALPHA, self.DB_BATCH_WRITE_INTERVAL
+            "WidgetState initialized: Max In-Memory History=%d, DB Batch=%d",
+            self.max_history_points, self.DB_BATCH_WRITE_INTERVAL
         )
 
     def _init_database(self) -> None:
         """
         Initialize the SQLite database with required tables.
-
-        Creates tables if they don’t exist and sets up indexes for efficient queries.
         """
         try:
             init_database(self.db_path)
@@ -172,84 +138,80 @@ class WidgetState(QObject):
 
     def _get_max_history_points(self) -> int:
         """
-        Determines the maximum number of history points based on configuration.
-
-        Returns:
-            int: The maximum number of history points, constrained by configured limits.
+        Calculates the maximum number of in-memory history points based on config.
         """
-        history_minutes = self.config.get("history_minutes", ConfigConstants.DEFAULT_HISTORY_MINUTES)
-        update_rate = self.config.get("update_rate", ConfigConstants.DEFAULT_UPDATE_RATE)
+        try:
+            history_minutes = self.config.get("history_minutes", ConfigConstants.DEFAULT_HISTORY_MINUTES)
+            update_rate_sec = self.config.get("update_rate", ConfigConstants.DEFAULT_UPDATE_RATE)
 
-        if update_rate <= 0:
-            self.logger.warning("Invalid update rate (<=0), using default %.2f", ConfigConstants.DEFAULT_UPDATE_RATE)
-            update_rate = ConfigConstants.DEFAULT_UPDATE_RATE
+            if update_rate_sec <= 0:
+                self.logger.warning("Invalid update_rate (<=0), using %.2fs for history calculation.", ConfigConstants.DEFAULT_UPDATE_RATE)
+                update_rate_sec = ConfigConstants.DEFAULT_UPDATE_RATE
 
-        max_points = int((history_minutes * 60) / update_rate)
-        return max(
-            ConfigConstants.MINIMUM_HISTORY_POINTS,
-            min(max_points, ConfigConstants.MAXIMUM_HISTORY_POINTS)
-        )
+            calculated_points = int(round((history_minutes * 60) / update_rate_sec))
+            min_points = getattr(ConfigConstants, "MINIMUM_HISTORY_POINTS", 10)
+            max_points = max(min_points, calculated_points)
+
+            max_limit = getattr(ConfigConstants, "MAXIMUM_HISTORY_POINTS", 5000)
+            if max_points > max_limit:
+                self.logger.warning(
+                    "Calculated history points (%d) exceeds maximum (%d). Clamping.",
+                    max_points, max_limit
+                )
+                max_points = max_limit
+            
+            return max_points
+        except Exception as e:
+            self.logger.error("Error calculating max history points: %s. Using default.", e)
+            return getattr(ConfigConstants, "DEFAULT_HISTORY_POINTS", 1800)
 
     def apply_config(self, config: Dict[str, Any]) -> None:
         """
         Apply updated configuration and adjust state.
-
-        Args:
-            config: New configuration dictionary.
-
-        Updates history size as needed.
         """
-        self.logger.debug("Applying new configuration")
+        self.logger.debug("Applying new configuration to WidgetState...")
         self.config = config.copy()
         new_max_points = self._get_max_history_points()
 
         if new_max_points != self.max_history_points:
             self.max_history_points = new_max_points
-            self.speed_history.apply_config(self.config)
-            self.logger.info("Graph speed history capacity updated to %d points", self.max_history_points)
+            # Recreate deque with new maxlen, preserving existing data
+            self.in_memory_history = deque(self.in_memory_history, maxlen=self.max_history_points)
+            self.logger.info("In-memory speed history capacity updated to %d points.", self.max_history_points)
 
-    def add_speed_data(self, upload_speed: float, download_speed: float) -> None:
+    def add_speed_data(self, upload_speed: float, download_speed: float, bytes_sent: int, bytes_recv: int) -> None:
         """
-        Adds new speed data to the history and updates EMA.
-
-        Args:
-            upload_speed (float): Upload speed in bytes per second.
-            download_speed (float): Download speed in bytes per second.
+        Adds new speed data, updates EMA, and stores in history (in-memory and DB batch).
+        Also adds raw byte differences to the bandwidth history batch.
         """
         # Update EMA
-        if self._ema_upload is None:
-            self._ema_upload = upload_speed
-            self._ema_download = download_speed
-        else:
-            self._ema_upload = (
-                self.EMA_ALPHA * upload_speed
-                + (1 - self.EMA_ALPHA) * self._ema_upload
-            )
-            self._ema_download = (
-                self.EMA_ALPHA * download_speed
-                + (1 - self.EMA_ALPHA) * self._ema_download
-            )
+        self._ema_upload = (self.EMA_ALPHA * upload_speed) + (1 - self.EMA_ALPHA) * self._ema_upload
+        self._ema_download = (self.EMA_ALPHA * download_speed) + (1 - self.EMA_ALPHA) * self._ema_download
 
-        self.logger.debug(
-            f"Speeds (Raw): up={upload_speed:.2f} bytes/sec, "
-            f"down={download_speed:.2f} bytes/sec | "
-            f"EMA: up={self._ema_upload:.2f}, down={self._ema_download:.2f}"
-        )
-
-        # Add to history
-        self.speed_history.update_speed_history(upload_speed, download_speed)
-
-        # Add to database batch
         now = datetime.now()
+        timestamp = int(now.timestamp())
+        
+        # Add to in-memory history for mini-graph
+        in_memory_data = AggregatedSpeedData(upload=upload_speed, download=download_speed, timestamp=now)
+        self.in_memory_history.append(in_memory_data)
+
         interfaces = self.config.get("selected_interfaces", []) if self.config.get("interface_mode") == "selected" else ["All"]
         for iface in interfaces:
-            speed_data = PerInterfaceSpeedData(
+            # Add to speed history database batch (for the graph)
+            db_data = PerInterfaceSpeedData(
                 upload=upload_speed,
                 download=download_speed,
                 timestamp=now,
                 interface=iface
             )
-            self._db_batch.append(speed_data)
+            self._db_batch.append(db_data)
+
+            # --- Populate the bandwidth history batch ---
+            if iface not in self._bandwidth_batch:
+                self._bandwidth_batch[iface] = []
+            # Only add to bandwidth history if there was actual data transfer
+            if bytes_sent > 0 or bytes_recv > 0:
+                self._bandwidth_batch[iface].append((timestamp, bytes_sent, bytes_recv, iface))
 
         # Periodic database persistence
         self._update_counter += 1
@@ -259,28 +221,36 @@ class WidgetState(QObject):
     def get_smoothed_speeds(self) -> Tuple[float, float]:
         """
         Returns the smoothed upload and download speeds using EMA.
-
-        Returns:
-            Tuple[float, float]: Smoothed upload and download speeds in bytes per second.
         """
-        upload = self._ema_upload if self._ema_upload is not None else 0.0
-        download = self._ema_download if self._ema_download is not None else 0.0
-        return upload, download
+        return self._ema_upload, self._ema_download
+
+    def get_in_memory_speed_history(self) -> List[AggregatedSpeedData]:
+        """
+        Retrieves the current in-memory speed history as a list.
+        Used for the real-time mini-graph.
+        """
+        return list(self.in_memory_history)
 
     def _persist_batch(self) -> None:
         """
         Persist batched speed, bandwidth, and app bandwidth data to SQLite.
-
-        Writes speed data to `speed_history`, bandwidth data to `bandwidth_history`,
-        and app bandwidth data to `app_bandwidth`.
+        Converts speed data from bytes/sec to Kbps before writing.
         """
         if not self._db_batch and not self._bandwidth_batch and not self._app_bandwidth_batch:
             return
 
+        records_to_write_count = len(self._db_batch)
+
         try:
             if self._db_batch:
+                # --- Convert from bytes/sec to Kbps before writing ---
                 batch_to_write = [
-                    (int(sd.timestamp.timestamp()), round(sd.upload, 2), round(sd.download, 2), sd.interface)
+                    (
+                        int(sd.timestamp.timestamp()),
+                        round(sd.upload * 8 / 1000.0, 2),  # bytes/sec to Kbps
+                        round(sd.download * 8 / 1000.0, 2), # bytes/sec to Kbps
+                        sd.interface
+                    )
                     for sd in self._db_batch
                 ]
                 persist_speed_batch(self.db_path, batch_to_write, self._db_lock)
@@ -296,7 +266,7 @@ class WidgetState(QObject):
                     persist_app_bandwidth_batch(self.db_path, batch, self._db_lock)
             self._app_bandwidth_batch.clear()
 
-            self.logger.debug("Persisted %d speed records, bandwidth, and app bandwidth batches", len(batch_to_write))
+            self.logger.debug("Persisted %d speed records, bandwidth, and app bandwidth batches", records_to_write_count)
         except sqlite3.Error as e:
             self.logger.error("Error persisting batch: %s", e, exc_info=True)
 
