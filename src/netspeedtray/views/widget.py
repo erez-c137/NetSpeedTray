@@ -50,6 +50,7 @@ from ..utils.config import ConfigManager as CoreConfigManager
 from ..utils.position_utils import PositionManager as CorePositionManager, WindowState as CoreWindowState
 from ..utils.taskbar_utils import get_taskbar_info, is_fullscreen_active, is_taskbar_visible
 from ..utils.widget_renderer import WidgetRenderer as CoreWidgetRenderer, RenderConfig
+from ..utils.win_event_hook import WinEventHook
 
 
 class NetworkSpeedWidget(QWidget):
@@ -91,12 +92,11 @@ class NetworkSpeedWidget(QWidget):
         self._dragging: bool = False
         self._drag_offset: QPoint = QPoint()
         self.is_paused: bool = False
-        self._context_menu_shown: bool = False
         self._last_update_time: float = 0.0
         
-        # --- Timers ---
-        self.visibility_timer = QTimer(self)
-        self.position_timer = QTimer(self)
+        # --- Event Hook & Timers ---
+        self.win_event_hook: WinEventHook
+        self.state_update_timer = QTimer(self)  # The single safety-net timer
         self._tray_watcher_timer = QTimer(self)
         
         # Keep the widget hidden initially
@@ -114,7 +114,6 @@ class NetworkSpeedWidget(QWidget):
             self._setup_timers()
             self._initialize_position()
             
-            # Defer the final "show" call to ensure the event loop has started
             QTimer.singleShot(0, self._delayed_initial_show)
 
             self.logger.info("NetworkSpeedWidget initialized successfully.")
@@ -127,21 +126,15 @@ class NetworkSpeedWidget(QWidget):
         """Configures and starts all application timers."""
         self.logger.debug("Setting up timers...")
         
-        self.visibility_timer.timeout.connect(self._check_visibility)
-        self.visibility_timer.start(TimerConstants.VISIBILITY_CHECK_INTERVAL_MS)
-        self.logger.debug(f"Visibility timer started (interval: {TimerConstants.VISIBILITY_CHECK_INTERVAL_MS} ms)")
+        # This is our safety-net timer. It runs slowly to catch missed events.
+        self.state_update_timer.timeout.connect(self._update_widget_state)
+        self.state_update_timer.start(1000) # Runs once per second.
+        self.logger.debug("Safety-net state update timer started (1000ms).")
 
+        # This timer remains for periodic position correction if the taskbar moves.
         self._tray_watcher_timer.timeout.connect(self._check_and_update_position)
-        self._tray_watcher_timer.start(2000) # Check every 2 seconds
+        self._tray_watcher_timer.start(2000)
         self.logger.debug("Tray watcher timer started.")
-
-        self.position_timer.timeout.connect(self._check_position)
-        position_check_interval = getattr(TimerConstants, 'POSITION_CHECK_INTERVAL_MS', 500)
-        if position_check_interval > 0:
-            self.position_timer.start(position_check_interval)
-            self.logger.debug("Position timer (topmost check) started.")
-        else:
-            self.logger.debug("Position timer (topmost check) is disabled.")
 
     def _init_core_components(self) -> None:
         """
@@ -250,6 +243,12 @@ class NetworkSpeedWidget(QWidget):
         except Exception as e:
             self.logger.error(f"Error during periodic position check: {e}", exc_info=True)
 
+
+    def _on_foreground_window_changed(self) -> None:
+        """Slot that responds to window focus changes for instant updates."""
+        self._update_widget_state()
+
+
     def _delayed_initial_show(self) -> None:
         """
         Delays showing the widget until its position and size are stabilized.
@@ -258,13 +257,13 @@ class NetworkSpeedWidget(QWidget):
         """
         self.logger.debug("Executing delayed initial show...")
         try:
-
             if self.upload_speed == 0.0 and self.download_speed == 0.0:
                 self.upload_speed = 0.0
                 self.download_speed = 0.0
                 self.logger.debug("Set placeholder speeds for initial rendering")
 
-            self._check_visibility()
+            self._update_widget_state()
+            
             if self.isVisible():
                 self.logger.info("Widget shown after stabilization")
             else:
@@ -306,10 +305,10 @@ class NetworkSpeedWidget(QWidget):
         self.update_config({'paused': False})
         self.update()
 
-    def update_stats(self, upload_mbps: float, download_mbps: float) -> None:
+    def update_stats(self, upload_mbps: float, download_mbps: float, sent_diff: int, recv_diff: int) -> None:
         """
-        Receives raw speeds, adds them to the state manager, updates the
-        renderer's history with smoothed data, and triggers a repaint.
+        Receives new data from the controller, passes it to the WidgetState,
+        and schedules a repaint of the widget.
         """
         current_time = time.monotonic()
         if current_time - self._last_update_time < self.MIN_UPDATE_INTERVAL:
@@ -319,22 +318,14 @@ class NetworkSpeedWidget(QWidget):
         upload_bytes_sec = upload_mbps * 1_000_000 / 8
         download_bytes_sec = download_mbps * 1_000_000 / 8
         
-        # 1. Add raw data to the state manager for smoothing and long-term history.
-        self.widget_state.add_speed_data(upload_bytes_sec, download_bytes_sec)
-        
-        # 2. Get the latest smoothed data back from the state manager.
-        smoothed_upload, smoothed_download = self.widget_state.get_smoothed_speeds()
-        
-        # 3. Create a data object for the renderer's visual history.
-        speed_data = CoreSpeedData(
-            upload=smoothed_upload,
-            download=smoothed_download,
-            timestamp=datetime.now()
+        # --- CHANGE: Pass the new bandwidth data to WidgetState ---
+        self.widget_state.add_speed_data(
+            upload_speed=upload_bytes_sec, 
+            download_speed=download_bytes_sec,
+            bytes_sent=sent_diff,
+            bytes_recv=recv_diff
         )
-        # 4. Pass the correct, smoothed byte/sec data to the renderer's history.
-        self.renderer.update_speed_history(speed_data)
         
-        # 5. Trigger a repaint. The paintEvent will handle all drawing.
         self.update()
 
     def _update_display_speeds(self) -> None:
@@ -452,6 +443,11 @@ class NetworkSpeedWidget(QWidget):
             self.logger.error("Error setting up signal connections: %s", e, exc_info=True)
             raise RuntimeError("Failed to establish critical signal connections") from e
         
+        # Connect the WinEventHook to its handler
+        self.win_event_hook = WinEventHook()
+        self.win_event_hook.foreground_window_changed.connect(self._on_foreground_window_changed)
+        self.win_event_hook.start()
+        
     def _validate_lazy_imports(self) -> None:
         """Validates lazy imports to catch potential issues early."""
         self.logger.debug("Validating lazy imports...")
@@ -531,8 +527,7 @@ class NetworkSpeedWidget(QWidget):
 
     def paintEvent(self, event: QPaintEvent) -> None:
         """
-        Handles all painting for the widget. It gets the latest smoothed speeds
-        from the widget_state and passes them to the renderer for drawing.
+        Handles all painting for the widget by delegating to the renderer.
         """
         if not self.isVisible():
             return
@@ -548,12 +543,9 @@ class NetworkSpeedWidget(QWidget):
 
             painter.setFont(self.font)
 
-            # Get the LATEST smoothed speeds (raw bytes/sec) from the single source of truth.
             upload_bytes, download_bytes = self.widget_state.get_smoothed_speeds()
-
             render_config = RenderConfig.from_dict(self.config)
 
-            # Draw the text, passing the raw byte values for formatting.
             self.renderer.draw_network_speeds(
                 painter=painter,
                 upload=upload_bytes,
@@ -563,13 +555,14 @@ class NetworkSpeedWidget(QWidget):
                 config=render_config
             )
 
-            # Draw the mini graph if enabled.
             if render_config.graph_enabled:
+                history = self.widget_state.get_in_memory_speed_history()
                 self.renderer.draw_mini_graph(
                     painter=painter,
                     width=self.width(),
                     height=self.height(),
-                    config=render_config
+                    config=render_config,
+                    history=history
                 )
             
             painter.end()
@@ -600,65 +593,66 @@ class NetworkSpeedWidget(QWidget):
         except Exception as paint_err:
             self.logger.critical(f"CRITICAL: Failed to draw paint error indicator: {paint_err}", exc_info=True)
 
+    # --- NEW HELPER METHOD ---
+    def _calculate_menu_position(self) -> QPoint:
+        """
+        Calculates the optimal global position for the context menu.
+        Positions the menu above the rendered text, ensuring it stays on-screen.
+        """
+        try:
+            text_rect_local = self.renderer.get_last_text_rect() if self.renderer else QRect()
+
+            # Determine a reference point for positioning
+            if not text_rect_local.isValid() or text_rect_local.isEmpty():
+                self.logger.warning("Renderer text rect invalid. Falling back to widget center for menu.")
+                ref_global_pos = self.mapToGlobal(self.rect().center())
+                ref_top_global_y = self.mapToGlobal(self.rect().topLeft()).y()
+            else:
+                ref_global_pos = self.mapToGlobal(text_rect_local.center())
+                ref_top_global_y = self.mapToGlobal(text_rect_local.topLeft()).y()
+
+            menu_size = self.context_menu.sizeHint()
+            menu_width = menu_size.width() if menu_size.width() > 0 else UIConstants.ESTIMATED_MENU_WIDTH
+            menu_height = menu_size.height() if menu_size.height() > 0 else 100
+
+            # Position menu above the text, centered horizontally
+            target_x = ref_global_pos.x() - menu_width // 2
+            target_y = ref_top_global_y - menu_height - UIConstants.MENU_PADDING_ABOVE
+            target_pos = QPoint(int(round(target_x)), int(round(target_y)))
+
+            # Validate position to ensure it's on-screen
+            screen = self.screen() or QApplication.primaryScreen()
+            if screen:
+                screen_rect = screen.availableGeometry()
+                validated_x = max(screen_rect.left(), min(target_pos.x(), screen_rect.right() - menu_width + 1))
+                validated_y = max(screen_rect.top(), min(target_pos.y(), screen_rect.bottom() - menu_height + 1))
+                target_pos.setX(validated_x)
+                target_pos.setY(validated_y)
+            
+            return target_pos
+        except Exception as e:
+            self.logger.error(f"Error calculating menu position: {e}", exc_info=True)
+            return self.mapToGlobal(self.rect().center()) # Safe fallback
+
+    # --- REFACTORED ---
     def mousePressEvent(self, event: QMouseEvent) -> None:
-        """
-        Handles mouse press events for dragging and context menu triggering.
-        """
-        self.logger.debug("Mouse press event: button=%s, pos=%s", event.button(), event.pos())
+        """Handles mouse press events for dragging and context menu."""
         try:
             if event.button() == Qt.MouseButton.LeftButton:
                 self._dragging = True
                 self._drag_offset = event.position().toPoint()
-                self.logger.debug(f"Drag started. Offset: ({self._drag_offset.x()}, {self._drag_offset.y()})")
                 event.accept()
             elif event.button() == Qt.MouseButton.RightButton:
-                self.logger.info("Right-click detected in mousePressEvent")
-                self._context_menu_shown = False
                 if self.context_menu:
-                    text_rect_local = self.renderer.get_last_text_rect() if self.renderer else QRect()
-                    if not text_rect_local.isValid() or text_rect_local.isEmpty():
-                        self.logger.warning("Renderer text rect invalid. Falling back to widget center.")
-                        widget_global_pos = self.mapToGlobal(self.rect().topLeft())
-                        center_global_x = widget_global_pos.x() + self.width() // 2
-                        ref_top_global_y = widget_global_pos.y()
-                    else:
-                        text_center_local = text_rect_local.center()
-                        text_top_left_local = text_rect_local.topLeft()
-                        center_global = self.mapToGlobal(text_center_local)
-                        top_left_global = self.mapToGlobal(text_top_left_local)
-                        center_global_x = center_global.x()
-                        ref_top_global_y = top_left_global.y()
-
-                    menu_size = self.context_menu.sizeHint()
-                    menu_width = menu_size.width() if menu_size.width() > 0 else getattr(UIConstants, 'ESTIMATED_MENU_WIDTH', 150)
-                    menu_height = menu_size.height() if menu_size.height() > 0 else 100
-
-                    target_x = center_global_x - menu_width // 2
-                    padding_above = getattr(UIConstants, 'MENU_PADDING_ABOVE', 5)
-                    target_y = ref_top_global_y - menu_height - padding_above
-                    target_pos = QPoint(int(round(target_x)), int(round(target_y)))
-
-                    screen = self.screen() or QApplication.primaryScreen()
-                    if screen:
-                        screen_rect = screen.availableGeometry()
-                        validated_x = max(screen_rect.left(), min(target_pos.x(), screen_rect.right() - menu_width + 1))
-                        validated_y = max(screen_rect.top(), min(target_pos.y(), screen_rect.bottom() - menu_height + 1))
-                        target_pos.setX(validated_x)
-                        target_pos.setY(validated_y)
-
-                    self.context_menu.exec(target_pos)
-                    self._context_menu_shown = True
-                    self.logger.info("Context menu shown via mousePressEvent at position: %s", target_pos)
-                    event.accept()
-                else:
-                    self.logger.warning("Context menu not initialized")
-                    event.ignore()
+                    menu_pos = self._calculate_menu_position()
+                    self.context_menu.exec(menu_pos)
+                event.accept()
             else:
                 super().mousePressEvent(event)
         except Exception as e:
             self.logger.error(f"Error in mousePressEvent: {e}", exc_info=True)
             event.ignore()
-
+            
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
         """Moves the widget if dragging is active."""
         if not self._dragging:
@@ -716,26 +710,19 @@ class NetworkSpeedWidget(QWidget):
                             tray_left_logical = round(taskbar_info.get_tray_rect()[0] / dpi_scale)
                             widget_right_edge = self.pos().x() + self.width()
                             
-                            # This is the offset calculated from the user's drop position.
                             calculated_offset = tray_left_logical - widget_right_edge                            
                             is_on_screen = self.pos().x() >= screen.geometry().left()
                             
-                            # 1. Define the minimum allowed offset (5px system margin).
                             from ..constants.constants import UIConstants
                             min_offset = getattr(UIConstants, 'WIDGET_MARGIN_FROM_TRAY', 5)
 
-                            # 2. Determine the final offset to be saved.
                             if calculated_offset >= min_offset and is_on_screen:
-                                # User dropped it in a valid location to the left of the tray.
                                 final_offset = calculated_offset
                                 self.logger.info(f"User set new total tray offset to {final_offset}px.")
                             else:
-                                # User dropped it too far right (offset < min_offset) or off-screen.
-                                # Snap to the minimum safe distance.
                                 final_offset = min_offset
                                 self.logger.info(f"User dragged too far right. Snapping to minimum offset of {final_offset}px.")
 
-                            # 3. Save and apply the final, validated offset.
                             self.update_config({"tray_offset_x": final_offset})
                             self.update_position()
                                 
@@ -770,73 +757,20 @@ class NetworkSpeedWidget(QWidget):
         except Exception as e:
             self.logger.error(f"Error in mouseDoubleClickEvent: {e}", exc_info=True)
 
+    # --- REFACTORED ---
     def contextMenuEvent(self, event: QContextMenuEvent) -> None:
         """
-        Shows the context menu centered on the rendered text as a fallback.
+        Shows the context menu. This handler is the primary mechanism for
+        keyboard-invoked context menus and a fallback for mouse events.
         """
-        self.logger.info("Context menu event triggered at position: global=%s, local=%s",
-                        event.globalPos(), event.pos())
-        if self._context_menu_shown:
-            self.logger.debug("Context menu already shown via mousePressEvent, skipping")
-            event.accept()
-            return
-
-        if not hasattr(self, 'context_menu') or not self.context_menu:
-            self.logger.error("Context menu not initialized.")
-            event.ignore()
-            return
-        if not hasattr(self, 'renderer') or not self.renderer:
-            self.logger.error("Renderer not available for text position calculation.")
-            event.ignore()
-            return
-
         try:
-            text_rect_local = self.renderer.get_last_text_rect()
-            if not text_rect_local.isValid() or text_rect_local.isEmpty():
-                self.logger.warning("Renderer text rect invalid. Falling back to widget center.")
-                widget_global_pos = self.mapToGlobal(self.rect().topLeft())
-                center_global_x = widget_global_pos.x() + self.width() // 2
-                ref_top_global_y = widget_global_pos.y()
-            else:
-                text_center_local = text_rect_local.center()
-                text_top_left_local = text_rect_local.topLeft()
-                center_global = self.mapToGlobal(text_center_local)
-                top_left_global = self.mapToGlobal(text_top_left_local)
-                center_global_x = center_global.x()
-                ref_top_global_y = top_left_global.y()
-
-            menu_size = self.context_menu.sizeHint()
-            menu_width = menu_size.width() if menu_size.width() > 0 else getattr(UIConstants, 'ESTIMATED_MENU_WIDTH', 150)
-            menu_height = menu_size.height() if menu_size.height() > 0 else 100
-
-            target_x = center_global_x - menu_width // 2
-            padding_above = getattr(UIConstants, 'MENU_PADDING_ABOVE', 5)
-            target_y = ref_top_global_y - menu_height - padding_above
-            target_pos = QPoint(int(round(target_x)), int(round(target_y)))
-
-            screen = self.screen() or QApplication.primaryScreen()
-            if screen:
-                screen_rect = screen.availableGeometry()
-                validated_x = max(screen_rect.left(), min(target_pos.x(), screen_rect.right() - menu_width + 1))
-                validated_y = max(screen_rect.top(), min(target_pos.y(), screen_rect.bottom() - menu_height + 1))
-                target_pos.setX(validated_x)
-                target_pos.setY(validated_y)
-
-            self.context_menu.exec(target_pos)
-            self._context_menu_shown = True
-            self.logger.info("Context menu shown successfully at position: %s", target_pos)
+            if self.context_menu:
+                menu_pos = self._calculate_menu_position()
+                self.context_menu.exec(menu_pos)
             event.accept()
-
         except Exception as e:
             self.logger.error(f"Error showing context menu: {e}", exc_info=True)
-            try:
-                self.context_menu.exec(event.globalPos())
-                self._context_menu_shown = True
-                self.logger.debug("Context menu shown at fallback position: %s", event.globalPos())
-                event.accept()
-            except Exception as fallback_e:
-                self.logger.critical(f"Failed to show context menu at fallback position: {fallback_e}", exc_info=True)
-                event.ignore()
+            event.ignore()
 
     def showEvent(self, event: QShowEvent) -> None:
         self.logger.debug(f"Widget showEvent triggered. New visibility: {self.isVisible()}")
@@ -852,7 +786,6 @@ class NetworkSpeedWidget(QWidget):
             self.cleanup()
             event.accept()
             self.logger.info("Widget cleanup complete. Proceeding to close.")
-            # Ensure the QApplication event loop is quit so all processes terminate
             app = QApplication.instance()
             if app:
                 app.quit()
@@ -862,56 +795,31 @@ class NetworkSpeedWidget(QWidget):
             app = QApplication.instance()
             if app:
                 app.quit()
-
-    def _check_visibility(self) -> None:
+    
+      
+    def _update_widget_state(self) -> None:
         """
-        Checks if the widget should be visible based on fullscreen state and taskbar visibility.
+        The single authoritative method to control widget visibility and Z-order.
+        Relies on the intelligent is_fullscreen_active() to make decisions.
         """
         try:
             taskbar_info = get_taskbar_info()
-            if not taskbar_info:
-                self._visibility_fail_count = getattr(self, '_visibility_fail_count', 0) + 1
-                if self._visibility_fail_count >= 3:
-                    self.logger.warning("Repeated taskbar info failures; hiding widget as fallback.")
-                    self.setVisible(False)
-                return
+            
+            # The logic is now simple: is_fullscreen_active() handles all complex cases.
+            # If it returns True, we hide. Otherwise, we show.
+            should_hide = is_fullscreen_active(taskbar_info)
+            should_be_visible = not should_hide
 
-            self._visibility_fail_count = 0
-            fullscreen_active = is_fullscreen_active(taskbar_info)
-            taskbar_visible_flag = is_taskbar_visible(taskbar_info)
-            should_be_visible = taskbar_visible_flag and not fullscreen_active
-            is_currently_visible = self.isVisible()
-
-            if not should_be_visible and is_currently_visible:
-                startup_time = getattr(self, '_startup_time', None)
-                if startup_time is None:
-                    self._startup_time = datetime.now()
-                    startup_time = self._startup_time
-                time_since_startup = (datetime.now() - startup_time).total_seconds()
-                grace_period = 5.0
-                if time_since_startup < grace_period:
-                    self.logger.debug(
-                        f"Deferring visibility change: within grace period ({time_since_startup:.1f}/{grace_period}s)"
-                    )
-                    return
-
-            if should_be_visible != is_currently_visible:
-                self.logger.info(
-                    f"Visibility change: Fullscreen={fullscreen_active}, "
-                    f"TaskbarVisible={taskbar_visible_flag} -> ShouldBeVisible={should_be_visible}"
-                )
+            if self.isVisible() != should_be_visible:
                 self.setVisible(should_be_visible)
-            else:
-                self.logger.debug(
-                    f"Visibility unchanged: Fullscreen={fullscreen_active}, "
-                    f"TaskbarVisible={taskbar_visible_flag}, Visible={is_currently_visible}"
-                )
+            
+            # If it's supposed to be visible, ensure it's on top.
+            if should_be_visible and not self.config.get("free_move", False):
+                self._ensure_win32_topmost()
+
         except Exception as e:
-            self.logger.error(f"Error in visibility check: {e}", exc_info=True)
-            self._visibility_fail_count = getattr(self, '_visibility_fail_count', 0) + 1
-            if self._visibility_fail_count >= 3:
-                self.setVisible(False)
-                self.logger.warning("Hiding widget due to persistent visibility check errors.")
+            self.logger.error(f"Error in _update_widget_state: {e}", exc_info=True)
+ 
 
     def _ensure_win32_topmost(self) -> None:
         """
@@ -946,21 +854,20 @@ class NetworkSpeedWidget(QWidget):
         except Exception as e:
             self.logger.error("Error in _ensure_win32_topmost for HWND %s: %s", widget_hwnd_ptr, e, exc_info=True)
 
-    def _check_position(self) -> None:
+    def _enforce_topmost_status(self) -> None:
         """
-        Periodically ensures the widget's topmost status. This is the safety net
-        for cases where event-driven checks fail, like after the Start Menu closes.
-        It forcefully re-asserts the topmost state to fix Z-order issues.
+        Periodically ensures the widget's topmost status. This is the primary
+        mechanism for keeping the widget visible over the taskbar after shell
+        UI elements like the Start Menu are closed.
         """
-        if not self.isVisible() or self.config.get("free_move", False):
+        # Do not run this logic if the user wants to move the widget freely.
+        if self.config.get("free_move", False):
             return
 
         try:
-            self.logger.debug("Periodically re-asserting topmost status.")
             self._ensure_win32_topmost()
-
         except Exception as e:
-            self.logger.error(f"Error in periodic topmost check: {e}", exc_info=True)
+            self.logger.error(f"Error in periodic topmost enforcement: {e}", exc_info=True)
 
     def reset_to_default_position(self) -> None:
         """
@@ -1298,69 +1205,39 @@ class NetworkSpeedWidget(QWidget):
             return []
 
     def cleanup(self) -> None:
-        """
-        Performs necessary cleanup actions before the widget is destroyed.
-        """
-        self.logger.info("Performing widget cleanup...")
-        try:
-            self.logger.debug("Stopping timers...")
-            for timer, name in [(self.visibility_timer, "visibility"), (self.position_timer, "position")]:
-                if timer and timer.isActive():
-                    try:
+            """Performs necessary cleanup actions before the widget is destroyed."""
+            self.logger.info("Performing widget cleanup...")
+            try:
+                if hasattr(self, 'win_event_hook'):
+                    self.win_event_hook.stop()
+                    self.win_event_hook.join(timeout=1.0)
+                    self.logger.debug("WinEventHook stopped.")
+                
+                for timer in [self.state_update_timer, self._tray_watcher_timer]:
+                    if timer and timer.isActive():
                         timer.stop()
-                        self.logger.debug(f"{name.capitalize()} timer stopped.")
-                    except Exception as e:
-                        self.logger.error(f"Failed to stop {name} timer: {e}", exc_info=True)
+                self.logger.debug("All timers stopped.")
 
-            if self.timer_manager and hasattr(self.timer_manager, 'cleanup'):
-                try:
+                if self.timer_manager and hasattr(self.timer_manager, 'cleanup'):
                     self.timer_manager.cleanup()
                     self.logger.debug("SpeedTimerManager cleaned up.")
-                except Exception as e:
-                    self.logger.error(f"Failed to cleanup SpeedTimerManager: {e}", exc_info=True)
-
-            if self.controller and hasattr(self.controller, 'cleanup'):
-                try:
+                
+                if self.controller and hasattr(self.controller, 'cleanup'):
                     self.controller.cleanup()
                     self.logger.debug("Controller cleaned up.")
-                except Exception as e:
-                    self.logger.error(f"Failed to cleanup Controller: {e}", exc_info=True)
 
-            if self.widget_state and hasattr(self.widget_state, 'cleanup'):
-                try:
+                if self.widget_state and hasattr(self.widget_state, 'cleanup'):
                     self.widget_state.cleanup()
                     self.logger.debug("WidgetState cleaned up.")
-                except Exception as e:
-                    self.logger.error(f"Failed to cleanup WidgetState: {e}", exc_info=True)
 
-            try:
-                self.save_position()
-                if self.config_manager:
-                    self.config_manager.save(self.config)
-                    self.logger.debug("Final configuration saved.")
-            except Exception as e:
-                self.logger.error(f"Error saving final config/position: %s", e, exc_info=True)
-
-            if self.graph_window:
-                self.logger.debug("Closing graph window...")
-                try:
-                    if hasattr(self.graph_window, '_realtime_timer'):
-                        self.graph_window._realtime_timer.stop()
-                    if hasattr(self.graph_window, '_update_timer'):
-                        self.graph_window._update_timer.stop()
-                    if hasattr(self.graph_window, 'closing_normally'):
-                        self.graph_window.closing_normally = True
+                if self.graph_window:
                     self.graph_window.close()
                     self.graph_window = None
                     self.logger.debug("Graph window closed.")
-                except Exception as e:
-                    self.logger.error(f"Error closing graph window: %s", e, exc_info=True)
+                
+                self.save_position()
+                
+                self.logger.info("Widget cleanup finished successfully.")
 
-            self.upload_speed = 0.0
-            self.download_speed = 0.0
-            self._dragging = False
-            self._drag_offset = QPoint()
-
-            self.logger.info("Widget cleanup finished successfully.")
-        except Exception as e:
-            self.logger.error(f"Unexpected error during cleanup: %s", e, exc_info=True)
+            except Exception as e:
+                self.logger.error(f"Unexpected error during cleanup: %s", e, exc_info=True)

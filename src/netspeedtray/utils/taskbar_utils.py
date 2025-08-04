@@ -29,7 +29,9 @@ from PyQt6.QtWidgets import QApplication
 from ..constants.constants import TaskbarEdge, TaskbarConstants
 
 logger = logging.getLogger("NetSpeedTray.TaskbarUtils")
-
+# Caches to improve performance and prevent log spam for invalid handles
+_dpi_cache: dict = {}
+_logged_warnings: set = set()
 
 # Windows API Structures
 class RECT(ctypes.Structure):
@@ -253,122 +255,58 @@ class TaskbarInfo:
 def get_dpi_for_monitor(monitor: Any, hwnd: Optional[int] = None) -> Optional[float]:
     """
     Retrieves the DPI scaling factor for a given monitor using Windows API.
-
-    Validates the monitor handle and caches results to reduce redundant calls.
-    Falls back to QScreen if the handle is invalid or the API call fails.
-
-    Args:
-        monitor: Monitor handle (HMONITOR) from win32api, typically a PyHANDLE object.
-        hwnd: Optional window handle (HWND) for context in logging (e.g., taskbar HWND).
-
-    Returns:
-        Optional[float]: DPI scaling factor (e.g., 1.0 for 96 DPI, 1.5 for 144 DPI).
-                        Returns None if the API call fails or the handle is invalid.
+    Caches results and warnings to improve performance and reduce log spam.
     """
-    context = f" for HWND {hwnd} (Class: {win32gui.GetClassName(hwnd)}, Title: {win32gui.GetWindowText(hwnd)})" if hwnd and win32gui.IsWindow(hwnd) else ""
-    _dpi_cache: dict = {}  # Static cache for monitor handles
-    _logged_warnings: set = set()  # Track warned handles to avoid log spam
-
-    # Convert monitor handle to integer for consistent comparison
     try:
-        monitor_id = int(monitor) if monitor else 0
-    except (TypeError, ValueError) as e:
+        monitor_id = int(monitor)
+    except (TypeError, ValueError):
         monitor_id = 0
-        if monitor_id not in _logged_warnings:
-            logger.warning("Invalid monitor handle: %s%s: %s. Falling back to QScreen.", monitor, context, str(e))
-            _logged_warnings.add(monitor_id)
-        screen = QApplication.primaryScreen()
-        dpi_scale = screen.devicePixelRatio() if screen else 1.0
-        _dpi_cache[monitor_id] = dpi_scale
-        return dpi_scale
 
     if monitor_id in _dpi_cache:
         return _dpi_cache[monitor_id]
 
-    # Validate monitor handle
-    if not monitor or monitor_id == 0:
-        if monitor_id not in _logged_warnings:
-            logger.warning("Invalid monitor handle: %s%s. Falling back to QScreen.", monitor, context)
-            _logged_warnings.add(monitor_id)
-        screen = QApplication.primaryScreen()
-        dpi_scale = screen.devicePixelRatio() if screen else 1.0
-        _dpi_cache[monitor_id] = dpi_scale
-        return dpi_scale
+    if monitor_id in _logged_warnings:
+        return 1.0  # Return a safe default for already-warned invalid handles
 
-    # Check if monitor handle is valid by comparing against active monitors
-    active_monitors = [int(m[0]) for m in win32api.EnumDisplayMonitors(None, None)]
-    if monitor_id not in active_monitors:
-        if monitor_id not in _logged_warnings:
-            logger.warning("Monitor handle %s (int: %d) not found in active monitors %s%s. Falling back to QScreen.",
-                           monitor, monitor_id, active_monitors, context)
-            _logged_warnings.add(monitor_id)
+    def get_fallback_dpi() -> float:
+        """Helper to get DPI from Qt and log a warning once per invalid handle."""
+        logger.warning("Falling back to QScreen for DPI detection for monitor handle '%s'.", monitor_id)
+        _logged_warnings.add(monitor_id)
         screen = QApplication.primaryScreen()
         dpi_scale = screen.devicePixelRatio() if screen else 1.0
         _dpi_cache[monitor_id] = dpi_scale
         return dpi_scale
 
     try:
-        # Validate monitor handle using GetMonitorInfo
-        monitor_info = win32api.GetMonitorInfo(monitor)
-        if not monitor_info:
-            if monitor_id not in _logged_warnings:
-                logger.warning("GetMonitorInfo failed for monitor handle: %s%s. Falling back to QScreen.", monitor, context)
-                _logged_warnings.add(monitor_id)
-            screen = QApplication.primaryScreen()
-            dpi_scale = screen.devicePixelRatio() if screen else 1.0
-            _dpi_cache[monitor_id] = dpi_scale
-            return dpi_scale
-
         MDT_EFFECTIVE_DPI = 0
         dpi_x = ctypes.c_uint()
         dpi_y = ctypes.c_uint()
-        # Explicitly cast PyHANDLE to HMONITOR for GetDpiForMonitor
+        
         monitor_handle = wintypes.HMONITOR(monitor_id)
+
         result = ctypes.windll.shcore.GetDpiForMonitor(
             monitor_handle,
             MDT_EFFECTIVE_DPI,
             byref(dpi_x),
             byref(dpi_y)
         )
-        if result != 0:
-            if monitor_id not in _logged_warnings:
-                logger.warning("GetDpiForMonitor failed with HRESULT %s for monitor %s%s. Falling back to QScreen.", result, monitor, context)
-                _logged_warnings.add(monitor_id)
-            screen = QApplication.primaryScreen()
-            dpi_scale = screen.devicePixelRatio() if screen else 1.0
-            _dpi_cache[monitor_id] = dpi_scale
-            return dpi_scale
+        
+        if result != 0:  # S_OK is 0, anything else is an error
+            return get_fallback_dpi()
 
         dpi = dpi_x.value / 96.0
         if dpi <= 0:
-            if monitor_id not in _logged_warnings:
-                logger.warning("Invalid DPI value %s for monitor %s%s. Falling back to QScreen.", dpi, monitor, context)
-                _logged_warnings.add(monitor_id)
-            screen = QApplication.primaryScreen()
-            dpi_scale = screen.devicePixelRatio() if screen else 1.0
-            _dpi_cache[monitor_id] = dpi_scale
-            return dpi_scale
+            return get_fallback_dpi()
 
-        logger.debug("DPI for monitor %s%s: %s (scale: %s)", monitor, context, dpi_x.value, dpi)
         _dpi_cache[monitor_id] = dpi
         return dpi
 
-    except AttributeError:
-        if monitor_id not in _logged_warnings:
-            logger.warning("GetDpiForMonitor not available (requires Windows 8.1+)%s. Falling back to QScreen.", context)
-            _logged_warnings.add(monitor_id)
-        screen = QApplication.primaryScreen()
-        dpi_scale = screen.devicePixelRatio() if screen else 1.0
-        _dpi_cache[monitor_id] = dpi_scale
-        return dpi_scale
+    except (AttributeError, NameError):
+        # GetDpiForMonitor is not available (e.g., older Windows)
+        return get_fallback_dpi()
     except Exception as e:
-        if monitor_id not in _logged_warnings:
-            logger.warning("Error getting DPI for monitor %s%s: %s. Falling back to QScreen.", monitor, context, str(e))
-            _logged_warnings.add(monitor_id)
-        screen = QApplication.primaryScreen()
-        dpi_scale = screen.devicePixelRatio() if screen else 1.0
-        _dpi_cache[monitor_id] = dpi_scale
-        return dpi_scale
+        logger.error("Unexpected error getting DPI for monitor %s: %s", monitor_id, e, exc_info=True)
+        return get_fallback_dpi()
 
 
 def get_all_taskbar_info() -> List[TaskbarInfo]:
@@ -621,80 +559,60 @@ def get_taskbar_height() -> int:
     except Exception as e:
         logger.error("Error getting taskbar height: %s. Returning default.", e)
         return TaskbarConstants.DEFAULT_HEIGHT
-
-
+ 
+      
 def is_fullscreen_active(taskbar_info: Optional[TaskbarInfo]) -> bool:
     """
-    Checks if the active foreground window is fullscreen on the same monitor as the given taskbar,
-    explicitly excluding the Desktop window itself.
-
-    Compares the foreground window's dimensions (physical) to its monitor's dimensions (physical),
-    only if the window is not the desktop and is on the same monitor as the taskbar.
-
-    Args:
-        taskbar_info: TaskbarInfo for the taskbar to check against, or None.
-
-    Returns:
-        bool: True if a non-desktop fullscreen app is detected on the taskbar's monitor,
-              False otherwise or on error.
+    Intelligently determines if the widget should hide. Returns True for true
+    fullscreen apps and problematic shell flyouts, but False for the desktop
+    and the taskbar itself.
     """
     try:
-        if not taskbar_info:
-            logger.debug("No valid TaskbarInfo provided for fullscreen check.")
-            return False
-
+        from ..constants.constants import ShellConstants
+        
         hwnd = win32gui.GetForegroundWindow()
-        if not hwnd or not win32gui.IsWindow(hwnd):
-            logger.debug("No valid foreground window found for fullscreen check.")
+        if not hwnd or not win32gui.IsWindow(hwnd) or not taskbar_info:
             return False
 
         class_name = win32gui.GetClassName(hwnd)
-        if class_name in ("Progman", "WorkerW"):
-            logger.debug("Foreground window is the Desktop (%s), not considered fullscreen.", class_name)
+
+        # --- RULE 1: Immediately EXCLUDE the Desktop and Taskbar ---
+        # These should never cause the widget to hide.
+        if class_name in ("Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"):
             return False
 
-        fg_monitor = win32api.MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)
-        if not fg_monitor:
-            logger.warning("Could not get monitor for foreground window HWND %s.", hwnd)
-            return False
+        # Get monitor info for context
+        try:
+            fg_monitor = win32api.MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)
+            tb_monitor = win32api.MonitorFromPoint((taskbar_info.rect[0], taskbar_info.rect[1]), MONITOR_DEFAULTTONEAREST)
+        except win32gui.error:
+            return False # Window might have closed, fail safe
 
-        tb_monitor = win32api.MonitorFromWindow(taskbar_info.hwnd, MONITOR_DEFAULTTONEAREST) if taskbar_info.hwnd else None
-        if not tb_monitor:
-            tb_rect = taskbar_info.rect
-            tb_monitor = win32api.MonitorFromPoint((tb_rect[0], tb_rect[1]), MONITOR_DEFAULTTONEAREST)
-            if not tb_monitor:
-                logger.warning("Could not get monitor for taskbar HWND %s.", taskbar_info.hwnd)
-                return False
-
+        # If the window is on a different monitor, it can't affect us.
         if fg_monitor != tb_monitor:
-            logger.debug("Foreground window (HWND %s) is on a different monitor than taskbar (HWND %s). Not fullscreen for this taskbar.", hwnd, taskbar_info.hwnd)
             return False
+            
+        # --- RULE 2: Immediately INCLUDE problematic shell flyouts by class name ---
+        if class_name in ShellConstants.UI_CLASS_NAMES_TO_HIDE:
+            logger.debug(f"Hiding for shell flyout: HWND={hwnd}, Class='{class_name}'")
+            return True
 
+        # --- RULE 3: For all other apps, check for true fullscreen geometry ---
         window_rect = win32gui.GetWindowRect(hwnd)
         monitor_info = win32api.GetMonitorInfo(fg_monitor)
         monitor_rect = monitor_info.get('Monitor')
-        if not monitor_rect:
-            logger.warning("Could not get Monitor rect for foreground window HWND %s.", hwnd)
-            return False
 
-        is_fullscreen = (window_rect == monitor_rect)
+        if window_rect == monitor_rect:
+            logger.debug(f"Hiding for fullscreen app: HWND={hwnd}, Class='{class_name}'")
+            return True
 
-        if is_fullscreen:
-            logger.debug(
-                "Fullscreen check: FG Win=%s ('%s', Class='%s'), WinRect=%s, MonRect=%s, Monitor=%s, TaskbarMonitor=%s -> True",
-                hwnd, win32gui.GetWindowText(hwnd), class_name, window_rect, monitor_rect, fg_monitor, tb_monitor
-            )
-
-        return is_fullscreen
-
-    except win32gui.error as e:
-        if e.winerror != 0:
-            logger.warning("win32gui error checking fullscreen: %s", e)
+        # If none of the above, it's a normal window.
         return False
+
     except Exception as e:
-        logger.error("Unexpected error checking fullscreen: %s", e, exc_info=True)
+        logger.error(f"Unexpected error in is_fullscreen_active: {e}", exc_info=True)
         return False
-
+    
 
 def is_taskbar_visible(taskbar_info: Optional[TaskbarInfo]) -> bool:
     """
