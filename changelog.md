@@ -2,6 +2,44 @@
 
 All notable changes to this project will be documented in this file.
 
+---
+
+## [1.0.9] - August 4, 2025
+
+This is a major stability, performance, and quality-of-life update focused on refining the widget's core behavior, improving data accuracy, and optimizing the application's architecture for future features.
+
+### ✨ Major Improvements
+
+- ** Improved Widget Stability & Behavior:** The widget now feels much more like a native part of the Windows taskbar. An entirely new, event-driven architecture (using a WinEventHook and a safety-net timer) has been implemented to intelligently manage visibility.
+  The widget no longer flickers, disappears, or gets stuck behind the taskbar when interacting with the Calendar, Network/Volume flyouts, or the tray overflow menu.
+
+- **Enhanced Startup Performance:** The application's impact on system startup has been reduced. By implementing "lazy loading" for the graph window and other UI components, the initial launch is now faster and lighter on system resources.
+
+### 🐛 Bug Fixes & Refinements
+
+- **Graphing Engine Overhaul:** The graph window's data pipeline has been completely revised for accuracy and reliability.
+  - Fixed a critical bug that caused the graph to appear flat-lined or empty due to a data unit mismatch in the database.
+  - Corrected the "Total" data calculation in the stats bar, which was showing vastly inflated numbers.
+  - Fixed an issue where the "Live Update" toggle was not updating the graph in real-time.
+- **Accurate Speed Calculation:** Resolved a bug where network speeds could show an incorrect, massive spike after the computer wakes from sleep or hibernation.
+- **Application Stability:**
+  - Fixed a potential crash (`AttributeError`) that could occur when closing the application.
+  - Hardened the DPI detection logic to prevent log spam and errors from invalid monitor handles reported by the OS.
+- **Code Quality & Architecture:**
+  - The core data management model has been centralized into a single `WidgetState` class, improving clarity and retiring the redundant `SpeedHistory` class.
+  - The developer console is now clean, with benign `matplotlib` warnings on first launch being properly handled.
+  - Numerous unused imports and obsolete code paths have been removed.
+
+### ⚠️ Important Note for Existing Users
+
+- To enable the data accuracy fixes, **users upgrading from a previous version must delete their old history database.** A new, clean database will be created automatically.
+- **Instructions:**
+  1.  Ensure NetSpeedTray is not running.
+  2.  Open File Explorer, paste `%APPDATA%\NetSpeedTray` into the address bar, and press Enter.
+  3.  Delete the file named `speed_history.db`.
+
+---
+
 ## [1.0.8] - July 31, 2025
 
 This release focuses on improving the reliability and accuracy of the Network Speed Graph, resolving all known bugs related to data display and state persistence.

@@ -27,10 +27,11 @@ coverage/
 # Visual Studio Code
 # Ignore all user-specific settings and temporary files inside the .vscode folder
 .vscode/*
-# DO NOT ignore these project-specific setting files
+# DO NOT ignore these project-specific setting files, which ensure a consistent
+# development environment for all contributors.
 !.vscode/settings.json
 !.vscode/launch.json
-!.vscode/extentions.json
+!.vscode/extensions.json
 
 # Also ignore any multi-root workspace files, which are user-specific
 !.vscode/*.code-workspace
@@ -88,3 +89,6 @@ src/structure.txt
 release-template.md
 *.lnk
 .pylintrc
+
+# Developer utility scripts
+populate_db.py
