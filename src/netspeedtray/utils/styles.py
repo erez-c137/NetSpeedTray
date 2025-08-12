@@ -99,10 +99,12 @@ def dialog_style() -> str:
 def sidebar_style() -> str:
     """Style for the sidebar (QListWidget)."""
     dark_mode_active = is_dark_mode()
-    sidebar_bg = constants.styles.SETTINGS_PANEL_BG_DARK if dark_mode_active else constants.config.defaults.UI_SIDEBAR_BG
-    selected_bg = "#3A3A3A" if dark_mode_active else constants.config.defaults.UI_SIDEBAR_SELECTED # This was an error, fixed.
+    
+    sidebar_bg = constants.styles.SETTINGS_PANEL_BG_DARK if dark_mode_active else constants.styles.UI_SIDEBAR_BG
+    selected_bg = "#3A3A3A" if dark_mode_active else constants.styles.UI_SIDEBAR_SELECTED
     hover_bg = "#4A4A4A" if dark_mode_active else "#E0E0E0"
-    text_color = constants.styles.SETTINGS_PANEL_TEXT_DARK if dark_mode_active else constants.config.defaults.UI_TEXT_COLOR
+    text_color = constants.styles.SETTINGS_PANEL_TEXT_DARK if dark_mode_active else constants.styles.UI_TEXT_COLOR
+
     accent_qcolor = get_accent_color()
     accent_rgb = f"rgb({accent_qcolor.red()}, {accent_qcolor.green()}, {accent_qcolor.blue()})"
 
