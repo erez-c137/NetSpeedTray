@@ -5,43 +5,32 @@ This module defines the `GraphWindow` class, which provides a graphical interfac
 network speed history and per-app bandwidth usage using Matplotlib and PyQt6.
 """
 
-import csv
+# --- Standard Library Imports ---
 import logging
 import os
-import psutil
 import time
 import warnings
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple, Any
 
-
-import matplotlib.dates as mdates
-import matplotlib.pyplot as plt
+# --- Third-Party Imports ---
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-from matplotlib.dates import DateFormatter
-from PyQt6.QtWidgets import QSizePolicy
 
 from PyQt6.QtCore import Qt, QPoint, QTimer
 from PyQt6.QtGui import QResizeEvent, QCloseEvent, QIcon
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QApplication,
-    QLabel, QComboBox, QProgressBar, QDialog, QGroupBox,
-    QTabWidget, QMessageBox, QFileDialog, QGridLayout
+    QApplication, QComboBox, QDialog, QFileDialog, QGridLayout, QGroupBox,
+    QHBoxLayout, QLabel, QMessageBox, QProgressBar, QPushButton,
+    QSizePolicy, QTabWidget, QVBoxLayout, QWidget
 )
 
-from netspeedtray.utils.styles import get_accent_color
-from netspeedtray.utils.components import Win11Toggle, Win11Slider
-from netspeedtray.core.widget_state import AggregatedSpeedData, AppBandwidthData, PerInterfaceSpeedData
-from netspeedtray.constants import (
-    GraphConstants, HistoryPeriodConstants, DataRetentionConstants,
-    LegendPositionConstants, UIStyleConstants, SliderConstants,
-    ExportConstants, HelperConstants, UnitConstants, ConfigConstants,
-    ColorConstants, AppConstants
-)
-from netspeedtray.utils.position_utils import ScreenUtils
+# --- Custom Application Imports ---
+from netspeedtray import constants
 from netspeedtray.utils import helpers
-from ..constants.i18n_strings import I18nStrings
+from netspeedtray.utils.components import Win11Slider, Win11Toggle
+from netspeedtray.utils.position_utils import ScreenUtils
+from netspeedtray.utils.styles import get_accent_color
 
 
 class GraphWindow(QWidget):
@@ -64,7 +53,7 @@ class GraphWindow(QWidget):
             self._is_closing = False
             self._current_data = None
             self._last_stats_update = time.time()
-            self._stats_update_interval = GraphConstants.STATS_UPDATE_INTERVAL
+            self._stats_update_interval = constants.graph.STATS_UPDATE_INTERVAL
             self._cached_stats = {}
 
             # The graph window now uses the time passed from its parent, with a fallback.
@@ -78,11 +67,11 @@ class GraphWindow(QWidget):
             
             # Setup UI
             self.setupUi(self)
-            self.setWindowTitle(GraphConstants.WINDOW_TITLE)
+            self.setWindowTitle(constants.graph.WINDOW_TITLE)
 
             # Set window icon
             try:
-                icon_filename = getattr(AppConstants, 'ICON_FILENAME', 'NetSpeedTray.ico')
+                icon_filename = getattr(constants.app, 'ICON_FILENAME', 'NetSpeedTray.ico')
                 icon_path = helpers.get_app_asset_path(icon_filename)
                 if icon_path.exists():
                     self.setWindowIcon(QIcon(str(icon_path)))
@@ -130,37 +119,11 @@ class GraphWindow(QWidget):
         self.graph_widget.setLayout(self.graph_layout)
         self.tab_widget.addTab(self.graph_widget, self.tr("Graph"))
 
-        # --- App Usage tab (Feature coming soon) ---
-        # self.app_usage_widget = QWidget()
-        # self.app_list_layout = QVBoxLayout(self.app_usage_widget)
-        # 
-        # # Filter combo for app usage
-        # filter_container = QHBoxLayout()
-        # filter_label = QLabel(getattr(self.i18n, 'FILTER_BY_LABEL', 'Filter by:'))
-        # self.app_filter_combo = QComboBox()
-        # self.app_filter_combo.addItems([
-        #     getattr(self.i18n, 'LAST_30_DAYS_LABEL', 'Last 30 Days'),
-        #     getattr(self.i18n, 'LAST_7_DAYS_LABEL', 'Last 7 Days'),
-        #     getattr(self.i18n, 'SESSION_LABEL', 'Current Session'),
-        # ])
-        # self.app_filter_combo.currentIndexChanged.connect(self._update_app_usage)
-        # filter_container.addWidget(filter_label)
-        # filter_container.addWidget(self.app_filter_combo)
-        # filter_container.addStretch()
-        # self.app_list_layout.addLayout(filter_container)
-        # 
-        # self.app_usage_widget.setLayout(self.app_list_layout)
-        # self.tab_widget.addTab(self.app_usage_widget, self.tr("App Usage"))
-
-        # # Optionally: add stretch to app usage layout for spacing
-        # self.app_list_layout.addStretch(1)
-
-
         # Connect tab change signal
         self.tab_widget.currentChanged.connect(self._on_tab_changed)
 
         # Set minimum size for usability
-        self.setMinimumSize(GraphConstants.GRAPH_WIDGET_WIDTH, GraphConstants.GRAPH_WIDGET_HEIGHT)
+        self.setMinimumSize(constants.graph.GRAPH_WIDGET_WIDTH, constants.graph.GRAPH_WIDGET_HEIGHT)
 
         # Placeholders for overlay elements (created in _init_overlay_elements)
         self.stats_bar = None
@@ -201,30 +164,30 @@ class GraphWindow(QWidget):
         """ Initialize matplotlib figure and canvas """
         try:
             # Use FIGURE_SIZE tuple (width, height)
-            fig_size = getattr(GraphConstants, 'FIGURE_SIZE', (8, 6))
+            fig_size = getattr(constants.graph, 'FIGURE_SIZE', (8, 6))
             self.figure = Figure(figsize=fig_size)
             self.canvas = FigureCanvas(self.figure)
             self.ax = self.figure.add_subplot(111)
             # Use i18n or fallback for axis labels            self.ax.set_xlabel('Time')  # Using default English labels
             self.ax.set_ylabel('Speed')
-            self.ax.grid(True, linestyle=getattr(GraphConstants, 'GRID_LINESTYLE', '--'), alpha=getattr(GraphConstants, 'GRID_ALPHA', 0.5))
+            self.ax.grid(True, linestyle=getattr(constants.graph, 'GRID_LINESTYLE', '--'), alpha=getattr(constants.graph, 'GRID_ALPHA', 0.5))
 
             # Initialize the upload and download lines
             self.upload_line, = self.ax.plot([], [], 
-                color=GraphConstants.UPLOAD_LINE_COLOR, 
-                linewidth=GraphConstants.LINE_WIDTH,
+                color=constants.graph.UPLOAD_LINE_COLOR, 
+                linewidth=constants.graph.LINE_WIDTH,
                 label=self.i18n.UPLOAD_LABEL if hasattr(self, 'i18n') else 'Upload'
             )
             self.download_line, = self.ax.plot([], [], 
-                color=GraphConstants.DOWNLOAD_LINE_COLOR, 
-                linewidth=GraphConstants.LINE_WIDTH,
+                color=constants.graph.DOWNLOAD_LINE_COLOR, 
+                linewidth=constants.graph.LINE_WIDTH,
                 label=self.i18n.DOWNLOAD_LABEL if hasattr(self, 'i18n') else 'Download'
             )
             
             # Initialize axis limits and "no data" text object
             self._no_data_text_obj = None
             self.ax.set_xlim(0, 1)
-            self.ax.set_ylim(0, GraphConstants.MIN_Y_AXIS_LIMIT)
+            self.ax.set_ylim(0, constants.graph.MIN_Y_AXIS_LIMIT)
             
             # Add canvas to layout
             if hasattr(self, 'graph_layout'):
@@ -243,7 +206,7 @@ class GraphWindow(QWidget):
             # Stats Bar
             self.stats_bar = QLabel(self)
             # Use INITIAL_STATS_TEXT if present, else fallback
-            initial_stats_text = getattr(GraphConstants, 'INITIAL_STATS_TEXT', "")
+            initial_stats_text = getattr(constants.graph, 'INITIAL_STATS_TEXT', "")
             self.stats_bar.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.stats_bar.setText(initial_stats_text)
             # Make the stats bar always fill the width of the graph area
@@ -252,7 +215,7 @@ class GraphWindow(QWidget):
             self.stats_bar.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             self.stats_bar.show()
               # Hamburger Menu
-            hamburger_size = getattr(GraphConstants, 'HAMBURGER_ICON_SIZE', 24)  # Fallback to 24px if missing
+            hamburger_size = getattr(constants.graph, 'HAMBURGER_ICON_SIZE', 24)  # Fallback to 24px if missing
             self.hamburger_icon = QPushButton(self)
             self.hamburger_icon.setFixedSize(hamburger_size, hamburger_size)
             self.hamburger_icon.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -344,41 +307,30 @@ class GraphWindow(QWidget):
 
     def _init_settings_panel(self):
         """Initialize settings panel widgets with a fixed dark theme."""
-        # Import panel_styles for QGroupBox and QComboBox, but labels will be styled explicitly below.
         from netspeedtray.utils.styles import always_dark_panel_style
         from netspeedtray.utils.components import Win11Slider, Win11Toggle
-        # Constants are already imported at the class/module level
 
         panel_styles = always_dark_panel_style()
         explicit_label_style = (
-            f"color: {UIStyleConstants.SETTINGS_PANEL_TEXT_DARK}; "
-            "background-color: transparent; "
-            "border: none; "
-            "outline: none; "
-            "padding: 0px; " # Explicitly reset padding
-            "margin: 0px; "  # Explicitly reset margin
-            "font-size: 13px; "
-            "font-family: 'Segoe UI Variable';"
+            f"color: {constants.styles.SETTINGS_PANEL_TEXT_DARK}; "
+            "background-color: transparent; border: none; outline: none; "
+            "padding: 0px; margin: 0px; font-size: 13px; font-family: 'Segoe UI Variable';"
         )
-
-        PANEL_TEXT_COLOR_FOR_SLIDER_VALUES = UIStyleConstants.GRAPH_TEXT_DARK 
+        PANEL_TEXT_COLOR_FOR_SLIDER_VALUES = constants.styles.GRAPH_TEXT_DARK
 
         self.settings_widget = QWidget(self)
         self.settings_widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        # Style the main settings panel container: always dark, no border for the container itself
         self.settings_widget.setStyleSheet(
-            f"QWidget {{ background-color: {UIStyleConstants.GRAPH_BG_DARK}; border: none; outline: none; }}"
+            f"QWidget {{ background-color: {constants.styles.GRAPH_BG_DARK}; border: none; outline: none; }}"
         )
 
         settings_main_layout = QVBoxLayout(self.settings_widget)
         settings_main_layout.setContentsMargins(12, 12, 12, 12)
-        settings_main_layout.setSpacing(15) 
+        settings_main_layout.setSpacing(15)
         self.settings_widget.setLayout(settings_main_layout)
 
         group_box = QGroupBox(self.settings_widget)
-        group_box_title = getattr(self.i18n, 'GRAPH_SETTINGS_LABEL', 'Graph Settings')
-        group_box.setTitle(group_box_title)
-        # Apply QGroupBox_PanelDark style for the GroupBox frame and title
+        group_box.setTitle(getattr(self.i18n, 'GRAPH_SETTINGS_LABEL', 'Graph Settings'))
         group_box.setStyleSheet(panel_styles.get("QGroupBox_PanelDark"))
         
         group_content_layout = QGridLayout(group_box)
@@ -388,17 +340,29 @@ class GraphWindow(QWidget):
 
         current_row = 0
 
+        # --- Interface Filter ---
+        interface_label = QLabel("Interface") # Placeholder, will be i18n later
+        interface_label.setStyleSheet(explicit_label_style)
+        self.interface_filter = QComboBox()
+        self.interface_filter.setStyleSheet(panel_styles.get("QComboBox_PanelDark"))
+        self.interface_filter.addItem("All (Aggregated)") # Default value
+
+        group_content_layout.addWidget(interface_label, current_row, 0, 1, 2)
+        current_row += 1
+        group_content_layout.addWidget(self.interface_filter, current_row, 0, 1, 2)
+        current_row += 1
+
         # --- History period Slider ---
         self.history_period_label = QLabel(getattr(self.i18n, 'HISTORY_PERIOD_LABEL_NO_VALUE', 'Timeline'))
-        self.history_period_label.setStyleSheet(explicit_label_style) 
+        self.history_period_label.setStyleSheet(explicit_label_style)
 
-        current_history_period_str = self._parent.config.get('history_period', HistoryPeriodConstants.DEFAULT_PERIOD)
+        current_history_period_str = self._parent.config.get('history_period', constants.data.history_period.DEFAULT_PERIOD)
         initial_history_slider_val = self._parent.config.get('history_period_slider_value', 
-            next((k for k, v in HistoryPeriodConstants.PERIOD_MAP.items() if v == current_history_period_str), 0))
+            next((k for k, v in constants.data.history_period.PERIOD_MAP.items() if v == current_history_period_str), 0))
         self.history_period = Win11Slider(
-            min_value=0, max_value=len(HistoryPeriodConstants.PERIOD_MAP) - 1,
+            min_value=0, max_value=len(constants.data.history_period.PERIOD_MAP) - 1,
             value=initial_history_slider_val, page_step=1, has_ticks=True, parent=group_box,
-            value_label_text_color=PANEL_TEXT_COLOR_FOR_SLIDER_VALUES 
+            value_label_text_color=PANEL_TEXT_COLOR_FOR_SLIDER_VALUES
         )
         group_content_layout.addWidget(self.history_period_label, current_row, 0, 1, 2)
         current_row += 1
@@ -407,12 +371,12 @@ class GraphWindow(QWidget):
 
         # --- Data Retention Slider ---
         self.keep_data_label = QLabel(getattr(self.i18n, 'DATA_RETENTION_LABEL_NO_VALUE', 'Data Retention'))
-        self.keep_data_label.setStyleSheet(explicit_label_style) 
+        self.keep_data_label.setStyleSheet(explicit_label_style)
 
-        config_days = self._parent.config.get("keep_data", ConfigConstants.DEFAULT_HISTORY_PERIOD_DAYS)
+        config_days = self._parent.config.get("keep_data", constants.config.defaults.DEFAULT_HISTORY_PERIOD_DAYS)
         initial_slider_value = self._days_to_slider_value(config_days)
         self.keep_data = Win11Slider(
-            min_value=0, max_value=len(DataRetentionConstants.DAYS_MAP) - 1,
+            min_value=0, max_value=len(constants.data.retention.DAYS_MAP) - 1,
             value=initial_slider_value, page_step=1, has_ticks=True, parent=group_box,
             value_label_text_color=PANEL_TEXT_COLOR_FOR_SLIDER_VALUES
         )
@@ -421,35 +385,139 @@ class GraphWindow(QWidget):
         group_content_layout.addWidget(self.keep_data, current_row, 0, 1, 2)
         current_row += 1
 
-        # --- Dark Mode Toggle ---
+        # --- Toggles ---
         dm_label = QLabel(getattr(self.i18n, 'DARK_MODE_LABEL', 'Dark Mode'))
-        dm_label.setStyleSheet(explicit_label_style) 
-        
+        dm_label.setStyleSheet(explicit_label_style)
         self.dark_mode = Win11Toggle(
-            label_text="",
-            initial_state=self._parent.config.get('dark_mode', ConfigConstants.DEFAULT_DARK_MODE),
+            initial_state=self._parent.config.get('dark_mode', constants.config.defaults.DEFAULT_DARK_MODE),
             parent=group_box
         )
-        group_content_layout.addWidget(dm_label, current_row, 0, Qt.AlignmentFlag.AlignVCenter)
-        group_content_layout.addWidget(self.dark_mode, current_row, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        group_content_layout.addWidget(dm_label, current_row, 0)
+        group_content_layout.addWidget(self.dark_mode, current_row, 1, Qt.AlignmentFlag.AlignLeft)
         current_row += 1
         
-        # --- Live Update Toggle ---
         lu_label = QLabel(getattr(self.i18n, 'LIVE_UPDATE_LABEL', 'Live Update'))
-        lu_label.setStyleSheet(explicit_label_style) 
-        
-        self.realtime = Win11Toggle(
-            label_text="", 
-            initial_state=True,
-            parent=group_box
-        )
-        group_content_layout.addWidget(lu_label, current_row, 0, Qt.AlignmentFlag.AlignVCenter)
-        group_content_layout.addWidget(self.realtime, current_row, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        current_row += 1
+        lu_label.setStyleSheet(explicit_label_style)
+        self.realtime = Win11Toggle(initial_state=True, parent=group_box)
+        group_content_layout.addWidget(lu_label, current_row, 0)
+        group_content_layout.addWidget(self.realtime, current_row, 1, Qt.AlignmentFlag.AlignLeft)
 
         settings_main_layout.addWidget(group_box)
         settings_main_layout.addStretch(1)
         self.settings_widget.hide()
+
+
+    def _populate_interface_filter(self) -> None:
+        """
+        Fetches the list of distinct interfaces from the database and populates
+        the interface filter QComboBox.
+        """
+        self.logger.debug("Populating interface filter...")
+        try:
+            if not self._parent or not hasattr(self._parent, 'widget_state'):
+                self.logger.warning("Cannot populate interfaces: parent or widget_state missing.")
+                return
+
+            # Block signals to prevent triggering updates while we modify the list
+            self.interface_filter.blockSignals(True)
+            
+            current_selection = self.interface_filter.currentText()
+            self.interface_filter.clear()
+            
+            # Add the default aggregate view
+            self.interface_filter.addItem("All (Aggregated)")
+            
+            # Fetch and add the distinct interfaces from the database
+            distinct_interfaces = self._parent.widget_state.get_distinct_interfaces()
+            if distinct_interfaces:
+                self.interface_filter.addItems(sorted(distinct_interfaces))
+            
+            # Restore previous selection if it still exists
+            index = self.interface_filter.findText(current_selection)
+            if index != -1:
+                self.interface_filter.setCurrentIndex(index)
+            
+            self.logger.info("Interface filter populated with %d interfaces.", len(distinct_interfaces))
+
+        except Exception as e:
+            self.logger.error("Failed to populate interface filter: %s", e, exc_info=True)
+            # Ensure there's at least the default option on error
+            if self.interface_filter.count() == 0:
+                self.interface_filter.addItem("All (Aggregated)")
+        finally:
+            # Always unblock signals
+            self.interface_filter.blockSignals(False)
+
+
+    def _on_interface_filter_changed(self, interface_name: str) -> None:
+        """
+        Slot that is triggered when the user selects a new interface from the filter.
+        """
+        if self._is_closing:
+            return
+            
+        self.logger.info("User selected interface: %s", interface_name)
+        # The main update method will automatically fetch data for the currently
+        # selected period and interface. We just need to trigger it.
+        self.update_graph()
+
+
+    def _on_retention_changed(self) -> None:
+        """
+        Slot triggered when the Data Retention slider is released. It notifies
+        the main widget to update the retention period in the backend.
+        """
+        if self._is_closing or not self._parent:
+            return
+
+        try:
+            slider_value = self.keep_data.value()
+            days = constants.data.retention.DAYS_MAP.get(slider_value, 30)
+            self.logger.info("Data Retention slider released. New period: %d days.", days)
+
+            # Call the new method on the parent to trigger the grace period logic
+            if hasattr(self._parent, 'update_retention_period'):
+                self._parent.update_retention_period(days)
+            else:
+                self.logger.warning("Parent widget does not have 'update_retention_period' method.")
+                
+        except Exception as e:
+            self.logger.error("Error in _on_retention_changed: %s", e, exc_info=True)
+
+
+    def _get_time_range_from_ui(self) -> Tuple[Optional[datetime], datetime]:
+        """
+        Determines the start and end time for a query based on the
+        current state of the 'Timeline' slider.
+
+        Returns:
+            A tuple of (start_time, end_time). start_time can be None for 'All'.
+        """
+        import psutil
+
+        now = datetime.now()
+        period_value = self.history_period.value()
+        period_name = constants.data.history_period.PERIOD_MAP.get(period_value, constants.data.history_period.DEFAULT_PERIOD)
+        
+        start_time: Optional[datetime] = None
+        if "System Uptime" in period_name:
+            start_time = datetime.fromtimestamp(psutil.boot_time())
+        elif "Session" in period_name:
+            start_time = self.session_start_time
+        elif "3 Hours" in period_name:
+            start_time = now - timedelta(hours=3)
+        elif "6 Hours" in period_name:
+            start_time = now - timedelta(hours=6)
+        elif "12 Hours" in period_name:
+            start_time = now - timedelta(hours=12)
+        elif "24 Hours" in period_name:
+            start_time = now - timedelta(days=1)
+        elif "Week" in period_name:
+            start_time = now - timedelta(weeks=1)
+        elif "Month" in period_name:
+            start_time = now - timedelta(days=30)
+        
+        return start_time, now
 
 
     def _perform_initial_update(self):
@@ -500,314 +568,73 @@ class GraphWindow(QWidget):
             self.logger.error(f"Error positioning window: {e}", exc_info=True)
 
 
-
     def _on_tab_changed(self, index: int) -> None:
         """Handle tab changes to update UI elements and data."""
         if self._is_closing: return
         try:
-            current_history = []
-            if self._parent and self._parent.widget_state:
-                 current_history = self._parent.widget_state.get_speed_history()
-
-            # Only Graph tab is currently active
             if index == 0:  # Speed Graph
-                self.update_graph(current_history) # Will use its throttle
-            # elif index == 1:  # App Usage (Feature coming soon)
-            #     self._update_app_usage() # Fetches its own data as needed
+                self.update_graph()
 
-            # Crucially, reposition overlays as the reference widget (current tab) changes
-            QTimer.singleShot(0, self._reposition_overlay_elements) # Ensure layout is settled
+            # The tab widget no longer has other tabs, but this ensures
+            # the overlays are correctly positioned if tabs are added later.
+            QTimer.singleShot(0, self._reposition_overlay_elements)
 
             self.logger.debug(f"Switched to tab {index}")
         except Exception as e:
             self.logger.error(f"Error handling tab change: {e}", exc_info=True)
-            # QMessageBox.critical(self, self.i18n.ERROR_TITLE, self.i18n.GRAPH_ERROR_MESSAGE.format(error=str(e)))
 
 
-    def _update_app_usage(self) -> None:
-        """ Fetches and displays the per-application bandwidth usage list, optimizing widget updates."""
-        if self._is_closing:
-            return
-        self.logger.debug("Updating app usage view...")
-
-        try:
-            if not self._parent or not self._parent.widget_state:
-                error_msg = getattr(self.i18n, 'GRAPH_DEPENDENCY_ERROR', "Graph dependencies missing.")
-                self._show_app_usage_error(error_msg)
-                self.logger.error("Cannot update app usage: Parent or widget_state missing.")
-                return
-
-            filter_text = self.app_filter_combo.currentText()
-            start_time: Optional[datetime] = None
-            now = datetime.now()
-
-            # Safe access to i18n strings
-            last_30_days_label = getattr(self.i18n, 'LAST_30_DAYS_LABEL', 'Last 30 Days')
-            last_7_days_label = getattr(self.i18n, 'LAST_7_DAYS_LABEL', 'Last 7 Days')
-            session_label = getattr(self.i18n, 'SESSION_LABEL', 'Current Session')
-
-            if filter_text == last_30_days_label:
-                start_time = now - timedelta(days=30)
-            elif filter_text == last_7_days_label:
-                start_time = now - timedelta(days=7)
-            elif filter_text == session_label:
-                start_time = self.app_start_time
-            
-            app_data: List[AppBandwidthData] = self._parent.widget_state.get_app_bandwidth_history(start_time=start_time)
-            
-            app_totals: Dict[str, Tuple[float, float]] = {}
-            for entry in app_data:
-                try:
-                    bytes_sent = float(entry.bytes_sent if entry.bytes_sent is not None else 0.0)
-                    bytes_recv = float(entry.bytes_recv if entry.bytes_recv is not None else 0.0)
-                    app_name = str(entry.app_name or "Unknown App") 
-                    aggregation_key = os.path.basename(app_name).lower() 
-                    sent, recv = app_totals.get(aggregation_key, (0.0, 0.0))
-                    app_totals[aggregation_key] = (sent + bytes_sent, recv + bytes_recv)
-                except (ValueError, TypeError) as e:
-                    self.logger.warning(f"Invalid bandwidth data for entry {entry}: {e}")
-                    continue
-            
-            sorted_apps = sorted(app_totals.items(), key=lambda item: item[1][0] + item[1][1], reverse=True)
-            
-            # Calculate max total usage for progress bar normalization
-            max_total_usage_bytes = 0.0
-            if sorted_apps: # only if there are apps
-                max_total_usage_bytes = sum(sorted_apps[0][1]) # Sum of sent+recv of the top app
-            if max_total_usage_bytes == 0: # Avoid division by zero if top app has 0 usage or no apps
-                max_total_usage_bytes = 1.0
-
-            total_sent_bytes = sum(sent for _, (sent, _) in sorted_apps)
-            total_recv_bytes = sum(recv for _, (_, recv) in sorted_apps)
-
-            # Use helpers.format_data_size
-            sent_val_num, sent_unit_str = helpers.format_data_size(total_sent_bytes)
-            recv_val_num, recv_unit_str = helpers.format_data_size(total_recv_bytes)
-            
-            up_unit = sent_unit_str
-            down_unit = recv_unit_str
-            try:
-                stats_template = getattr(self.i18n, 'APP_USAGE_STATS_TEXT_TEMPLATE', "Up: {up_total:.2f} {up_unit} | Down: {down_total:.2f} {down_unit}")
-                stats_bar_text = stats_template.format(
-                    up_total=float(sent_val_num), up_unit=up_unit,
-                    down_total=float(recv_val_num), down_unit=down_unit
-                )
-                self.stats_bar.setText(stats_bar_text)
-            except (ValueError, KeyError, AttributeError) as e_fmt: 
-                self.logger.error(f"Error formatting APP_USAGE_STATS_TEXT_TEMPLATE. Values: up={sent_val_num}{up_unit}, down={recv_val_num}{down_unit}. Error: {e_fmt}")
-                self.stats_bar.setText(f"Up: {float(sent_val_num):.2f} {up_unit} | Down: {float(recv_val_num):.2f} {down_unit}")
-            
-            self.stats_bar.adjustSize()
-            self._reposition_overlay_elements() 
-
-            theme_text_color = UIStyleConstants.DARK_MODE_TEXT_COLOR if self.dark_mode.isChecked() else UIStyleConstants.LIGHT_MODE_TEXT_COLOR
-            progress_bar_chunk_color = ColorConstants.APP_USAGE_PROGRESS_CHUNK 
-            prog_bar_bg_color = ColorConstants.APP_USAGE_PROGRESS_BG_DARK if self.dark_mode.isChecked() else ColorConstants.APP_USAGE_PROGRESS_BG_LIGHT
-
-            current_ui_app_keys = set(self._app_entry_widgets.keys())
-            data_app_keys = set()
-
-            # Handle "No app data" message
-            no_app_data_msg = getattr(self.i18n, 'NO_APP_DATA_MESSAGE', "No application data available for this period.")
-            if not sorted_apps:
-                if self._no_app_data_label is None:
-                    self._no_app_data_label = QLabel(no_app_data_msg)
-                    # Insert after the filter combo layout (which is at index 0)
-                    self.app_list_layout.insertWidget(1, self._no_app_data_label) 
-                
-                self._no_app_data_label.setText(no_app_data_msg)
-                self._no_app_data_label.setStyleSheet(f"color: {theme_text_color}; font-style: italic; padding: 10px; qproperty-alignment: AlignCenter;")
-                self._no_app_data_label.setVisible(True)
-            elif self._no_app_data_label:
-                self._no_app_data_label.setVisible(False)
-
-            # The app_list_layout contains:
-            # 0: filter_container (QHBoxLayout)
-            # 1: (optional) _no_app_data_label OR first app entry
-            # ... app entries ...
-            # N: stretch item
-            
-            # Clear existing app entries (widgets) before adding/updating, starting after the filter_container and _no_app_data_label
-            # More robust approach: recycle or hide/show existing ones.
-            # For now, let's stick to your existing recycling logic but be careful with indices.
-
-            # Iterate through sorted apps and update/create widgets
-            for list_idx, (app_name_key, (s_bytes, r_bytes)) in enumerate(sorted_apps):
-                data_app_keys.add(app_name_key)
-                tot_bytes = s_bytes + r_bytes
-                
-                # Use helpers.format_data_size
-                val_num, u_str = helpers.format_data_size(tot_bytes)
-                
-                prog_val = int((tot_bytes / max_total_usage_bytes) * 100) if max_total_usage_bytes > 0 else 0
-                
-                # The actual insert index in the QVBoxLayout, accounting for the filter combo
-                # and potentially the _no_app_data_label (though it should be hidden if sorted_apps is not empty)
-                # Let's aim to insert starting from index 1 of app_list_layout
-                target_layout_index = list_idx + 1 
-
-                if app_name_key in self._app_entry_widgets: 
-                    entry_widget = self._app_entry_widgets[app_name_key]
-                    _, name_label, usage_label, progress_bar = self._app_entry_labels_progress[app_name_key]
-                    
-                    name_label.setText(app_name_key) 
-                    name_label.setStyleSheet(f"color: {theme_text_color}; font-size: 13px;")
-                    usage_label.setText(f"{float(val_num):.2f} {u_str}")
-                    usage_label.setStyleSheet(f"color: {theme_text_color}; font-size: 13px;")
-                    progress_bar.setValue(prog_val)
-                    progress_bar.setStyleSheet(f"QProgressBar {{ border: 1px solid #555; background-color: {prog_bar_bg_color}; height: 8px; border-radius: 4px; }} QProgressBar::chunk {{ background-color: {progress_bar_chunk_color}; border-radius: 3px; margin: 1px; }}")
-                    
-                    # Ensure widget is at the correct position if order changed
-                    current_layout_item = self.app_list_layout.itemAt(target_layout_index)
-                    if not current_layout_item or current_layout_item.widget() != entry_widget:
-                        # Remove from old position if it exists elsewhere
-                        for i in range(self.app_list_layout.count()):
-                             item = self.app_list_layout.itemAt(i)
-                             if item and item.widget() == entry_widget:
-                                 self.app_list_layout.takeAt(i)
-                                 break # Found and removed
-                        self.app_list_layout.insertWidget(target_layout_index, entry_widget)
-                    entry_widget.show() # Ensure it's visible
-                else: 
-                    entry_widget = QWidget()
-                    entry_layout = QHBoxLayout(entry_widget)
-                    entry_layout.setContentsMargins(2,2,2,2)
-
-                    icon_label = QLabel() 
-                    icon_label.setFixedSize(24,24)
-                    icon_label.setStyleSheet(f"border: 1px solid {theme_text_color if not self.dark_mode.isChecked() else '#555'}; border-radius: 3px; qproperty-alignment: AlignCenter;")
-                    entry_layout.addWidget(icon_label)
-
-                    name_label = QLabel(app_name_key)
-                    name_label.setStyleSheet(f"color: {theme_text_color}; font-size: 13px;")
-                    name_label.setToolTip(app_name_key)
-                    entry_layout.addWidget(name_label, stretch=2)
-
-                    usage_label = QLabel(f"{float(val_num):.2f} {u_str}")
-                    usage_label.setStyleSheet(f"color: {theme_text_color}; font-size: 13px;")
-                    usage_label.setMinimumWidth(85)
-                    usage_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-                    entry_layout.addWidget(usage_label, stretch=1)
-                    
-                    progress_bar = QProgressBar()
-                    progress_bar.setMaximum(100)
-                    progress_bar.setValue(prog_val)
-                    progress_bar.setTextVisible(False)
-                    progress_bar.setStyleSheet(f"QProgressBar {{ border: 1px solid #555; background-color: {prog_bar_bg_color}; height: 8px; border-radius: 4px; }} QProgressBar::chunk {{ background-color: {progress_bar_chunk_color}; border-radius: 3px; margin: 1px; }}")
-                    entry_layout.addWidget(progress_bar, stretch=3)
-                    
-                    self.app_list_layout.insertWidget(target_layout_index, entry_widget)
-                    self._app_entry_widgets[app_name_key] = entry_widget
-                    self._app_entry_labels_progress[app_name_key] = (icon_label, name_label, usage_label, progress_bar)
-            
-            # Remove or hide widgets for apps no longer in data
-            apps_to_remove = current_ui_app_keys - data_app_keys
-            for key_to_remove in apps_to_remove:
-                if key_to_remove in self._app_entry_widgets:
-                    widget_to_remove = self._app_entry_widgets.pop(key_to_remove)
-                    self._app_entry_labels_progress.pop(key_to_remove) # Remove from mapping
-                    # self.app_list_layout.removeWidget(widget_to_remove) # This can be problematic if indices shift
-                    # widget_to_remove.deleteLater()
-                    widget_to_remove.hide() # Hiding is safer for now than full removal during iteration
-            
-            # Ensure any remaining old widgets beyond the current data are hidden
-            # Start checking from after the last current app + 1 (for filter combo)
-            start_checking_idx = len(sorted_apps) + 1 
-            for i in range(start_checking_idx, self.app_list_layout.count()):
-                item = self.app_list_layout.itemAt(i)
-                if item and item.widget():
-                    # If it's not the _no_app_data_label and not a stretch item
-                    if item.widget() != self._no_app_data_label:
-                        item.widget().hide()
-                elif item and item.spacerItem(): # If it's a stretch item, break
-                    break
-
-
-            # Manage stretch: remove if exists, then add back at the end
-            for i in reversed(range(self.app_list_layout.count())):
-                item = self.app_list_layout.itemAt(i)
-                if item and item.spacerItem():
-                    self.app_list_layout.takeAt(i) # Remove existing stretch
-                    # delete item.spacerItem() # Not strictly necessary for QSpacerItem
-                    break 
-            self.app_list_layout.addStretch(1)
-
-
-            self.logger.debug(f"Successfully updated app usage list UI with {len(sorted_apps)} entries.")
-
-        except ValueError as ve:
-             self.logger.error(f"Value error processing app usage data: {ve}", exc_info=True)
-             error_msg = getattr(self.i18n, 'APP_USAGE_CONFIG_ERROR', "App usage configuration error. Check logs.")
-             self._show_app_usage_error(error_msg)
-        except AttributeError as ae: 
-            self.logger.error(f"AttributeError in app usage (likely missing i18n string): {ae}", exc_info=True)
-            self._show_app_usage_error("A translation string is missing for app usage. Check logs.")
-        except Exception as e:
-            self.logger.error(f"Unexpected error updating app usage view: {e}", exc_info=True)
-            error_msg = getattr(self.i18n, 'APP_USAGE_ERROR_MESSAGE', "Failed to load app usage data. Check logs for details.")
-            self._show_app_usage_error(error_msg)
-
-
-    def _show_app_usage_error(self, message: str) -> None:
-        """ Displays an error message within the app usage list area. """
-        self.logger.warning(f"Displaying app usage error: {message}")
-        
-        # Hide all existing app entries
-        for widget in self._app_entry_widgets.values():
-            widget.setVisible(False) # Hide instead of remove, easier to bring back
-
-        theme_text_color = UIStyleConstants.DARK_MODE_TEXT_COLOR if self.dark_mode.isChecked() else UIStyleConstants.LIGHT_MODE_TEXT_COLOR
-        if self._no_app_data_label is None:
-            self._no_app_data_label = QLabel(message)
-            self.app_list_layout.addWidget(self._no_app_data_label) # Add to layout once
-        else:
-            self._no_app_data_label.setText(message) # Update text
-        
-        self._no_app_data_label.setStyleSheet(f"color: {theme_text_color}; font-style: italic; padding: 10px; qproperty-alignment: AlignCenter;")
-        self._no_app_data_label.setVisible(True)
-        # Ensure it's not pushed down by a stretch if list was previously empty
-        last_item_index = self.app_list_layout.count() -1
-        if last_item_index >=0 and self.app_list_layout.itemAt(last_item_index).spacerItem():
-            pass # Stretch is fine
-        else:
-            self.app_list_layout.addStretch(1)
-
-
-    def _show_graph_error(self, message: str) -> None:
-        """ Displays an error message overlayed on the Matplotlib graph area. """
-        self.logger.error(f"Displaying graph error: {message}")
+    def _show_graph_message(self, message: str, is_error: bool = True) -> None:
+        """
+        Displays a message overlayed on the Matplotlib graph area.
+        Can be used for errors or informational states like 'collecting data'.
+        """
+        if is_error:
+            self.logger.error(f"Displaying graph error: {message}")
         try:
             if not hasattr(self, 'ax') or not hasattr(self, 'canvas'): return
 
+            # Clear any plotted data
             self.upload_line.set_data([],[])
             self.download_line.set_data([],[])
-            self.upload_line.set_visible(False)
-            self.download_line.set_visible(False)
-            if self.ax.get_legend(): self.ax.get_legend().set_visible(False)
 
-            error_text_color = ColorConstants.RED 
-            facecolor = UIStyleConstants.DARK_MODE_BG_COLOR if self.dark_mode.isChecked() else UIStyleConstants.LIGHT_MODE_BG_COLOR
+            is_dark = self.dark_mode.isChecked()
+            facecolor = constants.styles.GRAPH_BG_DARK if is_dark else constants.styles.GRAPH_BG_LIGHT
             
-            if self._no_data_text_obj: # Reuse if exists
+            # Use red for errors, and standard theme text color for info messages
+            if is_error:
+                text_color = constants.color.RED
+            else:
+                text_color = constants.styles.DARK_MODE_TEXT_COLOR if is_dark else constants.styles.LIGHT_MODE_TEXT_COLOR
+
+            if self._no_data_text_obj: # Reuse if it exists
                 self._no_data_text_obj.set_text(message)
-                self._no_data_text_obj.set_color(error_text_color)
+                self._no_data_text_obj.set_color(text_color)
                 self._no_data_text_obj.set_visible(True)
             else:
                 self._no_data_text_obj = self.ax.text(0.5, 0.5, message,
                             ha='center', va='center', transform=self.ax.transAxes,
-                            color=error_text_color, fontsize=GraphConstants.ERROR_MESSAGE_FONTSIZE, visible=True)
-            
+                            color=text_color, fontsize=constants.graph.ERROR_MESSAGE_FONTSIZE, visible=True)
+
+            # Hide all axis elements for a clean message display
             self.ax.set_xticks([])
             self.ax.set_yticks([])
             self.ax.set_xlabel("")
             self.ax.set_ylabel("")
             for spine in self.ax.spines.values(): spine.set_visible(False)
-            
+
             self.ax.set_facecolor(facecolor)
             self.figure.patch.set_facecolor(facecolor)
             self.canvas.draw_idle()
         except Exception as e_draw:
-            self.logger.error(f"Failed to display graph error message on canvas: {e_draw}", exc_info=True)
+            self.logger.error(f"Failed to display graph message on canvas: {e_draw}", exc_info=True)
+
+
+    def _show_graph_error(self, message: str) -> None:
+        """ A convenience wrapper to display an error message on the graph. """
+        self._show_graph_message(message, is_error=True)
+
+            
     def toggle_settings(self) -> None:
         """Toggle the settings dialog."""
         if self._is_closing or not self._parent or not hasattr(self._parent, "config_manager"): 
@@ -885,9 +712,9 @@ class GraphWindow(QWidget):
                 self.logger.error("Graph components not initialized for dark mode toggle")
                 return # Added return to prevent further errors if components missing
 
-            graph_bg = UIStyleConstants.GRAPH_BG_DARK if is_dark else UIStyleConstants.GRAPH_BG_LIGHT
-            text_color = UIStyleConstants.DARK_MODE_TEXT_COLOR if is_dark else UIStyleConstants.LIGHT_MODE_TEXT_COLOR
-            grid_color = getattr(UIStyleConstants, 'GRID_COLOR_DARK', '#444444') if is_dark else getattr(UIStyleConstants, 'GRID_COLOR_LIGHT', '#CCCCCC')
+            graph_bg = constants.styles.GRAPH_BG_DARK if is_dark else constants.styles.GRAPH_BG_LIGHT
+            text_color = constants.styles.DARK_MODE_TEXT_COLOR if is_dark else constants.styles.LIGHT_MODE_TEXT_COLOR
+            grid_color = getattr(constants.styles, 'GRID_COLOR_DARK', '#444444') if is_dark else getattr(constants.styles, 'GRID_COLOR_LIGHT', '#CCCCCC')
 
             self.figure.patch.set_facecolor(graph_bg)
             self.ax.set_facecolor(graph_bg)
@@ -896,7 +723,7 @@ class GraphWindow(QWidget):
             self.ax.tick_params(colors=text_color) # Styles tick numbers and lines
             
             # Grid styling
-            self.ax.grid(True, linestyle=GraphConstants.GRID_LINESTYLE, alpha=GraphConstants.GRID_ALPHA, color=grid_color)
+            self.ax.grid(True, linestyle=constants.graph.GRID_LINESTYLE, alpha=constants.graph.GRID_ALPHA, color=grid_color)
             
             # Spines (axis borders) styling
             for spine in self.ax.spines.values(): 
@@ -918,7 +745,7 @@ class GraphWindow(QWidget):
                                     # Now it's part of the main try.
 
             # Overlay Elements for the main graph
-            self.stats_bar.setStyleSheet(UIStyleConstants.STATS_DARK_STYLE if is_dark else UIStyleConstants.STATS_LIGHT_STYLE)
+            self.stats_bar.setStyleSheet(constants.styles.STATS_DARK_STYLE if is_dark else constants.styles.STATS_LIGHT_STYLE)
             self.stats_bar.raise_()
             self.hamburger_icon.raise_() # Ensure it's on top after potential redraws
             self._reposition_overlay_elements() # Reposition after theme changes might affect sizes
@@ -947,18 +774,17 @@ class GraphWindow(QWidget):
         if hasattr(self, 'realtime') and self.realtime:
             self.realtime.toggled.connect(self.toggle_live_update)
         
+        if hasattr(self, 'interface_filter') and self.interface_filter:
+            self.interface_filter.currentTextChanged.connect(self._on_interface_filter_changed)
+
         if hasattr(self, 'history_period') and self.history_period:
             self.history_period.sliderReleased.connect(
                 lambda: self._save_slider_value_to_config('history_period_slider_value', self.history_period.value())
             )
-            self.history_period.valueChanged.connect(lambda v: self.update_history_period(v, False))
             self.history_period.valueChanged.connect(self._update_history_period_text)
         
         if hasattr(self, 'keep_data') and self.keep_data:
-            self.keep_data.sliderReleased.connect(
-                lambda: self._save_slider_value_to_config('keep_data_slider_value', self.keep_data.value())
-            )
-            self.keep_data.valueChanged.connect(lambda v: self.update_keep_data(v, False))
+            self.keep_data.sliderReleased.connect(self._on_retention_changed)
             self.keep_data.valueChanged.connect(self._update_keep_data_text)
 
         # Set initial text values for sliders
@@ -966,6 +792,7 @@ class GraphWindow(QWidget):
             self._update_history_period_text(self.history_period.value())
         if hasattr(self, 'keep_data'):
             self._update_keep_data_text(self.keep_data.value())
+
 
     def _save_slider_value_to_config(self, config_key: str, value: int) -> None:
         """Helper method to save a slider's integer value to the configuration."""
@@ -1009,8 +836,8 @@ class GraphWindow(QWidget):
 
             # Fix hamburger icon position relative to graph widget's top-right
             if self.tab_widget.currentWidget() == self.graph_widget:
-                hamburger_x = tab_content_pos_in_graph_window.x() + container_width - self.hamburger_icon.width() - GraphConstants.HAMBURGER_ICON_OFFSET_X
-                hamburger_y = tab_content_pos_in_graph_window.y() + GraphConstants.HAMBURGER_ICON_OFFSET_Y
+                hamburger_x = tab_content_pos_in_graph_window.x() + container_width - self.hamburger_icon.width() - constants.graph.HAMBURGER_ICON_OFFSET_X
+                hamburger_y = tab_content_pos_in_graph_window.y() + constants.graph.HAMBURGER_ICON_OFFSET_Y
                 self.hamburger_icon.move(hamburger_x, hamburger_y)
 
             # Reposition stats bar (top-center of tab content)
@@ -1019,7 +846,7 @@ class GraphWindow(QWidget):
             stats_bar_width = container_width - margin
             self.stats_bar.setFixedWidth(stats_bar_width)
             stats_bar_x = tab_content_pos_in_graph_window.x() + (container_width - stats_bar_width) // 2
-            stats_bar_y = tab_content_pos_in_graph_window.y() + GraphConstants.STATS_BAR_OFFSET_Y
+            stats_bar_y = tab_content_pos_in_graph_window.y() + constants.graph.STATS_BAR_OFFSET_Y
             self.stats_bar.move(stats_bar_x, stats_bar_y)
 
             self.hamburger_icon.raise_()
@@ -1034,7 +861,7 @@ class GraphWindow(QWidget):
         try:
             if checked:
                 # The timer is now connected in __init__, so we just need to start it.
-                self._realtime_timer.start(GraphConstants.REALTIME_UPDATE_INTERVAL_MS)
+                self._realtime_timer.start(constants.graph.REALTIME_UPDATE_INTERVAL_MS)
                 self.logger.info("Live updates enabled.")
             else:
                 self._realtime_timer.stop()
@@ -1073,7 +900,7 @@ class GraphWindow(QWidget):
             
         try:
             if hasattr(self, 'history_period'):
-                period = HistoryPeriodConstants.PERIOD_MAP.get(value, HistoryPeriodConstants.DEFAULT_PERIOD)
+                period = constants.data.history_period.PERIOD_MAP.get(value, constants.data.history_period.DEFAULT_PERIOD)
                 self.history_period.setValueText(period)
                 # Do NOT set any title or timeline label on the graph
                 if self.tab_widget.currentIndex() == 0 and hasattr(self, 'ax'):
@@ -1084,75 +911,57 @@ class GraphWindow(QWidget):
             self.logger.error(f"Error updating history period text: {e}", exc_info=True)
 
     def update_history_period(self, value: int, initial_setup: bool = False) -> None:
-        """
-        Determines the correct time range for the selected history period,
-        pads it if necessary, and triggers a graph update.
-        """
+        """Triggers a graph update based on the selected history period."""
+        if self._is_closing:
+            return
         try:
-            now = datetime.now()
-            period = HistoryPeriodConstants.PERIOD_MAP.get(value, HistoryPeriodConstants.DEFAULT_PERIOD)
-            
-            start_time: Optional[datetime] = None
-
-            if "System Uptime" in period:
-                start_time = datetime.fromtimestamp(psutil.boot_time())
-            elif "Session" in period:
-                start_time = self.session_start_time
-            elif "3 Hours" in period:
-                start_time = now - timedelta(hours=3)
-            elif "6 Hours" in period:
-                start_time = now - timedelta(hours=6)
-            elif "12 Hours" in period:
-                start_time = now - timedelta(hours=12)
-            elif "24 Hours" in period or "Day" in period:
-                start_time = now - timedelta(days=1)
-            elif "Week" in period:
-                start_time = now - timedelta(weeks=1)
-            elif "Month" in period:
-                start_time = now - timedelta(days=30)
-            else: # "All"
-                start_time = None
-            
-            # For all time-bound periods, we pass a definitive xlim.
-            # For "All", we pass None and let the graph decide its own limits.
-            if start_time:
-                self.update_graph(xlim=(start_time, now))
-            else:
-                self.update_graph(xlim=None)
-
-            self.logger.debug(f"History period updated to: {period}")
+            start_time, end_time = self._get_time_range_from_ui()
+            # We call the throttled update_graph, which will then call _perform_graph_update
+            self.update_graph(xlim=(start_time, end_time))
+            self.logger.debug("History period update triggered.")
         except Exception as e:
             self.logger.error(f"Error updating history period: {e}", exc_info=True)
 
+
     def export_history(self) -> None:
-        """Export network speed history to CSV."""
+        """Export network speed history to CSV, respecting the current UI filters."""
+        import csv
+
         if self._is_closing: return
         try:
             if not self._parent or not self._parent.widget_state:
                 QMessageBox.warning(self, self.i18n.WARNING_TITLE, "Cannot access data for export.")
                 return
 
-            history = self._parent.widget_state.get_speed_history()
-            if not history:
+            # Get filters from UI to export exactly what the user is seeing
+            start_time, _ = self._get_time_range_from_ui()
+            selected_interface = self.interface_filter.currentText()
+            interface_to_query = None if "All" in selected_interface else selected_interface
+
+            history_tuples = self._parent.widget_state.get_speed_history(
+                start_time=start_time,
+                interface_name=interface_to_query
+            )
+
+            if not history_tuples:
                 QMessageBox.warning(self, self.i18n.WARNING_TITLE, self.i18n.NO_HISTORY_DATA_MESSAGE)
                 return
 
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            suggested_name = ExportConstants.CSV_SUGGESTED_NAME_TEMPLATE.format(timestamp=timestamp)
+            suggested_name = constants.export.CSV_SUGGESTED_NAME_TEMPLATE.format(timestamp=timestamp)
             file_path, _ = QFileDialog.getSaveFileName(
-                self, self.i18n.EXPORT_CSV_TITLE, os.path.join(ExportConstants.DEFAULT_EXPORT_PATH, suggested_name), self.i18n.CSV_FILE_FILTER
+                self, self.i18n.EXPORT_CSV_TITLE, os.path.join(constants.export.DEFAULT_EXPORT_PATH, suggested_name), self.i18n.CSV_FILE_FILTER
             )
             if file_path:
-                os.makedirs(os.path.dirname(file_path), exist_ok=True) # Ensure dir exists
+                os.makedirs(os.path.dirname(file_path), exist_ok=True)
                 with open(file_path, "w", newline="", encoding='utf-8') as f:
                     writer = csv.writer(f)
-                    writer.writerow(["Timestamp", "Upload (Kbps)", "Download (Kbps)", "Interface"])
-                    for entry in history:
+                    writer.writerow(["Timestamp", "Upload (Mbps)", "Download (Mbps)"])
+                    for ts, up_bytes_sec, down_bytes_sec in history_tuples:
                         writer.writerow([
-                            entry.timestamp.isoformat(),
-                            entry.upload,
-                            entry.download,
-                            entry.interface
+                            ts.isoformat(),
+                            f"{(up_bytes_sec * 8 / 1_000_000):.4f}",
+                            f"{(down_bytes_sec * 8 / 1_000_000):.4f}"
                         ])
                 QMessageBox.information(
                     self, self.i18n.SUCCESS_TITLE, self.i18n.EXPORT_SUCCESS_MESSAGE.format(file_path=file_path)
@@ -1172,14 +981,14 @@ class GraphWindow(QWidget):
             return
         try:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            suggested_name = ExportConstants.IMAGE_SUGGESTED_NAME_TEMPLATE.format(timestamp=timestamp)
+            suggested_name = constants.export.IMAGE_SUGGESTED_NAME_TEMPLATE.format(timestamp=timestamp)
             file_path, _ = QFileDialog.getSaveFileName(
-                self, self.i18n.EXPORT_GRAPH_IMAGE_TITLE, os.path.join(ExportConstants.DEFAULT_EXPORT_PATH, suggested_name), self.i18n.PNG_FILE_FILTER
+                self, self.i18n.EXPORT_GRAPH_IMAGE_TITLE, os.path.join(constants.export.DEFAULT_EXPORT_PATH, suggested_name), self.i18n.PNG_FILE_FILTER
             )
             if file_path:
                 os.makedirs(os.path.dirname(file_path), exist_ok=True) # Ensure dir exists
                 # Use figure's current facecolor for saved image background
-                self.figure.savefig(file_path, bbox_inches='tight', dpi=ExportConstants.IMAGE_DPI, facecolor=self.figure.get_facecolor())
+                self.figure.savefig(file_path, bbox_inches='tight', dpi=constants.export.IMAGE_DPI, facecolor=self.figure.get_facecolor())
                 QMessageBox.information(
                     self, self.i18n.SUCCESS_TITLE, self.i18n.EXPORT_SUCCESS_MESSAGE.format(file_path=file_path)
                 )
@@ -1191,15 +1000,19 @@ class GraphWindow(QWidget):
         except Exception as e:
             self.logger.error(f"Error saving graph image: {e}", exc_info=True)
             QMessageBox.critical(self, self.i18n.ERROR_TITLE, self.i18n.EXPORT_ERROR_MESSAGE.format(error=str(e)))
+
+
     def closeEvent(self, event: QCloseEvent) -> None:
         """Handle window closure by hiding the window instead of closing it completely."""
+        import matplotlib.pyplot as plt
+
         try:
             # Save current window position and settings
             if self._parent and hasattr(self._parent, "config_manager") and self._parent.config:
                 self._parent.config["graph_window_pos"] = {"x": self.pos().x(), "y": self.pos().y()}
                 self._parent.config["dark_mode"] = self.dark_mode.isChecked()
-                self._parent.config["keep_data"] = DataRetentionConstants.DAYS_MAP.get(self.keep_data.value(), 30)
-                self._parent.config["history_period"] = HistoryPeriodConstants.PERIOD_MAP.get(self.history_period.value(), HistoryPeriodConstants.DEFAULT_PERIOD)
+                self._parent.config["keep_data"] = constants.data.retention.DAYS_MAP.get(self.keep_data.value(), 30)
+                self._parent.config["history_period"] = constants.data.history_period.PERIOD_MAP.get(self.history_period.value(), constants.data.history_period.DEFAULT_PERIOD)
                 self._parent.config_manager.save(self._parent.config)
 
             # If this is part of application shutdown, do full cleanup
@@ -1244,7 +1057,7 @@ class GraphWindow(QWidget):
         """Update the database size display."""
         try:
             if hasattr(self, 'keep_data'):
-                days = DataRetentionConstants.DAYS_MAP.get(self.keep_data.value(), 30)
+                days = constants.data.retention.DAYS_MAP.get(self.keep_data.value(), 30)
                 if days == 365:  # Only update if showing 1 year
                     db_size_mb = self._get_db_size_mb()
                     self.keep_data.setValueText(f"1 Year (DB {db_size_mb:.2f}MB)")
@@ -1259,68 +1072,18 @@ class GraphWindow(QWidget):
             self._db_size_update_timer.setInterval(10000)  # 10 second update interval
         
         # Start timer and do initial update if using 1-year retention
-        if hasattr(self, 'keep_data') and self.keep_data.value() in DataRetentionConstants.DAYS_MAP:
-            days = DataRetentionConstants.DAYS_MAP[self.keep_data.value()]
+        if hasattr(self, 'keep_data') and self.keep_data.value() in constants.data.retention.DAYS_MAP:
+            days = constants.data.retention.DAYS_MAP[self.keep_data.value()]
             if days == 365:
                 self._update_db_size()  # Update size immediately
                 if not self._db_size_update_timer.isActive():
                     self._db_size_update_timer.start()    
         
-    def update_keep_data(self, value: int, initial_setup: bool = False) -> None:
-        """Update the data retention period based on slider.
-
-        Args:
-            value: Slider value mapping to retention days.
-            initial_setup: True if called during init.
-        """
-        if self._is_closing:
-            return
-
-        try:
-            days = DataRetentionConstants.DAYS_MAP.get(value, DataRetentionConstants.DAYS_MAP[3])  # Default to 30 days
-            self._update_keep_data_text(value)  # Update label text first
-
-            if not initial_setup:
-                if not self._parent or not self._parent.config or not self._parent.widget_state or not hasattr(self._parent, 'config_manager'):
-                    self.logger.warning("Cannot update keep_data: parent/config/widget_state missing.")
-                    return
-
-                # Update config values
-                self._parent.config["keep_data"] = days
-                history_minutes = days * 24 * 60  # History minutes based on retention days
-                self._parent.config["history_minutes"] = history_minutes
-
-                # Save config first to persist the change
-                self._parent.config_manager.save(self._parent.config)
-                self.logger.debug(f"Data retention updated to {days} days and saved")
-
-                # Apply the updated config which will trigger data pruning
-                self._parent.widget_state.apply_config(self._parent.config)
-
-                # Update timers and DB size display
-                if days == DataRetentionConstants.MAX_RETENTION_DAYS:  # 1 year
-                    self._update_db_size()  # Update size immediately
-                    if not hasattr(self, '_db_size_update_timer') or not self._db_size_update_timer.isActive():
-                        self._init_db_size_timer()
-                        self._db_size_update_timer.start()
-                elif hasattr(self, '_db_size_update_timer') and self._db_size_update_timer.isActive():
-                    self._db_size_update_timer.stop()
-
-                # Refresh views since data might have been pruned
-                self._cached_stats.clear()  # Clear stats cache
-                if self.tab_widget.currentWidget() == self.graph_widget:
-                    if self._parent and self._parent.widget_state:
-                        self.update_graph(self._parent.widget_state.get_speed_history())
-                elif self.tab_widget.currentWidget() == self.app_usage_widget:
-                    self._update_app_usage()
-
-        except Exception as e:
-            self.logger.error(f"Error in update_keep_data: {e}", exc_info=True)
 
     def _update_keep_data_text(self, value: int) -> None:
         """Update the keep data slider's value text."""
         if hasattr(self, 'keep_data'):
-            days = DataRetentionConstants.DAYS_MAP.get(value, DataRetentionConstants.DAYS_MAP[3])
+            days = constants.data.retention.DAYS_MAP.get(value, constants.data.retention.DAYS_MAP[3])
             # For 1-year retention, include DB size
             if days == 365:
                 db_size_mb = self._get_db_size_mb()
@@ -1345,25 +1108,12 @@ class GraphWindow(QWidget):
         Returns:
             The slider value (0-6) that corresponds to the given number of days.
         """
-        for slider_value, mapped_days in DataRetentionConstants.DAYS_MAP.items():
+        for slider_value, mapped_days in constants.data.retention.DAYS_MAP.items():
             if mapped_days == days:
                 return slider_value
         # If not found, default to 30 days (slider value 3)
         return 3
-    
 
-    def _convert_speed(self, value_kbps: float) -> float:
-        """Convert Kbps to Mbps or MBps depending on config."""
-        if self._parent and self._parent.config.get("use_megabytes", False):
-            return value_kbps / 8000.0  # 1 MBps = 8000 Kbps
-        else:
-            return value_kbps / 1000.0  # 1 Mbps = 1000 Kbps
-
-    def _get_speed_unit(self) -> str:
-        if self._parent and self._parent.config.get("use_megabytes", False):
-            return "MB/s"
-        else:
-            return "Mbps"
 
     def update_graph(self, history_data: Optional[List] = None, xlim: Optional[Tuple[datetime, datetime]] = None) -> None:
         """
@@ -1377,135 +1127,255 @@ class GraphWindow(QWidget):
 
         self._graph_update_pending = True
         self._update_timer.singleShot(
-            GraphConstants.GRAPH_UPDATE_THROTTLE_MS,
+            constants.graph.GRAPH_UPDATE_THROTTLE_MS,
             lambda: self._perform_graph_update(xlim=xlim)
         )
 
+
+    def _configure_xaxis_format(self, start_time: datetime, end_time: datetime) -> None:
+        """
+        Intelligently configures the x-axis locator and formatter based on the
+        time range to prevent Matplotlib warnings and improve readability.
+        """
+        import matplotlib.dates as mdates
+
+        if not start_time or not end_time or start_time >= end_time:
+            self.ax.xaxis.set_major_locator(mdates.AutoDateLocator(maxticks=8))
+            self.ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
+            return
+
+        time_delta_seconds = (end_time - start_time).total_seconds()
+        
+        # --- MORE GRANULAR LOGIC ---
+        if time_delta_seconds <= 900:  # <= 15 minutes
+            locator = mdates.MinuteLocator(interval=2)
+            formatter = mdates.DateFormatter('%H:%M:%S')
+        elif time_delta_seconds <= 3600 * 2:  # <= 2 hours
+            locator = mdates.MinuteLocator(interval=15)
+            formatter = mdates.DateFormatter('%H:%M')
+        elif time_delta_seconds <= 3600 * 8:  # Handles 3h and 6h views
+            locator = mdates.HourLocator(interval=1)
+            formatter = mdates.DateFormatter('%H:%M')
+        elif time_delta_seconds <= 86400 * 2: # Handles 12h and 24h views
+            locator = mdates.HourLocator(interval=3)
+            formatter = mdates.DateFormatter('%H:%M\n%b %d')
+        elif time_delta_seconds <= 86400 * 8: # Handles 1 week view
+            locator = mdates.DayLocator(interval=1)
+            formatter = mdates.DateFormatter('%a %d') # e.g., "Mon 12"
+        elif time_delta_seconds <= 86400 * 32: # Handles 1 month view
+            locator = mdates.WeekdayLocator(byweekday=mdates.MO)
+            formatter = mdates.DateFormatter('%b %d')
+        else:  # > 1 month (e.g., "All")
+            locator = mdates.MonthLocator()
+            formatter = mdates.DateFormatter('%Y-%b')
+
+        self.ax.xaxis.set_major_locator(locator)
+        self.ax.xaxis.set_major_formatter(formatter)
+
+
+    def _get_nice_y_axis_top(self, max_speed: float) -> float:
+        """Calculates a 'nice' round number for the top of the Y-axis."""
+        import math
+
+        if max_speed <= 0:
+            return constants.graph.MIN_Y_AXIS_LIMIT
+
+        # Calculate the order of magnitude (e.g., 10, 100, 1000)
+        power = 10 ** math.floor(math.log10(max_speed))
+        # Normalize the max_speed to a value between 1 and 10
+        normalized_max = max_speed / power
+
+        # Determine the next 'nice' number in the 1, 2, 5, 10 sequence
+        if normalized_max <= 1:
+            nice_top = 1
+        elif normalized_max <= 2:
+            nice_top = 2
+        elif normalized_max <= 5:
+            nice_top = 5
+        else:
+            nice_top = 10
+        
+        return nice_top * power
+
+
     def _perform_graph_update(self, xlim: Optional[Tuple[datetime, datetime]] = None) -> None:
         """
-        Performs the actual rendering of the graph. It fetches the latest data,
-        filters it, and handles cases where no data exists for the selected period.
+        Performs the actual rendering of the graph by fetching data for the
+        currently selected interface and time period.
         """
+        self._graph_update_pending = False
+        if self._is_closing or not self.isVisible():
+            return
+
         try:
-            self._graph_update_pending = False
-            if self._is_closing or not self.isVisible():
-                return
-            
+            import numpy as np
+            import matplotlib.dates as mdates
+            from matplotlib.colors import SymLogNorm
+            from matplotlib.ticker import AutoLocator, ScalarFormatter, FixedLocator
+
             if not self._parent or not self._parent.widget_state:
                 self._show_graph_error("Data source not available.")
                 return
-            
-            all_history = self._parent.widget_state.get_speed_history()
 
-            if len(all_history) < 2:
-                self._show_graph_error(getattr(self.i18n, 'NO_DATA_MESSAGE', "No data to display."))
-                return
+            period_name = constants.data.history_period.PERIOD_MAP.get(self.history_period.value(), "")
+            is_session_view = "Session" in period_name
+            history_data = []
 
-            history_data = [
-                (entry.timestamp, entry.upload, entry.download, entry.interface)
-                for entry in all_history
-            ]
-
-            # If an explicit time limit is passed, use it. Otherwise, use the full data range.
-            x_start, x_end = (xlim[0], xlim[1]) if xlim else (min(e[0] for e in history_data), datetime.now())
-            
-            filtered_data = [entry for entry in history_data if x_start <= entry[0] <= x_end]
-            
-            if len(filtered_data) < 2:
-                # Still show "no data" if the filter results in too few points
-                self._show_graph_error(getattr(self.i18n, 'NO_DATA_MESSAGE', "No data for this period."))
-                self.upload_line.set_data([], [])
-                self.download_line.set_data([], [])
-                self.ax.set_xlim(x_start, x_end) # Keep the requested axis limits
-                self.canvas.draw_idle()
-                return
-
-            self._update_stats_bar(filtered_data)
-
-            if self._no_data_text_obj: self._no_data_text_obj.set_visible(False)
-            
-            timestamps = [entry[0] for entry in filtered_data]
-            upload_speeds = [self._convert_speed(entry[1]) for entry in filtered_data]
-            download_speeds = [self._convert_speed(entry[2]) for entry in filtered_data]
-
-            self.upload_line.set_data(timestamps, upload_speeds)
-            self.download_line.set_data(timestamps, download_speeds)
-            
-            max_speed = max(max(upload_speeds, default=1), max(download_speeds, default=1))
-            self.ax.set_ylim(0, max_speed * 1.1 if max_speed > 0 else GraphConstants.MIN_Y_AXIS_LIMIT)
-            self.ax.set_xlim(x_start, x_end)
-            self.ax.set_ylabel(self._get_speed_unit())
-            self.ax.set_title("")
-            
-            total_seconds = (x_end - x_start).total_seconds()
-            if total_seconds <= timedelta(days=1).total_seconds():
-                self.ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+            if is_session_view:
+                mem_history = self._parent.widget_state.get_in_memory_speed_history()
+                history_data = [(entry.timestamp, entry.upload, entry.download) for entry in mem_history]
             else:
-                self.ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+                selected_interface = self.interface_filter.currentText()
+                interface_to_query = None if "All" in selected_interface else selected_interface
+                start_time, end_time = self._get_time_range_from_ui()
+                history_data = self._parent.widget_state.get_speed_history(
+                    start_time=start_time,
+                    end_time=end_time,
+                    interface_name=interface_to_query
+                )
+
+            if len(history_data) < 2:
+                active_interfaces = self._parent.get_active_interfaces() if hasattr(self._parent, 'get_active_interfaces') else []
+                is_selected_interface_active = "All" in self.interface_filter.currentText() or self.interface_filter.currentText() in active_interfaces
+                if is_session_view and is_selected_interface_active:
+                    self._show_graph_message(getattr(self.i18n, 'COLLECTING_DATA_MESSAGE', "Collecting data..."), is_error=False)
+                else:
+                    self._show_graph_error(getattr(self.i18n, 'NO_DATA_MESSAGE', "No data available for the selected period."))
+                return
+
+            # --- Graph Restoration and Theming ---
+            if self._no_data_text_obj: self._no_data_text_obj.set_visible(False)
+            self.ax.set_yscale('linear')
+            self.upload_line.set_visible(True)
+            self.download_line.set_visible(True)
+            for spine in self.ax.spines.values(): spine.set_visible(True)
+            self.ax.xaxis.get_label().set_visible(True)
+            self.ax.yaxis.get_label().set_visible(True)
+            self.ax.yaxis.set_major_locator(AutoLocator())
+            self.ax.xaxis.set_major_locator(mdates.AutoDateLocator())
+            self.ax.set_xlabel("Time")
+            self.ax.set_ylabel("Mbps")
+            self.ax.tick_params(labelbottom=True, labelleft=True)
+            is_dark = self.dark_mode.isChecked()
+            graph_bg = constants.styles.GRAPH_BG_DARK if is_dark else constants.styles.GRAPH_BG_LIGHT
+            grid_color = getattr(constants.styles, 'GRID_COLOR_DARK', '#444444') if is_dark else getattr(constants.styles, 'GRID_COLOR_LIGHT', '#CCCCCC')
+            text_color = constants.styles.DARK_MODE_TEXT_COLOR if is_dark else constants.styles.LIGHT_MODE_TEXT_COLOR
+            self.figure.patch.set_facecolor(graph_bg)
+            self.ax.set_facecolor(graph_bg)
+            self.ax.tick_params(colors=text_color, which='both')
+            self.ax.grid(True, linestyle=constants.graph.GRID_LINESTYLE, alpha=constants.graph.GRID_ALPHA, color=grid_color)
             
-            self.ax.xaxis.set_major_locator(mdates.AutoDateLocator(maxticks=8))
+            self._update_stats_bar(history_data)
+
+            timestamps = [entry[0] for entry in history_data]
+            upload_speeds_mbps = [(entry[1] * 8) / 1_000_000 for entry in history_data]
+            download_speeds_mbps = [(entry[2] * 8) / 1_000_000 for entry in history_data]
+
+            self.upload_line.set_data(timestamps, upload_speeds_mbps)
+            self.download_line.set_data(timestamps, download_speeds_mbps)
             
+            all_speeds = upload_speeds_mbps + download_speeds_mbps
+            non_zero_speeds = [s for s in all_speeds if s > 0.1]
+            
+            final_thresh = 10
+            if non_zero_speeds:
+                dynamic_thresh = np.quantile(non_zero_speeds, 0.90)
+                final_thresh = max(1, min(dynamic_thresh, 50))
+
+            # Use the precise threshold for the scale's BEHAVIOR
+            self.ax.set_yscale('symlog', linthresh=final_thresh)
+            self.ax.yaxis.set_major_formatter(ScalarFormatter())
+            self.ax.yaxis.set_minor_formatter(ScalarFormatter())
+
+            max_speed = max(all_speeds) if all_speeds else 0
+            nice_top = self._get_nice_y_axis_top(max_speed)
+            
+            # --- Round the threshold to the nearest 5 for the VISUAL tick ---
+            rounded_thresh_for_tick = round(final_thresh / 5) * 5
+            y_ticks = {0.0, rounded_thresh_for_tick}
+            
+            if nice_top > 10:
+                log_tick = 10.0
+                while log_tick < nice_top:
+                    y_ticks.add(log_tick)
+                    log_tick *= 10
+            
+            y_ticks.add(nice_top)
+
+            # Filter out the rounded tick if it's 0 to avoid a duplicate label
+            if 0.0 in y_ticks and 0 in y_ticks and 0.0 != 0:
+                 y_ticks.remove(0)
+
+            self.ax.yaxis.set_major_locator(FixedLocator(sorted(list(y_ticks))))
+            self.ax.set_ylim(bottom=0, top=nice_top)
+
+            effective_start_time = min(timestamps)
+            effective_end_time = max(timestamps)
+            self.ax.set_xlim(effective_start_time, effective_end_time)
+            self._configure_xaxis_format(effective_start_time, effective_end_time)
+
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", UserWarning)
                 self.figure.autofmt_xdate(rotation=30, ha='right')
-            
-            if self.ax.get_legend():
-                is_dark = self.dark_mode.isChecked()
-                text_color = UIStyleConstants.DARK_MODE_TEXT_COLOR if is_dark else UIStyleConstants.LIGHT_MODE_TEXT_COLOR
-                for text in self.ax.get_legend().get_texts():
-                    text.set_color(text_color)
 
             self.canvas.draw_idle()
         except Exception as e:
             self.logger.error(f"Error updating graph: {e}", exc_info=True)
             self._show_graph_error(f"Error updating graph: {str(e)}")
 
-    def _calculate_period_stats(self, period_data: List[Tuple[datetime, float, float, str]]) -> Dict[str, Any]:
+
+    def _calculate_period_stats(self, period_data: List[Tuple[datetime, float, float]]) -> Dict[str, Any]:
         """
         Calculates statistics for a pre-filtered list of data points.
+        The input data is (timestamp, upload_bytes_sec, download_bytes_sec).
         """
         try:
             if not period_data or len(period_data) < 2:
-                return {"max_upload": 0.0, "max_download": 0.0, "total_upload": 0.0, "total_download": 0.0, "total_upload_unit": "B", "total_download_unit": "B"}
+                return {
+                    "max_upload": 0.0, "max_download": 0.0, 
+                    "total_upload": 0.0, "total_upload_unit": "B",
+                    "total_download": 0.0, "total_download_unit": "B"
+                }
 
-            # Calculate Max speeds in display units (Mbps or MB/s)
-            uploads_kbps = [up for _, up, _, _ in period_data]
-            downloads_kbps = [down for _, _, down, _ in period_data]
-            max_upload_display = self._convert_speed(max(uploads_kbps) if uploads_kbps else 0)
-            max_download_display = self._convert_speed(max(downloads_kbps) if downloads_kbps else 0)
+            upload_bytes_sec = [up for _, up, _ in period_data]
+            download_bytes_sec = [down for _, _, down in period_data]
+            
+            max_upload_mbps = (max(upload_bytes_sec) * 8 / 1_000_000) if upload_bytes_sec else 0.0
+            max_download_mbps = (max(download_bytes_sec) * 8 / 1_000_000) if download_bytes_sec else 0.0
 
-            # Calculate Total data transferred
-            total_upload_kbits = 0.0
-            total_download_kbits = 0.0
+            # --- Integrate total data transferred over time ---
+            total_upload_bytes = 0.0
+            total_download_bytes = 0.0
             for i in range(1, len(period_data)):
                 dt_seconds = (period_data[i][0] - period_data[i-1][0]).total_seconds()
-                if dt_seconds > 0:
-                    total_upload_kbits += period_data[i][1] * dt_seconds
-                    total_download_kbits += period_data[i][2] * dt_seconds
+                
+                # Allow for large gaps between aggregated points (up to ~25 hours)
+                # This prevents incorrect filtering when combining raw, minute, and hour data.
+                if dt_seconds <= 0 or dt_seconds > 90000: # 25 hours
+                    continue
+                
+                avg_upload_speed = (period_data[i][1] + period_data[i-1][1]) / 2
+                avg_download_speed = (period_data[i][2] + period_data[i-1][2]) / 2
+                
+                total_upload_bytes += avg_upload_speed * dt_seconds
+                total_download_bytes += avg_download_speed * dt_seconds
 
-            # --- THE DEFINITIVE FIX ---
-            # Convert total Kilobits to total BYTES
-            total_upload_bytes = (total_upload_kbits * 1000) / 8
-            total_download_bytes = (total_download_kbits * 1000) / 8
-
-            # Delegate formatting to the robust helper function
             total_upload_display, total_upload_unit = helpers.format_data_size(total_upload_bytes)
             total_download_display, total_download_unit = helpers.format_data_size(total_download_bytes)
 
-            stats = {
-                "max_upload": max_upload_display,
-                "max_download": max_download_display,
+            return {
+                "max_upload": max_upload_mbps,
+                "max_download": max_download_mbps,
                 "total_upload": total_upload_display,
-                "total_download": total_download_display,
                 "total_upload_unit": total_upload_unit,
+                "total_download": total_download_display,
                 "total_download_unit": total_download_unit,
             }
-            return stats
         except Exception as e:
             self.logger.error(f"Error calculating period stats: {e}", exc_info=True)
-            return {"max_upload": 0, "max_download": 0, "total_upload": 0, "total_download": 0, "total_upload_unit": "B", "total_download_unit": "B"}
-
-    def _update_stats_bar(self, history_data: List[Tuple[datetime, float, float, str]]) -> None:
+            return {"max_upload": 0, "max_download": 0, "total_upload": 0, "total_download_unit": "B"}
+        
+    def _update_stats_bar(self, history_data: List[Tuple[datetime, float, float]]) -> None:
         """
         Update the stats bar with statistics for the provided (pre-filtered) period.
         """
@@ -1515,9 +1385,10 @@ class GraphWindow(QWidget):
                 return
 
             stats = self._calculate_period_stats(history_data)
-            speed_unit = self._get_speed_unit()
             
-            # This format string now correctly uses the unit provided by the stats dictionary
+            # --- Max speed unit is now always Mbps ---
+            speed_unit = "Mbps"
+            
             stats_text = (
                 f"Max: ↑{stats['max_upload']:.2f} {speed_unit} ↓{stats['max_download']:.2f} {speed_unit} | "
                 f"Total: ↑{stats['total_upload']:.2f} {stats['total_upload_unit']} ↓{stats['total_download']:.2f} {stats['total_download_unit']}"
