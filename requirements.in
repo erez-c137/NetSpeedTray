@@ -4,3 +4,4 @@ pywin32
 psutil
 matplotlib
 numpy
+netifaces

@@ -3,4 +3,5 @@
 pyinstaller
 pytest
 pytest-mock
+pytest-cov
 freezegun
