@@ -73,7 +73,7 @@ A clean, modern UI to control every aspect of the widget's appearance and behavi
 Double-click the widget to see a detailed graph of your network history.
 
 <div align="center">
-  <img src="screenshots/main_graph_1.0.5b1.png" alt="Graph View" width="600"/><br/>
+  <img src="screenshots/main_graph_1.1.0.png" alt="Graph View" width="600"/><br/>
 </div>
 
 ---
