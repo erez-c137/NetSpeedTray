@@ -4,6 +4,45 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [1.1.0] - August 12, 2025
+
+This is a significant update focused on improving data accuracy, providing more detailed graphing features, and creating a more stable foundation for the future. The data collection and storage pipeline has been substantially rebuilt to make NetSpeedTray a more capable and reliable network monitor.
+
+### ✨ Major Features & Improvements
+
+-   **Intelligent Graph Visualization:** The history graph is now significantly more insightful and readable.
+    -   **Dynamic Logarithmic Scale:** A new `symlog` scale solves the "flat line" problem, allowing you to see fine-grained detail in your low-speed traffic without high-speed spikes squashing the visualization.
+    -   **Smart Axis Boundaries:** The Y-axis scale is now data-driven, analyzing your traffic patterns to set a "normal usage" range that ensures the graph is always well-suited to your network.
+    -   **Clean, Readable Ticks:** The Y-axis labels are now always round numbers (e.g., 0, 10, 100, 1000), making the graph intuitive and easy to read.
+-   **Smart Interface Monitoring:** The application can now automatically identify your primary internet connection (e.g., "Wi-Fi" or "Ethernet") and display its speed by default, providing a cleaner and more accurate reading.
+-   **Per-Interface Graph Filtering:** A new "Interface" dropdown in the graph settings allows you to visualize the speed history for any specific network adapter on your system.
+-   **Improved Data Accuracy:**
+    -   Fixed a bug that could cause large, incorrect speed spikes in the database after the computer woke from sleep. The controller now handles these events correctly, ensuring historical data is more reliable.
+-   **Safer Data Retention Policy:** If you reduce the data retention time (e.g., from 1 year to 7 days), the application now waits for a 48-hour grace period before pruning old data, preventing accidental data loss.
+
+### 🌍 Internationalization
+
+-   **Added full German (de_DE) language support.** Many thanks to the users and communities on **Chip.de** and **Softpedia** for their attention and support.
+
+### 🐛 Bug Fixes & Refinements
+
+-   **Architectural Overhaul:**
+    -   The core data layer (`WidgetState`) has been rebuilt with a multi-tiered database (`raw`, `minute`, `hour`) and a dedicated worker thread to improve UI responsiveness.
+    -   The `Controller` has been updated to support granular, per-interface data collection.
+    -   The application's constants have been refactored into a more organized package structure.
+-   **Performance:** Key libraries like `numpy` and `matplotlib` are now lazy-loaded, making the initial application startup faster and more lightweight.
+-   **Graphing Engine:**
+    -   The "Session" view now correctly uses live in-memory data.
+    -   The `Export to CSV` feature now exports the currently filtered view.
+-   **Technical Debt:** The obsolete `core/model.py` module has been removed, simplifying the codebase.
+
+### ⚠️ Important Note for Existing Users
+
+-   This version introduces a new database format to enable per-interface monitoring and improved accuracy.
+-   **The upgrade is automatic and safe.** When you first run v1.1.0, the application will detect the old database, back it up by renaming it to `speed_history.db.old`, and create a new one. No manual steps are required.
+
+---
+
 ## [1.0.9] - August 4, 2025
 
 This is a major stability, performance, and quality-of-life update focused on refining the widget's core behavior, improving data accuracy, and optimizing the application's architecture for future features.
