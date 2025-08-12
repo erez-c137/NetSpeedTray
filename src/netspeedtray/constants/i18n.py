@@ -1,10 +1,9 @@
 """
 Internationalization strings for the NetSpeedTray application.
 
-This module defines user-facing strings that may need to be translated in the future.
-It supports multiple languages using a dictionary-based approach, with logging for
-language selection and validation. Ensures fallback to English (en_US) if a string
-is missing in the detected language.
+This module defines user-facing strings that may need to be translated. It
+provides a singleton instance `strings` which detects the system locale and
+provides translated strings with a fallback to English (en_US).
 """
 
 import logging
@@ -12,7 +11,7 @@ import locale
 from typing import Dict, Any
 
 # Define logger at the module level
-logger = logging.getLogger("NetSpeedTray.I18nStrings")
+logger = logging.getLogger("NetSpeedTray.I18n")
 
 class I18nStrings:
     """
@@ -55,6 +54,7 @@ class I18nStrings:
 
                 # --- Messages ---
                 "NO_DATA_MESSAGE": "No data available for the selected period.",
+                "COLLECTING_DATA_MESSAGE": "Collecting data for current session...",
                 "GRAPH_ERROR_MESSAGE": "Failed to show the graph window. Check logs for details.",
                 "APP_USAGE_ERROR_MESSAGE": "Failed to load app usage data. Check logs for details.",
                 "SETTINGS_ERROR_MESSAGE": "Failed to apply one or more settings.",
@@ -79,8 +79,8 @@ class I18nStrings:
                 "NO_APP_DATA_MESSAGE": "No application usage data available for this period.",
                 "APP_USAGE_CONFIG_ERROR": "Error loading app usage: Configuration or data issue.",
                 "GRAPH_DATA_ERROR": "Error displaying graph: Invalid data.",
-                "GRAPH_INVALID_DATA_FORMAT": "Invalid data format for graph plotting.", # ADDED
-                "GRAPH_UPDATE_ERROR_MESSAGE": "Error updating graph display: {error}", # ADDED
+                "GRAPH_INVALID_DATA_FORMAT": "Invalid data format for graph plotting.",
+                "GRAPH_UPDATE_ERROR_MESSAGE": "Error updating graph display: {error}",
 
                 # --- Labels ---
                 "SPEED_GRAPH_TAB_LABEL": "Speed Graph",
@@ -90,13 +90,13 @@ class I18nStrings:
                 "HISTORY_PERIOD_LABEL": "Timeline: {period}",
                 "HISTORY_PERIOD_LABEL_NO_VALUE": "Timeline",
                 "GRAPH_SETTINGS_LABEL": "Graph Settings",
-                "DATA_RETENTION_LABEL_DAYS": "Data Retention: {days} day{plural}", # {plural} needs to be handled in code
-                "REALTIME_LABEL": "Real-time", # Note: LIVE_UPDATE_LABEL also exists, choose one or differentiate
+                "DATA_RETENTION_LABEL_DAYS": "Data Retention: {days} day{plural}",
+                "REALTIME_LABEL": "Real-time",
                 "DATA_RETENTION_LABEL_NO_VALUE": "Data Retention",
                 "DATA_RETENTION_LABEL_YEAR": "Data Retention: 1 Year (DB size: {size_mb:.1f} MB)",
                 "LEGEND_POSITION_LABEL": "Legend Position",
                 "TIME_LABEL": "Time",
-                "SPEED_LABEL": "Speed ({unit})", # Unit will be appended by code
+                "SPEED_LABEL": "Speed ({unit})",
                 "UPLOAD_LABEL": "Upload",
                 "DOWNLOAD_LABEL": "Download",
                 "FILTER_BY_LABEL": "Filter by:",
@@ -185,7 +185,7 @@ class I18nStrings:
                 "GB_UNIT": "GB",
                 "TB_UNIT": "TB",
                 "PB_UNIT": "PB",
-                "PLURAL_SUFFIX": "s", # For "day{s}"
+                "PLURAL_SUFFIX": "s",
                 "SECONDS_LABEL": "Seconds",
                 "MINUTES_LABEL": "Minutes",
                 "HOURS_LABEL": "Hours",
@@ -193,21 +193,20 @@ class I18nStrings:
                 "WEEKS_LABEL": "Weeks",
                 "MONTHS_LABEL": "Months",
                 "CSV_FILE_FILTER": "CSV Files (*.csv);;All Files (*.*)",
-                "PNG_FILE_FILTER": "PNG Images (*.png);;All Files (*.*)", # ADDED
-                "FONT_WEIGHT_THIN": "Thin", # ADDED
-                "FONT_WEIGHT_EXTRALIGHT": "ExtraLight", # ADDED
-                "FONT_WEIGHT_LIGHT": "Light", # ADDED
-                "FONT_WEIGHT_NORMAL": "Normal", # ADDED
-                "FONT_WEIGHT_MEDIUM": "Medium", # ADDED
-                "FONT_WEIGHT_DEMIBOLD": "DemiBold", # ADDED (or SemiBold)
-                "FONT_WEIGHT_BOLD": "Bold", # ADDED
-                "FONT_WEIGHT_EXTRABOLD": "ExtraBold", # ADDED
-                "FONT_WEIGHT_BLACK": "Black", # Existing, good
-                # Templates expect NUMBERS for speed/total due to :.2f formatting
+                "PNG_FILE_FILTER": "PNG Images (*.png);;All Files (*.*)",
+                "FONT_WEIGHT_THIN": "Thin",
+                "FONT_WEIGHT_EXTRALIGHT": "ExtraLight",
+                "FONT_WEIGHT_LIGHT": "Light",
+                "FONT_WEIGHT_NORMAL": "Normal",
+                "FONT_WEIGHT_MEDIUM": "Medium",
+                "FONT_WEIGHT_DEMIBOLD": "DemiBold",
+                "FONT_WEIGHT_BOLD": "Bold",
+                "FONT_WEIGHT_EXTRABOLD": "ExtraBold",
+                "FONT_WEIGHT_BLACK": "Black",
                 "DEFAULT_STATS_TEXT_TEMPLATE": "Max: \u2191{max_up:.2f} {max_up_unit}, \u2193{max_down:.2f} {max_down_unit} | Total: \u2191{up_total:.2f} {up_unit}, \u2193{down_total:.2f} {down_unit}",
                 "APP_USAGE_STATS_TEXT_TEMPLATE": "Total: \u2191{up_total:.2f} {up_unit}, \u2193{down_total:.2f} {down_unit}",
-                "GRAPH_TITLE_TEMPLATE": "Speed History ({period})", # ADDED
-                "GRAPH_STATS_TEXT_TEMPLATE": "Max: \u2191{max_up:.1f} {unit} | \u2193{max_down:.1f} {unit}", # ADDED
+                "GRAPH_TITLE_TEMPLATE": "Speed History ({period})",
+                "GRAPH_STATS_TEXT_TEMPLATE": "Max: \u2191{max_up:.1f} {unit} | \u2193{max_down:.1f} {unit}",
             },
 
             # ================= French (France) =================
@@ -229,6 +228,7 @@ class I18nStrings:
 
                 # --- Messages ---
                 "NO_DATA_MESSAGE": "Aucune donnée disponible pour la période sélectionnée.",
+                "COLLECTING_DATA_MESSAGE": "Collecte des données pour la session en cours...",
                 "GRAPH_ERROR_MESSAGE": "Échec de l'affichage de la fenêtre du graphique. Veuillez consulter les journaux.",
                 "APP_USAGE_ERROR_MESSAGE": "Échec du chargement des données d'utilisation des applications. Veuillez consulter les journaux.",
                 "SETTINGS_ERROR_MESSAGE": "Échec de l'application d'un ou plusieurs paramètres.",
@@ -236,7 +236,7 @@ class I18nStrings:
                 "SETUP_ERROR_MESSAGE": "Erreur critique lors de l'initialisation de l'interface utilisateur.",
                 "COLOR_PICKER_ERROR_MESSAGE": "Impossible d'ouvrir le sélecteur de couleurs.",
                 "FONT_SELECTOR_ERROR_MESSAGE": "Impossible d'ouvrir le sélecteur de polices.",
-                "DEFAULT_TEXT": "N/A", # Or "Indisponible"
+                "DEFAULT_TEXT": "N/A",
                 "EXPORT_SUCCESS_MESSAGE": "Exportation réussie vers :\n{file_path}",
                 "NO_HISTORY_DATA_MESSAGE": "Aucune donnée d'historique disponible pour l'exportation.",
                 "EXPORT_ERROR_MESSAGE": "Échec de l'exportation des données :\n{error}",
@@ -343,17 +343,17 @@ class I18nStrings:
                 "SMART_MODE_LABEL": "Mode Intelligent",
 
                 # --- Units and Formatting ---
-                "BPS_LABEL": "o/s",       # octets par seconde
-                "BITS_LABEL": "bit/s",    # bits par seconde
+                "BPS_LABEL": "o/s",
+                "BITS_LABEL": "bit/s",
                 "KBPS_LABEL": "Ko/s",
-                "KBITS_LABEL": "Kbit/s",  # Kilobits par seconde
+                "KBITS_LABEL": "Kbit/s",
                 "MBPS_LABEL": "Mo/s",
-                "MBITS_LABEL": "Mbit/s",  # Mégabits par seconde
+                "MBITS_LABEL": "Mbit/s",
                 "MBPS_UNIT": "Mo/s",
                 "MBITS_UNIT": "Mbit/s",
                 "GBPS_LABEL": "Go/s",
-                "GBITS_LABEL": "Gbit/s",  # Gigabits par seconde
-                "BYTES_UNIT": "o",        # octet
+                "GBITS_LABEL": "Gbit/s",
+                "BYTES_UNIT": "o",
                 "KB_UNIT": "Ko",
                 "MB_UNIT": "Mo",
                 "GB_UNIT": "Go",
@@ -366,24 +366,196 @@ class I18nStrings:
                 "DAYS_LABEL": "Jours",
                 "WEEKS_LABEL": "Semaines",
                 "MONTHS_LABEL": "Mois",
-                "CSV_FILE_FILTER": "Fichiers CSV (*.csv);;Tous les Fichiers (*.*)", # Changed
-                "PNG_FILE_FILTER": "Images PNG (*.png);;Tous les Fichiers (*.*)", # ADDED
-                "FONT_WEIGHT_THIN": "Fin", # ADDED
-                "FONT_WEIGHT_EXTRALIGHT": "Extra-Léger", # ADDED
-                "FONT_WEIGHT_LIGHT": "Léger", # ADDED
-                "FONT_WEIGHT_NORMAL": "Normal", # ADDED
-                "FONT_WEIGHT_MEDIUM": "Moyen", # ADDED
-                "FONT_WEIGHT_DEMIBOLD": "Demi-Gras", # ADDED
-                "FONT_WEIGHT_BOLD": "Gras", # ADDED
-                "FONT_WEIGHT_EXTRABOLD": "Extra-Gras", # ADDED
-                "FONT_WEIGHT_BLACK": "Noir", # Existing
-                # Templates
+                "CSV_FILE_FILTER": "Fichiers CSV (*.csv);;Tous les Fichiers (*.*)",
+                "PNG_FILE_FILTER": "Images PNG (*.png);;Tous les Fichiers (*.*)",
+                "FONT_WEIGHT_THIN": "Fin",
+                "FONT_WEIGHT_EXTRALIGHT": "Extra-Léger",
+                "FONT_WEIGHT_LIGHT": "Léger",
+                "FONT_WEIGHT_NORMAL": "Normal",
+                "FONT_WEIGHT_MEDIUM": "Moyen",
+                "FONT_WEIGHT_DEMIBOLD": "Demi-Gras",
+                "FONT_WEIGHT_BOLD": "Gras",
+                "FONT_WEIGHT_EXTRABOLD": "Extra-Gras",
+                "FONT_WEIGHT_BLACK": "Noir",
                 "DEFAULT_STATS_TEXT_TEMPLATE": "Max : \u2191{max_up:.2f} {max_up_unit}, \u2193{max_down:.2f} {max_down_unit} | Total : \u2191{up_total:.2f} {up_unit}, \u2193{down_total:.2f} {down_unit}",
                 "APP_USAGE_STATS_TEXT_TEMPLATE": "Total : \u2191{up_total:.2f} {up_unit}, \u2193{down_total:.2f} {down_unit}",
-                "GRAPH_TITLE_TEMPLATE": "Historique des Vitesses ({period})", # ADDED
-                "GRAPH_STATS_TEXT_TEMPLATE": "Max : \u2191{max_up:.1f} {unit} | \u2193{max_down:.1f} {unit}", # ADDED
+                "GRAPH_TITLE_TEMPLATE": "Historique des Vitesses ({period})",
+                "GRAPH_STATS_TEXT_TEMPLATE": "Max : \u2191{max_up:.1f} {unit} | \u2193{max_down:.1f} {unit}",
             },
-            # Add other languages here
+
+                        # ================= German (Germany) =================
+            "de_DE": {
+                # --- Window and dialog titles ---
+                "SETTINGS_WINDOW_TITLE": "Einstellungen",
+                "GRAPH_WINDOW_TITLE": "Verlauf der Netzwerkgeschwindigkeit",
+                "EXPORT_CSV_TITLE": "Verlauf exportieren",
+                "EXPORT_GRAPH_IMAGE_TITLE": "Grafik speichern (Bild)",
+                "EXPORT_ERROR_LOG_TITLE": "Fehlerprotokoll exportieren",
+                "SELECT_COLOR_TITLE": "Farbe auswählen",
+                "SELECT_FONT_TITLE": "Schriftart auswählen",
+                "ERROR_TITLE": "Fehler",
+                "WARNING_TITLE": "Warnung",
+                "SUCCESS_TITLE": "Erfolg",
+                "INFORMATION_TITLE": "Information",
+                "NO_LOG_TITLE": "Protokolldatei nicht gefunden",
+                "ERROR_WINDOW_TITLE": "Anwendungsfehler",
+
+                # --- Messages ---
+                "NO_DATA_MESSAGE": "Keine Daten für den ausgewählten Zeitraum verfügbar.",
+                "COLLECTING_DATA_MESSAGE": "Daten für die aktuelle Sitzung werden gesammelt...",
+                "GRAPH_ERROR_MESSAGE": "Anzeige des Grafikfensters fehlgeschlagen. Details im Protokoll.",
+                "APP_USAGE_ERROR_MESSAGE": "Laden der App-Nutzungsdaten fehlgeschlagen. Details im Protokoll.",
+                "SETTINGS_ERROR_MESSAGE": "Anwenden einer oder mehrerer Einstellungen fehlgeschlagen.",
+                "SAVE_ERROR_MESSAGE": "Speichern der Einstellungen fehlgeschlagen:\n{error}",
+                "SETUP_ERROR_MESSAGE": "Kritischer Fehler beim UI-Setup.",
+                "COLOR_PICKER_ERROR_MESSAGE": "Farbauswahl konnte nicht geöffnet werden.",
+                "FONT_SELECTOR_ERROR_MESSAGE": "Schriftauswahl konnte nicht geöffnet werden.",
+                "DEFAULT_TEXT": "N/A",
+                "EXPORT_SUCCESS_MESSAGE": "Erfolgreich exportiert nach:\n{file_path}",
+                "NO_HISTORY_DATA_MESSAGE": "Keine Verlaufsdaten zum Exportieren vorhanden.",
+                "EXPORT_ERROR_MESSAGE": "Export der Daten fehlgeschlagen:\n{error}",
+                "LOG_COPY_ERROR_MESSAGE": "Kopieren der Protokolldatei fehlgeschlagen:\n{error}",
+                "DATA_RETENTION_ERROR": "Datenaufbewahrung: {days} Tage (Fehler bei Größenberechnung)",
+                "NO_LOG_MESSAGE": "Die Fehlerprotokolldatei existiert nicht oder wurde nicht gefunden.",
+                "LOG_EXPORT_SUCCESS_MESSAGE": "Fehlerprotokoll erfolgreich exportiert nach:\n{file_path}",
+                "PERMISSION_DENIED_MESSAGE": "Berechtigung beim Exportieren des Protokolls verweigert.",
+                "LOG_EXPORT_ERROR_MESSAGE": "Export des Fehlerprotokolls fehlgeschlagen:\n{error}",
+                "NO_INTERFACES_DETECTED": "Keine aktiven Netzwerkschnittstellen erkannt.",
+                "ERROR_UI_SETUP_FAILED": "Einrichten des Einstellungsdialogs fehlgeschlagen: {error}",
+                "ERROR_GETTING_SETTINGS": "Abrufen der aktuellen Einstellungen von der UI fehlgeschlagen.",
+                "ERROR_SAVING_CONFIG": "Speichern der Konfigurationsdatei fehlgeschlagen:\n{error}",
+                "NO_APP_DATA_MESSAGE": "Keine Anwendungsnutzungsdaten für diesen Zeitraum verfügbar.",
+                "APP_USAGE_CONFIG_ERROR": "Fehler beim Laden der App-Nutzung: Konfigurations- oder Datenproblem.",
+                "GRAPH_DATA_ERROR": "Fehler bei der Grafikanzeige: Ungültige Daten.",
+                "GRAPH_INVALID_DATA_FORMAT": "Ungültiges Datenformat zum Plotten der Grafik.",
+                "GRAPH_UPDATE_ERROR_MESSAGE": "Fehler beim Aktualisieren der Grafikanzeige: {error}",
+
+                # --- Labels ---
+                "SPEED_GRAPH_TAB_LABEL": "Geschwindigkeitsgrafik",
+                "APP_USAGE_TAB_LABEL": "App-Nutzung",
+                "DARK_MODE_LABEL": "Dunkelmodus",
+                "LIVE_UPDATE_LABEL": "Live-Aktualisierung",
+                "HISTORY_PERIOD_LABEL": "Zeitachse: {period}",
+                "HISTORY_PERIOD_LABEL_NO_VALUE": "Zeitachse",
+                "GRAPH_SETTINGS_LABEL": "Grafik-Einstellungen",
+                "DATA_RETENTION_LABEL_DAYS": "Datenaufbewahrung: {days} Tag{plural}",
+                "REALTIME_LABEL": "Echtzeit",
+                "DATA_RETENTION_LABEL_NO_VALUE": "Datenaufbewahrung",
+                "DATA_RETENTION_LABEL_YEAR": "Aufbewahrung: 1 Jahr (DB-Größe: {size_mb:.1f} MB)",
+                "LEGEND_POSITION_LABEL": "Position der Legende",
+                "TIME_LABEL": "Zeit",
+                "SPEED_LABEL": "Geschwindigkeit ({unit})",
+                "UPLOAD_LABEL": "Upload",
+                "DOWNLOAD_LABEL": "Download",
+                "FILTER_BY_LABEL": "Filtern nach:",
+                "LAST_30_DAYS_LABEL": "Letzte 30 Tage",
+                "LAST_7_DAYS_LABEL": "Letzte 7 Tage",
+                "SESSION_LABEL": "Aktuelle Sitzung",
+                "GENERAL_SETTINGS_GROUP": "Allgemein",
+                "UPDATE_RATE_GROUP_TITLE": "Aktualisierungsrate",
+                "UPDATE_INTERVAL_LABEL": "Aktualisierungsintervall:",
+                "OPTIONS_GROUP_TITLE": "Optionen",
+                "FONT_SETTINGS_GROUP_TITLE": "Schrift-Einstellungen",
+                "DYNAMIC_UPDATE_RATE_LABEL": "Dynamische Aktualisierungsrate",
+                "START_WITH_WINDOWS_LABEL": "Mit Windows starten",
+                "FREE_MOVE_LABEL": "Frei bewegen (Kein Einrasten)",
+                "FONT_SIZE_LABEL": "Schriftgröße:",
+                "FONT_FAMILY_LABEL": "Schriftart:",
+                "FONT_WEIGHT_LABEL": "Schriftstärke:",
+                "COLOR_CODING_GROUP": "Farbkodierung der Geschwindigkeit",
+                "ENABLE_COLOR_CODING_LABEL": "Farbkodierung aktivieren",
+                "DEFAULT_COLOR_LABEL": "Standardfarbe:",
+                "HIGH_SPEED_THRESHOLD_LABEL": "Hohe Geschwindigkeit:",
+                "LOW_SPEED_THRESHOLD_LABEL": "Niedrige Geschwindigkeit:",
+                "HIGH_SPEED_COLOR_LABEL": "Farbe (Hoch):",
+                "LOW_SPEED_COLOR_LABEL": "Farbe (Niedrig):",
+                "MINI_GRAPH_SETTINGS_GROUP": "Mini-Grafik (Widget)",
+                "ENABLE_GRAPH_LABEL": "Mini-Grafik anzeigen",
+                "GRAPH_NOTE_TEXT": "Hinweis: Zeigt eine kleine Echtzeit-Grafik im Widget-Bereich.",
+                "HISTORY_DURATION_LABEL": "Grafik-Zeitspanne:",
+                "GRAPH_OPACITY_LABEL": "Grafik-Deckkraft:",
+                "UNITS_GROUP": "Einheiten",
+                "SPEED_DISPLAY_MODE_LABEL": "Anzeigemodus",
+                "SPEED_DISPLAY_MODE_AUTO": "Automatisch",
+                "SPEED_DISPLAY_MODE_MBPS": "Nur Mbit/s",
+                "DECIMAL_PLACES_LABEL": "Dezimalstellen",
+                "TEXT_ALIGNMENT_LABEL": "Textausrichtung",
+                "FORCE_DECIMALS_LABEL": "Dezimalstellen immer anzeigen",
+                "ALIGN_LEFT": "Links",
+                "ALIGN_CENTER": "Mitte",
+                "ALIGN_RIGHT": "Rechts",
+                "NETWORK_INTERFACES_GROUP": "Netzwerkschnittstellen",
+                "ALL_INTERFACES_LABEL": "Alle Schnittstellen überwachen",
+                "NO_INTERFACES_FOUND": "Keine Netzwerkschnittstellen erkannt.",
+                "TROUBLESHOOTING_GROUP": "Fehlerbehebung",
+                "LOG_FILES_FILTER": "Protokolldateien",
+                "ALL_FILES_FILTER": "Alle Dateien",
+                "UPLOAD_ARROW": "\u2191",
+                "DOWNLOAD_ARROW": "\u2193",
+
+                # --- Tooltips ---
+                "SHOW_GRAPH_SETTINGS_TOOLTIP": "Grafik-Einstellungen anzeigen",
+                "HIDE_GRAPH_SETTINGS_TOOLTIP": "Grafik-Einstellungen ausblenden",
+                "DEFAULT_COLOR_TOOLTIP": "Standard-Textfarbe auswählen",
+                "HIGH_SPEED_COLOR_TOOLTIP": "Farbe für hohe Geschwindigkeiten auswählen",
+                "LOW_SPEED_COLOR_TOOLTIP": "Farbe für niedrige Geschwindigkeiten auswählen",
+                "EXPORT_ERROR_LOG_TOOLTIP": "Eine Kopie des Anwendungs-Fehlerprotokolls speichern",
+
+                # --- Buttons and Menu Items ---
+                "EXPORT_CSV_BUTTON": "Verlauf exportieren (CSV)",
+                "EXPORT_GRAPH_IMAGE_BUTTON": "Grafik speichern (PNG)",
+                "SETTINGS_MENU_ITEM": "&Einstellungen",
+                "SHOW_GRAPH_MENU_ITEM": "&Grafikfenster anzeigen",
+                "STARTUP_MENU_ITEM": "Beim Start ausführe&n",
+                "PAUSE_MENU_ITEM": "&Pause",
+                "RESUME_MENU_ITEM": "&Fortsetzen",
+                "EXIT_MENU_ITEM": "&Beenden",
+                "SELECT_FONT_BUTTON": "Auswählen",
+                "EXPORT_ERROR_LOG_BUTTON": "Fehlerprotokoll exportieren",
+                "SAVE_BUTTON": "&Speichern",
+                "CANCEL_BUTTON": "&Abbrechen",
+                "SMART_MODE_LABEL": "Intelligenter Modus",
+
+                # --- Units and Formatting ---
+                "BPS_LABEL": "B/s",
+                "BITS_LABEL": "bit/s",
+                "KBPS_LABEL": "KB/s",
+                "KBITS_LABEL": "kbit/s",
+                "MBPS_LABEL": "MB/s",
+                "MBITS_LABEL": "Mbit/s",
+                "MBPS_UNIT": "MB/s",
+                "MBITS_UNIT": "Mbit/s",
+                "GBPS_LABEL": "GB/s",
+                "GBITS_LABEL": "Gbit/s",
+                "BYTES_UNIT": "B",
+                "KB_UNIT": "KB",
+                "MB_UNIT": "MB",
+                "GB_UNIT": "GB",
+                "TB_UNIT": "TB",
+                "PB_UNIT": "PB",
+                "PLURAL_SUFFIX": "e", # For "Tage" (Days)
+                "SECONDS_LABEL": "Sekunden",
+                "MINUTES_LABEL": "Minuten",
+                "HOURS_LABEL": "Stunden",
+                "DAYS_LABEL": "Tage",
+                "WEEKS_LABEL": "Wochen",
+                "MONTHS_LABEL": "Monate",
+                "CSV_FILE_FILTER": "CSV-Dateien (*.csv);;Alle Dateien (*.*)",
+                "PNG_FILE_FILTER": "PNG-Bilder (*.png);;Alle Dateien (*.*)",
+                "FONT_WEIGHT_THIN": "Dünn",
+                "FONT_WEIGHT_EXTRALIGHT": "Extra-Leicht",
+                "FONT_WEIGHT_LIGHT": "Leicht",
+                "FONT_WEIGHT_NORMAL": "Normal",
+                "FONT_WEIGHT_MEDIUM": "Mittel",
+                "FONT_WEIGHT_DEMIBOLD": "Halbfett",
+                "FONT_WEIGHT_BOLD": "Fett",
+                "FONT_WEIGHT_EXTRABOLD": "Extra-Fett",
+                "FONT_WEIGHT_BLACK": "Schwarz",
+                "DEFAULT_STATS_TEXT_TEMPLATE": "Max: \u2191{max_up:.2f} {max_up_unit}, \u2193{max_down:.2f} {max_down_unit} | Gesamt: \u2191{up_total:.2f} {up_unit}, \u2193{down_total:.2f} {down_unit}",
+                "APP_USAGE_STATS_TEXT_TEMPLATE": "Gesamt: \u2191{up_total:.2f} {up_unit}, \u2193{down_total:.2f} {down_unit}",
+                "GRAPH_TITLE_TEMPLATE": "Geschwindigkeitsverlauf ({period})",
+                "GRAPH_STATS_TEXT_TEMPLATE": "Max: \u2191{max_up:.1f} {unit} | \u2193{max_down:.1f} {unit}",
+            },
         }
 
         # --- Determine and set language ---
@@ -392,7 +564,7 @@ class I18nStrings:
             language_code = detected_locale[0] if detected_locale and detected_locale[0] else "en_US"
             language_code = language_code.replace('-', '_')
             
-            self.language = language_code # Initial detected language
+            self.language = language_code
         except Exception as e:
             logger.warning(f"Failed to get default locale: {e}, falling back to en_US.")
             self.language = "en_US"
@@ -403,19 +575,13 @@ class I18nStrings:
             effective_language = self.language
         else:
             base_language = self.language.split('_')[0]
-            # logger.debug(f"Locale language '{self.language}' not directly supported. Checking base '{base_language}'.")
-            found_base_variant = False
             for supported_lang in self._strings.keys():
                 if supported_lang.startswith(base_language + '_'):
                     effective_language = supported_lang
-                    # logger.debug(f"Falling back to supported language variant: {effective_language}")
-                    found_base_variant = True
                     break
-            # if not found_base_variant: # No need for else, effective_language remains en_US
-                # logger.debug(f"No variant of base language '{base_language}' found. Defaulting to en_US.")
         
-        self.language = effective_language # Set final effective language
-        logger.info(f"I18nStrings initialized. Effective language: {self.language}") # Use INFO for this important step
+        self.language = effective_language
+        logger.info(f"I18nStrings initialized. Effective language: {self.language}")
 
         try:
             self.validate()
@@ -426,14 +592,11 @@ class I18nStrings:
     def __getattr__(self, name: str) -> str:
         """
         Override attribute access for missing attributes to look up translation strings.
-        (Docstring from your file, remains excellent)
         """
         try:
             _strings_internal = object.__getattribute__(self, "_strings")
             language_internal = object.__getattribute__(self, "language")
         except AttributeError:
-            # This should ideally not happen if __init__ completes.
-            # If it does, it indicates a very early access before i18n is fully set up.
             logger.error(f"I18n internal attributes (_strings, language) not yet set when looking for '{name}'.")
             raise AttributeError(f"Attribute '{name}' not found and i18n internals not ready.")
 
@@ -441,12 +604,11 @@ class I18nStrings:
             current_lang_dict = _strings_internal.get(language_internal)
             if current_lang_dict is None:
                 logger.error(f"Internal Error: Language dictionary for '{language_internal}' is missing. Using en_US for '{name}'.")
-                current_lang_dict = _strings_internal.get("en_US", {}) # Fallback to en_US dict
+                current_lang_dict = _strings_internal.get("en_US", {})
 
             value = current_lang_dict.get(name)
             if value is None:
-                # String not found in the current language, try fallback
-                if language_internal != "en_US": # Avoid redundant logging if already trying en_US
+                if language_internal != "en_US":
                     logger.warning(f"String constant '{name}' not found in language '{language_internal}'. Attempting en_US fallback.")
                 
                 fallback_dict = _strings_internal.get("en_US", {})
@@ -455,64 +617,52 @@ class I18nStrings:
                 if value is None:
                     logger.critical(f"String constant '{name}' not found in fallback language 'en_US'.")
                     raise AttributeError(f"String constant '{name}' is missing from all language definitions.")
-                # else: # Successful fallback
-                    # logger.debug(f"String constant '{name}' used en_US fallback for language '{language_internal}'.")
 
             if not isinstance(value, str):
                 logger.error(f"Value for '{name}' in language '{language_internal}' is not a string (type: {type(value)}). Fallbacking to default.")
-                # Provide a very generic fallback if the type is wrong.
                 return f"[ERR: TYPE {name}]" 
             return value
         except AttributeError:
-            raise # Re-raise the AttributeError from the critical "missing from all" case
+            raise
         except Exception as e:
             logger.critical(f"Unexpected error retrieving string '{name}' for language '{language_internal}': {e}", exc_info=True)
-            # Fallback to a clearly problematic string to indicate failure
             return f"[ERR: LOOKUP {name}]"
 
 
     def set_language(self, language: str) -> None:
         """
         Set the current language dynamically.
-        (Docstring from your file)
         """
         normalized_language = language.replace('-', '_')
         if normalized_language not in self._strings:
-            logger.error(f"Attempted to set unsupported language: {language} (Normalized: {normalized_language})")
-            # Optionally, could fall back to en_US instead of raising, depending on desired behavior.
-            # For now, raising ValueError is fine as it indicates a programming error or unsupported request.
             raise ValueError(f"Language '{language}' not supported.")
         
         if self.language != normalized_language:
             self.language = normalized_language
             logger.info(f"Language dynamically set to: {self.language}")
-            # If UI elements need to be re-translated, a signal or callback mechanism would be needed here.
-            # e.g., self.language_changed_signal.emit(self.language)
+
 
     def validate(self) -> None:
         """
         Validate that all string constants are non-empty for all defined languages,
         comparing against the 'en_US' set as the master reference.
-        (Docstring from your file)
         """
         logger.debug("Validating all I18n strings...")
         if "en_US" not in self._strings or not isinstance(self._strings["en_US"], dict) or not self._strings["en_US"]:
             logger.error("en_US language strings are missing, empty, or not a dictionary. Cannot perform comprehensive validation.")
-            # Perform basic validation for other existing languages
             for lang, translations in self._strings.items():
                 if not isinstance(translations, dict):
                      raise ValueError(f"Entry for language '{lang}' is not a dictionary.")
                 for key, value in translations.items():
                     if not isinstance(key, str) or not key:
                          raise ValueError(f"Invalid or empty key found in language '{lang}'. Key: '{key}'")
-                    if not isinstance(value, str) or not value: # Check for non-string or empty string
+                    if not isinstance(value, str) or not value:
                         raise ValueError(f"Invalid or empty string value for key '{key}' in language '{lang}'. Value: '{value}'")
             logger.warning("Validation performed basic checks due to missing/invalid en_US base.")
             return
 
         master_keys = set(self._strings["en_US"].keys())
         if not all(isinstance(k, str) and k for k in master_keys):
-            # This should ideally be caught by the basic validation above if en_US itself has bad keys
             raise ValueError("Found invalid or empty keys in the master en_US dictionary.")
 
         validation_errors = []
@@ -523,32 +673,22 @@ class I18nStrings:
 
             current_lang_keys = set(translations_dict.keys())
             
-            # Check for malformed keys in the current language
             if not all(isinstance(k, str) and k for k in current_lang_keys):
                  malformed = [k for k in current_lang_keys if not (isinstance(k, str) and k)]
                  validation_errors.append(f"Language '{lang_code}' contains invalid or empty keys: {malformed}")
 
-            # Compare keys with master (en_US)
             missing_keys = master_keys - current_lang_keys
             if missing_keys:
                 validation_errors.append(f"Language '{lang_code}' is missing keys defined in en_US: {sorted(list(missing_keys))}")
 
-            if lang_code != "en_US": # Only warn for extra keys in non-master languages
+            if lang_code != "en_US":
                 extra_keys = current_lang_keys - master_keys
                 if extra_keys:
                     logger.warning(f"Language '{lang_code}' has extra keys not present in en_US: {sorted(list(extra_keys))}")
 
-            # Validate string values
             for key, value_str in translations_dict.items():
                 if not isinstance(value_str, str):
                     validation_errors.append(f"Value for key '{key}' in language '{lang_code}' is not a string (type: {type(value_str)}).")
-                elif not value_str.strip() and value_str != "": # Allow empty strings if explicitly set, but warn/error on just whitespace
-                    # If empty strings are disallowed for specific keys, that's a higher-level validation.
-                    # For now, just ensuring it's a string. If you want to disallow empty strings:
-                    # elif not value_str:
-                    #    validation_errors.append(f"Value for key '{key}' in language '{lang_code}' is empty.")
-                    pass # Allow empty strings for now, but not strings with only whitespace if that's an issue
-
 
         if validation_errors:
             error_summary = "I18n string validation failed with {} error(s):\n- ".format(len(validation_errors)) + "\n- ".join(validation_errors)
@@ -556,3 +696,6 @@ class I18nStrings:
             raise ValueError(error_summary)
         else:
             logger.debug("All I18n strings validated successfully against en_US keys.")
+
+# Singleton instance for easy access throughout the application
+strings = I18nStrings()
