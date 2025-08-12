@@ -15,12 +15,12 @@ import winerror
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
-from netspeedtray.constants import AppConstants, ConfigConstants
-from netspeedtray.constants.i18n_strings import I18nStrings
+# The new, single, correct way to import all constants
+from netspeedtray import constants
+
 from netspeedtray.utils.config import ConfigManager, ConfigError
 from netspeedtray.utils.taskbar_utils import get_taskbar_height
 from netspeedtray.views.widget import NetworkSpeedWidget
-
 
 class NetworkMonitor:
     """Manages the NetSpeedTray application lifecycle and single-instance execution."""
@@ -35,7 +35,7 @@ class NetworkMonitor:
         self.app: Optional[QApplication] = None
         self.widget: Optional[NetworkSpeedWidget] = None
         self.mutex: Optional[int] = None
-        self.i18n = I18nStrings()
+        self.i18n = constants.strings
         self.logger = logging.getLogger("NetSpeedTray.Monitor")
 
         self._setup_mutex()
@@ -45,7 +45,7 @@ class NetworkMonitor:
     def _setup_mutex(self) -> None:
         """Create a mutex for single-instance enforcement."""
         try:
-            self.mutex = win32event.CreateMutex(None, False, AppConstants.MUTEX_NAME)
+            self.mutex = win32event.CreateMutex(None, False, constants.app.MUTEX_NAME)
             if win32api.GetLastError() == winerror.ERROR_ALREADY_EXISTS:
                 self.logger.error("Another instance of NetSpeedTray is already running")
                 sys.exit(1)
@@ -110,7 +110,7 @@ class NetworkMonitor:
         try:
             from netspeedtray.utils.helpers import get_app_data_path
             app_data_path = get_app_data_path()
-            config_path = str(app_data_path / ConfigConstants.CONFIG_FILENAME).replace('\\', '/')
+            config_path = str(app_data_path / constants.config.defaults.CONFIG_FILENAME).replace('\\', '/')
             config_manager = ConfigManager(str(config_path))
             config = config_manager.load()
         except ConfigError as e:
@@ -122,8 +122,11 @@ class NetworkMonitor:
 
         try:
             taskbar_height = get_taskbar_height()
-            self.widget = NetworkSpeedWidget(taskbar_height=taskbar_height, config=config)
-            self.widget.set_app_version(AppConstants.VERSION)
+            self.widget = NetworkSpeedWidget(
+                taskbar_height=taskbar_height,
+                config=config
+            )
+            self.widget.set_app_version(constants.app.VERSION)
             QTimer.singleShot(1000, self._safe_show_widget)
         except Exception as e:
             self.logger.error("Widget initialization failed: %s (%s)", e, type(e).__name__)

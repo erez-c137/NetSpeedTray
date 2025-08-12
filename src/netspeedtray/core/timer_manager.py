@@ -8,8 +8,8 @@ network speed updates in the NetSpeedTray application. Key responsibilities incl
 - Emitting the `stats_updated` signal to trigger speed updates in the application.
 - Supporting connection and disconnection of slots to the timer's timeout signal.
 
-The class uses constants from `TimerConstants` for interval constraints and
-`ConfigConstants` for the default update rate. It relies on `timer_utils.py` for
+The class uses constants from `constants.timers` for interval constraints and
+`constants.config.defaults` for the default update rate. It relies on `timer_utils.py` for
 low-level timer creation, interval calculation, and cleanup operations.
 
 For generic timer utilities (e.g., creating timers for other purposes), use the functions
@@ -21,7 +21,7 @@ from typing import Dict, Any, Optional, Callable
 
 from PyQt6.QtCore import QTimer, QObject, pyqtSignal
 
-from ..constants.constants import TimerConstants, ConfigConstants
+from netspeedtray import constants
 from ..utils.timer_utils import calculate_timer_interval, create_timer, cleanup_timer  # Import utilities
 
 
@@ -36,8 +36,8 @@ class SpeedTimerManager(QObject):
     - Supporting connection and disconnection of slots to the timer's timeout signal.
 
     The timer interval is constrained by `MINIMUM_INTERVAL_MS` (500ms) and
-    `TimerConstants.MAXIMUM_UPDATE_RATE_SECONDS`, and the default update rate is sourced
-    from `ConfigConstants.DEFAULT_UPDATE_RATE`.
+    `constants.timers.MAXIMUM_UPDATE_RATE_SECONDS`, and the default update rate is sourced
+    from `constants.config.defaults.DEFAULT_UPDATE_RATE`.
 
     Signals:
         stats_updated: Emitted periodically based on the speed timer interval to trigger
@@ -167,7 +167,7 @@ class SpeedTimerManager(QObject):
         if update_rate < 0:
             self.logger.error("Update rate cannot be negative: %.2f", update_rate)
             raise ValueError(f"Update rate cannot be negative: {update_rate}")
-        max_update_rate = TimerConstants.MAXIMUM_UPDATE_RATE_SECONDS
+        max_update_rate = constants.timers.MAXIMUM_UPDATE_RATE_SECONDS
         if update_rate > max_update_rate and update_rate != 0:  # Allow 0 for smart mode
             self.logger.warning(
                 "Update rate %.2fs exceeds maximum allowed (%.2fs). Clamping to maximum.",
@@ -197,7 +197,7 @@ class SpeedTimerManager(QObject):
             RuntimeError: If timer creation fails due to Qt or system issues.
         """
         try:
-            initial_speed_rate = self.config.get("update_rate", ConfigConstants.DEFAULT_UPDATE_RATE)
+            initial_speed_rate = self.config.get("update_rate", constants.config.defaults.DEFAULT_UPDATE_RATE)
             speed_interval = calculate_timer_interval(initial_speed_rate)
             # Enforce minimum interval
             speed_interval = max(speed_interval, self.MINIMUM_INTERVAL_MS)
