@@ -16,13 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from .helpers import get_app_data_path
-from ..constants.constants import (
-    LogConstants,
-    ConfigConstants,
-    ConfigMessages,
-    HistoryPeriodConstants,
-    LegendPositionConstants,
-)
+from netspeedtray import constants
 
 
 class ConfigError(Exception):
@@ -40,14 +34,14 @@ class ConfigManager:
         """
         Initializes the ConfigManager.
         """
-        self.config_path = Path(config_path or self.BASE_DIR / ConfigConstants.CONFIG_FILENAME)
+        self.config_path = Path(config_path or self.BASE_DIR / constants.config.defaults.CONFIG_FILENAME)
         self.logger = logging.getLogger("NetSpeedTray.Config")
         self._last_config: Optional[Dict[str, Any]] = None
 
     @classmethod
     def get_log_file_path(cls) -> Path:
         """Returns the absolute path to the log file."""
-        return cls.BASE_DIR / LogConstants.LOG_FILENAME
+        return cls.BASE_DIR / constants.logs.LOG_FILENAME
 
     @classmethod
     def setup_logging(cls, log_level: str = 'INFO') -> None:
@@ -94,21 +88,21 @@ class ConfigManager:
                 raise ValueError("Value out of range")
             return int(num_value) if isinstance(default, int) else num_value
         except (TypeError, ValueError):
-            self.logger.warning(ConfigMessages.INVALID_NUMERIC.format(key=key, value=value, default=default))
+            self.logger.warning(constants.config.messages.INVALID_NUMERIC.format(key=key, value=value, default=default))
             return default
 
     def _validate_boolean(self, key: str, value: Any, default: bool) -> bool:
         """Validates a value is a boolean."""
         if isinstance(value, bool):
             return value
-        self.logger.warning(ConfigMessages.INVALID_BOOLEAN.format(key=key, value=value, default=default))
+        self.logger.warning(constants.config.messages.INVALID_BOOLEAN.format(key=key, value=value, default=default))
         return default
 
     def _validate_color_hex(self, key: str, value: Any, default: str) -> str:
         """Validates a value is a valid 6-digit hex color string."""
         if isinstance(value, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", value):
             return value
-        self.logger.warning(ConfigMessages.INVALID_COLOR.format(key=key, value=value, default=default))
+        self.logger.warning(constants.config.messages.INVALID_COLOR.format(key=key, value=value, default=default))
         return default
 
     def _validate_choice(self, key: str, value: Any, default: str, choices: List[str]) -> str:
@@ -117,14 +111,14 @@ class ConfigManager:
             for choice in choices:
                 if choice.lower() == value.lower():
                     return choice
-        self.logger.warning(ConfigMessages.INVALID_CHOICE.format(key=key, value=value, default=default, choices=choices))
+        self.logger.warning(constants.config.messages.INVALID_CHOICE.format(key=key, value=value, default=default, choices=choices))
         return default
 
     def _validate_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
         """
         Validates the configuration, merges with defaults, and sanitizes values.
         """
-        validated = ConfigConstants.DEFAULT_CONFIG.copy()
+        validated = constants.config.defaults.DEFAULT_CONFIG.copy()
         unknown_keys = set(config.keys()) - set(validated.keys())
         if unknown_keys:
             self.logger.warning("Ignoring unknown config fields: %s", ", ".join(unknown_keys))
@@ -136,48 +130,48 @@ class ConfigManager:
         # --- Apply Validations ---
         for key in ["color_coding", "graph_enabled", "dynamic_update_enabled", "free_move", 
                     "force_decimals", "dark_mode", "paused", "start_with_windows"]:
-            validated[key] = self._validate_boolean(key, validated[key], ConfigConstants.DEFAULT_CONFIG[key])
+            validated[key] = self._validate_boolean(key, validated[key], constants.config.defaults.DEFAULT_CONFIG[key])
 
-        validated["update_rate"] = self._validate_numeric("update_rate", validated["update_rate"], ConfigConstants.DEFAULT_UPDATE_RATE, ConfigConstants.MINIMUM_UPDATE_RATE, 300.0)
-        validated["font_size"] = self._validate_numeric("font_size", validated["font_size"], ConfigConstants.DEFAULT_FONT_SIZE, 5, 72)
-        validated["font_weight"] = self._validate_numeric("font_weight", validated["font_weight"], ConfigConstants.DEFAULT_FONT_WEIGHT, 1, 1000)
-        validated["high_speed_threshold"] = self._validate_numeric("high_speed_threshold", validated["high_speed_threshold"], ConfigConstants.DEFAULT_HIGH_SPEED_THRESHOLD, 0, 10000)
-        validated["low_speed_threshold"] = self._validate_numeric("low_speed_threshold", validated["low_speed_threshold"], ConfigConstants.DEFAULT_LOW_SPEED_THRESHOLD, 0, 10000)
-        validated["history_minutes"] = self._validate_numeric("history_minutes", validated["history_minutes"], ConfigConstants.DEFAULT_HISTORY_MINUTES, 1, 1440)
-        validated["graph_opacity"] = self._validate_numeric("graph_opacity", validated["graph_opacity"], ConfigConstants.DEFAULT_GRAPH_OPACITY, 0, 100)
-        validated["keep_data"] = self._validate_numeric("keep_data", validated["keep_data"], ConfigConstants.DEFAULT_HISTORY_PERIOD_DAYS, 1, 9999)
-        validated["decimal_places"] = self._validate_numeric("decimal_places", validated["decimal_places"], ConfigConstants.DEFAULT_DECIMAL_PLACES, 0, 2)
-        validated["min_update_rate"] = self._validate_numeric("min_update_rate", validated["min_update_rate"], ConfigConstants.DEFAULT_MIN_UPDATE_RATE, 0.1, 10.0)
-        validated["max_update_rate"] = self._validate_numeric("max_update_rate", validated["max_update_rate"], ConfigConstants.DEFAULT_MAX_UPDATE_RATE, 0.1, 10.0)
+        validated["update_rate"] = self._validate_numeric("update_rate", validated["update_rate"], constants.config.defaults.DEFAULT_UPDATE_RATE, constants.config.defaults.MINIMUM_UPDATE_RATE, 300.0)
+        validated["font_size"] = self._validate_numeric("font_size", validated["font_size"], constants.config.defaults.DEFAULT_FONT_SIZE, 5, 72)
+        validated["font_weight"] = self._validate_numeric("font_weight", validated["font_weight"], constants.config.defaults.DEFAULT_FONT_WEIGHT, 1, 1000)
+        validated["high_speed_threshold"] = self._validate_numeric("high_speed_threshold", validated["high_speed_threshold"], constants.config.defaults.DEFAULT_HIGH_SPEED_THRESHOLD, 0, 10000)
+        validated["low_speed_threshold"] = self._validate_numeric("low_speed_threshold", validated["low_speed_threshold"], constants.config.defaults.DEFAULT_LOW_SPEED_THRESHOLD, 0, 10000)
+        validated["history_minutes"] = self._validate_numeric("history_minutes", validated["history_minutes"], constants.config.defaults.DEFAULT_HISTORY_MINUTES, 1, 1440)
+        validated["graph_opacity"] = self._validate_numeric("graph_opacity", validated["graph_opacity"], constants.config.defaults.DEFAULT_GRAPH_OPACITY, 0, 100)
+        validated["keep_data"] = self._validate_numeric("keep_data", validated["keep_data"], constants.config.defaults.DEFAULT_HISTORY_PERIOD_DAYS, 1, 9999)
+        validated["decimal_places"] = self._validate_numeric("decimal_places", validated["decimal_places"], constants.config.defaults.DEFAULT_DECIMAL_PLACES, 0, 2)
+        validated["min_update_rate"] = self._validate_numeric("min_update_rate", validated["min_update_rate"], constants.config.defaults.DEFAULT_MIN_UPDATE_RATE, 0.1, 10.0)
+        validated["max_update_rate"] = self._validate_numeric("max_update_rate", validated["max_update_rate"], constants.config.defaults.DEFAULT_MAX_UPDATE_RATE, 0.1, 10.0)
 
         for key in ["default_color", "high_speed_color", "low_speed_color"]:
-            validated[key] = self._validate_color_hex(key, validated[key], ConfigConstants.DEFAULT_CONFIG[key])
+            validated[key] = self._validate_color_hex(key, validated[key], constants.config.defaults.DEFAULT_CONFIG[key])
 
-        validated["interface_mode"] = self._validate_choice("interface_mode", validated["interface_mode"], ConfigConstants.DEFAULT_INTERFACE_MODE, list(ConfigConstants.VALID_INTERFACE_MODES))
-        validated["legend_position"] = self._validate_choice("legend_position", validated["legend_position"], ConfigConstants.DEFAULT_LEGEND_POSITION, LegendPositionConstants.UI_OPTIONS)
-        validated["history_period"] = self._validate_choice("history_period", validated["history_period"], HistoryPeriodConstants.DEFAULT_PERIOD, list(HistoryPeriodConstants.PERIOD_MAP.values()))
-        validated["text_alignment"] = self._validate_choice("text_alignment", validated["text_alignment"], ConfigConstants.DEFAULT_TEXT_ALIGNMENT, ["left", "center", "right"])
-        validated["speed_display_mode"] = self._validate_choice("speed_display_mode", validated["speed_display_mode"], ConfigConstants.DEFAULT_SPEED_DISPLAY_MODE, ["auto", "always_mbps"])
+        validated["interface_mode"] = self._validate_choice("interface_mode", validated["interface_mode"], constants.config.defaults.DEFAULT_INTERFACE_MODE, list(constants.network.interface.VALID_INTERFACE_MODES))
+        validated["legend_position"] = self._validate_choice("legend_position", validated["legend_position"], constants.config.defaults.DEFAULT_LEGEND_POSITION, constants.data.legend_position.UI_OPTIONS)
+        validated["history_period"] = self._validate_choice("history_period", validated["history_period"], constants.data.history_period.DEFAULT_PERIOD, list(constants.data.history_period.PERIOD_MAP.values()))
+        validated["text_alignment"] = self._validate_choice("text_alignment", validated["text_alignment"], constants.config.defaults.DEFAULT_TEXT_ALIGNMENT, ["left", "center", "right"])
+        validated["speed_display_mode"] = self._validate_choice("speed_display_mode", validated["speed_display_mode"], constants.config.defaults.DEFAULT_SPEED_DISPLAY_MODE, ["auto", "always_mbps"])
         validated["history_period_slider_value"] = self._validate_numeric("history_period_slider_value", validated["history_period_slider_value"], 0, 0, 10) # Simple range check
 
         # Special cases and cross-field validation
         if not isinstance(validated["selected_interfaces"], list) or not all(isinstance(i, str) for i in validated["selected_interfaces"]):
-            self.logger.warning(ConfigMessages.INVALID_INTERFACES.format(value=validated["selected_interfaces"]))
+            self.logger.warning(constants.config.messages.INVALID_INTERFACES.format(value=validated["selected_interfaces"]))
             validated["selected_interfaces"] = []
 
         if validated["low_speed_threshold"] > validated["high_speed_threshold"]:
-            self.logger.warning(ConfigMessages.THRESHOLD_SWAP)
+            self.logger.warning(constants.config.messages.THRESHOLD_SWAP)
             validated["low_speed_threshold"] = validated["high_speed_threshold"]
 
         for key in ["position_x", "position_y"]:
             if validated[key] is not None and not isinstance(validated[key], int):
-                self.logger.warning(ConfigMessages.INVALID_POSITION.format(key=key, value=validated[key]))
+                self.logger.warning(constants.config.messages.INVALID_POSITION.format(key=key, value=validated[key]))
                 validated[key] = None
         
         if validated["graph_window_pos"] is not None:
             pos = validated["graph_window_pos"]
             if not (isinstance(pos, dict) and 'x' in pos and 'y' in pos and isinstance(pos['x'], int) and isinstance(pos['y'], int)):
-                self.logger.warning(ConfigMessages.INVALID_POSITION.format(key='graph_window_pos', value=pos))
+                self.logger.warning(constants.config.messages.INVALID_POSITION.format(key='graph_window_pos', value=pos))
                 validated["graph_window_pos"] = None
         
         return validated
@@ -236,6 +230,6 @@ class ConfigManager:
     def reset_to_defaults(self) -> Dict[str, Any]:
         """Resets the configuration to factory defaults and saves it."""
         self.logger.info("Resetting configuration to default values.")
-        defaults = ConfigConstants.DEFAULT_CONFIG.copy()
+        defaults = constants.config.defaults.DEFAULT_CONFIG.copy()
         self.save(defaults)
         return defaults

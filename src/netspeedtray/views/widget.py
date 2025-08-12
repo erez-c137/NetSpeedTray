@@ -38,11 +38,8 @@ import win32api
 import win32con
 import win32gui
 
-from ..constants.constants import (
-    AppConstants, ConfigConstants, HelperConstants, PositionConstants,
-    RendererConstants, TimerConstants, TaskbarEdge, UIConstants, LayoutConstants
-)
-from ..constants.i18n_strings import I18nStrings
+from netspeedtray import constants
+
 from ..core.controller import NetworkController as CoreController
 from ..core.timer_manager import SpeedTimerManager
 from ..core.widget_state import WidgetState as CoreWidgetState, AggregatedSpeedData as CoreSpeedData
@@ -61,14 +58,14 @@ class NetworkSpeedWidget(QWidget):
     def __init__(self, taskbar_height: int = 40, config: Optional[Dict[str, Any]] = None, parent: QObject | None = None) -> None:
         """Initialize the NetworkSpeedWidget with core components and UI setup."""
         super().__init__(parent)
-        self.logger = logging.getLogger(f"{AppConstants.APP_NAME}.{self.__class__.__name__}")
+        self.logger = logging.getLogger(f"{constants.app.APP_NAME}.{self.__class__.__name__}")
         self.logger.info("Initializing NetworkSpeedWidget...")
 
         # --- Core Application State ---
         self.session_start_time = datetime.now()
         self.config_manager = CoreConfigManager()
         self.config: Dict[str, Any] = config or self._load_initial_config(taskbar_height)
-        self.i18n = I18nStrings()
+        self.i18n = constants.strings
 
         # --- Core Functional Components ---
         self.widget_state: CoreWidgetState
@@ -305,28 +302,14 @@ class NetworkSpeedWidget(QWidget):
         self.update_config({'paused': False})
         self.update()
 
-    def update_stats(self, upload_mbps: float, download_mbps: float, sent_diff: int, recv_diff: int) -> None:
+    def update_display_speeds(self, upload_mbps: float, download_mbps: float) -> None:
         """
-        Receives new data from the controller, passes it to the WidgetState,
-        and schedules a repaint of the widget.
+        Slot for the controller's `display_speed_updated` signal.
+        Receives aggregated speeds in Mbps and schedules a repaint of the widget.
         """
-        current_time = time.monotonic()
-        if current_time - self._last_update_time < self.MIN_UPDATE_INTERVAL:
-            return
-        self._last_update_time = current_time
-
-        upload_bytes_sec = upload_mbps * 1_000_000 / 8
-        download_bytes_sec = download_mbps * 1_000_000 / 8
-        
-        # --- CHANGE: Pass the new bandwidth data to WidgetState ---
-        self.widget_state.add_speed_data(
-            upload_speed=upload_bytes_sec, 
-            download_speed=download_bytes_sec,
-            bytes_sent=sent_diff,
-            bytes_recv=recv_diff
-        )
-        
-        self.update()
+        self.upload_speed = upload_mbps
+        self.download_speed = download_mbps
+        self.update() # Trigger a repaint
 
     def _update_display_speeds(self) -> None:
         """
@@ -365,9 +348,9 @@ class NetworkSpeedWidget(QWidget):
         if not self.config:
             raise RuntimeError("Cannot initialize UI: Config missing")
         self._load_icon()
-        self.default_color = QColor(self.config.get("default_color", ConfigConstants.DEFAULT_COLOR))
-        self.high_color = QColor(self.config.get("high_speed_color", ConfigConstants.DEFAULT_HIGH_SPEED_COLOR))
-        self.low_color = QColor(self.config.get("low_speed_color", ConfigConstants.DEFAULT_LOW_SPEED_COLOR))
+        self.default_color = QColor(self.config.get("default_color", constants.config.defaults.DEFAULT_COLOR))
+        self.high_color = QColor(self.config.get("high_speed_color", constants.config.defaults.DEFAULT_HIGH_SPEED_COLOR))
+        self.low_color = QColor(self.config.get("low_speed_color", constants.config.defaults.DEFAULT_LOW_SPEED_COLOR))
         self.logger.debug(f"Colors initialized - Default: {self.default_color.name()}, High: {self.high_color.name()}, Low: {self.low_color.name()}")
         self._init_font()
         self.logger.debug("UI components initialized")
@@ -380,9 +363,9 @@ class NetworkSpeedWidget(QWidget):
     def _set_font(self, resize: bool = True) -> None:
         """Apply font settings from config."""
         self.logger.debug("Setting font...")
-        font_family = self.config.get("font_family", HelperConstants.DEFAULT_FONT)
-        font_size = max(5, min(int(self.config.get("font_size", ConfigConstants.DEFAULT_FONT_SIZE)), 72))
-        font_weight = self.config.get("font_weight", ConfigConstants.DEFAULT_FONT_WEIGHT)
+        font_family = self.config.get("font_family", constants.fonts.DEFAULT_FONT)
+        font_size = max(5, min(int(self.config.get("font_size", constants.config.defaults.DEFAULT_FONT_SIZE)), 72))
+        font_weight = self.config.get("font_weight", constants.config.defaults.DEFAULT_FONT_WEIGHT)
         if isinstance(font_weight, str):
             font_weight = {"normal": QFont.Weight.Normal, "bold": QFont.Weight.Bold}.get(font_weight.lower(), QFont.Weight.Normal)
         self.font = QFont(font_family, font_size, font_weight)
@@ -420,33 +403,35 @@ class NetworkSpeedWidget(QWidget):
             self.pause()
             self.pause_action.setText(self.i18n.RESUME_MENU_ITEM)
 
+
     def _setup_connections(self) -> None:
         """
-        Connects signals from core components to widget slots.
+        Connects signals from core components to widget slots and child windows.
         """
         self.logger.debug("Setting up signal connections...")
         if not all([self.widget_state, self.timer_manager, self.controller]):
             raise RuntimeError("Core components missing during signal connection setup.")
+
         try:
-            if hasattr(self.timer_manager, 'stats_updated') and hasattr(self.controller, 'update_speeds'):
-                self.timer_manager.stats_updated.connect(self.controller.update_speeds)
-            else:
-                self.logger.warning("Cannot connect stats_updated to update_speeds: Signal or slot missing.")
+            # Connect the timer tick to the controller's main update loop
+            self.timer_manager.stats_updated.connect(self.controller.update_speeds)
 
-            if hasattr(self.controller, 'speeds_updated'):
-                self.controller.speeds_updated.connect(self.update_stats)
-            else:
-                self.logger.warning("speeds_updated signal unavailable; speed updates may not work.")
+            # Connect the controller's final aggregated speed to this widget's display update
+            self.controller.display_speed_updated.connect(self.update_display_speeds)
 
+            # Connect the WinEventHook to its handler for fast visibility changes
+            self.win_event_hook = WinEventHook()
+            self.win_event_hook.foreground_window_changed.connect(self._on_foreground_window_changed)
+            self.win_event_hook.start()
+
+            # Connect the database worker's update signal to the graph's filter
+            # This is deferred until the graph window is created.
+            
             self.logger.debug("Signal connections established successfully.")
         except Exception as e:
             self.logger.error("Error setting up signal connections: %s", e, exc_info=True)
             raise RuntimeError("Failed to establish critical signal connections") from e
-        
-        # Connect the WinEventHook to its handler
-        self.win_event_hook = WinEventHook()
-        self.win_event_hook.foreground_window_changed.connect(self._on_foreground_window_changed)
-        self.win_event_hook.start()
+
         
     def _validate_lazy_imports(self) -> None:
         """Validates lazy imports to catch potential issues early."""
@@ -486,10 +471,10 @@ class NetworkSpeedWidget(QWidget):
 
             precision = self.config.get("speed_precision", 2)
             max_number_str = f"{999.99:.{precision}f}"
-            margin = int(RendererConstants.TEXT_MARGIN * dpi_scale)
-            arrow_num_gap = int(RendererConstants.ARROW_NUMBER_GAP * dpi_scale)
-            value_unit_gap = int(RendererConstants.VALUE_UNIT_GAP * dpi_scale)
-            arrow_char = RendererConstants.UPLOAD_ARROW
+            margin = int(constants.renderer.TEXT_MARGIN * dpi_scale)
+            arrow_num_gap = int(constants.renderer.ARROW_NUMBER_GAP * dpi_scale)
+            value_unit_gap = int(constants.renderer.VALUE_UNIT_GAP * dpi_scale)
+            arrow_char = constants.renderer.UPLOAD_ARROW
             arrow_width = self.metrics.horizontalAdvance(arrow_char)
             max_number_width = self.metrics.horizontalAdvance(max_number_str)
             possible_units = [" Kbps", " Mbps", " Gbps", " KB/s", " MB/s", " GB/s"]
@@ -500,13 +485,13 @@ class NetworkSpeedWidget(QWidget):
             v_padding = self.config.get("vertical_padding", 0)
             calculated_height = max(logical_taskbar_height + v_padding, 10)
 
-            if edge in (TaskbarEdge.LEFT, TaskbarEdge.RIGHT) and taskbar_info:
+            if edge in (constants.taskbar.edge.LEFT, constants.taskbar.edge.RIGHT) and taskbar_info:
                 self.logger.debug("Vertical taskbar detected, calculating vertical layout size.")
                 longest_line_width = (margin + arrow_width + arrow_num_gap + max_number_width + value_unit_gap + max_unit_width + margin)
                 calculated_width = math.ceil(longest_line_width)
-                line_gap = getattr(LayoutConstants, 'LINE_GAP', 2)
+                line_gap = getattr(constants.layout, 'LINE_GAP', 2)
                 text_height = (self.metrics.height() * 2) + line_gap
-                renderer_padding = getattr(RendererConstants, 'TEXT_MARGIN', 5) * 2
+                renderer_padding = getattr(constants.renderer, 'TEXT_MARGIN', 5) * 2
                 calculated_height = text_height + renderer_padding
                 self.logger.debug(f"Vertical layout calculated size: {calculated_width}x{calculated_height}")
 
@@ -531,8 +516,9 @@ class NetworkSpeedWidget(QWidget):
         """
         if not self.isVisible():
             return
+        
+        painter = QPainter(self)
         try:
-            painter = QPainter(self)
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
             painter.fillRect(self.rect(), QColor(0, 0, 0, 1))
 
@@ -543,13 +529,21 @@ class NetworkSpeedWidget(QWidget):
 
             painter.setFont(self.font)
 
-            upload_bytes, download_bytes = self.widget_state.get_smoothed_speeds()
+            # 1. Use the widget's own state variables, which are in Mbps.
+            upload_mbps = self.upload_speed
+            download_mbps = self.download_speed
+            
+            # 2. Convert from Mbps to Bytes/sec for the renderer.
+            #    (Mbps * 1,000,000 bits/megabit) / 8 bits/byte = Bytes/sec
+            upload_bytes_sec = (upload_mbps * 1_000_000) / 8
+            download_bytes_sec = (download_mbps * 1_000_000) / 8
+            
             render_config = RenderConfig.from_dict(self.config)
 
             self.renderer.draw_network_speeds(
                 painter=painter,
-                upload=upload_bytes,
-                download=download_bytes,
+                upload=upload_bytes_sec,
+                download=download_bytes_sec,
                 width=self.width(),
                 height=self.height(),
                 config=render_config
@@ -565,9 +559,9 @@ class NetworkSpeedWidget(QWidget):
                     history=history
                 )
             
-            painter.end()
         except Exception as e:
             self.logger.error(f"Error in paintEvent: {e}", exc_info=True)
+        finally:
             if painter.isActive():
                 painter.end()
 
@@ -612,12 +606,12 @@ class NetworkSpeedWidget(QWidget):
                 ref_top_global_y = self.mapToGlobal(text_rect_local.topLeft()).y()
 
             menu_size = self.context_menu.sizeHint()
-            menu_width = menu_size.width() if menu_size.width() > 0 else UIConstants.ESTIMATED_MENU_WIDTH
+            menu_width = menu_size.width() if menu_size.width() > 0 else constants.ui.general.ESTIMATED_MENU_WIDTH
             menu_height = menu_size.height() if menu_size.height() > 0 else 100
 
             # Position menu above the text, centered horizontally
             target_x = ref_global_pos.x() - menu_width // 2
-            target_y = ref_top_global_y - menu_height - UIConstants.MENU_PADDING_ABOVE
+            target_y = ref_top_global_y - menu_height - constants.ui.general.MENU_PADDING_ABOVE
             target_pos = QPoint(int(round(target_x)), int(round(target_y)))
 
             # Validate position to ensure it's on-screen
@@ -712,9 +706,7 @@ class NetworkSpeedWidget(QWidget):
                             
                             calculated_offset = tray_left_logical - widget_right_edge                            
                             is_on_screen = self.pos().x() >= screen.geometry().left()
-                            
-                            from ..constants.constants import UIConstants
-                            min_offset = getattr(UIConstants, 'WIDGET_MARGIN_FROM_TRAY', 5)
+                            min_offset = getattr(constants.ui.general, 'WIDGET_MARGIN_FROM_TRAY', 5)
 
                             if calculated_offset >= min_offset and is_on_screen:
                                 final_offset = calculated_offset
@@ -879,8 +871,7 @@ class NetworkSpeedWidget(QWidget):
             return
 
         # Set the offset in the config to its default value, which includes the margin.
-        from ..constants.constants import UIConstants
-        default_offset = PositionConstants.DEFAULT_PADDING + getattr(UIConstants, 'WIDGET_MARGIN_FROM_TRAY', 5)
+        default_offset = constants.layout.DEFAULT_PADDING + getattr(constants.ui.general, 'WIDGET_MARGIN_FROM_TRAY', 5)
         self.update_config({
             "position_x": None,
             "position_y": None,
@@ -899,27 +890,24 @@ class NetworkSpeedWidget(QWidget):
             raise RuntimeError("Configuration not loaded.")
 
         try:
-            # Step 1: Update all non-visual components.
+            # 1. Update all non-visual components.
             if self.renderer:
                 self.renderer.update_config(self.config)
             if self.controller:
-                self.controller.update_interface_settings(
-                    mode=self.config.get("interface_mode", ConfigConstants.DEFAULT_INTERFACE_MODE),
-                    selected=self.config.get("selected_interfaces", []),
-                )
+                self.controller.apply_config(self.config)
             if self.timer_manager:
-                update_rate = self.config.get("update_rate", ConfigConstants.DEFAULT_UPDATE_RATE)
+                update_rate = self.config.get("update_rate", constants.config.defaults.DEFAULT_UPDATE_RATE)
                 self.timer_manager.update_speed_rate(update_rate)
             if self.widget_state:
                 self.widget_state.apply_config(self.config)
 
-            # Step 2: Directly set the font, which also triggers the resize.
+            # 2. Directly set the font, which also triggers the resize.
             self._set_font(resize=True)
             
-            # Step 3: AFTER resizing, update the position. This is the crucial order.
+            # 3. AFTER resizing, update the position.
             self.update_position()
             
-            # Step 4: Schedule a repaint to reflect all changes.
+            # 4. Schedule a repaint to reflect all changes.
             self.update()
             
             self.logger.info("All settings applied successfully.")
@@ -1007,7 +995,7 @@ class NetworkSpeedWidget(QWidget):
                 project_root = os.path.abspath(os.path.join(script_dir, "..", "..", ".."))
                 base_path = project_root
 
-            icon_filename = getattr(AppConstants, 'ICON_FILENAME', 'NetSpeedTray.ico')
+            icon_filename = getattr(constants.app, 'ICON_FILENAME', 'NetSpeedTray.ico')
             icon_path = os.path.join(base_path, "assets", icon_filename)
             icon_path = os.path.normpath(icon_path)
 
@@ -1076,20 +1064,29 @@ class NetworkSpeedWidget(QWidget):
             return
 
         try:
-            # --- Optimization ---
-            # By placing the import here, the large matplotlib and numpy libraries
-            # are only loaded into memory when the user double-clicks the widget.
-            # This dramatically reduces the application's initial startup time and memory usage.
+            # --- Optimization: Lazy import ---
+            # By placing the import here, matplotlib is only loaded when the user
+            # requests the graph, speeding up initial application startup.
             from .graph import GraphWindow
 
             if self.graph_window is None or not self.graph_window.isVisible():
                 self.logger.info("Creating new GraphWindow instance.")
+                
+                # 1. Create the GraphWindow instance first.
                 self.graph_window = GraphWindow(
                     parent=self,
                     i18n=self.i18n,
                     session_start_time=self.session_start_time
                 )
+                
+                # 2. Connect the signal AFTER the instance exists.
+                self.widget_state.db_worker.database_updated.connect(
+                    self.graph_window._populate_interface_filter
+                )
+                
+                # 3. Show the window.
                 self.graph_window.show()
+
             else:
                 self.logger.debug("Graph window already exists. Activating.")
                 self.graph_window.show()
@@ -1098,6 +1095,7 @@ class NetworkSpeedWidget(QWidget):
         except Exception as e:
             self.logger.error(f"Error showing graph window: {e}", exc_info=True)
             QMessageBox.critical(self, "Error", f"Could not open the graph window:\n\n{str(e)}")
+
 
     def get_config(self) -> Dict[str, Any]:
         return self.config.copy() if self.config else {}
@@ -1128,6 +1126,7 @@ class NetworkSpeedWidget(QWidget):
             self.logger.error(f"Error checking startup status: {e}", exc_info=True)
             return False
 
+
     def toggle_startup(self, enable: bool) -> None:
         self.logger.info(f"Request to {'enable' if enable else 'disable'} application startup.")
         try:
@@ -1141,6 +1140,30 @@ class NetworkSpeedWidget(QWidget):
                 f"Could not {'enable' if enable else 'disable'} automatic startup.\n\n{e}"
             )
 
+
+    def update_retention_period(self, days: int) -> None:
+        """
+        Public method called by child windows (like GraphWindow) to update
+        the data retention period and trigger the necessary backend logic.
+        
+        Args:
+            days: The new retention period in days.
+        """
+        self.logger.info("Request received to update data retention period to %d days.", days)
+        if not self.widget_state:
+            self.logger.error("Cannot update retention period: WidgetState is not available.")
+            return
+        
+        # 1. Update the in-memory config dictionary.
+        self.config["keep_data"] = days
+        
+        # 2. Persist the change immediately to the config file.
+        self.update_config(self.config)
+        
+        # 3. Notify the WidgetState, which will trigger the grace period logic.
+        self.widget_state.update_retention_period()
+
+
     def _get_executable_path(self) -> str:
         """Gets the correct, quoted executable path or command for the registry."""        
         if getattr(sys, 'frozen', False):
@@ -1152,11 +1175,12 @@ class NetworkSpeedWidget(QWidget):
             script_path = os.path.abspath(sys.argv[0])
             return f'"{python_executable}" "{script_path}"'
 
+
     def _check_startup_registry(self) -> bool:
         if sys.platform != 'win32':
             return False
         registry_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
-        app_name = AppConstants.APP_NAME
+        app_name = constants.app.APP_NAME
         try:
             import winreg
             key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, registry_path, 0, winreg.KEY_READ)
@@ -1171,11 +1195,12 @@ class NetworkSpeedWidget(QWidget):
             self.logger.error(f"Error checking startup registry: {e}")
             return False
 
+
     def _set_startup_registry(self, enable: bool) -> None:
         if sys.platform != 'win32':  # pragma: no cover
             raise NotImplementedError("Startup registry modification only implemented for Windows.")
         registry_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
-        app_name = AppConstants.APP_NAME
+        app_name = constants.app.APP_NAME
         try:
             import winreg
             key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, registry_path, 0, winreg.KEY_WRITE)
@@ -1193,6 +1218,7 @@ class NetworkSpeedWidget(QWidget):
         except Exception as e:
             raise RuntimeError(f"Failed to modify startup registry: {e}") from e
 
+
     def get_available_interfaces(self) -> List[str]:
         if self.controller:
             try:
@@ -1203,6 +1229,17 @@ class NetworkSpeedWidget(QWidget):
         else:
             self.logger.warning("Cannot get interfaces: Controller not initialized.")
             return []
+        
+
+    def get_active_interfaces(self) -> List[str]:
+        """
+        Provides a passthrough to the controller's method for getting a list
+        of currently active network interfaces.
+        """
+        if self.controller:
+            return self.controller.get_active_interfaces()
+        return []
+
 
     def cleanup(self) -> None:
             """Performs necessary cleanup actions before the widget is destroyed."""

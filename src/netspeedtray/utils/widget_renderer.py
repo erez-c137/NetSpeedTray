@@ -12,7 +12,8 @@ from dataclasses import dataclass, field
 from PyQt6.QtGui import QPainter, QColor, QFont, QFontMetrics, QPen
 from PyQt6.QtCore import Qt, QPointF, QRect
 
-from ..constants.constants import RendererConstants, ConfigConstants, UnitConstants, GraphConstants
+from netspeedtray import constants
+
 from ..core.widget_state import AggregatedSpeedData
 from ..utils.helpers import format_speed
 
@@ -33,42 +34,42 @@ class RenderConfig:
     default_color: str
     high_speed_color: str
     low_speed_color: str
-    graph_opacity: float = field(default_factory=lambda: ConfigConstants.DEFAULT_GRAPH_OPACITY / 100.0)
-    speed_display_mode: str = ConfigConstants.DEFAULT_SPEED_DISPLAY_MODE
-    decimal_places: int = ConfigConstants.DEFAULT_DECIMAL_PLACES
-    text_alignment: str = ConfigConstants.DEFAULT_TEXT_ALIGNMENT
+    graph_opacity: float = field(default_factory=lambda: constants.config.defaults.DEFAULT_GRAPH_OPACITY / 100.0)
+    speed_display_mode: str = constants.config.defaults.DEFAULT_SPEED_DISPLAY_MODE
+    decimal_places: int = constants.config.defaults.DEFAULT_DECIMAL_PLACES
+    text_alignment: str = constants.config.defaults.DEFAULT_TEXT_ALIGNMENT
     force_decimals: bool = False
 
     @classmethod
     def from_dict(cls, config: Dict[str, Any]) -> 'RenderConfig':
         # ... (This method remains unchanged) ...
         try:
-            opacity = float(config.get('graph_opacity', ConfigConstants.DEFAULT_GRAPH_OPACITY)) / 100.0
-            weight = config.get('font_weight', ConfigConstants.DEFAULT_FONT_WEIGHT)
+            opacity = float(config.get('graph_opacity', constants.config.defaults.DEFAULT_GRAPH_OPACITY)) / 100.0
+            weight = config.get('font_weight', constants.config.defaults.DEFAULT_FONT_WEIGHT)
             if isinstance(weight, str):
                 weights = {"normal": QFont.Weight.Normal, "bold": QFont.Weight.Bold}
-                weight = weights.get(weight.lower(), ConfigConstants.DEFAULT_FONT_WEIGHT)
+                weight = weights.get(weight.lower(), constants.config.defaults.DEFAULT_FONT_WEIGHT)
             weight = int(weight)
             if not 1 <= weight <= 1000:
                 logger.warning("Invalid font_weight %s, using default.", weight)
-                weight = ConfigConstants.DEFAULT_FONT_WEIGHT
+                weight = constants.config.defaults.DEFAULT_FONT_WEIGHT
 
             return cls(
-                color_coding=config.get('color_coding', ConfigConstants.DEFAULT_COLOR_CODING),
-                graph_enabled=config.get('graph_enabled', ConfigConstants.DEFAULT_GRAPH_ENABLED),
-                high_speed_threshold=float(config.get('high_speed_threshold', ConfigConstants.DEFAULT_HIGH_SPEED_THRESHOLD)),
-                low_speed_threshold=float(config.get('low_speed_threshold', ConfigConstants.DEFAULT_LOW_SPEED_THRESHOLD)),
-                arrow_width=int(config.get('arrow_width', RendererConstants.DEFAULT_ARROW_WIDTH)),
-                font_family=config.get('font_family', ConfigConstants.DEFAULT_FONT_FAMILY),
-                font_size=int(config.get('font_size', ConfigConstants.DEFAULT_FONT_SIZE)),
+                color_coding=config.get('color_coding', constants.config.defaults.DEFAULT_COLOR_CODING),
+                graph_enabled=config.get('graph_enabled', constants.config.defaults.DEFAULT_GRAPH_ENABLED),
+                high_speed_threshold=float(config.get('high_speed_threshold', constants.config.defaults.DEFAULT_HIGH_SPEED_THRESHOLD)),
+                low_speed_threshold=float(config.get('low_speed_threshold', constants.config.defaults.DEFAULT_LOW_SPEED_THRESHOLD)),
+                arrow_width=int(config.get('arrow_width', constants.renderer.DEFAULT_ARROW_WIDTH)),
+                font_family=config.get('font_family', constants.config.defaults.DEFAULT_FONT_FAMILY),
+                font_size=int(config.get('font_size', constants.config.defaults.DEFAULT_FONT_SIZE)),
                 font_weight=weight,
-                default_color=config.get('default_color', ConfigConstants.DEFAULT_COLOR),
-                high_speed_color=config.get('high_speed_color', ConfigConstants.DEFAULT_HIGH_SPEED_COLOR),
-                low_speed_color=config.get('low_speed_color', ConfigConstants.DEFAULT_LOW_SPEED_COLOR),
+                default_color=config.get('default_color', constants.config.defaults.DEFAULT_COLOR),
+                high_speed_color=config.get('high_speed_color', constants.config.defaults.DEFAULT_HIGH_SPEED_COLOR),
+                low_speed_color=config.get('low_speed_color', constants.config.defaults.DEFAULT_LOW_SPEED_COLOR),
                 graph_opacity=max(0.0, min(1.0, opacity)),
-                speed_display_mode=config.get('speed_display_mode', ConfigConstants.DEFAULT_SPEED_DISPLAY_MODE),
-                decimal_places=int(config.get('decimal_places', ConfigConstants.DEFAULT_DECIMAL_PLACES)),
-                text_alignment=config.get('text_alignment', ConfigConstants.DEFAULT_TEXT_ALIGNMENT),
+                speed_display_mode=config.get('speed_display_mode', constants.config.defaults.DEFAULT_SPEED_DISPLAY_MODE),
+                decimal_places=int(config.get('decimal_places', constants.config.defaults.DEFAULT_DECIMAL_PLACES)),
+                text_alignment=config.get('text_alignment', constants.config.defaults.DEFAULT_TEXT_ALIGNMENT),
                 force_decimals=config.get('force_decimals', False)
             )
         except Exception as e:
@@ -149,28 +150,28 @@ class WidgetRenderer:
                 down_num_final = f"{down_val_num:g}"
                 if down_val_num == 0.0: down_num_final = "0"
             
-            arrow_width = self.metrics.horizontalAdvance(RendererConstants.UPLOAD_ARROW)
+            arrow_width = self.metrics.horizontalAdvance(constants.renderer.UPLOAD_ARROW)
             max_num_width = max(self.metrics.horizontalAdvance(up_num_final), self.metrics.horizontalAdvance(down_num_final))
             max_unit_width = max(self.metrics.horizontalAdvance(up_unit), self.metrics.horizontalAdvance(down_unit))
-            content_width = arrow_width + RendererConstants.ARROW_NUMBER_GAP + max_num_width + RendererConstants.VALUE_UNIT_GAP + max_unit_width
+            content_width = arrow_width + constants.renderer.ARROW_NUMBER_GAP + max_num_width + constants.renderer.VALUE_UNIT_GAP + max_unit_width
 
             if alignment == Qt.AlignmentFlag.AlignLeft:
-                margin = RendererConstants.TEXT_MARGIN
+                margin = constants.renderer.TEXT_MARGIN
             elif alignment == Qt.AlignmentFlag.AlignRight:
-                margin = max(width - content_width - RendererConstants.TEXT_MARGIN, RendererConstants.TEXT_MARGIN)
+                margin = max(width - content_width - constants.renderer.TEXT_MARGIN, constants.renderer.TEXT_MARGIN)
             else:  # Center
-                margin = max((width - content_width) // 2, RendererConstants.TEXT_MARGIN)
+                margin = max((width - content_width) // 2, constants.renderer.TEXT_MARGIN)
 
-            number_x = margin + arrow_width + RendererConstants.ARROW_NUMBER_GAP
-            unit_x = number_x + max_num_width + RendererConstants.VALUE_UNIT_GAP
+            number_x = margin + arrow_width + constants.renderer.ARROW_NUMBER_GAP
+            unit_x = number_x + max_num_width + constants.renderer.VALUE_UNIT_GAP
 
             painter.setPen(self._get_speed_color(upload, config) if config.color_coding else self.default_color)
-            painter.drawText(margin, top_y, RendererConstants.UPLOAD_ARROW)
+            painter.drawText(margin, top_y, constants.renderer.UPLOAD_ARROW)
             painter.drawText(number_x, top_y, up_num_final)
             painter.drawText(unit_x, top_y, up_unit)
 
             painter.setPen(self._get_speed_color(download, config) if config.color_coding else self.default_color)
-            painter.drawText(margin, bottom_y, RendererConstants.DOWNLOAD_ARROW)
+            painter.drawText(margin, bottom_y, constants.renderer.DOWNLOAD_ARROW)
             painter.drawText(number_x, bottom_y, down_num_final)
             painter.drawText(unit_x, bottom_y, down_unit)
             
@@ -198,7 +199,7 @@ class WidgetRenderer:
     def draw_mini_graph(self, painter: QPainter, width: int, height: int, config: RenderConfig, history: List[AggregatedSpeedData]) -> None:
         """Draws a mini graph of speed history behind the text."""
         # ... (This method is now correct and remains as you implemented it) ...
-        if len(history) < RendererConstants.MIN_GRAPH_POINTS:
+        if len(history) < constants.renderer.MIN_GRAPH_POINTS:
             return
 
         try:
@@ -218,8 +219,8 @@ class WidgetRenderer:
                 if num_points < 2: return
 
                 actual_max_speed = max(max(d.upload for d in history), max(d.download for d in history), 1.0)
-                max_speed = max(actual_max_speed, RendererConstants.MIN_Y_SCALE)
-                min_speed_threshold = RendererConstants.MIN_SPEED_THRESHOLD
+                max_speed = max(actual_max_speed, constants.renderer.MIN_Y_SCALE)
+                min_speed_threshold = constants.renderer.MIN_SPEED_THRESHOLD
                 step_x = graph_rect.width() / (num_points - 1)
 
                 self._cached_upload_points = [
@@ -240,12 +241,12 @@ class WidgetRenderer:
 
             painter.save()
             painter.setOpacity(config.graph_opacity)
-            upload_color = QColor(GraphConstants.UPLOAD_LINE_COLOR)
-            pen = QPen(upload_color, RendererConstants.LINE_WIDTH, cap=Qt.PenCapStyle.RoundCap, join=Qt.PenJoinStyle.RoundJoin)
+            upload_color = QColor(constants.graph.UPLOAD_LINE_COLOR)
+            pen = QPen(upload_color, constants.renderer.LINE_WIDTH, cap=Qt.PenCapStyle.RoundCap, join=Qt.PenJoinStyle.RoundJoin)
             painter.setPen(pen)
             painter.drawPolyline(self._cached_upload_points)
             
-            download_color = QColor(GraphConstants.DOWNLOAD_LINE_COLOR)
+            download_color = QColor(constants.graph.DOWNLOAD_LINE_COLOR)
             pen.setColor(download_color)
             painter.setPen(pen)
             painter.drawPolyline(self._cached_download_points)

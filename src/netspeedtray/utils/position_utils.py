@@ -14,18 +14,17 @@ from typing import Optional, Tuple, List, Protocol, runtime_checkable, TYPE_CHEC
 # Type Checking Imports
 if TYPE_CHECKING:
     from PyQt6.QtCore import QPoint, QRect, QSize
-    from PyQt6.QtGui import QScreen, QFontMetrics
+    from PyQt6.QtGui import QFontMetrics, QScreen
     from PyQt6.QtWidgets import QWidget
-    from ..constants.constants import TaskbarEdge
     from .taskbar_utils import TaskbarInfo
 
 # Qt Imports
 from PyQt6.QtCore import QPoint, QRect, QSize
-from PyQt6.QtGui import QScreen, QFontMetrics
+from PyQt6.QtGui import QFontMetrics, QScreen
 from PyQt6.QtWidgets import QApplication
 
 # Local Imports
-from ..constants.constants import PositionConstants, TaskbarEdge, TaskbarConstants, LayoutConstants, RendererConstants
+from netspeedtray import constants
 from .taskbar_utils import TaskbarInfo
 
 # Logger Setup
@@ -306,7 +305,7 @@ class TaskbarManager:
                     work_area=(0, 0, 0, 0),
                     dpi_scale=1.0,
                     is_primary=True,
-                    height=TaskbarConstants.DEFAULT_HEIGHT
+                    height=constants.taskbar.taskbar.DEFAULT_HEIGHT
                 )
             except Exception as e:
                 logger.error("Error creating primary fallback taskbar info: %s", e, exc_info=True)
@@ -325,13 +324,13 @@ class TaskbarManager:
                     work_area=(0, 0, 0, 0),
                     dpi_scale=1.0,
                     is_primary=True,
-                    height=TaskbarConstants.DEFAULT_HEIGHT
+                    height=constants.taskbar.taskbar.DEFAULT_HEIGHT
                 )
 
         def distance_to_taskbar_edge(tb: TaskbarInfo) -> float:
             """Calculates distance from point `pos` to the relevant edge of the taskbar."""
             try:
-                edge: TaskbarEdge = tb.get_edge_position()
+                edge: constants.TaskbarEdge = tb.get_edge_position()
                 rect_phys = tb.rect
                 dpi_scale = tb.dpi_scale if tb.dpi_scale > 0 else 1.0
 
@@ -340,13 +339,13 @@ class TaskbarManager:
                 right_log = rect_phys[2] / dpi_scale
                 bottom_log = rect_phys[3] / dpi_scale
 
-                if edge == TaskbarEdge.TOP:
+                if edge == constants.taskbar.edge.TOP:
                     return abs(pos.y() - bottom_log)
-                elif edge == TaskbarEdge.BOTTOM:
+                elif edge == constants.taskbar.edge.BOTTOM:
                     return abs(pos.y() - top_log)
-                elif edge == TaskbarEdge.LEFT:
+                elif edge == constants.taskbar.edge.LEFT:
                     return abs(pos.x() - right_log)
-                elif edge == TaskbarEdge.RIGHT:
+                elif edge == constants.taskbar.edge.RIGHT:
                     return abs(pos.x() - left_log)
                 else:
                     logger.warning("Unknown taskbar edge '%s' for HWND %s. Calculating center distance.", edge, tb.hwnd)
@@ -385,7 +384,7 @@ class TaskbarManager:
                     work_area=(0, 0, 0, 0),
                     dpi_scale=1.0,
                     is_primary=True,
-                    height=TaskbarConstants.DEFAULT_HEIGHT
+                    height=constants.taskbar.taskbar.DEFAULT_HEIGHT
                 )
             except Exception as e:
                 logger.error("Error creating primary fallback taskbar info: %s", e, exc_info=True)
@@ -404,7 +403,7 @@ class TaskbarManager:
                     work_area=(0, 0, 0, 0),
                     dpi_scale=1.0,
                     is_primary=True,
-                    height=TaskbarConstants.DEFAULT_HEIGHT
+                    height=constants.taskbar.DEFAULT_HEIGHT
                 )
 
 
@@ -501,7 +500,7 @@ class PositionCalculator:
     def __init__(self) -> None:
         """Initializes the calculator with logging throttle state."""
         self._last_drag_log_time: float = 0.0
-        self._drag_log_interval: float = getattr(PositionConstants, 'DRAG_LOG_INTERVAL_SECONDS', 1.0)
+        self._drag_log_interval: float = getattr(constants.taskbar.position, 'DRAG_LOG_INTERVAL_SECONDS', 1.0)
         logger.debug("PositionCalculator initialized.")
 
 class PositionCalculator:
@@ -515,7 +514,7 @@ class PositionCalculator:
     def __init__(self) -> None:
         """Initializes the calculator with logging throttle state."""
         self._last_drag_log_time: float = 0.0
-        self._drag_log_interval: float = getattr(PositionConstants, 'DRAG_LOG_INTERVAL_SECONDS', 1.0)
+        self._drag_log_interval: float = getattr(constants.taskbar.position, 'DRAG_LOG_INTERVAL_SECONDS', 1.0)
         logger.debug("PositionCalculator initialized.")
 
     def calculate_position(self, taskbar_info: TaskbarInfo, widget_size: Tuple[int, int], config: Dict[str, Any], font_metrics: Optional[QFontMetrics] = None) -> ScreenPosition:
@@ -554,13 +553,13 @@ class PositionCalculator:
                 tray_top_log = tb_bottom_log
 
             # The user-configurable offset from the tray.
-            total_offset = config.get('tray_offset_x', PositionConstants.DEFAULT_PADDING + 5)
+            total_offset = config.get('tray_offset_x', constants.layout.DEFAULT_PADDING + 5)
 
             # Calculate position based on the taskbar's edge
-            if edge in (TaskbarEdge.BOTTOM, TaskbarEdge.TOP):
+            if edge in (constants.taskbar.edge.BOTTOM, constants.taskbar.edge.TOP):
                 y = tb_top_log + (tb_height_log - widget_height) // 2
                 x = tray_left_log - widget_width - total_offset
-            elif edge in (TaskbarEdge.LEFT, TaskbarEdge.RIGHT):
+            elif edge in (constants.taskbar.edge.LEFT, constants.taskbar.edge.RIGHT):
                 x = tb_left_log + (tb_width_log - widget_width) // 2
                 y = tray_top_log - widget_height - total_offset
             else:
@@ -596,7 +595,7 @@ class PositionCalculator:
             edge = taskbar_info.get_edge_position() if taskbar_info else None
             final_target_pos = self.calculate_position(taskbar_info, widget_size_tuple, config)
 
-            if edge in (TaskbarEdge.LEFT, TaskbarEdge.RIGHT):
+            if edge in (constants.taskbar.edge.LEFT, constants.taskbar.edge.RIGHT):
                 # Constrain to a vertical line. The X is fixed.
                 fixed_x = final_target_pos.x
                 screen_rect = screen.geometry()
@@ -644,7 +643,7 @@ class PositionCalculator:
 
             screen_rect: QRect = primary_screen.availableGeometry()
             widget_width, widget_height = widget_size
-            margin = PositionConstants.SCREEN_EDGE_MARGIN
+            margin = constants.taskbar.position.SCREEN_EDGE_MARGIN
 
             fallback_x = screen_rect.right() - widget_width - margin + 1
             fallback_y = screen_rect.bottom() - widget_height - margin + 1

@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QSize, pyqtSignal, QPropertyAnimation, QEasingCurve, QPoint
 from PyQt6.QtGui import QFont, QPaintEvent, QPainter 
 from netspeedtray.utils.styles import toggle_style, slider_style
-from netspeedtray.constants.constants import ComponentVisualConstants
+from netspeedtray import constants
 
 
 logger = logging.getLogger("NetSpeedTray.Components")
@@ -33,9 +33,9 @@ class Win11Toggle(QWidget):
     """
     toggled = pyqtSignal(bool)
 
-    _OUTER_TRACK_WIDTH: Final[int] = ComponentVisualConstants.TOGGLE_TRACK_WIDTH
-    _OUTER_TRACK_HEIGHT: Final[int] = ComponentVisualConstants.TOGGLE_TRACK_HEIGHT
-    _THUMB_DIAMETER: Final[int] = ComponentVisualConstants.TOGGLE_THUMB_DIAMETER
+    _OUTER_TRACK_WIDTH: Final[int] = constants.ui.visuals.TOGGLE_TRACK_WIDTH
+    _OUTER_TRACK_HEIGHT: Final[int] = constants.ui.visuals.TOGGLE_TRACK_HEIGHT
+    _THUMB_DIAMETER: Final[int] = constants.ui.visuals.TOGGLE_THUMB_DIAMETER
     
     _THUMB_TRAVEL_PADDING: Final[int] = (_OUTER_TRACK_HEIGHT - _THUMB_DIAMETER) // 2
     

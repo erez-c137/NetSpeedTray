@@ -25,8 +25,7 @@ from PyQt6.QtCore import QRect, QPoint
 from PyQt6.QtGui import QScreen
 from PyQt6.QtWidgets import QApplication
 
-# Local Imports
-from ..constants.constants import TaskbarEdge, TaskbarConstants
+from netspeedtray import constants
 
 logger = logging.getLogger("NetSpeedTray.TaskbarUtils")
 # Caches to improve performance and prevent log spam for invalid handles
@@ -157,7 +156,7 @@ class TaskbarInfo:
             int(round(work_area_qrect.right() * dpi_scale)) + 1,
             int(round(work_area_qrect.bottom() * dpi_scale)) + 1,
         )
-        logical_height = TaskbarConstants.DEFAULT_HEIGHT
+        logical_height = constants.taskbar.taskbar.DEFAULT_HEIGHT
         screen_geo = primary_screen.geometry()
 
         return TaskbarInfo(
@@ -195,19 +194,19 @@ class TaskbarInfo:
             logger.error("Unexpected error getting tray rectangle for taskbar %s (Tray HWND %s): %s", self.hwnd, self.tray_hwnd, e)
             return None
 
-    def get_edge_position(self) -> TaskbarEdge:
+    def get_edge_position(self) -> constants.TaskbarEdge:
         """
         Determines which edge of the screen the taskbar is docked to (logical coords).
 
         Returns:
-            TaskbarEdge: Enum member representing the edge (TOP, BOTTOM, LEFT, RIGHT).
+            constants.taskbar.edge: Enum member representing the edge (TOP, BOTTOM, LEFT, RIGHT).
                          Defaults to BOTTOM if calculation fails or is ambiguous.
         """
         try:
             screen = self.get_screen()
             if not screen:
                 logger.error("Cannot determine taskbar edge: No valid QScreen for HWND %s.", self.hwnd)
-                return TaskbarEdge.BOTTOM
+                return constants.taskbar.edge.BOTTOM
 
             screen_rect_log: QRect = screen.geometry()
             dpi_scale = self.dpi_scale
@@ -226,14 +225,14 @@ class TaskbarInfo:
 
             if is_horizontal:
                 if abs(tb_top_log - screen_rect_log.top()) < tolerance:
-                    return TaskbarEdge.TOP
+                    return constants.taskbar.edge.TOP
                 elif abs(tb_bottom_log - (screen_rect_log.bottom() + 1)) < tolerance:
-                    return TaskbarEdge.BOTTOM
+                    return constants.taskbar.edge.BOTTOM
             else:
                 if abs(tb_left_log - screen_rect_log.left()) < tolerance:
-                    return TaskbarEdge.LEFT
+                    return constants.taskbar.edge.LEFT
                 elif abs(tb_right_log - (screen_rect_log.right() + 1)) < tolerance:
-                    return TaskbarEdge.RIGHT
+                    return constants.taskbar.edge.RIGHT
 
             logger.warning("Taskbar edge position ambiguous for HWND %s. Comparing centers.", self.hwnd)
             taskbar_center_x = (tb_left_log + tb_right_log) / 2
@@ -242,13 +241,13 @@ class TaskbarInfo:
             screen_center_y = (screen_rect_log.top() + screen_rect_log.bottom()) / 2
 
             if is_horizontal:
-                return TaskbarEdge.TOP if taskbar_center_y < screen_center_y else TaskbarEdge.BOTTOM
+                return constants.taskbar.edge.TOP if taskbar_center_y < screen_center_y else constants.taskbar.edge.BOTTOM
             else:
-                return TaskbarEdge.LEFT if taskbar_center_x < screen_center_x else TaskbarEdge.RIGHT
+                return constants.taskbar.edge.LEFT if taskbar_center_x < screen_center_x else constants.taskbar.edge.RIGHT
 
         except Exception as e:
             logger.error("Error calculating taskbar edge position for hwnd %s: %s. Defaulting to BOTTOM.", self.hwnd, e, exc_info=True)
-            return TaskbarEdge.BOTTOM
+            return constants.taskbar.edge.BOTTOM
 
 
 # Core Utility Functions
@@ -440,7 +439,7 @@ def get_all_taskbar_info() -> List[TaskbarInfo]:
 
             # Calculate logical height
             physical_height = rect_phys[3] - rect_phys[1]
-            logical_height = int(round(physical_height / dpi_scale)) if dpi_scale > 0 else TaskbarConstants.DEFAULT_HEIGHT
+            logical_height = int(round(physical_height / dpi_scale)) if dpi_scale > 0 else constants.taskbar.taskbar.DEFAULT_HEIGHT
             if physical_height > 0 and logical_height <= 0:
                 logical_height = 1
 
@@ -554,12 +553,13 @@ def get_taskbar_height() -> int:
         taskbar_info = get_taskbar_info()
         if taskbar_info.hwnd == 0 and taskbar_info.height <= 0:
             logger.warning("Using default taskbar height as detection failed.")
-            return TaskbarConstants.DEFAULT_HEIGHT
+            return constants.taskbar.taskbar.DEFAULT_HEIGHT
         return taskbar_info.height
     except Exception as e:
         logger.error("Error getting taskbar height: %s. Returning default.", e)
-        return TaskbarConstants.DEFAULT_HEIGHT
+        return constants.taskbar.taskbar.DEFAULT_HEIGHT
  
+      
       
 def is_fullscreen_active(taskbar_info: Optional[TaskbarInfo]) -> bool:
     """
@@ -568,7 +568,8 @@ def is_fullscreen_active(taskbar_info: Optional[TaskbarInfo]) -> bool:
     and the taskbar itself.
     """
     try:
-        from ..constants.constants import ShellConstants
+        # LAZY IMPORT: circular dependency fix.
+        from netspeedtray import constants
         
         hwnd = win32gui.GetForegroundWindow()
         if not hwnd or not win32gui.IsWindow(hwnd) or not taskbar_info:
@@ -577,7 +578,6 @@ def is_fullscreen_active(taskbar_info: Optional[TaskbarInfo]) -> bool:
         class_name = win32gui.GetClassName(hwnd)
 
         # --- RULE 1: Immediately EXCLUDE the Desktop and Taskbar ---
-        # These should never cause the widget to hide.
         if class_name in ("Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"):
             return False
 
@@ -593,7 +593,7 @@ def is_fullscreen_active(taskbar_info: Optional[TaskbarInfo]) -> bool:
             return False
             
         # --- RULE 2: Immediately INCLUDE problematic shell flyouts by class name ---
-        if class_name in ShellConstants.UI_CLASS_NAMES_TO_HIDE:
+        if class_name in constants.shell.shell.UI_CLASS_NAMES_TO_HIDE:
             logger.debug(f"Hiding for shell flyout: HWND={hwnd}, Class='{class_name}'")
             return True
 

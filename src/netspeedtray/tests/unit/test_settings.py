@@ -4,45 +4,61 @@ Unit tests for the SettingsDialog class.
 import pytest
 from unittest.mock import MagicMock, patch
 from PyQt6.QtWidgets import QApplication, QWidget
-from netspeedtray.constants import ConfigConstants
+
+# The new, single, correct way to import all constants
+from netspeedtray import constants
 
 @pytest.fixture(scope="session")
 def q_app():
+    """Provides a QApplication instance for the test session."""
     return QApplication.instance() or QApplication([])
 
 @pytest.fixture
 def mock_parent_widget():
+    """Creates a mock parent widget with default configuration."""
     parent = MagicMock()
-    parent.config = ConfigConstants.DEFAULT_CONFIG.copy()
+    # Use the new constants namespace to get the default config
+    parent.config = constants.config.defaults.DEFAULT_CONFIG.copy()
     parent.get_available_interfaces.return_value = ["Ethernet 1", "Wi-Fi"]
     parent.is_startup_enabled.return_value = False
     return parent
 
 @pytest.fixture
 def settings_dialog(q_app, mock_parent_widget):
+    """
+    Creates an instance of the SettingsDialog for testing, properly handling
+    Qt parentage and mocking.
+    """
+    # Import locally to avoid issues with Qt event loop in pytest
     from netspeedtray.views.settings import SettingsDialog
-    from netspeedtray.constants.i18n_strings import I18nStrings
     
-    # 1. Create a real, but simple, QWidget to act as the Qt parent.
+    # Create a real, but simple, QWidget to act as the Qt parent.
     actual_qt_parent = QWidget() 
 
-    # 2. Instantiate the dialog, but pass the REAL QWidget as the parent.
+    # Instantiate the dialog, passing the REAL QWidget as the parent.
     dialog = SettingsDialog(
         parent=actual_qt_parent, 
         config=mock_parent_widget.config.copy(),
-        version="1.0.8",
-        i18n=I18nStrings(),
+        version="1.1.0",
+        # Pass the singleton strings instance directly
+        i18n=constants.strings,
         available_interfaces=mock_parent_widget.get_available_interfaces(),
         is_startup_enabled=mock_parent_widget.is_startup_enabled()
     )
-    # 3. Patch the dialog's parent widget to use the mock.
+    # Patch the dialog's logical parent widget to use our mock.
     dialog.parent_widget = mock_parent_widget
 
     yield dialog
+    
+    # Cleanup Qt resources
     dialog.deleteLater()
     actual_qt_parent.deleteLater()
 
 def test_get_settings_translates_ui_state_to_config(settings_dialog):
+    """
+    Tests if the get_settings method correctly translates UI state back into
+    a configuration dictionary.
+    """
     # Arrange: Simulate user interaction
     settings_dialog.update_rate.setValue(5)
     settings_dialog.all_interfaces.setChecked(False)

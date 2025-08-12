@@ -19,7 +19,7 @@ from typing import Optional, Callable
 import logging
 from PyQt6.QtCore import QTimer, QObject
 
-from ..constants.constants import TimerConstants
+from netspeedtray import constants
 
 logger = logging.getLogger("NetSpeedTray.TimerUtils")
 
@@ -29,8 +29,8 @@ def calculate_timer_interval(update_rate: float) -> int:
     Calculate a timer interval in milliseconds based on the desired update rate.
 
     The update rate is converted to milliseconds, ensuring it meets the minimum interval
-    defined in `TimerConstants.MINIMUM_INTERVAL_MS`. If the update rate is 0, the function
-    returns the smart mode interval defined in `TimerConstants.SMART_MODE_INTERVAL_MS`.
+    defined in `constants.timers.MINIMUM_INTERVAL_MS`. If the update rate is 0, the function
+    returns the smart mode interval defined in `constants.timers.SMART_MODE_INTERVAL_MS`.
 
     Args:
         update_rate: The desired update frequency in seconds. Use 0 to enable smart mode.
@@ -52,10 +52,10 @@ def calculate_timer_interval(update_rate: float) -> int:
         raise ValueError(f"Update rate cannot be negative: {update_rate}")
 
     if update_rate == 0:
-        interval = TimerConstants.SMART_MODE_INTERVAL_MS
+        interval = constants.timers.SMART_MODE_INTERVAL_MS
         logger.debug("Using smart mode interval: %dms", interval)
     else:
-        interval = max(TimerConstants.MINIMUM_INTERVAL_MS, int(update_rate * 1000))
+        interval = max(constants.timers.MINIMUM_INTERVAL_MS, int(update_rate * 1000))
         logger.debug("Calculated timer interval: %dms from update_rate %.2fs", interval, update_rate)
     return interval
 

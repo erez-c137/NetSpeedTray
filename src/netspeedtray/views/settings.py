@@ -26,17 +26,13 @@ from PyQt6.QtWidgets import (
     QWidget, QFontDialog, QScrollArea, QApplication, QGridLayout
 )
 
-from netspeedtray.utils.taskbar_utils import get_taskbar_info, TaskbarEdge
+from netspeedtray.utils.taskbar_utils import get_taskbar_info
 from netspeedtray.utils.config import ConfigManager
 from netspeedtray.utils.helpers import get_app_data_path, get_app_asset_path
 from netspeedtray.utils.styles import dialog_style, sidebar_style, button_style, color_button_style
 from netspeedtray.utils.components import Win11Toggle, Win11Slider
-from netspeedtray.constants import (
-    AppConstants, HelperConstants, HistoryConstants, DialogConstants, FontConstants,
-    SliderConstants, LayoutConstants, InterfaceGroupConstants, ConfigConstants,
-    LogConstants, UIStyleConstants, ExportConstants, HistoryPeriodConstants, TimerConstants
-)
-from netspeedtray.constants.i18n_strings import I18nStrings
+
+from netspeedtray import constants
 
 class SettingsDialog(QDialog):
     """
@@ -56,7 +52,7 @@ class SettingsDialog(QDialog):
         parent: "NetworkSpeedWidget",
         config: Dict[str, Any],
         version: str,
-        i18n: I18nStrings,
+        i18n: constants.I18nStrings,
         available_interfaces: Optional[List[str]] = None,
         is_startup_enabled: bool = False,
     ) -> None:
@@ -97,14 +93,14 @@ class SettingsDialog(QDialog):
         # Timer for throttling live setting updates sent to the main widget
         self._update_timer = QTimer(self)
         self._update_timer.setSingleShot(True)
-        self._update_timer.setInterval(DialogConstants.THROTTLE_INTERVAL_MS)
+        self._update_timer.setInterval(constants.ui.dialogs.THROTTLE_INTERVAL_MS)
         self._update_timer.timeout.connect(self._emit_settings_changed_throttled)
 
-        self.setWindowTitle(f"{AppConstants.APP_NAME} {self.i18n.SETTINGS_WINDOW_TITLE} v{self.version}")
+        self.setWindowTitle(f"{constants.app.APP_NAME} {self.i18n.SETTINGS_WINDOW_TITLE} v{self.version}")
         
         # Set window icon using the same helper as other windows
         try:
-            icon_filename = getattr(AppConstants, 'ICON_FILENAME', 'NetSpeedTray.ico')
+            icon_filename = getattr(constants.app, 'ICON_FILENAME', 'NetSpeedTray.ico')
             icon_path = get_app_asset_path(icon_filename)
             if icon_path.exists():
                 self.setWindowIcon(QIcon(str(icon_path)))
@@ -233,7 +229,7 @@ class SettingsDialog(QDialog):
             update_group_layout = QVBoxLayout(update_group)
             update_group_layout.setSpacing(8)
             self.update_rate = Win11Slider()
-            self.update_rate.setRange(0, int(TimerConstants.MAXIMUM_UPDATE_RATE_SECONDS * 2))
+            self.update_rate.setRange(0, int(constants.timers.MAXIMUM_UPDATE_RATE_SECONDS * 2))
             update_group_layout.addWidget(QLabel(self.i18n.UPDATE_INTERVAL_LABEL))
             update_group_layout.addWidget(self.update_rate)
             page_layout.addWidget(update_group)
@@ -306,7 +302,7 @@ class SettingsDialog(QDialog):
 
             font_layout.addWidget(QLabel(self.i18n.FONT_SIZE_LABEL))
             self.font_size = Win11Slider()
-            self.font_size.setRange(FontConstants.FONT_SIZE_MIN, FontConstants.FONT_SIZE_MAX)
+            self.font_size.setRange(constants.fonts.FONT_SIZE_MIN, constants.fonts.FONT_SIZE_MAX)
             font_layout.addWidget(self.font_size)
 
             font_layout.addWidget(QLabel(self.i18n.FONT_WEIGHT_LABEL))
@@ -352,16 +348,16 @@ class SettingsDialog(QDialog):
             color_container_layout.addWidget(QLabel(self.i18n.HIGH_SPEED_THRESHOLD_LABEL))
             self.high_speed_threshold = Win11Slider()
             self.high_speed_threshold.setRange(
-                int(SliderConstants.SPEED_THRESHOLD_MIN_HIGH),
-                int(SliderConstants.SPEED_THRESHOLD_MAX_HIGH)
+                int(constants.ui.sliders.SPEED_THRESHOLD_MIN_HIGH),
+                int(constants.ui.sliders.SPEED_THRESHOLD_MAX_HIGH)
             )
             color_container_layout.addWidget(self.high_speed_threshold)
 
             color_container_layout.addWidget(QLabel(self.i18n.LOW_SPEED_THRESHOLD_LABEL))
             self.low_speed_threshold = Win11Slider()
             self.low_speed_threshold.setRange(
-                int(SliderConstants.SPEED_THRESHOLD_MIN_LOW),
-                int(SliderConstants.SPEED_THRESHOLD_MAX_LOW)
+                int(constants.ui.sliders.SPEED_THRESHOLD_MIN_LOW),
+                int(constants.ui.sliders.SPEED_THRESHOLD_MAX_LOW)
             )
             color_container_layout.addWidget(self.low_speed_threshold)
 
@@ -409,18 +405,18 @@ class SettingsDialog(QDialog):
             
             note = QLabel(self.i18n.GRAPH_NOTE_TEXT)
             note.setWordWrap(True)
-            note.setStyleSheet(f"font-size: {FontConstants.NOTE_FONT_SIZE}pt; color: grey;")
+            note.setStyleSheet(f"font-size: {constants.fonts.NOTE_FONT_SIZE}pt; color: grey;")
             graph_layout.addWidget(note, 1, 0, 1, 2) # Note spans 2 columns
 
             graph_layout.addWidget(QLabel(self.i18n.HISTORY_DURATION_LABEL), 2, 0, 1, 2)
             self.history_duration = Win11Slider()
-            hist_min, hist_max = HistoryConstants.HISTORY_MINUTES_RANGE
+            hist_min, hist_max = constants.ui.history.HISTORY_MINUTES_RANGE
             self.history_duration.setRange(hist_min, hist_max)
             graph_layout.addWidget(self.history_duration, 3, 0, 1, 2)
 
             graph_layout.addWidget(QLabel(self.i18n.GRAPH_OPACITY_LABEL), 4, 0, 1, 2)
             self.graph_opacity = Win11Slider()
-            self.graph_opacity.setRange(SliderConstants.OPACITY_MIN, SliderConstants.OPACITY_MAX)
+            self.graph_opacity.setRange(constants.ui.sliders.OPACITY_MIN, constants.ui.sliders.OPACITY_MAX)
             graph_layout.addWidget(self.graph_opacity, 5, 0, 1, 2)
 
             graph_layout.setColumnStretch(0, 0)
@@ -528,16 +524,16 @@ class SettingsDialog(QDialog):
                 example_toggle = next(iter(self.interface_checkboxes.values()))
                 item_height = example_toggle.sizeHint().height()
                 item_height_with_spacing = item_height + self.interfaces_container_layout.spacing()
-                max_items_to_show = InterfaceGroupConstants.MAX_VISIBLE_INTERFACES
+                max_items_to_show = constants.ui.interfaces.MAX_VISIBLE_INTERFACES
                 container_margins = self.interfaces_container_layout.contentsMargins()
                 if item_height_with_spacing <= 0: item_height_with_spacing = 30
                 calculated_max_height = (item_height_with_spacing * max_items_to_show)
                 if max_items_to_show > 0 : calculated_max_height -= self.interfaces_container_layout.spacing()
                 calculated_max_height += container_margins.top() + container_margins.bottom()
-                effective_max_height = max(calculated_max_height, InterfaceGroupConstants.SCROLL_MIN_HEIGHT)
+                effective_max_height = max(calculated_max_height, constants.ui.interfaces.SCROLL_MIN_HEIGHT)
                 self.interface_scroll.setMaximumHeight(int(effective_max_height))
             else:
-                self.interface_scroll.setMaximumHeight(InterfaceGroupConstants.SCROLL_MAX_HEIGHT_EMPTY)
+                self.interface_scroll.setMaximumHeight(constants.ui.interfaces.SCROLL_MAX_HEIGHT_EMPTY)
 
             interfaces_layout.addWidget(self.interface_scroll, 1, 0, 1, 2) # Scroll area spans 2 columns
 
@@ -575,9 +571,9 @@ class SettingsDialog(QDialog):
     def _snap_value_to_allowed(self, value: int, allowed_values: List[int]) -> int:
         """Snaps a value to the closest value in a list of allowed values."""
         if not allowed_values:
-            self.logger.warning("Cannot snap value: allowed_values list is empty. Trying FontConstants.WEIGHT_MAP.")
-            if FontConstants.WEIGHT_MAP: # Ensure WEIGHT_MAP exists
-                return min(FontConstants.WEIGHT_MAP.keys(), key=lambda w: abs(w - value))
+            self.logger.warning("Cannot snap value: allowed_values list is empty. Trying constants.fonts.WEIGHT_MAP.")
+            if constants.fonts.WEIGHT_MAP: # Ensure WEIGHT_MAP exists
+                return min(constants.fonts.WEIGHT_MAP.keys(), key=lambda w: abs(w - value))
             return value
 
         return min(allowed_values, key=lambda w: abs(w - value))
@@ -602,7 +598,7 @@ class SettingsDialog(QDialog):
         self.font_weight_name_map.clear()
         if raw_weights_to_styles:
             for weight_val, style_names_for_weight in sorted(raw_weights_to_styles.items()):
-                display_name = FontConstants.WEIGHT_MAP.get(weight_val) # Try standard name first
+                display_name = constants.fonts.WEIGHT_MAP.get(weight_val) # Try standard name first
                 
                 if display_name is None: # Not a standard weight, derive from font's style names
                     plain_name = None
@@ -619,10 +615,10 @@ class SettingsDialog(QDialog):
         
         if not self.font_weight_name_map: # Fallback if no specific weights found
             self.logger.warning(
-                f"No specific weights found for font '{font_family}'. Falling back to standard FontConstants.WEIGHT_MAP."
+                f"No specific weights found for font '{font_family}'. Falling back to standard constants.fonts.WEIGHT_MAP."
             )
             # Populate with standard weights and their i18n names if available
-            for weight_val, key_name in FontConstants.WEIGHT_NUM_TO_KEY.items():
+            for weight_val, key_name in constants.fonts.WEIGHT_NUM_TO_KEY.items():
                 self.font_weight_name_map[weight_val] = getattr(self.i18n, key_name, f"Weight {weight_val}")
 
 
@@ -643,7 +639,7 @@ class SettingsDialog(QDialog):
             self.font_weight.setEnabled(len(self.allowed_font_weights) > 1)
             self.logger.debug(f"Font weight slider range set: {min_w}-{max_w}. Enabled: {self.font_weight.isEnabled()}")
         else:
-            self.font_weight.setRange(FontConstants.FONT_WEIGHT_NORMAL, FontConstants.FONT_WEIGHT_NORMAL + 1) # Default fallback
+            self.font_weight.setRange(constants.fonts.FONT_WEIGHT_NORMAL, constants.fonts.FONT_WEIGHT_NORMAL + 1) # Default fallback
             self.font_weight.setEnabled(False)
             self.font_weight.setValueText(self.i18n.DEFAULT_TEXT) # Use N/A from i18n
             self.logger.warning("No allowed font weights for slider range; slider set to default/disabled.")
@@ -683,9 +679,9 @@ class SettingsDialog(QDialog):
             
             if not self.allowed_font_weights or not self.font_weight_name_map:
                 self.logger.warning("No allowed font weights/name map for text update. Using raw value or fallback.")
-                # Use FontConstants.WEIGHT_MAP for text if dynamic map is empty
-                fb_snapped_val = self._snap_value_to_allowed(current_slider_value, list(FontConstants.WEIGHT_MAP.keys()) if FontConstants.WEIGHT_MAP else [current_slider_value])
-                weight_text = FontConstants.WEIGHT_MAP.get(fb_snapped_val, f"Weight {current_slider_value}")
+                # Use constants.fonts.WEIGHT_MAP for text if dynamic map is empty
+                fb_snapped_val = self._snap_value_to_allowed(current_slider_value, list(constants.fonts.WEIGHT_MAP.keys()) if constants.fonts.WEIGHT_MAP else [current_slider_value])
+                weight_text = constants.fonts.WEIGHT_MAP.get(fb_snapped_val, f"Weight {current_slider_value}")
                 self.font_weight.setValueText(weight_text)
                 return
 
@@ -723,7 +719,7 @@ class SettingsDialog(QDialog):
             current_value_on_release = self.font_weight.value()
             if not self.allowed_font_weights:
                 self.logger.warning("Cannot snap on release: no allowed_font_weights. Using fallback map.")
-                target_snapped_value = self._snap_value_to_allowed(current_value_on_release, list(FontConstants.WEIGHT_MAP.keys()) if FontConstants.WEIGHT_MAP else [current_value_on_release])
+                target_snapped_value = self._snap_value_to_allowed(current_value_on_release, list(constants.fonts.WEIGHT_MAP.keys()) if constants.fonts.WEIGHT_MAP else [current_value_on_release])
             else:
                 target_snapped_value = self._snap_value_to_allowed(current_value_on_release, self.allowed_font_weights)
 
@@ -827,75 +823,75 @@ class SettingsDialog(QDialog):
 
         # --- General Page ---
         update_rate_val_raw = self.config.get("update_rate")
-        update_rate_val_config = ConfigConstants.DEFAULT_UPDATE_RATE if update_rate_val_raw is None else float(update_rate_val_raw)
+        update_rate_val_config = constants.config.defaults.DEFAULT_UPDATE_RATE if update_rate_val_raw is None else float(update_rate_val_raw)
         update_rate_slider_val = int(update_rate_val_config * 2) 
         self.update_rate.setValue(max(0, update_rate_slider_val)) 
         self.update_rate.setValueText(self.rate_to_text(self.update_rate.value()))
 
         dynamic_update_raw = self.config.get("dynamic_update_enabled")
-        dynamic_update_config = ConfigConstants.DEFAULT_DYNAMIC_UPDATE_ENABLED if dynamic_update_raw is None else bool(dynamic_update_raw)
+        dynamic_update_config = constants.config.defaults.DEFAULT_DYNAMIC_UPDATE_ENABLED if dynamic_update_raw is None else bool(dynamic_update_raw)
         self.dynamic_update_rate.setChecked(dynamic_update_config)
         
         self.start_with_windows.setChecked(self.startup_enabled_initial_state)
         self.free_move.setChecked(self.config.get("free_move", False))
 
         font_family_config = self.config.get("font_family")
-        initial_font_family = ConfigConstants.DEFAULT_FONT_FAMILY if not font_family_config else str(font_family_config)
+        initial_font_family = constants.config.defaults.DEFAULT_FONT_FAMILY if not font_family_config else str(font_family_config)
         self.font_family_label.setText(initial_font_family)
 
         font_size_config = self.config.get("font_size")
-        initial_font_size = ConfigConstants.DEFAULT_FONT_SIZE if font_size_config is None else int(font_size_config)
-        initial_font_size = max(FontConstants.FONT_SIZE_MIN, min(initial_font_size, FontConstants.FONT_SIZE_MAX))
+        initial_font_size = constants.config.defaults.DEFAULT_FONT_SIZE if font_size_config is None else int(font_size_config)
+        initial_font_size = max(constants.fonts.FONT_SIZE_MIN, min(initial_font_size, constants.fonts.FONT_SIZE_MAX))
         self.font_size.setValue(initial_font_size)
         self.font_size.setValueText(str(initial_font_size))
 
         self._update_font_weight_options(initial_font_family) 
         font_weight_config = self.config.get("font_weight")
-        initial_font_weight = ConfigConstants.DEFAULT_FONT_WEIGHT if font_weight_config is None else int(font_weight_config)
+        initial_font_weight = constants.config.defaults.DEFAULT_FONT_WEIGHT if font_weight_config is None else int(font_weight_config)
         self.update_font_weight_slider_controls(initial_font_weight)
 
         default_color_config = self.config.get("default_color")
-        initial_default_color_hex = ConfigConstants.DEFAULT_COLOR if not default_color_config or not default_color_config.startswith("#") else str(default_color_config)
+        initial_default_color_hex = constants.config.defaults.DEFAULT_COLOR if not default_color_config or not default_color_config.startswith("#") else str(default_color_config)
         self._set_color_button_style(self.default_color_button, initial_default_color_hex)
         
         # --- Color Page ---
         color_coding_raw = self.config.get("color_coding")
-        color_coding_enabled = ConfigConstants.DEFAULT_COLOR_CODING if color_coding_raw is None else bool(color_coding_raw)
+        color_coding_enabled = constants.config.defaults.DEFAULT_COLOR_CODING if color_coding_raw is None else bool(color_coding_raw)
         self.enable_colors.setChecked(color_coding_enabled)
 
         high_thresh_raw = self.config.get("high_speed_threshold")
-        high_thresh_config = ConfigConstants.DEFAULT_HIGH_SPEED_THRESHOLD if high_thresh_raw is None else float(high_thresh_raw)
+        high_thresh_config = constants.config.defaults.DEFAULT_HIGH_SPEED_THRESHOLD if high_thresh_raw is None else float(high_thresh_raw)
         self.high_speed_threshold.setValue(int(high_thresh_config * 10))
 
         low_thresh_raw = self.config.get("low_speed_threshold")
-        low_thresh_config = ConfigConstants.DEFAULT_LOW_SPEED_THRESHOLD if low_thresh_raw is None else float(low_thresh_raw)
+        low_thresh_config = constants.config.defaults.DEFAULT_LOW_SPEED_THRESHOLD if low_thresh_raw is None else float(low_thresh_raw)
         self.low_speed_threshold.setValue(int(low_thresh_config * 10))
         
         high_color_config = self.config.get("high_speed_color")
-        initial_high_color_hex = ConfigConstants.DEFAULT_HIGH_SPEED_COLOR if not high_color_config or not high_color_config.startswith("#") else str(high_color_config)
+        initial_high_color_hex = constants.config.defaults.DEFAULT_HIGH_SPEED_COLOR if not high_color_config or not high_color_config.startswith("#") else str(high_color_config)
         self._set_color_button_style(self.high_speed_color_button, initial_high_color_hex)
 
         low_color_config = self.config.get("low_speed_color")
-        initial_low_color_hex = ConfigConstants.DEFAULT_LOW_SPEED_COLOR if not low_color_config or not low_color_config.startswith("#") else str(low_color_config)
+        initial_low_color_hex = constants.config.defaults.DEFAULT_LOW_SPEED_COLOR if not low_color_config or not low_color_config.startswith("#") else str(low_color_config)
         self._set_color_button_style(self.low_speed_color_button, initial_low_color_hex)
         
         self.toggle_color_settings(color_coding_enabled)
 
         # --- Graph Page ---
         graph_enabled_raw = self.config.get("graph_enabled")
-        graph_enabled_config = ConfigConstants.DEFAULT_GRAPH_ENABLED if graph_enabled_raw is None else bool(graph_enabled_raw)
+        graph_enabled_config = constants.config.defaults.DEFAULT_GRAPH_ENABLED if graph_enabled_raw is None else bool(graph_enabled_raw)
         self.enable_graph.setChecked(graph_enabled_config)
 
         history_min_raw = self.config.get("history_minutes")
-        history_min_config = ConfigConstants.DEFAULT_HISTORY_MINUTES if history_min_raw is None else int(history_min_raw)
-        hist_min_slider, hist_max_slider = HistoryConstants.HISTORY_MINUTES_RANGE
+        history_min_config = constants.config.defaults.DEFAULT_HISTORY_MINUTES if history_min_raw is None else int(history_min_raw)
+        hist_min_slider, hist_max_slider = constants.ui.history.HISTORY_MINUTES_RANGE
         history_min_config = max(hist_min_slider, min(history_min_config, hist_max_slider))
         self.history_duration.setValue(history_min_config)
         self.history_duration.setValueText(f"{self.history_duration.value()} {self.i18n.MINUTES_LABEL}")
 
         graph_opacity_raw = self.config.get("graph_opacity")
-        graph_opacity_config = ConfigConstants.DEFAULT_GRAPH_OPACITY if graph_opacity_raw is None else int(graph_opacity_raw)
-        opacity_min_slider, opacity_max_slider = SliderConstants.OPACITY_MIN, SliderConstants.OPACITY_MAX
+        graph_opacity_config = constants.config.defaults.DEFAULT_GRAPH_OPACITY if graph_opacity_raw is None else int(graph_opacity_raw)
+        opacity_min_slider, opacity_max_slider = constants.ui.sliders.OPACITY_MIN, constants.ui.sliders.OPACITY_MAX
         graph_opacity_config = max(opacity_min_slider, min(graph_opacity_config, opacity_max_slider))
         self.graph_opacity.setValue(graph_opacity_config)
         self.graph_opacity.setValueText(f"{self.graph_opacity.value()}%")
@@ -927,7 +923,7 @@ class SettingsDialog(QDialog):
 
         # --- Interfaces Page ---
         interface_mode_config = self.config.get("interface_mode")
-        is_all_mode_config = (ConfigConstants.DEFAULT_INTERFACE_MODE == "all") if interface_mode_config is None else (str(interface_mode_config) == "all")
+        is_all_mode_config = (constants.config.defaults.DEFAULT_INTERFACE_MODE == "all") if interface_mode_config is None else (str(interface_mode_config) == "all")
 
         self.all_interfaces.blockSignals(True)
         self.all_interfaces.setChecked(is_all_mode_config)
@@ -1004,15 +1000,15 @@ class SettingsDialog(QDialog):
     def _set_color_button_style(self, button: QPushButton, color_hex: str) -> None:
         try:
             button.setStyleSheet(color_button_style(color_hex))
-            button.setFixedSize(DialogConstants.COLOR_BUTTON_WIDTH, DialogConstants.COLOR_BUTTON_HEIGHT)
+            button.setFixedSize(constants.ui.dialogs.COLOR_BUTTON_WIDTH, constants.ui.dialogs.COLOR_BUTTON_HEIGHT)
         except Exception as e:
             self.logger.error(f"Error setting style for color button '{button.objectName()}': {e}")
 
     def choose_color(self, button: QPushButton) -> None:
         object_name = button.objectName()
-        if object_name == "high_speed_color": default_color_hex = ConfigConstants.DEFAULT_HIGH_SPEED_COLOR
-        elif object_name == "low_speed_color": default_color_hex = ConfigConstants.DEFAULT_LOW_SPEED_COLOR
-        else: default_color_hex = ConfigConstants.DEFAULT_COLOR
+        if object_name == "high_speed_color": default_color_hex = constants.config.defaults.DEFAULT_HIGH_SPEED_COLOR
+        elif object_name == "low_speed_color": default_color_hex = constants.config.defaults.DEFAULT_LOW_SPEED_COLOR
+        else: default_color_hex = constants.config.defaults.DEFAULT_COLOR
 
         current_color_hex = self._get_color_from_button(button, default_color_hex)
         current_qcolor = QColor(current_color_hex)
@@ -1033,12 +1029,12 @@ class SettingsDialog(QDialog):
             if self.allowed_font_weights:
                  current_qfont_weight = self._snap_value_to_allowed(current_slider_val, self.allowed_font_weights)
             else: # Fallback if allowed_font_weights is empty for some reason
-                 fallback_weights = list(FontConstants.WEIGHT_MAP.keys()) if FontConstants.WEIGHT_MAP else [FontConstants.FONT_WEIGHT_NORMAL]
+                 fallback_weights = list(constants.fonts.WEIGHT_MAP.keys()) if constants.fonts.WEIGHT_MAP else [constants.fonts.FONT_WEIGHT_NORMAL]
                  current_qfont_weight = self._snap_value_to_allowed(current_slider_val, fallback_weights)
 
         except (ValueError, AttributeError) as e:
              self.logger.warning(f"Could not determine current font weight for dialog, using default: {e}")
-             current_qfont_weight = ConfigConstants.DEFAULT_FONT_WEIGHT
+             current_qfont_weight = constants.config.defaults.DEFAULT_FONT_WEIGHT
         
         current_font = QFont(
             self.font_family_label.text(),
@@ -1161,12 +1157,12 @@ class SettingsDialog(QDialog):
             )
 
     def export_error_log(self) -> None:
-        log_path = os.path.join(get_app_data_path(), LogConstants.LOG_FILENAME)
+        log_path = os.path.join(get_app_data_path(), constants.logs.LOG_FILENAME)
         if not os.path.exists(log_path):
             QMessageBox.warning(self, self.i18n.NO_LOG_TITLE, self.i18n.NO_LOG_MESSAGE)
             return
 
-        default_filename = f"{os.path.splitext(LogConstants.LOG_FILENAME)[0]}_export.log"
+        default_filename = f"{os.path.splitext(constants.logs.LOG_FILENAME)[0]}_export.log"
         default_path = os.path.join(os.path.expanduser("~"), "Documents", default_filename)
         dest_path, _ = QFileDialog.getSaveFileName(
             self, self.i18n.EXPORT_ERROR_LOG_TITLE, default_path,
@@ -1196,21 +1192,21 @@ class SettingsDialog(QDialog):
             settings = self.original_config.copy() # Start with original to preserve unmanaged settings
 
             # General Page
-            settings["update_rate"] = max(ConfigConstants.MINIMUM_UPDATE_RATE, self.update_rate.value() / 2.0) if self.update_rate.value() > 0 else 0.0
+            settings["update_rate"] = max(constants.config.defaults.MINIMUM_UPDATE_RATE, self.update_rate.value() / 2.0) if self.update_rate.value() > 0 else 0.0
             settings["font_size"] = self.font_size.value()
             settings["font_family"] = self.font_family_label.text()
             settings["font_weight"] = self.font_weight.value()
             settings["dynamic_update_enabled"] = self.dynamic_update_rate.isChecked()
             settings["free_move"] = self.free_move.isChecked()
             settings["start_with_windows"] = self.start_with_windows.isChecked() if hasattr(self, 'start_with_windows') else self.startup_enabled_initial_state
-            settings["default_color"] = self._get_color_from_button(self.default_color_button, ConfigConstants.DEFAULT_COLOR)
+            settings["default_color"] = self._get_color_from_button(self.default_color_button, constants.config.defaults.DEFAULT_COLOR)
 
             # Color Coding Page
             settings["color_coding"] = self.enable_colors.isChecked()
             settings["high_speed_threshold"] = self.high_speed_threshold.value() / 10.0
             settings["low_speed_threshold"] = self.low_speed_threshold.value() / 10.0
-            settings["high_speed_color"] = self._get_color_from_button(self.high_speed_color_button, ConfigConstants.DEFAULT_HIGH_SPEED_COLOR)
-            settings["low_speed_color"] = self._get_color_from_button(self.low_speed_color_button, ConfigConstants.DEFAULT_LOW_SPEED_COLOR)
+            settings["high_speed_color"] = self._get_color_from_button(self.high_speed_color_button, constants.config.defaults.DEFAULT_HIGH_SPEED_COLOR)
+            settings["low_speed_color"] = self._get_color_from_button(self.low_speed_color_button, constants.config.defaults.DEFAULT_LOW_SPEED_COLOR)
 
             # Mini Graph Page
             settings["graph_enabled"] = self.enable_graph.isChecked()
