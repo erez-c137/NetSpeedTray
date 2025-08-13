@@ -16,7 +16,7 @@ VSVersionInfo(
         StringStruct('FileDescription', 'NetSpeedTray (Beta Release)'),
         StringStruct('FileVersion', '1.1.1.0'),
         StringStruct('ProductName', 'NetSpeedTray'),
-        StringStruct('ProductVersion', '1.1.1-beta.1'),
+        StringStruct('ProductVersion', '1.1.1-beta.4'),
       ]
     ),
     VarFileInfo([VarStruct('Translation', [0x0409, 1252])])
