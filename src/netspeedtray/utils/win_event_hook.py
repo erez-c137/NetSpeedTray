@@ -10,6 +10,8 @@ import threading
 import ctypes
 from ctypes import wintypes, windll, byref
 
+import win32process
+
 from PyQt6.QtCore import QObject, pyqtSignal
 
 logger = logging.getLogger("NetSpeedTray.WinEventHook")
@@ -25,64 +27,88 @@ WINEVENTPROC = ctypes.WINFUNCTYPE(
     wintypes.DWORD,
     wintypes.DWORD
 )
+
+# WinEvent Constants
 EVENT_SYSTEM_FOREGROUND = 0x0003
+EVENT_OBJECT_LOCATIONCHANGE = 0x800B
 WINEVENT_OUTOFCONTEXT = 0x0000
+
 
 class WinEventHook(QObject, threading.Thread):
     """
-    Listens for foreground window changes in a separate thread and emits a signal.
+    Listens for a specific WinEvent in a separate thread and emits a signal.
+    Can be configured for global events or events from a specific window.
     """
-    foreground_window_changed = pyqtSignal()
+    event_triggered = pyqtSignal(int)  # Emits the HWND of the window that triggered the event
 
-    def __init__(self, parent=None):
+    def __init__(self, event_to_watch: int, hwnd_to_watch: int = 0, parent=None):
+        """
+        Initializes the hook.
+
+        Args:
+            event_to_watch: The WinEvent constant to listen for (e.g., EVENT_SYSTEM_FOREGROUND).
+            hwnd_to_watch: Optional HWND. If provided, the hook only listens to this window.
+                           If 0 (default), it's a global hook.
+        """
         super().__init__(parent)
         threading.Thread.__init__(self)
-        self.daemon = True  # Ensure thread exits when main program does
+        self.daemon = True
         self._hook = None
         self._thread_id = None
         self._is_running = False
+        
+        self.event_to_watch = event_to_watch
+        self.hwnd_to_watch = hwnd_to_watch
+
+        # Store the callback in an instance variable so it's not garbage collected
+        self.c_callback = WINEVENTPROC(self.callback)
 
     def run(self):
         """The main loop for the hook thread."""
         self._is_running = True
         
-        # We must store the callback in an instance variable so it's not garbage collected
-        self.c_callback = WINEVENTPROC(self.callback)
+        process_id = 0
+        thread_id = 0
         
-        # Set the hook. This must be done from the thread that will process the events.
+        # If we are watching a specific window, get its process and thread ID
+        if self.hwnd_to_watch != 0:
+            try:
+                thread_id, process_id = win32process.GetWindowThreadProcessId(self.hwnd_to_watch)
+            except Exception as e:
+                logger.error(f"Could not get process/thread for HWND {self.hwnd_to_watch}: {e}")
+                self._is_running = False
+                return
+
         self._hook = windll.user32.SetWinEventHook(
-            EVENT_SYSTEM_FOREGROUND,
-            EVENT_SYSTEM_FOREGROUND,
+            self.event_to_watch,
+            self.event_to_watch,
             0,
             self.c_callback,
-            0,
-            0,
+            process_id,
+            thread_id,
             WINEVENT_OUTOFCONTEXT
         )
         
         if self._hook == 0:
-            logger.error("SetWinEventHook failed.")
+            logger.error(f"SetWinEventHook failed for event {self.event_to_watch}.")
             self._is_running = False
             return
 
-        # Store the Win32 thread ID for posting the quit message
         self._thread_id = windll.kernel32.GetCurrentThreadId()
-        logger.info("WinEventHook started successfully in thread %d.", self._thread_id)
+        logger.info("WinEventHook started successfully for event %s in thread %d.", self.event_to_watch, self._thread_id)
         
-        # This is the standard Windows message loop.
         msg = wintypes.MSG()
         while self._is_running and windll.user32.GetMessageW(byref(msg), 0, 0, 0) != 0:
             windll.user32.TranslateMessage(byref(msg))
             windll.user32.DispatchMessageW(byref(msg))
 
         windll.user32.UnhookWinEvent(self._hook)
-        logger.info("WinEventHook stopped and unhooked.")
+        logger.info("WinEventHook stopped and unhooked for event %s.", self.event_to_watch)
 
     def callback(self, hWinEventHook, event, hwnd, idObject, idChild, dwEventThread, dwmsEventTime):
         """The C-compatible callback that receives events from Windows."""
-        # This function runs in the hook's thread, so we emit a signal
-        # to communicate safely with the main GUI thread.
-        self.foreground_window_changed.emit()
+        # Emit the HWND that triggered the event for context.
+        self.event_triggered.emit(hwnd)
 
     def stop(self):
         """Stops the event listener thread."""
@@ -90,4 +116,5 @@ class WinEventHook(QObject, threading.Thread):
             return
         self._is_running = False
         # Post a WM_QUIT message to the thread's message queue to unblock GetMessageW
-        windll.user32.PostThreadMessageW(self._thread_id, wintypes.UINT(0x0012), 0, 0)
+        WM_QUIT = 0x0012
+        windll.user32.PostThreadMessageW(self._thread_id, wintypes.UINT(WM_QUIT), 0, 0)
