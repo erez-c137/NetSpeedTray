@@ -7,7 +7,7 @@ from typing import Final
 class AppConstants:
     """Defines application metadata and the single-instance mutex name."""
     APP_NAME: Final[str] = "NetSpeedTray"
-    VERSION: Final[str] = "1.1.1-beta.2"
+    VERSION: Final[str] = "1.1.1-beta.3"
     MUTEX_NAME: Final[str] = "Global\\NetSpeedTray_SingleInstanceMutex"
 
     def __init__(self) -> None:

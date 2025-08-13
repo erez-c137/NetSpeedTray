@@ -39,7 +39,7 @@ def settings_dialog(q_app, mock_parent_widget):
     dialog = SettingsDialog(
         parent=actual_qt_parent, 
         config=mock_parent_widget.config.copy(),
-        version="1.1.1-beta.2",
+        version="1.1.1-beta3",
         # Pass the singleton strings instance directly
         i18n=constants.strings,
         available_interfaces=mock_parent_widget.get_available_interfaces(),
