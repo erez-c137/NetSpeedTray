@@ -123,26 +123,6 @@ class ConfigManager:
         unknown_keys = set(config.keys()) - set(validated.keys())
         if unknown_keys:
             self.logger.warning("Ignoring unknown config fields: %s", ", ".join(unknown_keys))
-        
-        def _is_windows_dark_mode() -> bool:
-            try:
-                # Use the reliable winreg method directly.
-                import winreg
-                key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
-                value, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
-                winreg.CloseKey(key)
-                return value == 0
-            except Exception:
-                # Default to dark mode if the registry key can't be read.
-                self.logger.warning("Could not determine Windows theme. Defaulting to dark.")
-                return True
-
-        # If the user has NOT customized their color (i.e., it's still the factory default white),
-        # AND the system is in Light Mode, we override the default to black for visibility.
-        if validated["default_color"].upper() == constants.config.defaults.DEFAULT_COLOR:
-            if not _is_windows_dark_mode():
-                self.logger.info("Light mode detected with default color. Overriding text color to black.")
-                validated["default_color"] = constants.color.BLACK
 
         # --- Apply Validations ---
         for key in ["color_coding", "graph_enabled", "dynamic_update_enabled", "free_move", 
