@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import winreg
 import math
 import time
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
@@ -65,6 +66,7 @@ class NetworkSpeedWidget(QWidget):
         self.session_start_time = datetime.now()
         self.config_manager = CoreConfigManager()
         self.config: Dict[str, Any] = config or self._load_initial_config(taskbar_height)
+        self._apply_theme_aware_defaults()
         self.i18n = constants.strings
 
         # --- Core Functional Components ---
@@ -324,6 +326,34 @@ class NetworkSpeedWidget(QWidget):
         config = self.config_manager.load()
         config["taskbar_height"] = taskbar_height
         return config
+    
+    def _apply_theme_aware_defaults(self) -> None:
+        """
+        Checks for factory-default settings that depend on the OS theme and
+        applies smarter defaults if necessary. This runs once on startup.
+        """
+        try:
+            # Check if the text color is the factory default (#FFFFFF)
+            is_default_color = self.config.get("default_color", "").upper() == constants.config.defaults.DEFAULT_COLOR
+
+            if is_default_color:
+                # Use the reliable winreg method to check the theme
+                key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
+                apps_use_light_theme, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
+                winreg.CloseKey(key)
+
+                # apps_use_light_theme == 1 means Light Mode is ON.
+                if apps_use_light_theme == 1:
+                    self.logger.info("Light mode detected with default color. Overriding to black for visibility.")
+                    # Update the config in memory
+                    self.config["default_color"] = constants.color.BLACK
+                    # Immediately persist this smart default back to the file
+                    self.update_config({"default_color": self.config["default_color"]})
+
+        except Exception as e:
+            # If the registry check fails for any reason, we log it but don't crash.
+            # The widget will just use the default white, which is a safe fallback.
+            self.logger.warning("Could not perform theme-aware default check: %s", e)   
 
     def _setup_window_properties(self) -> None:
         """
