@@ -8,38 +8,29 @@ positioned near the Windows system tray area.
 
 from __future__ import annotations
 
+# --- Standard Library Imports ---
 import logging
+import math
 import os
 import sys
-import math
 import time
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+import winreg
 from datetime import datetime
+from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from ..views.graph import GraphWindow
-    from ..views.settings import SettingsDialog
-    from PyQt6.QtGui import QScreen
-    from ..utils.position_utils import PositionCalculator
-    from ..utils.taskbar_utils import TaskbarInfo
-
-from PyQt6.QtCore import (
-    QPoint, QRect, QEvent, QObject, QSize, QTimer, Qt
-)
+# --- Third-Party Imports ---
+import win32api
+import win32con
+import win32gui
+from PyQt6.QtCore import QPoint, QRect, QEvent, QObject, QSize, QTimer, Qt
 from PyQt6.QtGui import (
     QCloseEvent, QColor, QContextMenuEvent, QFont, QFontMetrics, QHideEvent,
     QIcon, QMouseEvent, QPaintEvent, QPainter, QShowEvent
 )
-from PyQt6.QtWidgets import (
-    QApplication, QMenu, QMessageBox, QWidget, QDialog
-)
+from PyQt6.QtWidgets import QApplication, QDialog, QMenu, QMessageBox, QWidget
 
-import win32api
-import win32con
-import win32gui
-
+# --- First-Party (Local) Imports ---
 from netspeedtray import constants
-
 from ..core.controller import NetworkController as CoreController
 from ..core.timer_manager import SpeedTimerManager
 from ..core.widget_state import WidgetState as CoreWidgetState, AggregatedSpeedData as CoreSpeedData
@@ -47,13 +38,22 @@ from ..utils.config import ConfigManager as CoreConfigManager
 from ..utils.position_utils import PositionManager as CorePositionManager, WindowState as CoreWindowState
 from ..utils.taskbar_utils import get_taskbar_info, is_fullscreen_active, is_taskbar_visible
 from ..utils.widget_renderer import WidgetRenderer as CoreWidgetRenderer, RenderConfig
-from ..utils.win_event_hook import WinEventHook
+from ..utils.win_event_hook import WinEventHook, EVENT_SYSTEM_FOREGROUND, EVENT_OBJECT_LOCATIONCHANGE
+
+# --- Type Checking ---
+if TYPE_CHECKING:
+    from PyQt6.QtGui import QScreen
+    from ..views.graph import GraphWindow
+    from ..views.settings import SettingsDialog
+    from ..utils.position_utils import PositionCalculator
+    from ..utils.taskbar_utils import TaskbarInfo
 
 
 class NetworkSpeedWidget(QWidget):
     """Main widget for displaying network speeds near the Windows system tray."""
 
     MIN_UPDATE_INTERVAL = 0.5  # Minimum seconds between updates
+
 
     def __init__(self, taskbar_height: int = 40, config: Optional[Dict[str, Any]] = None, parent: QObject | None = None) -> None:
         """Initialize the NetworkSpeedWidget with core components and UI setup."""
@@ -65,6 +65,7 @@ class NetworkSpeedWidget(QWidget):
         self.session_start_time = datetime.now()
         self.config_manager = CoreConfigManager()
         self.config: Dict[str, Any] = config or self._load_initial_config(taskbar_height)
+        self._apply_theme_aware_defaults()
         self.i18n = constants.strings
 
         # --- Core Functional Components ---
@@ -90,9 +91,11 @@ class NetworkSpeedWidget(QWidget):
         self._drag_offset: QPoint = QPoint()
         self.is_paused: bool = False
         self._last_update_time: float = 0.0
+        self._last_taskbar_event_time: float = 0.0
         
         # --- Event Hook & Timers ---
-        self.win_event_hook: WinEventHook
+        self.foreground_hook: Optional[WinEventHook] = None
+        self.taskbar_hook: Optional[WinEventHook] = None
         self.state_update_timer = QTimer(self)  # The single safety-net timer
         self._tray_watcher_timer = QTimer(self)
         
@@ -119,6 +122,7 @@ class NetworkSpeedWidget(QWidget):
             self.logger.critical("Initialization failed: %s", e, exc_info=True)
             raise RuntimeError(f"Failed to initialize NetworkSpeedWidget: {e}") from e
 
+
     def _setup_timers(self) -> None:
         """Configures and starts all application timers."""
         self.logger.debug("Setting up timers...")
@@ -132,6 +136,7 @@ class NetworkSpeedWidget(QWidget):
         self._tray_watcher_timer.timeout.connect(self._check_and_update_position)
         self._tray_watcher_timer.start(2000)
         self.logger.debug("Tray watcher timer started.")
+
 
     def _init_core_components(self) -> None:
         """
@@ -153,6 +158,7 @@ class NetworkSpeedWidget(QWidget):
         except Exception as e:
             self.logger.error("Failed to initialize core components: %s", e, exc_info=True)
             raise RuntimeError("Failed to initialize core application components") from e
+
 
     def _init_position_manager(self) -> None:
         """
@@ -180,9 +186,21 @@ class NetworkSpeedWidget(QWidget):
             )
             self.position_manager = CorePositionManager(window_state)
             self.logger.debug("PositionManager initialized")
+
+            # --- START THE TASKBAR-SPECIFIC HOOK ---
+            # Now that we have the taskbar HWND, we can create a hook to watch it for movement.
+            taskbar_hwnd = self.position_manager._state.taskbar_info.hwnd
+            if taskbar_hwnd:
+                self.taskbar_hook = WinEventHook(EVENT_OBJECT_LOCATIONCHANGE, hwnd_to_watch=taskbar_hwnd)
+                self.taskbar_hook.event_triggered.connect(self._on_taskbar_state_changed)
+                self.taskbar_hook.start()
+            else:
+                self.logger.warning("Could not start taskbar event hook: Invalid taskbar HWND.")
+
         except Exception as e:
             self.logger.error("Failed to initialize PositionManager: %s", e, exc_info=True)
             raise RuntimeError("PositionManager initialization failed") from e
+
 
     def _initialize_position(self) -> None:
         """Set the initial widget position using saved coordinates or default placement."""
@@ -208,6 +226,7 @@ class NetworkSpeedWidget(QWidget):
         except Exception as e:
             self.logger.error("Failed to set initial position: %s", e, exc_info=True)
             raise RuntimeError("Initial position setup failed") from e
+
 
     def _check_and_update_position(self) -> None:
         """
@@ -242,7 +261,35 @@ class NetworkSpeedWidget(QWidget):
 
 
     def _on_foreground_window_changed(self) -> None:
-        """Slot that responds to window focus changes for instant updates."""
+        """
+        Slot that responds to window focus changes. It updates the widget's visibility
+        and forcefully re-asserts its topmost status if it should be visible.
+        This is the primary mechanism for fixing z-order issues.
+        """
+        # First, run the standard visibility check. This will correctly hide the
+        # widget if we've switched to a fullscreen app.
+        self._update_widget_state()
+        
+        # --- Z-ORDER FIX ---
+        # After the state update, if the widget is supposed to be visible,
+        # we re-assert its topmost status. This pulls it on top of shell
+        # elements like the taskbar when they are clicked.
+        if self.isVisible():
+            self._ensure_win32_topmost()
+
+
+    def _on_taskbar_state_changed(self, hwnd: int) -> None:
+        """
+        Slot for the taskbar's location change signal. Includes rate-limiting
+        to prevent event storms during the taskbar's slide animation.
+        """
+        # Rate-limit to avoid excessive updates. 100ms is a good balance.
+        now = time.monotonic()
+        if now - self._last_taskbar_event_time < 0.1:
+            return
+        self._last_taskbar_event_time = now
+        
+        self.logger.debug("Taskbar state change event received. Updating widget state.")
         self._update_widget_state()
 
 
@@ -270,6 +317,7 @@ class NetworkSpeedWidget(QWidget):
             # Ensure it stays hidden on error.
             self.setVisible(False)
 
+
     def pause(self) -> None:
         """Pause widget updates (for future use, not active by default)."""
         if self.is_paused:
@@ -285,6 +333,7 @@ class NetworkSpeedWidget(QWidget):
             self.renderer.pause()
         self.update_config({'paused': True})
         self.update()
+
 
     def resume(self) -> None:
         """Resume widget updates (for future use, not active by default)."""
@@ -302,6 +351,7 @@ class NetworkSpeedWidget(QWidget):
         self.update_config({'paused': False})
         self.update()
 
+
     def update_display_speeds(self, upload_mbps: float, download_mbps: float) -> None:
         """
         Slot for the controller's `display_speed_updated` signal.
@@ -311,6 +361,7 @@ class NetworkSpeedWidget(QWidget):
         self.download_speed = download_mbps
         self.update() # Trigger a repaint
 
+
     def _update_display_speeds(self) -> None:
         """
         This method is now deprecated and kept to prevent crashes if called by old code.
@@ -318,12 +369,43 @@ class NetworkSpeedWidget(QWidget):
         """
         self.update() # Just trigger a repaint.
 
+
     def _load_initial_config(self, taskbar_height: int) -> Dict[str, Any]:
         """Load configuration and inject taskbar height."""
         self.logger.debug("Loading initial configuration...")
         config = self.config_manager.load()
         config["taskbar_height"] = taskbar_height
         return config
+
+
+    def _apply_theme_aware_defaults(self) -> None:
+        """
+        Checks for factory-default settings that depend on the OS shell theme and
+        applies smarter defaults if necessary. This runs once on startup.
+        """
+        try:
+            # Check if the text color is the factory default (#FFFFFF)
+            is_default_color = self.config.get("default_color", "").upper() == constants.config.defaults.DEFAULT_COLOR
+            if not is_default_color:
+                return  # User has set a custom color, do nothing.
+
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
+            # This value controls the Windows shell (taskbar) theme. 1 = Light, 0 = Dark.
+            system_uses_light_theme, _ = winreg.QueryValueEx(key, "SystemUsesLightTheme")
+            winreg.CloseKey(key)
+
+            # system_uses_light_theme == 1 means the taskbar is using the Light theme.
+            if system_uses_light_theme == 1:
+                self.logger.info("Light taskbar theme detected with default color. Overriding to black for visibility.")
+                # Update the config dictionary in memory
+                self.config["default_color"] = constants.color.BLACK
+                
+                # Immediately persist this smart default back to the file so it's saved for next time.
+                self.update_config({"default_color": self.config["default_color"]})
+
+        except Exception as e:
+            self.logger.warning("Could not perform theme-aware default check: %s", e)
+
 
     def _setup_window_properties(self) -> None:
         """
@@ -342,6 +424,7 @@ class NetworkSpeedWidget(QWidget):
         self.setMouseTracking(True)
         self.logger.debug("Window properties set")
 
+
     def _init_ui_components(self) -> None:
         """Initialize UI-related elements: icon, colors, font."""
         self.logger.debug("Initializing UI components...")
@@ -355,10 +438,12 @@ class NetworkSpeedWidget(QWidget):
         self._init_font()
         self.logger.debug("UI components initialized")
 
+
     def _init_font(self) -> None:
         """Initialize the font and set initial widget size."""
         self.logger.debug("Initializing font...")
         self._set_font(resize=True)
+
 
     def _set_font(self, resize: bool = True) -> None:
         """Apply font settings from config."""
@@ -374,6 +459,7 @@ class NetworkSpeedWidget(QWidget):
         self.logger.debug(f"Font set: {font_family}, {font_size}px")
         if resize:
             self._resize_widget_for_font()
+
 
     def _init_context_menu(self) -> None:
         """Creates the right-click context menu."""
@@ -393,6 +479,7 @@ class NetworkSpeedWidget(QWidget):
             self.logger.debug("Context menu initialized successfully.")
         except Exception as e:
             self.logger.error("Error initializing context menu: %s", e, exc_info=True)
+
 
     def _toggle_pause_resume(self) -> None:
         """Toggles between pause and resume states."""
@@ -419,13 +506,12 @@ class NetworkSpeedWidget(QWidget):
             # Connect the controller's final aggregated speed to this widget's display update
             self.controller.display_speed_updated.connect(self.update_display_speeds)
 
-            # Connect the WinEventHook to its handler for fast visibility changes
-            self.win_event_hook = WinEventHook()
-            self.win_event_hook.foreground_window_changed.connect(self._on_foreground_window_changed)
-            self.win_event_hook.start()
+             # Connect the WinEventHook for FOREGROUND changes (fullscreen detection)
+            self.foreground_hook = WinEventHook(EVENT_SYSTEM_FOREGROUND)
+            self.foreground_hook.event_triggered.connect(self._on_foreground_window_changed)
+            self.foreground_hook.start()
 
-            # Connect the database worker's update signal to the graph's filter
-            # This is deferred until the graph window is created.
+            # The taskbar hook is set up later, once we have the taskbar's HWND.
             
             self.logger.debug("Signal connections established successfully.")
         except Exception as e:
@@ -442,6 +528,7 @@ class NetworkSpeedWidget(QWidget):
             self.logger.debug("Lazy imports validated successfully.")
         except ImportError as e:
             self.logger.error("Lazy import validation failed: %s", e, exc_info=True)
+
 
     def _resize_widget_for_font(self) -> None:
         """
@@ -502,6 +589,7 @@ class NetworkSpeedWidget(QWidget):
             self.logger.error(f"Failed to resize widget: {e}", exc_info=True)
             raise RuntimeError("Failed to resize widget based on font") from e
 
+
     def _update_font(self) -> None:
         """Slot to update the font and resize the widget when font settings change."""
         self.logger.debug("Updating font and resizing widget due to settings change...")
@@ -509,6 +597,58 @@ class NetworkSpeedWidget(QWidget):
             self._set_font(resize=True)
         except Exception as e:
             self.logger.error(f"Runtime font update failed: {e}", exc_info=True)
+
+
+    def _update_color_for_theme(self) -> None:
+        """
+        Checks the current Windows shell (taskbar) theme and updates the widget's
+        text color in real-time, but only if the color has not been customized.
+        This is an in-memory change and does not write to the config file.
+        """
+        self.logger.debug("Executing live theme color update check...")
+        try:
+            current_config_color = self.config.get("default_color", "").upper()
+            auto_colors = [
+                constants.config.defaults.DEFAULT_COLOR.upper(),
+                constants.color.BLACK.upper()
+            ]
+
+            # If the user has set a custom color (e.g., blue), we must not override it.
+            if current_config_color not in auto_colors:
+                self.logger.info("User has a custom text color set. Live theme update is disabled.")
+                return
+
+            # Query the registry for the current shell theme.
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
+            # This value specifically controls the Windows shell (taskbar) theme. 1 = Light, 0 = Dark.
+            system_uses_light_theme, _ = winreg.QueryValueEx(key, "SystemUsesLightTheme")
+            winreg.CloseKey(key)
+
+            # Determine the target color based on the shell theme.
+            if system_uses_light_theme == 1:  # Light Taskbar
+                target_color_hex = constants.color.BLACK
+                theme_name = "Light"
+            else:  # Dark Taskbar
+                target_color_hex = constants.config.defaults.DEFAULT_COLOR
+                theme_name = "Dark"
+            
+            # Only perform an update if the color actually needs to change.
+            if self.default_color.name().upper() != target_color_hex.upper():
+                self.logger.info(f"Windows shell theme changed to {theme_name}. Updating text color to {target_color_hex}.")
+                
+                # Apply the change to the in-memory QColor object used for painting.
+                self.default_color = QColor(target_color_hex)
+                
+                # Trigger a repaint of the widget to reflect the new color.
+                self.update()
+            else:
+                self.logger.debug(f"Shell theme changed to {theme_name}, but color is already correct.")
+
+        except FileNotFoundError:
+             self.logger.warning("Could not find theme registry key for live update. Feature may not work.")
+        except Exception as e:
+            self.logger.error(f"Failed to perform live theme color update: {e}", exc_info=True)
+
 
     def paintEvent(self, event: QPaintEvent) -> None:
         """
@@ -565,6 +705,7 @@ class NetworkSpeedWidget(QWidget):
             if painter.isActive():
                 painter.end()
 
+
     def _draw_paint_error(self, painter: Optional[QPainter], text: str) -> None:
         """Draws a visual error indicator on the widget background."""
         try:
@@ -587,7 +728,7 @@ class NetworkSpeedWidget(QWidget):
         except Exception as paint_err:
             self.logger.critical(f"CRITICAL: Failed to draw paint error indicator: {paint_err}", exc_info=True)
 
-    # --- NEW HELPER METHOD ---
+
     def _calculate_menu_position(self) -> QPoint:
         """
         Calculates the optimal global position for the context menu.
@@ -628,7 +769,7 @@ class NetworkSpeedWidget(QWidget):
             self.logger.error(f"Error calculating menu position: {e}", exc_info=True)
             return self.mapToGlobal(self.rect().center()) # Safe fallback
 
-    # --- REFACTORED ---
+
     def mousePressEvent(self, event: QMouseEvent) -> None:
         """Handles mouse press events for dragging and context menu."""
         try:
@@ -646,7 +787,8 @@ class NetworkSpeedWidget(QWidget):
         except Exception as e:
             self.logger.error(f"Error in mousePressEvent: {e}", exc_info=True)
             event.ignore()
-            
+
+
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
         """Moves the widget if dragging is active."""
         if not self._dragging:
@@ -678,6 +820,7 @@ class NetworkSpeedWidget(QWidget):
 
         except Exception as e:
             self.logger.error(f"Error processing mouseMoveEvent: {e}", exc_info=True)
+
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         """
@@ -729,6 +872,7 @@ class NetworkSpeedWidget(QWidget):
         except Exception as e:
             self.logger.error(f"Error in mouseReleaseEvent: {e}", exc_info=True)
 
+
     def changeEvent(self, event: QEvent) -> None:
         """Detects window activation/deactivation to ensure topmost status."""
         super().changeEvent(event)
@@ -736,6 +880,7 @@ class NetworkSpeedWidget(QWidget):
         if event_type in (QEvent.Type.WindowActivate, QEvent.Type.WindowDeactivate):
             self.logger.debug(f"{'WindowActivate' if event_type == QEvent.Type.WindowActivate else 'WindowDeactivate'} event, ensuring topmost.")
             QTimer.singleShot(10, self._ensure_win32_topmost)
+
 
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
         """Shows the speed history graph on left double-click."""
@@ -749,7 +894,7 @@ class NetworkSpeedWidget(QWidget):
         except Exception as e:
             self.logger.error(f"Error in mouseDoubleClickEvent: {e}", exc_info=True)
 
-    # --- REFACTORED ---
+
     def contextMenuEvent(self, event: QContextMenuEvent) -> None:
         """
         Shows the context menu. This handler is the primary mechanism for
@@ -764,13 +909,16 @@ class NetworkSpeedWidget(QWidget):
             self.logger.error(f"Error showing context menu: {e}", exc_info=True)
             event.ignore()
 
+
     def showEvent(self, event: QShowEvent) -> None:
         self.logger.debug(f"Widget showEvent triggered. New visibility: {self.isVisible()}")
         super().showEvent(event)
 
+
     def hideEvent(self, event: QHideEvent) -> None:
         self.logger.debug("Widget hideEvent triggered.")
         super().hideEvent(event)
+
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self.logger.info("Close event received. Initiating cleanup...")
@@ -792,22 +940,31 @@ class NetworkSpeedWidget(QWidget):
     def _update_widget_state(self) -> None:
         """
         The single authoritative method to control widget visibility and Z-order.
-        Relies on the intelligent is_fullscreen_active() to make decisions.
+        It shows the widget only if the taskbar is found and visible, AND no fullscreen app is active.
         """
         try:
             taskbar_info = get_taskbar_info()
-            
-            # The logic is now simple: is_fullscreen_active() handles all complex cases.
-            # If it returns True, we hide. Otherwise, we show.
-            should_hide = is_fullscreen_active(taskbar_info)
-            should_be_visible = not should_hide
 
-            if self.isVisible() != should_be_visible:
-                self.setVisible(should_be_visible)
+            should_be_visible = False
             
-            # If it's supposed to be visible, ensure it's on top.
-            if should_be_visible and not self.config.get("free_move", False):
-                self._ensure_win32_topmost()
+            if taskbar_info:
+                fullscreen = is_fullscreen_active(taskbar_info)
+                taskbar_is_on_screen = is_taskbar_visible(taskbar_info)
+
+                if not fullscreen and taskbar_is_on_screen:
+                    should_be_visible = True
+            
+            # Only perform actions if the visibility state needs to change.
+            if self.isVisible() != should_be_visible:
+                self.logger.info(
+                    f"Visibility state change ==> Setting widget visible: {should_be_visible}"
+                )
+                self.setVisible(should_be_visible)
+                
+                # Only re-assert topmost status at the exact moment the widget
+                # becomes visible. This prevents re-stacking on every event.
+                if should_be_visible and not self.config.get("free_move", False):
+                    self._ensure_win32_topmost()
 
         except Exception as e:
             self.logger.error(f"Error in _update_widget_state: {e}", exc_info=True)
@@ -846,6 +1003,7 @@ class NetworkSpeedWidget(QWidget):
         except Exception as e:
             self.logger.error("Error in _ensure_win32_topmost for HWND %s: %s", widget_hwnd_ptr, e, exc_info=True)
 
+
     def _enforce_topmost_status(self) -> None:
         """
         Periodically ensures the widget's topmost status. This is the primary
@@ -860,6 +1018,7 @@ class NetworkSpeedWidget(QWidget):
             self._ensure_win32_topmost()
         except Exception as e:
             self.logger.error(f"Error in periodic topmost enforcement: {e}", exc_info=True)
+
 
     def reset_to_default_position(self) -> None:
         """
@@ -879,6 +1038,7 @@ class NetworkSpeedWidget(QWidget):
         })
 
         self.update_position()
+
 
     def apply_all_settings(self) -> None:
         """
@@ -915,6 +1075,7 @@ class NetworkSpeedWidget(QWidget):
             self.logger.error(f"Error applying settings to components: {e}", exc_info=True)
             raise RuntimeError(f"Failed to apply settings: {e}") from e
 
+
     def handle_settings_changed(self, updated_config: Dict[str, Any], save_to_disk: bool = True) -> None:
         """
         Handles configuration changes. Applies them to the widget and optionally saves them.
@@ -946,6 +1107,7 @@ class NetworkSpeedWidget(QWidget):
             self.logger.error(f"Failed to handle settings change: {e}", exc_info=True)
             self.config = old_config # Rollback in-memory config
             raise
+
 
     def show_settings(self) -> None:
         """Creates and displays the modal settings dialog."""
@@ -983,6 +1145,7 @@ class NetworkSpeedWidget(QWidget):
             self.logger.error(f"Error showing settings: {e}", exc_info=True)
             QMessageBox.critical(self, self.i18n.ERROR_TITLE, f"Could not open settings:\n\n{str(e)}")
 
+
     def _load_icon(self) -> None:
         """Loads the application icon from the assets directory."""
         self.logger.debug("Loading application icon...")
@@ -1008,6 +1171,7 @@ class NetworkSpeedWidget(QWidget):
         except Exception as e:
             self.logger.error(f"Error loading application icon: {e}", exc_info=True)
 
+
     def _rollback_config(self, old_config: Dict[str, Any]) -> None:
         """Restores a previous configuration state."""
         self.logger.warning("Rolling back configuration changes due to apply failure.")
@@ -1017,6 +1181,7 @@ class NetworkSpeedWidget(QWidget):
             self.logger.info("Configuration rolled back and saved successfully.")
         except Exception as e:
             self.logger.error(f"CRITICAL: Error saving rolled-back configuration: {e}", exc_info=True)
+
 
     def update_config(self, updates: Dict[str, Any]) -> None:
         """Updates the internal configuration and saves it to disk."""
@@ -1030,6 +1195,7 @@ class NetworkSpeedWidget(QWidget):
         except Exception as e:
             self.logger.error(f"Error updating/saving configuration: {e}", exc_info=True)
             raise RuntimeError(f"Failed to save configuration: {e}") from e
+
 
     def save_position(self) -> None:
         """
@@ -1054,6 +1220,7 @@ class NetworkSpeedWidget(QWidget):
                     self.logger.debug("Free Move OFF. Cleared saved widget position.")
         except Exception as e:
             self.logger.error(f"Error saving widget position: %s", e, exc_info=True)
+
 
     def _show_graph_window(self) -> None:
         """Creates and displays the speed history graph window."""
@@ -1100,12 +1267,15 @@ class NetworkSpeedWidget(QWidget):
     def get_config(self) -> Dict[str, Any]:
         return self.config.copy() if self.config else {}
 
+
     def get_widget_size(self) -> QSize:
         return self.size()
+
 
     def set_app_version(self, version: str) -> None:
         self.app_version = version
         self.logger.debug(f"Application version set to: {version}")
+
 
     def update_position(self) -> None:
         """
@@ -1117,6 +1287,7 @@ class NetworkSpeedWidget(QWidget):
                 self.position_manager.update_position()
             except Exception as e:
                 self.logger.error(f"Error during position update: {e}", exc_info=True)
+
 
     def is_startup_enabled(self) -> bool:
         self.logger.debug("Checking system startup configuration...")
@@ -1245,10 +1416,16 @@ class NetworkSpeedWidget(QWidget):
             """Performs necessary cleanup actions before the widget is destroyed."""
             self.logger.info("Performing widget cleanup...")
             try:
-                if hasattr(self, 'win_event_hook'):
-                    self.win_event_hook.stop()
-                    self.win_event_hook.join(timeout=1.0)
-                    self.logger.debug("WinEventHook stopped.")
+
+                if hasattr(self, 'foreground_hook') and self.foreground_hook:
+                    self.foreground_hook.stop()
+                    self.foreground_hook.join(timeout=1.0)
+                    self.logger.debug("Foreground hook stopped.")
+            
+                if hasattr(self, 'taskbar_hook') and self.taskbar_hook:
+                    self.taskbar_hook.stop()
+                    self.taskbar_hook.join(timeout=1.0)
+                    self.logger.debug("Taskbar hook stopped.")
                 
                 for timer in [self.state_update_timer, self._tray_watcher_timer]:
                     if timer and timer.isActive():
