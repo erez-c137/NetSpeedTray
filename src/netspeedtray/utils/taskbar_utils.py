@@ -616,39 +616,63 @@ def is_fullscreen_active(taskbar_info: Optional[TaskbarInfo]) -> bool:
 
 def is_taskbar_visible(taskbar_info: Optional[TaskbarInfo]) -> bool:
     """
-    Checks if the specified taskbar is currently visible (i.e., not auto-hidden).
+    Checks if the specified taskbar is currently visible on screen.
 
-    Uses the SHAppBarMessage Windows API function (ABM_GETSTATE) to query the
-    taskbar's state flags and checks for the ABS_AUTOHIDE flag.
-
-    Args:
-        taskbar_info: TaskbarInfo for the taskbar to check, or None.
-
-    Returns:
-        bool: True if the taskbar is valid and NOT auto-hidden, False otherwise.
+    This function is now robust for auto-hiding taskbars. It first checks if
+    the auto-hide setting is enabled. If it is, it then checks the taskbar's
+    actual screen position to determine if it is currently revealed or hidden.
     """
     ABM_GETSTATE = 0x00000004
     ABS_AUTOHIDE = 0x00000001
 
-    if not taskbar_info or not taskbar_info.hwnd:
-        return False
-
-    if not win32gui.IsWindow(taskbar_info.hwnd):
-        logger.warning("Taskbar HWND=%s is invalid for visibility check.", taskbar_info.hwnd)
+    if not taskbar_info or not taskbar_info.hwnd or not win32gui.IsWindow(taskbar_info.hwnd):
         return False
 
     try:
+        # 1. Check if the auto-hide *setting* is enabled for this taskbar.
         abd = APPBARDATA()
         abd.cbSize = ctypes.sizeof(abd)
         abd.hWnd = taskbar_info.hwnd
-
         state_flags = windll.shell32.SHAppBarMessage(ABM_GETSTATE, byref(abd))
-        is_currently_autohidden = bool(state_flags & ABS_AUTOHIDE)
-        return not is_currently_autohidden
+        auto_hide_enabled = bool(state_flags & ABS_AUTOHIDE)
 
-    except AttributeError as e:
-        logger.error("API call failed for SHAppBarMessage (check shell32 availability?): %s", e, exc_info=True)
-        return False
+        # 2. If auto-hide is NOT enabled, the taskbar is always considered visible.
+        if not auto_hide_enabled:
+            return True
+
+        # 3. If auto-hide IS enabled, we must check its actual position.
+        # A hidden taskbar is moved just off the edge of the screen.
+        screen = taskbar_info.get_screen()
+        if not screen:
+            logger.warning("Cannot determine taskbar visibility state: no associated screen.")
+            return False
+
+        screen_geo = screen.geometry()
+        dpi = taskbar_info.dpi_scale
+        # Get the screen's bounds in physical pixels.
+        screen_rect_phys = (
+            int(screen_geo.left() * dpi),
+            int(screen_geo.top() * dpi),
+            int(screen_geo.right() * dpi) + 1,
+            int(screen_geo.bottom() * dpi) + 1
+        )
+
+        tb_rect_phys = taskbar_info.rect
+        edge = taskbar_info.get_edge_position()
+
+        # Check if the taskbar is positioned off-screen (with a small tolerance).
+        if edge == constants.taskbar.edge.BOTTOM and tb_rect_phys[1] >= screen_rect_phys[3] - 5:
+            return False  # Hidden at the bottom
+        if edge == constants.taskbar.edge.TOP and tb_rect_phys[3] <= screen_rect_phys[1] + 5:
+            return False  # Hidden at the top
+        if edge == constants.taskbar.edge.LEFT and tb_rect_phys[2] <= screen_rect_phys[0] + 5:
+            return False  # Hidden on the left
+        if edge == constants.taskbar.edge.RIGHT and tb_rect_phys[0] >= screen_rect_phys[2] - 5:
+            return False  # Hidden on the right
+
+        # 4. If auto-hide is on but it's not in a hidden position, it's visible.
+        return True
+
     except Exception as e:
-        logger.error("Error checking taskbar state via SHAppBarMessage for HWND=%s: %s", taskbar_info.hwnd, e, exc_info=True)
+        logger.error("Error checking taskbar visibility state for HWND=%s: %s", taskbar_info.hwnd, e, exc_info=True)
         return False
