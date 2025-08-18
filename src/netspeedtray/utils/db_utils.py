@@ -456,6 +456,49 @@ def get_app_bandwidth_usage(db_path: Union[str, Path], start_time: Optional[date
     return results
 
 
+def get_earliest_timestamp(db_path: Union[str, Path], db_lock: threading.Lock) -> Optional[int]:
+    """
+    Finds the earliest timestamp available in the speed history tables.
+
+    Checks both the raw and aggregated tables and returns the absolute earliest
+    timestamp found.
+
+    Args:
+        db_path: Path to the SQLite database file.
+        db_lock: Threading lock for database access.
+
+    Returns:
+        The earliest Unix timestamp as an integer, or None if the DB is empty.
+    """
+    logger = logging.getLogger("NetSpeedTray.db_utils")
+    earliest_ts = None
+
+    try:
+        with db_lock, sqlite3.connect(db_path, timeout=5) as conn:
+            cursor = conn.cursor()
+            
+            # Query for the minimum timestamp in both tables
+            query = f"""
+                SELECT MIN(ts) FROM (
+                    SELECT MIN(timestamp) as ts FROM {SPEED_TABLE} WHERE deleted_at IS NULL
+                    UNION ALL
+                    SELECT MIN(period_start) as ts FROM {AGGREGATED_TABLE} WHERE deleted_at IS NULL
+                ) WHERE ts IS NOT NULL
+            """
+            cursor.execute(query)
+            result = cursor.fetchone()
+
+            if result and result[0] is not None:
+                earliest_ts = int(result[0])
+                logger.debug("Earliest timestamp found in DB: %s", datetime.fromtimestamp(earliest_ts))
+
+    except sqlite3.Error as e:
+        logger.error("Failed to retrieve the earliest timestamp from database: %s", e)
+        # We can continue, will just return None
+
+    return earliest_ts
+
+
 def aggregate_speed_history(db_path: Union[str, Path], cutoff_timestamp: int, db_lock: threading.Lock) -> int:
     """
     Aggregate speed_history records older than cutoff_timestamp into speed_history_aggregated.

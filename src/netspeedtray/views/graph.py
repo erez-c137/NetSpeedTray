@@ -662,7 +662,9 @@ class GraphWindow(QWidget):
                     self._parent.apply_all_settings() 
                     # Update the graph and UI elements with new settings
                     self._reposition_overlay_elements()
-                    self.update_graph(self._current_data if self._current_data else [])
+                    
+                    # Call update_graph without unnecessary parameters
+                    self.update_graph()
                 else:
                     self.logger.warning("Parent widget lacks 'apply_all_settings' method.")
 
@@ -779,7 +781,7 @@ class GraphWindow(QWidget):
 
         if hasattr(self, 'history_period') and self.history_period:
             self.history_period.sliderReleased.connect(
-                lambda: self._save_slider_value_to_config('history_period_slider_value', self.history_period.value())
+                lambda: self._notify_parent_of_setting_change({'history_period_slider_value': self.history_period.value()})
             )
             self.history_period.valueChanged.connect(self._update_history_period_text)
         
@@ -792,6 +794,15 @@ class GraphWindow(QWidget):
             self._update_history_period_text(self.history_period.value())
         if hasattr(self, 'keep_data'):
             self._update_keep_data_text(self.keep_data.value())
+
+
+    def _notify_parent_of_setting_change(self, settings_dict: dict) -> None:
+        """Helper method to pass a dictionary of configuration updates to the parent widget."""
+        if self._parent and hasattr(self._parent, 'handle_graph_settings_update'):
+            self.logger.debug(f"Notifying parent of setting change: {settings_dict}")
+            self._parent.handle_graph_settings_update(settings_dict)
+        else:
+            self.logger.warning(f"Cannot notify parent of setting change: Method not found.")
 
 
     def _save_slider_value_to_config(self, config_key: str, value: int) -> None:
@@ -1003,42 +1014,37 @@ class GraphWindow(QWidget):
 
 
     def closeEvent(self, event: QCloseEvent) -> None:
-        """Handle window closure by hiding the window instead of closing it completely."""
+        """Handles window closure by hiding or performing a full cleanup."""
         import matplotlib.pyplot as plt
 
         try:
-            # Save current window position and settings
-            if self._parent and hasattr(self._parent, "config_manager") and self._parent.config:
-                self._parent.config["graph_window_pos"] = {"x": self.pos().x(), "y": self.pos().y()}
-                self._parent.config["dark_mode"] = self.dark_mode.isChecked()
-                self._parent.config["keep_data"] = constants.data.retention.DAYS_MAP.get(self.keep_data.value(), 30)
-                self._parent.config["history_period"] = constants.data.history_period.PERIOD_MAP.get(self.history_period.value(), constants.data.history_period.DEFAULT_PERIOD)
-                self._parent.config_manager.save(self._parent.config)
-
-            # If this is part of application shutdown, do full cleanup
+            # On application shutdown, the parent's cleanup routine now handles saving.
+            # We only need to handle the case where the user closes the graph window
+            # while the main app is still running. In this case, we just hide it.
             if getattr(self, '_is_closing', False):
                 self.logger.debug("Performing full cleanup for graph window...")
-                # Stop all timers
                 self._realtime_timer.stop()
                 self._update_timer.stop()
                 self._db_size_update_timer.stop()
                 
-                # Clean up matplotlib resources
-                plt.close(self.figure)
-                self.canvas.deleteLater()
+                if hasattr(self, 'figure'): plt.close(self.figure)
+                if hasattr(self, 'canvas'): self.canvas.deleteLater()
                 
-                if self._parent:
-                    self._parent.graph_window = None
-                    
                 event.accept()
             else:
-                # Just hide the window and keep it alive
-                self.logger.debug("Hiding graph window instead of closing")
+                # If just closing the window, save its state immediately and hide it.
+                final_graph_settings = {
+                    "graph_window_pos": {"x": self.pos().x(), "y": self.pos().y()},
+                    "history_period_slider_value": self.history_period.value()
+                }
+                self._notify_parent_of_setting_change(final_graph_settings)
+                self.logger.debug("Hiding graph window instead of closing.")
                 self.hide()
-                event.ignore()  # This keeps the window alive
+                event.ignore()
         except Exception as e:
             self.logger.error(f"Error in closeEvent: {e}", exc_info=True)            
-            event.ignore()  # On error, prefer to keep the window
+            event.ignore()
+
 
     def _get_db_size_mb(self) -> float:
         """Get the size of the database file in megabytes."""
@@ -1053,6 +1059,7 @@ class GraphWindow(QWidget):
             self.logger.error(f"Error getting DB size: {e}", exc_info=True)
             return 0.0
 
+
     def _update_db_size(self) -> None:
         """Update the database size display."""
         try:
@@ -1063,7 +1070,8 @@ class GraphWindow(QWidget):
                     self.keep_data.setValueText(f"1 Year (DB {db_size_mb:.2f}MB)")
         except Exception as e:
             self.logger.error(f"Error updating keep data label: {e}", exc_info=True)    
-    
+
+
     def _init_db_size_timer(self) -> None:
         """Initialize DB size update timer and immediately update the display."""
         if not hasattr(self, "_db_size_update_timer"):
@@ -1227,7 +1235,21 @@ class GraphWindow(QWidget):
             else:
                 selected_interface = self.interface_filter.currentText()
                 interface_to_query = None if "All" in selected_interface else selected_interface
+                
+                # Get the date range from the slider
                 start_time, end_time = self._get_time_range_from_ui()
+
+                # --- Adjust start_time if requested range is older than available data ---
+                is_special_view = "System Uptime" in period_name or "All" in period_name
+                if start_time and not is_special_view:
+                    earliest_data_time = self._parent.widget_state.get_earliest_data_timestamp()
+                    if earliest_data_time and start_time < earliest_data_time:
+                        self.logger.info(
+                            f"Requested start time {start_time} is before the earliest data point "
+                            f"({earliest_data_time}). Adjusting query to show all available data."
+                        )
+                        start_time = None  # Querying with start_time=None fetches all history
+
                 history_data = self._parent.widget_state.get_speed_history(
                     start_time=start_time,
                     end_time=end_time,
@@ -1237,13 +1259,16 @@ class GraphWindow(QWidget):
             if len(history_data) < 2:
                 active_interfaces = self._parent.get_active_interfaces() if hasattr(self._parent, 'get_active_interfaces') else []
                 is_selected_interface_active = "All" in self.interface_filter.currentText() or self.interface_filter.currentText() in active_interfaces
-                if is_session_view and is_selected_interface_active:
+                is_live_view = "Session" in period_name or "Uptime" in period_name
+
+                # Show "collecting" only for live views if the interface is active.
+                if is_live_view and is_selected_interface_active:
                     self._show_graph_message(getattr(self.i18n, 'COLLECTING_DATA_MESSAGE', "Collecting data..."), is_error=False)
                 else:
                     self._show_graph_error(getattr(self.i18n, 'NO_DATA_MESSAGE', "No data available for the selected period."))
                 return
 
-            # --- Graph Restoration and Theming ---
+            # --- Graph Restoration and Theming (no changes below this line in this method) ---
             if self._no_data_text_obj: self._no_data_text_obj.set_visible(False)
             self.ax.set_yscale('linear')
             self.upload_line.set_visible(True)
@@ -1304,7 +1329,7 @@ class GraphWindow(QWidget):
 
             # Filter out the rounded tick if it's 0 to avoid a duplicate label
             if 0.0 in y_ticks and 0 in y_ticks and 0.0 != 0:
-                 y_ticks.remove(0)
+                y_ticks.remove(0)
 
             self.ax.yaxis.set_major_locator(FixedLocator(sorted(list(y_ticks))))
             self.ax.set_ylim(bottom=0, top=nice_top)

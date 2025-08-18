@@ -459,58 +459,51 @@ class WidgetState(QObject):
 
 
     def get_speed_history(self, start_time: Optional[datetime] = None, end_time: Optional[datetime] = None, interface_name: Optional[str] = "All") -> List[Tuple[datetime, float, float]]:
-        """
-        Retrieves speed history from the database, intelligently selecting the
-        appropriate data tier based on the requested time range.
-        """
-        self.flush_batch()
-        time.sleep(0.1)
+            """
+            Retrieves speed history from the database, intelligently querying all
+            data tiers to ensure all relevant data is returned.
+            """
+            self.flush_batch()
+            time.sleep(0.1) # Give a moment for a potential flush to complete
 
-        _start = start_time or (datetime.now() - timedelta(days=365*10))
-        _end = end_time or datetime.now()
-        time_delta = _end - _start
-        
-        results = []
-        
-        try:
-            conn = sqlite3.connect(f"file:{self.db_worker.db_path}?mode=ro", uri=True, timeout=5)
-            cursor = conn.cursor()
+            results = []
+            _start_ts = int(start_time.timestamp()) if start_time else 0
+            _end_ts = int(end_time.timestamp()) if end_time else int(datetime.now().timestamp())
             
-            # --- INTELLIGENT TIER SELECTION ---
-            if time_delta.days < 3:
-                table_name = "speed_history_raw"
-                up_col, down_col = "upload_bytes_sec", "download_bytes_sec"
-                self.logger.debug("Fetching from RAW tier for time delta < 3 days.")
-            elif time_delta.days <= 60:
-                table_name = "speed_history_minute"
-                up_col, down_col = "upload_avg", "download_avg"
-                self.logger.debug("Fetching from MINUTE tier for time delta <= 60 days.")
-            else:
-                table_name = "speed_history_hour"
-                up_col, down_col = "upload_avg", "download_avg"
-                self.logger.debug("Fetching from HOUR tier for time delta > 60 days.")
+            try:
+                # Use a read-only connection to avoid blocking the writer thread
+                conn = sqlite3.connect(f"file:{self.db_worker.db_path}?mode=ro", uri=True, timeout=5)
+                cursor = conn.cursor()
+                
+                # This unified query fetches from all tiers at once, ensuring no data is missed.
+                base_query = f"""
+                    SELECT timestamp, upload, download, interface_name FROM (
+                        SELECT timestamp, upload_bytes_sec as upload, download_bytes_sec as download, interface_name FROM speed_history_raw
+                        UNION ALL
+                        SELECT timestamp, upload_avg as upload, download_avg as download, interface_name FROM speed_history_minute
+                        UNION ALL
+                        SELECT timestamp, upload_avg as upload, download_avg as download, interface_name FROM speed_history_hour
+                    )
+                    WHERE timestamp >= ? AND timestamp <= ?
+                """
+                
+                params: tuple
+                if interface_name == "All" or interface_name is None:
+                    query = f"SELECT timestamp, SUM(upload), SUM(download) FROM ({base_query}) GROUP BY timestamp ORDER BY timestamp"
+                    params = (_start_ts, _end_ts)
+                else:
+                    query = f"SELECT timestamp, upload, download FROM ({base_query} AND interface_name = ?) ORDER BY timestamp"
+                    params = (_start_ts, _end_ts, interface_name)
 
-            base_query = f"SELECT timestamp, {up_col}, {down_col} FROM {table_name} WHERE timestamp >= ? AND timestamp <= ? {{interface_clause}} ORDER BY timestamp"
-            
-            params: tuple
-            if interface_name == "All" or interface_name is None:
-                # Aggregate all interfaces for the chosen tier
-                agg_query = f"SELECT timestamp, SUM({up_col}), SUM({down_col}) FROM {table_name} WHERE timestamp >= ? AND timestamp <= ? GROUP BY timestamp ORDER BY timestamp"
-                params = (int(_start.timestamp()), int(_end.timestamp()))
-                cursor.execute(agg_query, params)
-                results = [(datetime.fromtimestamp(ts), up, down) for ts, up, down in cursor.fetchall()]
-            else:
-                # Fetch for a specific interface
-                query = base_query.format(interface_clause="AND interface_name = ?")
-                params = (int(_start.timestamp()), int(_end.timestamp()), interface_name)
                 cursor.execute(query, params)
-                results = [(datetime.fromtimestamp(ts), up, down) for ts, up, down in cursor.fetchall()]
+                results = [(datetime.fromtimestamp(ts), up, down) for ts, up, down in cursor.fetchall() if up is not None and down is not None]
 
-            conn.close()
-        except sqlite3.Error as e:
-            self.logger.error("Error retrieving intelligent speed history: %s", e, exc_info=True)
-        
-        return results
+                self.logger.info(f"Retrieved {len(results)} records for period {start_time} to {end_time} for interface '{interface_name}'.")
+                conn.close()
+            except sqlite3.Error as e:
+                self.logger.error("Error retrieving unified speed history: %s", e, exc_info=True)
+            
+            return results
 
 
     def get_distinct_interfaces(self) -> List[str]:
@@ -535,6 +528,41 @@ class WidgetState(QObject):
             self.logger.error("Error fetching distinct interfaces: %s", e, exc_info=True)
             return []
 
+
+    def get_earliest_data_timestamp(self) -> Optional[datetime]:
+        """
+        Retrieves the earliest data timestamp from the database by querying all tiers.
+        """
+        self.flush_batch()
+        time.sleep(0.1)
+
+        try:
+            conn = sqlite3.connect(f"file:{self.db_worker.db_path}?mode=ro", uri=True, timeout=5)
+            cursor = conn.cursor()
+
+            query = """
+                SELECT MIN(earliest_ts) FROM (
+                    SELECT MIN(timestamp) as earliest_ts FROM speed_history_raw
+                    UNION ALL
+                    SELECT MIN(timestamp) as earliest_ts FROM speed_history_minute
+                    UNION ALL
+                    SELECT MIN(timestamp) as earliest_ts FROM speed_history_hour
+                ) WHERE earliest_ts IS NOT NULL;
+            """
+            cursor.execute(query)
+            result = cursor.fetchone()
+            conn.close()
+
+            if result and result[0] is not None:
+                earliest_ts = int(result[0])
+                return datetime.fromtimestamp(earliest_ts)
+
+        except sqlite3.Error as e:
+            self.logger.error("Failed to retrieve the earliest timestamp from database: %s", e, exc_info=True)
+
+        return None
+
+
     def cleanup(self) -> None:
         """Flushes final data and cleanly stops the database worker thread."""
         self.logger.info("Cleaning up WidgetState...")
@@ -543,6 +571,7 @@ class WidgetState(QObject):
         self.flush_batch()
         self.db_worker.stop()
         self.db_worker.wait(2000) # Wait up to 2 seconds for the thread to finish
+
 
     def _get_max_history_points(self) -> int:
         """Calculates max points for the in-memory deque based on config."""
@@ -557,7 +586,8 @@ class WidgetState(QObject):
         except Exception as e:
             self.logger.error("Error calculating max history points: %s. Using default.", e)
             return 1800
-            
+
+          
     def apply_config(self, config: Dict[str, Any]) -> None:
         """Apply updated configuration and adjust state."""
         self.logger.debug("Applying new configuration to WidgetState...")
