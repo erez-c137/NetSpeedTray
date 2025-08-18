@@ -4,6 +4,37 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [1.1.1] - August 18, 2025
+
+This release focuses on providing a fast, and native-feeling user experience as much as possible. It introduces a major startup performance overhaul, addresses key bugs related to the history graph and UI integration, and refines the application's overall stability.
+
+### ✨ Major Features & Improvements
+
+-   **Drastically Improved Startup Performance:** The application's compiled structure has been changed to eliminate the slow, single-file unpacking process.
+    -   **Faster Launch:** Startup time is now significantly faster, as the application and its dependencies are no longer extracted to a temporary folder on every launch.
+    -   **New Distribution Formats:** To support this, NetSpeedTray is now distributed with a fast Inno Setup installer and a portable `.zip` archive for users who prefer a non-install option.
+-   **Seamless UI Responsiveness & Integration:** The widget's visibility logic is now fully event-driven, eliminating delays and making it feel like a native part of the Windows shell.
+    -   **Instantaneous Auto-Hide & Fullscreen Detection:** The widget now appears and disappears instantly with an auto-hiding taskbar and when entering or exiting fullscreen applications.
+    -   **Graceful System UI Handling:** Proactively hides when core system menus (like the Start Menu and network/volume flyouts) are opened, and reappears upon closing them. This provides a polished, non-intrusive experience and avoids visual glitches.
+    -   **Reliable Z-Order:** The widget now correctly stays on top of the taskbar and other applications after focus changes.
+-   **Smart Taskbar Theme Detection:** Fixed a critical bug where the widget's text color would be incorrect for users with a "mixed theme" (e.g., Light app mode with a Dark taskbar). The widget now correctly bases its text color on the **taskbar's theme**, ensuring visibility in all configurations.
+
+### 🐛 Bug Fixes & Refinements
+
+-   **Graph Window Polish:**
+    -   **Timeline Persistence:** The graph window now correctly remembers and restores the last selected time range (e.g., "6 Hours", "1 Day") across application restarts.
+    -   **Corrected Data Display:** Fixed a bug where the graph would show "No data available" for long-term views on a fresh launch; it now correctly displays all available historical data.
+-   **UI Visibility with Start Menu:** Resolved a regression where the widget would not reappear after launching an application (like Calculator or Settings) from the Start Menu.
+-   **Light Mode Stability:**
+    -   Fixed a crash that occurred when opening the Settings dialog in Windows Light Mode.
+    -   Resolved the "invisible text" bug on the very first launch for users in Light Mode.
+-   **Architectural Improvements:**
+    -   The `WinEventHook` utility has been upgraded to be more robust and efficient.
+    -   The core visibility logic in `taskbar_utils.py` has been significantly improved to handle edge cases more reliably.
+    -   The build process now performs a full cleanup, leaving no intermediate files behind.
+
+---
+
 ## [1.1.0] - August 12, 2025
 
 This is a significant update focused on improving data accuracy, providing more detailed graphing features, and creating a more stable foundation for the future. The data collection and storage pipeline has been substantially rebuilt to make NetSpeedTray a more capable and reliable network monitor.
