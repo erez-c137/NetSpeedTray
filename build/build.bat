@@ -2,7 +2,7 @@
 setlocal EnableDelayedExpansion
 
 :: --- Configuration ---
-set "VERSION=1.1.1-beta.4"
+set "VERSION=1.1.1"
 
 :: --- Automatically determine project paths (Portable & Robust) ---
 set "BUILD_DIR=%~dp0"
@@ -71,9 +71,19 @@ echo Packaging release files...
 echo Packaging release files... >> "%LOG_FILE%"
 set "start_time=%TIME%"
 set "RELEASE_DIR=%DIST_DIR%\NetSpeedTray-%VERSION%"
+set "PORTABLE_DIR_NAME=NetSpeedTray-Portable"
+
+:: Create the main release directory
 if not exist "!RELEASE_DIR!" mkdir "!RELEASE_DIR!"
-move "%DIST_DIR%\NetSpeedTray.exe" "!RELEASE_DIR!\NetSpeedTray-%VERSION%-Portable.exe" > NUL
+
+:: Move the installer into the release directory
 move "%INSTALLER_DIR%\NetSpeedTray-%VERSION%-Setup.exe" "!RELEASE_DIR!\" > NUL
+
+:: Create the portable zip archive
+echo Creating portable zip file...
+powershell -Command "Compress-Archive -Path '%DIST_DIR%\NetSpeedTray' -DestinationPath '!RELEASE_DIR!\%PORTABLE_DIR_NAME%-%VERSION%.zip' -Force" >> "%LOG_FILE%" 2>&1
+if errorlevel 1 (echo ERROR: Failed to create portable zip file. & goto :fail)
+
 set "end_time=%TIME%"
 call :log_elapsed "Packaging release files" "%start_time%" "%end_time%"
 
@@ -86,8 +96,8 @@ set "CHECKSUM_FILE=%RELEASE_DIR%\checksums.txt"
 (
     echo # SHA-256 Checksums for v%VERSION%
     echo.
-    echo ### NetSpeedTray-%VERSION%-Portable.exe
-    certutil -hashfile "!RELEASE_DIR!\NetSpeedTray-%VERSION%-Portable.exe" SHA256 | findstr /v "hash"
+    echo ### %PORTABLE_DIR_NAME%-%VERSION%.zip
+    certutil -hashfile "!RELEASE_DIR!\%PORTABLE_DIR_NAME%-%VERSION%.zip" SHA256 | findstr /v "hash"
     echo.
     echo ### NetSpeedTray-%VERSION%-Setup.exe
     certutil -hashfile "!RELEASE_DIR!\NetSpeedTray-%VERSION%-Setup.exe" SHA256 | findstr /v "hash"
@@ -101,11 +111,20 @@ echo Final cleanup...
 echo Final cleanup... >> "%LOG_FILE%"
 set "start_time=%TIME%"
 cd /d "%ROOT_DIR%"
-if exist "%ROOT_DIR%\build\build" rmdir /s /q "%ROOT_DIR%\build\build" 2>nul
+
+echo Removing intermediate PyInstaller build folder...
+if exist "%BUILD_DIR%build" rmdir /s /q "%BUILD_DIR%build" 2>nul
+
+echo Removing raw PyInstaller output folder from dist...
+if exist "%DIST_DIR%\NetSpeedTray" rmdir /s /q "%DIST_DIR%\NetSpeedTray" 2>nul
+
+echo Removing leftover EXE from dist folder (if any)...
+if exist "%DIST_DIR%\NetSpeedTray.exe" del /f /q "%DIST_DIR%\NetSpeedTray.exe" 2>nul
 if exist "%INSTALLER_DIR%" rmdir /s /q "%INSTALLER_DIR%" 2>nul
 if exist "%ROOT_DIR%\src\__pycache__" rmdir /s /q "%ROOT_DIR%\src\__pycache__" 2>nul
 for /r "%ROOT_DIR%\src\netspeedtray" %%i in (__pycache__) do if exist "%%i" rmdir /s /q "%%i" 2>nul
 for /r "%ROOT_DIR%\src" %%i in (*.pyc) do if exist "%%i" del /f /q "%%i" 2>nul
+
 set "end_time=%TIME%"
 call :log_elapsed "Final cleanup" "%start_time%" "%end_time%"
 

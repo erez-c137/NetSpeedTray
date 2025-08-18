@@ -1,3 +1,5 @@
+# NetSpeedTray.spec
+
 block_cipher = None
 
 a = Analysis(
@@ -47,4 +49,15 @@ exe = EXE(
     entitlements_file=None,
     icon='..\\assets\\NetSpeedTray.ico',
     version='version_info.txt'
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    name='NetSpeedTray'
 )

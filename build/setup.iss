@@ -1,6 +1,6 @@
 #define MyAppName "NetSpeedTray"
 #define MyAppVersion "1.1.1.0"
-#define MyAppVersionDisplay "1.1.1-beta.4"
+#define MyAppVersionDisplay "1.1.1"
 #define MyAppPublisher "Erez C137"
 #define MyAppURL "https://github.com/erez-c137/NetSpeedTray"
 #define MyAppExeName "NetSpeedTray.exe"
@@ -32,18 +32,13 @@ SignedUninstaller=no
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
-[Tasks]
-Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
-Name: "startupicon"; Description: "Start with Windows"; GroupDescription: "Windows Startup"; Flags: unchecked
-
 [Files]
-Source: "..\dist\NetSpeedTray.exe"; DestDir: "{app}"; DestName: "{#MyAppExeName}"; Flags: ignoreversion
+; Grab all files from the output directory of PyInstaller
+Source: "..\dist\NetSpeedTray\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
-Name: "{autostartup}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: startupicon
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
