@@ -36,7 +36,7 @@ from ..core.timer_manager import SpeedTimerManager
 from ..core.widget_state import WidgetState as CoreWidgetState, AggregatedSpeedData as CoreSpeedData
 from ..utils.config import ConfigManager as CoreConfigManager
 from ..utils.position_utils import PositionManager as CorePositionManager, WindowState as CoreWindowState
-from ..utils.taskbar_utils import get_taskbar_info, is_fullscreen_active, is_taskbar_visible
+from ..utils.taskbar_utils import get_taskbar_info, is_taskbar_obstructed, is_taskbar_visible
 from ..utils.widget_renderer import WidgetRenderer as CoreWidgetRenderer, RenderConfig
 from ..utils.win_event_hook import WinEventHook, EVENT_SYSTEM_FOREGROUND, EVENT_OBJECT_LOCATIONCHANGE
 
@@ -113,6 +113,7 @@ class NetworkSpeedWidget(QWidget):
             self._setup_connections()
             self._setup_timers()
             self._initialize_position()
+            self._synchronize_startup_task()
             
             QTimer.singleShot(0, self._delayed_initial_show)
 
@@ -127,10 +128,9 @@ class NetworkSpeedWidget(QWidget):
         """Configures and starts all application timers."""
         self.logger.debug("Setting up timers...")
         
-        # This is our safety-net timer. It runs slowly to catch missed events.
-        self.state_update_timer.timeout.connect(self._update_widget_state)
-        self.state_update_timer.start(1000) # Runs once per second.
-        self.logger.debug("Safety-net state update timer started (1000ms).")
+        self.state_update_timer.timeout.connect(self._on_foreground_window_changed)
+        self.state_update_timer.start(1000)
+        self.logger.debug("Safety-net state update timer started (1000ms), connected to full event handler.")
 
         # This timer remains for periodic position correction if the taskbar moves.
         self._tray_watcher_timer.timeout.connect(self._check_and_update_position)
@@ -206,25 +206,25 @@ class NetworkSpeedWidget(QWidget):
         """Set the initial widget position using saved coordinates or default placement."""
         self.logger.debug("Setting initial widget position...")
         if not hasattr(self, 'position_manager') or not self.position_manager:
-            self.logger.error("PositionManager not initialized")
-            self._init_position_manager()
-        
+            self.logger.error("PositionManager not initialized, cannot set position.")
+            return
+
         try:
             use_saved_position = self.config.get("free_move", False)
             pos_x = self.config.get("position_x")
             pos_y = self.config.get("position_y")
 
             if use_saved_position and isinstance(pos_x, int) and isinstance(pos_y, int):
-                # Only use saved position if free_move is ON and coordinates are valid
+                # Restore the exact saved position if free_move is ON.
                 self.move(pos_x, pos_y)
                 self.logger.info(f"Restored saved 'Free Move' position: ({pos_x}, {pos_y})")
             else:
-                # Fallback to calculated default position if free_move is OFF or no valid coordinates exist
-                self.logger.info("Placing widget at default taskbar position.")
-                self.reset_to_default_position()
+                # Calculate and apply the position without saving the config
+                self.logger.info("Placing widget at default taskbar-snapped position.")
+                self.position_manager.update_position()
 
         except Exception as e:
-            self.logger.error("Failed to set initial position: %s", e, exc_info=True)
+            self.logger.error(f"Failed to set initial position: {e}", exc_info=True)
             raise RuntimeError("Initial position setup failed") from e
 
 
@@ -260,20 +260,12 @@ class NetworkSpeedWidget(QWidget):
             self.logger.error(f"Error during periodic position check: {e}", exc_info=True)
 
 
-    def _on_foreground_window_changed(self) -> None:
+    def _on_foreground_window_changed(self, hwnd: int = 0) -> None:
         """
-        Slot that responds to window focus changes. It updates the widget's visibility
-        and forcefully re-asserts its topmost status if it should be visible.
-        This is the primary mechanism for fixing z-order issues.
+        Slot that responds to window focus changes. Triggers a state check
+        and ensures the widget is on top if it should be visible.
         """
-        # First, run the standard visibility check. This will correctly hide the
-        # widget if we've switched to a fullscreen app.
         self._update_widget_state()
-        
-        # --- Z-ORDER FIX ---
-        # After the state update, if the widget is supposed to be visible,
-        # we re-assert its topmost status. This pulls it on top of shell
-        # elements like the taskbar when they are clicked.
         if self.isVisible():
             self._ensure_win32_topmost()
 
@@ -874,12 +866,15 @@ class NetworkSpeedWidget(QWidget):
 
 
     def changeEvent(self, event: QEvent) -> None:
-        """Detects window activation/deactivation to ensure topmost status."""
+        """
+        Detects window activation/deactivation. This is a primary, high-frequency
+        mechanism for ensuring the widget's Z-order is correct.
+        """
         super().changeEvent(event)
-        event_type = event.type()
-        if event_type in (QEvent.Type.WindowActivate, QEvent.Type.WindowDeactivate):
-            self.logger.debug(f"{'WindowActivate' if event_type == QEvent.Type.WindowActivate else 'WindowDeactivate'} event, ensuring topmost.")
-            QTimer.singleShot(10, self._ensure_win32_topmost)
+        if event.type() in (QEvent.Type.WindowActivate, QEvent.Type.WindowDeactivate):
+            # If the widget is supposed to be visible, ensure it's on top.
+            if self.isVisible():
+                self._ensure_win32_topmost()
 
 
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
@@ -939,33 +934,21 @@ class NetworkSpeedWidget(QWidget):
       
     def _update_widget_state(self) -> None:
         """
-        The single authoritative method to control widget visibility and Z-order.
-        It shows the widget only if the taskbar is found and visible, AND no fullscreen app is active.
+        The single authoritative method to control widget visibility.
+        The widget is visible if and only if the taskbar is visible and unobstructed.
         """
         try:
             taskbar_info = get_taskbar_info()
 
-            should_be_visible = False
+            # The final, robust logic:
+            if taskbar_info and is_taskbar_visible(taskbar_info) and not is_taskbar_obstructed(taskbar_info):
+                should_be_visible = True
+            else:
+                should_be_visible = False
             
-            if taskbar_info:
-                fullscreen = is_fullscreen_active(taskbar_info)
-                taskbar_is_on_screen = is_taskbar_visible(taskbar_info)
-
-                if not fullscreen and taskbar_is_on_screen:
-                    should_be_visible = True
-            
-            # Only perform actions if the visibility state needs to change.
             if self.isVisible() != should_be_visible:
-                self.logger.info(
-                    f"Visibility state change ==> Setting widget visible: {should_be_visible}"
-                )
                 self.setVisible(should_be_visible)
                 
-                # Only re-assert topmost status at the exact moment the widget
-                # becomes visible. This prevents re-stacking on every event.
-                if should_be_visible and not self.config.get("free_move", False):
-                    self._ensure_win32_topmost()
-
         except Exception as e:
             self.logger.error(f"Error in _update_widget_state: {e}", exc_info=True)
  
@@ -1022,14 +1005,15 @@ class NetworkSpeedWidget(QWidget):
 
     def reset_to_default_position(self) -> None:
         """
-        Resets the widget to its default position, including the system margin.
+        Resets the widget to its default position by updating the config and then
+        triggering a reposition. This should be called by user actions (e.g., a button).
         """
         self.logger.info("Resetting widget to default auto-detected position.")
         if not self.position_manager:
             self.logger.warning("Cannot reset position, PositionManager is not available.")
             return
 
-        # Set the offset in the config to its default value, which includes the margin.
+        # This is now the one true way to reset the position config
         default_offset = constants.layout.DEFAULT_PADDING + getattr(constants.ui.general, 'WIDGET_MARGIN_FROM_TRAY', 5)
         self.update_config({
             "position_x": None,
@@ -1037,6 +1021,7 @@ class NetworkSpeedWidget(QWidget):
             "tray_offset_x": default_offset
         })
 
+        # After updating the config, apply the new position.
         self.update_position()
 
 
@@ -1183,41 +1168,60 @@ class NetworkSpeedWidget(QWidget):
             self.logger.error(f"CRITICAL: Error saving rolled-back configuration: {e}", exc_info=True)
 
 
-    def update_config(self, updates: Dict[str, Any]) -> None:
-        """Updates the internal configuration and saves it to disk."""
-        self.logger.debug(f"Updating configuration with {len(updates)} items...")
+    def update_config(self, updates: Dict[str, Any], save_to_disk: bool = True) -> None:
+        """Updates the internal configuration and optionally saves it to disk."""
+        self.logger.debug(f"Updating configuration with {len(updates)} items... (Save: {save_to_disk})")
         if not self.config or not self.config_manager:
             raise RuntimeError("Configuration or ConfigManager not initialized.")
         try:
             self.config.update(updates)
-            self.config_manager.save(self.config)
-            self.logger.info("Configuration updated and saved successfully.")
+            if save_to_disk:
+                self.config_manager.save(self.config)
+                self.logger.info("Configuration updated and saved successfully.")
         except Exception as e:
             self.logger.error(f"Error updating/saving configuration: {e}", exc_info=True)
             raise RuntimeError(f"Failed to save configuration: {e}") from e
+
+
+    def handle_graph_settings_update(self, updates: Dict[str, Any]) -> None:
+        """
+        Public method called by the GraphWindow to update and save configuration.
+        This centralizes the saving logic and prevents race conditions.
+        """
+        self.logger.info(f"Received settings update from graph window: {updates}")
+        # The update_config method already updates the in-memory config and saves to disk.
+        # We can just call it directly.
+        self.update_config(updates)
 
 
     def save_position(self) -> None:
         """
         Saves the widget's current position to the configuration ONLY if
         free_move is enabled. Otherwise, it clears any saved position.
+        This is typically called once on shutdown.
         """
         if not self.position_manager:
             self.logger.warning("Cannot save position: PositionManager not available.")
             return
         
         try:
+            # Create a dictionary of the changes we intend to make.
+            position_updates = {}
+
             if self.config.get("free_move", False):
                 # If free move is ON, save the current position.
                 current_pos = self.pos()
-                pos_dict = {"position_x": current_pos.x(), "position_y": current_pos.y()}
-                self.update_config(pos_dict)
-                self.logger.debug(f"Free Move ON. Widget position saved: ({current_pos.x()}, {current_pos.y()})")
+                position_updates["position_x"] = current_pos.x()
+                position_updates["position_y"] = current_pos.y()
+                self.logger.debug(f"Free Move ON. Staging position to save: ({current_pos.x()}, {current_pos.y()})")
             else:
-                # If free move is OFF, clear any saved position to force auto-placement on next launch.
-                if "position_x" in self.config or "position_y" in self.config:
-                    self.update_config({"position_x": None, "position_y": None})
-                    self.logger.debug("Free Move OFF. Cleared saved widget position.")
+                # If free move is OFF, ensure any saved absolute position is cleared.
+                position_updates["position_x"] = None
+                position_updates["position_y"] = None
+                self.logger.debug("Free Move OFF. Staging position clear.")
+
+            self.update_config(position_updates)
+
         except Exception as e:
             self.logger.error(f"Error saving widget position: %s", e, exc_info=True)
 
@@ -1310,6 +1314,32 @@ class NetworkSpeedWidget(QWidget):
                 "Startup Error",
                 f"Could not {'enable' if enable else 'disable'} automatic startup.\n\n{e}"
             )
+
+
+    def _synchronize_startup_task(self) -> None:
+        """
+        Ensures the Windows startup task state matches the setting in the config file.
+        This runs once on application startup to correct any mismatches.
+        """
+        try:
+            # Read the desired state from the config file. Default to True if the key is somehow missing.
+            should_be_enabled = self.config.get("start_with_windows", True)
+            
+            # Check the actual current state from the Windows Registry.
+            is_currently_enabled = self.is_startup_enabled()
+
+            # If the desired state and the actual state are different, fix it.
+            if should_be_enabled != is_currently_enabled:
+                self.logger.info(
+                    f"Startup task mismatch detected. Config: {should_be_enabled}, "
+                    f"Actual: {is_currently_enabled}. Synchronizing..."
+                )
+                self.toggle_startup(enable=should_be_enabled)
+            else:
+                self.logger.debug("Startup task state is already synchronized with configuration.")
+        except Exception as e:
+            # This is a non-critical task, so we log errors but don't crash the app.
+            self.logger.error(f"Failed during startup task synchronization: {e}", exc_info=True)
 
 
     def update_retention_period(self, days: int) -> None:
@@ -1413,45 +1443,45 @@ class NetworkSpeedWidget(QWidget):
 
 
     def cleanup(self) -> None:
-            """Performs necessary cleanup actions before the widget is destroyed."""
-            self.logger.info("Performing widget cleanup...")
-            try:
-
-                if hasattr(self, 'foreground_hook') and self.foreground_hook:
-                    self.foreground_hook.stop()
-                    self.foreground_hook.join(timeout=1.0)
-                    self.logger.debug("Foreground hook stopped.")
+        """Performs necessary cleanup and a single, final save of the configuration."""
+        self.logger.info("Performing widget cleanup...")
+        try:
+            # --- Stop all external event listeners first ---
+            if hasattr(self, 'foreground_hook') and self.foreground_hook: self.foreground_hook.stop()
+            if hasattr(self, 'taskbar_hook') and self.taskbar_hook: self.taskbar_hook.stop()
             
-                if hasattr(self, 'taskbar_hook') and self.taskbar_hook:
-                    self.taskbar_hook.stop()
-                    self.taskbar_hook.join(timeout=1.0)
-                    self.logger.debug("Taskbar hook stopped.")
-                
-                for timer in [self.state_update_timer, self._tray_watcher_timer]:
-                    if timer and timer.isActive():
-                        timer.stop()
-                self.logger.debug("All timers stopped.")
+            # --- Stop all timers ---
+            for timer in [self.state_update_timer, self._tray_watcher_timer]:
+                if timer and timer.isActive(): timer.stop()
+            
+            # --- Clean up core components ---
+            if self.timer_manager: self.timer_manager.cleanup()
+            if self.controller: self.controller.cleanup()
+            if self.widget_state: self.widget_state.cleanup()
 
-                if self.timer_manager and hasattr(self.timer_manager, 'cleanup'):
-                    self.timer_manager.cleanup()
-                    self.logger.debug("SpeedTimerManager cleaned up.")
-                
-                if self.controller and hasattr(self.controller, 'cleanup'):
-                    self.controller.cleanup()
-                    self.logger.debug("Controller cleaned up.")
+            # 1. Gather the graph window's state if it exists.
+            if self.graph_window:
+                final_graph_settings = {
+                    "graph_window_pos": {"x": self.graph_window.pos().x(), "y": self.graph_window.pos().y()},
+                    "dark_mode": self.graph_window.dark_mode.isChecked(),
+                    "history_period_slider_value": self.graph_window.history_period.value(),
+                    "keep_data": constants.data.retention.DAYS_MAP.get(self.graph_window.keep_data.value(), 30)
+                }
+                self.update_config(final_graph_settings, save_to_disk=False) # Update memory only
+                self.graph_window.close()
+                self.graph_window = None
 
-                if self.widget_state and hasattr(self.widget_state, 'cleanup'):
-                    self.widget_state.cleanup()
-                    self.logger.debug("WidgetState cleaned up.")
+            # 2. Gather the widget's final position state.
+            if self.config.get("free_move", False):
+                pos = self.pos()
+                self.update_config({"position_x": pos.x(), "position_y": pos.y()}, save_to_disk=False)
+            else:
+                self.update_config({"position_x": None, "position_y": None}, save_to_disk=False)
+            
+            # 3. Perform the single, final save operation.
+            self.logger.info("Performing final configuration save...")
+            self.config_manager.save(self.config)
 
-                if self.graph_window:
-                    self.graph_window.close()
-                    self.graph_window = None
-                    self.logger.debug("Graph window closed.")
-                
-                self.save_position()
-                
-                self.logger.info("Widget cleanup finished successfully.")
-
-            except Exception as e:
-                self.logger.error(f"Unexpected error during cleanup: %s", e, exc_info=True)
+            self.logger.info("Widget cleanup finished successfully.")
+        except Exception as e:
+            self.logger.error(f"Unexpected error during cleanup: %s", e, exc_info=True)

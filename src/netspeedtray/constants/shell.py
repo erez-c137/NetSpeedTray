@@ -5,17 +5,26 @@ from typing import Final, Set
 
 class ShellConstants:
     """Constants for identifying special Windows Shell UI elements."""
-    # Class names of shell flyouts that should cause the widget to hide.
-    UI_CLASS_NAMES_TO_HIDE: Final[Set[str]] = {
+    # Class names of shell flyouts that can be potential obstructions.
+    UI_CLASS_NAMES_TO_CHECK: Final[Set[str]] = {
         "Windows.UI.Core.CoreWindow",
         "ApplicationFrameWindow",
     }
+    # Executable names of specific shell processes that ARE obstructions.
+    UI_PROCESS_NAMES_TO_HIDE: Final[Set[str]] = {
+        "startmenuexperiencehost.exe",
+        "searchexperiencehost.exe",
+        "shellexperiencehost.exe",
+    }
+
     def __init__(self) -> None:
         self.validate()
         
     def validate(self) -> None:
-        if not self.UI_CLASS_NAMES_TO_HIDE:
-            raise ValueError("UI_CLASS_NAMES_TO_HIDE must not be empty.")
+        if not self.UI_CLASS_NAMES_TO_CHECK:
+            raise ValueError("UI_CLASS_NAMES_TO_CHECK must not be empty.")
+        if not self.UI_PROCESS_NAMES_TO_HIDE:
+            raise ValueError("UI_PROCESS_NAMES_TO_HIDE must not be empty.")
 
 class WindowsAPIConstants:
     """Constants for Windows API calls."""
