@@ -4,6 +4,54 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [1.1.2] - August 22, 2025
+
+This is a major stability and quality-of-life release that addresses critical bugs, enhances UI intelligence, improves user privacy, and completely overhauls the installer and settings backend for a more professional and robust user experience.
+
+### ✨ Major Features & Improvements
+
+-   **Intelligent Interface Monitoring (New Default):** The method for selecting network interfaces has been completely redesigned for clarity and accuracy.
+    -   It now uses a clear, three-option radio button system: `All`, `Auto`, and `Selected`.
+    -   **"Auto (Primary)" is the new default mode.** It intelligently identifies your main internet adapter, providing a much more accurate speed reading by ignoring noise from VPNs, virtual machines, and other virtual adapters.
+
+-   **Language Selection:** The application is now fully internationalized. Users can select their preferred language from a new dropdown in the General settings. A restart is required for the change to take full effect.
+
+-   **Intelligent Taskbar Positioning:** The widget's positioning logic has been completely re-architected. It now actively scans the taskbar for "obstacles" like the Start Menu, pinned application icons, and the Windows Weather/Widgets icon. It intelligently places itself in the nearest truly empty space, preventing it from overlapping with other UI elements.
+
+-   **Adaptive Layout for Small Taskbars:** The widget now automatically detects when Windows' "Use small taskbar buttons" setting is active and switches to a clean, compact, single-line horizontal layout for a much better visual fit.
+
+### 🐛 Critical Bug Fixes & Refinements
+
+-   **Fixed "Auto" Interface Monitoring:** Fixed a critical bug where the "Auto" mode logic existed but was never actually called, making the feature non-functional. The controller now correctly uses this logic when the "Auto" mode is selected.
+-   **Fixed Phantom Speed Spikes (Data Integrity):** Resolved a critical bug where waking the computer from sleep could cause the application to calculate and save impossibly high network speeds. The data collection logic is now more robust and includes multiple sanity checks to discard these "phantom" spikes.
+-   **Fixed "Invisible Shield" & RDP Bugs (UI Stability):** Resolved a severe bug where the widget could act as an "invisible shield," blocking mouse clicks to other applications. The widget's transparent areas are now correctly "click-through" by default. This also resolves related stability issues for users in Remote Desktop (RDP) sessions.
+-   **Fixed Graph Window Accuracy (Live Data):** Corrected a bug in the Graph Window where selecting a specific network interface would still display the total speed of all interfaces in "Live Update" mode. The graph now correctly displays only the selected interface's data.
+-   **Fixed Settings Window Stability:** The Settings window has been re-engineered to be a normal, non-modal window. This fixes numerous UI bugs, including dropdown menus instantly closing and the entire application shutting down when the settings window was closed.
+-   **Fixed Interface Selection Logic:** Corrected a logic flaw where monitoring would fall back to all interfaces if the "Selected" option was chosen but no interfaces were checked. It now correctly shows zero speed.
+-   **Database & Data Integrity:**
+    -   Fixed a bug where negligible, sub-byte network speeds were being incorrectly saved to the database.
+    -   Resolved a `KeyError` crash that could occur during application shutdown due to a race condition in the timer management system.
+-   **UI & Visual Polish:**
+    -   The mini-graph on the widget now has dynamic Y-axis padding, preventing graph peaks from being "cut off".
+    -   Fixed inconsistent decimal formatting for download speeds.
+
+### ⚙️ Build System, Installer & Privacy
+
+-   **Installer Overhaul:** The Inno Setup installer and uninstaller have been significantly improved:
+    -   **Correct 64-bit Installation:** Ensured the installer correctly recognizes the application as 64-bit, defaulting to the native `C:\Program Files` directory instead of `C:\Program Files (x86)`.
+    -   The uninstaller now reliably detects if the application is running and will prompt the user to close it before proceeding.
+    -   The uninstaller now provides a clear option to completely remove all personal data (settings, database, logs).
+    -   Fixed a bug where the desktop shortcut was sometimes left behind after uninstallation.
+    -   Silent Uninstall with Data Removal: For a complete, unattended removal, run the following command in an **Administrator PowerShell**:
+    ```powershell
+    & "C:\Program Files\NetSpeedTray\unins000.exe" /SILENT /PURGE=true
+    ```
+-   **Log File Privacy (Verified):** The privacy filter is now fully effective. It automatically obfuscates personal information before it is written to the log file.
+    -   User home directories in file paths are replaced (e.g., `C:\Users\Erez\...` becomes `<USER_HOME>\...`).
+    -   IP addresses found in rare error messages are partially redacted (e.g., `192.168.1.100` becomes `192.168.x.x`).
+
+---
+
 ## [1.1.1] - August 18, 2025
 
 This release focuses on providing a fast, and native-feeling user experience as much as possible. It introduces a major startup performance overhaul, addresses key bugs related to the history graph and UI integration, and refines the application's overall stability.

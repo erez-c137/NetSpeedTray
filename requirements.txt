@@ -38,6 +38,10 @@ pyqt6-sip==13.10.2
 python-dateutil==2.9.0.post0
     # via matplotlib
 pywin32==311
-    # via -r requirements.in
+    # via
+    #   -r requirements.in
+    #   wmi
 six==1.17.0
     # via python-dateutil
+wmi==1.5.1
+    # via -r requirements.in

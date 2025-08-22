@@ -69,7 +69,7 @@ The core of NetSpeedTray. It sits on your taskbar, showing your live network spe
 -   **Left-click and drag** to adjust its position along the taskbar.
 
 <div align="center">
-  <img src="screenshots/main_new_105b.png" alt="Main Interface" width="600"/><br/>
+  <img src="screenshots/main_new_1.1.2.png" alt="Main Interface" width="600"/><br/>
 </div>
 
 #### Modern Settings
@@ -77,7 +77,7 @@ The core of NetSpeedTray. It sits on your taskbar, showing your live network spe
 A clean, modern UI to control every aspect of the widget's appearance and behavior.
 
 <div align="center">
-  <img src="screenshots/settings_1.1.1.png" alt="Settings Dialog" width="600"/><br/>
+  <img src="screenshots/settings_1.1.2.png" alt="Settings Dialog" width="600"/><br/>
 </div>
 
 #### Detailed History Graph

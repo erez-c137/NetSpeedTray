@@ -5,3 +5,4 @@ psutil
 matplotlib
 numpy
 netifaces
+wmi
