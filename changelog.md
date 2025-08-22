@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [1.1.3] - August 22, 2025 (Hotfix)
+
+This is an urgent hotfix release that addresses a critical startup crash reported by users after the v1.1.2 update. It also restores and improves the widget's positioning stability, resolving several visual regressions.
+
+### 🐛 Critical Bug Fixes & Stability Improvements
+
+-   **Fixed Critical Startup Crash:** Resolved a critical `AttributeError` that prevented the application from launching on some systems. This was caused by an unreliable network dependency (`netifaces`) which has now been completely removed and replaced with a more robust, built-in solution.
+-   **Restored Widget Stability (Fixed Flashing):** Re-engineered the widget's core update logic to eliminate a visual "flashing" regression introduced in v1.1.2. The widget is now perfectly stable and only updates its position when absolutely necessary, removing all polling-related flicker.
+-   **Improved UI Responsiveness:** Fixed two key regressions where the widget would not:
+    -   Reliably reappear after launching an application (like Calculator) from the Start Menu.
+    -   Automatically reposition itself when new icons appeared in the system tray.
+
+---
+
 ## [1.1.2] - August 22, 2025
 
 This is a major stability and quality-of-life release that addresses critical bugs, enhances UI intelligence, improves user privacy, and completely overhauls the installer and settings backend for a more professional and robust user experience.
