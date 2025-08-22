@@ -1,5 +1,3 @@
-# src/netspeedtray/utils/components.py
-
 """
 Custom Qt Widget Components for NetSpeedTray.
 

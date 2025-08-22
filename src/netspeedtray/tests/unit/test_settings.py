@@ -5,7 +5,6 @@ import pytest
 from unittest.mock import MagicMock, patch
 from PyQt6.QtWidgets import QApplication, QWidget
 
-# The new, single, correct way to import all constants
 from netspeedtray import constants
 
 @pytest.fixture(scope="session")
@@ -29,30 +28,20 @@ def settings_dialog(q_app, mock_parent_widget):
     Creates an instance of the SettingsDialog for testing, properly handling
     Qt parentage and mocking.
     """
-    # Import locally to avoid issues with Qt event loop in pytest
     from netspeedtray.views.settings import SettingsDialog
     
-    # Create a real, but simple, QWidget to act as the Qt parent.
-    actual_qt_parent = QWidget() 
-
-    # Instantiate the dialog, passing the REAL QWidget as the parent.
     dialog = SettingsDialog(
-        parent=actual_qt_parent, 
+        main_widget=mock_parent_widget, # Pass the mock to the correct argument
         config=mock_parent_widget.config.copy(),
-        version="1.1.1",
-        # Pass the singleton strings instance directly
-        i18n=constants.strings,
+        version="1.1.2",
+        i18n=constants.i18n.get_i18n(),
         available_interfaces=mock_parent_widget.get_available_interfaces(),
         is_startup_enabled=mock_parent_widget.is_startup_enabled()
     )
-    # Patch the dialog's logical parent widget to use our mock.
-    dialog.parent_widget = mock_parent_widget
 
     yield dialog
     
-    # Cleanup Qt resources
     dialog.deleteLater()
-    actual_qt_parent.deleteLater()
 
 def test_get_settings_translates_ui_state_to_config(settings_dialog):
     """
@@ -61,7 +50,8 @@ def test_get_settings_translates_ui_state_to_config(settings_dialog):
     """
     # Arrange: Simulate user interaction
     settings_dialog.update_rate.setValue(5)
-    settings_dialog.all_interfaces.setChecked(False)
+    # Simulate the user choosing to select specific interfaces
+    settings_dialog.selected_interfaces_radio.setChecked(True) 
     settings_dialog.interface_checkboxes["Wi-Fi"].setChecked(True)
     settings_dialog.interface_checkboxes["Ethernet 1"].setChecked(False)
 

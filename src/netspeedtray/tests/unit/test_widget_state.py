@@ -153,17 +153,14 @@ def test_add_speed_data_queues_data_for_worker(managed_widget_state):
     
     # ASSERT
     
-    # 1. Assert the in-memory deque (for mini-graph) was updated correctly
-    # It should contain the *aggregated* total speed.
+    # 1. Assert the in-memory deque (for live graph) was updated correctly.
+    # It should contain the full dictionary of speeds.
     assert len(state.in_memory_history) == 1
     in_memory_snapshot = state.in_memory_history[0]
     
-    # Total upload = 1,250,000 + 1000 = 1,251,000 Bytes/sec
-    assert in_memory_snapshot.upload == pytest.approx(1251000.0)
-    # Total download = 2,500,000 + 2000 = 2,502,000 Bytes/sec
-    assert in_memory_snapshot.download == pytest.approx(2502000.0)
+    assert in_memory_snapshot.speeds == test_speed_data
 
-    # 2. Assert the internal database batch (`_db_batch`) was populated correctly
+    # 2. Assert the internal database batch (`_db_batch`) was populated correctly.
     # It should contain only the per-interface data for *non-negligible* speeds.
     assert len(state._db_batch) == 2, "Batch should only contain 2 records with significant speed."
     

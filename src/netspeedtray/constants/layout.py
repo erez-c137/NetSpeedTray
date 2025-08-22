@@ -11,9 +11,14 @@ class LayoutConstants:
     MARGIN: Final[int] = 10
     WIDGET_DEFAULT_RIGHT_PADDING_PX: Final[int] = 10
     
-    # ADDED missing constants
     SPACING: Final[int] = 8
     DEFAULT_PADDING: Final[int] = 4
+
+    # Constants for Adaptive Layout
+    # A standard taskbar is ~40px high. Small is ~32px. This is a safe threshold.
+    SMALL_TASKBAR_HEIGHT_THRESHOLD: Final[int] = 34
+    # Padding between the upload and download sections in horizontal mode.
+    HORIZONTAL_LAYOUT_SEPARATOR: Final[str] = " | "
 
     def __init__(self) -> None:
         self.validate()
@@ -22,8 +27,8 @@ class LayoutConstants:
         for attr_name in dir(self):
             if not attr_name.startswith('_') and attr_name.isupper():
                 value = getattr(self, attr_name)
-                if not isinstance(value, int) or value < 0:
-                    raise ValueError(f"{attr_name} must be a non-negative integer.")
+                if not isinstance(value, (int, str)) or value < 0 if isinstance(value, int) else False:
+                    raise ValueError(f"{attr_name} must be a non-negative integer or a string.")
 
 # Singleton instance for easy access
 layout = LayoutConstants()

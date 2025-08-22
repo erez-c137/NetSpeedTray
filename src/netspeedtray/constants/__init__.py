@@ -11,7 +11,7 @@ Usage:
     print(constants.app.VERSION)
 
     # Access a translated string
-    print(constants.strings.SETTINGS_WINDOW_TITLE)
+    print(constants.i18n.get_i18n().SETTINGS_WINDOW_TITLE)
 
     # Access a default configuration value
     if is_dark_mode == constants.config.defaults.DEFAULT_DARK_MODE:

@@ -70,6 +70,7 @@ class ConfigConstants:
     
     DEFAULT_CONFIG: Final[Dict[str, Any]] = {
         "start_with_windows": DEFAULT_START_WITH_WINDOWS,
+        "language": None,
         "update_rate": DEFAULT_UPDATE_RATE,
         "font_family": DEFAULT_FONT_FAMILY,
         "font_size": DEFAULT_FONT_SIZE,
@@ -122,7 +123,7 @@ class ConfigConstants:
 
         actual_keys = set(self.DEFAULT_CONFIG.keys())
         expected_keys = {
-            "start_with_windows", "update_rate", "font_family", "font_size", "font_weight",
+            "start_with_windows", "language", "update_rate", "font_family", "font_size", "font_weight",
             "color_coding", "default_color", "high_speed_threshold", "low_speed_threshold",
             "high_speed_color", "low_speed_color", "graph_enabled", "history_minutes",
             "graph_opacity", "interface_mode", "selected_interfaces", "excluded_interfaces",

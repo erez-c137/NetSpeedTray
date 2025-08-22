@@ -168,7 +168,7 @@ class GraphWindow(QWidget):
             self.figure = Figure(figsize=fig_size)
             self.canvas = FigureCanvas(self.figure)
             self.ax = self.figure.add_subplot(111)
-            # Use i18n or fallback for axis labels            self.ax.set_xlabel('Time')  # Using default English labels
+            # Use i18n or fallback for axis labels
             self.ax.set_ylabel('Speed')
             self.ax.grid(True, linestyle=getattr(constants.graph, 'GRID_LINESTYLE', '--'), alpha=getattr(constants.graph, 'GRID_ALPHA', 0.5))
 
@@ -1185,8 +1185,10 @@ class GraphWindow(QWidget):
         """Calculates a 'nice' round number for the top of the Y-axis."""
         import math
 
-        if max_speed <= 0:
-            return constants.graph.MIN_Y_AXIS_LIMIT
+        min_range_mbps = 0.1  # Equivalent to 100 Kbps
+
+        if max_speed <= min_range_mbps:
+            return min_range_mbps
 
         # Calculate the order of magnitude (e.g., 10, 100, 1000)
         power = 10 ** math.floor(math.log10(max_speed))
@@ -1229,17 +1231,30 @@ class GraphWindow(QWidget):
             is_session_view = "Session" in period_name
             history_data = []
 
+            # process per-interface live data
+            selected_interface = self.interface_filter.currentText()
+            interface_to_query = None if "All" in selected_interface else selected_interface
+
             if is_session_view:
+                # The "Session" view uses the live, in-memory data source.
                 mem_history = self._parent.widget_state.get_in_memory_speed_history()
-                history_data = [(entry.timestamp, entry.upload, entry.download) for entry in mem_history]
-            else:
-                selected_interface = self.interface_filter.currentText()
-                interface_to_query = None if "All" in selected_interface else selected_interface
                 
-                # Get the date range from the slider
+                # Process the new snapshot structure to filter data for the selected interface.
+                processed_history = []
+                for snapshot in mem_history:
+                    if interface_to_query is None:  # "All (Aggregated)" view
+                        total_upload = sum(up for up, down in snapshot.speeds.values())
+                        total_download = sum(down for up, down in snapshot.speeds.values())
+                        processed_history.append((snapshot.timestamp, total_upload, total_download))
+                    else:  # A specific interface is selected
+                        up_speed, down_speed = snapshot.speeds.get(interface_to_query, (0.0, 0.0))
+                        processed_history.append((snapshot.timestamp, up_speed, down_speed))
+                history_data = processed_history
+
+            else:
+                # All other views (Uptime, 3 Hours, etc.) query the database directly.
                 start_time, end_time = self._get_time_range_from_ui()
 
-                # --- Adjust start_time if requested range is older than available data ---
                 is_special_view = "System Uptime" in period_name or "All" in period_name
                 if start_time and not is_special_view:
                     earliest_data_time = self._parent.widget_state.get_earliest_data_timestamp()
@@ -1248,7 +1263,7 @@ class GraphWindow(QWidget):
                             f"Requested start time {start_time} is before the earliest data point "
                             f"({earliest_data_time}). Adjusting query to show all available data."
                         )
-                        start_time = None  # Querying with start_time=None fetches all history
+                        start_time = None
 
                 history_data = self._parent.widget_state.get_speed_history(
                     start_time=start_time,
@@ -1261,14 +1276,13 @@ class GraphWindow(QWidget):
                 is_selected_interface_active = "All" in self.interface_filter.currentText() or self.interface_filter.currentText() in active_interfaces
                 is_live_view = "Session" in period_name or "Uptime" in period_name
 
-                # Show "collecting" only for live views if the interface is active.
                 if is_live_view and is_selected_interface_active:
                     self._show_graph_message(getattr(self.i18n, 'COLLECTING_DATA_MESSAGE', "Collecting data..."), is_error=False)
                 else:
                     self._show_graph_error(getattr(self.i18n, 'NO_DATA_MESSAGE', "No data available for the selected period."))
                 return
 
-            # --- Graph Restoration and Theming (no changes below this line in this method) ---
+            # --- Graph Restoration and Theming (no changes beyond this point) ---
             if self._no_data_text_obj: self._no_data_text_obj.set_visible(False)
             self.ax.set_yscale('linear')
             self.upload_line.set_visible(True)
@@ -1307,7 +1321,6 @@ class GraphWindow(QWidget):
                 dynamic_thresh = np.quantile(non_zero_speeds, 0.90)
                 final_thresh = max(1, min(dynamic_thresh, 50))
 
-            # Use the precise threshold for the scale's BEHAVIOR
             self.ax.set_yscale('symlog', linthresh=final_thresh)
             self.ax.yaxis.set_major_formatter(ScalarFormatter())
             self.ax.yaxis.set_minor_formatter(ScalarFormatter())
@@ -1315,7 +1328,6 @@ class GraphWindow(QWidget):
             max_speed = max(all_speeds) if all_speeds else 0
             nice_top = self._get_nice_y_axis_top(max_speed)
             
-            # --- Round the threshold to the nearest 5 for the VISUAL tick ---
             rounded_thresh_for_tick = round(final_thresh / 5) * 5
             y_ticks = {0.0, rounded_thresh_for_tick}
             
@@ -1327,7 +1339,6 @@ class GraphWindow(QWidget):
             
             y_ticks.add(nice_top)
 
-            # Filter out the rounded tick if it's 0 to avoid a duplicate label
             if 0.0 in y_ticks and 0 in y_ticks and 0.0 != 0:
                 y_ticks.remove(0)
 
@@ -1368,15 +1379,13 @@ class GraphWindow(QWidget):
             max_upload_mbps = (max(upload_bytes_sec) * 8 / 1_000_000) if upload_bytes_sec else 0.0
             max_download_mbps = (max(download_bytes_sec) * 8 / 1_000_000) if download_bytes_sec else 0.0
 
-            # --- Integrate total data transferred over time ---
             total_upload_bytes = 0.0
             total_download_bytes = 0.0
             for i in range(1, len(period_data)):
                 dt_seconds = (period_data[i][0] - period_data[i-1][0]).total_seconds()
                 
-                # Allow for large gaps between aggregated points (up to ~25 hours)
-                # This prevents incorrect filtering when combining raw, minute, and hour data.
-                if dt_seconds <= 0 or dt_seconds > 90000: # 25 hours
+                # Ignore large time gaps (e.g., from sleep) in the total calculation
+                if not (0 < dt_seconds < 60):
                     continue
                 
                 avg_upload_speed = (period_data[i][1] + period_data[i-1][1]) / 2
@@ -1399,7 +1408,8 @@ class GraphWindow(QWidget):
         except Exception as e:
             self.logger.error(f"Error calculating period stats: {e}", exc_info=True)
             return {"max_upload": 0, "max_download": 0, "total_upload": 0, "total_download_unit": "B"}
-        
+
+
     def _update_stats_bar(self, history_data: List[Tuple[datetime, float, float]]) -> None:
         """
         Update the stats bar with statistics for the provided (pre-filtered) period.

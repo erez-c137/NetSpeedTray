@@ -21,9 +21,9 @@ if TYPE_CHECKING:
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QSize, QPoint
 from PyQt6.QtGui import QColor, QFont, QFontDatabase, QIcon
 from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QListWidget, QStackedWidget, QLabel,
-    QPushButton, QFileDialog, QMessageBox, QColorDialog, QGroupBox,
-    QWidget, QFontDialog, QScrollArea, QApplication, QGridLayout
+    QApplication, QColorDialog, QComboBox, QDialog, QFileDialog, QFontDialog,
+    QGridLayout, QGroupBox, QHBoxLayout, QLabel, QListWidget, QMessageBox,
+    QPushButton, QScrollArea, QStackedWidget, QVBoxLayout, QWidget, QRadioButton
 )
 
 from netspeedtray.utils.taskbar_utils import get_taskbar_info
@@ -34,9 +34,9 @@ from netspeedtray.utils.components import Win11Toggle, Win11Slider
 
 from netspeedtray import constants
 
-class SettingsDialog(QDialog):
+class SettingsDialog(QWidget):
     """
-    Modal dialog window for configuring NetSpeedTray settings.
+    Dialog window for configuring NetSpeedTray settings.
 
     Features sidebar navigation, live preview updates (throttled),
     and custom Win11-styled controls.
@@ -49,12 +49,13 @@ class SettingsDialog(QDialog):
 
     def __init__(
         self,
-        parent: "NetworkSpeedWidget",
+        main_widget: "NetworkSpeedWidget",
         config: Dict[str, Any],
         version: str,
         i18n: constants.I18nStrings,
         available_interfaces: Optional[List[str]] = None,
         is_startup_enabled: bool = False,
+        parent: QWidget | None = None,
     ) -> None:
         """
         Initializes the settings dialog.
@@ -67,19 +68,21 @@ class SettingsDialog(QDialog):
             available_interfaces: List of network interface names detected by the system.
             is_startup_enabled: The current status of the 'start with windows' setting.
         """
+    
         super().__init__(parent)
+        self.setWindowFlags(Qt.WindowType.Window)
+        self.parent_widget = main_widget
         self.logger = logging.getLogger(f"NetSpeedTray.{self.__class__.__name__}")
         self.logger.debug("Initializing SettingsDialog...")
 
         # Inverse mappings for saving config
         self.SPEED_DISPLAY_MODE_MAP_INV = {v: k for k, v in self.SPEED_DISPLAY_MODE_MAP.items()}
         self.TEXT_ALIGNMENT_MAP_INV = {v: k for k, v in self.TEXT_ALIGNMENT_MAP.items()}
-
-        self.parent_widget = parent
         self.config = config.copy() # Work on a copy to allow cancellation
         self.original_config = config.copy() # Keep original for rollback on reject
         self.version = version
         self.i18n = i18n
+        self.initial_language = self.i18n.language
         self.available_interfaces = available_interfaces or []
         self.startup_enabled_initial_state = is_startup_enabled
 
@@ -109,7 +112,6 @@ class SettingsDialog(QDialog):
         except Exception as e:
             self.logger.error(f"Error setting window icon: {e}", exc_info=True)
             
-        self.setModal(True)
         self.setStyleSheet(dialog_style())
 
         # --- Initialization Steps ---
@@ -125,6 +127,7 @@ class SettingsDialog(QDialog):
             self.move(screen_center - dialog_center)
 
         self.logger.debug("SettingsDialog initialization completed.")
+
 
     def setup_ui(self) -> None:
         """Creates and arranges all UI elements within the dialog."""
@@ -148,7 +151,7 @@ class SettingsDialog(QDialog):
             self.sidebar.setContentsMargins(0, 0, 0, 0)
             self.sidebar.addItems([
                 self.i18n.GENERAL_SETTINGS_GROUP,
-                self.i18n.COLOR_CODING_GROUP,
+                self.i18n.APPEARANCE_SETTINGS_GROUP,
                 self.i18n.MINI_GRAPH_SETTINGS_GROUP,
                 self.i18n.UNITS_GROUP,
                 self.i18n.NETWORK_INTERFACES_GROUP,
@@ -176,7 +179,7 @@ class SettingsDialog(QDialog):
                 widget_to_remove.deleteLater()
 
             self._setup_general_page()
-            self._setup_color_page()
+            self._setup_appearance_page()
             self._setup_graph_page()
             self._setup_units_page()
             self._setup_interfaces_page()
@@ -198,8 +201,8 @@ class SettingsDialog(QDialog):
             main_layout.addWidget(content_widget, stretch=1)
 
             self.sidebar.currentRowChanged.connect(self._on_sidebar_selection_changed)
-            self.cancel_button.clicked.connect(self.reject)
-            self.save_button.clicked.connect(self.accept)
+            self.cancel_button.clicked.connect(self._cancel_and_close)
+            self.save_button.clicked.connect(self._save_and_close)
 
             self._ui_setup_done = True
             self.setMinimumSize(600, 500) # Adjusted height slightly for font weight text
@@ -224,6 +227,18 @@ class SettingsDialog(QDialog):
             page_layout = QVBoxLayout(page)
             page_layout.setSpacing(15) # Spacing between QGroupBoxes
 
+            # --- Language Group ---
+            language_group = QGroupBox(self.i18n.LANGUAGE_LABEL)
+            language_layout = QVBoxLayout(language_group)
+            self.language_combo = QComboBox()
+            
+            # Populate the language dropdown from the i18n constants
+            for code, name in self.i18n.LANGUAGE_MAP.items():
+                self.language_combo.addItem(name, userData=code)
+            
+            language_layout.addWidget(self.language_combo)
+            page_layout.addWidget(language_group)
+
             # --- Update Rate Group ---
             update_group = QGroupBox(self.i18n.UPDATE_RATE_GROUP_TITLE)
             update_group_layout = QVBoxLayout(update_group)
@@ -236,7 +251,7 @@ class SettingsDialog(QDialog):
 
             # --- Options Group (Toggles) ---
             options_group = QGroupBox(self.i18n.OPTIONS_GROUP_TITLE)
-            options_layout = QGridLayout(options_group) # Use QGridLayout for toggle alignment
+            options_layout = QGridLayout(options_group)
             options_layout.setVerticalSpacing(10)
             options_layout.setHorizontalSpacing(8)
 
@@ -246,7 +261,7 @@ class SettingsDialog(QDialog):
             options_layout.addWidget(self.dynamic_update_rate, 0, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
             sww_label = QLabel(self.i18n.START_WITH_WINDOWS_LABEL)
-            self.start_with_windows = Win11Toggle(label_text="") # No internal label
+            self.start_with_windows = Win11Toggle(label_text="")
             options_layout.addWidget(sww_label, 1, 0, Qt.AlignmentFlag.AlignVCenter)
             options_layout.addWidget(self.start_with_windows, 1, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             
@@ -260,10 +275,27 @@ class SettingsDialog(QDialog):
             options_layout.setRowStretch(3, 1)
             page_layout.addWidget(options_group)
 
-            options_layout.setColumnStretch(0, 0) # Label column (col 0)
-            options_layout.setColumnStretch(1, 1) # Toggle control column (col 1)
-            options_layout.setRowStretch(2, 1) # Add stretch after the last row of toggles
-            page_layout.addWidget(options_group)
+            page_layout.addStretch()
+            self.stack.addWidget(page)
+        except Exception as e:
+            self.logger.error(f"Error setting up General page: {e}", exc_info=True)
+
+
+    def _on_free_move_toggled(self, checked: bool) -> None:
+        """
+        Handles the "Free Move" toggle event. If unchecked, snaps the widget
+        back to its default position.
+        """
+        self.logger.debug(f"Free Move toggled to: {checked}. Scheduling update.")
+        self._schedule_settings_update()
+
+
+    def _setup_appearance_page(self) -> None:
+        self.logger.debug("Setting up Appearance page")
+        try:
+            page = QWidget()
+            page_layout = QVBoxLayout(page)
+            page_layout.setSpacing(15)
 
             # --- Font Settings Group ---
             font_group = QGroupBox(self.i18n.FONT_SETTINGS_GROUP_TITLE)
@@ -310,39 +342,20 @@ class SettingsDialog(QDialog):
             font_layout.addWidget(self.font_weight)
             page_layout.addWidget(font_group)
 
-            page_layout.addStretch()
-            self.stack.addWidget(page)
-        except Exception as e:
-            self.logger.error(f"Error setting up General page: {e}", exc_info=True)
-
-    def _on_free_move_toggled(self, checked: bool) -> None:
-        """
-        Handles the "Free Move" toggle event. If unchecked, snaps the widget
-        back to its default position.
-        """
-        self.logger.debug(f"Free Move toggled to: {checked}. Scheduling update.")
-        self._schedule_settings_update()
-
-    def _setup_color_page(self) -> None:
-        self.logger.debug("Setting up Color page")
-        try:
-            page = QWidget()
-            page_layout = QVBoxLayout(page)
-            page_layout.setSpacing(15)
-
+            # --- MOVED: Color Coding Group ---
             color_coding_group = QGroupBox(self.i18n.COLOR_CODING_GROUP)
-            color_coding_main_layout = QGridLayout(color_coding_group) # Grid for main toggle + container
+            color_coding_main_layout = QGridLayout(color_coding_group)
             color_coding_main_layout.setVerticalSpacing(10)
             color_coding_main_layout.setHorizontalSpacing(8)
             
             enable_colors_label = QLabel(self.i18n.ENABLE_COLOR_CODING_LABEL)
-            self.enable_colors = Win11Toggle(label_text="") # No internal label
+            self.enable_colors = Win11Toggle(label_text="")
             color_coding_main_layout.addWidget(enable_colors_label, 0, 0, Qt.AlignmentFlag.AlignVCenter)
             color_coding_main_layout.addWidget(self.enable_colors, 0, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
-            self.color_container = QWidget() # Container for sliders and color buttons
-            color_container_layout = QVBoxLayout(self.color_container) # QVBoxLayout for items within this
-            color_container_layout.setContentsMargins(0, 10, 0, 0) # Top margin for spacing
+            self.color_container = QWidget()
+            color_container_layout = QVBoxLayout(self.color_container)
+            color_container_layout.setContentsMargins(0, 10, 0, 0)
             color_container_layout.setSpacing(8)
 
             color_container_layout.addWidget(QLabel(self.i18n.HIGH_SPEED_THRESHOLD_LABEL))
@@ -373,18 +386,17 @@ class SettingsDialog(QDialog):
             self.low_speed_color_button.setToolTip(self.i18n.LOW_SPEED_COLOR_TOOLTIP)
             color_container_layout.addWidget(self.low_speed_color_button, alignment=Qt.AlignmentFlag.AlignLeft)
 
-            # Add the color_container (with its QVBoxLayout) spanning columns in the grid
             color_coding_main_layout.addWidget(self.color_container, 1, 0, 1, 2) 
-            
             color_coding_main_layout.setColumnStretch(0, 0)
             color_coding_main_layout.setColumnStretch(1, 1)
-            color_coding_main_layout.setRowStretch(2, 1) # Stretch after the color_container
+            color_coding_main_layout.setRowStretch(2, 1)
 
             page_layout.addWidget(color_coding_group)
             page_layout.addStretch()
             self.stack.addWidget(page)
         except Exception as e:
-            self.logger.error(f"Error setting up Color page: {e}", exc_info=True)
+            self.logger.error(f"Error setting up Appearance page: {e}", exc_info=True)
+
 
     def _setup_graph_page(self) -> None:
         self.logger.debug("Setting up Graph page")
@@ -428,6 +440,7 @@ class SettingsDialog(QDialog):
             self.stack.addWidget(page)
         except Exception as e:
             self.logger.error(f"Error setting up Graph page: {e}", exc_info=True)
+
 
     def _setup_units_page(self) -> None:
         self.logger.debug("Setting up Units page")
@@ -478,6 +491,7 @@ class SettingsDialog(QDialog):
         except Exception as e:
             self.logger.error(f"Error setting up Units page: {e}", exc_info=True)
 
+
     def _setup_interfaces_page(self) -> None:
         self.logger.debug("Setting up Interfaces page")
         try:
@@ -486,29 +500,34 @@ class SettingsDialog(QDialog):
             page_layout.setSpacing(15)
 
             interfaces_group = QGroupBox(self.i18n.NETWORK_INTERFACES_GROUP)
-            interfaces_layout = QGridLayout(interfaces_group) # Use QGridLayout for the main toggle
-            interfaces_layout.setVerticalSpacing(10)
-            interfaces_layout.setHorizontalSpacing(8)
+            interfaces_layout = QVBoxLayout(interfaces_group)
+            interfaces_layout.setSpacing(10)
 
-            all_interfaces_label = QLabel(self.i18n.ALL_INTERFACES_LABEL)
-            self.all_interfaces = Win11Toggle(label_text="") # No internal label
-            interfaces_layout.addWidget(all_interfaces_label, 0, 0, Qt.AlignmentFlag.AlignVCenter)
-            interfaces_layout.addWidget(self.all_interfaces, 0, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            # --- Radio Buttons for mode selection ---
+            mode_label = QLabel(self.i18n.MONITORING_MODE_LABEL)
+            interfaces_layout.addWidget(mode_label)
+
+            self.all_interfaces_radio = QRadioButton(self.i18n.ALL_INTERFACES_LABEL)
+            self.auto_interface_radio = QRadioButton(self.i18n.AUTO_PRIMARY_LABEL)
+            self.selected_interfaces_radio = QRadioButton(self.i18n.SELECTED_INTERFACES_LABEL)
+            
+            interfaces_layout.addWidget(self.all_interfaces_radio)
+            interfaces_layout.addWidget(self.auto_interface_radio)
+            interfaces_layout.addWidget(self.selected_interfaces_radio)
 
             self.interface_scroll = QScrollArea()
             self.interface_scroll.setWidgetResizable(True)
             self.interface_scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
 
             interfaces_container = QWidget()
-            self.interfaces_container_layout = QVBoxLayout(interfaces_container) # QVBox for the list of checkboxes
+            self.interfaces_container_layout = QVBoxLayout(interfaces_container)
             self.interfaces_container_layout.setContentsMargins(5, 5, 5, 5)
             self.interfaces_container_layout.setSpacing(8)
 
             self.interface_checkboxes: Dict[str, Win11Toggle] = {}
             if self.available_interfaces:
                 for iface in sorted(self.available_interfaces):
-                    # These toggles inside the scroll area use their internal labels
-                    checkbox = Win11Toggle(iface) 
+                    checkbox = Win11Toggle(iface)
                     self.interface_checkboxes[iface] = checkbox
                     self.interfaces_container_layout.addWidget(checkbox)
             else:
@@ -518,8 +537,8 @@ class SettingsDialog(QDialog):
 
             self.interfaces_container_layout.addStretch()
             self.interface_scroll.setWidget(interfaces_container)
-            
-            # Calculate dynamic height for scroll area (logic remains the same)
+
+            # Dynamic height calculation remains the same...
             if self.interface_checkboxes:
                 example_toggle = next(iter(self.interface_checkboxes.values()))
                 item_height = example_toggle.sizeHint().height()
@@ -535,18 +554,13 @@ class SettingsDialog(QDialog):
             else:
                 self.interface_scroll.setMaximumHeight(constants.ui.interfaces.SCROLL_MAX_HEIGHT_EMPTY)
 
-            interfaces_layout.addWidget(self.interface_scroll, 1, 0, 1, 2) # Scroll area spans 2 columns
-
-            interfaces_layout.setColumnStretch(0, 0)
-            interfaces_layout.setColumnStretch(1, 1)
-            # The scroll area will handle its own vertical expansion.
-            # No specific row stretch needed here if the scroll area is the last major element.
-
+            interfaces_layout.addWidget(self.interface_scroll)
             page_layout.addWidget(interfaces_group)
             page_layout.addStretch()
             self.stack.addWidget(page)
         except Exception as e:
             self.logger.error(f"Error setting up Interfaces page: {e}", exc_info=True)
+
 
     def _setup_troubleshooting_page(self) -> None:
         self.logger.debug("Setting up Troubleshooting page")
@@ -567,6 +581,7 @@ class SettingsDialog(QDialog):
         except Exception as e:
             self.logger.error(f"Error setting up Troubleshooting page: {e}", exc_info=True)
 
+
     # --- Font Weight Logic ---
     def _snap_value_to_allowed(self, value: int, allowed_values: List[int]) -> int:
         """Snaps a value to the closest value in a list of allowed values."""
@@ -577,6 +592,7 @@ class SettingsDialog(QDialog):
             return value
 
         return min(allowed_values, key=lambda w: abs(w - value))
+
 
     def _update_font_weight_options(self, font_family: str) -> None:
         """
@@ -626,6 +642,7 @@ class SettingsDialog(QDialog):
         self.logger.debug(f"Allowed font weights for '{font_family}': {self.font_weight_name_map}")
         self._update_font_weight_slider_range()
 
+
     def _update_font_weight_slider_range(self) -> None:
         """Sets the min and max range for the font weight slider."""
         if not hasattr(self, 'font_weight'):
@@ -643,6 +660,7 @@ class SettingsDialog(QDialog):
             self.font_weight.setEnabled(False)
             self.font_weight.setValueText(self.i18n.DEFAULT_TEXT) # Use N/A from i18n
             self.logger.warning("No allowed font weights for slider range; slider set to default/disabled.")
+
 
     def update_font_weight_slider_controls(self, target_weight: int) -> None:
         """
@@ -667,6 +685,7 @@ class SettingsDialog(QDialog):
         self.font_weight.setValue(snapped_value)
         self.font_weight.slider.blockSignals(is_blocked)
         self._update_font_weight_text_live(snapped_value, force_update_text=True)
+
 
     def _update_font_weight_text_live(self, current_slider_value: int, force_update_text: bool = False) -> None:
         """
@@ -710,6 +729,7 @@ class SettingsDialog(QDialog):
             if hasattr(self, 'font_weight') and hasattr(self.font_weight, 'setValueText'):
                 self.font_weight.setValueText("Error") # Simple error text
 
+
     def _snap_font_weight_on_release(self) -> None:
         """Snaps font weight slider to nearest allowed weight on release."""
         if not hasattr(self, 'font_weight'):
@@ -746,10 +766,11 @@ class SettingsDialog(QDialog):
         else:
             self.logger.warning(f"Invalid sidebar index {index}, stack count is {self.stack.count()}")
 
+
     def _connect_signals(self) -> None:
         try:
             self._connect_general_signals()
-            self._connect_color_signals()
+            self._connect_appearance_signals()
             self._connect_graph_signals()
             self._connect_units_signals()
             self._connect_interfaces_signals()
@@ -759,6 +780,7 @@ class SettingsDialog(QDialog):
              QMessageBox.critical(self, self.i18n.ERROR_TITLE, f"UI setup incomplete, cannot connect signals: {e}")
         except Exception as e:
              self.logger.error(f"Unexpected error connecting signals: {e}", exc_info=True)
+
 
     def _connect_general_signals(self) -> None:
         self.update_rate.valueChanged.connect(lambda v: self.update_rate.setValueText(self.rate_to_text(v)))
@@ -776,8 +798,20 @@ class SettingsDialog(QDialog):
 
         self.default_color_button.clicked.connect(lambda: self.choose_color(self.default_color_button))
         self.free_move.toggled.connect(self._on_free_move_toggled)
+        self.language_combo.currentIndexChanged.connect(self._schedule_settings_update)
 
-    def _connect_color_signals(self) -> None:
+
+    def _connect_appearance_signals(self) -> None:
+        # Font signals
+        self.font_size.valueChanged.connect(lambda v: self.font_size.setValueText(str(v)))
+        self.font_size.valueChanged.connect(self._schedule_settings_update)
+        self.font_family_button.clicked.connect(self.select_font)
+        self.font_weight.valueChanged.connect(self._update_font_weight_text_live)
+        self.font_weight.slider.sliderReleased.connect(self._snap_font_weight_on_release)
+        self.font_weight.valueChanged.connect(self._schedule_settings_update)
+        self.default_color_button.clicked.connect(lambda: self.choose_color(self.default_color_button))
+
+        # Color coding signals
         self.enable_colors.toggled.connect(self.toggle_color_settings)
         self.enable_colors.toggled.connect(self._schedule_settings_update)
         self.high_speed_color_button.clicked.connect(lambda: self.choose_color(self.high_speed_color_button))
@@ -786,6 +820,7 @@ class SettingsDialog(QDialog):
         self.high_speed_threshold.valueChanged.connect(self._schedule_settings_update)
         self.low_speed_threshold.valueChanged.connect(self.update_threshold_labels)
         self.low_speed_threshold.valueChanged.connect(self._schedule_settings_update)
+
 
     def _connect_graph_signals(self) -> None:
         self.enable_graph.toggled.connect(self._schedule_settings_update)
@@ -797,6 +832,7 @@ class SettingsDialog(QDialog):
             lambda v: self.graph_opacity.setValueText(f"{v}%")
         )
         self.graph_opacity.valueChanged.connect(self._schedule_settings_update)
+
 
     def _connect_units_signals(self) -> None:
         self.speed_display_mode.valueChanged.connect(self._on_speed_display_mode_changed)
@@ -810,10 +846,35 @@ class SettingsDialog(QDialog):
         
         self.force_decimals.toggled.connect(self._schedule_settings_update)
 
+
     def _connect_interfaces_signals(self) -> None:
-        self.all_interfaces.toggled.connect(self.toggle_all_interfaces_action)
+        # Connect all radio buttons to the same handler
+        self.all_interfaces_radio.toggled.connect(self._on_interface_mode_changed)
+        self.auto_interface_radio.toggled.connect(self._on_interface_mode_changed)
+        self.selected_interfaces_radio.toggled.connect(self._on_interface_mode_changed)
+
+        # Checkboxes still schedule updates as before
         for checkbox in self.interface_checkboxes.values():
             checkbox.toggled.connect(self._schedule_settings_update)
+
+
+    def _on_interface_mode_changed(self) -> None:
+        """Handles visibility of the interface list when a radio button is selected."""
+        # This check ensures we only react to the button that is now 'on'
+        if not self.sender().isChecked():
+            return
+            
+        is_selection_visible = self.selected_interfaces_radio.isChecked()
+        
+        self.logger.debug(f"Interface mode changed. Selection visible: {is_selection_visible}")
+        
+        self.interface_scroll.setVisible(is_selection_visible)
+        for checkbox in self.interface_checkboxes.values():
+            checkbox.setEnabled(is_selection_visible)
+
+        self.adjustSize()
+        self._schedule_settings_update()
+
 
     def _init_ui_state(self) -> None:
         if not self._ui_setup_done:
@@ -822,10 +883,18 @@ class SettingsDialog(QDialog):
         self.logger.debug("Initializing UI state from configuration.")
 
         # --- General Page ---
+        # Initialize the language combo box
+        lang_code_to_find = self.config.get("language", self.initial_language)
+        index = self.language_combo.findData(lang_code_to_find)
+        if index != -1:
+            self.language_combo.setCurrentIndex(index)
+        else:
+            self.logger.warning(f"Saved language '{lang_code_to_find}' not found in dropdown. Defaulting.")
+
         update_rate_val_raw = self.config.get("update_rate")
         update_rate_val_config = constants.config.defaults.DEFAULT_UPDATE_RATE if update_rate_val_raw is None else float(update_rate_val_raw)
-        update_rate_slider_val = int(update_rate_val_config * 2) 
-        self.update_rate.setValue(max(0, update_rate_slider_val)) 
+        update_rate_slider_val = int(update_rate_val_config * 2)
+        self.update_rate.setValue(max(0, update_rate_slider_val))
         self.update_rate.setValueText(self.rate_to_text(self.update_rate.value()))
 
         dynamic_update_raw = self.config.get("dynamic_update_enabled")
@@ -835,6 +904,7 @@ class SettingsDialog(QDialog):
         self.start_with_windows.setChecked(self.startup_enabled_initial_state)
         self.free_move.setChecked(self.config.get("free_move", False))
 
+        # --- Appearance Page ---
         font_family_config = self.config.get("font_family")
         initial_font_family = constants.config.defaults.DEFAULT_FONT_FAMILY if not font_family_config else str(font_family_config)
         self.font_family_label.setText(initial_font_family)
@@ -845,7 +915,7 @@ class SettingsDialog(QDialog):
         self.font_size.setValue(initial_font_size)
         self.font_size.setValueText(str(initial_font_size))
 
-        self._update_font_weight_options(initial_font_family) 
+        self._update_font_weight_options(initial_font_family)
         font_weight_config = self.config.get("font_weight")
         initial_font_weight = constants.config.defaults.DEFAULT_FONT_WEIGHT if font_weight_config is None else int(font_weight_config)
         self.update_font_weight_slider_controls(initial_font_weight)
@@ -854,7 +924,6 @@ class SettingsDialog(QDialog):
         initial_default_color_hex = constants.config.defaults.DEFAULT_COLOR if not default_color_config or not default_color_config.startswith("#") else str(default_color_config)
         self._set_color_button_style(self.default_color_button, initial_default_color_hex)
         
-        # --- Color Page ---
         color_coding_raw = self.config.get("color_coding")
         color_coding_enabled = constants.config.defaults.DEFAULT_COLOR_CODING if color_coding_raw is None else bool(color_coding_raw)
         self.enable_colors.setChecked(color_coding_enabled)
@@ -897,86 +966,91 @@ class SettingsDialog(QDialog):
         self.graph_opacity.setValueText(f"{self.graph_opacity.value()}%")
 
         # --- Units Page ---
+        self.update_threshold_labels()
 
-        self.update_threshold_labels() # Directly update threshold labels with fixed unit
-
-        # Speed Display Mode
-        sdm_raw = self.config.get("speed_display_mode", "auto") # Default to "auto"
+        sdm_raw = self.config.get("speed_display_mode", "auto")
         sdm_val = self.SPEED_DISPLAY_MODE_MAP.get(str(sdm_raw).lower(), self.SPEED_DISPLAY_MODE_MAP["auto"])
         self.speed_display_mode.setValue(sdm_val)
-        self._on_speed_display_mode_changed(sdm_val) # Set initial text
+        self._on_speed_display_mode_changed(sdm_val)
 
-        # Decimal Places
         dp_raw = self.config.get("decimal_places")
         dp_val = 2 if dp_raw is None else int(dp_raw)
         self.decimal_places.setValue(dp_val)
-        self._on_decimal_places_changed(dp_val) # Set initial text
+        self._on_decimal_places_changed(dp_val)
 
-        # Text Alignment
-        ta_raw = self.config.get("text_alignment", "center") # Default to "center"
+        ta_raw = self.config.get("text_alignment", "center")
         ta_val = self.TEXT_ALIGNMENT_MAP.get(str(ta_raw).lower(), self.TEXT_ALIGNMENT_MAP["center"])
         self.text_alignment.setValue(ta_val)
-        self._on_text_alignment_changed(ta_val) # Set initial text
+        self._on_text_alignment_changed(ta_val)
+        
         fd_raw = self.config.get("force_decimals")
-        fd_val = False if fd_raw is None else bool(fd_raw) # Default to False
+        fd_val = False if fd_raw is None else bool(fd_raw)
         self.force_decimals.setChecked(fd_val)
 
         # --- Interfaces Page ---
-        interface_mode_config = self.config.get("interface_mode")
-        is_all_mode_config = (constants.config.defaults.DEFAULT_INTERFACE_MODE == "all") if interface_mode_config is None else (str(interface_mode_config) == "all")
+        # Default to 'auto' if the config value is missing or invalid
+        interface_mode_config = self.config.get("interface_mode", "auto")
+        
+        if interface_mode_config == "selected":
+            self.selected_interfaces_radio.setChecked(True)
+        elif interface_mode_config == "all":
+            self.all_interfaces_radio.setChecked(True)
+        elif interface_mode_config == "auto" or not interface_mode_config:
+            self.auto_interface_radio.setChecked(True)
+        else:
+            # Fallback: if config is missing or invalid, select auto by default
+            self.auto_interface_radio.setChecked(True)
 
-        self.all_interfaces.blockSignals(True)
-        self.all_interfaces.setChecked(is_all_mode_config)
-        self.all_interfaces.blockSignals(False)
+        is_selection_visible = self.selected_interfaces_radio.isChecked()
+        self.interface_scroll.setVisible(is_selection_visible)
 
-        self._set_initial_interface_checks() # This handles individual interface checkbox states
-        self.toggle_interface_settings(is_visible=not is_all_mode_config) # Show/hide scroll area
+        selected_interfaces = self.config.get("selected_interfaces", [])
+        for name, checkbox in self.interface_checkboxes.items():
+            checkbox.blockSignals(True)
+            checkbox.setChecked(name in selected_interfaces)
+            checkbox.setEnabled(is_selection_visible)
+            checkbox.blockSignals(False)
 
         self.adjustSize()
         self.logger.debug("UI state initialization complete.")
+
 
     def toggle_color_settings(self, enabled: bool) -> None:
         is_enabled = bool(enabled)
         self.color_container.setVisible(is_enabled)
         self.adjustSize()
 
+
     def toggle_all_interfaces_action(self, state: int | bool) -> None:
-        is_all_mode_now_active = bool(state)  # True if "Monitor all interfaces" is NOW CHECKED
+        """
+        Handles the "Monitor All Interfaces" toggle. Enables/disables the
+        specific interface list without changing the user's selections.
+        """
+        is_all_mode_now_active = bool(state)
         is_specific_mode_now_active = not is_all_mode_now_active
 
         self.logger.debug(
             f"'All Interfaces' toggle changed. New state: {'All Mode' if is_all_mode_now_active else 'Specific Mode'}"
         )
 
-        something_changed_in_list = False
-        for iface_name, checkbox in self.interface_checkboxes.items():
-            # Enable/disable individual toggles based on the mode
+        # Enable or disable the checkboxes. Do not change their state.
+        for checkbox in self.interface_checkboxes.values():
             checkbox.setEnabled(is_specific_mode_now_active)
-
-            if is_specific_mode_now_active:
-                if checkbox.isChecked(): # If it was checked
-                    checkbox.blockSignals(True) # Prevent its own toggle signal during this change
-                    checkbox.setChecked(False)
-                    checkbox.blockSignals(False)
-                    self.logger.debug(f"Switched to specific mode: Unchecking '{iface_name}'.")
-                    something_changed_in_list = True
-            else: # Switched TO "all_mode" (is_all_mode_now_active is True)
-                if not checkbox.isChecked():
-                    checkbox.blockSignals(True)
-                    checkbox.setChecked(True) # Visually check, though disabled
-                    checkbox.blockSignals(False)
 
         self.toggle_interface_settings(is_visible=is_specific_mode_now_active)
         self._schedule_settings_update()
+
 
     def toggle_interface_settings(self, is_visible: bool) -> None:
         self.interface_scroll.setVisible(is_visible)
         self.adjustSize()
 
+
     def _schedule_settings_update(self) -> None:
         if not self._ui_setup_done: return
         self._pending_update = True
         self._update_timer.start()
+
 
     def _emit_settings_changed_throttled(self) -> None:
         if not self._pending_update: return
@@ -997,12 +1071,14 @@ class SettingsDialog(QDialog):
                  self.logger.warning("Parent widget lacks handle_settings_changed for live update.")
         self._pending_update = False
 
+
     def _set_color_button_style(self, button: QPushButton, color_hex: str) -> None:
         try:
             button.setStyleSheet(color_button_style(color_hex))
             button.setFixedSize(constants.ui.dialogs.COLOR_BUTTON_WIDTH, constants.ui.dialogs.COLOR_BUTTON_HEIGHT)
         except Exception as e:
             self.logger.error(f"Error setting style for color button '{button.objectName()}': {e}")
+
 
     def choose_color(self, button: QPushButton) -> None:
         object_name = button.objectName()
@@ -1021,6 +1097,7 @@ class SettingsDialog(QDialog):
             self._schedule_settings_update()
         else:
              self.logger.debug(f"Color selection cancelled for '{object_name}'.")
+
 
     def select_font(self) -> None:
         """Opens a font dialog to select font family, size, and weight."""
@@ -1066,6 +1143,7 @@ class SettingsDialog(QDialog):
         else:
             self.logger.debug("Font selection cancelled.")
 
+
     # --- New Handler Methods for Units Page ---
     def _on_speed_display_mode_changed(self, value: int) -> None:
         """Updates the text for the speed display mode slider."""
@@ -1074,9 +1152,11 @@ class SettingsDialog(QDialog):
         else: # "always_mbps"
             self.speed_display_mode.setValueText(self.i18n.SPEED_DISPLAY_MODE_MBPS)
 
+
     def _on_decimal_places_changed(self, value: int) -> None:
         """Updates the text for the decimal places slider."""
         self.decimal_places.setValueText(str(value))
+
 
     def _on_text_alignment_changed(self, value: int) -> None:
         """Updates the text for the text alignment slider."""
@@ -1086,6 +1166,7 @@ class SettingsDialog(QDialog):
             self.text_alignment.setValueText(self.i18n.ALIGN_RIGHT)
         else: # "center"
             self.text_alignment.setValueText(self.i18n.ALIGN_CENTER)
+
 
     def update_threshold_labels(self) -> None:
         try:
@@ -1109,15 +1190,13 @@ class SettingsDialog(QDialog):
         except Exception as e:
              self.logger.error(f"Error updating threshold labels: {e}", exc_info=True)
 
+
     def _set_initial_interface_checks(self) -> None:
         """
         Sets the initial checked state of individual interface checkboxes based on
-        the loaded configuration and the state of the 'all_interfaces' toggle.
-        Also handles enabling/disabling these checkboxes.
+        the loaded configuration. The mode determines if they are enabled.
         """
         selected_interfaces_from_config = self.config.get("selected_interfaces", [])
-        # Use the current state of the 'all_interfaces' toggle, which should have been
-        # set from config by the time this method is called in _init_ui_state.
         is_all_mode_currently_active = self.all_interfaces.isChecked()
 
         self.logger.debug(
@@ -1125,36 +1204,22 @@ class SettingsDialog(QDialog):
             f"Selected_interfaces from config: {selected_interfaces_from_config}"
         )
 
-        if not self.interface_checkboxes and self.available_interfaces:
-             self.logger.warning(
-                "Interface checkboxes list is empty but available_interfaces is not. "
-                "This might happen if _setup_interfaces_page was not completed or had an error."
-            )
-             return
-
         for iface_name, checkbox in self.interface_checkboxes.items():
             # Individual checkboxes are enabled only if NOT in 'all_mode'
             checkbox.setEnabled(not is_all_mode_currently_active)
 
-            should_be_checked = False
-            if is_all_mode_currently_active:
-                # In "all" mode, individual checkboxes are disabled.
-                # For visual consistency, we can set them to appear checked.
-                should_be_checked = True
-            else:
-                # In "specific" (not "all") mode, check state comes from the config's selected_interfaces list.
-                should_be_checked = (iface_name in selected_interfaces_from_config)
+            # The checked state should ALWAYS reflect the saved config.
+            # The mode only determines if the controls are enabled or disabled.
+            should_be_checked = (iface_name in selected_interfaces_from_config)
 
-            # Block signals temporarily to prevent _schedule_settings_update from firing multiple times
-            # during this programmatic initialization of checkbox states.
             checkbox.blockSignals(True)
             checkbox.setChecked(should_be_checked)
             checkbox.blockSignals(False)
 
-            self.logger.log(
-                logging.DEBUG if checkbox.isEnabled() else logging.DEBUG, # Or a lower level for disabled
+            self.logger.debug(
                 f"Interface '{iface_name}': Initial state - Enabled={checkbox.isEnabled()}, Checked={checkbox.isChecked()}"
             )
+
 
     def export_error_log(self) -> None:
         log_path = os.path.join(get_app_data_path(), constants.logs.LOG_FILENAME)
@@ -1184,12 +1249,16 @@ class SettingsDialog(QDialog):
                     self.i18n.LOG_EXPORT_ERROR_MESSAGE.format(error=str(e))
                 )
 
+
     def get_settings(self) -> Dict[str, Any]:
         if not self._ui_setup_done:
             self.logger.error("Cannot get settings: UI setup not complete.")
             return {} # Return empty dict on failure
         try:
             settings = self.original_config.copy() # Start with original to preserve unmanaged settings
+            
+            # Language Setting
+            settings["language"] = self.language_combo.currentData()
 
             # General Page
             settings["update_rate"] = max(constants.config.defaults.MINIMUM_UPDATE_RATE, self.update_rate.value() / 2.0) if self.update_rate.value() > 0 else 0.0
@@ -1201,7 +1270,6 @@ class SettingsDialog(QDialog):
             settings["start_with_windows"] = self.start_with_windows.isChecked() if hasattr(self, 'start_with_windows') else self.startup_enabled_initial_state
             settings["default_color"] = self._get_color_from_button(self.default_color_button, constants.config.defaults.DEFAULT_COLOR)
 
-            # Color Coding Page
             settings["color_coding"] = self.enable_colors.isChecked()
             settings["high_speed_threshold"] = self.high_speed_threshold.value() / 10.0
             settings["low_speed_threshold"] = self.low_speed_threshold.value() / 10.0
@@ -1213,22 +1281,23 @@ class SettingsDialog(QDialog):
             settings["history_minutes"] = self.history_duration.value()
             settings["graph_opacity"] = self.graph_opacity.value()
 
-            # Units Page (CORRECTED LOGIC)
+            # Units Page
             settings["speed_display_mode"] = self.SPEED_DISPLAY_MODE_MAP_INV.get(self.speed_display_mode.value(), "auto")
             settings["decimal_places"] = self.decimal_places.value()
             settings["text_alignment"] = self.TEXT_ALIGNMENT_MAP_INV.get(self.text_alignment.value(), "center")
             settings["force_decimals"] = self.force_decimals.isChecked()
             
-            # Network Interfaces Page
-            is_all_mode_active_at_save = self.all_interfaces.isChecked()
-            settings["interface_mode"] = "all" if is_all_mode_active_at_save else "selected"
+            # Interface settings logic
+            if self.selected_interfaces_radio.isChecked():
+                settings["interface_mode"] = "selected"
+            elif self.all_interfaces_radio.isChecked():
+                settings["interface_mode"] = "all"
+            else: # Default to auto
+                settings["interface_mode"] = "auto"
 
-            if is_all_mode_active_at_save:
-                settings["selected_interfaces"] = []
-            else:
-                settings["selected_interfaces"] = [
-                    iface_name for iface_name, cb in self.interface_checkboxes.items() if cb.isChecked()
-                ]
+            settings["selected_interfaces"] = [
+                iface_name for iface_name, cb in self.interface_checkboxes.items() if cb.isChecked()
+            ]
             
             self.logger.debug(
                 f"Getting settings: interface_mode='{settings['interface_mode']}', "
@@ -1241,6 +1310,7 @@ class SettingsDialog(QDialog):
         except Exception as e:
              self.logger.error(f"Unexpected error getting settings: {e}", exc_info=True)
              return {}
+
 
     def _get_color_from_button(self, button: QPushButton, default: str) -> str:
         try:
@@ -1263,48 +1333,6 @@ class SettingsDialog(QDialog):
             self.logger.error(f"Error parsing color from button '{button.objectName()}': {e}")
             return default
 
-    def accept(self) -> None:
-        self.logger.info("Accept button clicked. Finalizing and saving settings...")
-        final_settings = self.get_settings()
-        if not final_settings:
-            QMessageBox.critical(self, self.i18n.ERROR_TITLE, self.i18n.ERROR_GETTING_SETTINGS)
-            return
-
-        if hasattr(self.parent_widget, 'handle_settings_changed'):
-            try:
-                # This call will update the config, save it, and apply all settings.
-                self.parent_widget.handle_settings_changed(final_settings, save_to_disk=True)
-            except Exception as e:
-                self.logger.error(f"Failed to apply final settings: {e}", exc_info=True)
-                QMessageBox.critical(self, self.i18n.ERROR_TITLE, f"Failed to apply settings: {e}")
-                return
-        else:
-            self.logger.warning("Parent lacks handle_settings_changed, cannot apply final settings directly.")
-
-        # Startup task logic is now separate from the main config application
-        if self.should_update_startup_task():
-            requested_state = self.is_startup_requested()
-            self.logger.info(f"Startup setting changed. Requesting toggle to: {requested_state}")
-            if hasattr(self.parent_widget, 'toggle_startup'):
-                 self.parent_widget.toggle_startup(requested_state)
-            else:
-                 self.logger.error("Parent widget missing 'toggle_startup' method.")
-
-        super().accept()
-
-    def reject(self) -> None:
-        self.logger.info("Reject (Cancel) button clicked. Reverting preview changes.")
-        
-        if hasattr(self.parent_widget, 'handle_settings_changed'):
-            self.logger.debug("Restoring original configuration on parent widget due to reject.")
-            try:
-                # This reverts the widget's in-memory state to how it was before the dialog was opened.
-                self.parent_widget.handle_settings_changed(self.original_config, save_to_disk=False)
-            except Exception as e:
-                 self.logger.error(f"Error reverting parent widget state on reject: {e}", exc_info=True)
-        else:
-            self.logger.warning("Parent widget lacks handle_settings_changed, cannot revert preview.")
-        super().reject()
 
     # --- Helper Methods ---
     def rate_to_text(self, value: int) -> str:
@@ -1312,13 +1340,70 @@ class SettingsDialog(QDialog):
         seconds = value / 2.0
         return f"{seconds:.1f} {self.i18n.SECONDS_LABEL}"
 
+
     def get_config(self) -> Dict[str, Any]:
         return self.config.copy()
+
 
     def should_update_startup_task(self) -> bool:
         if not self._ui_setup_done: return False
         return self.start_with_windows.isChecked() != self.startup_enabled_initial_state
 
+
     def is_startup_requested(self) -> bool:
         if not self._ui_setup_done: return False
         return self.start_with_windows.isChecked()
+    
+    def reset_with_config(self, config: Dict[str, Any]) -> None:
+        """Resets the UI state with a new configuration dictionary."""
+        self.config = config.copy()
+        self.original_config = config.copy()
+        self.initial_language = self.i18n.language
+        self._init_ui_state()
+        self.logger.debug("Settings dialog state has been reset with fresh config.")
+
+    def _save_and_close(self) -> None:
+        """Saves settings, handles startup task, and hides the window."""
+        self.logger.info("Save button clicked. Finalizing and saving settings...")
+        final_settings = self.get_settings()
+        if not final_settings:
+            QMessageBox.critical(self, self.i18n.ERROR_TITLE, self.i18n.ERROR_GETTING_SETTINGS)
+            return
+        
+        selected_language = final_settings.get("language")
+        language_changed = selected_language and (selected_language != self.initial_language)
+
+        if hasattr(self.parent_widget, 'handle_settings_changed'):
+            try:
+                self.parent_widget.handle_settings_changed(final_settings, save_to_disk=True)
+            except Exception as e:
+                self.logger.error(f"Failed to apply final settings: {e}", exc_info=True)
+                QMessageBox.critical(self, self.i18n.ERROR_TITLE, f"Failed to apply settings: {e}")
+                return
+        
+        if self.should_update_startup_task():
+            requested_state = self.is_startup_requested()
+            if hasattr(self.parent_widget, 'toggle_startup'):
+                 self.parent_widget.toggle_startup(requested_state)
+
+        if language_changed:
+            QMessageBox.information(self, self.i18n.LANGUAGE_RESTART_TITLE, self.i18n.LANGUAGE_RESTART_MESSAGE)
+            
+        self.hide() # Use hide() instead of close()
+
+    def _cancel_and_close(self) -> None:
+        """Reverts any live preview changes and hides the window."""
+        self.logger.info("Cancel button clicked. Reverting preview changes.")
+        if hasattr(self.parent_widget, 'handle_settings_changed'):
+            try:
+                self.parent_widget.handle_settings_changed(self.original_config, save_to_disk=False)
+            except Exception as e:
+                 self.logger.error(f"Error reverting parent widget state on reject: {e}", exc_info=True)
+        self.hide() # Use hide() instead of close()
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        """Handles the window close event (e.g., 'X' button) to hide instead of close."""
+        self.logger.debug("Close event triggered. Hiding settings window.")
+        # Revert any live changes, just like clicking "Cancel"
+        self._cancel_and_close()
+        event.ignore()

@@ -36,7 +36,7 @@ from ..core.timer_manager import SpeedTimerManager
 from ..core.widget_state import WidgetState as CoreWidgetState, AggregatedSpeedData as CoreSpeedData
 from ..utils.config import ConfigManager as CoreConfigManager
 from ..utils.position_utils import PositionManager as CorePositionManager, WindowState as CoreWindowState
-from ..utils.taskbar_utils import get_taskbar_info, is_taskbar_obstructed, is_taskbar_visible
+from ..utils.taskbar_utils import get_taskbar_info, is_taskbar_obstructed, is_taskbar_visible, is_small_taskbar
 from ..utils.widget_renderer import WidgetRenderer as CoreWidgetRenderer, RenderConfig
 from ..utils.win_event_hook import WinEventHook, EVENT_SYSTEM_FOREGROUND, EVENT_OBJECT_LOCATIONCHANGE
 
@@ -55,18 +55,23 @@ class NetworkSpeedWidget(QWidget):
     MIN_UPDATE_INTERVAL = 0.5  # Minimum seconds between updates
 
 
-    def __init__(self, taskbar_height: int = 40, config: Optional[Dict[str, Any]] = None, parent: QObject | None = None) -> None:
-        """Initialize the NetworkSpeedWidget with core components and UI setup."""
+    def __init__(self, taskbar_height: int = 40, config: Optional[Dict[str, Any]] = None, i18n: Optional[constants.i18n.I18nStrings] = None, parent: QObject | None = None) -> None:
+        """Initialize the NetworkSpeedTray with core components and UI setup."""
         super().__init__(parent)
         self.logger = logging.getLogger(f"{constants.app.APP_NAME}.{self.__class__.__name__}")
         self.logger.info("Initializing NetworkSpeedWidget...")
+        self.settings_dialog: Optional[SettingsDialog] = None
 
         # --- Core Application State ---
         self.session_start_time = datetime.now()
         self.config_manager = CoreConfigManager()
         self.config: Dict[str, Any] = config or self._load_initial_config(taskbar_height)
+        
+        if i18n is None:
+            raise ValueError("An i18n instance must be provided to NetworkSpeedWidget.")
+        self.i18n = i18n
+        
         self._apply_theme_aware_defaults()
-        self.i18n = constants.strings
 
         # --- Core Functional Components ---
         self.widget_state: CoreWidgetState
@@ -413,12 +418,17 @@ class NetworkSpeedWidget(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+        
+        # Make the window's transparent areas ignore mouse events
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        
         self.setMouseTracking(True)
         self.logger.debug("Window properties set")
 
 
     def _init_ui_components(self) -> None:
         """Initialize UI-related elements: icon, colors, font."""
+        self.settings_dialog: Optional[SettingsDialog] = None
         self.logger.debug("Initializing UI components...")
         if not self.config:
             raise RuntimeError("Cannot initialize UI: Config missing")
@@ -524,58 +534,49 @@ class NetworkSpeedWidget(QWidget):
 
     def _resize_widget_for_font(self) -> None:
         """
-        Calculates and sets the widget's fixed dimensions based on current font metrics
-        and taskbar orientation. This method should ONLY resize, not reposition.
+        Calculates and sets the widget's fixed dimensions, adapting for small taskbars.
         """
         self.logger.debug("Resizing widget based on renderer layout...")
         if not self.metrics:
-            self.logger.error("Cannot resize widget: FontMetrics not available.")
             raise RuntimeError("FontMetrics not initialized.")
 
         try:
-            screen = self.screen() or QApplication.primaryScreen()
-            if not screen:
-                self.logger.warning("No screen available; assuming DPI scaling of 1.0")
-                dpi_scale = 1.0
+            taskbar_info = get_taskbar_info()
+            is_small = is_small_taskbar(taskbar_info)
+            self.logger.debug(f"Small taskbar detected: {is_small}")
+
+            precision = self.config.get("decimal_places", 2)
+            margin = constants.renderer.TEXT_MARGIN
+            
+            # --- NEW: Adaptive layout sizing ---
+            if is_small:
+                # Horizontal Layout Calculation
+                upload_text, download_text = self.renderer._format_speed_texts(9.99, 99.99, False, precision, True)
+                up_str = f"{constants.renderer.UPLOAD_ARROW} {upload_text}"
+                down_str = f"{constants.renderer.DOWNLOAD_ARROW} {download_text}"
+                separator = constants.layout.layout.HORIZONTAL_LAYOUT_SEPARATOR
+                
+                calculated_width = (self.metrics.horizontalAdvance(up_str) +
+                                    self.metrics.horizontalAdvance(separator) +
+                                    self.metrics.horizontalAdvance(down_str) + (margin * 2))
+                
+                calculated_height = self.taskbar_height
             else:
-                dpi_scale = screen.devicePixelRatio()
-                self.logger.debug(f"DPI scaling factor: {dpi_scale}")
+                # Vertical Layout Calculation
+                max_number_str = f"{999.99:.{precision}f}"
+                arrow_width = self.metrics.horizontalAdvance(constants.renderer.UPLOAD_ARROW)
+                max_number_width = self.metrics.horizontalAdvance(max_number_str)
+                possible_units = [" Kbps", " Mbps", " Gbps", " KB/s", " MB/s", " GB/s"]
+                max_unit_width = max(self.metrics.horizontalAdvance(unit) for unit in possible_units)
+                
+                calculated_width = (margin + arrow_width + constants.renderer.ARROW_NUMBER_GAP +
+                                    max_number_width + constants.renderer.VALUE_UNIT_GAP +
+                                    max_unit_width + margin)
+                
+                calculated_height = self.taskbar_height
 
-            taskbar_info = None
-            edge = None
-            if hasattr(self, 'position_manager') and self.position_manager and hasattr(self.position_manager, '_state'):
-                taskbar_info = getattr(self.position_manager._state, 'taskbar_info', None)
-                if taskbar_info:
-                    edge = taskbar_info.get_edge_position()
-
-            precision = self.config.get("speed_precision", 2)
-            max_number_str = f"{999.99:.{precision}f}"
-            margin = int(constants.renderer.TEXT_MARGIN * dpi_scale)
-            arrow_num_gap = int(constants.renderer.ARROW_NUMBER_GAP * dpi_scale)
-            value_unit_gap = int(constants.renderer.VALUE_UNIT_GAP * dpi_scale)
-            arrow_char = constants.renderer.UPLOAD_ARROW
-            arrow_width = self.metrics.horizontalAdvance(arrow_char)
-            max_number_width = self.metrics.horizontalAdvance(max_number_str)
-            possible_units = [" Kbps", " Mbps", " Gbps", " KB/s", " MB/s", " GB/s"]
-            max_unit_width = max(self.metrics.horizontalAdvance(unit) for unit in possible_units)
-            calculated_width = (margin + arrow_width + arrow_num_gap + max_number_width + value_unit_gap + max_unit_width + margin)
-            calculated_width = math.ceil(calculated_width)
-            logical_taskbar_height = self.taskbar_height
-            v_padding = self.config.get("vertical_padding", 0)
-            calculated_height = max(logical_taskbar_height + v_padding, 10)
-
-            if edge in (constants.taskbar.edge.LEFT, constants.taskbar.edge.RIGHT) and taskbar_info:
-                self.logger.debug("Vertical taskbar detected, calculating vertical layout size.")
-                longest_line_width = (margin + arrow_width + arrow_num_gap + max_number_width + value_unit_gap + max_unit_width + margin)
-                calculated_width = math.ceil(longest_line_width)
-                line_gap = getattr(constants.layout, 'LINE_GAP', 2)
-                text_height = (self.metrics.height() * 2) + line_gap
-                renderer_padding = getattr(constants.renderer, 'TEXT_MARGIN', 5) * 2
-                calculated_height = text_height + renderer_padding
-                self.logger.debug(f"Vertical layout calculated size: {calculated_width}x{calculated_height}")
-
-            self.setFixedSize(int(calculated_width), int(calculated_height))
-            self.logger.info(f"Widget resized to: {calculated_width}x{calculated_height}px")
+            self.setFixedSize(math.ceil(calculated_width), math.ceil(calculated_height))
+            self.logger.info(f"Widget resized to: {self.width()}x{self.height()}px (Layout: {'Horizontal' if is_small else 'Vertical'})")
 
         except Exception as e:
             self.logger.error(f"Failed to resize widget: {e}", exc_info=True)
@@ -661,26 +662,25 @@ class NetworkSpeedWidget(QWidget):
 
             painter.setFont(self.font)
 
-            # 1. Use the widget's own state variables, which are in Mbps.
-            upload_mbps = self.upload_speed
-            download_mbps = self.download_speed
-            
-            # 2. Convert from Mbps to Bytes/sec for the renderer.
-            #    (Mbps * 1,000,000 bits/megabit) / 8 bits/byte = Bytes/sec
-            upload_bytes_sec = (upload_mbps * 1_000_000) / 8
-            download_bytes_sec = (download_mbps * 1_000_000) / 8
-            
+            upload_bytes_sec = (self.upload_speed * 1_000_000) / 8
+            download_bytes_sec = (self.download_speed * 1_000_000) / 8
             render_config = RenderConfig.from_dict(self.config)
-
+            
+            # Detect layout mode and pass to renderer
+            taskbar_info = get_taskbar_info()
+            layout_mode = 'horizontal' if is_small_taskbar(taskbar_info) else 'vertical'
+            
             self.renderer.draw_network_speeds(
                 painter=painter,
                 upload=upload_bytes_sec,
                 download=download_bytes_sec,
                 width=self.width(),
                 height=self.height(),
-                config=render_config
+                config=render_config,
+                layout_mode=layout_mode
             )
 
+            # Pass the corrected layout_mode to the graph renderer as well
             if render_config.graph_enabled:
                 history = self.widget_state.get_in_memory_speed_history()
                 self.renderer.draw_mini_graph(
@@ -688,7 +688,8 @@ class NetworkSpeedWidget(QWidget):
                     width=self.width(),
                     height=self.height(),
                     config=render_config,
-                    history=history
+                    history=history,
+                    layout_mode=layout_mode
                 )
             
         except Exception as e:
@@ -719,6 +720,24 @@ class NetworkSpeedWidget(QWidget):
 
         except Exception as paint_err:
             self.logger.critical(f"CRITICAL: Failed to draw paint error indicator: {paint_err}", exc_info=True)
+
+
+    def enterEvent(self, event: QEvent) -> None:
+        """
+        When the mouse enters the widget's rectangle, make it tangible
+        so it can be clicked and dragged.
+        """
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+        super().enterEvent(event)
+
+
+    def leaveEvent(self, event: QEvent) -> None:
+        """
+        When the mouse leaves the widget's rectangle, make it click-through
+        again so it doesn't block other applications.
+        """
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        super().leaveEvent(event)
 
 
     def _calculate_menu_position(self) -> QPoint:
@@ -1095,36 +1114,31 @@ class NetworkSpeedWidget(QWidget):
 
 
     def show_settings(self) -> None:
-        """Creates and displays the modal settings dialog."""
+        """Creates and displays the settings dialog as a normal, non-modal window."""
         self.logger.debug("Showing settings dialog...")
         try:
             from .settings import SettingsDialog
-            
-            config_copy = self.config.copy()
-            interfaces = self.get_available_interfaces()
-            startup_status = self.is_startup_enabled()
-            app_version = getattr(self, 'app_version', "Unknown")
 
-            dialog = SettingsDialog(
-                parent=self,
-                config=config_copy,
-                version=app_version,
-                i18n=self.i18n,
-                available_interfaces=interfaces,
-                is_startup_enabled=startup_status
-            )
+            if self.settings_dialog is None:
+                self.logger.info("Creating new SettingsDialog instance.")
+                # Create the dialog as a top-level window (parent=None)
+                self.settings_dialog = SettingsDialog(
+                    main_widget=self,
+                    config=self.config.copy(),
+                    version=getattr(self, 'app_version', "Unknown"),
+                    i18n=self.i18n,
+                    available_interfaces=self.get_available_interfaces(),
+                    is_startup_enabled=self.is_startup_enabled()
+                )
 
-            dialog.adjustSize()
-            result = dialog.exec()
-
-            if result == QDialog.DialogCode.Accepted:
-                self.logger.info("Settings dialog accepted by user.")
-                if dialog.should_update_startup_task():
-                    requested_startup_state = dialog.is_startup_requested()
-                    self.logger.info(f"Startup setting changed. Requesting toggle to: {requested_startup_state}")
-                    self.toggle_startup(requested_startup_state)
+            if not self.settings_dialog.isVisible():
+                # Every time before showing, ensure it has the latest config
+                self.settings_dialog.reset_with_config(self.config.copy())
+                self.settings_dialog.show()
             else:
-                self.logger.info("Settings dialog cancelled by user.")
+                self.logger.debug("Settings dialog already visible. Activating.")
+                self.settings_dialog.raise_()
+                self.settings_dialog.activateWindow()
 
         except Exception as e:
             self.logger.error(f"Error showing settings: {e}", exc_info=True)

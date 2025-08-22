@@ -2,37 +2,53 @@
 Internationalization strings for the NetSpeedTray application.
 
 This module defines user-facing strings that may need to be translated. It
-provides a singleton instance `strings` which detects the system locale and
-provides translated strings with a fallback to English (en_US).
+provides a mechanism to initialize a singleton `strings` instance which provides
+translated strings with a fallback to English (en_US).
 """
 
 import logging
 import locale
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
-# Define logger at the module level
 logger = logging.getLogger("NetSpeedTray.I18n")
+strings: Optional["I18nStrings"] = None
+
+
+def get_i18n(language_code: Optional[str] = None) -> "I18nStrings":
+    """
+    Initializes (if needed) and returns the global i18n singleton.
+
+    This should be called with the language_code from the config once at startup.
+    All subsequent calls from other parts of the app can omit the argument and
+    will safely return the already-created instance.
+    """
+    global strings
+    if strings is None:
+        logger.debug("First call; initializing i18n singleton.")
+        strings = I18nStrings(language_code)
+    return strings
+
 
 class I18nStrings:
     """
     User-facing strings for internationalization.
 
     Provides a collection of translatable strings for the NetSpeedTray application,
-    supporting multiple languages. The current language is determined by the system's
-    locale, with a fallback to English (en_US).
-
-    Attributes:
-        language (str): Current language code (e.g., "en_US", "fr_FR"). Determined at init.
-        _strings (Dict[str, Dict[str, str]]): Dictionary mapping language codes to string dictionaries.
+    supporting multiple languages. The language is set during initialization,
+    with a fallback to the system locale and then to English (en_US).
     """
 
-    def __init__(self) -> None:
-        """
-        Initialize the I18nStrings instance with the user's default language.
+    LANGUAGE_MAP: Dict[str, str] = {
+        "en_US": "English (US)",
+        "fr_FR": "Français (France)",
+        "de_DE": "Deutsch (Deutschland)",
+        "nl_NL": "Nederlands (Nederland)",
+    }
 
-        Attempts to determine the user's language from the system locale, falling back
-        to "en_US" if detection fails or the language is unsupported. Also performs
-        validation of the string dictionaries upon initialization.
+
+    def __init__(self, language_code: Optional[str] = None) -> None:
+        """
+        Initialize the I18nStrings instance with a specific or detected language.
         """
         self._strings: Dict[str, Dict[str, str]] = {
             # ================= English (United States) =================
@@ -51,6 +67,7 @@ class I18nStrings:
                 "INFORMATION_TITLE": "Information",
                 "NO_LOG_TITLE": "Log File Not Found",
                 "ERROR_WINDOW_TITLE": "Application Error",
+                "LANGUAGE_RESTART_TITLE": "Restart Required",
 
                 # --- Messages ---
                 "NO_DATA_MESSAGE": "No data available for the selected period.",
@@ -81,6 +98,7 @@ class I18nStrings:
                 "GRAPH_DATA_ERROR": "Error displaying graph: Invalid data.",
                 "GRAPH_INVALID_DATA_FORMAT": "Invalid data format for graph plotting.",
                 "GRAPH_UPDATE_ERROR_MESSAGE": "Error updating graph display: {error}",
+                "LANGUAGE_RESTART_MESSAGE": "Language changes will take effect after restarting the application.",
 
                 # --- Labels ---
                 "SPEED_GRAPH_TAB_LABEL": "Speed Graph",
@@ -104,6 +122,8 @@ class I18nStrings:
                 "LAST_7_DAYS_LABEL": "Last 7 Days",
                 "SESSION_LABEL": "Current Session",
                 "GENERAL_SETTINGS_GROUP": "General",
+                "APPEARANCE_SETTINGS_GROUP": "Appearance",
+                "LANGUAGE_LABEL": "Language",
                 "UPDATE_RATE_GROUP_TITLE": "Update Rate",
                 "UPDATE_INTERVAL_LABEL": "Update Interval:",
                 "OPTIONS_GROUP_TITLE": "Options",
@@ -138,6 +158,9 @@ class I18nStrings:
                 "ALIGN_RIGHT": "Right",
                 "NETWORK_INTERFACES_GROUP": "Network Interfaces",
                 "ALL_INTERFACES_LABEL": "Monitor All Interfaces",
+                "MONITORING_MODE_LABEL": "Monitoring Mode:",
+                "AUTO_PRIMARY_LABEL": "Auto (Primary Interface)",
+                "SELECTED_INTERFACES_LABEL": "Select Specific Interfaces",
                 "NO_INTERFACES_FOUND": "No network interfaces detected.",
                 "TROUBLESHOOTING_GROUP": "Troubleshooting",
                 "LOG_FILES_FILTER": "Log Files",
@@ -225,6 +248,7 @@ class I18nStrings:
                 "INFORMATION_TITLE": "Information",
                 "NO_LOG_TITLE": "Fichier Journal Introuvable",
                 "ERROR_WINDOW_TITLE": "Erreur de l'Application",
+                "LANGUAGE_RESTART_TITLE": "Redémarrage Requis",
 
                 # --- Messages ---
                 "NO_DATA_MESSAGE": "Aucune donnée disponible pour la période sélectionnée.",
@@ -255,6 +279,7 @@ class I18nStrings:
                 "GRAPH_DATA_ERROR": "Erreur d'affichage du graphique : Données invalides.",
                 "GRAPH_INVALID_DATA_FORMAT": "Format de données invalide pour le tracé du graphique.",
                 "GRAPH_UPDATE_ERROR_MESSAGE": "Erreur lors de la mise à jour de l'affichage du graphique : {error}",
+                "LANGUAGE_RESTART_MESSAGE": "Les changements de langue prendront effet après le redémarrage de l'application.",
 
                 # --- Labels ---
                 "SPEED_GRAPH_TAB_LABEL": "Graphique des Vitesses",
@@ -278,6 +303,8 @@ class I18nStrings:
                 "LAST_7_DAYS_LABEL": "7 Derniers Jours",
                 "SESSION_LABEL": "Session Actuelle",
                 "GENERAL_SETTINGS_GROUP": "Général",
+                "APPEARANCE_SETTINGS_GROUP": "Apparence",
+                "LANGUAGE_LABEL": "Langue",
                 "UPDATE_RATE_GROUP_TITLE": "Fréquence de Mise à Jour",
                 "UPDATE_INTERVAL_LABEL": "Intervalle de Mise à Jour :",
                 "OPTIONS_GROUP_TITLE": "Options",
@@ -312,6 +339,9 @@ class I18nStrings:
                 "ALIGN_RIGHT": "Droite",
                 "NETWORK_INTERFACES_GROUP": "Interfaces Réseau",
                 "ALL_INTERFACES_LABEL": "Surveiller Toutes les Interfaces",
+                "MONITORING_MODE_LABEL": "Mode de surveillance :",
+                "AUTO_PRIMARY_LABEL": "Auto (Interface principale)",
+                "SELECTED_INTERFACES_LABEL": "Sélectionner des interfaces spécifiques",
                 "NO_INTERFACES_FOUND": "Aucune interface réseau détectée.",
                 "TROUBLESHOOTING_GROUP": "Dépannage",
                 "LOG_FILES_FILTER": "Fichiers Journaux",
@@ -399,6 +429,7 @@ class I18nStrings:
                 "INFORMATION_TITLE": "Information",
                 "NO_LOG_TITLE": "Protokolldatei nicht gefunden",
                 "ERROR_WINDOW_TITLE": "Anwendungsfehler",
+                "LANGUAGE_RESTART_TITLE": "Neustart erforderlich",
 
                 # --- Messages ---
                 "NO_DATA_MESSAGE": "Keine Daten für den ausgewählten Zeitraum verfügbar.",
@@ -429,6 +460,7 @@ class I18nStrings:
                 "GRAPH_DATA_ERROR": "Fehler bei der Grafikanzeige: Ungültige Daten.",
                 "GRAPH_INVALID_DATA_FORMAT": "Ungültiges Datenformat zum Plotten der Grafik.",
                 "GRAPH_UPDATE_ERROR_MESSAGE": "Fehler beim Aktualisieren der Grafikanzeige: {error}",
+                "LANGUAGE_RESTART_MESSAGE": "Sprachänderungen werden nach einem Neustart der Anwendung wirksam.",
 
                 # --- Labels ---
                 "SPEED_GRAPH_TAB_LABEL": "Geschwindigkeitsgrafik",
@@ -452,6 +484,8 @@ class I18nStrings:
                 "LAST_7_DAYS_LABEL": "Letzte 7 Tage",
                 "SESSION_LABEL": "Aktuelle Sitzung",
                 "GENERAL_SETTINGS_GROUP": "Allgemein",
+                "APPEARANCE_SETTINGS_GROUP": "Erscheinungsbild",
+                "LANGUAGE_LABEL": "Sprache",
                 "UPDATE_RATE_GROUP_TITLE": "Aktualisierungsrate",
                 "UPDATE_INTERVAL_LABEL": "Aktualisierungsintervall:",
                 "OPTIONS_GROUP_TITLE": "Optionen",
@@ -486,6 +520,9 @@ class I18nStrings:
                 "ALIGN_RIGHT": "Rechts",
                 "NETWORK_INTERFACES_GROUP": "Netzwerkschnittstellen",
                 "ALL_INTERFACES_LABEL": "Alle Schnittstellen überwachen",
+                "MONITORING_MODE_LABEL": "Überwachungsmodus:",
+                "AUTO_PRIMARY_LABEL": "Automatisch (Primäre Schnittstelle)",
+                "SELECTED_INTERFACES_LABEL": "Spezifische Schnittstellen auswählen",
                 "NO_INTERFACES_FOUND": "Keine Netzwerkschnittstellen erkannt.",
                 "TROUBLESHOOTING_GROUP": "Fehlerbehebung",
                 "LOG_FILES_FILTER": "Protokolldateien",
@@ -557,7 +594,7 @@ class I18nStrings:
                 "GRAPH_STATS_TEXT_TEMPLATE": "Max: \u2191{max_up:.1f} {unit} | \u2193{max_down:.1f} {unit}",
             },
 
-                        # ================= Dutch (Netherlands) 2025.08.13 =================
+                        # ================= Dutch (Netherlands) =================
             "nl_NL": {
                 # --- Window and dialog titles ---
                 "SETTINGS_WINDOW_TITLE": "Instellingen",
@@ -573,6 +610,7 @@ class I18nStrings:
                 "INFORMATION_TITLE": "Informatie",
                 "NO_LOG_TITLE": "Logboek bestand niet gevonden",
                 "ERROR_WINDOW_TITLE": "Applicatiefout",
+                "LANGUAGE_RESTART_TITLE": "Herstart vereist",
 
                 # --- Messages ---
                 "NO_DATA_MESSAGE": "Geen gegevens beschikbaar voor de geselecteerde periode.",
@@ -603,6 +641,7 @@ class I18nStrings:
                 "GRAPH_DATA_ERROR": "Fout bij weergeven grafiek: ongeldige gegevens.",
                 "GRAPH_INVALID_DATA_FORMAT": "Ongeldig gegevensformaat voor grafiekweergave.",
                 "GRAPH_UPDATE_ERROR_MESSAGE": "Fout bij bijwerken grafiekweergave: {error}",
+                "LANGUAGE_RESTART_MESSAGE": "Taalwijzigingen worden van kracht na het opnieuw opstarten van de applicatie.",
 
                 # --- Labels ---
                 "SPEED_GRAPH_TAB_LABEL": "Snelheidsgrafiek",
@@ -626,6 +665,8 @@ class I18nStrings:
                 "LAST_7_DAYS_LABEL": "Laatste 7 dagen",
                 "SESSION_LABEL": "Huidige sessie",
                 "GENERAL_SETTINGS_GROUP": "Algemeen",
+                "APPEARANCE_SETTINGS_GROUP": "Uiterlijk",
+                "LANGUAGE_LABEL": "Taal",
                 "UPDATE_RATE_GROUP_TITLE": "Update frequentie",
                 "UPDATE_INTERVAL_LABEL": "Update interval:",
                 "OPTIONS_GROUP_TITLE": "Opties",
@@ -660,6 +701,9 @@ class I18nStrings:
                 "ALIGN_RIGHT": "Rechts",
                 "NETWORK_INTERFACES_GROUP": "Netwerkinterfaces",
                 "ALL_INTERFACES_LABEL": "Alle interfaces monitoren",
+                "MONITORING_MODE_LABEL": "Monitoringmodus:",
+                "AUTO_PRIMARY_LABEL": "Automatisch (Primaire interface)",
+                "SELECTED_INTERFACES_LABEL": "Specifieke interfaces selecteren",
                 "NO_INTERFACES_FOUND": "Geen netwerkinterfaces gedetecteerd.",
                 "TROUBLESHOOTING_GROUP": "Probleemoplossing",
                 "LOG_FILES_FILTER": "Logbestanden",
@@ -733,17 +777,17 @@ class I18nStrings:
         }
 
         # --- Determine and set language ---
-        try:
-            detected_locale = locale.getlocale(locale.LC_CTYPE)
-            language_code = detected_locale[0] if detected_locale and detected_locale[0] else "en_US"
-            language_code = language_code.replace('-', '_')
-            
-            self.language = language_code
-        except Exception as e:
-            logger.warning(f"Failed to get default locale: {e}, falling back to en_US.")
-            self.language = "en_US"
-
-        # Fallback logic
+        if language_code:
+            self.language = language_code.replace('-', '_')
+        else:
+            try:
+                detected_locale = locale.getlocale(locale.LC_CTYPE)
+                self.language = detected_locale[0].replace('-', '_') if detected_locale and detected_locale[0] else "en_US"
+            except Exception as e:
+                logger.warning(f"Failed to get default locale: {e}, falling back to en_US.")
+                self.language = "en_US"
+        
+        # Fallback logic to find the best match (e.g., if 'en_GB' is detected, use 'en_US')
         effective_language = "en_US"
         if self.language in self._strings:
             effective_language = self.language
@@ -870,6 +914,3 @@ class I18nStrings:
             raise ValueError(error_summary)
         else:
             logger.debug("All I18n strings validated successfully against en_US keys.")
-
-# Singleton instance for easy access throughout the application
-strings = I18nStrings()

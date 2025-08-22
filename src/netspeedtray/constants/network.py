@@ -35,6 +35,7 @@ class NetworkSpeedConstants:
     """Constants for network speed calculations."""
     DEFAULT_SPEED: Final[float] = 0.0
     MIN_TIME_DIFF: Final[float] = 1e-6
+    MIN_RECORDABLE_SPEED_BPS: Final[float] = 1.0
     DEFAULT_UNIT_BITS: Final[str] = "bps"
     DEFAULT_UNIT_BYTES: Final[str] = "B/s"
 
@@ -49,12 +50,13 @@ class NetworkSpeedConstants:
 
 class InterfaceConstants:
     """Constants related to network interface management."""
-    DEFAULT_MODE: Final[str] = "all"
-    VALID_INTERFACE_MODES: Final[Set[str]] = {"all", "selected"}
-    # --- ADD THIS LIST ---
+    DEFAULT_MODE: Final[str] = "auto"
+    VALID_INTERFACE_MODES: Final[Set[str]] = {"all", "auto", "selected"}
     DEFAULT_EXCLUSIONS: Final[List[str]] = [
         "loopback", "teredo", "isatap", "bluetooth", "vpn", "virtual", "vmware", "vbox"
     ]
+    # Maximum plausible speed in Bytes/sec (e.g., ~10 Gbps). Used as a sanity check.
+    MAX_REASONABLE_SPEED_BPS: Final[int] = 1_250_000_000
 
     def __init__(self) -> None:
         self.validate()

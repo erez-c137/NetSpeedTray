@@ -30,10 +30,11 @@ from typing import Any, Deque, Dict, List, Optional, Tuple, Literal
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal, QTimer
 
-from netspeedtray import constants
+from netspeedtray.constants.network import network
 from ..utils.helpers import get_app_data_path
 
 logger = logging.getLogger("NetSpeedTray.WidgetState")
+
 
 # --- Data Transfer Objects (DTOs) ---
 @dataclass(slots=True, frozen=True)
@@ -42,6 +43,14 @@ class AggregatedSpeedData:
     upload: float
     download: float
     timestamp: datetime
+
+
+@dataclass(slots=True, frozen=True)
+class SpeedDataSnapshot:
+    """Represents a snapshot of per-interface network speeds at a specific timestamp."""
+    speeds: Dict[str, Tuple[float, float]]
+    timestamp: datetime
+
 
 # --- Database Worker Thread ---
 class DatabaseWorker(QThread):
@@ -61,6 +70,7 @@ class DatabaseWorker(QThread):
         self._queue: Deque[Tuple[str, Any]] = deque()
         self._stop_event = threading.Event()
         self.logger = logging.getLogger(f"NetSpeedTray.{self.__class__.__name__}")
+
 
     def run(self) -> None:
         """The main event loop for the database thread."""
@@ -83,14 +93,17 @@ class DatabaseWorker(QThread):
         self._close_connection()
         self.logger.info("Database worker thread stopped.")
 
+
     def stop(self) -> None:
         """Signals the worker thread to stop and waits for it to finish."""
         self.logger.debug("Stopping database worker thread...")
         self._stop_event.set()
 
+
     def enqueue_task(self, task: str, data: Any = None) -> None:
         """Adds a task to the worker's queue for asynchronous execution."""
         self._queue.append((task, data))
+
 
     def _execute_task(self, task: str, data: Any) -> None:
         """Dispatches a task to the appropriate handler method."""
@@ -113,6 +126,7 @@ class DatabaseWorker(QThread):
         else:
             self.logger.warning("Unknown database task requested: %s", task)
 
+
     def _initialize_connection(self) -> None:
         """Establishes the SQLite connection and sets PRAGMAs for performance."""
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -126,6 +140,7 @@ class DatabaseWorker(QThread):
         self.conn.execute("PRAGMA busy_timeout = 5000;")
         self.logger.debug("Database connection established with WAL mode enabled.")
 
+
     def _close_connection(self) -> None:
         """Commits any final changes and closes the database connection."""
         if self.conn:
@@ -133,7 +148,8 @@ class DatabaseWorker(QThread):
             self.conn.close()
             self.conn = None
             self.logger.debug("Database connection closed.")
-            
+
+
     def _check_and_create_schema(self) -> None:
         """
         Checks the database version from the metadata table. If the version is
@@ -204,6 +220,7 @@ class DatabaseWorker(QThread):
         self.conn.commit()
         self.logger.info("New database schema created successfully.")
 
+
     def _persist_speed_batch(self, batch: List[Tuple[int, str, float, float]]) -> None:
         """Persists a batch of raw, per-second speed data in a single transaction."""
         if not batch or self.conn is None:
@@ -254,6 +271,7 @@ class DatabaseWorker(QThread):
             self.logger.error("Database maintenance failed: %s", e, exc_info=True)
             self.conn.rollback()
 
+
     def _aggregate_raw_to_minute(self, cursor: sqlite3.Cursor, now: datetime) -> None:
         """Aggregates per-second data older than 24 hours into per-minute averages/maxes."""
         cutoff = int((now - timedelta(hours=24)).timestamp())
@@ -277,6 +295,7 @@ class DatabaseWorker(QThread):
         
         cursor.execute("DELETE FROM speed_history_raw WHERE timestamp < ?", (cutoff,))
         if cursor.rowcount > 0: self.logger.info("Pruned %d raw records after aggregation.", cursor.rowcount)
+
 
     def _aggregate_minute_to_hour(self, cursor: sqlite3.Cursor, now: datetime) -> None:
         """Aggregates per-minute data older than 30 days into per-hour averages/maxes."""
@@ -302,6 +321,7 @@ class DatabaseWorker(QThread):
         cursor.execute("DELETE FROM speed_history_minute WHERE timestamp < ?", (cutoff,))
         if cursor.rowcount > 0: self.logger.info("Pruned %d minute records after aggregation.", cursor.rowcount)
 
+
     def _prune_data_with_grace_period(self, cursor: sqlite3.Cursor, config: Dict[str, Any], now: datetime) -> bool:
         """
         Prunes old per-hour data based on user config, respecting a grace period.
@@ -321,9 +341,7 @@ class DatabaseWorker(QThread):
         prune_scheduled_at_ts = int(row[0]) if row else None
 
         new_retention_config = config.get("keep_data", 365)
-        
-        # --- THIS IS THE CORRECT LOGICAL ORDER ---
-        
+                
         # 1. (HIGHEST PRIORITY) Check if a scheduled prune is due to be executed.
         if prune_scheduled_at_ts and prune_scheduled_at_ts <= int(now.timestamp()):
             cursor.execute("SELECT value FROM metadata WHERE key = 'pending_retention_days'")
@@ -367,7 +385,7 @@ class DatabaseWorker(QThread):
         cursor.execute("DELETE FROM speed_history_hour WHERE timestamp < ?", (cutoff,))
         return cursor.rowcount > 0
 
-# --- Main WidgetState Class ---
+
 class WidgetState(QObject):
     """Manages all network speed and bandwidth history for the NetworkSpeedWidget."""
 
@@ -378,7 +396,7 @@ class WidgetState(QObject):
 
         # In-Memory Cache for real-time mini-graph
         self.max_history_points: int = self._get_max_history_points()
-        self.in_memory_history: Deque[AggregatedSpeedData] = deque(maxlen=self.max_history_points)
+        self.in_memory_history: Deque[SpeedDataSnapshot] = deque(maxlen=self.max_history_points)
         
         # Batching list for database writes
         self._db_batch: List[Tuple[int, str, float, float]] = []
@@ -400,6 +418,7 @@ class WidgetState(QObject):
 
         self.logger.info("WidgetState initialized with threaded database worker.")
 
+
     def add_speed_data(self, speed_data: Dict[str, Tuple[float, float]]) -> None:
         """
         Adds new per-interface speed data. Updates in-memory state and adds
@@ -407,29 +426,34 @@ class WidgetState(QObject):
 
         Args:
             speed_data: A dictionary mapping interface names to a tuple of
-                        (upload_bytes_sec, download_bytes_sec).
+                        (upload_bytes_sec, download_bytes_sec) as FLOATS.
         """
-        total_upload = sum(up for up, down in speed_data.values())
-        total_download = sum(down for up, down in speed_data.values())
         now = datetime.now()
         
-        # Add aggregated data to in-memory deque for the mini-graph
-        self.in_memory_history.append(AggregatedSpeedData(
-            upload=total_upload,
-            download=total_download,
+        # The in-memory history now stores the full per-interface data for live filtering.
+        self.in_memory_history.append(SpeedDataSnapshot(
+            speeds=speed_data.copy(),
             timestamp=now
         ))
 
-        # Add granular, per-interface data to the database write batch
         timestamp = int(now.timestamp())
+        min_speed = network.speed.MIN_RECORDABLE_SPEED_BPS
         for interface, (up_speed, down_speed) in speed_data.items():
-            # Filter out negligible activity to prevent database bloat
-            if up_speed > 1.0 or down_speed > 1.0:
+            # Only add to the database batch if the speed is significant
+            if up_speed >= min_speed or down_speed >= min_speed:
                 self._db_batch.append((timestamp, interface, up_speed, down_speed))
-    
-    def get_in_memory_speed_history(self) -> List[AggregatedSpeedData]:
-        """Retrieves the current in-memory speed history for the mini-graph."""
+
+
+    def get_in_memory_speed_history(self) -> List[SpeedDataSnapshot]:
+        """
+        Retrieves the current in-memory speed history.
+        
+        Returns:
+            A list of SpeedDataSnapshot objects, each containing a dictionary of
+            per-interface speeds for a specific timestamp.
+        """
         return list(self.in_memory_history)
+
 
     def flush_batch(self) -> None:
         """Sends the current batch of speed data to the database worker."""
