@@ -32,15 +32,15 @@ If you prefer, you can download the latest files directly from the [**Releases P
 
 -   ✨ **Native Look & Feel:** Designed to blend in perfectly with the Windows 10/11 UI. Includes smart detection for light and dark taskbar themes to ensure text is always visible.
 
--   🚀 **Intelligent & Stable Positioning:** A fully event-driven core provides rock-solid positioning logic. The widget responds instantly without flickering or fighting with system elements.
+-   🚀 **Intelligent & Adaptive Positioning:** The widget finds the empty space next to your system tray and automatically shifts to make room for new icons, ensuring it never overlaps.
 
 -   **Seamless OS Integration:** Behaves like a native OS component.
     -   Hides instantly with the **auto-hiding taskbar**.
     -   Hides instantly when you use a **fullscreen application**.
 
 -   📈 **Smart Network Monitoring:**
-    -   Automatically identifies your primary internet connection to provide the most accurate reading out of the box.
-    -   Allows you to select and monitor specific network interfaces or aggregate them all.
+    -   Accurate by Default: The "Auto" mode is now the default and intelligently identifies your main internet connection, providing a true speed reading by ignoring noise from VPNs and virtual adapters.
+    -   Clear Interface Selection: A new, intuitive radio-button system in the settings makes it effortless to switch between Auto, All, or Selected interfaces.
 
 -   🎨 **Total Visual Customization:**
     -   **Free Move Mode:** Unlock the widget and place it anywhere on your screen.
@@ -90,11 +90,13 @@ Double-click the widget to see a detailed, filterable graph of your network hist
 
 ---
 
-## ☕ Support This Project
+## ☕ Support A Tool You Use Every Day
 
-Let’s be real: Windows should have had this feature built-in. Instead of waiting, I brewed up a lightweight, bloat-free solution that feels like it belongs.
+Let’s be real: Windows should have had this feature built-in. NetSpeedTray is my answer: a lightweight, bloat-free solution that feels like it belongs, crafted with hundreds of hours of development and debugging.
 
-If you enjoy NetSpeedTray and it makes your workflow a little better, please consider supporting its development. Your contribution helps me dedicate more time to the project and keep it a high-quality, ad-free tool for everyone.
+This project is a labor of love, and it will **always be free, open-source, and ad-free.**
+
+If you get daily value from this little widget, please consider supporting its future. Your contribution is a powerful way to say "thank you" and directly funds the time spent on new features and long-term maintenance.
 
 <p align="center">
   <a href="https://github.com/sponsors/erez-c137">
@@ -110,7 +112,7 @@ If you enjoy NetSpeedTray and it makes your workflow a little better, please con
   </a>
 </p>
 
-Sharing and Starring the repo is also a huge and deeply appreciated way to show support! ❤️
+Can't contribute financially? No problem! **Sharing & Starring the repo** on GitHub is a free and hugely appreciated way to show your support. ❤️
 
 ---
 
