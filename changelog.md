@@ -1,6 +1,15 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+---
+
+## [1.1.4] - August 23, 2025 (Hotfix)
+
+This is an immediate hotfix to address a critical bug in the "Start with Windows" feature introduced in v1.1.3.
+
+### 🐛 Critical Bug Fixes
+
+-   **Fixed "Start with Windows" Toggle:** Resolved a critical logic flaw where the "Start with Windows" setting could not be disabled. The toggle in the settings window will now correctly reflect the user's saved choice, and disabling the feature now correctly removes the application's entry from the Windows Registry.
 
 ---
 

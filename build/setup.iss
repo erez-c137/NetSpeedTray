@@ -1,9 +1,9 @@
 ; NetSpeedTray Installer Script
-; Version 1.1.3
+; Version 1.1.4
 
 #define MyAppName "NetSpeedTray"
-#define MyAppVersion "1.1.3.0"
-#define MyAppVersionDisplay "1.1.3"
+#define MyAppVersion "1.1.4.0"
+#define MyAppVersionDisplay "1.1.4"
 #define MyAppPublisher "Erez C137"
 #define MyAppURL "https://github.com/erez-c137/NetSpeedTray"
 #define MyAppExeName "NetSpeedTray.exe"
