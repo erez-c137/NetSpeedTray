@@ -14,8 +14,6 @@ kiwisolver==1.4.8
     # via matplotlib
 matplotlib==3.10.5
     # via -r requirements.in
-netifaces==0.11.0
-    # via -r requirements.in
 numpy==2.3.2
     # via
     #   -r requirements.in

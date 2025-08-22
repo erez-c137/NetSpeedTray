@@ -12,9 +12,9 @@ from typing import Dict, Any, List, Optional, TYPE_CHECKING, Tuple
 
 from PyQt6.QtCore import pyqtSignal, QObject
 import psutil
-import netifaces
 
 from netspeedtray import constants
+from ..utils.network_utils import get_primary_interface_name
 
 if TYPE_CHECKING:
     from ..views.widget import NetworkSpeedWidget
@@ -157,7 +157,7 @@ class NetworkController(QObject):
         Aggregates the calculated per-interface speeds based on the current monitoring mode.
         Returns total upload and download speeds in Bytes/sec.
         """
-        mode = self.config.get("interface_mode", "all")
+        mode = self.config.get("interface_mode", "auto")
 
         if mode == "selected":
             selected = self.config.get("selected_interfaces", [])
@@ -172,41 +172,16 @@ class NetworkController(QObject):
             return total_up, total_down
 
         elif mode == "auto":
-            # Try IP-based detection first (most robust and matches psutil names)
-            try:
-                from netspeedtray.utils.network_utils import get_primary_interface_name, guid_to_friendly_name
-                ip_primary = get_primary_interface_name()
-                if ip_primary and ip_primary in per_interface_speeds:
-                    self.logger.debug(f"Auto mode: Using IP-based primary interface '{ip_primary}' for speed display.")
-                    return per_interface_speeds[ip_primary]
-                elif ip_primary:
-                    self.logger.warning(f"Auto mode: IP-based primary interface '{ip_primary}' not found in speed data. Trying GUID/WMI fallback.")
-            except Exception as e:
-                self.logger.error(f"Auto mode: Error in IP-based primary interface detection: {e}", exc_info=True)
-
-            # Fallback to GUID/WMI mapping if available
+            # Call the function to identify the primary interface. This will trigger the log.
             self._update_primary_interface_name()
-            primary = self.primary_interface
-            if primary and primary.startswith('{') and primary.endswith('}'):
-                try:
-                    friendly = guid_to_friendly_name(primary)
-                    if friendly and friendly in per_interface_speeds:
-                        self.logger.info(f"Auto mode: Mapped GUID '{primary}' to friendly name '{friendly}'.")
-                        return per_interface_speeds[friendly]
-                    else:
-                        self.logger.warning(f"Auto mode: GUID '{primary}' could not be mapped or not found in speed data. Available: {list(per_interface_speeds.keys())}. Falling back to 'all' mode.")
-                except Exception as e:
-                    self.logger.error(f"Auto mode: Error mapping GUID to friendly name: {e}", exc_info=True)
-            elif primary and primary in per_interface_speeds:
-                self.logger.debug(f"Auto mode: Using primary interface '{primary}' for speed display.")
-                return per_interface_speeds[primary]
+            
+            if self.primary_interface and self.primary_interface in per_interface_speeds:
+                # If we found it, return the speeds for only that interface.
+                return per_interface_speeds[self.primary_interface]
             else:
-                self.logger.warning(
-                    f"Auto mode: Primary interface '{primary}' not found in speed data. "
-                    f"Available: {list(per_interface_speeds.keys())}. Falling back to 'all' mode.")
-            # Fallback to 'all' mode if primary interface is not found
-            return self._sum_all(per_interface_speeds)
-
+                # If we couldn't find it, show zero until it's found on the next tick.
+                return 0.0, 0.0
+        
         # If mode is "all" or any other value, sum everything.
         return self._sum_all(per_interface_speeds)
 
@@ -232,32 +207,22 @@ class NetworkController(QObject):
 
     def _update_primary_interface_name(self) -> None:
         """
-        Identifies the primary network interface by finding the default gateway.
-        This is the most reliable method for determining the user's main internet connection.
+        Identifies and updates the primary network interface using the robust
+        socket-based method from network_utils.
         """
         try:
-            # Find the default gateway for the IPv4 address family
-            gws = netifaces.gateways()
-            default_gateway_info = gws.get('default', {}).get(netifaces.AF_INET)
-            
-            if not default_gateway_info:
-                self.logger.warning("Could not determine default gateway. Primary interface not found.")
-                if self.primary_interface is not None:
-                    self.logger.info("Clearing primary interface. Will aggregate all physical interfaces.")
-                    self.primary_interface = None
-                return
+            # This calls the reliable function instead of using netifaces
+            new_primary_interface = get_primary_interface_name()
 
-            gateway_ip, interface_name = default_gateway_info
-            
-            if self.primary_interface != interface_name:
-                self.logger.info("Found new primary interface: '%s' (Gateway: %s)", interface_name, gateway_ip)
-                self.primary_interface = interface_name
+            if self.primary_interface != new_primary_interface:
+                if new_primary_interface:
+                    self.logger.info("Found new primary interface: '%s'", new_primary_interface)
+                else:
+                    self.logger.warning("Could not determine primary interface. Will aggregate all physical interfaces.")
+                self.primary_interface = new_primary_interface
 
-        except ImportError:
-            self.logger.error("`netifaces` package is not installed. Cannot determine primary interface.")
-            self.primary_interface = None
         except Exception as e:
-            self.logger.error("Error identifying primary interface: %s", e, exc_info=True)
+            self.logger.error("Unexpected error updating primary interface: %s", e, exc_info=True)
             self.primary_interface = None
 
 

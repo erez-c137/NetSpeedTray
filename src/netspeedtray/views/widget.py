@@ -97,11 +97,15 @@ class NetworkSpeedWidget(QWidget):
         self.is_paused: bool = False
         self._last_update_time: float = 0.0
         self._last_taskbar_event_time: float = 0.0
+        self.last_tray_rect: Optional[Tuple[int, int, int, int]] = None
         
         # --- Event Hook & Timers ---
         self.foreground_hook: Optional[WinEventHook] = None
         self.taskbar_hook: Optional[WinEventHook] = None
-        self.state_update_timer = QTimer(self)  # The single safety-net timer
+        self.z_order_timer = QTimer(self)
+        self.z_order_timer.setSingleShot(True)
+        self.z_order_timer.setInterval(250)  # A 250ms delay is imperceptible but effective
+        self.z_order_timer.timeout.connect(self._ensure_win32_topmost)
         self._tray_watcher_timer = QTimer(self)
         
         # Keep the widget hidden initially
@@ -131,16 +135,12 @@ class NetworkSpeedWidget(QWidget):
 
     def _setup_timers(self) -> None:
         """Configures and starts all application timers."""
-        self.logger.debug("Setting up timers...")
-        
-        self.state_update_timer.timeout.connect(self._on_foreground_window_changed)
-        self.state_update_timer.start(1000)
-        self.logger.debug("Safety-net state update timer started (1000ms), connected to full event handler.")
-
-        # This timer remains for periodic position correction if the taskbar moves.
-        self._tray_watcher_timer.timeout.connect(self._check_and_update_position)
-        self._tray_watcher_timer.start(2000)
-        self.logger.debug("Tray watcher timer started.")
+        # All polling timers have been replaced by WinEventHooks for efficiency
+        # and a single-shot z_order_timer for stability. This function
+        # is kept to prevent crashes but is now functionally empty.
+        self._tray_watcher_timer.timeout.connect(self._check_for_tray_changes)
+        self._tray_watcher_timer.start(3000)
+        self.logger.debug("Smart tray watcher timer started (3000ms).")
 
 
     def _init_core_components(self) -> None:
@@ -265,14 +265,50 @@ class NetworkSpeedWidget(QWidget):
             self.logger.error(f"Error during periodic position check: {e}", exc_info=True)
 
 
+    def _check_for_tray_changes(self) -> None:
+        """
+        Periodically checks if the system tray's geometry has changed, which
+        indicates icons have been added or removed. Triggers a reposition only
+        if a change is detected. This is the 'smart' polling solution.
+        """
+        if self.config.get("free_move", False) or not self.isVisible():
+            return
+
+        try:
+            taskbar_info = get_taskbar_info()
+            if not taskbar_info:
+                return
+
+            current_tray_rect = taskbar_info.get_tray_rect()
+
+            # If this is the first run, just store the rect and exit.
+            if self.last_tray_rect is None:
+                self.last_tray_rect = current_tray_rect
+                return
+
+            # If the tray's rectangle has changed, an icon was added or removed.
+            if self.last_tray_rect != current_tray_rect:
+                self.logger.info("System tray change detected. Updating widget position.")
+                self.update_position()
+                # Store the new rect for the next comparison.
+                self.last_tray_rect = current_tray_rect
+
+        except Exception as e:
+            self.logger.error(f"Error during tray change check: {e}", exc_info=True)
+
+
     def _on_foreground_window_changed(self, hwnd: int = 0) -> None:
         """
         Slot that responds to window focus changes. Triggers a state check
-        and ensures the widget is on top if it should be visible.
+        and then starts a delayed timer to fix the Z-order.
         """
+        # First, immediately update visibility. This is fast and handles hiding.
         self._update_widget_state()
+        
+        # If the widget should be visible, don't force its Z-order now.
+        # Instead, start the single-shot timer. It will fire in 250ms,
         if self.isVisible():
-            self._ensure_win32_topmost()
+            self.z_order_timer.start()
 
 
     def _on_taskbar_state_changed(self, hwnd: int) -> None:

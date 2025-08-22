@@ -24,8 +24,6 @@ kiwisolver==1.4.8
     # via matplotlib
 matplotlib==3.10.5
     # via -r requirements.in
-netifaces==0.11.0
-    # via -r requirements.in
 numpy==2.3.2
     # via
     #   -r requirements.in
@@ -75,11 +73,15 @@ python-dateutil==2.9.0.post0
     #   freezegun
     #   matplotlib
 pywin32==311
-    # via -r requirements.in
+    # via
+    #   -r requirements.in
+    #   wmi
 pywin32-ctypes==0.2.3
     # via pyinstaller
 six==1.17.0
     # via python-dateutil
+wmi==1.5.1
+    # via -r requirements.in
 
 # The following packages are considered to be unsafe in a requirements file:
 # setuptools
