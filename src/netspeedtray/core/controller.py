@@ -67,30 +67,32 @@ class NetworkController(QObject):
             self.display_speed_updated.emit(0.0, 0.0)
             return
 
-        # Priming read on first run or after an error
+        # On the very first run, just store the counters and exit.
         if not self.last_interface_counters:
-            self.logger.debug("First run or reset. Storing baseline counters.")
+            self.logger.debug("First run. Storing baseline counters.")
             self.last_check_time = current_time
             self.last_interface_counters = current_counters
             return
 
         time_diff = current_time - self.last_check_time
-        if time_diff < 0.1: # Prevent division by zero or nonsensical values
+        
+        # Prevent division by a tiny number if updates are too fast
+        if time_diff < 0.1:
             return
             
-        # Make the "resume from sleep" threshold dynamic based on the update rate.
+        # Check for long pauses, indicative of the computer waking from sleep.
         update_interval = self.config.get("update_rate", 1.0)
-        sleep_threshold = max(5.0, update_interval * 5) # At least 5s, or 5x the update interval
+        sleep_threshold = max(5.0, update_interval * 5)
 
         if time_diff > sleep_threshold:
-            self.logger.info("Long time delta (%.1fs) detected. Re-priming counters.", time_diff)
+            self.logger.info("Long time delta (%.1fs) detected. Re-priming counters to prevent speed spike.", time_diff)
+            # Fully reset the state, just like on the first run
             self.last_check_time = current_time
             self.last_interface_counters = current_counters
             self.display_speed_updated.emit(0.0, 0.0)
-            return
+            return # Exit immediately after re-priming.
 
-        # --- Per-Interface Speed Calculation ---
-        self.current_speed_data.clear() # Clear the old data before recalculating
+        self.current_speed_data.clear()
         exclusions = self.config.get("excluded_interfaces", constants.network.interface.DEFAULT_EXCLUSIONS)
 
         for name, current in current_counters.items():
@@ -99,30 +101,38 @@ class NetworkController(QObject):
 
             last = self.last_interface_counters.get(name)
             if last:
-                # Check for counter reset (e.g., interface reconnect)
+                # Silently handle counter resets (e.g., driver restart)
                 if current.bytes_sent < last.bytes_sent or current.bytes_recv < last.bytes_recv:
-                    continue # Skip this interface for one cycle
+                    continue
 
                 up_diff = current.bytes_sent - last.bytes_sent
                 down_diff = current.bytes_recv - last.bytes_recv
                 
-                # Use the instance variable to store the calculated speeds
-                self.current_speed_data[name] = (up_diff / time_diff, down_diff / time_diff)
+                # Calculate as integer Bytes/sec for data integrity
+                up_speed_bps = int(up_diff / time_diff)
+                down_speed_bps = int(down_diff / time_diff)
+                
+                # The hardcoded sanity check remains as a final safety net
+                max_speed = constants.network.interface.MAX_REASONABLE_SPEED_BPS
+                if up_speed_bps > max_speed or down_speed_bps > max_speed:
+                    self.logger.warning(
+                        f"Discarding impossibly high speed for '{name}': "
+                        f"Up={up_speed_bps} B/s. This may be a hardware or driver anomaly."
+                    )
+                    continue
 
-        # Send granular, per-interface data (in Bytes/sec) to the data layer for storage
+                self.current_speed_data[name] = (up_speed_bps, down_speed_bps)
+
         if self.current_speed_data:
             self.widget_state.add_speed_data(self.current_speed_data)
 
-        # --- Aggregate Speeds for Real-Time Display ---
         agg_upload, agg_download = self._aggregate_for_display(self.current_speed_data)
 
-        # Convert to Mbps for the view
         upload_mbps = (agg_upload * 8) / 1_000_000
         download_mbps = (agg_download * 8) / 1_000_000
         
         self.display_speed_updated.emit(upload_mbps, download_mbps)
 
-        # Update state for the next iteration
         self.last_check_time = current_time
         self.last_interface_counters = current_counters
 
@@ -147,11 +157,13 @@ class NetworkController(QObject):
         Aggregates the calculated per-interface speeds based on the current monitoring mode.
         Returns total upload and download speeds in Bytes/sec.
         """
-        mode = self.config.get("interface_mode", "Primary Interface")
+        mode = self.config.get("interface_mode", "all")
 
-        if mode == "Select Specific":
-            total_up, total_down = 0.0, 0.0
+        if mode == "selected":
             selected = self.config.get("selected_interfaces", [])
+            if not selected:
+                return 0.0, 0.0
+            total_up, total_down = 0.0, 0.0
             for name in selected:
                 if name in per_interface_speeds:
                     up, down = per_interface_speeds[name]
@@ -159,20 +171,43 @@ class NetworkController(QObject):
                     total_down += down
             return total_up, total_down
 
-        elif mode == "Primary Interface":
-            # Check for the primary interface immediately on the first run, then periodically every 30s.
-            is_first_check = self.last_primary_check_time == 0.0
-            is_time_for_recheck = (self.last_check_time - self.last_primary_check_time) > 30.0
-            
-            if is_first_check or is_time_for_recheck:
-                self._update_primary_interface_name()
-                self.last_primary_check_time = self.last_check_time
-            
-            if self.primary_interface and self.primary_interface in per_interface_speeds:
-                return per_interface_speeds[self.primary_interface]
-            # Fallthrough to aggregate all if primary is not found or not currently active.
-        
-        # Default behavior for "Aggregate Physical" and fallback for "Primary Interface"
+        elif mode == "auto":
+            # Try IP-based detection first (most robust and matches psutil names)
+            try:
+                from netspeedtray.utils.network_utils import get_primary_interface_name, guid_to_friendly_name
+                ip_primary = get_primary_interface_name()
+                if ip_primary and ip_primary in per_interface_speeds:
+                    self.logger.debug(f"Auto mode: Using IP-based primary interface '{ip_primary}' for speed display.")
+                    return per_interface_speeds[ip_primary]
+                elif ip_primary:
+                    self.logger.warning(f"Auto mode: IP-based primary interface '{ip_primary}' not found in speed data. Trying GUID/WMI fallback.")
+            except Exception as e:
+                self.logger.error(f"Auto mode: Error in IP-based primary interface detection: {e}", exc_info=True)
+
+            # Fallback to GUID/WMI mapping if available
+            self._update_primary_interface_name()
+            primary = self.primary_interface
+            if primary and primary.startswith('{') and primary.endswith('}'):
+                try:
+                    friendly = guid_to_friendly_name(primary)
+                    if friendly and friendly in per_interface_speeds:
+                        self.logger.info(f"Auto mode: Mapped GUID '{primary}' to friendly name '{friendly}'.")
+                        return per_interface_speeds[friendly]
+                    else:
+                        self.logger.warning(f"Auto mode: GUID '{primary}' could not be mapped or not found in speed data. Available: {list(per_interface_speeds.keys())}. Falling back to 'all' mode.")
+                except Exception as e:
+                    self.logger.error(f"Auto mode: Error mapping GUID to friendly name: {e}", exc_info=True)
+            elif primary and primary in per_interface_speeds:
+                self.logger.debug(f"Auto mode: Using primary interface '{primary}' for speed display.")
+                return per_interface_speeds[primary]
+            else:
+                self.logger.warning(
+                    f"Auto mode: Primary interface '{primary}' not found in speed data. "
+                    f"Available: {list(per_interface_speeds.keys())}. Falling back to 'all' mode.")
+            # Fallback to 'all' mode if primary interface is not found
+            return self._sum_all(per_interface_speeds)
+
+        # If mode is "all" or any other value, sum everything.
         return self._sum_all(per_interface_speeds)
 
 

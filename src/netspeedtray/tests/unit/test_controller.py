@@ -13,12 +13,14 @@ from netspeedtray import constants
 from netspeedtray.core.controller import NetworkController
 from netspeedtray.core.widget_state import WidgetState
 
+
 # A helper class to simulate psutil's snetio counter objects
 class MockNetIO:
     """A simple mock for psutil._common.snetio."""
     def __init__(self, bytes_sent: int, bytes_recv: int):
         self.bytes_sent = bytes_sent
         self.bytes_recv = bytes_recv
+
 
 @pytest.fixture
 def mock_config() -> dict:
@@ -28,15 +30,18 @@ def mock_config() -> dict:
     config["excluded_interfaces"].append("test_exclude")
     return config
 
+
 @pytest.fixture
 def mock_widget_state() -> MagicMock:
     """Provides a MagicMock of the WidgetState."""
     return MagicMock(spec=WidgetState)
 
+
 @pytest.fixture
 def controller_instance(mock_config: dict, mock_widget_state: MagicMock) -> NetworkController:
     """Provides a fresh, configured NetworkController instance for each test."""
     return NetworkController(config=mock_config, widget_state=mock_widget_state)
+
 
 def test_update_speeds_calculates_and_emits_correctly(controller_instance, mock_widget_state):
     """
@@ -55,6 +60,9 @@ def test_update_speeds_calculates_and_emits_correctly(controller_instance, mock_
         "test_exclude": MockNetIO(bytes_sent=9999, bytes_recv=9999) 
     }
     controller.primary_interface = None # Ensure it uses the fallback aggregation logic
+
+    # EXPLICITLY set the mode for this test case
+    controller.config["interface_mode"] = "all"
 
     # Define the network counters for the second read
     second_counters = {
@@ -84,6 +92,7 @@ def test_update_speeds_calculates_and_emits_correctly(controller_instance, mock_
     # Total Download Mbps = (2500 * 8) / 1,000,000 = 0.02
     assert display_args[1] == pytest.approx(0.02)
 
+
 def test_update_speeds_handles_resume_from_sleep(controller_instance, mock_widget_state):
     """
     Tests that a long time delta re-primes counters and emits zero speed.
@@ -112,31 +121,30 @@ def test_update_speeds_handles_resume_from_sleep(controller_instance, mock_widge
     # Assert the time has been updated to the new baseline
     assert controller.last_check_time == time_before_sleep + 600.0
 
+
 def test_aggregate_for_display_select_specific_mode(controller_instance):
     """
-    Tests that the _aggregate_for_display method correctly sums only the user-selected
-    interfaces when the monitoring mode is 'Select Specific'.
+    Tests that the _aggregate_for_display method correctly sums only the
+    user-selected interfaces when the monitoring mode is 'selected'.
     """
     # ARRANGE
     controller = controller_instance
     
-    # Configure the controller to be in "Select Specific" mode
-    controller.config["interface_mode"] = "Select Specific"
-    controller.config["selected_interfaces"] = ["Wi-Fi", "VPN"] # User wants to see these two
-    
-    # Provide a dictionary of calculated per-interface speeds (in Bytes/sec)
+    # Configure the controller to be in "selected" mode
+    controller.config["interface_mode"] = "selected"
+    controller.config["selected_interfaces"] = ["Wi-Fi", "VPN"]
+
     per_interface_speeds = {
         "Wi-Fi": (1000.0, 2000.0),
-        "Ethernet": (5000.0, 8000.0), # This one should be IGNORED
+        "Ethernet": (5000.0, 8000.0), # Should be ignored
         "VPN": (100.0, 150.0),
-        "Bluetooth": (5.0, 10.0)      # This one should be IGNORED
+        "Bluetooth": (5.0, 10.0)      # Should be ignored
     }
     
     # ACT
     agg_upload_bps, agg_download_bps = controller._aggregate_for_display(per_interface_speeds)
     
     # ASSERT
-    # The result should be the sum of "Wi-Fi" and "VPN" only.
     # Expected Upload = 1000.0 (Wi-Fi) + 100.0 (VPN) = 1100.0 B/s
     assert agg_upload_bps == pytest.approx(1100.0)
     
