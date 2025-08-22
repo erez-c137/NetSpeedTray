@@ -1,7 +1,31 @@
-# src/netspeedtray/utils/network_utils.py
+
+import sys
+from typing import Optional
+
+def guid_to_friendly_name(guid: str) -> Optional[str]:
+    """
+    On Windows, maps a network interface GUID (e.g., '{7BB8DA25-E8B9-44C0-8BC8-09F08D0BC446}')
+    to its friendly name (e.g., 'Ethernet') using WMI.
+    Returns the friendly name if found, else None.
+    """
+    if sys.platform != "win32":
+        return None
+    try:
+        import wmi
+        c = wmi.WMI()
+        for iface in c.Win32_NetworkAdapter():
+            # NetConnectionID is the friendly name, GUID is in GUID
+            if hasattr(iface, 'GUID') and iface.GUID and iface.GUID.lower() == guid.strip('{}').lower():
+                return getattr(iface, 'NetConnectionID', None)
+    except ImportError:
+        logger.warning("wmi module not installed; cannot map GUID to friendly name.")
+    except Exception as e:
+        logger.error(f"Error mapping GUID to friendly name: {e}", exc_info=True)
+    return None
 """
 Network-related utility functions for NetSpeedTray.
 """
+
 import logging
 import socket
 from typing import Optional

@@ -20,6 +20,58 @@ from .styles import is_dark_mode
 from netspeedtray import constants
 
 
+# In src/netspeedtray/utils/config.py
+
+class PrivacyFilter(logging.Filter):
+    """
+    A logging filter that obfuscates sensitive user data in log records.
+
+    This filter replaces the user's home directory path in any log arguments
+    with a generic placeholder and redacts IP addresses.
+    """
+    
+    def __init__(self):
+        super().__init__()
+        try:
+            # Use resolve() to get the canonical path (e.g., handles symlinks)
+            self.user_home = str(Path.home().resolve())
+        except Exception:
+            # Fallback in case Path.home() fails for some reason
+            self.user_home = os.path.expanduser("~")
+        
+        self.ip_regex = re.compile(r"(\d{1,3}\.\d{1,3}\.)\d{1,3}\.\d{1,3}")
+
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        """
+        Filters the log record in-place, modifying its arguments to remove PII.
+        It does NOT format the message, preventing TypeErrors downstream.
+        """
+        # We only need to process records that have arguments.
+        if record.args and isinstance(record.args, tuple):
+            # We must create a new list from the tuple to modify it.
+            new_args = list(record.args)
+            for i, arg in enumerate(new_args):
+                # Check if the argument is a string OR a Path object that needs sanitizing.
+                if isinstance(arg, (str, Path)):
+                    # Ensure we are working with a string for the replacement logic.
+                    sanitized_arg = str(arg)
+                    # Obfuscate user home path
+                    if self.user_home in sanitized_arg:
+                        sanitized_arg = sanitized_arg.replace(self.user_home, "<USER_HOME>")
+                    
+                    # Obfuscate IP addresses
+                    sanitized_arg = self.ip_regex.sub(r"\1x.x", sanitized_arg)
+                    
+                    new_args[i] = sanitized_arg
+            
+            # Replace the old args tuple with our new, sanitized one.
+            record.args = tuple(new_args)
+        
+        # Always return True to allow the record to be processed.
+        return True
+
+
 class ConfigError(Exception):
     """Custom exception for configuration-related errors, such as I/O or permission issues."""
 
@@ -62,6 +114,11 @@ class ConfigManager:
                 datefmt='%Y-%m-%d %H:%M:%S'
             )
             file_handler.setFormatter(file_formatter)
+            
+            # Create and add the privacy filter ONLY to the file handler
+            privacy_filter = PrivacyFilter()
+            file_handler.addFilter(privacy_filter)
+            
             logger.addHandler(file_handler)
 
             console_handler = logging.StreamHandler()
@@ -69,6 +126,7 @@ class ConfigManager:
             console_formatter = logging.Formatter('%(name)s - %(levelname)s - %(message)s')
             console_handler.setFormatter(console_formatter)
             logger.addHandler(console_handler)
+
         except Exception as e:
             logging.basicConfig(level=logging.ERROR)
             logging.error("Failed to initialize file logging, falling back to console: %s", e)
@@ -156,6 +214,15 @@ class ConfigManager:
         validated["text_alignment"] = self._validate_choice("text_alignment", validated.get("text_alignment"), constants.config.defaults.DEFAULT_TEXT_ALIGNMENT, ["left", "center", "right"])
         validated["speed_display_mode"] = self._validate_choice("speed_display_mode", validated.get("speed_display_mode"), constants.config.defaults.DEFAULT_SPEED_DISPLAY_MODE, ["auto", "always_mbps"])
         validated["history_period_slider_value"] = self._validate_numeric("history_period_slider_value", validated.get("history_period_slider_value"), 0, 0, 10)
+
+        # Get the list of supported language codes from the i18n constants
+        supported_languages = list(constants.i18n.I18nStrings.LANGUAGE_MAP.keys())
+        if validated.get("language") is not None and validated.get("language") not in supported_languages:
+            self.logger.warning(
+                f"Invalid language '{validated.get('language')}' in config. "
+                f"Resetting to None (will use OS default). Valid choices: {supported_languages}"
+            )
+            validated["language"] = None
 
         # Special cases and cross-field validation
         if not isinstance(validated.get("selected_interfaces"), list) or not all(isinstance(i, str) for i in validated.get("selected_interfaces", [])):
