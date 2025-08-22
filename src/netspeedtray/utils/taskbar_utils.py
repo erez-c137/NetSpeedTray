@@ -55,25 +55,42 @@ class APPBARDATA(ctypes.Structure):
     ]
 
 
+def find_tasklist_rect(taskbar_hwnd: int) -> Optional[Tuple[int, int, int, int]]:
+    """
+    Finds the bounding rectangle of the task list (running app icons) area on the taskbar.
+
+    This is the most reliable way to determine the left-hand boundary for our widget.
+    """
+    try:
+        # The hierarchy is Shell_TrayWnd -> ReBarWindow32 -> MSTaskSwWClass -> ToolbarWindow32
+        rebar_hwnd = win32gui.FindWindowEx(taskbar_hwnd, 0, "ReBarWindow32", None)
+        if not rebar_hwnd:
+            return None
+        
+        tasklist_hwnd = win32gui.FindWindowEx(rebar_hwnd, 0, "MSTaskSwWClass", None)
+        if not tasklist_hwnd:
+            return None
+        
+        # The final container for the icons is a ToolbarWindow32
+        toolbar_hwnd = win32gui.FindWindowEx(tasklist_hwnd, 0, "ToolbarWindow32", None)
+        if not toolbar_hwnd:
+            return None
+            
+        return win32gui.GetWindowRect(toolbar_hwnd)
+    except Exception as e:
+        logger.error(f"Error finding tasklist rect for taskbar HWND {taskbar_hwnd}: {e}")
+        return None
+
+
 # Dataclasses
 @dataclass(slots=True)
 class TaskbarInfo:
     """
     Holds comprehensive information about a detected taskbar.
-
-    Attributes:
-        hwnd: Window handle (HWND) of the taskbar window.
-        tray_hwnd: Optional HWND of the system tray area ('TrayNotifyWnd').
-        rect: Taskbar bounding rectangle (left, top, right, bottom) in PHYSICAL screen coordinates.
-        screen_name: Name of the QScreen associated with the taskbar's monitor.
-        screen_geometry: Geometry of the screen (left, top, width, height) in LOGICAL coordinates.
-        work_area: Available work area on the monitor (left, top, right, bottom) in PHYSICAL coordinates.
-        dpi_scale: DPI scaling factor (e.g., 1.0, 1.5, 2.0) for the associated screen.
-        is_primary: True if this taskbar is on the primary monitor.
-        height: Calculated height of the taskbar in LOGICAL pixels (physical height / dpi_scale).
     """
     hwnd: int
     tray_hwnd: Optional[int]
+    tasklist_rect: Optional[Tuple[int, int, int, int]]
     rect: Tuple[int, int, int, int]
     screen_name: str
     screen_geometry: Tuple[int, int, int, int]  # (left, top, width, height) in logical coords
@@ -130,12 +147,6 @@ class TaskbarInfo:
         """
         Creates a fallback TaskbarInfo using the primary screen's details.
         Used when automatic taskbar detection fails entirely.
-
-        Returns:
-            TaskbarInfo: A default TaskbarInfo instance based on the primary screen.
-
-        Raises:
-            RuntimeError: If no primary screen can be obtained from QApplication.
         """
         logger.warning("Creating fallback TaskbarInfo using primary screen details.")
         primary_screen = QApplication.primaryScreen()
@@ -162,6 +173,7 @@ class TaskbarInfo:
         return TaskbarInfo(
             hwnd=0,
             tray_hwnd=None,
+            tasklist_rect=None,
             rect=(0, 0, 0, 0),
             screen_name=primary_screen.name(),
             screen_geometry=(screen_geo.left(), screen_geo.top(), screen_geo.width(), screen_geo.height()),
@@ -312,8 +324,9 @@ def get_all_taskbar_info() -> List[TaskbarInfo]:
     """
     Finds all taskbars (primary and secondary) and gathers their details.
 
-    First attempts to find taskbars directly using FindWindow for efficiency.
-    Falls back to EnumWindows if no taskbars are found.
+    This function is robust for complex multi-monitor and virtualized (RDP)
+    environments by using a multi-layered geometric heuristic to find the
+    correct screen for each taskbar instead of relying on fragile name matching.
 
     Returns:
         List[TaskbarInfo]: List of found taskbars. Returns a list containing only
@@ -325,135 +338,92 @@ def get_all_taskbar_info() -> List[TaskbarInfo]:
 
     def find_screen_for_taskbar(tb_rect_phys: Tuple[int, int, int, int]) -> Optional[QScreen]:
         """
-        Finds the QScreen that best matches the taskbar's physical rectangle.
+        Finds the QScreen that a taskbar belongs to using a robust, multi-layered
+        geometric heuristic.
 
         Args:
             tb_rect_phys: Taskbar rectangle (left, top, right, bottom) in physical coordinates.
 
         Returns:
-            Optional[QScreen]: The best matching QScreen, or primary screen as fallback.
+            Optional[QScreen]: The best matching QScreen, falling back to the primary screen.
         """
+        # --- Layer 1: Find the screen with the largest geometric intersection (most reliable) ---
         best_match_screen: Optional[QScreen] = None
-        max_overlap: int = 0
+        max_overlap: int = -1
 
-        tb_qrect_phys = QRect(tb_rect_phys[0], tb_rect_phys[1],
-                              tb_rect_phys[2] - tb_rect_phys[0], tb_rect_phys[3] - tb_rect_phys[1])
+        try:
+            tb_qrect_phys = QRect(tb_rect_phys[0], tb_rect_phys[1],
+                                  tb_rect_phys[2] - tb_rect_phys[0], tb_rect_phys[3] - tb_rect_phys[1])
 
-        for screen in all_screens:
-            geo_log = screen.geometry()
-            dpi = screen.devicePixelRatio()
-            geo_phys = QRect(int(round(geo_log.left() * dpi)), int(round(geo_log.top() * dpi)),
-                             int(round(geo_log.width() * dpi)), int(round(geo_log.height() * dpi)))
+            for screen in all_screens:
+                geo_log = screen.geometry()
+                dpi = screen.devicePixelRatio()
+                geo_phys = QRect(int(round(geo_log.left() * dpi)), int(round(geo_log.top() * dpi)),
+                                 int(round(geo_log.width() * dpi)), int(round(geo_log.height() * dpi)))
 
-            overlap_rect = geo_phys.intersected(tb_qrect_phys)
-            overlap_area = overlap_rect.width() * overlap_rect.height()
+                overlap_rect = geo_phys.intersected(tb_qrect_phys)
+                overlap_area = overlap_rect.width() * overlap_rect.height()
 
-            if overlap_area > max_overlap:
-                max_overlap = overlap_area
-                best_match_screen = screen
+                if overlap_area > max_overlap:
+                    max_overlap = overlap_area
+                    best_match_screen = screen
+            
+            if best_match_screen:
+                logger.debug(f"Found best screen match for taskbar via intersection: {best_match_screen.name()}")
+                return best_match_screen
+        except Exception as e:
+            logger.error(f"Error during screen intersection check: {e}. Proceeding to fallbacks.")
 
-        if not best_match_screen:
-            best_match_screen = QApplication.screenAt(QRect(tb_rect_phys[0], tb_rect_phys[1], 1, 1).topLeft())
+        # --- Layer 2: Fallback to a point-based check ---
+        try:
+            point = QPoint(tb_rect_phys[0], tb_rect_phys[1])
+            screen_at_point = QApplication.screenAt(point)
+            if screen_at_point:
+                logger.warning(f"Used point-based fallback to find screen: {screen_at_point.name()}")
+                return screen_at_point
+        except Exception as e:
+            logger.error(f"Error during point-based screen check: {e}. Proceeding to final fallback.")
 
-        return best_match_screen if best_match_screen else primary_screen
+        # --- Layer 3: Final safety net - return the primary screen ---
+        logger.warning("All screen detection methods failed. Returning primary screen as a final fallback.")
+        return primary_screen
 
     def process_taskbar(hwnd: int) -> Optional[TaskbarInfo]:
         """
         Processes a single taskbar window and constructs a TaskbarInfo object.
-
-        Validates the taskbar's HWND, determines its associated monitor using physical coordinates,
-        and constructs a TaskbarInfo object with screen and DPI information.
-
-        Args:
-            hwnd: Window handle (HWND) of the potential taskbar.
-
-        Returns:
-            Optional[TaskbarInfo]: TaskbarInfo if valid, None otherwise.
+        (This inner function remains largely the same)
         """
         try:
-            # Validate HWND
             if not win32gui.IsWindow(hwnd) or not win32gui.IsWindowVisible(hwnd):
-                logger.debug("Skipping HWND %s: Not a valid or visible window.", hwnd)
                 return None
 
             class_name = win32gui.GetClassName(hwnd)
             if class_name not in ("Shell_TrayWnd", "Shell_SecondaryTrayWnd"):
-                logger.debug("Skipping HWND %s: Class '%s' is not a taskbar.", hwnd, class_name)
                 return None
 
             rect_phys = win32gui.GetWindowRect(hwnd)
             tray_hwnd = win32gui.FindWindowEx(hwnd, 0, "TrayNotifyWnd", None) or None
+            tasklist_rect_phys = find_tasklist_rect(hwnd)
 
-            # Find associated QScreen
+            # Find associated QScreen using our new robust method
             screen = find_screen_for_taskbar(rect_phys)
             if not screen:
-                logger.error("Could not determine QScreen for taskbar HWND %s (Class: %s, Title: %s, Rect: %s)", 
-                            hwnd, class_name, win32gui.GetWindowText(hwnd), rect_phys)
+                logger.error(f"Robust screen detection failed for HWND {hwnd}. This should not happen.")
                 return None
 
-            # Get monitor handle using taskbar's top-left corner
             monitor = win32api.MonitorFromPoint((rect_phys[0], rect_phys[1]), MONITOR_DEFAULTTONEAREST)
-            if not monitor or int(monitor) == 0:
-                logger.warning("MonitorFromPoint returned invalid handle for taskbar HWND %s (Class: %s, Title: %s, Rect: %s).", 
-                            hwnd, class_name, win32gui.GetWindowText(hwnd), rect_phys)
-                return None
-
-            # Log active monitors and validate handle
-            active_monitors = [int(m[0]) for m in win32api.EnumDisplayMonitors(None, None)]
-            monitor_int = int(monitor)
-            logger.debug("Active monitors: %s, Current monitor handle: %s (int: %d) for HWND %s (Rect: %s)", 
-                        active_monitors, monitor, monitor_int, hwnd, rect_phys)
-
-            # Validate monitor handle (log warning but proceed if GetMonitorInfo succeeds)
-            if monitor_int not in active_monitors:
-                logger.warning("Monitor handle %d not found in active monitors %s for HWND %s (Class: %s, Title: %s, Rect: %s). Proceeding to GetMonitorInfo.", 
-                            monitor_int, active_monitors, hwnd, class_name, win32gui.GetWindowText(hwnd), rect_phys)
-
-            # Get monitor info
             monitor_info = win32api.GetMonitorInfo(monitor)
-            if not monitor_info:
-                logger.error("GetMonitorInfo failed for monitor handle %d for HWND %s (Class: %s, Title: %s, Rect: %s).", 
-                            monitor_int, hwnd, class_name, win32gui.GetWindowText(hwnd), rect_phys)
-                return None
-
-            logger.debug("Monitor info retrieved successfully for handle %d: %s", monitor_int, monitor_info)
-
             work_area_phys = monitor_info.get("Work", (0, 0, 0, 0))
-            if work_area_phys == (0, 0, 0, 0):
-                logger.warning("Could not get 'Work' area for monitor of taskbar HWND %s. Using screen geometry.", hwnd)
-                geo_log = screen.geometry()
-                dpi = screen.devicePixelRatio()
-                work_area_phys = (
-                    int(round(geo_log.left() * dpi)),
-                    int(round(geo_log.top() * dpi)),
-                    int(round(geo_log.right() * dpi)) + 1,
-                    int(round(geo_log.bottom() * dpi)) + 1
-                )
-
-            # Get DPI scaling
-            dpi_scale = get_dpi_for_monitor(monitor, hwnd)
-            if dpi_scale is None:
-                dpi_scale = screen.devicePixelRatio()
-                logger.debug("Using QScreen.devicePixelRatio for DPI: %s", dpi_scale)
-            dpi_scale = dpi_scale if dpi_scale > 0 else 1.0
-
-            # Calculate logical height
+            dpi_scale = get_dpi_for_monitor(monitor, hwnd) or screen.devicePixelRatio()
             physical_height = rect_phys[3] - rect_phys[1]
-            logical_height = int(round(physical_height / dpi_scale)) if dpi_scale > 0 else constants.taskbar.taskbar.DEFAULT_HEIGHT
-            if physical_height > 0 and logical_height <= 0:
-                logical_height = 1
-
-            # Check primary monitor consistency
-            is_primary_monitor = bool(monitor_info.get('Flags', 0) & MONITORINFOF_PRIMARY)
+            logical_height = int(round(physical_height / dpi_scale)) if dpi_scale > 0 else 0
             is_primary_qt = (screen == primary_screen)
-            if is_primary_monitor != is_primary_qt:
-                logger.warning("Win32 primary monitor flag differs from Qt primary screen for HWND %s. Using Qt's.", hwnd)
-
-            # Construct TaskbarInfo
+            
             screen_geo = screen.geometry()
-            taskbar_info = TaskbarInfo(
+            return TaskbarInfo(
                 hwnd=hwnd,
                 tray_hwnd=tray_hwnd,
+                tasklist_rect=tasklist_rect_phys,
                 rect=rect_phys,
                 screen_name=screen.name(),
                 screen_geometry=(screen_geo.left(), screen_geo.top(), screen_geo.width(), screen_geo.height()),
@@ -462,54 +432,34 @@ def get_all_taskbar_info() -> List[TaskbarInfo]:
                 is_primary=is_primary_qt,
                 height=logical_height
             )
-            logger.debug("Found taskbar: HWND=%s, Class=%s, Rect=%s, Screen=%s, DPI=%.2f, Primary=%s, LogicalH=%d",
-                        hwnd, class_name, rect_phys, screen.name(), dpi_scale, is_primary_qt, logical_height)
-            return taskbar_info
-
         except win32gui.error as e:
             if e.winerror != 0:
-                logger.warning("win32gui error during taskbar processing for HWND %s (Class: %s, Title: %s): %s", 
-                            hwnd, win32gui.GetClassName(hwnd), win32gui.GetWindowText(hwnd), e)
+                logger.warning(f"win32gui error during taskbar processing for HWND {hwnd}: {e}")
             return None
         except Exception as e:
-            logger.error("Unexpected error during taskbar processing for HWND %s (Class: %s, Title: %s): %s", 
-                        hwnd, win32gui.GetClassName(hwnd), win32gui.GetWindowText(hwnd), e)
+            logger.error(f"Unexpected error during taskbar processing for HWND {hwnd}: {e}")
             return None
 
+    # Main execution block of get_all_taskbar_info
     try:
-        # Try direct FindWindow for efficiency
-        for class_name in ("Shell_TrayWnd", "Shell_SecondaryTrayWnd"):
-            hwnd = win32gui.FindWindow(class_name, None)
-            if hwnd:
+        # Try direct FindWindow for efficiency first
+        primary_hwnd = win32gui.FindWindow("Shell_TrayWnd", None)
+        if primary_hwnd:
+            taskbar_info = process_taskbar(primary_hwnd)
+            if taskbar_info:
+                taskbars.append(taskbar_info)
+
+        # Then enumerate to find all others
+        def enum_callback(hwnd: int, _: Any) -> bool:
+            if hwnd != primary_hwnd:
                 taskbar_info = process_taskbar(hwnd)
                 if taskbar_info:
                     taskbars.append(taskbar_info)
-    except Exception as e:
-        logger.warning("Error using FindWindow to locate taskbars: %s. Falling back to EnumWindows.", e)
-
-    if not taskbars:
-        logger.debug("No taskbars found via FindWindow. Falling back to EnumWindows.")
-        def enum_callback(hwnd: int, _: Any) -> bool:
-            """
-            Callback for EnumWindows to process potential taskbar windows.
-
-            Args:
-                hwnd: Window handle being enumerated.
-                lparam: User-defined parameter (unused).
-
-            Returns:
-                bool: True to continue enumeration, False to stop.
-            """
-            taskbar_info = process_taskbar(hwnd)
-            if taskbar_info:
-                taskbars.append(taskbar_info)
             return True
 
-        try:
-            win32gui.EnumWindows(enum_callback, None)
-        except Exception as e:
-            logger.error("Failed to execute EnumWindows: %s", e, exc_info=True)
-            return [TaskbarInfo.create_primary_fallback_taskbar_info()]
+        win32gui.EnumWindows(enum_callback, None)
+    except Exception as e:
+        logger.error(f"Failed during taskbar enumeration: {e}", exc_info=True)
 
     if not taskbars:
         logger.warning("No taskbars found. Returning fallback.")
@@ -559,8 +509,7 @@ def get_taskbar_height() -> int:
         logger.error("Error getting taskbar height: %s. Returning default.", e)
         return constants.taskbar.taskbar.DEFAULT_HEIGHT
  
-      
-      
+          
 def is_taskbar_obstructed(taskbar_info: Optional[TaskbarInfo]) -> bool:
     """
     Checks if the taskbar is obstructed by a true fullscreen app or an
@@ -671,3 +620,12 @@ def is_taskbar_visible(taskbar_info: Optional[TaskbarInfo]) -> bool:
     except Exception as e:
         logger.error(f"Error checking taskbar visibility for HWND={taskbar_info.hwnd}: {e}", exc_info=True)
         return False
+    
+
+def is_small_taskbar(taskbar_info: Optional[TaskbarInfo]) -> bool:
+    """
+    Checks if the taskbar is using the 'small buttons' mode by checking its logical height.
+    """
+    if not taskbar_info:
+        return False
+    return 0 < taskbar_info.height <= constants.layout.SMALL_TASKBAR_HEIGHT_THRESHOLD

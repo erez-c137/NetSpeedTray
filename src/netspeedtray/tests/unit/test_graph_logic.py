@@ -22,7 +22,7 @@ def mock_graph_parent() -> MagicMock:
     """Provides a mock parent widget with necessary attributes."""
     parent = MagicMock()
     parent.config = constants.config.defaults.DEFAULT_CONFIG.copy()
-    parent.i18n = constants.strings
+    parent.i18n = constants.i18n.get_i18n()
     return parent
 
 @pytest.fixture

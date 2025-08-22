@@ -519,58 +519,68 @@ class PositionCalculator:
 
     def calculate_position(self, taskbar_info: TaskbarInfo, widget_size: Tuple[int, int], config: Dict[str, Any], font_metrics: Optional[QFontMetrics] = None) -> ScreenPosition:
         """
-        Calculates the final target position for the widget using a single,
-        user-defined offset, ensuring all calculations are in logical pixels.
+        Calculates the widget's optimal position, respecting other taskbar elements.
+
+        This method implements a robust heuristic to find a "safe zone" on the
+        taskbar, bounded by running application icons and the system tray. This
+        prevents overlap with elements like the Windows Weather widget, regardless
+        of taskbar orientation (horizontal or vertical).
+
+        Args:
+            taskbar_info: A dataclass containing detailed info about the target taskbar.
+            widget_size: A tuple of the widget's (width, height) in logical pixels.
+            config: The application's configuration dictionary.
+            font_metrics: Not used in this method but kept for signature consistency.
+
+        Returns:
+            A ScreenPosition object with the calculated and validated x, y coordinates.
         """
         try:
             edge = taskbar_info.get_edge_position()
-            tray_rect_phys = taskbar_info.get_tray_rect()
-            taskbar_rect_phys = taskbar_info.rect
             screen = taskbar_info.get_screen()
-
             if not screen:
-                logger.error("Cannot calculate position: No associated QScreen")
-                return self._get_safe_fallback_position(widget_size)
+                raise RuntimeError("No associated QScreen found for taskbar.")
 
             dpi_scale = taskbar_info.dpi_scale if taskbar_info.dpi_scale > 0 else 1.0
             widget_width, widget_height = widget_size
 
-            # Convert all physical pixel values from the OS to logical pixels for calculation.
-            tb_left_log = round(taskbar_rect_phys[0] / dpi_scale)
-            tb_top_log = round(taskbar_rect_phys[1] / dpi_scale)
-            tb_right_log = round(taskbar_rect_phys[2] / dpi_scale)
-            tb_bottom_log = round(taskbar_rect_phys[3] / dpi_scale)
-            tb_height_log = tb_bottom_log - tb_top_log
-            tb_width_log = tb_right_log - tb_left_log
-
-            # The tray rectangle is our primary anchor point.
-            if tray_rect_phys:
-                tray_left_log = round(tray_rect_phys[0] / dpi_scale)
-                tray_top_log = round(tray_rect_phys[1] / dpi_scale)
-            else:
-                # If we can't find the tray, fall back to the edge of the taskbar itself.
-                tray_left_log = tb_right_log
-                tray_top_log = tb_bottom_log
-
-            # The user-configurable offset from the tray.
-            total_offset = config.get('tray_offset_x', constants.layout.DEFAULT_PADDING + 5)
-
-            # Calculate position based on the taskbar's edge
+            x, y = 0, 0
+            
             if edge in (constants.taskbar.edge.BOTTOM, constants.taskbar.edge.TOP):
+                # --- HORIZONTAL TASKBAR LOGIC ---
+                tb_top_log = round(taskbar_info.rect[1] / dpi_scale)
+                tb_height_log = round((taskbar_info.rect[3] - taskbar_info.rect[1]) / dpi_scale)
+                
+                right_boundary = round(taskbar_info.get_tray_rect()[0] / dpi_scale) if taskbar_info.get_tray_rect() else round(taskbar_info.rect[2] / dpi_scale)
+                left_boundary = round(taskbar_info.tasklist_rect[2] / dpi_scale) if taskbar_info.tasklist_rect else round(taskbar_info.rect[0] / dpi_scale)
+
                 y = tb_top_log + (tb_height_log - widget_height) // 2
-                x = tray_left_log - widget_width - total_offset
+                offset = config.get('tray_offset_x', constants.layout.DEFAULT_PADDING + 5)
+                x = right_boundary - widget_width - offset
+
+                if x < left_boundary:
+                    logger.warning("Calculated position overlaps app icons; snapping to safe zone.")
+                    x = left_boundary + constants.layout.DEFAULT_PADDING
+
             elif edge in (constants.taskbar.edge.LEFT, constants.taskbar.edge.RIGHT):
+                # --- VERTICAL TASKBAR LOGIC ---
+                tb_left_log = round(taskbar_info.rect[0] / dpi_scale)
+                tb_width_log = round((taskbar_info.rect[2] - taskbar_info.rect[0]) / dpi_scale)
+                
+                bottom_boundary = round(taskbar_info.get_tray_rect()[1] / dpi_scale) if taskbar_info.get_tray_rect() else round(taskbar_info.rect[3] / dpi_scale)
+                top_boundary = round(taskbar_info.tasklist_rect[3] / dpi_scale) if taskbar_info.tasklist_rect else round(taskbar_info.rect[1] / dpi_scale)
+                
                 x = tb_left_log + (tb_width_log - widget_width) // 2
-                y = tray_top_log - widget_height - total_offset
+                
+                # Vertically center the widget in the available "safe" space.
+                safe_zone_height = bottom_boundary - top_boundary
+                y = top_boundary + (safe_zone_height - widget_height) // 2
+            
             else:
-                # This should not happen with the edge detection, but it's a safe fallback.
-                logger.error("Unknown taskbar edge: %s", edge)
+                logger.error("Unknown taskbar edge detected: '%s'. Using fallback.", edge)
                 return self._get_safe_fallback_position(widget_size)
 
-            validated_pos = ScreenUtils.validate_position(x, y, widget_size, screen)
-            logger.debug("Calculated final position: (%s, %s) for edge %s with total offset %d",
-                         validated_pos.x, validated_pos.y, edge, total_offset)
-            return validated_pos
+            return ScreenUtils.validate_position(x, y, widget_size, screen)
 
         except Exception as e:
             logger.error(f"Error calculating position: {e}", exc_info=True)
@@ -579,49 +589,50 @@ class PositionCalculator:
     
     def constrain_drag_position(self, desired_pos: QPoint, taskbar_info: TaskbarInfo, widget_size_q: QSize, config: Dict[str, Any]) -> Optional[QPoint]:
         """
-        Constrains a desired widget position (during dragging) to allow movement only
-        along the taskbar edge. It uses the final calculated position as its reference.
+        Constrains a desired widget position during dragging, ensuring it stays
+        within the 'safe zone' between app icons and the system tray for any
+        taskbar orientation.
         """
         try:
-            screen = taskbar_info.get_screen() or QApplication.primaryScreen()
+            screen = taskbar_info.get_screen()
             if not screen:
-                logger.error("Cannot constrain drag: No associated QScreen")
-                return None
+                raise RuntimeError("No associated QScreen for taskbar.")
 
-            widget_width = widget_size_q.width()
-            widget_height = widget_size_q.height()
-            widget_size_tuple = (widget_width, widget_height)
+            widget_width, widget_height = widget_size_q.width(), widget_size_q.height()
+            edge = taskbar_info.get_edge_position()
+            dpi_scale = taskbar_info.dpi_scale if taskbar_info.dpi_scale > 0 else 1.0
 
-            edge = taskbar_info.get_edge_position() if taskbar_info else None
-            final_target_pos = self.calculate_position(taskbar_info, widget_size_tuple, config)
+            if edge in (constants.taskbar.edge.BOTTOM, constants.taskbar.edge.TOP):
+                # --- HORIZONTAL CONSTRAINT LOGIC ---
+                tb_top_log = round(taskbar_info.rect[1] / dpi_scale)
+                tb_height_log = round((taskbar_info.rect[3] - taskbar_info.rect[1]) / dpi_scale)
+                fixed_y = tb_top_log + (tb_height_log - widget_height) // 2
+                
+                right_boundary = (round(taskbar_info.get_tray_rect()[0] / dpi_scale) - widget_width - constants.layout.DEFAULT_PADDING) if taskbar_info.get_tray_rect() else (screen.geometry().right() - widget_width)
+                left_boundary = (round(taskbar_info.tasklist_rect[2] / dpi_scale) + constants.layout.DEFAULT_PADDING) if taskbar_info.tasklist_rect else screen.geometry().left()
+                
+                constrained_x = max(left_boundary, min(desired_pos.x(), right_boundary))
+                return QPoint(constrained_x, fixed_y)
 
-            if edge in (constants.taskbar.edge.LEFT, constants.taskbar.edge.RIGHT):
-                # Constrain to a vertical line. The X is fixed.
-                fixed_x = final_target_pos.x
-                screen_rect = screen.geometry()
-                min_y = screen_rect.top()
-                max_y = screen_rect.bottom() - widget_height + 1
-                constrained_y = max(min_y, min(desired_pos.y(), max_y))
-                constrained_point = QPoint(fixed_x, constrained_y)
-            else:
-                # Constrain to a horizontal line. The Y is fixed.
-                fixed_y = final_target_pos.y
-                screen_rect = screen.geometry()
-                min_x = screen_rect.left()
-                max_x = screen_rect.right() - widget_width + 1
-                constrained_x = max(min_x, min(desired_pos.x(), max_x))
-                constrained_point = QPoint(constrained_x, fixed_y)
+            elif edge in (constants.taskbar.edge.LEFT, constants.taskbar.edge.RIGHT):
+                # --- VERTICAL CONSTRAINT LOGIC ---
+                tb_left_log = round(taskbar_info.rect[0] / dpi_scale)
+                tb_width_log = round((taskbar_info.rect[2] - taskbar_info.rect[0]) / dpi_scale)
+                fixed_x = tb_left_log + (tb_width_log - widget_width) // 2
+                
+                bottom_boundary = (round(taskbar_info.get_tray_rect()[1] / dpi_scale) - widget_height - constants.layout.DEFAULT_PADDING) if taskbar_info.get_tray_rect() else (screen.geometry().bottom() - widget_height)
+                top_boundary = (round(taskbar_info.tasklist_rect[3] / dpi_scale) + constants.layout.DEFAULT_PADDING) if taskbar_info.tasklist_rect else screen.geometry().top()
+                
+                constrained_y = max(top_boundary, min(desired_pos.y(), bottom_boundary))
+                return QPoint(fixed_x, constrained_y)
             
-            current_time = time.monotonic()
-            if current_time - self._last_drag_log_time >= self._drag_log_interval:
-                logger.debug("Drag constrained to: (%s, %s)", constrained_point.x(), constrained_point.y())
-                self._last_drag_log_time = current_time
-
-            return constrained_point
+            else:
+                return desired_pos # Should not happen
 
         except Exception as e:
             logger.error(f"Error constraining drag position: {e}", exc_info=True)
             return None
+
 
     @staticmethod
     def _get_safe_fallback_position(widget_size: Tuple[int, int]) -> ScreenPosition:

@@ -46,6 +46,7 @@ class SpeedTimerManager(QObject):
     stats_updated = pyqtSignal()
     MINIMUM_INTERVAL_MS = 500  # Enforce 500ms minimum interval
 
+
     def __init__(self, config: Dict[str, Any], parent: Optional[QObject] = None) -> None:
         """
         Initialize the SpeedTimerManager with the given configuration.
@@ -75,6 +76,7 @@ class SpeedTimerManager(QObject):
             self.logger.critical("Failed to initialize SpeedTimerManager: %s", e, exc_info=True)
             raise
 
+
     def connect_timer(self, slot: Callable) -> bool:
         """
         Connects a slot function to the speed timer's timeout signal.
@@ -92,6 +94,7 @@ class SpeedTimerManager(QObject):
         except Exception as e:
             self.logger.error("Error connecting slot %s to speed timer: %s", getattr(slot, '__name__', repr(slot)), e)
             return False
+
 
     def disconnect_timer(self, slot: Callable) -> bool:
         """
@@ -114,21 +117,24 @@ class SpeedTimerManager(QObject):
             self.logger.error("Error disconnecting slot %s from speed timer: %s", getattr(slot, '__name__', repr(slot)), e)
             return False
 
+
     def start_timer(self) -> None:
         """
-        Starts the speed timer if it is not already active.
+        Starts the speed timer if it exists and is not already active.
         """
-        if not self.timers["speed"].isActive():
+        if "speed" in self.timers and not self.timers["speed"].isActive():
             self.timers["speed"].start()
             self.logger.debug("Started speed timer")
 
+
     def stop_timer(self) -> None:
         """
-        Stops the speed timer if it is active.
+        Stops the speed timer if it exists and is active.
         """
-        if self.timers["speed"].isActive():
+        if "speed" in self.timers and self.timers["speed"].isActive():
             self.timers["speed"].stop()
             self.logger.debug("Stopped speed timer")
+
 
     def update_interval(self, interval_ms: int) -> None:
         """
@@ -137,6 +143,10 @@ class SpeedTimerManager(QObject):
         Args:
             interval_ms: The desired interval in milliseconds.
         """
+        if "speed" not in self.timers:
+            self.logger.warning("Cannot update interval: 'speed' timer has been cleaned up.")
+            return
+
         actual_interval = max(interval_ms, self.MINIMUM_INTERVAL_MS)
         if actual_interval != interval_ms:
             self.logger.warning(
@@ -151,6 +161,7 @@ class SpeedTimerManager(QObject):
             if was_active:
                 self.timers["speed"].start()
             self.logger.info("Updated speed timer interval to %dms", actual_interval)
+
 
     def update_speed_rate(self, update_rate: float) -> None:
         """
@@ -186,6 +197,7 @@ class SpeedTimerManager(QObject):
             self.logger.error("Unexpected error updating speed timer rate: %s", e, exc_info=True)
             raise
 
+
     def _init_timers(self) -> None:
         """
         Initializes the speed timer with the configured interval.
@@ -210,12 +222,13 @@ class SpeedTimerManager(QObject):
             self.logger.error("Failed to initialize speed timer: %s", e, exc_info=True)
             raise RuntimeError(f"Failed to initialize speed timer: {e}") from e
 
+
     def cleanup(self) -> None:
         """
         Stops and cleans up the speed timer gracefully.
         """
         self.logger.debug("Cleaning up speed timer...")
         if "speed" in self.timers:
-            cleanup_timer(self.timers["speed"])  # Use timer_utils
-        self.timers.clear()
+            cleanup_timer(self.timers["speed"])
+            del self.timers["speed"]
         self.logger.info("Speed timer cleanup completed")
