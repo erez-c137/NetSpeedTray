@@ -1168,8 +1168,10 @@ class NetworkSpeedWidget(QWidget):
                 )
 
             if not self.settings_dialog.isVisible():
-                # Every time before showing, ensure it has the latest config
-                self.settings_dialog.reset_with_config(self.config.copy())
+                self.settings_dialog.reset_with_config(
+                    config=self.config.copy(),
+                    is_startup_enabled=self.is_startup_enabled()
+                )
                 self.settings_dialog.show()
             else:
                 self.logger.debug("Settings dialog already visible. Activating.")
@@ -1343,10 +1345,15 @@ class NetworkSpeedWidget(QWidget):
                 self.logger.error(f"Error during position update: {e}", exc_info=True)
 
 
-    def is_startup_enabled(self) -> bool:
+    def is_startup_enabled(self, force_check: bool = False) -> bool:
+        """
+        Checks if the application is configured to start with Windows.
+        By default, this uses the improved 'correctness' check.
+        `force_check=True` can be used to do a simple existence check.
+        """
         self.logger.debug("Checking system startup configuration...")
         try:
-            return self._check_startup_registry()
+            return self._check_startup_registry(check_for_correctness=(not force_check))
         except Exception as e:
             self.logger.error(f"Error checking startup status: {e}", exc_info=True)
             return False
@@ -1372,23 +1379,29 @@ class NetworkSpeedWidget(QWidget):
         This runs once on application startup to correct any mismatches.
         """
         try:
-            # Read the desired state from the config file. Default to True if the key is somehow missing.
+            # 1. Read the user's desired state from the config file.
             should_be_enabled = self.config.get("start_with_windows", True)
             
-            # Check the actual current state from the Windows Registry.
-            is_currently_enabled = self.is_startup_enabled()
+            # 2. Check the actual current state from the Windows Registry (using our improved function).
+            is_currently_correct = self._check_startup_registry()
 
-            # If the desired state and the actual state are different, fix it.
-            if should_be_enabled != is_currently_enabled:
+            # 3. If the user wants it enabled, but the key is incorrect or missing, fix it.
+            if should_be_enabled and not is_currently_correct:
                 self.logger.info(
-                    f"Startup task mismatch detected. Config: {should_be_enabled}, "
-                    f"Actual: {is_currently_enabled}. Synchronizing..."
+                    "Startup task is enabled in config but missing or incorrect in registry. Creating it..."
                 )
-                self.toggle_startup(enable=should_be_enabled)
+                self._set_startup_registry(enable=True)
+            
+            # 4. If the user wants it disabled, but a key exists (even an incorrect one), remove it.
+            elif not should_be_enabled and self.is_startup_enabled(force_check=True):
+                self.logger.info(
+                    "Startup task is disabled in config but exists in registry. Removing it..."
+                )
+                self._set_startup_registry(enable=False)
+                
             else:
                 self.logger.debug("Startup task state is already synchronized with configuration.")
         except Exception as e:
-            # This is a non-critical task, so we log errors but don't crash the app.
             self.logger.error(f"Failed during startup task synchronization: {e}", exc_info=True)
 
 
@@ -1427,7 +1440,7 @@ class NetworkSpeedWidget(QWidget):
             return f'"{python_executable}" "{script_path}"'
 
 
-    def _check_startup_registry(self) -> bool:
+    def _check_startup_registry(self, check_for_correctness: bool = True) -> bool:
         if sys.platform != 'win32':
             return False
         registry_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
@@ -1436,11 +1449,20 @@ class NetworkSpeedWidget(QWidget):
             import winreg
             key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, registry_path, 0, winreg.KEY_READ)
             with key:
-                winreg.QueryValueEx(key, app_name)
-                self.logger.debug(f"Startup entry '{app_name}' found in HKCU\\{registry_path}.")
-                return True
+                stored_path, _ = winreg.QueryValueEx(key, app_name)
+                # If we don't need to check the path, the fact that we found the key is enough.
+                if not check_for_correctness:
+                    return True
+
+                expected_path = self._get_executable_path()
+                if stored_path == expected_path:
+                    self.logger.debug("Correct startup entry found in registry.")
+                    return True
+                else:
+                    self.logger.warning(f"Startup entry found but path is incorrect. Expected: {expected_path}, Found: {stored_path}.")
+                    return False
         except FileNotFoundError:
-            self.logger.debug(f"Startup entry '{app_name}' not found in HKCU\\{registry_path}.")
+            self.logger.debug(f"Startup entry '{app_name}' not found.")
             return False
         except Exception as e:
             self.logger.error(f"Error checking startup registry: {e}")
@@ -1501,8 +1523,11 @@ class NetworkSpeedWidget(QWidget):
             if hasattr(self, 'taskbar_hook') and self.taskbar_hook: self.taskbar_hook.stop()
             
             # --- Stop all timers ---
-            for timer in [self.state_update_timer, self._tray_watcher_timer]:
-                if timer and timer.isActive(): timer.stop()
+            # The old polling timers are gone. Stop the new timers.
+            if hasattr(self, 'z_order_timer') and self.z_order_timer.isActive():
+                self.z_order_timer.stop()
+            if hasattr(self, '_tray_watcher_timer') and self._tray_watcher_timer.isActive():
+                self._tray_watcher_timer.stop()
             
             # --- Clean up core components ---
             if self.timer_manager: self.timer_manager.cleanup()

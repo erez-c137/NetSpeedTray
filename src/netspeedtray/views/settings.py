@@ -901,7 +901,8 @@ class SettingsDialog(QWidget):
         dynamic_update_config = constants.config.defaults.DEFAULT_DYNAMIC_UPDATE_ENABLED if dynamic_update_raw is None else bool(dynamic_update_raw)
         self.dynamic_update_rate.setChecked(dynamic_update_config)
         
-        self.start_with_windows.setChecked(self.startup_enabled_initial_state)
+        start_with_windows_config = self.config.get("start_with_windows", True)
+        self.start_with_windows.setChecked(start_with_windows_config)
         self.free_move.setChecked(self.config.get("free_move", False))
 
         # --- Appearance Page ---
@@ -1354,11 +1355,12 @@ class SettingsDialog(QWidget):
         if not self._ui_setup_done: return False
         return self.start_with_windows.isChecked()
     
-    def reset_with_config(self, config: Dict[str, Any]) -> None:
-        """Resets the UI state with a new configuration dictionary."""
+    def reset_with_config(self, config: Dict[str, Any], is_startup_enabled: bool) -> None:
+        """Resets the UI state with a new configuration dictionary and fresh startup status."""
         self.config = config.copy()
         self.original_config = config.copy()
         self.initial_language = self.i18n.language
+        self.startup_enabled_initial_state = is_startup_enabled
         self._init_ui_state()
         self.logger.debug("Settings dialog state has been reset with fresh config.")
 
