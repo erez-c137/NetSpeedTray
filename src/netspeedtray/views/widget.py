@@ -73,14 +73,12 @@ class NetworkSpeedWidget(QWidget):
         
         self._apply_theme_aware_defaults()
 
-        # --- Core Functional Components ---
+        # --- Declare all instance attributes for clarity ---
         self.widget_state: CoreWidgetState
         self.timer_manager: SpeedTimerManager
         self.controller: CoreController
         self.renderer: CoreWidgetRenderer
         self.position_manager: CorePositionManager
-        
-        # --- UI Components & State ---
         self.graph_window: Optional[GraphWindow] = None
         self.app_icon: QIcon
         self.context_menu: QMenu
@@ -98,17 +96,14 @@ class NetworkSpeedWidget(QWidget):
         self._last_update_time: float = 0.0
         self._last_taskbar_event_time: float = 0.0
         self.last_tray_rect: Optional[Tuple[int, int, int, int]] = None
-        
-        # --- Event Hook & Timers ---
         self.foreground_hook: Optional[WinEventHook] = None
         self.taskbar_hook: Optional[WinEventHook] = None
         self.z_order_timer = QTimer(self)
         self.z_order_timer.setSingleShot(True)
-        self.z_order_timer.setInterval(250)  # A 250ms delay is imperceptible but effective
+        self.z_order_timer.setInterval(250)
         self.z_order_timer.timeout.connect(self._ensure_win32_topmost)
         self._tray_watcher_timer = QTimer(self)
         
-        # Keep the widget hidden initially
         self.setVisible(False)
         self.logger.debug("Widget initially hidden to stabilize position and size.")
 
@@ -117,6 +112,10 @@ class NetworkSpeedWidget(QWidget):
             self._setup_window_properties()
             self._init_ui_components()
             self._init_core_components()
+            
+            # Now that all components are initialized, perform the initial resize.
+            self._resize_widget_for_font()
+            
             self._init_position_manager()
             self._init_context_menu()
             self._setup_connections()
@@ -480,7 +479,7 @@ class NetworkSpeedWidget(QWidget):
     def _init_font(self) -> None:
         """Initialize the font and set initial widget size."""
         self.logger.debug("Initializing font...")
-        self._set_font(resize=True)
+        self._set_font(resize=False)
 
 
     def _set_font(self, resize: bool = True) -> None:
@@ -576,6 +575,11 @@ class NetworkSpeedWidget(QWidget):
         if not self.metrics:
             raise RuntimeError("FontMetrics not initialized.")
 
+        # This guard clause is no longer strictly necessary with the new init order,
+        # but it provides an extra layer of safety.
+        if not hasattr(self, 'renderer') or not self.renderer:
+            raise RuntimeError("Renderer not initialized before resizing.")
+
         try:
             taskbar_info = get_taskbar_info()
             is_small = is_small_taskbar(taskbar_info)
@@ -584,13 +588,13 @@ class NetworkSpeedWidget(QWidget):
             precision = self.config.get("decimal_places", 2)
             margin = constants.renderer.TEXT_MARGIN
             
-            # --- NEW: Adaptive layout sizing ---
+            # --- Adaptive layout sizing ---
             if is_small:
                 # Horizontal Layout Calculation
                 upload_text, download_text = self.renderer._format_speed_texts(9.99, 99.99, False, precision, True)
                 up_str = f"{constants.renderer.UPLOAD_ARROW} {upload_text}"
                 down_str = f"{constants.renderer.DOWNLOAD_ARROW} {download_text}"
-                separator = constants.layout.layout.HORIZONTAL_LAYOUT_SEPARATOR
+                separator = constants.layout.HORIZONTAL_LAYOUT_SEPARATOR
                 
                 calculated_width = (self.metrics.horizontalAdvance(up_str) +
                                     self.metrics.horizontalAdvance(separator) +
