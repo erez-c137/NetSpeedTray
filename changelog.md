@@ -1,6 +1,23 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+
+---
+
+## [1.1.5] - August 23, 2025 (Hotfix)
+
+This is a critical hotfix that resolves a startup crash affecting new users and significantly improves the update process for existing users.
+
+**This is a highly recommended update for all users.**
+
+### 🐛 Fixed
+
+-   **Critical Startup Crash:** Resolved a chain of initialization errors that caused the application to crash immediately upon launching. This bug primarily affected new installations and systems with specific UI configurations (like a small taskbar). The fix ensures a stable and reliable first-time launch experience for all users.
+
+### ✨ Improved
+
+-   **Installer Reliability:** The installer is now much more robust when updating a running instance of NetSpeedTray. It now attempts a graceful shutdown of the application before proceeding with the update, preventing the "Setup was unable to automatically close all applications" error and ensuring a smoother, more successful update process.
+
 ---
 
 ## [1.1.4] - August 23, 2025 (Hotfix)
