@@ -1,9 +1,9 @@
 ; NetSpeedTray Installer Script
-; Version 1.1.4
+; Version 1.1.5
 
 #define MyAppName "NetSpeedTray"
-#define MyAppVersion "1.1.4.0"
-#define MyAppVersionDisplay "1.1.4"
+#define MyAppVersion "1.1.5.0"
+#define MyAppVersionDisplay "1.1.5"
 #define MyAppPublisher "Erez C137"
 #define MyAppURL "https://github.com/erez-c137/NetSpeedTray"
 #define MyAppExeName "NetSpeedTray.exe"
@@ -36,6 +36,9 @@ UsePreviousAppDir=no
 SetupLogging=yes
 UninstallDisplayName={#MyAppName}
 RestartIfNeededByRun=no
+; Enable auto-force close for upgrades (graceful first via Restart Manager, then kill)
+CloseApplications=force
+CloseApplicationsFilter=*.exe,*.dll
 ; SignedUninstaller=yes ; Uncomment when you have a code signing certificate
 
 [Languages]
@@ -70,8 +73,22 @@ function OpenMutex(dwDesiredAccess: LongWord; bInheritHandle: Boolean; lpName: s
   external 'OpenMutexW@kernel32.dll stdcall';
 function CloseHandle(hObject: THandle): Boolean;
   external 'CloseHandle@kernel32.dll stdcall';
+function FindWindow(lpClassName, lpWindowName: string): HWND;
+  external 'FindWindowW@user32.dll stdcall';
+function PostMessage(hWnd: HWND; Msg: Cardinal; wParam, lParam: Longint): BOOL;
+  external 'PostMessageW@user32.dll stdcall';
+const
+  WM_CLOSE = $0010;  // WinAPI constant for close message
 
-// --- Helper Function ---
+// --- Helper Functions ---
+function BoolToStr(Value: Boolean): string;
+begin
+  if Value then
+    Result := 'True'
+  else
+    Result := 'False';
+end;
+
 function IsAppRunning(): Boolean;
 var
   MutexHandle: THandle;
@@ -88,27 +105,146 @@ begin
   end;
 end;
 
-// --- Installer/Uninstaller Event Functions ---
-function InitializeSetup(): Boolean;
+function CloseNetSpeedTray(): Boolean;
+var
+  ResultCode: Integer;
+  Hwnd: HWND;
+  WaitCount: Integer;
+  KillAttempts: Integer;
 begin
-  if IsAppRunning() then
+  Result := True;
+  
+  if not IsAppRunning() then
+    Exit;
+    
+  Log('NetSpeedTray is running (likely two processes), attempting to close gracefully...');
+  
+  // Find the main window (on the child process) by its hidden title
+  Hwnd := FindWindow('', 'NetSpeedTrayHidden');
+  if Hwnd <> 0 then
   begin
-    MsgBox('{#MyAppName} is already running.'#13#10'Please close the application before running the installer.', mbError, MB_OK);
-    Result := False;
+    Log('Found NetSpeedTray window (child process), sending WM_CLOSE...');
+    PostMessage(Hwnd, WM_CLOSE, 0, 0);
+    
+    // Wait up to 5 seconds for graceful close (check every 500ms)
+    WaitCount := 0;
+    while (WaitCount < 10) and (FindWindow('', 'NetSpeedTrayHidden') <> 0) do
+    begin
+      Sleep(500);
+      WaitCount := WaitCount + 1;
+    end;
+    
+    // If still running (parent may linger), force kill the EXE and tree
+    if IsAppRunning() or (FindWindow('', 'NetSpeedTrayHidden') <> 0) then
+    begin
+      Log('Graceful close incomplete (parent/child lingering), using taskkill on EXE/tree...');
+      KillAttempts := 0;
+      while (KillAttempts < 3) and IsAppRunning() do
+      begin
+        if Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM "{#MyAppExeName}" /T', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+        begin
+          Log('taskkill (attempt ' + IntToStr(KillAttempts + 1) + ') executed with exit code: ' + IntToStr(ResultCode));
+          Sleep(2000);  // Extra wait for parent to exit after child
+        end
+        else
+        begin
+          Log('Failed to execute taskkill (attempt ' + IntToStr(KillAttempts + 1) + ')');
+          Result := False;
+          Exit;
+        end;
+        KillAttempts := KillAttempts + 1;
+      end;
+      
+      if IsAppRunning() then
+      begin
+        Log('NetSpeedTray still running after max taskkill attempts');
+        Result := False;
+      end
+      else
+      begin
+        Log('All NetSpeedTray processes closed');
+      end;
+    end
+    else
+    begin
+      Log('NetSpeedTray closed gracefully');
+    end;
   end
   else
   begin
-    Result := True;
+    Log('Could not find NetSpeedTray window, falling back to taskkill on EXE/tree...');
+    KillAttempts := 0;
+    while (KillAttempts < 3) and IsAppRunning() do
+    begin
+      if Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM "{#MyAppExeName}" /T', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+      begin
+        Log('taskkill (attempt ' + IntToStr(KillAttempts + 1) + ') executed with exit code: ' + IntToStr(ResultCode));
+        Sleep(2000);
+      end
+      else
+      begin
+        Log('Failed to execute taskkill (attempt ' + IntToStr(KillAttempts + 1) + ')');
+        Result := False;
+        Exit;
+      end;
+      KillAttempts := KillAttempts + 1;
+    end;
+    
+    if IsAppRunning() then
+    begin
+      Log('NetSpeedTray still running after max taskkill attempts');
+      Result := False;
+    end
+    else
+    begin
+      Log('All NetSpeedTray processes closed');
+    end;
   end;
+end;
+
+// --- Installer/Uninstaller Event Functions ---
+function InitializeSetup(): Boolean;
+begin
+  // No early close; CloseApplications=force handles during file replace for upgrades
+  // But if running and prompt needed (rare), handle here
+  if IsAppRunning() then
+  begin
+    if MsgBox('{#MyAppName} is currently running and needs to be closed to continue installation.'#13#10#13#10'Click OK to automatically close it, or Cancel to exit the installer.', mbConfirmation, MB_OKCANCEL) = IDOK then
+    begin
+      if not CloseNetSpeedTray() then
+      begin
+        MsgBox('Failed to close {#MyAppName}.'#13#10'Please close it manually and try again.', mbError, MB_OK);
+        Result := False;
+        Exit;
+      end;
+    end
+    else
+    begin
+      Result := False;
+      Exit;
+    end;
+  end;
+  Result := True;
 end;
 
 function InitializeUninstall(): Boolean;
 begin
   if IsAppRunning() then
   begin
-    MsgBox('{#MyAppName} is currently running.'#13#10'Please close the application before uninstalling.', mbError, MB_OK);
-    Result := False;
-    Exit;
+    if MsgBox('{#MyAppName} is currently running and needs to be closed to continue uninstallation.'#13#10#13#10'Click OK to automatically close it, or Cancel to exit the uninstaller.', mbConfirmation, MB_OKCANCEL) = IDOK then
+    begin
+      if not CloseNetSpeedTray() then
+      begin
+        MsgBox('Failed to close {#MyAppName}.'#13#10'Please close it manually and try again.', mbError, MB_OK);
+        Result := False;
+        Exit;
+      end;
+    end
+    else
+    begin
+      Result := False;
+      Exit;
+    end;
   end;
   
   DeleteUserData := False; 

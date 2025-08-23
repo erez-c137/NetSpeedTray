@@ -7,6 +7,8 @@ import signal
 import sys
 from typing import Optional
 
+import win32gui
+import win32con
 import win32api
 import win32event
 import winerror
@@ -58,7 +60,7 @@ def main() -> int:
 
     Orchestrates the application's startup sequence:
     1. Sets up logging.
-    2. Ensures single-instance execution.
+    2. Ensures single-instance execution (or handles --shutdown command).
     3. Loads configuration.
     4. Initializes internationalization with the user's chosen language.
     5. Creates the main widget and runs the application event loop.
@@ -72,6 +74,24 @@ def main() -> int:
     
     # The QApplication must be created before any UI elements.
     app = QApplication(sys.argv)
+
+    if "--shutdown" in sys.argv:
+        # This is a special mode triggered by the installer.
+        # We broadcast a custom Windows message that only our running application will understand.
+        logger.info("Shutdown command received. Broadcasting WM_USER_SHUTDOWN.")
+        try:
+            # Register a custom Windows message. The name must be unique.
+            WM_USER_SHUTDOWN = win32gui.RegisterWindowMessageW("NetSpeedTray_WM_SHUTDOWN")
+            
+            # Broadcast this message to all top-level windows. Our app will be listening.
+            win32gui.PostMessage(win32con.HWND_BROADCAST, WM_USER_SHUTDOWN, 0, 0)
+            
+            logger.info("Broadcast message sent. Exiting shutdown command.")
+            return 0  # Exit successfully
+        except Exception as e:
+            logger.error(f"Error during shutdown command: {e}", exc_info=True)
+            return 1  # Return an error code
+
     i18n_strings: Optional[constants.i18n.I18nStrings] = None 
 
     try:
