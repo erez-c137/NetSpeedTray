@@ -305,7 +305,7 @@ class TaskbarManager:
                     work_area=(0, 0, 0, 0),
                     dpi_scale=1.0,
                     is_primary=True,
-                    height=constants.taskbar.taskbar.DEFAULT_HEIGHT
+                    height=constants.taskbar.DEFAULT_HEIGHT
                 )
             except Exception as e:
                 logger.error("Error creating primary fallback taskbar info: %s", e, exc_info=True)
@@ -324,7 +324,7 @@ class TaskbarManager:
                     work_area=(0, 0, 0, 0),
                     dpi_scale=1.0,
                     is_primary=True,
-                    height=constants.taskbar.taskbar.DEFAULT_HEIGHT
+                    height=constants.taskbar.DEFAULT_HEIGHT
                 )
 
         def distance_to_taskbar_edge(tb: TaskbarInfo) -> float:
@@ -384,7 +384,7 @@ class TaskbarManager:
                     work_area=(0, 0, 0, 0),
                     dpi_scale=1.0,
                     is_primary=True,
-                    height=constants.taskbar.taskbar.DEFAULT_HEIGHT
+                    height=constants.taskbar.DEFAULT_HEIGHT
                 )
             except Exception as e:
                 logger.error("Error creating primary fallback taskbar info: %s", e, exc_info=True)
@@ -489,19 +489,6 @@ class ScreenUtils:
 
 
 # Position Calculation Logic
-class PositionCalculator:
-    """
-    Calculates the optimal widget position relative to a specified taskbar.
-
-    Takes into account the taskbar's edge (top, bottom, left, right), the
-    location of the system tray (if available), DPI scaling, and configured padding.
-    Also provides logic for constraining drag movements along the taskbar edge.
-    """
-    def __init__(self) -> None:
-        """Initializes the calculator with logging throttle state."""
-        self._last_drag_log_time: float = 0.0
-        self._drag_log_interval: float = getattr(constants.taskbar.position, 'DRAG_LOG_INTERVAL_SECONDS', 1.0)
-        logger.debug("PositionCalculator initialized.")
 
 class PositionCalculator:
     """

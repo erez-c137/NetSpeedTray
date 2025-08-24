@@ -1,6 +1,19 @@
+"""
+Network-related utility functions for NetSpeedTray.
 
+This module provides functions for discovering network interfaces, mapping
+GUIDs to friendly names, and determining the primary internet-facing interface.
+"""
+
+import logging
+import socket
 import sys
 from typing import Optional
+
+import psutil
+
+logger = logging.getLogger("NetSpeedTray.NetworkUtils")
+
 
 def guid_to_friendly_name(guid: str) -> Optional[str]:
     """
@@ -14,25 +27,15 @@ def guid_to_friendly_name(guid: str) -> Optional[str]:
         import wmi
         c = wmi.WMI()
         for iface in c.Win32_NetworkAdapter():
-            # NetConnectionID is the friendly name, GUID is in GUID
+            # NetConnectionID is the friendly name, GUID is in the GUID property
             if hasattr(iface, 'GUID') and iface.GUID and iface.GUID.lower() == guid.strip('{}').lower():
                 return getattr(iface, 'NetConnectionID', None)
     except ImportError:
-        logger.warning("wmi module not installed; cannot map GUID to friendly name.")
+        logger.warning("The 'wmi' module is not installed; cannot map GUID to friendly name.")
     except Exception as e:
         logger.error(f"Error mapping GUID to friendly name: {e}", exc_info=True)
     return None
-"""
-Network-related utility functions for NetSpeedTray.
-"""
 
-import logging
-import socket
-from typing import Optional
-
-import psutil
-
-logger = logging.getLogger("NetSpeedTray.NetworkUtils")
 
 def get_primary_interface_name() -> Optional[str]:
     """
@@ -46,6 +49,7 @@ def get_primary_interface_name() -> Optional[str]:
         The name of the primary interface (e.g., "Wi-Fi"), or None if it
         cannot be determined.
     """
+    local_ip = "0.0.0.0" # Initialize for logging in case of early exit
     try:
         # Create a UDP socket to a public IP (Google's DNS) to find the default route
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
@@ -72,5 +76,5 @@ def get_primary_interface_name() -> Optional[str]:
         logger.error(f"Unexpected error determining primary interface: {e}", exc_info=True)
         return None
         
-    logger.warning("Could not find an interface matching the local IP {local_ip}.")
+    logger.warning(f"Could not find an interface matching the local IP {local_ip}.")
     return None

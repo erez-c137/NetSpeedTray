@@ -182,7 +182,7 @@ class WidgetRenderer:
         
         up_str = f"{constants.renderer.UPLOAD_ARROW} {upload_text}"
         down_str = f"{constants.renderer.DOWNLOAD_ARROW} {download_text}"
-        separator = constants.layout.layout.HORIZONTAL_LAYOUT_SEPARATOR
+        separator = constants.layout.HORIZONTAL_LAYOUT_SEPARATOR
         
         up_width = self.metrics.horizontalAdvance(up_str)
         down_width = self.metrics.horizontalAdvance(down_str)

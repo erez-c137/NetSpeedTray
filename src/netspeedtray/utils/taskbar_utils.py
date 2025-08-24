@@ -167,7 +167,7 @@ class TaskbarInfo:
             int(round(work_area_qrect.right() * dpi_scale)) + 1,
             int(round(work_area_qrect.bottom() * dpi_scale)) + 1,
         )
-        logical_height = constants.taskbar.taskbar.DEFAULT_HEIGHT
+        logical_height = constants.taskbar.DEFAULT_HEIGHT
         screen_geo = primary_screen.geometry()
 
         return TaskbarInfo(
@@ -503,11 +503,11 @@ def get_taskbar_height() -> int:
         taskbar_info = get_taskbar_info()
         if taskbar_info.hwnd == 0 and taskbar_info.height <= 0:
             logger.warning("Using default taskbar height as detection failed.")
-            return constants.taskbar.taskbar.DEFAULT_HEIGHT
+            return constants.taskbar.DEFAULT_HEIGHT
         return taskbar_info.height
     except Exception as e:
         logger.error("Error getting taskbar height: %s. Returning default.", e)
-        return constants.taskbar.taskbar.DEFAULT_HEIGHT
+        return constants.taskbar.DEFAULT_HEIGHT
  
           
 def is_taskbar_obstructed(taskbar_info: Optional[TaskbarInfo]) -> bool:
