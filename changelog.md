@@ -4,15 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ---
 
-## [1.1.5] - August 23, 2025 (Hotfix)
+## [1.1.5] - August 24, 2025 (Hotfix)
 
-This is a critical hotfix that resolves a startup crash affecting new users and significantly improves the update process for existing users.
+This is a critical hotfix release that provides a definitive and comprehensive fix for the startup crash and several related stability issues discovered during the beta cycle.
 
 **This is a highly recommended update for all users.**
 
 ### 🐛 Fixed
 
--   **Critical Startup Crash:** Resolved a chain of initialization errors that caused the application to crash immediately upon launching. This bug primarily affected new installations and systems with specific UI configurations (like a small taskbar). The fix ensures a stable and reliable first-time launch experience for all users.
+-   **Critical Startup Crash & Systemic Stability Issues:** Resolved a complex chain of initialization and rendering errors that caused the application to crash on first launch, particularly on systems with specific UI configurations (like a small taskbar).
+    -   Following user feedback from the beta releases (a huge thank you to GitHub user **[CMTriX](https://github.com/CMTriX)**!), a full codebase audit was performed.
+    -   This audit eradicated a systemic typo pattern and fixed numerous latent bugs in the widget rendering, positioning, and various utility modules (`taskbar`, `network`, `config`).
+    -   The result is a stable and reliable experience across a much wider variety of Windows environments.
 
 ### ✨ Improved
 
