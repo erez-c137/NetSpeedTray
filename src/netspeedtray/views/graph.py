@@ -52,7 +52,7 @@ class GraphWindow(QWidget):
                 self.i18n = None
             self._is_closing = False
             self._current_data = None
-            self._last_stats_update = time.time()
+            self._last_stats_update = time.monotonic()
             self._stats_update_interval = constants.graph.STATS_UPDATE_INTERVAL
             self._cached_stats = {}
 

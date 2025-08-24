@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from netspeedtray.views.widget import NetworkSpeedWidget
 
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QSize, QPoint
-from PyQt6.QtGui import QColor, QFont, QFontDatabase, QIcon
+from PyQt6.QtGui import QColor, QFont, QFontDatabase, QIcon, QCloseEvent 
 from PyQt6.QtWidgets import (
     QApplication, QColorDialog, QComboBox, QDialog, QFileDialog, QFontDialog,
     QGridLayout, QGroupBox, QHBoxLayout, QLabel, QListWidget, QMessageBox,

@@ -22,18 +22,22 @@ _logging_lock: threading.Lock = threading.Lock()
 def get_app_asset_path(asset_name: str) -> Path:
     """
     Get the path to an application asset in the assets directory.
+    This function is robust for both development and PyInstaller-packaged modes.
     """
-    import sys
-    # Support PyInstaller (_MEIPASS) and dev mode
-    if hasattr(sys, '_MEIPASS'):
-        # PyInstaller: assets are in the temp _MEIPASS dir
+    # Check if the application is running in a PyInstaller bundle
+    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+        # In a bundle, assets are located in the _MEIPASS temporary directory
         base_path = Path(sys._MEIPASS)
-        asset_path = base_path / "assets" / asset_name
     else:
-        # Dev mode: assets are relative to project root
-        base_path = Path(__file__).parent.parent.parent.parent
-        asset_path = base_path / "assets" / asset_name
-    return asset_path
+        current_path = Path(__file__).resolve()
+        project_root = current_path
+        while project_root.name != 'src':
+            project_root = project_root.parent
+            if project_root == project_root.parent: # Reached the filesystem root
+                raise FileNotFoundError("Could not find the 'src' directory to determine project root.")
+        base_path = project_root.parent # The project root is one level above 'src'
+
+    return base_path / "assets" / asset_name
 
 def get_app_data_path() -> Path:
     """

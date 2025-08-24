@@ -117,8 +117,8 @@ def main() -> int:
             app.setQuitOnLastWindowClosed(False)
 
             # 7. Set up signal handlers to gracefully call the widget's own cleanup routine.
-            signal.signal(signal.SIGINT, lambda s, f: widget.close())
-            signal.signal(signal.SIGTERM, lambda s, f: widget.close())
+            signal.signal(signal.SIGINT, lambda s, f: QApplication.instance().quit())
+            signal.signal(signal.SIGTERM, lambda s, f: QApplication.instance().quit())
 
             # 8. Show the widget after a short delay to ensure the event loop is running.
             QTimer.singleShot(500, widget.show)
