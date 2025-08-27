@@ -181,8 +181,8 @@ class WidgetRenderer:
         """Draws the compact single-line horizontal layout."""
         upload_text, download_text = self._format_speed_texts(upload, download, always_mbps, decimal_places, force_decimals, full_string=True)
         
-        up_str = f"{self.i18n.UPLOAD_ARROW} {upload_text}"
-        down_str = f"{self.i18n.DOWNLOAD_ARROW} {download_text}"
+        up_str = f"{constants.renderer.UPLOAD_ARROW} {upload_text}"
+        down_str = f"{constants.renderer.DOWNLOAD_ARROW} {download_text}"
         separator = constants.layout.HORIZONTAL_LAYOUT_SEPARATOR
         
         up_width = self.metrics.horizontalAdvance(up_str)

@@ -505,7 +505,72 @@ def get_taskbar_height() -> int:
     except Exception as e:
         logger.error("Error getting taskbar height: %s. Returning default.", e)
         return constants.taskbar.DEFAULT_HEIGHT
+ 
+          
+def is_taskbar_obstructed(taskbar_info: Optional[TaskbarInfo]) -> bool:
+    """
+    Checks if the taskbar is obstructed by a true fullscreen app or an
+    intrusive shell UI element that does not respect the screen's work area.
+    """
+    try:
+        from netspeedtray import constants
 
+        hwnd = win32gui.GetForegroundWindow()
+        if not hwnd or not win32gui.IsWindow(hwnd) or not taskbar_info:
+            return False
+
+        class_name = win32gui.GetClassName(hwnd)
+        if class_name in ("Progman", "WorkerW"):  # Ignore the Desktop
+            return False
+
+        # --- Context Gathering ---
+        try:
+            # Ensure the foreground window is on the same monitor as the taskbar
+            fg_monitor = win32api.MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)
+            tb_monitor = win32api.MonitorFromPoint((taskbar_info.rect[0], taskbar_info.rect[1]), MONITOR_DEFAULTTONEAREST)
+            if fg_monitor != tb_monitor:
+                return False  # An app on another monitor is not an obstruction
+
+            window_rect = win32gui.GetWindowRect(hwnd)
+            monitor_info = win32api.GetMonitorInfo(fg_monitor)
+            monitor_rect = monitor_info.get('Monitor')
+            work_area_rect = monitor_info.get('Work')
+            if not monitor_rect or not work_area_rect:
+                return False
+        except win32gui.error:
+            # Window might have closed while we were checking it.
+            return False
+
+        # --- OBSTRUCTION CHECK 1: True Fullscreen ---
+        # A window is fullscreen if its rectangle is identical to the monitor's rectangle.
+        if window_rect == monitor_rect:
+            return True
+
+        # --- OBSTRUCTION CHECK 2: Intrusive Shell UI (Geometric Check) ---
+        # Check if the window is a known shell type. We do this first as a quick filter.
+        if class_name in constants.shell.shell.UI_CLASS_NAMES_TO_CHECK:
+            # An intrusive UI element (like the Start Menu) will not be fully contained
+            # within the available work area. A normal app (like Calculator) will be.
+            
+            # Check if the window's rectangle is completely inside the work area
+            is_contained_in_work_area = (
+                window_rect[0] >= work_area_rect[0] and  # Left edge
+                window_rect[1] >= work_area_rect[1] and  # Top edge
+                window_rect[2] <= work_area_rect[2] and  # Right edge
+                window_rect[3] <= work_area_rect[3]      # Bottom edge
+            )
+
+            # If it's NOT contained, it's an intrusive element like the Start Menu.
+            if not is_contained_in_work_area:
+                return True
+
+        # If it's not fullscreen and it's a normal app respecting the work area, it's not an obstruction.
+        return False
+
+    except Exception as e:
+        logger.error(f"Unexpected error in is_taskbar_obstructed: {e}", exc_info=True)
+        return False
+    
 
 def is_taskbar_visible(taskbar_info: Optional[TaskbarInfo]) -> bool:
     """

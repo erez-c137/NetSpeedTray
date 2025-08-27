@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ---
 
-## Comprehensive Changelog: NetSpeedTray v1.1.6
+##  [1.1.6] - August 27, 2025
 
 This version represents a major leap forward in stability, internationalization, and user control, addressing critical bugs from previous versions and fundamentally improving the application's architecture for future development.
 
