@@ -167,7 +167,7 @@ class TaskbarInfo:
             int(round(work_area_qrect.right() * dpi_scale)) + 1,
             int(round(work_area_qrect.bottom() * dpi_scale)) + 1,
         )
-        logical_height = constants.taskbar.taskbar.DEFAULT_HEIGHT
+        logical_height = constants.taskbar.DEFAULT_HEIGHT
         screen_geo = primary_screen.geometry()
 
         return TaskbarInfo(
@@ -336,16 +336,11 @@ def get_all_taskbar_info() -> List[TaskbarInfo]:
     primary_screen = QApplication.primaryScreen()
     all_screens = QApplication.screens()
 
+
     def find_screen_for_taskbar(tb_rect_phys: Tuple[int, int, int, int]) -> Optional[QScreen]:
         """
         Finds the QScreen that a taskbar belongs to using a robust, multi-layered
         geometric heuristic.
-
-        Args:
-            tb_rect_phys: Taskbar rectangle (left, top, right, bottom) in physical coordinates.
-
-        Returns:
-            Optional[QScreen]: The best matching QScreen, falling back to the primary screen.
         """
         # --- Layer 1: Find the screen with the largest geometric intersection (most reliable) ---
         best_match_screen: Optional[QScreen] = None
@@ -388,10 +383,10 @@ def get_all_taskbar_info() -> List[TaskbarInfo]:
         logger.warning("All screen detection methods failed. Returning primary screen as a final fallback.")
         return primary_screen
 
+
     def process_taskbar(hwnd: int) -> Optional[TaskbarInfo]:
         """
         Processes a single taskbar window and constructs a TaskbarInfo object.
-        (This inner function remains largely the same)
         """
         try:
             if not win32gui.IsWindow(hwnd) or not win32gui.IsWindowVisible(hwnd):
@@ -404,14 +399,16 @@ def get_all_taskbar_info() -> List[TaskbarInfo]:
             rect_phys = win32gui.GetWindowRect(hwnd)
             tray_hwnd = win32gui.FindWindowEx(hwnd, 0, "TrayNotifyWnd", None) or None
             tasklist_rect_phys = find_tasklist_rect(hwnd)
-
-            # Find associated QScreen using our new robust method
+            
+            # Use MonitorFromWindow for a direct, unambiguous link between the taskbar and its monitor.
+            monitor = win32api.MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)
+            
+            # Find associated QScreen using our robust geometric method
             screen = find_screen_for_taskbar(rect_phys)
             if not screen:
                 logger.error(f"Robust screen detection failed for HWND {hwnd}. This should not happen.")
                 return None
 
-            monitor = win32api.MonitorFromPoint((rect_phys[0], rect_phys[1]), MONITOR_DEFAULTTONEAREST)
             monitor_info = win32api.GetMonitorInfo(monitor)
             work_area_phys = monitor_info.get("Work", (0, 0, 0, 0))
             dpi_scale = get_dpi_for_monitor(monitor, hwnd) or screen.devicePixelRatio()
@@ -440,7 +437,7 @@ def get_all_taskbar_info() -> List[TaskbarInfo]:
             logger.error(f"Unexpected error during taskbar processing for HWND {hwnd}: {e}")
             return None
 
-    # Main execution block of get_all_taskbar_info
+    # --- Main execution block of get_all_taskbar_info ---
     try:
         # Try direct FindWindow for efficiency first
         primary_hwnd = win32gui.FindWindow("Shell_TrayWnd", None)
@@ -503,82 +500,18 @@ def get_taskbar_height() -> int:
         taskbar_info = get_taskbar_info()
         if taskbar_info.hwnd == 0 and taskbar_info.height <= 0:
             logger.warning("Using default taskbar height as detection failed.")
-            return constants.taskbar.taskbar.DEFAULT_HEIGHT
+            return constants.taskbar.DEFAULT_HEIGHT
         return taskbar_info.height
     except Exception as e:
         logger.error("Error getting taskbar height: %s. Returning default.", e)
-        return constants.taskbar.taskbar.DEFAULT_HEIGHT
- 
-          
-def is_taskbar_obstructed(taskbar_info: Optional[TaskbarInfo]) -> bool:
-    """
-    Checks if the taskbar is obstructed by a true fullscreen app or an
-    intrusive shell UI element that does not respect the screen's work area.
-    """
-    try:
-        from netspeedtray import constants
+        return constants.taskbar.DEFAULT_HEIGHT
 
-        hwnd = win32gui.GetForegroundWindow()
-        if not hwnd or not win32gui.IsWindow(hwnd) or not taskbar_info:
-            return False
-
-        class_name = win32gui.GetClassName(hwnd)
-        if class_name in ("Progman", "WorkerW"):  # Ignore the Desktop
-            return False
-
-        # --- Context Gathering ---
-        try:
-            # Ensure the foreground window is on the same monitor as the taskbar
-            fg_monitor = win32api.MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)
-            tb_monitor = win32api.MonitorFromPoint((taskbar_info.rect[0], taskbar_info.rect[1]), MONITOR_DEFAULTTONEAREST)
-            if fg_monitor != tb_monitor:
-                return False  # An app on another monitor is not an obstruction
-
-            window_rect = win32gui.GetWindowRect(hwnd)
-            monitor_info = win32api.GetMonitorInfo(fg_monitor)
-            monitor_rect = monitor_info.get('Monitor')
-            work_area_rect = monitor_info.get('Work')
-            if not monitor_rect or not work_area_rect:
-                return False
-        except win32gui.error:
-            # Window might have closed while we were checking it.
-            return False
-
-        # --- OBSTRUCTION CHECK 1: True Fullscreen ---
-        # A window is fullscreen if its rectangle is identical to the monitor's rectangle.
-        if window_rect == monitor_rect:
-            return True
-
-        # --- OBSTRUCTION CHECK 2: Intrusive Shell UI (Geometric Check) ---
-        # Check if the window is a known shell type. We do this first as a quick filter.
-        if class_name in constants.shell.shell.UI_CLASS_NAMES_TO_CHECK:
-            # An intrusive UI element (like the Start Menu) will not be fully contained
-            # within the available work area. A normal app (like Calculator) will be.
-            
-            # Check if the window's rectangle is completely inside the work area
-            is_contained_in_work_area = (
-                window_rect[0] >= work_area_rect[0] and  # Left edge
-                window_rect[1] >= work_area_rect[1] and  # Top edge
-                window_rect[2] <= work_area_rect[2] and  # Right edge
-                window_rect[3] <= work_area_rect[3]      # Bottom edge
-            )
-
-            # If it's NOT contained, it's an intrusive element like the Start Menu.
-            if not is_contained_in_work_area:
-                return True
-
-        # If it's not fullscreen and it's a normal app respecting the work area, it's not an obstruction.
-        return False
-
-    except Exception as e:
-        logger.error(f"Unexpected error in is_taskbar_obstructed: {e}", exc_info=True)
-        return False
-    
 
 def is_taskbar_visible(taskbar_info: Optional[TaskbarInfo]) -> bool:
     """
-    Checks if the specified taskbar is currently visible on screen.
-    This function is robust for auto-hiding taskbars.
+    Checks if the taskbar is in a visible state based on its own properties.
+    This check is now independent of other application windows. Obstruction is
+    handled separately by is_taskbar_obstructed.
     """
     ABM_GETSTATE = 0x00000004
     ABS_AUTOHIDE = 0x00000001
@@ -587,40 +520,98 @@ def is_taskbar_visible(taskbar_info: Optional[TaskbarInfo]) -> bool:
         return False
 
     try:
+        # --- CHECK 1: Is the window itself programmatically visible? ---
+        if not win32gui.IsWindowVisible(taskbar_info.hwnd):
+            return False
+
+        # --- CHECK 2: Is it an auto-hiding taskbar that is currently hidden? ---
         abd = APPBARDATA()
         abd.cbSize = ctypes.sizeof(abd)
         abd.hWnd = taskbar_info.hwnd
         state_flags = windll.shell32.SHAppBarMessage(ABM_GETSTATE, byref(abd))
         auto_hide_enabled = bool(state_flags & ABS_AUTOHIDE)
 
-        if not auto_hide_enabled:
-            return True # If auto-hide is off, it's always visible.
+        if auto_hide_enabled:
+            screen = taskbar_info.get_screen()
+            if not screen: return False # Cannot determine state without screen info
 
-        # If auto-hide is ON, we must check its actual position.
-        screen = taskbar_info.get_screen()
-        if not screen:
-            return False
+            screen_geo = screen.geometry()
+            dpi = taskbar_info.dpi_scale
+            # Calculate the screen's physical rectangle
+            screen_rect_phys = (
+                int(screen_geo.left() * dpi), int(screen_geo.top() * dpi),
+                int(screen_geo.right() * dpi) + 1, int(screen_geo.bottom() * dpi) + 1
+            )
+            tb_rect_phys = taskbar_info.rect
+            edge = taskbar_info.get_edge_position()
 
-        screen_geo = screen.geometry()
-        dpi = taskbar_info.dpi_scale
-        screen_rect_phys = (
-            int(screen_geo.left() * dpi), int(screen_geo.top() * dpi),
-            int(screen_geo.right() * dpi) + 1, int(screen_geo.bottom() * dpi) + 1
-        )
-        tb_rect_phys = taskbar_info.rect
-        edge = taskbar_info.get_edge_position()
+            # The taskbar is "hidden" if it's mostly off-screen.
+            # A small tolerance (e.g., 5 pixels) is used to account for animations/rounding.
+            if edge == constants.taskbar.edge.BOTTOM and tb_rect_phys[1] >= screen_rect_phys[3] - 5: return False
+            if edge == constants.taskbar.edge.TOP and tb_rect_phys[3] <= screen_rect_phys[1] + 5: return False
+            if edge == constants.taskbar.edge.LEFT and tb_rect_phys[2] <= screen_rect_phys[0] + 5: return False
+            if edge == constants.taskbar.edge.RIGHT and tb_rect_phys[0] >= screen_rect_phys[2] - 5: return False
 
-        if edge == constants.taskbar.edge.BOTTOM and tb_rect_phys[1] >= screen_rect_phys[3] - 5: return False
-        if edge == constants.taskbar.edge.TOP and tb_rect_phys[3] <= screen_rect_phys[1] + 5: return False
-        if edge == constants.taskbar.edge.LEFT and tb_rect_phys[2] <= screen_rect_phys[0] + 5: return False
-        if edge == constants.taskbar.edge.RIGHT and tb_rect_phys[0] >= screen_rect_phys[2] - 5: return False
-
-        return True # If not in a hidden position, it's visible.
+        # If it passes all its own state checks, it is considered visible.
+        return True
 
     except Exception as e:
         logger.error(f"Error checking taskbar visibility for HWND={taskbar_info.hwnd}: {e}", exc_info=True)
         return False
-    
+
+
+def is_taskbar_obstructed(taskbar_info: Optional[TaskbarInfo], hwnd_to_check: int) -> bool:
+    """
+    Checks if the taskbar is obstructed by a specific window (hwnd_to_check).
+    This is the definitive, stable, hybrid implementation.
+    """
+    try:
+        # We now use the specific window handle passed to us, not a fresh API call.
+        if not hwnd_to_check or not win32gui.IsWindow(hwnd_to_check) or not taskbar_info:
+            return False
+
+        # The taskbar cannot obstruct itself, and the desktop is always behind it.
+        class_name = win32gui.GetClassName(hwnd_to_check)
+        if class_name in ("Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"):
+            return False
+
+        # --- Context Gathering ---
+        try:
+            fg_monitor = win32api.MonitorFromWindow(hwnd_to_check, MONITOR_DEFAULTTONEAREST)
+            tb_monitor = win32api.MonitorFromWindow(taskbar_info.hwnd, MONITOR_DEFAULTTONEAREST)
+            if fg_monitor != tb_monitor:
+                return False
+
+            window_rect = win32gui.GetWindowRect(hwnd_to_check)
+            monitor_info = win32api.GetMonitorInfo(fg_monitor)
+            monitor_rect = monitor_info.get('Monitor')
+            work_area_rect = monitor_info.get('Work')
+            if not monitor_rect or not work_area_rect:
+                return False
+        except win32gui.error:
+            return False # Window might have closed.
+
+        # --- OBSTRUCTION CHECK 1: True Fullscreen (Games, F11 Browser) ---
+        if window_rect == monitor_rect:
+            return True
+
+        # --- OBSTRUCTION CHECK 2: Work Area Violation (Start Menu, Browser Fullscreen Video) ---
+        if class_name in constants.shell.shell.UI_CLASS_NAMES_TO_CHECK:
+            is_contained = (
+                window_rect[0] >= work_area_rect[0] and
+                window_rect[1] >= work_area_rect[1] and
+                window_rect[2] <= work_area_rect[2] and
+                window_rect[3] <= work_area_rect[3]
+            )
+            if not is_contained:
+                return True
+        
+        return False
+
+    except Exception as e:
+        logger.error(f"Unexpected error in is_taskbar_obstructed: {e}", exc_info=True)
+        return False
+
 
 def is_small_taskbar(taskbar_info: Optional[TaskbarInfo]) -> bool:
     """

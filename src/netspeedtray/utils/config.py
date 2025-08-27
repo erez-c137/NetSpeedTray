@@ -7,6 +7,7 @@ merging, and strict validation, preventing corrupted or invalid configurations f
 affecting the application.
 """
 
+import os
 import json
 import logging
 import re
