@@ -22,7 +22,6 @@ class FontConstants:
         WEIGHT_LIGHT, WEIGHT_NORMAL, WEIGHT_DEMIBOLD, WEIGHT_BOLD
     ]
 
-    # ADDED all missing constants
     DEFAULT_FONT: Final[str] = 'Segoe UI'
     NOTE_FONT_SIZE: Final[int] = 8
     FONT_WEIGHT_MIN_STANDARD: Final[int] = WEIGHT_LIGHT
@@ -31,19 +30,18 @@ class FontConstants:
     FONT_WEIGHT_SLIDER_MIN_WIDTH: Final[int] = 120
     FONT_WEIGHT_LABEL_PADDING: Final[int] = 20
 
+    # This map is now internal and points to the i18n keys.
     WEIGHT_MAP: Final[Dict[int, str]] = {
-        WEIGHT_THIN: "Thin", WEIGHT_EXTRALIGHT: "ExtraLight", WEIGHT_LIGHT: "Light",
-        WEIGHT_NORMAL: "Normal", WEIGHT_MEDIUM: "Medium", WEIGHT_DEMIBOLD: "DemiBold",
-        WEIGHT_BOLD: "Bold", WEIGHT_EXTRABOLD: "ExtraBold", WEIGHT_BLACK: "Black"
-    }
-    
-    WEIGHT_NUM_TO_KEY: Final[Dict[int, str]] = {
         WEIGHT_THIN: "FONT_WEIGHT_THIN", WEIGHT_EXTRALIGHT: "FONT_WEIGHT_EXTRALIGHT",
         WEIGHT_LIGHT: "FONT_WEIGHT_LIGHT", WEIGHT_NORMAL: "FONT_WEIGHT_NORMAL",
         WEIGHT_MEDIUM: "FONT_WEIGHT_MEDIUM", WEIGHT_DEMIBOLD: "FONT_WEIGHT_DEMIBOLD",
         WEIGHT_BOLD: "FONT_WEIGHT_BOLD", WEIGHT_EXTRABOLD: "FONT_WEIGHT_EXTRABOLD",
-        WEIGHT_BLACK: "FONT_WEIGHT_BLACK",
+        WEIGHT_BLACK: "FONT_WEIGHT_BLACK"
     }
+    
+    # This map can be removed as WEIGHT_MAP now serves its purpose.
+    # Keeping it for now if other code relies on it, but it's now redundant.
+    WEIGHT_NUM_TO_KEY: Final[Dict[int, str]] = WEIGHT_MAP
 
     def __init__(self) -> None:
         self.validate()

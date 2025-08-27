@@ -3,7 +3,6 @@ Constants related to application state, controller logic, and data storage.
 """
 from typing import Final, List
 
-# CORRECTED IMPORT
 from .config import config
 
 class WidgetStateConstants:
@@ -12,9 +11,13 @@ class WidgetStateConstants:
         (config.defaults.DEFAULT_HISTORY_MINUTES * 60) / config.defaults.DEFAULT_UPDATE_RATE
     ))
     POSITION_TOLERANCE: Final[int] = 5
-    MAX_SPEED_DISPLAY_TEMPLATE: Final[str] = "↑ 999.9 GB/s"
+    
+    # REMOVED: MAX_SPEED_DISPLAY_TEMPLATE. This logic should be in the UI.
+    
     CSV_FILE_NAME: Final[str] = "nst_speed_history.csv"
-    CSV_HEADERS: Final[List[str]] = ["timestamp", "upload_bytes", "download_bytes"]
+    
+    # REMOVED: CSV_HEADERS. The headers should be generated using i18n keys.
+    # See export_history() in graph.py for the correct implementation.
 
     def __init__(self) -> None:
         self.validate()

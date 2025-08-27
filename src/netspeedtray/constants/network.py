@@ -4,7 +4,7 @@ Constants related to network speeds, units, and interfaces.
 from typing import Final, Set, List
 
 class UnitConstants:
-    """Constants for unit conversions and labels in speed formatting."""
+    """Constants for unit conversions and i18n keys for labels."""
     BITS_PER_BYTE: Final[int] = 8
     KILO_DIVISOR: Final[int] = 1_000
     MEGA_DIVISOR: Final[int] = 1_000_000
@@ -13,14 +13,16 @@ class UnitConstants:
     MEGA_THRESHOLD: Final[int] = MEGA_DIVISOR
     GIGA_THRESHOLD: Final[int] = GIGA_DIVISOR
     MINIMUM_DISPLAY_SPEED: Final[float] = 10_000
-    BPS_LABEL: Final[str] = "B/s"
-    KBPS_LABEL: Final[str] = "KB/s"
-    MBPS_LABEL: Final[str] = "MB/s"
-    GBPS_LABEL: Final[str] = "GB/s"
-    BITS_LABEL: Final[str] = "bps"
-    KBITS_LABEL: Final[str] = "Kbps"
-    MBITS_LABEL: Final[str] = "Mbps"
-    GBITS_LABEL: Final[str] = "Gbps"
+    
+    # These are now i18n keys
+    BPS_LABEL: Final[str] = "BPS_LABEL"
+    KBPS_LABEL: Final[str] = "KBPS_LABEL"
+    MBPS_LABEL: Final[str] = "MBPS_LABEL"
+    GBPS_LABEL: Final[str] = "GBPS_LABEL"
+    BITS_LABEL: Final[str] = "BITS_LABEL"
+    KBITS_LABEL: Final[str] = "KBITS_LABEL"
+    MBITS_LABEL: Final[str] = "MBITS_LABEL"
+    GBITS_LABEL: Final[str] = "GBITS_LABEL"
 
     def __init__(self) -> None:
         self.validate()
@@ -36,8 +38,10 @@ class NetworkSpeedConstants:
     DEFAULT_SPEED: Final[float] = 0.0
     MIN_TIME_DIFF: Final[float] = 1e-6
     MIN_RECORDABLE_SPEED_BPS: Final[float] = 1.0
-    DEFAULT_UNIT_BITS: Final[str] = "bps"
-    DEFAULT_UNIT_BYTES: Final[str] = "B/s"
+    
+    # These are now i18n keys
+    DEFAULT_UNIT_BITS: Final[str] = "BITS_LABEL"
+    DEFAULT_UNIT_BYTES: Final[str] = "BPS_LABEL"
 
     def __init__(self) -> None:
         self.validate()
@@ -51,11 +55,10 @@ class NetworkSpeedConstants:
 class InterfaceConstants:
     """Constants related to network interface management."""
     DEFAULT_MODE: Final[str] = "auto"
-    VALID_INTERFACE_MODES: Final[Set[str]] = {"all", "auto", "selected"}
+    VALID_INTERFACE_MODES: Final[Set[str]] = {"auto", "all_physical", "all_virtual", "selected"}
     DEFAULT_EXCLUSIONS: Final[List[str]] = [
         "loopback", "teredo", "isatap", "bluetooth", "vpn", "virtual", "vmware", "vbox"
     ]
-    # Maximum plausible speed in Bytes/sec (e.g., ~10 Gbps). Used as a sanity check.
     MAX_REASONABLE_SPEED_BPS: Final[int] = 1_250_000_000
 
     def __init__(self) -> None:

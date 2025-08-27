@@ -1,4 +1,3 @@
-# src/netspeedtray/constants/data.py
 """
 Constants related to historical data management and representation.
 """
@@ -7,10 +6,11 @@ from typing import Final, Dict, List, Optional
 
 class LegendPositionConstants:
     """Constants defining available positions for the graph legend."""
-    OFF: Final[str] = "Off"
-    LEFT: Final[str] = "Left"
-    CENTER: Final[str] = "Center"
-    RIGHT: Final[str] = "Right"
+    # Use i18n keys, not display strings
+    OFF: Final[str] = "LEGEND_POSITION_OFF"
+    LEFT: Final[str] = "LEGEND_POSITION_LEFT"
+    CENTER: Final[str] = "LEGEND_POSITION_CENTER"
+    RIGHT: Final[str] = "LEGEND_POSITION_RIGHT"
 
     LEGEND_LOC_MAP: Final[Dict[str, Optional[str]]] = {
         OFF: None,
@@ -18,6 +18,7 @@ class LegendPositionConstants:
         CENTER: "upper center",
         RIGHT: "upper right",
     }
+    # This list now contains the keys for your UI code to use
     UI_OPTIONS: Final[List[str]] = [OFF, LEFT, CENTER, RIGHT]
     DEFAULT_LEGEND_POSITION: Final[str] = OFF
 
@@ -53,14 +54,17 @@ class DataRetentionConstants:
 
 class HistoryPeriodConstants:
     """Constants for history periods in graphs."""
+    # Use i18n keys, not display strings
     PERIOD_MAP: Final[Dict[int, str]] = {
-        0: "System Uptime", 1: "Session", 2: "3 Hours", 3: "6 Hours",
-        4: "12 Hours", 5: "24 Hours", 6: "1 Week", 7: "1 Month", 8: "All",
+        0: "TIMELINE_SYSTEM_UPTIME", 1: "TIMELINE_SESSION", 2: "TIMELINE_3_HOURS",
+        3: "TIMELINE_6_HOURS", 4: "TIMELINE_12_HOURS", 5: "TIMELINE_24_HOURS",
+        6: "TIMELINE_WEEK", 7: "TIMELINE_MONTH", 8: "TIMELINE_ALL",
     }
     DEFAULT_PERIOD: Final[str] = PERIOD_MAP[0]
+    # The logic in CUTOFF_DAYS must also use the i18n keys
     CUTOFF_DAYS: Final[Dict[str, float]] = {
-        "3 Hours": 3 / 24, "6 Hours": 6 / 24, "12 Hours": 12 / 24,
-        "24 Hours": 1, "1 Week": 7, "1 Month": 30, "All": 365 * 10,
+        "TIMELINE_3_HOURS": 3 / 24, "TIMELINE_6_HOURS": 6 / 24, "TIMELINE_12_HOURS": 12 / 24,
+        "TIMELINE_24_HOURS": 1, "TIMELINE_WEEK": 7, "TIMELINE_MONTH": 30, "TIMELINE_ALL": 365 * 10,
     }
 
     def __init__(self) -> None:
@@ -71,7 +75,7 @@ class HistoryPeriodConstants:
             raise ValueError("PERIOD_MAP must not be empty")
         if self.DEFAULT_PERIOD not in self.PERIOD_MAP.values():
             raise ValueError("DEFAULT_PERIOD must be a value in PERIOD_MAP")
-        expected_cutoff_keys = set(self.PERIOD_MAP.values()) - {"System Uptime", "Session"}
+        expected_cutoff_keys = set(self.PERIOD_MAP.values()) - {"TIMELINE_SYSTEM_UPTIME", "TIMELINE_SESSION"}
         if set(self.CUTOFF_DAYS.keys()) != expected_cutoff_keys:
             raise ValueError("CUTOFF_DAYS keys do not match filterable periods in PERIOD_MAP")
 

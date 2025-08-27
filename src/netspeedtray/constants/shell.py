@@ -3,6 +3,7 @@ Constants for Windows Shell and API interactions.
 """
 from typing import Final, Set
 
+
 class ShellConstants:
     """Constants for identifying special Windows Shell UI elements."""
     # Class names of shell flyouts that can be potential obstructions.
@@ -26,6 +27,7 @@ class ShellConstants:
         if not self.UI_PROCESS_NAMES_TO_HIDE:
             raise ValueError("UI_PROCESS_NAMES_TO_HIDE must not be empty.")
 
+
 class WindowsAPIConstants:
     """Constants for Windows API calls."""
     ABM_GETTASKBARPOS: Final[int] = 0x00000005
@@ -47,6 +49,7 @@ class WindowsAPIConstants:
                 value = getattr(self, attr_name)
                 if not isinstance(value, int) or value < 0:
                     raise ValueError(f"{attr_name} must be a non-negative integer.")
+
 
 class ShellInteractionConstants:
     """Container for Shell and API constants."""
