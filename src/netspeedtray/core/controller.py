@@ -44,14 +44,12 @@ class NetworkController(QObject):
         self.primary_interface: Optional[str] = None
         self.last_primary_check_time: float = 0.0
 
-        # self._update_primary_interface_name() # REMOVED FROM INIT - it's too early.
         self.logger.info("NetworkController initialized.")
 
 
     def set_view(self, view: 'NetworkSpeedWidget') -> None:
         """Connects the controller to the main widget view."""
         self.view = view
-        # The signal name was wrong in my refactoring. It should be display_speed_updated
         self.display_speed_updated.connect(self.view.update_display_speeds)
         self.logger.debug("View set and signal connected.")
 
@@ -67,7 +65,6 @@ class NetworkController(QObject):
             self.display_speed_updated.emit(0.0, 0.0)
             return
 
-        # On the very first run, just store the counters and exit.
         if not self.last_interface_counters:
             self.logger.debug("First run. Storing baseline counters.")
             self.last_check_time = current_time
@@ -75,44 +72,35 @@ class NetworkController(QObject):
             return
 
         time_diff = current_time - self.last_check_time
-        
-        # Prevent division by a tiny number if updates are too fast
         if time_diff < 0.1:
             return
             
-        # Check for long pauses, indicative of the computer waking from sleep.
         update_interval = self.config.get("update_rate", 1.0)
         sleep_threshold = max(5.0, update_interval * 5)
 
         if time_diff > sleep_threshold:
             self.logger.info("Long time delta (%.1fs) detected. Re-priming counters to prevent speed spike.", time_diff)
-            # Fully reset the state, just like on the first run
             self.last_check_time = current_time
             self.last_interface_counters = current_counters
             self.display_speed_updated.emit(0.0, 0.0)
-            return # Exit immediately after re-priming.
+            return
 
         self.current_speed_data.clear()
-        exclusions = self.config.get("excluded_interfaces", constants.network.interface.DEFAULT_EXCLUSIONS)
 
+        # CORRECTED: The exclusion logic has been removed from here. Filtering now happens
+        # in the aggregation step, which allows the "All (including virtual)" mode to work.
         for name, current in current_counters.items():
-            if any(kw in name.lower() for kw in exclusions):
-                continue
-
             last = self.last_interface_counters.get(name)
             if last:
-                # Silently handle counter resets (e.g., driver restart)
                 if current.bytes_sent < last.bytes_sent or current.bytes_recv < last.bytes_recv:
                     continue
 
                 up_diff = current.bytes_sent - last.bytes_sent
                 down_diff = current.bytes_recv - last.bytes_recv
                 
-                # Calculate as integer Bytes/sec for data integrity
                 up_speed_bps = int(up_diff / time_diff)
                 down_speed_bps = int(down_diff / time_diff)
                 
-                # The hardcoded sanity check remains as a final safety net
                 max_speed = constants.network.interface.MAX_REASONABLE_SPEED_BPS
                 if up_speed_bps > max_speed or down_speed_bps > max_speed:
                     self.logger.warning(
@@ -140,18 +128,16 @@ class NetworkController(QObject):
     def get_active_interfaces(self) -> List[str]:
         """
         Returns a list of interface names that currently have active network speed data.
-        An interface is considered active if its calculated speed is above a small threshold.
         """
         if not self.current_speed_data:
             return []
         
-        # Return interfaces that have any meaningful traffic
         return [
             name for name, (up_speed, down_speed) in self.current_speed_data.items()
-            if up_speed > 1.0 or down_speed > 1.0 # Speeds are in Bytes/sec
+            if up_speed > 1.0 or down_speed > 1.0
         ]
 
-
+    # --- CORRECTED AGGREGATION LOGIC ---
     def _aggregate_for_display(self, per_interface_speeds: Dict[str, Tuple[float, float]]) -> Tuple[float, float]:
         """
         Aggregates the calculated per-interface speeds based on the current monitoring mode.
@@ -160,30 +146,35 @@ class NetworkController(QObject):
         mode = self.config.get("interface_mode", "auto")
 
         if mode == "selected":
-            selected = self.config.get("selected_interfaces", [])
-            if not selected:
+            selected_interfaces = self.config.get("selected_interfaces", [])
+            if not selected_interfaces:
                 return 0.0, 0.0
-            total_up, total_down = 0.0, 0.0
-            for name in selected:
-                if name in per_interface_speeds:
-                    up, down = per_interface_speeds[name]
-                    total_up += up
-                    total_down += down
+            
+            total_up = sum(up for name, (up, down) in per_interface_speeds.items() if name in selected_interfaces)
+            total_down = sum(down for name, (up, down) in per_interface_speeds.items() if name in selected_interfaces)
             return total_up, total_down
 
         elif mode == "auto":
-            # Call the function to identify the primary interface. This will trigger the log.
             self._update_primary_interface_name()
-            
             if self.primary_interface and self.primary_interface in per_interface_speeds:
-                # If we found it, return the speeds for only that interface.
                 return per_interface_speeds[self.primary_interface]
             else:
-                # If we couldn't find it, show zero until it's found on the next tick.
                 return 0.0, 0.0
+
+        elif mode == "all_physical":
+            exclusions = self.config.get("excluded_interfaces", constants.network.interface.DEFAULT_EXCLUSIONS)
+            total_up = sum(up for name, (up, down) in per_interface_speeds.items() if not any(kw in name.lower() for kw in exclusions))
+            total_down = sum(down for name, (up, down) in per_interface_speeds.items() if not any(kw in name.lower() for kw in exclusions))
+            return total_up, total_down
+
+        elif mode == "all_virtual":
+            # No filtering applied, sum everything.
+            return self._sum_all(per_interface_speeds)
         
-        # If mode is "all" or any other value, sum everything.
-        return self._sum_all(per_interface_speeds)
+        else: # Fallback for unknown/legacy mode
+            self.logger.warning(f"Unknown interface_mode '{mode}'. Defaulting to 'auto'.")
+            self.config["interface_mode"] = "auto"
+            return self._aggregate_for_display(per_interface_speeds)
 
 
     def _sum_all(self, per_interface_speeds: Dict[str, Tuple[float, float]]) -> Tuple[float, float]:
@@ -211,23 +202,23 @@ class NetworkController(QObject):
         socket-based method from network_utils.
         """
         try:
-            # This calls the reliable function instead of using netifaces
             new_primary_interface = get_primary_interface_name()
-
             if self.primary_interface != new_primary_interface:
                 if new_primary_interface:
                     self.logger.info("Found new primary interface: '%s'", new_primary_interface)
                 else:
-                    self.logger.warning("Could not determine primary interface. Will aggregate all physical interfaces.")
+                    self.logger.warning("Could not determine primary interface. Speeds may show as 0 in 'Auto' mode.")
                 self.primary_interface = new_primary_interface
-
         except Exception as e:
             self.logger.error("Unexpected error updating primary interface: %s", e, exc_info=True)
             self.primary_interface = None
 
 
     def get_available_interfaces(self) -> List[str]:
-        """Returns a list of all non-excluded interface names."""
+        """
+        Returns a clean list of interface names for the UI, still respecting exclusions
+        to avoid cluttering the "Select Specific Interfaces" list.
+        """
         try:
             all_interfaces = psutil.net_io_counters(pernic=True).keys()
             exclusions = self.config.get("excluded_interfaces", constants.network.interface.DEFAULT_EXCLUSIONS)

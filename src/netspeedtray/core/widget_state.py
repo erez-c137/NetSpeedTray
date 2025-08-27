@@ -288,7 +288,7 @@ class DatabaseWorker(QThread):
                 MAX(download_bytes_sec)
             FROM speed_history_raw
             WHERE timestamp < ?
-            GROUP BY minute_timestamp, interface_name
+            GROUP BY (timestamp / 60), interface_name
             ON CONFLICT(timestamp, interface_name) DO NOTHING;
         """, (cutoff,))
         if cursor.rowcount > 0: self.logger.info("Aggregated %d per-minute records.", cursor.rowcount)
@@ -313,7 +313,7 @@ class DatabaseWorker(QThread):
                 MAX(download_max)
             FROM speed_history_minute
             WHERE timestamp < ?
-            GROUP BY hour_timestamp, interface_name
+            GROUP BY (timestamp / 3600), interface_name
             ON CONFLICT(timestamp, interface_name) DO NOTHING;
         """, (cutoff,))
         if cursor.rowcount > 0: self.logger.info("Aggregated %d per-hour records.", cursor.rowcount)

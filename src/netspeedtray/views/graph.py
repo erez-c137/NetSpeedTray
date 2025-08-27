@@ -52,7 +52,7 @@ class GraphWindow(QWidget):
                 self.i18n = None
             self._is_closing = False
             self._current_data = None
-            self._last_stats_update = time.time()
+            self._last_stats_update = time.monotonic()
             self._stats_update_interval = constants.graph.STATS_UPDATE_INTERVAL
             self._cached_stats = {}
 
@@ -117,7 +117,7 @@ class GraphWindow(QWidget):
         self.graph_widget = QWidget()
         self.graph_layout = QVBoxLayout(self.graph_widget)
         self.graph_widget.setLayout(self.graph_layout)
-        self.tab_widget.addTab(self.graph_widget, self.tr("Graph"))
+        self.tab_widget.addTab(self.graph_widget, self.i18n.SPEED_GRAPH_TAB_LABEL)
 
         # Connect tab change signal
         self.tab_widget.currentChanged.connect(self._on_tab_changed)
@@ -341,11 +341,12 @@ class GraphWindow(QWidget):
         current_row = 0
 
         # --- Interface Filter ---
-        interface_label = QLabel("Interface") # Placeholder, will be i18n later
+        interface_label = QLabel(self.i18n.INTERFACE_LABEL)
         interface_label.setStyleSheet(explicit_label_style)
         self.interface_filter = QComboBox()
         self.interface_filter.setStyleSheet(panel_styles.get("QComboBox_PanelDark"))
-        self.interface_filter.addItem("All (Aggregated)") # Default value
+        # Use the i18n string for display and a fixed key 'all' for logic
+        self.interface_filter.addItem(self.i18n.ALL_INTERFACES_AGGREGATED_LABEL, "all")
 
         group_content_layout.addWidget(interface_label, current_row, 0, 1, 2)
         current_row += 1
@@ -425,7 +426,8 @@ class GraphWindow(QWidget):
             self.interface_filter.clear()
             
             # Add the default aggregate view
-            self.interface_filter.addItem("All (Aggregated)")
+            # Use the i18n string for display and a fixed key 'all' for logic
+            self.interface_filter.addItem(self.i18n.ALL_INTERFACES_AGGREGATED_LABEL, "all")
             
             # Fetch and add the distinct interfaces from the database
             distinct_interfaces = self._parent.widget_state.get_distinct_interfaces()
@@ -497,25 +499,28 @@ class GraphWindow(QWidget):
 
         now = datetime.now()
         period_value = self.history_period.value()
-        period_name = constants.data.history_period.PERIOD_MAP.get(period_value, constants.data.history_period.DEFAULT_PERIOD)
+        # Get the non-translated KEY from the map
+        period_key = constants.data.history_period.PERIOD_MAP.get(period_value, constants.data.history_period.DEFAULT_PERIOD)
         
         start_time: Optional[datetime] = None
-        if "System Uptime" in period_name:
+        # Compare against the KEY, not the displayed text
+        if period_key == "TIMELINE_SYSTEM_UPTIME":
             start_time = datetime.fromtimestamp(psutil.boot_time())
-        elif "Session" in period_name:
+        elif period_key == "TIMELINE_SESSION":
             start_time = self.session_start_time
-        elif "3 Hours" in period_name:
+        elif period_key == "TIMELINE_3_HOURS":
             start_time = now - timedelta(hours=3)
-        elif "6 Hours" in period_name:
+        elif period_key == "TIMELINE_6_HOURS":
             start_time = now - timedelta(hours=6)
-        elif "12 Hours" in period_name:
+        elif period_key == "TIMELINE_12_HOURS":
             start_time = now - timedelta(hours=12)
-        elif "24 Hours" in period_name:
+        elif period_key == "TIMELINE_24_HOURS":
             start_time = now - timedelta(days=1)
-        elif "Week" in period_name:
+        elif period_key == "TIMELINE_WEEK":
             start_time = now - timedelta(weeks=1)
-        elif "Month" in period_name:
+        elif period_key == "TIMELINE_MONTH":
             start_time = now - timedelta(days=30)
+        # Note: "TIMELINE_ALL" correctly results in start_time = None
         
         return start_time, now
 
@@ -780,9 +785,7 @@ class GraphWindow(QWidget):
             self.interface_filter.currentTextChanged.connect(self._on_interface_filter_changed)
 
         if hasattr(self, 'history_period') and self.history_period:
-            self.history_period.sliderReleased.connect(
-                lambda: self._notify_parent_of_setting_change({'history_period_slider_value': self.history_period.value()})
-            )
+            self.history_period.sliderReleased.connect(self._on_history_slider_released)
             self.history_period.valueChanged.connect(self._update_history_period_text)
         
         if hasattr(self, 'keep_data') and self.keep_data:
@@ -794,6 +797,21 @@ class GraphWindow(QWidget):
             self._update_history_period_text(self.history_period.value())
         if hasattr(self, 'keep_data'):
             self._update_keep_data_text(self.keep_data.value())
+
+
+    def _on_history_slider_released(self) -> None:
+        """
+        Handles the timeline slider release event. This triggers an immediate graph
+        update and notifies the parent to save the new setting for persistence.
+        """
+        # Get the current value from the slider
+        current_value = self.history_period.value()
+
+        # 1. Trigger the graph to update itself with the new time period.
+        self.update_history_period(current_value)
+
+        # 2. Notify the parent widget to save this new setting to the config file.
+        self._notify_parent_of_setting_change({'history_period_slider_value': current_value})
 
 
     def _notify_parent_of_setting_change(self, settings_dict: dict) -> None:
@@ -911,8 +929,9 @@ class GraphWindow(QWidget):
             
         try:
             if hasattr(self, 'history_period'):
-                period = constants.data.history_period.PERIOD_MAP.get(value, constants.data.history_period.DEFAULT_PERIOD)
-                self.history_period.setValueText(period)
+                period_key = constants.data.history_period.PERIOD_MAP.get(value, constants.data.history_period.DEFAULT_PERIOD)
+                translated_period = getattr(self.i18n, period_key, period_key)
+                self.history_period.setValueText(translated_period)
                 # Do NOT set any title or timeline label on the graph
                 if self.tab_widget.currentIndex() == 0 and hasattr(self, 'ax'):
                     self.ax.set_title("")
@@ -941,13 +960,13 @@ class GraphWindow(QWidget):
         if self._is_closing: return
         try:
             if not self._parent or not self._parent.widget_state:
-                QMessageBox.warning(self, self.i18n.WARNING_TITLE, "Cannot access data for export.")
+                QMessageBox.warning(self, self.i18n.WARNING_TITLE, self.i18n.EXPORT_DATA_ACCESS_ERROR_MESSAGE)
                 return
 
             # Get filters from UI to export exactly what the user is seeing
             start_time, _ = self._get_time_range_from_ui()
-            selected_interface = self.interface_filter.currentText()
-            interface_to_query = None if "All" in selected_interface else selected_interface
+            selected_interface_key = self.interface_filter.currentData()
+            interface_to_query = None if selected_interface_key == "all" else selected_interface_key
 
             history_tuples = self._parent.widget_state.get_speed_history(
                 start_time=start_time,
@@ -967,7 +986,7 @@ class GraphWindow(QWidget):
                 os.makedirs(os.path.dirname(file_path), exist_ok=True)
                 with open(file_path, "w", newline="", encoding='utf-8') as f:
                     writer = csv.writer(f)
-                    writer.writerow(["Timestamp", "Upload (Mbps)", "Download (Mbps)"])
+                    writer.writerow([self.i18n.CSV_HEADER_TIMESTAMP, self.i18n.CSV_HEADER_UPLOAD_MBPS, self.i18n.CSV_HEADER_DOWNLOAD_MBPS])
                     for ts, up_bytes_sec, down_bytes_sec in history_tuples:
                         writer.writerow([
                             ts.isoformat(),
@@ -1067,7 +1086,7 @@ class GraphWindow(QWidget):
                 days = constants.data.retention.DAYS_MAP.get(self.keep_data.value(), 30)
                 if days == 365:  # Only update if showing 1 year
                     db_size_mb = self._get_db_size_mb()
-                    self.keep_data.setValueText(f"1 Year (DB {db_size_mb:.2f}MB)")
+                    self.keep_data.setValueText(self.i18n.YEAR_WITH_DB_SIZE_LABEL.format(size_mb=db_size_mb))
         except Exception as e:
             self.logger.error(f"Error updating keep data label: {e}", exc_info=True)    
 
@@ -1095,13 +1114,13 @@ class GraphWindow(QWidget):
             # For 1-year retention, include DB size
             if days == 365:
                 db_size_mb = self._get_db_size_mb()
-                self.keep_data.setValueText(f"1 Year (DB {db_size_mb:.2f}MB)")
+                self.keep_data.setValueText(self.i18n.YEAR_WITH_DB_SIZE_LABEL.format(size_mb=db_size_mb))
                 # Start the DB size update timer if not already running
                 if not self._db_size_update_timer.isActive():
                     self._db_size_update_timer.start()
             else:
                 # For other periods, just show days
-                self.keep_data.setValueText(f"{days} Days")
+                self.keep_data.setValueText(self.i18n.DAYS_TEMPLATE.format(days=days))
                 # Stop the DB size update timer if running
                 if self._db_size_update_timer.isActive():
                     self._db_size_update_timer.stop()
@@ -1224,7 +1243,7 @@ class GraphWindow(QWidget):
             from matplotlib.ticker import AutoLocator, ScalarFormatter, FixedLocator
 
             if not self._parent or not self._parent.widget_state:
-                self._show_graph_error("Data source not available.")
+                self._show_graph_error(self.i18n.DATA_SOURCE_UNAVAILABLE_ERROR)
                 return
 
             period_name = constants.data.history_period.PERIOD_MAP.get(self.history_period.value(), "")
@@ -1232,8 +1251,8 @@ class GraphWindow(QWidget):
             history_data = []
 
             # process per-interface live data
-            selected_interface = self.interface_filter.currentText()
-            interface_to_query = None if "All" in selected_interface else selected_interface
+            selected_interface_key = self.interface_filter.currentData()
+            interface_to_query = None if selected_interface_key == "all" else selected_interface_key
 
             if is_session_view:
                 # The "Session" view uses the live, in-memory data source.
@@ -1292,8 +1311,8 @@ class GraphWindow(QWidget):
             self.ax.yaxis.get_label().set_visible(True)
             self.ax.yaxis.set_major_locator(AutoLocator())
             self.ax.xaxis.set_major_locator(mdates.AutoDateLocator())
-            self.ax.set_xlabel("Time")
-            self.ax.set_ylabel("Mbps")
+            self.ax.set_xlabel(self.i18n.TIME_LABEL)
+            self.ax.set_ylabel(self.i18n.MBITS_LABEL)
             self.ax.tick_params(labelbottom=True, labelleft=True)
             is_dark = self.dark_mode.isChecked()
             graph_bg = constants.styles.GRAPH_BG_DARK if is_dark else constants.styles.GRAPH_BG_LIGHT
@@ -1357,7 +1376,7 @@ class GraphWindow(QWidget):
             self.canvas.draw_idle()
         except Exception as e:
             self.logger.error(f"Error updating graph: {e}", exc_info=True)
-            self._show_graph_error(f"Error updating graph: {str(e)}")
+            self._show_graph_error(self.i18n.GRAPH_UPDATE_ERROR_TEMPLATE.format(error=str(e)))
 
 
     def _calculate_period_stats(self, period_data: List[Tuple[datetime, float, float]]) -> Dict[str, Any]:
@@ -1394,8 +1413,9 @@ class GraphWindow(QWidget):
                 total_upload_bytes += avg_upload_speed * dt_seconds
                 total_download_bytes += avg_download_speed * dt_seconds
 
-            total_upload_display, total_upload_unit = helpers.format_data_size(total_upload_bytes)
-            total_download_display, total_download_unit = helpers.format_data_size(total_download_bytes)
+            # Format the final totals ONCE after the loop is complete.
+            total_upload_display, total_upload_unit = helpers.format_data_size(total_upload_bytes, self.i18n)
+            total_download_display, total_download_unit = helpers.format_data_size(total_download_bytes, self.i18n)
 
             return {
                 "max_upload": max_upload_mbps,
@@ -1416,7 +1436,7 @@ class GraphWindow(QWidget):
         """
         try:
             if not history_data:
-                self.stats_bar.setText("No data available for this period")
+                self.stats_bar.setText(self.i18n.NO_DATA_MESSAGE)
                 return
 
             stats = self._calculate_period_stats(history_data)
@@ -1424,13 +1444,19 @@ class GraphWindow(QWidget):
             # --- Max speed unit is now always Mbps ---
             speed_unit = "Mbps"
             
-            stats_text = (
-                f"Max: ↑{stats['max_upload']:.2f} {speed_unit} ↓{stats['max_download']:.2f} {speed_unit} | "
-                f"Total: ↑{stats['total_upload']:.2f} {stats['total_upload_unit']} ↓{stats['total_download']:.2f} {stats['total_download_unit']}"
+            stats_text = self.i18n.DEFAULT_STATS_TEXT_TEMPLATE.format(
+                max_up=stats['max_upload'],
+                max_up_unit=speed_unit,
+                max_down=stats['max_download'],
+                max_down_unit=speed_unit,
+                up_total=stats['total_upload'],
+                up_unit=stats['total_upload_unit'],
+                down_total=stats['total_download'],
+                down_unit=stats['total_download_unit']
             )
             self.stats_bar.setText(stats_text)
             self.stats_bar.adjustSize()
             
         except Exception as e:
             self.logger.error(f"Error updating stats bar: {e}", exc_info=True)
-            self.stats_bar.setText("Error calculating statistics")
+            self.stats_bar.setText(self.i18n.STATS_CALCULATION_ERROR)

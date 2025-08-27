@@ -84,11 +84,12 @@ class WidgetRenderer:
     """
     Renders network speeds and optional mini graph for NetworkSpeedWidget.
     """
-    def __init__(self, config: Dict[str, Any]) -> None:
+    def __init__(self, config: Dict[str, Any], i18n) -> None:
             """
             Initializes renderer with config, handling setup errors.
             """
             self.logger = logger
+            self.i18n = i18n
             try:
                 self.config = RenderConfig.from_dict(config)
                 self.default_color = QColor(self.config.default_color)
@@ -155,7 +156,7 @@ class WidgetRenderer:
         up_val_str, up_unit = upload_text
         down_val_str, down_unit = download_text
         
-        arrow_width = self.metrics.horizontalAdvance(constants.renderer.UPLOAD_ARROW)
+        arrow_width = self.metrics.horizontalAdvance(self.i18n.UPLOAD_ARROW)
         max_num_width = max(self.metrics.horizontalAdvance(up_val_str), self.metrics.horizontalAdvance(down_val_str))
         max_unit_width = max(self.metrics.horizontalAdvance(up_unit), self.metrics.horizontalAdvance(down_unit))
         content_width = arrow_width + constants.renderer.ARROW_NUMBER_GAP + max_num_width + constants.renderer.VALUE_UNIT_GAP + max_unit_width
@@ -165,12 +166,12 @@ class WidgetRenderer:
         unit_x = number_x + max_num_width + constants.renderer.VALUE_UNIT_GAP
 
         painter.setPen(self._get_speed_color(upload, config))
-        painter.drawText(margin, top_y, constants.renderer.UPLOAD_ARROW)
+        painter.drawText(margin, top_y, self.i18n.UPLOAD_ARROW)
         painter.drawText(number_x, top_y, up_val_str)
         painter.drawText(unit_x, top_y, up_unit)
 
         painter.setPen(self._get_speed_color(download, config))
-        painter.drawText(margin, bottom_y, constants.renderer.DOWNLOAD_ARROW)
+        painter.drawText(margin, bottom_y, self.i18n.DOWNLOAD_ARROW)
         painter.drawText(number_x, bottom_y, down_val_str)
         painter.drawText(unit_x, bottom_y, down_unit)
         
@@ -180,9 +181,9 @@ class WidgetRenderer:
         """Draws the compact single-line horizontal layout."""
         upload_text, download_text = self._format_speed_texts(upload, download, always_mbps, decimal_places, force_decimals, full_string=True)
         
-        up_str = f"{constants.renderer.UPLOAD_ARROW} {upload_text}"
-        down_str = f"{constants.renderer.DOWNLOAD_ARROW} {download_text}"
-        separator = constants.layout.layout.HORIZONTAL_LAYOUT_SEPARATOR
+        up_str = f"{self.i18n.UPLOAD_ARROW} {upload_text}"
+        down_str = f"{self.i18n.DOWNLOAD_ARROW} {download_text}"
+        separator = constants.layout.HORIZONTAL_LAYOUT_SEPARATOR
         
         up_width = self.metrics.horizontalAdvance(up_str)
         down_width = self.metrics.horizontalAdvance(down_str)
@@ -211,8 +212,8 @@ class WidgetRenderer:
 
     def _format_speed_texts(self, upload: float, download: float, always_mbps: bool, decimal_places: int, force_decimals: bool, full_string: bool = False) -> Tuple[Any, Any]:
         """Helper to format speed values into final strings or tuples."""
-        upload_full = format_speed(upload, False, always_mbps=always_mbps, decimal_places=decimal_places)
-        download_full = format_speed(download, False, always_mbps=always_mbps, decimal_places=decimal_places)
+        upload_full = format_speed(upload, self.i18n, False, always_mbps=always_mbps, decimal_places=decimal_places)
+        download_full = format_speed(download, self.i18n, False, always_mbps=always_mbps, decimal_places=decimal_places)
         
         up_val_str, up_unit = upload_full.split(" ", 1)
         down_val_str, down_unit = download_full.split(" ", 1)

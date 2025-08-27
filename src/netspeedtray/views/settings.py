@@ -19,11 +19,12 @@ if TYPE_CHECKING:
     from netspeedtray.views.widget import NetworkSpeedWidget
 
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QSize, QPoint
-from PyQt6.QtGui import QColor, QFont, QFontDatabase, QIcon
+from PyQt6.QtGui import QColor, QFont, QFontDatabase, QIcon, QCloseEvent 
 from PyQt6.QtWidgets import (
     QApplication, QColorDialog, QComboBox, QDialog, QFileDialog, QFontDialog,
     QGridLayout, QGroupBox, QHBoxLayout, QLabel, QListWidget, QMessageBox,
-    QPushButton, QScrollArea, QStackedWidget, QVBoxLayout, QWidget, QRadioButton
+    QPushButton, QScrollArea, QStackedWidget, QVBoxLayout, QWidget, QRadioButton,
+    QSpacerItem
 )
 
 from netspeedtray.utils.taskbar_utils import get_taskbar_info
@@ -475,15 +476,9 @@ class SettingsDialog(QWidget):
             units_layout.addWidget(self.text_alignment_label, 2, 0, Qt.AlignmentFlag.AlignVCenter)
             units_layout.addWidget(self.text_alignment, 2, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
-            # Row 3: Force Decimals
-            self.force_decimals_label = QLabel(self.i18n.FORCE_DECIMALS_LABEL)
-            self.force_decimals = Win11Toggle(label_text="")
-            units_layout.addWidget(self.force_decimals_label, 3, 0, Qt.AlignmentFlag.AlignVCenter)
-            units_layout.addWidget(self.force_decimals, 3, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-
             units_layout.setColumnStretch(0, 0)
             units_layout.setColumnStretch(1, 1)
-            units_layout.setRowStretch(4, 1) 
+            units_layout.setRowStretch(3, 1) # Adjust stretch to the new last row + 1
 
             page_layout.addWidget(units_group)
             page_layout.addStretch()
@@ -503,18 +498,29 @@ class SettingsDialog(QWidget):
             interfaces_layout = QVBoxLayout(interfaces_group)
             interfaces_layout.setSpacing(10)
 
-            # --- Radio Buttons for mode selection ---
+            # --- Radio Button Group ---
             mode_label = QLabel(self.i18n.MONITORING_MODE_LABEL)
             interfaces_layout.addWidget(mode_label)
 
-            self.all_interfaces_radio = QRadioButton(self.i18n.ALL_INTERFACES_LABEL)
-            self.auto_interface_radio = QRadioButton(self.i18n.AUTO_PRIMARY_LABEL)
-            self.selected_interfaces_radio = QRadioButton(self.i18n.SELECTED_INTERFACES_LABEL)
+            # Create the four radio buttons
+            self.auto_interface_radio = QRadioButton(self.i18n.MONITORING_MODE_AUTO)
+            self.all_physical_interfaces_radio = QRadioButton(self.i18n.MONITORING_MODE_PHYSICAL)
+            self.all_virtual_interfaces_radio = QRadioButton(self.i18n.MONITORING_MODE_VIRTUAL)
+            self.selected_interfaces_radio = QRadioButton(self.i18n.MONITORING_MODE_SELECTED)
             
-            interfaces_layout.addWidget(self.all_interfaces_radio)
+            # Add descriptive helper text below each radio button
+            self.auto_interface_radio.setToolTip(self.i18n.MONITORING_MODE_AUTO_TOOLTIP)
+            self.all_physical_interfaces_radio.setToolTip(self.i18n.MONITORING_MODE_PHYSICAL_TOOLTIP)
+            self.all_virtual_interfaces_radio.setToolTip(self.i18n.MONITORING_MODE_VIRTUAL_TOOLTIP)
+            self.selected_interfaces_radio.setToolTip(self.i18n.MONITORING_MODE_SELECTED_TOOLTIP)
+            
+            # Add radio buttons to the layout
             interfaces_layout.addWidget(self.auto_interface_radio)
+            interfaces_layout.addWidget(self.all_physical_interfaces_radio)
+            interfaces_layout.addWidget(self.all_virtual_interfaces_radio)
             interfaces_layout.addWidget(self.selected_interfaces_radio)
 
+            # --- Scroll Area for Specific Interfaces (Unchanged) ---
             self.interface_scroll = QScrollArea()
             self.interface_scroll.setWidgetResizable(True)
             self.interface_scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
@@ -537,8 +543,8 @@ class SettingsDialog(QWidget):
 
             self.interfaces_container_layout.addStretch()
             self.interface_scroll.setWidget(interfaces_container)
-
-            # Dynamic height calculation remains the same...
+            
+            # Dynamic height calculation (Unchanged)
             if self.interface_checkboxes:
                 example_toggle = next(iter(self.interface_checkboxes.values()))
                 item_height = example_toggle.sizeHint().height()
@@ -614,9 +620,14 @@ class SettingsDialog(QWidget):
         self.font_weight_name_map.clear()
         if raw_weights_to_styles:
             for weight_val, style_names_for_weight in sorted(raw_weights_to_styles.items()):
-                display_name = constants.fonts.WEIGHT_MAP.get(weight_val) # Try standard name first
+                # First, try to get the i18n KEY for the standard weight
+                key_name = constants.fonts.WEIGHT_MAP.get(weight_val)
                 
-                if display_name is None: # Not a standard weight, derive from font's style names
+                if key_name:
+                    # If it's a standard weight, TRANSLATE the key to get the display name
+                    display_name = getattr(self.i18n, key_name, key_name)
+                else:
+                    # If it's not a standard weight, derive the name from the font's style
                     plain_name = None
                     for name in style_names_for_weight: # Prefer non-italic/oblique
                         if "italic" not in name.lower() and "oblique" not in name.lower():
@@ -700,7 +711,8 @@ class SettingsDialog(QWidget):
                 self.logger.warning("No allowed font weights/name map for text update. Using raw value or fallback.")
                 # Use constants.fonts.WEIGHT_MAP for text if dynamic map is empty
                 fb_snapped_val = self._snap_value_to_allowed(current_slider_value, list(constants.fonts.WEIGHT_MAP.keys()) if constants.fonts.WEIGHT_MAP else [current_slider_value])
-                weight_text = constants.fonts.WEIGHT_MAP.get(fb_snapped_val, f"Weight {current_slider_value}")
+                weight_key = constants.fonts.WEIGHT_MAP.get(fb_snapped_val, "")
+                weight_text = getattr(self.i18n, weight_key, f"Weight {current_slider_value}")
                 self.font_weight.setValueText(weight_text)
                 return
 
@@ -843,14 +855,13 @@ class SettingsDialog(QWidget):
         
         self.text_alignment.valueChanged.connect(self._on_text_alignment_changed)
         self.text_alignment.valueChanged.connect(self._schedule_settings_update)
-        
-        self.force_decimals.toggled.connect(self._schedule_settings_update)
 
 
     def _connect_interfaces_signals(self) -> None:
         # Connect all radio buttons to the same handler
-        self.all_interfaces_radio.toggled.connect(self._on_interface_mode_changed)
         self.auto_interface_radio.toggled.connect(self._on_interface_mode_changed)
+        self.all_physical_interfaces_radio.toggled.connect(self._on_interface_mode_changed)
+        self.all_virtual_interfaces_radio.toggled.connect(self._on_interface_mode_changed)
         self.selected_interfaces_radio.toggled.connect(self._on_interface_mode_changed)
 
         # Checkboxes still schedule updates as before
@@ -983,23 +994,18 @@ class SettingsDialog(QWidget):
         ta_val = self.TEXT_ALIGNMENT_MAP.get(str(ta_raw).lower(), self.TEXT_ALIGNMENT_MAP["center"])
         self.text_alignment.setValue(ta_val)
         self._on_text_alignment_changed(ta_val)
-        
-        fd_raw = self.config.get("force_decimals")
-        fd_val = False if fd_raw is None else bool(fd_raw)
-        self.force_decimals.setChecked(fd_val)
 
         # --- Interfaces Page ---
         # Default to 'auto' if the config value is missing or invalid
         interface_mode_config = self.config.get("interface_mode", "auto")
-        
+
         if interface_mode_config == "selected":
             self.selected_interfaces_radio.setChecked(True)
-        elif interface_mode_config == "all":
-            self.all_interfaces_radio.setChecked(True)
-        elif interface_mode_config == "auto" or not interface_mode_config:
-            self.auto_interface_radio.setChecked(True)
-        else:
-            # Fallback: if config is missing or invalid, select auto by default
+        elif interface_mode_config == "all_physical":
+            self.all_physical_interfaces_radio.setChecked(True)
+        elif interface_mode_config == "all_virtual":
+            self.all_virtual_interfaces_radio.setChecked(True)
+        else: # Default to "auto" for safety
             self.auto_interface_radio.setChecked(True)
 
         is_selection_visible = self.selected_interfaces_radio.isChecked()
@@ -1286,13 +1292,14 @@ class SettingsDialog(QWidget):
             settings["speed_display_mode"] = self.SPEED_DISPLAY_MODE_MAP_INV.get(self.speed_display_mode.value(), "auto")
             settings["decimal_places"] = self.decimal_places.value()
             settings["text_alignment"] = self.TEXT_ALIGNMENT_MAP_INV.get(self.text_alignment.value(), "center")
-            settings["force_decimals"] = self.force_decimals.isChecked()
             
             # Interface settings logic
             if self.selected_interfaces_radio.isChecked():
                 settings["interface_mode"] = "selected"
-            elif self.all_interfaces_radio.isChecked():
-                settings["interface_mode"] = "all"
+            elif self.all_physical_interfaces_radio.isChecked():
+                settings["interface_mode"] = "all_physical"
+            elif self.all_virtual_interfaces_radio.isChecked():
+                settings["interface_mode"] = "all_virtual"
             else: # Default to auto
                 settings["interface_mode"] = "auto"
 
