@@ -6,7 +6,10 @@ a = Analysis(
     ['..\\src\\monitor.py'],
     pathex=[],
     binaries=[],
-    datas=[('..\\assets', 'assets')],
+    datas=[
+        ('..\\assets', 'assets'),
+        ('..\\src\\netspeedtray\\constants\\locales', 'netspeedtray/constants/locales')
+    ],
     hiddenimports=[
         'PyQt6.QtCore',
         'PyQt6.QtGui',
@@ -19,6 +22,7 @@ a = Analysis(
         'matplotlib.backends.backend_qtagg',
         'numpy',
         'signal',
+        'wmi',
     ],
     hookspath=[],
     runtime_hooks=[],

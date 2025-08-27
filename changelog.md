@@ -4,15 +4,58 @@ All notable changes to this project will be documented in this file.
 
 ---
 
-## [1.1.5] - August 23, 2025 (Hotfix)
+## Comprehensive Changelog: NetSpeedTray v1.1.6
 
-This is a critical hotfix that resolves a startup crash affecting new users and significantly improves the update process for existing users.
+This version represents a major leap forward in stability, internationalization, and user control, addressing critical bugs from previous versions and fundamentally improving the application's architecture for future development.
+
+### ✨ New & Reworked Features
+
+-   **Full Internationalization (i18n) Framework:**
+    -   The application has been completely re-architected to support multiple languages.
+    -   **Modular Language Files:** All user-facing strings have been externalized from Python source code (`.py`) into language-specific JSON files (`locales/*.json`). This decouples translation from application logic, making it vastly easier for the community to add new languages or fix typos.
+    -   **UX Improvement:** The language selection menu in the settings now correctly displays language names in their native form (endonyms), such as "Deutsch" instead of "German". This is a global best practice that prevents users from getting "trapped" in a language they cannot read.
+
+-   **Overhauled Network Interface Monitoring:**
+    -   The ambiguous "Monitor All Interfaces" option has been replaced with a clear, explicit set of four radio-button choices in the settings, giving users full control and transparency.
+    -   **New Monitoring Modes:**
+        1.  **Auto (Primary Interface):** The smart default that automatically finds the main internet-facing adapter.
+        2.  **All Physical Interfaces:** Aggregates speed from hardware like Wi-Fi and Ethernet while intelligently filtering out virtual adapters (VPNs, VMs) to reduce noise.
+        3.  **All Interfaces (including virtual):** A new power-user option that aggregates traffic from **every** adapter reported by the system, including VPNs, virtual machines, and system loopbacks.
+        4.  **Select Specific Interfaces:** The existing manual selection mode.
+    -   The core `NetworkController` logic was updated to support these new modes, applying the virtual interface exclusion list *only* when "All Physical" is selected.
+
+### 🐛 Fixed & Stability Improvements
+
+-   **Definitive Fix for Disappearing/Flickering Widget:**
+    -   A fundamental issue in event handling, which caused the widget to disappear when interacting with the desktop, taskbar, or RDP sessions, has been resolved.
+    -   **New Architecture:** The old, aggressive logic has been replaced with a **debounced refresh architecture**. The application now uses `WinEventHook` listeners to intelligently wait for system UI events (like window focus changes or resizes) to "settle" before performing a single, authoritative check on the widget's visibility and Z-order.
+    -   This resolves all related stability issues, including the widget hiding when right-clicking for a context menu and correctly handles browser fullscreen videos.
+
+-   **Database Aggregation Logic:**
+    -   Fixed a bug in the SQL `GROUP BY` clause for both minute-to-hour and raw-to-minute data aggregation, ensuring that records are correctly combined and preventing duplicate entries in aggregated tables.
+
+### 🏠 Architectural & Internal Improvements
+
+-   **Constants Refactoring:** All user-facing strings were removed from the `constants` files and replaced with non-translatable keys. This improves code clarity and centralizes all text in the `locales` directory.
+-   **Dependency Injection for i18n:** The internationalization object (`i18n`) is now properly initialized at the application entry point (`monitor.py`) and passed down as a dependency to all UI components (`widget`, `settings`, `graph`, `renderer`) and helper functions (`format_speed`).
+-   **Test Suite Updates:** The `pytest` unit tests have been updated to reflect all architectural changes, including the new interface monitoring modes and the use of i18n keys, ensuring the application's logic remains sound.
+-   **Installer Reliability:** The installer continues to gracefully shut down a running instance of the application before updating, preventing common installation errors.
+-   **Improved Decimal Formatting UI:** The confusing "Force Decimals" toggle has been removed in favor of a single, intuitive slider that directly controls the number of decimal places (0, 1, or 2), with output now consistently padded with zeros for a more stable appearance.
+
+---
+
+## [1.1.5] - August 24, 2025 (Hotfix)
+
+This is a critical hotfix release that provides a definitive and comprehensive fix for the startup crash and several related stability issues discovered during the beta cycle.
 
 **This is a highly recommended update for all users.**
 
 ### 🐛 Fixed
 
--   **Critical Startup Crash:** Resolved a chain of initialization errors that caused the application to crash immediately upon launching. This bug primarily affected new installations and systems with specific UI configurations (like a small taskbar). The fix ensures a stable and reliable first-time launch experience for all users.
+-   **Critical Startup Crash & Systemic Stability Issues:** Resolved a complex chain of initialization and rendering errors that caused the application to crash on first launch, particularly on systems with specific UI configurations (like a small taskbar).
+    -   Following user feedback from the beta releases (a huge thank you to GitHub user **[CMTriX](https://github.com/CMTriX)**!), a full codebase audit was performed.
+    -   This audit eradicated a systemic typo pattern and fixed numerous latent bugs in the widget rendering, positioning, and various utility modules (`taskbar`, `network`, `config`).
+    -   The result is a stable and reliable experience across a much wider variety of Windows environments.
 
 ### ✨ Improved
 
