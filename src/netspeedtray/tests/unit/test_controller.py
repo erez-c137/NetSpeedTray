@@ -62,7 +62,7 @@ def test_update_speeds_calculates_and_emits_correctly(controller_instance, mock_
     controller.primary_interface = None # Ensure it uses the fallback aggregation logic
 
     # EXPLICITLY set the mode for this test case
-    controller.config["interface_mode"] = "all"
+    controller.config["interface_mode"] = "all_physical"
 
     # Define the network counters for the second read
     second_counters = {
