@@ -799,16 +799,11 @@ class SettingsDialog(QWidget):
         self.update_rate.valueChanged.connect(self._schedule_settings_update)
         self.dynamic_update_rate.toggled.connect(self._schedule_settings_update)
         self.start_with_windows.toggled.connect(self._schedule_settings_update) # Actual toggle on accept
-        self.font_size.valueChanged.connect(lambda v: self.font_size.setValueText(str(v)))
-        self.font_size.valueChanged.connect(self._schedule_settings_update)
-        self.font_family_button.clicked.connect(self.select_font)
         
         # Font Weight Signals
         self.font_weight.valueChanged.connect(self._update_font_weight_text_live) # Live text update
         self.font_weight.slider.sliderReleased.connect(self._snap_font_weight_on_release) # Final snap
         self.font_weight.valueChanged.connect(self._schedule_settings_update) # For live preview
-
-        self.default_color_button.clicked.connect(lambda: self.choose_color(self.default_color_button))
         self.free_move.toggled.connect(self._on_free_move_toggled)
         self.language_combo.currentIndexChanged.connect(self._schedule_settings_update)
 
