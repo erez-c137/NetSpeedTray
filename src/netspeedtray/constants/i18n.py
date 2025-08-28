@@ -18,7 +18,6 @@ strings: Optional["I18nStrings"] = None
 
 def get_locales_path() -> Path:
     """Returns the absolute path to the 'locales' directory."""
-    # Assuming locales is in src/netspeedtray/i18n/locales
     return Path(__file__).parent / "locales"
 
 
@@ -42,8 +41,10 @@ class I18nStrings:
     LANGUAGE_MAP: Dict[str, str] = {
         "en_US": "English (US)",
         "de_DE": "Deutsch (Deutschland)",
+        "es_ES": "Español (España)",
         "fr_FR": "Français (France)",
         "nl_NL": "Nederlands (Nederland)",
+        "pl_PL": "Polski (Polska)",
     }
 
     def __init__(self, language_code: Optional[str] = None) -> None:
