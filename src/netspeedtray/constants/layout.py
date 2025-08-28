@@ -19,6 +19,7 @@ class LayoutConstants:
     SMALL_TASKBAR_HEIGHT_THRESHOLD: Final[int] = 34
     # Padding between the upload and download sections in horizontal mode.
     HORIZONTAL_LAYOUT_SEPARATOR: Final[str] = " | "
+    MINI_GRAPH_HORIZONTAL_WIDTH: Final[int] = 40
 
     def __init__(self) -> None:
         self.validate()

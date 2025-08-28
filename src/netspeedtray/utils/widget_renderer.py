@@ -274,22 +274,29 @@ class WidgetRenderer:
 
 
     def draw_mini_graph(self, painter: QPainter, width: int, height: int, config: RenderConfig, history: List[SpeedDataSnapshot], layout_mode: str = 'vertical') -> None:
-        """Draws a mini graph of speed history, skipping if in horizontal mode."""
-        if layout_mode == 'horizontal' or len(history) < constants.renderer.MIN_GRAPH_POINTS:
+        """Draws a mini graph of speed history, adapting to the current layout mode."""
+        if len(history) < constants.renderer.MIN_GRAPH_POINTS:
             return
 
         try:
-            text_rect = self.get_last_text_rect()
-            if not text_rect.isValid():
-                self.logger.debug("Cannot draw mini-graph: text rect is invalid.")
-                return
+            if layout_mode == 'horizontal':
+                # In horizontal mode, the graph gets a dedicated slice on the right.
+                graph_width = constants.layout.MINI_GRAPH_HORIZONTAL_WIDTH
+                vertical_margin = 4
+                # Anchor the graph to the right edge of the widget.
+                graph_rect = QRect(width - graph_width, vertical_margin, graph_width, height - (vertical_margin * 2))
+            else:  # Vertical mode
+                # In vertical mode, the graph is drawn "behind" the text area.
+                text_rect = self.get_last_text_rect()
+                if not text_rect.isValid():
+                    self.logger.debug("Cannot draw mini-graph: text rect is invalid.")
+                    return
+                vertical_padding = 10
+                graph_rect = text_rect.adjusted(0, -vertical_padding, 0, vertical_padding)
 
-            vertical_padding = 10
-            graph_rect = text_rect.adjusted(0, -vertical_padding, 0, vertical_padding)
             if graph_rect.width() <= 0 or graph_rect.height() <= 0:
                 return
 
-            # The mini-graph always shows the total, so we must aggregate the speeds first.
             aggregated_history = []
             for snapshot in history:
                 total_upload = sum(up for up, down in snapshot.speeds.values())
@@ -322,7 +329,7 @@ class WidgetRenderer:
                             graph_rect.bottom() - min(1.0, data['download'] / max_speed) * graph_rect.height())
                     for i, data in enumerate(aggregated_history)
                 ]
-                
+
                 self._last_widget_size = (width, height)
                 self._last_history_hash = current_hash
 
@@ -332,7 +339,7 @@ class WidgetRenderer:
             pen = QPen(upload_color, constants.renderer.LINE_WIDTH, cap=Qt.PenCapStyle.RoundCap, join=Qt.PenJoinStyle.RoundJoin)
             painter.setPen(pen)
             painter.drawPolyline(self._cached_upload_points)
-            
+
             download_color = QColor(constants.graph.DOWNLOAD_LINE_COLOR)
             pen.setColor(download_color)
             painter.setPen(pen)
