@@ -167,7 +167,7 @@ class TaskbarInfo:
             int(round(work_area_qrect.right() * dpi_scale)) + 1,
             int(round(work_area_qrect.bottom() * dpi_scale)) + 1,
         )
-        logical_height = constants.taskbar.DEFAULT_HEIGHT
+        logical_height = constants.taskbar.taskbar.DEFAULT_HEIGHT
         screen_geo = primary_screen.geometry()
 
         return TaskbarInfo(
