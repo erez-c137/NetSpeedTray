@@ -88,6 +88,12 @@ class GraphWindow(QWidget):
             
             # Initialize settings panel
             self._init_settings_panel()
+
+            if hasattr(self, 'graph_layout') and self.stats_bar and self.canvas:
+                # Add the stats bar to the top row. It will take its preferred height.
+                self.graph_layout.addWidget(self.stats_bar)
+                # Add the canvas to the second row. It will stretch to fill the rest of the space.
+                self.graph_layout.addWidget(self.canvas)
             
             # Apply initial theme
             initial_dark_mode = self._parent.config.get("dark_mode", False) if self._parent else False
@@ -160,45 +166,45 @@ class GraphWindow(QWidget):
         # Call window positioning after UI is set up
         self._position_window()
 
+
     def _init_matplotlib(self):
         """ Initialize matplotlib figure and canvas """
         try:
-            # Use FIGURE_SIZE tuple (width, height)
+            from PyQt6.QtWidgets import QSizePolicy
+
             fig_size = getattr(constants.graph, 'FIGURE_SIZE', (8, 6))
-            self.figure = Figure(figsize=fig_size)
+
+            # 1. Use `tight_layout=True`, which is compatible with manual adjustments.
+            self.figure = Figure(figsize=fig_size, tight_layout=True)
+
+            # 2. Set the desired padding, which will now be respected.
+            self.figure.subplots_adjust(left=0.08, bottom=0.12, right=0.97, top=0.95)
+
             self.canvas = FigureCanvas(self.figure)
+            self.canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
             self.ax = self.figure.add_subplot(111)
-            # Use i18n or fallback for axis labels
-            self.ax.set_ylabel('Speed')
+            self.ax.set_ylabel('Speed') # Use i18n string for 'Speed' if available
             self.ax.grid(True, linestyle=getattr(constants.graph, 'GRID_LINESTYLE', '--'), alpha=getattr(constants.graph, 'GRID_ALPHA', 0.5))
 
-            # Initialize the upload and download lines
-            self.upload_line, = self.ax.plot([], [], 
-                color=constants.graph.UPLOAD_LINE_COLOR, 
+            self.upload_line, = self.ax.plot([], [],
+                color=constants.graph.UPLOAD_LINE_COLOR,
                 linewidth=constants.graph.LINE_WIDTH,
                 label=self.i18n.UPLOAD_LABEL if hasattr(self, 'i18n') else 'Upload'
             )
-            self.download_line, = self.ax.plot([], [], 
-                color=constants.graph.DOWNLOAD_LINE_COLOR, 
+            self.download_line, = self.ax.plot([], [],
+                color=constants.graph.DOWNLOAD_LINE_COLOR,
                 linewidth=constants.graph.LINE_WIDTH,
                 label=self.i18n.DOWNLOAD_LABEL if hasattr(self, 'i18n') else 'Download'
             )
-            
-            # Initialize axis limits and "no data" text object
+
             self._no_data_text_obj = None
             self.ax.set_xlim(0, 1)
             self.ax.set_ylim(0, constants.graph.MIN_Y_AXIS_LIMIT)
-            
-            # Add canvas to layout
-            if hasattr(self, 'graph_layout'):
-                self.graph_layout.addWidget(self.canvas)
-            else:
-                self.logger.error("graph_layout not found")
-                
-            # Ensure initial draw
-            self.canvas.draw_idle()
+
         except Exception as e:
             self.logger.error(f"Error initializing matplotlib: {e}", exc_info=True)
+
     
     def _init_overlay_elements(self):
         """ Initialize stats bar and hamburger menu """
@@ -835,6 +841,7 @@ class GraphWindow(QWidget):
         else:
             self.logger.warning(f"Cannot save slider value for {config_key}: parent or config components missing.")
 
+
     def resizeEvent(self, event: Optional[QResizeEvent]) -> None:
         """ Handles window resize events. Repositions overlay elements. """
         if event: super().resizeEvent(event)
@@ -848,38 +855,18 @@ class GraphWindow(QWidget):
 
 
     def _reposition_overlay_elements(self) -> None:
-        """Reposition stats bar over the current tab's content area; keep hamburger icon fixed on graph."""
-        if self._is_closing or not all(hasattr(self, attr) for attr in ['tab_widget', 'hamburger_icon', 'stats_bar']):
+        """Reposition the hamburger icon. The stats bar is now managed by the layout."""
+        if self._is_closing or not all(hasattr(self, attr) for attr in ['tab_widget', 'hamburger_icon']):
             return
 
         try:
-            current_tab_content_widget = self.tab_widget.currentWidget()
-            if not current_tab_content_widget:
-                self.logger.warning("Cannot reposition overlays: No current tab content widget.")
-                return
-
-            # Get geometry of the tab content area relative to GraphWindow
-            tab_content_rect_global = current_tab_content_widget.mapToGlobal(current_tab_content_widget.rect().topLeft())
-            tab_content_pos_in_graph_window = self.mapFromGlobal(tab_content_rect_global)
-            container_width = current_tab_content_widget.width()
-
-            # Fix hamburger icon position relative to graph widget's top-right
+            # The hamburger icon is the only true overlay.
+            # Position it relative to the top-right of the graph widget.
             if self.tab_widget.currentWidget() == self.graph_widget:
-                hamburger_x = tab_content_pos_in_graph_window.x() + container_width - self.hamburger_icon.width() - constants.graph.HAMBURGER_ICON_OFFSET_X
-                hamburger_y = tab_content_pos_in_graph_window.y() + constants.graph.HAMBURGER_ICON_OFFSET_Y
+                hamburger_x = self.graph_widget.width() - self.hamburger_icon.width() - constants.graph.HAMBURGER_ICON_OFFSET_X
+                hamburger_y = constants.graph.HAMBURGER_ICON_OFFSET_Y
                 self.hamburger_icon.move(hamburger_x, hamburger_y)
-
-            # Reposition stats bar (top-center of tab content)
-            # Make the stats bar always fill the width of the graph area (minus a small margin)
-            margin = 16
-            stats_bar_width = container_width - margin
-            self.stats_bar.setFixedWidth(stats_bar_width)
-            stats_bar_x = tab_content_pos_in_graph_window.x() + (container_width - stats_bar_width) // 2
-            stats_bar_y = tab_content_pos_in_graph_window.y() + constants.graph.STATS_BAR_OFFSET_Y
-            self.stats_bar.move(stats_bar_x, stats_bar_y)
-
-            self.hamburger_icon.raise_()
-            self.stats_bar.raise_()
+                self.hamburger_icon.raise_()
         except Exception as e:
             self.logger.error(f"Error repositioning overlay elements: {e}", exc_info=True)
 

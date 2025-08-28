@@ -21,56 +21,58 @@ from .styles import is_dark_mode
 from netspeedtray import constants
 
 
-# In src/netspeedtray/utils/config.py
-
-class PrivacyFilter(logging.Filter):
+class ObfuscatingFormatter(logging.Formatter):
     """
-    A logging filter that obfuscates sensitive user data in log records.
-
-    This filter replaces the user's home directory path in any log arguments
-    with a generic placeholder and redacts IP addresses.
+    A custom logging formatter that automatically redacts sensitive information
+    like user paths and IP addresses from all log records, including tracebacks.
     """
-    
-    def __init__(self):
-        super().__init__()
+    # This regex is a robust pattern for matching both IPv4 and IPv6 addresses.
+    IP_REGEX = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b|\b(?:[A-F0-9]{1,4}:){7}[A-F0-9]{1,4}\b", re.IGNORECASE)
+
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._paths_to_obfuscate: List[str] = []
+        self._setup_paths()
+
+
+    def _setup_paths(self):
+        """Determines user-specific paths that need to be obfuscated."""
         try:
-            # Use resolve() to get the canonical path (e.g., handles symlinks)
-            self.user_home = str(Path.home().resolve())
-        except Exception:
-            # Fallback in case Path.home() fails for some reason
-            self.user_home = os.path.expanduser("~")
-        
-        self.ip_regex = re.compile(r"(\d{1,3}\.\d{1,3}\.)\d{1,3}\.\d{1,3}")
+            # Use resolve() to get the canonical path, as in the original PrivacyFilter.
+            user_home = str(Path.home().resolve())
+            self._paths_to_obfuscate.append(user_home)
+
+            # Also find the project root for development logs.
+            # Assumes this file is in `src/netspeedtray/utils/`.
+            project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+            if project_root and project_root not in self._paths_to_obfuscate:
+                self._paths_to_obfuscate.append(project_root)
+        except Exception as e:
+            # It's better to log this failure, but we can't use the logger here
+            # as it might not be configured yet.
+            print(f"Warning: Could not determine paths for log obfuscation: {e}", file=sys.stderr)
 
 
-    def filter(self, record: logging.LogRecord) -> bool:
+    def format(self, record: logging.LogRecord) -> str:
         """
-        Filters the log record in-place, modifying its arguments to remove PII.
-        It does NOT format the message, preventing TypeErrors downstream.
+        Formats the log record and then obfuscates sensitive information from the final string.
         """
-        # We only need to process records that have arguments.
-        if record.args and isinstance(record.args, tuple):
-            # We must create a new list from the tuple to modify it.
-            new_args = list(record.args)
-            for i, arg in enumerate(new_args):
-                # Check if the argument is a string OR a Path object that needs sanitizing.
-                if isinstance(arg, (str, Path)):
-                    # Ensure we are working with a string for the replacement logic.
-                    sanitized_arg = str(arg)
-                    # Obfuscate user home path
-                    if self.user_home in sanitized_arg:
-                        sanitized_arg = sanitized_arg.replace(self.user_home, "<USER_HOME>")
-                    
-                    # Obfuscate IP addresses
-                    sanitized_arg = self.ip_regex.sub(r"\1x.x", sanitized_arg)
-                    
-                    new_args[i] = sanitized_arg
-            
-            # Replace the old args tuple with our new, sanitized one.
-            record.args = tuple(new_args)
-        
-        # Always return True to allow the record to be processed.
-        return True
+        # 1. Format the message using the parent class's logic. This is the crucial step
+        #    that correctly handles and includes exception tracebacks into the string.
+        formatted_message = super().format(record)
+
+        # 2. Sanitize the fully-formatted message.
+        sanitized_message = formatted_message
+        for path in self._paths_to_obfuscate:
+            # Use replace, being mindful of different OS path separators by normalizing.
+            # This is a simple but effective approach.
+            sanitized_message = sanitized_message.replace(path, "<REDACTED_PATH>")
+
+        # 3. Redact any IP addresses found in the message.
+        sanitized_message = self.IP_REGEX.sub("<REDACTED_IP>", sanitized_message)
+
+        return sanitized_message
 
 
 class ConfigError(Exception):
@@ -84,6 +86,7 @@ class ConfigManager:
     BASE_DIR = Path(get_app_data_path())
     LOG_DIR = BASE_DIR
 
+
     def __init__(self, config_path: Optional[Union[str, Path]] = None) -> None:
         """
         Initializes the ConfigManager.
@@ -92,10 +95,12 @@ class ConfigManager:
         self.logger = logging.getLogger("NetSpeedTray.Config")
         self._last_config: Optional[Dict[str, Any]] = None
 
+
     @classmethod
     def get_log_file_path(cls) -> Path:
         """Returns the absolute path to the log file."""
         return cls.BASE_DIR / constants.logs.LOG_FILENAME
+
 
     @classmethod
     def setup_logging(cls, log_level: str = 'INFO') -> None:
@@ -110,16 +115,14 @@ class ConfigManager:
 
             file_handler = logging.FileHandler(cls.get_log_file_path(), encoding='utf-8')
             file_handler.setLevel(logging.INFO)
-            file_formatter = logging.Formatter(
+
+            # Instantiate our new, robust ObfuscatingFormatter.
+            file_formatter = ObfuscatingFormatter(
                 '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
                 datefmt='%Y-%m-%d %H:%M:%S'
             )
+
             file_handler.setFormatter(file_formatter)
-            
-            # Create and add the privacy filter ONLY to the file handler
-            privacy_filter = PrivacyFilter()
-            file_handler.addFilter(privacy_filter)
-            
             logger.addHandler(file_handler)
 
             console_handler = logging.StreamHandler()
@@ -132,6 +135,7 @@ class ConfigManager:
             logging.basicConfig(level=logging.ERROR)
             logging.error("Failed to initialize file logging, falling back to console: %s", e)
 
+
     @classmethod
     def ensure_directories(cls) -> None:
         """Creates necessary application directories if they don't exist."""
@@ -139,6 +143,7 @@ class ConfigManager:
             cls.BASE_DIR.mkdir(parents=True, exist_ok=True)
         except OSError as e:
             raise ConfigError(f"Failed to create application directory at {cls.BASE_DIR}: {e}") from e
+
 
     def _validate_numeric(self, key: str, value: Any, default: Any, min_v: float, max_v: float) -> Union[int, float]:
         """Validates a numeric value is within a given range."""
@@ -151,6 +156,7 @@ class ConfigManager:
             self.logger.warning(constants.config.messages.INVALID_NUMERIC.format(key=key, value=value, default=default))
             return default
 
+
     def _validate_boolean(self, key: str, value: Any, default: bool) -> bool:
         """Validates a value is a boolean."""
         if isinstance(value, bool):
@@ -158,12 +164,14 @@ class ConfigManager:
         self.logger.warning(constants.config.messages.INVALID_BOOLEAN.format(key=key, value=value, default=default))
         return default
 
+
     def _validate_color_hex(self, key: str, value: Any, default: str) -> str:
         """Validates a value is a valid 6-digit hex color string."""
         if isinstance(value, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", value):
             return value
         self.logger.warning(constants.config.messages.INVALID_COLOR.format(key=key, value=value, default=default))
         return default
+
 
     def _validate_choice(self, key: str, value: Any, default: str, choices: List[str]) -> str:
         """Validates a value is one of the allowed choices (case-insensitive)."""
@@ -173,6 +181,7 @@ class ConfigManager:
                     return choice
         self.logger.warning(constants.config.messages.INVALID_CHOICE.format(key=key, value=value, default=default, choices=choices))
         return default
+
 
     def _validate_config(self, loaded_config: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -250,6 +259,7 @@ class ConfigManager:
 
         return final_config
 
+
     def load(self) -> Dict[str, Any]:
         """Loads and validates the configuration from the file."""
         if not self.config_path.exists():
@@ -274,6 +284,7 @@ class ConfigManager:
         validated_config = self._validate_config(config)
         self._last_config = validated_config.copy()
         return validated_config
+
 
     def save(self, config: Dict[str, Any]) -> None:
         """Atomically saves the provided configuration to the file."""
@@ -300,6 +311,7 @@ class ConfigManager:
             msg = f"Failed to save configuration to {self.config_path}: {e}"
             self.logger.error(msg)
             raise ConfigError(msg) from e
+
 
     def reset_to_defaults(self) -> Dict[str, Any]:
         """Resets the configuration to factory defaults and saves it."""
