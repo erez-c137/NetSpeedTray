@@ -1068,27 +1068,33 @@ class GraphWindow(QWidget):
     def _get_db_size_mb(self) -> float:
         """Get the size of the database file in megabytes."""
         try:
-            if hasattr(self._parent, "widget_state") and hasattr(self._parent.widget_state, "db_path"):
-                db_path = self._parent.widget_state.db_path
-                if os.path.exists(db_path):
-                    size_bytes = os.path.getsize(db_path)
-                    return size_bytes / (1024 * 1024)  # Convert to MB
-            return 0.0
+            # FIX: Access the db_path via the db_worker attribute on widget_state.
+            if (hasattr(self._parent, "widget_state") and
+                    hasattr(self._parent.widget_state, "db_worker") and
+                    hasattr(self._parent.widget_state.db_worker, "db_path")):
+                db_path = self._parent.widget_state.db_worker.db_path
+                if db_path and os.path.exists(db_path):
+                    return os.path.getsize(db_path) / (1024 * 1024)
         except Exception as e:
             self.logger.error(f"Error getting DB size: {e}", exc_info=True)
-            return 0.0
+        return 0.0
 
 
     def _update_db_size(self) -> None:
-        """Update the database size display."""
+        """
+        The single, authoritative function to update the database size display.
+        This is now the only place where the label text for the "Year" setting is formatted.
+        """
         try:
             if hasattr(self, 'keep_data'):
+                # Check if the slider is still set to "Year" before updating.
                 days = constants.data.retention.DAYS_MAP.get(self.keep_data.value(), 30)
-                if days == 365:  # Only update if showing 1 year
+                if days == 365:
                     db_size_mb = self._get_db_size_mb()
+                    # Pass the raw float `db_size_mb` directly.
                     self.keep_data.setValueText(self.i18n.YEAR_WITH_DB_SIZE_LABEL.format(size_mb=db_size_mb))
         except Exception as e:
-            self.logger.error(f"Error updating keep data label: {e}", exc_info=True)    
+            self.logger.error(f"Error updating keep data label: {e}", exc_info=True)
 
 
     def _init_db_size_timer(self) -> None:
@@ -1108,22 +1114,25 @@ class GraphWindow(QWidget):
         
 
     def _update_keep_data_text(self, value: int) -> None:
-        """Update the keep data slider's value text."""
-        if hasattr(self, 'keep_data'):
-            days = constants.data.retention.DAYS_MAP.get(value, constants.data.retention.DAYS_MAP[3])
-            # For 1-year retention, include DB size
-            if days == 365:
-                db_size_mb = self._get_db_size_mb()
-                self.keep_data.setValueText(self.i18n.YEAR_WITH_DB_SIZE_LABEL.format(size_mb=db_size_mb))
-                # Start the DB size update timer if not already running
-                if not self._db_size_update_timer.isActive():
-                    self._db_size_update_timer.start()
-            else:
-                # For other periods, just show days
-                self.keep_data.setValueText(self.i18n.DAYS_TEMPLATE.format(days=days))
-                # Stop the DB size update timer if running
-                if self._db_size_update_timer.isActive():
-                    self._db_size_update_timer.stop()
+        """
+        Update the keep data slider's value text and manage the DB size refresh timer.
+        """
+        if not hasattr(self, 'keep_data'):
+            return
+
+        days = constants.data.retention.DAYS_MAP.get(value, constants.data.retention.DAYS_MAP[3])
+
+        if days == 365:
+            # Call the single authoritative update function.
+            self._update_db_size()
+            if not self._db_size_update_timer.isActive():
+                # Start the timer with the correct 10-second interval.
+                self._db_size_update_timer.start(10000)
+        else:
+            # For other periods, just show the number of days.
+            self.keep_data.setValueText(self.i18n.DAYS_TEMPLATE.format(days=days))
+            if self._db_size_update_timer.isActive():
+                self._db_size_update_timer.stop()
 
 
     def _days_to_slider_value(self, days: int) -> int:
@@ -1246,8 +1255,8 @@ class GraphWindow(QWidget):
                 self._show_graph_error(self.i18n.DATA_SOURCE_UNAVAILABLE_ERROR)
                 return
 
-            period_name = constants.data.history_period.PERIOD_MAP.get(self.history_period.value(), "")
-            is_session_view = "Session" in period_name
+            period_key = constants.data.history_period.PERIOD_MAP.get(self.history_period.value(), "")
+            is_session_view = (period_key == "TIMELINE_SESSION")
             history_data = []
 
             # process per-interface live data
@@ -1257,7 +1266,7 @@ class GraphWindow(QWidget):
             if is_session_view:
                 # The "Session" view uses the live, in-memory data source.
                 mem_history = self._parent.widget_state.get_in_memory_speed_history()
-                
+
                 # Process the new snapshot structure to filter data for the selected interface.
                 processed_history = []
                 for snapshot in mem_history:
@@ -1274,7 +1283,7 @@ class GraphWindow(QWidget):
                 # All other views (Uptime, 3 Hours, etc.) query the database directly.
                 start_time, end_time = self._get_time_range_from_ui()
 
-                is_special_view = "System Uptime" in period_name or "All" in period_name
+                is_special_view = "System Uptime" in period_key or "All" in period_key
                 if start_time and not is_special_view:
                     earliest_data_time = self._parent.widget_state.get_earliest_data_timestamp()
                     if earliest_data_time and start_time < earliest_data_time:
@@ -1292,8 +1301,10 @@ class GraphWindow(QWidget):
 
             if len(history_data) < 2:
                 active_interfaces = self._parent.get_active_interfaces() if hasattr(self._parent, 'get_active_interfaces') else []
-                is_selected_interface_active = "All" in self.interface_filter.currentText() or self.interface_filter.currentText() in active_interfaces
-                is_live_view = "Session" in period_name or "Uptime" in period_name
+
+                is_selected_interface_active = self.interface_filter.currentData() == "all" or self.interface_filter.currentText() in active_interfaces
+
+                is_live_view = "Session" in period_key or "Uptime" in period_key
 
                 if is_live_view and is_selected_interface_active:
                     self._show_graph_message(getattr(self.i18n, 'COLLECTING_DATA_MESSAGE', "Collecting data..."), is_error=False)
@@ -1301,7 +1312,7 @@ class GraphWindow(QWidget):
                     self._show_graph_error(getattr(self.i18n, 'NO_DATA_MESSAGE', "No data available for the selected period."))
                 return
 
-            # --- Graph Restoration and Theming (no changes beyond this point) ---
+            # --- Graph Restoration and Theming ---
             if self._no_data_text_obj: self._no_data_text_obj.set_visible(False)
             self.ax.set_yscale('linear')
             self.upload_line.set_visible(True)
@@ -1322,7 +1333,7 @@ class GraphWindow(QWidget):
             self.ax.set_facecolor(graph_bg)
             self.ax.tick_params(colors=text_color, which='both')
             self.ax.grid(True, linestyle=constants.graph.GRID_LINESTYLE, alpha=constants.graph.GRID_ALPHA, color=grid_color)
-            
+
             self._update_stats_bar(history_data)
 
             timestamps = [entry[0] for entry in history_data]
@@ -1331,10 +1342,10 @@ class GraphWindow(QWidget):
 
             self.upload_line.set_data(timestamps, upload_speeds_mbps)
             self.download_line.set_data(timestamps, download_speeds_mbps)
-            
+
             all_speeds = upload_speeds_mbps + download_speeds_mbps
             non_zero_speeds = [s for s in all_speeds if s > 0.1]
-            
+
             final_thresh = 10
             if non_zero_speeds:
                 dynamic_thresh = np.quantile(non_zero_speeds, 0.90)
@@ -1346,16 +1357,16 @@ class GraphWindow(QWidget):
 
             max_speed = max(all_speeds) if all_speeds else 0
             nice_top = self._get_nice_y_axis_top(max_speed)
-            
+
             rounded_thresh_for_tick = round(final_thresh / 5) * 5
             y_ticks = {0.0, rounded_thresh_for_tick}
-            
+
             if nice_top > 10:
                 log_tick = 10.0
                 while log_tick < nice_top:
                     y_ticks.add(log_tick)
                     log_tick *= 10
-            
+
             y_ticks.add(nice_top)
 
             if 0.0 in y_ticks and 0 in y_ticks and 0.0 != 0:
