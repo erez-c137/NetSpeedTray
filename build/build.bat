@@ -2,7 +2,7 @@
 setlocal EnableDelayedExpansion
 
 :: --- Configuration ---
-set "VERSION=1.1.6"
+set "VERSION=1.1.7"
 
 :: --- Automatically determine project paths (Portable & Robust) ---
 set "BUILD_DIR=%~dp0"
