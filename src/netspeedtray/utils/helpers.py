@@ -2,7 +2,7 @@
 Helper utilities for NetSpeedTray.
 
 This module provides foundational functions for directory management, logging setup,
-and speed formatting used across the application.
+and data formatting used across the application.
 """
 
 import os
@@ -10,8 +10,9 @@ import sys
 import logging
 import threading
 from logging.handlers import RotatingFileHandler
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 from pathlib import Path
+from datetime import datetime
 
 from netspeedtray import constants
 
@@ -231,3 +232,45 @@ def format_data_size(data_bytes: int | float, i18n, precision: int = 2) -> Tuple
         return round(value, 0), UNITS_DATA_SIZE[unit_index] 
         
     return formatted_value, UNITS_DATA_SIZE[unit_index]
+
+# --- Data Processing Utilities ---
+
+def downsample_data(data: List[Tuple[datetime, float, float]], max_points: int) -> List[Tuple[datetime, float, float]]:
+    """
+    Reduces the number of data points to a maximum limit for efficient plotting.
+
+    This function uses a binning method that preserves the most significant data point
+    (the one with the highest combined upload/download speed) within each bin. This
+    ensures that visual spikes in network activity are not lost during downsampling.
+
+    Args:
+        data: The input data as a list of (timestamp, upload, download) tuples.
+        max_points: The maximum number of points the output should contain.
+
+    Returns:
+        A downsampled list of data points, or the original list if it's already
+        within the max_points limit.
+    """
+    if len(data) <= max_points:
+        return data
+
+    downsampled = []
+    num_points = len(data)
+    # Ensure bin_size is at least 1, even if max_points is > num_points (should not happen with the guard clause)
+    bin_size = max(1.0, num_points / max_points)
+
+    for i in range(max_points):
+        start_index = int(i * bin_size)
+        end_index = int((i + 1) * bin_size)
+        if start_index >= num_points:
+            break
+        
+        bin_data = data[start_index:end_index]
+        if not bin_data:
+            continue
+
+        # Find the point with the highest combined speed in the bin to preserve spikes
+        peak_point = max(bin_data, key=lambda point: point[1] + point[2])
+        downsampled.append(peak_point)
+
+    return downsampled
