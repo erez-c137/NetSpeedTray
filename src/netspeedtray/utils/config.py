@@ -36,40 +36,84 @@ class ObfuscatingFormatter(logging.Formatter):
         self._setup_paths()
 
 
-    def _setup_paths(self):
-        """Determines user-specific paths that need to be obfuscated."""
-        try:
-            # Use resolve() to get the canonical path, as in the original PrivacyFilter.
-            user_home = str(Path.home().resolve())
-            self._paths_to_obfuscate.append(user_home)
+class ObfuscatingFormatter(logging.Formatter):
+    """
+    A custom logging formatter that automatically redacts sensitive information
+    like user paths and IP addresses from all log records, including tracebacks.
+    This version uses pre-compiled regexes for performance and robust normalization.
+    """
+    # Pre-compile the IP regex as a class attribute for efficiency.
+    IP_REGEX = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b|\b(?:[A-F0-9]{1,4}:){7}[A-F0-9]{1,4}\b", re.IGNORECASE)
 
-            # Also find the project root for development logs.
-            # Assumes this file is in `src/netspeedtray/utils/`.
-            project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-            if project_root and project_root not in self._paths_to_obfuscate:
-                self._paths_to_obfuscate.append(project_root)
-        except Exception as e:
-            # It's better to log this failure, but we can't use the logger here
-            # as it might not be configured yet.
-            print(f"Warning: Could not determine paths for log obfuscation: {e}", file=sys.stderr)
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # This will hold our list of pre-compiled regex patterns for paths.
+        self._path_regexes: List[re.Pattern] = []
+        self._setup_paths()
+
+
+    def _setup_paths(self):
+        """
+        Determines, normalizes, and pre-compiles regex patterns for all
+        user-specific paths that need to be obfuscated.
+        """
+        import tempfile
+        import sys
+
+        paths_to_obfuscate = set()
+        
+        # --- 1. Gather all potential PII paths ---
+        potential_paths = []
+        try: potential_paths.append(str(Path.home().resolve()))
+        except Exception: pass
+        
+        try: potential_paths.append(str(Path(get_app_data_path()).resolve()))
+        except Exception: pass
+
+        try: potential_paths.append(str(Path(tempfile.gettempdir()).resolve()))
+        except Exception: pass
+
+        if not getattr(sys, 'frozen', False):
+            try:
+                project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+                potential_paths.append(project_root)
+                python_exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+                potential_paths.append(python_exe_dir)
+            except Exception: pass
+
+        # --- 2. Normalize and filter the paths for maximum reliability ---
+        for path_str in potential_paths:
+            if not path_str or len(path_str) <= 3: # Ignore empty or trivial paths (e.g., "C:\")
+                continue
+            # Normalize path for the current OS (e.g., C:/Temp -> C:\Temp) and make it lowercase.
+            # This makes the regex matching far more reliable.
+            normalized_path = os.path.normcase(os.path.normpath(path_str))
+            paths_to_obfuscate.add(normalized_path)
+
+        # --- 3. Pre-compile the regexes for high-performance formatting ---
+        # CRITICAL: Sort paths by length in reverse order.
+        sorted_paths = sorted(list(paths_to_obfuscate), key=len, reverse=True)
+        
+        self._path_regexes = [re.compile(re.escape(p), re.IGNORECASE) for p in sorted_paths]
+
+        # Use stderr for startup debugging as the logger itself is not yet fully configured.
+        print(f"ObfuscatingFormatter initialized with {len(self._path_regexes)} path redaction patterns.", file=sys.stderr)
 
 
     def format(self, record: logging.LogRecord) -> str:
         """
         Formats the log record and then obfuscates sensitive information from the final string.
         """
-        # 1. Format the message using the parent class's logic. This is the crucial step
-        #    that correctly handles and includes exception tracebacks into the string.
+        # First, allow the base formatter to do its work, including traceback formatting.
         formatted_message = super().format(record)
-
-        # 2. Sanitize the fully-formatted message.
         sanitized_message = formatted_message
-        for path in self._paths_to_obfuscate:
-            # Use replace, being mindful of different OS path separators by normalizing.
-            # This is a simple but effective approach.
-            sanitized_message = sanitized_message.replace(path, "<REDACTED_PATH>")
 
-        # 3. Redact any IP addresses found in the message.
+        # Now, run the pre-compiled regexes over the fully formatted string.
+        # This is highly efficient and robust.
+        for pattern in self._path_regexes:
+            sanitized_message = pattern.sub("<REDACTED_PATH>", sanitized_message)
+
+        # Redact any IP addresses found in the message.
         sanitized_message = self.IP_REGEX.sub("<REDACTED_IP>", sanitized_message)
 
         return sanitized_message
