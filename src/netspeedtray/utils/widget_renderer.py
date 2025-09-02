@@ -177,12 +177,14 @@ class WidgetRenderer:
         
         self._last_text_rect = QRect(margin, int(top_y - ascent), int(content_width), int(total_text_height))
 
+
     def _draw_horizontal_layout(self, painter: QPainter, upload: float, download: float, width: int, height: int, config: RenderConfig, always_mbps: bool, decimal_places: int, force_decimals: bool) -> None:
         """Draws the compact single-line horizontal layout."""
-        upload_text, download_text = self._format_speed_texts(upload, download, always_mbps, decimal_places, force_decimals, full_string=True)
+        upload_text_full, download_text_full = self._format_speed_texts(upload, download, always_mbps, decimal_places, force_decimals, full_string=True)
         
-        up_str = f"{constants.renderer.UPLOAD_ARROW} {upload_text}"
-        down_str = f"{constants.renderer.DOWNLOAD_ARROW} {download_text}"
+        # Get the arrow characters from the i18n object, not the constants module.
+        up_str = f"{self.i18n.UPLOAD_ARROW} {upload_text_full}"
+        down_str = f"{self.i18n.DOWNLOAD_ARROW} {download_text_full}"
         separator = constants.layout.HORIZONTAL_LAYOUT_SEPARATOR
         
         up_width = self.metrics.horizontalAdvance(up_str)
@@ -190,7 +192,6 @@ class WidgetRenderer:
         separator_width = self.metrics.horizontalAdvance(separator)
         content_width = up_width + separator_width + down_width
 
-        # Ensure all coordinates are integers before drawing
         y_pos = int((height - self.metrics.height()) / 2 + self.metrics.ascent())
         margin = self._calculate_margin(width, content_width, config.text_alignment)
         
@@ -275,18 +276,16 @@ class WidgetRenderer:
 
     def draw_mini_graph(self, painter: QPainter, width: int, height: int, config: RenderConfig, history: List[SpeedDataSnapshot], layout_mode: str = 'vertical') -> None:
         """Draws a mini graph of speed history, adapting to the current layout mode."""
-        if len(history) < constants.renderer.MIN_GRAPH_POINTS:
+        # Proactive Check: Exit immediately if the graph is disabled in the config.
+        if not config.graph_enabled or len(history) < constants.renderer.MIN_GRAPH_POINTS:
             return
 
         try:
             if layout_mode == 'horizontal':
-                # In horizontal mode, the graph gets a dedicated slice on the right.
                 graph_width = constants.layout.MINI_GRAPH_HORIZONTAL_WIDTH
                 vertical_margin = 4
-                # Anchor the graph to the right edge of the widget.
                 graph_rect = QRect(width - graph_width, vertical_margin, graph_width, height - (vertical_margin * 2))
             else:  # Vertical mode
-                # In vertical mode, the graph is drawn "behind" the text area.
                 text_rect = self.get_last_text_rect()
                 if not text_rect.isValid():
                     self.logger.debug("Cannot draw mini-graph: text rect is invalid.")
@@ -309,13 +308,13 @@ class WidgetRenderer:
                 num_points = len(aggregated_history)
                 if num_points < 2: return
 
-                max_upload = max(d['upload'] for d in aggregated_history)
-                max_download = max(d['download'] for d in aggregated_history)
+                max_upload = max(d['upload'] for d in aggregated_history) if aggregated_history else 0
+                max_download = max(d['download'] for d in aggregated_history) if aggregated_history else 0
                 actual_max_speed = max(max_upload, max_download, 1.0)
                 padded_max_speed = actual_max_speed * constants.renderer.GRAPH_Y_AXIS_PADDING_FACTOR
                 max_speed = max(padded_max_speed, constants.renderer.MIN_Y_SCALE)
                 min_speed_threshold = constants.renderer.MIN_SPEED_THRESHOLD
-                step_x = graph_rect.width() / (num_points - 1)
+                step_x = graph_rect.width() / (num_points - 1) if num_points > 1 else 0
 
                 self._cached_upload_points = [
                     QPointF(graph_rect.left() + i * step_x,
