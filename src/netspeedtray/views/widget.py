@@ -29,7 +29,12 @@ from ..core.timer_manager import SpeedTimerManager
 from ..core.widget_state import WidgetState as CoreWidgetState
 from ..utils.config import ConfigManager as CoreConfigManager
 from ..utils.position_utils import PositionManager as CorePositionManager, WindowState as CoreWindowState
-from ..utils.taskbar_utils import get_taskbar_info, is_taskbar_obstructed, is_taskbar_visible, is_small_taskbar
+from ..utils.taskbar_utils import (
+    get_taskbar_info, is_taskbar_obstructed, is_taskbar_visible,
+    is_small_taskbar, get_process_name_from_hwnd
+)
+
+from ..utils.visibility_manager import VisibilityManager
 from ..utils.widget_renderer import WidgetRenderer as CoreWidgetRenderer, RenderConfig
 from ..utils.win_event_hook import (
     EVENT_OBJECT_LOCATIONCHANGE,
@@ -89,14 +94,17 @@ class NetworkSpeedWidget(QWidget):
         self._dragging: bool = False
         self._drag_offset: QPoint = QPoint()
         self.is_paused: bool = False
-        self._last_update_time: float = 0.0
-        self._last_taskbar_event_time: float = 0.0
+        self._last_immediate_hide_time: float = 0.0 # For the race condition fix
         self.last_tray_rect: Optional[Tuple[int, int, int, int]] = None
-        self.win_event_hooks: List[WinEventHook] = []
-        self.last_known_taskbar_info: Optional[TaskbarInfo] = None
-        self._refresh_timer = QTimer(self)
+        
+        # Hooks for system events
+        self.foreground_hook: Optional[WinEventHook] = None
+        self.taskbar_hook: Optional[WinEventHook] = None
+        self.movesize_hook: Optional[WinEventHook] = None
+        
+        # Timers for periodic checks
         self._tray_watcher_timer = QTimer(self)
-        self._state_watcher_timer = QTimer(self)
+        self._state_watcher_timer = QTimer(self) # The "Safety Net" timer
         
         self.setVisible(False)
         self.logger.debug("Widget initially hidden to stabilize position and size.")
@@ -127,19 +135,19 @@ class NetworkSpeedWidget(QWidget):
 
 
     def _setup_timers(self) -> None:
-        """Configures and starts all application timers."""
-        # The master debounce timer for all UI state refreshes.
-        self._refresh_timer.setSingleShot(True)
-        self._refresh_timer.setInterval(250) # 250ms debounce interval
-        self._refresh_timer.timeout.connect(self._perform_refresh)
-        
-        # Periodic timer for rare tray icon changes.
+        """Configures all application timers."""
+        # This timer periodically checks if icons were added/removed from the tray.
         self._tray_watcher_timer.timeout.connect(self._check_for_tray_changes)
         self._tray_watcher_timer.start(10000)
+        self.logger.debug("Smart tray watcher timer started (10000ms).")
 
-        # The periodic self-healing timer is no longer needed.
-        self._state_watcher_timer.stop()
-        self.logger.debug("Event hooks and timers configured for new refresh architecture.")
+        # This is the "Safety Net" timer. It runs constantly at a low frequency
+        # to catch state changes that don't fire system events, like taskbar auto-hide.
+        self._state_watcher_timer.setInterval(1000) # Check once per second.
+        self._state_watcher_timer.timeout.connect(self._execute_refresh)
+        self._state_watcher_timer.start()
+        self.logger.debug("Safety net state watcher timer started (1000ms).")
+
 
     def _init_core_components(self) -> None:
         """
@@ -166,10 +174,6 @@ class NetworkSpeedWidget(QWidget):
     def _init_position_manager(self) -> None:
         """
         Initialize the PositionManager for widget placement.
-
-        Raises:
-            RuntimeError: If configuration is missing, taskbar info cannot be retrieved,
-                        or PositionManager initialization fails.
         """
         self.logger.debug("Initializing PositionManager...")
         if not self.config:
@@ -190,8 +194,11 @@ class NetworkSpeedWidget(QWidget):
             self.position_manager = CorePositionManager(window_state)
             self.logger.debug("PositionManager initialized")
 
+            # The taskbar_hook has been removed from here. The new VisibilityManager
+            # now handles all necessary system events, including those that affect position.
+
         except Exception as e:
-            self.logger.error("Failed to initialize PositionManager: %s", e, exc_info=True)
+            self.logger.error(f"Failed to initialize PositionManager: %s", e, exc_info=True)
             raise RuntimeError("PositionManager initialization failed") from e
 
 
@@ -283,113 +290,71 @@ class NetworkSpeedWidget(QWidget):
 
         except Exception as e:
             self.logger.error(f"Error during tray change check: {e}", exc_info=True)
-        
 
-    def _schedule_refresh(self) -> None:
-        """
-        Schedules a call to the single authoritative refresh function.
-        This is the ONLY way that a refresh should be triggered. The timer
-        handles the debouncing to prevent event storms.
-        """
-        # If a refresh is already scheduled, this simply resets the timer's countdown.
-        self._refresh_timer.start()
 
-    def _handle_taskbar_focus(self, hwnd: int) -> None:
+    def _on_foreground_change_immediate(self, hwnd: int) -> None:
         """
-        An instant, non-debounced handler specifically to combat the taskbar
-        stealing focus and hiding the widget.
+        Handles the raw event for an "emergency hide" on unambiguous fullscreen windows.
+        This handler's ONLY job is to hide the widget; it never shows it.
         """
         try:
-            class_name = win32gui.GetClassName(hwnd)
-            if class_name in ("Shell_TrayWnd", "Shell_SecondaryTrayWnd"):
-                # If the taskbar just gained focus, our widget should be on top of it.
-                # Re-asserting topmost status immediately prevents any flicker.
-                self._ensure_win32_topmost()
-        except win32gui.error:
-            pass # Window might have closed, which is fine.
+            if not self.isVisible() or not hwnd or not win32gui.IsWindow(hwnd):
+                return
+
+            taskbar_info = get_taskbar_info()
+            if is_taskbar_obstructed(taskbar_info, hwnd):
+                window_rect = win32gui.GetWindowRect(hwnd)
+                monitor_info = win32api.GetMonitorInfo(win32api.MonitorFromWindow(hwnd))
+                monitor_rect = monitor_info.get('Monitor')
+                
+                # This check for true fullscreen is what provides the instant hide.
+                if window_rect == monitor_rect:
+                    self.logger.debug(f"Immediate check: Fullscreen detected (HWND: {hwnd}). Hiding widget.")
+                    self.setVisible(False)
+                    # Set the cooldown timestamp to prevent the debounced handler from undoing this.
+                    self._last_immediate_hide_time = time.monotonic()
+
+        except (win32gui.error, AttributeError):
+            pass # Fail silently; the authoritative check will fix any errors.
         except Exception as e:
-            self.logger.error(f"Error in _handle_taskbar_focus: {e}", exc_info=True)
+            self.logger.error(f"Error in immediate foreground change handler: {e}", exc_info=True)
 
 
-# In src/netspeedtray/widget.py
-
-    def _perform_refresh(self) -> None:
+    def _execute_refresh(self, hwnd: int = 0) -> None:
         """
-        The single, authoritative function that checks all system state and
-        sets the widget's final visibility and position.
+        The AUTHORITATIVE refresh trigger. This runs after a debounce or on a timer
+        and makes the final, correct decision about the widget's state.
         """
+        now = time.monotonic()
+        if now - self._last_immediate_hide_time < 0.5: # 500ms cooldown
+            return
+
         if self._dragging or self.config.get("free_move", False):
             return
 
-        QApplication.processEvents()
+        if hwnd == 0:
+            try:
+                hwnd = win32gui.GetForegroundWindow()
+            except win32gui.error:
+                hwnd = 0
 
-        try:
-            taskbar_info = get_taskbar_info()
-            if not taskbar_info:
-                if self.isVisible(): self.setVisible(False)
-                return
+        self._update_widget_state(hwnd)
 
-            hwnd_fg = win32gui.GetForegroundWindow()
-            was_visible = self.isVisible()
-
-            # 1. ALWAYS determine the correct visibility state first.
-            taskbar_is_visible = is_taskbar_visible(taskbar_info)
-            taskbar_is_obstructed = is_taskbar_obstructed(taskbar_info, hwnd_fg)
-            should_be_visible = taskbar_is_visible and not taskbar_is_obstructed
-
-            # 2. Apply visibility changes. This is fast and does not flicker.
-            if was_visible != should_be_visible:
-                self.setVisible(should_be_visible)
-
-            # 3. Only perform expensive operations if the widget is meant to be visible.
-            if should_be_visible:
-                # Determine if the taskbar's physical geometry has changed since the last check.
-                taskbar_has_changed = (
-                    not self.last_known_taskbar_info or
-                    taskbar_info.rect != self.last_known_taskbar_info.rect
-                )
-
-                # We only need to run the flicker-inducing updates if the widget was just
-                # turned on (e.g., exiting fullscreen) OR if the taskbar has moved.
-                if not was_visible or taskbar_has_changed:
-                    self.logger.debug(
-                        "Refreshing position and Z-order due to visibility change or taskbar move."
-                    )
-                    self.position_manager.update_position()
-                    self._ensure_win32_topmost()
-                else:
-                    self.logger.debug("Skipping redundant position/Z-order update; state is stable.")
-
-            # 4. Always cache the latest taskbar info for the next check.
-            self.last_known_taskbar_info = taskbar_info
-
-        except Exception as e:
-            self.logger.error(f"Error during authoritative refresh: {e}", exc_info=True)
-            self.setVisible(False) # Hide on error for safety
+        if self.isVisible():
+            self._ensure_win32_topmost()
 
 
     def _delayed_initial_show(self) -> None:
-        """
-        Delays showing the widget until its position and size are stabilized.
-        The initial positioning is now handled entirely by _initialize_position.
-        This method is now only responsible for making the widget visible.
-        """
+        """Triggers the initial authoritative visibility check."""
         self.logger.debug("Executing delayed initial show...")
         try:
-            if self.upload_speed == 0.0 and self.download_speed == 0.0:
-                self.upload_speed = 0.0
-                self.download_speed = 0.0
-                self.logger.debug("Set placeholder speeds for initial rendering")
-
-            self._schedule_refresh()
+            if self.visibility_manager:
+                self.visibility_manager.refresh_visibility()
             
             if self.isVisible():
                 self.logger.info("Widget shown after stabilization")
-            else:
-                self.logger.debug("Widget remains hidden due to visibility conditions")
         except Exception as e:
             self.logger.error(f"Error in delayed initial show: {e}", exc_info=True)
-            # Ensure it stays hidden on error.
             self.setVisible(False)
 
 
@@ -572,37 +537,21 @@ class NetworkSpeedWidget(QWidget):
 
 
     def _setup_connections(self) -> None:
-        """Connects signals from core components and system events."""
+        """Connects signals from core components and initializes the VisibilityManager."""
         self.logger.debug("Setting up signal connections...")
-        
-        # Core component signals
-        self.timer_manager.stats_updated.connect(self.controller.update_speeds)
-        self.controller.display_speed_updated.connect(self.update_display_speeds)
+        if not all([self.widget_state, self.timer_manager, self.controller]):
+            raise RuntimeError("Core components missing during signal connection setup.")
+        try:
+            self.timer_manager.stats_updated.connect(self.controller.update_speeds)
+            self.controller.display_speed_updated.connect(self.update_display_speeds)
 
-        # --- New Unified WinEventHook Setup ---
-        events_to_watch = [
-            EVENT_SYSTEM_FOREGROUND,
-            EVENT_OBJECT_LOCATIONCHANGE,
-            EVENT_SYSTEM_MOVESIZEEND,
-        ]
-        
-        for event in events_to_watch:
-            try:
-                hook = WinEventHook(event)
-                # --- MODIFIED BLOCK ---
-                # All events schedule the main, debounced refresh.
-                hook.event_triggered.connect(self._schedule_refresh)
-
-                # BUT, for foreground changes, we also connect a raw,
-                # instant handler to fix the taskbar flicker.
-                if event == EVENT_SYSTEM_FOREGROUND:
-                    hook.event_triggered.connect(self._handle_taskbar_focus)
-                # --- END OF MODIFIED BLOCK ---
-                
-                hook.start()
-                self.win_event_hooks.append(hook)
-            except Exception as e:
-                self.logger.error(f"Failed to create WinEventHook for event {event}: {e}")
+            self.visibility_manager = VisibilityManager(self, parent=self)
+            self.visibility_manager.visibility_should_change.connect(self._handle_visibility_change)
+            
+            self.logger.debug("Signal connections established successfully.")
+        except Exception as e:
+            self.logger.error("Error setting up signal connections: %s", e, exc_info=True)
+            raise RuntimeError("Failed to establish critical signal connections") from e
 
         
     def _validate_lazy_imports(self) -> None:
@@ -624,6 +573,8 @@ class NetworkSpeedWidget(QWidget):
         if not self.metrics:
             raise RuntimeError("FontMetrics not initialized.")
 
+        # This guard clause is no longer strictly necessary with the new init order,
+        # but it provides an extra layer of safety.
         if not hasattr(self, 'renderer') or not self.renderer:
             raise RuntimeError("Renderer not initialized before resizing.")
 
@@ -634,25 +585,22 @@ class NetworkSpeedWidget(QWidget):
 
             precision = self.config.get("decimal_places", 2)
             margin = constants.renderer.TEXT_MARGIN
-
+            
+            # --- Adaptive layout sizing ---
             if is_small:
+                # Horizontal Layout Calculation
                 upload_text, download_text = self.renderer._format_speed_texts(9.99, 99.99, False, precision, True)
                 up_str = f"{self.i18n.UPLOAD_ARROW} {upload_text}"
                 down_str = f"{self.i18n.DOWNLOAD_ARROW} {download_text}"
-                # FIX: Use the correct constant path.
                 separator = constants.layout.HORIZONTAL_LAYOUT_SEPARATOR
-
+                
                 calculated_width = (self.metrics.horizontalAdvance(up_str) +
                                     self.metrics.horizontalAdvance(separator) +
                                     self.metrics.horizontalAdvance(down_str) + (margin * 2))
-
-                if self.config.get("graph_enabled", False):
-                    # FIX: Use the correct, direct constant paths.
-                    calculated_width += constants.layout.MINI_GRAPH_HORIZONTAL_WIDTH
-                    calculated_width += constants.layout.HORIZONTAL_SPACING_MEDIUM
-
+                
                 calculated_height = self.taskbar_height
             else:
+                # Vertical Layout Calculation
                 max_number_str = f"{999.99:.{precision}f}"
                 arrow_width = self.metrics.horizontalAdvance(self.i18n.UPLOAD_ARROW)
                 max_number_width = self.metrics.horizontalAdvance(max_number_str)
@@ -665,7 +613,7 @@ class NetworkSpeedWidget(QWidget):
                 calculated_width = (margin + arrow_width + constants.renderer.ARROW_NUMBER_GAP +
                                     max_number_width + constants.renderer.VALUE_UNIT_GAP +
                                     max_unit_width + margin)
-
+                
                 calculated_height = self.taskbar_height
 
             self.setFixedSize(math.ceil(calculated_width), math.ceil(calculated_height))
@@ -674,6 +622,15 @@ class NetworkSpeedWidget(QWidget):
         except Exception as e:
             self.logger.error(f"Failed to resize widget: {e}", exc_info=True)
             raise RuntimeError("Failed to resize widget based on font") from e
+
+
+    def _update_font(self) -> None:
+        """Slot to update the font and resize the widget when font settings change."""
+        self.logger.debug("Updating font and resizing widget due to settings change...")
+        try:
+            self._set_font(resize=True)
+        except Exception as e:
+            self.logger.error(f"Runtime font update failed: {e}", exc_info=True)
 
 
     def _update_color_for_theme(self) -> None:
@@ -990,72 +947,34 @@ class NetworkSpeedWidget(QWidget):
             app = QApplication.instance()
             if app:
                 app.quit()
-    
-      
+
+
+    def _handle_visibility_change(self, should_be_visible: bool) -> None:
+        """Slot to handle the visibility signal from the VisibilityManager."""
+        if self._dragging or self.config.get("free_move", False):
+            return
+
+        if self.isVisible() != should_be_visible:
+            self.setVisible(should_be_visible)
+            if should_be_visible:
+                self.update_position()
+                self._ensure_win32_topmost()
+
+
     def _update_widget_state(self, hwnd: int) -> None:
         """
         The single authoritative method to control widget visibility.
-        Balances responsiveness for fullscreen changes with flicker prevention.
+        Now includes a check to prevent flicker if the state isn't changing.
         """
         try:
-            # Skip updates during drag operations or in free-move mode
-            if self._dragging or self.config.get("free_move", False):
-                return
-
-            # Get current taskbar info
             taskbar_info = get_taskbar_info()
-            if not taskbar_info:
-                return
-
-            # Handle rate limiting differently based on the window type
-            now = time.monotonic()
-            try:
-                if hwnd and win32gui.IsWindow(hwnd):
-                    class_name = win32gui.GetClassName(hwnd)
-                    
-                    # For browser windows (potential fullscreen changes), be more responsive
-                    if "Chrome" in class_name or "Mozilla" in class_name:
-                        rate_limit = 0.1  # More responsive for fullscreen changes
-                    else:
-                        # For regular windows, use more aggressive rate limiting
-                        rate_limit = 0.5
-                        
-                        # Skip processing for shell windows
-                        if class_name in ("Shell_TrayWnd", "Shell_SecondaryTrayWnd"):
-                            return
-                else:
-                    rate_limit = 0.5
-            except win32gui.error:
-                rate_limit = 0.5
-
-            # Apply rate limiting
-            if hasattr(self, '_last_state_update_time'):
-                if now - self._last_state_update_time < rate_limit:
-                    return
-            self._last_state_update_time = now
-
-            # Check if we actually need to change visibility
-            current_visible = self.isVisible()
-            taskbar_visible = is_taskbar_visible(taskbar_info)
             
-            # If taskbar isn't visible, we definitely need to hide
-            if not taskbar_visible and current_visible:
-                self.setVisible(False)
-                return
-            
-            # Only check for obstruction if taskbar is visible
-            if taskbar_visible:
-                is_obstructed = is_taskbar_obstructed(taskbar_info, hwnd)
-                should_be_visible = not is_obstructed
-                
-                # Only change visibility if it's different from current state
-                if current_visible != should_be_visible:
-                    self.setVisible(should_be_visible)
-                    if should_be_visible:
-                        # Ensure proper z-order when becoming visible
-                        self._ensure_win32_topmost()
-                        # Update position when becoming visible
-                        self.position_manager.update_position()
+            should_be_visible = is_taskbar_visible(taskbar_info) and not is_taskbar_obstructed(taskbar_info, hwnd)
+
+            if self.isVisible() != should_be_visible:
+                self.setVisible(should_be_visible)
+                if should_be_visible:
+                    self.position_manager.update_position()
 
         except Exception as e:
             self.logger.error(f"Error in _update_widget_state: {e}", exc_info=True)
@@ -1572,48 +1491,49 @@ class NetworkSpeedWidget(QWidget):
         return []
 
 
-    def cleanup(self) -> None:
-        """Performs necessary cleanup and a single, final save of the configuration."""
-        self.logger.info("Performing widget cleanup...")
-        try:
-            # --- Stop all external event listeners first ---
-            for hook in self.win_event_hooks:
-                hook.stop()
+def cleanup(self) -> None:
+    """Performs necessary cleanup and a single, final save of the configuration."""
+    self.logger.info("Performing widget cleanup...")
+    try:
+        # --- Stop all external event listeners and timers ---
+        if self.visibility_manager:
+            self.visibility_manager.stop()
+
+        if self._tray_watcher_timer.isActive():
+            self._tray_watcher_timer.stop()
+
+        # --- Clean up core components ---
+        if self.timer_manager: self.timer_manager.cleanup()
+        if self.controller: self.controller.cleanup()
+        if self.widget_state: self.widget_state.cleanup()
+
+        # 1. Gather the graph window's state if it exists.
+        if self.graph_window:
+            # Access internal state variables directly to avoid errors if the
+            # settings panel's UI was never created (lazy loading).
+            final_graph_settings = {
+                "graph_window_pos": {"x": self.graph_window.pos().x(), "y": self.graph_window.pos().y()},
+                "dark_mode": self.graph_window._is_dark_mode,
+                "history_period_slider_value": self.graph_window._history_period_value,
+            }
+            self.update_config(final_graph_settings, save_to_disk=False) # Update memory only
             
-            # --- Stop all timers ---
-            if hasattr(self, '_tray_watcher_timer') and self._tray_watcher_timer.isActive():
-                self._tray_watcher_timer.stop()
-            if hasattr(self, '_state_watcher_timer') and self._state_watcher_timer.isActive():
-                self._state_watcher_timer.stop()
+            # Set a flag to ensure the graph window performs a full cleanup.
+            self.graph_window._is_closing = True
+            self.graph_window.close()
+            self.graph_window = None
 
-            # --- Clean up core components ---
-            if self.timer_manager: self.timer_manager.cleanup()
-            if self.controller: self.controller.cleanup()
-            if self.widget_state: self.widget_state.cleanup()
+        # 2. Gather the widget's final position state.
+        if self.config.get("free_move", False):
+            pos = self.pos()
+            self.update_config({"position_x": pos.x(), "position_y": pos.y()}, save_to_disk=False)
+        else:
+            self.update_config({"position_x": None, "position_y": None}, save_to_disk=False)
+        
+        # 3. Perform the single, final save operation.
+        self.logger.info("Performing final configuration save...")
+        self.config_manager.save(self.config)
 
-            # 1. Gather the graph window's state if it exists.
-            if self.graph_window:
-                final_graph_settings = {
-                    "graph_window_pos": {"x": self.graph_window.pos().x(), "y": self.graph_window.pos().y()},
-                    "dark_mode": self.graph_window.dark_mode.isChecked(),
-                    "history_period_slider_value": self.graph_window.history_period.value(),
-                    "keep_data": constants.data.retention.DAYS_MAP.get(self.graph_window.keep_data.value(), 30)
-                }
-                self.update_config(final_graph_settings, save_to_disk=False) # Update memory only
-                self.graph_window.close()
-                self.graph_window = None
-
-            # 2. Gather the widget's final position state.
-            if self.config.get("free_move", False):
-                pos = self.pos()
-                self.update_config({"position_x": pos.x(), "position_y": pos.y()}, save_to_disk=False)
-            else:
-                self.update_config({"position_x": None, "position_y": None}, save_to_disk=False)
-            
-            # 3. Perform the single, final save operation.
-            self.logger.info("Performing final configuration save...")
-            self.config_manager.save(self.config)
-
-            self.logger.info("Widget cleanup finished successfully.")
-        except Exception as e:
-            self.logger.error(f"Unexpected error during cleanup: %s", e, exc_info=True)
+        self.logger.info("Widget cleanup finished successfully.")
+    except Exception as e:
+        self.logger.error(f"Unexpected error during cleanup: %s", e, exc_info=True)

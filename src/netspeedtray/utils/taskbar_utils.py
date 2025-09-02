@@ -11,11 +11,13 @@ import ctypes
 from ctypes import wintypes, windll, byref, Structure
 from dataclasses import dataclass
 from typing import Tuple, Optional, List, Any
+import psutil
 
 # Win32 Imports
 import win32gui
 import win32api
 import win32con
+import win32process
 from win32con import (
     MONITOR_DEFAULTTONEAREST, MONITORINFOF_PRIMARY
 )
@@ -31,6 +33,24 @@ logger = logging.getLogger("NetSpeedTray.TaskbarUtils")
 # Caches to improve performance and prevent log spam for invalid handles
 _dpi_cache: dict = {}
 _logged_warnings: set = set()
+
+
+def get_process_name_from_hwnd(hwnd: int) -> Optional[str]:
+    """Gets the executable name of the process that owns the given window handle."""
+    try:
+        if not hwnd or not win32gui.IsWindow(hwnd):
+            return None
+        _, pid = win32process.GetWindowThreadProcessId(hwnd)
+        if pid == 0:
+            return None
+        process = psutil.Process(pid)
+        return process.name().lower()
+    except (psutil.NoSuchProcess, psutil.AccessDenied, win32gui.error):
+        return None # Gracefully handle cases where process info isn't available
+    except Exception as e:
+        logger.error(f"Error getting process name for HWND {hwnd}: {e}")
+        return None
+
 
 # Windows API Structures
 class RECT(ctypes.Structure):
@@ -167,7 +187,7 @@ class TaskbarInfo:
             int(round(work_area_qrect.right() * dpi_scale)) + 1,
             int(round(work_area_qrect.bottom() * dpi_scale)) + 1,
         )
-        logical_height = constants.taskbar.taskbar.DEFAULT_HEIGHT
+        logical_height = constants.taskbar.DEFAULT_HEIGHT
         screen_geo = primary_screen.geometry()
 
         return TaskbarInfo(
@@ -507,64 +527,64 @@ def get_taskbar_height() -> int:
         return constants.taskbar.DEFAULT_HEIGHT
  
           
-def is_taskbar_obstructed(taskbar_info: Optional[TaskbarInfo]) -> bool:
+def is_taskbar_obstructed(taskbar_info: Optional[TaskbarInfo], hwnd_to_check: int) -> bool:
     """
-    Checks if the taskbar is obstructed by a true fullscreen app or an
-    intrusive shell UI element that does not respect the screen's work area.
+    Checks if the taskbar is obstructed by a specific window (hwnd_to_check).
+    This is the definitive, stable, hybrid implementation.
     """
     try:
-        from netspeedtray import constants
-
-        hwnd = win32gui.GetForegroundWindow()
-        if not hwnd or not win32gui.IsWindow(hwnd) or not taskbar_info:
+        if not hwnd_to_check or not win32gui.IsWindow(hwnd_to_check) or not taskbar_info:
             return False
 
-        class_name = win32gui.GetClassName(hwnd)
-        if class_name in ("Progman", "WorkerW"):  # Ignore the Desktop
+        class_name = win32gui.GetClassName(hwnd_to_check)
+        if class_name in ("Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"):
             return False
 
         # --- Context Gathering ---
         try:
-            # Ensure the foreground window is on the same monitor as the taskbar
-            fg_monitor = win32api.MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)
-            tb_monitor = win32api.MonitorFromPoint((taskbar_info.rect[0], taskbar_info.rect[1]), MONITOR_DEFAULTTONEAREST)
+            fg_monitor = win32api.MonitorFromWindow(hwnd_to_check, MONITOR_DEFAULTTONEAREST)
+            tb_monitor = win32api.MonitorFromWindow(taskbar_info.hwnd, MONITOR_DEFAULTTONEAREST)
             if fg_monitor != tb_monitor:
-                return False  # An app on another monitor is not an obstruction
+                return False
 
-            window_rect = win32gui.GetWindowRect(hwnd)
+            window_rect = win32gui.GetWindowRect(hwnd_to_check)
             monitor_info = win32api.GetMonitorInfo(fg_monitor)
             monitor_rect = monitor_info.get('Monitor')
             work_area_rect = monitor_info.get('Work')
             if not monitor_rect or not work_area_rect:
                 return False
         except win32gui.error:
-            # Window might have closed while we were checking it.
             return False
 
-        # --- OBSTRUCTION CHECK 1: True Fullscreen ---
-        # A window is fullscreen if its rectangle is identical to the monitor's rectangle.
+        # --- CHECK 1: True Fullscreen (Games, F11 Browser) ---
         if window_rect == monitor_rect:
             return True
 
-        # --- OBSTRUCTION CHECK 2: Intrusive Shell UI (Geometric Check) ---
-        # Check if the window is a known shell type. We do this first as a quick filter.
-        if class_name in constants.shell.shell.UI_CLASS_NAMES_TO_CHECK:
-            # An intrusive UI element (like the Start Menu) will not be fully contained
-            # within the available work area. A normal app (like Calculator) will be.
+        # --- CHECK 2: Work Area Violation (Start Menu, Task View) ---
+        is_contained = (
+            window_rect[0] >= work_area_rect[0] and
+            window_rect[1] >= work_area_rect[1] and
+            window_rect[2] <= work_area_rect[2] and
+            window_rect[3] <= work_area_rect[3]
+        )
+        if not is_contained:
+            return True
             
-            # Check if the window's rectangle is completely inside the work area
-            is_contained_in_work_area = (
-                window_rect[0] >= work_area_rect[0] and  # Left edge
-                window_rect[1] >= work_area_rect[1] and  # Top edge
-                window_rect[2] <= work_area_rect[2] and  # Right edge
-                window_rect[3] <= work_area_rect[3]      # Bottom edge
-            )
+        # --- CHECK 3: Work Area Fullscreen (Borderless) vs. Maximized Apps ---
+        is_work_area_sized = (
+            window_rect[0] == work_area_rect[0] and
+            window_rect[1] == work_area_rect[1] and
+            window_rect[2] == work_area_rect[2] and
+            window_rect[3] == work_area_rect[3]
+        )
+        if is_work_area_sized:
+            style = win32gui.GetWindowLong(hwnd_to_check, win32con.GWL_STYLE)
+            if style & win32con.WS_MAXIMIZE:
+                return False  # It's a normal maximized app, NOT an obstruction.
+            
+            # It fills the work area but isn't a "maximized" window, so it's a borderless fullscreen app.
+            return True
 
-            # If it's NOT contained, it's an intrusive element like the Start Menu.
-            if not is_contained_in_work_area:
-                return True
-
-        # If it's not fullscreen and it's a normal app respecting the work area, it's not an obstruction.
         return False
 
     except Exception as e:
