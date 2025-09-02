@@ -205,74 +205,101 @@ def persist_app_bandwidth_batch(db_path: Union[str, Path], batch: List[Tuple[int
         raise
 
 
-def get_speed_history(db_path: Union[str, Path], start_time: Optional[datetime] = None, limit: Optional[int] = None,
-                      interfaces: Optional[List[str]] = None, db_lock: threading.Lock = None) -> List[SpeedData]:
+def get_speed_history(db_path: Union[str, Path], start_time: Optional[datetime] = None,
+                      end_time: Optional[datetime] = None, interface_name: Optional[str] = None,
+                      db_lock: threading.Lock = None) -> List[Tuple[datetime, float, float]]:
     """
-    Retrieve speed history from both speed_history and speed_history_aggregated tables.
+    Retrieves speed history with an optimized query strategy based on the time range.
 
-    Combines per-second data (speed_history) with aggregated per-minute data (speed_history_aggregated)
-    using UNION ALL, filtered by start_time, interfaces, and a row limit.
+    - For short time ranges (< 2 days), it queries the high-resolution 'speed_history' table.
+    - For long time ranges (>= 2 days), it combines data from the 'speed_history_aggregated'
+      table for the older period with 'speed_history' for the recent period.
 
     Args:
         db_path: Path to the SQLite database file.
-        start_time: Optional start time to filter records (inclusive).
-        limit: Optional maximum number of records to return.
-        interfaces: Optional list of interfaces to filter by.
+        start_time: The start of the time window. If None, fetches all history.
+        end_time: The end of the time window. Defaults to now.
+        interface_name: The specific interface to query for. If None, aggregates all.
         db_lock: Threading lock for database access.
 
     Returns:
-        List of SpeedData namedtuples (timestamp: datetime, upload: float, download: float, interface: str).
+        A list of tuples, each containing (timestamp, upload_bytes_sec, download_bytes_sec).
     """
+    from datetime import timedelta
+
     logger = logging.getLogger("NetSpeedTray.db_utils")
-    logger.debug("Fetching speed history with start_time=%s, limit=%s, interfaces=%s",
-                 start_time, limit, interfaces)
+    if end_time is None:
+        end_time = datetime.now()
 
-    results: List[SpeedData] = []
-    start_timestamp = int(start_time.timestamp()) if start_time else None
-    interface_filter = " AND interface IN ({})".format(
-        ",".join([f"'{i}'" for i in interfaces]) if interfaces else "'*'"
-    ) if interfaces else ""
+    # Define the threshold where we switch from raw to aggregated data (e.g., 2 days ago)
+    aggregation_cutoff_time = end_time - timedelta(days=2)
 
-    query = f"""
-        SELECT timestamp, upload, download, interface
-        FROM {SPEED_TABLE}
-        WHERE deleted_at IS NULL
-        {interface_filter}
-        {"AND timestamp >= ?" if start_timestamp else ""}
-        UNION ALL
-        SELECT period_end AS timestamp, avg_upload AS upload, avg_download AS download, interface
-        FROM {AGGREGATED_TABLE}
-        WHERE deleted_at IS NULL
-        {interface_filter}
-        {"AND period_end >= ?" if start_timestamp else ""}
-        ORDER BY timestamp DESC
-        {"LIMIT ?" if limit else ""}
-    """
+    # If the user is asking for a period that is entirely within the raw data timeframe,
+    # or if no start time is given (implying 'All', which needs both), we decide the strategy.
+    use_only_raw = start_time and start_time > aggregation_cutoff_time
+
     params = []
-    if start_timestamp:
-        params.append(start_timestamp)
-        params.append(start_timestamp)
-    if limit:
-        params.append(limit)
+    queries = []
+
+    # --- Query for the recent, high-resolution data ---
+    # This part is almost always run, unless the user requests a period ending >2 days ago.
+    if not start_time or end_time > aggregation_cutoff_time:
+        raw_start_time = max(start_time, aggregation_cutoff_time) if start_time else aggregation_cutoff_time
+        
+        raw_query_parts = [
+            f"SELECT timestamp, upload, download FROM {SPEED_TABLE}",
+            "WHERE timestamp >= ?",
+            "AND timestamp <= ?"
+        ]
+        params.extend([raw_start_time.timestamp(), end_time.timestamp()])
+
+        if interface_name:
+            raw_query_parts.append("AND interface = ?")
+            params.append(interface_name)
+        
+        queries.append(" ".join(raw_query_parts))
+
+
+    # --- Query for the older, aggregated data (only for long time ranges) ---
+    if not use_only_raw and (not start_time or start_time < aggregation_cutoff_time):
+        agg_end_time = aggregation_cutoff_time
+        
+        agg_query_parts = [
+            f"SELECT period_end as timestamp, avg_upload as upload, avg_download as download FROM {AGGREGATED_TABLE}",
+            "WHERE period_end <= ?"
+        ]
+        params.append(agg_end_time.timestamp())
+
+        if start_time:
+            agg_query_parts.append("AND period_end >= ?")
+            params.append(start_time.timestamp())
+        
+        if interface_name:
+            agg_query_parts.append("AND interface = ?")
+            params.append(interface_name)
+            
+        queries.append(" ".join(agg_query_parts))
+
+    final_query = " UNION ALL ".join(queries)
+    final_query += " ORDER BY timestamp ASC" # Order ascending for correct plotting
+
+    results = []
+    if not final_query:
+        return results
 
     try:
         with db_lock, sqlite3.connect(db_path, timeout=10) as conn:
             cursor = conn.cursor()
-            cursor.execute(query, params)
-            rows = cursor.fetchall()
+            logger.debug("Executing optimized speed history query with %d params", len(params))
+            cursor.execute(final_query, params)
+            # The direct conversion here is faster than creating namedtuples in a loop
             results = [
-                SpeedData(
-                    timestamp=datetime.fromtimestamp(row[0]),
-                    upload=float(row[1]),
-                    download=float(row[2]),
-                    interface=row[3]
-                )
-                for row in rows
+                (datetime.fromtimestamp(row[0]), float(row[1]), float(row[2]))
+                for row in cursor.fetchall()
             ]
-            logger.debug("Retrieved %d speed history records", len(results))
+            logger.debug("Retrieved %d records with optimized query.", len(results))
     except sqlite3.Error as e:
-        logger.error("Failed to retrieve speed history: %s", e)
-        raise
+        logger.error("Failed to retrieve optimized speed history: %s", e, exc_info=True)
 
     return results
 
