@@ -17,8 +17,8 @@ from typing import Dict, List, Optional, Tuple, Any
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
-from PyQt6.QtCore import Qt, QPoint, QTimer
-from PyQt6.QtGui import QResizeEvent, QCloseEvent, QIcon
+from PyQt6.QtCore import Qt, QPoint, QTimer, QEvent
+from PyQt6.QtGui import QResizeEvent, QCloseEvent, QIcon, QShowEvent
 from PyQt6.QtWidgets import (
     QApplication, QComboBox, QDialog, QFileDialog, QGridLayout, QGroupBox,
     QHBoxLayout, QLabel, QMessageBox, QProgressBar, QPushButton,
@@ -39,75 +39,78 @@ class GraphWindow(QWidget):
     (Docstring remains largely the same as provided)
     """
 
+
     def __init__(self, parent=None, logger=None, i18n=None, session_start_time: Optional[datetime] = None):
-            """ Initialize the GraphWindow with its UI components. """
-            super().__init__()
-            self._parent = parent
-            self.logger = logger or logging.getLogger(__name__)
-            if i18n is not None:
-                self.i18n = i18n
-            elif parent is not None and hasattr(parent, 'i18n'):
-                self.i18n = parent.i18n
+        """ Initialize the GraphWindow with its UI components. """
+        super().__init__()
+        self._parent = parent
+        self.logger = logger or logging.getLogger(__name__)
+        if i18n is not None:
+            self.i18n = i18n
+        elif parent is not None and hasattr(parent, 'i18n'):
+            self.i18n = parent.i18n
+        else:
+            self.i18n = None
+        self._is_closing = False
+        self._initial_load_done = False
+
+        # --- State variables that are ALWAYS available ---
+        # These will hold the current state, independent of whether the UI widgets exist.
+        self._is_dark_mode = self._parent.config.get("dark_mode", False) if self._parent else False
+        self._is_live_update_enabled = True # Default to on
+        self._history_period_value = self._parent.config.get('history_period_slider_value', 0) if self._parent else 0
+        self._graph_data_cache: List[Tuple[datetime, float, float]] = []
+
+        self._current_data = None
+        self._last_stats_update = time.monotonic()
+        self._stats_update_interval = constants.graph.STATS_UPDATE_INTERVAL
+        self._cached_stats = {}
+
+        # The graph window now uses the time passed from its parent, with a fallback.
+        self.session_start_time = session_start_time or datetime.now()
+
+        # Setup timers
+        self._realtime_timer = QTimer(self)
+        self._update_timer = QTimer(self)
+        self._db_size_update_timer = QTimer(self)
+        self._db_size_update_timer.timeout.connect(self._update_db_size)
+
+        # Setup UI
+        self.setupUi(self)
+        self.setWindowTitle(constants.graph.WINDOW_TITLE)
+
+        # Set window icon
+        try:
+            icon_filename = getattr(constants.app, 'ICON_FILENAME', 'NetSpeedTray.ico')
+            icon_path = helpers.get_app_asset_path(icon_filename)
+            if icon_path.exists():
+                self.setWindowIcon(QIcon(str(icon_path)))
             else:
-                self.i18n = None
-            self._is_closing = False
-            self._current_data = None
-            self._last_stats_update = time.monotonic()
-            self._stats_update_interval = constants.graph.STATS_UPDATE_INTERVAL
-            self._cached_stats = {}
+                self.logger.warning(f"Icon file not found at {icon_path}")
+        except Exception as e:
+            self.logger.error(f"Error setting window icon: {e}", exc_info=True)
 
-            # The graph window now uses the time passed from its parent, with a fallback.
-            self.session_start_time = session_start_time or datetime.now()
+        # Initialize matplotlib components first
+        self._init_matplotlib()
 
-            # Setup timers
-            self._realtime_timer = QTimer(self)
-            self._update_timer = QTimer(self)
-            self._db_size_update_timer = QTimer(self)
-            self._db_size_update_timer.timeout.connect(self._update_db_size)
-            
-            # Setup UI
-            self.setupUi(self)
-            self.setWindowTitle(constants.graph.WINDOW_TITLE)
+        # Initialize overlay elements
+        self._init_overlay_elements()
 
-            # Set window icon
-            try:
-                icon_filename = getattr(constants.app, 'ICON_FILENAME', 'NetSpeedTray.ico')
-                icon_path = helpers.get_app_asset_path(icon_filename)
-                if icon_path.exists():
-                    self.setWindowIcon(QIcon(str(icon_path)))
-                else:
-                    self.logger.warning(f"Icon file not found at {icon_path}")
-            except Exception as e:
-                self.logger.error(f"Error setting window icon: {e}", exc_info=True)
-            
-            # Initialize matplotlib components first
-            self._init_matplotlib()
-            
-            # Initialize overlay elements
-            self._init_overlay_elements()
-            
-            # Initialize settings panel
-            self._init_settings_panel()
+        if hasattr(self, 'graph_layout') and self.stats_bar and self.canvas:
+            self.graph_layout.addWidget(self.stats_bar)
+            self.graph_layout.addWidget(self.canvas)
 
-            if hasattr(self, 'graph_layout') and self.stats_bar and self.canvas:
-                # Add the stats bar to the top row. It will take its preferred height.
-                self.graph_layout.addWidget(self.stats_bar)
-                # Add the canvas to the second row. It will stretch to fill the rest of the space.
-                self.graph_layout.addWidget(self.canvas)
-            
-            # Apply initial theme
-            initial_dark_mode = self._parent.config.get("dark_mode", False) if self._parent else False
-            self.toggle_dark_mode(initial_dark_mode)
-            
-            # Connect signals
-            self._connect_signals()
-            
-            # Initial update
-            self._perform_initial_update()
+        # Apply initial theme USING the new state variable
+        self.toggle_dark_mode(self._is_dark_mode)
 
-            # Start the live update timer by default
-            self.toggle_live_update(True)
-    
+        # Connect signals that DON'T depend on the settings panel
+        self._connect_signals()
+
+        # Start the live update timer if it's enabled by default
+        if self._is_live_update_enabled:
+            self._realtime_timer.start(constants.graph.REALTIME_UPDATE_INTERVAL_MS)
+
+
     def setupUi(self, parent=None):
         """Constructs the main layout and widgets for the GraphWindow (manual, not Qt Designer)."""
         # Main vertical layout
@@ -146,6 +149,7 @@ class GraphWindow(QWidget):
         self.ax = None
 
         # Placeholders for settings panel, set in _init_settings_panel
+        self.interface_filter = None
         self.settings_widget = None
         self.history_period_label = None
         self.keep_data_label = None
@@ -205,7 +209,7 @@ class GraphWindow(QWidget):
         except Exception as e:
             self.logger.error(f"Error initializing matplotlib: {e}", exc_info=True)
 
-    
+
     def _init_overlay_elements(self):
         """ Initialize stats bar and hamburger menu """
         try:
@@ -260,158 +264,183 @@ class GraphWindow(QWidget):
 
 
     def _toggle_settings_panel_visibility(self):
-        """Show or hide the settings panel, expanding to the right without resizing the graph or moving the hamburger icon."""
-        if not self.settings_widget:
-            return
-
+        """
+        Shows or hides the settings panel with a smooth animation by deferring widget creation.
+        """
         try:
-            # Store original window and graph widget sizes before any changes
+            # On first click, create the settings panel but defer populating it.
+            if self.settings_widget is None:
+                self.logger.debug("First use: Creating settings panel shell.")
+                # Create the main container widget so it can be positioned and shown
+                self.settings_widget = QWidget(self)
+                self.settings_widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+                self.settings_widget.setStyleSheet("background-color: #2c2c2c; border-radius: 8px;")
+                self.settings_widget.hide()
+
+                # Schedule the heavy work (creating sliders, etc.) to happen AFTER
+                # the panel has had a chance to animate into view.
+                QTimer.singleShot(100, self._populate_settings_panel)
+
             if not hasattr(self, '_original_window_size'):
                 self._original_window_size = self.geometry().size()
                 self._original_graph_size = self.graph_widget.size()
 
             if self.settings_widget.isVisible():
                 self.settings_widget.hide()
-                # Restore original window and graph widget sizes
                 self.resize(self._original_window_size)
                 self.graph_widget.setFixedSize(self._original_graph_size)
-                self._reposition_overlay_elements()  # Adjust stats bar
-                self.logger.debug("Settings panel hidden, window and graph sizes restored")
+                self._reposition_overlay_elements()
+                self.logger.debug("Settings panel hidden.")
                 return
 
-            # Fix graph widget size to prevent resizing
+            # --- Show and Animate the Panel ---
             self.graph_widget.setFixedSize(self._original_graph_size)
 
-            # Get hamburger icon's global position (right edge)
             hamburger_right_global = self.hamburger_icon.mapToGlobal(QPoint(self.hamburger_icon.width(), 0))
-            # Convert to window coordinates
             hamburger_right_window = self.mapFromGlobal(hamburger_right_global)
 
-            # Set panel position to the right of the hamburger icon with a small gap
             panel_x = hamburger_right_window.x() + 8
-            panel_y = hamburger_right_window.y()
-
-            # Set fixed size for the settings panel - increased width to accommodate sliders
+            panel_y = constants.graph.SETTINGS_PANEL_Y_OFFSET
+            
             panel_width = 300
             panel_height = self._original_graph_size.height()
             self.settings_widget.setFixedSize(panel_width, panel_height)
 
-            # Ensure window is wide enough to accommodate the panel
             window_geometry = self.geometry()
-            required_width = panel_x + panel_width + 16  # 16px padding on the right
+            required_width = panel_x + panel_width + 16
             if window_geometry.width() < required_width:
                 self.resize(required_width, window_geometry.height())
 
-            # Move and show the settings panel
             self.settings_widget.move(panel_x, panel_y)
             self.settings_widget.raise_()
             self.settings_widget.show()
-            self.logger.debug(f"Settings panel positioned at ({panel_x}, {panel_y})")
+            self.logger.debug(f"Settings panel shown at ({panel_x}, {panel_y}). Population deferred.")
         except Exception as e:
-            self.logger.error(f"Error positioning settings panel: {e}", exc_info=True)
+            self.logger.error(f"Error in _toggle_settings_panel_visibility: {e}", exc_info=True)
+
+
+    def _populate_settings_panel(self):
+        """
+        Creates and lays out the widgets inside the settings panel.
+        This is called by a QTimer to avoid blocking the UI on first open.
+        """
+        if not self.settings_widget:
+            self.logger.error("Attempted to populate a non-existent settings panel.")
+            return
+            
+        self.logger.debug("Populating settings panel widgets.")
+        try:
+            self._init_settings_panel() # This now contains the widget creation logic
+            self._connect_settings_signals()
+            self._populate_interface_filter()
+            # Ensure the populated widget is visible if the panel is still open
+            if self.settings_widget.isVisible():
+                self.settings_widget.show()
+        except Exception as e:
+            self.logger.error(f"Error populating settings panel: {e}", exc_info=True)
 
 
     def _init_settings_panel(self):
-        """Initialize settings panel widgets with a fixed dark theme."""
-        from netspeedtray.utils.styles import always_dark_panel_style
+        """Initializes the widgets within the settings panel container."""
         from netspeedtray.utils.components import Win11Slider, Win11Toggle
+        from netspeedtray.utils.helpers import get_app_asset_path
+        from PyQt6.QtWidgets import QSlider
 
-        panel_styles = always_dark_panel_style()
-        explicit_label_style = (
-            f"color: {constants.styles.SETTINGS_PANEL_TEXT_DARK}; "
-            "background-color: transparent; border: none; outline: none; "
-            "padding: 0px; margin: 0px; font-size: 13px; font-family: 'Segoe UI Variable';"
-        )
-        PANEL_TEXT_COLOR_FOR_SLIDER_VALUES = constants.styles.GRAPH_TEXT_DARK
+        PANEL_BACKGROUND_COLOR = "#2c2c2c"
+        PANEL_TEXT_COLOR = "#ffffff"
 
-        self.settings_widget = QWidget(self)
-        self.settings_widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.settings_widget.setStyleSheet(
-            f"QWidget {{ background-color: {constants.styles.GRAPH_BG_DARK}; border: none; outline: none; }}"
-        )
+        # Important: The background style is now set on the container. We only define child styles here.
+        self.settings_widget.setStyleSheet(f"""
+            QWidget {{ background-color: {PANEL_BACKGROUND_COLOR}; }}
+            QLabel {{ color: #dddddd; background-color: transparent; font-size: 13px; }}
+            QComboBox {{
+                background-color: #3c3c3c; border: 1px solid #555555;
+                border-radius: 4px; padding: 4px 8px; color: {PANEL_TEXT_COLOR};
+            }}
+            QComboBox::drop-down {{ border: none; }}
+            QGroupBox {{
+                background-color: {PANEL_BACKGROUND_COLOR}; border-radius: 8px; margin-top: 10px;
+            }}
+            QGroupBox::title {{
+                subcontrol-origin: margin; subcontrol-position: top left;
+                padding-left: 10px; padding-top: 2px;
+                font-family: 'Segoe UI Variable'; font-size: 15px;
+                font-weight: 600; color: {PANEL_TEXT_COLOR};
+            }}
+        """)
 
+        # This method now populates the existing self.settings_widget
         settings_main_layout = QVBoxLayout(self.settings_widget)
-        settings_main_layout.setContentsMargins(12, 12, 12, 12)
+        settings_main_layout.setContentsMargins(12, 0, 12, 12)
         settings_main_layout.setSpacing(15)
         self.settings_widget.setLayout(settings_main_layout)
 
-        group_box = QGroupBox(self.settings_widget)
-        group_box.setTitle(getattr(self.i18n, 'GRAPH_SETTINGS_LABEL', 'Graph Settings'))
-        group_box.setStyleSheet(panel_styles.get("QGroupBox_PanelDark"))
+        group_box = QGroupBox(getattr(self.i18n, 'GRAPH_SETTINGS_LABEL', 'Graph Settings'))
         
         group_content_layout = QGridLayout(group_box)
-        group_content_layout.setVerticalSpacing(10)
-        group_content_layout.setHorizontalSpacing(8)
-        group_content_layout.setContentsMargins(10, 15, 10, 10)
+        group_content_layout.setVerticalSpacing(15)
+        group_content_layout.setHorizontalSpacing(10)
+        group_content_layout.setContentsMargins(15, 25, 15, 15)
 
         current_row = 0
 
-        # --- Interface Filter ---
         interface_label = QLabel(self.i18n.INTERFACE_LABEL)
-        interface_label.setStyleSheet(explicit_label_style)
         self.interface_filter = QComboBox()
-        self.interface_filter.setStyleSheet(panel_styles.get("QComboBox_PanelDark"))
-        # Use the i18n string for display and a fixed key 'all' for logic
         self.interface_filter.addItem(self.i18n.ALL_INTERFACES_AGGREGATED_LABEL, "all")
-
         group_content_layout.addWidget(interface_label, current_row, 0, 1, 2)
         current_row += 1
         group_content_layout.addWidget(self.interface_filter, current_row, 0, 1, 2)
         current_row += 1
 
-        # --- History period Slider ---
         self.history_period_label = QLabel(getattr(self.i18n, 'HISTORY_PERIOD_LABEL_NO_VALUE', 'Timeline'))
-        self.history_period_label.setStyleSheet(explicit_label_style)
-
-        current_history_period_str = self._parent.config.get('history_period', constants.data.history_period.DEFAULT_PERIOD)
-        initial_history_slider_val = self._parent.config.get('history_period_slider_value', 
-            next((k for k, v in constants.data.history_period.PERIOD_MAP.items() if v == current_history_period_str), 0))
-        self.history_period = Win11Slider(
-            min_value=0, max_value=len(constants.data.history_period.PERIOD_MAP) - 1,
-            value=initial_history_slider_val, page_step=1, has_ticks=True, parent=group_box,
-            value_label_text_color=PANEL_TEXT_COLOR_FOR_SLIDER_VALUES
-        )
+        self.history_period = Win11Slider(value=self._history_period_value, parent=group_box)
+        
+        if hasattr(self.history_period, 'slider'):
+            num_periods = len(constants.data.history_period.PERIOD_MAP)
+            self.history_period.slider.setMinimum(0)
+            self.history_period.slider.setMaximum(num_periods - 1)
+            self.history_period.slider.setSingleStep(1)
+            self.history_period.slider.setPageStep(1)
+            self.history_period.slider.setTickInterval(1)
+            self.history_period.slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        
         group_content_layout.addWidget(self.history_period_label, current_row, 0, 1, 2)
         current_row += 1
         group_content_layout.addWidget(self.history_period, current_row, 0, 1, 2)
         current_row += 1
 
-        # --- Data Retention Slider ---
         self.keep_data_label = QLabel(getattr(self.i18n, 'DATA_RETENTION_LABEL_NO_VALUE', 'Data Retention'))
-        self.keep_data_label.setStyleSheet(explicit_label_style)
-
-        config_days = self._parent.config.get("keep_data", constants.config.defaults.DEFAULT_HISTORY_PERIOD_DAYS)
+        config_days = self._parent.config.get("keep_data", 30)
         initial_slider_value = self._days_to_slider_value(config_days)
-        self.keep_data = Win11Slider(
-            min_value=0, max_value=len(constants.data.retention.DAYS_MAP) - 1,
-            value=initial_slider_value, page_step=1, has_ticks=True, parent=group_box,
-            value_label_text_color=PANEL_TEXT_COLOR_FOR_SLIDER_VALUES
-        )
+        self.keep_data = Win11Slider(value=initial_slider_value, parent=group_box)
+        
+        if hasattr(self.keep_data, 'slider'):
+            num_retention_opts = len(constants.data.retention.DAYS_MAP)
+            self.keep_data.slider.setMinimum(0)
+            self.keep_data.slider.setMaximum(num_retention_opts - 1)
+            self.keep_data.slider.setSingleStep(1)
+            self.keep_data.slider.setPageStep(1)
+            self.keep_data.slider.setTickInterval(1)
+            self.keep_data.slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+
         group_content_layout.addWidget(self.keep_data_label, current_row, 0, 1, 2)
         current_row += 1
         group_content_layout.addWidget(self.keep_data, current_row, 0, 1, 2)
         current_row += 1
 
-        # --- Toggles ---
         dm_label = QLabel(getattr(self.i18n, 'DARK_MODE_LABEL', 'Dark Mode'))
-        dm_label.setStyleSheet(explicit_label_style)
-        self.dark_mode = Win11Toggle(
-            initial_state=self._parent.config.get('dark_mode', constants.config.defaults.DEFAULT_DARK_MODE),
-            parent=group_box
-        )
+        self.dark_mode = Win11Toggle(initial_state=self._is_dark_mode, parent=group_box)
         group_content_layout.addWidget(dm_label, current_row, 0)
         group_content_layout.addWidget(self.dark_mode, current_row, 1, Qt.AlignmentFlag.AlignLeft)
         current_row += 1
         
         lu_label = QLabel(getattr(self.i18n, 'LIVE_UPDATE_LABEL', 'Live Update'))
-        lu_label.setStyleSheet(explicit_label_style)
-        self.realtime = Win11Toggle(initial_state=True, parent=group_box)
+        self.realtime = Win11Toggle(initial_state=self._is_live_update_enabled, parent=group_box)
         group_content_layout.addWidget(lu_label, current_row, 0)
         group_content_layout.addWidget(self.realtime, current_row, 1, Qt.AlignmentFlag.AlignLeft)
 
         settings_main_layout.addWidget(group_box)
         settings_main_layout.addStretch(1)
-        self.settings_widget.hide()
 
 
     def _populate_interface_filter(self) -> None:
@@ -419,6 +448,11 @@ class GraphWindow(QWidget):
         Fetches the list of distinct interfaces from the database and populates
         the interface filter QComboBox.
         """
+        # If the settings panel hasn't been created yet, do nothing.
+        if self.interface_filter is None:
+            self.logger.debug("Settings panel not yet initialized; skipping interface filter population.")
+            return
+
         self.logger.debug("Populating interface filter...")
         try:
             if not self._parent or not hasattr(self._parent, 'widget_state'):
@@ -504,7 +538,7 @@ class GraphWindow(QWidget):
         import psutil
 
         now = datetime.now()
-        period_value = self.history_period.value()
+        period_value = self._history_period_value
         # Get the non-translated KEY from the map
         period_key = constants.data.history_period.PERIOD_MAP.get(period_value, constants.data.history_period.DEFAULT_PERIOD)
         
@@ -526,7 +560,6 @@ class GraphWindow(QWidget):
             start_time = now - timedelta(weeks=1)
         elif period_key == "TIMELINE_MONTH":
             start_time = now - timedelta(days=30)
-        # Note: "TIMELINE_ALL" correctly results in start_time = None
         
         return start_time, now
 
@@ -537,14 +570,15 @@ class GraphWindow(QWidget):
         history period update logic, which respects the initial slider state.
         """
         try:
-            if hasattr(self, 'history_period'):
-                self.update_history_period(self.history_period.value(), initial_setup=True)
+            # The history_period widget may not exist, so use the state variable
+            self.update_history_period(self._history_period_value, initial_setup=True)
 
             self._reposition_overlay_elements()
             if hasattr(self, 'canvas'):
                 self.canvas.draw()
         except Exception as e:
             self.logger.error(f"Error in initial update: {e}", exc_info=True)
+
 
     def _position_window(self) -> None:
         """Position the window centered on the primary screen or to saved position."""
@@ -609,7 +643,7 @@ class GraphWindow(QWidget):
             self.upload_line.set_data([],[])
             self.download_line.set_data([],[])
 
-            is_dark = self.dark_mode.isChecked()
+            is_dark = self._is_dark_mode
             facecolor = constants.styles.GRAPH_BG_DARK if is_dark else constants.styles.GRAPH_BG_LIGHT
             
             # Use red for errors, and standard theme text color for info messages
@@ -691,16 +725,18 @@ class GraphWindow(QWidget):
         """
         if self._is_closing: return
         try:
-            is_dark = checked
+            self._is_dark_mode = checked # Update state variable FIRST
+            is_dark = self._is_dark_mode
             self.logger.debug(f"Applying graph dark mode theme: {is_dark}")
 
-            if self.dark_mode.isChecked() != is_dark: # Sync toggle if called programmatically
+            # Sync the toggle widget ONLY if it has been created
+            if self.dark_mode and self.dark_mode.isChecked() != is_dark:
                 self.dark_mode.blockSignals(True)
-                self.dark_mode.setChecked(is_dark) # This refers to the Win11Toggle for the *graph's* dark mode
+                self.dark_mode.setChecked(is_dark)
                 self.dark_mode.blockSignals(False)
 
             if self._parent and hasattr(self._parent, "config_manager"):
-                self._parent.config["dark_mode"] = is_dark # This is the main graph dark mode setting
+                self._parent.config["dark_mode"] = is_dark
                 self._parent.config_manager.save(self._parent.config)
 
             # Hamburger icon - keep consistent dark background style regardless of theme
@@ -718,12 +754,12 @@ class GraphWindow(QWidget):
                 QPushButton:pressed {
                     background-color: rgba(0, 0, 0, 1.0);
                 }
-            """) # Make sure this is the full intended style from your original working code
+            """)
 
-            # Matplotlib Graph Theme (This is the main purpose of this method)
+            # Matplotlib Graph Theme
             if not hasattr(self, 'figure') or not hasattr(self, 'ax') or not hasattr(self, 'canvas'):
                 self.logger.error("Graph components not initialized for dark mode toggle")
-                return # Added return to prevent further errors if components missing
+                return
 
             graph_bg = constants.styles.GRAPH_BG_DARK if is_dark else constants.styles.GRAPH_BG_LIGHT
             text_color = constants.styles.DARK_MODE_TEXT_COLOR if is_dark else constants.styles.LIGHT_MODE_TEXT_COLOR
@@ -733,67 +769,61 @@ class GraphWindow(QWidget):
             self.ax.set_facecolor(graph_bg)
             self.ax.xaxis.label.set_color(text_color)
             self.ax.yaxis.label.set_color(text_color)
-            self.ax.tick_params(colors=text_color) # Styles tick numbers and lines
+            self.ax.tick_params(colors=text_color)
             
-            # Grid styling
             self.ax.grid(True, linestyle=constants.graph.GRID_LINESTYLE, alpha=constants.graph.GRID_ALPHA, color=grid_color)
             
-            # Spines (axis borders) styling
             for spine in self.ax.spines.values(): 
-                spine.set_color(grid_color) # Use grid_color or text_color as appropriate for spines
+                spine.set_color(grid_color)
             
-            # Legend styling
             if self.ax.get_legend():
                 leg = self.ax.get_legend()
                 for text_obj in leg.get_texts():
                     text_obj.set_color(text_color)
                 leg.get_frame().set_facecolor(graph_bg)
-                leg.get_frame().set_edgecolor(grid_color) # Or a specific legend border color
+                leg.get_frame().set_edgecolor(grid_color)
             
-            # The code block that was causing the error:
-            # Ensure this draw_idle is properly handled. The original code had it inside another try/except for e_mpl.
-            # Let's assume for now it's part of the main try block of this method.
-            # The earlier `return` if components are missing should protect this.
-            # self.canvas.draw_idle() # This line was the one without a proper try/except structure previously.
-                                    # Now it's part of the main try.
-
             # Overlay Elements for the main graph
             self.stats_bar.setStyleSheet(constants.styles.STATS_DARK_STYLE if is_dark else constants.styles.STATS_LIGHT_STYLE)
             self.stats_bar.raise_()
-            self.hamburger_icon.raise_() # Ensure it's on top after potential redraws
-            self._reposition_overlay_elements() # Reposition after theme changes might affect sizes
+            self.hamburger_icon.raise_()
+            self._reposition_overlay_elements()
 
             # Redraw canvas for main graph changes
-            # It's generally good practice to have draw_idle in a try-except if it can fail.
             try:
                 self.canvas.draw_idle()
             except Exception as e_draw_idle:
                 self.logger.error(f"Error during canvas.draw_idle() in toggle_dark_mode: {e_draw_idle}", exc_info=True)
                 try:
-                    self.canvas.draw() # Fallback to draw() if draw_idle() fails
+                    self.canvas.draw()
                 except Exception as e_draw_fallback:
                     self.logger.error(f"Error during canvas.draw() fallback in toggle_dark_mode: {e_draw_fallback}", exc_info=True)
 
 
-        except Exception as e: # This is the main try's except
+        except Exception as e:
             self.logger.error(f"Error in toggle_dark_mode: {e}", exc_info=True)
 
 
     def _connect_signals(self):
         """Connect all relevant signals for UI interactivity."""
         self._realtime_timer.timeout.connect(self._update_realtime)
+        # All other signal connections are moved to _connect_settings_signals
+
+
+    def _connect_settings_signals(self):
+        """Connect signals for the settings panel after it has been created."""
         if hasattr(self, 'dark_mode') and self.dark_mode:
             self.dark_mode.toggled.connect(self.toggle_dark_mode)
         if hasattr(self, 'realtime') and self.realtime:
             self.realtime.toggled.connect(self.toggle_live_update)
-        
+
         if hasattr(self, 'interface_filter') and self.interface_filter:
             self.interface_filter.currentTextChanged.connect(self._on_interface_filter_changed)
 
         if hasattr(self, 'history_period') and self.history_period:
             self.history_period.sliderReleased.connect(self._on_history_slider_released)
             self.history_period.valueChanged.connect(self._update_history_period_text)
-        
+
         if hasattr(self, 'keep_data') and self.keep_data:
             self.keep_data.sliderReleased.connect(self._on_retention_changed)
             self.keep_data.valueChanged.connect(self._update_keep_data_text)
@@ -805,13 +835,48 @@ class GraphWindow(QWidget):
             self._update_keep_data_text(self.keep_data.value())
 
 
+    def _pause_realtime_updates(self) -> None:
+        """Stops the real-time timer to prevent UI lag during interactions."""
+        if self._realtime_timer.isActive():
+            self.logger.debug("Pausing real-time graph updates for UI interaction.")
+            self._realtime_timer.stop()
+
+
+    def eventFilter(self, watched: object, event: QEvent) -> bool:
+        """
+        Intercepts events from watched objects. We use this to detect when the
+        interface dropdown's popup is shown or hidden, to pause background updates.
+        """
+        # We only care about events from the combo box's popup widget.
+        if watched == self.interface_filter.view().parent():
+            if event.type() == QEvent.Type.Show:
+                # The popup is about to be shown, so pause the timer.
+                self._pause_realtime_updates()
+            elif event.type() == QEvent.Type.Hide:
+                # The popup has been hidden, so resume the timer.
+                self._resume_realtime_updates()
+        
+        # Pass the event on to the parent class for default processing.
+        return super().eventFilter(watched, event)
+
+
+    def _resume_realtime_updates(self) -> None:
+        """Resumes the real-time timer after a UI interaction is complete."""
+        # Only restart the timer if the user still has "Live Update" enabled.
+        if self.realtime.isChecked() and not self._realtime_timer.isActive():
+            self.logger.debug("Resuming real-time graph updates.")
+            self._realtime_timer.start(constants.graph.REALTIME_UPDATE_INTERVAL_MS)
+
+
     def _on_history_slider_released(self) -> None:
         """
         Handles the timeline slider release event. This triggers an immediate graph
         update and notifies the parent to save the new setting for persistence.
         """
+
         # Get the current value from the slider
         current_value = self.history_period.value()
+        self._history_period_value = current_value # UPDATE STATE VARIABLE
 
         # 1. Trigger the graph to update itself with the new time period.
         self.update_history_period(current_value)
@@ -840,6 +905,25 @@ class GraphWindow(QWidget):
                 self.logger.error(f"Failed to save config after slider value change for {config_key}: {e}")
         else:
             self.logger.warning(f"Cannot save slider value for {config_key}: parent or config components missing.")
+
+
+    def showEvent(self, event: QShowEvent) -> None:
+        """
+        Override the show event to trigger the initial data load after the window
+        is visible, preventing UI blocking on startup.
+        """
+        super().showEvent(event)
+        if not self._initial_load_done:
+            self._initial_load_done = True
+            # Display a "collecting data" message immediately for better UX
+            self._show_graph_message(
+                getattr(self.i18n, 'COLLECTING_DATA_MESSAGE', "Collecting data..."),
+                is_error=False
+            )
+            # Schedule the actual data fetch and graph update.
+            # A 50ms delay gives the UI time to fully paint itself.
+            QTimer.singleShot(50, self._perform_initial_update)
+            self.logger.debug("Scheduled initial graph update after window became visible.")
 
 
     def resizeEvent(self, event: Optional[QResizeEvent]) -> None:
@@ -874,9 +958,9 @@ class GraphWindow(QWidget):
     def toggle_live_update(self, checked: bool) -> None:
         """ Starts or stops the real-time update timer. """
         if self._is_closing: return
+        self._is_live_update_enabled = checked # Update state variable
         try:
-            if checked:
-                # The timer is now connected in __init__, so we just need to start it.
+            if self._is_live_update_enabled:
                 self._realtime_timer.start(constants.graph.REALTIME_UPDATE_INTERVAL_MS)
                 self.logger.info("Live updates enabled.")
             else:
@@ -886,11 +970,12 @@ class GraphWindow(QWidget):
         except Exception as e:
             self.logger.error(f"Error toggling live update: {e}", exc_info=True)
 
+
     def _update_realtime(self) -> None:
-        """ Slot for _realtime_timer. Fetches latest data and updates the active view. """
-        if self._is_closing or not self.isVisible() or not self.realtime.isChecked():
-            if not self.realtime.isChecked() and self._realtime_timer.isActive():
-                self._realtime_timer.stop()
+        """
+        Slot for _realtime_timer. Triggers a live, incremental graph update.
+        """
+        if not self.isActiveWindow() or self._is_closing or not self.isVisible() or not self._is_live_update_enabled:
             return
         
         try:
@@ -898,11 +983,12 @@ class GraphWindow(QWidget):
                 self.logger.warning("Parent or widget_state missing for real-time update.")
                 return
             
-            current_slider_value = self.history_period.value()
-            self.update_history_period(current_slider_value)
+            # Call perform_graph_update with the live_update flag
+            self._perform_graph_update(live_update=True)
 
         except Exception as e:
             self.logger.error(f"Error in real-time update: {e}", exc_info=True)
+
 
     def _update_history_period_text(self, value: int) -> None:
         """Update the history period slider's value text.
@@ -927,15 +1013,16 @@ class GraphWindow(QWidget):
         except Exception as e:
             self.logger.error(f"Error updating history period text: {e}", exc_info=True)
 
+
     def update_history_period(self, value: int, initial_setup: bool = False) -> None:
         """Triggers a graph update based on the selected history period."""
         if self._is_closing:
             return
         try:
-            start_time, end_time = self._get_time_range_from_ui()
-            # We call the throttled update_graph, which will then call _perform_graph_update
-            self.update_graph(xlim=(start_time, end_time))
-            self.logger.debug("History period update triggered.")
+            # We no longer need to pass the time range directly. The update_graph
+            # will trigger _perform_graph_update, which now gets the time range itself.
+            self.update_graph()
+            self.logger.debug("History period update triggered for a full refresh.")
         except Exception as e:
             self.logger.error(f"Error updating history period: {e}", exc_info=True)
 
@@ -1041,7 +1128,7 @@ class GraphWindow(QWidget):
                 # If just closing the window, save its state immediately and hide it.
                 final_graph_settings = {
                     "graph_window_pos": {"x": self.pos().x(), "y": self.pos().y()},
-                    "history_period_slider_value": self.history_period.value()
+                    "history_period_slider_value": self._history_period_value
                 }
                 self._notify_parent_of_setting_change(final_graph_settings)
                 self.logger.debug("Hiding graph window instead of closing.")
@@ -1138,9 +1225,9 @@ class GraphWindow(QWidget):
         return 3
 
 
-    def update_graph(self, history_data: Optional[List] = None, xlim: Optional[Tuple[datetime, datetime]] = None) -> None:
+    def update_graph(self) -> None:
         """
-        Schedules a throttled update for the graph. It only passes the time range.
+        Schedules a throttled, full-refresh update for the graph.
         """
         if self._is_closing:
             return
@@ -1151,7 +1238,8 @@ class GraphWindow(QWidget):
         self._graph_update_pending = True
         self._update_timer.singleShot(
             constants.graph.GRAPH_UPDATE_THROTTLE_MS,
-            lambda: self._perform_graph_update(xlim=xlim)
+            # Call _perform_graph_update without any arguments for a full refresh
+            lambda: self._perform_graph_update(live_update=False)
         )
 
 
@@ -1223,10 +1311,14 @@ class GraphWindow(QWidget):
         return nice_top * power
 
 
-    def _perform_graph_update(self, xlim: Optional[Tuple[datetime, datetime]] = None) -> None:
+    def _perform_graph_update(self, live_update: bool = False) -> None:
         """
-        Performs the actual rendering of the graph by fetching data for the
-        currently selected interface and time period.
+        Performs the actual rendering of the graph.
+
+        Has two modes:
+        - Full Refresh (live_update=False): Fetches, downsamples, and caches all data for the period.
+        - Live Update (live_update=True): Fetches only new data since the last poll,
+        appends it to the cache, and trims old data.
         """
         self._graph_update_pending = False
         if self._is_closing or not self.isVisible():
@@ -1235,71 +1327,91 @@ class GraphWindow(QWidget):
         try:
             import numpy as np
             import matplotlib.dates as mdates
-            from matplotlib.colors import SymLogNorm
             from matplotlib.ticker import AutoLocator, ScalarFormatter, FixedLocator
 
             if not self._parent or not self._parent.widget_state:
                 self._show_graph_error(self.i18n.DATA_SOURCE_UNAVAILABLE_ERROR)
                 return
 
-            period_key = constants.data.history_period.PERIOD_MAP.get(self.history_period.value(), "")
-            is_session_view = (period_key == "TIMELINE_SESSION")
-            history_data = []
+            period_key = constants.data.history_period.PERIOD_MAP.get(self._history_period_value, "")
+            is_session_view = period_key == "TIMELINE_SESSION"
+            
+            if live_update and self._graph_data_cache and not is_session_view:
+                # --- LIVE UPDATE PATH ---
+                last_timestamp = self._graph_data_cache[-1][0]
+                
+                interface_to_query = None
+                if self.interface_filter:
+                    selected_interface_key = self.interface_filter.currentData()
+                    interface_to_query = None if selected_interface_key == "all" else selected_interface_key
 
-            # process per-interface live data
-            selected_interface_key = self.interface_filter.currentData()
-            interface_to_query = None if selected_interface_key == "all" else selected_interface_key
-
-            if is_session_view:
-                # The "Session" view uses the live, in-memory data source.
-                mem_history = self._parent.widget_state.get_in_memory_speed_history()
-
-                # Process the new snapshot structure to filter data for the selected interface.
-                processed_history = []
-                for snapshot in mem_history:
-                    if interface_to_query is None:  # "All (Aggregated)" view
-                        total_upload = sum(up for up, down in snapshot.speeds.values())
-                        total_download = sum(down for up, down in snapshot.speeds.values())
-                        processed_history.append((snapshot.timestamp, total_upload, total_download))
-                    else:  # A specific interface is selected
-                        up_speed, down_speed = snapshot.speeds.get(interface_to_query, (0.0, 0.0))
-                        processed_history.append((snapshot.timestamp, up_speed, down_speed))
-                history_data = processed_history
-
-            else:
-                # All other views (Uptime, 3 Hours, etc.) query the database directly.
-                start_time, end_time = self._get_time_range_from_ui()
-
-                is_special_view = "System Uptime" in period_key or "All" in period_key
-                if start_time and not is_special_view:
-                    earliest_data_time = self._parent.widget_state.get_earliest_data_timestamp()
-                    if earliest_data_time and start_time < earliest_data_time:
-                        self.logger.info(
-                            f"Requested start time {start_time} is before the earliest data point "
-                            f"({earliest_data_time}). Adjusting query to show all available data."
-                        )
-                        start_time = None
-
-                history_data = self._parent.widget_state.get_speed_history(
-                    start_time=start_time,
-                    end_time=end_time,
+                # Fetch only the newest records
+                new_data = self._parent.widget_state.get_speed_history(
+                    start_time=last_timestamp,
                     interface_name=interface_to_query
                 )
 
+                if new_data:
+                    # Append new data, avoiding duplicates
+                    self._graph_data_cache.extend(p for p in new_data if p[0] > last_timestamp)
+
+                # Trim old data from the left side of the time window
+                start_time, _ = self._get_time_range_from_ui()
+                if start_time:
+                    # Filter out points that are now too old to be in the window
+                    self._graph_data_cache = [p for p in self._graph_data_cache if p[0] >= start_time]
+                
+                history_data = self._graph_data_cache
+            else:
+                # --- FULL REFRESH PATH ---
+                interface_to_query = None
+                if self.interface_filter:
+                    selected_interface_key = self.interface_filter.currentData()
+                    interface_to_query = None if selected_interface_key == "all" else selected_interface_key
+                
+                if is_session_view:
+                    mem_history = self._parent.widget_state.get_in_memory_speed_history()
+                    # (Same session view logic as before)
+                    processed_history = []
+                    for snapshot in mem_history:
+                        if interface_to_query is None:
+                            total_upload = sum(up for up, down in snapshot.speeds.values())
+                            total_download = sum(down for up, down in snapshot.speeds.values())
+                            processed_history.append((snapshot.timestamp, total_upload, total_download))
+                        else:
+                            up_speed, down_speed = snapshot.speeds.get(interface_to_query, (0.0, 0.0))
+                            processed_history.append((snapshot.timestamp, up_speed, down_speed))
+                    history_data = processed_history
+                else:
+                    start_time, end_time = self._get_time_range_from_ui()
+                    history_data = self._parent.widget_state.get_speed_history(
+                        start_time=start_time,
+                        end_time=end_time,
+                        interface_name=interface_to_query
+                    )
+
+                # Downsample only on a full refresh
+                if len(history_data) > constants.graph.MAX_DATA_POINTS:
+                    self.logger.debug(f"Downsampling {len(history_data)} points to a max of {constants.graph.MAX_DATA_POINTS}")
+                    history_data = helpers.downsample_data(history_data, constants.graph.MAX_DATA_POINTS)
+                
+                # Store the freshly processed data in the cache
+                self._graph_data_cache = history_data
+
             if len(history_data) < 2:
+                # (Error handling for "no data" is the same)
                 active_interfaces = self._parent.get_active_interfaces() if hasattr(self._parent, 'get_active_interfaces') else []
-
-                is_selected_interface_active = self.interface_filter.currentData() == "all" or self.interface_filter.currentText() in active_interfaces
-
+                is_selected_interface_active = True
+                if self.interface_filter:
+                    is_selected_interface_active = self.interface_filter.currentData() == "all" or self.interface_filter.currentText() in active_interfaces
                 is_live_view = "Session" in period_key or "Uptime" in period_key
-
                 if is_live_view and is_selected_interface_active:
                     self._show_graph_message(getattr(self.i18n, 'COLLECTING_DATA_MESSAGE', "Collecting data..."), is_error=False)
                 else:
                     self._show_graph_error(getattr(self.i18n, 'NO_DATA_MESSAGE', "No data available for the selected period."))
                 return
-
-            # --- Graph Restoration and Theming ---
+                
+            # (Graph Restoration, Theming, Plotting, etc. is all the same)
             if self._no_data_text_obj: self._no_data_text_obj.set_visible(False)
             self.ax.set_yscale('linear')
             self.upload_line.set_visible(True)
@@ -1312,7 +1424,7 @@ class GraphWindow(QWidget):
             self.ax.set_xlabel(self.i18n.TIME_LABEL)
             self.ax.set_ylabel(self.i18n.MBITS_LABEL)
             self.ax.tick_params(labelbottom=True, labelleft=True)
-            is_dark = self.dark_mode.isChecked()
+            is_dark = self._is_dark_mode
             graph_bg = constants.styles.GRAPH_BG_DARK if is_dark else constants.styles.GRAPH_BG_LIGHT
             grid_color = getattr(constants.styles, 'GRID_COLOR_DARK', '#444444') if is_dark else getattr(constants.styles, 'GRID_COLOR_LIGHT', '#CCCCCC')
             text_color = constants.styles.DARK_MODE_TEXT_COLOR if is_dark else constants.styles.LIGHT_MODE_TEXT_COLOR
@@ -1453,7 +1565,6 @@ class GraphWindow(QWidget):
                 down_unit=stats['total_download_unit']
             )
             self.stats_bar.setText(stats_text)
-            self.stats_bar.adjustSize()
             
         except Exception as e:
             self.logger.error(f"Error updating stats bar: {e}", exc_info=True)
