@@ -77,7 +77,7 @@ The core of NetSpeedTray. It sits on your taskbar, showing your live network spe
 A clean, modern UI to control every aspect of the widget's appearance and behavior.
 
 <div align="center">
-  <img src="screenshots/settings_1.1.2.png" alt="Settings Dialog" width="600"/><br/>
+  <img src="screenshots/settings_1.1.7.png" alt="Settings Dialog" width="600"/><br/>
 </div>
 
 #### Detailed History Graph
@@ -85,7 +85,7 @@ A clean, modern UI to control every aspect of the widget's appearance and behavi
 Double-click the widget to see a detailed, filterable graph of your network history.
 
 <div align="center">
-  <img src="screenshots/main_graph_1.1.0.png" alt="Graph View" width="600"/><br/>
+  <img src="screenshots/main_graph_1.1.7.png" alt="Graph View" width="600"/><br/>
 </div>
 
 ---

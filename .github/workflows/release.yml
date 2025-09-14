@@ -1,0 +1,89 @@
+name: Create Signed Release
+
+# This workflow runs ONLY when a new tag that starts with 'v' is pushed (e.g., v1.1.7)
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      # Step 1: Get the code from your repository
+      - name: Check out repository code
+        uses: actions/checkout@v4
+
+      # Step 2: Set up the Python environment
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # Step 3: Set up Inno Setup (replaces checking for it on your C: drive)
+      - name: Set up Inno Setup
+        uses: crazy-max/ghaction-inno-setup@v3
+        with:
+          iscc-path: 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+
+      # Step 4: Install your project's dependencies
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r dev-requirements.txt
+
+      # Step 5: Get the version number from the Git tag (e.g., v1.2.3 -> 1.2.3)
+      - name: Get version from tag
+        run: |
+          # The GITHUB_REF variable is 'refs/tags/v1.2.3'. We strip the prefix.
+          echo "VERSION=${{ github.ref_name }}" >> $env:GITHUB_ENV
+        shell: bash
+
+      # Step 6: Build the .exe with PyInstaller (replaces Stage 3 of your .bat)
+      - name: Build executable with PyInstaller
+        run: |
+          cd build
+          pyinstaller --noconfirm --distpath "../dist" NetSpeedTray.spec
+
+      # ====================================================================
+      # Step 7: Sign the executable with SignPath (THE NEW, CRITICAL STEP)
+      # ====================================================================
+      - name: Sign the executable
+        uses: signpath/action@v2
+        with:
+          # These are SECRETS you will add to your GitHub repository settings
+          # SignPath will give you these values.
+          signpath_organization_id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          signpath_api_token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          project_slug: 'netspeedtray' # This will be the project name in your SignPath account
+          
+          # Path to the file that PyInstaller just created
+          file_to_sign: 'dist/NetSpeedTray/NetSpeedTray.exe'
+
+      # Step 8: Build the Inno Setup installer (replaces Stage 4 of your .bat)
+      - name: Build installer with Inno Setup
+        run: |
+          # Run the Inno Setup compiler. The version is passed automatically.
+          iscc.exe build/setup.iss
+
+      # Step 9: Create the portable .zip archive (replaces Stage 5 of your .bat)
+      - name: Create portable ZIP archive
+        run: |
+          Compress-Archive -Path "dist/NetSpeedTray" -DestinationPath "dist/NetSpeedTray-Portable-${{ env.VERSION }}.zip"
+        shell: powershell
+
+      # Step 10: Create the Release and Upload Artifacts (replaces Stages 5, 6, and 7)
+      - name: Create GitHub Release and Upload Artifacts
+        uses: softprops/action-gh-release@v2
+        with:
+          # This tells the action to upload files to the release triggered by the tag
+          tag_name: ${{ github.ref }}
+          # Use the tag name as the release title
+          name: "Release ${{ github.ref_name }}"
+          # Automatically generate the release body from your commit history
+          generate_release_notes: true
+          # List all the files we want to upload
+          files: |
+            dist/installer/NetSpeedTray-${{ env.VERSION }}-Setup.exe
+            dist/NetSpeedTray-Portable-${{ env.VERSION }}.zip
