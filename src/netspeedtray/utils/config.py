@@ -154,30 +154,37 @@ class ConfigManager:
         try:
             cls.ensure_directories()
             logger = logging.getLogger("NetSpeedTray")
-            logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+            # Set the root logger level to the most verbose level we will use.
+            logger.setLevel(logging.DEBUG)
             logger.handlers.clear()
 
-            file_handler = logging.FileHandler(cls.get_log_file_path(), encoding='utf-8')
-            file_handler.setLevel(logging.INFO)
-
-            # Instantiate our new, robust ObfuscatingFormatter.
-            file_formatter = ObfuscatingFormatter(
-                '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-                datefmt='%Y-%m-%d %H:%M:%S'
+            # Create and configure the rotating file handler
+            file_handler = logging.handlers.RotatingFileHandler(
+                cls.get_log_file_path(),
+                maxBytes=constants.logs.MAX_LOG_SIZE,
+                backupCount=constants.logs.LOG_BACKUP_COUNT,
+                encoding='utf-8'
             )
+            file_handler.setLevel(constants.logs.FILE_LOG_LEVEL)
 
+            file_formatter = ObfuscatingFormatter(
+                constants.logs.LOG_FORMAT,
+                datefmt=constants.logs.LOG_DATE_FORMAT
+            )
             file_handler.setFormatter(file_formatter)
             logger.addHandler(file_handler)
 
+            # Create and configure the console handler
             console_handler = logging.StreamHandler()
-            console_handler.setLevel(logging.ERROR)
+            console_handler.setLevel(constants.logs.CONSOLE_LOG_LEVEL)
             console_formatter = logging.Formatter('%(name)s - %(levelname)s - %(message)s')
             console_handler.setFormatter(console_formatter)
             logger.addHandler(console_handler)
 
+            logger.info("Logging initialized successfully.")
         except Exception as e:
             logging.basicConfig(level=logging.ERROR)
-            logging.error("Failed to initialize file logging, falling back to console: %s", e)
+            logging.error("Failed to initialize file logging, falling back to basic console: %s", e)
 
 
     @classmethod
@@ -232,75 +239,62 @@ class ConfigManager:
         Validates the configuration, merges it with defaults for missing keys,
         and sanitizes all values.
         """
-        # --- Start with the default config, then merge the user's saved config over it. ---
         validated = constants.config.defaults.DEFAULT_CONFIG.copy()
-        validated.update(loaded_config) # This applies the user's saved values.
+        validated.update(loaded_config)
+        default_ref = constants.config.defaults.DEFAULT_CONFIG
 
-        unknown_keys = set(loaded_config.keys()) - set(constants.config.defaults.DEFAULT_CONFIG.keys())
+        unknown_keys = set(loaded_config.keys()) - set(default_ref.keys())
         if unknown_keys:
             self.logger.warning("Ignoring unknown config fields: %s", ", ".join(unknown_keys))
-
-        # --- Apply Validations (using the merged dictionary) ---
-        default_ref = constants.config.defaults.DEFAULT_CONFIG
 
         for key in ["color_coding", "graph_enabled", "dynamic_update_enabled", "free_move", 
                     "force_decimals", "dark_mode", "paused", "start_with_windows"]:
             validated[key] = self._validate_boolean(key, validated.get(key), default_ref[key])
 
-        validated["update_rate"] = self._validate_numeric("update_rate", validated.get("update_rate"), constants.config.defaults.DEFAULT_UPDATE_RATE, constants.config.defaults.MINIMUM_UPDATE_RATE, 300.0)
-        validated["font_size"] = self._validate_numeric("font_size", validated.get("font_size"), constants.config.defaults.DEFAULT_FONT_SIZE, 5, 72)
-        validated["font_weight"] = self._validate_numeric("font_weight", validated.get("font_weight"), constants.config.defaults.DEFAULT_FONT_WEIGHT, 1, 1000)
-        validated["high_speed_threshold"] = self._validate_numeric("high_speed_threshold", validated.get("high_speed_threshold"), constants.config.defaults.DEFAULT_HIGH_SPEED_THRESHOLD, 0, 10000)
-        validated["low_speed_threshold"] = self._validate_numeric("low_speed_threshold", validated.get("low_speed_threshold"), constants.config.defaults.DEFAULT_LOW_SPEED_THRESHOLD, 0, 10000)
-        validated["history_minutes"] = self._validate_numeric("history_minutes", validated.get("history_minutes"), constants.config.defaults.DEFAULT_HISTORY_MINUTES, 1, 1440)
-        validated["graph_opacity"] = self._validate_numeric("graph_opacity", validated.get("graph_opacity"), constants.config.defaults.DEFAULT_GRAPH_OPACITY, 0, 100)
-        validated["keep_data"] = self._validate_numeric("keep_data", validated.get("keep_data"), constants.config.defaults.DEFAULT_HISTORY_PERIOD_DAYS, 1, 9999)
-        validated["decimal_places"] = self._validate_numeric("decimal_places", validated.get("decimal_places"), constants.config.defaults.DEFAULT_DECIMAL_PLACES, 0, 2)
-        validated["min_update_rate"] = self._validate_numeric("min_update_rate", validated.get("min_update_rate"), constants.config.defaults.DEFAULT_MIN_UPDATE_RATE, 0.1, 10.0)
-        validated["max_update_rate"] = self._validate_numeric("max_update_rate", validated.get("max_update_rate"), constants.config.defaults.DEFAULT_MAX_UPDATE_RATE, 0.1, 10.0)
+        validated["update_rate"] = self._validate_numeric("update_rate", validated.get("update_rate"), default_ref["update_rate"], constants.config.defaults.MINIMUM_UPDATE_RATE, constants.timers.MAXIMUM_UPDATE_RATE_SECONDS)
+        validated["font_size"] = self._validate_numeric("font_size", validated.get("font_size"), default_ref["font_size"], constants.fonts.FONT_SIZE_MIN, constants.fonts.FONT_SIZE_MAX)
+        validated["font_weight"] = self._validate_numeric("font_weight", validated.get("font_weight"), default_ref["font_weight"], 1, 1000)
+        validated["high_speed_threshold"] = self._validate_numeric("high_speed_threshold", validated.get("high_speed_threshold"), default_ref["high_speed_threshold"], 0, constants.ui.sliders.SPEED_THRESHOLD_MAX_HIGH / 10)
+        validated["low_speed_threshold"] = self._validate_numeric("low_speed_threshold", validated.get("low_speed_threshold"), default_ref["low_speed_threshold"], 0, constants.ui.sliders.SPEED_THRESHOLD_MAX_LOW / 10)
+        
+        hist_min, hist_max = constants.ui.history.HISTORY_MINUTES_RANGE
+        validated["history_minutes"] = self._validate_numeric("history_minutes", validated.get("history_minutes"), default_ref["history_minutes"], hist_min, hist_max)
+        
+        validated["graph_opacity"] = self._validate_numeric("graph_opacity", validated.get("graph_opacity"), default_ref["graph_opacity"], constants.ui.sliders.OPACITY_MIN, constants.ui.sliders.OPACITY_MAX)
+        validated["keep_data"] = self._validate_numeric("keep_data", validated.get("keep_data"), default_ref["keep_data"], min(constants.data.retention.DAYS_MAP.values()), max(constants.data.retention.DAYS_MAP.values()))
+        validated["decimal_places"] = self._validate_numeric("decimal_places", validated.get("decimal_places"), default_ref["decimal_places"], 0, 2)
+
+        max_slider_val = len(constants.data.history_period.PERIOD_MAP) - 1
+        validated["history_period_slider_value"] = self._validate_numeric("history_period_slider_value", validated.get("history_period_slider_value"), 0, 0, max_slider_val)
 
         for key in ["default_color", "high_speed_color", "low_speed_color"]:
             validated[key] = self._validate_color_hex(key, validated.get(key), default_ref[key])
 
-        validated["interface_mode"] = self._validate_choice("interface_mode", validated.get("interface_mode"), constants.config.defaults.DEFAULT_INTERFACE_MODE, list(constants.network.interface.VALID_INTERFACE_MODES))
+        validated["interface_mode"] = self._validate_choice("interface_mode", validated.get("interface_mode"), default_ref["interface_mode"], list(constants.network.interface.VALID_INTERFACE_MODES))
         validated["legend_position"] = self._validate_choice("legend_position", validated.get("legend_position"), constants.config.defaults.DEFAULT_LEGEND_POSITION, constants.data.legend_position.UI_OPTIONS)
         validated["history_period"] = self._validate_choice("history_period", validated.get("history_period"), constants.data.history_period.DEFAULT_PERIOD, list(constants.data.history_period.PERIOD_MAP.values()))
-        validated["text_alignment"] = self._validate_choice("text_alignment", validated.get("text_alignment"), constants.config.defaults.DEFAULT_TEXT_ALIGNMENT, ["left", "center", "right"])
-        validated["speed_display_mode"] = self._validate_choice("speed_display_mode", validated.get("speed_display_mode"), constants.config.defaults.DEFAULT_SPEED_DISPLAY_MODE, ["auto", "always_mbps"])
-        validated["history_period_slider_value"] = self._validate_numeric("history_period_slider_value", validated.get("history_period_slider_value"), 0, 0, 10)
-
-        # Get the list of supported language codes from the i18n constants
+        validated["text_alignment"] = self._validate_choice("text_alignment", validated.get("text_alignment"), default_ref["text_alignment"], ["left", "center", "right"])
+        validated["speed_display_mode"] = self._validate_choice("speed_display_mode", validated.get("speed_display_mode"), default_ref["speed_display_mode"], ["auto", "always_mbps"])
+        
         supported_languages = list(constants.i18n.I18nStrings.LANGUAGE_MAP.keys())
-        if validated.get("language") is not None and validated.get("language") not in supported_languages:
-            self.logger.warning(
-                f"Invalid language '{validated.get('language')}' in config. "
-                f"Resetting to None (will use OS default). Valid choices: {supported_languages}"
-            )
+        if validated.get("language") not in [None] + supported_languages:
             validated["language"] = None
 
-        # Special cases and cross-field validation
         if not isinstance(validated.get("selected_interfaces"), list) or not all(isinstance(i, str) for i in validated.get("selected_interfaces", [])):
-            self.logger.warning(constants.config.messages.INVALID_INTERFACES.format(value=validated.get("selected_interfaces")))
             validated["selected_interfaces"] = []
 
         if validated["low_speed_threshold"] > validated["high_speed_threshold"]:
-            self.logger.warning(constants.config.messages.THRESHOLD_SWAP)
             validated["low_speed_threshold"] = validated["high_speed_threshold"]
 
         for key in ["position_x", "position_y"]:
             if validated.get(key) is not None and not isinstance(validated.get(key), int):
-                self.logger.warning(constants.config.messages.INVALID_POSITION.format(key=key, value=validated.get(key)))
                 validated[key] = None
         
-        if validated.get("graph_window_pos") is not None:
-            pos = validated["graph_window_pos"]
-            if not (isinstance(pos, dict) and 'x' in pos and 'y' in pos and isinstance(pos.get('x'), int) and isinstance(pos.get('y'), int)):
-                self.logger.warning(constants.config.messages.INVALID_POSITION.format(key='graph_window_pos', value=pos))
-                validated["graph_window_pos"] = None
+        pos = validated.get("graph_window_pos")
+        if pos is not None and not (isinstance(pos, dict) and 'x' in pos and 'y' in pos and isinstance(pos.get('x'), int) and isinstance(pos.get('y'), int)):
+            validated["graph_window_pos"] = None
         
-        # Prune any keys that are not in the default config, in case of old config files
         final_config = {key: validated[key] for key in default_ref if key in validated}
-
         return final_config
 
 
@@ -350,7 +344,7 @@ class ConfigManager:
                 temp_path = temp_f.name
             shutil.move(temp_path, self.config_path)
             self._last_config = validated_config.copy()
-            self.logger.info("Configuration saved successfully to %s", self.config_path)
+            self.logger.debug("Configuration saved successfully to %s", self.config_path)
         except OSError as e:
             msg = f"Failed to save configuration to {self.config_path}: {e}"
             self.logger.error(msg)

@@ -19,23 +19,28 @@ if TYPE_CHECKING:
     from netspeedtray.views.widget import NetworkSpeedWidget
 
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QSize, QPoint
-from PyQt6.QtGui import QColor, QFont, QFontDatabase, QIcon, QCloseEvent 
+from PyQt6.QtGui import QColor, QFont, QFontDatabase, QIcon, QCloseEvent
 from PyQt6.QtWidgets import (
     QApplication, QColorDialog, QComboBox, QDialog, QFileDialog, QFontDialog,
     QGridLayout, QGroupBox, QHBoxLayout, QLabel, QListWidget, QMessageBox,
     QPushButton, QScrollArea, QStackedWidget, QVBoxLayout, QWidget, QRadioButton,
-    QSpacerItem
+    QSpacerItem, QSizePolicy
 )
+
+# --- Custom Application Imports ---
+from netspeedtray import constants
+# Import the design tokens (raw values) with a clear alias
+from netspeedtray.constants import styles as style_constants
+# Import the style engine (functions that build stylesheets) with a clear alias
+from netspeedtray.utils import styles as style_utils
 
 from netspeedtray.utils.taskbar_utils import get_taskbar_info
 from netspeedtray.utils.config import ConfigManager
 from netspeedtray.utils.helpers import get_app_data_path, get_app_asset_path
-from netspeedtray.utils.styles import dialog_style, sidebar_style, button_style, color_button_style
 from netspeedtray.utils.components import Win11Toggle, Win11Slider
 
-from netspeedtray import constants
 
-class SettingsDialog(QWidget):
+class SettingsDialog(QDialog):
     """
     Dialog window for configuring NetSpeedTray settings.
 
@@ -47,6 +52,7 @@ class SettingsDialog(QWidget):
     # Mappings for config strings to slider integer values
     SPEED_DISPLAY_MODE_MAP = {"auto": 0, "always_mbps": 1}
     TEXT_ALIGNMENT_MAP = {"left": 0, "center": 1, "right": 2}
+
 
     def __init__(
         self,
@@ -60,18 +66,10 @@ class SettingsDialog(QWidget):
     ) -> None:
         """
         Initializes the settings dialog.
-
-        Args:
-            parent: The parent NetworkSpeedWidget instance.
-            config: The current application configuration dictionary.
-            version: The application version string.
-            i18n: The internationalization strings instance.
-            available_interfaces: List of network interface names detected by the system.
-            is_startup_enabled: The current status of the 'start with windows' setting.
+        ...
         """
     
         super().__init__(parent)
-        self.setWindowFlags(Qt.WindowType.Window)
         self.parent_widget = main_widget
         self.logger = logging.getLogger(f"NetSpeedTray.{self.__class__.__name__}")
         self.logger.debug("Initializing SettingsDialog...")
@@ -86,15 +84,16 @@ class SettingsDialog(QWidget):
         self.initial_language = self.i18n.language
         self.available_interfaces = available_interfaces or []
         self.startup_enabled_initial_state = is_startup_enabled
+        self._user_chose_default_color = False
 
         # For dynamic font weight handling
-        self.allowed_font_weights: List[int] = []  # Sorted list of numerical weights for the current font
-        self.font_weight_name_map: Dict[int, str] = {} # Maps numerical weight to its display name
+        self.allowed_font_weights: List[int] = []
+        self.font_weight_name_map: Dict[int, str] = {}
 
-        self._ui_setup_done = False # Flag to prevent accessing UI elements before setup
-        self._pending_update = False # Flag for throttling signal emissions
+        self._ui_setup_done = False
+        self._pending_update = False
 
-        # Timer for throttling live setting updates sent to the main widget
+        # Timer for throttling live setting updates
         self._update_timer = QTimer(self)
         self._update_timer.setSingleShot(True)
         self._update_timer.setInterval(constants.ui.dialogs.THROTTLE_INTERVAL_MS)
@@ -102,7 +101,6 @@ class SettingsDialog(QWidget):
 
         self.setWindowTitle(f"{constants.app.APP_NAME} {self.i18n.SETTINGS_WINDOW_TITLE} v{self.version}")
         
-        # Set window icon using the same helper as other windows
         try:
             icon_filename = getattr(constants.app, 'ICON_FILENAME', 'NetSpeedTray.ico')
             icon_path = get_app_asset_path(icon_filename)
@@ -113,14 +111,14 @@ class SettingsDialog(QWidget):
         except Exception as e:
             self.logger.error(f"Error setting window icon: {e}", exc_info=True)
             
-        self.setStyleSheet(dialog_style())
+        # Apply the main dialog style from our style engine
+        self.setStyleSheet(style_utils.dialog_style())
 
         # --- Initialization Steps ---
-        self.setup_ui() # Build the UI elements
-        self._init_ui_state() # Populate UI elements with initial config values
-        self._connect_signals() # Connect UI element signals to handlers
+        self.setup_ui()
+        self._init_ui_state()
+        self._connect_signals()
 
-        # Center the dialog on the screen
         screen = self.screen() or QApplication.primaryScreen()
         if screen:
             screen_center = screen.availableGeometry().center()
@@ -140,23 +138,16 @@ class SettingsDialog(QWidget):
             # --- Sidebar ---
             sidebar_container = QWidget()
             sidebar_container.setObjectName("sidebarContainer")
-            sidebar_container.setContentsMargins(0, 0, 0, 0)
             sidebar_layout = QVBoxLayout(sidebar_container)
-            sidebar_layout.setContentsMargins(0, 0, 0, 0)
-            sidebar_layout.setSpacing(0)
-
+            sidebar_layout.setContentsMargins(0,0,0,0)
             self.sidebar = QListWidget()
-            self.sidebar.setFixedWidth(220)
-            self.sidebar.setStyleSheet(sidebar_style())
+            self.sidebar.setFixedWidth(constants.layout.SIDEBAR_WIDTH)
+            self.sidebar.setStyleSheet(style_utils.sidebar_style())
             self.sidebar.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            self.sidebar.setContentsMargins(0, 0, 0, 0)
             self.sidebar.addItems([
-                self.i18n.GENERAL_SETTINGS_GROUP,
-                self.i18n.APPEARANCE_SETTINGS_GROUP,
-                self.i18n.MINI_GRAPH_SETTINGS_GROUP,
-                self.i18n.UNITS_GROUP,
-                self.i18n.NETWORK_INTERFACES_GROUP,
-                self.i18n.TROUBLESHOOTING_GROUP
+                self.i18n.GENERAL_SETTINGS_GROUP, self.i18n.APPEARANCE_SETTINGS_GROUP,
+                self.i18n.MINI_GRAPH_SETTINGS_GROUP, self.i18n.UNITS_GROUP,
+                self.i18n.NETWORK_INTERFACES_GROUP, self.i18n.TROUBLESHOOTING_GROUP
             ])
             self.sidebar.setCurrentRow(0)
             sidebar_layout.addWidget(self.sidebar)
@@ -165,14 +156,15 @@ class SettingsDialog(QWidget):
             # --- Content Area ---
             content_widget = QWidget()
             content_widget.setObjectName("contentWidget")
-            content_widget.setContentsMargins(0, 0, 0, 0)
             content_layout = QVBoxLayout(content_widget)
-            content_layout.setContentsMargins(10, 20, 30, 20)
-            content_layout.setSpacing(20)
+            content_layout.setContentsMargins(
+                constants.layout.MAIN_MARGIN, constants.layout.MAIN_MARGIN,
+                constants.layout.MAIN_MARGIN, constants.layout.MAIN_MARGIN
+            )
+            content_layout.setSpacing(constants.layout.MAIN_SPACING)
 
             self.stack = QStackedWidget()
-            self.stack.setContentsMargins(0, 0, 0, 0)
-            content_layout.addWidget(self.stack, stretch=1)
+            content_layout.addWidget(self.stack)
 
             while self.stack.count() > 0:
                 widget_to_remove = self.stack.widget(0)
@@ -186,14 +178,15 @@ class SettingsDialog(QWidget):
             self._setup_interfaces_page()
             self._setup_troubleshooting_page()
 
+            content_layout.addStretch(1)
+
             # --- Bottom Buttons (Save/Cancel) ---
             button_layout = QHBoxLayout()
-            button_layout.setContentsMargins(0, 10, 0, 0)
             button_layout.addStretch()
             self.cancel_button = QPushButton(self.i18n.CANCEL_BUTTON)
-            self.cancel_button.setStyleSheet(button_style())
+            self.cancel_button.setStyleSheet(style_utils.button_style())
             self.save_button = QPushButton(self.i18n.SAVE_BUTTON)
-            self.save_button.setStyleSheet(button_style(accent=True))
+            self.save_button.setStyleSheet(style_utils.button_style(accent=True))
             self.save_button.setDefault(True)
             button_layout.addWidget(self.cancel_button)
             button_layout.addWidget(self.save_button)
@@ -206,15 +199,13 @@ class SettingsDialog(QWidget):
             self.save_button.clicked.connect(self._save_and_close)
 
             self._ui_setup_done = True
-            self.setMinimumSize(600, 500) # Adjusted height slightly for font weight text
             self.adjustSize()
 
             self.logger.debug(f"UI setup completed. Stack has {self.stack.count()} pages.")
         except Exception as e:
             self.logger.error(f"Error setting up UI: {e}", exc_info=True)
             QMessageBox.critical(
-                self,
-                self.i18n.ERROR_TITLE,
+                self, self.i18n.ERROR_TITLE,
                 self.i18n.ERROR_UI_SETUP_FAILED.format(error=str(e))
             )
             QTimer.singleShot(0, self.reject)
@@ -226,7 +217,7 @@ class SettingsDialog(QWidget):
         try:
             page = QWidget()
             page_layout = QVBoxLayout(page)
-            page_layout.setSpacing(15) # Spacing between QGroupBoxes
+            page_layout.setSpacing(constants.layout.GROUP_BOX_SPACING)
 
             # --- Language Group ---
             language_group = QGroupBox(self.i18n.LANGUAGE_LABEL)
@@ -276,7 +267,6 @@ class SettingsDialog(QWidget):
             options_layout.setRowStretch(3, 1)
             page_layout.addWidget(options_group)
 
-            page_layout.addStretch()
             self.stack.addWidget(page)
         except Exception as e:
             self.logger.error(f"Error setting up General page: {e}", exc_info=True)
@@ -296,7 +286,7 @@ class SettingsDialog(QWidget):
         try:
             page = QWidget()
             page_layout = QVBoxLayout(page)
-            page_layout.setSpacing(15)
+            page_layout.setSpacing(constants.layout.GROUP_BOX_SPACING)
 
             # --- Font Settings Group ---
             font_group = QGroupBox(self.i18n.FONT_SETTINGS_GROUP_TITLE)
@@ -310,7 +300,7 @@ class SettingsDialog(QWidget):
             font_family_v_layout.setSpacing(4)
             font_family_v_layout.addWidget(QLabel(self.i18n.FONT_FAMILY_LABEL))
             self.font_family_button = QPushButton(self.i18n.SELECT_FONT_BUTTON)
-            self.font_family_button.setStyleSheet(button_style())
+            self.font_family_button.setStyleSheet(style_utils.button_style())
             self.font_family_label = QLabel()
             self.font_family_label.setWordWrap(True)
             font_family_button_label_layout = QHBoxLayout()
@@ -343,11 +333,9 @@ class SettingsDialog(QWidget):
             font_layout.addWidget(self.font_weight)
             page_layout.addWidget(font_group)
 
-            # --- MOVED: Color Coding Group ---
+            # --- Color Coding Group ---
             color_coding_group = QGroupBox(self.i18n.COLOR_CODING_GROUP)
             color_coding_main_layout = QGridLayout(color_coding_group)
-            color_coding_main_layout.setVerticalSpacing(10)
-            color_coding_main_layout.setHorizontalSpacing(8)
             
             enable_colors_label = QLabel(self.i18n.ENABLE_COLOR_CODING_LABEL)
             self.enable_colors = Win11Toggle(label_text="")
@@ -388,9 +376,6 @@ class SettingsDialog(QWidget):
             color_container_layout.addWidget(self.low_speed_color_button, alignment=Qt.AlignmentFlag.AlignLeft)
 
             color_coding_main_layout.addWidget(self.color_container, 1, 0, 1, 2) 
-            color_coding_main_layout.setColumnStretch(0, 0)
-            color_coding_main_layout.setColumnStretch(1, 1)
-            color_coding_main_layout.setRowStretch(2, 1)
 
             page_layout.addWidget(color_coding_group)
             page_layout.addStretch()
@@ -404,22 +389,24 @@ class SettingsDialog(QWidget):
         try:
             page = QWidget()
             page_layout = QVBoxLayout(page)
-            page_layout.setSpacing(15)
+            page_layout.setSpacing(constants.layout.GROUP_BOX_SPACING)
 
             graph_group = QGroupBox(self.i18n.MINI_GRAPH_SETTINGS_GROUP)
-            graph_layout = QGridLayout(graph_group) # Use QGridLayout
+            graph_layout = QGridLayout(graph_group)
             graph_layout.setVerticalSpacing(10)
             graph_layout.setHorizontalSpacing(8)
 
             enable_graph_label = QLabel(self.i18n.ENABLE_GRAPH_LABEL)
-            self.enable_graph = Win11Toggle(label_text="") # No internal label
+            self.enable_graph = Win11Toggle(label_text="")
             graph_layout.addWidget(enable_graph_label, 0, 0, Qt.AlignmentFlag.AlignVCenter)
             graph_layout.addWidget(self.enable_graph, 0, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             
             note = QLabel(self.i18n.GRAPH_NOTE_TEXT)
             note.setWordWrap(True)
-            note.setStyleSheet(f"font-size: {constants.fonts.NOTE_FONT_SIZE}pt; color: grey;")
-            graph_layout.addWidget(note, 1, 0, 1, 2) # Note spans 2 columns
+            is_dark = style_utils.is_dark_mode()
+            subtle_color = style_constants.SUBTLE_TEXT_COLOR_DARK if is_dark else style_constants.SUBTLE_TEXT_COLOR_LIGHT
+            note.setStyleSheet(f"font-size: {constants.fonts.NOTE_FONT_SIZE}pt; color: {subtle_color};")
+            graph_layout.addWidget(note, 1, 0, 1, 2)
 
             graph_layout.addWidget(QLabel(self.i18n.HISTORY_DURATION_LABEL), 2, 0, 1, 2)
             self.history_duration = Win11Slider()
@@ -431,10 +418,6 @@ class SettingsDialog(QWidget):
             self.graph_opacity = Win11Slider()
             self.graph_opacity.setRange(constants.ui.sliders.OPACITY_MIN, constants.ui.sliders.OPACITY_MAX)
             graph_layout.addWidget(self.graph_opacity, 5, 0, 1, 2)
-
-            graph_layout.setColumnStretch(0, 0)
-            graph_layout.setColumnStretch(1, 1)
-            graph_layout.setRowStretch(6, 1) # Stretch after last item
 
             page_layout.addWidget(graph_group)
             page_layout.addStretch()
@@ -448,7 +431,7 @@ class SettingsDialog(QWidget):
         try:
             page = QWidget()
             page_layout = QVBoxLayout(page)
-            page_layout.setSpacing(15)
+            page_layout.setSpacing(constants.layout.GROUP_BOX_SPACING)
 
             units_group = QGroupBox(self.i18n.UNITS_GROUP)
             units_layout = QGridLayout(units_group)
@@ -492,43 +475,35 @@ class SettingsDialog(QWidget):
         try:
             page = QWidget()
             page_layout = QVBoxLayout(page)
-            page_layout.setSpacing(15)
+            page_layout.setSpacing(constants.layout.GROUP_BOX_SPACING)
 
             interfaces_group = QGroupBox(self.i18n.NETWORK_INTERFACES_GROUP)
             interfaces_layout = QVBoxLayout(interfaces_group)
-            interfaces_layout.setSpacing(10)
+            interfaces_layout.setSpacing(constants.layout.HORIZONTAL_SPACING_MEDIUM)
 
-            # --- Radio Button Group ---
-            mode_label = QLabel(self.i18n.MONITORING_MODE_LABEL)
-            interfaces_layout.addWidget(mode_label)
-
-            # Create the four radio buttons
+            interfaces_layout.addWidget(QLabel(self.i18n.MONITORING_MODE_LABEL))
             self.auto_interface_radio = QRadioButton(self.i18n.MONITORING_MODE_AUTO)
             self.all_physical_interfaces_radio = QRadioButton(self.i18n.MONITORING_MODE_PHYSICAL)
             self.all_virtual_interfaces_radio = QRadioButton(self.i18n.MONITORING_MODE_VIRTUAL)
             self.selected_interfaces_radio = QRadioButton(self.i18n.MONITORING_MODE_SELECTED)
             
-            # Add descriptive helper text below each radio button
             self.auto_interface_radio.setToolTip(self.i18n.MONITORING_MODE_AUTO_TOOLTIP)
             self.all_physical_interfaces_radio.setToolTip(self.i18n.MONITORING_MODE_PHYSICAL_TOOLTIP)
             self.all_virtual_interfaces_radio.setToolTip(self.i18n.MONITORING_MODE_VIRTUAL_TOOLTIP)
             self.selected_interfaces_radio.setToolTip(self.i18n.MONITORING_MODE_SELECTED_TOOLTIP)
             
-            # Add radio buttons to the layout
             interfaces_layout.addWidget(self.auto_interface_radio)
             interfaces_layout.addWidget(self.all_physical_interfaces_radio)
             interfaces_layout.addWidget(self.all_virtual_interfaces_radio)
             interfaces_layout.addWidget(self.selected_interfaces_radio)
 
-            # --- Scroll Area for Specific Interfaces (Unchanged) ---
             self.interface_scroll = QScrollArea()
             self.interface_scroll.setWidgetResizable(True)
             self.interface_scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
 
             interfaces_container = QWidget()
             self.interfaces_container_layout = QVBoxLayout(interfaces_container)
-            self.interfaces_container_layout.setContentsMargins(5, 5, 5, 5)
-            self.interfaces_container_layout.setSpacing(8)
+            self.interfaces_container_layout.setSpacing(constants.layout.VERTICAL_SPACING)
 
             self.interface_checkboxes: Dict[str, Win11Toggle] = {}
             if self.available_interfaces:
@@ -538,54 +513,70 @@ class SettingsDialog(QWidget):
                     self.interfaces_container_layout.addWidget(checkbox)
             else:
                 no_iface_label = QLabel(self.i18n.NO_INTERFACES_FOUND)
-                no_iface_label.setStyleSheet("color: grey; font-style: italic;")
+                is_dark = style_utils.is_dark_mode()
+                subtle_color = style_constants.SUBTLE_TEXT_COLOR_DARK if is_dark else style_constants.SUBTLE_TEXT_COLOR_LIGHT
+                no_iface_label.setStyleSheet(f"color: {subtle_color}; font-style: italic;")
                 self.interfaces_container_layout.addWidget(no_iface_label)
 
             self.interfaces_container_layout.addStretch()
             self.interface_scroll.setWidget(interfaces_container)
-            
-            # Dynamic height calculation (Unchanged)
-            if self.interface_checkboxes:
-                example_toggle = next(iter(self.interface_checkboxes.values()))
-                item_height = example_toggle.sizeHint().height()
-                item_height_with_spacing = item_height + self.interfaces_container_layout.spacing()
-                max_items_to_show = constants.ui.interfaces.MAX_VISIBLE_INTERFACES
-                container_margins = self.interfaces_container_layout.contentsMargins()
-                if item_height_with_spacing <= 0: item_height_with_spacing = 30
-                calculated_max_height = (item_height_with_spacing * max_items_to_show)
-                if max_items_to_show > 0 : calculated_max_height -= self.interfaces_container_layout.spacing()
-                calculated_max_height += container_margins.top() + container_margins.bottom()
-                effective_max_height = max(calculated_max_height, constants.ui.interfaces.SCROLL_MIN_HEIGHT)
-                self.interface_scroll.setMaximumHeight(int(effective_max_height))
-            else:
-                self.interface_scroll.setMaximumHeight(constants.ui.interfaces.SCROLL_MAX_HEIGHT_EMPTY)
 
             interfaces_layout.addWidget(self.interface_scroll)
             page_layout.addWidget(interfaces_group)
+            
+            # This ensures the entire page remains compact
             page_layout.addStretch()
             self.stack.addWidget(page)
         except Exception as e:
             self.logger.error(f"Error setting up Interfaces page: {e}", exc_info=True)
 
 
+    def update_interface_list(self, new_interfaces: List[str]) -> None:
+        self.logger.debug(f"Updating interface list with {len(new_interfaces)} items.")
+        self.available_interfaces = new_interfaces or []
+        
+        while self.interfaces_container_layout.count():
+            child = self.interfaces_container_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+        
+        self.interface_checkboxes.clear()
+
+        if self.available_interfaces:
+            for iface in sorted(self.available_interfaces):
+                checkbox = Win11Toggle(iface)
+                self.interface_checkboxes[iface] = checkbox
+                self.interfaces_container_layout.addWidget(checkbox)
+                checkbox.toggled.connect(self._schedule_settings_update)
+        else:
+            no_iface_label = QLabel(self.i18n.NO_INTERFACES_FOUND)
+            is_dark = style_utils.is_dark_mode()
+            subtle_color = style_constants.SUBTLE_TEXT_COLOR_DARK if is_dark else style_constants.SUBTLE_TEXT_COLOR_LIGHT
+            no_iface_label.setStyleSheet(f"color: {subtle_color}; font-style: italic;")
+            self.interfaces_container_layout.addWidget(no_iface_label)
+        
+        self.interfaces_container_layout.addStretch()
+        self._init_ui_state()
+
+
     def _setup_troubleshooting_page(self) -> None:
-        self.logger.debug("Setting up Troubleshooting page")
-        try:
-            page = QWidget()
-            layout = QVBoxLayout(page)
-            layout.setSpacing(15)
-            troubleshooting_group = QGroupBox(self.i18n.TROUBLESHOOTING_GROUP)
-            troubleshooting_layout = QVBoxLayout(troubleshooting_group)
-            export_button = QPushButton(self.i18n.EXPORT_ERROR_LOG_BUTTON)
-            export_button.setStyleSheet(button_style())
-            export_button.setToolTip(self.i18n.EXPORT_ERROR_LOG_TOOLTIP)
-            export_button.clicked.connect(self.export_error_log)
-            troubleshooting_layout.addWidget(export_button, alignment=Qt.AlignmentFlag.AlignLeft)
-            layout.addWidget(troubleshooting_group)
-            layout.addStretch()
-            self.stack.addWidget(page)
-        except Exception as e:
-            self.logger.error(f"Error setting up Troubleshooting page: {e}", exc_info=True)
+            self.logger.debug("Setting up Troubleshooting page")
+            try:
+                page = QWidget()
+                layout = QVBoxLayout(page)
+                layout.setSpacing(constants.layout.GROUP_BOX_SPACING)
+                troubleshooting_group = QGroupBox(self.i18n.TROUBLESHOOTING_GROUP)
+                troubleshooting_layout = QVBoxLayout(troubleshooting_group)
+                export_button = QPushButton(self.i18n.EXPORT_ERROR_LOG_BUTTON)
+                export_button.setStyleSheet(style_utils.button_style())
+                export_button.setToolTip(self.i18n.EXPORT_ERROR_LOG_TOOLTIP)
+                export_button.clicked.connect(self.export_error_log)
+                troubleshooting_layout.addWidget(export_button, alignment=Qt.AlignmentFlag.AlignLeft)
+                layout.addWidget(troubleshooting_group)
+                layout.addStretch()
+                self.stack.addWidget(page)
+            except Exception as e:
+                self.logger.error(f"Error setting up Troubleshooting page: {e}", exc_info=True)
 
 
     # --- Font Weight Logic ---
@@ -772,9 +763,16 @@ class SettingsDialog(QWidget):
     # --- Signal Handlers and UI Logic ---
 
     def _on_sidebar_selection_changed(self, index: int) -> None:
+        """
+        Handles sidebar selection changes by switching the visible page in the
+        QStackedWidget and resizing the entire dialog to fit the new page's content.
+        """
         self.logger.debug(f"Sidebar selection changed to index {index}")
         if 0 <= index < self.stack.count():
             self.stack.setCurrentIndex(index)
+            # After changing the page, tell the dialog to resize to fit the new content.
+            # A singleShot timer ensures this happens after the new widget is fully shown.
+            QTimer.singleShot(0, self.adjustSize)
         else:
             self.logger.warning(f"Invalid sidebar index {index}, stack count is {self.stack.count()}")
 
@@ -889,119 +887,96 @@ class SettingsDialog(QWidget):
         self.logger.debug("Initializing UI state from configuration.")
 
         # --- General Page ---
-        # Initialize the language combo box
         lang_code_to_find = self.config.get("language", self.initial_language)
         index = self.language_combo.findData(lang_code_to_find)
-        if index != -1:
-            self.language_combo.setCurrentIndex(index)
-        else:
-            self.logger.warning(f"Saved language '{lang_code_to_find}' not found in dropdown. Defaulting.")
-
-        update_rate_val_raw = self.config.get("update_rate")
-        update_rate_val_config = constants.config.defaults.DEFAULT_UPDATE_RATE if update_rate_val_raw is None else float(update_rate_val_raw)
-        update_rate_slider_val = int(update_rate_val_config * 2)
-        self.update_rate.setValue(max(0, update_rate_slider_val))
+        if index != -1: self.language_combo.setCurrentIndex(index)
+        
+        update_rate_val = self.config.get("update_rate", constants.config.defaults.DEFAULT_UPDATE_RATE)
+        self.update_rate.setValue(int(update_rate_val * 2))
         self.update_rate.setValueText(self.rate_to_text(self.update_rate.value()))
 
-        dynamic_update_raw = self.config.get("dynamic_update_enabled")
-        dynamic_update_config = constants.config.defaults.DEFAULT_DYNAMIC_UPDATE_ENABLED if dynamic_update_raw is None else bool(dynamic_update_raw)
-        self.dynamic_update_rate.setChecked(dynamic_update_config)
-        
-        start_with_windows_config = self.config.get("start_with_windows", True)
-        self.start_with_windows.setChecked(start_with_windows_config)
-        self.free_move.setChecked(self.config.get("free_move", False))
+        self.dynamic_update_rate.setChecked(self.config.get("dynamic_update_enabled", constants.config.defaults.DEFAULT_DYNAMIC_UPDATE_ENABLED))
+        self.start_with_windows.setChecked(self.config.get("start_with_windows", constants.config.defaults.DEFAULT_START_WITH_WINDOWS))
+        self.free_move.setChecked(self.config.get("free_move", constants.config.defaults.DEFAULT_FREE_MOVE))
 
         # --- Appearance Page ---
-        font_family_config = self.config.get("font_family")
-        initial_font_family = constants.config.defaults.DEFAULT_FONT_FAMILY if not font_family_config else str(font_family_config)
+        initial_font_family = self.config.get("font_family", constants.config.defaults.DEFAULT_FONT_FAMILY)
         self.font_family_label.setText(initial_font_family)
 
-        font_size_config = self.config.get("font_size")
-        initial_font_size = constants.config.defaults.DEFAULT_FONT_SIZE if font_size_config is None else int(font_size_config)
-        initial_font_size = max(constants.fonts.FONT_SIZE_MIN, min(initial_font_size, constants.fonts.FONT_SIZE_MAX))
+        initial_font_size = self.config.get("font_size", constants.config.defaults.DEFAULT_FONT_SIZE)
         self.font_size.setValue(initial_font_size)
         self.font_size.setValueText(str(initial_font_size))
 
         self._update_font_weight_options(initial_font_family)
-        font_weight_config = self.config.get("font_weight")
-        initial_font_weight = constants.config.defaults.DEFAULT_FONT_WEIGHT if font_weight_config is None else int(font_weight_config)
+        initial_font_weight = self.config.get("font_weight", constants.config.defaults.DEFAULT_FONT_WEIGHT)
         self.update_font_weight_slider_controls(initial_font_weight)
 
-        default_color_config = self.config.get("default_color")
-        initial_default_color_hex = constants.config.defaults.DEFAULT_COLOR if not default_color_config or not default_color_config.startswith("#") else str(default_color_config)
-        self._set_color_button_style(self.default_color_button, initial_default_color_hex)
+        # Default Color
+        initial_default_color = self.config.get("default_color")
+        if not initial_default_color or not QColor(initial_default_color).isValid():
+            self.logger.warning(f"Invalid 'default_color' in config: '{initial_default_color}'. Reverting to default.")
+            initial_default_color = constants.config.defaults.DEFAULT_COLOR
+        self._set_color_button_style(self.default_color_button, initial_default_color)
         
-        color_coding_raw = self.config.get("color_coding")
-        color_coding_enabled = constants.config.defaults.DEFAULT_COLOR_CODING if color_coding_raw is None else bool(color_coding_raw)
+        color_coding_enabled = self.config.get("color_coding", constants.config.defaults.DEFAULT_COLOR_CODING)
         self.enable_colors.setChecked(color_coding_enabled)
 
-        high_thresh_raw = self.config.get("high_speed_threshold")
-        high_thresh_config = constants.config.defaults.DEFAULT_HIGH_SPEED_THRESHOLD if high_thresh_raw is None else float(high_thresh_raw)
-        self.high_speed_threshold.setValue(int(high_thresh_config * 10))
+        high_thresh = self.config.get("high_speed_threshold", constants.config.defaults.DEFAULT_HIGH_SPEED_THRESHOLD)
+        self.high_speed_threshold.setValue(int(high_thresh * 10))
 
-        low_thresh_raw = self.config.get("low_speed_threshold")
-        low_thresh_config = constants.config.defaults.DEFAULT_LOW_SPEED_THRESHOLD if low_thresh_raw is None else float(low_thresh_raw)
-        self.low_speed_threshold.setValue(int(low_thresh_config * 10))
+        low_thresh = self.config.get("low_speed_threshold", constants.config.defaults.DEFAULT_LOW_SPEED_THRESHOLD)
+        self.low_speed_threshold.setValue(int(low_thresh * 10))
         
-        high_color_config = self.config.get("high_speed_color")
-        initial_high_color_hex = constants.config.defaults.DEFAULT_HIGH_SPEED_COLOR if not high_color_config or not high_color_config.startswith("#") else str(high_color_config)
-        self._set_color_button_style(self.high_speed_color_button, initial_high_color_hex)
-
-        low_color_config = self.config.get("low_speed_color")
-        initial_low_color_hex = constants.config.defaults.DEFAULT_LOW_SPEED_COLOR if not low_color_config or not low_color_config.startswith("#") else str(low_color_config)
-        self._set_color_button_style(self.low_speed_color_button, initial_low_color_hex)
+        # High Speed Color
+        high_color = self.config.get("high_speed_color")
+        if not high_color or not QColor(high_color).isValid():
+            self.logger.warning(f"Invalid 'high_speed_color' in config: '{high_color}'. Reverting to default.")
+            high_color = constants.config.defaults.DEFAULT_HIGH_SPEED_COLOR
+        self._set_color_button_style(self.high_speed_color_button, high_color)
+        
+        # Low Speed Color
+        low_color = self.config.get("low_speed_color")
+        if not low_color or not QColor(low_color).isValid():
+            self.logger.warning(f"Invalid 'low_speed_color' in config: '{low_color}'. Reverting to default.")
+            low_color = constants.config.defaults.DEFAULT_LOW_SPEED_COLOR
+        self._set_color_button_style(self.low_speed_color_button, low_color)
         
         self.toggle_color_settings(color_coding_enabled)
 
         # --- Graph Page ---
-        graph_enabled_raw = self.config.get("graph_enabled")
-        graph_enabled_config = constants.config.defaults.DEFAULT_GRAPH_ENABLED if graph_enabled_raw is None else bool(graph_enabled_raw)
-        self.enable_graph.setChecked(graph_enabled_config)
+        self.enable_graph.setChecked(self.config.get("graph_enabled", constants.config.defaults.DEFAULT_GRAPH_ENABLED))
 
-        history_min_raw = self.config.get("history_minutes")
-        history_min_config = constants.config.defaults.DEFAULT_HISTORY_MINUTES if history_min_raw is None else int(history_min_raw)
-        hist_min_slider, hist_max_slider = constants.ui.history.HISTORY_MINUTES_RANGE
-        history_min_config = max(hist_min_slider, min(history_min_config, hist_max_slider))
-        self.history_duration.setValue(history_min_config)
-        self.history_duration.setValueText(f"{self.history_duration.value()} {self.i18n.MINUTES_LABEL}")
+        history_min = self.config.get("history_minutes", constants.config.defaults.DEFAULT_HISTORY_MINUTES)
+        self.history_duration.setValue(history_min)
+        self.history_duration.setValueText(f"{history_min} {self.i18n.MINUTES_LABEL}")
 
-        graph_opacity_raw = self.config.get("graph_opacity")
-        graph_opacity_config = constants.config.defaults.DEFAULT_GRAPH_OPACITY if graph_opacity_raw is None else int(graph_opacity_raw)
-        opacity_min_slider, opacity_max_slider = constants.ui.sliders.OPACITY_MIN, constants.ui.sliders.OPACITY_MAX
-        graph_opacity_config = max(opacity_min_slider, min(graph_opacity_config, opacity_max_slider))
-        self.graph_opacity.setValue(graph_opacity_config)
-        self.graph_opacity.setValueText(f"{self.graph_opacity.value()}%")
+        graph_opacity = self.config.get("graph_opacity", constants.config.defaults.DEFAULT_GRAPH_OPACITY)
+        self.graph_opacity.setValue(graph_opacity)
+        self.graph_opacity.setValueText(f"{graph_opacity}%")
 
         # --- Units Page ---
         self.update_threshold_labels()
 
-        sdm_raw = self.config.get("speed_display_mode", "auto")
-        sdm_val = self.SPEED_DISPLAY_MODE_MAP.get(str(sdm_raw).lower(), self.SPEED_DISPLAY_MODE_MAP["auto"])
+        sdm_key = self.config.get("speed_display_mode", constants.config.defaults.DEFAULT_SPEED_DISPLAY_MODE)
+        sdm_val = self.SPEED_DISPLAY_MODE_MAP.get(sdm_key, 0)
         self.speed_display_mode.setValue(sdm_val)
         self._on_speed_display_mode_changed(sdm_val)
 
-        dp_raw = self.config.get("decimal_places")
-        dp_val = 2 if dp_raw is None else int(dp_raw)
+        dp_val = self.config.get("decimal_places", constants.config.defaults.DEFAULT_DECIMAL_PLACES)
         self.decimal_places.setValue(dp_val)
         self._on_decimal_places_changed(dp_val)
 
-        ta_raw = self.config.get("text_alignment", "center")
-        ta_val = self.TEXT_ALIGNMENT_MAP.get(str(ta_raw).lower(), self.TEXT_ALIGNMENT_MAP["center"])
+        ta_key = self.config.get("text_alignment", constants.config.defaults.DEFAULT_TEXT_ALIGNMENT)
+        ta_val = self.TEXT_ALIGNMENT_MAP.get(ta_key, 1)
         self.text_alignment.setValue(ta_val)
         self._on_text_alignment_changed(ta_val)
 
         # --- Interfaces Page ---
-        # Default to 'auto' if the config value is missing or invalid
-        interface_mode_config = self.config.get("interface_mode", "auto")
-
-        if interface_mode_config == "selected":
-            self.selected_interfaces_radio.setChecked(True)
-        elif interface_mode_config == "all_physical":
-            self.all_physical_interfaces_radio.setChecked(True)
-        elif interface_mode_config == "all_virtual":
-            self.all_virtual_interfaces_radio.setChecked(True)
-        else: # Default to "auto" for safety
-            self.auto_interface_radio.setChecked(True)
+        interface_mode = self.config.get("interface_mode", constants.config.defaults.DEFAULT_INTERFACE_MODE)
+        if interface_mode == "selected": self.selected_interfaces_radio.setChecked(True)
+        elif interface_mode == "all_physical": self.all_physical_interfaces_radio.setChecked(True)
+        elif interface_mode == "all_virtual": self.all_virtual_interfaces_radio.setChecked(True)
+        else: self.auto_interface_radio.setChecked(True)
 
         is_selection_visible = self.selected_interfaces_radio.isChecked()
         self.interface_scroll.setVisible(is_selection_visible)
@@ -1076,7 +1051,7 @@ class SettingsDialog(QWidget):
 
     def _set_color_button_style(self, button: QPushButton, color_hex: str) -> None:
         try:
-            button.setStyleSheet(color_button_style(color_hex))
+            button.setStyleSheet(style_utils.color_button_style(color_hex))
             button.setFixedSize(constants.ui.dialogs.COLOR_BUTTON_WIDTH, constants.ui.dialogs.COLOR_BUTTON_HEIGHT)
         except Exception as e:
             self.logger.error(f"Error setting style for color button '{button.objectName()}': {e}")
@@ -1096,6 +1071,9 @@ class SettingsDialog(QWidget):
             new_color_hex = new_qcolor.name(QColor.NameFormat.HexRgb)
             self.logger.debug(f"Color chosen for '{object_name}': {new_color_hex}")
             self._set_color_button_style(button, new_color_hex)
+            if object_name == "default_color":
+                self._user_chose_default_color = True
+
             self._schedule_settings_update()
         else:
              self.logger.debug(f"Color selection cancelled for '{object_name}'.")
@@ -1263,7 +1241,7 @@ class SettingsDialog(QWidget):
             settings["language"] = self.language_combo.currentData()
 
             # General Page
-            settings["update_rate"] = max(constants.config.defaults.MINIMUM_UPDATE_RATE, self.update_rate.value() / 2.0) if self.update_rate.value() > 0 else 0.0
+            settings["update_rate"] = max(constants.config.defaults.MINIMUM_UPDATE_RATE, self.update_rate.value() / 2.0)
             settings["font_size"] = self.font_size.value()
             settings["font_family"] = self.font_family_label.text()
             settings["font_weight"] = self.font_weight.value()
@@ -1271,6 +1249,12 @@ class SettingsDialog(QWidget):
             settings["free_move"] = self.free_move.isChecked()
             settings["start_with_windows"] = self.start_with_windows.isChecked() if hasattr(self, 'start_with_windows') else self.startup_enabled_initial_state
             settings["default_color"] = self._get_color_from_button(self.default_color_button, constants.config.defaults.DEFAULT_COLOR)
+
+            if self._user_chose_default_color:
+                settings["color_is_automatic"] = False
+            else:
+                # Preserve the original value if the user didn't touch the color
+                settings["color_is_automatic"] = self.original_config.get("color_is_automatic", True)
 
             settings["color_coding"] = self.enable_colors.isChecked()
             settings["high_speed_threshold"] = self.high_speed_threshold.value() / 10.0
@@ -1356,19 +1340,22 @@ class SettingsDialog(QWidget):
     def is_startup_requested(self) -> bool:
         if not self._ui_setup_done: return False
         return self.start_with_windows.isChecked()
-    
+
+
     def reset_with_config(self, config: Dict[str, Any], is_startup_enabled: bool) -> None:
         """Resets the UI state with a new configuration dictionary and fresh startup status."""
         self.config = config.copy()
         self.original_config = config.copy()
         self.initial_language = self.i18n.language
         self.startup_enabled_initial_state = is_startup_enabled
+        self._user_chose_default_color = False
         self._init_ui_state()
         self.logger.debug("Settings dialog state has been reset with fresh config.")
 
+
     def _save_and_close(self) -> None:
         """Saves settings, handles startup task, and hides the window."""
-        self.logger.info("Save button clicked. Finalizing and saving settings...")
+        self.logger.debug("Save button clicked. Finalizing and saving settings...")
         final_settings = self.get_settings()
         if not final_settings:
             QMessageBox.critical(self, self.i18n.ERROR_TITLE, self.i18n.ERROR_GETTING_SETTINGS)
@@ -1393,21 +1380,23 @@ class SettingsDialog(QWidget):
         if language_changed:
             QMessageBox.information(self, self.i18n.LANGUAGE_RESTART_TITLE, self.i18n.LANGUAGE_RESTART_MESSAGE)
             
-        self.hide() # Use hide() instead of close()
+        self.hide() # Use hide() instead of accept() to prevent deletion
+
 
     def _cancel_and_close(self) -> None:
         """Reverts any live preview changes and hides the window."""
-        self.logger.info("Cancel button clicked. Reverting preview changes.")
+        self.logger.debug("Cancel button clicked. Reverting preview changes.")
         if hasattr(self.parent_widget, 'handle_settings_changed'):
             try:
                 self.parent_widget.handle_settings_changed(self.original_config, save_to_disk=False)
             except Exception as e:
                  self.logger.error(f"Error reverting parent widget state on reject: {e}", exc_info=True)
-        self.hide() # Use hide() instead of close()
+        self.hide() # Use hide() instead of reject() to prevent deletion
+
 
     def closeEvent(self, event: QCloseEvent) -> None:
         """Handles the window close event (e.g., 'X' button) to hide instead of close."""
         self.logger.debug("Close event triggered. Hiding settings window.")
         # Revert any live changes, just like clicking "Cancel"
         self._cancel_and_close()
-        event.ignore()
+        event.ignore() # Prevent the dialog from actually closing and being deleted

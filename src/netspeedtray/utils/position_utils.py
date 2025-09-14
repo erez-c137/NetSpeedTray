@@ -118,11 +118,11 @@ class PositionManager:
         """
         try:
             if self._apply_saved_position():
-                logger.info("Widget position set from saved coordinates: %s", self._state.widget.pos())
+                logger.debug("Widget position set from saved coordinates: %s", self._state.widget.pos())
                 return
 
             if self._apply_calculated_position():
-                logger.info("Widget position set from calculated coordinates: %s", self._state.widget.pos())
+                logger.debug("Widget position set from calculated coordinates: %s", self._state.widget.pos())
             else:
                 logger.warning("Failed to calculate and apply position. Widget may be misplaced.")
 

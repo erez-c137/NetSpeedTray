@@ -160,7 +160,7 @@ class SpeedTimerManager(QObject):
             self.timers["speed"].setInterval(actual_interval)
             if was_active:
                 self.timers["speed"].start()
-            self.logger.info("Updated speed timer interval to %dms", actual_interval)
+            self.logger.debug("Updated speed timer interval to %dms", actual_interval)
 
 
     def update_speed_rate(self, update_rate: float) -> None:
@@ -189,7 +189,7 @@ class SpeedTimerManager(QObject):
         try:
             interval_ms = calculate_timer_interval(update_rate)  # Use timer_utils
             self.update_interval(interval_ms)
-            self.logger.info("Speed timer interval updated via rate %.2fs to %dms", update_rate, interval_ms)
+            self.logger.debug("Speed timer interval updated via rate %.2fs to %dms", update_rate, interval_ms)
         except ValueError as e:
             self.logger.error("Invalid update rate provided for speed timer: %s", e)
             raise

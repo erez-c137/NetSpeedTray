@@ -47,25 +47,18 @@ class RenderConfig:
     def from_dict(cls, config: Dict[str, Any]) -> 'RenderConfig':
         """Creates a RenderConfig instance from a standard application config dictionary."""
         try:
+            # Use constants for all default fallbacks
             opacity = float(config.get('graph_opacity', constants.config.defaults.DEFAULT_GRAPH_OPACITY)) / 100.0
-            weight = config.get('font_weight', constants.config.defaults.DEFAULT_FONT_WEIGHT)
-            if isinstance(weight, str):
-                weights = {"normal": QFont.Weight.Normal, "bold": QFont.Weight.Bold}
-                weight = weights.get(weight.lower(), constants.config.defaults.DEFAULT_FONT_WEIGHT)
-            weight = int(weight)
-            if not 1 <= weight <= 1000:
-                logger.warning("Invalid font_weight %s, using default.", weight)
-                weight = constants.config.defaults.DEFAULT_FONT_WEIGHT
-
+            
             return cls(
                 color_coding=config.get('color_coding', constants.config.defaults.DEFAULT_COLOR_CODING),
                 graph_enabled=config.get('graph_enabled', constants.config.defaults.DEFAULT_GRAPH_ENABLED),
                 high_speed_threshold=float(config.get('high_speed_threshold', constants.config.defaults.DEFAULT_HIGH_SPEED_THRESHOLD)),
                 low_speed_threshold=float(config.get('low_speed_threshold', constants.config.defaults.DEFAULT_LOW_SPEED_THRESHOLD)),
-                arrow_width=int(config.get('arrow_width', constants.renderer.DEFAULT_ARROW_WIDTH)),
+                arrow_width=constants.renderer.DEFAULT_ARROW_WIDTH, # No longer in config
                 font_family=config.get('font_family', constants.config.defaults.DEFAULT_FONT_FAMILY),
                 font_size=int(config.get('font_size', constants.config.defaults.DEFAULT_FONT_SIZE)),
-                font_weight=weight,
+                font_weight=int(config.get('font_weight', constants.config.defaults.DEFAULT_FONT_WEIGHT)),
                 default_color=config.get('default_color', constants.config.defaults.DEFAULT_COLOR),
                 high_speed_color=config.get('high_speed_color', constants.config.defaults.DEFAULT_HIGH_SPEED_COLOR),
                 low_speed_color=config.get('low_speed_color', constants.config.defaults.DEFAULT_LOW_SPEED_COLOR),
@@ -73,10 +66,10 @@ class RenderConfig:
                 speed_display_mode=config.get('speed_display_mode', constants.config.defaults.DEFAULT_SPEED_DISPLAY_MODE),
                 decimal_places=int(config.get('decimal_places', constants.config.defaults.DEFAULT_DECIMAL_PLACES)),
                 text_alignment=config.get('text_alignment', constants.config.defaults.DEFAULT_TEXT_ALIGNMENT),
-                force_decimals=config.get('force_decimals', False)
+                force_decimals=config.get('force_decimals', constants.config.defaults.DEFAULT_FORCE_DECIMALS)
             )
-        except Exception as e:
-            logger.error("Failed to create RenderConfig: %s", e)
+        except (ValueError, TypeError) as e:
+            logger.error("Failed to create RenderConfig from dict: %s", e)
             raise ValueError("Invalid rendering configuration") from e
 
 
@@ -144,12 +137,15 @@ class WidgetRenderer:
 
 
     def _draw_vertical_layout(self, painter: QPainter, upload: float, download: float, width: int, height: int, config: RenderConfig, always_mbps: bool, decimal_places: int, force_decimals: bool) -> None:
-        """Draws the standard two-line vertical layout."""
+        """Draws the standard two-line vertical layout with correct compact centering."""
         line_height = self.metrics.height()
         ascent = self.metrics.ascent()
+        
+        # Calculate the height of ONLY the text itself to create a compact block.
         total_text_height = line_height * 2
-        # Ensure all coordinates are integers before drawing
+        # Center this compact block vertically.
         top_y = int((height - total_text_height) / 2 + ascent)
+        # The second line is positioned exactly one line_height below the first.
         bottom_y = top_y + line_height
 
         upload_text, download_text = self._format_speed_texts(upload, download, always_mbps, decimal_places, force_decimals)
@@ -265,7 +261,7 @@ class WidgetRenderer:
             return self.default_color
         
         # Thresholds are in Mbps, speed is in bytes/sec. Convert for comparison.
-        speed_mbps = (speed * 8) / 1_000_000
+        speed_mbps = (speed * constants.network.units.BITS_PER_BYTE) / constants.network.units.MEGA_DIVISOR
         
         if speed_mbps >= config.high_speed_threshold:
             return self.high_color
@@ -276,75 +272,68 @@ class WidgetRenderer:
 
     def draw_mini_graph(self, painter: QPainter, width: int, height: int, config: RenderConfig, history: List[SpeedDataSnapshot], layout_mode: str = 'vertical') -> None:
         """Draws a mini graph of speed history, adapting to the current layout mode."""
-        # Proactive Check: Exit immediately if the graph is disabled in the config.
         if not config.graph_enabled or len(history) < constants.renderer.MIN_GRAPH_POINTS:
             return
 
         try:
             if layout_mode == 'horizontal':
                 graph_width = constants.layout.MINI_GRAPH_HORIZONTAL_WIDTH
-                vertical_margin = 4
-                graph_rect = QRect(width - graph_width, vertical_margin, graph_width, height - (vertical_margin * 2))
-            else:  # Vertical mode
+                v_margin = constants.layout.DEFAULT_PADDING
+                graph_rect = QRect(width - graph_width - constants.renderer.GRAPH_RIGHT_PADDING, v_margin, graph_width, height - (v_margin * 2))
+            else:
                 text_rect = self.get_last_text_rect()
-                if not text_rect.isValid():
-                    self.logger.debug("Cannot draw mini-graph: text rect is invalid.")
-                    return
-                vertical_padding = 10
-                graph_rect = text_rect.adjusted(0, -vertical_padding, 0, vertical_padding)
+                if not text_rect.isValid(): return
+                v_padding = constants.renderer.GRAPH_MARGIN * 2
+                graph_rect = text_rect.adjusted(0, -v_padding, 0, v_padding)
 
-            if graph_rect.width() <= 0 or graph_rect.height() <= 0:
-                return
+            if graph_rect.width() <= 0 or graph_rect.height() <= 0: return
 
+            # Aggregate upload and download speeds
             aggregated_history = []
-            for snapshot in history:
-                total_upload = sum(up for up, down in snapshot.speeds.values())
-                total_download = sum(down for up, down in snapshot.speeds.values())
+            for s in history:
+                total_upload = sum(speeds[0] for speeds in s.speeds.values())
+                total_download = sum(speeds[1] for speeds in s.speeds.values())
                 aggregated_history.append({'upload': total_upload, 'download': total_download})
 
+            # Hash the aggregated data to prevent unnecessary recalculations
             current_hash = hash(tuple((d['upload'], d['download']) for d in aggregated_history))
 
             if self._last_widget_size != (width, height) or self._last_history_hash != current_hash:
                 num_points = len(aggregated_history)
-                if num_points < 2: return
+                # Gracefully handle empty history to prevent max() error
+                if not aggregated_history:
+                    return
 
-                max_upload = max(d['upload'] for d in aggregated_history) if aggregated_history else 0
-                max_download = max(d['download'] for d in aggregated_history) if aggregated_history else 0
-                actual_max_speed = max(max_upload, max_download, 1.0)
-                padded_max_speed = actual_max_speed * constants.renderer.GRAPH_Y_AXIS_PADDING_FACTOR
-                max_speed = max(padded_max_speed, constants.renderer.MIN_Y_SCALE)
-                min_speed_threshold = constants.renderer.MIN_SPEED_THRESHOLD
+                max_speed_val = max(
+                    max(d['upload'] for d in aggregated_history),
+                    max(d['download'] for d in aggregated_history)
+                ) if aggregated_history else 0
+
+                padded_max_speed = max_speed_val * constants.renderer.GRAPH_Y_AXIS_PADDING_FACTOR
+                max_y = max(padded_max_speed, constants.renderer.MIN_Y_SCALE)
                 step_x = graph_rect.width() / (num_points - 1) if num_points > 1 else 0
 
                 self._cached_upload_points = [
-                    QPointF(graph_rect.left() + i * step_x,
-                            graph_rect.bottom() if data['upload'] < min_speed_threshold else
-                            graph_rect.bottom() - min(1.0, data['upload'] / max_speed) * graph_rect.height())
-                    for i, data in enumerate(aggregated_history)
+                    QPointF(graph_rect.left() + i * step_x, graph_rect.bottom() - (d['upload'] / max_y) * graph_rect.height())
+                    for i, d in enumerate(aggregated_history)
                 ]
                 self._cached_download_points = [
-                    QPointF(graph_rect.left() + i * step_x,
-                            graph_rect.bottom() if data['download'] < min_speed_threshold else
-                            graph_rect.bottom() - min(1.0, data['download'] / max_speed) * graph_rect.height())
-                    for i, data in enumerate(aggregated_history)
+                    QPointF(graph_rect.left() + i * step_x, graph_rect.bottom() - (d['download'] / max_y) * graph_rect.height())
+                    for i, d in enumerate(aggregated_history)
                 ]
-
                 self._last_widget_size = (width, height)
                 self._last_history_hash = current_hash
 
             painter.save()
             painter.setOpacity(config.graph_opacity)
-            upload_color = QColor(constants.graph.UPLOAD_LINE_COLOR)
-            pen = QPen(upload_color, constants.renderer.LINE_WIDTH, cap=Qt.PenCapStyle.RoundCap, join=Qt.PenJoinStyle.RoundJoin)
-            painter.setPen(pen)
+            upload_pen = QPen(QColor(constants.graph.UPLOAD_LINE_COLOR), constants.renderer.LINE_WIDTH)
+            painter.setPen(upload_pen)
             painter.drawPolyline(self._cached_upload_points)
 
-            download_color = QColor(constants.graph.DOWNLOAD_LINE_COLOR)
-            pen.setColor(download_color)
-            painter.setPen(pen)
+            download_pen = QPen(QColor(constants.graph.DOWNLOAD_LINE_COLOR), constants.renderer.LINE_WIDTH)
+            painter.setPen(download_pen)
             painter.drawPolyline(self._cached_download_points)
             painter.restore()
-
         except Exception as e:
             self.logger.error("Failed to draw mini graph: %s", e, exc_info=True)
 
@@ -361,7 +350,7 @@ class WidgetRenderer:
             self._cached_upload_points = []
             self._cached_download_points = []
             self._last_history_hash = 0
-            self.logger.info("Renderer config updated.")
+            self.logger.debug("Renderer config updated.")
         except Exception as e:
             self.logger.error("Failed to update config: %s", e)
 
