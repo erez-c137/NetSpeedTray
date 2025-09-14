@@ -1,94 +1,98 @@
 """
 Unit tests for the data processing logic within the GraphWindow class.
-
-These tests verify the correctness of statistical calculations and data transformations
-performed by the graph view, ensuring the data presented to the user is accurate.
 """
 
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from datetime import datetime, timedelta
 from typing import Iterator
 
-# The new, single, correct way to import all constants
-from netspeedtray import constants
+from PyQt6.QtWidgets import QApplication, QWidget
 
-# This import is for type hinting and for the object we will patch.
+from netspeedtray import constants
 from netspeedtray.views.graph import GraphWindow
 
-# Fixtures
-@pytest.fixture
-def mock_graph_parent() -> MagicMock:
-    """Provides a mock parent widget with necessary attributes."""
-    parent = MagicMock()
-    parent.config = constants.config.defaults.DEFAULT_CONFIG.copy()
-    parent.i18n = constants.i18n.get_i18n()
-    return parent
+# --- Fixtures ---
+@pytest.fixture(scope="session")
+def qapp() -> QApplication:
+    """Provides a QApplication instance for the test session."""
+    return QApplication.instance() or QApplication([])
 
 @pytest.fixture
-def graph_window_instance(mock_graph_parent, mocker) -> Iterator[GraphWindow]:
+def graph_window_instance(qapp, mocker) -> Iterator[GraphWindow]:
     """
-    Provides a minimally initialized GraphWindow instance for testing logic.
-    Uses the 'mocker' fixture from pytest-mock to patch __init__.
+    Provides a properly initialized GraphWindow instance for logic testing.
+    This fixture allows the __init__ to run but mocks the low-level,
+    problematic dependencies, ensuring graceful cleanup.
     """
-    # Use the mocker fixture to patch the __init__ method of the GraphWindow.
-    # This prevents it from creating real UI elements which would require a QApplication.
-    mocker.patch.object(GraphWindow, '__init__', lambda s, **kwargs: None)
+    mocker.patch('matplotlib.pyplot.subplots', return_value=(MagicMock(), (MagicMock(), MagicMock())))
+    mocker.patch('netspeedtray.views.graph.FigureCanvas', return_value=QWidget())
+    mocker.patch('netspeedtray.utils.helpers.get_app_asset_path', return_value=MagicMock())
+    mocker.patch.object(GraphWindow, '_init_worker_thread', return_value=None)
+    mocker.patch.object(GraphWindow, '_connect_signals', return_value=None)
+    mocker.patch.object(GraphWindow, '_position_window', return_value=None)
     
-    graph_window = GraphWindow()
-    # After creating the "empty" instance, manually assign the attributes
-    # that our logic tests will depend on.
-    graph_window._parent = mock_graph_parent
-    graph_window.i18n = mock_graph_parent.i18n
-    graph_window.logger = MagicMock()
-    
-    yield graph_window
+    mock_parent = MagicMock()
+    mock_parent.config = constants.config.defaults.DEFAULT_CONFIG.copy()
+    mock_parent.i18n = constants.i18n.get_i18n("en_US")
+    mock_parent.widget_state = MagicMock()
 
-def test_calculate_period_stats_correctly_computes_values(graph_window_instance):
+    graph = GraphWindow(
+        parent=mock_parent,
+        i18n=mock_parent.i18n,
+        session_start_time=datetime.now()
+    )
+    graph.logger = MagicMock()
+    
+    # The constructor creates a real QLabel. We must replace it with a mock
+    # so that our test assertions will work.
+    graph.stats_bar = MagicMock()
+    
+    yield graph
+    
+    graph.close()
+
+
+def test_update_stats_bar_correctly_computes_values(graph_window_instance):
     """
-    Tests the _calculate_period_stats method to ensure it correctly calculates
-    max speeds in Mbps and total data transferred from a list of Bytes/sec readings.
+    Tests the _update_stats_bar method to ensure it correctly calculates and
+    formats max speeds and total bandwidth.
     """
     # ARRANGE
     graph = graph_window_instance
     
     now = datetime.now()
-    period_data = [
-        (now - timedelta(seconds=2), 1_000_000, 2_000_000),      # 1 MB/s up, 2 MB/s down
-        (now - timedelta(seconds=1), 2_500_000, 5_000_000),      # 2.5 MB/s up (max), 5 MB/s down (max)
-        (now, 1_500_000, 3_000_000)                             # 1.5 MB/s up, 3 MB/s down
+    history_data = [
+        (now - timedelta(seconds=2), 1_000_000, 2_000_000),
+        (now - timedelta(seconds=1), 2_500_000, 5_000_000),
+        (now, 1_500_000, 3_000_000)
     ]
     
-    # ACT
-    stats = graph._calculate_period_stats(period_data)
+    with patch.object(GraphWindow, '_get_time_range_from_ui', return_value=(now - timedelta(seconds=2), now)), \
+         patch('netspeedtray.views.graph.db_utils.get_total_bandwidth_for_period') as mock_get_bandwidth:
+        
+        mock_get_bandwidth.return_value = (5000000, 10000000)
+        
+        # ACT
+        graph._update_stats_bar(history_data)
     
     # ASSERT
-    # Max Upload = 2,500,000 Bytes/sec = (2.5 * 8) = 20 Mbps
-    assert stats["max_upload"] == pytest.approx(20.0)
-    # Max Download = 5,000,000 Bytes/sec = (5 * 8) = 40 Mbps
-    assert stats["max_download"] == pytest.approx(40.0)
+    graph.stats_bar.setText.assert_called_once()
+    stats_text = graph.stats_bar.setText.call_args[0][0]
     
-    # Total Upload Bytes = (1.75 * 1M) + (2.0 * 1M) = 3,750,000 Bytes
-    # Our helper format_data_size correctly converts this to 3.58 MB (using 1024 divisor)
-    assert stats["total_upload"] == pytest.approx(3.58, abs=0.01) 
-    assert stats["total_upload_unit"] == "MB"
-    # Total Download Bytes = (3.5 * 1M) + (4.0 * 1M) = 7,500,000 Bytes -> 7.15 MB
-    assert stats["total_download"] == pytest.approx(7.15, abs=0.01)
-    assert stats["total_download_unit"] == "MB"
+    assert "Max: ↑20.00 Mbps, ↓40.00 Mbps" in stats_text
+    assert "Total: ↑4.77 MB, ↓9.54 MB" in stats_text
 
-def test_calculate_period_stats_handles_empty_data(graph_window_instance):
+
+def test_update_stats_bar_handles_empty_data(graph_window_instance):
     """
-    Tests that _calculate_period_stats returns a default, zeroed-out dictionary
-    when it receives no data, preventing crashes.
+    Tests that the stats bar shows the "No data" message when history is empty.
     """
+    # ARRANGE
     graph = graph_window_instance
-    stats = graph._calculate_period_stats([])
     
-    # The actual return dict was missing a key, this test uncovered it.
-    # We must check against the *actual* expected return value.
-    expected_keys = {
-        "max_upload", "max_download", "total_upload", 
-        "total_upload_unit", "total_download", "total_download_unit"
-    }
-    assert set(stats.keys()) == expected_keys
-    assert stats["total_upload_unit"] == "B"
+    # ACT
+    graph._update_stats_bar([])
+    
+    # ASSERT
+    graph.stats_bar.setText.assert_called_once_with(graph.i18n.NO_DATA_MESSAGE)

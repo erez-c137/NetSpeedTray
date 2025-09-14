@@ -150,3 +150,37 @@ def test_aggregate_for_display_select_specific_mode(controller_instance):
     
     # Expected Download = 2000.0 (Wi-Fi) + 150.0 (VPN) = 2150.0 B/s
     assert agg_download_bps == pytest.approx(2150.0)
+
+
+def test_update_speeds_handles_short_lag_spike(controller_instance, mock_widget_state):
+    """
+    Tests that a short but abnormal time delta (e.g. 4s on a 1s interval)
+    is correctly identified as a lag spike and does not record a speed.
+    This validates the fix for the phantom speed issue.
+    """
+    # ARRANGE
+    controller = controller_instance
+    controller.config["update_rate"] = 1.0
+    
+    # --- Manually prime the controller state ---
+    # This simulates the application having been running normally before the lag spike.
+    time_before_lag = time.monotonic()
+    controller.last_check_time = time_before_lag
+    controller.last_interface_counters = { "Wi-Fi": MockNetIO(bytes_sent=1000, bytes_recv=2000) }
+    
+    second_counters = { "Wi-Fi": MockNetIO(bytes_sent=10000, bytes_recv=20000) } # Large delta
+    mock_view = MagicMock()
+    controller.set_view(mock_view)
+    
+    # ACT: Simulate a 4-second lag, which is > (1s * 3.0) but < 5s
+    with patch('time.monotonic', return_value=time_before_lag + 4.0):
+        with patch('psutil.net_io_counters', return_value=second_counters):
+            controller.update_speeds()
+
+    # ASSERT
+    # With the new logic, no speed should be calculated or stored
+    mock_widget_state.add_speed_data.assert_not_called()
+    # The view should be reset to zero
+    mock_view.update_display_speeds.assert_called_once_with(0.0, 0.0)
+    # The baseline time should be updated to the new time
+    assert controller.last_check_time == time_before_lag + 4.0

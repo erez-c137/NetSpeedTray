@@ -19,8 +19,11 @@ numpy==2.3.2
     #   -r requirements.in
     #   contourpy
     #   matplotlib
+    #   pandas
 packaging==25.0
     # via matplotlib
+pandas==2.3.2
+    # via -r requirements.in
 pillow==11.3.0
     # via matplotlib
 psutil==7.0.0
@@ -34,12 +37,18 @@ pyqt6-qt6==6.9.1
 pyqt6-sip==13.10.2
     # via pyqt6
 python-dateutil==2.9.0.post0
-    # via matplotlib
+    # via
+    #   matplotlib
+    #   pandas
+pytz==2025.2
+    # via pandas
 pywin32==311
     # via
     #   -r requirements.in
     #   wmi
 six==1.17.0
     # via python-dateutil
+tzdata==2025.2
+    # via pandas
 wmi==1.5.1
     # via -r requirements.in

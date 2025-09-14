@@ -29,12 +29,17 @@ numpy==2.3.2
     #   -r requirements.in
     #   contourpy
     #   matplotlib
+    #   pandas
 packaging==25.0
     # via
     #   matplotlib
     #   pyinstaller
     #   pyinstaller-hooks-contrib
     #   pytest
+pandas==2.3.2
+    # via
+    #   -r dev-requirements.in
+    #   -r requirements.in
 pefile==2023.2.7
     # via pyinstaller
 pillow==11.3.0
@@ -72,6 +77,9 @@ python-dateutil==2.9.0.post0
     # via
     #   freezegun
     #   matplotlib
+    #   pandas
+pytz==2025.2
+    # via pandas
 pywin32==311
     # via
     #   -r requirements.in
@@ -80,6 +88,8 @@ pywin32-ctypes==0.2.3
     # via pyinstaller
 six==1.17.0
     # via python-dateutil
+tzdata==2025.2
+    # via pandas
 wmi==1.5.1
     # via -r requirements.in
 
