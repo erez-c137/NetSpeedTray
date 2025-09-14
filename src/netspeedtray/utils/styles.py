@@ -1,11 +1,16 @@
 """
-UI styling definitions for NetSpeedTray using PyQt6 QSS.
+UI styling engine for NetSpeedTray using PyQt6 QSS.
+
+This module reads raw style constants from `constants.styles` and uses them
+to build dynamic stylesheets for different application components.
 """
 
 from PyQt6.QtGui import QColor
 import winreg
-from typing import Dict
-from netspeedtray import constants
+
+# Import the design tokens (raw values) and other UI constants
+from netspeedtray.constants import styles as style_constants
+from netspeedtray.constants import ui, color as color_constants
 
 
 def is_dark_mode() -> bool:
@@ -17,6 +22,7 @@ def is_dark_mode() -> bool:
         return value == 0
     except Exception:
         return False
+
 
 def get_accent_color() -> QColor:
     """Retrieve the user's Windows accent color as a QColor."""
@@ -30,16 +36,19 @@ def get_accent_color() -> QColor:
         blue = argb & 0xFF
         return QColor(red, green, blue)
     except Exception:
-        return QColor(constants.styles.UI_ACCENT_FALLBACK)
+        return QColor(style_constants.styles.UI_ACCENT_FALLBACK)
+
 
 def dialog_style() -> str:
     """Style for the main SettingsDialog."""
     dark_mode_active = is_dark_mode()
-    sidebar_bg = constants.styles.SETTINGS_PANEL_BG_DARK if dark_mode_active else constants.styles.SETTINGS_PANEL_BG_LIGHT
-    # DEFINE THE MISSING VARIABLES HERE
-    content_bg = constants.styles.SETTINGS_PANEL_BG_DARK if dark_mode_active else constants.styles.SETTINGS_PANEL_BG_LIGHT
-    section_bg = "#2D2D2D" if dark_mode_active else "#F0F0F0"
-    text_color = constants.styles.SETTINGS_PANEL_TEXT_DARK if dark_mode_active else constants.styles.SETTINGS_PANEL_TEXT_LIGHT
+    
+    sidebar_bg = style_constants.DIALOG_SIDEBAR_BG_DARK if dark_mode_active else style_constants.DIALOG_SIDEBAR_BG_LIGHT
+    content_bg = style_constants.DIALOG_CONTENT_BG_DARK if dark_mode_active else style_constants.DIALOG_CONTENT_BG_LIGHT
+    section_bg = style_constants.DIALOG_SECTION_BG_DARK if dark_mode_active else style_constants.DIALOG_SECTION_BG_LIGHT
+    text_color = style_constants.DARK_MODE_TEXT_COLOR if dark_mode_active else style_constants.LIGHT_MODE_TEXT_COLOR
+    border_color = "#404040" if dark_mode_active else "#D0D0D0"
+
     label_style_str = f"color: {text_color}; font-size: 13px; font-family: 'Segoe UI Variable';"
 
     return f"""
@@ -61,7 +70,7 @@ def dialog_style() -> str:
             margin-top: 12px;
             color: {text_color};
             background-color: {section_bg};
-            border: 1px solid {"#404040" if dark_mode_active else "#D0D0D0"};
+            border: 1px solid {border_color};
             border-radius: 6px;
             padding: 10px; 
             padding-top: 20px;
@@ -73,37 +82,19 @@ def dialog_style() -> str:
             left: 10px;
             color: {text_color};
         }}
-        QPushButton {{
-            font-size: 13px;
-            padding: 5px 15px;
-            border-radius: 4px;
-            color: {text_color};
-            background-color: {"#454545" if dark_mode_active else "#E0E0E0"};
-            border: 1px solid {"#505050" if dark_mode_active else "#C0C0C0"};
-            outline: none;
+        QWidget:focus, QStackedWidget:focus, QStackedWidget::widget:focus {{ 
+            outline: none; 
         }}
-        QPushButton:hover {{
-            background-color: {"#505050" if dark_mode_active else "#D0D0D0"};
-        }}
-        QPushButton:pressed {{
-            background-color: {"#353535" if dark_mode_active else "#B8B8B8"};
-        }}
-        QCheckBox::indicator {{
-            border-radius: {constants.ui.visuals.TOGGLE_TRACK_HEIGHT // 2}px;
-        }}
-        QWidget:focus {{ outline: none; }}
-        QStackedWidget:focus {{ outline: none; }}
-        QStackedWidget::widget:focus {{ outline: none; }}
     """
 
+
 def sidebar_style() -> str:
-    """Style for the sidebar (QListWidget)."""
+    """Style for the sidebar (QListWidget) in the main SettingsDialog."""
     dark_mode_active = is_dark_mode()
     
-    sidebar_bg = constants.styles.SETTINGS_PANEL_BG_DARK if dark_mode_active else constants.styles.UI_SIDEBAR_BG
-    selected_bg = "#3A3A3A" if dark_mode_active else constants.styles.UI_SIDEBAR_SELECTED
+    sidebar_bg = style_constants.DIALOG_SIDEBAR_BG_DARK if dark_mode_active else style_constants.DIALOG_SIDEBAR_BG_LIGHT
+    text_color = style_constants.DARK_MODE_TEXT_COLOR if dark_mode_active else style_constants.LIGHT_MODE_TEXT_COLOR
     hover_bg = "#4A4A4A" if dark_mode_active else "#E0E0E0"
-    text_color = constants.styles.SETTINGS_PANEL_TEXT_DARK if dark_mode_active else constants.styles.UI_TEXT_COLOR
 
     accent_qcolor = get_accent_color()
     accent_rgb = f"rgb({accent_qcolor.red()}, {accent_qcolor.green()}, {accent_qcolor.blue()})"
@@ -128,7 +119,7 @@ def sidebar_style() -> str:
         }}
         QListWidget::item:selected {{
             background-color: {accent_rgb};
-            color: white;
+            color: {color_constants.WHITE};
             border-radius: 4px; 
             outline: none;
         }}
@@ -136,55 +127,140 @@ def sidebar_style() -> str:
             background-color: {hover_bg};
             border-radius: 4px;
         }}
-        QListWidget:focus {{ outline: none; }}
-        QListWidget::item:focus {{ outline: none; border: none; }}
+        QListWidget:focus, QListWidget::item:focus {{ 
+            outline: none; 
+            border: none; 
+        }}
+    """
+
+
+def graph_settings_panel_style() -> str:
+    """
+    Returns a single, scoped stylesheet for the graph's settings panel.
+    This panel always has a dark, semi-transparent theme.
+    """
+    accent_qcolor = get_accent_color()
+    accent_rgb = f"rgb({accent_qcolor.red()}, {accent_qcolor.green()}, {accent_qcolor.blue()})"
+    
+    # Correctly access constants directly from the 'style_constants' instance
+    return f"""
+        QWidget#settingsPanel {{
+            background-color: rgba(32, 32, 32, 0.95); /* Dark, semi-transparent base */
+            border-radius: 8px;
+            border: 1px solid rgba(80, 80, 80, 0.9);
+        }}
+        QWidget#controlsContainer {{
+            background-color: rgba(45, 45, 45, 0.95); /* Slightly lighter card for controls */
+            border: 1px solid #4a4a4a;
+            border-radius: 8px;
+        }}
+        #settingsPanel QLabel {{
+            color: {style_constants.SETTINGS_PANEL_TEXT_DARK};
+            background-color: transparent;
+            font-size: 13px;
+        }}
+        #settingsPanel QLabel#settingsTitleLabel {{
+            font-family: 'Segoe UI Variable';
+            font-size: 15px;
+            font-weight: 600;
+            color: {style_constants.DARK_MODE_TEXT_COLOR};
+            padding: 5px 0 10px 0;
+        }}
+        #settingsPanel QComboBox {{
+            background-color: {style_constants.COMBOBOX_BG_DARK};
+            border: 1px solid {style_constants.COMBOBOX_BORDER_DARK};
+            border-radius: 4px;
+            padding: 4px 8px;
+            color: {style_constants.DARK_MODE_TEXT_COLOR};
+        }}
+        #settingsPanel QComboBox::drop-down {{
+            border: none;
+        }}
+        #settingsPanel QComboBox QAbstractItemView {{
+            color: {style_constants.DARK_MODE_TEXT_COLOR};
+            background-color: {style_constants.COMBOBOX_BG_DARK};
+            border: 1px solid {style_constants.COMBOBOX_BORDER_DARK};
+            selection-background-color: {accent_rgb};
+            outline: 0px;
+        }}
+    """
+
+
+def graph_tooltip_style() -> str:
+    """Returns the stylesheet for the graph's live data tooltip."""
+    return """
+        QLabel#graphTooltip {
+            background-color: rgba(40, 40, 40, 230);
+            color: white;
+            border: 1px solid rgba(100, 100, 100, 200);
+            border-radius: 4px;
+            padding: 5px;
+            font-size: 9pt;
+        }
+    """
+
+
+def graph_overlay_style() -> str:
+    """
+    Returns a stylesheet for the overlay elements on the graph (stats bar, hamburger).
+    """
+    return """
+        QLabel, QPushButton {
+            background-color: rgba(40, 40, 40, 0.85);
+            color: white;
+            padding: 4px;
+            font-size: 13px;
+            font-family: 'Segoe UI Variable';
+            border-radius: 4px;
+            border: none;
+        }
+        QPushButton {
+            padding: 2px;
+        }
+        QPushButton:hover {
+            background-color: rgba(55, 55, 55, 0.9);
+        }
+        QPushButton:pressed {
+            background-color: rgba(25, 25, 25, 0.95);
+        }
     """
 
 
 def toggle_style(total_track_width: int, total_track_height: int) -> str:
     """
     Style for the QCheckBox acting as the track in Win11Toggle.
-    The provided dimensions are treated as the total outer dimensions including border.
     """
     dark_mode_active = is_dark_mode()
     accent_qcolor = get_accent_color()
     accent_rgb = f"rgb({accent_qcolor.red()}, {accent_qcolor.green()}, {accent_qcolor.blue()})"
     
-    track_off_bg = getattr(constants.styles, 'COMBOBOX_BORDER_DARK', '#333333') if dark_mode_active else getattr(constants.styles, 'COMBOBOX_BORDER_LIGHT', '#CCCCCC')
+    # Using direct constants instead of getattr for clarity and performance
+    # ...
+    track_off_bg = style_constants.COMBOBOX_BORDER_DARK if dark_mode_active else style_constants.COMBOBOX_BORDER_LIGHT
     track_on_bg = accent_rgb
     track_off_hover_bg = QColor(track_off_bg).lighter(120).name() if dark_mode_active else QColor(track_off_bg).darker(110).name()
     track_on_hover_bg = accent_qcolor.darker(115).name()
-    checkbox_text_color = constants.styles.SETTINGS_PANEL_TEXT_DARK if dark_mode_active else constants.styles.SETTINGS_PANEL_TEXT_LIGHT
+    checkbox_text_color = style_constants.DARK_MODE_TEXT_COLOR if dark_mode_active else style_constants.LIGHT_MODE_TEXT_COLOR
 
-    track_border_width = 1  # Define the border width for the track indicator
-    
-    # Calculate content width/height for the QCheckBox::indicator
-    # QSS 'width' and 'height' properties apply to the content box.
-    indicator_content_width = total_track_width - (2 * track_border_width)
-    indicator_content_height = total_track_height - (2 * track_border_width)
-
-    # Ensure content dimensions are not negative
-    indicator_content_width = max(0, indicator_content_width)
-    indicator_content_height = max(0, indicator_content_height)
-
+    track_border_width = 1
+    indicator_content_width = max(0, total_track_width - (2 * track_border_width))
+    indicator_content_height = max(0, total_track_height - (2 * track_border_width))
     track_border_color_off = "#505050" if dark_mode_active else "#B0B0B0"
     track_border_color_on = accent_qcolor.darker(120).name()
     track_border_color_on_hover = accent_qcolor.darker(130).name()
 
     return f"""
         QCheckBox {{
+            color: {checkbox_text_color};
             background-color: transparent;
             border: none;
-            padding: 0px;
-            margin: 0px;
-            spacing: 0px;
-            color: {checkbox_text_color};
+            padding: 0px; margin: 0px; spacing: 0px;
         }}
         QCheckBox::indicator {{
             width: {indicator_content_width}px;
             height: {indicator_content_height}px;
             background-color: {track_off_bg};
-            border-radius: {total_track_height // 2}px; /* Radius based on total outer height */
+            border-radius: {total_track_height // 2}px;
             border: {track_border_width}px solid {track_border_color_off};
         }}
         QCheckBox::indicator:checked {{
@@ -193,7 +269,6 @@ def toggle_style(total_track_width: int, total_track_height: int) -> str:
         }}
         QCheckBox::indicator:unchecked:hover {{
             background-color: {track_off_hover_bg};
-            /* border-color: {track_border_color_off}; /* Already set */
         }}
         QCheckBox::indicator:checked:hover {{
             background-color: {track_on_hover_bg};
@@ -201,13 +276,14 @@ def toggle_style(total_track_width: int, total_track_height: int) -> str:
         }}
     """
 
+
 def slider_style() -> str:
-    """Style for the internal QSlider in Win11Slider, using the user's accent color."""
+    """Style for the internal QSlider in Win11Slider."""
     dark_mode_active = is_dark_mode()
     accent_qcolor = get_accent_color()
     accent_rgb = f"rgb({accent_qcolor.red()}, {accent_qcolor.green()}, {accent_qcolor.blue()})"
     
-    groove_bg_inactive = getattr(constants.styles, 'COMBOBOX_BORDER_DARK', '#333333') if dark_mode_active else "#E0E0E0"
+    groove_bg_inactive = style_constants.COMBOBOX_BORDER_DARK if dark_mode_active else "#E0E0E0"
     handle_bg = accent_rgb
     handle_hover_bg = accent_qcolor.lighter(115).name()
     handle_pressed_bg = accent_qcolor.darker(115).name()
@@ -216,33 +292,24 @@ def slider_style() -> str:
     handle_hover_border_color_str = QColor(handle_hover_bg).lighter(130).name() if not dark_mode_active else QColor(handle_hover_bg).darker(130).name()
     handle_pressed_border_color_str = QColor(handle_pressed_bg).darker(130).name()
 
-
     return f"""
         QSlider::groove:horizontal {{
             background: {groove_bg_inactive};
-            height: 4px;
-            border-radius: 2px;
-            margin: 8px 0;
+            height: 4px; border-radius: 2px; margin: 8px 0;
         }}
         QSlider::sub-page:horizontal {{
             background: {accent_rgb};
-            height: 4px;
-            border-radius: 2px;
-            margin: 8px 0;
+            height: 4px; border-radius: 2px; margin: 8px 0;
         }}
         QSlider::add-page:horizontal {{
             background: {groove_bg_inactive};
-            height: 4px;
-            border-radius: 2px;
-            margin: 8px 0;
+            height: 4px; border-radius: 2px; margin: 8px 0;
         }}
         QSlider::handle:horizontal {{
             background: {handle_bg};
             border: 2px solid {handle_border_color_str};
-            width: 16px; 
-            height: 16px;
-            margin: -8px 0;
-            border-radius: 8px;
+            width: 16px; height: 16px;
+            margin: -8px 0; border-radius: 8px;
         }}
         QSlider::handle:horizontal:hover {{
             background: {handle_hover_bg};
@@ -254,6 +321,7 @@ def slider_style() -> str:
         }}
     """
 
+
 def button_style(accent: bool = False) -> str:
     """Generic button style, can be for standard or accent buttons."""
     dark_mode_active = is_dark_mode()
@@ -262,13 +330,15 @@ def button_style(accent: bool = False) -> str:
     if accent:
         accent_qcolor = get_accent_color()
         bg_color = accent_qcolor.name()
-        text_color = constants.color.WHITE
+        # CORRECTED ACCESS:
+        text_color = color_constants.WHITE
         hover_bg_color = accent_qcolor.lighter(110).name()
         pressed_bg_color = accent_qcolor.darker(110).name()
         border_color = accent_qcolor.darker(120).name()
     else: 
         bg_color = "#4D4D4D" if dark_mode_active else "#E1E1E1"
-        text_color = constants.color.WHITE if dark_mode_active else constants.color.BLACK
+        # CORRECTED ACCESS:
+        text_color = color_constants.WHITE if dark_mode_active else color_constants.BLACK
         hover_bg_color = "#5A5A5A" if dark_mode_active else "#D0D0D0"
         pressed_bg_color = "#404040" if dark_mode_active else "#B8B8B8"
         border_color = "#606060" if dark_mode_active else "#ADADAD"
@@ -278,10 +348,8 @@ def button_style(accent: bool = False) -> str:
             background-color: {bg_color};
             color: {text_color};
             border: 1px solid {border_color};
-            padding: 5px 15px;
-            border-radius: 4px;
-            font-family: "Segoe UI Variable";
-            font-size: 13px;
+            padding: 5px 15px; border-radius: 4px;
+            font-family: "Segoe UI Variable"; font-size: 13px;
             min-height: 22px; 
         }}
         QPushButton:hover {{
@@ -298,14 +366,16 @@ def button_style(accent: bool = False) -> str:
         }}
     """
 
+
 def color_button_style(color_hex: str) -> str:
     """Style for color picker preview buttons."""
     if not (isinstance(color_hex, str) and color_hex.startswith("#") and len(color_hex) == 7):
-        color_hex = constants.config.defaults.DEFAULT_COLOR
+        # Fallback to a default if the input is invalid
+        color_hex = color_constants.BLACK 
 
-    border_c = constants.styles.UI_BORDER_COLOR
-    button_width = constants.ui.dialogs.COLOR_BUTTON_WIDTH
-    button_height = constants.ui.dialogs.COLOR_BUTTON_HEIGHT
+    border_c = style_constants.BORDER_COLOR
+    button_width = ui.dialogs.COLOR_BUTTON_WIDTH
+    button_height = ui.dialogs.COLOR_BUTTON_HEIGHT
 
     return (
         f"QPushButton {{ background-color: {color_hex}; border: 1px solid {border_c}; "
@@ -313,73 +383,3 @@ def color_button_style(color_hex: str) -> str:
         f"min-height: {button_height}px; max-height: {button_height}px; "
         f"border-radius: 4px; }}"
     )
-
-def always_dark_panel_style() -> Dict[str, str]:
-    panel_background_color = constants.styles.GRAPH_BG_DARK
-    groupbox_title_text_color = constants.styles.SETTINGS_PANEL_TEXT_DARK
-    panel_border_color = constants.styles.BORDER_COLOR
-    
-    combo_bg_dark_panel = constants.styles.COMBOBOX_BG_DARK
-    combo_border_dark_panel = constants.styles.COMBOBOX_BORDER_DARK
-    
-    accent_qcolor = get_accent_color()
-    accent_rgb = f"rgb({accent_qcolor.red()}, {accent_qcolor.green()}, {accent_qcolor.blue()})"
-
-    styles = {
-        "QWidget_Container": "background-color: transparent; border: none; outline: none;",
-        "QGroupBox_PanelDark": f"""
-            QGroupBox {{
-                font-size: 14px;
-                font-weight: 600;
-                color: {groupbox_title_text_color}; 
-                background-color: {panel_background_color};
-                border: 1px solid {panel_border_color}; 
-                border-radius: 6px;
-                padding: 10px; 
-                padding-top: 20px; 
-                margin-top: 8px; 
-                outline: none; 
-            }}
-            QGroupBox::title {{
-                subcontrol-origin: margin;
-                subcontrol-position: top left;
-                padding: 0px 5px 2px 5px;
-                left: 10px;
-                color: {groupbox_title_text_color};
-            }}
-            /* REMOVED: QGroupBox QLabel sub-rule from here */
-            QGroupBox > QWidget:focus, QGroupBox QWidget:focus {{ outline: none; }}
-            QGroupBox QComboBox:focus {{ outline: none; }}
-            QGroupBox QSlider:focus {{ outline: none; }}
-            QGroupBox Win11Toggle:focus {{ outline: none; }}
-            QGroupBox Win11Slider:focus {{ outline: none; }}
-            QGroupBox Win11Toggle QCheckBox:focus {{ outline: none; }}
-            QGroupBox Win11Slider QSlider:focus {{ outline: none; }}
-        """,
-        # This QLabel_PanelDark will be used explicitly in graph.py now
-        "QLabel_PanelDark": f"color: {constants.styles.SETTINGS_PANEL_TEXT_DARK}; background-color: transparent; border: none; outline: none; font-size: 13px; font-family: 'Segoe UI Variable';",
-        "QComboBox_PanelDark": f"""
-            QComboBox {{ 
-                background-color: {combo_bg_dark_panel}; 
-                color: {constants.styles.SETTINGS_PANEL_TEXT_DARK}; 
-                border: 1px solid {combo_border_dark_panel}; 
-                padding: 4px 8px 4px 8px; 
-                border-radius: 4px;
-                min-width: 90px;
-                outline: none; 
-            }}
-            QComboBox:focus {{ /* border: 1px solid {accent_rgb}; */ }}
-            QComboBox::drop-down {{ border: none; }}
-            QComboBox::down-arrow {{ }}
-            QComboBox QAbstractItemView {{
-                background-color: {combo_bg_dark_panel}; 
-                color: {constants.styles.SETTINGS_PANEL_TEXT_DARK}; 
-                selection-background-color: {accent_rgb};
-                selection-color: {constants.color.WHITE}; 
-                border: 1px solid {combo_border_dark_panel};
-                border-radius: 4px; 
-                outline: none;
-            }}
-        """,
-    }
-    return styles

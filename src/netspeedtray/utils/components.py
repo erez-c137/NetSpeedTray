@@ -40,6 +40,7 @@ class Win11Toggle(QWidget):
     _START_X_POS: Final[int] = _THUMB_TRAVEL_PADDING
     _END_X_POS: Final[int] = _OUTER_TRACK_WIDTH - _THUMB_DIAMETER - _THUMB_TRAVEL_PADDING
 
+
     def __init__(self, label_text: str = "", initial_state: bool = False, 
                  parent: Optional[QWidget] = None, label_text_color: Optional[str] = None) -> None:
         super().__init__(parent)
@@ -59,8 +60,10 @@ class Win11Toggle(QWidget):
         self.checkbox.blockSignals(False)
         self._update_thumb_position(animate=False)
 
+
     def paintEvent(self, event: QPaintEvent) -> None:
         super().paintEvent(event)
+
 
     def _create_label_widget(self, text: str) -> QLabel:
         label = QLabel(text, self)
@@ -75,6 +78,7 @@ class Win11Toggle(QWidget):
         label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         return label
 
+
     def _setup_ui(self) -> None:
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0) 
@@ -87,20 +91,25 @@ class Win11Toggle(QWidget):
         self.toggle_visual_container = QWidget(self) 
         self.toggle_visual_container.setFixedSize(self._OUTER_TRACK_WIDTH, self._OUTER_TRACK_HEIGHT)
         self.toggle_visual_container.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        # Explicitly set border and outline to none for the internal visual container
         self.toggle_visual_container.setStyleSheet("background:transparent; border: none; outline: none;") 
 
-        self.checkbox = QCheckBox(self.toggle_visual_container)
+        # A layout is created for the container. This is the crucial fix.
+        # It ensures all child widgets are properly managed by Qt's layout system.
+        container_layout = QHBoxLayout(self.toggle_visual_container)
+        container_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.checkbox = QCheckBox() # No parent needed here, the layout will set it.
         self.checkbox.setFixedSize(self._OUTER_TRACK_WIDTH, self._OUTER_TRACK_HEIGHT)
         self.checkbox.setCursor(Qt.CursorShape.PointingHandCursor)
-        # toggle_style handles ::indicator. Ensure QCheckBox base has no outline.
         checkbox_qss = toggle_style(self._OUTER_TRACK_WIDTH, self._OUTER_TRACK_HEIGHT) 
         checkbox_qss += " QCheckBox { background-color: transparent; border: none; outline: none; padding: 0px; margin: 0px; }"
         self.checkbox.setStyleSheet(checkbox_qss)
 
+        # The checkbox is now added to the container's layout.
+        container_layout.addWidget(self.checkbox)
+
         self.thumb = QWidget(self.toggle_visual_container)
         self.thumb.setFixedSize(self._THUMB_DIAMETER, self._THUMB_DIAMETER)
-        # Thumb style should not include an outline by default, only its own border
         self.thumb.setStyleSheet(f"""
             QWidget {{
                 background-color: white; 
@@ -122,6 +131,7 @@ class Win11Toggle(QWidget):
         self.setLayout(layout)
         self._update_minimum_height_and_adjust_size()
 
+
     def _update_minimum_height_and_adjust_size(self) -> None:
         content_min_h = self._OUTER_TRACK_HEIGHT
         if self._label_widget and self._label_widget.isVisible():
@@ -130,6 +140,7 @@ class Win11Toggle(QWidget):
         margins = self.layout().contentsMargins()
         self.setMinimumHeight(content_min_h + margins.top() + margins.bottom())
         self.adjustSize()
+
 
     def _update_thumb_position(self, animate: bool = True) -> None:
         target_x = self._END_X_POS if self._is_checked else self._START_X_POS
@@ -147,13 +158,16 @@ class Win11Toggle(QWidget):
         else:
             self.thumb.move(end_pos)
 
+
     def _on_checkbox_toggled(self, checked: bool) -> None:
         if self._is_checked == checked: return
         self._is_checked = checked
         self._update_thumb_position(animate=True) 
         self.toggled.emit(self._is_checked)
 
+
     def isChecked(self) -> bool: return self._is_checked
+
 
     def setChecked(self, checked: bool) -> None:
         if self._is_checked == checked:
@@ -162,6 +176,7 @@ class Win11Toggle(QWidget):
         self.checkbox.blockSignals(True); self.checkbox.setChecked(self._is_checked); self.checkbox.blockSignals(False)
         self._update_thumb_position(animate=False) 
         self.toggled.emit(self._is_checked)
+
 
     def setText(self, text: str) -> None:
         self.label_text = text
@@ -183,6 +198,7 @@ class Win11Toggle(QWidget):
         
         self._update_minimum_height_and_adjust_size()
 
+
     def setLabelTextColor(self, color_hex: str) -> None:
         self._label_text_color = color_hex 
         if self._label_widget:
@@ -190,6 +206,7 @@ class Win11Toggle(QWidget):
             if self._label_text_color:
                 label_qss += f" color: {self._label_text_color};"
             self._label_widget.setStyleSheet(label_qss)
+
 
     def sizeHint(self) -> QSize:
         current_layout = self.layout()
@@ -211,6 +228,7 @@ class Win11Toggle(QWidget):
         
         return QSize(total_width, total_height)
 
+
 class Win11Slider(QWidget):
     """
     A custom slider widget styled to resemble Windows 11's sliders.
@@ -219,7 +237,8 @@ class Win11Slider(QWidget):
     """
     valueChanged = pyqtSignal(int)
     sliderReleased = pyqtSignal()
-    
+
+
     def __init__(self, min_value: int = 0, max_value: int = 100, value: int = 0, 
                  page_step: int = 1, has_ticks: bool = False, 
                  parent: Optional[QWidget] = None, value_label_text_color: Optional[str] = None) -> None:
@@ -232,8 +251,10 @@ class Win11Slider(QWidget):
         self.setStyleSheet("background:transparent; border: none; outline: none;")
         self._setup_ui(min_value, max_value, value, page_step, has_ticks)
 
+
     def paintEvent(self, event: QPaintEvent) -> None:
         super().paintEvent(event)
+
 
     def _setup_ui(self, min_val: int, max_val: int, initial_val: int, page_step: int, has_ticks: bool) -> None:
         layout = QHBoxLayout(self)
@@ -282,8 +303,12 @@ class Win11Slider(QWidget):
         self.slider.valueChanged.connect(self._on_internal_slider_value_changed)
         self.slider.sliderReleased.connect(self._on_internal_slider_released)
 
+
     def _on_internal_slider_value_changed(self, value: int) -> None: self.valueChanged.emit(value)
+
+
     def _on_internal_slider_released(self) -> None: self.sliderReleased.emit()
+
 
     def setRange(self, min_val: int, max_val: int) -> None:
         self.slider.setRange(min_val, max_val)
@@ -293,16 +318,29 @@ class Win11Slider(QWidget):
                 tick_interval = max(1, (max_val - min_val) // 15)
             self.slider.setTickInterval(tick_interval)
 
+
     def setValue(self, value: int) -> None: self.slider.setValue(value)
+
+
     def setSingleStep(self, step: int) -> None: self.slider.setSingleStep(step)
+
+
     def setPageStep(self, step: int) -> None: self.slider.setPageStep(step)
+
+
     def setTickInterval(self, ti: int) -> None: self.slider.setTickInterval(ti)
+
+
     def setTickPosition(self, position: QSlider.TickPosition) -> None: self.slider.setTickPosition(position)
+
+
     def value(self) -> int: return self.slider.value()
+
 
     def setValueText(self, text: str) -> None:
         if self._value_label: self._value_label.setText(text)
         else: logger.error("Win11Slider: _value_label not initialized when trying to set text.")
+
 
     def setValueLabelTextColor(self, color_hex: str) -> None:
         self._value_label_text_color = color_hex 
@@ -311,6 +349,7 @@ class Win11Slider(QWidget):
             if self._value_label_text_color:
                 label_qss += f" color: {self._value_label_text_color};"
             self._value_label.setStyleSheet(label_qss)
+
 
     def sizeHint(self) -> QSize:
         slider_sh = self.slider.sizeHint()

@@ -13,11 +13,16 @@ import warnings
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple, Any
 
-# --- Third-Party Imports ---
+# --- Third-Party Imports (Centralized) ---
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
+import matplotlib.pyplot as plt
+from matplotlib.ticker import ScalarFormatter, FixedLocator
+import numpy as np
+import pandas as pd
 
-from PyQt6.QtCore import Qt, QPoint, QTimer, QEvent
+# --- PyQt6 Imports ---
+from PyQt6.QtCore import Qt, QPoint, QThread, pyqtSignal, QObject, QTimer, QEvent
 from PyQt6.QtGui import QResizeEvent, QCloseEvent, QIcon, QShowEvent
 from PyQt6.QtWidgets import (
     QApplication, QComboBox, QDialog, QFileDialog, QGridLayout, QGroupBox,
@@ -27,10 +32,71 @@ from PyQt6.QtWidgets import (
 
 # --- Custom Application Imports ---
 from netspeedtray import constants
+from netspeedtray.constants import styles as style_constants
 from netspeedtray.utils import helpers
 from netspeedtray.utils.components import Win11Slider, Win11Toggle
 from netspeedtray.utils.position_utils import ScreenUtils
-from netspeedtray.utils.styles import get_accent_color
+from netspeedtray.utils import styles
+from netspeedtray.utils import styles as style_utils
+from netspeedtray.utils import db_utils
+
+
+class GraphDataWorker(QObject):
+    """
+    Processes graph data in a background thread to keep the UI responsive.
+    """
+    data_ready = pyqtSignal(object)
+    error = pyqtSignal(str)
+
+
+    def __init__(self, widget_state):
+        """
+        Initializes the worker.
+        
+        Args:
+            widget_state: A direct reference to the application's WidgetState object.
+        """
+        super().__init__()
+        self.widget_state = widget_state
+
+
+    def process_data(self, start_time, end_time, interface_to_query, is_session_view):
+        """The main data processing method."""
+        try:
+            if not self.widget_state:
+                self.error.emit("Data source (WidgetState) not available.")
+                return
+
+            if is_session_view:
+                # Get data from the in-memory deque for the current session
+                history_data = self.widget_state.get_in_memory_speed_history()
+                
+                # The in-memory data is a list of SpeedDataSnapshot objects,
+                # so we need to process it into the tuple format the graph expects.
+                processed_history = []
+                for snapshot in history_data:
+                    if interface_to_query is None:
+                        up = sum(s[0] for s in snapshot.speeds.values())
+                        down = sum(s[1] for s in snapshot.speeds.values())
+                    else:
+                        up, down = snapshot.speeds.get(interface_to_query, (0.0, 0.0))
+                    processed_history.append((snapshot.timestamp, up, down))
+                history_data = processed_history
+            else:
+                # For all other timelines, get data from the database
+                history_data = self.widget_state.get_speed_history(
+                    start_time=start_time, end_time=end_time, interface_name=interface_to_query
+                )
+
+            if len(history_data) < 2:
+                self.data_ready.emit(pd.DataFrame()) # Emit empty DataFrame for "No data" message
+                return
+
+            df = pd.DataFrame(history_data, columns=['timestamp', 'upload_speed', 'download_speed'])
+            self.data_ready.emit(df)
+        except Exception as e:
+            logging.getLogger(__name__).error(f"Error in data worker: {e}", exc_info=True)
+            self.error.emit(str(e))
 
 
 class GraphWindow(QWidget):
@@ -38,77 +104,57 @@ class GraphWindow(QWidget):
     A window for displaying network speed history and per-app bandwidth usage using PyQt6.
     (Docstring remains largely the same as provided)
     """
-
+    request_data_processing = pyqtSignal(object, object, object, bool)
 
     def __init__(self, parent=None, logger=None, i18n=None, session_start_time: Optional[datetime] = None):
         """ Initialize the GraphWindow with its UI components. """
         super().__init__()
         self._parent = parent
         self.logger = logger or logging.getLogger(__name__)
-        if i18n is not None:
-            self.i18n = i18n
-        elif parent is not None and hasattr(parent, 'i18n'):
-            self.i18n = parent.i18n
-        else:
-            self.i18n = None
+        self.i18n = i18n
+        self.session_start_time = session_start_time or datetime.now()
+        
+        # --- State variables ---
         self._is_closing = False
         self._initial_load_done = False
+        self._is_dark_mode = self._parent.config.get("dark_mode", True)
+        self._is_live_update_enabled = self._parent.config.get("live_update", True)
+        self._history_period_value = self._parent.config.get('history_period_slider_value', 0)
+        self._data_cache: Dict[Tuple[str, str], pd.DataFrame] = {}
+        self._graph_data_cache = [] # Used for crosshair lookup
 
-        # --- State variables that are ALWAYS available ---
-        # These will hold the current state, independent of whether the UI widgets exist.
-        self._is_dark_mode = self._parent.config.get("dark_mode", False) if self._parent else False
-        self._is_live_update_enabled = True # Default to on
-        self._history_period_value = self._parent.config.get('history_period_slider_value', 0) if self._parent else 0
-        self._graph_data_cache: List[Tuple[datetime, float, float]] = []
-
-        self._current_data = None
-        self._last_stats_update = time.monotonic()
-        self._stats_update_interval = constants.graph.STATS_UPDATE_INTERVAL
-        self._cached_stats = {}
-
-        # The graph window now uses the time passed from its parent, with a fallback.
-        self.session_start_time = session_start_time or datetime.now()
-
-        # Setup timers
-        self._realtime_timer = QTimer(self)
-        self._update_timer = QTimer(self)
-        self._db_size_update_timer = QTimer(self)
-        self._db_size_update_timer.timeout.connect(self._update_db_size)
-
-        # Setup UI
-        self.setupUi(self)
+        # --- Setup UI and Timers ---
+        self.setupUi()
         self.setWindowTitle(constants.graph.WINDOW_TITLE)
-
-        # Set window icon
         try:
-            icon_filename = getattr(constants.app, 'ICON_FILENAME', 'NetSpeedTray.ico')
-            icon_path = helpers.get_app_asset_path(icon_filename)
-            if icon_path.exists():
-                self.setWindowIcon(QIcon(str(icon_path)))
-            else:
-                self.logger.warning(f"Icon file not found at {icon_path}")
-        except Exception as e:
-            self.logger.error(f"Error setting window icon: {e}", exc_info=True)
+            icon_path = helpers.get_app_asset_path(constants.app.ICON_FILENAME)
+            if icon_path.exists(): self.setWindowIcon(QIcon(str(icon_path)))
+        except Exception as e: self.logger.error(f"Error setting window icon: {e}", exc_info=True)
 
-        # Initialize matplotlib components first
+        # --- Initialize Core Components in Order ---
         self._init_matplotlib()
+        
+        # Initialize interactive elements (crosshair, tooltip)
+        self.crosshair_v_download = self.ax_download.axvline(x=0, color=style_constants.GRID_COLOR_DARK, linewidth=0.8, linestyle='--', zorder=20, visible=False)
+        self.crosshair_v_upload = self.ax_upload.axvline(x=0, color=style_constants.GRID_COLOR_DARK, linewidth=0.8, linestyle='--', zorder=20, visible=False)
+        self.tooltip = QLabel(self.canvas)
+        self.tooltip.setObjectName("graphTooltip")
+        self.tooltip.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        self.tooltip.setVisible(False)
+        self.tooltip.setStyleSheet(style_utils.graph_tooltip_style())
 
-        # Initialize overlay elements
+        # Initialize overlay elements (stats bar, hamburger menu)
         self._init_overlay_elements()
 
-        if hasattr(self, 'graph_layout') and self.stats_bar and self.canvas:
-            self.graph_layout.addWidget(self.stats_bar)
-            self.graph_layout.addWidget(self.canvas)
+        # Final assembly of the visual layout
+        self.graph_layout.addWidget(self.stats_bar)
+        self.graph_layout.addWidget(self.canvas)
 
-        # Apply initial theme USING the new state variable
-        self.toggle_dark_mode(self._is_dark_mode)
-
-        # Connect signals that DON'T depend on the settings panel
+        # Now that the UI is fully built, initialize the background worker
+        self._init_worker_thread(parent.widget_state if parent else None)
+        
+        # Finally, connect all signals
         self._connect_signals()
-
-        # Start the live update timer if it's enabled by default
-        if self._is_live_update_enabled:
-            self._realtime_timer.start(constants.graph.REALTIME_UPDATE_INTERVAL_MS)
 
 
     def setupUi(self, parent=None):
@@ -127,6 +173,9 @@ class GraphWindow(QWidget):
         self.graph_layout = QVBoxLayout(self.graph_widget)
         self.graph_widget.setLayout(self.graph_layout)
         self.tab_widget.addTab(self.graph_widget, self.i18n.SPEED_GRAPH_TAB_LABEL)
+        
+        # Hide the tab bar as it's not needed for a single tab
+        self.tab_widget.tabBar().setVisible(False)
 
         # Connect tab change signal
         self.tab_widget.currentChanged.connect(self._on_tab_changed)
@@ -160,10 +209,7 @@ class GraphWindow(QWidget):
 
         # Timers and state
         self._realtime_timer = QTimer(self)
-        self._update_timer = QTimer(self)
         self._db_size_update_timer = QTimer(self)
-        self._graph_update_pending = False
-        self._last_history = None
         self._no_data_text_obj = None
         self._current_date_formatter_type = None
 
@@ -172,39 +218,49 @@ class GraphWindow(QWidget):
 
 
     def _init_matplotlib(self):
-        """ Initialize matplotlib figure and canvas """
+        """ Initialize matplotlib with a dual-axis, stacked subplot layout. """
         try:
+            # These imports are now needed here for the subplots call
             from PyQt6.QtWidgets import QSizePolicy
+            import matplotlib.pyplot as plt
 
             fig_size = getattr(constants.graph, 'FIGURE_SIZE', (8, 6))
 
-            # 1. Use `tight_layout=True`, which is compatible with manual adjustments.
-            self.figure = Figure(figsize=fig_size, tight_layout=True)
+            # sharex=True is CRITICAL. It links the X-axis (time) of both plots,
+            # so zooming/panning on one automatically updates the other.
+            # gridspec_kw controls the height ratio; we give slightly more to download.
+            self.figure, self.axes = plt.subplots(
+                2, 1,
+                sharex=True,
+                tight_layout=True,
+                figsize=fig_size,
+                gridspec_kw={'height_ratios': [3, 2]} # e.g., Download gets 60%, Upload 40%
+            )
 
-            # 2. Set the desired padding, which will now be respected.
-            self.figure.subplots_adjust(left=0.08, bottom=0.12, right=0.97, top=0.95)
+            # Assign the axes to clear, named attributes
+            self.ax_download, self.ax_upload = self.axes
 
             self.canvas = FigureCanvas(self.figure)
             self.canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
-            self.ax = self.figure.add_subplot(111)
-            self.ax.set_ylabel('Speed') # Use i18n string for 'Speed' if available
-            self.ax.grid(True, linestyle=getattr(constants.graph, 'GRID_LINESTYLE', '--'), alpha=getattr(constants.graph, 'GRID_ALPHA', 0.5))
+            # Configure the new axes
+            self.ax_download.set_ylabel(self.i18n.DOWNLOAD_LABEL)
+            self.ax_upload.set_ylabel(self.i18n.UPLOAD_LABEL)
 
-            self.upload_line, = self.ax.plot([], [],
-                color=constants.graph.UPLOAD_LINE_COLOR,
-                linewidth=constants.graph.LINE_WIDTH,
-                label=self.i18n.UPLOAD_LABEL if hasattr(self, 'i18n') else 'Upload'
-            )
-            self.download_line, = self.ax.plot([], [],
-                color=constants.graph.DOWNLOAD_LINE_COLOR,
-                linewidth=constants.graph.LINE_WIDTH,
-                label=self.i18n.DOWNLOAD_LABEL if hasattr(self, 'i18n') else 'Download'
-            )
+            # We no longer use self.upload_line and self.download_line directly for plotting,
+            # but we can keep them for legend purposes if needed. For now, let's clear them.
+            self.upload_line = None
+            self.download_line = None
+
+            # Hide the X-axis labels and ticks on the top (download) plot to avoid clutter
+            self.ax_download.tick_params(axis='x', which='both', bottom=False, top=False, labelbottom=False)
+            self.ax_upload.set_xlabel(self.i18n.TIME_LABEL)
+
+            # Configure grids for both plots
+            for ax in self.axes:
+                ax.grid(True, linestyle=getattr(constants.graph, 'GRID_LINESTYLE', '--'), alpha=getattr(constants.graph, 'GRID_ALPHA', 0.5))
 
             self._no_data_text_obj = None
-            self.ax.set_xlim(0, 1)
-            self.ax.set_ylim(0, constants.graph.MIN_Y_AXIS_LIMIT)
 
         except Exception as e:
             self.logger.error(f"Error initializing matplotlib: {e}", exc_info=True)
@@ -215,70 +271,72 @@ class GraphWindow(QWidget):
         try:
             # Stats Bar
             self.stats_bar = QLabel(self)
-            # Use INITIAL_STATS_TEXT if present, else fallback
             initial_stats_text = getattr(constants.graph, 'INITIAL_STATS_TEXT', "")
             self.stats_bar.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.stats_bar.setText(initial_stats_text)
-            # Make the stats bar always fill the width of the graph area
-            self.stats_bar.setMinimumWidth(0)
-            self.stats_bar.setMaximumWidth(16777215)  # Max possible width
             self.stats_bar.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             self.stats_bar.show()
-              # Hamburger Menu
-            hamburger_size = getattr(constants.graph, 'HAMBURGER_ICON_SIZE', 24)  # Fallback to 24px if missing
-            self.hamburger_icon = QPushButton(self)
+
+            # Hamburger Menu
+            hamburger_size = getattr(constants.graph, 'HAMBURGER_ICON_SIZE', 24)
+            self.hamburger_icon = QPushButton(self.graph_widget)
             self.hamburger_icon.setFixedSize(hamburger_size, hamburger_size)
             self.hamburger_icon.setCursor(Qt.CursorShape.PointingHandCursor)
-            # Set hamburger icon as Unicode text
             self.hamburger_icon.setText("☰")
             font = self.hamburger_icon.font()
-            font.setPointSize(14)  # Slightly smaller for better appearance
+            font.setPointSize(14)
             self.hamburger_icon.setFont(font)
-            # Apply a semi-transparent dark background with white text for better visibility
-            base_style = """
-                QPushButton {
-                    background-color: rgba(0, 0, 0, 0.7);
-                    color: white;
-                    border: none;
-                    border-radius: 4px;
-                    padding: 2px;
-                }
-                QPushButton:hover {
-                    background-color: rgba(0, 0, 0, 0.85);
-                }
-                QPushButton:pressed {
-                    background-color: rgba(0, 0, 0, 1.0);
-                }
-            """
-            self.hamburger_icon.setStyleSheet(base_style)
+            
+            # Apply centralized overlay style using the correct alias
+            self.hamburger_icon.setStyleSheet(style_utils.graph_overlay_style())
+
             self.hamburger_icon.show()
-            # Connect to toggle settings panel
             self.hamburger_icon.clicked.connect(self._toggle_settings_panel_visibility)
             
-            # Ensure visibility
             self.stats_bar.raise_()
-            self.hamburger_icon.raise_()
             
         except Exception as e:
             self.logger.error(f"Error initializing overlay elements: {e}", exc_info=True)
 
 
+    def _plot_continuous_segments(self, axis, timestamps, speeds, color, label):
+        """
+        Plots data on a given axis, splitting it into continuous segments
+        to create clean visual gaps where data is missing (NaN).
+        """
+        # Clear any previous lines from this axis to prevent over-drawing
+        axis.clear() # This is a simple but effective way to reset for a full refresh
+
+        df = pd.DataFrame({'timestamp': timestamps, 'speed': speeds})
+        
+        # Find the indices where a gap starts (i.e., the value is NaN)
+        nan_indices = df.index[df['speed'].isna()]
+        
+        start_index = 0
+        for end_index in nan_indices:
+            # Plot the segment before the gap
+            segment = df.iloc[start_index:end_index]
+            if not segment.empty:
+                axis.plot(segment['timestamp'], segment['speed'], color=color, linewidth=constants.graph.LINE_WIDTH)
+            start_index = end_index + 1
+            
+        # Plot the final segment after the last gap (or the whole thing if no gaps)
+        final_segment = df.iloc[start_index:]
+        if not final_segment.empty:
+            # Add the label only to the last segment to avoid duplicates in the legend
+            axis.plot(final_segment['timestamp'], final_segment['speed'], color=color, linewidth=constants.graph.LINE_WIDTH, label=label)
+
+
     def _toggle_settings_panel_visibility(self):
         """
-        Shows or hides the settings panel with a smooth animation by deferring widget creation.
+        Shows or hides the settings panel, ensuring it is perfectly aligned with the stats bar.
         """
         try:
-            # On first click, create the settings panel but defer populating it.
             if self.settings_widget is None:
                 self.logger.debug("First use: Creating settings panel shell.")
-                # Create the main container widget so it can be positioned and shown
                 self.settings_widget = QWidget(self)
                 self.settings_widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-                self.settings_widget.setStyleSheet("background-color: #2c2c2c; border-radius: 8px;")
                 self.settings_widget.hide()
-
-                # Schedule the heavy work (creating sliders, etc.) to happen AFTER
-                # the panel has had a chance to animate into view.
                 QTimer.singleShot(100, self._populate_settings_panel)
 
             if not hasattr(self, '_original_window_size'):
@@ -293,17 +351,20 @@ class GraphWindow(QWidget):
                 self.logger.debug("Settings panel hidden.")
                 return
 
-            # --- Show and Animate the Panel ---
             self.graph_widget.setFixedSize(self._original_graph_size)
 
             hamburger_right_global = self.hamburger_icon.mapToGlobal(QPoint(self.hamburger_icon.width(), 0))
             hamburger_right_window = self.mapFromGlobal(hamburger_right_global)
-
             panel_x = hamburger_right_window.x() + 8
-            panel_y = constants.graph.SETTINGS_PANEL_Y_OFFSET
-            
+
+            # Use coordinate mapping for robust vertical alignment
+            stats_bar_top_left_global = self.stats_bar.mapToGlobal(QPoint(0, 0))
+            stats_bar_top_left_window = self.mapFromGlobal(stats_bar_top_left_global)
+            panel_y = stats_bar_top_left_window.y()
+
             panel_width = 300
-            panel_height = self._original_graph_size.height()
+            panel_height = self.graph_widget.height() - panel_y
+
             self.settings_widget.setFixedSize(panel_width, panel_height)
 
             window_geometry = self.geometry()
@@ -343,45 +404,26 @@ class GraphWindow(QWidget):
     def _init_settings_panel(self):
         """Initializes the widgets within the settings panel container."""
         from netspeedtray.utils.components import Win11Slider, Win11Toggle
-        from netspeedtray.utils.helpers import get_app_asset_path
         from PyQt6.QtWidgets import QSlider
 
-        PANEL_BACKGROUND_COLOR = "#2c2c2c"
-        PANEL_TEXT_COLOR = "#ffffff"
+        self.settings_widget.setObjectName("settingsPanel")
 
-        # Important: The background style is now set on the container. We only define child styles here.
-        self.settings_widget.setStyleSheet(f"""
-            QWidget {{ background-color: {PANEL_BACKGROUND_COLOR}; }}
-            QLabel {{ color: #dddddd; background-color: transparent; font-size: 13px; }}
-            QComboBox {{
-                background-color: #3c3c3c; border: 1px solid #555555;
-                border-radius: 4px; padding: 4px 8px; color: {PANEL_TEXT_COLOR};
-            }}
-            QComboBox::drop-down {{ border: none; }}
-            QGroupBox {{
-                background-color: {PANEL_BACKGROUND_COLOR}; border-radius: 8px; margin-top: 10px;
-            }}
-            QGroupBox::title {{
-                subcontrol-origin: margin; subcontrol-position: top left;
-                padding-left: 10px; padding-top: 2px;
-                font-family: 'Segoe UI Variable'; font-size: 15px;
-                font-weight: 600; color: {PANEL_TEXT_COLOR};
-            }}
-        """)
+        settings_main_layout = QGridLayout(self.settings_widget)
+        settings_main_layout.setContentsMargins(15, 15, 15, 15)
+        settings_main_layout.setVerticalSpacing(15)
+        settings_main_layout.setHorizontalSpacing(10)
 
-        # This method now populates the existing self.settings_widget
-        settings_main_layout = QVBoxLayout(self.settings_widget)
-        settings_main_layout.setContentsMargins(12, 0, 12, 12)
-        settings_main_layout.setSpacing(15)
-        self.settings_widget.setLayout(settings_main_layout)
+        title_label = QLabel(getattr(self.i18n, 'GRAPH_SETTINGS_LABEL', 'Graph Settings'))
+        title_label.setObjectName("settingsTitleLabel")
+        settings_main_layout.addWidget(title_label, 0, 0, 1, 2)
 
-        group_box = QGroupBox(getattr(self.i18n, 'GRAPH_SETTINGS_LABEL', 'Graph Settings'))
-        
-        group_content_layout = QGridLayout(group_box)
+        controls_container = QWidget()
+        controls_container.setObjectName("controlsContainer")
+        group_content_layout = QGridLayout(controls_container)
+        group_content_layout.setContentsMargins(15, 15, 15, 15)
         group_content_layout.setVerticalSpacing(15)
         group_content_layout.setHorizontalSpacing(10)
-        group_content_layout.setContentsMargins(15, 25, 15, 15)
-
+        
         current_row = 0
 
         interface_label = QLabel(self.i18n.INTERFACE_LABEL)
@@ -393,88 +435,204 @@ class GraphWindow(QWidget):
         current_row += 1
 
         self.history_period_label = QLabel(getattr(self.i18n, 'HISTORY_PERIOD_LABEL_NO_VALUE', 'Timeline'))
-        self.history_period = Win11Slider(value=self._history_period_value, parent=group_box)
-        
+        self.history_period = Win11Slider(value=self._history_period_value)
         if hasattr(self.history_period, 'slider'):
-            num_periods = len(constants.data.history_period.PERIOD_MAP)
             self.history_period.slider.setMinimum(0)
-            self.history_period.slider.setMaximum(num_periods - 1)
-            self.history_period.slider.setSingleStep(1)
-            self.history_period.slider.setPageStep(1)
-            self.history_period.slider.setTickInterval(1)
-            self.history_period.slider.setTickPosition(QSlider.TickPosition.TicksBelow)
-        
+            self.history_period.slider.setMaximum(len(constants.data.history_period.PERIOD_MAP) - 1)
         group_content_layout.addWidget(self.history_period_label, current_row, 0, 1, 2)
         current_row += 1
         group_content_layout.addWidget(self.history_period, current_row, 0, 1, 2)
         current_row += 1
 
         self.keep_data_label = QLabel(getattr(self.i18n, 'DATA_RETENTION_LABEL_NO_VALUE', 'Data Retention'))
-        config_days = self._parent.config.get("keep_data", 30)
-        initial_slider_value = self._days_to_slider_value(config_days)
-        self.keep_data = Win11Slider(value=initial_slider_value, parent=group_box)
-        
+        initial_slider_value = self._days_to_slider_value(self._parent.config.get("keep_data", 30))
+        self.keep_data = Win11Slider(value=initial_slider_value)
         if hasattr(self.keep_data, 'slider'):
-            num_retention_opts = len(constants.data.retention.DAYS_MAP)
             self.keep_data.slider.setMinimum(0)
-            self.keep_data.slider.setMaximum(num_retention_opts - 1)
-            self.keep_data.slider.setSingleStep(1)
-            self.keep_data.slider.setPageStep(1)
-            self.keep_data.slider.setTickInterval(1)
-            self.keep_data.slider.setTickPosition(QSlider.TickPosition.TicksBelow)
-
+            self.keep_data.slider.setMaximum(len(constants.data.retention.DAYS_MAP) - 1)
         group_content_layout.addWidget(self.keep_data_label, current_row, 0, 1, 2)
         current_row += 1
         group_content_layout.addWidget(self.keep_data, current_row, 0, 1, 2)
         current_row += 1
 
         dm_label = QLabel(getattr(self.i18n, 'DARK_MODE_LABEL', 'Dark Mode'))
-        self.dark_mode = Win11Toggle(initial_state=self._is_dark_mode, parent=group_box)
+        self.dark_mode = Win11Toggle(initial_state=self._is_dark_mode)
         group_content_layout.addWidget(dm_label, current_row, 0)
         group_content_layout.addWidget(self.dark_mode, current_row, 1, Qt.AlignmentFlag.AlignLeft)
         current_row += 1
         
         lu_label = QLabel(getattr(self.i18n, 'LIVE_UPDATE_LABEL', 'Live Update'))
-        self.realtime = Win11Toggle(initial_state=self._is_live_update_enabled, parent=group_box)
+        self.realtime = Win11Toggle(initial_state=self._is_live_update_enabled)
         group_content_layout.addWidget(lu_label, current_row, 0)
         group_content_layout.addWidget(self.realtime, current_row, 1, Qt.AlignmentFlag.AlignLeft)
+        current_row += 1
 
-        settings_main_layout.addWidget(group_box)
-        settings_main_layout.addStretch(1)
+        # --- Show Legend Toggle ---
+        legend_label = QLabel(getattr(self.i18n, 'SHOW_LEGEND_LABEL', 'Show Legend'))
+        self.show_legend = Win11Toggle(initial_state=self._parent.config.get("show_legend", True))
+        group_content_layout.addWidget(legend_label, current_row, 0)
+        group_content_layout.addWidget(self.show_legend, current_row, 1, Qt.AlignmentFlag.AlignLeft)
+
+        settings_main_layout.addWidget(controls_container, 1, 0, 1, 2)
+        settings_main_layout.setRowStretch(2, 1)
+
+        self.settings_widget.setStyleSheet(styles.graph_settings_panel_style())
+
+
+    def _init_worker_thread(self, widget_state):
+        """Initializes the background worker thread for data processing."""
+        self.worker_thread = QThread()
+        self.data_worker = GraphDataWorker(widget_state)
+        self.data_worker.moveToThread(self.worker_thread)
+        
+        self.data_worker.data_ready.connect(self._on_data_ready)
+        self.data_worker.error.connect(self._show_graph_error)
+        
+        self.request_data_processing.connect(self.data_worker.process_data)
+        
+        self.worker_thread.start()
+
+
+    def _on_data_ready(self, df: pd.DataFrame):
+        """Slot to receive processed data from the worker and render it."""
+        if self._is_closing: return
+        if df.empty or len(df) < 2:
+            self._show_graph_message(self.i18n.NO_DATA_MESSAGE, is_error=False)
+            return
+        
+        # Call the new, dedicated rendering function
+        self._render_graph(df)
+
+
+    def _apply_theme(self):
+        """
+        The single, authoritative function to apply the current theme to all axes.
+        Called AFTER all plotting to prevent race conditions.
+        """
+        is_dark = self._is_dark_mode
+        graph_bg = style_constants.GRAPH_BG_DARK if is_dark else style_constants.GRAPH_BG_LIGHT
+        grid_color = style_constants.GRID_COLOR_DARK if is_dark else style_constants.GRID_COLOR_LIGHT
+        text_color = style_constants.DARK_MODE_TEXT_COLOR if is_dark else style_constants.LIGHT_MODE_TEXT_COLOR
+        
+        self.figure.patch.set_facecolor(graph_bg)
+        for ax in self.axes:
+            ax.set_facecolor(graph_bg)
+            
+            # Set the color for ALL text elements on the axis at once
+            ax.xaxis.label.set_color(text_color)
+            ax.yaxis.label.set_color(text_color)
+            ax.tick_params(axis='x', colors=text_color)
+            ax.tick_params(axis='y', colors=text_color)
+            
+            for spine in ax.spines.values():
+                spine.set_color(grid_color)
+            ax.grid(True, linestyle=constants.graph.GRID_LINESTYLE, alpha=constants.graph.GRID_ALPHA, color=grid_color)
+            
+            # Re-apply the number formatter every time the theme is applied
+            ax.yaxis.set_major_formatter(ScalarFormatter())
+            ax.yaxis.get_major_formatter().set_scientific(False)
+
+        self.ax_upload.spines['top'].set_visible(True)
+
+
+    def _on_mouse_move(self, event):
+        """Handles mouse movement over the canvas to display a synchronized crosshair and tooltip."""
+        if not event.inaxes or not self._graph_data_cache:
+            self._on_mouse_leave(event)
+            return
+
+        mouse_timestamp = event.xdata
+        
+        # This is a highly optimized way to find the closest data point
+        timestamps = [p[0] for p in self._graph_data_cache]
+        dt_mouse_timestamp = datetime.fromtimestamp(plt.dates.num2date(mouse_timestamp).timestamp())
+        
+        index = min(range(len(timestamps)), key=lambda i: abs(timestamps[i] - dt_mouse_timestamp))
+        
+        data_point = self._graph_data_cache[index]
+        timestamp, upload_bps, download_bps = data_point
+
+        self.crosshair_v_download.set_xdata([timestamp])
+        self.crosshair_v_upload.set_xdata([timestamp])
+        self.crosshair_v_download.setVisible(True)
+        self.crosshair_v_upload.setVisible(True)
+
+        download_mbps = (download_bps * 8) / 1_000_000
+        upload_mbps = (upload_bps * 8) / 1_000_000
+        
+        tooltip_text = (
+            f"<div style='font-weight: bold;'>{timestamp.strftime('%Y-%m-%d %H:%M:%S')}</div>"
+            f"<div style='color: {constants.graph.DOWNLOAD_LINE_COLOR};'>↓ {download_mbps:.2f} Mbps</div>"
+            f"<div style='color: {constants.graph.UPLOAD_LINE_COLOR};'>↑ {upload_mbps:.2f} Mbps</div>"
+        )
+        self.tooltip.setText(tooltip_text)
+        self.tooltip.adjustSize()
+        
+        mouse_pos = self.canvas.mapFromGlobal(self.cursor().pos())
+        tooltip_x = mouse_pos.x() + 15
+        tooltip_y = mouse_pos.y() - self.tooltip.height() - 15
+
+        if tooltip_x + self.tooltip.width() > self.canvas.width():
+            tooltip_x = mouse_pos.x() - self.tooltip.width() - 15
+        if tooltip_y < 0:
+            tooltip_y = mouse_pos.y() + 15
+
+        self.tooltip.move(tooltip_x, tooltip_y)
+        self.tooltip.setVisible(True)
+        
+        self.canvas.draw_idle()
+
+    def _on_mouse_leave(self, event):
+        """Hides the crosshair and tooltip when the mouse leaves the axes."""
+        if self.crosshair_v_download.get_visible():
+            self.crosshair_v_download.setVisible(False)
+            self.crosshair_v_upload.setVisible(False)
+            self.tooltip.setVisible(False)
+            self.canvas.draw_idle()
+
+    def _on_legend_pick(self, event):
+        """Handles clicking on a legend item to toggle its visibility."""
+        legend = event.artist
+        is_visible = legend.get_visible()
+        legend.set_visible(not is_visible)
+        
+        # Find the corresponding line/fill plot and toggle its visibility
+        for line in self.ax_download.lines + self.ax_download.collections:
+            if line.get_label() == legend.get_label():
+                line.set_visible(not is_visible)
+        for line in self.ax_upload.lines + self.ax_upload.collections:
+            if line.get_label() == legend.get_label():
+                line.set_visible(not is_visible)
+        
+        self.canvas.draw_idle()
 
 
     def _populate_interface_filter(self) -> None:
         """
-        Fetches the list of distinct interfaces from the database and populates
-        the interface filter QComboBox.
+        Populates the interface filter QComboBox using the unified list from the parent widget.
         """
-        # If the settings panel hasn't been created yet, do nothing.
         if self.interface_filter is None:
-            self.logger.debug("Settings panel not yet initialized; skipping interface filter population.")
             return
 
         self.logger.debug("Populating interface filter...")
         try:
-            if not self._parent or not hasattr(self._parent, 'widget_state'):
-                self.logger.warning("Cannot populate interfaces: parent or widget_state missing.")
+            if not self._parent or not hasattr(self._parent, 'get_unified_interface_list'):
+                self.logger.warning("Cannot populate interfaces: parent or required method missing.")
                 return
 
-            # Block signals to prevent triggering updates while we modify the list
             self.interface_filter.blockSignals(True)
             
             current_selection = self.interface_filter.currentText()
             self.interface_filter.clear()
             
-            # Add the default aggregate view
-            # Use the i18n string for display and a fixed key 'all' for logic
             self.interface_filter.addItem(self.i18n.ALL_INTERFACES_AGGREGATED_LABEL, "all")
             
-            # Fetch and add the distinct interfaces from the database
-            distinct_interfaces = self._parent.widget_state.get_distinct_interfaces()
+            # Call the new unified method on the parent widget.
+            distinct_interfaces = self._parent.get_unified_interface_list()
+            
             if distinct_interfaces:
                 self.interface_filter.addItems(sorted(distinct_interfaces))
             
-            # Restore previous selection if it still exists
             index = self.interface_filter.findText(current_selection)
             if index != -1:
                 self.interface_filter.setCurrentIndex(index)
@@ -483,11 +641,9 @@ class GraphWindow(QWidget):
 
         except Exception as e:
             self.logger.error("Failed to populate interface filter: %s", e, exc_info=True)
-            # Ensure there's at least the default option on error
             if self.interface_filter.count() == 0:
                 self.interface_filter.addItem("All (Aggregated)")
         finally:
-            # Always unblock signals
             self.interface_filter.blockSignals(False)
 
 
@@ -531,20 +687,16 @@ class GraphWindow(QWidget):
         """
         Determines the start and end time for a query based on the
         current state of the 'Timeline' slider.
-
-        Returns:
-            A tuple of (start_time, end_time). start_time can be None for 'All'.
         """
         import psutil
 
         now = datetime.now()
         period_value = self._history_period_value
-        # Get the non-translated KEY from the map
         period_key = constants.data.history_period.PERIOD_MAP.get(period_value, constants.data.history_period.DEFAULT_PERIOD)
         
         start_time: Optional[datetime] = None
-        # Compare against the KEY, not the displayed text
         if period_key == "TIMELINE_SYSTEM_UPTIME":
+            # psutil.boot_time() returns a timestamp, so we must convert it.
             start_time = datetime.fromtimestamp(psutil.boot_time())
         elif period_key == "TIMELINE_SESSION":
             start_time = self.session_start_time
@@ -631,44 +783,35 @@ class GraphWindow(QWidget):
 
     def _show_graph_message(self, message: str, is_error: bool = True) -> None:
         """
-        Displays a message overlayed on the Matplotlib graph area.
-        Can be used for errors or informational states like 'collecting data'.
+        Displays a message overlayed on the Matplotlib graph area, clearing both axes.
         """
         if is_error:
             self.logger.error(f"Displaying graph error: {message}")
         try:
-            if not hasattr(self, 'ax') or not hasattr(self, 'canvas'): return
-
-            # Clear any plotted data
-            self.upload_line.set_data([],[])
-            self.download_line.set_data([],[])
+            if not hasattr(self, 'axes') or not hasattr(self, 'canvas'):
+                return
 
             is_dark = self._is_dark_mode
             facecolor = constants.styles.GRAPH_BG_DARK if is_dark else constants.styles.GRAPH_BG_LIGHT
-            
-            # Use red for errors, and standard theme text color for info messages
-            if is_error:
-                text_color = constants.color.RED
-            else:
-                text_color = constants.styles.DARK_MODE_TEXT_COLOR if is_dark else constants.styles.LIGHT_MODE_TEXT_COLOR
+            text_color = constants.color.RED if is_error else (constants.styles.DARK_MODE_TEXT_COLOR if is_dark else constants.styles.LIGHT_MODE_TEXT_COLOR)
 
-            if self._no_data_text_obj: # Reuse if it exists
-                self._no_data_text_obj.set_text(message)
-                self._no_data_text_obj.set_color(text_color)
-                self._no_data_text_obj.set_visible(True)
-            else:
-                self._no_data_text_obj = self.ax.text(0.5, 0.5, message,
-                            ha='center', va='center', transform=self.ax.transAxes,
-                            color=text_color, fontsize=constants.graph.ERROR_MESSAGE_FONTSIZE, visible=True)
+            # Clear any previously plotted data from both axes
+            for ax in self.axes:
+                ax.clear()
+                ax.set_xticks([])
+                ax.set_yticks([])
+                ax.set_xlabel("")
+                ax.set_ylabel("")
+                for spine in ax.spines.values():
+                    spine.set_visible(False)
+                ax.set_facecolor(facecolor)
+                ax.grid(False) # Turn off grid for message display
 
-            # Hide all axis elements for a clean message display
-            self.ax.set_xticks([])
-            self.ax.set_yticks([])
-            self.ax.set_xlabel("")
-            self.ax.set_ylabel("")
-            for spine in self.ax.spines.values(): spine.set_visible(False)
+            # Place the text message in the center of the top (download) plot
+            self.ax_download.text(0.5, 0.5, message,
+                                ha='center', va='center', transform=self.ax_download.transAxes,
+                                color=text_color, fontsize=constants.graph.ERROR_MESSAGE_FONTSIZE)
 
-            self.ax.set_facecolor(facecolor)
             self.figure.patch.set_facecolor(facecolor)
             self.canvas.draw_idle()
         except Exception as e_draw:
@@ -720,17 +863,14 @@ class GraphWindow(QWidget):
 
 
     def toggle_dark_mode(self, checked: bool) -> None:
-        """ Applies dark or light mode theme to the GraphWindow and its components.
-            The settings panel itself remains always dark.
-        """
+        """ Applies dark or light mode theme to the GraphWindow and its components. """
         if self._is_closing: return
         try:
-            self._is_dark_mode = checked # Update state variable FIRST
+            self._is_dark_mode = checked
             is_dark = self._is_dark_mode
             self.logger.debug(f"Applying graph dark mode theme: {is_dark}")
 
-            # Sync the toggle widget ONLY if it has been created
-            if self.dark_mode and self.dark_mode.isChecked() != is_dark:
+            if hasattr(self, 'dark_mode') and self.dark_mode and self.dark_mode.isChecked() != is_dark:
                 self.dark_mode.blockSignals(True)
                 self.dark_mode.setChecked(is_dark)
                 self.dark_mode.blockSignals(False)
@@ -739,66 +879,41 @@ class GraphWindow(QWidget):
                 self._parent.config["dark_mode"] = is_dark
                 self._parent.config_manager.save(self._parent.config)
 
-            # Hamburger icon - keep consistent dark background style regardless of theme
-            self.hamburger_icon.setStyleSheet("""
-                QPushButton {
-                    background-color: rgba(0, 0, 0, 0.7);
-                    color: white;
-                    border: none;
-                    border-radius: 4px;
-                    padding: 2px;
-                }
-                QPushButton:hover {
-                    background-color: rgba(0, 0, 0, 0.85);
-                }
-                QPushButton:pressed {
-                    background-color: rgba(0, 0, 0, 1.0);
-                }
-            """)
-
-            # Matplotlib Graph Theme
-            if not hasattr(self, 'figure') or not hasattr(self, 'ax') or not hasattr(self, 'canvas'):
-                self.logger.error("Graph components not initialized for dark mode toggle")
+            # Check for the new `axes` attribute
+            if not hasattr(self, 'figure') or not hasattr(self, 'axes') or not hasattr(self, 'canvas'):
                 return
 
-            graph_bg = constants.styles.GRAPH_BG_DARK if is_dark else constants.styles.GRAPH_BG_LIGHT
-            text_color = constants.styles.DARK_MODE_TEXT_COLOR if is_dark else constants.styles.LIGHT_MODE_TEXT_COLOR
-            grid_color = getattr(constants.styles, 'GRID_COLOR_DARK', '#444444') if is_dark else getattr(constants.styles, 'GRID_COLOR_LIGHT', '#CCCCCC')
+            graph_bg = style_constants.GRAPH_BG_DARK if is_dark else style_constants.GRAPH_BG_LIGHT
+            text_color = style_constants.DARK_MODE_TEXT_COLOR if is_dark else style_constants.LIGHT_MODE_TEXT_COLOR
+            grid_color = style_constants.GRID_COLOR_DARK if is_dark else style_constants.GRID_COLOR_LIGHT
 
             self.figure.patch.set_facecolor(graph_bg)
-            self.ax.set_facecolor(graph_bg)
-            self.ax.xaxis.label.set_color(text_color)
-            self.ax.yaxis.label.set_color(text_color)
-            self.ax.tick_params(colors=text_color)
-            
-            self.ax.grid(True, linestyle=constants.graph.GRID_LINESTYLE, alpha=constants.graph.GRID_ALPHA, color=grid_color)
-            
-            for spine in self.ax.spines.values(): 
-                spine.set_color(grid_color)
-            
-            if self.ax.get_legend():
-                leg = self.ax.get_legend()
-                for text_obj in leg.get_texts():
-                    text_obj.set_color(text_color)
-                leg.get_frame().set_facecolor(graph_bg)
-                leg.get_frame().set_edgecolor(grid_color)
-            
-            # Overlay Elements for the main graph
-            self.stats_bar.setStyleSheet(constants.styles.STATS_DARK_STYLE if is_dark else constants.styles.STATS_LIGHT_STYLE)
+
+            # --- Loop through both axes to apply themes ---
+            for ax in self.axes:
+                ax.set_facecolor(graph_bg)
+                ax.xaxis.label.set_color(text_color)
+                ax.yaxis.label.set_color(text_color)
+                ax.tick_params(colors=text_color, which='both') # Use 'both' for major and minor ticks
+                ax.grid(True, linestyle=constants.graph.GRID_LINESTYLE, alpha=constants.graph.GRID_ALPHA, color=grid_color)
+                for spine in ax.spines.values():
+                    spine.set_color(grid_color)
+                
+                # Theme the legend for each axis
+                leg = ax.get_legend()
+                if leg:
+                    for text_obj in leg.get_texts():
+                        text_obj.set_color(text_color)
+                    leg.get_frame().set_facecolor(graph_bg)
+                    leg.get_frame().set_edgecolor(grid_color)
+
+            # The rest of the function remains the same
+            self.stats_bar.setStyleSheet(style_utils.graph_overlay_style())
             self.stats_bar.raise_()
             self.hamburger_icon.raise_()
             self._reposition_overlay_elements()
-
-            # Redraw canvas for main graph changes
-            try:
-                self.canvas.draw_idle()
-            except Exception as e_draw_idle:
-                self.logger.error(f"Error during canvas.draw_idle() in toggle_dark_mode: {e_draw_idle}", exc_info=True)
-                try:
-                    self.canvas.draw()
-                except Exception as e_draw_fallback:
-                    self.logger.error(f"Error during canvas.draw() fallback in toggle_dark_mode: {e_draw_fallback}", exc_info=True)
-
+            
+            self.canvas.draw_idle()
 
         except Exception as e:
             self.logger.error(f"Error in toggle_dark_mode: {e}", exc_info=True)
@@ -808,6 +923,11 @@ class GraphWindow(QWidget):
         """Connect all relevant signals for UI interactivity."""
         self._realtime_timer.timeout.connect(self._update_realtime)
         # All other signal connections are moved to _connect_settings_signals
+
+        # Connect Canvas Mouse and Legend Click Events
+        self.canvas.mpl_connect('motion_notify_event', self._on_mouse_move)
+        self.canvas.mpl_connect('axes_leave_event', self._on_mouse_leave)
+        self.canvas.mpl_connect('pick_event', self._on_legend_pick)
 
 
     def _connect_settings_signals(self):
@@ -827,6 +947,9 @@ class GraphWindow(QWidget):
         if hasattr(self, 'keep_data') and self.keep_data:
             self.keep_data.sliderReleased.connect(self._on_retention_changed)
             self.keep_data.valueChanged.connect(self._update_keep_data_text)
+
+        if hasattr(self, 'show_legend') and self.show_legend:
+            self.show_legend.toggled.connect(self._on_legend_toggled)
 
         # Set initial text values for sliders
         if hasattr(self, 'history_period'):
@@ -939,16 +1062,18 @@ class GraphWindow(QWidget):
 
 
     def _reposition_overlay_elements(self) -> None:
-        """Reposition the hamburger icon. The stats bar is now managed by the layout."""
-        if self._is_closing or not all(hasattr(self, attr) for attr in ['tab_widget', 'hamburger_icon']):
+        """Reposition the hamburger icon to be vertically centered on the stats bar."""
+        if self._is_closing or not all(hasattr(self, attr) for attr in ['tab_widget', 'hamburger_icon', 'stats_bar']):
             return
 
         try:
-            # The hamburger icon is the only true overlay.
-            # Position it relative to the top-right of the graph widget.
             if self.tab_widget.currentWidget() == self.graph_widget:
                 hamburger_x = self.graph_widget.width() - self.hamburger_icon.width() - constants.graph.HAMBURGER_ICON_OFFSET_X
-                hamburger_y = constants.graph.HAMBURGER_ICON_OFFSET_Y
+                
+                # This logic is now correct due to the shared parentage
+                stats_bar_center_y = self.stats_bar.y() + self.stats_bar.height() // 2
+                hamburger_y = stats_bar_center_y - self.hamburger_icon.height() // 2
+                
                 self.hamburger_icon.move(hamburger_x, hamburger_y)
                 self.hamburger_icon.raise_()
         except Exception as e:
@@ -956,13 +1081,16 @@ class GraphWindow(QWidget):
 
 
     def toggle_live_update(self, checked: bool) -> None:
-        """ Starts or stops the real-time update timer. """
+        """ Starts or stops the real-time update timer based on the toggle. """
         if self._is_closing: return
-        self._is_live_update_enabled = checked # Update state variable
+        self._is_live_update_enabled = checked
         try:
             if self._is_live_update_enabled:
+                # Set the interval and start the timer.
                 self._realtime_timer.start(constants.graph.REALTIME_UPDATE_INTERVAL_MS)
                 self.logger.info("Live updates enabled.")
+                # Trigger an immediate update when the user turns it on.
+                self._update_realtime()
             else:
                 self._realtime_timer.stop()
                 self.logger.info("Live updates disabled.")
@@ -973,43 +1101,34 @@ class GraphWindow(QWidget):
 
     def _update_realtime(self) -> None:
         """
-        Slot for _realtime_timer. Triggers a live, incremental graph update.
+        Slot for the real-time timer. Triggers a live graph update ONLY if
+        the user is currently viewing the "Session" timeline.
         """
         if not self.isActiveWindow() or self._is_closing or not self.isVisible() or not self._is_live_update_enabled:
             return
-        
+
         try:
-            if not self._parent or not self._parent.widget_state:
-                self.logger.warning("Parent or widget_state missing for real-time update.")
-                return
-            
-            # Call perform_graph_update with the live_update flag
-            self._perform_graph_update(live_update=True)
+            # Only perform a live update if the user is on the "Session" timeline.
+            period_key = constants.data.history_period.PERIOD_MAP.get(self._history_period_value, "")
+            if period_key == "TIMELINE_SESSION":
+                self.logger.debug("Live update tick: Refreshing session data.")
+                # Trigger the standard, worker-based update. The worker will
+                # fetch the latest in-memory session data, which is very fast.
+                self.update_graph()
+            # If not on session view, do nothing.
 
         except Exception as e:
             self.logger.error(f"Error in real-time update: {e}", exc_info=True)
 
 
     def _update_history_period_text(self, value: int) -> None:
-        """Update the history period slider's value text.
-        
-        Args:
-            value: The history period value to set
-        """
-        if not isinstance(value, int):
-            self.logger.error(f"Invalid history period value type: {type(value)}, expected int")
-            value = 0  # Default to System Uptime
-            
+        """Updates the text label for the history period slider in the settings panel."""
         try:
-            if hasattr(self, 'history_period'):
+            # This function should ONLY ever interact with the settings panel widgets.
+            if hasattr(self, 'history_period') and self.history_period:
                 period_key = constants.data.history_period.PERIOD_MAP.get(value, constants.data.history_period.DEFAULT_PERIOD)
                 translated_period = getattr(self.i18n, period_key, period_key)
                 self.history_period.setValueText(translated_period)
-                # Do NOT set any title or timeline label on the graph
-                if self.tab_widget.currentIndex() == 0 and hasattr(self, 'ax'):
-                    self.ax.set_title("")
-                    if hasattr(self, 'canvas'):
-                        self.canvas.draw_idle()
         except Exception as e:
             self.logger.error(f"Error updating history period text: {e}", exc_info=True)
 
@@ -1019,8 +1138,7 @@ class GraphWindow(QWidget):
         if self._is_closing:
             return
         try:
-            # We no longer need to pass the time range directly. The update_graph
-            # will trigger _perform_graph_update, which now gets the time range itself.
+            # The new architecture is simple: just trigger a full update.
             self.update_graph()
             self.logger.debug("History period update triggered for a full refresh.")
         except Exception as e:
@@ -1111,38 +1229,54 @@ class GraphWindow(QWidget):
         import matplotlib.pyplot as plt
 
         try:
-            # On application shutdown, the parent's cleanup routine now handles saving.
-            # We only need to handle the case where the user closes the graph window
-            # while the main app is still running. In this case, we just hide it.
+            # This flag is set by the parent widget during a full application shutdown.
             if getattr(self, '_is_closing', False):
-                self.logger.debug("Performing full cleanup for graph window...")
+                self.logger.debug("Performing full cleanup for graph window on app exit...")
+                
+                # Stop all timers and the worker thread
                 self._realtime_timer.stop()
-                self._update_timer.stop()
                 self._db_size_update_timer.stop()
+                if hasattr(self, 'worker_thread') and self.worker_thread.isRunning():
+                    self.worker_thread.quit()
+                    self.worker_thread.wait(1000) # Wait up to 1 second
                 
                 if hasattr(self, 'figure'): plt.close(self.figure)
                 if hasattr(self, 'canvas'): self.canvas.deleteLater()
                 
                 event.accept()
             else:
-                # If just closing the window, save its state immediately and hide it.
+                # If the user is just closing the window, stop the thread
+                # and clean up resources so it can be created fresh next time.
+                self.logger.debug("User closing graph window. Stopping worker and hiding.")
+                
+                self._realtime_timer.stop()
+                if hasattr(self, 'worker_thread') and self.worker_thread.isRunning():
+                    self.worker_thread.quit()
+                    self.worker_thread.wait(1000)
+                
+                # Save final state before hiding
                 final_graph_settings = {
                     "graph_window_pos": {"x": self.pos().x(), "y": self.pos().y()},
                     "history_period_slider_value": self._history_period_value
                 }
                 self._notify_parent_of_setting_change(final_graph_settings)
-                self.logger.debug("Hiding graph window instead of closing.")
+                
                 self.hide()
                 event.ignore()
+                
+                # Tell the parent widget that this instance is "dead"
+                # so that it will create a fresh one next time.
+                if self._parent:
+                    self._parent.graph_window = None
+                
         except Exception as e:
             self.logger.error(f"Error in closeEvent: {e}", exc_info=True)            
             event.ignore()
 
-
     def _get_db_size_mb(self) -> float:
         """Get the size of the database file in megabytes."""
         try:
-            # FIX: Access the db_path via the db_worker attribute on widget_state.
+            # Access the db_path via the db_worker attribute on widget_state.
             if (hasattr(self._parent, "widget_state") and
                     hasattr(self._parent.widget_state, "db_worker") and
                     hasattr(self._parent.widget_state.db_worker, "db_path")):
@@ -1209,6 +1343,18 @@ class GraphWindow(QWidget):
                 self._db_size_update_timer.stop()
 
 
+    def _on_legend_toggled(self, checked: bool) -> None:
+        """Handles the Show Legend toggle, saves the state, and updates the graph."""
+        if self._is_closing or not self._parent:
+            return
+        
+        # 1. Update the application's central configuration
+        self._notify_parent_of_setting_change({'show_legend': checked})
+        
+        # 2. Trigger a graph redraw to show/hide the legend
+        self.update_graph()
+
+
     def _days_to_slider_value(self, days: int) -> int:
         """Convert a number of days to the corresponding slider value (0-6).
         
@@ -1225,22 +1371,25 @@ class GraphWindow(QWidget):
         return 3
 
 
-    def update_graph(self) -> None:
+    def update_graph(self):
         """
-        Schedules a throttled, full-refresh update for the graph.
+        Triggers a data refresh by emitting a signal to the worker thread.
+        This is the primary entry point for all graph updates.
         """
-        if self._is_closing:
+        if self._is_closing or not hasattr(self, 'request_data_processing'):
             return
+        
+        # Show a loading message immediately for a responsive feel.
+        self._show_graph_message(self.i18n.COLLECTING_DATA_MESSAGE, is_error=False)
 
-        if self._graph_update_pending:
-            return
+        # Get the current filter settings from the UI.
+        start_time, end_time = self._get_time_range_from_ui()
+        interface_to_query = self.interface_filter.currentData() if self.interface_filter and self.interface_filter.currentData() != "all" else None
+        period_key = constants.data.history_period.PERIOD_MAP.get(self._history_period_value, "")
+        is_session_view = period_key == "TIMELINE_SESSION"
 
-        self._graph_update_pending = True
-        self._update_timer.singleShot(
-            constants.graph.GRAPH_UPDATE_THROTTLE_MS,
-            # Call _perform_graph_update without any arguments for a full refresh
-            lambda: self._perform_graph_update(live_update=False)
-        )
+        # Emit the signal to the worker thread to start processing the data.
+        self.request_data_processing.emit(start_time, end_time, interface_to_query, is_session_view)
 
 
     def _configure_xaxis_format(self, start_time: datetime, end_time: datetime) -> None:
@@ -1249,15 +1398,17 @@ class GraphWindow(QWidget):
         time range to prevent Matplotlib warnings and improve readability.
         """
         import matplotlib.dates as mdates
+        
+        # Target the bottom plot's X-axis, as it is shared with the top plot.
+        axis_to_configure = self.ax_upload
 
         if not start_time or not end_time or start_time >= end_time:
-            self.ax.xaxis.set_major_locator(mdates.AutoDateLocator(maxticks=8))
-            self.ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
+            axis_to_configure.xaxis.set_major_locator(mdates.AutoDateLocator(maxticks=8))
+            axis_to_configure.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
             return
 
         time_delta_seconds = (end_time - start_time).total_seconds()
         
-        # --- MORE GRANULAR LOGIC ---
         if time_delta_seconds <= 900:  # <= 15 minutes
             locator = mdates.MinuteLocator(interval=2)
             formatter = mdates.DateFormatter('%H:%M:%S')
@@ -1272,7 +1423,7 @@ class GraphWindow(QWidget):
             formatter = mdates.DateFormatter('%H:%M\n%b %d')
         elif time_delta_seconds <= 86400 * 8: # Handles 1 week view
             locator = mdates.DayLocator(interval=1)
-            formatter = mdates.DateFormatter('%a %d') # e.g., "Mon 12"
+            formatter = mdates.DateFormatter('%a %d')
         elif time_delta_seconds <= 86400 * 32: # Handles 1 month view
             locator = mdates.WeekdayLocator(byweekday=mdates.MO)
             formatter = mdates.DateFormatter('%b %d')
@@ -1280,8 +1431,8 @@ class GraphWindow(QWidget):
             locator = mdates.MonthLocator()
             formatter = mdates.DateFormatter('%Y-%b')
 
-        self.ax.xaxis.set_major_locator(locator)
-        self.ax.xaxis.set_major_formatter(formatter)
+        axis_to_configure.xaxis.set_major_locator(locator)
+        axis_to_configure.xaxis.set_major_formatter(formatter)
 
 
     def _get_nice_y_axis_top(self, max_speed: float) -> float:
@@ -1290,8 +1441,8 @@ class GraphWindow(QWidget):
 
         min_range_mbps = 0.1  # Equivalent to 100 Kbps
 
-        if max_speed <= min_range_mbps:
-            return min_range_mbps
+        if max_speed <= constants.graph.MINIMUM_Y_AXIS_MBPS:
+            return constants.graph.MINIMUM_Y_AXIS_MBPS
 
         # Calculate the order of magnitude (e.g., 10, 100, 1000)
         power = 10 ** math.floor(math.log10(max_speed))
@@ -1311,258 +1462,132 @@ class GraphWindow(QWidget):
         return nice_top * power
 
 
-    def _perform_graph_update(self, live_update: bool = False) -> None:
+    def _render_graph(self, df: pd.DataFrame):
         """
-        Performs the actual rendering of the graph.
-
-        Has two modes:
-        - Full Refresh (live_update=False): Fetches, downsamples, and caches all data for the period.
-        - Live Update (live_update=True): Fetches only new data since the last poll,
-        appends it to the cache, and trims old data.
+        The definitive rendering function. Takes a processed DataFrame and draws it
+        with a true-zero floor and an adaptive logarithmic scale.
         """
-        self._graph_update_pending = False
-        if self._is_closing or not self.isVisible():
-            return
-
         try:
-            import numpy as np
-            import matplotlib.dates as mdates
-            from matplotlib.ticker import AutoLocator, ScalarFormatter, FixedLocator
+            from matplotlib.ticker import FixedLocator, FuncFormatter
 
-            if not self._parent or not self._parent.widget_state:
-                self._show_graph_error(self.i18n.DATA_SOURCE_UNAVAILABLE_ERROR)
-                return
-
-            period_key = constants.data.history_period.PERIOD_MAP.get(self._history_period_value, "")
-            is_session_view = period_key == "TIMELINE_SESSION"
+            df['upload_mbps'] = (df['upload_speed'] * constants.network.units.BITS_PER_BYTE) / constants.network.units.MEGA_DIVISOR
+            df['download_mbps'] = (df['download_speed'] * constants.network.units.BITS_PER_BYTE) / constants.network.units.MEGA_DIVISOR
+            df['upload_mbps'] = df['upload_mbps'].clip(lower=0)
+            df['download_mbps'] = df['download_mbps'].clip(lower=0)
             
-            if live_update and self._graph_data_cache and not is_session_view:
-                # --- LIVE UPDATE PATH ---
-                last_timestamp = self._graph_data_cache[-1][0]
-                
-                interface_to_query = None
-                if self.interface_filter:
-                    selected_interface_key = self.interface_filter.currentData()
-                    interface_to_query = None if selected_interface_key == "all" else selected_interface_key
+            for ax in self.axes:
+                ax.clear()
 
-                # Fetch only the newest records
-                new_data = self._parent.widget_state.get_speed_history(
-                    start_time=last_timestamp,
-                    interface_name=interface_to_query
-                )
+            start_time, end_time = self._get_time_range_from_ui()
+            # A timespan is "long" if the user selected "All" (start_time is None)
+            # OR if the selected range is greater than 2 days.
+            is_long_timespan = start_time is None or (end_time - start_time).days > 2
+            
+            # However, if the total data available is very short, always use the detailed view.
+            total_data_duration_hours = (df['timestamp'].max() - df['timestamp'].min()).total_seconds() / 3600
+            if total_data_duration_hours < 48:
+                is_long_timespan = False
 
-                if new_data:
-                    # Append new data, avoiding duplicates
-                    self._graph_data_cache.extend(p for p in new_data if p[0] > last_timestamp)
-
-                # Trim old data from the left side of the time window
-                start_time, _ = self._get_time_range_from_ui()
-                if start_time:
-                    # Filter out points that are now too old to be in the window
-                    self._graph_data_cache = [p for p in self._graph_data_cache if p[0] >= start_time]
-                
-                history_data = self._graph_data_cache
+            if is_long_timespan:
+                # Mean/Range logic
+                df.set_index('timestamp', inplace=True)
+                daily_agg = df.resample('D').agg({'download_mbps': ['mean', 'min', 'max'], 'upload_mbps': ['mean', 'min', 'max']}).fillna(0)
+                df.reset_index(inplace=True)
+                self.ax_download.plot(daily_agg.index, daily_agg[('download_mbps', 'mean')], color=constants.graph.DOWNLOAD_LINE_COLOR, linewidth=1.5, zorder=10)
+                self.ax_download.fill_between(daily_agg.index, daily_agg[('download_mbps', 'min')], daily_agg[('download_mbps', 'max')], color=constants.graph.DOWNLOAD_LINE_COLOR, alpha=0.3, label=self.i18n.DOWNLOAD_LABEL)
+                self.ax_upload.plot(daily_agg.index, daily_agg[('upload_mbps', 'mean')], color=constants.graph.UPLOAD_LINE_COLOR, linewidth=1.5, zorder=10)
+                self.ax_upload.fill_between(daily_agg.index, daily_agg[('upload_mbps', 'min')], daily_agg[('upload_mbps', 'max')], color=constants.graph.UPLOAD_LINE_COLOR, alpha=0.3, label=self.i18n.UPLOAD_LABEL)
             else:
-                # --- FULL REFRESH PATH ---
-                interface_to_query = None
-                if self.interface_filter:
-                    selected_interface_key = self.interface_filter.currentData()
-                    interface_to_query = None if selected_interface_key == "all" else selected_interface_key
-                
-                if is_session_view:
-                    mem_history = self._parent.widget_state.get_in_memory_speed_history()
-                    # (Same session view logic as before)
-                    processed_history = []
-                    for snapshot in mem_history:
-                        if interface_to_query is None:
-                            total_upload = sum(up for up, down in snapshot.speeds.values())
-                            total_download = sum(down for up, down in snapshot.speeds.values())
-                            processed_history.append((snapshot.timestamp, total_upload, total_download))
-                        else:
-                            up_speed, down_speed = snapshot.speeds.get(interface_to_query, (0.0, 0.0))
-                            processed_history.append((snapshot.timestamp, up_speed, down_speed))
-                    history_data = processed_history
-                else:
-                    start_time, end_time = self._get_time_range_from_ui()
-                    history_data = self._parent.widget_state.get_speed_history(
-                        start_time=start_time,
-                        end_time=end_time,
-                        interface_name=interface_to_query
-                    )
+                # Detailed line plot logic
+                df['time_diff'] = df['timestamp'].diff().dt.total_seconds()
+                gap_indices = df[df['time_diff'] > 60].index
+                for index in reversed(gap_indices):
+                    gap_row = df.loc[index].copy()
+                    gap_row['upload_mbps'], gap_row['download_mbps'] = np.nan, np.nan
+                    df = pd.concat([df.iloc[:index], pd.DataFrame([gap_row]), df.iloc[index:]], ignore_index=True)
+                self._plot_continuous_segments(self.ax_download, df['timestamp'], df['download_mbps'], color=constants.graph.DOWNLOAD_LINE_COLOR, label=self.i18n.DOWNLOAD_LABEL)
+                self._plot_continuous_segments(self.ax_upload, df['timestamp'], df['upload_mbps'], color=constants.graph.UPLOAD_LINE_COLOR, label=self.i18n.UPLOAD_LABEL)
 
-                # Downsample only on a full refresh
-                if len(history_data) > constants.graph.MAX_DATA_POINTS:
-                    self.logger.debug(f"Downsampling {len(history_data)} points to a max of {constants.graph.MAX_DATA_POINTS}")
-                    history_data = helpers.downsample_data(history_data, constants.graph.MAX_DATA_POINTS)
-                
-                # Store the freshly processed data in the cache
-                self._graph_data_cache = history_data
+            self._apply_theme()
+            
+            for ax, speed_col in [(self.ax_download, 'download_mbps'), (self.ax_upload, 'upload_mbps')]:
+                all_speeds = [s for s in df[speed_col] if pd.notna(s)]
+                if all_speeds:
+                    max_speed = max(all_speeds)
+                    nice_top = self._get_nice_y_axis_top(max_speed)
+                    ax.set_ylim(bottom=0, top=nice_top)
+                    ax.set_yscale('symlog', linthresh=1.0)
+                    
+                    ticks = {0.0, 1.0}
+                    if nice_top > 1:
+                        power = 10
+                        while power < nice_top * 0.9:
+                            ticks.add(float(power))
+                            power *= 10
+                    ticks.add(float(nice_top))
+                    
+                    ax.yaxis.set_major_locator(FixedLocator(sorted(list(ticks))))
+                    ax.yaxis.set_major_formatter(FuncFormatter(lambda x, pos: f'{x:.1f}'.rstrip('0').rstrip('.')))
+            
+            if self._parent and self._parent.config.get("show_legend", True):
+                for ax in self.axes:
+                    leg = ax.legend()
+                    if leg:
+                        for legend_handle in leg.legendHandles:
+                            legend_handle.set_picker(5)
 
-            if len(history_data) < 2:
-                # (Error handling for "no data" is the same)
-                active_interfaces = self._parent.get_active_interfaces() if hasattr(self._parent, 'get_active_interfaces') else []
-                is_selected_interface_active = True
-                if self.interface_filter:
-                    is_selected_interface_active = self.interface_filter.currentData() == "all" or self.interface_filter.currentText() in active_interfaces
-                is_live_view = "Session" in period_key or "Uptime" in period_key
-                if is_live_view and is_selected_interface_active:
-                    self._show_graph_message(getattr(self.i18n, 'COLLECTING_DATA_MESSAGE', "Collecting data..."), is_error=False)
-                else:
-                    self._show_graph_error(getattr(self.i18n, 'NO_DATA_MESSAGE', "No data available for the selected period."))
-                return
-                
-            # (Graph Restoration, Theming, Plotting, etc. is all the same)
-            if self._no_data_text_obj: self._no_data_text_obj.set_visible(False)
-            self.ax.set_yscale('linear')
-            self.upload_line.set_visible(True)
-            self.download_line.set_visible(True)
-            for spine in self.ax.spines.values(): spine.set_visible(True)
-            self.ax.xaxis.get_label().set_visible(True)
-            self.ax.yaxis.get_label().set_visible(True)
-            self.ax.yaxis.set_major_locator(AutoLocator())
-            self.ax.xaxis.set_major_locator(mdates.AutoDateLocator())
-            self.ax.set_xlabel(self.i18n.TIME_LABEL)
-            self.ax.set_ylabel(self.i18n.MBITS_LABEL)
-            self.ax.tick_params(labelbottom=True, labelleft=True)
-            is_dark = self._is_dark_mode
-            graph_bg = constants.styles.GRAPH_BG_DARK if is_dark else constants.styles.GRAPH_BG_LIGHT
-            grid_color = getattr(constants.styles, 'GRID_COLOR_DARK', '#444444') if is_dark else getattr(constants.styles, 'GRID_COLOR_LIGHT', '#CCCCCC')
-            text_color = constants.styles.DARK_MODE_TEXT_COLOR if is_dark else constants.styles.LIGHT_MODE_TEXT_COLOR
-            self.figure.patch.set_facecolor(graph_bg)
-            self.ax.set_facecolor(graph_bg)
-            self.ax.tick_params(colors=text_color, which='both')
-            self.ax.grid(True, linestyle=constants.graph.GRID_LINESTYLE, alpha=constants.graph.GRID_ALPHA, color=grid_color)
+            self.ax_download.set_ylabel(f"{self.i18n.DOWNLOAD_LABEL} (Mbps)")
+            self.ax_upload.set_ylabel(f"{self.i18n.UPLOAD_LABEL} (Mbps)")
 
+            effective_start_time = df['timestamp'].min()
+            effective_end_time = df['timestamp'].max()
+            self.ax_upload.set_xlim(effective_start_time, effective_end_time)
+            self._configure_xaxis_format(effective_start_time, effective_end_time)
+            
+            history_data = list(zip(df['timestamp'], df['upload_speed'], df['download_speed']))
             self._update_stats_bar(history_data)
 
-            timestamps = [entry[0] for entry in history_data]
-            upload_speeds_mbps = [(entry[1] * 8) / 1_000_000 for entry in history_data]
-            download_speeds_mbps = [(entry[2] * 8) / 1_000_000 for entry in history_data]
-
-            self.upload_line.set_data(timestamps, upload_speeds_mbps)
-            self.download_line.set_data(timestamps, download_speeds_mbps)
-
-            all_speeds = upload_speeds_mbps + download_speeds_mbps
-            non_zero_speeds = [s for s in all_speeds if s > 0.1]
-
-            final_thresh = 10
-            if non_zero_speeds:
-                dynamic_thresh = np.quantile(non_zero_speeds, 0.90)
-                final_thresh = max(1, min(dynamic_thresh, 50))
-
-            self.ax.set_yscale('symlog', linthresh=final_thresh)
-            self.ax.yaxis.set_major_formatter(ScalarFormatter())
-            self.ax.yaxis.set_minor_formatter(ScalarFormatter())
-
-            max_speed = max(all_speeds) if all_speeds else 0
-            nice_top = self._get_nice_y_axis_top(max_speed)
-
-            rounded_thresh_for_tick = round(final_thresh / 5) * 5
-            y_ticks = {0.0, rounded_thresh_for_tick}
-
-            if nice_top > 10:
-                log_tick = 10.0
-                while log_tick < nice_top:
-                    y_ticks.add(log_tick)
-                    log_tick *= 10
-
-            y_ticks.add(nice_top)
-
-            if 0.0 in y_ticks and 0 in y_ticks and 0.0 != 0:
-                y_ticks.remove(0)
-
-            self.ax.yaxis.set_major_locator(FixedLocator(sorted(list(y_ticks))))
-            self.ax.set_ylim(bottom=0, top=nice_top)
-
-            effective_start_time = min(timestamps)
-            effective_end_time = max(timestamps)
-            self.ax.set_xlim(effective_start_time, effective_end_time)
-            self._configure_xaxis_format(effective_start_time, effective_end_time)
-
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", UserWarning)
-                self.figure.autofmt_xdate(rotation=30, ha='right')
-
+            self.figure.autofmt_xdate(rotation=30, ha='right')
             self.canvas.draw_idle()
+
         except Exception as e:
-            self.logger.error(f"Error updating graph: {e}", exc_info=True)
-            self._show_graph_error(self.i18n.GRAPH_UPDATE_ERROR_TEMPLATE.format(error=str(e)))
-
-
-    def _calculate_period_stats(self, period_data: List[Tuple[datetime, float, float]]) -> Dict[str, Any]:
-        """
-        Calculates statistics for a pre-filtered list of data points.
-        The input data is (timestamp, upload_bytes_sec, download_bytes_sec).
-        """
-        try:
-            if not period_data or len(period_data) < 2:
-                return {
-                    "max_upload": 0.0, "max_download": 0.0, 
-                    "total_upload": 0.0, "total_upload_unit": "B",
-                    "total_download": 0.0, "total_download_unit": "B"
-                }
-
-            upload_bytes_sec = [up for _, up, _ in period_data]
-            download_bytes_sec = [down for _, _, down in period_data]
-            
-            max_upload_mbps = (max(upload_bytes_sec) * 8 / 1_000_000) if upload_bytes_sec else 0.0
-            max_download_mbps = (max(download_bytes_sec) * 8 / 1_000_000) if download_bytes_sec else 0.0
-
-            total_upload_bytes = 0.0
-            total_download_bytes = 0.0
-            for i in range(1, len(period_data)):
-                dt_seconds = (period_data[i][0] - period_data[i-1][0]).total_seconds()
-                
-                # Ignore large time gaps (e.g., from sleep) in the total calculation
-                if not (0 < dt_seconds < 60):
-                    continue
-                
-                avg_upload_speed = (period_data[i][1] + period_data[i-1][1]) / 2
-                avg_download_speed = (period_data[i][2] + period_data[i-1][2]) / 2
-                
-                total_upload_bytes += avg_upload_speed * dt_seconds
-                total_download_bytes += avg_download_speed * dt_seconds
-
-            # Format the final totals ONCE after the loop is complete.
-            total_upload_display, total_upload_unit = helpers.format_data_size(total_upload_bytes, self.i18n)
-            total_download_display, total_download_unit = helpers.format_data_size(total_download_bytes, self.i18n)
-
-            return {
-                "max_upload": max_upload_mbps,
-                "max_download": max_download_mbps,
-                "total_upload": total_upload_display,
-                "total_upload_unit": total_upload_unit,
-                "total_download": total_download_display,
-                "total_download_unit": total_download_unit,
-            }
-        except Exception as e:
-            self.logger.error(f"Error calculating period stats: {e}", exc_info=True)
-            return {"max_upload": 0, "max_download": 0, "total_upload": 0, "total_download_unit": "B"}
+            self.logger.error(f"Error rendering graph: {e}", exc_info=True)
+            self._show_graph_error(str(e))
 
 
     def _update_stats_bar(self, history_data: List[Tuple[datetime, float, float]]) -> None:
         """
-        Update the stats bar with statistics for the provided (pre-filtered) period.
+        Update the stats bar. It calculates max speed from the plot data,
+        but gets the accurate total bandwidth from a dedicated, efficient database query.
         """
         try:
             if not history_data:
                 self.stats_bar.setText(self.i18n.NO_DATA_MESSAGE)
                 return
 
-            stats = self._calculate_period_stats(history_data)
+            upload_bytes_sec = [up for _, up, _ in history_data if up is not None]
+            download_bytes_sec = [down for _, _, down in history_data if down is not None]
+            max_upload_mbps = (max(upload_bytes_sec) * 8 / 1_000_000) if upload_bytes_sec else 0.0
+            max_download_mbps = (max(download_bytes_sec) * 8 / 1_000_000) if download_bytes_sec else 0.0
+
+            start_time, end_time = self._get_time_range_from_ui()
+            interface_to_query = self.interface_filter.currentData() if self.interface_filter and self.interface_filter.currentData() != "all" else None
             
-            # --- Max speed unit is now always Mbps ---
-            speed_unit = "Mbps"
-            
+            total_upload_bytes, total_download_bytes = db_utils.get_total_bandwidth_for_period(
+                self._parent.widget_state.db_worker.db_path,
+                start_time,
+                end_time,
+                interface_to_query
+            )
+
+            total_upload_display, total_upload_unit = helpers.format_data_size(total_upload_bytes, self.i18n)
+            total_download_display, total_download_unit = helpers.format_data_size(total_download_bytes, self.i18n)
+
             stats_text = self.i18n.DEFAULT_STATS_TEXT_TEMPLATE.format(
-                max_up=stats['max_upload'],
-                max_up_unit=speed_unit,
-                max_down=stats['max_download'],
-                max_down_unit=speed_unit,
-                up_total=stats['total_upload'],
-                up_unit=stats['total_upload_unit'],
-                down_total=stats['total_download'],
-                down_unit=stats['total_download_unit']
+                max_up=max_upload_mbps, max_up_unit="Mbps",
+                max_down=max_download_mbps, max_down_unit="Mbps",
+                up_total=total_upload_display, up_unit=total_upload_unit,
+                down_total=total_download_display, down_unit=total_download_unit
             )
             self.stats_bar.setText(stats_text)
             
