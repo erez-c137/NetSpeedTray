@@ -75,6 +75,7 @@
     "DAYS_TEMPLATE": "{days} Días",
     "REALTIME_LABEL": "Tiempo Real",
     "LEGEND_POSITION_LABEL": "Posición de la Leyenda",
+    "SHOW_LEGEND_LABEL": "Mostrar Leyenda",
     "TIME_LABEL": "Hora",
     "SPEED_LABEL": "Velocidad ({unit})",
     "UPLOAD_LABEL": "Subida",

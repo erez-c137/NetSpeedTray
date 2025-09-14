@@ -75,6 +75,7 @@
     "DAYS_TEMPLATE": "{days} Dagen",
     "REALTIME_LABEL": "Real-time",
     "LEGEND_POSITION_LABEL": "Legenda positie",
+    "SHOW_LEGEND_LABEL": "Legenda tonen",
     "TIME_LABEL": "Tijd",
     "SPEED_LABEL": "Snelheid ({unit})",
     "UPLOAD_LABEL": "Upload",

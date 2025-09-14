@@ -75,6 +75,7 @@
     "DAYS_TEMPLATE": "{days} dni",
     "REALTIME_LABEL": "Na żywo",
     "LEGEND_POSITION_LABEL": "Położenie legendy",
+    "SHOW_LEGEND_LABEL": "Pokaż legendę",
     "TIME_LABEL": "Czas",
     "SPEED_LABEL": "Prędkość ({unit})",
     "UPLOAD_LABEL": "Wysyłanie",
