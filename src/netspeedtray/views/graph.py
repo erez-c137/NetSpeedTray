@@ -1533,7 +1533,7 @@ class GraphWindow(QWidget):
                 for ax in self.axes:
                     leg = ax.legend()
                     if leg:
-                        for legend_handle in leg.legendHandles:
+                        for legend_handle in leg.legend_handles:
                             legend_handle.set_picker(5)
 
             self.ax_download.set_ylabel(f"{self.i18n.DOWNLOAD_LABEL} (Mbps)")

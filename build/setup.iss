@@ -30,7 +30,6 @@ SolidCompression=yes
 OutputDir=installer
 OutputBaseFilename=NetSpeedTray-{#MyAppVersionDisplay}-Setup
 VersionInfoVersion={#MyAppVersion}
-AllowNoIcons=yes
 DisableDirPage=auto
 UsePreviousAppDir=no
 SetupLogging=yes
