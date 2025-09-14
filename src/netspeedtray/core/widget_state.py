@@ -444,6 +444,28 @@ class WidgetState(QObject):
                 self._db_batch.append((timestamp, interface, up_speed, down_speed))
 
 
+    def get_total_bandwidth_for_period(self, start_time: Optional[datetime], end_time: datetime, interface_name: Optional[str] = None) -> Tuple[float, float]:
+        """
+        Calculates the total upload and download bandwidth for a given period
+        by running a SUM query directly on the aggregated database tables.
+        This is much more efficient than calculating it in Python.
+
+        Returns:
+            A tuple of (total_upload_bytes, total_download_bytes).
+        """
+        if not hasattr(self, 'db_worker') or not self.db_worker:
+            return 0.0, 0.0
+
+        # Determine which table to query for maximum efficiency
+        # For periods over 2 days, the hourly aggregate is accurate enough and much faster.
+        if start_time and (end_time - start_time).days > 2:
+            table_name = "hour_data"
+        else:
+            table_name = "minute_data"
+
+        return self.db_worker.get_total_bandwidth(table_name, start_time, end_time, interface_name)
+
+
     def get_in_memory_speed_history(self) -> List[SpeedDataSnapshot]:
         """
         Retrieves the current in-memory speed history.
@@ -494,9 +516,11 @@ class WidgetState(QObject):
             _start_ts = int(start_time.timestamp()) if start_time else 0
             _end_ts = int(end_time.timestamp()) if end_time else int(datetime.now().timestamp())
             
+            conn = None  # Initialize connection variable
             try:
                 # Use a read-only connection to avoid blocking the writer thread
                 conn = sqlite3.connect(f"file:{self.db_worker.db_path}?mode=ro", uri=True, timeout=5)
+                conn.execute("PRAGMA busy_timeout = 250;")  # Wait up to 250ms if locked
                 cursor = conn.cursor()
                 
                 # This unified query fetches from all tiers at once, ensuring no data is missed.
@@ -522,18 +546,22 @@ class WidgetState(QObject):
                 cursor.execute(query, params)
                 results = [(datetime.fromtimestamp(ts), up, down) for ts, up, down in cursor.fetchall() if up is not None and down is not None]
 
-                self.logger.info(f"Retrieved {len(results)} records for period {start_time} to {end_time} for interface '{interface_name}'.")
-                conn.close()
+                self.logger.debug(f"Retrieved {len(results)} records for period {start_time} to {end_time} for interface '{interface_name}'.")
             except sqlite3.Error as e:
                 self.logger.error("Error retrieving unified speed history: %s", e, exc_info=True)
+            finally:
+                if conn:
+                    conn.close()
             
             return results
 
 
     def get_distinct_interfaces(self) -> List[str]:
         """Returns a sorted list of all unique interface names from the database."""
+        conn = None
         try:
             conn = sqlite3.connect(f"file:{self.db_worker.db_path}?mode=ro", uri=True, timeout=5)
+            conn.execute("PRAGMA busy_timeout = 250;") # Wait up to 250ms if locked
             cursor = conn.cursor()
 
             # Query all three tables to be comprehensive
@@ -546,11 +574,13 @@ class WidgetState(QObject):
                 ORDER BY interface_name
             """)
             interfaces = [row[0] for row in cursor.fetchall()]
-            conn.close()
             return interfaces
         except sqlite3.Error as e:
             self.logger.error("Error fetching distinct interfaces: %s", e, exc_info=True)
             return []
+        finally:
+            if conn:
+                conn.close()
 
 
     def get_earliest_data_timestamp(self) -> Optional[datetime]:
@@ -559,9 +589,11 @@ class WidgetState(QObject):
         """
         self.flush_batch()
         time.sleep(0.1)
-
+        
+        conn = None
         try:
             conn = sqlite3.connect(f"file:{self.db_worker.db_path}?mode=ro", uri=True, timeout=5)
+            conn.execute("PRAGMA busy_timeout = 250;") # Wait up to 250ms if locked
             cursor = conn.cursor()
 
             query = """
@@ -575,14 +607,16 @@ class WidgetState(QObject):
             """
             cursor.execute(query)
             result = cursor.fetchone()
-            conn.close()
-
+            
             if result and result[0] is not None:
                 earliest_ts = int(result[0])
                 return datetime.fromtimestamp(earliest_ts)
 
         except sqlite3.Error as e:
             self.logger.error("Failed to retrieve the earliest timestamp from database: %s", e, exc_info=True)
+        finally:
+            if conn:
+                conn.close()
 
         return None
 
@@ -594,7 +628,9 @@ class WidgetState(QObject):
         self.maintenance_timer.stop()
         self.flush_batch()
         self.db_worker.stop()
-        self.db_worker.wait(2000) # Wait up to 2 seconds for the thread to finish
+        # Only wait for the thread if it was actually running
+        if self.db_worker.isRunning():
+            self.db_worker.wait(2000) # Wait up to 2 seconds for the thread to finish
 
 
     def _get_max_history_points(self) -> int:

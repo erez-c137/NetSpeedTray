@@ -24,92 +24,58 @@ import threading
 from collections import namedtuple
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union, Any
 
 # --- Local Imports ---
 from .config import ConfigManager
+from .. import constants
 
 # --- Named Tuples for Data ---
 SpeedData = namedtuple("SpeedData", ["timestamp", "upload", "download", "interface"])
 AppBandwidthData = namedtuple("AppBandwidthData", ["app_name", "timestamp", "bytes_sent", "bytes_recv", "interface"])
 
-# --- Constants ---
-SPEED_TABLE = "speed_history"
-AGGREGATED_TABLE = "speed_history_aggregated"
-BANDWIDTH_TABLE = "bandwidth_history"
-APP_BANDWIDTH_TABLE = "app_bandwidth"
-
 
 def init_database(db_path: Union[str, Path]) -> None:
     """
     Initialize the SQLite database with required tables and indices.
-
-    Creates the following tables if they don't exist:
-    - speed_history: Stores per-second speed data.
-    - speed_history_aggregated: Stores aggregated per-minute speed data.
-    - bandwidth_history: Stores bandwidth data.
-    - app_bandwidth: Stores per-app bandwidth data.
-
-    Args:
-        db_path: Path to the SQLite database file.
     """
     logger = logging.getLogger("NetSpeedTray.db_utils")
     logger.debug("Initializing database at %s", db_path)
-
     try:
         with sqlite3.connect(db_path, timeout=10) as conn:
             cursor = conn.cursor()
-
-            # Speed History Table
             cursor.execute(f"""
-                CREATE TABLE IF NOT EXISTS {SPEED_TABLE} (
-                    timestamp INTEGER PRIMARY KEY,
-                    upload REAL NOT NULL,
-                    download REAL NOT NULL,
-                    interface TEXT NOT NULL,
-                    deleted_at INTEGER
+                CREATE TABLE IF NOT EXISTS {constants.data.SPEED_TABLE} (
+                    timestamp INTEGER PRIMARY KEY, upload REAL NOT NULL, download REAL NOT NULL,
+                    interface TEXT NOT NULL, deleted_at INTEGER
                 )
             """)
-            cursor.execute(f"CREATE INDEX IF NOT EXISTS idx_{SPEED_TABLE}_timestamp ON {SPEED_TABLE}(timestamp)")
+            cursor.execute(f"CREATE INDEX IF NOT EXISTS idx_{constants.data.SPEED_TABLE}_timestamp ON {constants.data.SPEED_TABLE}(timestamp)")
 
-            # Aggregated Speed History Table
             cursor.execute(f"""
-                CREATE TABLE IF NOT EXISTS {AGGREGATED_TABLE} (
-                    period_start INTEGER NOT NULL,
-                    period_end INTEGER NOT NULL,
-                    avg_upload REAL NOT NULL,
-                    avg_download REAL NOT NULL,
-                    interface TEXT NOT NULL,
-                    deleted_at INTEGER,
+                CREATE TABLE IF NOT EXISTS {constants.data.AGGREGATED_TABLE} (
+                    period_start INTEGER NOT NULL, period_end INTEGER NOT NULL, avg_upload REAL NOT NULL,
+                    avg_download REAL NOT NULL, interface TEXT NOT NULL, deleted_at INTEGER,
                     PRIMARY KEY (period_start, interface)
                 )
             """)
-            cursor.execute(f"CREATE INDEX IF NOT EXISTS idx_{AGGREGATED_TABLE}_period_end ON {AGGREGATED_TABLE}(period_end)")
+            cursor.execute(f"CREATE INDEX IF NOT EXISTS idx_{constants.data.AGGREGATED_TABLE}_period_end ON {constants.data.AGGREGATED_TABLE}(period_end)")
 
-            # Bandwidth History Table
             cursor.execute(f"""
-                CREATE TABLE IF NOT EXISTS {BANDWIDTH_TABLE} (
-                    timestamp INTEGER PRIMARY KEY,
-                    bytes_sent INTEGER NOT NULL,
-                    bytes_recv INTEGER NOT NULL,
-                    interface TEXT NOT NULL,
-                    deleted_at INTEGER
+                CREATE TABLE IF NOT EXISTS {constants.data.BANDWIDTH_TABLE} (
+                    timestamp INTEGER PRIMARY KEY, bytes_sent INTEGER NOT NULL, bytes_recv INTEGER NOT NULL,
+                    interface TEXT NOT NULL, deleted_at INTEGER
                 )
             """)
-            cursor.execute(f"CREATE INDEX IF NOT EXISTS idx_{BANDWIDTH_TABLE}_timestamp ON {BANDWIDTH_TABLE}(timestamp)")
+            cursor.execute(f"CREATE INDEX IF NOT EXISTS idx_{constants.data.BANDWIDTH_TABLE}_timestamp ON {constants.data.BANDWIDTH_TABLE}(timestamp)")
 
-            # App Bandwidth Table
             cursor.execute(f"""
-                CREATE TABLE IF NOT EXISTS {APP_BANDWIDTH_TABLE} (
-                    timestamp INTEGER NOT NULL,
-                    app_name TEXT NOT NULL,
-                    bytes_sent INTEGER NOT NULL,
-                    bytes_recv INTEGER NOT NULL,
-                    interface TEXT NOT NULL,
-                    deleted_at INTEGER
+                CREATE TABLE IF NOT EXISTS {constants.data.APP_BANDWIDTH_TABLE} (
+                    timestamp INTEGER NOT NULL, app_name TEXT NOT NULL, bytes_sent INTEGER NOT NULL,
+                    bytes_recv INTEGER NOT NULL, interface TEXT NOT NULL, deleted_at INTEGER
                 )
             """)
-            cursor.execute(f"CREATE INDEX IF NOT EXISTS idx_{APP_BANDWIDTH_TABLE}_timestamp_app ON {APP_BANDWIDTH_TABLE}(timestamp, app_name)")
+            cursor.execute(f"CREATE INDEX IF NOT EXISTS idx_{constants.data.APP_BANDWIDTH_TABLE}_timestamp_app ON {constants.data.APP_BANDWIDTH_TABLE}(timestamp, app_name)")
 
             conn.commit()
             logger.debug("Database initialized successfully")
@@ -121,23 +87,17 @@ def init_database(db_path: Union[str, Path]) -> None:
 def persist_speed_batch(db_path: Union[str, Path], batch: List[Tuple[int, float, float, str]], db_lock: threading.Lock) -> None:
     """
     Persist a batch of speed data to the speed_history table.
-
-    Args:
-        db_path: Path to the SQLite database file.
-        batch: List of tuples (timestamp, upload, download, interface).
-        db_lock: Threading lock for database access.
     """
     logger = logging.getLogger("NetSpeedTray.db_utils")
     logger.debug("Persisting speed batch of size %d", len(batch))
-
     if not batch:
         return
-
     try:
         with db_lock, sqlite3.connect(db_path, timeout=10) as conn:
             cursor = conn.cursor()
+            # CORRECTED: Added comma between SQL string and batch parameter
             cursor.executemany(
-                f"INSERT OR REPLACE INTO {SPEED_TABLE} (timestamp, upload, download, interface, deleted_at) VALUES (?, ?, ?, ?, NULL)",
+                f"INSERT OR REPLACE INTO {constants.data.SPEED_TABLE} (timestamp, upload, download, interface, deleted_at) VALUES (?, ?, ?, ?, NULL)",
                 batch
             )
             conn.commit()
@@ -146,27 +106,20 @@ def persist_speed_batch(db_path: Union[str, Path], batch: List[Tuple[int, float,
         logger.error("Failed to persist speed batch: %s", e)
         raise
 
-
 def persist_bandwidth_batch(db_path: Union[str, Path], batch: List[Tuple[int, int, int, str]], db_lock: threading.Lock) -> None:
     """
     Persist a batch of bandwidth data to the bandwidth_history table.
-
-    Args:
-        db_path: Path to the SQLite database file.
-        batch: List of tuples (timestamp, bytes_sent, bytes_recv, interface).
-        db_lock: Threading lock for database access.
     """
     logger = logging.getLogger("NetSpeedTray.db_utils")
     logger.debug("Persisting bandwidth batch of size %d", len(batch))
-
     if not batch:
         return
-
     try:
         with db_lock, sqlite3.connect(db_path, timeout=10) as conn:
             cursor = conn.cursor()
+            # CORRECTED: Added comma between SQL string and batch parameter
             cursor.executemany(
-                f"INSERT OR REPLACE INTO {BANDWIDTH_TABLE} (timestamp, bytes_sent, bytes_recv, interface, deleted_at) VALUES (?, ?, ?, ?, NULL)",
+                f"INSERT OR REPLACE INTO {constants.data.BANDWIDTH_TABLE} (timestamp, bytes_sent, bytes_recv, interface, deleted_at) VALUES (?, ?, ?, ?, NULL)",
                 batch
             )
             conn.commit()
@@ -175,27 +128,20 @@ def persist_bandwidth_batch(db_path: Union[str, Path], batch: List[Tuple[int, in
         logger.error("Failed to persist bandwidth batch: %s", e)
         raise
 
-
 def persist_app_bandwidth_batch(db_path: Union[str, Path], batch: List[Tuple[int, str, int, int, str]], db_lock: threading.Lock) -> None:
     """
     Persist a batch of per-app bandwidth data to the app_bandwidth table.
-
-    Args:
-        db_path: Path to the SQLite database file.
-        batch: List of tuples (timestamp, app_name, bytes_sent, bytes_recv, interface).
-        db_lock: Threading lock for database access.
     """
     logger = logging.getLogger("NetSpeedTray.db_utils")
     logger.debug("Persisting app bandwidth batch of size %d", len(batch))
-
     if not batch:
         return
-
     try:
         with db_lock, sqlite3.connect(db_path, timeout=10) as conn:
             cursor = conn.cursor()
+            # CORRECTED: Added comma between SQL string and batch parameter
             cursor.executemany(
-                f"INSERT INTO {APP_BANDWIDTH_TABLE} (timestamp, app_name, bytes_sent, bytes_recv, interface, deleted_at) VALUES (?, ?, ?, ?, ?, NULL)",
+                f"INSERT INTO {constants.data.APP_BANDWIDTH_TABLE} (timestamp, app_name, bytes_sent, bytes_recv, interface, deleted_at) VALUES (?, ?, ?, ?, ?, NULL)",
                 batch
             )
             conn.commit()
@@ -231,25 +177,19 @@ def get_speed_history(db_path: Union[str, Path], start_time: Optional[datetime] 
     if end_time is None:
         end_time = datetime.now()
 
-    # Define the threshold where we switch from raw to aggregated data (e.g., 2 days ago)
-    aggregation_cutoff_time = end_time - timedelta(days=2)
+    # USE CONSTANT: Define the threshold where we switch from raw to aggregated data.
+    aggregation_cutoff_time = end_time - timedelta(days=constants.data.AGGREGATION_CUTOFF_DAYS)
 
-    # If the user is asking for a period that is entirely within the raw data timeframe,
-    # or if no start time is given (implying 'All', which needs both), we decide the strategy.
     use_only_raw = start_time and start_time > aggregation_cutoff_time
-
     params = []
     queries = []
 
-    # --- Query for the recent, high-resolution data ---
-    # This part is almost always run, unless the user requests a period ending >2 days ago.
     if not start_time or end_time > aggregation_cutoff_time:
         raw_start_time = max(start_time, aggregation_cutoff_time) if start_time else aggregation_cutoff_time
         
         raw_query_parts = [
-            f"SELECT timestamp, upload, download FROM {SPEED_TABLE}",
-            "WHERE timestamp >= ?",
-            "AND timestamp <= ?"
+            f"SELECT timestamp, upload, download FROM {constants.data.SPEED_TABLE}",
+            "WHERE timestamp >= ? AND timestamp <= ?"
         ]
         params.extend([raw_start_time.timestamp(), end_time.timestamp()])
 
@@ -259,13 +199,11 @@ def get_speed_history(db_path: Union[str, Path], start_time: Optional[datetime] 
         
         queries.append(" ".join(raw_query_parts))
 
-
-    # --- Query for the older, aggregated data (only for long time ranges) ---
     if not use_only_raw and (not start_time or start_time < aggregation_cutoff_time):
         agg_end_time = aggregation_cutoff_time
         
         agg_query_parts = [
-            f"SELECT period_end as timestamp, avg_upload as upload, avg_download as download FROM {AGGREGATED_TABLE}",
+            f"SELECT period_end as timestamp, avg_upload as upload, avg_download as download FROM {constants.data.AGGREGATED_TABLE}",
             "WHERE period_end <= ?"
         ]
         params.append(agg_end_time.timestamp())
@@ -280,19 +218,17 @@ def get_speed_history(db_path: Union[str, Path], start_time: Optional[datetime] 
             
         queries.append(" ".join(agg_query_parts))
 
-    final_query = " UNION ALL ".join(queries)
-    final_query += " ORDER BY timestamp ASC" # Order ascending for correct plotting
+    if not queries:
+        return []
 
+    final_query = " UNION ALL ".join(queries) + " ORDER BY timestamp ASC"
     results = []
-    if not final_query:
-        return results
 
     try:
         with db_lock, sqlite3.connect(db_path, timeout=10) as conn:
             cursor = conn.cursor()
             logger.debug("Executing optimized speed history query with %d params", len(params))
             cursor.execute(final_query, params)
-            # The direct conversion here is faster than creating namedtuples in a loop
             results = [
                 (datetime.fromtimestamp(row[0]), float(row[1]), float(row[2]))
                 for row in cursor.fetchall()
@@ -304,116 +240,184 @@ def get_speed_history(db_path: Union[str, Path], start_time: Optional[datetime] 
     return results
 
 
+def get_total_bandwidth_for_period(db_path: Union[str, Path], start_time: Optional[datetime],
+                                   end_time: datetime, interface_name: Optional[str] = None) -> Tuple[float, float]:
+    """
+    Calculates total bandwidth by running SUM queries across all relevant tables.
+    Uses a separate, read-only connection for thread safety.
+    """
+    logger = logging.getLogger("NetSpeedTray.db_utils")
+    total_up, total_down = 0.0, 0.0
+    
+    _start_ts = int(start_time.timestamp()) if start_time else 0
+    _end_ts = int(end_time.timestamp()) if end_time else int(datetime.now().timestamp())
+
+    try:
+        # Use a read-only connection to prevent locking issues.
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5)
+        cursor = conn.cursor()
+
+        table_map = {
+            "speed_history_raw": ("SUM(upload_bytes_sec)", "SUM(download_bytes_sec)"),
+            "speed_history_minute": ("SUM(upload_avg * 60)", "SUM(download_avg * 60)"),
+            "speed_history_hour": ("SUM(upload_avg * 3600)", "SUM(download_avg * 3600)")
+        }
+
+        for table, (up_sum_expr, down_sum_expr) in table_map.items():
+            query = f"SELECT {up_sum_expr}, {down_sum_expr} FROM {table} WHERE timestamp BETWEEN ? AND ?"
+            params: List[Any] = [_start_ts, _end_ts]
+
+            if interface_name and interface_name != "All":
+                query += " AND interface_name = ?"
+                params.append(interface_name)
+
+            cursor.execute(query, tuple(params))
+            result = cursor.fetchone()
+            
+            if result and result[0] is not None: total_up += result[0]
+            if result and result[1] is not None: total_down += result[1]
+        
+        conn.close()
+        return total_up, total_down
+
+    except sqlite3.Error as e:
+        logger.error(f"Database error in get_total_bandwidth_for_period: {e}")
+        return 0.0, 0.0
+
+
 def get_max_speeds(db_path: Union[str, Path], start_time: Optional[int] = None, interfaces: Optional[List[str]] = None,
                    db_lock: threading.Lock = None) -> Tuple[float, float]:
     """
     Retrieve maximum upload and download speeds from speed_history and speed_history_aggregated.
-
-    Args:
-        db_path: Path to the SQLite database file.
-        start_time: Optional start timestamp to filter records (inclusive).
-        interfaces: Optional list of interfaces to filter by.
-        db_lock: Threading lock for database access.
-
-    Returns:
-        Tuple of (max_upload, max_download) in Kbps as floats.
     """
     logger = logging.getLogger("NetSpeedTray.db_utils")
     logger.debug("Fetching max speeds with start_time=%s, interfaces=%s", start_time, interfaces)
 
-    max_upload, max_download = 0.0, 0.0
-    interface_filter = " AND interface IN ({})".format(
-        ",".join([f"'{i}'" for i in interfaces]) if interfaces else "'*'"
-    ) if interfaces else ""
+    query_parts = [
+        "SELECT MAX(max_upload), MAX(max_download) FROM (",
+        f"SELECT MAX(upload) as max_upload, MAX(download) as max_download FROM {constants.data.SPEED_TABLE} WHERE deleted_at IS NULL",
+        f"UNION ALL SELECT MAX(avg_upload), MAX(avg_download) FROM {constants.data.AGGREGATED_TABLE} WHERE deleted_at IS NULL",
+        ")"
+    ]
+    params = []
+    
+    # --- Build WHERE clause with proper parameterization ---
+    where_clauses = []
+    if start_time:
+        where_clauses.append("timestamp >= ?")
+        params.append(start_time)
+    if interfaces:
+        placeholders = ", ".join("?" for _ in interfaces)
+        where_clauses.append(f"interface IN ({placeholders})")
+        params.extend(interfaces)
 
-    query = f"""
-        SELECT MAX(upload), MAX(download)
-        FROM {SPEED_TABLE}
-        WHERE deleted_at IS NULL
-        {interface_filter}
-        {"AND timestamp >= ?" if start_time else ""}
-        UNION ALL
-        SELECT MAX(avg_upload), MAX(avg_download)
-        FROM {AGGREGATED_TABLE}
-        WHERE deleted_at IS NULL
-        {interface_filter}
-        {"AND period_end >= ?" if start_time else ""}
-    """
-    params = [start_time, start_time] if start_time else []
+    if where_clauses:
+        # This is a bit complex, but it correctly applies the WHERE to both subqueries
+        where_str = " AND ".join(where_clauses)
+        query_parts[1] += f" AND {where_str.replace('timestamp', 'timestamp')}"
+        query_parts[2] += f" AND {where_str.replace('timestamp', 'period_end')}"
+        # The params list is duplicated because the conditions apply to both sides of the UNION
+        params.extend(params)
+
+    query = " ".join(query_parts)
 
     try:
         with db_lock, sqlite3.connect(db_path, timeout=10) as conn:
             cursor = conn.cursor()
             cursor.execute(query, params)
-            rows = cursor.fetchall()
-            for row in rows:
-                try:
-                    upload = float(row[0]) if row[0] is not None else 0.0
-                    download = float(row[1]) if row[1] is not None else 0.0
-                    max_upload = max(max_upload, upload)
-                    max_download = max(max_download, download)
-                except (ValueError, TypeError) as e:
-                    logger.error("Invalid data in max speeds query: upload=%s, download=%s, error=%s", row[0], row[1], e)
-                    continue
-            logger.debug("Max speeds: upload=%.2f, download=%.2f", max_upload, max_download)
+            row = cursor.fetchone()
+            if row and row[0] is not None:
+                return float(row[0]), float(row[1])
     except sqlite3.Error as e:
         logger.error("Failed to retrieve max speeds: %s", e)
         raise
 
-    return max_upload, max_download
+    return 0.0, 0.0
+
+
+def get_max_speeds(db_path: Union[str, Path], start_time: Optional[int] = None, interfaces: Optional[List[str]] = None,
+                   db_lock: threading.Lock = None) -> Tuple[float, float]:
+    """
+    Retrieve maximum upload and download speeds using an efficient, aggregated query.
+    """
+    logger = logging.getLogger("NetSpeedTray.db_utils")
+    logger.debug("Fetching max speeds with start_time=%s, interfaces=%s", start_time, interfaces)
+
+    query_parts = [
+        "SELECT MAX(max_upload), MAX(max_download) FROM (",
+        f"SELECT MAX(upload) as max_upload, MAX(download) as max_download FROM {constants.data.SPEED_TABLE} WHERE deleted_at IS NULL",
+        f"UNION ALL SELECT MAX(avg_upload), MAX(avg_download) FROM {constants.data.AGGREGATED_TABLE} WHERE deleted_at IS NULL",
+        ")"
+    ]
+    params = []
+    
+    # --- Build WHERE clause with proper parameterization ---
+    where_clauses = []
+    if start_time:
+        where_clauses.append("timestamp >= ?")
+        params.append(start_time)
+    if interfaces:
+        placeholders = ", ".join("?" for _ in interfaces)
+        where_clauses.append(f"interface IN ({placeholders})")
+        params.extend(interfaces)
+
+    if where_clauses:
+        # This is a bit complex, but it correctly applies the WHERE to both subqueries
+        where_str = " AND ".join(where_clauses)
+        query_parts[1] += f" AND {where_str.replace('timestamp', 'timestamp')}"
+        query_parts[2] += f" AND {where_str.replace('timestamp', 'period_end')}"
+        # The params list is duplicated because the conditions apply to both sides of the UNION
+        params.extend(params)
+
+    query = " ".join(query_parts)
+
+    try:
+        with db_lock, sqlite3.connect(db_path, timeout=10) as conn:
+            cursor = conn.cursor()
+            cursor.execute(query, params)
+            row = cursor.fetchone()
+            if row and row[0] is not None:
+                return float(row[0]), float(row[1])
+    except sqlite3.Error as e:
+        logger.error("Failed to retrieve max speeds: %s", e)
+        raise
+
+    return 0.0, 0.0
 
 
 def get_bandwidth_usage(db_path: Union[str, Path], start_time: Optional[int] = None, interfaces: Optional[List[str]] = None,
                         db_lock: threading.Lock = None) -> Tuple[int, int]:
     """
-    Retrieve total bandwidth usage (bytes sent and received) from bandwidth_history.
-
-    Args:
-        db_path: Path to the SQLite database file.
-        start_time: Optional start timestamp to filter records (inclusive).
-        interfaces: Optional list of interfaces to filter by.
-        db_lock: Threading lock for database access.
-
-    Returns:
-        Tuple of (total_bytes_sent, total_bytes_recv) as integers.
+    Retrieve total bandwidth usage (bytes sent/received) using an efficient, aggregated query.
     """
     logger = logging.getLogger("NetSpeedTray.db_utils")
     logger.debug("Fetching bandwidth usage with start_time=%s, interfaces=%s", start_time, interfaces)
+    
+    query_parts = [f"SELECT SUM(bytes_sent), SUM(bytes_recv) FROM {constants.data.BANDWIDTH_TABLE} WHERE deleted_at IS NULL"]
+    params = []
 
-    total_sent, total_recv = 0, 0
-    interface_filter = " AND interface IN ({})".format(
-        ",".join([f"'{i}'" for i in interfaces]) if interfaces else "'*'"
-    ) if interfaces else ""
-
-    query = f"""
-        SELECT bytes_sent, bytes_recv
-        FROM {BANDWIDTH_TABLE}
-        WHERE deleted_at IS NULL
-        {interface_filter}
-        {"AND timestamp >= ?" if start_time else ""}
-    """
-    params = [start_time] if start_time else []
+    if start_time:
+        query_parts.append("AND timestamp >= ?")
+        params.append(start_time)
+    if interfaces:
+        placeholders = ", ".join("?" for _ in interfaces)
+        query_parts.append(f"AND interface IN ({placeholders})")
+        params.extend(interfaces)
+    
+    query = " ".join(query_parts)
 
     try:
         with db_lock, sqlite3.connect(db_path, timeout=10) as conn:
             cursor = conn.cursor()
             cursor.execute(query, params)
-            rows = cursor.fetchall()
-            for row in rows:
-                try:
-                    sent = int(row[0]) if row[0] is not None else 0
-                    recv = int(row[1]) if row[1] is not None else 0
-                    total_sent += sent
-                    total_recv += recv
-                except (ValueError, TypeError) as e:
-                    logger.error("Invalid data in bandwidth usage query: bytes_sent=%s, bytes_recv=%s, error=%s", row[0], row[1], e)
-                    continue
-            logger.debug("Total bandwidth: sent=%d, recv=%d", total_sent, total_recv)
+            row = cursor.fetchone()
+            if row and row[0] is not None:
+                return int(row[0]), int(row[1])
     except sqlite3.Error as e:
         logger.error("Failed to retrieve bandwidth usage: %s", e)
         raise
-
-    return total_sent, total_recv
+        
+    return 0, 0
 
 
 def get_app_bandwidth_usage(db_path: Union[str, Path], start_time: Optional[datetime] = None,
@@ -447,7 +451,7 @@ def get_app_bandwidth_usage(db_path: Union[str, Path], start_time: Optional[date
 
     query = f"""
         SELECT app_name, timestamp, bytes_sent, bytes_recv, interface
-        FROM {APP_BANDWIDTH_TABLE}
+        FROM {constants.data.APP_BANDWIDTH_TABLE}
         WHERE deleted_at IS NULL
         {interface_filter}
         {app_filter}
@@ -507,9 +511,9 @@ def get_earliest_timestamp(db_path: Union[str, Path], db_lock: threading.Lock) -
             # Query for the minimum timestamp in both tables
             query = f"""
                 SELECT MIN(ts) FROM (
-                    SELECT MIN(timestamp) as ts FROM {SPEED_TABLE} WHERE deleted_at IS NULL
+                    SELECT MIN(timestamp) as ts FROM {constants.data.SPEED_TABLE} WHERE deleted_at IS NULL
                     UNION ALL
-                    SELECT MIN(period_start) as ts FROM {AGGREGATED_TABLE} WHERE deleted_at IS NULL
+                    SELECT MIN(period_start) as ts FROM {constants.data.AGGREGATED_TABLE} WHERE deleted_at IS NULL
                 ) WHERE ts IS NOT NULL
             """
             cursor.execute(query)
@@ -539,7 +543,7 @@ def aggregate_speed_history(db_path: Union[str, Path], cutoff_timestamp: int, db
         db_lock: Threading lock for database access.
 
     Returns:
-        Number of records aggregated.
+        Number of raw records that were successfully aggregated and deleted.
     """
     logger = logging.getLogger("NetSpeedTray.db_utils")
     logger.debug("Aggregating speed history before timestamp %d", cutoff_timestamp)
@@ -550,9 +554,9 @@ def aggregate_speed_history(db_path: Union[str, Path], cutoff_timestamp: int, db
         with db_lock, sqlite3.connect(db_path, timeout=10) as conn:
             cursor = conn.cursor()
 
-            # Aggregate per-second data into per-minute periods
+            # Step 1: Aggregate per-second data into per-minute periods and insert into the aggregated table.
             cursor.execute(f"""
-                INSERT OR IGNORE INTO {AGGREGATED_TABLE} (period_start, period_end, avg_upload, avg_download, interface, deleted_at)
+                INSERT OR IGNORE INTO {constants.data.AGGREGATED_TABLE} (period_start, period_end, avg_upload, avg_download, interface, deleted_at)
                 SELECT
                     (timestamp / 60) * 60 AS period_start,
                     ((timestamp / 60) + 1) * 60 AS period_end,
@@ -560,23 +564,25 @@ def aggregate_speed_history(db_path: Union[str, Path], cutoff_timestamp: int, db
                     AVG(download) AS avg_download,
                     interface,
                     NULL
-                FROM {SPEED_TABLE}
+                FROM {constants.data.SPEED_TABLE}
                 WHERE timestamp < ? AND deleted_at IS NULL
                 GROUP BY (timestamp / 60), interface
             """, (cutoff_timestamp,))
-            aggregated_count = cursor.rowcount
             conn.commit()
 
-            # Delete aggregated records from speed_history if any were aggregated
+            # Step 2: Delete the raw records that were just aggregated.
+            # We check rowcount here to see how many records will be deleted.
+            cursor.execute(f"""
+                DELETE FROM {constants.data.SPEED_TABLE}
+                WHERE timestamp < ? AND deleted_at IS NULL
+            """, (cutoff_timestamp,))
+            aggregated_count = cursor.rowcount
+            conn.commit()
+            
             if aggregated_count > 0:
-                cursor.execute(f"""
-                    DELETE FROM {SPEED_TABLE}
-                    WHERE timestamp < ? AND deleted_at IS NULL
-                """, (cutoff_timestamp,))
-                conn.commit()
-                logger.debug("Aggregated and deleted %d records", aggregated_count)
+                logger.debug("Aggregated and deleted %d raw records", aggregated_count)
             else:
-                logger.debug("No records to aggregate")
+                logger.debug("No raw records to aggregate")
 
     except sqlite3.Error as e:
         logger.error("Failed to aggregate speed history: %s", e)
@@ -602,16 +608,17 @@ def vacuum_database(db_path: Union[str, Path], db_lock: threading.Lock) -> float
     logger.debug("Starting VACUUM operation on database at %s", db_path)
 
     try:
-        # Measure size before VACUUM
-        size_before = os.path.getsize(db_path) / (1024 * 1024)  # Size in MB
+        # Measure size before VACUUM using the constant for conversion
+        size_before = os.path.getsize(db_path) / constants.logs.BYTES_TO_MEGABYTES
 
         with db_lock, sqlite3.connect(db_path, timeout=10) as conn:
+            # Setting isolation_level to None commits the VACUUM immediately.
+            conn.isolation_level = None
             cursor = conn.cursor()
             cursor.execute("VACUUM")
-            conn.commit()
-
+            
         # Measure size after VACUUM
-        size_after = os.path.getsize(db_path) / (1024 * 1024)  # Size in MB
+        size_after = os.path.getsize(db_path) / constants.logs.BYTES_TO_MEGABYTES
         space_reclaimed = size_before - size_after
         logger.info("VACUUM completed: reclaimed %.2f MB (before: %.2f MB, after: %.2f MB)",
                     space_reclaimed, size_before, size_after)

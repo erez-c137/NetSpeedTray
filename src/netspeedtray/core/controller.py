@@ -76,10 +76,16 @@ class NetworkController(QObject):
             return
             
         update_interval = self.config.get("update_rate", 1.0)
-        sleep_threshold = max(5.0, update_interval * 5)
+        # A time delta more than 3x the update rate is abnormal.
+        # This is much stricter and correctly flags short sleeps or system stutters.
+        validity_threshold = update_interval * 3.0
 
-        if time_diff > sleep_threshold:
-            self.logger.info("Long time delta (%.1fs) detected. Re-priming counters to prevent speed spike.", time_diff)
+        if time_diff > validity_threshold:
+            self.logger.info(
+                "Abnormal time delta (%.1fs) detected (threshold: %.1fs). "
+                "Likely resume from sleep or system lag. Resetting counters to prevent speed spike.",
+                time_diff, validity_threshold
+            )
             self.last_check_time = current_time
             self.last_interface_counters = current_counters
             self.display_speed_updated.emit(0.0, 0.0)
@@ -87,8 +93,6 @@ class NetworkController(QObject):
 
         self.current_speed_data.clear()
 
-        # CORRECTED: The exclusion logic has been removed from here. Filtering now happens
-        # in the aggregation step, which allows the "All (including virtual)" mode to work.
         for name, current in current_counters.items():
             last = self.last_interface_counters.get(name)
             if last:
