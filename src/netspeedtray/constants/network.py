@@ -56,9 +56,13 @@ class InterfaceConstants:
     """Constants related to network interface management."""
     DEFAULT_MODE: Final[str] = "auto"
     VALID_INTERFACE_MODES: Final[Set[str]] = {"auto", "all_physical", "all_virtual", "selected"}
+    
+    # The default config must be JSON serializable, so this must be a list.
     DEFAULT_EXCLUSIONS: Final[List[str]] = [
         "loopback", "teredo", "isatap", "bluetooth", "vpn", "virtual", "vmware", "vbox"
     ]
+    
+    # Maximum plausible speed in bytes per second (10 Gbps) to filter out anomalies.
     MAX_REASONABLE_SPEED_BPS: Final[int] = 1_250_000_000
 
     def __init__(self) -> None:

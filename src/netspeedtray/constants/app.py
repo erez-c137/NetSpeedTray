@@ -9,6 +9,7 @@ class AppConstants:
     APP_NAME: Final[str] = "NetSpeedTray"
     VERSION: Final[str] = "1.1.7"
     MUTEX_NAME: Final[str] = "Global\\NetSpeedTray_SingleInstanceMutex"
+    ICON_FILENAME: Final[str] = "NetSpeedTray.ico"
 
     def __init__(self) -> None:
         self.validate()
@@ -21,6 +22,8 @@ class AppConstants:
             raise ValueError("VERSION must not be empty")
         if not self.MUTEX_NAME:
             raise ValueError("MUTEX_NAME must not be empty")
+        if not self.ICON_FILENAME:
+            raise ValueError("ICON_FILENAME must not be empty")
 
 # Singleton instance for easy access
 app = AppConstants()

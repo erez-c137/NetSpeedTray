@@ -1,36 +1,29 @@
 """
 Constants related to application state, controller logic, and data storage.
 """
-from typing import Final, List
-
-from .config import config
+from typing import Final
 
 class WidgetStateConstants:
     """Constants related to the internal state of the main widget."""
-    MAX_HISTORY_POINTS: Final[int] = int(round(
-        (config.defaults.DEFAULT_HISTORY_MINUTES * 60) / config.defaults.DEFAULT_UPDATE_RATE
-    ))
+    # Tolerance in pixels for considering the widget position unchanged.
     POSITION_TOLERANCE: Final[int] = 5
     
-    # REMOVED: MAX_SPEED_DISPLAY_TEMPLATE. This logic should be in the UI.
-    
-    CSV_FILE_NAME: Final[str] = "nst_speed_history.csv"
-    
-    # REMOVED: CSV_HEADERS. The headers should be generated using i18n keys.
-    # See export_history() in graph.py for the correct implementation.
+    # How often to commit collected speed data to the database, in seconds.
+    DB_COMMIT_INTERVAL: Final[int] = 60
 
     def __init__(self) -> None:
         self.validate()
 
     def validate(self) -> None:
-        if self.MAX_HISTORY_POINTS <= 0:
-            raise ValueError("MAX_HISTORY_POINTS must be positive")
-        if not self.CSV_FILE_NAME:
-            raise ValueError("CSV_FILE_NAME must not be empty")
+        if self.POSITION_TOLERANCE < 0:
+            raise ValueError("POSITION_TOLERANCE must be non-negative")
+        if self.DB_COMMIT_INTERVAL <= 0:
+            raise ValueError("DB_COMMIT_INTERVAL must be positive")
 
 class ControllerConstants:
     """Constants specific to the application's main controller."""
-    SPEED_LOGGING_FREQUENCY: Final[int] = 30  # Log speed every 30 updates
+    # Log the current speed every N updates for debugging purposes.
+    SPEED_LOGGING_FREQUENCY: Final[int] = 60
 
     def __init__(self) -> None:
         self.validate()

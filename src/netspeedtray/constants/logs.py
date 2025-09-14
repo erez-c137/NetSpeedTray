@@ -9,7 +9,7 @@ class LogConstants:
     LOG_FILENAME: Final[str] = "NetSpeedTray_Log.log"
     LOG_FORMAT: Final[str] = "%(asctime)s - %(name)s - %(levelname)s - %(module)s.%(funcName)s:%(lineno)d - %(message)s"
     LOG_DATE_FORMAT: Final[str] = "%Y-%m-%d %H:%M:%S"
-    FILE_LOG_LEVEL: Final[int] = logging.DEBUG
+    FILE_LOG_LEVEL: Final[int] = logging.INFO
     CONSOLE_LOG_LEVEL: Final[int] = logging.INFO
     PRODUCTION_LOG_LEVEL: Final[int] = logging.WARNING
     

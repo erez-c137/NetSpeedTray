@@ -81,10 +81,23 @@ class HistoryPeriodConstants:
 
 class DataConstants:
     """Container for data-related constant groups."""
+    # The filename for the SQLite database that stores speed history.
+    DB_FILENAME: Final[str] = "speed_history.db"
+    SPEED_TABLE: Final[str] = "speed_history"
+    AGGREGATION_CUTOFF_DAYS: Final[int] = 2  # Days before data is aggregated
+    AGGREGATED_TABLE: Final[str] = "speed_history_aggregated"
+    BANDWIDTH_TABLE: Final[str] = "bandwidth_history"
+    APP_BANDWIDTH_TABLE: Final[str] = "app_bandwidth"
+    
     def __init__(self) -> None:
         self.legend_position = LegendPositionConstants()
         self.retention = DataRetentionConstants()
         self.history_period = HistoryPeriodConstants()
+        self.validate()
+
+    def validate(self) -> None:
+        if not self.DB_FILENAME or not self.DB_FILENAME.endswith(".db"):
+            raise ValueError("DB_FILENAME must be a valid .db filename")
 
 # Singleton instance for easy access
 data = DataConstants()

@@ -17,6 +17,10 @@ class ShellConstants:
         "searchexperiencehost.exe",
         "shellexperiencehost.exe",
     }
+    COMMON_BROWSER_PROCESSES: Final[Set[str]] = {
+        "chrome.exe", "firefox.exe", "msedge.exe", "brave.exe", "opera.exe"
+    }
+
 
     def __init__(self) -> None:
         self.validate()

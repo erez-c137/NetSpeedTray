@@ -1,74 +1,54 @@
 """
 Constants defining specific UI element styles, like colors and stylesheets.
+
+This file serves as the "design token" repository for the application. It should
+only contain raw, static values (e.g., hex color codes). The construction of
+actual QSS stylesheets from these tokens is handled by functions in `utils/styles.py`.
 """
 from typing import Final
 from .color import color
 
 class UIStyleConstants:
-    """Defines stylesheets and theme colors for the UI."""
-    DARK_MODE_BG_COLOR: Final[str] = "#2B2B2B"
-    DARK_MODE_TEXT_COLOR: Final[str] = color.WHITE
-    LIGHT_MODE_BG_COLOR: Final[str] = "#F3F3F3"
-    LIGHT_MODE_TEXT_COLOR: Final[str] = color.BLACK
+    """Defines theme colors and other style constants for the UI."""
+
+    # --- Theme Agnostic ---
+    # Used when a value is the same in both light and dark mode.
+    UI_ACCENT_FALLBACK: Final[str] = "#0078D4"
     BORDER_COLOR: Final[str] = "#505050"
-    HOVER_BORDER_COLOR: Final[str] = color.WHITE
-    LEGEND_DARK_FRAME_COLOR: Final[str] = "#404040"
-    APP_LIST_BG_DARK: Final[str] = "#1E1E1E"
-    APP_LIST_BG_LIGHT: Final[str] = "#F5F5F5"
-    SETTINGS_PANEL_BG_DARK: Final[str] = "#1E1E1E"
-    SETTINGS_PANEL_BG_LIGHT: Final[str] = color.WHITE
+
+    # --- Light Mode ---
+    LIGHT_MODE_TEXT_COLOR: Final[str] = color.BLACK
+    DIALOG_SIDEBAR_BG_LIGHT: Final[str] = "#f3f3f3"
+    DIALOG_CONTENT_BG_LIGHT: Final[str] = "#ffffff"
+    DIALOG_SECTION_BG_LIGHT: Final[str] = "#F0F0F0"
+    GRAPH_BG_LIGHT: Final[str] = color.WHITE
+    GRID_COLOR_LIGHT: Final[str] = '#CCCCCC'
+    COMBOBOX_BG_LIGHT: Final[str] = "#f9f9f9"
+    COMBOBOX_BORDER_LIGHT: Final[str] = "#cccccc"
+
+    # --- Dark Mode ---
+    DARK_MODE_TEXT_COLOR: Final[str] = color.WHITE
+    DIALOG_SIDEBAR_BG_DARK: Final[str] = '#202020'
+    DIALOG_CONTENT_BG_DARK: Final[str] = '#2d2d2d'
+    DIALOG_SECTION_BG_DARK: Final[str] = '#202020'
+    GRAPH_BG_DARK: Final[str] = "#1E1E1E"
+    GRID_COLOR_DARK: Final[str] = '#444444'
+    COMBOBOX_BG_DARK: Final[str] = "#3c3c3c"
+    COMBOBOX_BORDER_DARK: Final[str] = "#555555"
+
+    # --- Component Specific ---
+    # Used for elements that have unique colors not tied to the main theme.
     SETTINGS_PANEL_TEXT_DARK: Final[str] = color.WHITE
     SETTINGS_PANEL_TEXT_LIGHT: Final[str] = "#1F1F1F"
-    GRAPH_BG_DARK: Final[str] = "#1E1E1E"
-    GRAPH_BG_LIGHT: Final[str] = color.WHITE
-    GRAPH_TEXT_DARK: Final[str] = color.WHITE
-    GRAPH_TEXT_LIGHT: Final[str] = "#1F1F1F"
-    COMBOBOX_BG_DARK: Final[str] = "#2D2D2D"
-    COMBOBOX_BG_LIGHT: Final[str] = "#F3F3F3"
-    COMBOBOX_BORDER_DARK: Final[str] = "#3D3D3D"
-    COMBOBOX_BORDER_LIGHT: Final[str] = "#CCCCCC"
-
-    # Added missing UI colors
-    UI_MICA_LIGHT: Final[str] = "#F3F3F3"
-    UI_SIDEBAR_BG: Final[str] = "#E8ECEF"
-    UI_SIDEBAR_SELECTED: Final[str] = "#D1D6DB"
-    UI_TEXT_COLOR: Final[str] = "#1F1F1F"
-    UI_ACCENT_FALLBACK: Final[str] = "#0078D4"
-    UI_BORDER_COLOR: Final[str] = "#A0A0A0"
-
-    HAMBURGER_DARK_STYLE: Final[str] = f"QPushButton {{ border: none; font-size: 16px; color: {DARK_MODE_TEXT_COLOR}; background: transparent; }}"
-    HAMBURGER_LIGHT_STYLE: Final[str] = f"QPushButton {{ border: none; font-size: 16px; color: {LIGHT_MODE_TEXT_COLOR}; background: transparent; }}"
-    STATS_DARK_STYLE: Final[str] = f"color: {DARK_MODE_TEXT_COLOR}; background-color: {DARK_MODE_BG_COLOR}; padding: 2px; font-size: 14px; border: none;"
-    STATS_LIGHT_STYLE: Final[str] = f"color: {LIGHT_MODE_TEXT_COLOR}; background: transparent; padding: 2px; font-size: 14px; border: none;"
-    SETTINGS_STYLE: Final[str] = f"background-color: {DARK_MODE_BG_COLOR};"
-    LABEL_STYLE: Final[str] = f"color: {DARK_MODE_TEXT_COLOR};"
-
-    BUTTON_STYLE: Final[str] = """
-        QPushButton {
-            background-color: #0078D4; color: white; border-radius: 4px;
-            padding: 5px 15px; border: 1px solid #005A9E; min-height: 20px;
-        }
-        QPushButton:hover { background-color: #0086F0; }
-        QPushButton:pressed { background-color: #005A9E; }
-        QPushButton:disabled { background-color: #505050; color: #909090; border: 1px solid #444; }
-    """
+    SUBTLE_TEXT_COLOR_LIGHT: Final[str] = "#595959"
+    SUBTLE_TEXT_COLOR_DARK: Final[str] = "#808080"
 
     def __init__(self) -> None:
-        self.validate()
+        """
+        This class is intended for holding constants and should not be instantiated
+        with instance-specific logic. The __init__ is kept minimal.
+        """
+        pass
 
-    def validate(self) -> None:
-        """Validate that all style attributes are valid."""
-        for attr_name in dir(self):
-            if not attr_name.startswith('_') and attr_name.isupper():
-                value = getattr(self, attr_name)
-                # Validate colors
-                if attr_name.endswith(("_COLOR", "_BG", "_DARK", "_LIGHT")):
-                    if isinstance(value, str) and not value.startswith("#"):
-                        raise ValueError(f"Color attribute '{attr_name}' must be a hex string.")
-                # Validate stylesheets
-                elif attr_name.endswith("_STYLE"):
-                    if not isinstance(value, str) or not value:
-                        raise ValueError(f"Stylesheet attribute '{attr_name}' must be a non-empty string.")
-
-# Singleton instance for easy access
+# Singleton instance for easy access throughout the application
 styles = UIStyleConstants()

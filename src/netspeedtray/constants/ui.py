@@ -17,23 +17,20 @@ class ComponentVisualConstants:
 
 class DialogConstants:
     """Constants for dialog sizing and behavior."""
-    MINIMUM_DIALOG_WIDTH: Final[int] = 300
-    MINIMUM_DIALOG_HEIGHT: Final[int] = 200
-    MAXIMUM_DIALOG_WIDTH: Final[int] = 350
-    GAP_ABOVE_WIDGET: Final[int] = 40
     THROTTLE_INTERVAL_MS: Final[int] = 250
     COLOR_BUTTON_WIDTH: Final[int] = 40
     COLOR_BUTTON_HEIGHT: Final[int] = 18
+    GRAPH_COMBO_MIN_WIDTH: Final[int] = 90 # ADDED for graph settings panel
 
 class SliderConstants:
     """Constants for configuring QSlider widgets."""
+    # Values are multiplied by 10 for finer control (e.g., 5.0 -> 50)
     SPEED_THRESHOLD_MIN_HIGH: Final[int] = 1 * 10
     SPEED_THRESHOLD_MAX_HIGH: Final[int] = 10000 * 10
     SPEED_THRESHOLD_MIN_LOW: Final[int] = 0 * 10
     SPEED_THRESHOLD_MAX_LOW: Final[int] = 9999 * 10
     OPACITY_MIN: Final[int] = 10
     OPACITY_MAX: Final[int] = 100
-    SLIDER_STYLE: str = "" # Style is now handled by theme, but keep attr
 
 class HistoryConstants:
     """Constants for managing historical data ranges."""
@@ -41,7 +38,7 @@ class HistoryConstants:
 
 class InterfaceGroupConstants:
     """Constants for the Network Interfaces group in settings."""
-    MAX_VISIBLE_INTERFACES: Final[int] = 10
+    # MAX_VISIBLE_INTERFACES is now correctly in constants/layout.py
     SCROLL_MIN_HEIGHT: Final[int] = 80
     SCROLL_MAX_HEIGHT_EMPTY: Final[int] = 60
 

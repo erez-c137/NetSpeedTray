@@ -24,13 +24,8 @@ class FontConstants:
 
     DEFAULT_FONT: Final[str] = 'Segoe UI'
     NOTE_FONT_SIZE: Final[int] = 8
-    FONT_WEIGHT_MIN_STANDARD: Final[int] = WEIGHT_LIGHT
-    FONT_WEIGHT_MAX_STANDARD: Final[int] = WEIGHT_BLACK
-    FONT_WEIGHT_STEP_STANDARD: Final[int] = 100
-    FONT_WEIGHT_SLIDER_MIN_WIDTH: Final[int] = 120
-    FONT_WEIGHT_LABEL_PADDING: Final[int] = 20
 
-    # This map is now internal and points to the i18n keys.
+    # This map points numeric font weights to their corresponding i18n translation keys.
     WEIGHT_MAP: Final[Dict[int, str]] = {
         WEIGHT_THIN: "FONT_WEIGHT_THIN", WEIGHT_EXTRALIGHT: "FONT_WEIGHT_EXTRALIGHT",
         WEIGHT_LIGHT: "FONT_WEIGHT_LIGHT", WEIGHT_NORMAL: "FONT_WEIGHT_NORMAL",
@@ -39,18 +34,12 @@ class FontConstants:
         WEIGHT_BLACK: "FONT_WEIGHT_BLACK"
     }
     
-    # This map can be removed as WEIGHT_MAP now serves its purpose.
-    # Keeping it for now if other code relies on it, but it's now redundant.
-    WEIGHT_NUM_TO_KEY: Final[Dict[int, str]] = WEIGHT_MAP
-
     def __init__(self) -> None:
         self.validate()
 
     def validate(self) -> None:
         if self.FONT_SIZE_MAX < self.FONT_SIZE_MIN:
             raise ValueError("FONT_SIZE_MAX must be >= FONT_SIZE_MIN")
-        if set(self.WEIGHT_MAP.keys()) != set(self.WEIGHT_NUM_TO_KEY.keys()):
-             raise ValueError("Keys in WEIGHT_MAP and WEIGHT_NUM_TO_KEY must match")
 
 # Singleton instance for easy access
 fonts = FontConstants()
