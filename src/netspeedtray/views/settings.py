@@ -192,6 +192,7 @@ class SettingsDialog(QDialog):
             button_layout.addWidget(self.save_button)
             content_layout.addLayout(button_layout)
 
+            content_widget.setMinimumWidth(300) 
             main_layout.addWidget(content_widget, stretch=1)
 
             self.sidebar.currentRowChanged.connect(self._on_sidebar_selection_changed)
@@ -876,7 +877,6 @@ class SettingsDialog(QDialog):
         for checkbox in self.interface_checkboxes.values():
             checkbox.setEnabled(is_selection_visible)
 
-        self.adjustSize()
         self._schedule_settings_update()
 
 

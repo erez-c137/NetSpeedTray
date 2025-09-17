@@ -227,8 +227,11 @@ class TaskbarInfo:
         if not self.tray_hwnd:
             return None
         try:
+            # --- Validate the handle before using it ---
             if not win32gui.IsWindow(self.tray_hwnd):
                 logger.warning("Failed to get tray rectangle for taskbar %s: Tray HWND %s is invalid.", self.hwnd, self.tray_hwnd)
+                # Invalidate the cached handle so we don't try again
+                self.tray_hwnd = None
                 return None
             rect = win32gui.GetWindowRect(self.tray_hwnd)
             return rect
@@ -556,7 +559,7 @@ def is_taskbar_obstructed(taskbar_info: Optional[TaskbarInfo], hwnd_to_check: in
             return False
 
         class_name = win32gui.GetClassName(hwnd_to_check)
-        if class_name in ("Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"):
+        if class_name in ("Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd", "NotifyIconOverflowWindow"):
             return False
 
         process_name = get_process_name_from_hwnd(hwnd_to_check)

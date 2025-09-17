@@ -143,10 +143,16 @@ class NetworkSpeedWidget(QWidget):
         self.logger.debug("Smart tray watcher timer started (10000ms).")
 
         # This is the "Safety Net" timer. It runs to catch states missed by events.
-        self._state_watcher_timer.setInterval(1000) # Check once per second.
+        self._state_watcher_timer.setInterval(1000)
         self._state_watcher_timer.timeout.connect(self._execute_refresh)
         self._state_watcher_timer.start()
         self.logger.debug("Safety net state watcher timer started (1000ms).")
+
+        # Add a dedicated timer to watch for explorer.exe restarts
+        self._taskbar_validity_timer = QTimer(self)
+        self._taskbar_validity_timer.timeout.connect(self._check_taskbar_validity)
+        self._taskbar_validity_timer.start(3000) # Check every 3 seconds
+        self.logger.debug("Taskbar validity watcher timer started (3000ms).")
 
 
     def _init_core_components(self) -> None:
@@ -290,6 +296,30 @@ class NetworkSpeedWidget(QWidget):
 
         except Exception as e:
             self.logger.error(f"Error during tray change check: {e}", exc_info=True)
+
+
+    def _check_taskbar_validity(self) -> None:
+        """
+        Periodically checks if the stored taskbar handle is still valid.
+        If not, it forces a full UI refresh to find the new taskbar.
+        This is the definitive fix for recovering from an explorer.exe restart.
+        """
+        try:
+            # Use direct attribute path
+            if not self.position_manager or not hasattr(self.position_manager, 'taskbar_info'):
+                return
+
+            taskbar_hwnd = self.position_manager.taskbar_info.hwnd
+            
+            # A hwnd of 0 is the fallback; we don't need to check it.
+            if taskbar_hwnd != 0 and not win32gui.IsWindow(taskbar_hwnd):
+                self.logger.warning(
+                    f"Taskbar handle {taskbar_hwnd} is no longer valid. Explorer likely restarted. "
+                    "Forcing a full position and visibility refresh."
+                )
+                self._execute_refresh()
+        except Exception as e:
+            self.logger.error(f"Error during taskbar validity check: {e}", exc_info=True)
 
 
     def _on_foreground_change_immediate(self, hwnd: int) -> None:
@@ -1291,19 +1321,19 @@ class NetworkSpeedWidget(QWidget):
             if self.graph_window is None or not self.graph_window.isVisible():
                 self.logger.info("Creating new GraphWindow instance.")
                 
-                # 1. Create the GraphWindow instance first.
                 self.graph_window = GraphWindow(
-                    parent=self,
+                    main_widget=self, # Pass self as the main_widget reference
+                    parent=None,      # Set the Qt parent to None to decouple
                     i18n=self.i18n,
                     session_start_time=self.session_start_time
                 )
                 
-                # 2. Connect the signal AFTER the instance exists.
+                # Connect the signal AFTER the instance exists.
                 self.widget_state.db_worker.database_updated.connect(
                     self.graph_window._populate_interface_filter
                 )
                 
-                # 3. Show the window.
+                # Show the window.
                 self.graph_window.show()
 
             else:
