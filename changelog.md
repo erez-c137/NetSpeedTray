@@ -4,37 +4,44 @@ All notable changes to this project will be documented in this file.
 
 ---
 
-## [1.1.7] - September 14, 2025
+## [1.1.7] - September 17, 2025
 
-This is a landmark release focused on making the application's most complex feature—the **Network Speed Graph**—a truly professional-grade, fast, and visually insightful tool. The graph has been completely re-architected from the ground up for performance and clarity. This update also includes major stability enhancements for the core application.
+This is a landmark release focused on stability and making the application's most complex feature—the **Network Speed Graph**—a truly professional-grade, fast, and visually insightful tool.
+
+The graph has been completely re-architected for performance and clarity. This update also includes an extensive list of critical bug fixes that address phantom speed spikes, UI glitches, installer problems, and instability when the Windows shell is restarted.
 
 ### 🚀 Major Graph Window Overhaul
 
 *   **Definitive Visualization:** The graph has been completely redesigned to solve the core problem of displaying asymmetric network speeds.
     *   **Dual-Axis Layout:** The graph is now split into two dedicated, independently-scaled charts for **Download** and **Upload**, ensuring that upload activity is always perfectly visible and not "flattened" by large download spikes.
-    *   **Hybrid Rendering Engine:** The graph uses a smart, hybrid approach for visualization. Short timelines (e.g., "24 Hours") are rendered as detailed line plots with clean visual gaps for sleep periods, while long timelines (e.g., "Month," "All") are rendered as a beautiful **Mean & Range Plot**, showing both the daily average trend and the min/max volatility.
-    *   **Adaptive Logarithmic Scale:** The Y-axis uses an intelligent `symlog` scale. It maintains a linear region for low-level traffic (0-1 Mbps) to give it proper visual weight, while logarithmically scaling large spikes for clarity.
+    *   **Hybrid Rendering Engine:** The graph uses a smart, hybrid approach for visualization. Short timelines (e.g., "24 Hours") are rendered as detailed line plots, while long timelines (e.g., "Month") are rendered as a beautiful **Mean & Range Plot**, showing both the daily average trend and the min/max volatility.
 
-*   **Massive Performance Improvements:** The entire data pipeline is now asynchronous, eliminating UI freezes and lag.
+*   **Massive Performance Improvements:** The entire data pipeline is now asynchronous, eliminating UI freezes.
     *   **Instantaneous Loading:** The graph window now opens instantly. Data is fetched and processed in a **background worker thread**, preventing the application from becoming unresponsive when loading large time ranges.
     *   **Responsive UI:** Switching between timelines, hovering over the graph, and resizing the window is now dramatically faster and smoother.
 
-*   **Full Interactivity & Polish:** The graph is no longer a static image; it's a dynamic analysis tool.
-    *   **Fixed "No Data Available" Bug:** Resolved a critical bug in the database query logic that could cause the graph to incorrectly show "No data available."
+*   **Corrected & Polished:**
+    *   **Fixed Incorrect Interface Filtering:** Fixed a critical bug where selecting different network interfaces in the graph would incorrectly show the same aggregated data for all of them. The filter now works correctly.
+    *   **Fixed Graph Crash:** Resolved a crash when rendering the graph legend, caused by an API change in a dependent library.
     *   **Accurate Total Bandwidth:** Corrected the stats bar logic to ensure "Total" bandwidth calculations are fast and accurate across all timelines.
     *   **Visual Glitch Fixes:** Resolved bugs that caused Y-axis labels to appear in black on a dark background or display in scientific notation. Added a separator line for better clarity.
 
 ### 🛡️ Core Stability & Reliability
 
-*   **Eliminated "Phantom" Speed Spikes:** Fixed a critical bug where impossible network speeds (e.g., 10,000 Mbps) would be recorded after the computer resumed from sleep, was unlocked, or experienced heavy system lag. The data collection engine is now much smarter at validating time intervals and rejects these phantom readings.
-*   **Fixed Database Locking Crashes:** Resolved a race condition that could cause the application to hang or show a "database is locked" error when the graph was opened at the exact moment data was being saved.
-*   **Fixed Graph Crash on Second Open:** Eliminated a `QThread` error that caused the entire application to crash if the user closed and then re-opened the graph window.
+*   **Definitive Fix for "Phantom" Speed Spikes:** Implemented a new multi-stage "re-priming" state to permanently fix the bug where impossible network speeds would be recorded after the computer resumed from sleep or experienced heavy lag. The data collection engine now waits for the network drivers to stabilize before resuming measurements.
+*   **Resilience to Explorer Restarts:** Fixed a major bug where the widget would disappear permanently if `explorer.exe` was restarted from the Task Manager. The application now automatically detects the new taskbar and repositions itself correctly.
+*   **Fixed "Zombie" Process Bug:** Solved a critical issue where closing the graph window would also incorrectly close the main widget, leaving a lingering "zombie" process running in the background.
+*   **Fixed Start Menu Shortcut:** Corrected a bug in the installer that prevented the Start Menu shortcut from being created on a fresh installation.
+*   **Fixed "0 Mbps" Bug:** Fixed a logic error that caused the meter to show `0.00 Mbps` for users with a very fast `update_rate` by making internal timing checks dynamic and more robust.
+*   **Fixed UI Glitches:**
+    *   Resolved an issue where the widget would incorrectly move position after the user clicked the "Show hidden icons" tray chevron.
+    *   Fixed a visual glitch that could cause duplicated "Apply" and "Cancel" buttons to appear in the settings dialog.
 
 ### ⚙️ Under the Hood & Code Quality
 
-*   **Comprehensive Code Refactoring:** Many internal components were refactored to improve maintainability and performance. This includes centralizing application-wide constants to eliminate "magic numbers" and improve consistency.
-*   **Hardened Test Suite:** The project's automated test suite (`pytest`) has been significantly expanded and improved, ensuring that all new features and bug fixes are thoroughly validated, leading to a more stable application.
-*   **Enhanced Logging Privacy:** The logging system's privacy filter has been replaced with a more powerful `ObfuscatingFormatter`. It now redacts sensitive information (user paths, IP addresses) from the *entire* log message, including full tracebacks, ensuring no personal data is accidentally written to log files.
+*   **Comprehensive Code Refactoring:** Many internal components were refactored to improve maintainability and performance, including the centralization of application-wide constants.
+*   **Hardened Test Suite:** The project's automated test suite (`pytest`) has been significantly expanded and improved to validate all new features and bug fixes.
+*   **Enhanced Logging Privacy:** The logging system's privacy filter has been replaced with a more powerful `ObfuscatingFormatter` that redacts sensitive information (user paths, IP addresses) from the entire log message, including full tracebacks.
 
 ---
 
