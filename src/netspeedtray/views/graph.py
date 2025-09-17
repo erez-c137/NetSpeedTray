@@ -106,10 +106,10 @@ class GraphWindow(QWidget):
     """
     request_data_processing = pyqtSignal(object, object, object, bool)
 
-    def __init__(self, parent=None, logger=None, i18n=None, session_start_time: Optional[datetime] = None):
+    def __init__(self, main_widget, parent=None, logger=None, i18n=None, session_start_time: Optional[datetime] = None):
         """ Initialize the GraphWindow with its UI components. """
-        super().__init__()
-        self._parent = parent
+        super().__init__(parent)    
+        self._main_widget = main_widget
         self.logger = logger or logging.getLogger(__name__)
         self.i18n = i18n
         self.session_start_time = session_start_time or datetime.now()
@@ -117,9 +117,9 @@ class GraphWindow(QWidget):
         # --- State variables ---
         self._is_closing = False
         self._initial_load_done = False
-        self._is_dark_mode = self._parent.config.get("dark_mode", True)
-        self._is_live_update_enabled = self._parent.config.get("live_update", True)
-        self._history_period_value = self._parent.config.get('history_period_slider_value', 0)
+        self._is_dark_mode = self._main_widget.config.get("dark_mode", True)
+        self._is_live_update_enabled = self._main_widget.config.get("live_update", True)
+        self._history_period_value = self._main_widget.config.get('history_period_slider_value', 0)
         self._data_cache: Dict[Tuple[str, str], pd.DataFrame] = {}
         self._graph_data_cache = [] # Used for crosshair lookup
 
@@ -151,7 +151,7 @@ class GraphWindow(QWidget):
         self.graph_layout.addWidget(self.canvas)
 
         # Now that the UI is fully built, initialize the background worker
-        self._init_worker_thread(parent.widget_state if parent else None)
+        self._init_worker_thread(self._main_widget.widget_state)
         
         # Finally, connect all signals
         self._connect_signals()
@@ -445,7 +445,7 @@ class GraphWindow(QWidget):
         current_row += 1
 
         self.keep_data_label = QLabel(getattr(self.i18n, 'DATA_RETENTION_LABEL_NO_VALUE', 'Data Retention'))
-        initial_slider_value = self._days_to_slider_value(self._parent.config.get("keep_data", 30))
+        initial_slider_value = self._days_to_slider_value(self._main_widget.config.get("keep_data", 30))
         self.keep_data = Win11Slider(value=initial_slider_value)
         if hasattr(self.keep_data, 'slider'):
             self.keep_data.slider.setMinimum(0)
@@ -469,7 +469,7 @@ class GraphWindow(QWidget):
 
         # --- Show Legend Toggle ---
         legend_label = QLabel(getattr(self.i18n, 'SHOW_LEGEND_LABEL', 'Show Legend'))
-        self.show_legend = Win11Toggle(initial_state=self._parent.config.get("show_legend", True))
+        self.show_legend = Win11Toggle(initial_state=self._main_widget.config.get("show_legend", True))
         group_content_layout.addWidget(legend_label, current_row, 0)
         group_content_layout.addWidget(self.show_legend, current_row, 1, Qt.AlignmentFlag.AlignLeft)
 
@@ -609,31 +609,36 @@ class GraphWindow(QWidget):
 
     def _populate_interface_filter(self) -> None:
         """
-        Populates the interface filter QComboBox using the unified list from the parent widget.
+        Populates the interface filter QComboBox using the unified list from the main widget.
         """
         if self.interface_filter is None:
             return
 
         self.logger.debug("Populating interface filter...")
         try:
-            if not self._parent or not hasattr(self._parent, 'get_unified_interface_list'):
-                self.logger.warning("Cannot populate interfaces: parent or required method missing.")
+            if not self._main_widget or not hasattr(self._main_widget, 'get_unified_interface_list'):
+                self.logger.warning("Cannot populate interfaces: main_widget or required method missing.")
                 return
 
             self.interface_filter.blockSignals(True)
             
-            current_selection = self.interface_filter.currentText()
+            # --- Iterate and use addItem to set both text and userData ---
+            current_selection_data = self.interface_filter.currentData()
             self.interface_filter.clear()
             
+            # Add the "All" item first, with its userData
             self.interface_filter.addItem(self.i18n.ALL_INTERFACES_AGGREGATED_LABEL, "all")
             
-            # Call the new unified method on the parent widget.
-            distinct_interfaces = self._parent.get_unified_interface_list()
+            distinct_interfaces = self._main_widget.get_unified_interface_list()
             
             if distinct_interfaces:
-                self.interface_filter.addItems(sorted(distinct_interfaces))
+                # Loop through the interfaces and add them one by one
+                for interface in sorted(distinct_interfaces):
+                    # For each interface, the display text and userData are the same string
+                    self.interface_filter.addItem(interface, interface)
             
-            index = self.interface_filter.findText(current_selection)
+            # Restore the previous selection based on the userData, not the text
+            index = self.interface_filter.findData(current_selection_data)
             if index != -1:
                 self.interface_filter.setCurrentIndex(index)
             
@@ -642,7 +647,7 @@ class GraphWindow(QWidget):
         except Exception as e:
             self.logger.error("Failed to populate interface filter: %s", e, exc_info=True)
             if self.interface_filter.count() == 0:
-                self.interface_filter.addItem("All (Aggregated)")
+                self.interface_filter.addItem("All (Aggregated)", "all")
         finally:
             self.interface_filter.blockSignals(False)
 
@@ -665,7 +670,7 @@ class GraphWindow(QWidget):
         Slot triggered when the Data Retention slider is released. It notifies
         the main widget to update the retention period in the backend.
         """
-        if self._is_closing or not self._parent:
+        if self._is_closing or not self._main_widget:
             return
 
         try:
@@ -674,8 +679,8 @@ class GraphWindow(QWidget):
             self.logger.info("Data Retention slider released. New period: %d days.", days)
 
             # Call the new method on the parent to trigger the grace period logic
-            if hasattr(self._parent, 'update_retention_period'):
-                self._parent.update_retention_period(days)
+            if hasattr(self._main_widget, 'update_retention_period'):
+                self._main_widget.update_retention_period(days)
             else:
                 self.logger.warning("Parent widget does not have 'update_retention_period' method.")
                 
@@ -736,8 +741,8 @@ class GraphWindow(QWidget):
         """Position the window centered on the primary screen or to saved position."""
         try:
             pos_x, pos_y = -1, -1
-            if self._parent and "graph_window_pos" in self._parent.config:
-                saved_pos = self._parent.config["graph_window_pos"]
+            if self._main_widget and "graph_window_pos" in self._main_widget.config:
+                saved_pos = self._main_widget.config["graph_window_pos"]
                 if isinstance(saved_pos, dict) and "x" in saved_pos and "y" in saved_pos:
                     pos_x, pos_y = saved_pos["x"], saved_pos["y"]
 
@@ -825,18 +830,18 @@ class GraphWindow(QWidget):
             
     def toggle_settings(self) -> None:
         """Toggle the settings dialog."""
-        if self._is_closing or not self._parent or not hasattr(self._parent, "config_manager"): 
+        if self._is_closing or not self._main_widget or not hasattr(self._main_widget, "config_manager"): 
             return
             
         try:
             from .settings import SettingsDialog
             settings_dialog = SettingsDialog(
-                parent=self._parent,  # Keep parent as self._parent for config access
-                config=self._parent.config.copy(),
-                version=self._parent.version,
+                parent=self._main_widget,  # Keep parent reference for config access
+                config=self._main_widget.config.copy(),
+                version=self._main_widget.version,
                 i18n=self.i18n,
-                available_interfaces=self._parent.get_available_interfaces() if hasattr(self._parent, "get_available_interfaces") else None,
-                is_startup_enabled=self._parent.startup_task_exists() if hasattr(self._parent, "startup_task_exists") else False
+                available_interfaces=self._main_widget.get_available_interfaces() if hasattr(self._main_widget, "get_available_interfaces") else None,
+                is_startup_enabled=self._main_widget.startup_task_exists() if hasattr(self._main_widget, "startup_task_exists") else False
             )
             
             # Center the dialog relative to this window
@@ -846,8 +851,8 @@ class GraphWindow(QWidget):
             # Show the dialog modally
             if settings_dialog.exec() == QDialog.DialogCode.Accepted:
                 # Settings were saved, apply them
-                if hasattr(self._parent, 'apply_all_settings'):
-                    self._parent.apply_all_settings() 
+                if hasattr(self._main_widget, 'apply_all_settings'):
+                    self._main_widget.apply_all_settings() 
                     # Update the graph and UI elements with new settings
                     self._reposition_overlay_elements()
                     
@@ -875,9 +880,9 @@ class GraphWindow(QWidget):
                 self.dark_mode.setChecked(is_dark)
                 self.dark_mode.blockSignals(False)
 
-            if self._parent and hasattr(self._parent, "config_manager"):
-                self._parent.config["dark_mode"] = is_dark
-                self._parent.config_manager.save(self._parent.config)
+            if self._main_widget and hasattr(self._main_widget, "config_manager"):
+                self._main_widget.config["dark_mode"] = is_dark
+                self._main_widget.config_manager.save(self._main_widget.config)
 
             # Check for the new `axes` attribute
             if not hasattr(self, 'figure') or not hasattr(self, 'axes') or not hasattr(self, 'canvas'):
@@ -1010,20 +1015,20 @@ class GraphWindow(QWidget):
 
     def _notify_parent_of_setting_change(self, settings_dict: dict) -> None:
         """Helper method to pass a dictionary of configuration updates to the parent widget."""
-        if self._parent and hasattr(self._parent, 'handle_graph_settings_update'):
+        if self._main_widget and hasattr(self._main_widget, 'handle_graph_settings_update'):
             self.logger.debug(f"Notifying parent of setting change: {settings_dict}")
-            self._parent.handle_graph_settings_update(settings_dict)
+            self._main_widget.handle_graph_settings_update(settings_dict)
         else:
             self.logger.warning(f"Cannot notify parent of setting change: Method not found.")
 
 
     def _save_slider_value_to_config(self, config_key: str, value: int) -> None:
         """Helper method to save a slider's integer value to the configuration."""
-        if self._parent and hasattr(self._parent, 'config') and hasattr(self._parent, 'config_manager'):
+        if self._main_widget and hasattr(self._main_widget, 'config') and hasattr(self._main_widget, 'config_manager'):
             self.logger.debug(f"Saving slider value: {config_key} = {value}")
-            self._parent.config[config_key] = value
+            self._main_widget.config[config_key] = value
             try:
-                self._parent.config_manager.save(self._parent.config)
+                self._main_widget.config_manager.save(self._main_widget.config)
             except Exception as e:
                 self.logger.error(f"Failed to save config after slider value change for {config_key}: {e}")
         else:
@@ -1151,7 +1156,7 @@ class GraphWindow(QWidget):
 
         if self._is_closing: return
         try:
-            if not self._parent or not self._parent.widget_state:
+            if not self._main_widget or not self._main_widget.widget_state:
                 QMessageBox.warning(self, self.i18n.WARNING_TITLE, self.i18n.EXPORT_DATA_ACCESS_ERROR_MESSAGE)
                 return
 
@@ -1160,7 +1165,7 @@ class GraphWindow(QWidget):
             selected_interface_key = self.interface_filter.currentData()
             interface_to_query = None if selected_interface_key == "all" else selected_interface_key
 
-            history_tuples = self._parent.widget_state.get_speed_history(
+            history_tuples = self._main_widget.widget_state.get_speed_history(
                 start_time=start_time,
                 interface_name=interface_to_query
             )
@@ -1266,8 +1271,8 @@ class GraphWindow(QWidget):
                 
                 # Tell the parent widget that this instance is "dead"
                 # so that it will create a fresh one next time.
-                if self._parent:
-                    self._parent.graph_window = None
+                if self._main_widget:
+                    self._main_widget.graph_window = None
                 
         except Exception as e:
             self.logger.error(f"Error in closeEvent: {e}", exc_info=True)            
@@ -1277,10 +1282,10 @@ class GraphWindow(QWidget):
         """Get the size of the database file in megabytes."""
         try:
             # Access the db_path via the db_worker attribute on widget_state.
-            if (hasattr(self._parent, "widget_state") and
-                    hasattr(self._parent.widget_state, "db_worker") and
-                    hasattr(self._parent.widget_state.db_worker, "db_path")):
-                db_path = self._parent.widget_state.db_worker.db_path
+            if (hasattr(self._main_widget, "widget_state") and
+                    hasattr(self._main_widget.widget_state, "db_worker") and
+                    hasattr(self._main_widget.widget_state.db_worker, "db_path")):
+                db_path = self._main_widget.widget_state.db_worker.db_path
                 if db_path and os.path.exists(db_path):
                     return os.path.getsize(db_path) / (1024 * 1024)
         except Exception as e:
@@ -1345,7 +1350,7 @@ class GraphWindow(QWidget):
 
     def _on_legend_toggled(self, checked: bool) -> None:
         """Handles the Show Legend toggle, saves the state, and updates the graph."""
-        if self._is_closing or not self._parent:
+        if self._is_closing or not self._main_widget:
             return
         
         # 1. Update the application's central configuration
@@ -1529,7 +1534,7 @@ class GraphWindow(QWidget):
                     ax.yaxis.set_major_locator(FixedLocator(sorted(list(ticks))))
                     ax.yaxis.set_major_formatter(FuncFormatter(lambda x, pos: f'{x:.1f}'.rstrip('0').rstrip('.')))
             
-            if self._parent and self._parent.config.get("show_legend", True):
+            if self._main_widget and self._main_widget.config.get("show_legend", True):
                 for ax in self.axes:
                     leg = ax.legend()
                     if leg:
@@ -1574,7 +1579,7 @@ class GraphWindow(QWidget):
             interface_to_query = self.interface_filter.currentData() if self.interface_filter and self.interface_filter.currentData() != "all" else None
             
             total_upload_bytes, total_download_bytes = db_utils.get_total_bandwidth_for_period(
-                self._parent.widget_state.db_worker.db_path,
+                self._main_widget.widget_state.db_worker.db_path,
                 start_time,
                 end_time,
                 interface_to_query

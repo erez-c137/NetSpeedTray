@@ -504,56 +504,67 @@ class WidgetState(QObject):
         self.trigger_maintenance()
 
 
-    def get_speed_history(self, start_time: Optional[datetime] = None, end_time: Optional[datetime] = None, interface_name: Optional[str] = "All") -> List[Tuple[datetime, float, float]]:
-            """
-            Retrieves speed history from the database, intelligently querying all
-            data tiers to ensure all relevant data is returned.
-            """
-            self.flush_batch()
-            time.sleep(0.1) # Give a moment for a potential flush to complete
+    def get_speed_history(self, start_time: Optional[datetime] = None, end_time: Optional[datetime] = None, interface_name: Optional[str] = None) -> List[Tuple[datetime, float, float]]:
+        """
+        Retrieves speed history from the database, intelligently querying all
+        data tiers to ensure all relevant data is returned.
+        """
+        self.flush_batch()
+        time.sleep(0.1)
 
-            results = []
-            _start_ts = int(start_time.timestamp()) if start_time else 0
-            _end_ts = int(end_time.timestamp()) if end_time else int(datetime.now().timestamp())
+        results = []
+        _start_ts = int(start_time.timestamp()) if start_time else 0
+        _end_ts = int(end_time.timestamp()) if end_time else int(datetime.now().timestamp())
+        
+        conn = None
+        try:
+            conn = sqlite3.connect(f"file:{self.db_worker.db_path}?mode=ro", uri=True, timeout=5)
+            conn.execute("PRAGMA busy_timeout = 250;")
+            cursor = conn.cursor()
             
-            conn = None  # Initialize connection variable
-            try:
-                # Use a read-only connection to avoid blocking the writer thread
-                conn = sqlite3.connect(f"file:{self.db_worker.db_path}?mode=ro", uri=True, timeout=5)
-                conn.execute("PRAGMA busy_timeout = 250;")  # Wait up to 250ms if locked
-                cursor = conn.cursor()
-                
-                # This unified query fetches from all tiers at once, ensuring no data is missed.
-                base_query = f"""
-                    SELECT timestamp, upload, download, interface_name FROM (
-                        SELECT timestamp, upload_bytes_sec as upload, download_bytes_sec as download, interface_name FROM speed_history_raw
-                        UNION ALL
-                        SELECT timestamp, upload_avg as upload, download_avg as download, interface_name FROM speed_history_minute
-                        UNION ALL
-                        SELECT timestamp, upload_avg as upload, download_avg as download, interface_name FROM speed_history_hour
-                    )
-                    WHERE timestamp >= ? AND timestamp <= ?
-                """
-                
-                params: tuple
-                if interface_name == "All" or interface_name is None:
-                    query = f"SELECT timestamp, SUM(upload), SUM(download) FROM ({base_query}) GROUP BY timestamp ORDER BY timestamp"
-                    params = (_start_ts, _end_ts)
-                else:
-                    query = f"SELECT timestamp, upload, download FROM ({base_query} AND interface_name = ?) ORDER BY timestamp"
-                    params = (_start_ts, _end_ts, interface_name)
-
-                cursor.execute(query, params)
-                results = [(datetime.fromtimestamp(ts), up, down) for ts, up, down in cursor.fetchall() if up is not None and down is not None]
-
-                self.logger.debug(f"Retrieved {len(results)} records for period {start_time} to {end_time} for interface '{interface_name}'.")
-            except sqlite3.Error as e:
-                self.logger.error("Error retrieving unified speed history: %s", e, exc_info=True)
-            finally:
-                if conn:
-                    conn.close()
+            # --- Build query and params iteratively and explicitly ---
+            params: List[Any] = []
             
-            return results
+            base_selects = [
+                "SELECT timestamp, upload_bytes_sec as upload, download_bytes_sec as download FROM speed_history_raw",
+                "SELECT timestamp, upload_avg as upload, download_avg as download FROM speed_history_minute",
+                "SELECT timestamp, upload_avg as upload, download_avg as download FROM speed_history_hour"
+            ]
+            
+            query_parts = []
+            for select_stmt in base_selects:
+                # Start with the base time filter for every subquery
+                query_part = f"{select_stmt} WHERE timestamp BETWEEN ? AND ?"
+                params.extend([_start_ts, _end_ts])
+                
+                # If a specific interface is requested, add its filter to this subquery
+                if interface_name and interface_name != "All":
+                    query_part += " AND interface_name = ?"
+                    params.append(interface_name)
+                
+                query_parts.append(query_part)
+            
+            # Combine the fully-formed subqueries
+            union_query = " UNION ALL ".join(query_parts)
+            
+            if interface_name and interface_name != "All":
+                # For a specific interface, just order the combined results
+                final_query = union_query + " ORDER BY timestamp"
+            else:
+                # For "All" interfaces, wrap the union in an aggregation
+                final_query = f"SELECT timestamp, SUM(upload), SUM(download) FROM ({union_query}) GROUP BY timestamp ORDER BY timestamp"
+            
+            cursor.execute(final_query, tuple(params))
+            results = [(datetime.fromtimestamp(ts), up, down) for ts, up, down in cursor.fetchall() if up is not None and down is not None]
+
+            self.logger.debug(f"Retrieved {len(results)} records for period {start_time} to {end_time} for interface '{interface_name}'.")
+        except sqlite3.Error as e:
+            self.logger.error("Error retrieving unified speed history: %s", e, exc_info=True)
+        finally:
+            if conn:
+                conn.close()
+        
+        return results
 
 
     def get_distinct_interfaces(self) -> List[str]:

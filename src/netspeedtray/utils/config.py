@@ -251,7 +251,8 @@ class ConfigManager:
                     "force_decimals", "dark_mode", "paused", "start_with_windows"]:
             validated[key] = self._validate_boolean(key, validated.get(key), default_ref[key])
 
-        validated["update_rate"] = self._validate_numeric("update_rate", validated.get("update_rate"), default_ref["update_rate"], constants.config.defaults.MINIMUM_UPDATE_RATE, constants.timers.MAXIMUM_UPDATE_RATE_SECONDS)
+        MINIMUM_SAFE_UPDATE_RATE = 0.5
+        validated["update_rate"] = self._validate_numeric("update_rate", validated.get("update_rate"), default_ref["update_rate"], MINIMUM_SAFE_UPDATE_RATE, constants.timers.MAXIMUM_UPDATE_RATE_SECONDS)
         validated["font_size"] = self._validate_numeric("font_size", validated.get("font_size"), default_ref["font_size"], constants.fonts.FONT_SIZE_MIN, constants.fonts.FONT_SIZE_MAX)
         validated["font_weight"] = self._validate_numeric("font_weight", validated.get("font_weight"), default_ref["font_weight"], 1, 1000)
         validated["high_speed_threshold"] = self._validate_numeric("high_speed_threshold", validated.get("high_speed_threshold"), default_ref["high_speed_threshold"], 0, constants.ui.sliders.SPEED_THRESHOLD_MAX_HIGH / 10)

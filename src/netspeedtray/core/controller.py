@@ -44,6 +44,8 @@ class NetworkController(QObject):
         self.primary_interface: Optional[str] = None
         self.last_primary_check_time: float = 0.0
 
+        self.repriming_needed: int = 0  # Number of priming cycles needed after a resume
+
         self.logger.info("NetworkController initialized.")
 
 
@@ -57,7 +59,7 @@ class NetworkController(QObject):
     def update_speeds(self) -> None:
         """
         The main update loop. Fetches stats, calculates per-interface speeds,
-        sends granular data to WidgetState, and sends aggregated data to the view.
+        and handles a re-priming state after resume-from-sleep to prevent phantom spikes.
         """
         current_time = time.monotonic()
         current_counters = self._fetch_network_stats()
@@ -72,31 +74,46 @@ class NetworkController(QObject):
             return
 
         time_diff = current_time - self.last_check_time
-        if time_diff < 0.1:
+        update_interval = self.config.get("update_rate", 1.0)
+
+        if time_diff < (update_interval / 0.5):
             return
             
         update_interval = self.config.get("update_rate", 1.0)
-        # A time delta more than 3x the update rate is abnormal.
-        # This is much stricter and correctly flags short sleeps or system stutters.
         validity_threshold = update_interval * 3.0
 
+        # --- LAYER 1: DETECT RESUME EVENT ---
         if time_diff > validity_threshold:
             self.logger.info(
-                "Abnormal time delta (%.1fs) detected (threshold: %.1fs). "
-                "Likely resume from sleep or system lag. Resetting counters to prevent speed spike.",
-                time_diff, validity_threshold
+                "Abnormal time delta (%.1fs) detected. Entering re-priming state to prevent speed spike.",
+                time_diff
             )
+            self.repriming_needed = 3  # Require 3 good readings before trusting the data
             self.last_check_time = current_time
             self.last_interface_counters = current_counters
             self.display_speed_updated.emit(0.0, 0.0)
             return
 
+        # --- LAYER 2: EXECUTE RE-PRIMING STATE ---
+        if self.repriming_needed > 0:
+            self.logger.debug(f"Re-priming cycle: {self.repriming_needed} remaining.")
+            self.last_check_time = current_time
+            self.last_interface_counters = current_counters
+            self.display_speed_updated.emit(0.0, 0.0)
+            self.repriming_needed -= 1
+            if self.repriming_needed == 0:
+                self.logger.info("Re-priming complete. Resuming normal speed calculation.")
+            return
+
+        # --- NORMAL OPERATION ---
         self.current_speed_data.clear()
 
         for name, current in current_counters.items():
             last = self.last_interface_counters.get(name)
             if last:
+                # --- LAYER 3: COUNTER ROLLOVER CHECK ---
                 if current.bytes_sent < last.bytes_sent or current.bytes_recv < last.bytes_recv:
+                    self.logger.warning(f"Counter rollover or reset detected for '{name}'. Skipping this cycle.")
                     continue
 
                 up_diff = current.bytes_sent - last.bytes_sent
@@ -105,11 +122,12 @@ class NetworkController(QObject):
                 up_speed_bps = int(up_diff / time_diff)
                 down_speed_bps = int(down_diff / time_diff)
                 
+                # --- LAYER 4: SANITY CHECK ---
                 max_speed = constants.network.interface.MAX_REASONABLE_SPEED_BPS
                 if up_speed_bps > max_speed or down_speed_bps > max_speed:
                     self.logger.warning(
                         f"Discarding impossibly high speed for '{name}': "
-                        f"Up={up_speed_bps} B/s. This may be a hardware or driver anomaly."
+                        f"Up={up_speed_bps} B/s, Down={down_speed_bps} B/s."
                     )
                     continue
 
