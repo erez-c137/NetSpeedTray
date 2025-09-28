@@ -137,40 +137,59 @@ class TaskbarInfo:
 
     def get_screen(self) -> Optional[QScreen]:
         """
-        Fetches the QScreen object associated with this taskbar using a robust
-        geometric comparison.
+        Fetches the QScreen object associated with this taskbar using a robust,
+        multi-layered geometric and name-based comparison.
         """
         try:
             all_screens = QApplication.screens()
             
-            # Convert this taskbar's stored logical geometry to a QRect for comparison.
+            # Layer 1: Direct logical geometry match (fastest and most common)
             stored_geo_rect = QRect(
                 self.screen_geometry[0], self.screen_geometry[1],
                 self.screen_geometry[2], self.screen_geometry[3]
             )
-
             for screen in all_screens:
-                # The most reliable check is a direct match of the logical geometry.
                 if screen.geometry() == stored_geo_rect:
                     return screen
-            
-            # Fallback for rare cases: check if the screen names match AND the geometries overlap.
-            for screen in all_screens:
-                if screen.name() == self.screen_name and screen.geometry().intersects(stored_geo_rect):
-                    logger.warning("Used name-based fallback to get screen for HWND %s", self.hwnd)
-                    return screen
 
-            # Final fallback: find the screen that contains the taskbar's top-left corner.
-            point = QPoint(self.rect[0], self.rect[1])
-            screen_at_point = QApplication.screenAt(point)
-            if screen_at_point:
-                logger.warning("Used point-based fallback to get screen for HWND %s", self.hwnd)
-                return screen_at_point
+            # Layer 2: Geometric intersection (good for most edge cases)
+            tb_qrect_phys = QRect(self.rect[0], self.rect[1], self.rect[2] - self.rect[0], self.rect[3] - self.rect[1])
+            best_match_screen: Optional[QScreen] = None
+            max_overlap: int = 0
+            for screen in all_screens:
+                geo_log = screen.geometry()
+                dpi = screen.devicePixelRatio()
+                geo_phys = QRect(int(geo_log.left() * dpi), int(geo_log.top() * dpi), int(geo_log.width() * dpi), int(geo_log.height() * dpi))
+                overlap_rect = geo_phys.intersected(tb_qrect_phys)
+                if overlap_rect.width() * overlap_rect.height() > max_overlap:
+                    max_overlap = overlap_rect.width() * overlap_rect.height()
+                    best_match_screen = screen
+            
+            if best_match_screen:
+                logger.warning("Used intersection-based fallback to get screen for HWND %s", self.hwnd)
+                return best_match_screen
+
+            # Layer 3: Direct WinAPI to Qt name matching (most robust fallback)
+            try:
+                # Get the HMONITOR directly from the taskbar's HWND
+                tb_monitor_handle = win32api.MonitorFromWindow(self.hwnd, MONITOR_DEFAULTTONEAREST)
+                if tb_monitor_handle:
+                    # Get the monitor's device name (e.g., "\\.\DISPLAY1") from the WinAPI
+                    monitor_info = win32api.GetMonitorInfo(tb_monitor_handle)
+                    winapi_screen_name = monitor_info.get('Device', '')
+                    if winapi_screen_name:
+                        # Find the QScreen that has the exact same device name
+                        for screen in all_screens:
+                            if screen.name() == winapi_screen_name:
+                                logger.warning("Used robust name-based fallback to get screen for HWND %s", self.hwnd)
+                                return screen
+            except Exception as e:
+                logger.error("Error during name-based screen matching fallback: %s", e)
                 
-            logger.error("Could not find a matching QScreen for taskbar HWND %s.", self.hwnd)
+            logger.error("CRITICAL: Could not find any matching QScreen for taskbar HWND %s.", self.hwnd)
             return None
         except Exception as e:
-            logger.error("Error fetching QScreen for taskbar HWND %s: %s", self.hwnd, e, exc_info=True)
+            logger.error("Unexpected error fetching QScreen for taskbar HWND %s: %s", self.hwnd, e, exc_info=True)
             return None
 
 
@@ -431,6 +450,12 @@ def get_all_taskbar_info() -> List[TaskbarInfo]:
 
             class_name = win32gui.GetClassName(hwnd)
             if class_name not in ("Shell_TrayWnd", "Shell_SecondaryTrayWnd"):
+                return None
+
+            # Check for the tray's existence
+            tray_hwnd = win32gui.FindWindowEx(hwnd, 0, "TrayNotifyWnd", None)
+            if not tray_hwnd:
+                logger.debug(f"Found taskbar HWND {hwnd}, but its TrayNotifyWnd child is not ready yet. Ignoring.")
                 return None
 
             rect_phys = win32gui.GetWindowRect(hwnd)
