@@ -1041,6 +1041,11 @@ class GraphWindow(QWidget):
         is visible, preventing UI blocking on startup.
         """
         super().showEvent(event)
+
+        if self._is_live_update_enabled and not self._realtime_timer.isActive():
+            self.logger.debug("Window shown with live update enabled. Starting timer.")
+            self._realtime_timer.start(constants.graph.REALTIME_UPDATE_INTERVAL_MS)
+
         if not self._initial_load_done:
             self._initial_load_done = True
             # Display a "collecting data" message immediately for better UX
@@ -1400,44 +1405,46 @@ class GraphWindow(QWidget):
     def _configure_xaxis_format(self, start_time: datetime, end_time: datetime) -> None:
         """
         Intelligently configures the x-axis locator and formatter based on the
-        time range to prevent Matplotlib warnings and improve readability.
+        user's selected timeline to ensure optimal readability.
         """
         import matplotlib.dates as mdates
+        from matplotlib.ticker import NullLocator
+
+        axis = self.ax_upload
+
+        # Determine the user's explicit choice from the timeline slider
+        period_key = constants.data.history_period.PERIOD_MAP.get(self._history_period_value)
+
+        major_locator = None
+        major_formatter = mdates.DateFormatter('%H:%M') # Default for most time-based views
+
+        # Define explicit rules for each specific timeline view
+        if period_key == "TIMELINE_3_HOURS":
+            major_locator = mdates.HourLocator(interval=1)  # Tick every hour
+        elif period_key == "TIMELINE_6_HOURS":
+            major_locator = mdates.HourLocator(interval=1)  # Tick every hour
+        elif period_key == "TIMELINE_12_HOURS":
+            major_locator = mdates.HourLocator(interval=2)  # Tick every 2 hours
+        elif period_key == "TIMELINE_24_HOURS":
+            major_locator = mdates.HourLocator(interval=3)  # Tick every 3 hours
+        elif period_key == "TIMELINE_WEEK":
+            major_locator = mdates.DayLocator(interval=1)
+            major_formatter = mdates.DateFormatter('%a %d') # e.g., "Mon 15"
+        elif period_key == "TIMELINE_MONTH":
+            major_locator = mdates.WeekdayLocator(byweekday=mdates.MO)
+            major_formatter = mdates.DateFormatter('%b %d') # e.g., "Sep 16"
+        else: # Covers "Uptime", "Session", and "All" (long term)
+            # For these dynamic ranges, let Matplotlib decide, but use its best formatter
+            major_locator = mdates.AutoDateLocator(maxticks=8)
+            major_formatter = mdates.ConciseDateFormatter(major_locator)
+
+        # Apply the explicit settings
+        axis.xaxis.set_major_locator(major_locator)
+        axis.xaxis.set_major_formatter(major_formatter)
         
-        # Target the bottom plot's X-axis, as it is shared with the top plot.
-        axis_to_configure = self.ax_upload
-
-        if not start_time or not end_time or start_time >= end_time:
-            axis_to_configure.xaxis.set_major_locator(mdates.AutoDateLocator(maxticks=8))
-            axis_to_configure.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
-            return
-
-        time_delta_seconds = (end_time - start_time).total_seconds()
-        
-        if time_delta_seconds <= 900:  # <= 15 minutes
-            locator = mdates.MinuteLocator(interval=2)
-            formatter = mdates.DateFormatter('%H:%M:%S')
-        elif time_delta_seconds <= 3600 * 2:  # <= 2 hours
-            locator = mdates.MinuteLocator(interval=15)
-            formatter = mdates.DateFormatter('%H:%M')
-        elif time_delta_seconds <= 3600 * 8:  # Handles 3h and 6h views
-            locator = mdates.HourLocator(interval=1)
-            formatter = mdates.DateFormatter('%H:%M')
-        elif time_delta_seconds <= 86400 * 2: # Handles 12h and 24h views
-            locator = mdates.HourLocator(interval=3)
-            formatter = mdates.DateFormatter('%H:%M\n%b %d')
-        elif time_delta_seconds <= 86400 * 8: # Handles 1 week view
-            locator = mdates.DayLocator(interval=1)
-            formatter = mdates.DateFormatter('%a %d')
-        elif time_delta_seconds <= 86400 * 32: # Handles 1 month view
-            locator = mdates.WeekdayLocator(byweekday=mdates.MO)
-            formatter = mdates.DateFormatter('%b %d')
-        else:  # > 1 month (e.g., "All")
-            locator = mdates.MonthLocator()
-            formatter = mdates.DateFormatter('%Y-%b')
-
-        axis_to_configure.xaxis.set_major_locator(locator)
-        axis_to_configure.xaxis.set_major_formatter(formatter)
+        # Disable minor ticks for our hand-tuned views to prevent clutter
+        if "HOURS" in (period_key or ""):
+            axis.xaxis.set_minor_locator(NullLocator())
 
 
     def _get_nice_y_axis_top(self, max_speed: float) -> float:
@@ -1544,12 +1551,21 @@ class GraphWindow(QWidget):
             self.ax_download.set_ylabel(f"{self.i18n.DOWNLOAD_LABEL} (Mbps)")
             self.ax_upload.set_ylabel(f"{self.i18n.UPLOAD_LABEL} (Mbps)")
 
-            effective_start_time = df['timestamp'].min()
-            effective_end_time = df['timestamp'].max()
-            self.ax_upload.set_xlim(effective_start_time, effective_end_time)
-            self._configure_xaxis_format(effective_start_time, effective_end_time)
+            # Use the requested time range for the X-axis
+            requested_start_time, requested_end_time = self._get_time_range_from_ui()
+
+            # If the user selected a dynamic range like "All" or "Uptime", fall back to the data's actual range.
+            if requested_start_time is None:
+                requested_start_time = df['timestamp'].min()
+
+            # Add 1% padding to the time range for a cleaner look
+            time_range_delta = requested_end_time - requested_start_time
+            padding = time_range_delta * 0.01
+            self.ax_upload.set_xlim(requested_start_time - padding, requested_end_time + padding)
+            self._configure_xaxis_format(requested_start_time, requested_end_time)
             
             history_data = list(zip(df['timestamp'], df['upload_speed'], df['download_speed']))
+
             self._update_stats_bar(history_data)
 
             self.figure.autofmt_xdate(rotation=30, ha='right')
