@@ -4,9 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ---
 
-## [1.1.7] - September 17, 2025
+## [1.1.7] - October 29, 2025
 
-This is a landmark release focused on stability and making the application's most complex feature—the **Network Speed Graph**—a truly professional-grade, fast, and visually insightful tool.
+This is a landmark release focused on stability and making the application's most complex feature—the **Network Speed Graph** - a fast, and visually insightful tool.
 
 The graph has been completely re-architected for performance and clarity. This update also includes an extensive list of critical bug fixes that address phantom speed spikes, UI glitches, installer problems, and instability when the Windows shell is restarted.
 
@@ -20,16 +20,18 @@ The graph has been completely re-architected for performance and clarity. This u
     *   **Instantaneous Loading:** The graph window now opens instantly. Data is fetched and processed in a **background worker thread**, preventing the application from becoming unresponsive when loading large time ranges.
     *   **Responsive UI:** Switching between timelines, hovering over the graph, and resizing the window is now dramatically faster and smoother.
 
-*   **Corrected & Polished:**
-    *   **Fixed Incorrect Interface Filtering:** Fixed a critical bug where selecting different network interfaces in the graph would incorrectly show the same aggregated data for all of them. The filter now works correctly.
-    *   **Fixed Graph Crash:** Resolved a crash when rendering the graph legend, caused by an API change in a dependent library.
+*   **Full Interactivity & Polish:**
+
+    *   **NEW:** **Fixed Graph Timeline Display:** Solved multiple issues with the X-axis, including incorrect time windows being shown and cluttered, nonsensical timestamps. Timelines from 3-24 hours now have clean, sensible tick intervals.
+    *   **NEW:** **Fixed Live Update Initialization:** Resolved a bug where the "Live Update" feature in the graph would not work on the first open, requiring the user to toggle it off and on again.
+    *   **Fixed "No Data Available" Bug:** Resolved a critical bug in the database query logic that could cause the graph to incorrectly show "No data available."
     *   **Accurate Total Bandwidth:** Corrected the stats bar logic to ensure "Total" bandwidth calculations are fast and accurate across all timelines.
     *   **Visual Glitch Fixes:** Resolved bugs that caused Y-axis labels to appear in black on a dark background or display in scientific notation. Added a separator line for better clarity.
 
 ### 🛡️ Core Stability & Reliability
 
 *   **Definitive Fix for "Phantom" Speed Spikes:** Implemented a new multi-stage "re-priming" state to permanently fix the bug where impossible network speeds would be recorded after the computer resumed from sleep or experienced heavy lag. The data collection engine now waits for the network drivers to stabilize before resuming measurements.
-*   **Resilience to Explorer Restarts:** Fixed a major bug where the widget would disappear permanently if `explorer.exe` was restarted from the Task Manager. The application now automatically detects the new taskbar and repositions itself correctly.
+*   **Enhanced Shell & Display Resilience:** Fixed major bugs where the widget would disappear or move to the wrong position after `explorer.exe` was restarted, a monitor was disconnected (e.g., via a KVM switch), or on some multi-monitor setups. The application is now significantly more robust in detecting and recovering from these events.
 *   **Fixed "Zombie" Process Bug:** Solved a critical issue where closing the graph window would also incorrectly close the main widget, leaving a lingering "zombie" process running in the background.
 *   **Fixed Start Menu Shortcut:** Corrected a bug in the installer that prevented the Start Menu shortcut from being created on a fresh installation.
 *   **Fixed "0 Mbps" Bug:** Fixed a logic error that caused the meter to show `0.00 Mbps` for users with a very fast `update_rate` by making internal timing checks dynamic and more robust.
@@ -39,9 +41,9 @@ The graph has been completely re-architected for performance and clarity. This u
 
 ### ⚙️ Under the Hood & Code Quality
 
-*   **Comprehensive Code Refactoring:** Many internal components were refactored to improve maintainability and performance, including the centralization of application-wide constants.
-*   **Hardened Test Suite:** The project's automated test suite (`pytest`) has been significantly expanded and improved to validate all new features and bug fixes.
-*   **Enhanced Logging Privacy:** The logging system's privacy filter has been replaced with a more powerful `ObfuscatingFormatter` that redacts sensitive information (user paths, IP addresses) from the entire log message, including full tracebacks.
+*   **Comprehensive Code Refactoring:** Many internal components were refactored to improve maintainability and performance. This includes centralizing application-wide constants to eliminate "magic numbers" and improve consistency.
+*   **Hardened Test Suite:** The project's automated test suite (`pytest`) has been significantly expanded and improved, ensuring that all new features and bug fixes are thoroughly validated, leading to a more stable application.
+*   **Enhanced Logging Privacy:** The logging system's privacy filter has been replaced with a more powerful `ObfuscatingFormatter` that redacts sensitive information (user paths, IP addresses) from the *entire* log message, including full tracebacks.
 
 ---
 
