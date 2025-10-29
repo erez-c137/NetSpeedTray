@@ -8,7 +8,6 @@ on:
 jobs:
   build-and-release:
     runs-on: windows-latest
-
     permissions:
       contents: write
       id-token: write
@@ -22,8 +21,9 @@ jobs:
         with:
           python-version: '3.11'
 
+      # --- THE DEFINITIVE FIX: Use the correct, existing Inno Setup action ---
       - name: Set up Inno Setup
-        uses: crazy-max/ghaction-inno-setup@v3
+        uses: Min-Z/gh-action-inno-setup@v2
 
       - name: Install dependencies
         run: |
