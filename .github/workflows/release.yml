@@ -33,8 +33,7 @@ jobs:
         run: pyinstaller --noconfirm --distpath "./dist" build/NetSpeedTray.spec
 
       - name: Sign NetSpeedTray.exe
-        uses: signpath/action@v2.1.1
-
+        uses: signpath/action@v2
         with:
           signpath_organization_id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
           signpath_api_token: ${{ secrets.SIGNPATH_API_TOKEN }}
@@ -45,8 +44,7 @@ jobs:
         run: iscc.exe "build/setup.iss"
 
       - name: Sign the installer (NetSpeedTray-Setup.exe)
-        uses: signpath/action@v2.1.1
-        
+        uses: signpath/action@v2
         with:
           signpath_organization_id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
           signpath_api_token: ${{ secrets.SIGNPATH_API_TOKEN }}
