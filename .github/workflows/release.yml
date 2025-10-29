@@ -70,7 +70,7 @@ jobs:
       - name: Sign the installer (NetSpeedTray-Setup.exe)
         uses: signpath/github-action-submit-signing-request@v2
         with:
-          organization-id: ${{ secrets.SIGNPATH_ ORGANIZATION_ID }}
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
           project-slug: 'netspeedtray'
           artifact-configuration-slug: 'netspeedtray-installer'
           signing-policy-slug: 'test-signing'
