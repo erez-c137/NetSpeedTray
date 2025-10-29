@@ -32,10 +32,10 @@ jobs:
       - name: Sign NetSpeedTray.exe
         uses: signpath/github-action-submit-signing-request@v2
         with:
-          signpath_organization_id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
-          signpath_api_token: ${{ secrets.SIGNPATH_API_TOKEN }}
-          project_slug: 'netspeedtray'
-          file_to_sign: 'dist/NetSpeedTray/NetSpeedTray.exe'
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          project-slug: 'netspeedtray'
+          artifact-configuration-slug: 'netspeedtray-executable' # Use the slug from signpath.yaml
 
       - name: Build installer with Inno Setup
         uses: Minionguyjpro/Inno-Setup-Action@v1.2.2
@@ -45,10 +45,10 @@ jobs:
       - name: Sign the installer (NetSpeedTray-Setup.exe)
         uses: signpath/github-action-submit-signing-request@v2
         with:
-          signpath_organization_id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
-          signpath_api_token: ${{ secrets.SIGNPATH_API_TOKEN }}
-          project_slug: 'netspeedtray'
-          file_to_sign: 'installer/NetSpeedTray-${{ github.ref_name }}-Setup.exe'
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          project-slug: 'netspeedtray'
+          artifact-configuration-slug: 'netspeedtray-installer' # Use the slug from signpath.yaml
       
       - name: Create portable ZIP archive
         run: Compress-Archive -Path "dist/NetSpeedTray" -DestinationPath "dist/NetSpeedTray-Portable-${{ github.ref_name }}.zip"
