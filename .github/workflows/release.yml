@@ -22,7 +22,7 @@ jobs:
           python-version: '3.11'
 
       - name: Set up Inno Setup
-        uses: Minionguyjpro/Inno-Setup-Action@v2
+        uses: Minionguyjpro/Inno-Setup-Action@v1.2.2
 
       - name: Install dependencies
         run: |
