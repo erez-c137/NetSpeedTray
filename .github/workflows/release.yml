@@ -21,9 +21,6 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Set up Inno Setup
-        uses: Minionguyjpro/Inno-Setup-Action@v1.2.2
-
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -41,7 +38,9 @@ jobs:
           file_to_sign: 'dist/NetSpeedTray/NetSpeedTray.exe'
 
       - name: Build installer with Inno Setup
-        run: iscc.exe "build/setup.iss"
+        uses: Minionguyjpro/Inno-Setup-Action@v1.2.2
+        with:
+          path: build/setup.iss
 
       - name: Sign the installer (NetSpeedTray-Setup.exe)
         uses: signpath/github-action-submit-signing-request@v2
