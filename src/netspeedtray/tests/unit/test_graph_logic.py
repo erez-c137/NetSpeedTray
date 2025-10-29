@@ -31,17 +31,22 @@ def graph_window_instance(qapp, mocker) -> Iterator[GraphWindow]:
     mocker.patch.object(GraphWindow, '_init_worker_thread', return_value=None)
     mocker.patch.object(GraphWindow, '_connect_signals', return_value=None)
     mocker.patch.object(GraphWindow, '_position_window', return_value=None)
-    
-    mock_parent = MagicMock()
-    mock_parent.config = constants.config.defaults.DEFAULT_CONFIG.copy()
-    mock_parent.i18n = constants.i18n.get_i18n("en_US")
-    mock_parent.widget_state = MagicMock()
 
+    # Use main_widget and set parent=None to satisfy the constructor requirements.
+    # Create a mock for the main widget, which is what the constructor now expects.
+    mock_main_widget = MagicMock()
+    mock_main_widget.config = constants.config.defaults.DEFAULT_CONFIG.copy()
+    mock_main_widget.i18n = constants.i18n.get_i18n("en_US")
+    mock_main_widget.widget_state = MagicMock()
+
+    # Call the constructor with the correct arguments
     graph = GraphWindow(
-        parent=mock_parent,
-        i18n=mock_parent.i18n,
+        main_widget=mock_main_widget,
+        parent=None, # Explicitly set parent to None
+        i18n=mock_main_widget.i18n,
         session_start_time=datetime.now()
     )
+
     graph.logger = MagicMock()
     
     # The constructor creates a real QLabel. We must replace it with a mock
