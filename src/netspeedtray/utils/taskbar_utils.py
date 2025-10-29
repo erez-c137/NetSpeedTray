@@ -452,10 +452,16 @@ def get_all_taskbar_info() -> List[TaskbarInfo]:
             if class_name not in ("Shell_TrayWnd", "Shell_SecondaryTrayWnd"):
                 return None
 
-            # Check for the tray's existence
             tray_hwnd = win32gui.FindWindowEx(hwnd, 0, "TrayNotifyWnd", None)
-            if not tray_hwnd:
-                logger.debug(f"Found taskbar HWND {hwnd}, but its TrayNotifyWnd child is not ready yet. Ignoring.")
+            # A taskbar is not "ready" until its TrayNotifyWnd child is a valid, queryable window.
+            if not tray_hwnd or not win32gui.IsWindow(tray_hwnd):
+                logger.debug(f"Found taskbar HWND {hwnd}, but its tray child is not yet valid. Ignoring.")
+                return None
+            try:
+                # This is the ultimate test: can we get its rectangle? If not, it's not ready.
+                win32gui.GetWindowRect(tray_hwnd)
+            except win32gui.error:
+                logger.debug(f"Found tray HWND {tray_hwnd}, but it is not yet queryable. Ignoring.")
                 return None
 
             rect_phys = win32gui.GetWindowRect(hwnd)

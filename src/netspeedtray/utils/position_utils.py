@@ -108,14 +108,19 @@ class PositionManager:
         self._calculator: PositionCalculator = PositionCalculator()
         logger.debug("PositionManager initialized.")
 
-    def update_position(self) -> None:
+
+    def update_position(self, fresh_taskbar_info: Optional[TaskbarInfo] = None) -> None:
         """
         Sets the widget's position.
 
+        If fresh_taskbar_info is provided, it updates the internal state first.
         Attempts to use a valid saved position from configuration first.
         If no valid saved position exists, calculates a new position based on
-        taskbar information and applies it. Handles potential errors during the process.
+        taskbar information and applies it.
         """
+        if fresh_taskbar_info:
+            self._state.taskbar_info = fresh_taskbar_info
+        
         try:
             if self._apply_saved_position():
                 logger.debug("Widget position set from saved coordinates: %s", self._state.widget.pos())
@@ -128,6 +133,7 @@ class PositionManager:
 
         except Exception as e:
             logger.error("Unexpected error during position update: %s", e, exc_info=True)
+
 
     def get_calculated_position(self) -> Optional[QPoint]:
         """
@@ -162,6 +168,7 @@ class PositionManager:
         except Exception as e:
             logger.error("Error calculating target position: %s", e, exc_info=True)
             return None
+
 
     def _apply_saved_position(self) -> bool:
         """
@@ -199,6 +206,7 @@ class PositionManager:
 
         logger.debug("Saved position (%s, %s) is invalid for screen '%s'", saved_x, saved_y, screen.name())
         return False
+
 
     def _apply_calculated_position(self) -> bool:
         """
@@ -267,6 +275,7 @@ class TaskbarManager:
             logger.error("Error finding all taskbars: %s", e, exc_info=True)
             return []
 
+
     @staticmethod
     def find_nearest_taskbar(pos: QPoint) -> TaskbarInfo:
         """
@@ -326,6 +335,7 @@ class TaskbarManager:
                     is_primary=True,
                     height=constants.taskbar.DEFAULT_HEIGHT
                 )
+
 
         def distance_to_taskbar_edge(tb: TaskbarInfo) -> float:
             """Calculates distance from point `pos` to the relevant edge of the taskbar."""
@@ -422,6 +432,7 @@ class ScreenUtils:
         """
         return QApplication.screenAt(point)
 
+
     @staticmethod
     def find_screen_for_rect(rect: QRect) -> Optional[QScreen]:
         """
@@ -434,6 +445,7 @@ class ScreenUtils:
             Optional[QScreen]: The screen containing the center, or None.
         """
         return QApplication.screenAt(rect.center())
+
 
     @staticmethod
     def validate_position(x: int, y: int, widget_size: Tuple[int, int], screen: QScreen) -> ScreenPosition:
@@ -467,6 +479,7 @@ class ScreenUtils:
         except Exception as e:
             logger.error("Error validating position (%s,%s) on screen '%s': %s", x, y, screen.name(), e, exc_info=True)
             return ScreenPosition(x, y)
+
 
     @staticmethod
     def is_position_valid(x: int, y: int, widget_size: Tuple[int, int], screen: QScreen) -> bool:
@@ -503,6 +516,7 @@ class PositionCalculator:
         self._last_drag_log_time: float = 0.0
         self._drag_log_interval: float = getattr(constants.taskbar.position, 'DRAG_LOG_INTERVAL_SECONDS', 1.0)
         logger.debug("PositionCalculator initialized.")
+
 
     def calculate_position(self, taskbar_info: TaskbarInfo, widget_size: Tuple[int, int], config: Dict[str, Any], font_metrics: Optional[QFontMetrics] = None) -> ScreenPosition:
         """

@@ -97,6 +97,7 @@ class NetworkSpeedWidget(QWidget):
         self._last_immediate_hide_time: float = 0.0 # For the race condition fix
         self._is_context_menu_visible: bool = False
         self.last_tray_rect: Optional[Tuple[int, int, int, int]] = None
+        self._taskbar_lost_count: int = 0
         
         # Hooks for system events
         self.foreground_hook: Optional[WinEventHook] = None
@@ -300,24 +301,24 @@ class NetworkSpeedWidget(QWidget):
 
     def _check_taskbar_validity(self) -> None:
         """
-        Periodically checks if the stored taskbar handle is still valid.
-        If not, it forces a full UI refresh to find the new taskbar.
-        This is the definitive fix for recovering from an explorer.exe restart.
+        Periodically checks if the stored taskbar handle is still valid. If not,
+        it triggers a persistent refresh cycle to recover from an explorer.exe restart.
         """
         try:
-            # Use direct attribute path
             if not self.position_manager or not hasattr(self.position_manager, 'taskbar_info'):
                 return
 
             taskbar_hwnd = self.position_manager.taskbar_info.hwnd
             
-            # A hwnd of 0 is the fallback; we don't need to check it.
             if taskbar_hwnd != 0 and not win32gui.IsWindow(taskbar_hwnd):
                 self.logger.warning(
                     f"Taskbar handle {taskbar_hwnd} is no longer valid. Explorer likely restarted. "
-                    "Forcing a full position and visibility refresh."
+                    "Initiating recovery refresh cycle."
                 )
-                self._execute_refresh()
+                # Instead of one refresh, trigger a burst of attempts
+                # This gives explorer.exe several seconds to fully initialize.
+                for i in range(5): # Attempt to refresh 5 times over 5 seconds
+                    QTimer.singleShot(i * 1000, self._execute_refresh)
         except Exception as e:
             self.logger.error(f"Error during taskbar validity check: {e}", exc_info=True)
 
@@ -352,30 +353,46 @@ class NetworkSpeedWidget(QWidget):
 
     def _execute_refresh(self, hwnd: int = 0) -> None:
         """
-        The AUTHORITATIVE refresh trigger. This runs after a debounce or on a timer
-        and makes the final, correct decision about the widget's state.
+        The AUTHORITATIVE refresh trigger. This version includes a grace period
+        to handle temporary taskbar detection failures (e.g., during shell restarts).
         """
-        if self._is_context_menu_visible:
+        if self._is_context_menu_visible or self._dragging:
             return
         
-        now = time.monotonic()
-        cooldown_seconds = constants.timers.VISIBILITY_CHECK_INTERVAL_MS / 1000.0
-        if now - self._last_immediate_hide_time < cooldown_seconds:
-            return
+        try:
+            taskbar_info = get_taskbar_info()
 
-        if self._dragging or self.config.get("free_move", False):
-            return
+            # Implement the "coasting" logic for taskbar detection failures.
+            if taskbar_info.hwnd == 0: # hwnd=0 signifies a fallback object from get_taskbar_info
+                self._taskbar_lost_count += 1
+                self.logger.warning(
+                    f"Taskbar detection failed. Coasting on last known position. "
+                    f"Failure count: {self._taskbar_lost_count}"
+                )
+                # If the taskbar has been missing for too long (e.g., 5 seconds), hide the widget.
+                if self._taskbar_lost_count >= 5:
+                    if self.isVisible(): self.setVisible(False)
+                return # CRITICAL: Do not proceed to repositioning with bad data
+            else:
+                # If we successfully found a real taskbar, reset the counter.
+                self._taskbar_lost_count = 0
 
-        if hwnd == 0:
-            try:
+            if hwnd == 0:
                 hwnd = win32gui.GetForegroundWindow()
-            except win32gui.error:
-                hwnd = 0
 
-        self._update_widget_state(hwnd)
+            should_be_visible = is_taskbar_visible(taskbar_info) and not is_taskbar_obstructed(taskbar_info, hwnd)
 
-        if self.isVisible():
-            self._ensure_win32_topmost()
+            if self.isVisible() != should_be_visible:
+                self.setVisible(should_be_visible)
+            
+            # Only update position if we are supposed to be visible.
+            if self.isVisible() and not self.config.get("free_move", False):
+                self.position_manager.update_position(fresh_taskbar_info=taskbar_info)
+                self._ensure_win32_topmost()
+
+        except Exception as e:
+            self.logger.error(f"Critical error in _execute_refresh: {e}", exc_info=True)
+            if self.isVisible(): self.setVisible(False)
 
 
     def _delayed_initial_show(self) -> None:
