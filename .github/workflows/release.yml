@@ -29,26 +29,64 @@ jobs:
       - name: Build executable with PyInstaller
         run: pyinstaller --noconfirm --distpath "./dist" build/NetSpeedTray.spec
 
+      - name: Upload executable artifact for signing
+        uses: actions/upload-artifact@v4
+        id: upload-executable
+        with:
+          name: netspeedtray-executable
+          path: dist/NetSpeedTray/NetSpeedTray.exe
+          retention-days: 1
+
       - name: Sign NetSpeedTray.exe
         uses: signpath/github-action-submit-signing-request@v2
+        id: sign-executable
         with:
           organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
           project-slug: 'netspeedtray'
-          artifact-configuration-slug: 'netspeedtray-executable' # Use the slug from signpath.yaml
+          artifact-configuration-slug: 'netspeedtray-executable'
+          signing-policy-slug: 'test-signing'
+          github-artifact-id: ${{ steps.upload-executable.outputs.artifact-id }}
+
+      - name: Download signed executable
+        uses: actions/download-artifact@v4
+        with:
+          name: netspeedtray-executable-signed
+          path: dist/NetSpeedTray/
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.run_id }}
 
       - name: Build installer with Inno Setup
         uses: Minionguyjpro/Inno-Setup-Action@v1.2.2
         with:
           path: build/setup.iss
 
+      - name: Upload installer artifact for signing
+        uses: actions/upload-artifact@v4
+        id: upload-installer
+        with:
+          name: netspeedtray-installer
+          path: installer/NetSpeedTray-${{ github.ref_name }}-Setup.exe
+          retention-days: 1
+
       - name: Sign the installer (NetSpeedTray-Setup.exe)
         uses: signpath/github-action-submit-signing-request@v2
+        id: sign-installer
         with:
           organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
           project-slug: 'netspeedtray'
-          artifact-configuration-slug: 'netspeedtray-installer' # Use the slug from signpath.yaml
+          artifact-configuration-slug: 'netspeedtray-installer'
+          signing-policy-slug: 'test-signing'
+          github-artifact-id: ${{ steps.upload-installer.outputs.artifact-id }}
+
+      - name: Download signed installer
+        uses: actions/download-artifact@v4
+        with:
+          name: netspeedtray-installer-signed
+          path: installer/
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.run_id }}
       
       - name: Create portable ZIP archive
         run: Compress-Archive -Path "dist/NetSpeedTray" -DestinationPath "dist/NetSpeedTray-Portable-${{ github.ref_name }}.zip"
