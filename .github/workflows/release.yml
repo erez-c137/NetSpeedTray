@@ -21,9 +21,8 @@ jobs:
         with:
           python-version: '3.11'
 
-      # --- THE DEFINITIVE FIX: Use the correct, existing Inno Setup action ---
       - name: Set up Inno Setup
-        uses: Min-Z/gh-action-inno-setup@v2
+        uses: Minionguyjpro/Inno-Setup-Action@v2
 
       - name: Install dependencies
         run: |
