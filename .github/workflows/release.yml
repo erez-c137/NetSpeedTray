@@ -10,34 +10,25 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      # Step 1: Get the code from your repository
       - name: Check out repository code
         uses: actions/checkout@v4
 
-      # Step 2: Set up Python
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      # Step 3: Set up Inno Setup
       - name: Set up Inno Setup
         uses: crazy-max/ghaction-inno-setup@v3
 
-      # Step 4: Install dependencies
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r dev-requirements.txt
 
-      # Step 5: Build the executable with PyInstaller
       - name: Build executable with PyInstaller
         run: pyinstaller --noconfirm --distpath "./dist" build/NetSpeedTray.spec
 
-      # ====================================================================
-      # Step 6: Sign the main application executable
-      # This ensures the core .exe file is trusted by Windows.
-      # ====================================================================
       - name: Sign NetSpeedTray.exe
         uses: signpath/action@v2
         with:
@@ -46,39 +37,27 @@ jobs:
           project_slug: 'netspeedtray'
           file_to_sign: 'dist/NetSpeedTray/NetSpeedTray.exe'
 
-      # ====================================================================
-      # Step 7: Build the Inno Setup installer
-      # This will now automatically bundle the freshly signed NetSpeedTray.exe
-      # ====================================================================
       - name: Build installer with Inno Setup
         run: iscc.exe "build/setup.iss"
 
-      # ====================================================================
-      # Step 8: Sign the final installer package
-      # This is the file the user downloads. Signing it is critical for user trust.
-      # ====================================================================
       - name: Sign the installer (NetSpeedTray-Setup.exe)
         uses: signpath/action@v2
         with:
           signpath_organization_id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
           signpath_api_token: ${{ secrets.SIGNPATH_API_TOKEN }}
-          project_slug: 'netspeedTray' # Ensure this matches your SignPath project name
-          # The installer is in the 'installer' folder as defined in setup.iss
+          project_slug: 'netspeedtray'
           file_to_sign: 'installer/NetSpeedTray-${{ github.ref_name }}-Setup.exe'
       
-      # Step 9: Create the portable .zip archive
       - name: Create portable ZIP archive
         run: Compress-Archive -Path "dist/NetSpeedTray" -DestinationPath "dist/NetSpeedTray-Portable-${{ github.ref_name }}.zip"
         shell: powershell
 
-      # Step 10: Create the Release and Upload Artifacts
       - name: Create GitHub Release and Upload Artifacts
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref }}
           name: "Release ${{ github.ref_name }}"
           generate_release_notes: true
-          # Correctly list the paths to the signed installer and the portable zip
           files: |
             installer/NetSpeedTray-${{ github.ref_name }}-Setup.exe
             dist/NetSpeedTray-Portable-${{ github.ref_name }}.zip
