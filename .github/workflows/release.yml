@@ -11,6 +11,7 @@ jobs:
     permissions:
       contents: write
       id-token: write
+
     steps:
       - name: Check out repository code
         uses: actions/checkout@v4
@@ -69,7 +70,8 @@ jobs:
       - name: Sign the installer (NetSpeedTray-Setup.exe)
         uses: signpath/github-action-submit-signing-request@v2
         with:
-          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}          project-slug: 'netspeedtray'
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: 'netspeedtray'
           artifact-configuration-slug: 'netspeedtray-installer'
           signing-policy-slug: 'test-signing'
           github-artifact-id: ${{ steps.upload-installer.outputs.artifact-id }}
