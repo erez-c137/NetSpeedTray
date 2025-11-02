@@ -27,27 +27,19 @@ jobs:
       - name: Build the application
         run: .\build\build.bat
 
-      - name: List build outputs
-        run: |
-          echo "Listing contents of the current directory:"
-          dir
-          echo "Listing contents of the dist directory:"
-          dir dist
-        shell: cmd
-
       - name: Upload Unsigned Installer
         id: upload_installer
         uses: actions/upload-artifact@v4
         with:
           name: installer-unsigned
-          path: Output/*-Setup.exe
+          path: dist/NetSpeedTray-*/NetSpeedTray-*-Setup.exe
 
       - name: Upload Unsigned Portable Zip
         id: upload_portable
         uses: actions/upload-artifact@v4
         with:
           name: portable-unsigned
-          path: dist/*.zip
+          path: dist/NetSpeedTray-*/*-Portable-*.zip
 
       - name: Submit Installer to SignPath
         uses: signpath/github-action-submit-signing-request@v2
