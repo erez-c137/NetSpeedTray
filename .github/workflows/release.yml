@@ -10,7 +10,6 @@ jobs:
     runs-on: windows-latest
     permissions:
       contents: write
-      id-token: write
 
     steps:
       - name: Check out repository code
@@ -41,6 +40,7 @@ jobs:
         uses: signpath/github-action-submit-signing-request@v2
         with:
           organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
           project-slug: 'netspeedtray'
           artifact-configuration-slug: 'netspeedtray-executable'
           signing-policy-slug: 'test-signing'
@@ -71,6 +71,7 @@ jobs:
         uses: signpath/github-action-submit-signing-request@v2
         with:
           organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
           project-slug: 'netspeedtray'
           artifact-configuration-slug: 'netspeedtray-installer'
           signing-policy-slug: 'test-signing'
