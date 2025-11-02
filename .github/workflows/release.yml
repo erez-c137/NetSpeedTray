@@ -1,100 +1,73 @@
-name: Create Signed Release
+name: Create Release and Sign Artifacts
 
 on:
   push:
     tags:
-      - 'v*.*.*'
+      - "v*.*.*"
 
 jobs:
-  build-and-release:
+  build-and-sign:
     runs-on: windows-latest
-    permissions:
-      contents: write
 
     steps:
-      - name: Check out repository code
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
+          python -m venv .venv
+          .\.venv\Scripts\Activate.ps1
           pip install -r dev-requirements.txt
 
-      - name: Build executable with PyInstaller
-        run: pyinstaller --noconfirm --distpath "./dist" build/NetSpeedTray.spec
+      - name: Build the application
+        run: .\build\build.bat
 
-      - name: Upload executable artifact for signing
+      - name: Upload Unsigned Installer
+        id: upload_installer
         uses: actions/upload-artifact@v4
-        id: upload-executable
         with:
-          name: netspeedtray-executable
-          path: dist/NetSpeedTray/NetSpeedTray.exe
-          retention-days: 1
+          name: installer-unsigned
+          path: dist/*-Setup.exe
 
-      - name: Sign NetSpeedTray.exe
+      - name: Upload Unsigned Portable Zip
+        id: upload_portable
+        uses: actions/upload-artifact@v4
+        with:
+          name: portable-unsigned
+          path: dist/*.zip
+
+      - name: Submit Installer to SignPath
         uses: signpath/github-action-submit-signing-request@v2
         with:
-          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
-          project-slug: 'netspeedtray'
-          artifact-configuration-slug: 'netspeedtray-executable'
-          signing-policy-slug: 'test-signing'
-          github-artifact-id: ${{ steps.upload-executable.outputs.artifact-id }}
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: "netspeedtray"
+          artifact-configuration-slug: "netspeedtray-installer"
+          signing-policy-slug: "test-signing"
+          github-artifact-id: ${{ steps.upload_installer.outputs.artifact-id }}
+          output-artifact-directory: "signed-installer"
 
-      - name: Download signed executable
-        uses: actions/download-artifact@v4
-        with:
-          name: netspeedtray-executable-signed
-          path: dist/NetSpeedTray/
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: ${{ github.run_id }}
-
-      - name: Build installer with Inno Setup
-        uses: Minionguyjpro/Inno-Setup-Action@v1.2.2
-        with:
-          path: build/setup.iss
-
-      - name: Upload installer artifact for signing
-        uses: actions/upload-artifact@v4
-        id: upload-installer
-        with:
-          name: netspeedtray-installer
-          path: installer/NetSpeedTray-${{ github.ref_name }}-Setup.exe
-          retention-days: 1
-
-      - name: Sign the installer (NetSpeedTray-Setup.exe)
+      - name: Submit Portable ZIP to SignPath
         uses: signpath/github-action-submit-signing-request@v2
         with:
-          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
-          project-slug: 'netspeedtray'
-          artifact-configuration-slug: 'netspeedtray-installer'
-          signing-policy-slug: 'test-signing'
-          github-artifact-id: ${{ steps.upload-installer.outputs.artifact-id }}
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: "netspeedtray"
+          artifact-configuration-slug: "netspeedtray-portable"
+          signing-policy-slug: "test-signing"
+          github-artifact-id: ${{ steps.upload_portable.outputs.artifact-id }}
+          output-artifact-directory: "signed-portable"
 
-      - name: Download signed installer
-        uses: actions/download-artifact@v4
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
         with:
-          name: netspeedtray-installer-signed
-          path: installer/
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: ${{ github.run_id }}
-      
-      - name: Create portable ZIP archive
-        run: Compress-Archive -Path "dist/NetSpeedTray" -DestinationPath "dist/NetSpeedTray-Portable-${{ github.ref_name }}.zip"
-        shell: powershell
-
-      - name: Create GitHub Release and Upload Artifacts
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref }}
-          name: "Release ${{ github.ref_name }}"
-          generate_release_notes: true
           files: |
-            installer/NetSpeedTray-${{ github.ref_name }}-Setup.exe
-            dist/NetSpeedTray-Portable-${{ github.ref_name }}.zip
+            signed-installer/*
+            signed-portable/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
