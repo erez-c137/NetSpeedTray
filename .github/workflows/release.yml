@@ -1,12 +1,12 @@
-name: Create Release and Sign Artifacts
+name: DEBUG - Inspect Build Artifacts
 
 on:
   push:
     tags:
-      - "v*.*.*"
+      - "v*-debug"
 
 jobs:
-  build-and-sign:
+  build-and-inspect:
     runs-on: windows-latest
 
     steps:
@@ -27,47 +27,23 @@ jobs:
       - name: Build the application
         run: .\build\build.bat
 
-      - name: Upload Unsigned Installer
-        id: upload_installer
+      - name: Upload Installer for Inspection
         uses: actions/upload-artifact@v4
         with:
-          name: installer-unsigned
+          name: installer-for-inspection
           path: dist/NetSpeedTray-*/NetSpeedTray-*-Setup.exe
 
-      - name: Upload Unsigned Portable Zip
-        id: upload_portable
-        uses: actions/upload-artifact@v4
-        with:
-          name: portable-unsigned
-          path: dist/NetSpeedTray-*/*-Portable-*.zip
-
-      - name: Submit Installer to SignPath
-        uses: signpath/github-action-submit-signing-request@v2
-        with:
-          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
-          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
-          project-slug: "netspeedtray"
-          artifact-configuration-slug: "netspeedtray-installer"
-          signing-policy-slug: "test-signing"
-          github-artifact-id: ${{ steps.upload_installer.outputs.artifact-id }}
-          output-artifact-directory: "signed-installer"
-
-      - name: Submit Portable ZIP to SignPath
-        uses: signpath/github-action-submit-signing-request@v2
-        with:
-          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
-          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
-          project-slug: "netspeedtray"
-          artifact-configuration-slug: "netspeedtray-portable"
-          signing-policy-slug: "test-signing"
-          github-artifact-id: ${{ steps.upload_portable.outputs.artifact-id }}
-          output-artifact-directory: "signed-portable"
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
-        with:
-          files: |
-            signed-installer/*
-            signed-portable/*
+      - name: Download and Inspect Artifact
+        run: |
+          # Download the artifact we just uploaded into a directory named 'debug'
+          gh artifact download installer-for-inspection --dir debug
+          
+          echo "---"
+          echo "--- ARTIFACT CONTENTS ---"
+          echo "The exact file path inside the artifact is shown below:"
+          echo "---"
+          
+          # List the full directory tree of the downloaded artifact
+          dir debug /s
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
