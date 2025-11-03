@@ -67,7 +67,7 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            signed-installer/*
-            signed-portable/*
+            signed-installer/**/*
+            signed-portable/**/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
