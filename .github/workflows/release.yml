@@ -6,9 +6,8 @@ on:
       - "v*-debug"
 
 jobs:
-  build-and-inspect:
+  build-and-upload:
     runs-on: windows-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -27,23 +26,49 @@ jobs:
       - name: Build the application
         run: .\build\build.bat
 
-      - name: Upload Installer for Inspection
+      - name: Upload Installer Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: installer-for-inspection
+          name: installer-artifact-for-inspection
           path: dist/NetSpeedTray-*/NetSpeedTray-*-Setup.exe
 
-      - name: Download and Inspect Artifact
+      - name: Upload Portable Zip Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: portable-artifact-for-inspection
+          path: dist/NetSpeedTray-*/NetSpeedTray-Portable-*.zip
+
+  inspect:
+    needs: build-and-upload
+    runs-on: windows-latest
+    steps:
+      - name: Download Installer Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: installer-artifact-for-inspection
+          path: inspect-installer
+
+      - name: Download Portable Zip Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: portable-artifact-for-inspection
+          path: inspect-portable
+
+      - name: List Contents of Installer Artifact
         run: |
-          # Download the artifact we just uploaded into a directory named 'debug'
-          gh artifact download installer-for-inspection --dir debug
-          
           echo "---"
-          echo "--- ARTIFACT CONTENTS ---"
-          echo "The exact file path inside the artifact is shown below:"
+          echo "--- INSTALLER ARTIFACT CONTENTS (GROUND TRUTH) ---"
           echo "---"
-          
-          # List the full directory tree of the downloaded artifact
-          dir debug /s
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          dir inspect-installer /s
+        shell: cmd
+
+      - name: Unzip and List Contents of Portable Artifact
+        run: |
+          echo "---"
+          echo "--- PORTABLE ARTIFACT CONTENTS (GROUND TRUTH) ---"
+          echo "---"
+          # Unzip the outer zip file first
+          Expand-Archive -Path "inspect-portable\*.zip" -DestinationPath "inspect-portable\unzipped"
+          # List the contents
+          dir inspect-portable /s
+        shell: pwsh
