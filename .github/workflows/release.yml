@@ -1,13 +1,14 @@
-name: DEBUG - Inspect Build Artifacts
+name: Create Release and Sign Artifacts
 
 on:
   push:
     tags:
-      - "v*-debug"
+      - "v*.*.*"
 
 jobs:
-  build-and-upload:
+  build-and-sign:
     runs-on: windows-latest
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -26,49 +27,47 @@ jobs:
       - name: Build the application
         run: .\build\build.bat
 
-      - name: Upload Installer Artifact
+      - name: Upload Unsigned Installer
+        id: upload_installer
         uses: actions/upload-artifact@v4
         with:
-          name: installer-artifact-for-inspection
+          name: installer-unsigned
           path: dist/NetSpeedTray-*/NetSpeedTray-*-Setup.exe
 
-      - name: Upload Portable Zip Artifact
+      - name: Upload Unsigned Portable Zip
+        id: upload_portable
         uses: actions/upload-artifact@v4
         with:
-          name: portable-artifact-for-inspection
+          name: portable-unsigned
           path: dist/NetSpeedTray-*/NetSpeedTray-Portable-*.zip
 
-  inspect:
-    needs: build-and-upload
-    runs-on: windows-latest
-    steps:
-      - name: Download Installer Artifact
-        uses: actions/download-artifact@v4
+      - name: Submit Installer to SignPath
+        uses: signpath/github-action-submit-signing-request@v2
         with:
-          name: installer-artifact-for-inspection
-          path: inspect-installer
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: "netspeedtray"
+          artifact-configuration-slug: "netspeedtray-installer"
+          signing-policy-slug: "test-signing"
+          github-artifact-id: ${{ steps.upload_installer.outputs.artifact-id }}
+          output-artifact-directory: "signed-installer"
 
-      - name: Download Portable Zip Artifact
-        uses: actions/download-artifact@v4
+      - name: Submit Portable ZIP to SignPath
+        uses: signpath/github-action-submit-signing-request@v2
         with:
-          name: portable-artifact-for-inspection
-          path: inspect-portable
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: "netspeedtray"
+          artifact-configuration-slug: "netspeedtray-portable"
+          signing-policy-slug: "test-signing"
+          github-artifact-id: ${{ steps.upload_portable.outputs.artifact-id }}
+          output-artifact-directory: "signed-portable"
 
-      - name: List Contents of Installer Artifact
-        run: |
-          echo "---"
-          echo "--- INSTALLER ARTIFACT CONTENTS (GROUND TRUTH) ---"
-          echo "---"
-          dir inspect-installer /s
-        shell: cmd
-
-      - name: Unzip and List Contents of Portable Artifact
-        run: |
-          echo "---"
-          echo "--- PORTABLE ARTIFACT CONTENTS (GROUND TRUTH) ---"
-          echo "---"
-          # Unzip the outer zip file first
-          Expand-Archive -Path "inspect-portable\*.zip" -DestinationPath "inspect-portable\unzipped"
-          # List the contents
-          dir inspect-portable /s
-        shell: pwsh
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            signed-installer/*
+            signed-portable/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
