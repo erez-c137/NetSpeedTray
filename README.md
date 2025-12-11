@@ -8,6 +8,11 @@ A lightweight, open-source network monitor for Windows that displays live upload
 
 ---
 
+## Sponsors
+
+This program uses free code signing provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+
+
 ## Installation
 
 The easiest way to install and get automatic updates is with a package manager.
