@@ -2,7 +2,17 @@
 setlocal EnableDelayedExpansion
 
 :: --- Configuration ---
-set "VERSION=1.1.7"
+:: UPDATED: Take version from command line argument
+set "VERSION=%~1"
+
+:: Validate Version Input
+if "%VERSION%"=="" (
+    echo.
+    echo ERROR: Version argument is missing.
+    echo Usage: build.bat [version]
+    echo Example: build.bat 1.1.8
+    goto :fail
+)
 
 :: --- Automatically determine project paths (Portable & Robust) ---
 set "BUILD_DIR=%~dp0"
@@ -34,7 +44,6 @@ if not exist "%CODENAME%" (echo ERROR: monitor.py missing & goto :fail)
 if not exist "%ROOT_DIR%\assets\NetSpeedTray.ico" (echo ERROR: NetSpeedTray.ico missing & goto :fail)
 if not exist "%BUILD_DIR%NetSpeedTray.spec" (echo ERROR: netspeedtray.spec missing & goto :fail)
 if not exist "%BUILD_DIR%setup.iss" (echo ERROR: setup.iss missing & goto :fail)
-if not exist "%BUILD_DIR%version_info.txt" (echo ERROR: version_info.txt missing & goto :fail)
 if not exist "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" (echo ERROR: Inno Setup 6 not installed & goto :fail)
 call "%ROOT_DIR%\.venv\Scripts\activate.bat" 2>nul
 "%ROOT_DIR%\.venv\Scripts\python.exe" -c "import PyQt6, psutil, win32api, matplotlib, numpy, signal" >> "%LOG_FILE%" 2>&1
@@ -48,18 +57,22 @@ echo Compiling executable...
 echo Compiling executable... >> "%LOG_FILE%"
 set "start_time=%TIME%"
 cd /d "%BUILD_DIR%"
+
+:: --- NEW: Generate the dynamic version_info.txt ---
+echo Generating version info for v%VERSION%...
+"%ROOT_DIR%\.venv\Scripts\python.exe" create_version_info.py "%VERSION%" >> "%LOG_FILE%" 2>&1
+if errorlevel 1 (echo ERROR: Failed to generate version info & goto :fail)
+:: --------------------------------------------------
+
 pyinstaller --noconfirm --distpath "%DIST_DIR%" NetSpeedTray.spec >> "%LOG_FILE%" 2>&1
-if errorlevel 1 (echo ERROR: PyInstaller failed. Check %LOG_FILE% & goto :fail)
-if not exist "%DIST_DIR%\NetSpeedTray.exe" (echo ERROR: Executable not found after compilation & goto :fail)
-set "end_time=%TIME%"
-call :log_elapsed "Compiling executable" "%start_time%" "%end_time%"
 
 :: Stage 4: Generate Installer
 echo.
 echo Generating installer...
 echo Generating installer... >> "%LOG_FILE%"
 set "start_time=%TIME%"
-"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "%BUILD_DIR%setup.iss" >> "%LOG_FILE%" 2>&1
+:: UPDATED: Pass the version to Inno Setup using /DAppVersion
+"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DAppVersion="%VERSION%" "%BUILD_DIR%setup.iss" >> "%LOG_FILE%" 2>&1
 if errorlevel 1 (echo ERROR: Installer creation failed. Check %LOG_FILE% & goto :fail)
 if not exist "%INSTALLER_DIR%\NetSpeedTray-%VERSION%-Setup.exe" (echo ERROR: Setup file not found after compilation & goto :fail)
 set "end_time=%TIME%"

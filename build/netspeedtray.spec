@@ -1,29 +1,40 @@
 # NetSpeedTray.spec
+from PyInstaller.utils.hooks import collect_all
 
 block_cipher = None
+
+# --- FORCE COLLECT PANDAS ---
+# This grabs all hidden imports, data files, and binaries for pandas
+pandas_datas, pandas_binaries, pandas_hiddenimports = collect_all('pandas')
+
+# Define your manual hidden imports
+my_hidden_imports = [
+    'PyQt6.QtCore',
+    'PyQt6.QtGui',
+    'PyQt6.QtWidgets',
+    'psutil',
+    'win32api',
+    'win32com.shell.shell',
+    'matplotlib',
+    'matplotlib.pyplot',
+    'matplotlib.backends.backend_qtagg',
+    'numpy',
+    'signal',
+    'wmi',
+]
+
+# Combine them
+all_hidden_imports = my_hidden_imports + pandas_hiddenimports
 
 a = Analysis(
     ['..\\src\\monitor.py'],
     pathex=[],
-    binaries=[],
+    binaries=pandas_binaries, # Include pandas binaries
     datas=[
         ('..\\assets', 'assets'),
         ('..\\src\\netspeedtray\\constants\\locales', 'netspeedtray/constants/locales')
-    ],
-    hiddenimports=[
-        'PyQt6.QtCore',
-        'PyQt6.QtGui',
-        'PyQt6.QtWidgets',
-        'psutil',
-        'win32api',
-        'win32com.shell.shell',
-        'matplotlib',
-        'matplotlib.pyplot',
-        'matplotlib.backends.backend_qtagg',
-        'numpy',
-        'signal',
-        'wmi',
-    ],
+    ] + pandas_datas, # Include pandas data
+    hiddenimports=all_hidden_imports, # Include pandas hidden imports
     hookspath=[],
     runtime_hooks=[],
     excludes=[],

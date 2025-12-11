@@ -1,20 +1,27 @@
 ; NetSpeedTray Installer Script
-; Version 1.1.7
 
 #define MyAppName "NetSpeedTray"
-#define MyAppVersion "1.1.7.0"
-#define MyAppVersionDisplay "1.1.7"
 #define MyAppPublisher "Erez C137"
 #define MyAppURL "https://github.com/erez-c137/NetSpeedTray"
 #define MyAppExeName "NetSpeedTray.exe"
 #define MyAppMutex "Global\NetSpeedTray_Single_Instance_Mutex"
 #define MyAppId "{{D3A32B89-C533-4F2C-9F87-23B2395B5B89}}"
 
+; --- DYNAMIC VERSIONING ---
+; If AppVersion is NOT defined (e.g., manual compile without build.bat), use a default.
+; When running via build.bat, the /DAppVersion="x.x.x" flag overrides this.
+#ifndef AppVersion
+  #define AppVersion "0.0.0" 
+#endif
+
 [Setup]
 AppId={#MyAppId}
 AppName={#MyAppName}
-AppVersion={#MyAppVersion}
-AppVerName={#MyAppName} {#MyAppVersionDisplay}
+
+; Uses the version passed from build.bat (e.g., 1.1.8)
+AppVersion={#AppVersion}
+AppVerName={#MyAppName} {#AppVersion}
+
 AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
@@ -28,17 +35,20 @@ WizardStyle=modern
 Compression=lzma
 SolidCompression=yes
 OutputDir=installer
-OutputBaseFilename=NetSpeedTray-{#MyAppVersionDisplay}-Setup
-VersionInfoVersion={#MyAppVersion}
+
+; Filename will now be NetSpeedTray-1.1.8-Setup
+OutputBaseFilename=NetSpeedTray-{#AppVersion}-Setup
+
+; This sets the Windows Property "File Version"
+VersionInfoVersion={#AppVersion}
+
 DisableDirPage=auto
 UsePreviousAppDir=no
 SetupLogging=yes
 UninstallDisplayName={#MyAppName}
 RestartIfNeededByRun=no
-; Enable auto-force close for upgrades (graceful first via Restart Manager, then kill)
 CloseApplications=force
 CloseApplicationsFilter=*.exe,*.dll
-; SignedUninstaller=yes ; Uncomment when you have a code signing certificate
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -57,10 +67,7 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
 
-; --- UninstallDelete section ---
 [UninstallDelete]
-; This section provides explicit instructions for the uninstaller.
-; It ensures that orphaned files from previous versions are removed.
 Type: files; Name: "{autodesktop}\{#MyAppName}.lnk"
 
 [Code]
@@ -77,7 +84,7 @@ function FindWindow(lpClassName, lpWindowName: string): HWND;
 function PostMessage(hWnd: HWND; Msg: Cardinal; wParam, lParam: Longint): BOOL;
   external 'PostMessageW@user32.dll stdcall';
 const
-  WM_CLOSE = $0010;  // WinAPI constant for close message
+  WM_CLOSE = $0010;  
 
 // --- Helper Functions ---
 function BoolToStr(Value: Boolean): string;
@@ -118,14 +125,12 @@ begin
     
   Log('NetSpeedTray is running (likely two processes), attempting to close gracefully...');
   
-  // Find the main window (on the child process) by its hidden title
   Hwnd := FindWindow('', 'NetSpeedTrayHidden');
   if Hwnd <> 0 then
   begin
     Log('Found NetSpeedTray window (child process), sending WM_CLOSE...');
     PostMessage(Hwnd, WM_CLOSE, 0, 0);
     
-    // Wait up to 5 seconds for graceful close (check every 500ms)
     WaitCount := 0;
     while (WaitCount < 10) and (FindWindow('', 'NetSpeedTrayHidden') <> 0) do
     begin
@@ -133,7 +138,6 @@ begin
       WaitCount := WaitCount + 1;
     end;
     
-    // If still running (parent may linger), force kill the EXE and tree
     if IsAppRunning() or (FindWindow('', 'NetSpeedTrayHidden') <> 0) then
     begin
       Log('Graceful close incomplete (parent/child lingering), using taskkill on EXE/tree...');
@@ -143,7 +147,7 @@ begin
         if Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM "{#MyAppExeName}" /T', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
         begin
           Log('taskkill (attempt ' + IntToStr(KillAttempts + 1) + ') executed with exit code: ' + IntToStr(ResultCode));
-          Sleep(2000);  // Extra wait for parent to exit after child
+          Sleep(2000); 
         end
         else
         begin
@@ -201,11 +205,8 @@ begin
   end;
 end;
 
-// --- Installer/Uninstaller Event Functions ---
 function InitializeSetup(): Boolean;
 begin
-  // No early close; CloseApplications=force handles during file replace for upgrades
-  // But if running and prompt needed (rare), handle here
   if IsAppRunning() then
   begin
     if MsgBox('{#MyAppName} is currently running and needs to be closed to continue installation.'#13#10#13#10'Click OK to automatically close it, or Cancel to exit the installer.', mbConfirmation, MB_OKCANCEL) = IDOK then
