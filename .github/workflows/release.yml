@@ -22,6 +22,9 @@ jobs:
         run: |
           python -m venv .venv
           .\.venv\Scripts\Activate.ps1
+          # Install APP dependencies (PyQt6, pandas, etc.)
+          pip install -r requirements.txt
+          # Install DEV dependencies (pytest, mock, etc.)
           pip install -r dev-requirements.txt
 
       # --- Quality Gate ---
