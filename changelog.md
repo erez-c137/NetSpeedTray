@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [1.1.8] - December 11, 2025
+
+This release marks a significant maturity milestone for NetSpeedTray. We are proud to announce that the application is now **digitally signed**, establishing a chain of trust and eliminating security warnings. Additionally, this update brings full Russian language support and a completely modernized, automated build pipeline.
+
+### 🛡️ Security & Trust
+*   **Digitally Signed Release:** NetSpeedTray is now officially signed with a trusted code signing certificate.
+    *   Eliminates the "Unknown Publisher" warning from Windows SmartScreen.
+    *   Guarantees that the executable has not been tampered with since it left the build server.
+*   **Security Patches:** Updated critical dependencies (including `fonttools` and `pandas`) to the latest secure versions to resolve reported vulnerabilities (CVEs).
+*   **Hardened Build Process:** Implemented strict input sanitization in the GitHub Actions workflow to prevent script injection attacks.
+
+### 🌍 Localization
+*   **Russian Language Support:** Added complete translation for the Russian language (Русский).
+*   **Locale Best Practices:** Updated the internal localization engine to use native language names (Endonyms) in the settings menu.
+
+### 🤖 Automation & CI/CD
+*   **Fully Automated Pipeline:** Implemented a robust CI/CD workflow using GitHub Actions. Every release is now built, tested, and packaged in a clean, isolated environment, ensuring 100% reproducibility.
+*   **Automated Versioning:** The application version is now dynamically injected from Git tags directly into the executable, installer, and internal metadata. This ensures the "File Version" in Windows Properties always matches the release tag perfectly.
+*   **Quality Gates:** Unit tests are now automatically executed before every build. If a test fails, the build is stopped immediately, preventing buggy releases from reaching users.
+
+---
+
 ## [1.1.7] - October 29, 2025
 
 This is a landmark release focused on stability and making the application's most complex feature—the **Network Speed Graph** - a fast, and visually insightful tool.
