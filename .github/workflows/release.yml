@@ -48,7 +48,7 @@ jobs:
           organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
           project-slug: "netspeedtray"
           artifact-configuration-slug: "netspeedtray-installer"
-          signing-policy-slug: "test-signing"
+          signing-policy-slug: "release-signing"
           github-artifact-id: ${{ steps.upload_installer.outputs.artifact-id }}
           output-artifact-directory: "signed-installer"
 
@@ -59,7 +59,7 @@ jobs:
           organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
           project-slug: "netspeedtray"
           artifact-configuration-slug: "netspeedtray-portable"
-          signing-policy-slug: "test-signing"
+          signing-policy-slug: "release-signing"
           github-artifact-id: ${{ steps.upload_portable.outputs.artifact-id }}
           output-artifact-directory: "signed-portable"
 
