@@ -159,7 +159,8 @@ goto :end
 echo.
 echo !   BUILD FAILED. Check %LOG_FILE% for details.     !
 echo.
-goto :end
+:: CRITICAL: Exit with an error code so GitHub Actions knows it failed!
+exit /b 1
 
 :: --- SCRIPT FUNCTIONS ---
 :log_elapsed

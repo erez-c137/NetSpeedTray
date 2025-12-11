@@ -18,6 +18,9 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress
+
       - name: Install dependencies
         run: |
           python -m venv .venv
