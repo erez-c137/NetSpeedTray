@@ -5,4 +5,5 @@ psutil
 matplotlib
 numpy
 wmi
-pandas
+pandas>=2.3.3
+fonttools>=4.61.0   # Explicitly added to enforce Security CVE fix

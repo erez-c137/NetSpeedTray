@@ -4,4 +4,4 @@ pytest
 pytest-mock
 pytest-cov
 freezegun
-pandas
+pip-tools
