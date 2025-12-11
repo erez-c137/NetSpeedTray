@@ -41,7 +41,7 @@ jobs:
         id: get_version
         env:
           TAG_REF: ${{ github.ref_name }}
-        # CORRECTED: Clean the tag first, THEN add the variable name
+        # Clean the tag first, THEN add the variable name
         run: |
           $clean_version = $env:TAG_REF.replace('v', '')
           echo "VERSION=$clean_version" >> $env:GITHUB_OUTPUT
