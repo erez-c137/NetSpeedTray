@@ -37,7 +37,7 @@ SolidCompression=yes
 OutputDir=installer
 
 ; Filename will now be NetSpeedTray-1.1.8-Setup
-OutputBaseFilename=NetSpeedTray-{#AppVersion}-Setup
+OutputBaseFilename=NetSpeedTray-{#AppVersion}-x64-Setup
 
 ; This sets the Windows Property "File Version"
 VersionInfoVersion={#AppVersion}

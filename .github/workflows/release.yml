@@ -5,6 +5,9 @@ on:
     tags:
       - "v*.*.*"
 
+permissions:
+  contents: write
+
 jobs:
   build-and-sign:
     runs-on: windows-latest
@@ -25,29 +28,23 @@ jobs:
         run: |
           python -m venv .venv
           .\.venv\Scripts\Activate.ps1
-          # Install APP dependencies (PyQt6, pandas, etc.)
           pip install -r requirements.txt
-          # Install DEV dependencies (pytest, mock, etc.)
           pip install -r dev-requirements.txt
 
-      # --- Quality Gate ---
       - name: Run unit tests
         run: |
           .\.venv\Scripts\Activate.ps1
-          pytest
+          python -m pytest
 
-      # --- Extract Version (Securely) ---
       - name: Get version from tag
         id: get_version
         env:
           TAG_REF: ${{ github.ref_name }}
-        # Clean the tag first, THEN add the variable name
         run: |
           $clean_version = $env:TAG_REF.replace('v', '')
           echo "VERSION=$clean_version" >> $env:GITHUB_OUTPUT
         shell: pwsh
 
-      # --- Pass version to build script ---
       - name: Build the application
         run: .\build\build.bat ${{ steps.get_version.outputs.VERSION }}
 
@@ -87,11 +84,45 @@ jobs:
           github-artifact-id: ${{ steps.upload_portable.outputs.artifact-id }}
           output-artifact-directory: "signed-portable"
 
+      # --- Calculate Checksums of SIGNED files ---
+      - name: Generate Checksums
+        run: |
+          echo "Calculating SHA256 checksums..."
+          $files = Get-ChildItem -Path signed-installer, signed-portable -Recurse -Include *.exe, *.zip
+          
+          # Create/Clear the file
+          $null > checksums.txt
+          
+          foreach ($file in $files) {
+            $hash = Get-FileHash $file.FullName -Algorithm SHA256
+            $entry = "$($hash.Hash) $($file.Name)"
+            echo $entry
+            echo $entry >> checksums.txt
+          }
+        shell: pwsh
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
           files: |
             signed-installer/**/*
             signed-portable/**/*
+            checksums.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  submit-to-winget:
+    needs: build-and-sign
+    runs-on: ubuntu-latest
+    steps:
+      - name: Submit to Winget
+        uses: vedantmgoyal2009/winget-releaser@v2
+        with:
+          # Your Winget Package ID
+          identifier: ErezC137.NetSpeedTray
+          
+          # Only submit the Installer (Setup.exe), ignore the Portable Zip
+          installers-regex: '.*Setup.exe$'
+          
+          # The token you just created
+          token: ${{ secrets.WINGET_TOKEN }}
