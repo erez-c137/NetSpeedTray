@@ -24,8 +24,24 @@ jobs:
           .\.venv\Scripts\Activate.ps1
           pip install -r dev-requirements.txt
 
+      # --- Quality Gate ---
+      - name: Run unit tests
+        run: |
+          .\.venv\Scripts\Activate.ps1
+          pytest
+
+      # --- Extract Version (Securely) ---
+      - name: Get version from tag
+        id: get_version
+        # SECURITY FIX: map the tag to an ENV variable to prevent script injection attacks.
+        env:
+          TAG_REF: ${{ github.ref_name }}
+        run: echo "version=$env:TAG_REF" | ForEach-Object { $_.replace('v', '') } | ForEach-Object { "VERSION=$_" } >> $env:GITHUB_OUTPUT
+        shell: pwsh
+
+      # --- Pass version to build script ---
       - name: Build the application
-        run: .\build\build.bat
+        run: .\build\build.bat ${{ steps.get_version.outputs.VERSION }}
 
       - name: Upload Unsigned Installer
         id: upload_installer
