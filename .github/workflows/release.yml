@@ -39,10 +39,12 @@ jobs:
       # --- Extract Version (Securely) ---
       - name: Get version from tag
         id: get_version
-        # SECURITY FIX: map the tag to an ENV variable to prevent script injection attacks.
         env:
           TAG_REF: ${{ github.ref_name }}
-        run: echo "version=$env:TAG_REF" | ForEach-Object { $_.replace('v', '') } | ForEach-Object { "VERSION=$_" } >> $env:GITHUB_OUTPUT
+        # CORRECTED: Clean the tag first, THEN add the variable name
+        run: |
+          $clean_version = $env:TAG_REF.replace('v', '')
+          echo "VERSION=$clean_version" >> $env:GITHUB_OUTPUT
         shell: pwsh
 
       # --- Pass version to build script ---
