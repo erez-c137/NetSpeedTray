@@ -10,7 +10,7 @@ This release addresses a critical bug where the widget would incorrectly hide wh
 
 ### 🐛 Bug Fixes
 
-*   **Fixed Widget Hiding with Maximized Apps:** Resolved issues [#65](https://github.com/erez-c137/NetSpeedTray/issues/65) and [#70](https://github.com/erez-c137/NetSpeedTray/issues/70) where the widget would disappear when other applications were maximized.
+*   **Fixed Widget Hiding with Maximized Apps:** Resolved issues where the widget would disappear when other applications were maximized.
     *   The `is_taskbar_obstructed` logic was overly aggressive and incorrectly identified maximized windows as obstructions.
     *   The detection has been simplified: the widget now only hides when a **true fullscreen application** is running (window dimensions exactly match the monitor).
     *   Maximized windows, borderless windowed games, and other non-fullscreen scenarios no longer cause the widget to hide.
