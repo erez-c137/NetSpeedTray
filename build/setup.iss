@@ -18,7 +18,6 @@
 AppId={#MyAppId}
 AppName={#MyAppName}
 
-; Uses the version passed from build.bat (e.g., 1.1.8)
 AppVersion={#AppVersion}
 AppVerName={#MyAppName} {#AppVersion}
 
@@ -36,10 +35,7 @@ Compression=lzma
 SolidCompression=yes
 OutputDir=installer
 
-; Filename will now be NetSpeedTray-1.1.8-Setup
 OutputBaseFilename=NetSpeedTray-{#AppVersion}-x64-Setup
-
-; This sets the Windows Property "File Version"
 VersionInfoVersion={#AppVersion}
 
 DisableDirPage=auto

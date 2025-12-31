@@ -573,76 +573,6 @@ def get_taskbar_height() -> int:
         return constants.taskbar.taskbar.DEFAULT_HEIGHT
  
           
-def is_taskbar_obstructed(taskbar_info: Optional[TaskbarInfo], hwnd_to_check: int) -> bool:
-    """
-    Checks if the taskbar is obstructed by a specific window (hwnd_to_check).
-    This is the definitive, stable, hybrid implementation restored from the last known-good version.
-    """
-    try:
-        if not hwnd_to_check or not win32gui.IsWindow(hwnd_to_check) or not taskbar_info or not taskbar_info.hwnd:
-            return False
-
-        # CHECK 0: Ignore self and common safe windows. This is the critical fix
-        # for the context menu causing the widget to hide.
-        own_pid = os.getpid()
-        _, check_pid = win32process.GetWindowThreadProcessId(hwnd_to_check)
-        if own_pid == check_pid:
-            return False
-
-        class_name = win32gui.GetClassName(hwnd_to_check)
-        if class_name in ("Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd", "NotifyIconOverflowWindow"):
-            return False
-
-        process_name = get_process_name_from_hwnd(hwnd_to_check)
-        if process_name == "explorer.exe":
-            return False
-
-        # Context Gathering: Ensure the window is on the same monitor as the taskbar.
-        try:
-            fg_monitor = win32api.MonitorFromWindow(hwnd_to_check, MONITOR_DEFAULTTONEAREST)
-            tb_monitor = win32api.MonitorFromWindow(taskbar_info.hwnd, MONITOR_DEFAULTTONEAREST)
-            if fg_monitor != tb_monitor:
-                return False
-
-            window_rect = win32gui.GetWindowRect(hwnd_to_check)
-            monitor_info = win32api.GetMonitorInfo(fg_monitor)
-            monitor_rect = monitor_info.get('Monitor')
-            work_area_rect = monitor_info.get('Work')
-            if not monitor_rect or not work_area_rect:
-                return False
-        except win32gui.error:
-            return False
-
-        # --- RULE 1: True fullscreen is ALWAYS an obstruction ---
-        # This correctly identifies fullscreen games, videos, etc.
-        if window_rect == monitor_rect:
-            return True
-
-        # --- RULE 2: Whitelist common browsers if they are not true fullscreen ---
-        # This is the fix for browsers and other maximized apps causing hiding.
-        if process_name in constants.shell.shell.COMMON_BROWSER_PROCESSES:
-            return False
-
-        # --- RULE 3: Specific shell flyouts ARE obstructions ---
-        # This correctly hides the widget for the Start Menu, Action Center, etc.
-        if process_name in constants.shell.shell.UI_PROCESS_NAMES_TO_HIDE:
-            return True
-
-        # --- RULE 4: Any other window that violates the work area is an obstruction ---
-        # This is a robust fallback for unusually sized or positioned windows.
-        is_contained = (
-            window_rect[0] >= work_area_rect[0] and window_rect[1] >= work_area_rect[1] and
-            window_rect[2] <= work_area_rect[2] and window_rect[3] <= work_area_rect[3]
-        )
-        if not is_contained:
-            return True
-
-        return False
-
-    except Exception as e:
-        logger.error(f"Unexpected error in is_taskbar_obstructed: {e}", exc_info=True)
-        return False
-    
 
 def is_taskbar_visible(taskbar_info: Optional[TaskbarInfo]) -> bool:
     """
@@ -691,31 +621,32 @@ def is_taskbar_visible(taskbar_info: Optional[TaskbarInfo]) -> bool:
 
 def is_taskbar_obstructed(taskbar_info: Optional[TaskbarInfo], hwnd_to_check: int) -> bool:
     """
-    Checks if the taskbar is obstructed by a specific window (hwnd_to_check).
-    This is the definitive, stable, hybrid implementation restored from the last known-good version,
-    updated to use the new constants architecture.
+    Checks if the taskbar is obstructed by a specific window.
+    
+    The goal is simple: widget should be visible whenever the taskbar is visible.
+    Only TRUE fullscreen windows (covering the entire monitor) should hide the widget.
     """
     try:
         if not hwnd_to_check or not win32gui.IsWindow(hwnd_to_check) or not taskbar_info or not taskbar_info.hwnd:
             return False
 
-        # RULE 0: A window cannot be obstructed by itself or its own popups (e.g., context menu).
+        # Ignore our own windows (e.g., context menu popups)
         own_pid = os.getpid()
         _, check_pid = win32process.GetWindowThreadProcessId(hwnd_to_check)
         if own_pid == check_pid:
             return False
 
-        # RULE 1: Ignore the desktop and the taskbar itself.
+        # Ignore desktop and shell windows
         class_name = win32gui.GetClassName(hwnd_to_check)
         if class_name in ("Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"):
             return False
 
-        # RULE 2: Ignore explorer.exe, which can sometimes be the foreground window harmlessly.
+        # Ignore explorer.exe (File Explorer, desktop, etc.)
         process_name = get_process_name_from_hwnd(hwnd_to_check)
         if process_name == "explorer.exe":
             return False
 
-        # --- Context Gathering: Ensure the window is on the same monitor as the taskbar ---
+        # Check if window is on the same monitor as the taskbar
         try:
             fg_monitor = win32api.MonitorFromWindow(hwnd_to_check, MONITOR_DEFAULTTONEAREST)
             tb_monitor = win32api.MonitorFromWindow(taskbar_info.hwnd, MONITOR_DEFAULTTONEAREST)
@@ -725,46 +656,17 @@ def is_taskbar_obstructed(taskbar_info: Optional[TaskbarInfo], hwnd_to_check: in
             window_rect = win32gui.GetWindowRect(hwnd_to_check)
             monitor_info = win32api.GetMonitorInfo(fg_monitor)
             monitor_rect = monitor_info.get('Monitor')
-            work_area_rect = monitor_info.get('Work')
-            if not monitor_rect or not work_area_rect:
+            if not monitor_rect:
                 return False
         except win32gui.error:
-            return False # Window might have closed between checks.
+            return False
 
-        # --- RULE 3: True fullscreen is ALWAYS an obstruction (e.g., games, F11 mode) ---
+        # ONLY obstruction: True fullscreen (window covers ENTIRE monitor)
+        # This catches fullscreen games, F11 browser mode, fullscreen videos, etc.
         if window_rect == monitor_rect:
             return True
 
-        # --- RULE 4: Whitelist common browsers if they are not true fullscreen ---
-        # This is a fast-path to prevent unnecessary checks for the most common case.
-        if process_name in constants.shell.shell.COMMON_BROWSER_PROCESSES:
-            return False
-
-        # --- RULE 5: Specific shell UI elements ARE obstructions (Start Menu, Action Center) ---
-        if process_name in constants.shell.shell.UI_PROCESS_NAMES_TO_HIDE:
-            return True
-
-        # --- RULE 6 (PROVEN LOGIC): Differentiate maximized windows from borderless fullscreen ---
-        is_work_area_sized = (
-            window_rect[0] == work_area_rect[0] and window_rect[1] == work_area_rect[1] and
-            window_rect[2] == work_area_rect[2] and window_rect[3] == work_area_rect[3]
-        )
-        if is_work_area_sized:
-            style = win32gui.GetWindowLong(hwnd_to_check, win32con.GWL_STYLE)
-            # If it has the WS_MAXIMIZE style, it's a normal application. NOT an obstruction.
-            if style & win32con.WS_MAXIMIZE:
-                return False
-            # Otherwise, it's a borderless window filling the work area. IS an obstruction.
-            return True
-
-        # --- RULE 7 (FALLBACK): Any window that violates the work area is an obstruction ---
-        is_contained = (
-            window_rect[0] >= work_area_rect[0] and window_rect[1] >= work_area_rect[1] and
-            window_rect[2] <= work_area_rect[2] and window_rect[3] <= work_area_rect[3]
-        )
-        if not is_contained:
-            return True
-
+        # All other cases: NOT an obstruction (maximized apps, snapped windows, etc.)
         return False
 
     except Exception as e:

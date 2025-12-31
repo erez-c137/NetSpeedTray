@@ -74,7 +74,7 @@ set "start_time=%TIME%"
 :: UPDATED: Pass the version to Inno Setup using /DAppVersion
 "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DAppVersion="%VERSION%" "%BUILD_DIR%setup.iss" >> "%LOG_FILE%" 2>&1
 if errorlevel 1 (echo ERROR: Installer creation failed. Check %LOG_FILE% & goto :fail)
-if not exist "%INSTALLER_DIR%\NetSpeedTray-%VERSION%-Setup.exe" (echo ERROR: Setup file not found after compilation & goto :fail)
+if not exist "%INSTALLER_DIR%\NetSpeedTray-%VERSION%-x64-Setup.exe" (echo ERROR: Setup file not found after compilation & goto :fail)
 set "end_time=%TIME%"
 call :log_elapsed "Generating installer" "%start_time%" "%end_time%"
 
@@ -90,7 +90,7 @@ set "PORTABLE_DIR_NAME=NetSpeedTray-Portable"
 if not exist "!RELEASE_DIR!" mkdir "!RELEASE_DIR!"
 
 :: Move the installer into the release directory
-move "%INSTALLER_DIR%\NetSpeedTray-%VERSION%-Setup.exe" "!RELEASE_DIR!\" > NUL
+move "%INSTALLER_DIR%\NetSpeedTray-%VERSION%-x64-Setup.exe" "!RELEASE_DIR!\" > NUL
 
 :: Create the portable zip archive
 echo Creating portable zip file...
@@ -112,8 +112,8 @@ set "CHECKSUM_FILE=%RELEASE_DIR%\checksums.txt"
     echo ### %PORTABLE_DIR_NAME%-%VERSION%.zip
     certutil -hashfile "!RELEASE_DIR!\%PORTABLE_DIR_NAME%-%VERSION%.zip" SHA256 | findstr /v "hash"
     echo.
-    echo ### NetSpeedTray-%VERSION%-Setup.exe
-    certutil -hashfile "!RELEASE_DIR!\NetSpeedTray-%VERSION%-Setup.exe" SHA256 | findstr /v "hash"
+    echo ### NetSpeedTray-%VERSION%-x64-Setup.exe
+    certutil -hashfile "!RELEASE_DIR!\NetSpeedTray-%VERSION%-x64-Setup.exe" SHA256 | findstr /v "hash"
 ) > "!CHECKSUM_FILE!"
 set "end_time=%TIME%"
 call :log_elapsed "Computing checksums" "%start_time%" "%end_time%"

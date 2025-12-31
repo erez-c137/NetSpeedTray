@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [1.1.9] - December 31, 2025
+
+This release addresses a critical bug where the widget would incorrectly hide when applications were maximized, even though the taskbar remained visible.
+
+### 🐛 Bug Fixes
+
+*   **Fixed Widget Hiding with Maximized Apps:** Resolved issues [#65](https://github.com/erez-c137/NetSpeedTray/issues/65) and [#70](https://github.com/erez-c137/NetSpeedTray/issues/70) where the widget would disappear when other applications were maximized.
+    *   The `is_taskbar_obstructed` logic was overly aggressive and incorrectly identified maximized windows as obstructions.
+    *   The detection has been simplified: the widget now only hides when a **true fullscreen application** is running (window dimensions exactly match the monitor).
+    *   Maximized windows, borderless windowed games, and other non-fullscreen scenarios no longer cause the widget to hide.
+
+### ⚙️ Build System
+
+*   **Fixed Build Script:** Corrected a filename mismatch in `build.bat` where the expected installer filename did not include the `-x64` suffix, causing builds to fail at the packaging stage.
+
+---
+
 ## [1.1.8] - December 11, 2025
 
 This release marks a significant maturity milestone for NetSpeedTray. We are proud to announce that the application is now **digitally signed**, establishing a chain of trust and eliminating security warnings. Additionally, this update brings full Russian language support and a completely modernized, automated build pipeline.
