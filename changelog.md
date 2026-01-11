@@ -22,6 +22,9 @@ This release is a major milestone in interactivity, stability, and design. It in
     *   **Sliders:** Precise sliders for transparency and history period adjustments.
     *   **Toggle Switches:** Replaced legacy checkboxes with modern looking switches.
     *   **Hex Color Input:** Added support for manual Hex color codes (e.g., `#FF5733`).
+*   **Unit Customization:**
+    *   **Bits vs Bytes:** Choose to display speeds in **Mbps** (Megabits) or **MB/s** (Megabytes).
+    *   **Decimal vs Binary:** Select between standard decimal (1000 = 1k, "MB") or binary IEC (1024 = 1Ki, "MiB") units.
 *   **Visual Polish:**
     *   **Fixed-Width Values:** Option to use monospaced formatting for speeds to prevent widget resizing/jitter.
     *   **Shortened Labels:** Optimized text labels ("Speed Display Mode" -> "Display") to fit better in compact views.
