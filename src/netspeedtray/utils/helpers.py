@@ -125,12 +125,30 @@ def setup_logging() -> logging.Logger:
     return logger
 
 
-def format_speed(speed: float, i18n, use_megabytes: bool, *, always_mbps: bool = False, decimal_places: int = 1) -> str:
+def format_speed(
+    speed: float, 
+    i18n, 
+    use_megabytes: bool = False,  # Deprecated, use unit_type instead
+    *, 
+    always_mbps: bool = False,  # Deprecated, use speed_display_mode instead
+    decimal_places: int = 1,
+    unit_type: str = "bits_decimal",
+    fixed_width: bool = False
+) -> str:
     """
     Format a speed value (in bytes/sec) into a human-readable string with dynamic units.
 
-    Speeds below `constants.network.units.MINIMUM_DISPLAY_SPEED` bytes/sec are displayed as '0'.
-    The number of decimal places for the output is controlled by `decimal_places`.
+    Args:
+        speed: Speed in bytes per second
+        i18n: Internationalization object with unit labels
+        use_megabytes: DEPRECATED - use unit_type instead
+        always_mbps: If True, always show Mbps/MBps regardless of actual speed
+        decimal_places: Number of decimal places to display
+        unit_type: One of "bits_decimal", "bits_binary", "bytes_decimal", "bytes_binary"
+        fixed_width: If True, pad values to prevent text jumping
+    
+    Returns:
+        Formatted speed string like "12.34 Mbps"
     """
     if not isinstance(speed, (int, float)):
         raise TypeError(f"Speed must be a number (int or float), got {type(speed)}")
@@ -138,60 +156,84 @@ def format_speed(speed: float, i18n, use_megabytes: bool, *, always_mbps: bool =
     current_speed = max(0.0, float(speed))
     val: float
     unit: str
+    units = constants.network.units
 
-    if current_speed < constants.network.units.MINIMUM_DISPLAY_SPEED:
-        if use_megabytes:
-            unit_key = constants.network.units.MBPS_LABEL if always_mbps else constants.network.units.KBPS_LABEL
+    # Parse unit_type
+    is_binary = unit_type.endswith("_binary")
+    is_bytes = unit_type.startswith("bytes")
+    
+    # Select divisors based on binary vs decimal
+    if is_binary:
+        kilo_div = units.KIBI_DIVISOR
+        mega_div = units.MEBI_DIVISOR
+        giga_div = units.GIBI_DIVISOR
+    else:
+        kilo_div = units.KILO_DIVISOR
+        mega_div = units.MEGA_DIVISOR
+        giga_div = units.GIGA_DIVISOR
+    
+    # Select unit labels based on bytes vs bits and binary vs decimal
+    if is_bytes:
+        if is_binary:
+            base_label, kilo_label, mega_label, giga_label = (
+                units.BPS_LABEL, units.KIBPS_LABEL, units.MIBPS_LABEL, units.GIBPS_LABEL
+            )
         else:
-            unit_key = constants.network.units.MBITS_LABEL if always_mbps else constants.network.units.KBITS_LABEL
-        unit = getattr(i18n, unit_key)
-        return f"{0.0:.{decimal_places}f} {unit}"
+            base_label, kilo_label, mega_label, giga_label = (
+                units.BPS_LABEL, units.KBPS_LABEL, units.MBPS_LABEL, units.GBPS_LABEL
+            )
+        speed_value = current_speed  # Already in bytes/sec
+    else:  # bits
+        if is_binary:
+            base_label, kilo_label, mega_label, giga_label = (
+                units.BITS_LABEL, units.KIBITS_LABEL, units.MIBITS_LABEL, units.GIBITS_LABEL
+            )
+        else:
+            base_label, kilo_label, mega_label, giga_label = (
+                units.BITS_LABEL, units.KBITS_LABEL, units.MBITS_LABEL, units.GBITS_LABEL
+            )
+        speed_value = current_speed * units.BITS_PER_BYTE  # Convert to bits
 
+    # Handle zero/minimum display threshold
+    if current_speed < units.MINIMUM_DISPLAY_SPEED:
+        unit = getattr(i18n, mega_label if always_mbps else kilo_label)
+        formatted_val = f"{0.0:.{decimal_places}f}"
+        if fixed_width:
+            formatted_val = formatted_val.rjust(7)
+        return f"{formatted_val} {unit}"
+
+    # Always show mega units or auto-scale
     if always_mbps:
-        if use_megabytes:
-            val = current_speed / constants.network.units.MEGA_DIVISOR
-            unit = getattr(i18n, constants.network.units.MBPS_LABEL)
+        val = speed_value / mega_div
+        unit = getattr(i18n, mega_label)
+    else:
+        # Auto-scale based on speed
+        if speed_value >= giga_div:
+            val = speed_value / giga_div
+            unit = getattr(i18n, giga_label)
+        elif speed_value >= mega_div:
+            val = speed_value / mega_div
+            unit = getattr(i18n, mega_label)
+        elif speed_value >= kilo_div:
+            val = speed_value / kilo_div
+            unit = getattr(i18n, kilo_label)
         else:
-            val = current_speed * constants.network.units.BITS_PER_BYTE / 1_000_000
-            unit = getattr(i18n, constants.network.units.MBITS_LABEL)
-    else:
-        if use_megabytes:  # Byte-based units (B/s, KB/s, MB/s, GB/s)
-            if current_speed >= constants.network.units.GIGA_DIVISOR:
-                val = current_speed / constants.network.units.GIGA_DIVISOR
-                unit = getattr(i18n, constants.network.units.GBPS_LABEL)
-            elif current_speed >= constants.network.units.MEGA_DIVISOR:
-                val = current_speed / constants.network.units.MEGA_DIVISOR
-                unit = getattr(i18n, constants.network.units.MBPS_LABEL)
-            elif current_speed >= constants.network.units.KILO_DIVISOR:
-                val = current_speed / constants.network.units.KILO_DIVISOR
-                unit = getattr(i18n, constants.network.units.KBPS_LABEL)
-            else:
-                val = current_speed
-                unit = getattr(i18n, constants.network.units.BPS_LABEL)
-        else:  # Bit-based units (bps, Kbps, Mbps, Gbps)
-            speed_bits = current_speed * constants.network.units.BITS_PER_BYTE
-            KILO_BITS_DIVISOR = 1000.0
-            MEGA_BITS_DIVISOR = 1000.0**2
-            GIGA_BITS_DIVISOR = 1000.0**3
-            if speed_bits >= GIGA_BITS_DIVISOR:
-                val = speed_bits / GIGA_BITS_DIVISOR
-                unit = getattr(i18n, constants.network.units.GBITS_LABEL)
-            elif speed_bits >= MEGA_BITS_DIVISOR:
-                val = speed_bits / MEGA_BITS_DIVISOR
-                unit = getattr(i18n, constants.network.units.MBITS_LABEL)
-            elif speed_bits >= KILO_BITS_DIVISOR:
-                val = speed_bits / KILO_BITS_DIVISOR
-                unit = getattr(i18n, constants.network.units.KBITS_LABEL)
-            else:
-                val = speed_bits
-                unit = getattr(i18n, constants.network.units.BITS_LABEL)
+            val = speed_value
+            unit = getattr(i18n, base_label)
 
-    # For base units (B/s, bps), always use 0 decimal places regardless of setting.
-    if unit in (getattr(i18n, constants.network.units.BPS_LABEL), getattr(i18n, constants.network.units.BITS_LABEL)):
-        return f"{val:.0f} {unit}"
+    # Format the value
+    if unit in (getattr(i18n, base_label, None),):
+        formatted_val = f"{val:.0f}"
     else:
-        # The f-string handles all rounding and padding based on decimal_places.
-        return f"{val:.{decimal_places}f} {unit}"
+        formatted_val = f"{val:.{decimal_places}f}"
+    
+    # Apply fixed-width padding if enabled
+    if fixed_width:
+        # Pad to accommodate values like "1234.56" (7 chars)
+        formatted_val = formatted_val.rjust(7)
+    
+    return f"{formatted_val} {unit}"
+
 
 def format_data_size(data_bytes: int | float, i18n, precision: int = 2) -> Tuple[float, str]:
     """

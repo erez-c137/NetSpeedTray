@@ -6,15 +6,23 @@ from typing import Final, Set, List
 class UnitConstants:
     """Constants for unit conversions and i18n keys for labels."""
     BITS_PER_BYTE: Final[int] = 8
+    
+    # Decimal (SI) divisors - powers of 1000
     KILO_DIVISOR: Final[int] = 1_000
     MEGA_DIVISOR: Final[int] = 1_000_000
     GIGA_DIVISOR: Final[int] = 1_000_000_000
+    
+    # Binary (IEC) divisors - powers of 1024
+    KIBI_DIVISOR: Final[int] = 1_024
+    MEBI_DIVISOR: Final[int] = 1_048_576
+    GIBI_DIVISOR: Final[int] = 1_073_741_824
+    
     KILO_THRESHOLD: Final[int] = KILO_DIVISOR
     MEGA_THRESHOLD: Final[int] = MEGA_DIVISOR
     GIGA_THRESHOLD: Final[int] = GIGA_DIVISOR
     MINIMUM_DISPLAY_SPEED: Final[float] = 10_000
     
-    # These are now i18n keys
+    # Decimal (SI) unit labels - i18n keys
     BPS_LABEL: Final[str] = "BPS_LABEL"
     KBPS_LABEL: Final[str] = "KBPS_LABEL"
     MBPS_LABEL: Final[str] = "MBPS_LABEL"
@@ -23,6 +31,15 @@ class UnitConstants:
     KBITS_LABEL: Final[str] = "KBITS_LABEL"
     MBITS_LABEL: Final[str] = "MBITS_LABEL"
     GBITS_LABEL: Final[str] = "GBITS_LABEL"
+    
+    # Binary (IEC) unit labels - i18n keys
+    BIBPS_LABEL: Final[str] = "BIBPS_LABEL"      # B/s (same as BPS)
+    KIBPS_LABEL: Final[str] = "KIBPS_LABEL"      # KiB/s
+    MIBPS_LABEL: Final[str] = "MIBPS_LABEL"      # MiB/s
+    GIBPS_LABEL: Final[str] = "GIBPS_LABEL"      # GiB/s
+    KIBITS_LABEL: Final[str] = "KIBITS_LABEL"    # Kibps
+    MIBITS_LABEL: Final[str] = "MIBITS_LABEL"    # Mibps
+    GIBITS_LABEL: Final[str] = "GIBITS_LABEL"    # Gibps
 
     def __init__(self) -> None:
         self.validate()

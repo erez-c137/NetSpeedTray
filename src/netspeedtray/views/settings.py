@@ -22,7 +22,7 @@ from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QSize, QPoint
 from PyQt6.QtGui import QColor, QFont, QFontDatabase, QIcon, QCloseEvent
 from PyQt6.QtWidgets import (
     QApplication, QColorDialog, QComboBox, QDialog, QFileDialog, QFontDialog,
-    QGridLayout, QGroupBox, QHBoxLayout, QLabel, QListWidget, QMessageBox,
+    QGridLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget, QMessageBox,
     QPushButton, QScrollArea, QStackedWidget, QVBoxLayout, QWidget, QRadioButton,
     QSpacerItem, QSizePolicy
 )
@@ -200,7 +200,17 @@ class SettingsDialog(QDialog):
             self.save_button.clicked.connect(self._save_and_close)
 
             self._ui_setup_done = True
-            self.adjustSize()
+            
+            # Initial resize to fit the first page
+            layout = self.layout()
+            if layout:
+                from PyQt6.QtWidgets import QLayout
+                original_constraint = layout.sizeConstraint()
+                layout.setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
+                self.adjustSize()
+                layout.setSizeConstraint(original_constraint)
+            else:
+                self.adjustSize()
 
             self.logger.debug(f"UI setup completed. Stack has {self.stack.count()} pages.")
         except Exception as e:
@@ -236,7 +246,7 @@ class SettingsDialog(QDialog):
             update_group = QGroupBox(self.i18n.UPDATE_RATE_GROUP_TITLE)
             update_group_layout = QVBoxLayout(update_group)
             update_group_layout.setSpacing(8)
-            self.update_rate = Win11Slider()
+            self.update_rate = Win11Slider(editable=False)
             self.update_rate.setRange(0, int(constants.timers.MAXIMUM_UPDATE_RATE_SECONDS * 2))
             update_group_layout.addWidget(QLabel(self.i18n.UPDATE_INTERVAL_LABEL))
             update_group_layout.addWidget(self.update_rate)
@@ -265,14 +275,35 @@ class SettingsDialog(QDialog):
 
             options_layout.setColumnStretch(0, 0)
             options_layout.setColumnStretch(1, 1)
-            options_layout.setRowStretch(3, 1)
+            # options_layout.setRowStretch(3, 1)
             page_layout.addWidget(options_group)
-
+            
+            # Add stretch to compact the view
+            page_layout.addStretch()
+            
             self.stack.addWidget(page)
         except Exception as e:
             self.logger.error(f"Error setting up General page: {e}", exc_info=True)
 
 
+    def _on_sidebar_selection_changed(self, row: int) -> None:
+        """Handles sidebar row changes to switch the stacked page."""
+        self.stack.setCurrentIndex(row)
+        
+        # Force the dialog to resize to fit the new page's content
+        # We temporarily set the layout constraint to 'SetFixedSize' which forces the window to shrink,
+        # then restore it so the user can still resize it if needed.
+        layout = self.layout()
+        if layout:
+            from PyQt6.QtWidgets import QLayout
+            original_constraint = layout.sizeConstraint()
+            layout.setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
+            self.adjustSize()
+            layout.setSizeConstraint(original_constraint)
+        else:
+             self.adjustSize() 
+ 
+ 
     def _on_free_move_toggled(self, checked: bool) -> None:
         """
         Handles the "Free Move" toggle event. If unchecked, snaps the widget
@@ -316,21 +347,35 @@ class SettingsDialog(QDialog):
             font_color_v_layout.setContentsMargins(0,0,0,0)
             font_color_v_layout.setSpacing(4)
             font_color_v_layout.addWidget(QLabel(self.i18n.DEFAULT_COLOR_LABEL))
+            
+            # Color button + hex input layout
+            default_color_h_layout = QHBoxLayout()
+            default_color_h_layout.setSpacing(8)
             self.default_color_button = QPushButton()
             self.default_color_button.setObjectName("default_color")
             self.default_color_button.setToolTip(self.i18n.DEFAULT_COLOR_TOOLTIP)
-            font_color_v_layout.addWidget(self.default_color_button, alignment=Qt.AlignmentFlag.AlignLeft)
+            default_color_h_layout.addWidget(self.default_color_button)
+            
+            self.default_color_input = QLineEdit()
+            self.default_color_input.setPlaceholderText("#FFFFFF")
+            self.default_color_input.setMaxLength(7)
+            self.default_color_input.setFixedWidth(80)
+            default_color_h_layout.addWidget(self.default_color_input)
+            default_color_h_layout.addStretch()
+            
+            font_color_v_layout.addLayout(default_color_h_layout)
             font_color_v_layout.addStretch()
             font_family_color_layout.addWidget(font_color_widget)
+
             font_layout.addLayout(font_family_color_layout)
 
             font_layout.addWidget(QLabel(self.i18n.FONT_SIZE_LABEL))
-            self.font_size = Win11Slider()
+            self.font_size = Win11Slider(editable=False)
             self.font_size.setRange(constants.fonts.FONT_SIZE_MIN, constants.fonts.FONT_SIZE_MAX)
             font_layout.addWidget(self.font_size)
 
             font_layout.addWidget(QLabel(self.i18n.FONT_WEIGHT_LABEL))
-            self.font_weight = Win11Slider()
+            self.font_weight = Win11Slider(editable=False)
             font_layout.addWidget(self.font_weight)
             page_layout.addWidget(font_group)
 
@@ -349,7 +394,7 @@ class SettingsDialog(QDialog):
             color_container_layout.setSpacing(8)
 
             color_container_layout.addWidget(QLabel(self.i18n.HIGH_SPEED_THRESHOLD_LABEL))
-            self.high_speed_threshold = Win11Slider()
+            self.high_speed_threshold = Win11Slider(editable=False)
             self.high_speed_threshold.setRange(
                 int(constants.ui.sliders.SPEED_THRESHOLD_MIN_HIGH),
                 int(constants.ui.sliders.SPEED_THRESHOLD_MAX_HIGH)
@@ -357,7 +402,7 @@ class SettingsDialog(QDialog):
             color_container_layout.addWidget(self.high_speed_threshold)
 
             color_container_layout.addWidget(QLabel(self.i18n.LOW_SPEED_THRESHOLD_LABEL))
-            self.low_speed_threshold = Win11Slider()
+            self.low_speed_threshold = Win11Slider(editable=False)
             self.low_speed_threshold.setRange(
                 int(constants.ui.sliders.SPEED_THRESHOLD_MIN_LOW),
                 int(constants.ui.sliders.SPEED_THRESHOLD_MAX_LOW)
@@ -365,16 +410,35 @@ class SettingsDialog(QDialog):
             color_container_layout.addWidget(self.low_speed_threshold)
 
             color_container_layout.addWidget(QLabel(self.i18n.HIGH_SPEED_COLOR_LABEL))
+            high_color_h_layout = QHBoxLayout()
+            high_color_h_layout.setSpacing(8)
             self.high_speed_color_button = QPushButton()
             self.high_speed_color_button.setObjectName("high_speed_color")
             self.high_speed_color_button.setToolTip(self.i18n.HIGH_SPEED_COLOR_TOOLTIP)
-            color_container_layout.addWidget(self.high_speed_color_button, alignment=Qt.AlignmentFlag.AlignLeft)
+            high_color_h_layout.addWidget(self.high_speed_color_button)
+            self.high_speed_color_input = QLineEdit()
+            self.high_speed_color_input.setPlaceholderText("#00FF00")
+            self.high_speed_color_input.setMaxLength(7)
+            self.high_speed_color_input.setFixedWidth(80)
+            high_color_h_layout.addWidget(self.high_speed_color_input)
+            high_color_h_layout.addStretch()
+            color_container_layout.addLayout(high_color_h_layout)
 
             color_container_layout.addWidget(QLabel(self.i18n.LOW_SPEED_COLOR_LABEL))
+            low_color_h_layout = QHBoxLayout()
+            low_color_h_layout.setSpacing(8)
             self.low_speed_color_button = QPushButton()
             self.low_speed_color_button.setObjectName("low_speed_color")
             self.low_speed_color_button.setToolTip(self.i18n.LOW_SPEED_COLOR_TOOLTIP)
-            color_container_layout.addWidget(self.low_speed_color_button, alignment=Qt.AlignmentFlag.AlignLeft)
+            low_color_h_layout.addWidget(self.low_speed_color_button)
+            self.low_speed_color_input = QLineEdit()
+            self.low_speed_color_input.setPlaceholderText("#FFA500")
+            self.low_speed_color_input.setMaxLength(7)
+            self.low_speed_color_input.setFixedWidth(80)
+            low_color_h_layout.addWidget(self.low_speed_color_input)
+            low_color_h_layout.addStretch()
+            color_container_layout.addLayout(low_color_h_layout)
+
 
             color_coding_main_layout.addWidget(self.color_container, 1, 0, 1, 2) 
 
@@ -410,13 +474,13 @@ class SettingsDialog(QDialog):
             graph_layout.addWidget(note, 1, 0, 1, 2)
 
             graph_layout.addWidget(QLabel(self.i18n.HISTORY_DURATION_LABEL), 2, 0, 1, 2)
-            self.history_duration = Win11Slider()
+            self.history_duration = Win11Slider(editable=False)
             hist_min, hist_max = constants.ui.history.HISTORY_MINUTES_RANGE
             self.history_duration.setRange(hist_min, hist_max)
             graph_layout.addWidget(self.history_duration, 3, 0, 1, 2)
 
             graph_layout.addWidget(QLabel(self.i18n.GRAPH_OPACITY_LABEL), 4, 0, 1, 2)
-            self.graph_opacity = Win11Slider()
+            self.graph_opacity = Win11Slider(editable=False)
             self.graph_opacity.setRange(constants.ui.sliders.OPACITY_MIN, constants.ui.sliders.OPACITY_MAX)
             graph_layout.addWidget(self.graph_opacity, 5, 0, 1, 2)
 
@@ -428,47 +492,109 @@ class SettingsDialog(QDialog):
 
 
     def _setup_units_page(self) -> None:
-        self.logger.debug("Setting up Units page")
+        self.logger.debug("Setting up Display page")
         try:
             page = QWidget()
             page_layout = QVBoxLayout(page)
             page_layout.setSpacing(constants.layout.GROUP_BOX_SPACING)
 
-            units_group = QGroupBox(self.i18n.UNITS_GROUP)
-            units_layout = QGridLayout(units_group)
-            units_layout.setVerticalSpacing(10)
-            units_layout.setHorizontalSpacing(8)
+            # --- Group 1: Data Format ---
+            format_group = QGroupBox(getattr(self.i18n, 'DISPLAY_FORMAT_GROUP', "Data Format"))
+            format_layout = QGridLayout(format_group)
+            format_layout.setVerticalSpacing(10)
+            format_layout.setHorizontalSpacing(15)
+            format_row = 0
 
-            # Row 0: Speed Display Mode (Auto/Mbps only)
-            self.speed_display_mode_label = QLabel(self.i18n.SPEED_DISPLAY_MODE_LABEL)
-            self.speed_display_mode = Win11Slider()
-            self.speed_display_mode.setRange(0, 1)  # 0 for auto, 1 for always_mbps
-            units_layout.addWidget(self.speed_display_mode_label, 0, 0, Qt.AlignmentFlag.AlignVCenter)
-            units_layout.addWidget(self.speed_display_mode, 0, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            # Unit Type
+            format_layout.addWidget(QLabel(self.i18n.UNIT_TYPE_LABEL), format_row, 0, Qt.AlignmentFlag.AlignVCenter)
+            self.unit_type = QComboBox()
+            self.unit_type.addItem(self.i18n.UNIT_TYPE_BITS_DECIMAL, "bits_decimal")
+            self.unit_type.addItem(self.i18n.UNIT_TYPE_BITS_BINARY, "bits_binary")
+            self.unit_type.addItem(self.i18n.UNIT_TYPE_BYTES_DECIMAL, "bytes_decimal")
+            self.unit_type.addItem(self.i18n.UNIT_TYPE_BYTES_BINARY, "bytes_binary")
+            self.unit_type.setMinimumWidth(120)
+            format_layout.addWidget(self.unit_type, format_row, 1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            format_row += 1
 
-            # Row 1: Decimal Places (0, 1, 2)
-            self.decimal_places_label = QLabel(self.i18n.DECIMAL_PLACES_LABEL)
-            self.decimal_places = Win11Slider()
+            # Scaling (Speed Display Mode)
+            format_layout.addWidget(QLabel(getattr(self.i18n, 'SCALING_LABEL', "Unit Scaling")), format_row, 0, Qt.AlignmentFlag.AlignVCenter)
+            self.speed_display_mode = Win11Slider(editable=False)
+            self.speed_display_mode.setRange(0, 1)
+            format_layout.addWidget(self.speed_display_mode, format_row, 1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            format_row += 1
+
+            # Decimals
+            format_layout.addWidget(QLabel(self.i18n.DECIMAL_PLACES_LABEL), format_row, 0, Qt.AlignmentFlag.AlignVCenter)
+            self.decimal_places = Win11Slider(editable=False)
             self.decimal_places.setRange(0, 2)
-            units_layout.addWidget(self.decimal_places_label, 1, 0, Qt.AlignmentFlag.AlignVCenter)
-            units_layout.addWidget(self.decimal_places, 1, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            format_layout.addWidget(self.decimal_places, format_row, 1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            
+            format_layout.setColumnStretch(0, 1)
+            format_layout.setColumnStretch(1, 0)
+            page_layout.addWidget(format_group)
 
-            # Row 2: Text Alignment (Left, Center, Right)
-            self.text_alignment_label = QLabel(self.i18n.TEXT_ALIGNMENT_LABEL)
-            self.text_alignment = Win11Slider()
-            self.text_alignment.setRange(0, 2)  # 0 for left, 1 for center, 2 for right
-            units_layout.addWidget(self.text_alignment_label, 2, 0, Qt.AlignmentFlag.AlignVCenter)
-            units_layout.addWidget(self.text_alignment, 2, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            # --- Group 2: Interface Layout ---
+            layout_group = QGroupBox(getattr(self.i18n, 'INTERFACE_LAYOUT_GROUP', "Interface Layout"))
+            layout_gl = QGridLayout(layout_group)
+            layout_gl.setVerticalSpacing(10)
+            layout_gl.setHorizontalSpacing(15)
+            l_row = 0
 
-            units_layout.setColumnStretch(0, 0)
-            units_layout.setColumnStretch(1, 1)
-            units_layout.setRowStretch(3, 1) # Adjust stretch to the new last row + 1
+            # Text Alignment
+            layout_gl.addWidget(QLabel(self.i18n.TEXT_ALIGNMENT_LABEL), l_row, 0, Qt.AlignmentFlag.AlignVCenter)
+            self.text_alignment = Win11Slider(editable=False)
+            self.text_alignment.setRange(0, 2)
+            layout_gl.addWidget(self.text_alignment, l_row, 1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            l_row += 1
 
-            page_layout.addWidget(units_group)
+            # Toggles Helper
+            def add_toggle_row(label_text, toggle_widget, row_idx):
+                layout_gl.addWidget(QLabel(label_text), row_idx, 0, Qt.AlignmentFlag.AlignVCenter)
+                # Ensure toggle is right-aligned
+                layout_gl.addWidget(toggle_widget, row_idx, 1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+
+            # Swap Order
+            self.swap_upload_download = Win11Toggle(label_text="")
+            add_toggle_row(self.i18n.SWAP_UPLOAD_DOWNLOAD_LABEL, self.swap_upload_download, l_row)
+            l_row += 1
+
+            # Fixed Width
+            self.fixed_width_values = Win11Toggle(label_text="")
+            add_toggle_row(self.i18n.FIXED_WIDTH_VALUES_LABEL, self.fixed_width_values, l_row)
+            l_row += 1
+
+            # Hide Arrows
+            self.hide_arrows = Win11Toggle(label_text="")
+            add_toggle_row(self.i18n.HIDE_ARROWS_LABEL, self.hide_arrows, l_row)
+            l_row += 1
+
+            # Hide Units
+            self.hide_unit_suffix = Win11Toggle(label_text="")
+            add_toggle_row(self.i18n.HIDE_UNIT_SUFFIX_LABEL, self.hide_unit_suffix, l_row)
+
+            layout_gl.setColumnStretch(0, 1)
+            layout_gl.setColumnStretch(1, 0)
+            page_layout.addWidget(layout_group)
+
+            # --- Group 3: Positioning ---
+            pos_group = QGroupBox(getattr(self.i18n, 'POSITION_GROUP', "Positioning"))
+            pos_layout = QGridLayout(pos_group)
+            
+            pos_layout.addWidget(QLabel(self.i18n.TRAY_OFFSET_LABEL), 0, 0, Qt.AlignmentFlag.AlignVCenter)
+            self.tray_offset = Win11Slider()
+            self.tray_offset.setRange(0, 50)
+            pos_layout.addWidget(self.tray_offset, 0, 1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            
+            pos_layout.setColumnStretch(0, 1)
+            pos_layout.setColumnStretch(1, 0)
+            page_layout.addWidget(pos_group)
+
             page_layout.addStretch()
             self.stack.addWidget(page)
         except Exception as e:
             self.logger.error(f"Error setting up Units page: {e}", exc_info=True)
+
+
 
 
     def _setup_interfaces_page(self) -> None:
@@ -816,16 +942,20 @@ class SettingsDialog(QDialog):
         self.font_weight.slider.sliderReleased.connect(self._snap_font_weight_on_release)
         self.font_weight.valueChanged.connect(self._schedule_settings_update)
         self.default_color_button.clicked.connect(lambda: self.choose_color(self.default_color_button))
+        self.default_color_input.editingFinished.connect(lambda: self._on_hex_input_changed(self.default_color_input, self.default_color_button))
 
         # Color coding signals
         self.enable_colors.toggled.connect(self.toggle_color_settings)
         self.enable_colors.toggled.connect(self._schedule_settings_update)
         self.high_speed_color_button.clicked.connect(lambda: self.choose_color(self.high_speed_color_button))
+        self.high_speed_color_input.editingFinished.connect(lambda: self._on_hex_input_changed(self.high_speed_color_input, self.high_speed_color_button))
         self.low_speed_color_button.clicked.connect(lambda: self.choose_color(self.low_speed_color_button))
+        self.low_speed_color_input.editingFinished.connect(lambda: self._on_hex_input_changed(self.low_speed_color_input, self.low_speed_color_button))
         self.high_speed_threshold.valueChanged.connect(self.update_threshold_labels)
         self.high_speed_threshold.valueChanged.connect(self._schedule_settings_update)
         self.low_speed_threshold.valueChanged.connect(self.update_threshold_labels)
         self.low_speed_threshold.valueChanged.connect(self._schedule_settings_update)
+
 
 
     def _connect_graph_signals(self) -> None:
@@ -841,6 +971,8 @@ class SettingsDialog(QDialog):
 
 
     def _connect_units_signals(self) -> None:
+        self.unit_type.currentIndexChanged.connect(self._schedule_settings_update)
+        
         self.speed_display_mode.valueChanged.connect(self._on_speed_display_mode_changed)
         self.speed_display_mode.valueChanged.connect(self._schedule_settings_update)
         
@@ -849,6 +981,13 @@ class SettingsDialog(QDialog):
         
         self.text_alignment.valueChanged.connect(self._on_text_alignment_changed)
         self.text_alignment.valueChanged.connect(self._schedule_settings_update)
+        
+        self.swap_upload_download.toggled.connect(self._schedule_settings_update)
+        self.fixed_width_values.toggled.connect(self._schedule_settings_update)
+        self.hide_arrows.toggled.connect(self._schedule_settings_update)
+        self.hide_unit_suffix.toggled.connect(self._schedule_settings_update)
+        self.tray_offset.valueChanged.connect(self._on_tray_offset_changed)
+        self.tray_offset.valueChanged.connect(self._schedule_settings_update)
 
 
     def _connect_interfaces_signals(self) -> None:
@@ -917,6 +1056,7 @@ class SettingsDialog(QDialog):
             self.logger.warning(f"Invalid 'default_color' in config: '{initial_default_color}'. Reverting to default.")
             initial_default_color = constants.config.defaults.DEFAULT_COLOR
         self._set_color_button_style(self.default_color_button, initial_default_color)
+        self.default_color_input.setText(initial_default_color.upper())
         
         color_coding_enabled = self.config.get("color_coding", constants.config.defaults.DEFAULT_COLOR_CODING)
         self.enable_colors.setChecked(color_coding_enabled)
@@ -933,6 +1073,7 @@ class SettingsDialog(QDialog):
             self.logger.warning(f"Invalid 'high_speed_color' in config: '{high_color}'. Reverting to default.")
             high_color = constants.config.defaults.DEFAULT_HIGH_SPEED_COLOR
         self._set_color_button_style(self.high_speed_color_button, high_color)
+        self.high_speed_color_input.setText(high_color.upper())
         
         # Low Speed Color
         low_color = self.config.get("low_speed_color")
@@ -940,8 +1081,10 @@ class SettingsDialog(QDialog):
             self.logger.warning(f"Invalid 'low_speed_color' in config: '{low_color}'. Reverting to default.")
             low_color = constants.config.defaults.DEFAULT_LOW_SPEED_COLOR
         self._set_color_button_style(self.low_speed_color_button, low_color)
+        self.low_speed_color_input.setText(low_color.upper())
         
         self.toggle_color_settings(color_coding_enabled)
+
 
         # --- Graph Page ---
         self.enable_graph.setChecked(self.config.get("graph_enabled", constants.config.defaults.DEFAULT_GRAPH_ENABLED))
@@ -970,6 +1113,37 @@ class SettingsDialog(QDialog):
         ta_val = self.TEXT_ALIGNMENT_MAP.get(ta_key, 1)
         self.text_alignment.setValue(ta_val)
         self._on_text_alignment_changed(ta_val)
+
+        # Unit Type (combo box)
+        unit_type_val = self.config.get("unit_type", constants.config.defaults.DEFAULT_UNIT_TYPE)
+        unit_type_index = self.unit_type.findData(unit_type_val)
+        if unit_type_index != -1:
+            self.unit_type.setCurrentIndex(unit_type_index)
+        
+        # Swap Upload/Download
+        self.swap_upload_download.setChecked(
+            self.config.get("swap_upload_download", constants.config.defaults.DEFAULT_SWAP_UPLOAD_DOWNLOAD)
+        )
+        
+        # Fixed Width Values
+        self.fixed_width_values.setChecked(
+            self.config.get("fixed_width_values", constants.config.defaults.DEFAULT_FIXED_WIDTH_VALUES)
+        )
+        
+        # Hide Arrows
+        self.hide_arrows.setChecked(
+            self.config.get("hide_arrows", constants.config.defaults.DEFAULT_HIDE_ARROWS)
+        )
+        
+        # Hide Unit Suffix
+        self.hide_unit_suffix.setChecked(
+            self.config.get("hide_unit_suffix", constants.config.defaults.DEFAULT_HIDE_UNIT_SUFFIX)
+        )
+        
+        # Tray Offset
+        tray_offset_val = self.config.get("tray_offset_x", constants.config.defaults.DEFAULT_TRAY_OFFSET_X)
+        self.tray_offset.setValue(tray_offset_val)
+        self._on_tray_offset_changed(tray_offset_val)
 
         # --- Interfaces Page ---
         interface_mode = self.config.get("interface_mode", constants.config.defaults.DEFAULT_INTERFACE_MODE)
@@ -1071,12 +1245,52 @@ class SettingsDialog(QDialog):
             new_color_hex = new_qcolor.name(QColor.NameFormat.HexRgb)
             self.logger.debug(f"Color chosen for '{object_name}': {new_color_hex}")
             self._set_color_button_style(button, new_color_hex)
+            
+            # Sync hex input field
+            self._sync_color_input(object_name, new_color_hex)
+            
             if object_name == "default_color":
                 self._user_chose_default_color = True
 
             self._schedule_settings_update()
         else:
              self.logger.debug(f"Color selection cancelled for '{object_name}'.")
+
+
+    def _sync_color_input(self, object_name: str, hex_color: str) -> None:
+        """Syncs the hex input field with the given color."""
+        if object_name == "default_color":
+            self.default_color_input.setText(hex_color.upper())
+        elif object_name == "high_speed_color":
+            self.high_speed_color_input.setText(hex_color.upper())
+        elif object_name == "low_speed_color":
+            self.low_speed_color_input.setText(hex_color.upper())
+
+
+    def _on_hex_input_changed(self, input_field: QLineEdit, button: QPushButton) -> None:
+        """Handles hex input field changes and updates the color button."""
+        hex_text = input_field.text().strip()
+        
+        # Validate hex color format
+        if not hex_text.startswith("#"):
+            hex_text = "#" + hex_text
+        
+        # Validate using regex
+        if re.match(r'^#[0-9A-Fa-f]{6}$', hex_text):
+            qcolor = QColor(hex_text)
+            if qcolor.isValid():
+                self._set_color_button_style(button, hex_text)
+                input_field.setText(hex_text.upper())
+                
+                if button.objectName() == "default_color":
+                    self._user_chose_default_color = True
+                    
+                self._schedule_settings_update()
+                self.logger.debug(f"Hex color applied for '{button.objectName()}': {hex_text}")
+            else:
+                self.logger.debug(f"Invalid QColor from hex: {hex_text}")
+        else:
+            self.logger.debug(f"Invalid hex format: {hex_text}")
 
 
     def select_font(self) -> None:
@@ -1147,6 +1361,10 @@ class SettingsDialog(QDialog):
         else: # "center"
             self.text_alignment.setValueText(self.i18n.ALIGN_CENTER)
 
+
+    def _on_tray_offset_changed(self, value: int) -> None:
+        """Updates the text for the tray offset slider."""
+        self.tray_offset.setValueText(f"{value} px")
 
     def update_threshold_labels(self) -> None:
         try:
@@ -1271,6 +1489,12 @@ class SettingsDialog(QDialog):
             settings["speed_display_mode"] = self.SPEED_DISPLAY_MODE_MAP_INV.get(self.speed_display_mode.value(), "auto")
             settings["decimal_places"] = self.decimal_places.value()
             settings["text_alignment"] = self.TEXT_ALIGNMENT_MAP_INV.get(self.text_alignment.value(), "center")
+            settings["unit_type"] = self.unit_type.currentData()
+            settings["swap_upload_download"] = self.swap_upload_download.isChecked()
+            settings["fixed_width_values"] = self.fixed_width_values.isChecked()
+            settings["hide_arrows"] = self.hide_arrows.isChecked()
+            settings["hide_unit_suffix"] = self.hide_unit_suffix.isChecked()
+            settings["tray_offset_x"] = self.tray_offset.value()
             
             # Interface settings logic
             if self.selected_interfaces_radio.isChecked():

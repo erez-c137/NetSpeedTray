@@ -64,6 +64,13 @@ def dialog_style() -> str:
             {label_style_str}
             background-color: transparent;
         }}
+        QRadioButton, QCheckBox {{
+            color: {text_color};
+            font-family: "Segoe UI Variable";
+            font-size: 13px;
+            background-color: transparent;
+            outline: none;
+        }}
         QGroupBox {{
             font-size: 14px;
             font-weight: 600;
@@ -71,9 +78,9 @@ def dialog_style() -> str:
             color: {text_color};
             background-color: {section_bg};
             border: 1px solid {border_color};
-            border-radius: 6px;
-            padding: 10px; 
-            padding-top: 20px;
+            border-radius: 8px; /* Native Win11 radius */
+            padding: 12px; 
+            padding-top: 24px; /* Space for title */
         }}
         QGroupBox::title {{
             subcontrol-origin: margin;

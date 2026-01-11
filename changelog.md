@@ -4,6 +4,41 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [1.2.0] - January 11, 2026
+
+This release is a major milestone in interactivity, stability, and design. It introduces a fully interactive graph with precise crosshairs, a native Windows 11-style settings experience, and significant performance optimizations.
+
+### 🚀 Interactive Graph Overhaul
+*   **Precision Crosshairs:** Added a comprehensive dual-axis crosshair system.
+    *   **Vertical Line:** Snaps to the exact measurement timestamp for accurate data reading.
+    *   **Horizontal Line:** Follows your mouse cursor's Y-position on the active chart, effectively visualizing speed levels.
+*   **Coordinate-Based Tracking:** Refactored the hit-testing logic to use direct coordinate lookup. This eliminates "stuck" cursors caused by timezone conversion drifts.
+*   **Smoother Interaction:** Switched rendering to an idle-loop model, eliminating UI freezes and high CPU usage when hovering over the graph.
+*   **Z-Order Fixes:** Tooltips are now properly parented to the window, ensuring they always float above the graph lines and grid.
+
+### 🎨 Modern UI & Customization
+*   **Native Windows 11 Design:** The Settings dialog has been completely redesigned with a responsive Grid Layout, modern spacing, and updated typography.
+*   **New Controls:**
+    *   **Sliders:** Precise sliders for transparency and history period adjustments.
+    *   **Toggle Switches:** Replaced legacy checkboxes with modern looking switches.
+    *   **Hex Color Input:** Added support for manual Hex color codes (e.g., `#FF5733`).
+*   **Visual Polish:**
+    *   **Fixed-Width Values:** Option to use monospaced formatting for speeds to prevent widget resizing/jitter.
+    *   **Shortened Labels:** Optimized text labels ("Speed Display Mode" -> "Display") to fit better in compact views.
+    *   **Swap Order:** Toggle to swap the position of Upload and Download speeds.
+    *   **Minimalism:** Options to hide arrows and unit suffixes.
+
+### ⚡ Performance & Core Optimization
+*   **Pandas Removal:** Completely removed the `pandas` dependency. The application is now lighter, faster to build (~1 min), and launches significantly closer to instant.
+*   **Lazy Loading:** Graph components are initialized only when the window is opened, reducing startup memory usage.
+*   **Build Size:** Reduced total executable size due to dependency pruning.
+
+### 🐛 Critical Bug Fixes
+*   **Fixed Widget Disappearance:** Resolved a regression where the main widget would vanish after closing the Graph window. Added robust visibility restoration logic.
+*   **Fixed Startup Crashes:** Solved `AttributeError` issues related to `matplotlib.dates` handling.
+*   **Fixed Graph Defaults:** "Show Legend" is now Off by default for a cleaner look.
+*   **Fixed Build System:** Corrected filenames and exclusion rules in the build script.
+
 ## [1.1.9] - December 31, 2025
 
 This release addresses a critical bug where the widget would incorrectly hide when applications were maximized, even though the taskbar remained visible.

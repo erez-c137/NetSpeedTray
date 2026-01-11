@@ -60,7 +60,7 @@ class HistoryPeriodConstants:
         3: "TIMELINE_6_HOURS", 4: "TIMELINE_12_HOURS", 5: "TIMELINE_24_HOURS",
         6: "TIMELINE_WEEK", 7: "TIMELINE_MONTH", 8: "TIMELINE_ALL",
     }
-    DEFAULT_PERIOD: Final[str] = PERIOD_MAP[0]
+    DEFAULT_PERIOD: Final[str] = PERIOD_MAP[0] # "TIMELINE_SYSTEM_UPTIME"
     # The logic in CUTOFF_DAYS must also use the i18n keys
     CUTOFF_DAYS: Final[Dict[str, float]] = {
         "TIMELINE_3_HOURS": 3 / 24, "TIMELINE_6_HOURS": 6 / 24, "TIMELINE_12_HOURS": 12 / 24,

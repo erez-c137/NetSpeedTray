@@ -45,10 +45,15 @@ class ConfigConstants:
     DEFAULT_HISTORY_MINUTES: Final[int] = 30
     DEFAULT_GRAPH_OPACITY: Final[int] = 30
     DEFAULT_INTERFACE_MODE: Final[str] = network.interface.DEFAULT_MODE
-    DEFAULT_KEEP_DATA_DAYS: Final[int] = data.retention.DAYS_MAP[3] # 30 days default
+    DEFAULT_KEEP_DATA_DAYS: Final[int] = data.retention.DAYS_MAP[6] # 365 days (1 Year) default
     DEFAULT_DARK_MODE: Final[bool] = True
     DEFAULT_DYNAMIC_UPDATE_ENABLED: Final[bool] = True
-    DEFAULT_SPEED_DISPLAY_MODE: Final[str] = "always_mbps"
+    DEFAULT_SPEED_DISPLAY_MODE: Final[str] = "auto"
+    DEFAULT_UNIT_TYPE: Final[str] = "bytes_binary"  # Most users prefer MB/s (Bytes) akin to file downloads
+    DEFAULT_SWAP_UPLOAD_DOWNLOAD: Final[bool] = True # Download on top is standard convention
+    DEFAULT_FIXED_WIDTH_VALUES: Final[bool] = False
+    DEFAULT_HIDE_ARROWS: Final[bool] = False
+    DEFAULT_HIDE_UNIT_SUFFIX: Final[bool] = False
     DEFAULT_DECIMAL_PLACES: Final[int] = 2
     DEFAULT_TEXT_ALIGNMENT: Final[str] = "center"
     DEFAULT_FREE_MOVE: Final[bool] = False
@@ -93,10 +98,15 @@ class ConfigConstants:
         "text_alignment": DEFAULT_TEXT_ALIGNMENT,
         "free_move": DEFAULT_FREE_MOVE,
         "force_decimals": DEFAULT_FORCE_DECIMALS,
+        "unit_type": DEFAULT_UNIT_TYPE,
+        "swap_upload_download": DEFAULT_SWAP_UPLOAD_DOWNLOAD,
+        "fixed_width_values": DEFAULT_FIXED_WIDTH_VALUES,
+        "hide_arrows": DEFAULT_HIDE_ARROWS,
+        "hide_unit_suffix": DEFAULT_HIDE_UNIT_SUFFIX,
         "tray_offset_x": DEFAULT_TRAY_OFFSET_X,
         "graph_window_pos": None,
         "history_period_slider_value": 0,  # UI-specific state
-        "show_legend": DEFAULT_SHOW_LEGEND,
+        "show_legend": False,
     }
 
 
@@ -124,6 +134,8 @@ class ConfigConstants:
             "excluded_interfaces", "keep_data", "dark_mode", "position_x", "position_y",
             "paused", "dynamic_update_enabled", "speed_display_mode", "decimal_places",
             "text_alignment", "free_move", "force_decimals", "tray_offset_x",
+            "unit_type", "swap_upload_download", "fixed_width_values",
+            "hide_arrows", "hide_unit_suffix",
             "graph_window_pos", "history_period_slider_value",
             "history_period", "legend_position", "show_legend"
         }

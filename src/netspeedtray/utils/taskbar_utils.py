@@ -578,7 +578,16 @@ def is_taskbar_visible(taskbar_info: Optional[TaskbarInfo]) -> bool:
     """
     Checks if the taskbar is in a visible state based on its own properties.
     """
-    if not taskbar_info or not taskbar_info.hwnd or not win32gui.IsWindow(taskbar_info.hwnd):
+    if not taskbar_info:
+        return False
+    
+    # If the handle is 0, it means we are using a fallback TaskbarInfo (e.g. detection failed).
+    # In this case, we default to TRUE (visible) to prevent the widget from disappearing
+    # just because the API is flaky.
+    if taskbar_info.hwnd == 0:
+        return True
+
+    if not win32gui.IsWindow(taskbar_info.hwnd):
         return False
 
     try:

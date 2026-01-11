@@ -8,10 +8,11 @@ to provide a cohesive user experience.
 """
 
 import logging
+import re
 from typing import Optional, Final
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QCheckBox, QLabel, QSlider, 
-    QSizePolicy, QStyleOption
+    QSizePolicy, QStyleOption, QLineEdit
 )
 from PyQt6.QtCore import Qt, QSize, pyqtSignal, QPropertyAnimation, QEasingCurve, QPoint
 from PyQt6.QtGui import QFont, QPaintEvent, QPainter 
@@ -232,8 +233,8 @@ class Win11Toggle(QWidget):
 class Win11Slider(QWidget):
     """
     A custom slider widget styled to resemble Windows 11's sliders.
-    It consists of a QSlider for the sliding mechanism and a QLabel
-    to display the current value or associated text.
+    It consists of a QSlider for the sliding mechanism and a label/input
+    to display and edit the current value.
     """
     valueChanged = pyqtSignal(int)
     sliderReleased = pyqtSignal()
@@ -241,10 +242,13 @@ class Win11Slider(QWidget):
 
     def __init__(self, min_value: int = 0, max_value: int = 100, value: int = 0, 
                  page_step: int = 1, has_ticks: bool = False, 
-                 parent: Optional[QWidget] = None, value_label_text_color: Optional[str] = None) -> None:
+                 parent: Optional[QWidget] = None, value_label_text_color: Optional[str] = None,
+                 editable: bool = True) -> None:
         super().__init__(parent)
+        self._value_input: Optional[QLineEdit] = None
         self._value_label: Optional[QLabel] = None
         self._value_label_text_color: Optional[str] = value_label_text_color
+        self._editable: bool = editable
         
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         # Explicitly set border and outline to none for the QWidget container
@@ -276,32 +280,80 @@ class Win11Slider(QWidget):
 
         if has_ticks:
             self.slider.setTickPosition(QSlider.TickPosition.TicksBelow)
-            tick_interval = max(1, (max_val - min_val) // 10 if (max_val - min_val) > 0 else 1)
-            if (max_val - min_val) > 0 and (max_val - min_val) / max(1, tick_interval) > 15:
-                tick_interval = max(1, (max_val - min_val) // 15)
+            # Safe tick interval calculation
+            rng = max_val - min_val
+            if rng > 0:
+                tick_interval = max(1, rng // 10)
+                if rng / tick_interval > 15:
+                    tick_interval = max(1, rng // 15)
+            else:
+                tick_interval = 1
             self.slider.setTickInterval(tick_interval)
 
-        self._value_label = QLabel(self) 
-        font = QFont("Segoe UI Variable", 10) 
-        self._value_label.setFont(font)
-        self._value_label.setMinimumWidth(70) 
-        self._value_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        self._value_label.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self._value_label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
-
-        # Ensure value label also has no border/outline
-        label_qss = "background:transparent; border:none; outline: none;"
-        if self._value_label_text_color: 
-            label_qss += f" color: {self._value_label_text_color};"
-        self._value_label.setStyleSheet(label_qss)
-        self.setValueText(str(initial_val)) 
-
         layout.addWidget(self.slider)
-        layout.addWidget(self._value_label)
+
+        label_font = QFont("Segoe UI Variable", 10)
+        
+        if self._editable:
+            self._value_input = QLineEdit(self) 
+            self._value_input.setFont(label_font)
+            self._value_input.setMinimumWidth(70) 
+            self._value_input.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            self._value_input.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+            self._value_input.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
+            
+            self._update_input_style()
+            self._value_input.setText(str(initial_val))
+            
+            layout.addWidget(self._value_input)
+            self._value_input.editingFinished.connect(self._on_input_editing_finished)
+        else:
+            self._value_label = QLabel(str(initial_val), self)
+            self._value_label.setFont(label_font)
+            # Allow label to grow if needed, but keeping a minimum prevents jumping
+            self._value_label.setMinimumWidth(50) 
+            self._value_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            self._value_label.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+            
+            # Style for the label
+            label_style = "QLabel { background: transparent; border: none; padding-left: 2px; }"
+            if self._value_label_text_color:
+                label_style += f" color: {self._value_label_text_color};"
+            self._value_label.setStyleSheet(label_style)
+            
+            layout.addWidget(self._value_label)
+
         self.setLayout(layout)
 
         self.slider.valueChanged.connect(self._on_internal_slider_value_changed)
         self.slider.sliderReleased.connect(self._on_internal_slider_released)
+
+
+    def _update_input_style(self) -> None:
+        """Updates the QLineEdit style to look transparent but usable."""
+        if not self._value_input: return
+        
+        base_style = """
+            QLineEdit {
+                background: transparent;
+                border: 1px solid transparent;
+                border-radius: 4px;
+                outline: none;
+                padding-left: 2px;
+            }
+            QLineEdit:hover {
+                border: 1px solid rgba(120, 120, 120, 0.5);
+                background: rgba(120, 120, 120, 0.1);
+            }
+            QLineEdit:focus {
+                border: 1px solid #0078D4;
+                background: rgba(32, 32, 32, 0.2);
+            }
+        """
+        if self._value_label_text_color: 
+            base_style += f" QLineEdit {{ color: {self._value_label_text_color}; }}"
+        
+        self._value_input.setStyleSheet(base_style)
 
 
     def _on_internal_slider_value_changed(self, value: int) -> None: self.valueChanged.emit(value)
@@ -310,12 +362,32 @@ class Win11Slider(QWidget):
     def _on_internal_slider_released(self) -> None: self.sliderReleased.emit()
 
 
+    def _on_input_editing_finished(self) -> None:
+        """Parses input text and updates the slider."""
+        if not self._value_input: return
+        text = self._value_input.text()
+        # Find the first integer in the text
+        match = re.search(r"[-+]?\d+", text)
+        if match:
+            try:
+                new_val = int(match.group())
+                # Clamp to range
+                new_val = max(self.slider.minimum(), min(self.slider.maximum(), new_val))
+                
+                # Update slider (this will trigger valueChanged -> parent update -> setValueText)
+                if new_val != self.slider.value():
+                    self.slider.setValue(new_val)
+            except ValueError:
+                pass 
+
+
     def setRange(self, min_val: int, max_val: int) -> None:
         self.slider.setRange(min_val, max_val)
         if self.slider.tickPosition() != QSlider.TickPosition.NoTicks:
-            tick_interval = max(1, (max_val - min_val) // 10 if (max_val - min_val) > 0 else 1)
-            if (max_val - min_val) > 0 and (max_val - min_val) / max(1, tick_interval) > 15:
-                tick_interval = max(1, (max_val - min_val) // 15)
+            rng = max_val - min_val
+            tick_interval = max(1, rng // 10) if rng > 0 else 1
+            if rng > 0 and rng / tick_interval > 15:
+                tick_interval = max(1, rng // 15)
             self.slider.setTickInterval(tick_interval)
 
 
@@ -338,22 +410,33 @@ class Win11Slider(QWidget):
 
 
     def setValueText(self, text: str) -> None:
-        if self._value_label: self._value_label.setText(text)
-        else: logger.error("Win11Slider: _value_label not initialized when trying to set text.")
+        if self._value_input:
+            if not self._value_input.hasFocus():
+                self._value_input.setText(text)
+                self._value_input.setCursorPosition(0)
+        elif self._value_label:
+            self._value_label.setText(text)
 
 
     def setValueLabelTextColor(self, color_hex: str) -> None:
         self._value_label_text_color = color_hex 
-        if self._value_label:
-            label_qss = "background:transparent; border:none; outline: none;" # Ensure outline:none
+        if self._value_input:
+            self._update_input_style()
+        elif self._value_label:
+            label_style = "QLabel { background: transparent; border: none; padding-left: 2px; }"
             if self._value_label_text_color:
-                label_qss += f" color: {self._value_label_text_color};"
-            self._value_label.setStyleSheet(label_qss)
+                label_style += f" color: {self._value_label_text_color};"
+            self._value_label.setStyleSheet(label_style)
 
 
     def sizeHint(self) -> QSize:
         slider_sh = self.slider.sizeHint()
-        label_sh = self._value_label.sizeHint() if self._value_label else QSize(70, 20) 
+        if self._value_input:
+             label_sh = self._value_input.sizeHint()
+        elif self._value_label:
+             label_sh = self._value_label.sizeHint()
+        else:
+             label_sh = QSize(50, 20)
         
         current_layout = self.layout()
         if not isinstance(current_layout, QHBoxLayout): 

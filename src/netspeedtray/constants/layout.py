@@ -13,9 +13,9 @@ class LayoutConstants:
     DEFAULT_PADDING: Final[int] = 4
 
     # --- General Dialog Layout ---
-    MAIN_MARGIN: Final[int] = 20
-    MAIN_SPACING: Final[int] = 20
-    GROUP_BOX_SPACING: Final[int] = 15
+    MAIN_MARGIN: Final[int] = 16
+    MAIN_SPACING: Final[int] = 12
+    GROUP_BOX_SPACING: Final[int] = 12
     SIDEBAR_WIDTH: Final[int] = 200
 
     # --- Interface Page Specific ---

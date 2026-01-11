@@ -537,6 +537,12 @@ class PositionCalculator:
             A ScreenPosition object with the calculated and validated x, y coordinates.
         """
         try:
+            # If we are working with a fallback taskbar (hwnd=0), do NOT attempt to calculate
+            # relative to a (0,0,0,0) rect. Just use the safe fallback immediately.
+            if taskbar_info.hwnd == 0:
+                logger.warning("Calculation requested for fallback taskbar. Using safe fallback position.")
+                return self._get_safe_fallback_position(widget_size)
+
             edge = taskbar_info.get_edge_position()
             screen = taskbar_info.get_screen()
             if not screen:

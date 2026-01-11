@@ -363,16 +363,16 @@ class NetworkSpeedWidget(QWidget):
             taskbar_info = get_taskbar_info()
 
             # Implement the "coasting" logic for taskbar detection failures.
+            # Implement the "coasting" logic for taskbar detection failures.
             if taskbar_info.hwnd == 0: # hwnd=0 signifies a fallback object from get_taskbar_info
                 self._taskbar_lost_count += 1
-                self.logger.warning(
-                    f"Taskbar detection failed. Coasting on last known position. "
-                    f"Failure count: {self._taskbar_lost_count}"
-                )
-                # If the taskbar has been missing for too long (e.g., 5 seconds), hide the widget.
-                if self._taskbar_lost_count >= 5:
-                    if self.isVisible(): self.setVisible(False)
-                return # CRITICAL: Do not proceed to repositioning with bad data
+                if self._taskbar_lost_count % 10 == 0: # Log warning every 10 seconds
+                    self.logger.warning(
+                        f"Taskbar detection failing. Coasting on fallback/safe mode. "
+                        f"Failure count: {self._taskbar_lost_count}"
+                    )
+                # Removed logic that hides widget after 5 failures. 
+                # We now rely on 'safe fallback position' (bottom-right of screen) instead.
             else:
                 # If we successfully found a real taskbar, reset the counter.
                 self._taskbar_lost_count = 0
@@ -1350,6 +1350,10 @@ class NetworkSpeedWidget(QWidget):
                     self.graph_window._populate_interface_filter
                 )
                 
+                # CLEAN FIX: Listen for destruction to restore Z-order/Visibility
+                # This decouples the child from the parent's implementation details.
+                self.graph_window.window_closed.connect(self._on_graph_window_closed)
+
                 # Show the window.
                 self.graph_window.show()
 
@@ -1361,6 +1365,26 @@ class NetworkSpeedWidget(QWidget):
         except Exception as e:
             self.logger.error(f"Error showing graph window: {e}", exc_info=True)
             QMessageBox.critical(self, "Error", f"Could not open the graph window:\n\n{str(e)}")
+
+
+    def _on_graph_window_closed(self) -> None:
+        """
+        Handles the destruction of the graph window.
+        Triggers a delayed refresh to restore the main widget's Z-order and visibility
+        after the focus transition completes.
+        """
+        self.logger.debug("Graph window destroyed. Restoring main widget state.")
+        self.graph_window = None
+        
+        # Explicitly force visibility first to prevent "disappeared" state
+        # The subsequent refresh will handle obstruction logic, but we assume
+        # the user wants to see the widget after closing the graph.
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+        # Use singleShot with a slightly longer delay to allow Windows focus settling
+        QTimer.singleShot(300, self._execute_refresh)
 
 
     def get_config(self) -> Dict[str, Any]:

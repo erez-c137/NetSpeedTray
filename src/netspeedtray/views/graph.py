@@ -11,15 +11,18 @@ import os
 import time
 import warnings
 from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from typing import Dict, List, Optional, Tuple, Any
+from collections import defaultdict
 
 # --- Third-Party Imports (Centralized) ---
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 from matplotlib.ticker import ScalarFormatter, FixedLocator
 import numpy as np
-import pandas as pd
+
 
 # --- PyQt6 Imports ---
 from PyQt6.QtCore import Qt, QPoint, QThread, pyqtSignal, QObject, QTimer, QEvent
@@ -89,11 +92,11 @@ class GraphDataWorker(QObject):
                 )
 
             if len(history_data) < 2:
-                self.data_ready.emit(pd.DataFrame()) # Emit empty DataFrame for "No data" message
+                self.data_ready.emit([]) # Emit empty list for "No data" message
                 return
 
-            df = pd.DataFrame(history_data, columns=['timestamp', 'upload_speed', 'download_speed'])
-            self.data_ready.emit(df)
+            # Pass the raw list of tuples: (timestamp, upload_speed, download_speed)
+            self.data_ready.emit(history_data)
         except Exception as e:
             logging.getLogger(__name__).error(f"Error in data worker: {e}", exc_info=True)
             self.error.emit(str(e))
@@ -105,10 +108,15 @@ class GraphWindow(QWidget):
     (Docstring remains largely the same as provided)
     """
     request_data_processing = pyqtSignal(object, object, object, bool)
+    window_closed = pyqtSignal()
 
     def __init__(self, main_widget, parent=None, logger=None, i18n=None, session_start_time: Optional[datetime] = None):
         """ Initialize the GraphWindow with its UI components. """
-        super().__init__(parent)    
+        super().__init__(parent)
+        
+        # Ensure the window is destroyed on close so 'destroyed' signal fires
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            
         self._main_widget = main_widget
         self.logger = logger or logging.getLogger(__name__)
         self.i18n = i18n
@@ -120,8 +128,9 @@ class GraphWindow(QWidget):
         self._is_dark_mode = self._main_widget.config.get("dark_mode", True)
         self._is_live_update_enabled = self._main_widget.config.get("live_update", True)
         self._history_period_value = self._main_widget.config.get('history_period_slider_value', 0)
-        self._data_cache: Dict[Tuple[str, str], pd.DataFrame] = {}
+        self._data_cache: Dict[Tuple[str, str], List[Tuple[datetime, float, float]]] = {}
         self._graph_data_cache = [] # Used for crosshair lookup
+        self._graph_x_cache = None # Optimization: Cache float dates for mouse lookup
 
         # --- Setup UI and Timers ---
         self.setupUi()
@@ -137,7 +146,11 @@ class GraphWindow(QWidget):
         # Initialize interactive elements (crosshair, tooltip)
         self.crosshair_v_download = self.ax_download.axvline(x=0, color=style_constants.GRID_COLOR_DARK, linewidth=0.8, linestyle='--', zorder=20, visible=False)
         self.crosshair_v_upload = self.ax_upload.axvline(x=0, color=style_constants.GRID_COLOR_DARK, linewidth=0.8, linestyle='--', zorder=20, visible=False)
-        self.tooltip = QLabel(self.canvas)
+        self.crosshair_h_download = self.ax_download.axhline(y=0, color=style_constants.GRID_COLOR_DARK, linewidth=0.8, linestyle='--', zorder=20, visible=False)
+        self.crosshair_h_upload = self.ax_upload.axhline(y=0, color=style_constants.GRID_COLOR_DARK, linewidth=0.8, linestyle='--', zorder=20, visible=False)
+        
+        # Tooltip should be parented to the WINDOW (self), not the canvas, to float above everything
+        self.tooltip = QLabel(self)
         self.tooltip.setObjectName("graphTooltip")
         self.tooltip.setAlignment(Qt.AlignmentFlag.AlignLeft)
         self.tooltip.setVisible(False)
@@ -242,6 +255,7 @@ class GraphWindow(QWidget):
 
             self.canvas = FigureCanvas(self.figure)
             self.canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+            self.canvas.setMouseTracking(True) # Critical for hover events without clicking
 
             # Configure the new axes
             self.ax_download.set_ylabel(self.i18n.DOWNLOAD_LABEL)
@@ -301,30 +315,49 @@ class GraphWindow(QWidget):
 
     def _plot_continuous_segments(self, axis, timestamps, speeds, color, label):
         """
-        Plots data on a given axis, splitting it into continuous segments
-        to create clean visual gaps where data is missing (NaN).
+        Plots data on a given axis, handling gaps by splitting into segments.
+        Expects timestamps and speeds to be lists or numpy arrays.
         """
-        # Clear any previous lines from this axis to prevent over-drawing
-        axis.clear() # This is a simple but effective way to reset for a full refresh
+        import numpy as np
 
-        df = pd.DataFrame({'timestamp': timestamps, 'speed': speeds})
+        axis.clear()
         
-        # Find the indices where a gap starts (i.e., the value is NaN)
-        nan_indices = df.index[df['speed'].isna()]
+        if not len(timestamps) or not len(speeds):
+            return
+
+        # Convert to numpy arrays for easier handling if they aren't already
+        t_array = np.array(timestamps)
+        s_array = np.array(speeds, dtype=float)
+
+        # Find indices where data is NOT NaN
+        valid_mask = ~np.isnan(s_array)
         
-        start_index = 0
-        for end_index in nan_indices:
-            # Plot the segment before the gap
-            segment = df.iloc[start_index:end_index]
-            if not segment.empty:
-                axis.plot(segment['timestamp'], segment['speed'], color=color, linewidth=constants.graph.LINE_WIDTH)
-            start_index = end_index + 1
+        # If no valid data, nothing to plot
+        if not np.any(valid_mask):
+            return
+
+        # Create segments based on validity
+        # We need to find transitions between valid and invalid
+        # A jump in indices of valid data indicates a gap
+        valid_indices = np.where(valid_mask)[0]
+        
+        # If continuous, diff will be 1 everywhere
+        diffs = np.diff(valid_indices)
+        split_points = np.where(diffs > 1)[0] + 1
+        
+        # Split the valid indices into groups
+        segments = np.split(valid_indices, split_points)
+
+        for i, segment_indices in enumerate(segments):
+            if len(segment_indices) == 0:
+                continue
+                
+            seg_t = t_array[segment_indices]
+            seg_s = s_array[segment_indices]
             
-        # Plot the final segment after the last gap (or the whole thing if no gaps)
-        final_segment = df.iloc[start_index:]
-        if not final_segment.empty:
-            # Add the label only to the last segment to avoid duplicates in the legend
-            axis.plot(final_segment['timestamp'], final_segment['speed'], color=color, linewidth=constants.graph.LINE_WIDTH, label=label)
+            # Only add the label to the last segment
+            lbl = label if (i == len(segments) - 1) else None
+            axis.plot(seg_t, seg_s, color=color, linewidth=constants.graph.LINE_WIDTH, label=lbl)
 
 
     def _toggle_settings_panel_visibility(self):
@@ -493,15 +526,15 @@ class GraphWindow(QWidget):
         self.worker_thread.start()
 
 
-    def _on_data_ready(self, df: pd.DataFrame):
+    def _on_data_ready(self, data: List[Tuple[datetime, float, float]]):
         """Slot to receive processed data from the worker and render it."""
         if self._is_closing: return
-        if df.empty or len(df) < 2:
+        if not data or len(data) < 2:
             self._show_graph_message(self.i18n.NO_DATA_MESSAGE, is_error=False)
             return
         
         # Call the new, dedicated rendering function
-        self._render_graph(df)
+        self._render_graph(data)
 
 
     def _apply_theme(self):
@@ -537,58 +570,121 @@ class GraphWindow(QWidget):
 
     def _on_mouse_move(self, event):
         """Handles mouse movement over the canvas to display a synchronized crosshair and tooltip."""
-        if not event.inaxes or not self._graph_data_cache:
-            self._on_mouse_leave(event)
-            return
+        try:
+            if not event.inaxes:
+                self._on_mouse_leave(event)
+                return
+            
+            # Visual Debug: Change cursor to indicate event is received
+            self.canvas.setCursor(Qt.CursorShape.CrossCursor)
 
-        mouse_timestamp = event.xdata
-        
-        # This is a highly optimized way to find the closest data point
-        timestamps = [p[0] for p in self._graph_data_cache]
-        dt_mouse_timestamp = datetime.fromtimestamp(plt.dates.num2date(mouse_timestamp).timestamp())
-        
-        index = min(range(len(timestamps)), key=lambda i: abs(timestamps[i] - dt_mouse_timestamp))
-        
-        data_point = self._graph_data_cache[index]
-        timestamp, upload_bps, download_bps = data_point
+            if not self._graph_data_cache:
+                return
 
-        self.crosshair_v_download.set_xdata([timestamp])
-        self.crosshair_v_upload.set_xdata([timestamp])
-        self.crosshair_v_download.setVisible(True)
-        self.crosshair_v_upload.setVisible(True)
+            mouse_timestamp = event.xdata
+            if mouse_timestamp is None:
+                return
 
-        download_mbps = (download_bps * 8) / 1_000_000
-        upload_mbps = (upload_bps * 8) / 1_000_000
-        
-        tooltip_text = (
-            f"<div style='font-weight: bold;'>{timestamp.strftime('%Y-%m-%d %H:%M:%S')}</div>"
-            f"<div style='color: {constants.graph.DOWNLOAD_LINE_COLOR};'>↓ {download_mbps:.2f} Mbps</div>"
-            f"<div style='color: {constants.graph.UPLOAD_LINE_COLOR};'>↑ {upload_mbps:.2f} Mbps</div>"
-        )
-        self.tooltip.setText(tooltip_text)
-        self.tooltip.adjustSize()
-        
-        mouse_pos = self.canvas.mapFromGlobal(self.cursor().pos())
-        tooltip_x = mouse_pos.x() + 15
-        tooltip_y = mouse_pos.y() - self.tooltip.height() - 15
+            # This is a highly optimized way to find the closest data point
+            if self._graph_x_cache is None or len(self._graph_x_cache) == 0:
+                return
 
-        if tooltip_x + self.tooltip.width() > self.canvas.width():
-            tooltip_x = mouse_pos.x() - self.tooltip.width() - 15
-        if tooltip_y < 0:
-            tooltip_y = mouse_pos.y() + 15
+            # DIRECT COORDINATE LOOKUP (Fixes timezone/conversion drift)
+            # Find the index of the timestamp closest to the mouse's X coordinate
+            try:
+                # np.abs returns array of diffs, argmin gives index of min diff
+                index = (np.abs(self._graph_x_cache - mouse_timestamp)).argmin()
+            except Exception as e:
+                # Fallback purely for safety
+                self.logger.warning(f"Coordinate lookup failed: {e}")
+                return
+            
+            data_point = self._graph_data_cache[index]
+            timestamp, upload_bps, download_bps = data_point
 
-        self.tooltip.move(tooltip_x, tooltip_y)
-        self.tooltip.setVisible(True)
-        
-        self.canvas.draw_idle()
+            # Update Vertical lines to snap to the closest data point
+            for line in [self.crosshair_v_download, self.crosshair_v_upload]:
+                if line:
+                     line.set_xdata([timestamp, timestamp])
+                     line.set_visible(True)
+
+            download_mbps = (download_bps * 8) / 1_000_000
+            upload_mbps = (upload_bps * 8) / 1_000_000
+
+            # Update Horizontal lines:
+            # 1. They should follow the MOUSE Y-position (cursor), not snap to data.
+            # 2. Only show on the axis the mouse is currently hovering over (scales differ).
+            if event.inaxes == self.ax_download:
+                if self.crosshair_h_download:
+                    self.crosshair_h_download.set_ydata([event.ydata, event.ydata])
+                    self.crosshair_h_download.set_visible(True)
+                if self.crosshair_h_upload:
+                    self.crosshair_h_upload.set_visible(False)
+            
+            elif event.inaxes == self.ax_upload:
+                if self.crosshair_h_upload:
+                    self.crosshair_h_upload.set_ydata([event.ydata, event.ydata])
+                    self.crosshair_h_upload.set_visible(True)
+                if self.crosshair_h_download:
+                    self.crosshair_h_download.set_visible(False)
+            else:
+                 # Should not happen due to check at start of function, but safe default
+                 if self.crosshair_h_download: self.crosshair_h_download.set_visible(False)
+                 if self.crosshair_h_upload: self.crosshair_h_upload.set_visible(False)
+            
+            tooltip_text = (
+                f"<div style='font-weight: bold;'>{timestamp.strftime('%Y-%m-%d %H:%M:%S')}</div>"
+                f"<div style='color: {constants.graph.DOWNLOAD_LINE_COLOR};'>↓ {download_mbps:.2f} Mbps</div>"
+                f"<div style='color: {constants.graph.UPLOAD_LINE_COLOR};'>↑ {upload_mbps:.2f} Mbps</div>"
+            )
+            self.tooltip.setText(tooltip_text)
+            self.tooltip.adjustSize()
+            
+            # Use QCursor.pos() for global position, then map to THE WINDOW (self)
+            from PyQt6.QtGui import QCursor
+            mouse_pos = self.mapFromGlobal(QCursor.pos())
+            
+            tooltip_x = mouse_pos.x() + 15
+            tooltip_y = mouse_pos.y() - self.tooltip.height() - 15
+
+            # Keep tooltip within window bounds
+            if tooltip_x + self.tooltip.width() > self.width():
+                tooltip_x = mouse_pos.x() - self.tooltip.width() - 15
+            if tooltip_y < 0:
+                tooltip_y = mouse_pos.y() + 15
+
+            self.tooltip.move(tooltip_x, tooltip_y)
+            self.tooltip.setVisible(True)
+            self.tooltip.raise_()
+            
+            self.tooltip.setVisible(True)
+            self.tooltip.raise_()
+            
+            self.canvas.draw_idle()
+            
+        except Exception as e:
+            self.logger.error(f"Error in _on_mouse_move: {e}", exc_info=True)
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        """Handle window close event."""
+        self._is_closing = True
+        self.window_closed.emit()
+        event.accept()
 
     def _on_mouse_leave(self, event):
         """Hides the crosshair and tooltip when the mouse leaves the axes."""
-        if self.crosshair_v_download.get_visible():
-            self.crosshair_v_download.setVisible(False)
-            self.crosshair_v_upload.setVisible(False)
-            self.tooltip.setVisible(False)
-            self.canvas.draw_idle()
+        self.canvas.setCursor(Qt.CursorShape.ArrowCursor)
+        if hasattr(self, 'crosshair_v_download') and self.crosshair_v_download:
+             self.crosshair_v_download.set_visible(False)
+        if hasattr(self, 'crosshair_v_upload') and self.crosshair_v_upload:
+             self.crosshair_v_upload.set_visible(False)
+        if hasattr(self, 'crosshair_h_download') and self.crosshair_h_download:
+             self.crosshair_h_download.set_visible(False)
+        if hasattr(self, 'crosshair_h_upload') and self.crosshair_h_upload:
+             self.crosshair_h_upload.set_visible(False)
+        if hasattr(self, 'tooltip'):
+             self.tooltip.setVisible(False)
+        self.canvas.draw_idle()
 
     def _on_legend_pick(self, event):
         """Handles clicking on a legend item to toggle its visibility."""
@@ -1271,6 +1367,8 @@ class GraphWindow(QWidget):
                 }
                 self._notify_parent_of_setting_change(final_graph_settings)
                 
+                self.window_closed.emit()
+                
                 self.hide()
                 event.ignore()
                 
@@ -1474,18 +1572,28 @@ class GraphWindow(QWidget):
         return nice_top * power
 
 
-    def _render_graph(self, df: pd.DataFrame):
+    def _render_graph(self, history_data: List[Tuple[datetime, float, float]]):
         """
-        The definitive rendering function. Takes a processed DataFrame and draws it
+        The definitive rendering function. Takes a list of tuples and draws it
         with a true-zero floor and an adaptive logarithmic scale.
+        Replaces pandas logic with standard Python/Numpy.
         """
         try:
             from matplotlib.ticker import FixedLocator, FuncFormatter
+            import numpy as np
 
-            df['upload_mbps'] = (df['upload_speed'] * constants.network.units.BITS_PER_BYTE) / constants.network.units.MEGA_DIVISOR
-            df['download_mbps'] = (df['download_speed'] * constants.network.units.BITS_PER_BYTE) / constants.network.units.MEGA_DIVISOR
-            df['upload_mbps'] = df['upload_mbps'].clip(lower=0)
-            df['download_mbps'] = df['download_mbps'].clip(lower=0)
+            # Unpack data
+            timestamps = [x[0] for x in history_data]
+            upload_speeds = np.array([x[1] for x in history_data], dtype=float)
+            download_speeds = np.array([x[2] for x in history_data], dtype=float)
+
+            # Convert to Mbps
+            upload_mbps = (upload_speeds * constants.network.units.BITS_PER_BYTE) / constants.network.units.MEGA_DIVISOR
+            download_mbps = (download_speeds * constants.network.units.BITS_PER_BYTE) / constants.network.units.MEGA_DIVISOR
+            
+            # Clip negative values
+            upload_mbps = np.maximum(upload_mbps, 0)
+            download_mbps = np.maximum(download_mbps, 0)
             
             for ax in self.axes:
                 ax.clear()
@@ -1496,36 +1604,78 @@ class GraphWindow(QWidget):
             is_long_timespan = start_time is None or (end_time - start_time).days > 2
             
             # However, if the total data available is very short, always use the detailed view.
-            total_data_duration_hours = (df['timestamp'].max() - df['timestamp'].min()).total_seconds() / 3600
-            if total_data_duration_hours < 48:
+            max_ts = max(timestamps) if timestamps else datetime.now()
+            min_ts = min(timestamps) if timestamps else datetime.now()
+            total_duration_hours = (max_ts - min_ts).total_seconds() / 3600
+            
+            if total_duration_hours < 48:
                 is_long_timespan = False
 
             if is_long_timespan:
-                # Mean/Range logic
-                df.set_index('timestamp', inplace=True)
-                daily_agg = df.resample('D').agg({'download_mbps': ['mean', 'min', 'max'], 'upload_mbps': ['mean', 'min', 'max']}).fillna(0)
-                df.reset_index(inplace=True)
-                self.ax_download.plot(daily_agg.index, daily_agg[('download_mbps', 'mean')], color=constants.graph.DOWNLOAD_LINE_COLOR, linewidth=1.5, zorder=10)
-                self.ax_download.fill_between(daily_agg.index, daily_agg[('download_mbps', 'min')], daily_agg[('download_mbps', 'max')], color=constants.graph.DOWNLOAD_LINE_COLOR, alpha=0.3, label=self.i18n.DOWNLOAD_LABEL)
-                self.ax_upload.plot(daily_agg.index, daily_agg[('upload_mbps', 'mean')], color=constants.graph.UPLOAD_LINE_COLOR, linewidth=1.5, zorder=10)
-                self.ax_upload.fill_between(daily_agg.index, daily_agg[('upload_mbps', 'min')], daily_agg[('upload_mbps', 'max')], color=constants.graph.UPLOAD_LINE_COLOR, alpha=0.3, label=self.i18n.UPLOAD_LABEL)
+                # --- Manual Daily Aggregation (Replacing Pandas Resample) ---
+                daily_stats = defaultdict(list)
+                for t, up, down in zip(timestamps, upload_mbps, download_mbps):
+                    daily_stats[t.date()].append((up, down))
+                
+                agg_dates = sorted(daily_stats.keys())
+                agg_timestamps = [datetime.combine(d, datetime.min.time()) for d in agg_dates]
+                
+                down_mean, down_min, down_max = [], [], []
+                up_mean, up_min, up_max = [], [], []
+                
+                for d in agg_dates:
+                    vals = daily_stats[d]
+                    ups = [v[0] for v in vals]
+                    downs = [v[1] for v in vals]
+                    
+                    up_mean.append(np.mean(ups))
+                    up_min.append(np.min(ups))
+                    up_max.append(np.max(ups))
+                    
+                    down_mean.append(np.mean(downs))
+                    down_min.append(np.min(downs))
+                    down_max.append(np.max(downs))
+                
+                self.ax_download.plot(agg_timestamps, down_mean, color=constants.graph.DOWNLOAD_LINE_COLOR, linewidth=1.5, zorder=10)
+                self.ax_download.fill_between(agg_timestamps, down_min, down_max, color=constants.graph.DOWNLOAD_LINE_COLOR, alpha=0.3, label=self.i18n.DOWNLOAD_LABEL)
+                self.ax_upload.plot(agg_timestamps, up_mean, color=constants.graph.UPLOAD_LINE_COLOR, linewidth=1.5, zorder=10)
+                self.ax_upload.fill_between(agg_timestamps, up_min, up_max, color=constants.graph.UPLOAD_LINE_COLOR, alpha=0.3, label=self.i18n.UPLOAD_LABEL)
             else:
-                # Detailed line plot logic
-                df['time_diff'] = df['timestamp'].diff().dt.total_seconds()
-                gap_indices = df[df['time_diff'] > 60].index
-                for index in reversed(gap_indices):
-                    gap_row = df.loc[index].copy()
-                    gap_row['upload_mbps'], gap_row['download_mbps'] = np.nan, np.nan
-                    df = pd.concat([df.iloc[:index], pd.DataFrame([gap_row]), df.iloc[index:]], ignore_index=True)
-                self._plot_continuous_segments(self.ax_download, df['timestamp'], df['download_mbps'], color=constants.graph.DOWNLOAD_LINE_COLOR, label=self.i18n.DOWNLOAD_LABEL)
-                self._plot_continuous_segments(self.ax_upload, df['timestamp'], df['upload_mbps'], color=constants.graph.UPLOAD_LINE_COLOR, label=self.i18n.UPLOAD_LABEL)
+                # --- Detailed Line Plot with Gap Detection ---
+                # Check for gaps > 60 seconds and insert NaNs
+                plot_timestamps = []
+                plot_ups = []
+                plot_downs = []
+                
+                for i in range(len(timestamps)):
+                    curr_time = timestamps[i]
+                    curr_up = upload_mbps[i]
+                    curr_down = download_mbps[i]
+                    
+                    if i > 0:
+                        prev_time = timestamps[i-1]
+                        # If gap > 60s, insert a NaN point to break the line
+                        if (curr_time - prev_time).total_seconds() > 60:
+                             # Create a fake timestamp slightly after prev
+                            gap_time = prev_time + timedelta(seconds=1)
+                            plot_timestamps.append(gap_time)
+                            plot_ups.append(np.nan)
+                            plot_downs.append(np.nan)
+
+                    plot_timestamps.append(curr_time)
+                    plot_ups.append(curr_up)
+                    plot_downs.append(curr_down)
+                
+                self._plot_continuous_segments(self.ax_download, plot_timestamps, plot_downs, color=constants.graph.DOWNLOAD_LINE_COLOR, label=self.i18n.DOWNLOAD_LABEL)
+                self._plot_continuous_segments(self.ax_upload, plot_timestamps, plot_ups, color=constants.graph.UPLOAD_LINE_COLOR, label=self.i18n.UPLOAD_LABEL)
 
             self._apply_theme()
             
-            for ax, speed_col in [(self.ax_download, 'download_mbps'), (self.ax_upload, 'upload_mbps')]:
-                all_speeds = [s for s in df[speed_col] if pd.notna(s)]
-                if all_speeds:
-                    max_speed = max(all_speeds)
+            for ax, speed_data in [(self.ax_download, download_mbps), (self.ax_upload, upload_mbps)]:
+                # Filter NaNs for max calculation
+                valid_speeds = speed_data[~np.isnan(speed_data)]
+                if len(valid_speeds) > 0:
+                    max_speed = np.max(valid_speeds)
                     nice_top = self._get_nice_y_axis_top(max_speed)
                     ax.set_ylim(bottom=0, top=nice_top)
                     ax.set_yscale('symlog', linthresh=1.0)
@@ -1556,7 +1706,7 @@ class GraphWindow(QWidget):
 
             # If the user selected a dynamic range like "All" or "Uptime", fall back to the data's actual range.
             if requested_start_time is None:
-                requested_start_time = df['timestamp'].min()
+                requested_start_time = min(timestamps) if timestamps else datetime.now()
 
             # Add 1% padding to the time range for a cleaner look
             time_range_delta = requested_end_time - requested_start_time
@@ -1564,12 +1714,35 @@ class GraphWindow(QWidget):
             self.ax_upload.set_xlim(requested_start_time - padding, requested_end_time + padding)
             self._configure_xaxis_format(requested_start_time, requested_end_time)
             
-            history_data = list(zip(df['timestamp'], df['upload_speed'], df['download_speed']))
-
             self._update_stats_bar(history_data)
 
             self.figure.autofmt_xdate(rotation=30, ha='right')
+            # Re-create crosshairs because ax.clear() removed them
+            # Use current theme colors
+            is_dark = self._is_dark_mode
+            crosshair_color = style_constants.GRID_COLOR_DARK if is_dark else style_constants.GRID_COLOR_LIGHT
+            
+            self.crosshair_v_download = self.ax_download.axvline(x=timestamps[-1], color=crosshair_color, linewidth=0.8, linestyle='--', zorder=20, visible=False)
+            self.crosshair_v_upload = self.ax_upload.axvline(x=timestamps[-1], color=crosshair_color, linewidth=0.8, linestyle='--', zorder=20, visible=False)
+            self.crosshair_h_download = self.ax_download.axhline(y=0, color=crosshair_color, linewidth=0.8, linestyle='--', zorder=20, visible=False)
+            self.crosshair_h_upload = self.ax_upload.axhline(y=0, color=crosshair_color, linewidth=0.8, linestyle='--', zorder=20, visible=False)
+
             self.canvas.draw_idle()
+            
+            # Cache data for tooltip crosshair (converted to list of tuples for compatibility with mouse move)
+            self._graph_data_cache = list(zip(timestamps, upload_speeds * constants.network.units.BITS_PER_BYTE, download_speeds * constants.network.units.BITS_PER_BYTE))
+            
+            # CRITICAL OPTIMIZATION:
+            # Pre-calculate and cache the float representations of timestamps.
+            # This allows _on_mouse_move to compare floats directly (O(n) or O(1) with numpy)
+            # instead of converting mouse -> datetime -> local -> compare.
+            # This fixes "stuck on right" bugs caused by timezone mismatches.
+            if timestamps:
+                self._graph_x_cache = np.array(mdates.date2num(timestamps))
+            else:
+                self._graph_x_cache = None
+
+            self.logger.debug(f"Graph data cache updated with {len(self._graph_data_cache)} points.")
 
         except Exception as e:
             self.logger.error(f"Error rendering graph: {e}", exc_info=True)

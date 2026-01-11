@@ -41,6 +41,11 @@ class RenderConfig:
     decimal_places: int = constants.config.defaults.DEFAULT_DECIMAL_PLACES
     text_alignment: str = constants.config.defaults.DEFAULT_TEXT_ALIGNMENT
     force_decimals: bool = False
+    unit_type: str = constants.config.defaults.DEFAULT_UNIT_TYPE
+    swap_upload_download: bool = constants.config.defaults.DEFAULT_SWAP_UPLOAD_DOWNLOAD
+    fixed_width_values: bool = constants.config.defaults.DEFAULT_FIXED_WIDTH_VALUES
+    hide_arrows: bool = constants.config.defaults.DEFAULT_HIDE_ARROWS
+    hide_unit_suffix: bool = constants.config.defaults.DEFAULT_HIDE_UNIT_SUFFIX
 
 
     @classmethod
@@ -66,7 +71,12 @@ class RenderConfig:
                 speed_display_mode=config.get('speed_display_mode', constants.config.defaults.DEFAULT_SPEED_DISPLAY_MODE),
                 decimal_places=int(config.get('decimal_places', constants.config.defaults.DEFAULT_DECIMAL_PLACES)),
                 text_alignment=config.get('text_alignment', constants.config.defaults.DEFAULT_TEXT_ALIGNMENT),
-                force_decimals=config.get('force_decimals', constants.config.defaults.DEFAULT_FORCE_DECIMALS)
+                force_decimals=config.get('force_decimals', constants.config.defaults.DEFAULT_FORCE_DECIMALS),
+                unit_type=config.get('unit_type', constants.config.defaults.DEFAULT_UNIT_TYPE),
+                swap_upload_download=config.get('swap_upload_download', constants.config.defaults.DEFAULT_SWAP_UPLOAD_DOWNLOAD),
+                fixed_width_values=config.get('fixed_width_values', constants.config.defaults.DEFAULT_FIXED_WIDTH_VALUES),
+                hide_arrows=config.get('hide_arrows', constants.config.defaults.DEFAULT_HIDE_ARROWS),
+                hide_unit_suffix=config.get('hide_unit_suffix', constants.config.defaults.DEFAULT_HIDE_UNIT_SUFFIX)
             )
         except (ValueError, TypeError) as e:
             logger.error("Failed to create RenderConfig from dict: %s", e)
@@ -125,18 +135,21 @@ class WidgetRenderer:
             always_mbps = config.speed_display_mode == "always_mbps"
             decimal_places = max(0, min(2, config.decimal_places))
             force_decimals = config.force_decimals
+            unit_type = config.unit_type
+            fixed_width = config.fixed_width_values
+            swap_order = config.swap_upload_download
             
             if layout_mode == 'horizontal':
-                self._draw_horizontal_layout(painter, upload, download, width, height, config, always_mbps, decimal_places, force_decimals)
+                self._draw_horizontal_layout(painter, upload, download, width, height, config, always_mbps, decimal_places, force_decimals, unit_type, fixed_width, swap_order)
             else: # Default to vertical
-                self._draw_vertical_layout(painter, upload, download, width, height, config, always_mbps, decimal_places, force_decimals)
+                self._draw_vertical_layout(painter, upload, download, width, height, config, always_mbps, decimal_places, force_decimals, unit_type, fixed_width, swap_order)
 
         except Exception as e:
             self.logger.error("Failed to draw speeds: %s", e, exc_info=True)
             self._last_text_rect = QRect()
 
 
-    def _draw_vertical_layout(self, painter: QPainter, upload: float, download: float, width: int, height: int, config: RenderConfig, always_mbps: bool, decimal_places: int, force_decimals: bool) -> None:
+    def _draw_vertical_layout(self, painter: QPainter, upload: float, download: float, width: int, height: int, config: RenderConfig, always_mbps: bool, decimal_places: int, force_decimals: bool, unit_type: str, fixed_width: bool, swap_order: bool) -> None:
         """Draws the standard two-line vertical layout with correct compact centering."""
         line_height = self.metrics.height()
         ascent = self.metrics.ascent()
@@ -148,75 +161,137 @@ class WidgetRenderer:
         # The second line is positioned exactly one line_height below the first.
         bottom_y = top_y + line_height
 
-        upload_text, download_text = self._format_speed_texts(upload, download, always_mbps, decimal_places, force_decimals)
+        upload_text, download_text = self._format_speed_texts(upload, download, always_mbps, decimal_places, force_decimals, unit_type, fixed_width)
         up_val_str, up_unit = upload_text
         down_val_str, down_unit = download_text
         
-        arrow_width = self.metrics.horizontalAdvance(self.i18n.UPLOAD_ARROW)
-        max_num_width = max(self.metrics.horizontalAdvance(up_val_str), self.metrics.horizontalAdvance(down_val_str))
-        max_unit_width = max(self.metrics.horizontalAdvance(up_unit), self.metrics.horizontalAdvance(down_unit))
-        content_width = arrow_width + constants.renderer.ARROW_NUMBER_GAP + max_num_width + constants.renderer.VALUE_UNIT_GAP + max_unit_width
+        # Calculate widths, conditionally including arrows and units
+        hide_arrows = config.hide_arrows
+        hide_unit = config.hide_unit_suffix
+        
+        arrow_width = 0 if hide_arrows else self.metrics.horizontalAdvance(self.i18n.UPLOAD_ARROW)
+        arrow_gap = 0 if hide_arrows else constants.renderer.ARROW_NUMBER_GAP
+        
+        if fixed_width:
+            # Use a reference string depending on display mode to determine max width
+            # "888" for Auto (approx 999 MB/s), "8888" for Fixed (approx 9999 Mbps)
+            integer_part = "8888" if always_mbps else "888"
+            
+            # Construct reference string based on decimal places
+            # Even if force_decimals is False, we reserve space for them if they MIGHT appear (so width doesn't jump)
+            # Actually, if force_decimals is False, the number might be "10" or "10.5". 
+            # If we want STABLE width, we must reserve space for the max possible width (including decimals).
+            # So we assume decimals are present for the width calculation.
+            ref_str = integer_part
+            if decimal_places > 0:
+                ref_str += "." + "8" * decimal_places
+            
+            max_num_width = self.metrics.horizontalAdvance(ref_str)
+        else:
+            max_num_width = max(self.metrics.horizontalAdvance(up_val_str), self.metrics.horizontalAdvance(down_val_str))
+            
+        unit_gap = 0 if hide_unit else constants.renderer.VALUE_UNIT_GAP
+        max_unit_width = 0 if hide_unit else max(self.metrics.horizontalAdvance(up_unit), self.metrics.horizontalAdvance(down_unit))
+        content_width = arrow_width + arrow_gap + max_num_width + unit_gap + max_unit_width
 
         margin = self._calculate_margin(width, content_width, config.text_alignment)
-        number_x = margin + arrow_width + constants.renderer.ARROW_NUMBER_GAP
-        unit_x = number_x + max_num_width + constants.renderer.VALUE_UNIT_GAP
+        number_starting_x_base = margin + arrow_width + arrow_gap
+        # The unit starts after the allocated number width
+        unit_x = number_starting_x_base + max_num_width + unit_gap
 
-        painter.setPen(self._get_speed_color(upload, config))
-        painter.drawText(margin, top_y, self.i18n.UPLOAD_ARROW)
-        painter.drawText(number_x, top_y, up_val_str)
-        painter.drawText(unit_x, top_y, up_unit)
+        def draw_line(y_pos: int, arrow_char: str, val_str: str, unit_str: str, color: QColor):
+            painter.setPen(color)
+            if not hide_arrows:
+                painter.drawText(margin, y_pos, arrow_char)
+            
+            # Draw Number: Right aligned within the allocated max_num_width
+            # x_position = start_of_number_area + allocated_width - width_of_actual_string
+            val_width = self.metrics.horizontalAdvance(val_str)
+            
+            if fixed_width:
+                # Strictly right-align to the edge of the number area
+                val_x = number_starting_x_base + max_num_width - val_width
+            else:
+                # Default behavior: Left align (relative to number column) or just draw at start
+                # Existing behavior was "drawText(number_x...)" which aligns left of the number block.
+                # To keep existing behavior for non-fixed:
+                val_x = number_starting_x_base
 
-        painter.setPen(self._get_speed_color(download, config))
-        painter.drawText(margin, bottom_y, self.i18n.DOWNLOAD_ARROW)
-        painter.drawText(number_x, bottom_y, down_val_str)
-        painter.drawText(unit_x, bottom_y, down_unit)
+            painter.drawText(int(val_x), y_pos, val_str)
+            
+            if not hide_unit:
+                painter.drawText(unit_x, y_pos, unit_str)
+
+        # Handle swap order: if swapped, draw download on top
+        if swap_order:
+            draw_line(top_y, self.i18n.DOWNLOAD_ARROW, down_val_str, down_unit, self._get_speed_color(download, config))
+            draw_line(bottom_y, self.i18n.UPLOAD_ARROW, up_val_str, up_unit, self._get_speed_color(upload, config))
+        else:
+            draw_line(top_y, self.i18n.UPLOAD_ARROW, up_val_str, up_unit, self._get_speed_color(upload, config))
+            draw_line(bottom_y, self.i18n.DOWNLOAD_ARROW, down_val_str, down_unit, self._get_speed_color(download, config))
         
         self._last_text_rect = QRect(margin, int(top_y - ascent), int(content_width), int(total_text_height))
 
 
-    def _draw_horizontal_layout(self, painter: QPainter, upload: float, download: float, width: int, height: int, config: RenderConfig, always_mbps: bool, decimal_places: int, force_decimals: bool) -> None:
+
+    def _draw_horizontal_layout(self, painter: QPainter, upload: float, download: float, width: int, height: int, config: RenderConfig, always_mbps: bool, decimal_places: int, force_decimals: bool, unit_type: str, fixed_width: bool, swap_order: bool) -> None:
         """Draws the compact single-line horizontal layout."""
-        upload_text_full, download_text_full = self._format_speed_texts(upload, download, always_mbps, decimal_places, force_decimals, full_string=True)
+        upload_text_full, download_text_full = self._format_speed_texts(upload, download, always_mbps, decimal_places, force_decimals, unit_type, fixed_width, full_string=True)
         
-        # Get the arrow characters from the i18n object, not the constants module.
-        up_str = f"{self.i18n.UPLOAD_ARROW} {upload_text_full}"
-        down_str = f"{self.i18n.DOWNLOAD_ARROW} {download_text_full}"
+        # Handle swap order
+        if swap_order:
+            first_arrow = self.i18n.DOWNLOAD_ARROW
+            first_text = download_text_full
+            first_speed = download
+            second_arrow = self.i18n.UPLOAD_ARROW
+            second_text = upload_text_full
+            second_speed = upload
+        else:
+            first_arrow = self.i18n.UPLOAD_ARROW
+            first_text = upload_text_full
+            first_speed = upload
+            second_arrow = self.i18n.DOWNLOAD_ARROW
+            second_text = download_text_full
+            second_speed = download
+        
+        first_str = f"{first_arrow} {first_text}"
+        second_str = f"{second_arrow} {second_text}"
         separator = constants.layout.HORIZONTAL_LAYOUT_SEPARATOR
         
-        up_width = self.metrics.horizontalAdvance(up_str)
-        down_width = self.metrics.horizontalAdvance(down_str)
+        first_width = self.metrics.horizontalAdvance(first_str)
+        second_width = self.metrics.horizontalAdvance(second_str)
         separator_width = self.metrics.horizontalAdvance(separator)
-        content_width = up_width + separator_width + down_width
+        content_width = first_width + separator_width + second_width
 
         y_pos = int((height - self.metrics.height()) / 2 + self.metrics.ascent())
         margin = self._calculate_margin(width, content_width, config.text_alignment)
         
-        up_x = margin
-        separator_x = up_x + up_width
-        down_x = separator_x + separator_width
+        first_x = margin
+        separator_x = first_x + first_width
+        second_x = separator_x + separator_width
 
-        painter.setPen(self._get_speed_color(upload, config))
-        painter.drawText(up_x, y_pos, up_str)
+        painter.setPen(self._get_speed_color(first_speed, config))
+        painter.drawText(first_x, y_pos, first_str)
         
         painter.setPen(self.default_color)
         painter.drawText(separator_x, y_pos, separator)
         
-        painter.setPen(self._get_speed_color(download, config))
-        painter.drawText(down_x, y_pos, down_str)
+        painter.setPen(self._get_speed_color(second_speed, config))
+        painter.drawText(second_x, y_pos, second_str)
 
         self._last_text_rect = QRect(margin, (height - self.metrics.height()) // 2, int(content_width), self.metrics.height())
 
 
-    def _format_speed_texts(self, upload: float, download: float, always_mbps: bool, decimal_places: int, force_decimals: bool, full_string: bool = False) -> Tuple[Any, Any]:
+    def _format_speed_texts(self, upload: float, download: float, always_mbps: bool, decimal_places: int, force_decimals: bool, unit_type: str = "bits_decimal", fixed_width: bool = False, full_string: bool = False) -> Tuple[Any, Any]:
         """Helper to format speed values into final strings or tuples."""
-        upload_full = format_speed(upload, self.i18n, False, always_mbps=always_mbps, decimal_places=decimal_places)
-        download_full = format_speed(download, self.i18n, False, always_mbps=always_mbps, decimal_places=decimal_places)
+        upload_full = format_speed(upload, self.i18n, always_mbps=always_mbps, decimal_places=decimal_places, unit_type=unit_type, fixed_width=False)
+        download_full = format_speed(download, self.i18n, always_mbps=always_mbps, decimal_places=decimal_places, unit_type=unit_type, fixed_width=False)
         
         up_val_str, up_unit = upload_full.split(" ", 1)
         down_val_str, down_unit = download_full.split(" ", 1)
 
-        up_val_float = float(up_val_str)
-        down_val_float = float(down_val_str)
+        up_val_float = float(up_val_str.strip())
+        down_val_float = float(down_val_str.strip())
 
         def format_value(value: float) -> str:
             """Formats a float value based on the force_decimals setting."""
@@ -233,7 +308,7 @@ class WidgetRenderer:
 
         up_num_final = format_value(up_val_float)
         down_num_final = format_value(down_val_float)
-
+        
         if full_string:
             return f"{up_num_final} {up_unit}", f"{down_num_final} {down_unit}"
         else:
