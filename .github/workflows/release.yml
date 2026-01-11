@@ -119,7 +119,7 @@ jobs:
         uses: vedantmgoyal2009/winget-releaser@v2
         with:
           # Your Winget Package ID
-          identifier: ErezC137.NetSpeedTray
+          identifier: erez-c137.NetSpeedTray
           
           # Only submit the Installer (Setup.exe), ignore the Portable Zip
           installers-regex: '.*Setup.exe$'

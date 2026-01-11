@@ -3,10 +3,6 @@ from PyInstaller.utils.hooks import collect_all
 
 block_cipher = None
 
-# --- FORCE COLLECT PANDAS ---
-# This grabs all hidden imports, data files, and binaries for pandas
-pandas_datas, pandas_binaries, pandas_hiddenimports = collect_all('pandas')
-
 # Define your manual hidden imports
 my_hidden_imports = [
     'PyQt6.QtCore',
@@ -23,21 +19,18 @@ my_hidden_imports = [
     'wmi',
 ]
 
-# Combine them
-all_hidden_imports = my_hidden_imports + pandas_hiddenimports
-
 a = Analysis(
     ['..\\src\\monitor.py'],
     pathex=[],
-    binaries=pandas_binaries, # Include pandas binaries
+    binaries=[],
     datas=[
         ('..\\assets', 'assets'),
         ('..\\src\\netspeedtray\\constants\\locales', 'netspeedtray/constants/locales')
-    ] + pandas_datas, # Include pandas data
-    hiddenimports=all_hidden_imports, # Include pandas hidden imports
+    ],
+    hiddenimports=my_hidden_imports,
     hookspath=[],
     runtime_hooks=[],
-    excludes=[],
+    excludes=['pandas'],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
