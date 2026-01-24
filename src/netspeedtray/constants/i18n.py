@@ -46,6 +46,7 @@ class I18nStrings:
         "nl_NL": "Nederlands (Nederland)",
         "pl_PL": "Polski (Polska)",
         "ru_RU": "Русский (Россия)",
+        "sl_SI": "Slovenščina (Slovenija)",
     }
 
     def __init__(self, language_code: Optional[str] = None) -> None:
