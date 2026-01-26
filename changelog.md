@@ -4,43 +4,62 @@ All notable changes to this project will be documented in this file.
 
 ---
 
-## [1.2.0] - January 11, 2026
+## [1.2.0] - January 25, 2026
 
-This release is a major milestone in interactivity, stability, and design. It introduces a fully interactive graph with precise crosshairs, a native Windows 11-style settings experience, and significant performance optimizations.
+This is a major stable release that combines significant performance overhauls with critical stabilization fixes. It introduces vectorized graph processing, a modular settings architecture, and definitive fixes for long-standing accuracy and layout issues.
+
+### 🚀 Performance & Core Optimization
+*   **Vectorized Graph Logic:** Replaced legacy loop-based processing with vectorized NumPy operations, achieving a **42x speed improvement** in graph rendering for large datasets.
+*   **Zero-Copy Data Retrieval:** Updated database layer to fetch raw timestamps directly, bypassing expensive datetime object instantiation.
+*   **Pandas Removal:** Completely removed the `pandas` dependency. The application is now lighter and launches significantly closer to instant.
+
+### 🐛 Critical Stabilization & Fixes
+*   **Fixed "Stuck 0.00 Mbps" Bug (#64):** Lowered minimum display threshold to `0.0`. Meters now react to even the smallest background transfers (below 80kbps).
+*   **Accuracy & Lag Resilience (#78):** Fixed timing logic and increased validity thresholds (3s -> 10s) to prevent inaccurate speed drops during minor system lag.
+*   **Vertical Taskbar Support (#77):** 
+    *   Changed layout to bottom-align the widget on vertical taskbars (placing it near the tray).
+    *   Hardened Z-order preservation to ensure the widget stays on top even when the taskbar is clicked.
+*   **Taskbar Detection Fixes (#75, #76):** Added safe screen fallbacks and silenced benign "ambiguous edge" log spam.
+*   **Phantom Speed Spikes:** Corrected the rate-limiting math to prevent erratic behavior after system wake or intense jitter.
+
+### 🏗️ Refactoring & Maintainability
+*   **Modular Settings Dialog:** Decomposed the settings file into dedicated page classes (`General`, `Appearance`, `Graph`, etc.) for easier expansion.
+*   **Tray Icon Manager:** Extracted system tray logic into a dedicated component.
+*   **System Event Handler:** Centralized low-level Windows hooks (taskbar detection, fullscreen logic) for improved testability.
+*   **Main Widget Decoupling:** Split the monolithic `NetworkSpeedWidget` by extracting `StartupManager` (registry logic) and enhancing `PositionManager` (Z-order/window control), significantly reducing code complexity.
+
+### 📐 Layout & Positioning
+*   **Optimized Tray Offset:** Reduced default tray offset from `10px` to `1px`, allowing the widget to sit flush against the system tray overflow menu for a cleaner look.
+*   **Layout Stability:** Fixed scaling issues and potential crashes (`NameError`) during font resizing or unit switching.
+
+### 🛡️ Data Integrity
+*   **Safe Database Migrations:** Replaced the destructive "Drop & Recreate" logic with a safe, versioned migration system.
+
+### 🌍 Localization
+*   **New Languages:** Added full support for **Korean (ko_KR)** and **Slovenian (sl_SI)**.
+*   **Key Parity (#74):** Backfilled all 9 supported locales to ensure 100% key parity with English, preventing "missing key" crashes.
+
+### 🎨 UI & Customization
+*   **Widget Background:** Added custom background color and opacity controls.
+*   **Short Unit Labels:** Added a toggle for compact unit display (e.g. "Mb" vs "Mbps").
+*   **Precise Thresholds:** Replaced sliders with precise `QDoubleSpinBox` inputs (0-10,000 Mbps).
+
+---
+
+## [1.2.0-Beta] - January 11, 2026
+
+*Original release of the interactive graph overhaul, later designated as Beta due to accuracy and layout regressions reported in high-frequency monitoring scenarios.*
 
 ### 🚀 Interactive Graph Overhaul
-*   **Precision Crosshairs:** Added a comprehensive dual-axis crosshair system.
-    *   **Vertical Line:** Snaps to the exact measurement timestamp for accurate data reading.
-    *   **Horizontal Line:** Follows your mouse cursor's Y-position on the active chart, effectively visualizing speed levels.
-*   **Coordinate-Based Tracking:** Refactored the hit-testing logic to use direct coordinate lookup. This eliminates "stuck" cursors caused by timezone conversion drifts.
-*   **Smoother Interaction:** Switched rendering to an idle-loop model, eliminating UI freezes and high CPU usage when hovering over the graph.
-*   **Z-Order Fixes:** Tooltips are now properly parented to the window, ensuring they always float above the graph lines and grid.
+*   **Precision Crosshairs:** Added comprehensive dual-axis crosshair system (vertical timestamp snap & horizontal speed tracking).
+*   **Dual-Axis Layout:** Split graph into dedicated independently-scaled charts for Download and Upload.
+*   **Smooth Interaction:** Switched rendering to an idle-loop model to eliminate UI freezes.
 
-### 🎨 Modern UI & Customization
-*   **Native Windows 11 Design:** The Settings dialog has been completely redesigned with a responsive Grid Layout, modern spacing, and updated typography.
-*   **New Controls:**
-    *   **Sliders:** Precise sliders for transparency and history period adjustments.
-    *   **Toggle Switches:** Replaced legacy checkboxes with modern looking switches.
-    *   **Hex Color Input:** Added support for manual Hex color codes (e.g., `#FF5733`).
-*   **Unit Customization:**
-    *   **Bits vs Bytes:** Choose to display speeds in **Mbps** (Megabits) or **MB/s** (Megabytes).
-    *   **Decimal vs Binary:** Select between standard decimal (1000 = 1k, "MB") or binary IEC (1024 = 1Ki, "MiB") units.
-*   **Visual Polish:**
-    *   **Fixed-Width Values:** Option to use monospaced formatting for speeds to prevent widget resizing/jitter.
-    *   **Shortened Labels:** Optimized text labels ("Speed Display Mode" -> "Display") to fit better in compact views.
-    *   **Swap Order:** Toggle to swap the position of Upload and Download speeds.
-    *   **Minimalism:** Options to hide arrows and unit suffixes.
+### 🐛 Bug Fixes
+*   **Fixed Startup Crashes:** Solved `AttributeError` issues related to `matplotlib.dates`.
+*   **Fixed Widget Disappearance:** Resolved regression where closing the Graph window could hide the main widget.
 
-### ⚡ Performance & Core Optimization
-*   **Pandas Removal:** Completely removed the `pandas` dependency. The application is now lighter, faster to build (~1 min), and launches significantly closer to instant.
-*   **Lazy Loading:** Graph components are initialized only when the window is opened, reducing startup memory usage.
-*   **Build Size:** Reduced total executable size due to dependency pruning.
-
-### 🐛 Critical Bug Fixes
-*   **Fixed Widget Disappearance:** Resolved a regression where the main widget would vanish after closing the Graph window. Added robust visibility restoration logic.
-*   **Fixed Startup Crashes:** Solved `AttributeError` issues related to `matplotlib.dates` handling.
-*   **Fixed Graph Defaults:** "Show Legend" is now Off by default for a cleaner look.
-*   **Fixed Build System:** Corrected filenames and exclusion rules in the build script.
+---
 
 ## [1.1.9] - December 31, 2025
 
@@ -299,7 +318,7 @@ This is a significant update focused on improving data accuracy, providing more 
 -   **Smart Interface Monitoring:** The application can now automatically identify your primary internet connection (e.g., "Wi-Fi" or "Ethernet") and display its speed by default, providing a cleaner and more accurate reading.
 -   **Per-Interface Graph Filtering:** A new "Interface" dropdown in the graph settings allows you to visualize the speed history for any specific network adapter on your system.
 -   **Improved Data Accuracy:**
-    -   Fixed a bug that could cause large, incorrect speed spikes in the database after the computer woke from sleep. The controller now handles these events correctly, ensuring historical data is more reliable.
+    -   Fixed a bug that could cause large, incorrect speed spikes in the database after the computer wakes from sleep. The controller now handles these events correctly, ensuring historical data is more reliable.
 -   **Safer Data Retention Policy:** If you reduce the data retention time (e.g., from 1 year to 7 days), the application now waits for a 48-hour grace period before pruning old data, preventing accidental data loss.
 
 ### 🌍 Internationalization

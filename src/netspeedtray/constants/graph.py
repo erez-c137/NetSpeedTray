@@ -2,8 +2,8 @@
 Constants specific to the network speed history graph window.
 """
 from typing import Final, Tuple
-from .app import app
-from .color import color
+from netspeedtray.constants.app import app
+from netspeedtray.constants.color import color
 
 class GraphConstants:
     """Defines constants for the history graph window."""

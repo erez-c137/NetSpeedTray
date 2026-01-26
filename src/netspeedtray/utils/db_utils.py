@@ -27,8 +27,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union, Any
 
 # --- Local Imports ---
-from .config import ConfigManager
-from .. import constants
+from netspeedtray.utils.config import ConfigManager
+from netspeedtray import constants
 
 # --- Named Tuples for Data ---
 SpeedData = namedtuple("SpeedData", ["timestamp", "upload", "download", "interface"])

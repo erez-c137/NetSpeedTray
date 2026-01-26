@@ -14,11 +14,11 @@ from PyQt6.QtCore import pyqtSignal, QObject
 import psutil
 
 from netspeedtray import constants
-from ..utils.network_utils import get_primary_interface_name
+from netspeedtray.utils.network_utils import get_primary_interface_name
 
 if TYPE_CHECKING:
-    from ..views.widget import NetworkSpeedWidget
-    from ..core.widget_state import WidgetState
+    from netspeedtray.views.widget import NetworkSpeedWidget
+    from netspeedtray.core.widget_state import WidgetState
 
 logger = logging.getLogger("NetSpeedTray.NetworkController")
 
@@ -76,11 +76,13 @@ class NetworkController(QObject):
         time_diff = current_time - self.last_check_time
         update_interval = self.config.get("update_rate", 1.0)
 
-        if time_diff < (update_interval / 0.5):
+        # Skip updates that are triggered too soon (e.g., more than 2x the requested rate)
+        # Fix: Using * 0.5 instead of / 0.5 to correctly allow jitter down to 500ms for a 1s interval.
+        if time_diff < (update_interval * 0.5):
             return
             
-        update_interval = self.config.get("update_rate", 1.0)
-        validity_threshold = update_interval * 3.0
+        # Increase validity threshold to be more tolerant of system lag (10s minimum)
+        validity_threshold = max(10.0, update_interval * 5.0)
 
         # --- LAYER 1: DETECT RESUME EVENT ---
         if time_diff > validity_threshold:
@@ -88,7 +90,7 @@ class NetworkController(QObject):
                 "Abnormal time delta (%.1fs) detected. Entering re-priming state to prevent speed spike.",
                 time_diff
             )
-            self.repriming_needed = 3  # Require 3 good readings before trusting the data
+            self.repriming_needed = 2  # Require 2 good readings before trusting the data
             self.last_check_time = current_time
             self.last_interface_counters = current_counters
             self.display_speed_updated.emit(0.0, 0.0)
@@ -96,7 +98,7 @@ class NetworkController(QObject):
 
         # --- LAYER 2: EXECUTE RE-PRIMING STATE ---
         if self.repriming_needed > 0:
-            self.logger.debug(f"Re-priming cycle: {self.repriming_needed} remaining.")
+            self.logger.debug("Re-priming cycle: %s remaining.", self.repriming_needed)
             self.last_check_time = current_time
             self.last_interface_counters = current_counters
             self.display_speed_updated.emit(0.0, 0.0)
@@ -113,7 +115,7 @@ class NetworkController(QObject):
             if last:
                 # --- LAYER 3: COUNTER ROLLOVER CHECK ---
                 if current.bytes_sent < last.bytes_sent or current.bytes_recv < last.bytes_recv:
-                    self.logger.warning(f"Counter rollover or reset detected for '{name}'. Skipping this cycle.")
+                    self.logger.warning("Counter rollover or reset detected for '%s'. Skipping this cycle.", name)
                     continue
 
                 up_diff = current.bytes_sent - last.bytes_sent
@@ -194,7 +196,7 @@ class NetworkController(QObject):
             return self._sum_all(per_interface_speeds)
         
         else: # Fallback for unknown/legacy mode
-            self.logger.warning(f"Unknown interface_mode '{mode}'. Defaulting to 'auto'.")
+            self.logger.warning("Unknown interface_mode '%s'. Defaulting to 'auto'.", mode)
             self.config["interface_mode"] = "auto"
             return self._aggregate_for_display(per_interface_speeds)
 

@@ -186,11 +186,11 @@ class TaskbarInfo:
             except Exception as e:
                 logger.error("Error during name-based screen matching fallback: %s", e)
                 
-            logger.error("CRITICAL: Could not find any matching QScreen for taskbar HWND %s.", self.hwnd)
-            return None
+            logger.warning("Could not find any matching QScreen for taskbar HWND %s. Falling back to primary screen.", self.hwnd)
+            return QApplication.primaryScreen()
         except Exception as e:
-            logger.error("Unexpected error fetching QScreen for taskbar HWND %s: %s", self.hwnd, e, exc_info=True)
-            return None
+            logger.error("Unexpected error fetching QScreen for taskbar HWND %s: %s. Using primary fallback.", self.hwnd, e, exc_info=True)
+            return QApplication.primaryScreen()
 
 
     @staticmethod
@@ -302,7 +302,7 @@ class TaskbarInfo:
                 elif abs(tb_right_log - (screen_rect_log.right() + 1)) < tolerance:
                     return constants.taskbar.edge.RIGHT
 
-            logger.warning("Taskbar edge position ambiguous for HWND %s. Comparing centers.", self.hwnd)
+            logger.debug("Taskbar edge position ambiguous for HWND %s. Comparing centers.", self.hwnd)
             taskbar_center_x = (tb_left_log + tb_right_log) / 2
             taskbar_center_y = (tb_top_log + tb_bottom_log) / 2
             screen_center_x = (screen_rect_log.left() + screen_rect_log.right()) / 2

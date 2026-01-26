@@ -95,3 +95,12 @@ populate_db.py
 
 # Documentation
 Docs/
+
+# AI and Agent-related files
+.antigravity/
+.agent/
+.gemini/
+gemini.md
+GEMINI.md
+
+

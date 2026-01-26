@@ -26,7 +26,7 @@ def graph_window_instance(qapp, mocker) -> Iterator[GraphWindow]:
     problematic dependencies, ensuring graceful cleanup.
     """
     mocker.patch('matplotlib.pyplot.subplots', return_value=(MagicMock(), (MagicMock(), MagicMock())))
-    mocker.patch('netspeedtray.views.graph.FigureCanvas', return_value=QWidget())
+    mocker.patch('netspeedtray.views.graph.window.FigureCanvas', return_value=QWidget())
     mocker.patch('netspeedtray.utils.helpers.get_app_asset_path', return_value=MagicMock())
     mocker.patch.object(GraphWindow, '_init_worker_thread', return_value=None)
     mocker.patch.object(GraphWindow, '_connect_signals', return_value=None)
@@ -74,7 +74,7 @@ def test_update_stats_bar_correctly_computes_values(graph_window_instance):
     ]
     
     with patch.object(GraphWindow, '_get_time_range_from_ui', return_value=(now - timedelta(seconds=2), now)), \
-         patch('netspeedtray.views.graph.db_utils.get_total_bandwidth_for_period') as mock_get_bandwidth:
+         patch('netspeedtray.views.graph.window.db_utils.get_total_bandwidth_for_period') as mock_get_bandwidth:
         
         mock_get_bandwidth.return_value = (5000000, 10000000)
         

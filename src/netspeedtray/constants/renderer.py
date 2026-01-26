@@ -2,7 +2,7 @@
 Constants influencing the rendering of the network speed widget.
 """
 from typing import Final
-from .color import color # Import the master color palette
+from netspeedtray.constants.color import color # Import the master color palette
 
 class RendererConstants:
     """Defines constants for rendering the widget display."""

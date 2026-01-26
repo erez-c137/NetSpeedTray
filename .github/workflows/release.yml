@@ -36,17 +36,10 @@ jobs:
           .\.venv\Scripts\Activate.ps1
           python -m pytest
 
-      - name: Get version from tag
-        id: get_version
-        env:
-          TAG_REF: ${{ github.ref_name }}
-        run: |
-          $clean_version = $env:TAG_REF.replace('v', '')
-          echo "VERSION=$clean_version" >> $env:GITHUB_OUTPUT
-        shell: pwsh
+
 
       - name: Build the application
-        run: .\build\build.bat ${{ steps.get_version.outputs.VERSION }}
+        run: .\build\build.bat
 
       - name: Upload Unsigned Installer
         id: upload_installer

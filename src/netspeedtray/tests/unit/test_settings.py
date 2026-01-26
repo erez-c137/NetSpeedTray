@@ -49,16 +49,19 @@ def test_get_settings_translates_ui_state_to_config(settings_dialog):
     a configuration dictionary.
     """
     # Arrange: Simulate user interaction
-    settings_dialog.update_rate.setValue(5)
+    # Access widgets via the page objects
+    settings_dialog.general_page.update_rate.setValue(5)
+    
     # Simulate the user choosing to select specific interfaces
-    settings_dialog.selected_interfaces_radio.setChecked(True) 
-    settings_dialog.interface_checkboxes["Wi-Fi"].setChecked(True)
-    settings_dialog.interface_checkboxes["Ethernet 1"].setChecked(False)
+    # Interface controls are now on interfaces_page
+    settings_dialog.interfaces_page.selected_interfaces_radio.setChecked(True)
+    settings_dialog.interfaces_page.interface_checkboxes["Wi-Fi"].setChecked(True)
+    settings_dialog.interfaces_page.interface_checkboxes["Ethernet 1"].setChecked(False)
 
     # Act
     new_settings = settings_dialog.get_settings()
 
     # Assert
     assert new_settings["update_rate"] == 2.5
-    assert new_settings["interface_mode"] == "selected"
+    assert new_settings["monitoring_mode"] == "selected"
     assert set(new_settings["selected_interfaces"]) == {"Wi-Fi"}

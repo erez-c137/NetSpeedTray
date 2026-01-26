@@ -6,18 +6,18 @@ from typing import TYPE_CHECKING, Set
 import win32gui
 from PyQt6.QtCore import QObject, pyqtSignal, QTimer
 
-from .taskbar_utils import (
+from netspeedtray.utils.taskbar_utils import (
     get_process_name_from_hwnd, get_taskbar_info, is_taskbar_obstructed,
     is_taskbar_visible
 )
-from .win_event_hook import (
+from netspeedtray.utils.win_event_hook import (
     EVENT_SYSTEM_FOREGROUND,
     EVENT_SYSTEM_MOVESIZEEND,
     WinEventHook,
 )
 
 if TYPE_CHECKING:
-    from ..views.widget import NetworkSpeedWidget
+    from netspeedtray.views.widget import NetworkSpeedWidget
 
 logger = logging.getLogger("NetSpeedTray.VisibilityManager")
 

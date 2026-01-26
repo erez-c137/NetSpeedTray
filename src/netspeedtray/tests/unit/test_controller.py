@@ -172,8 +172,8 @@ def test_update_speeds_handles_short_lag_spike(controller_instance, mock_widget_
     mock_view = MagicMock()
     controller.set_view(mock_view)
     
-    # ACT: Simulate a 4-second lag, which is > (1s * 3.0) but < 5s
-    with patch('time.monotonic', return_value=time_before_lag + 4.0):
+    # ACT: Simulate a 12-second lag, which is > max(10s, 1s * 5.0)
+    with patch('time.monotonic', return_value=time_before_lag + 12.0):
         with patch('psutil.net_io_counters', return_value=second_counters):
             controller.update_speeds()
 
@@ -183,4 +183,4 @@ def test_update_speeds_handles_short_lag_spike(controller_instance, mock_widget_
     # The view should be reset to zero
     mock_view.update_display_speeds.assert_called_once_with(0.0, 0.0)
     # The baseline time should be updated to the new time
-    assert controller.last_check_time == time_before_lag + 4.0
+    assert controller.last_check_time == time_before_lag + 12.0

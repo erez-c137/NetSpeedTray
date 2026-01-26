@@ -2,6 +2,12 @@
 Application entry point and lifecycle management for NetSpeedTray.
 """
 
+# CRITICAL: Configure matplotlib BEFORE any matplotlib imports anywhere in the app
+# This MUST be at the very top of the entry point to prevent popup windows
+import matplotlib
+matplotlib.use('QtAgg')  # Use Qt backend for embedding
+matplotlib.interactive(False)  # Disable interactive mode to prevent popups
+
 import logging
 import signal
 import sys

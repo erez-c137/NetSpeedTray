@@ -243,12 +243,13 @@ class Win11Slider(QWidget):
     def __init__(self, min_value: int = 0, max_value: int = 100, value: int = 0, 
                  page_step: int = 1, has_ticks: bool = False, 
                  parent: Optional[QWidget] = None, value_label_text_color: Optional[str] = None,
-                 editable: bool = True) -> None:
+                 editable: bool = True, suffix: str = "") -> None:
         super().__init__(parent)
         self._value_input: Optional[QLineEdit] = None
         self._value_label: Optional[QLabel] = None
         self._value_label_text_color: Optional[str] = value_label_text_color
         self._editable: bool = editable
+        self._suffix: str = suffix
         
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         # Explicitly set border and outline to none for the QWidget container
@@ -303,12 +304,12 @@ class Win11Slider(QWidget):
             self._value_input.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
             
             self._update_input_style()
-            self._value_input.setText(str(initial_val))
+            self._value_input.setText(f"{initial_val}{self._suffix}")
             
             layout.addWidget(self._value_input)
             self._value_input.editingFinished.connect(self._on_input_editing_finished)
         else:
-            self._value_label = QLabel(str(initial_val), self)
+            self._value_label = QLabel(f"{initial_val}{self._suffix}", self)
             self._value_label.setFont(label_font)
             # Allow label to grow if needed, but keeping a minimum prevents jumping
             self._value_label.setMinimumWidth(50) 
@@ -356,7 +357,9 @@ class Win11Slider(QWidget):
         self._value_input.setStyleSheet(base_style)
 
 
-    def _on_internal_slider_value_changed(self, value: int) -> None: self.valueChanged.emit(value)
+    def _on_internal_slider_value_changed(self, value: int) -> None:
+        self.setValueText(f"{value}{self._suffix}")
+        self.valueChanged.emit(value)
 
 
     def _on_internal_slider_released(self) -> None: self.sliderReleased.emit()
@@ -377,6 +380,9 @@ class Win11Slider(QWidget):
                 # Update slider (this will trigger valueChanged -> parent update -> setValueText)
                 if new_val != self.slider.value():
                     self.slider.setValue(new_val)
+                else:
+                     # Even if value is same, format it back (e.g. user typed "50" -> "50%")
+                     self.setValueText(f"{new_val}{self._suffix}")
             except ValueError:
                 pass 
 

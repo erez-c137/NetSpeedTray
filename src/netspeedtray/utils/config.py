@@ -16,24 +16,9 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
-from .helpers import get_app_data_path
-from .styles import is_dark_mode
+from netspeedtray.utils.helpers import get_app_data_path
+from netspeedtray.utils.styles import is_dark_mode
 from netspeedtray import constants
-
-
-class ObfuscatingFormatter(logging.Formatter):
-    """
-    A custom logging formatter that automatically redacts sensitive information
-    like user paths and IP addresses from all log records, including tracebacks.
-    """
-    # This regex is a robust pattern for matching both IPv4 and IPv6 addresses.
-    IP_REGEX = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b|\b(?:[A-F0-9]{1,4}:){7}[A-F0-9]{1,4}\b", re.IGNORECASE)
-
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._paths_to_obfuscate: List[str] = []
-        self._setup_paths()
 
 
 class ObfuscatingFormatter(logging.Formatter):
@@ -42,37 +27,23 @@ class ObfuscatingFormatter(logging.Formatter):
     like user paths and IP addresses from all log records, including tracebacks.
     This version uses pre-compiled regexes for performance and robust normalization.
     """
-    # Pre-compile the IP regex as a class attribute for efficiency.
     IP_REGEX = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b|\b(?:[A-F0-9]{1,4}:){7}[A-F0-9]{1,4}\b", re.IGNORECASE)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # This will hold our list of pre-compiled regex patterns for paths.
         self._path_regexes: List[re.Pattern] = []
         self._setup_paths()
 
-
     def _setup_paths(self):
-        """
-        Determines, normalizes, and pre-compiles regex patterns for all
-        user-specific paths that need to be obfuscated.
-        """
-        import tempfile
         import sys
-
         paths_to_obfuscate = set()
-        
-        # --- 1. Gather all potential PII paths ---
         potential_paths = []
         try: potential_paths.append(str(Path.home().resolve()))
         except Exception: pass
-        
         try: potential_paths.append(str(Path(get_app_data_path()).resolve()))
         except Exception: pass
-
         try: potential_paths.append(str(Path(tempfile.gettempdir()).resolve()))
         except Exception: pass
-
         if not getattr(sys, 'frozen', False):
             try:
                 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
@@ -80,42 +51,20 @@ class ObfuscatingFormatter(logging.Formatter):
                 python_exe_dir = os.path.dirname(os.path.abspath(sys.executable))
                 potential_paths.append(python_exe_dir)
             except Exception: pass
-
-        # --- 2. Normalize and filter the paths for maximum reliability ---
         for path_str in potential_paths:
-            if not path_str or len(path_str) <= 3: # Ignore empty or trivial paths (e.g., "C:\")
-                continue
-            # Normalize path for the current OS (e.g., C:/Temp -> C:\Temp) and make it lowercase.
-            # This makes the regex matching far more reliable.
+            if not path_str or len(path_str) <= 3: continue
             normalized_path = os.path.normcase(os.path.normpath(path_str))
             paths_to_obfuscate.add(normalized_path)
-
-        # --- 3. Pre-compile the regexes for high-performance formatting ---
-        # CRITICAL: Sort paths by length in reverse order.
         sorted_paths = sorted(list(paths_to_obfuscate), key=len, reverse=True)
-        
         self._path_regexes = [re.compile(re.escape(p), re.IGNORECASE) for p in sorted_paths]
-
-        # Use stderr for startup debugging as the logger itself is not yet fully configured.
         print(f"ObfuscatingFormatter initialized with {len(self._path_regexes)} path redaction patterns.", file=sys.stderr)
 
-
     def format(self, record: logging.LogRecord) -> str:
-        """
-        Formats the log record and then obfuscates sensitive information from the final string.
-        """
-        # First, allow the base formatter to do its work, including traceback formatting.
         formatted_message = super().format(record)
         sanitized_message = formatted_message
-
-        # Now, run the pre-compiled regexes over the fully formatted string.
-        # This is highly efficient and robust.
         for pattern in self._path_regexes:
             sanitized_message = pattern.sub("<REDACTED_PATH>", sanitized_message)
-
-        # Redact any IP addresses found in the message.
         sanitized_message = self.IP_REGEX.sub("<REDACTED_IP>", sanitized_message)
-
         return sanitized_message
 
 
@@ -138,6 +87,51 @@ class ConfigManager:
         self.config_path = Path(config_path or self.BASE_DIR / constants.config.defaults.CONFIG_FILENAME)
         self.logger = logging.getLogger("NetSpeedTray.Config")
         self._last_config: Optional[Dict[str, Any]] = None
+
+
+    def _migrate_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Migrates old configuration fields to the current schema.
+        This ensures a smooth transition and preserves user settings when fields are renamed.
+        """
+        migration_map = {
+            "monitoring_mode": "interface_mode",
+            "tray_icon_offset": "tray_offset_x",
+            "tray_offset": "tray_offset_x",
+            "dynamic_update_rate": "dynamic_update_enabled",
+            "color_coding_enabled": "color_coding",
+            "history_duration": "history_minutes",
+            "fixed_width_values": None # Explicitly drop removed field
+        }
+
+        migrated = config.copy()
+        changes_made = False
+
+        for old_key, new_key in migration_map.items():
+            if old_key in migrated:
+                val = migrated.pop(old_key)
+                if new_key:
+                    # Only move if the new key doesn't already exist or has a default-like value
+                    if new_key not in migrated:
+                        migrated[new_key] = val
+                        self.logger.info(f"Migrated config field: '{old_key}' -> '{new_key}'")
+                        changes_made = True
+                else:
+                    self.logger.debug(f"Dropped obsolete config field: '{old_key}'")
+                    changes_made = True
+        
+        # Unit type migration (old short names to new explicit names)
+        unit_migration = {
+            "bytes": "bytes_binary",
+            "bits": "bits_decimal"
+        }
+        current_unit = migrated.get("unit_type")
+        if current_unit in unit_migration:
+            migrated["unit_type"] = unit_migration[current_unit]
+            self.logger.info(f"Migrated unit_type: '{current_unit}' -> '{migrated['unit_type']}'")
+            changes_made = True
+
+        return migrated
 
 
     @classmethod
@@ -196,107 +190,112 @@ class ConfigManager:
             raise ConfigError(f"Failed to create application directory at {cls.BASE_DIR}: {e}") from e
 
 
-    def _validate_numeric(self, key: str, value: Any, default: Any, min_v: float, max_v: float) -> Union[int, float]:
-        """Validates a numeric value is within a given range."""
-        try:
-            num_value = float(value)
-            if not (min_v <= num_value <= max_v):
-                raise ValueError("Value out of range")
-            return int(num_value) if isinstance(default, int) else num_value
-        except (TypeError, ValueError):
-            self.logger.warning(constants.config.messages.INVALID_NUMERIC.format(key=key, value=value, default=default))
-            return default
+    def _validate_value(self, key: str, value: Any, rules: Dict[str, Any]) -> Any:
+        """
+        Validates a single value against its schema rules.
+        Returns the valid value (sanitized/coerced) or the default if invalid.
+        """
+        default = rules["default"]
+        
+        # 1. Type Check
+        expected_type = rules.get("type")
+        if expected_type:
+            # Handle Optional types (e.g. (int, type(None)))
+            if not isinstance(value, expected_type):
+                # Special case: float to int conversion if safe?
+                # For now, strict type check as per schema.
+                self.logger.warning(f"Invalid type for {key}: expected {expected_type}, got {type(value)}. Resetting to default.")
+                return default
 
-
-    def _validate_boolean(self, key: str, value: Any, default: bool) -> bool:
-        """Validates a value is a boolean."""
-        if isinstance(value, bool):
+        # If value is None and allowed (via type), return it early unless default is not None?
+        # If type allows None, and value is None, it is valid. 
+        # Check specific constraints only if value is not None.
+        if value is None:
             return value
-        self.logger.warning(constants.config.messages.INVALID_BOOLEAN.format(key=key, value=value, default=default))
-        return default
 
+        # 2. Choice Check
+        choices = rules.get("choices")
+        if choices:
+            # Case-insensitive string match if applicable
+            if isinstance(value, str) and isinstance(choices[0], str):
+                 norm_value = value.lower()
+                 # Find matching choice
+                 for choice in choices:
+                     if choice and choice.lower() == norm_value:
+                         return choice
+                 # If None is a valid choice
+                 if None in choices and value is None: 
+                     return None
+                 
+                 self.logger.warning(constants.config.messages.INVALID_CHOICE.format(key=key, value=value, default=default, choices=choices))
+                 return default
+            elif value not in choices:
+                 self.logger.warning(constants.config.messages.INVALID_CHOICE.format(key=key, value=value, default=default, choices=choices))
+                 return default
 
-    def _validate_color_hex(self, key: str, value: Any, default: str) -> str:
-        """Validates a value is a valid 6-digit hex color string."""
-        if isinstance(value, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", value):
-            return value
-        self.logger.warning(constants.config.messages.INVALID_COLOR.format(key=key, value=value, default=default))
-        return default
+        # 3. Range Check (Min/Max)
+        if isinstance(value, (int, float)):
+            min_v = rules.get("min")
+            max_v = rules.get("max")
+            if min_v is not None and value < min_v:
+                self.logger.warning(f"{key} {value} is below minimum {min_v}. Resetting to default.")
+                return default # Or clamp? Previous logic reset to default or clamped? 
+                               # _validate_numeric previously reset to default if out of range.
+            if max_v is not None and value > max_v:
+                self.logger.warning(f"{key} {value} is above maximum {max_v}. Resetting to default.")
+                return default
 
+        # 4. Regex Check
+        regex = rules.get("regex")
+        if regex and isinstance(value, str):
+            if not re.fullmatch(regex, value):
+                self.logger.warning(f"Invalid format for {key} ('{value}'). Resetting to default.")
+                return default
+        
+        # 5. List Item Type Check
+        item_type = rules.get("item_type")
+        if item_type and isinstance(value, list):
+            if not all(isinstance(i, item_type) for i in value):
+                self.logger.warning(f"Invalid list items for {key}. Resetting to default.")
+                return default
 
-    def _validate_choice(self, key: str, value: Any, default: str, choices: List[str]) -> str:
-        """Validates a value is one of the allowed choices (case-insensitive)."""
-        if isinstance(value, str) and value.lower() in [c.lower() for c in choices]:
-            for choice in choices:
-                if choice.lower() == value.lower():
-                    return choice
-        self.logger.warning(constants.config.messages.INVALID_CHOICE.format(key=key, value=value, default=default, choices=choices))
-        return default
-
+        return value
 
     def _validate_config(self, loaded_config: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Validates the configuration, merges it with defaults for missing keys,
-        and sanitizes all values.
+        Validates the configuration using the central VALIDATION_SCHEMA.
         """
-        validated = constants.config.defaults.DEFAULT_CONFIG.copy()
-        validated.update(loaded_config)
-        default_ref = constants.config.defaults.DEFAULT_CONFIG
-
-        unknown_keys = set(loaded_config.keys()) - set(default_ref.keys())
-        if unknown_keys:
-            self.logger.warning("Ignoring unknown config fields: %s", ", ".join(unknown_keys))
-
-        for key in ["color_coding", "graph_enabled", "dynamic_update_enabled", "free_move", 
-                    "force_decimals", "dark_mode", "paused", "start_with_windows"]:
-            validated[key] = self._validate_boolean(key, validated.get(key), default_ref[key])
-
-        MINIMUM_SAFE_UPDATE_RATE = 0.5
-        validated["update_rate"] = self._validate_numeric("update_rate", validated.get("update_rate"), default_ref["update_rate"], MINIMUM_SAFE_UPDATE_RATE, constants.timers.MAXIMUM_UPDATE_RATE_SECONDS)
-        validated["font_size"] = self._validate_numeric("font_size", validated.get("font_size"), default_ref["font_size"], constants.fonts.FONT_SIZE_MIN, constants.fonts.FONT_SIZE_MAX)
-        validated["font_weight"] = self._validate_numeric("font_weight", validated.get("font_weight"), default_ref["font_weight"], 1, 1000)
-        validated["high_speed_threshold"] = self._validate_numeric("high_speed_threshold", validated.get("high_speed_threshold"), default_ref["high_speed_threshold"], 0, constants.ui.sliders.SPEED_THRESHOLD_MAX_HIGH / 10)
-        validated["low_speed_threshold"] = self._validate_numeric("low_speed_threshold", validated.get("low_speed_threshold"), default_ref["low_speed_threshold"], 0, constants.ui.sliders.SPEED_THRESHOLD_MAX_LOW / 10)
+        validated = {}
+        schema = constants.config.defaults.VALIDATION_SCHEMA
         
-        hist_min, hist_max = constants.ui.history.HISTORY_MINUTES_RANGE
-        validated["history_minutes"] = self._validate_numeric("history_minutes", validated.get("history_minutes"), default_ref["history_minutes"], hist_min, hist_max)
-        
-        validated["graph_opacity"] = self._validate_numeric("graph_opacity", validated.get("graph_opacity"), default_ref["graph_opacity"], constants.ui.sliders.OPACITY_MIN, constants.ui.sliders.OPACITY_MAX)
-        validated["keep_data"] = self._validate_numeric("keep_data", validated.get("keep_data"), default_ref["keep_data"], min(constants.data.retention.DAYS_MAP.values()), max(constants.data.retention.DAYS_MAP.values()))
-        validated["decimal_places"] = self._validate_numeric("decimal_places", validated.get("decimal_places"), default_ref["decimal_places"], 0, 2)
+        # Iterate over schema to ensure all expected keys are present and valid
+        for key, rules in schema.items():
+            loaded_value = loaded_config.get(key)
+            
+            # Use default if key missing
+            if key not in loaded_config:
+                validated[key] = rules["default"]
+                continue
+                
+            validated[key] = self._validate_value(key, loaded_value, rules)
 
-        max_slider_val = len(constants.data.history_period.PERIOD_MAP) - 1
-        validated["history_period_slider_value"] = self._validate_numeric("history_period_slider_value", validated.get("history_period_slider_value"), 0, 0, max_slider_val)
+        # Handle specific cross-field logic (Business Rules)
+        # Rule: Low Threshold <= High Threshold
+        try:
+             low = validated.get("low_speed_threshold", 0)
+             high = validated.get("high_speed_threshold", 0)
+             if low > high:
+                 self.logger.warning(constants.config.messages.THRESHOLD_SWAP)
+                 validated["low_speed_threshold"] = high
+        except Exception: 
+            pass
 
-        for key in ["default_color", "high_speed_color", "low_speed_color"]:
-            validated[key] = self._validate_color_hex(key, validated.get(key), default_ref[key])
+        # Warn about unknown keys
+        extra_keys = set(loaded_config.keys()) - set(schema.keys())
+        if extra_keys:
+            self.logger.warning("Ignoring unknown config fields: %s", ", ".join(extra_keys))
 
-        validated["interface_mode"] = self._validate_choice("interface_mode", validated.get("interface_mode"), default_ref["interface_mode"], list(constants.network.interface.VALID_INTERFACE_MODES))
-        validated["legend_position"] = self._validate_choice("legend_position", validated.get("legend_position"), constants.config.defaults.DEFAULT_LEGEND_POSITION, constants.data.legend_position.UI_OPTIONS)
-        validated["history_period"] = self._validate_choice("history_period", validated.get("history_period"), constants.data.history_period.DEFAULT_PERIOD, list(constants.data.history_period.PERIOD_MAP.values()))
-        validated["text_alignment"] = self._validate_choice("text_alignment", validated.get("text_alignment"), default_ref["text_alignment"], ["left", "center", "right"])
-        validated["speed_display_mode"] = self._validate_choice("speed_display_mode", validated.get("speed_display_mode"), default_ref["speed_display_mode"], ["auto", "always_mbps"])
-        
-        supported_languages = list(constants.i18n.I18nStrings.LANGUAGE_MAP.keys())
-        if validated.get("language") not in [None] + supported_languages:
-            validated["language"] = None
-
-        if not isinstance(validated.get("selected_interfaces"), list) or not all(isinstance(i, str) for i in validated.get("selected_interfaces", [])):
-            validated["selected_interfaces"] = []
-
-        if validated["low_speed_threshold"] > validated["high_speed_threshold"]:
-            validated["low_speed_threshold"] = validated["high_speed_threshold"]
-
-        for key in ["position_x", "position_y"]:
-            if validated.get(key) is not None and not isinstance(validated.get(key), int):
-                validated[key] = None
-        
-        pos = validated.get("graph_window_pos")
-        if pos is not None and not (isinstance(pos, dict) and 'x' in pos and 'y' in pos and isinstance(pos.get('x'), int) and isinstance(pos.get('y'), int)):
-            validated["graph_window_pos"] = None
-        
-        final_config = {key: validated[key] for key in default_ref if key in validated}
-        return final_config
+        return validated
 
 
     def load(self) -> Dict[str, Any]:
@@ -320,7 +319,8 @@ class ConfigManager:
             self.logger.critical(msg)
             raise ConfigError(msg) from e
 
-        validated_config = self._validate_config(config)
+        migrated_config = self._migrate_config(config)
+        validated_config = self._validate_config(migrated_config)
         self._last_config = validated_config.copy()
         return validated_config
 

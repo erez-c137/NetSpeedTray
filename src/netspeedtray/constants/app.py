@@ -3,11 +3,12 @@ Constants for application metadata and lifecycle management.
 """
 
 from typing import Final
+import netspeedtray
 
 class AppConstants:
     """Defines application metadata and the single-instance mutex name."""
     APP_NAME: Final[str] = "NetSpeedTray"
-    VERSION: Final[str] = "1.2.0"
+    VERSION: Final[str] = netspeedtray.__version__
     MUTEX_NAME: Final[str] = "Global\\NetSpeedTray_SingleInstanceMutex"
     ICON_FILENAME: Final[str] = "NetSpeedTray.ico"
 

@@ -20,7 +20,7 @@ class UnitConstants:
     KILO_THRESHOLD: Final[int] = KILO_DIVISOR
     MEGA_THRESHOLD: Final[int] = MEGA_DIVISOR
     GIGA_THRESHOLD: Final[int] = GIGA_DIVISOR
-    MINIMUM_DISPLAY_SPEED: Final[float] = 10_000
+    MINIMUM_DISPLAY_SPEED: Final[float] = 0.0
     
     # Decimal (SI) unit labels - i18n keys
     BPS_LABEL: Final[str] = "BPS_LABEL"
@@ -40,6 +40,25 @@ class UnitConstants:
     KIBITS_LABEL: Final[str] = "KIBITS_LABEL"    # Kibps
     MIBITS_LABEL: Final[str] = "MIBITS_LABEL"    # Mibps
     GIBITS_LABEL: Final[str] = "GIBITS_LABEL"    # Gibps
+
+    # Short unit labels (e.g. "Mb" instead of "Mbps")
+    BPS_SHORT_LABEL: Final[str] = "BPS_SHORT_LABEL"
+    KBPS_SHORT_LABEL: Final[str] = "KBPS_SHORT_LABEL"
+    MBPS_SHORT_LABEL: Final[str] = "MBPS_SHORT_LABEL"
+    GBPS_SHORT_LABEL: Final[str] = "GBPS_SHORT_LABEL"
+    BITS_SHORT_LABEL: Final[str] = "BITS_SHORT_LABEL"
+    KBITS_SHORT_LABEL: Final[str] = "KBITS_SHORT_LABEL"
+    MBITS_SHORT_LABEL: Final[str] = "MBITS_SHORT_LABEL"
+    GBITS_SHORT_LABEL: Final[str] = "GBITS_SHORT_LABEL"
+    
+    # Binary Short
+    BIBPS_SHORT_LABEL: Final[str] = "BIBPS_SHORT_LABEL"
+    KIBPS_SHORT_LABEL: Final[str] = "KIBPS_SHORT_LABEL"
+    MIBPS_SHORT_LABEL: Final[str] = "MIBPS_SHORT_LABEL"
+    GIBPS_SHORT_LABEL: Final[str] = "GIBPS_SHORT_LABEL"
+    KIBITS_SHORT_LABEL: Final[str] = "KIBITS_SHORT_LABEL"
+    MIBITS_SHORT_LABEL: Final[str] = "MIBITS_SHORT_LABEL"
+    GIBITS_SHORT_LABEL: Final[str] = "GIBITS_SHORT_LABEL"
 
     def __init__(self) -> None:
         self.validate()

@@ -16,8 +16,8 @@ from PyQt6.QtCore import Qt, QPointF, QRect
 
 from netspeedtray import constants
 
-from ..core.widget_state import SpeedDataSnapshot
-from ..utils.helpers import format_speed
+from netspeedtray.core.widget_state import SpeedDataSnapshot
+from netspeedtray.utils.helpers import format_speed
 
 logger = logging.getLogger("NetSpeedTray.WidgetRenderer")
 
@@ -36,6 +36,8 @@ class RenderConfig:
     default_color: str
     high_speed_color: str
     low_speed_color: str
+    background_color: str = field(default_factory=lambda: constants.config.defaults.DEFAULT_BACKGROUND_COLOR)
+    background_opacity: float = field(default_factory=lambda: constants.config.defaults.DEFAULT_BACKGROUND_OPACITY / 100.0)
     graph_opacity: float = field(default_factory=lambda: constants.config.defaults.DEFAULT_GRAPH_OPACITY / 100.0)
     speed_display_mode: str = constants.config.defaults.DEFAULT_SPEED_DISPLAY_MODE
     decimal_places: int = constants.config.defaults.DEFAULT_DECIMAL_PLACES
@@ -43,9 +45,9 @@ class RenderConfig:
     force_decimals: bool = False
     unit_type: str = constants.config.defaults.DEFAULT_UNIT_TYPE
     swap_upload_download: bool = constants.config.defaults.DEFAULT_SWAP_UPLOAD_DOWNLOAD
-    fixed_width_values: bool = constants.config.defaults.DEFAULT_FIXED_WIDTH_VALUES
     hide_arrows: bool = constants.config.defaults.DEFAULT_HIDE_ARROWS
     hide_unit_suffix: bool = constants.config.defaults.DEFAULT_HIDE_UNIT_SUFFIX
+    short_unit_labels: bool = constants.config.defaults.DEFAULT_SHORT_UNIT_LABELS
 
 
     @classmethod
@@ -67,6 +69,8 @@ class RenderConfig:
                 default_color=config.get('default_color', constants.config.defaults.DEFAULT_COLOR),
                 high_speed_color=config.get('high_speed_color', constants.config.defaults.DEFAULT_HIGH_SPEED_COLOR),
                 low_speed_color=config.get('low_speed_color', constants.config.defaults.DEFAULT_LOW_SPEED_COLOR),
+                background_color=config.get('background_color', constants.config.defaults.DEFAULT_BACKGROUND_COLOR),
+                background_opacity=max(0.0, min(1.0, float(config.get('background_opacity', constants.config.defaults.DEFAULT_BACKGROUND_OPACITY)) / 100.0)),
                 graph_opacity=max(0.0, min(1.0, opacity)),
                 speed_display_mode=config.get('speed_display_mode', constants.config.defaults.DEFAULT_SPEED_DISPLAY_MODE),
                 decimal_places=int(config.get('decimal_places', constants.config.defaults.DEFAULT_DECIMAL_PLACES)),
@@ -74,9 +78,9 @@ class RenderConfig:
                 force_decimals=config.get('force_decimals', constants.config.defaults.DEFAULT_FORCE_DECIMALS),
                 unit_type=config.get('unit_type', constants.config.defaults.DEFAULT_UNIT_TYPE),
                 swap_upload_download=config.get('swap_upload_download', constants.config.defaults.DEFAULT_SWAP_UPLOAD_DOWNLOAD),
-                fixed_width_values=config.get('fixed_width_values', constants.config.defaults.DEFAULT_FIXED_WIDTH_VALUES),
                 hide_arrows=config.get('hide_arrows', constants.config.defaults.DEFAULT_HIDE_ARROWS),
-                hide_unit_suffix=config.get('hide_unit_suffix', constants.config.defaults.DEFAULT_HIDE_UNIT_SUFFIX)
+                hide_unit_suffix=config.get('hide_unit_suffix', constants.config.defaults.DEFAULT_HIDE_UNIT_SUFFIX),
+                short_unit_labels=config.get('short_unit_labels', constants.config.defaults.DEFAULT_SHORT_UNIT_LABELS)
             )
         except (ValueError, TypeError) as e:
             logger.error("Failed to create RenderConfig from dict: %s", e)
@@ -129,6 +133,24 @@ class WidgetRenderer:
         painter.restore()
 
 
+    def draw_background(self, painter: QPainter, rect: QRect, config: RenderConfig) -> None:
+        """Draws the widget background. Ensures at least minimal opacity for hit testing."""
+        painter.save()
+        bg_color = QColor(config.background_color)
+        
+        # CRITICAL FIX: Ensure minimum opacity of ~0.004 (1/255) so the window system
+        # treats the window as "hit-testable" even if visually transparent.
+        # This prevents clicks from falling through or causing undefined behavior.
+        min_opacity = 1.0 / 255.0
+        effective_opacity = max(config.background_opacity, min_opacity)
+        
+        bg_color.setAlphaF(effective_opacity)
+        painter.setBrush(bg_color)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawRoundedRect(rect, 4, 4) # Rounded corners for polish
+        painter.restore()
+
+
     def draw_network_speeds(self, painter: QPainter, upload: float, download: float, width: int, height: int, config: RenderConfig, layout_mode: str = 'vertical') -> None:
         """Draws upload/download speeds, adapting to vertical or horizontal layouts."""
         try:
@@ -136,20 +158,19 @@ class WidgetRenderer:
             decimal_places = max(0, min(2, config.decimal_places))
             force_decimals = config.force_decimals
             unit_type = config.unit_type
-            fixed_width = config.fixed_width_values
             swap_order = config.swap_upload_download
             
             if layout_mode == 'horizontal':
-                self._draw_horizontal_layout(painter, upload, download, width, height, config, always_mbps, decimal_places, force_decimals, unit_type, fixed_width, swap_order)
+                self._draw_horizontal_layout(painter, upload, download, width, height, config, always_mbps, decimal_places, force_decimals, unit_type, swap_order, config.short_unit_labels)
             else: # Default to vertical
-                self._draw_vertical_layout(painter, upload, download, width, height, config, always_mbps, decimal_places, force_decimals, unit_type, fixed_width, swap_order)
+                self._draw_vertical_layout(painter, upload, download, width, height, config, always_mbps, decimal_places, force_decimals, unit_type, swap_order, config.short_unit_labels)
 
         except Exception as e:
             self.logger.error("Failed to draw speeds: %s", e, exc_info=True)
             self._last_text_rect = QRect()
 
 
-    def _draw_vertical_layout(self, painter: QPainter, upload: float, download: float, width: int, height: int, config: RenderConfig, always_mbps: bool, decimal_places: int, force_decimals: bool, unit_type: str, fixed_width: bool, swap_order: bool) -> None:
+    def _draw_vertical_layout(self, painter: QPainter, upload: float, download: float, width: int, height: int, config: RenderConfig, always_mbps: bool, decimal_places: int, force_decimals: bool, unit_type: str, swap_order: bool, short_labels: bool) -> None:
         """Draws the standard two-line vertical layout with correct compact centering."""
         line_height = self.metrics.height()
         ascent = self.metrics.ascent()
@@ -161,7 +182,7 @@ class WidgetRenderer:
         # The second line is positioned exactly one line_height below the first.
         bottom_y = top_y + line_height
 
-        upload_text, download_text = self._format_speed_texts(upload, download, always_mbps, decimal_places, force_decimals, unit_type, fixed_width)
+        upload_text, download_text = self._format_speed_texts(upload, download, always_mbps, decimal_places, force_decimals, unit_type, short_labels=short_labels)
         up_val_str, up_unit = upload_text
         down_val_str, down_unit = download_text
         
@@ -172,53 +193,44 @@ class WidgetRenderer:
         arrow_width = 0 if hide_arrows else self.metrics.horizontalAdvance(self.i18n.UPLOAD_ARROW)
         arrow_gap = 0 if hide_arrows else constants.renderer.ARROW_NUMBER_GAP
         
-        if fixed_width:
-            # Use a reference string depending on display mode to determine max width
-            # "888" for Auto (approx 999 MB/s), "8888" for Fixed (approx 9999 Mbps)
-            integer_part = "8888" if always_mbps else "888"
-            
-            # Construct reference string based on decimal places
-            # Even if force_decimals is False, we reserve space for them if they MIGHT appear (so width doesn't jump)
-            # Actually, if force_decimals is False, the number might be "10" or "10.5". 
-            # If we want STABLE width, we must reserve space for the max possible width (including decimals).
-            # So we assume decimals are present for the width calculation.
-            ref_str = integer_part
-            if decimal_places > 0:
-                ref_str += "." + "8" * decimal_places
-            
-            max_num_width = self.metrics.horizontalAdvance(ref_str)
-        else:
-            max_num_width = max(self.metrics.horizontalAdvance(up_val_str), self.metrics.horizontalAdvance(down_val_str))
-            
+        # Use helpers for reference strings and labels
+        from netspeedtray.utils.helpers import get_reference_value_string, get_unit_labels_for_type
+        
+        ref_val = get_reference_value_string(always_mbps, decimal_places)
+        max_number_width = self.metrics.horizontalAdvance(ref_val)
+        
+        # For units: determine the widest possible unit label for the current unit_type
+        # This prevents jumping when unit changes from "B" to "KiB" to "MiB" etc.
         unit_gap = 0 if hide_unit else constants.renderer.VALUE_UNIT_GAP
-        max_unit_width = 0 if hide_unit else max(self.metrics.horizontalAdvance(up_unit), self.metrics.horizontalAdvance(down_unit))
-        content_width = arrow_width + arrow_gap + max_num_width + unit_gap + max_unit_width
+        
+        if hide_unit:
+            max_unit_width = 0
+        else:
+            # Get all possible unit labels for the current unit type and find the widest
+            possible_units = get_unit_labels_for_type(self.i18n, unit_type, short_labels)
+            
+            max_unit_width = max(self.metrics.horizontalAdvance(u) for u in possible_units)
+        
+        content_width = arrow_width + arrow_gap + max_number_width + unit_gap + max_unit_width
 
         margin = self._calculate_margin(width, content_width, config.text_alignment)
         number_starting_x_base = margin + arrow_width + arrow_gap
         # The unit starts after the allocated number width
-        unit_x = number_starting_x_base + max_num_width + unit_gap
+        unit_x = number_starting_x_base + max_number_width + unit_gap
 
         def draw_line(y_pos: int, arrow_char: str, val_str: str, unit_str: str, color: QColor):
             painter.setPen(color)
             if not hide_arrows:
                 painter.drawText(margin, y_pos, arrow_char)
             
-            # Draw Number: Right aligned within the allocated max_num_width
-            # x_position = start_of_number_area + allocated_width - width_of_actual_string
+            # Right-align numbers within the fixed-width number column
+            # This keeps digits stable regardless of value magnitude
             val_width = self.metrics.horizontalAdvance(val_str)
-            
-            if fixed_width:
-                # Strictly right-align to the edge of the number area
-                val_x = number_starting_x_base + max_num_width - val_width
-            else:
-                # Default behavior: Left align (relative to number column) or just draw at start
-                # Existing behavior was "drawText(number_x...)" which aligns left of the number block.
-                # To keep existing behavior for non-fixed:
-                val_x = number_starting_x_base
+            val_x = number_starting_x_base + max_number_width - val_width
 
             painter.drawText(int(val_x), y_pos, val_str)
             
+            # Units are left-aligned in their fixed-width column
             if not hide_unit:
                 painter.drawText(unit_x, y_pos, unit_str)
 
@@ -234,9 +246,9 @@ class WidgetRenderer:
 
 
 
-    def _draw_horizontal_layout(self, painter: QPainter, upload: float, download: float, width: int, height: int, config: RenderConfig, always_mbps: bool, decimal_places: int, force_decimals: bool, unit_type: str, fixed_width: bool, swap_order: bool) -> None:
+    def _draw_horizontal_layout(self, painter: QPainter, upload: float, download: float, width: int, height: int, config: RenderConfig, always_mbps: bool, decimal_places: int, force_decimals: bool, unit_type: str, swap_order: bool, short_labels: bool) -> None:
         """Draws the compact single-line horizontal layout."""
-        upload_text_full, download_text_full = self._format_speed_texts(upload, download, always_mbps, decimal_places, force_decimals, unit_type, fixed_width, full_string=True)
+        upload_text_full, download_text_full = self._format_speed_texts(upload, download, always_mbps, decimal_places, force_decimals, unit_type, short_labels=short_labels, full_string=True)
         
         # Handle swap order
         if swap_order:
@@ -282,10 +294,10 @@ class WidgetRenderer:
         self._last_text_rect = QRect(margin, (height - self.metrics.height()) // 2, int(content_width), self.metrics.height())
 
 
-    def _format_speed_texts(self, upload: float, download: float, always_mbps: bool, decimal_places: int, force_decimals: bool, unit_type: str = "bits_decimal", fixed_width: bool = False, full_string: bool = False) -> Tuple[Any, Any]:
+    def _format_speed_texts(self, upload: float, download: float, always_mbps: bool, decimal_places: int, force_decimals: bool, unit_type: str = "bits_decimal", short_labels: bool = False, full_string: bool = False) -> Tuple[Any, Any]:
         """Helper to format speed values into final strings or tuples."""
-        upload_full = format_speed(upload, self.i18n, always_mbps=always_mbps, decimal_places=decimal_places, unit_type=unit_type, fixed_width=False)
-        download_full = format_speed(download, self.i18n, always_mbps=always_mbps, decimal_places=decimal_places, unit_type=unit_type, fixed_width=False)
+        upload_full = format_speed(upload, self.i18n, always_mbps=always_mbps, decimal_places=decimal_places, unit_type=unit_type, fixed_width=False, short_labels=short_labels)
+        download_full = format_speed(download, self.i18n, always_mbps=always_mbps, decimal_places=decimal_places, unit_type=unit_type, fixed_width=False, short_labels=short_labels)
         
         up_val_str, up_unit = upload_full.split(" ", 1)
         down_val_str, down_unit = download_full.split(" ", 1)

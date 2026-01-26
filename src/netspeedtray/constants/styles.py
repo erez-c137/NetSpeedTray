@@ -6,7 +6,7 @@ only contain raw, static values (e.g., hex color codes). The construction of
 actual QSS stylesheets from these tokens is handled by functions in `utils/styles.py`.
 """
 from typing import Final
-from .color import color
+from netspeedtray.constants.color import color
 
 class UIStyleConstants:
     """Defines theme colors and other style constants for the UI."""
@@ -22,7 +22,7 @@ class UIStyleConstants:
     DIALOG_CONTENT_BG_LIGHT: Final[str] = "#ffffff"
     DIALOG_SECTION_BG_LIGHT: Final[str] = "#F0F0F0"
     GRAPH_BG_LIGHT: Final[str] = color.WHITE
-    GRID_COLOR_LIGHT: Final[str] = '#CCCCCC'
+    GRID_COLOR_LIGHT: Final[str] = '#B0B0B0'  # Darkened for better visibility on white
     COMBOBOX_BG_LIGHT: Final[str] = "#f9f9f9"
     COMBOBOX_BORDER_LIGHT: Final[str] = "#cccccc"
 

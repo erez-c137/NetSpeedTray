@@ -22,7 +22,7 @@ from typing import Dict, Any, Optional, Callable
 from PyQt6.QtCore import QTimer, QObject, pyqtSignal
 
 from netspeedtray import constants
-from ..utils.timer_utils import calculate_timer_interval, create_timer, cleanup_timer  # Import utilities
+from netspeedtray.utils.timer_utils import calculate_timer_interval, create_timer, cleanup_timer  # Import utilities
 
 
 class SpeedTimerManager(QObject):

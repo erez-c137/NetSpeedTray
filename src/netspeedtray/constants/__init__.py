@@ -21,24 +21,25 @@ Usage:
     timer.start(constants.timers.VISIBILITY_CHECK_INTERVAL_MS)
 """
 
-from .app import app
-from .color import color
-from .config import config
-from .data import data
-from .export import export
-from .fonts import fonts
-from .graph import graph
-from .i18n import strings
-from .layout import layout
-from .logs import logs
-from .network import network
-from .renderer import renderer
-from .shell import shell
-from .state import state
-from .styles import styles
-from .taskbar import taskbar, TaskbarEdge
-from .timers import timers
-from .ui import ui
+from netspeedtray.constants.app import app
+from netspeedtray.constants.color import color
+from netspeedtray.constants.config import config
+from netspeedtray.constants.data import data
+from netspeedtray.constants.export import export
+from netspeedtray.constants.fonts import fonts
+from netspeedtray.constants.graph import graph
+from netspeedtray.constants.i18n import strings, I18nStrings
+from netspeedtray.constants.layout import layout
+from netspeedtray.constants.logs import logs
+from netspeedtray.constants.network import network
+from netspeedtray.constants.renderer import renderer
+from netspeedtray.constants.shell import shell
+from netspeedtray.constants.state import state
+from netspeedtray.constants.styles import styles
+from netspeedtray.constants.taskbar import taskbar, TaskbarEdge
+from netspeedtray.constants.timeouts import timeouts
+from netspeedtray.constants.timers import timers
+from netspeedtray.constants.ui import ui
 
 # No validation script is needed here; validation happens on instantiation
 # of each singleton within its own module.

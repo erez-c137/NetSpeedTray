@@ -1,22 +1,34 @@
 @echo off
 setlocal EnableDelayedExpansion
 
-:: --- Configuration ---
-:: UPDATED: Take version from command line argument
-set "VERSION=%~1"
+:: --- Automatically determine project paths (Robust) ---
+set "BUILD_DIR=%~dp0"
+pushd "%BUILD_DIR%.."
+set "ROOT_DIR=%CD%"
+popd
 
-:: Validate Version Input
-if "%VERSION%"=="" (
+:: --- Configuration ---
+:: --- Configuration ---
+echo Resolving Python from: "%ROOT_DIR%\.venv\Scripts\python.exe"
+
+"%ROOT_DIR%\.venv\Scripts\python.exe" -c "import sys, os; sys.path.append(os.path.join(r'%ROOT_DIR%', 'src')); import netspeedtray; print(netspeedtray.__version__)" > "%BUILD_DIR%version.tmp"
+
+if not exist "%BUILD_DIR%version.tmp" (
     echo.
-    echo ERROR: Version argument is missing.
-    echo Usage: build.bat [version]
-    echo Example: build.bat 1.1.8
-    goto :fail
+    echo ERROR: Could not extract version - file missing.
+    exit /b 1
 )
 
-:: --- Automatically determine project paths (Portable & Robust) ---
-set "BUILD_DIR=%~dp0"
-for %%i in ("%BUILD_DIR%..") do set "ROOT_DIR=%%~fi"
+set /p VERSION=<"%BUILD_DIR%version.tmp"
+del "%BUILD_DIR%version.tmp"
+
+if "%VERSION%"=="" (
+    echo.
+    echo ERROR: Could not extract version - empty result.
+    exit /b 1
+)
+
+echo Detected Version: %VERSION%
 
 set "CODENAME=%ROOT_DIR%\src\monitor.py"
 set "DIST_DIR=%ROOT_DIR%\dist"
@@ -40,14 +52,14 @@ echo.
 echo Verifying dependencies...
 echo Verifying dependencies... >> "%LOG_FILE%"
 set "start_time=%TIME%"
-if not exist "%CODENAME%" (echo ERROR: monitor.py missing & goto :fail)
-if not exist "%ROOT_DIR%\assets\NetSpeedTray.ico" (echo ERROR: NetSpeedTray.ico missing & goto :fail)
-if not exist "%BUILD_DIR%NetSpeedTray.spec" (echo ERROR: netspeedtray.spec missing & goto :fail)
-if not exist "%BUILD_DIR%setup.iss" (echo ERROR: setup.iss missing & goto :fail)
-if not exist "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" (echo ERROR: Inno Setup 6 not installed & goto :fail)
+if not exist "%CODENAME%" (echo ERROR: monitor.py missing & exit /b 1)
+if not exist "%ROOT_DIR%\assets\NetSpeedTray.ico" (echo ERROR: NetSpeedTray.ico missing & exit /b 1)
+if not exist "%BUILD_DIR%NetSpeedTray.spec" (echo ERROR: netspeedtray.spec missing & exit /b 1)
+if not exist "%BUILD_DIR%setup.iss" (echo ERROR: setup.iss missing & exit /b 1)
+if not exist "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" (echo ERROR: Inno Setup 6 not installed & exit /b 1)
 call "%ROOT_DIR%\.venv\Scripts\activate.bat" 2>nul
 "%ROOT_DIR%\.venv\Scripts\python.exe" -c "import PyQt6, psutil, win32api, matplotlib, numpy, signal" >> "%LOG_FILE%" 2>&1
-if errorlevel 1 (echo ERROR: Required Python packages missing & goto :fail)
+if errorlevel 1 (echo ERROR: Required Python packages missing & exit /b 1)
 set "end_time=%TIME%"
 call :log_elapsed "Verifying dependencies" "%start_time%" "%end_time%"
 
@@ -61,7 +73,7 @@ cd /d "%BUILD_DIR%"
 :: --- NEW: Generate the dynamic version_info.txt ---
 echo Generating version info for v%VERSION%...
 "%ROOT_DIR%\.venv\Scripts\python.exe" create_version_info.py "%VERSION%" >> "%LOG_FILE%" 2>&1
-if errorlevel 1 (echo ERROR: Failed to generate version info & goto :fail)
+if errorlevel 1 (echo ERROR: Failed to generate version info & exit /b 1)
 :: --------------------------------------------------
 
 pyinstaller --noconfirm --distpath "%DIST_DIR%" NetSpeedTray.spec >> "%LOG_FILE%" 2>&1
@@ -73,8 +85,8 @@ echo Generating installer... >> "%LOG_FILE%"
 set "start_time=%TIME%"
 :: UPDATED: Pass the version to Inno Setup using /DAppVersion
 "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DAppVersion="%VERSION%" "%BUILD_DIR%setup.iss" >> "%LOG_FILE%" 2>&1
-if errorlevel 1 (echo ERROR: Installer creation failed. Check %LOG_FILE% & goto :fail)
-if not exist "%INSTALLER_DIR%\NetSpeedTray-%VERSION%-x64-Setup.exe" (echo ERROR: Setup file not found after compilation & goto :fail)
+if errorlevel 1 (echo ERROR: Installer creation failed. Check %LOG_FILE% & exit /b 1)
+if not exist "%INSTALLER_DIR%\NetSpeedTray-%VERSION%-x64-Setup.exe" (echo ERROR: Setup file not found after compilation & exit /b 1)
 set "end_time=%TIME%"
 call :log_elapsed "Generating installer" "%start_time%" "%end_time%"
 
@@ -95,7 +107,7 @@ move "%INSTALLER_DIR%\NetSpeedTray-%VERSION%-x64-Setup.exe" "!RELEASE_DIR!\" > N
 :: Create the portable zip archive
 echo Creating portable zip file...
 powershell -Command "Compress-Archive -Path '%DIST_DIR%\NetSpeedTray' -DestinationPath '!RELEASE_DIR!\%PORTABLE_DIR_NAME%-%VERSION%.zip' -Force" >> "%LOG_FILE%" 2>&1
-if errorlevel 1 (echo ERROR: Failed to create portable zip file. & goto :fail)
+if errorlevel 1 (echo ERROR: Failed to create portable zip file. & exit /b 1)
 
 set "end_time=%TIME%"
 call :log_elapsed "Packaging release files" "%start_time%" "%end_time%"
@@ -153,14 +165,7 @@ echo.
 echo   Release files are located at:
 echo     %RELEASE_DIR%\
 echo.
-goto :end
-
-:fail
-echo.
-echo !   BUILD FAILED. Check %LOG_FILE% for details.     !
-echo.
-:: CRITICAL: Exit with an error code so GitHub Actions knows it failed!
-exit /b 1
+exit /b 0
 
 :: --- SCRIPT FUNCTIONS ---
 :log_elapsed
@@ -190,6 +195,3 @@ if defined summary_mode (
     echo %stage_name% completed in !formatted_elapsed! >> "%LOG_FILE%"
 )
 exit /b
-
-:end
-pause

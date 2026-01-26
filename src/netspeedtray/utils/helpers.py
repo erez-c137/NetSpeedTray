@@ -125,30 +125,68 @@ def setup_logging() -> logging.Logger:
     return logger
 
 
+def get_unit_labels_for_type(i18n, unit_type: str, short_labels: bool = False) -> List[str]:
+    """
+    Returns a list of translated unit labels [base, kilo, mega, giga] for the given unit type.
+    """
+    units = constants.network.units
+    is_binary = unit_type.endswith("_binary")
+    is_bytes = unit_type.startswith("bytes")
+    
+    if is_bytes:
+        if is_binary:
+            keys = (units.BIBPS_SHORT_LABEL, units.KIBPS_SHORT_LABEL, units.MIBPS_SHORT_LABEL, units.GIBPS_SHORT_LABEL) if short_labels else \
+                   (units.BIBPS_LABEL, units.KIBPS_LABEL, units.MIBPS_LABEL, units.GIBPS_LABEL)
+        else:
+            keys = (units.BPS_SHORT_LABEL, units.KBPS_SHORT_LABEL, units.MBPS_SHORT_LABEL, units.GBPS_SHORT_LABEL) if short_labels else \
+                   (units.BPS_LABEL, units.KBPS_LABEL, units.MBPS_LABEL, units.GBPS_LABEL)
+    else:  # bits
+        if is_binary:
+            keys = (units.BITS_SHORT_LABEL, units.KIBITS_SHORT_LABEL, units.MIBITS_SHORT_LABEL, units.GIBITS_SHORT_LABEL) if short_labels else \
+                   (units.BITS_LABEL, units.KIBITS_LABEL, units.MIBITS_LABEL, units.GIBITS_LABEL)
+        else:
+            keys = (units.BITS_SHORT_LABEL, units.KBITS_SHORT_LABEL, units.MBITS_SHORT_LABEL, units.GBITS_SHORT_LABEL) if short_labels else \
+                   (units.BITS_LABEL, units.KBITS_LABEL, units.MBITS_LABEL, units.GBITS_LABEL)
+    
+    return [getattr(i18n, key) for key in keys]
+
+
+def get_all_possible_unit_labels(i18n) -> List[str]:
+    """
+    Returns all unique translated unit labels across all unit types and formats.
+    Used for calculating reference widths in the UI.
+    """
+    all_labels = set()
+    for ut in ["bits_decimal", "bits_binary", "bytes_decimal", "bytes_binary"]:
+        all_labels.update(get_unit_labels_for_type(i18n, ut, False))
+        all_labels.update(get_unit_labels_for_type(i18n, ut, True))
+    return sorted(list(all_labels))
+
+
+def get_reference_value_string(always_mbps: bool, decimal_places: int) -> str:
+    """
+    Returns a reference number string (e.g., '888.8' or '8888.88') used to 
+    calculate the maximum width needed for speed values in the UI.
+    """
+    integer_part = "8888" if always_mbps else "888"
+    if decimal_places > 0:
+        return f"{integer_part}.{'8' * decimal_places}"
+    return integer_part
+
+
 def format_speed(
     speed: float, 
     i18n, 
-    use_megabytes: bool = False,  # Deprecated, use unit_type instead
+    use_megabytes: bool = False,  # Deprecated
     *, 
-    always_mbps: bool = False,  # Deprecated, use speed_display_mode instead
+    always_mbps: bool = False, 
     decimal_places: int = 1,
     unit_type: str = "bits_decimal",
-    fixed_width: bool = False
+    fixed_width: bool = False,
+    short_labels: bool = False
 ) -> str:
     """
     Format a speed value (in bytes/sec) into a human-readable string with dynamic units.
-
-    Args:
-        speed: Speed in bytes per second
-        i18n: Internationalization object with unit labels
-        use_megabytes: DEPRECATED - use unit_type instead
-        always_mbps: If True, always show Mbps/MBps regardless of actual speed
-        decimal_places: Number of decimal places to display
-        unit_type: One of "bits_decimal", "bits_binary", "bytes_decimal", "bytes_binary"
-        fixed_width: If True, pad values to prevent text jumping
-    
-    Returns:
-        Formatted speed string like "12.34 Mbps"
     """
     if not isinstance(speed, (int, float)):
         raise TypeError(f"Speed must be a number (int or float), got {type(speed)}")
@@ -156,81 +194,58 @@ def format_speed(
     current_speed = max(0.0, float(speed))
     val: float
     unit: str
-    units = constants.network.units
+    network_consts = constants.network.units
 
-    # Parse unit_type
+    # Select divisors based on binary vs decimal
     is_binary = unit_type.endswith("_binary")
     is_bytes = unit_type.startswith("bytes")
     
-    # Select divisors based on binary vs decimal
     if is_binary:
-        kilo_div = units.KIBI_DIVISOR
-        mega_div = units.MEBI_DIVISOR
-        giga_div = units.GIBI_DIVISOR
+        kilo_div = network_consts.KIBI_DIVISOR
+        mega_div = network_consts.MEBI_DIVISOR
+        giga_div = network_consts.GIBI_DIVISOR
     else:
-        kilo_div = units.KILO_DIVISOR
-        mega_div = units.MEGA_DIVISOR
-        giga_div = units.GIGA_DIVISOR
+        kilo_div = network_consts.KILO_DIVISOR
+        mega_div = network_consts.MEGA_DIVISOR
+        giga_div = network_consts.GIGA_DIVISOR
     
-    # Select unit labels based on bytes vs bits and binary vs decimal
-    if is_bytes:
-        if is_binary:
-            base_label, kilo_label, mega_label, giga_label = (
-                units.BPS_LABEL, units.KIBPS_LABEL, units.MIBPS_LABEL, units.GIBPS_LABEL
-            )
-        else:
-            base_label, kilo_label, mega_label, giga_label = (
-                units.BPS_LABEL, units.KBPS_LABEL, units.MBPS_LABEL, units.GBPS_LABEL
-            )
-        speed_value = current_speed  # Already in bytes/sec
-    else:  # bits
-        if is_binary:
-            base_label, kilo_label, mega_label, giga_label = (
-                units.BITS_LABEL, units.KIBITS_LABEL, units.MIBITS_LABEL, units.GIBITS_LABEL
-            )
-        else:
-            base_label, kilo_label, mega_label, giga_label = (
-                units.BITS_LABEL, units.KBITS_LABEL, units.MBITS_LABEL, units.GBITS_LABEL
-            )
-        speed_value = current_speed * units.BITS_PER_BYTE  # Convert to bits
+    # Get translated labels [base, kilo, mega, giga]
+    labels = get_unit_labels_for_type(i18n, unit_type, short_labels)
+    
+    # Select numeric value based on bytes vs bits
+    speed_value = current_speed if is_bytes else current_speed * network_consts.BITS_PER_BYTE
 
-    # Handle zero/minimum display threshold
-    if current_speed < units.MINIMUM_DISPLAY_SPEED:
-        unit = getattr(i18n, mega_label if always_mbps else kilo_label)
-        formatted_val = f"{0.0:.{decimal_places}f}"
-        if fixed_width:
-            formatted_val = formatted_val.rjust(7)
-        return f"{formatted_val} {unit}"
-
-    # Always show mega units or auto-scale
-    if always_mbps:
+    # Determine scale and unit
+    if current_speed < network_consts.MINIMUM_DISPLAY_SPEED:
+        val = 0.0
+        unit = labels[2] if always_mbps else labels[1]
+    elif always_mbps:
         val = speed_value / mega_div
-        unit = getattr(i18n, mega_label)
+        unit = labels[2]
     else:
-        # Auto-scale based on speed
         if speed_value >= giga_div:
             val = speed_value / giga_div
-            unit = getattr(i18n, giga_label)
+            unit = labels[3]
         elif speed_value >= mega_div:
             val = speed_value / mega_div
-            unit = getattr(i18n, mega_label)
+            unit = labels[2]
         elif speed_value >= kilo_div:
             val = speed_value / kilo_div
-            unit = getattr(i18n, kilo_label)
+            unit = labels[1]
         else:
             val = speed_value
-            unit = getattr(i18n, base_label)
+            unit = labels[0]
 
-    # Format the value
-    if unit in (getattr(i18n, base_label, None),):
+    # Format numeric part
+    if unit == labels[0]:
         formatted_val = f"{val:.0f}"
     else:
         formatted_val = f"{val:.{decimal_places}f}"
     
-    # Apply fixed-width padding if enabled
     if fixed_width:
-        # Pad to accommodate values like "1234.56" (7 chars)
-        formatted_val = formatted_val.rjust(7)
+        # Use reference string to match logic in layout/renderer
+        ref_val = get_reference_value_string(always_mbps, decimal_places)
+        formatted_val = formatted_val.rjust(len(ref_val))
     
     return f"{formatted_val} {unit}"
 
