@@ -56,11 +56,11 @@ class HistoryPeriodConstants:
     """Constants for history periods in graphs."""
     # Use i18n keys, not display strings
     PERIOD_MAP: Final[Dict[int, str]] = {
-        0: "TIMELINE_SYSTEM_UPTIME", 1: "TIMELINE_SESSION", 2: "TIMELINE_3_HOURS",
+        0: "TIMELINE_SESSION", 1: "TIMELINE_SYSTEM_UPTIME", 2: "TIMELINE_3_HOURS",
         3: "TIMELINE_6_HOURS", 4: "TIMELINE_12_HOURS", 5: "TIMELINE_24_HOURS",
         6: "TIMELINE_WEEK", 7: "TIMELINE_MONTH", 8: "TIMELINE_ALL",
     }
-    DEFAULT_PERIOD: Final[str] = PERIOD_MAP[0] # "TIMELINE_SYSTEM_UPTIME"
+    DEFAULT_PERIOD: Final[str] = PERIOD_MAP[0] # "TIMELINE_SESSION"
     # The logic in CUTOFF_DAYS must also use the i18n keys
     CUTOFF_DAYS: Final[Dict[str, float]] = {
         "TIMELINE_3_HOURS": 3 / 24, "TIMELINE_6_HOURS": 6 / 24, "TIMELINE_12_HOURS": 12 / 24,
@@ -83,11 +83,20 @@ class DataConstants:
     """Container for data-related constant groups."""
     # The filename for the SQLite database that stores speed history.
     DB_FILENAME: Final[str] = "speed_history.db"
+    
+    # Modern Schema (v2+)
+    SPEED_TABLE_RAW: Final[str] = "speed_history_raw"
+    SPEED_TABLE_MINUTE: Final[str] = "speed_history_minute"
+    SPEED_TABLE_HOUR: Final[str] = "speed_history_hour"
+    
+    # Legacy Schema (v1) - To be removed after full transition
     SPEED_TABLE: Final[str] = "speed_history"
-    AGGREGATION_CUTOFF_DAYS: Final[int] = 2  # Days before data is aggregated
     AGGREGATED_TABLE: Final[str] = "speed_history_aggregated"
+    
     BANDWIDTH_TABLE: Final[str] = "bandwidth_history"
     APP_BANDWIDTH_TABLE: Final[str] = "app_bandwidth"
+    
+    AGGREGATION_CUTOFF_DAYS: Final[int] = 2  # Days before data is aggregated
     
     def __init__(self) -> None:
         self.legend_position = LegendPositionConstants()

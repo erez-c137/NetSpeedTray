@@ -16,7 +16,7 @@ from PyQt6.QtCore import Qt, QPointF, QRect
 
 from netspeedtray import constants
 
-from netspeedtray.core.widget_state import SpeedDataSnapshot
+from netspeedtray.core.widget_state import SpeedDataSnapshot, AggregatedSpeedData
 from netspeedtray.utils.helpers import format_speed
 
 logger = logging.getLogger("NetSpeedTray.WidgetRenderer")
@@ -295,36 +295,19 @@ class WidgetRenderer:
 
 
     def _format_speed_texts(self, upload: float, download: float, always_mbps: bool, decimal_places: int, force_decimals: bool, unit_type: str = "bits_decimal", short_labels: bool = False, full_string: bool = False) -> Tuple[Any, Any]:
-        """Helper to format speed values into final strings or tuples."""
-        upload_full = format_speed(upload, self.i18n, always_mbps=always_mbps, decimal_places=decimal_places, unit_type=unit_type, fixed_width=False, short_labels=short_labels)
-        download_full = format_speed(download, self.i18n, always_mbps=always_mbps, decimal_places=decimal_places, unit_type=unit_type, fixed_width=False, short_labels=short_labels)
+        """Helper to format speed values into final strings or tuples using centralized logic."""
+        up_formatted = format_speed(
+            upload, self.i18n, always_mbps=always_mbps, decimal_places=decimal_places, 
+            unit_type=unit_type, split_unit=not full_string, short_labels=short_labels
+        )
+        down_formatted = format_speed(
+            download, self.i18n, always_mbps=always_mbps, decimal_places=decimal_places, 
+            unit_type=unit_type, split_unit=not full_string, short_labels=short_labels
+        )
         
-        up_val_str, up_unit = upload_full.split(" ", 1)
-        down_val_str, down_unit = download_full.split(" ", 1)
-
-        up_val_float = float(up_val_str.strip())
-        down_val_float = float(down_val_str.strip())
-
-        def format_value(value: float) -> str:
-            """Formats a float value based on the force_decimals setting."""
-            if force_decimals:
-                return f"{value:.{decimal_places}f}"
-            else:
-                epsilon = 1e-9
-                if abs(value - round(value)) < epsilon:
-                    # If the value is very close to a whole number, show no decimals.
-                    return f"{round(value)}"
-                else:
-                    # Otherwise, show the configured number of decimal places.
-                    return f"{value:.{decimal_places}f}"
-
-        up_num_final = format_value(up_val_float)
-        down_num_final = format_value(down_val_float)
-        
-        if full_string:
-            return f"{up_num_final} {up_unit}", f"{down_num_final} {down_unit}"
-        else:
-            return (up_num_final, up_unit), (down_num_final, down_unit)
+        # If full_string is True, format_speed returns a string.
+        # If full_string is False (split_unit is True), format_speed returns Tuple[str, str].
+        return up_formatted, down_formatted
 
 
     def _calculate_margin(self, width: int, content_width: float, alignment_str: str) -> int:
@@ -357,7 +340,7 @@ class WidgetRenderer:
         return self.default_color
 
 
-    def draw_mini_graph(self, painter: QPainter, width: int, height: int, config: RenderConfig, history: List[SpeedDataSnapshot], layout_mode: str = 'vertical') -> None:
+    def draw_mini_graph(self, painter: QPainter, width: int, height: int, config: RenderConfig, history: List[AggregatedSpeedData], layout_mode: str = 'vertical') -> None:
         """Draws a mini graph of speed history, adapting to the current layout mode."""
         if not config.graph_enabled or len(history) < constants.renderer.MIN_GRAPH_POINTS:
             return
@@ -375,38 +358,32 @@ class WidgetRenderer:
 
             if graph_rect.width() <= 0 or graph_rect.height() <= 0: return
 
-            # Aggregate upload and download speeds
-            aggregated_history = []
-            for s in history:
-                total_upload = sum(speeds[0] for speeds in s.speeds.values())
-                total_download = sum(speeds[1] for speeds in s.speeds.values())
-                aggregated_history.append({'upload': total_upload, 'download': total_download})
-
-            # Hash the aggregated data to prevent unnecessary recalculations
-            current_hash = hash(tuple((d['upload'], d['download']) for d in aggregated_history))
+            # Hash the history data to prevent unnecessary recalculations
+            # AggregatedSpeedData is a frozen dataclass, so it's hashable.
+            current_hash = hash(tuple(history))
 
             if self._last_widget_size != (width, height) or self._last_history_hash != current_hash:
-                num_points = len(aggregated_history)
+                num_points = len(history)
                 # Gracefully handle empty history to prevent max() error
-                if not aggregated_history:
+                if not history:
                     return
 
                 max_speed_val = max(
-                    max(d['upload'] for d in aggregated_history),
-                    max(d['download'] for d in aggregated_history)
-                ) if aggregated_history else 0
+                    max(d.upload for d in history),
+                    max(d.download for d in history)
+                ) if history else 0
 
                 padded_max_speed = max_speed_val * constants.renderer.GRAPH_Y_AXIS_PADDING_FACTOR
                 max_y = max(padded_max_speed, constants.renderer.MIN_Y_SCALE)
                 step_x = graph_rect.width() / (num_points - 1) if num_points > 1 else 0
 
                 self._cached_upload_points = [
-                    QPointF(graph_rect.left() + i * step_x, graph_rect.bottom() - (d['upload'] / max_y) * graph_rect.height())
-                    for i, d in enumerate(aggregated_history)
+                    QPointF(graph_rect.left() + i * step_x, graph_rect.bottom() - (d.upload / max_y) * graph_rect.height())
+                    for i, d in enumerate(history)
                 ]
                 self._cached_download_points = [
-                    QPointF(graph_rect.left() + i * step_x, graph_rect.bottom() - (d['download'] / max_y) * graph_rect.height())
-                    for i, d in enumerate(aggregated_history)
+                    QPointF(graph_rect.left() + i * step_x, graph_rect.bottom() - (d.download / max_y) * graph_rect.height())
+                    for i, d in enumerate(history)
                 ]
                 self._last_widget_size = (width, height)
                 self._last_history_hash = current_hash

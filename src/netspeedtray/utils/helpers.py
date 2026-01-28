@@ -183,10 +183,15 @@ def format_speed(
     decimal_places: int = 1,
     unit_type: str = "bits_decimal",
     fixed_width: bool = False,
-    short_labels: bool = False
-) -> str:
+    short_labels: bool = False,
+    split_unit: bool = False
+) -> str | Tuple[str, str]:
     """
-    Format a speed value (in bytes/sec) into a human-readable string with dynamic units.
+    Format a speed value (in bytes/sec) into human-readable components.
+    
+    Returns:
+        If split_unit is True: Tuple[str, str] (formatted_value, unit)
+        If split_unit is False: str "formatted_value unit"
     """
     if not isinstance(speed, (int, float)):
         raise TypeError(f"Speed must be a number (int or float), got {type(speed)}")
@@ -246,6 +251,9 @@ def format_speed(
         # Use reference string to match logic in layout/renderer
         ref_val = get_reference_value_string(always_mbps, decimal_places)
         formatted_val = formatted_val.rjust(len(ref_val))
+    
+    if split_unit:
+        return formatted_val, unit
     
     return f"{formatted_val} {unit}"
 
