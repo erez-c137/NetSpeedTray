@@ -10,11 +10,6 @@ build==1.3.0
     # via pip-tools
 click==8.3.1
     # via pip-tools
-colorama==0.4.6
-    # via
-    #   build
-    #   click
-    #   pytest
 coverage[toml]==7.10.3
     # via pytest-cov
 freezegun==1.5.4
@@ -27,8 +22,7 @@ packaging==25.0
     #   pyinstaller
     #   pyinstaller-hooks-contrib
     #   pytest
-pefile==2023.2.7
-    # via pyinstaller
+    #   wheel
 pip-tools==7.5.2
     # via -r dev-requirements.in
 pluggy==1.6.0
@@ -56,11 +50,9 @@ pytest-mock==3.14.1
     # via -r dev-requirements.in
 python-dateutil==2.9.0.post0
     # via freezegun
-pywin32-ctypes==0.2.3
-    # via pyinstaller
 six==1.17.0
     # via python-dateutil
-wheel==0.45.1
+wheel==0.46.2
     # via pip-tools
 
 # The following packages are considered to be unsafe in a requirements file:
