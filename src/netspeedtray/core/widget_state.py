@@ -68,7 +68,7 @@ class WidgetState(QObject):
         # In-Memory Cache for real-time mini-graph
         self.max_history_points: int = self._get_max_history_points()
         self.in_memory_history: Deque[SpeedDataSnapshot] = deque(maxlen=self.max_history_points)
-        
+        self.aggregated_history: Deque[AggregatedSpeedData] = deque(maxlen=self.max_history_points)
         # Batching list for database writes
         self._db_batch: List[Tuple[int, str, float, float]] = []
 
@@ -87,7 +87,39 @@ class WidgetState(QObject):
         self.maintenance_timer.timeout.connect(self.trigger_maintenance)
         self.maintenance_timer.start(60 * 60 * 1000) # Run maintenance every hour
 
+        # Persistent Read Connections (per-thread)
+        self._read_conns: Dict[int, sqlite3.Connection] = {}
+        self._read_conns_lock = threading.Lock()
+
         self.logger.info("WidgetState initialized with threaded database worker.")
+
+
+    def _get_read_conn(self) -> sqlite3.Connection:
+        """
+        Provides a thread-specific, read-only SQLite connection.
+        Using a persistent connection reduces the overhead of repeatedly 
+        opening/closing the database during UI updates or graph rendering.
+        """
+        tid = threading.get_ident()
+        
+        with self._read_conns_lock:
+            if tid not in self._read_conns:
+                self.logger.debug("Opening persistent READ connection for thread %d", tid)
+                try:
+                    # Use 'ro' mode for safety; timeout allows for occasional write locks
+                    conn = sqlite3.connect(
+                        f"file:{self.db_worker.db_path}?mode=ro", 
+                        uri=True, 
+                        timeout=timeouts.DB_BUSY_TIMEOUT_MS / 1000.0
+                    )
+                    conn.execute(f"PRAGMA busy_timeout = {timeouts.DB_BUSY_TIMEOUT_MS};")
+                    self._read_conns[tid] = conn
+                except sqlite3.Error as e:
+                    self.logger.error("Failed to open read connection for thread %d: %s", tid, e)
+                    # Fallback: try opening a non-URI connection if URI fails (though it shouldn't)
+                    return sqlite3.connect(self.db_worker.db_path, timeout=5)
+            
+            return self._read_conns[tid]
 
 
     def add_speed_data(self, speed_data: Dict[str, Tuple[float, float]]) -> None:
@@ -107,6 +139,16 @@ class WidgetState(QObject):
             timestamp=now
         ))
 
+        # --- PRE-AGGREGATION OPTIMIZATION ---
+        # Sum all interface speeds now so the renderer doesn't have to do it every frame.
+        total_up = sum(speeds[0] for speeds in speed_data.values())
+        total_down = sum(speeds[1] for speeds in speed_data.values())
+        self.aggregated_history.append(AggregatedSpeedData(
+            upload=total_up,
+            download=total_down,
+            timestamp=now
+        ))
+
         timestamp = int(now.timestamp())
         min_speed = network.speed.MIN_RECORDABLE_SPEED_BPS
         for interface, (up_speed, down_speed) in speed_data.items():
@@ -118,23 +160,53 @@ class WidgetState(QObject):
     def get_total_bandwidth_for_period(self, start_time: Optional[datetime], end_time: datetime, interface_name: Optional[str] = None) -> Tuple[float, float]:
         """
         Calculates the total upload and download bandwidth for a given period
-        by running a SUM query directly on the aggregated database tables.
-        This is much more efficient than calculating it in Python.
-
-        Returns:
-            A tuple of (total_upload_bytes, total_download_bytes).
+        by running SUM queries across all data tiers.
         """
         if not hasattr(self, 'db_worker') or not self.db_worker:
             return 0.0, 0.0
 
-        # Determine which table to query for maximum efficiency
-        # For periods over 2 days, the hourly aggregate is accurate enough and much faster.
-        if start_time and (end_time - start_time).days > 2:
-            table_name = "hour_data"
-        else:
-            table_name = "minute_data"
+        try:
+            conn = self._get_read_conn()
+            cursor = conn.cursor()
+            
+            start_ts = int(start_time.timestamp()) if start_time else 0
+            end_ts = int(end_time.timestamp())
 
-        return self.db_worker.get_total_bandwidth(table_name, start_time, end_time, interface_name)
+            total_up, total_down = 0.0, 0.0
+            
+            # Optimization: Only query tiers that could potentially have data for this range.
+            # Raw: last 2 days. Minute: last 32 days. Hour: all.
+            now_ts = int(datetime.now().timestamp())
+            
+            tiers = []
+            if start_ts <= now_ts: # Always check raw as it might have unaggregated data
+                tiers.append(("speed_history_raw", "upload_bytes_sec", "download_bytes_sec"))
+            
+            if start_ts < (now_ts - 24*3600): # Might have minute data
+                tiers.append(("speed_history_minute", "upload_avg * 60", "download_avg * 60"))
+                
+            if start_ts < (now_ts - 30*86400): # Might have hour data
+                tiers.append(("speed_history_hour", "upload_avg * 3600", "download_avg * 3600"))
+
+            for table, up_expr, down_expr in tiers:
+                query = f"SELECT SUM({up_expr}), SUM({down_expr}) FROM {table} WHERE timestamp BETWEEN ? AND ?"
+                params = [start_ts, end_ts]
+                
+                if interface_name and str(interface_name).lower() != "all":
+                    query += " AND interface_name = ?"
+                    params.append(interface_name)
+                
+                cursor.execute(query, params)
+                row = cursor.fetchone()
+                if row:
+                    total_up += (row[0] or 0.0)
+                    total_down += (row[1] or 0.0)
+
+            return total_up, total_down
+
+        except Exception as e:
+            self.logger.error("Error calculating total bandwidth: %s", e, exc_info=True)
+            return 0.0, 0.0
 
 
     def get_in_memory_speed_history(self) -> List[SpeedDataSnapshot]:
@@ -146,6 +218,14 @@ class WidgetState(QObject):
             per-interface speeds for a specific timestamp.
         """
         return list(self.in_memory_history)
+
+
+    def get_aggregated_speed_history(self) -> List[AggregatedSpeedData]:
+        """
+        Retrieves the pre-calculated aggregated speed history.
+        This is optimized for the mini-graph renderer.
+        """
+        return list(self.aggregated_history)
 
 
     def flush_batch(self) -> None:
@@ -177,78 +257,74 @@ class WidgetState(QObject):
 
     def get_speed_history(self, start_time: Optional[datetime] = None, end_time: Optional[datetime] = None, interface_name: Optional[str] = None, return_raw: bool = False) -> List[Tuple[Union[datetime, float], float, float]]:
         """
-        Retrieves speed history from the database, intelligently querying all
-        data tiers to ensure all relevant data is returned.
+        Retrieves speed history from the database, unioning all data tiers
+        to ensure all relevant data is returned.
         """
         self.flush_batch()
         time.sleep(timeouts.DB_FLUSH_BATCH_SYNC_SLEEP)
 
-        results = []
         _start_ts = int(start_time.timestamp()) if start_time else 0
         _end_ts = int(end_time.timestamp()) if end_time else int(datetime.now().timestamp())
         
-        conn = None
+        # We always query all three tiers for maximum robustness, but we group them individually
+        # BEFORE unioning to significantly reduce the workload on the query planner.
+        
+        is_all_interfaces = interface_name is None or str(interface_name).lower() == "all"
+        
+        # Build SELECT statements for each table
+        selects = [
+            ("speed_history_raw", "upload_bytes_sec", "download_bytes_sec"),
+            ("speed_history_minute", "upload_avg", "download_avg"),
+            ("speed_history_hour", "upload_avg", "download_avg")
+        ]
+        
         try:
-            conn = sqlite3.connect(f"file:{self.db_worker.db_path}?mode=ro", uri=True, timeout=5)
-            conn.execute(f"PRAGMA busy_timeout = {timeouts.DB_BUSY_TIMEOUT_MS};")
+            conn = self._get_read_conn()
             cursor = conn.cursor()
             
-            # --- Build query and params iteratively and explicitly ---
             params: List[Any] = []
-            
-            base_selects = [
-                "SELECT timestamp, upload_bytes_sec as upload, download_bytes_sec as download FROM speed_history_raw",
-                "SELECT timestamp, upload_avg as upload, download_avg as download FROM speed_history_minute",
-                "SELECT timestamp, upload_avg as upload, download_avg as download FROM speed_history_hour"
-            ]
-            
             query_parts = []
-            for select_stmt in base_selects:
-                # Start with the base time filter for every subquery
-                query_part = f"{select_stmt} WHERE timestamp BETWEEN ? AND ?"
-                params.extend([_start_ts, _end_ts])
+            
+            for table, up_col, down_col in selects:
+                if is_all_interfaces:
+                    # Group by timestamp immediately to reduce the number of rows passed to the UNION
+                    query_part = f"SELECT timestamp, SUM({up_col}) as up, SUM({down_col}) as down FROM {table} WHERE timestamp BETWEEN ? AND ? GROUP BY timestamp"
+                else:
+                    query_part = f"SELECT timestamp, {up_col} as up, {down_col} as down FROM {table} WHERE timestamp BETWEEN ? AND ? AND interface_name = ?"
                 
-                # If a specific interface is requested, add its filter to this subquery
-                if interface_name and interface_name != "All":
-                    query_part += " AND interface_name = ?"
+                params.extend([_start_ts, _end_ts])
+                if not is_all_interfaces:
                     params.append(interface_name)
                 
                 query_parts.append(query_part)
             
-            # Combine the fully-formed subqueries
             union_query = " UNION ALL ".join(query_parts)
             
-            if interface_name and interface_name != "All":
-                # For a specific interface, just order the combined results
-                final_query = union_query + " ORDER BY timestamp"
+            # Final outer group by is only strictly necessary for 'All Interfaces' to ensure 
+            # no duplicate timestamps if data accidentally overlaps between tiers.
+            if is_all_interfaces:
+                final_query = f"SELECT timestamp, SUM(up), SUM(down) FROM ({union_query}) GROUP BY timestamp ORDER BY timestamp"
             else:
-                # For "All" interfaces, wrap the union in an aggregation
-                final_query = f"SELECT timestamp, SUM(upload), SUM(download) FROM ({union_query}) GROUP BY timestamp ORDER BY timestamp"
+                final_query = f"{union_query} ORDER BY timestamp"
             
             cursor.execute(final_query, tuple(params))
             
             if return_raw:
-                # Return raw timestamps (floats) directly to avoid expensive datetime instantiation
-                results = [(ts, up, down) for ts, up, down in cursor.fetchall() if up is not None and down is not None]
+                results = [(row[0], row[1], row[2]) for row in cursor.fetchall() if row[1] is not None]
             else:
-                results = [(datetime.fromtimestamp(ts), up, down) for ts, up, down in cursor.fetchall() if up is not None and down is not None]
+                results = [(datetime.fromtimestamp(row[0]), row[1], row[2]) for row in cursor.fetchall() if row[1] is not None]
 
             self.logger.debug("Retrieved %d records for period %s to %s for interface '%s'.", len(results), start_time, end_time, interface_name)
+            return results
         except sqlite3.Error as e:
             self.logger.error("Error retrieving unified speed history: %s", e, exc_info=True)
-        finally:
-            if conn:
-                conn.close()
-        
-        return results
+            return []
 
 
     def get_distinct_interfaces(self) -> List[str]:
         """Returns a sorted list of all unique interface names from the database."""
-        conn = None
         try:
-            conn = sqlite3.connect(f"file:{self.db_worker.db_path}?mode=ro", uri=True, timeout=5)
-            conn.execute("PRAGMA busy_timeout = 250;") # Wait up to 250ms if locked
+            conn = self._get_read_conn()
             cursor = conn.cursor()
 
             # Query all three tables to be comprehensive
@@ -265,9 +341,6 @@ class WidgetState(QObject):
         except sqlite3.Error as e:
             self.logger.error("Error fetching distinct interfaces: %s", e, exc_info=True)
             return []
-        finally:
-            if conn:
-                conn.close()
 
 
     def get_earliest_data_timestamp(self) -> Optional[datetime]:
@@ -277,10 +350,8 @@ class WidgetState(QObject):
         self.flush_batch()
         time.sleep(0.1)
         
-        conn = None
         try:
-            conn = sqlite3.connect(f"file:{self.db_worker.db_path}?mode=ro", uri=True, timeout=5)
-            conn.execute("PRAGMA busy_timeout = 250;") # Wait up to 250ms if locked
+            conn = self._get_read_conn()
             cursor = conn.cursor()
 
             query = """
@@ -301,9 +372,6 @@ class WidgetState(QObject):
 
         except sqlite3.Error as e:
             self.logger.error("Failed to retrieve the earliest timestamp from database: %s", e, exc_info=True)
-        finally:
-            if conn:
-                conn.close()
 
         return None
 
@@ -314,6 +382,16 @@ class WidgetState(QObject):
         self.batch_persist_timer.stop()
         self.maintenance_timer.stop()
         self.flush_batch()
+
+        # Close persistent read connections
+        with self._read_conns_lock:
+            for tid, conn in self._read_conns.items():
+                try:
+                    conn.close()
+                except:
+                    pass
+            self._read_conns.clear()
+
         self.db_worker.stop()
         # Only wait for the thread if it was actually running
         if self.db_worker.isRunning():
@@ -344,4 +422,5 @@ class WidgetState(QObject):
         if new_max_points != self.max_history_points:
             self.max_history_points = new_max_points
             self.in_memory_history = deque(self.in_memory_history, maxlen=self.max_history_points)
+            self.aggregated_history = deque(self.aggregated_history, maxlen=self.max_history_points)
             self.logger.info("In-memory speed history capacity updated to %d points.", self.max_history_points)

@@ -164,11 +164,16 @@ class GraphRenderer(QObject):
             if total_duration_hours < 48:
                 is_long_timespan = False
 
+        # Convert UTC epoch floats to local datetime objects for robust plotting
+        # Matplotlib handles datetime objects natively and correctly manages its internal epoch.
+        plot_datetimes = [datetime.fromtimestamp(t) for t in timestamps]
+        plot_datetimes_array = np.array(plot_datetimes)
+
         # Plotting Logic
         if is_long_timespan:
-            self._plot_aggregated(timestamps, upload_mbps, download_mbps)
+            self._plot_aggregated(plot_datetimes_array, upload_mbps, download_mbps)
         else:
-            self._plot_high_res(timestamps, upload_mbps, download_mbps)
+            self._plot_high_res(plot_datetimes_array, upload_mbps, download_mbps)
 
         # Configure Limits and Formats
         self._configure_axes(start_time, end_time, period_key, timestamps, upload_mbps, download_mbps)
@@ -177,18 +182,15 @@ class GraphRenderer(QObject):
         
         return timestamps, upload_speeds, download_speeds
 
-    def _plot_aggregated(self, timestamps, upload_mbps, download_mbps):
-        """Vectorized Daily Aggregation and Plotting"""
-        # Bin by day (approximate UTC bins for visualization speed)
-        day_bins = (timestamps // 86400).astype(int)
+    def _plot_aggregated(self, plot_datetimes, upload_mbps, download_mbps):
+        """Daily Aggregation and Plotting"""
+        # Bin by day (using datetime attributes for safety)
+        day_bins = np.array([dt.date().toordinal() for dt in plot_datetimes])
         unique_days, indices = np.unique(day_bins, return_inverse=True)
         
         counts = np.bincount(indices)
-        down_sums = np.bincount(indices, weights=download_mbps)
-        up_sums = np.bincount(indices, weights=upload_mbps)
-        
-        down_mean = down_sums / counts
-        up_mean = up_sums / counts
+        down_mean = np.bincount(indices, weights=download_mbps) / counts
+        up_mean = np.bincount(indices, weights=upload_mbps) / counts
         
         # Min/Max aggregation for fill
         change_points = np.where(np.diff(indices) > 0)[0] + 1
@@ -203,49 +205,35 @@ class GraphRenderer(QObject):
             up_max = up_mean; up_min = up_mean
             down_max = down_mean; down_min = down_mean
 
-        # Convert unique_days (epoch days) to Matplotlib date floats
-        import time as pytime
-        is_dst = pytime.localtime().tm_isdst > 0
-        tz_offset = -pytime.altzone if is_dst else -pytime.timezone
-        day_offset = tz_offset / 86400.0
-        agg_mpl_dates = unique_days + 719163.0 + day_offset
+        # Convert unique_days (ordinals) to datetime objects for the center of the day
+        from datetime import date
+        agg_dates = [datetime.combine(date.fromordinal(d), datetime.min.time()) for d in unique_days]
         
-        self.ax_download.plot(agg_mpl_dates, down_mean, color=constants.graph.DOWNLOAD_LINE_COLOR, linewidth=1.5, zorder=10)
-        self.ax_download.fill_between(agg_mpl_dates, down_min, down_max, color=constants.graph.DOWNLOAD_LINE_COLOR, alpha=0.3)
-        self.ax_upload.plot(agg_mpl_dates, up_mean, color=constants.graph.UPLOAD_LINE_COLOR, linewidth=1.5, zorder=10)
-        self.ax_upload.fill_between(agg_mpl_dates, up_min, up_max, color=constants.graph.UPLOAD_LINE_COLOR, alpha=0.3)
+        self.ax_download.plot(agg_dates, down_mean, color=constants.graph.DOWNLOAD_LINE_COLOR, linewidth=1.5, zorder=10)
+        self.ax_download.fill_between(agg_dates, down_min, down_max, color=constants.graph.DOWNLOAD_LINE_COLOR, alpha=0.3)
+        self.ax_upload.plot(agg_dates, up_mean, color=constants.graph.UPLOAD_LINE_COLOR, linewidth=1.5, zorder=10)
+        self.ax_upload.fill_between(agg_dates, up_min, up_max, color=constants.graph.UPLOAD_LINE_COLOR, alpha=0.3)
 
-    def _plot_high_res(self, timestamps, upload_mbps, download_mbps):
-        """Vectorized Gap Detection and Segmented Plotting"""
-        # Detect gaps > 2 seconds
-        gaps = np.diff(timestamps) > 2.0
+    def _plot_high_res(self, plot_datetimes, upload_mbps, download_mbps):
+        """Segmented Plotting with Gap Detection"""
+        # Detect gaps > 10 seconds to account for jitter or sleep.
+        # This prevents the graph from breaking into single points that draw nothing.
+        timestamps_float = np.array([dt.timestamp() for dt in plot_datetimes])
+        gaps = np.diff(timestamps_float) > 10.0
         gap_indices = np.where(gaps)[0] + 1
         
-        segments_ts = np.split(timestamps, gap_indices)
+        segments_ts = np.split(plot_datetimes, gap_indices)
         segments_up = np.split(upload_mbps, gap_indices)
         segments_down = np.split(download_mbps, gap_indices)
-        
-        # Determine format based on range
-        import time as pytime
-        is_dst = pytime.localtime().tm_isdst > 0
-        tz_offset = -pytime.altzone if is_dst else -pytime.timezone
-        
-        # Render segments
-        # Vectorized conversion for all timestamps at once would be faster, but split requires list
-        # Actually we can plot raw dates if we convert first?
-        # But we need split to break lines.
         
         for ts, up, down in zip(segments_ts, segments_up, segments_down):
             if len(ts) == 0: continue
             
-            # Convert to MPL dates
-            mpl_dates = ((ts + tz_offset) / 86400.0) + 719163.0
+            self.ax_download.plot(ts, down, color=constants.graph.DOWNLOAD_LINE_COLOR, linewidth=1.5)
+            self.ax_download.fill_between(ts, 0, down, color=constants.graph.DOWNLOAD_LINE_COLOR, alpha=0.1)
             
-            self.ax_download.plot(mpl_dates, down, color=constants.graph.DOWNLOAD_LINE_COLOR, linewidth=1.5)
-            self.ax_download.fill_between(mpl_dates, 0, down, color=constants.graph.DOWNLOAD_LINE_COLOR, alpha=0.1)
-            
-            self.ax_upload.plot(mpl_dates, up, color=constants.graph.UPLOAD_LINE_COLOR, linewidth=1.5)
-            self.ax_upload.fill_between(mpl_dates, 0, up, color=constants.graph.UPLOAD_LINE_COLOR, alpha=0.1)
+            self.ax_upload.plot(ts, up, color=constants.graph.UPLOAD_LINE_COLOR, linewidth=1.5)
+            self.ax_upload.fill_between(ts, 0, up, color=constants.graph.UPLOAD_LINE_COLOR, alpha=0.1)
 
     def _configure_axes(self, start_time, end_time, period_key, timestamps, upload_mbps, download_mbps):
         """Sets limits and Formatters."""
@@ -259,20 +247,13 @@ class GraphRenderer(QObject):
         self.ax_upload.set_ylim(bottom=0, top=y_top_up)
         self.ax_download.set_ylim(bottom=0, top=y_top_down)
 
-        # X-Axis Limits
-        import time as pytime
-        is_dst = pytime.localtime().tm_isdst > 0
-        tz_offset = -pytime.altzone if is_dst else -pytime.timezone
-        
         if start_time and end_time:
-             start_mpl = mdates.date2num(start_time)
-             end_mpl = mdates.date2num(end_time)
-             self.ax_upload.set_xlim(start_mpl, end_mpl)
+             self.ax_upload.set_xlim(start_time, end_time)
         elif len(timestamps) > 0:
              # Auto-range logic
-             min_ts_mpl = ((timestamps.min() + tz_offset) / 86400.0) + 719163.0
-             max_ts_mpl = ((timestamps.max() + tz_offset) / 86400.0) + 719163.0
-             self.ax_upload.set_xlim(min_ts_mpl, max_ts_mpl)
+             min_dt = datetime.fromtimestamp(timestamps.min())
+             max_dt = datetime.fromtimestamp(timestamps.max())
+             self.ax_upload.set_xlim(min_dt, max_dt)
 
         # X-Axis Formatting
         self._configure_xaxis_format(period_key)

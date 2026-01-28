@@ -17,6 +17,8 @@ from typing import Any, Deque, Dict, List, Optional, Tuple
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
+from netspeedtray import constants
+
 # Logger Setup
 logger = logging.getLogger("NetSpeedTray.Core.Database")
 
@@ -41,20 +43,39 @@ class DatabaseWorker(QThread):
 
 
     def run(self) -> None:
-        """The main event loop for the database thread."""
-        try:
-            self._initialize_connection()
-            self._check_and_create_schema()
-        except sqlite3.Error as e:
-            self.logger.critical("Database initialization failed: %s", e, exc_info=True)
-            self.error.emit(f"Database initialization failed: {e}")
+        """The main event loop for the database thread with retry logic."""
+        max_retries = 3
+        retry_delay = 2.0 # seconds
+        
+        initialized = False
+        for attempt in range(max_retries):
+            try:
+                self._initialize_connection()
+                self._check_and_create_schema()
+                initialized = True
+                break
+            except sqlite3.Error as e:
+                self.logger.error("Database initialization attempt %d failed: %s", attempt + 1, e)
+                if attempt < max_retries - 1:
+                    self.msleep(int(retry_delay * 1000))
+        
+        if not initialized:
+            self.logger.critical("Database initialization failed after %d attempts.", max_retries)
+            self.error.emit(f"Critical: Database initialization failed after multiple attempts.")
             return
 
         self.logger.info("Database worker thread started successfully.")
         while not self._stop_event.is_set():
             if self._queue:
                 task, data = self._queue.popleft()
-                self._execute_task(task, data)
+                try:
+                    self._execute_task(task, data)
+                except sqlite3.Error as e:
+                    self.logger.error("Database error during task execution: %s", e)
+                    # If the connection is broken, attempt to reconnect once
+                    if "closed" in str(e).lower() or "database is locked" in str(e).lower():
+                        self.logger.info("Attempting to reconnect database...")
+                        self._reconnect()
             else:
                 self.msleep(100) # Sleep briefly when idle
 
@@ -207,13 +228,13 @@ class DatabaseWorker(QThread):
         # Drop old tables if they exist to ensure a clean slate
         self.logger.info("Dropping old tables...")
         cursor.execute("PRAGMA foreign_keys = OFF;") # disable FKs to drop safely
-        cursor.execute("DROP TABLE IF EXISTS speed_history")
-        cursor.execute("DROP TABLE IF EXISTS speed_history_aggregated")
-        cursor.execute("DROP TABLE IF EXISTS speed_history_raw")
-        cursor.execute("DROP TABLE IF EXISTS speed_history_minute")
-        cursor.execute("DROP TABLE IF EXISTS speed_history_hour")
-        cursor.execute("DROP TABLE IF EXISTS bandwidth_history")
-        cursor.execute("DROP TABLE IF EXISTS app_bandwidth")
+        cursor.execute(f"DROP TABLE IF EXISTS {constants.data.SPEED_TABLE}")
+        cursor.execute(f"DROP TABLE IF EXISTS {constants.data.AGGREGATED_TABLE}")
+        cursor.execute(f"DROP TABLE IF EXISTS {constants.data.SPEED_TABLE_RAW}")
+        cursor.execute(f"DROP TABLE IF EXISTS {constants.data.SPEED_TABLE_MINUTE}")
+        cursor.execute(f"DROP TABLE IF EXISTS {constants.data.SPEED_TABLE_HOUR}")
+        cursor.execute(f"DROP TABLE IF EXISTS {constants.data.BANDWIDTH_TABLE}")
+        cursor.execute(f"DROP TABLE IF EXISTS {constants.data.APP_BANDWIDTH_TABLE}")
         cursor.execute("DROP TABLE IF EXISTS metadata")
         cursor.execute("PRAGMA foreign_keys = ON;")
 
@@ -227,16 +248,16 @@ class DatabaseWorker(QThread):
             );
             INSERT INTO metadata (key, value) VALUES ('db_version', '{self._DB_VERSION}');
 
-            CREATE TABLE speed_history_raw (
+            CREATE TABLE {constants.data.SPEED_TABLE_RAW} (
                 timestamp INTEGER NOT NULL,
                 interface_name TEXT NOT NULL,
                 upload_bytes_sec REAL NOT NULL,
                 download_bytes_sec REAL NOT NULL,
                 PRIMARY KEY (timestamp, interface_name)
             );
-            CREATE INDEX idx_raw_timestamp ON speed_history_raw (timestamp DESC);
+            CREATE INDEX idx_raw_timestamp ON {constants.data.SPEED_TABLE_RAW} (timestamp DESC);
 
-            CREATE TABLE speed_history_minute (
+            CREATE TABLE {constants.data.SPEED_TABLE_MINUTE} (
                 timestamp INTEGER NOT NULL,
                 interface_name TEXT NOT NULL,
                 upload_avg REAL NOT NULL,
@@ -245,9 +266,9 @@ class DatabaseWorker(QThread):
                 download_max REAL NOT NULL,
                 PRIMARY KEY (timestamp, interface_name)
             );
-            CREATE INDEX idx_minute_interface_timestamp ON speed_history_minute (interface_name, timestamp DESC);
+            CREATE INDEX idx_minute_interface_timestamp ON {constants.data.SPEED_TABLE_MINUTE} (interface_name, timestamp DESC);
 
-            CREATE TABLE speed_history_hour (
+            CREATE TABLE {constants.data.SPEED_TABLE_HOUR} (
                 timestamp INTEGER NOT NULL,
                 interface_name TEXT NOT NULL,
                 upload_avg REAL NOT NULL,
@@ -256,7 +277,7 @@ class DatabaseWorker(QThread):
                 download_max REAL NOT NULL,
                 PRIMARY KEY (timestamp, interface_name)
             );
-            CREATE INDEX idx_hour_interface_timestamp ON speed_history_hour (interface_name, timestamp DESC);
+            CREATE INDEX idx_hour_interface_timestamp ON {constants.data.SPEED_TABLE_HOUR} (interface_name, timestamp DESC);
         """)
         self.conn.commit()
         self.logger.info("New database schema created successfully.")
@@ -271,7 +292,7 @@ class DatabaseWorker(QThread):
         cursor = self.conn.cursor()
         try:
             cursor.executemany(
-                "INSERT OR IGNORE INTO speed_history_raw (timestamp, interface_name, upload_bytes_sec, download_bytes_sec) VALUES (?, ?, ?, ?)",
+                f"INSERT OR IGNORE INTO {constants.data.SPEED_TABLE_RAW} (timestamp, interface_name, upload_bytes_sec, download_bytes_sec) VALUES (?, ?, ?, ?)",
                 batch
             )
             self.conn.commit()
@@ -318,8 +339,8 @@ class DatabaseWorker(QThread):
         cutoff = int((now - timedelta(hours=24)).timestamp())
         self.logger.debug("Aggregating raw data older than %s...", datetime.fromtimestamp(cutoff))
         
-        cursor.execute("""
-            INSERT INTO speed_history_minute (timestamp, interface_name, upload_avg, download_avg, upload_max, download_max)
+        cursor.execute(f"""
+            INSERT OR IGNORE INTO {constants.data.SPEED_TABLE_MINUTE} (timestamp, interface_name, upload_avg, download_avg, upload_max, download_max)
             SELECT
                 (timestamp / 60) * 60 AS minute_timestamp,
                 interface_name,
@@ -327,14 +348,13 @@ class DatabaseWorker(QThread):
                 AVG(download_bytes_sec),
                 MAX(upload_bytes_sec),
                 MAX(download_bytes_sec)
-            FROM speed_history_raw
+            FROM {constants.data.SPEED_TABLE_RAW}
             WHERE timestamp < ?
-            GROUP BY (timestamp / 60), interface_name
-            ON CONFLICT(timestamp, interface_name) DO NOTHING;
+            GROUP BY minute_timestamp, interface_name
         """, (cutoff,))
         if cursor.rowcount > 0: self.logger.info("Aggregated %d per-minute records.", cursor.rowcount)
         
-        cursor.execute("DELETE FROM speed_history_raw WHERE timestamp < ?", (cutoff,))
+        cursor.execute(f"DELETE FROM {constants.data.SPEED_TABLE_RAW} WHERE timestamp < ?", (cutoff,))
         if cursor.rowcount > 0: self.logger.info("Pruned %d raw records after aggregation.", cursor.rowcount)
 
 
@@ -343,8 +363,8 @@ class DatabaseWorker(QThread):
         cutoff = int((now - timedelta(days=30)).timestamp())
         self.logger.debug("Aggregating minute data older than %s...", datetime.fromtimestamp(cutoff))
 
-        cursor.execute("""
-            INSERT INTO speed_history_hour (timestamp, interface_name, upload_avg, download_avg, upload_max, download_max)
+        cursor.execute(f"""
+            INSERT OR IGNORE INTO {constants.data.SPEED_TABLE_HOUR} (timestamp, interface_name, upload_avg, download_avg, upload_max, download_max)
             SELECT
                 (timestamp / 3600) * 3600 AS hour_timestamp,
                 interface_name,
@@ -352,14 +372,13 @@ class DatabaseWorker(QThread):
                 AVG(download_avg),
                 MAX(upload_max),
                 MAX(download_max)
-            FROM speed_history_minute
+            FROM {constants.data.SPEED_TABLE_MINUTE}
             WHERE timestamp < ?
-            GROUP BY (timestamp / 3600), interface_name
-            ON CONFLICT(timestamp, interface_name) DO NOTHING;
+            GROUP BY hour_timestamp, interface_name
         """, (cutoff,))
         if cursor.rowcount > 0: self.logger.info("Aggregated %d per-hour records.", cursor.rowcount)
 
-        cursor.execute("DELETE FROM speed_history_minute WHERE timestamp < ?", (cutoff,))
+        cursor.execute(f"DELETE FROM {constants.data.SPEED_TABLE_MINUTE} WHERE timestamp < ?", (cutoff,))
         if cursor.rowcount > 0: self.logger.info("Pruned %d minute records after aggregation.", cursor.rowcount)
 
 
@@ -393,7 +412,7 @@ class DatabaseWorker(QThread):
                 self.logger.info("Grace period expired. Pruning data older than %d days.", final_retention_days)
                 
                 cutoff = int((now - timedelta(days=final_retention_days)).timestamp())
-                cursor.execute("DELETE FROM speed_history_hour WHERE timestamp < ?", (cutoff,))
+                cursor.execute(f"DELETE FROM {constants.data.SPEED_TABLE_HOUR} WHERE timestamp < ?", (cutoff,))
                 pruned_count = cursor.rowcount
                 
                 cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES ('current_retention_days', ?)", (str(final_retention_days),))
@@ -423,63 +442,13 @@ class DatabaseWorker(QThread):
 
         # 4. If none of the above, just perform a standard, daily prune.
         cutoff = int((now - timedelta(days=current_retention_db)).timestamp())
-        cursor.execute("DELETE FROM speed_history_hour WHERE timestamp < ?", (cutoff,))
+        cursor.execute(f"DELETE FROM {constants.data.SPEED_TABLE_HOUR} WHERE timestamp < ?", (cutoff,))
         return cursor.rowcount > 0
 
 
-    def get_total_bandwidth(self, table_name: str, start_time: Optional[datetime], end_time: datetime, interface_name: Optional[str] = None) -> Tuple[float, float]:
-        """
-        Calculates the total upload and download bandwidth for a given period.
-        Uses correct table based on time range and aggregation level.
-        
-        Args:
-            table_name: Hint for table selection ('raw', 'minute_data', 'hour_data').
-            start_time: Start of the query period.
-            end_time: End of the query period.
-            interface_name: Optional filter for specific interface.
-            
-        Returns:
-            Tuple of (total_upload_bytes, total_download_bytes).
-        """
-        if self.conn is None:
-            return 0.0, 0.0
-
-        try:
-            start_ts = int(start_time.timestamp()) if start_time else 0
-            end_ts = int(end_time.timestamp())
-
-            # Select table and columns based on the table_name hint
-            if table_name == "hour_data":
-                sql_table = "speed_history_hour"
-                # For hourly data, upload_avg is bytes/sec averaged over the hour
-                # To get total bytes: avg_bytes_per_sec * 3600 seconds
-                col_up = "upload_avg * 3600"
-                col_down = "download_avg * 3600"
-            elif table_name == "minute_data":
-                sql_table = "speed_history_minute"
-                col_up = "upload_avg * 60"
-                col_down = "download_avg * 60"
-            else:  # Default to raw
-                sql_table = "speed_history_raw"
-                col_up = "upload_bytes_sec"
-                col_down = "download_bytes_sec"
-
-            # Build the query
-            query = f"SELECT SUM({col_up}), SUM({col_down}) FROM {sql_table} WHERE timestamp BETWEEN ? AND ?"
-            params = [start_ts, end_ts]
-
-            if interface_name and interface_name != "all":
-                query += " AND interface_name = ?"
-                params.append(interface_name)
-
-            cursor = self.conn.cursor()
-            cursor.execute(query, params)
-            row = cursor.fetchone()
-
-            if row and row[0] is not None:
-                return float(row[0]), float(row[1])
-            return 0.0, 0.0
-
-        except Exception as e:
-            self.logger.error("Error getting total bandwidth: %s", e, exc_info=True)
-            return 0.0, 0.0
+    def _reconnect(self) -> None:
+        """Closes and re-opens the database connection."""
+        self._close_connection()
+        self.msleep(1000)
+        self._initialize_connection()
+        self.logger.info("Database reconnected.")

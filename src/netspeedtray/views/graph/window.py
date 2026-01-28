@@ -40,7 +40,7 @@ from netspeedtray.utils.components import Win11Slider, Win11Toggle
 from netspeedtray.core.position_manager import ScreenUtils
 from netspeedtray.utils import styles
 from netspeedtray.utils import styles as style_utils
-from netspeedtray.utils import db_utils
+
 
 
 from netspeedtray.views.graph.controls import GraphSettingsPanel
@@ -313,6 +313,10 @@ class GraphWindow(QWidget):
         
         self.request_data_processing.connect(self.data_worker.process_data)
         
+        # NOTE: We do NOT connect database_updated here because it causes an infinite recursion
+        # (update_graph flushes the batch, which triggers database_updated, which triggers update_graph).
+        # We rely on periodic timers and manual refreshes for UI updates.
+            
         self.worker_thread.start()
 
 
@@ -410,7 +414,8 @@ class GraphWindow(QWidget):
             start_time = now - timedelta(weeks=1)
         elif period_key == "TIMELINE_MONTH":
             start_time = now - timedelta(days=30)
-        
+        elif period_key == "TIMELINE_ALL":
+            start_time = None # Handled as 'since beginning of time'
         return start_time, now
 
 
@@ -1063,12 +1068,22 @@ class GraphWindow(QWidget):
         if self._is_closing or not hasattr(self, 'request_data_processing'):
             return
         
+        # Only perform updates if the window is actually visible to save resources,
+        # unless it's the very first load.
+        if not self.isVisible() and self._initial_load_done:
+            return
+
         # Show a loading message immediately for a responsive feel.
         self._show_graph_message(self.i18n.COLLECTING_DATA_MESSAGE, is_error=False)
 
         # Get the current filter settings from the UI.
         start_time, end_time = self._get_time_range_from_ui()
-        interface_to_query = self.interface_filter.currentData() if self.interface_filter and self.interface_filter.currentData() != "all" else None
+        # Get the current filter settings from the UI safely.
+        interface_to_query = None
+        if hasattr(self, 'interface_filter') and self.interface_filter:
+            data = self.interface_filter.currentData()
+            interface_to_query = data if data != "all" else None
+
         period_key = constants.data.history_period.PERIOD_MAP.get(self._history_period_value, "")
         is_session_view = period_key == "TIMELINE_SESSION"
 
@@ -1081,7 +1096,7 @@ class GraphWindow(QWidget):
 
 
 
-    def _on_data_ready(self, data: List[Tuple[datetime, float, float]]):
+    def _on_data_ready(self, data: List[Tuple[float, float, float]], total_up: float, total_down: float):
         """Slot to receive processed data from the worker and render it."""
         if self._is_closing: return
         if not data or len(data) < 2:
@@ -1090,12 +1105,12 @@ class GraphWindow(QWidget):
         
         # Call the new, dedicated rendering function
         try:
-            self._render_graph(data)
+            self._render_graph(data, total_up, total_down)
         except Exception as e:
             logging.getLogger(__name__).error(f"Error rendering graph: {e}", exc_info=True)
             self._show_graph_message(self.i18n.GRAPH_UPDATE_ERROR_TEMPLATE.format(error=str(e)), is_error=True)
 
-    def _render_graph(self, history_data: List[Tuple[float, float, float]]):
+    def _render_graph(self, history_data: List[Tuple[float, float, float]], total_up: float = 0.0, total_down: float = 0.0):
         """
         Delegates rendering to GraphRenderer.
         """
@@ -1122,8 +1137,8 @@ class GraphWindow(QWidget):
                 self.renderer.apply_theme(self._is_dark_mode)
                 self.logger.debug(f"Applied theme: dark_mode={self._is_dark_mode}")
 
-            # Update Stats Bar
-            self._update_stats_bar(history_data)
+            # Update Stats Bar with pre-calculated totals
+            self._update_stats_bar(history_data, total_up, total_down)
             
             # Force canvas visibility and redraw
             self.canvas.setVisible(True)
@@ -1134,10 +1149,9 @@ class GraphWindow(QWidget):
             self.logger.error(f"Error rendering graph: {e}", exc_info=True)
             self._show_graph_error(f"Render Error: {e}")
 
-    def _update_stats_bar(self, history_data: List[Tuple[float, float, float]]) -> None:
+    def _update_stats_bar(self, history_data: List[Tuple[float, float, float]], total_upload_bytes: float = 0.0, total_download_bytes: float = 0.0) -> None:
         """
-        Update the stats bar. It calculates max speed from the plot data,
-        but gets the accurate total bandwidth from a dedicated, efficient database query.
+        Update the stats bar using the pre-calculated totals from the worker.
         """
         try:
             if not history_data:
@@ -1148,16 +1162,6 @@ class GraphWindow(QWidget):
             download_bytes_sec = [down for _, _, down in history_data if down is not None]
             max_upload_mbps = (max(upload_bytes_sec) * 8 / 1_000_000) if upload_bytes_sec else 0.0
             max_download_mbps = (max(download_bytes_sec) * 8 / 1_000_000) if download_bytes_sec else 0.0
-
-            start_time, end_time = self._get_time_range_from_ui()
-            interface_to_query = self.interface_filter.currentData() if self.interface_filter and self.interface_filter.currentData() != "all" else None
-            
-            total_upload_bytes, total_download_bytes = db_utils.get_total_bandwidth_for_period(
-                self._main_widget.widget_state.db_worker.db_path,
-                start_time,
-                end_time,
-                interface_to_query
-            )
 
             total_upload_display, total_upload_unit = helpers.format_data_size(total_upload_bytes, self.i18n)
             total_download_display, total_download_unit = helpers.format_data_size(total_download_bytes, self.i18n)
