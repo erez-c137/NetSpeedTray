@@ -4,16 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ---
 
-## [1.2.0] - January 25, 2026
+## [1.2.0] - January 28, 2026
 
 This is a major stable release that combines significant performance overhauls with critical stabilization fixes. It introduces vectorized graph processing, a modular settings architecture, and definitive fixes for long-standing accuracy and layout issues.
 
 ### 🚀 Performance & Core Optimization
+*   **Background Monitoring Thread:** Offloaded network polling to a dedicated thread, ensuring consistent 60+ FPS widget movement and zero micro-stutters during network stack latency.
 *   **Vectorized Graph Logic:** Replaced legacy loop-based processing with vectorized NumPy operations, achieving a **42x speed improvement** in graph rendering for large datasets.
+*   **Optimized Graph Queries:** Refactored historical data retrieval to group results per-table before unioning, significantly reducing database load times for multi-month timelines.
 *   **Zero-Copy Data Retrieval:** Updated database layer to fetch raw timestamps directly, bypassing expensive datetime object instantiation.
 *   **Pandas Removal:** Completely removed the `pandas` dependency. The application is now lighter and launches significantly closer to instant.
 
 ### 🐛 Critical Stabilization & Fixes
+*   **Fixed Graph Freeze:** Decoupled recursive signal loops that could lock up the interface when switching between long timelines or when the database flushed during a refresh.
+*   **Fixed Missing Plot Lines:** Resolved a Matplotlib epoch mismatch that caused data to be rendered thousands of years in the future; transitioned to robust native datetime plotting.
+*   **Background Bandwidth Calculation:** Moved heavy statistical summations to the data worker thread, preventing UI lag when calculating totals for massive datasets.
 *   **Fixed "Stuck 0.00 Mbps" Bug (#64):** Lowered minimum display threshold to `0.0`. Meters now react to even the smallest background transfers (below 80kbps).
 *   **Accuracy & Lag Resilience (#78):** Fixed timing logic and increased validity thresholds (3s -> 10s) to prevent inaccurate speed drops during minor system lag.
 *   **Vertical Taskbar Support (#77):** 
@@ -28,8 +33,14 @@ This is a major stable release that combines significant performance overhauls w
 *   **System Event Handler:** Centralized low-level Windows hooks (taskbar detection, fullscreen logic) for improved testability.
 *   **Main Widget Decoupling:** Split the monolithic `NetworkSpeedWidget` by extracting `StartupManager` (registry logic) and enhancing `PositionManager` (Z-order/window control), significantly reducing code complexity.
 
+### 🎨 UI & Customization
+*   **Session View Default:** The graph now defaults to the high-resolution "Session" view, ensuring data is visible immediately upon opening.
+*   **Widget Background:** Added custom background color and opacity controls.
+*   **Short Unit Labels:** Added a toggle for compact unit display (e.g. "Mb" vs "Mbps").
+*   **Precise Thresholds:** Replaced sliders with precise `QDoubleSpinBox` inputs (0-10,000 Mbps).
+
 ### 📐 Layout & Positioning
-*   **Optimized Tray Offset:** Reduced default tray offset from `10px` to `1px`, allowing the widget to sit flush against the system tray overflow menu for a cleaner look.
+*   **Optimized Tray Offset:** Reduced default tray offset from 10px to 1px, allowing the widget to sit flush against the system tray overflow menu for a cleaner look.
 *   **Layout Stability:** Fixed scaling issues and potential crashes (`NameError`) during font resizing or unit switching.
 
 ### 🛡️ Data Integrity
@@ -38,11 +49,6 @@ This is a major stable release that combines significant performance overhauls w
 ### 🌍 Localization
 *   **New Languages:** Added full support for **Korean (ko_KR)** and **Slovenian (sl_SI)**.
 *   **Key Parity (#74):** Backfilled all 9 supported locales to ensure 100% key parity with English, preventing "missing key" crashes.
-
-### 🎨 UI & Customization
-*   **Widget Background:** Added custom background color and opacity controls.
-*   **Short Unit Labels:** Added a toggle for compact unit display (e.g. "Mb" vs "Mbps").
-*   **Precise Thresholds:** Replaced sliders with precise `QDoubleSpinBox` inputs (0-10,000 Mbps).
 
 ---
 
