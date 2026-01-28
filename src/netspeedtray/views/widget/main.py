@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import QApplication, QMenu, QMessageBox, QWidget
 from netspeedtray import constants
 from netspeedtray.core.controller import NetworkController as CoreController
 from netspeedtray.core.timer_manager import SpeedTimerManager
+from netspeedtray.core.monitor_thread import NetworkMonitorThread
 from netspeedtray.core.tray_manager import TrayIconManager
 from netspeedtray.core.widget_state import WidgetState as CoreWidgetState
 from netspeedtray.utils.config import ConfigManager as CoreConfigManager
@@ -90,6 +91,7 @@ class NetworkSpeedWidget(QWidget):
         self.layout_manager: WidgetLayoutManager
         self.theme_manager: WidgetThemeManager
         self.tray_manager: TrayIconManager
+        self.monitor_thread: NetworkMonitorThread
         self.graph_window: Optional[GraphWindow] = None
         self.app_icon: QIcon
         # Note: self.font and self.metrics are initialized earlier before _init_managers()
@@ -166,11 +168,18 @@ class NetworkSpeedWidget(QWidget):
         try:
             self.widget_state = CoreWidgetState(self.config)
             self.timer_manager = SpeedTimerManager(self.config, parent=self)
+            
+            # Background Monitoring Thread
+            update_rate = self.config.get("update_rate", constants.config.defaults.DEFAULT_UPDATE_RATE)
+            self.monitor_thread = NetworkMonitorThread(interval=update_rate)
+            
             self.controller = CoreController(config=self.config, widget_state=self.widget_state)
             self.controller.set_view(self)
             self.renderer = CoreWidgetRenderer(self.config, self.i18n)
-            self.timer_manager.start_timer()
-            self.logger.debug("Core components initialized and timers started")
+            
+            # Note: We no longer start timer_manager for speeds; monitor_thread drives them.
+            # self.timer_manager.start_timer() 
+            self.logger.debug("Core components initialized; monitor thread ready.")
         except Exception as e:
             self.logger.error("Failed to initialize core components: %s", e, exc_info=True)
             raise RuntimeError("Failed to initialize core application components") from e
@@ -372,8 +381,12 @@ class NetworkSpeedWidget(QWidget):
             raise RuntimeError("Core components missing during signal connection setup.")
         try:
             # Connect core component signals
-            self.timer_manager.stats_updated.connect(self.controller.update_speeds)
+            # self.timer_manager.stats_updated.connect(self.controller.update_speeds) # Deprecated
+            self.monitor_thread.counters_ready.connect(self.controller.handle_network_counters)
             self.controller.display_speed_updated.connect(self.update_display_speeds)
+            
+            # Start the monitoring thread
+            self.monitor_thread.start()
 
             # 1. System Event Handler (replaces manual WinEventHooks)
             self.system_event_handler.foreground_app_changed.connect(self._execute_refresh)
@@ -452,7 +465,7 @@ class NetworkSpeedWidget(QWidget):
 
             # Pass the corrected layout_mode to the graph renderer as well
             if render_config.graph_enabled:
-                history = self.widget_state.get_in_memory_speed_history()
+                history = self.widget_state.get_aggregated_speed_history()
                 self.renderer.draw_mini_graph(
                     painter=painter,
                     width=self.width(),
@@ -616,9 +629,9 @@ class NetworkSpeedWidget(QWidget):
                 self.renderer.update_config(self.config)
             if self.controller:
                 self.controller.apply_config(self.config)
-            if self.timer_manager:
+            if self.monitor_thread:
                 update_rate = self.config.get("update_rate", constants.config.defaults.DEFAULT_UPDATE_RATE)
-                self.timer_manager.update_speed_rate(update_rate)
+                self.monitor_thread.set_interval(update_rate)
             if self.widget_state:
                 self.widget_state.apply_config(self.config)
 

@@ -56,13 +56,13 @@ class NetworkController(QObject):
         self.logger.debug("View set and signal connected.")
 
 
-    def update_speeds(self) -> None:
+    def handle_network_counters(self, current_counters: Dict[str, psutil._common.snetio]) -> None:
         """
-        The main update loop. Fetches stats, calculates per-interface speeds,
-        and handles a re-priming state after resume-from-sleep to prevent phantom spikes.
+        Slot for the NetworkMonitorThread's signal. Process incoming raw counters,
+        calculates per-interface speeds, and handles a re-priming state.
         """
         current_time = time.monotonic()
-        current_counters = self._fetch_network_stats()
+        
         if not current_counters:
             self.display_speed_updated.emit(0.0, 0.0)
             return
@@ -77,7 +77,6 @@ class NetworkController(QObject):
         update_interval = self.config.get("update_rate", 1.0)
 
         # Skip updates that are triggered too soon (e.g., more than 2x the requested rate)
-        # Fix: Using * 0.5 instead of / 0.5 to correctly allow jitter down to 500ms for a 1s interval.
         if time_diff < (update_interval * 0.5):
             return
             
