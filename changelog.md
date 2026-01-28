@@ -9,6 +9,9 @@ All notable changes to this project will be documented in this file.
 This is a major stable release that combines significant performance overhauls with critical stabilization fixes. It introduces vectorized graph processing, a modular settings architecture, and definitive fixes for long-standing accuracy and layout issues.
 
 ### 🚀 Performance & Core Optimization
+*   **Zero-Latency Timeline Switching:** Removed a 100ms synchronous freeze in the graph data retrieval path, making the interface feel significantly more snappy.
+*   **Obsolete Result Filtering (Sequence IDs):** High-speed slider interaction no longer causes a "render backlog"; the UI now instantly drops stale results, preventing cumulative performance degradation.
+*   **Resource Caching:** Implemented a 60-second cache for static values like system boot time and earliest database records to minimize redundant system calls.
 *   **Background Monitoring Thread:** Offloaded network polling to a dedicated thread, ensuring consistent 60+ FPS widget movement and zero micro-stutters during network stack latency.
 *   **Vectorized Graph Logic:** Replaced legacy loop-based processing with vectorized NumPy operations, achieving a **42x speed improvement** in graph rendering for large datasets.
 *   **Optimized Graph Queries:** Refactored historical data retrieval to group results per-table before unioning, significantly reducing database load times for multi-month timelines.
@@ -16,7 +19,8 @@ This is a major stable release that combines significant performance overhauls w
 *   **Pandas Removal:** Completely removed the `pandas` dependency. The application is now lighter and launches significantly closer to instant.
 
 ### 🐛 Critical Stabilization & Fixes
-*   **Fixed Graph Freeze:** Decoupled recursive signal loops that could lock up the interface when switching between long timelines or when the database flushed during a refresh.
+*   **Memory Leak Fix:** Resolved an issue where closing the graph window would leave "ghost" instances running in the background. Windows are now properly destroyed, freeing up system resources.
+*   **Fixed Graph Freeze:** Decoupled recursive signal loops that could lock up the interface when switching between long timelines.
 *   **Fixed Missing Plot Lines:** Resolved a Matplotlib epoch mismatch that caused data to be rendered thousands of years in the future; transitioned to robust native datetime plotting.
 *   **Background Bandwidth Calculation:** Moved heavy statistical summations to the data worker thread, preventing UI lag when calculating totals for massive datasets.
 *   **Fixed "Stuck 0.00 Mbps" Bug (#64):** Lowered minimum display threshold to `0.0`. Meters now react to even the smallest background transfers (below 80kbps).

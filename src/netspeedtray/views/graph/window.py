@@ -52,7 +52,9 @@ class GraphWindow(QWidget):
     """
     A window for displaying network speed history and per-app bandwidth usage using PyQt6.
     """
-    request_data_processing = pyqtSignal(object, object, object, bool)
+    # Signal for background thread processing
+    # Args: (start_time, end_time, interface_name, is_session_view, sequence_id)
+    request_data_processing = pyqtSignal(object, object, str, bool, int)
     window_closed = pyqtSignal()
 
     def __init__(self, main_widget, parent=None, logger=None, i18n=None, session_start_time: Optional[datetime] = None):
@@ -165,6 +167,19 @@ class GraphWindow(QWidget):
         # Timers and state
         self._realtime_timer = QTimer(self)
         self._db_size_update_timer = QTimer(self)
+        self._config_debounce_timer = QTimer(self)
+        self._config_debounce_timer.setSingleShot(True)
+        self._config_debounce_timer.setInterval(500) # 500ms debounce
+        self._config_debounce_timer.timeout.connect(self._process_pending_config_save)
+        self._pending_config = {}
+        
+        # Performance & Sync State
+        self._current_request_id = 0
+        self._last_processed_id = -1
+        self._cached_boot_time = None
+        self._cached_earliest_db = None
+        self._last_cache_refresh = 0
+        
         self._no_data_text_obj = None
         self._current_date_formatter_type = None
 
@@ -320,15 +335,6 @@ class GraphWindow(QWidget):
         self.worker_thread.start()
 
 
-    def _on_data_ready(self, data: List[Tuple[datetime, float, float]]):
-        """Slot to receive processed data from the worker and render it."""
-        if self._is_closing: return
-        if not data or len(data) < 2:
-            self._show_graph_message(self.i18n.NO_DATA_MESSAGE, is_error=False)
-            return
-        
-        # Call the new, dedicated rendering function
-        self._render_graph(data)
 
 
 
@@ -398,8 +404,24 @@ class GraphWindow(QWidget):
         
         start_time: Optional[datetime] = None
         if period_key == "TIMELINE_SYSTEM_UPTIME":
-            # psutil.boot_time() returns a timestamp, so we must convert it.
-            start_time = datetime.fromtimestamp(psutil.boot_time())
+            # Cache boot_time and earliest_db to avoid expensive calls on every update
+            import time
+            curr_time = time.time()
+            if not self._cached_boot_time or (curr_time - self._last_cache_refresh) > 60:
+                self.logger.debug("Refreshing boot time and earliest DB timestamp cache.")
+                self._cached_boot_time = datetime.fromtimestamp(psutil.boot_time())
+                self._cached_earliest_db = self._main_widget.widget_state.get_earliest_data_timestamp()
+                self._last_cache_refresh = curr_time
+
+            boot_time = self._cached_boot_time
+            earliest_db = self._cached_earliest_db
+            
+            # Start from boot time, but don't go back further than our earliest data
+            # if that data is more recent than the boot (avoids empty voids).
+            if earliest_db:
+                start_time = max(boot_time, earliest_db)
+            else:
+                start_time = boot_time
         elif period_key == "TIMELINE_SESSION":
             start_time = self.session_start_time
         elif period_key == "TIMELINE_3_HOURS":
@@ -671,6 +693,8 @@ class GraphWindow(QWidget):
         Args:
             value: The slider value (index) passed from the signal.
         """
+        # start = time.perf_counter()
+        # self.logger.debug(f"[PERF-{start}] _on_history_slider_released START")
         
         # Get the current value from the argument or fallback to widget
         if value is None:
@@ -685,8 +709,11 @@ class GraphWindow(QWidget):
         # 1. Trigger the graph to update itself with the new time period.
         self.update_history_period(current_value)
 
-        # 2. Notify the parent widget to save this new setting to the config file.
-        self._notify_parent_of_setting_change({'history_period_slider_value': current_value})
+        # 2. Queue the config save (Debounced)
+        self._pending_config.update({'history_period_slider_value': current_value})
+        self._config_debounce_timer.start()
+        
+        # self.logger.debug(f"[PERF-{start}] _on_history_slider_released END (dur={time.perf_counter() - start:.4f}s)")
 
 
     def _notify_parent_of_setting_change(self, settings_dict: dict) -> None:
@@ -696,6 +723,16 @@ class GraphWindow(QWidget):
             self._main_widget.handle_graph_settings_update(settings_dict)
         else:
             self.logger.warning(f"Cannot notify parent of setting change: Method not found.")
+
+    def _process_pending_config_save(self) -> None:
+        """Slot for debounce timer to save accumulated config changes."""
+        if not self._pending_config: return
+        try:
+            self.logger.debug(f"Executing debounced config save: {self._pending_config}")
+            self._notify_parent_of_setting_change(self._pending_config)
+            self._pending_config = {}
+        except Exception as e:
+            self.logger.error(f"Error in debounced config save: {e}", exc_info=True)
 
 
     def _save_slider_value_to_config(self, config_key: str, value: int) -> None:
@@ -949,8 +986,9 @@ class GraphWindow(QWidget):
                 
                 self.window_closed.emit()
                 
-                self.hide()
-                event.ignore()
+                # IMPORTANT: Use accept() so WA_DeleteOnClose cleans up the widget.
+                # Previously hide() + ignore() caused a memory leak with ghost windows.
+                event.accept()
                 
                 # Tell the parent widget that this instance is "dead"
                 # so that it will create a fresh one next time.
@@ -1084,23 +1122,33 @@ class GraphWindow(QWidget):
             data = self.interface_filter.currentData()
             interface_to_query = data if data != "all" else None
 
+        interface_to_query = self.interface_filter.currentData() if self.interface_filter else "all"
         period_key = constants.data.history_period.PERIOD_MAP.get(self._history_period_value, "")
         is_session_view = period_key == "TIMELINE_SESSION"
 
-        # Emit the signal to the worker thread to start processing the data.
-        self.request_data_processing.emit(start_time, end_time, interface_to_query, is_session_view)
+        # 4. Emit the processing request with a Sequence ID
+        self._current_request_id += 1
+        # self.logger.debug(f"[PERF] update_graph: Emitting request {self._current_request_id}")
+        self.request_data_processing.emit(start_time, end_time, interface_to_query, is_session_view, self._current_request_id)
 
 
-
-
-
-
-
-    def _on_data_ready(self, data: List[Tuple[float, float, float]], total_up: float, total_down: float):
+    def _on_data_ready(self, data: List[Tuple[float, float, float]], total_up: float, total_down: float, sequence_id: int):
         """Slot to receive processed data from the worker and render it."""
+        if self._is_closing: return
+
+        # PERFORMANCE: Only render if this is the LATEST request result
+        if sequence_id < self._last_processed_id:
+            # self.logger.debug(f"Skipping obsolete result (SID {sequence_id} < {self._last_processed_id})")
+            return
+            
+        self._last_processed_id = sequence_id
+        # start = time.perf_counter()
+        # self.logger.debug(f"[PERF-{start}] _on_data_ready START (Received from Worker)")
+        
         if self._is_closing: return
         if not data or len(data) < 2:
             self._show_graph_message(self.i18n.NO_DATA_MESSAGE, is_error=False)
+            # self.logger.debug(f"[PERF-{start}] _on_data_ready END (No Data) (dur={time.perf_counter() - start:.4f}s)")
             return
         
         # Call the new, dedicated rendering function
@@ -1109,6 +1157,8 @@ class GraphWindow(QWidget):
         except Exception as e:
             logging.getLogger(__name__).error(f"Error rendering graph: {e}", exc_info=True)
             self._show_graph_message(self.i18n.GRAPH_UPDATE_ERROR_TEMPLATE.format(error=str(e)), is_error=True)
+        
+        # self.logger.debug(f"[PERF-{start}] _on_data_ready END (Render Complete) (dur={time.perf_counter() - start:.4f}s)")
 
     def _render_graph(self, history_data: List[Tuple[float, float, float]], total_up: float = 0.0, total_down: float = 0.0):
         """
@@ -1121,12 +1171,14 @@ class GraphWindow(QWidget):
             self.logger.debug(f"Rendering with period_key={period_key}, start={start_time}, end={end_time}")
             
             # Delegate to Renderer
+            # rend_start = time.perf_counter()
             result = self.renderer.render(history_data, start_time, end_time, period_key)
+            # self.logger.debug(f"[PERF] MPL Render Call Finished (dur={time.perf_counter() - rend_start:.4f}s)")
             self.logger.debug(f"renderer.render() returned: {result is not None}")
             
             if result:
-                timestamps, ups, downs = result
-                self.interaction.update_data_cache(timestamps, ups, downs)
+                timestamps, x_coords, ups, downs = result
+                self.interaction.update_data_cache(timestamps, ups, downs, x_coords=x_coords)
                 self.logger.debug(f"Updated interaction cache with {len(timestamps)} points")
             else:
                 self.interaction.update_data_cache(np.array([]), np.array([]), np.array([]))
@@ -1142,7 +1194,7 @@ class GraphWindow(QWidget):
             
             # Force canvas visibility and redraw
             self.canvas.setVisible(True)
-            self.canvas.draw_idle()  # Use draw_idle() to avoid popup window
+            # self.canvas.draw_idle()  # REMOVED: Redundant, renderer.render() already called draw_idle()
             self.logger.debug(f"Canvas visible={self.canvas.isVisible()}, size={self.canvas.size()}")
             
         except Exception as e:

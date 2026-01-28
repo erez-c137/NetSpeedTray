@@ -122,7 +122,7 @@ class WidgetState(QObject):
             return self._read_conns[tid]
 
 
-    def add_speed_data(self, speed_data: Dict[str, Tuple[float, float]]) -> None:
+    def add_speed_data(self, speed_data: Dict[str, Tuple[float, float]], now: Optional[datetime] = None) -> None:
         """
         Adds new per-interface speed data. Updates in-memory state and adds
         to the database write batch.
@@ -130,13 +130,14 @@ class WidgetState(QObject):
         Args:
             speed_data: A dictionary mapping interface names to a tuple of
                         (upload_bytes_sec, download_bytes_sec) as FLOATS.
+            now: Optional datetime override (defaults to datetime.now()).
         """
-        now = datetime.now()
+        _now = now or datetime.now()
         
         # The in-memory history now stores the full per-interface data for live filtering.
         self.in_memory_history.append(SpeedDataSnapshot(
             speeds=speed_data.copy(),
-            timestamp=now
+            timestamp=_now
         ))
 
         # --- PRE-AGGREGATION OPTIMIZATION ---
@@ -146,10 +147,10 @@ class WidgetState(QObject):
         self.aggregated_history.append(AggregatedSpeedData(
             upload=total_up,
             download=total_down,
-            timestamp=now
+            timestamp=_now
         ))
 
-        timestamp = int(now.timestamp())
+        timestamp = int(_now.timestamp())
         min_speed = network.speed.MIN_RECORDABLE_SPEED_BPS
         for interface, (up_speed, down_speed) in speed_data.items():
             # Only add to the database batch if the speed is significant
@@ -236,13 +237,18 @@ class WidgetState(QObject):
             self.db_worker.enqueue_task("persist_speed", batch_to_send)
 
 
-    def trigger_maintenance(self) -> None:
+    def trigger_maintenance(self, now: Optional[datetime] = None) -> None:
         """
         Public method to enqueue a maintenance task for the database worker,
         passing it the current application configuration.
         """
         self.logger.debug("Triggering periodic database maintenance.")
-        self.db_worker.enqueue_task("maintenance", self.config.copy())
+        config = self.config.copy()
+        if now:
+            # Pass (config, now) tuple as expected by DatabaseWorker._execute_task
+            self.db_worker.enqueue_task("maintenance", (config, now))
+        else:
+            self.db_worker.enqueue_task("maintenance", config)
 
 
     def update_retention_period(self) -> None:
@@ -255,27 +261,42 @@ class WidgetState(QObject):
         self.trigger_maintenance()
 
 
-    def get_speed_history(self, start_time: Optional[datetime] = None, end_time: Optional[datetime] = None, interface_name: Optional[str] = None, return_raw: bool = False) -> List[Tuple[Union[datetime, float], float, float]]:
+    def get_speed_history(self, start_time: Optional[datetime] = None, end_time: Optional[datetime] = None, interface_name: Optional[str] = None, return_raw: bool = False, resolution: Literal['auto', 'raw', 'minute', 'hour'] = 'auto') -> List[Tuple[Union[datetime, float], float, float]]:
         """
-        Retrieves speed history from the database, unioning all data tiers
-        to ensure all relevant data is returned.
+        Retrieves speed history, intelligently aggregating in the database for performance.
+        `resolution`: 'auto' (default), 'raw', 'minute', 'hour'.
         """
         self.flush_batch()
-        time.sleep(timeouts.DB_FLUSH_BATCH_SYNC_SLEEP)
+        # Non-blocking sync or minimal sleep
+        # time.sleep(timeouts.DB_FLUSH_BATCH_SYNC_SLEEP) # Removed to improve responsiveness
 
+        _now_ts = int(datetime.now().timestamp())
         _start_ts = int(start_time.timestamp()) if start_time else 0
-        _end_ts = int(end_time.timestamp()) if end_time else int(datetime.now().timestamp())
+        _end_ts = int(end_time.timestamp()) if end_time else _now_ts
+        duration = _end_ts - _start_ts
         
-        # We always query all three tiers for maximum robustness, but we group them individually
-        # BEFORE unioning to significantly reduce the workload on the query planner.
-        
+        # 1. Determine Target Resolution ('auto')
+        target_res = resolution
+        if target_res == 'auto':
+            if duration > 14 * 86400: # > 14 days
+                target_res = 'hour'
+            elif duration > 48 * 3600: # > 48 hours
+                target_res = 'minute'
+            else:
+                target_res = 'raw'
+
+        # Helper to map resolution to seconds
+        res_map = {'raw': 1, 'minute': 60, 'hour': 3600}
+        target_interval = res_map.get(target_res, 1)
+
         is_all_interfaces = interface_name is None or str(interface_name).lower() == "all"
         
-        # Build SELECT statements for each table
-        selects = [
-            ("speed_history_raw", "upload_bytes_sec", "download_bytes_sec"),
-            ("speed_history_minute", "upload_avg", "download_avg"),
-            ("speed_history_hour", "upload_avg", "download_avg")
+        # 2. Select Tables based on time coverage to avoid querying empty ranges
+        # Raw: 24h, Minute: 30d, Hour: 1y (approx)
+        tables_config = [
+            ("speed_history_raw", "upload_bytes_sec", "download_bytes_sec", 1, 24 * 3600),
+            ("speed_history_minute", "upload_avg", "download_avg", 60, 30 * 86400),
+            ("speed_history_hour", "upload_avg", "download_avg", 3600, 365 * 86400 * 2) # 2 years safety
         ]
         
         try:
@@ -285,27 +306,58 @@ class WidgetState(QObject):
             params: List[Any] = []
             query_parts = []
             
-            for table, up_col, down_col in selects:
+            for table, up_col, down_col, source_interval, retention_sec in tables_config:
+                # Optimized table skipping
+                if _end_ts < (_now_ts - retention_sec):
+                    continue
+                
+                # Construct the Query
+                time_expr = "timestamp"
+                needs_agg = source_interval < target_interval
+                
+                if needs_agg:
+                    time_expr = f"(timestamp / {target_interval}) * {target_interval}"
+                
+                select_clause = ""
                 if is_all_interfaces:
-                    # Group by timestamp immediately to reduce the number of rows passed to the UNION
-                    query_part = f"SELECT timestamp, SUM({up_col}) as up, SUM({down_col}) as down FROM {table} WHERE timestamp BETWEEN ? AND ? GROUP BY timestamp"
+                    if needs_agg:
+                        # Spatial + Temporal Aggregation
+                        select_clause = f"SELECT {time_expr} as timestamp, SUM({up_col}) / COUNT(DISTINCT timestamp) as up, SUM({down_col}) / COUNT(DISTINCT timestamp) as down"
+                    else:
+                        # Spatial Aggregation Only
+                        select_clause = f"SELECT {time_expr} as timestamp, SUM({up_col}) as up, SUM({down_col}) as down"
                 else:
-                    query_part = f"SELECT timestamp, {up_col} as up, {down_col} as down FROM {table} WHERE timestamp BETWEEN ? AND ? AND interface_name = ?"
+                    if needs_agg:
+                        # Temporal Aggregation Only
+                        select_clause = f"SELECT {time_expr} as timestamp, AVG({up_col}) as up, AVG({down_col}) as down"
+                    else:
+                        # Raw fetch
+                        select_clause = f"SELECT {time_expr} as timestamp, {up_col} as up, {down_col} as down"
+
+                where_clause = f"FROM {table} WHERE timestamp BETWEEN ? AND ?"
+                group_clause = f"GROUP BY {time_expr}" if (is_all_interfaces or needs_agg) else ""
+                
+                if not is_all_interfaces:
+                    where_clause += " AND interface_name = ?"
+                
+                query_part = f"{select_clause} {where_clause} {group_clause}"
                 
                 params.extend([_start_ts, _end_ts])
                 if not is_all_interfaces:
                     params.append(interface_name)
-                
+                    
                 query_parts.append(query_part)
             
+            if not query_parts:
+                return []
+
             union_query = " UNION ALL ".join(query_parts)
             
-            # Final outer group by is only strictly necessary for 'All Interfaces' to ensure 
-            # no duplicate timestamps if data accidentally overlaps between tiers.
-            if is_all_interfaces:
-                final_query = f"SELECT timestamp, SUM(up), SUM(down) FROM ({union_query}) GROUP BY timestamp ORDER BY timestamp"
+            # Final outer aggregation handling overlaps
+            if is_all_interfaces or target_res != 'raw':
+                 final_query = f"SELECT timestamp, AVG(up), AVG(down) FROM ({union_query}) GROUP BY timestamp ORDER BY timestamp"
             else:
-                final_query = f"{union_query} ORDER BY timestamp"
+                 final_query = f"{union_query} ORDER BY timestamp"
             
             cursor.execute(final_query, tuple(params))
             
@@ -314,7 +366,7 @@ class WidgetState(QObject):
             else:
                 results = [(datetime.fromtimestamp(row[0]), row[1], row[2]) for row in cursor.fetchall() if row[1] is not None]
 
-            self.logger.debug("Retrieved %d records for period %s to %s for interface '%s'.", len(results), start_time, end_time, interface_name)
+            self.logger.debug("Retrieved %d records (Res: %s) for %s to %s.", len(results), target_res, start_time, end_time)
             return results
         except sqlite3.Error as e:
             self.logger.error("Error retrieving unified speed history: %s", e, exc_info=True)
@@ -348,7 +400,7 @@ class WidgetState(QObject):
         Retrieves the earliest data timestamp from the database by querying all tiers.
         """
         self.flush_batch()
-        time.sleep(0.1)
+        # time.sleep(0.1)  # REMOVED: This was causing a 100ms freeze on the UI thread.
         
         try:
             conn = self._get_read_conn()

@@ -10,6 +10,7 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import matplotlib.font_manager as font_manager
 import matplotlib.dates as mdates
+from matplotlib.dates import date2num
 from matplotlib.ticker import NullLocator
 
 from netspeedtray import constants
@@ -152,41 +153,86 @@ class GraphRenderer(QObject):
         # Re-apply axis formatting (grid, spines, labels)
         self._format_axes()
 
-        # Determine Aggregation
-        is_long_timespan = False
-        if start_time is None:
-            is_long_timespan = True
-        else:
-             is_long_timespan = (end_time - start_time).days > 2
-        
-        if len(timestamps) > 0:
-            total_duration_hours = (timestamps.max() - timestamps.min()) / 3600
-            if total_duration_hours < 48:
-                is_long_timespan = False
-
         # Convert UTC epoch floats to local datetime objects for robust plotting
         # Matplotlib handles datetime objects natively and correctly manages its internal epoch.
         plot_datetimes = [datetime.fromtimestamp(t) for t in timestamps]
         plot_datetimes_array = np.array(plot_datetimes)
 
+        # Determine Aggregation Level
+        # < 2 days: High-res
+        # 2-14 days: Hourly
+        # > 14 days: Daily
+        timespan_days = 0
+        if start_time and end_time:
+            timespan_days = (end_time - start_time).days
+        elif start_time is None: # TIMELINE_ALL
+            timespan_days = 365 # Assume long
+            
         # Plotting Logic
-        if is_long_timespan:
-            self._plot_aggregated(plot_datetimes_array, upload_mbps, download_mbps)
+        # Plotting Logic
+        plotted_ts, plotted_x_coords, plotted_up, plotted_down = None, None, None, None
+        
+        # Aggregation Logic
+        # < 6 hours: High-res (Raw)
+        # 6 hours - 2 days: Minute Aggregation
+        # 2 - 14 days: Hourly Aggregation
+        # > 14 days: Daily Aggregation
+        
+        if timespan_days == 0 and (end_time - start_time).total_seconds() < 21600: # < 6 hours
+             self._plot_high_res(plot_datetimes_array, upload_mbps, download_mbps)
+             plotted_ts = timestamps # Keep original floats for high-res
+             plotted_up = upload_mbps
+             plotted_down = download_mbps
+        elif timespan_days < 2:
+            plotted_ts, plotted_up, plotted_down = self._plot_aggregated(plot_datetimes_array, upload_mbps, download_mbps, mode="minute")
+        elif timespan_days <= 14:
+            plotted_ts, plotted_up, plotted_down = self._plot_aggregated(plot_datetimes_array, upload_mbps, download_mbps, mode="hourly")
         else:
-            self._plot_high_res(plot_datetimes_array, upload_mbps, download_mbps)
+            plotted_ts, plotted_up, plotted_down = self._plot_aggregated(plot_datetimes_array, upload_mbps, download_mbps, mode="daily")
 
         # Configure Limits and Formats
         self._configure_axes(start_time, end_time, period_key, timestamps, upload_mbps, download_mbps)
         
         self.canvas.draw_idle()
         
-        return timestamps, upload_speeds, download_speeds
+        # Return the DATA THAT WAS ACTUALLY PLOTTED, so interactions match the visual lines.
+        # InteractionHandler needs BOTH:
+        # 1. Unix Timestamps (float seconds) - For Tooltip Text
+        # 2. Bytes/sec (raw speed) - For Tooltip Text
+        # 3. MPL Float Coordinates - For Cache/Mouse Lookup
+        
+        plotted_x_coords = None
 
-    def _plot_aggregated(self, plot_datetimes, upload_mbps, download_mbps):
-        """Daily Aggregation and Plotting"""
-        # Bin by day (using datetime attributes for safety)
-        day_bins = np.array([dt.date().toordinal() for dt in plot_datetimes])
-        unique_days, indices = np.unique(day_bins, return_inverse=True)
+        # Convert aggregated datetimes back to Unix timestamps for the interaction handler
+        if plotted_ts is not None and len(plotted_ts) > 0 and isinstance(plotted_ts[0], datetime):
+             # Save the MPL coordinates (float days) before converting timestamp
+             plotted_x_coords = date2num(plotted_ts)
+             plotted_ts = np.array([dt.timestamp() for dt in plotted_ts])
+
+        # Convert Mbps back to Bytes/s for the interaction handler (which expects raw units)
+        # Bytes/s = (Mbps * 1,000,000) / 8
+        if plotted_up is not None:
+            plotted_up = (plotted_up * constants.network.units.MEGA_DIVISOR) / constants.network.units.BITS_PER_BYTE
+        if plotted_down is not None:
+            plotted_down = (plotted_down * constants.network.units.MEGA_DIVISOR) / constants.network.units.BITS_PER_BYTE
+
+        return plotted_ts, plotted_x_coords, plotted_up, plotted_down
+
+    def _plot_aggregated(self, plot_datetimes, upload_mbps, download_mbps, mode="daily"):
+        """Adaptive Aggregation (Daily, Hourly, or Minute) and Plotting"""
+        if len(plot_datetimes) == 0: return None, None, None, None
+
+        if mode == "daily":
+            # Bin by day
+            bins = np.array([dt.date().toordinal() for dt in plot_datetimes])
+        elif mode == "hourly":
+            # Bin by hour: (Ordinal * 24) + Hour
+            bins = np.array([dt.date().toordinal() * 24 + dt.hour for dt in plot_datetimes])
+        else: # minute
+            # Bin by minute: (Ordinal * 1440) + (Hour * 60) + Minute
+            bins = np.array([dt.date().toordinal() * 1440 + dt.hour * 60 + dt.minute for dt in plot_datetimes])
+            
+        unique_bins, indices = np.unique(bins, return_inverse=True)
         
         counts = np.bincount(indices)
         down_mean = np.bincount(indices, weights=download_mbps) / counts
@@ -196,7 +242,7 @@ class GraphRenderer(QObject):
         change_points = np.where(np.diff(indices) > 0)[0] + 1
         reduce_indices = np.concatenate(([0], change_points))
         
-        if len(reduce_indices) == len(unique_days):
+        if len(reduce_indices) == len(unique_bins):
             up_max = np.maximum.reduceat(upload_mbps, reduce_indices)
             up_min = np.minimum.reduceat(upload_mbps, reduce_indices)
             down_max = np.maximum.reduceat(download_mbps, reduce_indices)
@@ -205,14 +251,32 @@ class GraphRenderer(QObject):
             up_max = up_mean; up_min = up_mean
             down_max = down_mean; down_min = down_mean
 
-        # Convert unique_days (ordinals) to datetime objects for the center of the day
-        from datetime import date
-        agg_dates = [datetime.combine(date.fromordinal(d), datetime.min.time()) for d in unique_days]
+        # Convert bins back to datetime objects
+        from datetime import date, time
+        if mode == "daily":
+            agg_dates = [datetime.combine(date.fromordinal(b), time.min) for b in unique_bins]
+        elif mode == "hourly":
+            agg_dates = [datetime.combine(date.fromordinal(b // 24), time(hour=b % 24)) for b in unique_bins]
+        else: # minute
+            # (Ordinal) = val // 1440
+            # Remainder = val % 1440
+            # Hour = Remainder // 60
+            # Minute = Remainder % 60
+            agg_dates = []
+            for b in unique_bins:
+                ordinal = b // 1440
+                remainder = b % 1440
+                h = remainder // 60
+                m = remainder % 60
+                agg_dates.append(datetime.combine(date.fromordinal(ordinal), time(hour=h, minute=m)))
         
         self.ax_download.plot(agg_dates, down_mean, color=constants.graph.DOWNLOAD_LINE_COLOR, linewidth=1.5, zorder=10)
         self.ax_download.fill_between(agg_dates, down_min, down_max, color=constants.graph.DOWNLOAD_LINE_COLOR, alpha=0.3)
         self.ax_upload.plot(agg_dates, up_mean, color=constants.graph.UPLOAD_LINE_COLOR, linewidth=1.5, zorder=10)
         self.ax_upload.fill_between(agg_dates, up_min, up_max, color=constants.graph.UPLOAD_LINE_COLOR, alpha=0.3)
+        
+        # Return the aggregated data for the interaction handler
+        return agg_dates, up_mean, down_mean
 
     def _plot_high_res(self, plot_datetimes, upload_mbps, download_mbps):
         """Segmented Plotting with Gap Detection"""
@@ -260,20 +324,12 @@ class GraphRenderer(QObject):
 
 
     def _get_nice_y_axis_top(self, max_speed: float) -> float:
-        """Calculates a 'nice' round number for the top of the Y-axis."""
-        min_range_mbps = 0.1 
+        """Calculates a top limit with ~10% padding."""
         if max_speed <= constants.graph.MINIMUM_Y_AXIS_MBPS:
             return constants.graph.MINIMUM_Y_AXIS_MBPS
 
-        power = 10 ** math.floor(math.log10(max_speed))
-        normalized_max = max_speed / power
-        
-        if normalized_max <= 1.0: nice_norm = 1.0
-        elif normalized_max <= 2.0: nice_norm = 2.0
-        elif normalized_max <= 5.0: nice_norm = 5.0
-        else: nice_norm = 10.0
-        
-        return nice_norm * power
+        # User requested tight 10% padding (e.g. 1000 -> 1100, not 2000)
+        return max_speed * 1.1
 
     def _configure_xaxis_format(self, period_key: str) -> None:
         """

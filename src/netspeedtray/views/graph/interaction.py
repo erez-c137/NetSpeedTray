@@ -62,24 +62,25 @@ class GraphInteractionHandler(QObject):
         self.window.renderer.canvas.mpl_connect('axes_leave_event', self._on_mouse_leave)
         self.window.renderer.canvas.mpl_connect('pick_event', self._on_legend_pick)
 
-    def update_data_cache(self, timestamps, upload_speeds, download_speeds):
+    def update_data_cache(self, timestamps, upload_speeds, download_speeds, x_coords=None):
         """
         Updates the internal cache used for mouse interaction.
         Arguments are expected to be numpy arrays.
+        x_coords: Optional pre-calculated MPL x-coordinates (float days).
+                  If None, they will be calculated (legacy fallback).
         """
         if len(timestamps) > 0:
-            # We need to replicate the timezone logic or pass the x-coordinates directly?
-            # Passing x-coordinates directly from Renderer would be safer to ensure alignment.
-            # But the interaction handler needs to map mouse X to timestamp.
-            # So we need the exact X coordinates used in plot.
-            
-            # Recalculate local offset
-            import time as pytime
-            is_dst = pytime.localtime().tm_isdst > 0
-            tz_offset = -pytime.altzone if is_dst else -pytime.timezone
-            
-            # Compute MPL float dates (X-axis coordinates)
-            self._graph_x_cache = ((timestamps + tz_offset) / 86400.0) + 719163.0
+            if x_coords is not None and len(x_coords) == len(timestamps):
+                # Use the exact coordinates from the renderer
+                self._graph_x_cache = x_coords
+            else:
+                # Fallback: Recalculate local offset (Prone to errors if Renderer logic changes)
+                import time as pytime
+                is_dst = pytime.localtime().tm_isdst > 0
+                tz_offset = -pytime.altzone if is_dst else -pytime.timezone
+                
+                # Compute MPL float dates (X-axis coordinates)
+                self._graph_x_cache = ((timestamps + tz_offset) / 86400.0) + 719163.0
         else:
             self._graph_x_cache = None
 

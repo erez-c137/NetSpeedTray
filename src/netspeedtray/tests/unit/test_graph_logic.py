@@ -73,13 +73,13 @@ def test_update_stats_bar_correctly_computes_values(graph_window_instance):
         (now, 1_500_000, 3_000_000)
     ]
     
-    with patch.object(GraphWindow, '_get_time_range_from_ui', return_value=(now - timedelta(seconds=2), now)), \
-         patch.object(graph._main_widget.widget_state, 'get_total_bandwidth_for_period') as mock_get_bandwidth:
+    with patch.object(GraphWindow, '_get_time_range_from_ui', return_value=(now - timedelta(seconds=2), now)):
         
-        mock_get_bandwidth.return_value = (5000000, 10000000)
+        total_up = 5_000_000.0
+        total_down = 10_000_000.0
         
         # ACT
-        graph._update_stats_bar(history_data)
+        graph._update_stats_bar(history_data, total_up, total_down)
     
     # ASSERT
     graph.stats_bar.setText.assert_called_once()
