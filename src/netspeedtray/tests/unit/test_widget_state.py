@@ -435,5 +435,43 @@ def test_pruning_with_grace_period(managed_widget_state, mock_config):
     
     cursor.execute("SELECT value FROM metadata WHERE key = 'current_retention_days'")
     assert int(cursor.fetchone()[0]) == 30, "The current retention period should now be updated to 30."
-
     conn.close()
+
+
+def test_get_speed_history_unified_tiers(managed_widget_state):
+    """
+    Verifies that get_speed_history correctly unions data from all tiers
+    even when a large time range is requested.
+    """
+    state, db_path = managed_widget_state
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    
+    now = datetime.now()
+    now_ts = int(now.timestamp())
+    
+    # Tier 1: Raw (Last few minutes)
+    cursor.execute("INSERT INTO speed_history_raw VALUES (?, 'eth0', 100, 200)", (now_ts - 60,))
+    
+    # Tier 2: Minute (2 days ago)
+    cursor.execute("INSERT INTO speed_history_minute VALUES (?, 'eth0', 50, 60, 70, 80)", (now_ts - 2 * 86400,))
+    
+    # Tier 3: Hour (40 days ago)
+    cursor.execute("INSERT INTO speed_history_hour VALUES (?, 'eth0', 10, 20, 30, 40)", (now_ts - 40 * 86400,))
+    
+    conn.commit()
+    conn.close()
+    
+    # ACT: Request "All" time range (None start time)
+    results = state.get_speed_history(start_time=None, end_time=now)
+    
+    # ASSERT: Should have 3 records (one from each tier)
+    assert len(results) == 3
+    
+    # Verify values (SUM logic is applied for "All" interfaces by default if interface_name=None)
+    # The order is by timestamp ASC
+    results.sort(key=lambda x: x[0])
+    
+    assert results[0][1] == 10.0 # From hour
+    assert results[1][1] == 50.0 # From minute
+    assert results[2][1] == 100.0 # From raw

@@ -74,7 +74,7 @@ def test_update_stats_bar_correctly_computes_values(graph_window_instance):
     ]
     
     with patch.object(GraphWindow, '_get_time_range_from_ui', return_value=(now - timedelta(seconds=2), now)), \
-         patch('netspeedtray.views.graph.window.db_utils.get_total_bandwidth_for_period') as mock_get_bandwidth:
+         patch.object(graph._main_widget.widget_state, 'get_total_bandwidth_for_period') as mock_get_bandwidth:
         
         mock_get_bandwidth.return_value = (5000000, 10000000)
         
