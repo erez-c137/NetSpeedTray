@@ -155,8 +155,15 @@ class GraphRenderer(QObject):
 
         # Convert UTC epoch floats to local datetime objects for robust plotting
         # Matplotlib handles datetime objects natively and correctly manages its internal epoch.
-        plot_datetimes = [datetime.fromtimestamp(t) for t in timestamps]
-        plot_datetimes_array = np.array(plot_datetimes)
+        # OPTIMIZATION: This loop was identified as a bottleneck. 
+        # Since we now cap data at 800 points in the worker, this is O(800) which is negligible (<1ms).
+        # We rely on the worker to protect this thread.
+        try:
+             plot_datetimes = [datetime.fromtimestamp(t) for t in timestamps]
+             plot_datetimes_array = np.array(plot_datetimes)
+        except Exception as e:
+             self.logger.error(f"Error converting timestamps to datetime: {e}")
+             return None
 
         # Determine Aggregation Level
         # < 2 days: High-res

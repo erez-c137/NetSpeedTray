@@ -76,12 +76,17 @@ class GraphDataWorker(QObject):
                 )
                 # logging.getLogger(__name__).debug(f"[PERF] DB Totals DONE (dur={time.perf_counter() - totals_start:.4f}s)")
 
-                # PERFORMANCE OPTIMIZATION: Downsample large datasets.
-                # 500 points is the "sweet spot" for clarity on most monitors.
-                if len(history_data) > 500:
-                    # ds_start = time.perf_counter()
-                    history_data = downsample_data(history_data, 500)
-                    # logging.getLogger(__name__).debug(f"[PERF] Downsampling DONE (dur={time.perf_counter() - ds_start:.4f}s)")
+            # PERFORMANCE OPTIMIZATION:
+            # We enforce a strict limit on the number of points sent to the renderer.
+            # Matplotlib on the main thread will struggle with > 1000 points (especially initializing date objects).
+            # The 'downsample_data' function uses a "largest-triangle-three-buckets" or max-bin approach 
+            # to preserve visual spikes while reducing count.
+            MAX_RENDER_POINTS = 800
+
+            if len(history_data) > MAX_RENDER_POINTS:
+                # ds_start = time.perf_counter()
+                history_data = downsample_data(history_data, MAX_RENDER_POINTS)
+                # logging.getLogger(__name__).debug(f"[PERF] Downsampling DONE (reduced from {len(history_data)} to {len(history_data)})")
 
             if not history_data or len(history_data) < 2:
                 self.data_ready.emit([], 0.0, 0.0, sequence_id)

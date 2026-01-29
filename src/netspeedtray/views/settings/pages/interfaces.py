@@ -3,7 +3,7 @@ Interfaces Settings Page.
 """
 from typing import Dict, Any, Callable, List
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QGroupBox, QLabel, QRadioButton, QScrollArea
 )
@@ -14,6 +14,8 @@ from netspeedtray.constants import styles as style_constants
 from netspeedtray.utils import styles as style_utils
 
 class InterfacesPage(QWidget):
+    layout_changed = pyqtSignal()
+
     def __init__(self, i18n, available_interfaces: List[str], on_change: Callable[[], None]):
         super().__init__()
         self.i18n = i18n
@@ -45,14 +47,21 @@ class InterfacesPage(QWidget):
         # Connect signals
         for radio in [self.auto_interface_radio, self.all_physical_interfaces_radio, 
                       self.all_virtual_interfaces_radio, self.selected_interfaces_radio]:
-            radio.toggled.connect(lambda c: c and self.on_change())
+            radio.toggled.connect(self._on_mode_toggled)
             interfaces_layout.addWidget(radio)
 
         self.interface_scroll = QScrollArea()
         self.interface_scroll.setWidgetResizable(True)
-        self.interface_scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        # Ensure scroll area and its viewport are transparent
+        self.interface_scroll.setStyleSheet("""
+            QScrollArea { border: none; background: transparent; }
+            QScrollArea > QWidget > QWidget { background: transparent; }
+        """)
+        self.interface_scroll.viewport().setAutoFillBackground(False)
+        self.interface_scroll.setVisible(False) # Default to hidden, shown only if mode is 'selected'
 
         interfaces_container = QWidget()
+        interfaces_container.setStyleSheet("background: transparent;")
         self.interfaces_container_layout = QVBoxLayout(interfaces_container)
         self.interfaces_container_layout.setSpacing(constants.layout.VERTICAL_SPACING)
 
@@ -64,6 +73,17 @@ class InterfacesPage(QWidget):
         interfaces_layout.addWidget(self.interface_scroll)
         layout.addWidget(interfaces_group)
         layout.addStretch()
+
+    def _on_mode_toggled(self, checked: bool):
+        self._update_visibility()
+        if checked:
+            self.on_change()
+
+    def _update_visibility(self):
+        should_be_visible = self.selected_interfaces_radio.isChecked()
+        if self.interface_scroll.isVisible() != should_be_visible:
+            self.interface_scroll.setVisible(should_be_visible)
+            self.layout_changed.emit()
 
     def _populate_interface_list(self):
         # Clear existing
@@ -104,6 +124,8 @@ class InterfacesPage(QWidget):
             self.all_virtual_interfaces_radio.setChecked(True)
         elif mode == "selected":
             self.selected_interfaces_radio.setChecked(True)
+        
+        self._update_visibility()
         
         selected_list = config.get("selected_interfaces", [])
         for iface, checkbox in self.interface_checkboxes.items():

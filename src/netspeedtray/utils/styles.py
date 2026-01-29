@@ -49,7 +49,16 @@ def dialog_style() -> str:
     text_color = style_constants.DARK_MODE_TEXT_COLOR if dark_mode_active else style_constants.LIGHT_MODE_TEXT_COLOR
     border_color = "#404040" if dark_mode_active else "#D0D0D0"
 
+    accent_qcolor = get_accent_color()
+    accent_rgb = f"rgb({accent_qcolor.red()}, {accent_qcolor.green()}, {accent_qcolor.blue()})"
+    
+    # Radio Button Dot Color (White in dark mode, Black/White in light mode? Usually White on Accent is safe)
+    dot_color = "white"
+
     label_style_str = f"color: {text_color}; font-size: 13px; font-family: 'Segoe UI Variable';"
+    
+    # Unchecked border
+    radio_border_dull = "#999999" if dark_mode_active else "#666666"
 
     return f"""
         QDialog {{
@@ -70,7 +79,27 @@ def dialog_style() -> str:
             font-size: 13px;
             background-color: transparent;
             outline: none;
+            spacing: 8px;
         }}
+        /* Robust Custom Radio Button Styling */
+        QRadioButton::indicator {{
+            width: 14px;
+            height: 14px;
+            border-radius: 8px;
+            border: 1px solid {radio_border_dull};
+            background-color: transparent;
+        }}
+        QRadioButton::indicator:checked {{
+            background-color: {dot_color};
+            border: 5px solid {accent_rgb};
+            width: 6px;
+            height: 6px;
+            border-radius: 8px;
+        }}
+        QRadioButton::indicator:hover {{
+            border-color: {accent_rgb};
+        }}
+        
         QGroupBox {{
             font-size: 14px;
             font-weight: 600;
@@ -292,39 +321,81 @@ def slider_style() -> str:
     
     groove_bg_inactive = style_constants.COMBOBOX_BORDER_DARK if dark_mode_active else "#E0E0E0"
     handle_bg = accent_rgb
-    handle_hover_bg = accent_qcolor.lighter(115).name()
-    handle_pressed_bg = accent_qcolor.darker(115).name()
     
-    handle_border_color_str = QColor(handle_bg).lighter(130).name() if not dark_mode_active else QColor(handle_bg).darker(130).name()
-    handle_hover_border_color_str = QColor(handle_hover_bg).lighter(130).name() if not dark_mode_active else QColor(handle_hover_bg).darker(130).name()
-    handle_pressed_border_color_str = QColor(handle_pressed_bg).darker(130).name()
+    # Refined Interaction Colors
+    handle_hover_bg = accent_qcolor.lighter(110).name()
+    handle_pressed_bg = accent_qcolor.darker(110).name()
+    
+    # Border Logic: Win11 usually has a subtle contrast border, not a thick one.
+    if dark_mode_active:
+        # Dark mode: Lighter border for visibility against dark bg, or semi-transparent
+        handle_border_color_str = "#454545" 
+        handle_hover_border_color_str = "#606060"
+        handle_pressed_border_color_str = "#303030"
+    else:
+        # Light mode: Darker grey border
+        handle_border_color_str = "#cccccc"
+        handle_hover_border_color_str = "#bbbbbb"
+        handle_pressed_border_color_str = "#999999"
 
+    # Dimensions (Native Win11 feel)
+    groove_h = 4
+    handle_size = 18 # 20px is standard, 18px feels tighter for tray apps
+    # Margins are critical to prevent "cut off" and center the handle
+    # Formula: (GrooveHeight + 2*GrooveMargin) must >= HandleHeight
+    # We want Handle centered on Groove.
+    # Groove Margin = (TotalHeight - GrooveHeight) / 2
+    # Handle Margin = negative offset to pull it up? 
+    # QSS Logic: Handle is placed relative to content rect of groove.
+    # To center handle (18px) on groove (4px):
+    # Handle needs to overhang groove by (18-4)/2 = 7px.
+    # So handle margin should be -7px.
+    margin_offset = (handle_size - groove_h) // 2 # 7px
+    
+    # Total widget height must accommodate the handle
+    total_height = handle_size + 2 # +2 for buffer/border
+    
     return f"""
+        QSlider {{
+            min-height: {total_height}px;
+            max-height: {total_height}px;
+            background: transparent;
+        }}
         QSlider::groove:horizontal {{
             background: {groove_bg_inactive};
-            height: 4px; border-radius: 2px; margin: 8px 0;
+            height: {groove_h}px; 
+            border-radius: {groove_h // 2}px; 
+            margin: {margin_offset}px 0; /* Pushes groove down to center it */
         }}
         QSlider::sub-page:horizontal {{
             background: {accent_rgb};
-            height: 4px; border-radius: 2px; margin: 8px 0;
+            height: {groove_h}px; 
+            border-radius: {groove_h // 2}px; 
+            margin: {margin_offset}px 0;
         }}
         QSlider::add-page:horizontal {{
             background: {groove_bg_inactive};
-            height: 4px; border-radius: 2px; margin: 8px 0;
+            height: {groove_h}px; 
+            border-radius: {groove_h // 2}px; 
+            margin: {margin_offset}px 0;
         }}
         QSlider::handle:horizontal {{
             background: {handle_bg};
-            border: 2px solid {handle_border_color_str};
-            width: 16px; height: 16px;
-            margin: -8px 0; border-radius: 8px;
+            border: 1px solid {handle_border_color_str}; /* 1px is cleaner */
+            width: {handle_size}px; height: {handle_size}px;
+            margin: -{margin_offset}px 0; /* Pulls handle up to center align */
+            border-radius: {handle_size // 2}px;
         }}
         QSlider::handle:horizontal:hover {{
             background: {handle_hover_bg};
-            border: 2px solid {handle_hover_border_color_str};
+            border: 1px solid {handle_hover_border_color_str};
+            /* Scale effect simulated by color change, actual scaling hard in pure QSS without image */
         }}
         QSlider::handle:horizontal:pressed {{
             background: {handle_pressed_bg};
-            border: 2px solid {handle_pressed_border_color_str};
+            border: 1px solid {handle_pressed_border_color_str};
+            /* Win11 "shrink" effect: simulated by making border thicker/matching bg? 
+               Or just darker color is enough for feedback. */
         }}
     """
 

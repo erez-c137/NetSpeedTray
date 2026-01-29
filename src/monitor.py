@@ -11,6 +11,7 @@ matplotlib.interactive(False)  # Disable interactive mode to prevent popups
 import logging
 import signal
 import sys
+import os
 from typing import Optional
 
 import win32gui
@@ -60,6 +61,38 @@ class SingleInstanceChecker:
             except win32api.error as e:
                 self.logger.error("Failed to release mutex: %s", e)
 
+def set_app_working_directory():
+    """
+    Sets the Current Working Directory (CWD) to the application's root directory.
+    This ensures that relative paths (like 'assets/') work correctly regardless
+    of how the application was launched (e.g., via Registry Run key).
+    """
+    try:
+        if getattr(sys, 'frozen', False):
+            # PyInstaller: sys.executable is the exe path
+            app_dir = os.path.dirname(sys.executable)
+        else:
+            # Dev mode: sys.argv[0] is the script path (D:\...\src\monitor.py)
+            # We want the project root, not 'src'.
+            # monitor.py is in 'src', so we go up one level.
+            script_path = os.path.abspath(sys.argv[0])
+            src_dir = os.path.dirname(script_path)
+            # Check if we are in 'src' and need to go up, or if we should stay in 'src' based on asset logic
+            # helpers.get_app_asset_path traverses up looking for 'src', so if we set CWD to project root...
+            # The previous logic seemed to rely on running FROM project root in dev.
+            # Let's align with that. If we are in 'src/monitor.py', project root is parent.
+            app_dir = os.path.dirname(src_dir) 
+        
+        # Determine strict asset location via helpers first to be sure? 
+        # No, setting CWD to the EXE/Script dir is standard practice.
+        # However, helpers.py traverses UP to find 'src'.
+        # If we set CWD to project root, helpers will work.
+        
+        os.chdir(app_dir)
+        # logging isn't setup yet in main(), but we can print carefully or rely on main's logging later.
+    except Exception:
+        pass # If this fails, we proceed with original CWD and hope for the best.
+
 def main() -> int:
     """
     Main entry point for the NetSpeedTray application.
@@ -75,6 +108,8 @@ def main() -> int:
         An integer exit code.
     """
     # 1. Set up logging immediately so that any subsequent errors can be recorded.
+    # Set CWD first to ensure log files (if relative) go to the right place
+    set_app_working_directory()
     ConfigManager.setup_logging()
     logger = logging.getLogger("NetSpeedTray.Main")
     

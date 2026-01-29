@@ -156,11 +156,14 @@ Can't contribute financially? No problem! **Sharing & Starring the repo** on Git
     ```
 
 3.  **Install All Dependencies:**
-    This project uses `pip-tools` for robust dependency management. The following command will install all necessary packages for running, testing, and building the application.
+    This project uses `pip-tools` for specific version pinning. To set up your environment, simply run:
 
     ```bash
     pip install -r dev-requirements.txt
     ```
+
+    > **Note for Python 3.13+ Users:** If you are using a pre-release version of Python (e.g., 3.14), you may need to install dependencies with the `--pre` flag if stable wheels are not yet available:
+    > `pip install --pre -r dev-requirements.txt`
 
 4.  **Run the Application from Source:**
 

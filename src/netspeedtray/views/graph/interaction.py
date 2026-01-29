@@ -41,11 +41,28 @@ class GraphInteractionHandler(QObject):
         """Create tooltip and crosshair lines."""
         if not hasattr(self.window, 'renderer') or not self.window.renderer.axes: return
 
+        # CLEANUP: Destroy existing tooltip widget to prevent memory leak (zombie widgets)
+        if self.tooltip:
+            try:
+                self.tooltip.deleteLater()
+            except RuntimeError:
+                pass # Already deleted
+            self.tooltip = None
+
+        # Reset crosshair references (Previous artists are removed by ax.clear() in renderer)
+        self.crosshair_v_download = None
+        self.crosshair_v_upload = None
+        self.crosshair_h_download = None
+        self.crosshair_h_upload = None
+
         # Crosshairs
-        self.crosshair_v_download = self.window.renderer.ax_download.axvline(x=0, color=style_constants.GRID_COLOR_DARK, linewidth=0.8, linestyle='--', zorder=20, visible=False)
-        self.crosshair_v_upload = self.window.renderer.ax_upload.axvline(x=0, color=style_constants.GRID_COLOR_DARK, linewidth=0.8, linestyle='--', zorder=20, visible=False)
-        self.crosshair_h_download = self.window.renderer.ax_download.axhline(y=0, color=style_constants.GRID_COLOR_DARK, linewidth=0.8, linestyle='--', zorder=20, visible=False)
-        self.crosshair_h_upload = self.window.renderer.ax_upload.axhline(y=0, color=style_constants.GRID_COLOR_DARK, linewidth=0.8, linestyle='--', zorder=20, visible=False)
+        try:
+            self.crosshair_v_download = self.window.renderer.ax_download.axvline(x=0, color=style_constants.GRID_COLOR_DARK, linewidth=0.8, linestyle='--', zorder=20, visible=False)
+            self.crosshair_v_upload = self.window.renderer.ax_upload.axvline(x=0, color=style_constants.GRID_COLOR_DARK, linewidth=0.8, linestyle='--', zorder=20, visible=False)
+            self.crosshair_h_download = self.window.renderer.ax_download.axhline(y=0, color=style_constants.GRID_COLOR_DARK, linewidth=0.8, linestyle='--', zorder=20, visible=False)
+            self.crosshair_h_upload = self.window.renderer.ax_upload.axhline(y=0, color=style_constants.GRID_COLOR_DARK, linewidth=0.8, linestyle='--', zorder=20, visible=False)
+        except Exception as e:
+            self.logger.error(f"Error creating crosshairs: {e}")
 
         # Tooltip
         self.tooltip = QLabel(self.window)

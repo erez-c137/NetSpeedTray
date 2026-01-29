@@ -20,6 +20,14 @@ This release addresses the remaining critical bug reports tracked in the v1.2.x 
 *   **Throttled Configuration Engine:** Added a `QTimer`-based throttling mechanism to prevent redundant disk I/O when making rapid adjustments in the settings menu.
 
 ### 🎨 UI & UX Improvements
+*   **Custom Arrow Styling:** Added granular control over arrow font family and size, independent of the speed value text.
+*   **Settings Menu Streamlining:** Merged the standalone "Arrows" tab into the "Appearance" page, simplifying the navigation hierarchy (Visuals vs. Data rules).
+*   **Modernized Mini-Graph:** Updated the widget's background graph to use a premium "Area Chart" style with gradient fills, smoother lines (antialiased), and improved Z-ordering (graph now properly sits behind text).
+*   **Streamlined Interface Selection:** The specific interface list is now hidden by default to reduce visual clutter, automatically appearing only when "Select Specific Interfaces" is chosen.
+*   **Enhanced Control Visibility:** Fixed rendering issues where radio buttons and checkboxes could become invisible in certain themes. Implemented custom, high-contrast circular styling for all radio buttons to ensure perfect visibility.
+*   **Visual Polish:** Resolved transparency artifacts (black backgrounds) in the interface selection list.
+*   **Adaptive Text Spacing:** Optimized the whitespace between arrows and speed values. Units like `MiB/s` now use tighter, cleaner spacing (3-digit reservation), while `Mbps` maintains a safe buffer for Gigabit speeds to prevent layout jitter.
+*   **Windows 11 Slider Styling:** Updated all sliders to match the modern Windows 11 Fluent Design with thinner borders, precise handle sizing, and better hover states.
 *   **Restored Speed Color Coding (#90):** Brought back full customization for color coding thresholds and colors in the Appearance settings.
 *   **Smart Settings Auto-Resize:** The settings window now dynamically expands when toggling features and intelligently repositions itself upward if the expansion would go behind the taskbar on 1080p screens.
 *   **Enhanced Font Weight Slider:** Replaced raw number inputs with a descriptive slider (e.g., "Regular", "Bold", "Extra Black") for easier configuration.
@@ -33,15 +41,19 @@ This release addresses the remaining critical bug reports tracked in the v1.2.x 
 *   **Dead Code Cleanup:** Removed legacy startup registry logic from the main widget that was left over from recent architectural refactors.
 
 ### 🏎️ Performance & Reliability
+*   **Critical Memory Leak Fix:** Resolved an issue where graph tooltips were creating orphan `QLabel` widgets on every timeline switch. Added explicit `deleteLater()` cleanup to prevent memory accumulation over prolonged sessions.
+*   **Strict Rendering Caps:** Enforced a hard 800-point limit for all graph views (including 'Session'). The downsampling algorithm is now universally applied, preventing UI thread freezes during high-volume data rendering.
+*   **Robust Date Handling:** Added failsafes around the plot date conversion loop to prevent renderer crashes even if data capping fails.
 *   **Zero-Latency Interactions:** Implemented a dual-timer debouncing system (150ms for data updates, 500ms for configuration saves) that prevents UI "freezing" when rapidly adjusting sliders or filters.
 *   **Intelligent Database Tier Selection:** Rewrote data retrieval to automatically select the most efficient single table (`raw`, `minute`, or `hour`) based on the requested time range, eliminating the overhead of complex `UNION ALL` queries for common views.
 *   **Graph Caching & Smart Updates:** Implemented efficient in-place data updates for the "Live Session" graph, significantly reducing CPU usage during active monitoring.
 *   **Improved Aggregation Accuracy:** Fixed a long-standing "binning shift" where data points in long-term views were forced to the start of their time window. Plot points are now rendered at the **mean timestamp** of their respective bins, providing a more accurate representation of the data.
 *   **System Uptime Precision:** Resolved an issue where the "System Uptime" timeline showed inconsistent X-axis labels; it now correctly uses boot-time synchronization and high-precision locators.
 *   **Obsolete Request Cancellation:** The background data worker now checks for newer request IDs and instantly skips processing for stale requests, ensuring the UI remains responsive under heavy interaction.
-*   **Memory Leak Fix:** Resolved an issue where graph crosshairs and tooltips would fail to re-initialize after an axes clear, preventing memory accumulation.
 
 ### 🐛 Bug Fixes
+*   **Startup Path Safety:** Fixed a critical issue where launching via Registry could fail due to incorrect working directory resolution (`cwd` correctness).
+*   **Dev-Mode Protection:** Added safeguards to `startup_manager` to prevent development instances from accidentally overwriting production registry keys.
 *   **Critical Font Crash Resolved:** Fixed a regression where interacting with the font selection dialog would crash the application due to a return-value swap (passing a boolean instead of a font object).
 *   **Defensive Type Checking:** Added explicit `isinstance` checks and `try...except` blocks in the settings application layer to prevent future crashes from malformed configuration data.
 *   **Widget Rendering Glitches:**

@@ -251,7 +251,7 @@ class WidgetRenderer:
         # Use helpers for reference strings and labels
         from netspeedtray.utils.helpers import get_reference_value_string, get_unit_labels_for_type
         
-        ref_val = get_reference_value_string(always_mbps, decimal_places)
+        ref_val = get_reference_value_string(always_mbps, decimal_places, unit_type=unit_type)
         max_number_width = self.metrics.horizontalAdvance(ref_val)
         
         # For units: determine the widest possible unit label for the current unit_type
@@ -426,32 +426,34 @@ class WidgetRenderer:
 
 
     def draw_mini_graph(self, painter: QPainter, width: int, height: int, config: RenderConfig, history: List[AggregatedSpeedData], layout_mode: str = 'vertical') -> None:
-        """Draws a mini graph of speed history, adapting to the current layout mode."""
+        """Draws a mini graph of speed history with gradient area fill."""
         if not config.graph_enabled or len(history) < constants.renderer.MIN_GRAPH_POINTS:
             return
 
         try:
-            if layout_mode == 'horizontal':
-                graph_width = constants.layout.MINI_GRAPH_HORIZONTAL_WIDTH
-                v_margin = constants.layout.DEFAULT_PADDING
-                graph_rect = QRect(width - graph_width - constants.renderer.GRAPH_RIGHT_PADDING, v_margin, graph_width, height - (v_margin * 2))
-            else:
-                text_rect = self.get_last_text_rect()
-                if not text_rect.isValid(): return
-                v_padding = constants.renderer.GRAPH_MARGIN * 2
-                graph_rect = text_rect.adjusted(0, -v_padding, 0, v_padding)
+            # Layout Logic: Use full widget width/height minus margins, 
+            # instead of relying on potentially uninitialized text rects.
+            side_margin = constants.renderer.GRAPH_LEFT_PADDING
+            top_margin = constants.renderer.GRAPH_MARGIN
+            bottom_margin = constants.renderer.GRAPH_BOTTOM_PADDING
+            
+            # Reduce height slightly to avoid text overlap if needed, but since it's background, 
+            # full coverage looks better (Area Chart style).
+            graph_rect = QRect(
+                side_margin, 
+                top_margin, 
+                width - (side_margin * 2), 
+                height - (top_margin + bottom_margin)
+            )
 
             if graph_rect.width() <= 0 or graph_rect.height() <= 0: return
 
-            # Hash the history data to prevent unnecessary recalculations
-            # AggregatedSpeedData is a frozen dataclass, so it's hashable.
+            # Hash check for caching
             current_hash = hash(tuple(history))
 
             if self._last_widget_size != (width, height) or self._last_history_hash != current_hash:
                 num_points = len(history)
-                # Gracefully handle empty history to prevent max() error
-                if not history:
-                    return
+                if not history: return
 
                 max_speed_val = max(
                     max(d.upload for d in history),
@@ -461,38 +463,71 @@ class WidgetRenderer:
                 padded_max_speed = max_speed_val * constants.renderer.GRAPH_Y_AXIS_PADDING_FACTOR
                 max_y = max(padded_max_speed, constants.renderer.MIN_Y_SCALE)
                 
-                # FIX for #91: Use max_samples for fixed time scaling
-                max_samples = max(2, config.max_samples) # Ensure divisor is valid
+                max_samples = max(2, config.max_samples)
                 step_x = graph_rect.width() / (max_samples - 1)
 
-                # Points are plotted from Right (Newest) to Left (Oldest)
-                # history[-1] (newest) should be at right edge
-                # history[0] (oldest available) should be at right_edge - (num_points-1)*step_x
-                
                 right_edge = float(graph_rect.right())
                 base_y = float(graph_rect.bottom())
                 h = float(graph_rect.height())
 
-                self._cached_upload_points = [
-                    QPointF(right_edge - (num_points - 1 - i) * step_x, base_y - (d.upload / max_y) * h)
-                    for i, d in enumerate(history)
-                ]
-                self._cached_download_points = [
-                    QPointF(right_edge - (num_points - 1 - i) * step_x, base_y - (d.download / max_y) * h)
-                    for i, d in enumerate(history)
-                ]
+                # Generate Points
+                # Note: We create Polygons for the fill (start at bottom, go up, follow line, go down)
+                
+                def make_polyline(accessor):
+                    return [
+                        QPointF(right_edge - (num_points - 1 - i) * step_x, base_y - (accessor(d) / max_y) * h)
+                        for i, d in enumerate(history)
+                    ]
+
+                self._cached_upload_points = make_polyline(lambda d: d.upload)
+                self._cached_download_points = make_polyline(lambda d: d.download)
+
                 self._last_widget_size = (width, height)
                 self._last_history_hash = current_hash
 
             painter.save()
             painter.setOpacity(config.graph_opacity)
-            upload_pen = QPen(QColor(constants.graph.UPLOAD_LINE_COLOR), constants.renderer.LINE_WIDTH)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+            # --- Draw Gradients (Fill) ---
+            # Helper to draw area
+            from PyQt6.QtGui import QLinearGradient, QBrush, QPolygonF
+
+            def draw_area(points, color_hex):
+                if not points: return
+                poly_points = [QPointF(points[0].x(), float(graph_rect.bottom()))] # Start bottom-left
+                poly_points.extend(points)
+                poly_points.append(QPointF(points[-1].x(), float(graph_rect.bottom()))) # End bottom-right
+                
+                grad = QLinearGradient(0, graph_rect.top(), 0, graph_rect.bottom())
+                c = QColor(color_hex)
+                c.setAlpha(100) # Start opaque
+                grad.setColorAt(0.0, c)
+                c.setAlpha(10)  # Fade to transparent
+                grad.setColorAt(1.0, c)
+                
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QBrush(grad))
+                painter.drawPolygon(QPolygonF(poly_points))
+
+            draw_area(self._cached_upload_points, constants.graph.UPLOAD_LINE_COLOR)
+            draw_area(self._cached_download_points, constants.graph.DOWNLOAD_LINE_COLOR)
+
+            # --- Draw Lines (Stroke) ---
+            # Thicker lines for visibility
+            stroke_width = 1.5 
+
+            upload_pen = QPen(QColor(constants.graph.UPLOAD_LINE_COLOR), stroke_width)
+            upload_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
             painter.setPen(upload_pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawPolyline(self._cached_upload_points)
 
-            download_pen = QPen(QColor(constants.graph.DOWNLOAD_LINE_COLOR), constants.renderer.LINE_WIDTH)
+            download_pen = QPen(QColor(constants.graph.DOWNLOAD_LINE_COLOR), stroke_width)
+            download_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
             painter.setPen(download_pen)
             painter.drawPolyline(self._cached_download_points)
+
             painter.restore()
         except Exception as e:
             self.logger.error("Failed to draw mini graph: %s", e, exc_info=True)
@@ -507,6 +542,14 @@ class WidgetRenderer:
             self.low_color = QColor(self.config.low_speed_color)
             self.font = QFont(self.config.font_family, self.config.font_size, self.config.font_weight)
             self.metrics = QFontMetrics(self.font)
+            
+            # Update Arrow Font
+            if self.config.use_separate_arrow_font:
+                self.arrow_font = QFont(self.config.arrow_font_family, self.config.arrow_font_size, int(self.config.arrow_font_weight))
+            else:
+                self.arrow_font = self.font
+            self.arrow_metrics = QFontMetrics(self.arrow_font)
+
             self._cached_upload_points = []
             self._cached_download_points = []
             self._last_history_hash = 0

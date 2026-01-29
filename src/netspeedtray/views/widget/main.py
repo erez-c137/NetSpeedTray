@@ -447,28 +447,13 @@ class NetworkSpeedWidget(QWidget):
                 self.logger.error("Renderer or metrics not initialized during paintEvent")
                 self._draw_paint_error(painter, "Render Error")
                 return
-
-            painter.setFont(self.current_font)
-
-            upload_bytes_sec = (self.upload_speed * constants.network.units.MEGA_DIVISOR) / constants.network.units.BITS_PER_BYTE
-            download_bytes_sec = (self.download_speed * constants.network.units.MEGA_DIVISOR) / constants.network.units.BITS_PER_BYTE
-            # render_config already created above
             
             # Detect layout mode and pass to renderer
             taskbar_info = get_taskbar_info()
             layout_mode = 'horizontal' if is_small_taskbar(taskbar_info) else 'vertical'
             
-            self.renderer.draw_network_speeds(
-                painter=painter,
-                upload=upload_bytes_sec,
-                download=download_bytes_sec,
-                width=self.width(),
-                height=self.height(),
-                config=render_config,
-                layout_mode=layout_mode
-            )
-
-            # Pass the corrected layout_mode to the graph renderer as well
+            # Draw Mini-Graph (Background Layer)
+            # Must be drawn BEFORE text to prevent obscuring readability
             if render_config.graph_enabled:
                 history = self.widget_state.get_aggregated_speed_history()
                 self.renderer.draw_mini_graph(
@@ -479,6 +464,21 @@ class NetworkSpeedWidget(QWidget):
                     history=history,
                     layout_mode=layout_mode
                 )
+
+            painter.setFont(self.current_font)
+
+            upload_bytes_sec = (self.upload_speed * constants.network.units.MEGA_DIVISOR) / constants.network.units.BITS_PER_BYTE
+            download_bytes_sec = (self.download_speed * constants.network.units.MEGA_DIVISOR) / constants.network.units.BITS_PER_BYTE
+            
+            self.renderer.draw_network_speeds(
+                painter=painter,
+                upload=upload_bytes_sec,
+                download=download_bytes_sec,
+                width=self.width(),
+                height=self.height(),
+                config=render_config,
+                layout_mode=layout_mode
+            )
             
         except Exception as e:
             self.logger.error(f"Error in paintEvent: {e}", exc_info=True)

@@ -46,6 +46,24 @@ class StartupManager:
         Ensures the Windows startup task state matches the setting in the config file.
         This runs once on application startup to correct any mismatches.
         """
+        # DEV MODE PROTECTION:
+        # If running in development (not frozen), we must NOT overwrite a production registry key.
+        # This prevents "python src/monitor.py" from hijacking "NetSpeedTray.exe".
+        if not getattr(sys, 'frozen', False):
+            try:
+                # Direct check of registry value without validity comparison
+                key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_READ)
+                value, _ = winreg.QueryValueEx(key, constants.app.APP_NAME)
+                winreg.CloseKey(key)
+
+                val_lower = value.lower()
+                # Heuristic: If it points to an .exe and NOT a python executable, assume it's a prod build.
+                if ".exe" in val_lower and "python" not in val_lower:
+                    self.logger.warning(f"DEV MODE: Detected production startup key ({value}). Skipping synchronization to prevent overwrite.")
+                    return
+            except Exception:
+                pass # Key doesn't exist or other error, safe to proceed with normal logic
+
         is_actually_enabled = self.is_startup_enabled()
         self.logger.debug(f"Syncing startup task. Config says: {should_be_enabled}, Registry says: {is_actually_enabled}")
 

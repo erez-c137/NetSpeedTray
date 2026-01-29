@@ -130,6 +130,7 @@ class Win11Toggle(QWidget):
         layout.addWidget(self.toggle_visual_container)
         
         self.setLayout(layout)
+        self.thumb.raise_() # Ensure thumb is always drawn on top of the checkbox track
         self._update_minimum_height_and_adjust_size()
 
 
