@@ -238,6 +238,19 @@ class GraphRenderer(QObject):
         down_mean = np.bincount(indices, weights=download_mbps) / counts
         up_mean = np.bincount(indices, weights=upload_mbps) / counts
         
+        # Min/Max aggregation for fill
+        change_points = np.where(np.diff(indices) > 0)[0] + 1
+        reduce_indices = np.concatenate(([0], change_points))
+        
+        if len(reduce_indices) == len(unique_bins):
+            up_max = np.maximum.reduceat(upload_mbps, reduce_indices)
+            up_min = np.minimum.reduceat(upload_mbps, reduce_indices)
+            down_max = np.maximum.reduceat(download_mbps, reduce_indices)
+            down_min = np.minimum.reduceat(download_mbps, reduce_indices)
+        else:
+            up_max = up_mean; up_min = up_mean
+            down_max = down_mean; down_min = down_mean
+
         # FIX: Instead of mapping back to the START of the bin (e.g. 15:00), 
         # we calculate the MEAN timestamp of all points within the bin.
         # This prevents the visual "lag" or "shift" in aggregated views.
