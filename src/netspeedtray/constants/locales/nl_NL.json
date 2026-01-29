@@ -235,6 +235,7 @@
     "KIBITS_SHORT_LABEL": "Kib",
     "GIBPS_SHORT_LABEL": "GiB",
     "BIBPS_SHORT_LABEL": "B",
+    "FIXED_WIDTH_VALUES_LABEL": "Vaste breedte",
     "SHORT_UNIT_LABELS_LABEL": "Short Unit Labels (e.g. Mb)",
     "GIBITS_SHORT_LABEL": "Gib",
     "SCALING_LABEL": "Scaling",

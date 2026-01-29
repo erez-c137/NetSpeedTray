@@ -63,5 +63,5 @@ def test_get_settings_translates_ui_state_to_config(settings_dialog):
 
     # Assert
     assert new_settings["update_rate"] == 2.5
-    assert new_settings["monitoring_mode"] == "selected"
+    assert new_settings["interface_mode"] == "selected"
     assert set(new_settings["selected_interfaces"]) == {"Wi-Fi"}
