@@ -19,7 +19,7 @@ This release addresses the remaining critical bug reports tracked in the v1.2.x 
 *   **Adaptive Component Design:** Implemented a custom `AdaptiveStackedWidget` that allows the settings window to resize dynamically based on the current page's content.
 *   **Throttled Configuration Engine:** Added a `QTimer`-based throttling mechanism to prevent redundant disk I/O when making rapid adjustments in the settings menu.
 
-### ✨🎨 UI & UX Improvements
+### 🎨 UI & UX Improvements
 *   **Restored Speed Color Coding (#90):** Brought back full customization for color coding thresholds and colors in the Appearance settings.
 *   **Smart Settings Auto-Resize:** The settings window now dynamically expands when toggling features and intelligently repositions itself upward if the expansion would go behind the taskbar on 1080p screens.
 *   **Enhanced Font Weight Slider:** Replaced raw number inputs with a descriptive slider (e.g., "Regular", "Bold", "Extra Black") for easier configuration.
