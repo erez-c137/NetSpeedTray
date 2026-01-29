@@ -39,7 +39,7 @@ class NetworkController(QObject):
         self.view: Optional['NetworkSpeedWidget'] = None
         
         self.last_check_time: float = 0.0
-        self.last_interface_counters: Dict[str, psutil._common.snetio] = {}
+        self.last_interface_counters: Dict[str, Any] = {}
         self.current_speed_data: Dict[str, Tuple[float, float]] = {}
         self.primary_interface: Optional[str] = None
         self.last_primary_check_time: float = 0.0
@@ -56,7 +56,7 @@ class NetworkController(QObject):
         self.logger.debug("View set and signal connected.")
 
 
-    def handle_network_counters(self, current_counters: Dict[str, psutil._common.snetio]) -> None:
+    def handle_network_counters(self, current_counters: Dict[str, Any]) -> None:
         """
         Slot for the NetworkMonitorThread's signal. Process incoming raw counters,
         calculates per-interface speeds, and handles a re-priming state.
@@ -207,7 +207,7 @@ class NetworkController(QObject):
         return total_up, total_down
 
 
-    def _fetch_network_stats(self) -> Optional[Dict[str, psutil._common.snetio]]:
+    def _fetch_network_stats(self) -> Optional[Dict[str, Any]]:
         """Fetches raw I/O counters for all network interfaces from psutil."""
         try:
             return psutil.net_io_counters(pernic=True)
