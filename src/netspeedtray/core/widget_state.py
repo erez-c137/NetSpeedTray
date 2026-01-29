@@ -31,6 +31,7 @@ from typing import Any, Deque, Dict, List, Optional, Tuple, Literal, Union
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal, QTimer
 
+from netspeedtray import constants
 from netspeedtray.constants import network, timeouts
 from netspeedtray.utils.helpers import get_app_data_path
 
