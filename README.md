@@ -33,35 +33,48 @@ If you prefer, you can download the latest files directly from the [**Releases P
 
 ## Key Features
 
--   💻 **Lightweight & Efficient:** Sits quietly in your system tray without hogging resources. Features a "Dynamic Update Rate" that automatically reduces update frequency when the network is idle to conserve CPU and battery life.
+-   ⚡ **High-Performance & Efficient:**
+    -   **NumPy Vectorization:** Uses optimized vectorized operations for near-instant graph rendering and zero-latency UI interaction, even with years of data.
+    -   **Dynamic Update Rate:** Automatically reduces polling frequency when the network is idle to conserve CPU and extend battery life.
+    -   **Global Debouncing:** Every adjustment feels snappy thanks to an intelligent input debouncing system that prevents UI thread freezes.
 
--   ✨ **Native Look & Feel:** Designed to blend in perfectly with the Windows 10/11 UI. Includes smart detection for light and dark taskbar themes to ensure text is always visible.
+-   ✨ **Modern Native Look & Feel:**
+    -   **Fluent Design Sliders:** Designed to blend perfectly with Windows 10/11 UI using modern Fluent-inspired controls.
+    -   **Auto-Theme Detection:** Intelligently switches text and background colors based on your taskbar theme (Light/Dark/Mixed) for perfect visibility.
 
--   🚀 **Intelligent & Adaptive Positioning:** The widget finds the empty space next to your system tray and automatically shifts to make room for new icons, ensuring it never overlaps.
-
--   **Seamless OS Integration:** Behaves like a native OS component.
-    -   Hides instantly with the **auto-hiding taskbar**.
-    -   Hides instantly when you use a **fullscreen application**.
+-   🚀 **Intelligent & Adaptive Positioning:**
+    -   **Auto-Shift:** The widget finds empty space next to your system tray and automatically shifts to make room for new icons.
+    -   **Z-Order Excellence:** Stays on top of the taskbar but gracefully hides when you use **Fullscreen applications** or open system menus (Start Menu, Action Center).
+    -   **Tray Offset Control:** Fine-tune exactly where the widget sits relative to the system tray overflow button.
 
 -   📈 **Smart Network Monitoring:**
-    -   Accurate by Default: The "Auto" mode is now the default and intelligently identifies your main internet connection, providing a true speed reading by ignoring noise from VPNs and virtual adapters.
-    -   Clear Interface Selection: A new, intuitive radio-button system in the settings makes it effortless to switch between Auto, All, or Selected interfaces.
+    -   **Auto-Primary Mode:** The default mode intelligently identifies your main internet connection, ignoring "noise" from internal VPNs or virtual machine adapters.
+    -   **Physical vs. Virtual Filtering:** Choose to monitor all hardware, specific interfaces, or include virtual adapters for power-user transparency.
 
 -   🎨 **Total Visual Customization:**
-    -   **Free Move Mode:** Unlock the widget and place it anywhere on your screen.
-    -   **Optional Mini-Graph:** Display a real-time graph of recent activity directly on the widget, with adjustable opacity.
-    -   **Color Coding:** Set custom colors and speed thresholds to see your network status at a glance.
+    -   **Free Move Mode:** Unlock the widget and place it anywhere—on another monitor or a specific spot on your desktop.
+    -   **Optional Mini-Graph:** Display a real-time area chart of recent activity directly on the widget with adjustable opacity and gradient fills.
+    -   **Arrow Styling:** Granular control over arrow symbols—customize their font, size, and weight independently of the speed values.
+    -   **Color Coding:** Set custom speed thresholds and colors to visualize network load at a glance.
 
 -   ✍️ **Granular Display Control:**
-    -   **Text & Font:** Fine-tune the font family, size, weight, and text alignment (left/center/right).
-    -   **Units:** Choose between an automatic unit (B/s, KB/s, MB/s) or a fixed `Mbps` display.
-    -   **Precision:** Control the number of decimal places and choose to always show them for a uniform look.
+    -   **Centralized Unit System:** Choose between Bits (Mbps), Bytes (MB/s), Binary (MiB/s), or Decimal units.
+    -   **Precision Padding:** Control decimal places (0-2) and toggle fixed-width values to prevent layout jitter as numbers change.
+    -   **Layout Options:** Align text (left/center/right) and toggle unit suffixes or activity arrows for a minimalist look.
 
--   📊 **Detailed & Intelligent History Graph:** Double-click the widget to open a powerful and insightful history graph.
-    -   **Always-Readable Smart Scale:** A dynamic logarithmic scale lets you see fine-grained detail in low-level traffic while still clearly showing massive download spikes.
-    -   **Per-Interface Filtering:** Isolate the speed history for any specific network adapter on your system (Wi-Fi, Ethernet, VPN, etc.).
-    -   **Safe & Efficient Data Management:** Adjust data retention with an accidental-deletion grace period, while the database is automatically cleaned and optimized to save space.
-    -   **Easy Data Export:** Export raw data to a `.csv` file for spreadsheet analysis or save the graph itself as a high-quality `.png` image.
+-   📊 **Advanced History Graph:**
+    -   **Dual-Axis Area Charts:** Split view for Download and Upload ensures both are visible even when speeds are asymmetric.
+    -   **Symlog Scaling:** A dynamic logarithmic scale lets you see fine-grained detail in low-level traffic while still handling massive Gigabit spikes.
+    -   **Time-Dynamic Rendering:** Automatically switches between detailed line plots and "Mean & Range" plots for long-term historical trends.
+    -   **Data Export:** Export your history to `.csv` or save a high-resolution `.png` of your network activity.
+
+-   🌍 **Globally Localized:**
+    -   Full support for **9+ languages** (Korean, French, German, Russian, Spanish, Dutch, Polish, Slovenian, and English).
+    -   **100% Key Parity:** Every language is fully translated—no missing keys or English placeholders in any supported locale.
+
+-   🛡️ **Trusted & Secure:**
+    -   **Digitally Signed:** Verified by [SignPath Foundation](https://signpath.org/) to guarantee code integrity and eliminate Windows SmartScreen warnings.
+    -   **100% Open Source:** No ads, no tracking, no telemetry. Just your data, on your machine.
 
 ## Usage & Screenshots
 
