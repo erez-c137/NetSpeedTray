@@ -108,6 +108,10 @@ jobs:
     needs: build-and-sign
     runs-on: ubuntu-latest
     steps:
+      - name: Sync WinGet Fork
+        run: gh repo sync erez-c137/winget-pkgs --source microsoft/winget-pkgs
+        env:
+          GITHUB_TOKEN: ${{ secrets.WINGET_TOKEN }}
       - name: Submit to Winget
         uses: vedantmgoyal2009/winget-releaser@v2
         with:
