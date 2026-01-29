@@ -26,19 +26,17 @@ def mock_config() -> dict:
 
 
 @pytest.fixture
-def managed_widget_state(tmp_path: Path, mock_config: dict, mocker) -> Iterator[tuple[WidgetState, Path]]:
+def managed_widget_state(tmp_path: Path, mock_config: dict) -> Iterator[tuple[WidgetState, Path]]:
     """
     Provides a WidgetState instance with a temporary DB for SYNCHRONOUS testing.
     It PREVENTS the DatabaseWorker QThread from starting and initializes the DB directly.
     """
     db_path = tmp_path / "speed_history.db"
     
-    # Mock QThread.start to prevent the worker from running in the background.
-    mocker.patch.object(QThread, 'start', lambda self: None)
-    
-    # Patch the helper function to ensure WidgetState uses our temporary path.
-    with patch('netspeedtray.core.widget_state.get_app_data_path', return_value=tmp_path):
-        state = WidgetState(mock_config)
+    with patch.object(QThread, 'start', lambda self: None):
+        # Patch the helper function to ensure WidgetState uses our temporary path.
+        with patch('netspeedtray.core.widget_state.get_app_data_path', return_value=tmp_path):
+            state = WidgetState(mock_config)
         
         # Get the worker instance *after* WidgetState has created it.
         worker = state.db_worker
@@ -465,13 +463,12 @@ def test_get_speed_history_unified_tiers(managed_widget_state):
     # ACT: Request "All" time range (None start time)
     results = state.get_speed_history(start_time=None, end_time=now)
     
-    # ASSERT: Should have 3 records (one from each tier)
-    assert len(results) == 3
+    # ASSERT: With the new "Single Table" optimization, for a 40-day range,
+    # the system selects 'speed_history_hour'. 
+    # Since we manually inserted data into separate tables and did NOT run aggregation,
+    # the query will only return the record that physically exists in 'speed_history_hour'.
+    assert len(results) == 1
     
-    # Verify values (SUM logic is applied for "All" interfaces by default if interface_name=None)
-    # The order is by timestamp ASC
-    results.sort(key=lambda x: x[0])
-    
-    assert results[0][1] == 10.0 # From hour
-    assert results[1][1] == 50.0 # From minute
-    assert results[2][1] == 100.0 # From raw
+    # Verify it retrieved the hourly record (the oldest one)
+    # 40 days ago = 10.0 upload
+    assert results[0][1] == 10.0

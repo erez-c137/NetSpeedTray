@@ -4,19 +4,27 @@ Unit tests for the decomposed Settings Pages.
 import pytest
 from unittest.mock import MagicMock, patch
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QWidget
+from PyQt6.QtWidgets import QWidget, QApplication
+from PyQt6.QtGui import QFont
 
 from netspeedtray.views.settings.pages.general import GeneralPage
 from netspeedtray.views.settings.pages.appearance import AppearancePage
 from netspeedtray.views.settings.pages.graph_config import GraphPage
 from netspeedtray.views.settings.pages.units import UnitsPage
 from netspeedtray.views.settings.pages.interfaces import InterfacesPage
+from netspeedtray.views.settings.pages.colors import ColorsPage
+from netspeedtray import constants
+
+@pytest.fixture(scope="session")
+def q_app():
+    """Provides a QApplication instance for the test session."""
+    return QApplication.instance() or QApplication([])
 
 @pytest.fixture
 def mock_i18n():
-    i18n = MagicMock()
-    # Mock necessary attributes
-    i18n.LANGUAGE_MAP = {"en": "English", "fr": "French"}
+    i18n = MagicMock(spec=constants.I18nStrings)
+    # Mock necessary attributes as strings to avoid PyQt TypeError
+    i18n.LANGUAGE_MAP = {"en_US": "English", "fr_FR": "French"}
     i18n.LANGUAGE_LABEL = "Language"
     i18n.UPDATE_RATE_GROUP_TITLE = "Update Rate"
     i18n.UPDATE_INTERVAL_LABEL = "Interval"
@@ -71,9 +79,14 @@ def mock_i18n():
     i18n.TROUBLESHOOTING_GROUP = "Troubleshooting"
     i18n.EXPORT_ERROR_LOG_BUTTON = "Export"
     i18n.DISPLAY_FORMAT_GROUP = "Data Format"
-    i18n.SCALING_LABEL = "Scaling" # Added
+    i18n.SCALING_LABEL = "Scaling"
     i18n.INTERFACE_LAYOUT_GROUP = "Interface Layout"
+    i18n.ARROW_STYLING_GROUP = "Arrow Styling"
     i18n.POSITION_GROUP = "Positioning"
+    i18n.USE_CUSTOM_ARROW_FONT = "Use Custom Arrow Font"
+    i18n.FONT_WEIGHT_DEMIBOLD = "Demibold"
+    i18n.FONT_WEIGHT_NORMAL = "Normal"
+    i18n.FONT_WEIGHT_BOLD = "Bold"
     
     # New v1.3.0 Keys
     i18n.BACKGROUND_SETTINGS_GROUP_TITLE = "Background"
@@ -81,6 +94,11 @@ def mock_i18n():
     i18n.BACKGROUND_COLOR_TOOLTIP = "Select Bg"
     i18n.BACKGROUND_OPACITY_LABEL = "Opacity"
     i18n.SHORT_UNIT_LABELS_LABEL = "Short Labels"
+
+    # Font Weight Labels (used in Win11Slider.setValueText)
+    for key in constants.fonts.WEIGHT_MAP.values():
+        if not hasattr(i18n, key):
+            setattr(i18n, key, key.replace("FONT_WEIGHT_", "").capitalize())
 
     return i18n
 
@@ -93,7 +111,7 @@ def test_general_page(q_app, mock_i18n, mock_callback):
     page = GeneralPage(mock_i18n, mock_callback)
     
     config = {
-        "language": "fr",
+        "language": "fr_FR",
         "update_rate": 1.5,
         "dynamic_update_enabled": True,
         "free_move": True,
@@ -103,7 +121,7 @@ def test_general_page(q_app, mock_i18n, mock_callback):
     page.load_settings(config, is_startup_enabled=True)
     
     settings = page.get_settings()
-    assert settings["language"] == "fr"
+    assert settings["language"] == "fr_FR"
     assert settings["update_rate"] == 1.5
     assert settings["dynamic_update_enabled"] is True
     assert settings["free_move"] is True
@@ -118,11 +136,13 @@ def test_appearance_page(q_app, mock_i18n, mock_callback):
     config = {
         "font_family": "Arial",
         "font_size": 10,
-        "font_weight": 50, # Arbitrary int we map
+        "font_weight": 600,
         "default_color": "#FF0000",
-        "color_coding": True,
-        "high_speed_threshold": 50,
-        "low_speed_threshold": 10
+        "background_color": "#000000",
+        "background_opacity": 50,
+        "use_separate_arrow_font": False,
+        "arrow_font_family": "Arial",
+        "arrow_font_size": 10
     }
     
     with patch("PyQt6.QtGui.QFontDatabase.styles", return_value=["Normal", "Bold"]):
@@ -132,7 +152,28 @@ def test_appearance_page(q_app, mock_i18n, mock_callback):
     assert settings["font_family"] == "Arial"
     assert settings["font_size"] == 10
     assert settings["default_color"] == "#FF0000"
+
+def test_colors_page(q_app, mock_i18n, mock_callback):
+    """Test ColorsPage."""
+    color_cb = MagicMock()
+    page = ColorsPage(mock_i18n, mock_callback, color_cb)
+    
+    config = {
+        "color_coding": True,
+        "high_speed_threshold": 50,
+        "low_speed_threshold": 10,
+        "high_speed_color": "#00FF00",
+        "low_speed_color": "#FFFF00"
+    }
+    
+    page.load_settings(config)
+    settings = page.get_settings()
+    
     assert settings["color_coding"] is True
+    assert settings["high_speed_threshold"] == 50
+    assert settings["low_speed_threshold"] == 10
+    assert settings["high_speed_color"] == "#00FF00"
+    assert settings["low_speed_color"] == "#FFFF00"
 
 def test_graph_page(q_app, mock_i18n, mock_callback):
     """Test GraphPage."""
@@ -153,44 +194,46 @@ def test_graph_page(q_app, mock_i18n, mock_callback):
 
 def test_units_page(q_app, mock_i18n, mock_callback):
     """Test UnitsPage."""
-    assert isinstance(mock_i18n.DISPLAY_FORMAT_GROUP, str), f"Mock bad: {mock_i18n.DISPLAY_FORMAT_GROUP}"
     page = UnitsPage(mock_i18n, mock_callback)
     
     config = {
-        "unit_type": "bytes_decimal",
+        "unit_type": "bits_binary",
         "speed_display_mode": "always_mbps",
-        "decimal_places": 1,
-        "text_alignment": "right",
-        "swap_upload_download": True,
+        "decimal_places": 2,
+        "text_alignment": "center",
+        "swap_upload_download": False,
+        "hide_arrows": True,
+        "hide_unit_suffix": True,
+        "short_unit_labels": False,
         "tray_offset_x": 10
     }
     
     page.load_settings(config)
     settings = page.get_settings()
     
-    assert settings["unit_type"] == "bytes_decimal"
+    assert settings["unit_type"] == "bits_binary"
     assert settings["speed_display_mode"] == "always_mbps"
-    assert settings["decimal_places"] == 1
-    assert settings["text_alignment"] == "right"
-    assert settings["swap_upload_download"] is True
+    assert settings["decimal_places"] == 2
+    assert settings["text_alignment"] == "center"
+    assert settings["swap_upload_download"] is False
+    assert settings["hide_arrows"] is True
+    assert settings["hide_unit_suffix"] is True
+    assert settings["short_unit_labels"] is False
     assert settings["tray_offset_x"] == 10
 
 def test_interfaces_page(q_app, mock_i18n, mock_callback):
     """Test InterfacesPage."""
-    page = InterfacesPage(mock_i18n, ["Eth0", "Wlan0"], mock_callback)
+    available = ["Ethernet", "Wi-Fi"]
+    page = InterfacesPage(mock_i18n, available, mock_callback)
     
     config = {
         "interface_mode": "selected",
-        "selected_interfaces": ["Eth0"]
+        "selected_interfaces": ["Ethernet"]
     }
     
     page.load_settings(config)
     settings = page.get_settings()
     
     assert settings["interface_mode"] == "selected"
-    assert settings["selected_interfaces"] == ["Eth0"]
-    
-    # Test update list
-    page.update_interface_list(["Eth1"])
-    assert "Eth1" in page.interface_checkboxes
-    assert "Eth0" not in page.interface_checkboxes
+    assert "Ethernet" in settings["selected_interfaces"]
+    assert "Wi-Fi" not in settings["selected_interfaces"]

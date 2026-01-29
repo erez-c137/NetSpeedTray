@@ -6,10 +6,12 @@ All notable changes to this project will be documented in this file.
 
 ## [1.2.3] - January 29, 2026
 
-This release addresses the remaining critical bug reports tracked in the v1.2.x series, focusing on graph accuracy, settings UX, and rendering glitches.
+This release addresses the remaining critical bug reports tracked in the v1.2.x series, focusing on graph performance and accuracy, settings UX, and rendering glitches.
 
 ### 🌍 Localization
+*   **Korean (ko_KR):** Major update with idiomatic phrasing and improved technical terms (Thanks @VenusGirl for the contribution! #95)
 *   **French (fr_FR):** Updated translation with corrections and improvements (Thanks @logounet for the contribution! #94)
+*   **Multi-language Audit:** Synchronized and updated missing terms across all supported languages (Russian, Spanish, Dutch, Polish, Slovenian).
 
 ### 🏗️ Architectural Overhaul
 *   **Modular Settings Architecture:** Decomposed the monolithic settings dialog into dedicated page classes (`AppearancePage`, `GraphPage`, etc.) located in a new `pages/` sub-package for significantly better maintainability.
