@@ -33,7 +33,7 @@ def settings_dialog(q_app, mock_parent_widget):
     dialog = SettingsDialog(
         main_widget=mock_parent_widget, # Pass the mock to the correct argument
         config=mock_parent_widget.config.copy(),
-        version="1.2.0",
+        version="1.2.1",
         i18n=constants.i18n.get_i18n(),
         available_interfaces=mock_parent_widget.get_available_interfaces(),
         is_startup_enabled=mock_parent_widget.is_startup_enabled()
