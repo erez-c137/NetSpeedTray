@@ -61,11 +61,55 @@ class HistoryPeriodConstants:
         6: "TIMELINE_WEEK", 7: "TIMELINE_MONTH", 8: "TIMELINE_ALL",
     }
     DEFAULT_PERIOD: Final[str] = PERIOD_MAP[0] # "TIMELINE_SESSION"
-    # The logic in CUTOFF_DAYS must also use the i18n keys
+
+    # Aggregation thresholds (seconds) for choosing DB source and plotting resolution
+    RES_RAW_THRESHOLD: Final[int] = 23 * 3600      # Use Raw for < 23h
+    RES_MINUTE_THRESHOLD: Final[int] = 29 * 86400  # Use Minute for < 29d
+    
+    # Plotting resolution thresholds (seconds)
+    PLOT_MINUTE_THRESHOLD: Final[int] = 30 * 86400 # Use minute bins for < 30 days
+    PLOT_HOURLY_THRESHOLD: Final[int] = 90 * 86400 # Use hourly bins for < 90 days
+    
+    # Mapping of period keys to their duration in days for standard ranges
     CUTOFF_DAYS: Final[Dict[str, float]] = {
-        "TIMELINE_3_HOURS": 3 / 24, "TIMELINE_6_HOURS": 6 / 24, "TIMELINE_12_HOURS": 12 / 24,
-        "TIMELINE_24_HOURS": 1, "TIMELINE_WEEK": 7, "TIMELINE_MONTH": 30, "TIMELINE_ALL": 365 * 10,
+        "TIMELINE_3_HOURS": 3 / 24, 
+        "TIMELINE_6_HOURS": 6 / 24, 
+        "TIMELINE_12_HOURS": 12 / 24,
+        "TIMELINE_24_HOURS": 1, 
+        "TIMELINE_WEEK": 7, 
+        "TIMELINE_MONTH": 30, 
+        "TIMELINE_ALL": 365 * 10,
     }
+
+    @staticmethod
+    def get_start_time(period_key: str, now: datetime, session_start: Optional[datetime] = None, 
+                       boot_time: Optional[datetime] = None, earliest_db: Optional[datetime] = None) -> Optional[datetime]:
+        """Centralized calculation of start_time for any given period."""
+        if period_key == "TIMELINE_SESSION":
+            return session_start
+        elif period_key == "TIMELINE_SYSTEM_UPTIME":
+            if earliest_db and boot_time:
+                return max(boot_time, earliest_db)
+            return boot_time
+        elif period_key in HistoryPeriodConstants.CUTOFF_DAYS:
+            if period_key == "TIMELINE_ALL":
+                return None
+            return now - timedelta(days=HistoryPeriodConstants.CUTOFF_DAYS[period_key])
+        return None
+
+    @staticmethod
+    def get_target_resolution(start_time: Optional[datetime], end_time: datetime) -> str:
+        """Determines the data resolution (raw, minute, hour) for a given time range."""
+        if not start_time:
+            return 'hour'
+        
+        duration = (end_time - start_time).total_seconds()
+        if duration <= HistoryPeriodConstants.RES_RAW_THRESHOLD:
+            return 'raw'
+        elif duration <= HistoryPeriodConstants.RES_MINUTE_THRESHOLD:
+            return 'minute'
+        else:
+            return 'hour'
 
     def __init__(self) -> None:
         self.validate()

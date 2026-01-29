@@ -178,14 +178,14 @@ class GraphRenderer(QObject):
         # 2 - 14 days: Hourly Aggregation
         # > 14 days: Daily Aggregation
         
-        if timespan_days == 0 and (end_time - start_time).total_seconds() < 21600: # < 6 hours
+        if timespan_days == 0 and (end_time - start_time).total_seconds() <= constants.data.history_period.RES_RAW_THRESHOLD:
              self._plot_high_res(plot_datetimes_array, upload_mbps, download_mbps)
              plotted_ts = timestamps # Keep original floats for high-res
              plotted_up = upload_mbps
              plotted_down = download_mbps
-        elif timespan_days < 2:
+        elif timespan_days == 0 or (end_time - start_time).total_seconds() <= constants.data.history_period.PLOT_MINUTE_THRESHOLD:
             plotted_ts, plotted_up, plotted_down = self._plot_aggregated(plot_datetimes_array, upload_mbps, download_mbps, mode="minute")
-        elif timespan_days <= 14:
+        elif (end_time - start_time).total_seconds() <= constants.data.history_period.PLOT_HOURLY_THRESHOLD:
             plotted_ts, plotted_up, plotted_down = self._plot_aggregated(plot_datetimes_array, upload_mbps, download_mbps, mode="hourly")
         else:
             plotted_ts, plotted_up, plotted_down = self._plot_aggregated(plot_datetimes_array, upload_mbps, download_mbps, mode="daily")
@@ -238,42 +238,18 @@ class GraphRenderer(QObject):
         down_mean = np.bincount(indices, weights=download_mbps) / counts
         up_mean = np.bincount(indices, weights=upload_mbps) / counts
         
-        # Min/Max aggregation for fill
-        change_points = np.where(np.diff(indices) > 0)[0] + 1
-        reduce_indices = np.concatenate(([0], change_points))
+        # FIX: Instead of mapping back to the START of the bin (e.g. 15:00), 
+        # we calculate the MEAN timestamp of all points within the bin.
+        # This prevents the visual "lag" or "shift" in aggregated views.
+        timestamps_float = np.array([dt.timestamp() for dt in plot_datetimes])
+        bin_timestamps = np.bincount(indices, weights=timestamps_float) / counts
+        agg_dates = [datetime.fromtimestamp(ts) for ts in bin_timestamps]
         
-        if len(reduce_indices) == len(unique_bins):
-            up_max = np.maximum.reduceat(upload_mbps, reduce_indices)
-            up_min = np.minimum.reduceat(upload_mbps, reduce_indices)
-            down_max = np.maximum.reduceat(download_mbps, reduce_indices)
-            down_min = np.minimum.reduceat(download_mbps, reduce_indices)
-        else:
-            up_max = up_mean; up_min = up_mean
-            down_max = down_mean; down_min = down_mean
-
-        # Convert bins back to datetime objects
-        from datetime import date, time
-        if mode == "daily":
-            agg_dates = [datetime.combine(date.fromordinal(b), time.min) for b in unique_bins]
-        elif mode == "hourly":
-            agg_dates = [datetime.combine(date.fromordinal(b // 24), time(hour=b % 24)) for b in unique_bins]
-        else: # minute
-            # (Ordinal) = val // 1440
-            # Remainder = val % 1440
-            # Hour = Remainder // 60
-            # Minute = Remainder % 60
-            agg_dates = []
-            for b in unique_bins:
-                ordinal = b // 1440
-                remainder = b % 1440
-                h = remainder // 60
-                m = remainder % 60
-                agg_dates.append(datetime.combine(date.fromordinal(ordinal), time(hour=h, minute=m)))
-        
-        self.ax_download.plot(agg_dates, down_mean, color=constants.graph.DOWNLOAD_LINE_COLOR, linewidth=1.5, zorder=10)
-        self.ax_download.fill_between(agg_dates, down_min, down_max, color=constants.graph.DOWNLOAD_LINE_COLOR, alpha=0.3)
-        self.ax_upload.plot(agg_dates, up_mean, color=constants.graph.UPLOAD_LINE_COLOR, linewidth=1.5, zorder=10)
-        self.ax_upload.fill_between(agg_dates, up_min, up_max, color=constants.graph.UPLOAD_LINE_COLOR, alpha=0.3)
+        # Store references to lines for potential updates (though aggregated view updates are rare)
+        self.line_download, = self.ax_download.plot(agg_dates, down_mean, color=constants.graph.DOWNLOAD_LINE_COLOR, linewidth=1.5, zorder=10)
+        self.fill_download = self.ax_download.fill_between(agg_dates, down_min, down_max, color=constants.graph.DOWNLOAD_LINE_COLOR, alpha=0.3)
+        self.line_upload, = self.ax_upload.plot(agg_dates, up_mean, color=constants.graph.UPLOAD_LINE_COLOR, linewidth=1.5, zorder=10)
+        self.fill_upload = self.ax_upload.fill_between(agg_dates, up_min, up_max, color=constants.graph.UPLOAD_LINE_COLOR, alpha=0.3)
         
         # Return the aggregated data for the interaction handler
         return agg_dates, up_mean, down_mean
@@ -281,23 +257,35 @@ class GraphRenderer(QObject):
     def _plot_high_res(self, plot_datetimes, upload_mbps, download_mbps):
         """Segmented Plotting with Gap Detection"""
         # Detect gaps > 10 seconds to account for jitter or sleep.
-        # This prevents the graph from breaking into single points that draw nothing.
         timestamps_float = np.array([dt.timestamp() for dt in plot_datetimes])
         gaps = np.diff(timestamps_float) > 10.0
-        gap_indices = np.where(gaps)[0] + 1
         
-        segments_ts = np.split(plot_datetimes, gap_indices)
-        segments_up = np.split(upload_mbps, gap_indices)
-        segments_down = np.split(download_mbps, gap_indices)
-        
-        for ts, up, down in zip(segments_ts, segments_up, segments_down):
-            if len(ts) == 0: continue
+        if np.any(gaps):
+            gap_indices = np.where(gaps)[0] + 1
+            segments_ts = np.split(plot_datetimes, gap_indices)
+            segments_up = np.split(upload_mbps, gap_indices)
+            segments_down = np.split(download_mbps, gap_indices)
             
-            self.ax_download.plot(ts, down, color=constants.graph.DOWNLOAD_LINE_COLOR, linewidth=1.5)
-            self.ax_download.fill_between(ts, 0, down, color=constants.graph.DOWNLOAD_LINE_COLOR, alpha=0.1)
+            for ts, up, down in zip(segments_ts, segments_up, segments_down):
+                if len(ts) == 0: continue
+                
+                self.ax_download.plot(ts, down, color=constants.graph.DOWNLOAD_LINE_COLOR, linewidth=1.5)
+                self.ax_download.fill_between(ts, 0, down, color=constants.graph.DOWNLOAD_LINE_COLOR, alpha=0.1)
+                
+                self.ax_upload.plot(ts, up, color=constants.graph.UPLOAD_LINE_COLOR, linewidth=1.5)
+                self.ax_upload.fill_between(ts, 0, up, color=constants.graph.UPLOAD_LINE_COLOR, alpha=0.1)
+                
+            # Sentinel to indicate we can't easily update via set_data
+            self.line_download = None
+            self.line_upload = None
             
-            self.ax_upload.plot(ts, up, color=constants.graph.UPLOAD_LINE_COLOR, linewidth=1.5)
-            self.ax_upload.fill_between(ts, 0, up, color=constants.graph.UPLOAD_LINE_COLOR, alpha=0.1)
+        else:
+            # Single continuous line - OPTIMIZED PATH
+            self.line_download, = self.ax_download.plot(plot_datetimes, download_mbps, color=constants.graph.DOWNLOAD_LINE_COLOR, linewidth=1.5)
+            self.fill_download = self.ax_download.fill_between(plot_datetimes, 0, download_mbps, color=constants.graph.DOWNLOAD_LINE_COLOR, alpha=0.1)
+            
+            self.line_upload, = self.ax_upload.plot(plot_datetimes, upload_mbps, color=constants.graph.UPLOAD_LINE_COLOR, linewidth=1.5)
+            self.fill_upload = self.ax_upload.fill_between(plot_datetimes, 0, upload_mbps, color=constants.graph.UPLOAD_LINE_COLOR, alpha=0.1)
 
     def _configure_axes(self, start_time, end_time, period_key, timestamps, upload_mbps, download_mbps):
         """Sets limits and Formatters."""
@@ -337,29 +325,65 @@ class GraphRenderer(QObject):
         """
         axis = self.ax_upload
         
-        major_locator = None
+        # Default for most views
+        major_locator = mdates.AutoDateLocator(maxticks=8)
         major_formatter = mdates.DateFormatter('%H:%M') 
 
-        if period_key == "TIMELINE_3_HOURS":
-            major_locator = mdates.HourLocator(interval=1)
-        elif period_key == "TIMELINE_6_HOURS":
-            major_locator = mdates.HourLocator(interval=1)
-        elif period_key == "TIMELINE_12_HOURS":
-            major_locator = mdates.HourLocator(interval=2)
-        elif period_key == "TIMELINE_24_HOURS":
-            major_locator = mdates.HourLocator(interval=3)
-        elif period_key == "TIMELINE_WEEK":
-            major_locator = mdates.DayLocator(interval=1)
+        if period_key == "TIMELINE_WEEK":
             major_formatter = mdates.DateFormatter('%a %d')
         elif period_key == "TIMELINE_MONTH":
-            major_locator = mdates.WeekdayLocator(byweekday=mdates.MO)
             major_formatter = mdates.DateFormatter('%b %d')
-        else:
-            major_locator = mdates.AutoDateLocator(maxticks=8)
-            major_formatter = mdates.ConciseDateFormatter(major_locator)
-
+        elif period_key == "TIMELINE_ALL":
+            major_formatter = mdates.DateFormatter('%Y-%m-%d')
+        elif period_key == "TIMELINE_SYSTEM_UPTIME":
+             # Uptime can be minutes or days; Concise is best here
+             major_formatter = mdates.ConciseDateFormatter(major_locator)
+        
         axis.xaxis.set_major_locator(major_locator)
         axis.xaxis.set_major_formatter(major_formatter)
         
         if "HOURS" in (period_key or ""):
             axis.xaxis.set_minor_locator(NullLocator())
+
+    def update_data(self, plot_datetimes, upload_mbps, download_mbps, start_time, end_time):
+        """
+        Efficiently updates the graph data without clearing axes, if possible.
+        """
+        # Check if we have valid line objects to update AND they are still attached to axes
+        # (if axes were cleared to show a message, artist.axes will be None)
+        if not hasattr(self, 'line_download') or not self.line_download or self.line_download.axes is None or \
+           not hasattr(self, 'line_upload') or not self.line_upload or self.line_upload.axes is None:
+               # Fallback to full render if we don't have updateable lines (e.g. segmented or cleared)
+               return False
+               
+        # Update X/Y data
+        self.line_download.set_data(plot_datetimes, download_mbps)
+        self.line_upload.set_data(plot_datetimes, upload_mbps)
+        
+        # Updating fill_between is tricky. It creates a PolyCollection.
+        # The most robust way for fill is to remove the old one and add a new one, 
+        # which is still faster than full ax.clear() + reformatting.
+        
+        try:
+            if hasattr(self, 'fill_download') and self.fill_download:
+                self.fill_download.remove()
+            if hasattr(self, 'fill_upload') and self.fill_upload:
+                self.fill_upload.remove()
+        except Exception:
+            pass # Already removed or invalid
+
+        self.fill_download = self.ax_download.fill_between(plot_datetimes, 0, download_mbps, color=constants.graph.DOWNLOAD_LINE_COLOR, alpha=0.1)
+        self.fill_upload = self.ax_upload.fill_between(plot_datetimes, 0, upload_mbps, color=constants.graph.UPLOAD_LINE_COLOR, alpha=0.1)
+        
+        # Update Limits
+        self.ax_upload.set_xlim(start_time, end_time)
+        self.ax_download.set_xlim(start_time, end_time)
+        
+        # Update Y-Limits
+        max_up = np.max(upload_mbps) if len(upload_mbps) > 0 else 0
+        max_down = np.max(download_mbps) if len(download_mbps) > 0 else 0
+        self.ax_upload.set_ylim(0, self._get_nice_y_axis_top(max_up))
+        self.ax_download.set_ylim(0, self._get_nice_y_axis_top(max_down))
+        
+        self.canvas.draw_idle()
+        return True

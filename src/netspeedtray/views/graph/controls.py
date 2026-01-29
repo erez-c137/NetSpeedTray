@@ -79,7 +79,7 @@ class GraphSettingsPanel(QWidget):
         # 2. History Period Slider
         history_label = QLabel(getattr(self.i18n, 'HISTORY_PERIOD_LABEL_NO_VALUE', 'Timeline'))
         initial_history_val = self.initial_state.get('history_period_value', 0)
-        self.history_period_slider = Win11Slider(value=initial_history_val)
+        self.history_period_slider = Win11Slider(value=initial_history_val, editable=False)
         if hasattr(self.history_period_slider, 'slider'):
              self.history_period_slider.slider.setMinimum(0)
              self.history_period_slider.slider.setMaximum(len(constants.data.history_period.PERIOD_MAP) - 1)
@@ -93,7 +93,7 @@ class GraphSettingsPanel(QWidget):
         retention_label = QLabel(getattr(self.i18n, 'DATA_RETENTION_LABEL_NO_VALUE', 'Data Retention'))
         retention_days = self.initial_state.get('retention_days', 30)
         retention_val = self._days_to_slider_value(retention_days)
-        self.keep_data_slider = Win11Slider(value=retention_val)
+        self.keep_data_slider = Win11Slider(value=retention_val, editable=False)
         if hasattr(self.keep_data_slider, 'slider'):
              self.keep_data_slider.slider.setMinimum(0)
              self.keep_data_slider.slider.setMaximum(len(constants.data.retention.DAYS_MAP) - 1)

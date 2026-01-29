@@ -87,5 +87,26 @@ class TestDatabaseMigration(unittest.TestCase):
             self.worker._check_and_create_schema()
             mock_migrate.assert_not_called()
 
+    def test_v3_migration_execution(self):
+        """Test that the actual v3 migration method executes without error."""
+        # Setup: Ensure we are starting with v2
+        self.worker._initialize_connection()
+        self._create_v2_schema(self.worker.conn)
+        
+        # Override the target version to 3 for this test instance
+        self.worker._DB_VERSION = 3
+        
+        # We generally DO NOT mock the migration method here because we want to test
+        # the *actual* implementation of _migrate_v2_to_v3 (even if it's just logging).
+        
+        # Act: Run the full schema check which triggers migration
+        self.worker._check_and_create_schema()
+        
+        # Assert: Check DB version is now 3
+        cursor = self.worker.conn.cursor()
+        cursor.execute("SELECT value FROM metadata WHERE key='db_version'")
+        new_ver = int(cursor.fetchone()[0])
+        self.assertEqual(new_ver, 3)
+
 if __name__ == '__main__':
     unittest.main()

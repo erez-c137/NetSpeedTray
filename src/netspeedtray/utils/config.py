@@ -175,7 +175,7 @@ class ConfigManager:
             console_handler.setFormatter(console_formatter)
             logger.addHandler(console_handler)
 
-            logger.info("Logging initialized successfully.")
+            logger.debug("Logging initialized successfully.")
         except Exception as e:
             logging.basicConfig(level=logging.ERROR)
             logging.error("Failed to initialize file logging, falling back to basic console: %s", e)

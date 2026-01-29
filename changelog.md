@@ -4,6 +4,57 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [1.2.3] - January 29, 2026
+
+This release addresses the remaining critical bug reports tracked in the v1.2.x series, focusing on graph accuracy, settings UX, and rendering glitches.
+
+### 🌍 Localization
+*   **French (fr_FR):** Updated translation with corrections and improvements (Thanks @logounet for the contribution! #94)
+
+### 🏗️ Architectural Overhaul
+*   **Modular Settings Architecture:** Decomposed the monolithic settings dialog into dedicated page classes (`AppearancePage`, `GraphPage`, etc.) located in a new `pages/` sub-package for significantly better maintainability.
+*   **Core Logic Decoupling:** Extracted complex logic from `NetworkSpeedWidget` into specialized controllers:
+    *   **`ConfigController`:** Now handles the entire settings lifecycle, including loading, saving, and rollbacks.
+    *   **`InputHandler`:** Centralizes all mouse and keyboard events, separating user interaction from display logic.
+*   **Adaptive Component Design:** Implemented a custom `AdaptiveStackedWidget` that allows the settings window to resize dynamically based on the current page's content.
+*   **Throttled Configuration Engine:** Added a `QTimer`-based throttling mechanism to prevent redundant disk I/O when making rapid adjustments in the settings menu.
+
+### ✨🎨 UI & UX Improvements
+*   **Restored Speed Color Coding (#90):** Brought back full customization for color coding thresholds and colors in the Appearance settings.
+*   **Smart Settings Auto-Resize:** The settings window now dynamically expands when toggling features and intelligently repositions itself upward if the expansion would go behind the taskbar on 1080p screens.
+*   **Enhanced Font Weight Slider:** Replaced raw number inputs with a descriptive slider (e.g., "Regular", "Bold", "Extra Black") for easier configuration.
+
+### 🧹 Maintenance & Logging
+*   **Reduced Log Verbosity:** Demoted over 30 redundant initialization and routine cleanup messages from `INFO` to `DEBUG`, resulting in much cleaner and more readable log files.
+*   **Architectural Polish:**
+    *   **Shadowed Property Fix:** Renamed `self.font` and `self.metrics` to `self.current_font` and `self.current_metrics` to prevent internal conflicts with native `QWidget` methods.
+    *   **Deduplication:** Removed a redundant second implementation of the mini-graph rendering logic.
+*   **DRY Consolidation:** Centralized all timeline duration logic, aggregation thresholds, and resolution rules into `constants/data.py` to ensure consistency between the database layer and multiple UI components.
+*   **Dead Code Cleanup:** Removed legacy startup registry logic from the main widget that was left over from recent architectural refactors.
+
+### 🏎️ Performance & Reliability
+*   **Zero-Latency Interactions:** Implemented a dual-timer debouncing system (150ms for data updates, 500ms for configuration saves) that prevents UI "freezing" when rapidly adjusting sliders or filters.
+*   **Intelligent Database Tier Selection:** Rewrote data retrieval to automatically select the most efficient single table (`raw`, `minute`, or `hour`) based on the requested time range, eliminating the overhead of complex `UNION ALL` queries for common views.
+*   **Graph Caching & Smart Updates:** Implemented efficient in-place data updates for the "Live Session" graph, significantly reducing CPU usage during active monitoring.
+*   **Improved Aggregation Accuracy:** Fixed a long-standing "binning shift" where data points in long-term views were forced to the start of their time window. Plot points are now rendered at the **mean timestamp** of their respective bins, providing a more accurate representation of the data.
+*   **System Uptime Precision:** Resolved an issue where the "System Uptime" timeline showed inconsistent X-axis labels; it now correctly uses boot-time synchronization and high-precision locators.
+*   **Obsolete Request Cancellation:** The background data worker now checks for newer request IDs and instantly skips processing for stale requests, ensuring the UI remains responsive under heavy interaction.
+*   **Memory Leak Fix:** Resolved an issue where graph crosshairs and tooltips would fail to re-initialize after an axes clear, preventing memory accumulation.
+
+### 🐛 Bug Fixes
+*   **Critical Font Crash Resolved:** Fixed a regression where interacting with the font selection dialog would crash the application due to a return-value swap (passing a boolean instead of a font object).
+*   **Defensive Type Checking:** Added explicit `isinstance` checks and `try...except` blocks in the settings application layer to prevent future crashes from malformed configuration data.
+*   **Widget Rendering Glitches:**
+    *   **Hide Arrows (#84) & Unit Suffix (#86):** Fixed rendering logic that ignored these "Show/Hide" preferences in certain layout modes.
+    *   **Font Style Visibility (#88):** Resolved a bug where changing font styles could cause the widget to disappear.
+    *   **Font Weight Scaling (#89):** Added robust support for legacy string values (e.g., "bold", "normal") when loading weights from older configuration files.
+*   **Positioning Stability:**
+    *   **Free Move Snapping (#87):** Refined the "Free Move" logic to ensure the widget is correctly constrained to screen bounds.
+    *   **Tray Offset (#92):** Validated and fine-tuned the widget's offset calculations relative to the system tray.
+*   **Graph Settings Sliders (#93):** Replaced editable text boxes in graph settings with read-only labels for "Timeline" and "Retention" sliders to prevent invalid input.
+
+---
+
 ## [1.2.2] - January 29, 2026
 
 This is a hotfix release addressing immediate UI and stability issues reported after v1.2.1.
@@ -44,7 +95,6 @@ This is a major stable release that combines significant performance overhauls w
 *   **Phantom Speed Spikes:** Corrected the rate-limiting math to prevent erratic behavior after system wake or intense jitter.
 
 ### 🏗️ Refactoring & Maintainability
-*   **Modular Settings Dialog:** Decomposed the settings file into dedicated page classes (`General`, `Appearance`, `Graph`, etc.) for easier expansion.
 *   **Tray Icon Manager:** Extracted system tray logic into a dedicated component.
 *   **System Event Handler:** Centralized low-level Windows hooks (taskbar detection, fullscreen logic) for improved testability.
 *   **Main Widget Decoupling:** Split the monolithic `NetworkSpeedWidget` by extracting `StartupManager` (registry logic) and enhancing `PositionManager` (Z-order/window control), significantly reducing code complexity.

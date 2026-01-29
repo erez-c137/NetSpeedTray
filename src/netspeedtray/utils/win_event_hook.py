@@ -94,13 +94,13 @@ class WinEventHook(QObject, threading.Thread):
             self._is_running = False
             return
         self._thread_id = windll.kernel32.GetCurrentThreadId()
-        logger.info("WinEventHook started successfully for event %s in thread %d.", self.event_to_watch, self._thread_id)
+        logger.debug("WinEventHook started successfully for event %s in thread %d.", self.event_to_watch, self._thread_id)
         msg = wintypes.MSG()
         while self._is_running and windll.user32.GetMessageW(byref(msg), 0, 0, 0) != 0:
             windll.user32.TranslateMessage(byref(msg))
             windll.user32.DispatchMessageW(byref(msg))
         windll.user32.UnhookWinEvent(self._hook)
-        logger.info("WinEventHook stopped and unhooked for event %s.", self.event_to_watch)
+        logger.debug("WinEventHook stopped and unhooked for event %s.", self.event_to_watch)
 
     def callback(self, hWinEventHook, event, hwnd, idObject, idChild, dwEventThread, dwmsEventTime):
         """

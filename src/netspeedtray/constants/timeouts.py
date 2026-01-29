@@ -16,6 +16,18 @@ class TimeoutConstants:
 
     # System Event related intervals (milliseconds)
     TASKBAR_VALIDITY_CHECK_INTERVAL_MS: Final[int] = 3000
+    STATE_WATCHER_INTERVAL_MS: Final[int] = 1000
+    TASKBAR_RESTART_RECOVERY_DELAY_MS: Final[int] = 1000
+    TASKBAR_RESTART_RETRIES: Final[int] = 5
+
+    # Widget / UI Delays (milliseconds)
+    WIDGET_INIT_DELAY_MS: Final[int] = 500
+    GRAPH_CLOSE_REFRESH_DELAY_MS: Final[int] = 300
+    
+    # Thread / App Lifecycle (milliseconds/seconds)
+    APP_CLOSE_WAIT_MS: Final[int] = 2000
+    MONITOR_THREAD_STOP_WAIT_MS: Final[int] = 1000
+    DB_INITIALIZATION_RETRY_DELAY_SEC: Final[float] = 2.0
 
     def __init__(self) -> None:
         self.validate()

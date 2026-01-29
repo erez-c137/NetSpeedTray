@@ -23,11 +23,17 @@ class GraphDataWorker(QObject):
         """
         super().__init__()
         self.widget_state = widget_state
+        self._last_received_id = -1
 
 
     def process_data(self, start_time: Optional[datetime], end_time: datetime, interface_name: Optional[str], is_session_view: bool = False, sequence_id: int = 0):
         """Processes speed history data in a background thread."""
         try:
+            # Check if this request is already obsolete
+            if sequence_id < self._last_received_id:
+                return
+            self._last_received_id = sequence_id
+
             if not self.widget_state:
                 self.error.emit("Data source (WidgetState) not available.")
                 return

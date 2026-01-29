@@ -96,4 +96,4 @@ class InputHandler(QObject):
             if hasattr(self.widget, 'update_config'):
                 self.widget.update_config(updates)
         except Exception as e:
-            self.logger.error("Failed to save dragged position: %s", e)
+            self.logger.error("Failed to save dragged position: %s", e, exc_info=True)

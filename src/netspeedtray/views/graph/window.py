@@ -14,6 +14,10 @@ from datetime import datetime, timedelta, date
 from typing import Dict, List, Optional, Tuple, Any
 from collections import defaultdict
 
+# Suppress Matplotlib AutoDateLocator interval warnings globally
+# This warning is harmless in our context and clutters the terminal.
+warnings.filterwarnings("ignore", "AutoDateLocator was unable to pick an appropriate interval")
+
 # --- Third-Party Imports (Centralized) ---
 # NOTE: matplotlib backend is set in monitor.py entry point to ensure it's set before ANY matplotlib import
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
@@ -172,6 +176,13 @@ class GraphWindow(QWidget):
         self._config_debounce_timer.setInterval(500) # 500ms debounce
         self._config_debounce_timer.timeout.connect(self._process_pending_config_save)
         self._pending_config = {}
+
+        # Data Update Debounce (Protects DB and UI from slider hammering)
+        self._data_update_debounce_timer = QTimer(self)
+        self._data_update_debounce_timer.setSingleShot(True)
+        self._data_update_debounce_timer.setInterval(150) # 150ms debounce
+        self._data_update_debounce_timer.timeout.connect(self._execute_debounced_data_update)
+        self._pending_data_update = False
         
         # Performance & Sync State
         self._current_request_id = 0
@@ -358,9 +369,10 @@ class GraphWindow(QWidget):
             return
             
         self.logger.info("User selected interface: %s", interface_name)
-        # The main update method will automatically fetch data for the currently
-        # selected period and interface. We just need to trigger it.
-        self.update_graph()
+        
+        # Debounce the update call to prevent rapid switching flickers
+        self._pending_data_update_show_loading = True
+        self._data_update_debounce_timer.start()
 
 
     def _on_retention_changed(self, days: int = None) -> None:
@@ -402,42 +414,24 @@ class GraphWindow(QWidget):
         period_value = self._history_period_value
         period_key = constants.data.history_period.PERIOD_MAP.get(period_value, constants.data.history_period.DEFAULT_PERIOD)
         
-        start_time: Optional[datetime] = None
+        # Cache boot_time and earliest_db to avoid expensive calls on every update
         if period_key == "TIMELINE_SYSTEM_UPTIME":
-            # Cache boot_time and earliest_db to avoid expensive calls on every update
-            import time
-            curr_time = time.time()
+            import time as pytime
+            curr_time = pytime.time()
             if not self._cached_boot_time or (curr_time - self._last_cache_refresh) > 60:
                 self.logger.debug("Refreshing boot time and earliest DB timestamp cache.")
                 self._cached_boot_time = datetime.fromtimestamp(psutil.boot_time())
                 self._cached_earliest_db = self._main_widget.widget_state.get_earliest_data_timestamp()
                 self._last_cache_refresh = curr_time
 
-            boot_time = self._cached_boot_time
-            earliest_db = self._cached_earliest_db
-            
-            # Start from boot time, but don't go back further than our earliest data
-            # if that data is more recent than the boot (avoids empty voids).
-            if earliest_db:
-                start_time = max(boot_time, earliest_db)
-            else:
-                start_time = boot_time
-        elif period_key == "TIMELINE_SESSION":
-            start_time = self.session_start_time
-        elif period_key == "TIMELINE_3_HOURS":
-            start_time = now - timedelta(hours=3)
-        elif period_key == "TIMELINE_6_HOURS":
-            start_time = now - timedelta(hours=6)
-        elif period_key == "TIMELINE_12_HOURS":
-            start_time = now - timedelta(hours=12)
-        elif period_key == "TIMELINE_24_HOURS":
-            start_time = now - timedelta(days=1)
-        elif period_key == "TIMELINE_WEEK":
-            start_time = now - timedelta(weeks=1)
-        elif period_key == "TIMELINE_MONTH":
-            start_time = now - timedelta(days=30)
-        elif period_key == "TIMELINE_ALL":
-            start_time = None # Handled as 'since beginning of time'
+        start_time = constants.data.history_period.get_start_time(
+            period_key, 
+            now, 
+            session_start=self.session_start_time,
+            boot_time=self._cached_boot_time,
+            earliest_db=self._cached_earliest_db
+        )
+
         return start_time, now
 
 
@@ -693,8 +687,9 @@ class GraphWindow(QWidget):
         Args:
             value: The slider value (index) passed from the signal.
         """
-        # start = time.perf_counter()
-        # self.logger.debug(f"[PERF-{start}] _on_history_slider_released START")
+        if self.logger.isEnabledFor(logging.DEBUG):
+            start = time.perf_counter()
+            self.logger.debug(f"[PERF-{start}] _on_history_slider_released START")
         
         # Get the current value from the argument or fallback to widget
         if value is None:
@@ -706,14 +701,17 @@ class GraphWindow(QWidget):
         current_value = value
         self._history_period_value = current_value # UPDATE STATE VARIABLE
 
-        # 1. Trigger the graph to update itself with the new time period.
-        self.update_history_period(current_value)
+        # Determine if we should show the loading message (suppress for Session)
+        period_key = constants.data.history_period.PERIOD_MAP.get(current_value, "")
+        show_loading = (period_key != "TIMELINE_SESSION")
 
-        # 2. Queue the config save (Debounced)
-        self._pending_config.update({'history_period_slider_value': current_value})
-        self._config_debounce_timer.start()
+        # Instead of updating immediately, we start the debounce timer.
+        # This prevents "freezing" when someone is rapidly switching timelines.
+        self._pending_data_update_show_loading = show_loading
+        self._data_update_debounce_timer.start()
         
-        # self.logger.debug(f"[PERF-{start}] _on_history_slider_released END (dur={time.perf_counter() - start:.4f}s)")
+        if self.logger.isEnabledFor(logging.DEBUG):
+            self.logger.debug(f"[PERF-{start}] _on_history_slider_released QUEUED (150ms debounce)")
 
 
     def _notify_parent_of_setting_change(self, settings_dict: dict) -> None:
@@ -723,6 +721,25 @@ class GraphWindow(QWidget):
             self._main_widget.handle_graph_settings_update(settings_dict)
         else:
             self.logger.warning(f"Cannot notify parent of setting change: Method not found.")
+
+    def _execute_debounced_data_update(self) -> None:
+        """Actually triggers the graph and config update after the debounce period."""
+        try:
+            val = self._history_period_value
+            show_loading = getattr(self, '_pending_data_update_show_loading', True)
+            
+            self.logger.debug(f"Executing debounced data update for period index {val}")
+            
+            # 1. Trigger Graph Update
+            self.update_history_period(val, show_loading=show_loading)
+            
+            # 2. Queue Config Save
+            self._pending_config.update({'history_period_slider_value': val})
+            self._config_debounce_timer.start()
+            
+        except Exception as e:
+            self.logger.error(f"Error in debounced data update: {e}", exc_info=True)
+
 
     def _process_pending_config_save(self) -> None:
         """Slot for debounce timer to save accumulated config changes."""
@@ -768,7 +785,7 @@ class GraphWindow(QWidget):
             )
             # Schedule the actual data fetch and graph update.
             # A 50ms delay gives the UI time to fully paint itself.
-            QTimer.singleShot(50, self._perform_initial_update)
+            QTimer.singleShot(50, lambda: self.update_graph(show_loading=True))
             self.logger.debug("Scheduled initial graph update after window became visible.")
 
 
@@ -837,7 +854,8 @@ class GraphWindow(QWidget):
                 self.logger.debug("Live update tick: Refreshing session data.")
                 # Trigger the standard, worker-based update. The worker will
                 # fetch the latest in-memory session data, which is very fast.
-                self.update_graph()
+                # PASS show_loading=False to avoid flickering the "collecting data" overlay
+                self.update_graph(show_loading=False)
             # If not on session view, do nothing.
 
         except Exception as e:
@@ -856,13 +874,13 @@ class GraphWindow(QWidget):
             self.logger.error(f"Error updating history period text: {e}", exc_info=True)
 
 
-    def update_history_period(self, value: int, initial_setup: bool = False) -> None:
+    def update_history_period(self, value: int, show_loading: bool = True) -> None:
         """Triggers a graph update based on the selected history period."""
         if self._is_closing:
             return
         try:
             # The new architecture is simple: just trigger a full update.
-            self.update_graph()
+            self.update_graph(show_loading=show_loading)
             self.logger.debug("History period update triggered for a full refresh.")
         except Exception as e:
             self.logger.error(f"Error updating history period: {e}", exc_info=True)
@@ -1098,7 +1116,7 @@ class GraphWindow(QWidget):
         return 3
 
 
-    def update_graph(self):
+    def update_graph(self, show_loading: bool = True):
         """
         Triggers a data refresh by emitting a signal to the worker thread.
         This is the primary entry point for all graph updates.
@@ -1111,8 +1129,9 @@ class GraphWindow(QWidget):
         if not self.isVisible() and self._initial_load_done:
             return
 
-        # Show a loading message immediately for a responsive feel.
-        self._show_graph_message(self.i18n.COLLECTING_DATA_MESSAGE, is_error=False)
+        if show_loading:
+            # Show a loading message immediately for a responsive feel.
+            self._show_graph_message(self.i18n.COLLECTING_DATA_MESSAGE, is_error=False)
 
         # Get the current filter settings from the UI.
         start_time, end_time = self._get_time_range_from_ui()
@@ -1162,7 +1181,7 @@ class GraphWindow(QWidget):
 
     def _render_graph(self, history_data: List[Tuple[float, float, float]], total_up: float = 0.0, total_down: float = 0.0):
         """
-        Delegates rendering to GraphRenderer.
+        Delegates rendering to GraphRenderer with optimization for live updates.
         """
         try:
             self.logger.debug(f"_render_graph called with {len(history_data)} data points")
@@ -1170,31 +1189,81 @@ class GraphWindow(QWidget):
             period_key = constants.data.history_period.PERIOD_MAP.get(self._history_period_value, "")
             self.logger.debug(f"Rendering with period_key={period_key}, start={start_time}, end={end_time}")
             
-            # Delegate to Renderer
-            # rend_start = time.perf_counter()
-            result = self.renderer.render(history_data, start_time, end_time, period_key)
-            # self.logger.debug(f"[PERF] MPL Render Call Finished (dur={time.perf_counter() - rend_start:.4f}s)")
-            self.logger.debug(f"renderer.render() returned: {result is not None}")
+            # Prepare data common to both paths (logic duplicated from renderer to ensure consistency?)
+            # No, better to let renderer handle it. But update_data needs pre-processed data?
+            # To avoid duplication, let's rely on renderer.
+            
+            # ATTEMPT OPTIMIZED UPDATE
+            # Only try optimized update if we are in High Res mode (e.g. Session or < 6h)
+            # because aggregated modes might change bins.
+            # Ideally renderer.update_data handles this, but for safety, we assume update_data 
+            # only works for high-res continuous lines.
+            
+            update_success = False
+            
+            # Determine if we should try update (simple heuristic: Session view is prime candidate)
+            is_session = (period_key == "TIMELINE_SESSION")
+            
+            if is_session:
+                 # We need to prep data for update_data
+                 raw_data = np.array(history_data, dtype=float)
+                 if len(raw_data) > 0:
+                     timestamps = raw_data[:, 0]
+                     ups = raw_data[:, 1]
+                     downs = raw_data[:, 2]
+                     
+                     upload_mbps = (ups * constants.network.units.BITS_PER_BYTE) / constants.network.units.MEGA_DIVISOR
+                     download_mbps = (downs * constants.network.units.BITS_PER_BYTE) / constants.network.units.MEGA_DIVISOR
+                     upload_mbps = np.maximum(upload_mbps, 0)
+                     download_mbps = np.maximum(download_mbps, 0)
+                     
+                     plot_dates = [datetime.fromtimestamp(t) for t in timestamps]
+                     
+                     if self.renderer.update_data(plot_dates, upload_mbps, download_mbps, start_time, end_time):
+                         update_success = True
+                         # Construct result for interaction cache manually
+                         # (timestamps, x_coords (None implies recalc), up_mbps, down_mbps)
+                         from matplotlib.dates import date2num
+                         # Re-convert to bytes for cache (as expected by interaction) - wait interaction expects raw bytes?
+                         # renderer.render returns PLOTTED data (Mbps?).
+                         # interaction.update_data_cache docs say: "Bytes/s = (Mbps...)"
+                         # Wait, renderer.render conversion (lines 215):
+                         # if plotted_up is not None: plotted_up = (plotted_up * ...) / ...
+                         # Interaction expects BYTES/SEC.
+                         # But internally cache stores raw bytes.
+                         # Let's check interaction.py line 87: self._graph_data_ups = upload_speeds * 8
+                         # It expects input in Mbps?
+                         # renderer line 215: up = up_mbps * 1M / 8.
+                         # So render returns BYTES/SEC.
+                         
+                         # So here we use ups/downs directly (they are bytes/sec).
+                         result = (timestamps, None, ups, downs)
+
+            if not update_success:
+                # Delegate to Renderer for full render
+                result = self.renderer.render(history_data, start_time, end_time, period_key)
+                # If full render occurred, previous crosshairs are gone. Restore them.
+                if hasattr(self.interaction, 'refresh_overlays'):
+                    self.interaction.refresh_overlays()
             
             if result:
-                timestamps, x_coords, ups, downs = result
-                self.interaction.update_data_cache(timestamps, ups, downs, x_coords=x_coords)
-                self.logger.debug(f"Updated interaction cache with {len(timestamps)} points")
+                processed_timestamps, x_coords, processed_ups, processed_downs = result
+                # Note: processed_ups/downs from render() are already converted to bytes/sec if they were mbps.
+                # If we did the manual update, 'ups' and 'downs' from history_data are ALREADY bytes/sec.
+                self.interaction.update_data_cache(processed_timestamps, processed_ups, processed_downs, x_coords=x_coords)
+                self.logger.debug(f"Updated interaction cache with {len(processed_timestamps)} points")
             else:
                 self.interaction.update_data_cache(np.array([]), np.array([]), np.array([]))
-                self.logger.warning("renderer.render() returned None - no data to cache")
 
             # Apply Theme (Color synchronization)
             if hasattr(self, 'renderer'):
                 self.renderer.apply_theme(self._is_dark_mode)
-                self.logger.debug(f"Applied theme: dark_mode={self._is_dark_mode}")
 
             # Update Stats Bar with pre-calculated totals
             self._update_stats_bar(history_data, total_up, total_down)
             
-            # Force canvas visibility and redraw
+            # Force canvas visibility
             self.canvas.setVisible(True)
-            # self.canvas.draw_idle()  # REMOVED: Redundant, renderer.render() already called draw_idle()
             self.logger.debug(f"Canvas visible={self.canvas.isVisible()}, size={self.canvas.size()}")
             
         except Exception as e:

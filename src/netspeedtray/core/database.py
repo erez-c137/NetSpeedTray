@@ -44,9 +44,10 @@ class DatabaseWorker(QThread):
 
     def run(self) -> None:
         """The main event loop for the database thread with retry logic."""
-        max_retries = 3
-        retry_delay = 2.0 # seconds
-        
+        max_retries = 5
+        base_delay = constants.timeouts.DB_INITIALIZATION_RETRY_DELAY_SEC # seconds
+        max_delay = 30.0
+
         initialized = False
         for attempt in range(max_retries):
             try:
@@ -55,16 +56,19 @@ class DatabaseWorker(QThread):
                 initialized = True
                 break
             except sqlite3.Error as e:
-                self.logger.error("Database initialization attempt %d failed: %s", attempt + 1, e)
+                # Exponential Backoff
+                delay = min(max_delay, base_delay * (2 ** attempt))
+                self.logger.error("Database initialization attempt %d failed: %s. Retrying in %.2fs...", attempt + 1, e, delay)
+                
                 if attempt < max_retries - 1:
-                    self.msleep(int(retry_delay * 1000))
+                    self.msleep(int(delay * 1000))
         
         if not initialized:
             self.logger.critical("Database initialization failed after %d attempts.", max_retries)
             self.error.emit(f"Critical: Database initialization failed after multiple attempts.")
             return
 
-        self.logger.info("Database worker thread started successfully.")
+        self.logger.debug("Database worker thread started successfully.")
         while not self._stop_event.is_set():
             if self._queue:
                 task, data = self._queue.popleft()
@@ -197,9 +201,15 @@ class DatabaseWorker(QThread):
             raise 
 
     def _migrate_v2_to_v3(self, cursor: sqlite3.Cursor) -> None:
-        """Example migration: Add a new column or table."""
-        # This is a placeholder for v3. Currently v3 == v2 structure-wise.
-        pass
+        """
+        Migration from v2 to v3.
+        
+        Currently, v3 introduces no schema changes but serves as a placeholder
+        to ensure the migration pipeline handles version bumps gracefully.
+        """
+        self.logger.info("Executing v2->v3 migration (No schema changes required).")
+        # Example of what would go here:
+        # cursor.execute("ALTER TABLE speed_history_raw ADD COLUMN packet_loss REAL DEFAULT 0.0")
 
     def _check_and_create_schema(self) -> None:
         """
@@ -209,7 +219,7 @@ class DatabaseWorker(QThread):
         current_version = self._get_current_db_version()
 
         if current_version == self._DB_VERSION:
-            self.logger.info("Database schema is up to date (Version %d).", self._DB_VERSION)
+            self.logger.debug("Database schema is up to date (Version %d).", self._DB_VERSION)
             return
 
         if current_version > 0:

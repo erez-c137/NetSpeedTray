@@ -43,7 +43,11 @@ from netspeedtray.views.widget.layout import WidgetLayoutManager
 from netspeedtray.core.system_events import SystemEventHandler
 from netspeedtray.views.widget.layout import WidgetLayoutManager
 from netspeedtray.views.widget.theme import WidgetThemeManager
+from netspeedtray.core.system_events import SystemEventHandler
+from netspeedtray.views.widget.layout import WidgetLayoutManager
+from netspeedtray.views.widget.theme import WidgetThemeManager
 from netspeedtray.core.startup_manager import StartupManager
+from netspeedtray.core.config_controller import ConfigController
 
 # --- Type Checking ---
 if TYPE_CHECKING:
@@ -62,21 +66,27 @@ class NetworkSpeedWidget(QWidget):
         """Initialize the NetworkSpeedTray with core components and UI setup."""
         super().__init__(parent)
         self.logger = logging.getLogger(f"{constants.app.APP_NAME}.{self.__class__.__name__}")
-        self.logger.info("Initializing NetworkSpeedWidget...")
+        self.logger.debug("Initializing NetworkSpeedWidget...")
         self.settings_dialog: Optional[SettingsDialog] = None
 
         # --- Core Application State ---
         self.session_start_time = datetime.now()
         self.config_manager = CoreConfigManager()
-        self.config: Dict[str, Any] = config or self._load_initial_config(taskbar_height)
+        
+        # Initialize ConfigController
+        # NOTE: We pass 'self' (the widget) to the controller. This requires careful handling
+        # in the controller to avoid circular discrepancies, but allows it to orchestrate updates.
+        self.config_controller = ConfigController(self, self.config_manager)
+        
+        self.config: Dict[str, Any] = config or self.config_controller.load_initial_config(taskbar_height)
         
         if i18n is None:
             raise ValueError("An i18n instance must be provided to NetworkSpeedWidget.")
         self.i18n = i18n
         
-        # These MUST be initialized before _init_managers() because it checks self.metrics
-        self.font: QFont = None
-        self.metrics: QFontMetrics = None
+        # These MUST be initialized before _init_managers() because it checks self.current_metrics
+        self.current_font: QFont = None
+        self.current_metrics: QFontMetrics = None
 
         self._init_managers() # Initialize managers first
         self.theme_manager.apply_theme_aware_defaults()
@@ -94,7 +104,7 @@ class NetworkSpeedWidget(QWidget):
         self.monitor_thread: NetworkMonitorThread
         self.graph_window: Optional[GraphWindow] = None
         self.app_icon: QIcon
-        # Note: self.font and self.metrics are initialized earlier before _init_managers()
+        # Note: self.current_font and self.current_metrics are initialized earlier before _init_managers()
         
         self.upload_speed: float = 0.0
         self.download_speed: float = 0.0
@@ -150,10 +160,10 @@ class NetworkSpeedWidget(QWidget):
         self.logger.debug("PositionManager monitoring started.")
 
         # This is the "Safety Net" timer. It runs to catch states missed by events.
-        self._state_watcher_timer.setInterval(1000)
+        self._state_watcher_timer.setInterval(constants.timeouts.STATE_WATCHER_INTERVAL_MS)
         self._state_watcher_timer.timeout.connect(self._execute_refresh)
         self._state_watcher_timer.start()
-        self.logger.debug("Safety net state watcher timer started (1000ms).")
+        self.logger.debug(f"Safety net state watcher timer started ({constants.timeouts.STATE_WATCHER_INTERVAL_MS}ms).")
 
 
     def _init_core_components(self) -> None:
@@ -194,7 +204,7 @@ class NetworkSpeedWidget(QWidget):
         self.theme_manager = WidgetThemeManager(self)
         self.startup_manager = StartupManager()
         
-        if not self.metrics:
+        if not self.current_metrics:
             self.layout_manager.init_font()
 
         try:
@@ -204,7 +214,7 @@ class NetworkSpeedWidget(QWidget):
                 config=self.config,
                 widget=self,
                 taskbar_info=taskbar_info,
-                font_metrics=self.metrics
+                font_metrics=self.current_metrics
             )
             self.position_manager = PositionManager(window_state, parent=self)
             # Note: InputHandler is initialized in _init_ui_components() after tray_manager is created
@@ -280,7 +290,7 @@ class NetworkSpeedWidget(QWidget):
             self._execute_refresh()
             
             if self.isVisible():
-                self.logger.info("Widget shown after stabilization")
+                self.logger.debug("Widget shown after stabilization")
         except Exception as e:
             self.logger.error(f"Error in delayed initial show: {e}", exc_info=True)
             # Ensure widget is hidden if an error occurs during the initial check.
@@ -334,12 +344,7 @@ class NetworkSpeedWidget(QWidget):
 
 
 
-    def _load_initial_config(self, taskbar_height: int) -> Dict[str, Any]:
-        """Load configuration and inject taskbar height."""
-        self.logger.debug("Loading initial configuration...")
-        config = self.config_manager.load()
-        config["taskbar_height"] = taskbar_height
-        return config
+    # _load_initial_config removed as it is now handled by ConfigController class
 
 
     def _on_theme_changed(self) -> None:
@@ -397,7 +402,7 @@ class NetworkSpeedWidget(QWidget):
             self.system_event_handler.immediate_hide_requested.connect(lambda: self.setVisible(False))
             
             # Handle taskbar restarts
-            self.system_event_handler.taskbar_restarted.connect(lambda: [QTimer.singleShot(i * 1000, self._execute_refresh) for i in range(5)])
+            self.system_event_handler.taskbar_restarted.connect(lambda: [QTimer.singleShot(i * constants.timeouts.TASKBAR_RESTART_RECOVERY_DELAY_MS, self._execute_refresh) for i in range(constants.timeouts.TASKBAR_RESTART_RETRIES)])
             
             self.system_event_handler.start()
 
@@ -438,12 +443,12 @@ class NetworkSpeedWidget(QWidget):
             # Draw user-configurable background
             self.renderer.draw_background(painter, self.rect(), render_config)
 
-            if not self.renderer or not self.metrics:
+            if not self.renderer or not self.current_metrics:
                 self.logger.error("Renderer or metrics not initialized during paintEvent")
                 self._draw_paint_error(painter, "Render Error")
                 return
 
-            painter.setFont(self.font)
+            painter.setFont(self.current_font)
 
             upload_bytes_sec = (self.upload_speed * constants.network.units.MEGA_DIVISOR) / constants.network.units.BITS_PER_BYTE
             download_bytes_sec = (self.download_speed * constants.network.units.MEGA_DIVISOR) / constants.network.units.BITS_PER_BYTE
@@ -496,8 +501,8 @@ class NetworkSpeedWidget(QWidget):
             error_color.setAlpha(200) # Keep alpha for translucency
             p.fillRect(self.rect(), error_color)
             p.setPen(Qt.GlobalColor.white)
-            if self.font:
-                p.setFont(self.font)
+            if self.current_font:
+                p.setFont(self.current_font)
             p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, text)
 
             if created_painter:
@@ -568,11 +573,11 @@ class NetworkSpeedWidget(QWidget):
 
 
     def closeEvent(self, event: QCloseEvent) -> None:
-        self.logger.info("Close event received. Initiating cleanup...")
+        self.logger.debug("Close event received. Initiating cleanup...")
         try:
             self.cleanup()
             event.accept()
-            self.logger.info("Widget cleanup complete. Proceeding to close.")
+            self.logger.debug("Widget cleanup complete. Proceeding to close.")
             app = QApplication.instance()
             if app:
                 app.quit()
@@ -615,84 +620,13 @@ class NetworkSpeedWidget(QWidget):
 
 
     def apply_all_settings(self) -> None:
-        """
-        Applies all settings from the current config in a specific, synchronous order
-        to prevent race conditions: update components -> update colors -> set font & resize -> reposition -> repaint.
-        """
-        self.logger.debug("Applying all settings from current configuration...")
-        if not self.config:
-            raise RuntimeError("Configuration not loaded.")
-
-        try:
-            # 1. Update all non-visual components.
-            if self.renderer:
-                self.renderer.update_config(self.config)
-            if self.controller:
-                self.controller.apply_config(self.config)
-            if self.monitor_thread:
-                update_rate = self.config.get("update_rate", constants.config.defaults.DEFAULT_UPDATE_RATE)
-                self.monitor_thread.set_interval(update_rate)
-            if self.widget_state:
-                self.widget_state.apply_config(self.config)
-
-            self.logger.debug("Synchronizing internal QColor objects with current config.")
-            self.default_color = QColor(self.config.get("default_color", constants.config.defaults.DEFAULT_COLOR))
-            self.high_color = QColor(self.config.get("high_speed_color", constants.config.defaults.DEFAULT_HIGH_SPEED_COLOR))
-            self.low_color = QColor(self.config.get("low_speed_color", constants.config.defaults.DEFAULT_LOW_SPEED_COLOR))
-
-            # 2. Directly set the font, which also triggers the resize.
-            self.layout_manager.set_font(resize=True)
-            
-            # 3. AFTER resizing, update the position.
-            self.update_position()
-            
-            # 4. Schedule a repaint to reflect all changes.
-            self.update()
-            
-            self.logger.debug("All settings applied successfully.")
-        except Exception as e:
-            self.logger.error(f"Error applying settings to components: {e}", exc_info=True)
-            raise RuntimeError(f"Failed to apply settings: {e}") from e
+        """Delegates to ConfigController."""
+        self.config_controller.apply_all_settings()
 
 
     def handle_settings_changed(self, updated_config: Dict[str, Any], save_to_disk: bool = True) -> None:
-        """
-        Handles configuration changes. Applies them to the widget and optionally saves them.
-        """
-        self.logger.debug(f"Handling settings change request... (Save to disk: {save_to_disk})")
-        
-        old_config = self.config.copy()
-
-        try:
-            free_move_was_enabled = old_config.get('free_move', False)
-            free_move_is_now_enabled = updated_config.get('free_move', False)
-
-            if free_move_was_enabled and not free_move_is_now_enabled:
-                self.logger.debug("Free Move was disabled. Clearing saved coordinates.")
-                updated_config['position_x'] = None
-                updated_config['position_y'] = None
-            
-            # Capture current position when Free Move is active upon saving
-            if free_move_is_now_enabled:
-                current_pos = self.pos()
-                updated_config['position_x'] = current_pos.x()
-                updated_config['position_y'] = current_pos.y()
-                self.logger.debug(f"Free Move is active. Capturing current position ({current_pos.x()}, {current_pos.y()}) for save.")
-
-            if save_to_disk:
-                self.update_config(updated_config)
-            else:
-                self.config.update(updated_config)
-            
-            # apply_all_settings now handles the entire visual update transaction correctly.
-            self.apply_all_settings()
-
-            self.logger.debug("Settings successfully handled and applied.")
-
-        except Exception as e:
-            self.logger.error(f"Failed to handle settings change: {e}", exc_info=True)
-            self.config = old_config # Rollback in-memory config
-            raise
+        """Delegates to ConfigController."""
+        self.config_controller.handle_settings_changed(updated_config, save_to_disk)
 
 
     def show_settings(self) -> None:
@@ -739,29 +673,13 @@ class NetworkSpeedWidget(QWidget):
 
 
     def _rollback_config(self, old_config: Dict[str, Any]) -> None:
-        """Restores a previous configuration state."""
-        self.logger.warning("Rolling back configuration changes due to apply failure.")
-        self.config = old_config
-        try:
-            self.config_manager.save(self.config)
-            self.logger.info("Configuration rolled back and saved successfully.")
-        except Exception as e:
-            self.logger.error(f"CRITICAL: Error saving rolled-back configuration: {e}", exc_info=True)
+        """Delegates to ConfigController."""
+        self.config_controller.rollback_config(old_config)
 
 
     def update_config(self, updates: Dict[str, Any], save_to_disk: bool = True) -> None:
-        """Updates the internal configuration and optionally saves it to disk."""
-        self.logger.debug(f"Updating configuration with {len(updates)} items... (Save: {save_to_disk})")
-        if not self.config or not self.config_manager:
-            raise RuntimeError("Configuration or ConfigManager not initialized.")
-        try:
-            self.config.update(updates)
-            if save_to_disk:
-                self.config_manager.save(self.config)
-                self.logger.debug("Configuration updated and saved successfully.")
-        except Exception as e:
-            self.logger.error(f"Error updating/saving configuration: {e}", exc_info=True)
-            raise RuntimeError(f"Failed to save configuration: {e}") from e
+        """Delegates to ConfigController."""
+        self.config_controller.update_config(updates, save_to_disk)
 
 
     def handle_graph_settings_update(self, updates: Dict[str, Any]) -> None:
@@ -775,20 +693,7 @@ class NetworkSpeedWidget(QWidget):
         self.update_config(updates)
 
 
-    def save_position(self) -> None:
-        """
-        Instantly saves the widget's current X and Y coordinates to the configuration.
-        This provides a "live save" experience when the user moves the widget,
-        ensuring its position is remembered immediately after a drag, even before
-        the main settings are saved.
-        """
-        current_pos = self.pos()
-        position_updates = {
-            "position_x": current_pos.x(),
-            "position_y": current_pos.y()
-        }
-        self.logger.debug(f"Live-saving position after drag: ({current_pos.x()}, {current_pos.y()})")
-        self.update_config(position_updates)
+
 
 
     def open_graph_window(self) -> None:
@@ -806,7 +711,7 @@ class NetworkSpeedWidget(QWidget):
             from netspeedtray.views.graph import GraphWindow
 
             if self.graph_window is None or not self.graph_window.isVisible():
-                self.logger.info("Creating new GraphWindow instance.")
+                self.logger.debug("Creating new GraphWindow instance.")
                 
                 self.graph_window = GraphWindow(
                     main_widget=self, # Pass self as the main_widget reference
@@ -854,26 +759,10 @@ class NetworkSpeedWidget(QWidget):
         self.activateWindow()
 
         # Use singleShot with a slightly longer delay to allow Windows focus settling
-        QTimer.singleShot(300, self._execute_refresh)
+        QTimer.singleShot(constants.timeouts.GRAPH_CLOSE_REFRESH_DELAY_MS, self._execute_refresh)
 
 
-    def update_config(self, new_settings: Dict[str, Any], save_to_disk: bool = True) -> None:
-        """
-        Updates the widget configuration and optionally saves it to disk.
-        """
-        self.logger.debug("Updating configuration...")
-        try:
-            self.config.update(new_settings)
-            
-            if hasattr(self, 'renderer') and self.renderer:
-                self.renderer.update_config(self.config)
-                
-            if save_to_disk:
-                self.config_manager.save(self.config)
-                
-            self.update()
-        except Exception as e:
-            self.logger.error(f"Failed to update config: {e}", exc_info=True)
+    # update_config (redundant definition) removed
 
 
     def get_config(self) -> Dict[str, Any]:
@@ -950,27 +839,6 @@ class NetworkSpeedWidget(QWidget):
         # 3. Notify the WidgetState, which will trigger the grace period logic.
         self.widget_state.update_retention_period()
 
-
-        registry_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
-        app_name = constants.app.APP_NAME
-        try:
-            import winreg
-            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, registry_path, 0, winreg.KEY_WRITE)
-            with key:
-                if enable:
-                    executable_command = self._get_executable_path()
-                    winreg.SetValueEx(key, app_name, 0, winreg.REG_SZ, executable_command)
-                    self.logger.info(f"Added startup entry '{app_name}' pointing to: {executable_command}")
-                else:
-                    try:
-                        winreg.DeleteValue(key, app_name)
-                        self.logger.info(f"Removed startup entry '{app_name}'.")
-                    except FileNotFoundError:
-                        self.logger.debug(f"Startup entry '{app_name}' not found, nothing to remove.")
-        except Exception as e:
-            raise RuntimeError(f"Failed to modify startup registry: {e}") from e
-
-
     def get_unified_interface_list(self) -> List[str]:
         """
         Returns a comprehensive, sorted list of network interfaces by combining
@@ -1010,7 +878,7 @@ class NetworkSpeedWidget(QWidget):
 
     def cleanup(self) -> None:
         """Performs necessary cleanup and a single, final save of the configuration."""
-        self.logger.info("Performing widget cleanup...")
+        self.logger.debug("Performing widget cleanup...")
         try:
             # --- Stop all external event listeners and timers ---
             # self.foreground_hook and movesize_hook are likely legacy, but keeping check is harmless
@@ -1048,9 +916,9 @@ class NetworkSpeedWidget(QWidget):
             else:
                 self.update_config({"position_x": None, "position_y": None}, save_to_disk=False)
             
-            self.logger.info("Performing final configuration save...")
+            self.logger.debug("Performing final configuration save...")
             self.config_manager.save(self.config)
 
-            self.logger.info("Widget cleanup finished successfully.")
+            self.logger.debug("Widget cleanup finished successfully.")
         except Exception as e:
             self.logger.error(f"Unexpected error during cleanup: %s", e, exc_info=True)

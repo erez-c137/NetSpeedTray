@@ -91,7 +91,7 @@ class WidgetState(QObject):
         self._read_conns: Dict[int, sqlite3.Connection] = {}
         self._read_conns_lock = threading.Lock()
 
-        self.logger.info("WidgetState initialized with threaded database worker.")
+        self.logger.debug("WidgetState initialized with threaded database worker.")
 
 
     def _get_read_conn(self) -> sqlite3.Connection:
@@ -278,12 +278,7 @@ class WidgetState(QObject):
         # 1. Determine Target Resolution ('auto')
         target_res = resolution
         if target_res == 'auto':
-            if duration > 14 * 86400: # > 14 days
-                target_res = 'hour'
-            elif duration > 48 * 3600: # > 48 hours
-                target_res = 'minute'
-            else:
-                target_res = 'raw'
+            target_res = constants.data.history_period.get_target_resolution(start_time, end_time)
 
         # Helper to map resolution to seconds
         res_map = {'raw': 1, 'minute': 60, 'hour': 3600}
@@ -291,85 +286,74 @@ class WidgetState(QObject):
 
         is_all_interfaces = interface_name is None or str(interface_name).lower() == "all"
         
-        # 2. Select Tables based on time coverage to avoid querying empty ranges
-        # Raw: 24h, Minute: 30d, Hour: 1y (approx)
-        tables_config = [
-            ("speed_history_raw", "upload_bytes_sec", "download_bytes_sec", 1, 24 * 3600),
-            ("speed_history_minute", "upload_avg", "download_avg", 60, 30 * 86400),
-            ("speed_history_hour", "upload_avg", "download_avg", 3600, 365 * 86400 * 2) # 2 years safety
-        ]
-        
         try:
             conn = self._get_read_conn()
             cursor = conn.cursor()
             
-            params: List[Any] = []
-            query_parts = []
+            # --- INTELLIGENT TABLE SELECTION ---
+            # Instead of a complex UNION, we pick the most appropriate SINGLE table 
+            # if the requested range fits entirely within its retention window.
+            # This drastically reduces query complexity for common 'Last X Hours' views.
             
-            for table, up_col, down_col, source_interval, retention_sec in tables_config:
-                # Optimized table skipping
-                if _end_ts < (_now_ts - retention_sec):
-                    continue
-                
-                # Construct the Query
-                time_expr = "timestamp"
-                needs_agg = source_interval < target_interval
-                
+            target_table = "speed_history_hour" # Default fallback
+            up_col, down_col = "upload_avg", "download_avg"
+            source_interval = 3600
+            
+            if _start_ts >= (_now_ts - constants.data.history_period.RES_RAW_THRESHOLD):
+                target_table = "speed_history_raw"
+                up_col, down_col = "upload_bytes_sec", "download_bytes_sec"
+                source_interval = 1
+            elif _start_ts >= (_now_ts - constants.data.history_period.RES_MINUTE_THRESHOLD):
+                target_table = "speed_history_minute"
+                up_col, down_col = "upload_avg", "download_avg"
+                source_interval = 60
+
+            # Construct the Query
+            time_expr = "timestamp"
+            needs_agg = source_interval < target_interval
+            
+            if needs_agg:
+                time_expr = f"(timestamp / {target_interval}) * {target_interval}"
+            
+            if is_all_interfaces:
                 if needs_agg:
-                    time_expr = f"(timestamp / {target_interval}) * {target_interval}"
-                
-                select_clause = ""
-                if is_all_interfaces:
-                    if needs_agg:
-                        # Spatial + Temporal Aggregation
-                        select_clause = f"SELECT {time_expr} as timestamp, SUM({up_col}) / COUNT(DISTINCT timestamp) as up, SUM({down_col}) / COUNT(DISTINCT timestamp) as down"
-                    else:
-                        # Spatial Aggregation Only
-                        select_clause = f"SELECT {time_expr} as timestamp, SUM({up_col}) as up, SUM({down_col}) as down"
+                    # Spatial + Temporal Aggregation
+                    select_clause = f"SELECT {time_expr}, SUM({up_col}) / COUNT(DISTINCT timestamp), SUM({down_col}) / COUNT(DISTINCT timestamp)"
                 else:
-                    if needs_agg:
-                        # Temporal Aggregation Only
-                        select_clause = f"SELECT {time_expr} as timestamp, AVG({up_col}) as up, AVG({down_col}) as down"
-                    else:
-                        # Raw fetch
-                        select_clause = f"SELECT {time_expr} as timestamp, {up_col} as up, {down_col} as down"
-
-                where_clause = f"FROM {table} WHERE timestamp BETWEEN ? AND ?"
-                group_clause = f"GROUP BY {time_expr}" if (is_all_interfaces or needs_agg) else ""
-                
-                if not is_all_interfaces:
-                    where_clause += " AND interface_name = ?"
-                
-                query_part = f"{select_clause} {where_clause} {group_clause}"
-                
-                params.extend([_start_ts, _end_ts])
-                if not is_all_interfaces:
-                    params.append(interface_name)
-                    
-                query_parts.append(query_part)
-            
-            if not query_parts:
-                return []
-
-            union_query = " UNION ALL ".join(query_parts)
-            
-            # Final outer aggregation handling overlaps
-            if is_all_interfaces or target_res != 'raw':
-                 final_query = f"SELECT timestamp, AVG(up), AVG(down) FROM ({union_query}) GROUP BY timestamp ORDER BY timestamp"
+                    # Spatial Aggregation Only
+                    select_clause = f"SELECT {time_expr}, SUM({up_col}), SUM({down_col})"
             else:
-                 final_query = f"{union_query} ORDER BY timestamp"
+                if needs_agg:
+                    # Temporal Aggregation Only
+                    select_clause = f"SELECT {time_expr}, AVG({up_col}), AVG({down_col})"
+                else:
+                    # Raw fetch
+                    select_clause = f"SELECT {time_expr}, {up_col}, {down_col}"
+
+            query = f"{select_clause} FROM {target_table} WHERE timestamp BETWEEN ? AND ?"
+            params: List[Any] = [_start_ts, _end_ts]
             
-            cursor.execute(final_query, tuple(params))
+            if not is_all_interfaces:
+                query += " AND interface_name = ?"
+                params.append(interface_name)
+            
+            if is_all_interfaces or needs_agg:
+                query += f" GROUP BY {time_expr}"
+            
+            query += " ORDER BY timestamp"
+            
+            # self.logger.debug(f"Executing Optimized Query: {query} with {params}")
+            cursor.execute(query, tuple(params))
             
             if return_raw:
                 results = [(row[0], row[1], row[2]) for row in cursor.fetchall() if row[1] is not None]
             else:
                 results = [(datetime.fromtimestamp(row[0]), row[1], row[2]) for row in cursor.fetchall() if row[1] is not None]
 
-            self.logger.debug("Retrieved %d records (Res: %s) for %s to %s.", len(results), target_res, start_time, end_time)
+            self.logger.debug("Retrieved %d records (Res: %s, Table: %s) for %s to %s.", len(results), target_res, target_table, start_time, end_time)
             return results
         except sqlite3.Error as e:
-            self.logger.error("Error retrieving unified speed history: %s", e, exc_info=True)
+            self.logger.error("Error retrieving optimized speed history: %s", e, exc_info=True)
             return []
 
 
@@ -475,4 +459,4 @@ class WidgetState(QObject):
             self.max_history_points = new_max_points
             self.in_memory_history = deque(self.in_memory_history, maxlen=self.max_history_points)
             self.aggregated_history = deque(self.aggregated_history, maxlen=self.max_history_points)
-            self.logger.info("In-memory speed history capacity updated to %d points.", self.max_history_points)
+            self.logger.debug("In-memory speed history capacity updated to %d points.", self.max_history_points)

@@ -46,7 +46,7 @@ class NetworkController(QObject):
 
         self.repriming_needed: int = 0  # Number of priming cycles needed after a resume
 
-        self.logger.info("NetworkController initialized.")
+        self.logger.debug("NetworkController initialized.")
 
 
     def set_view(self, view: 'NetworkSpeedWidget') -> None:
@@ -103,7 +103,7 @@ class NetworkController(QObject):
             self.display_speed_updated.emit(0.0, 0.0)
             self.repriming_needed -= 1
             if self.repriming_needed == 0:
-                self.logger.info("Re-priming complete. Resuming normal speed calculation.")
+                self.logger.debug("Re-priming complete. Resuming normal speed calculation.")
             return
 
         # --- NORMAL OPERATION ---
@@ -228,7 +228,7 @@ class NetworkController(QObject):
             new_primary_interface = get_primary_interface_name()
             if self.primary_interface != new_primary_interface:
                 if new_primary_interface:
-                    self.logger.info("Found new primary interface: '%s'", new_primary_interface)
+                    self.logger.debug("Found new primary interface: '%s'", new_primary_interface)
                 else:
                     self.logger.warning("Could not determine primary interface. Speeds may show as 0 in 'Auto' mode.")
                 self.primary_interface = new_primary_interface

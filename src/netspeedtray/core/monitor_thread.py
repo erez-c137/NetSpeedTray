@@ -30,8 +30,9 @@ class NetworkMonitorThread(QThread):
         super().__init__()
         self.interval = interval
         self._is_running = True
+        self.consecutive_errors = 0
         self.logger = logger
-        self.logger.info("NetworkMonitorThread initialized with interval %.2fs", interval)
+        self.logger.debug("NetworkMonitorThread initialized with interval %.2fs", interval)
 
     def set_interval(self, interval: float) -> None:
         """Dynamically updates the polling interval."""
@@ -39,20 +40,41 @@ class NetworkMonitorThread(QThread):
         self.logger.debug("Monitoring interval updated to %.2fs", self.interval)
 
     def run(self) -> None:
-        """Main monitoring loop."""
+        """Main monitoring loop with circuit breaker logic."""
         self.logger.debug("NetworkMonitorThread starting loop...")
+        
         while self._is_running:
             try:
                 # Polling network stats: This is the I/O that we want off the main thread.
                 counters = psutil.net_io_counters(pernic=True)
                 if counters:
                     self.counters_ready.emit(counters)
+                    
+                # Success - reset circuit breaker
+                if self.consecutive_errors > 0:
+                    self.logger.info("Network monitor recovered from transient errors.")
+                    self.consecutive_errors = 0
+                    
             except (psutil.AccessDenied, OSError) as e:
-                self.logger.error("Permission denied or OS error fetching stats: %s", e)
-                # We emit but don't stop the thread, permitting recovery if it's transient.
+                self.consecutive_errors += 1
+                self.logger.error("Error fetching stats (Attempt %d/10): %s", self.consecutive_errors, e, exc_info=True)
+                
+                if self.consecutive_errors > 10:
+                    self.logger.critical("Too many consecutive errors (%d). Stopping monitor thread to prevent log spam.", self.consecutive_errors)
+                    self.error_occurred.emit(f"Critical: Monitor thread stopped after {self.consecutive_errors} failures: {e}")
+                    self._is_running = False
+                    break
+                    
             except Exception as e:
                 self.logger.error("Unexpected error in monitoring thread: %s", e, exc_info=True)
                 self.error_occurred.emit(str(e))
+                # For unexpected exceptions, we might also want to increment error count
+                # or handle differently. For now, we replicate original 'warn but continue' behavior
+                # or arguably, we should also track these. Let's count them too for safety.
+                self.consecutive_errors += 1
+                if self.consecutive_errors > 10:
+                    self._is_running = False
+                    break
             
             # Use precise sleep to maintain timing.
             time.sleep(self.interval)
@@ -60,5 +82,5 @@ class NetworkMonitorThread(QThread):
     def stop(self) -> None:
         """Gracefully stops the monitoring loop."""
         self._is_running = False
-        self.wait(1000) # Wait up to 1 second for thread to terminate
+        self.wait(constants.timeouts.MONITOR_THREAD_STOP_WAIT_MS) # Wait for thread to terminate
         self.logger.info("NetworkMonitorThread stopped.")

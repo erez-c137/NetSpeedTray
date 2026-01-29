@@ -71,7 +71,7 @@ class SpeedTimerManager(QObject):
         self.logger.debug("Initializing speed timer...")
         try:
             self._init_timers()
-            self.logger.info("SpeedTimerManager initialized successfully")
+            self.logger.debug("SpeedTimerManager initialized successfully")
         except Exception as e:
             self.logger.critical("Failed to initialize SpeedTimerManager: %s", e, exc_info=True)
             raise
@@ -231,4 +231,4 @@ class SpeedTimerManager(QObject):
         if "speed" in self.timers:
             cleanup_timer(self.timers["speed"])
             del self.timers["speed"]
-        self.logger.info("Speed timer cleanup completed")
+        self.logger.debug("Speed timer cleanup completed")

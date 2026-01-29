@@ -151,7 +151,7 @@ class I18nStrings:
              logger.error(f"Failed to load strings for '{self.language}'. Using English fallbacks.")
              self._strings = self._fallback_strings
         
-        logger.info(f"I18nStrings initialized. Effective language: {self.language}")
+        logger.debug(f"I18nStrings initialized. Effective language: {self.language}")
 
     def validate(self) -> None:
         """

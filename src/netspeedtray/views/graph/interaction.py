@@ -183,6 +183,19 @@ class GraphInteractionHandler(QObject):
         if hasattr(self.window, 'renderer') and self.window.renderer.canvas:
             self.window.renderer.canvas.draw_idle()
 
+    def refresh_overlays(self):
+        """
+        Ensures crosshairs and tooltips exist on the current axes.
+        Called after axes are cleared/recreated.
+        """
+        # Re-initialize overlays (Matplotlib clears artists on ax.clear())
+        # It's safer to recreate them than to try to re-attach detached artists.
+        self._init_ui_overlays()
+        
+        # Ensure tooltip is raised
+        if self.tooltip:
+            self.tooltip.raise_()
+
     def _on_legend_pick(self, event):
         """Handles legend clicking."""
         legend = event.artist

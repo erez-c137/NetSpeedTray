@@ -38,6 +38,10 @@ class ConfigConstants:
     DEFAULT_FONT_FAMILY: Final[str] = fonts.DEFAULT_FONT
     DEFAULT_FONT_SIZE: Final[int] = 9
     DEFAULT_FONT_WEIGHT: Final[int] = fonts.WEIGHT_DEMIBOLD
+    DEFAULT_USE_SEPARATE_ARROW_FONT: Final[bool] = False
+    DEFAULT_ARROW_FONT_FAMILY: Final[str] = fonts.DEFAULT_FONT
+    DEFAULT_ARROW_FONT_SIZE: Final[int] = 9
+    DEFAULT_ARROW_FONT_WEIGHT: Final[int] = fonts.WEIGHT_DEMIBOLD
     DEFAULT_COLOR: Final[str] = color.WHITE # Referencing color palette
     DEFAULT_COLOR_CODING: Final[bool] = False
     DEFAULT_HIGH_SPEED_THRESHOLD: Final[float] = 5.0
@@ -114,6 +118,10 @@ class ConfigConstants:
         "graph_window_pos": None,
         "history_period_slider_value": 0,  # UI-specific state
         "show_legend": False,
+        "use_separate_arrow_font": DEFAULT_USE_SEPARATE_ARROW_FONT,
+        "arrow_font_family": DEFAULT_ARROW_FONT_FAMILY,
+        "arrow_font_size": DEFAULT_ARROW_FONT_SIZE,
+        "arrow_font_weight": DEFAULT_ARROW_FONT_WEIGHT,
     }
     
     # --- Schema Definition for Modern Config Validation ---
@@ -148,6 +156,10 @@ class ConfigConstants:
         "speed_display_mode": {"type": str, "default": DEFAULT_SPEED_DISPLAY_MODE, "choices": ["auto", "always_mbps"]},
         "decimal_places": {"type": int, "default": DEFAULT_DECIMAL_PLACES, "min": 0, "max": 2},
         "text_alignment": {"type": str, "default": DEFAULT_TEXT_ALIGNMENT, "choices": ["left", "center", "right"]},
+        "use_separate_arrow_font": {"type": bool, "default": DEFAULT_USE_SEPARATE_ARROW_FONT},
+        "arrow_font_family": {"type": str, "default": DEFAULT_ARROW_FONT_FAMILY},
+        "arrow_font_size": {"type": int, "default": DEFAULT_ARROW_FONT_SIZE, "min": fonts.FONT_SIZE_MIN, "max": fonts.FONT_SIZE_MAX},
+        "arrow_font_weight": {"type": int, "default": DEFAULT_ARROW_FONT_WEIGHT, "min": 1, "max": 1000},
         "free_move": {"type": bool, "default": DEFAULT_FREE_MOVE},
         "force_decimals": {"type": bool, "default": DEFAULT_FORCE_DECIMALS},
         "unit_type": {"type": str, "default": DEFAULT_UNIT_TYPE, "choices": ["bits_decimal", "bits_binary", "bytes_decimal", "bytes_binary"]},
@@ -179,21 +191,7 @@ class ConfigConstants:
              raise ValueError("CONFIG_FILENAME must not be empty")
 
         actual_keys = set(self.DEFAULT_CONFIG.keys())
-        
-        expected_keys = {
-            "start_with_windows", "language", "update_rate", "font_family", "font_size", "font_weight",
-            "color_coding", "default_color", "color_is_automatic", "high_speed_threshold",
-            "low_speed_threshold", "high_speed_color", "low_speed_color", "graph_enabled",
-            "history_minutes", "graph_opacity", "interface_mode", "selected_interfaces",
-            "excluded_interfaces", "keep_data", "dark_mode", "position_x", "position_y",
-            "paused", "dynamic_update_enabled", "speed_display_mode", "decimal_places",
-            "text_alignment", "free_move", "force_decimals", "tray_offset_x",
-            "unit_type", "swap_upload_download",
-            "hide_arrows", "hide_unit_suffix", "background_color", "background_opacity",
-            "short_unit_labels",
-            "graph_window_pos", "history_period_slider_value",
-            "history_period", "legend_position", "show_legend"
-        }
+        expected_keys = set(self.VALIDATION_SCHEMA.keys())
 
         if actual_keys != expected_keys:
             missing = expected_keys - actual_keys

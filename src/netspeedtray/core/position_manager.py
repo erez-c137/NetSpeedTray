@@ -377,7 +377,18 @@ class PositionManager(QObject):
         """
         if not self._state.taskbar_info:
              self._state.taskbar_info = get_taskbar_info()
-             
+
+        # FIX for #87: specific check for Free Move
+        if self._state.config.get("free_move", False):
+            # If Free Move is enabled, only constrain to screen bounds (prevent total loss)
+            screen = self._state.taskbar_info.get_screen() if self._state.taskbar_info else QApplication.screenAt(pos)
+            if screen:
+                widget_size = (self._state.widget.width(), self._state.widget.height())
+                validated = ScreenUtils.validate_position(pos.x(), pos.y(), widget_size, screen)
+                return QPoint(validated.x, validated.y)
+            return pos
+
+        # Otherwise, snap/constrain to taskbar
         res = self._calculator.constrain_drag_position(
             pos, 
             self._state.taskbar_info, 

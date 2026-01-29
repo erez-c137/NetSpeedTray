@@ -48,6 +48,11 @@ class RenderConfig:
     hide_arrows: bool = constants.config.defaults.DEFAULT_HIDE_ARROWS
     hide_unit_suffix: bool = constants.config.defaults.DEFAULT_HIDE_UNIT_SUFFIX
     short_unit_labels: bool = constants.config.defaults.DEFAULT_SHORT_UNIT_LABELS
+    max_samples: int = 1800 # Default 30 mins * 60s
+    use_separate_arrow_font: bool = False
+    arrow_font_family: str = constants.config.defaults.DEFAULT_FONT_FAMILY
+    arrow_font_size: int = 9
+    arrow_font_weight: int = constants.fonts.WEIGHT_DEMIBOLD
 
 
     @classmethod
@@ -55,36 +60,62 @@ class RenderConfig:
         """Creates a RenderConfig instance from a standard application config dictionary."""
         try:
             # Use constants for all default fallbacks
-            opacity = float(config.get('graph_opacity', constants.config.defaults.DEFAULT_GRAPH_OPACITY)) / 100.0
+            opacity_raw = config.get('graph_opacity', constants.config.defaults.DEFAULT_GRAPH_OPACITY)
+            opacity = float(opacity_raw) / 100.0 if opacity_raw is not None else (constants.config.defaults.DEFAULT_GRAPH_OPACITY / 100.0)
             
+            # Calculate max samples for graph scaling (#91)
+            hist_mins = int(config.get('history_minutes', constants.config.defaults.DEFAULT_HISTORY_MINUTES))
+            rate = float(config.get('update_rate', constants.config.defaults.DEFAULT_UPDATE_RATE))
+            if rate <= 0: rate = 1.0
+            max_samples = int((hist_mins * 60) / rate)
+
+            # Font Weight handling (robust against legacy string values)
+            weight_raw = config.get('font_weight', constants.fonts.WEIGHT_DEMIBOLD)
+            if isinstance(weight_raw, str):
+                weight_val = {
+                    "normal": constants.fonts.WEIGHT_NORMAL, 
+                    "bold": constants.fonts.WEIGHT_BOLD
+                }.get(weight_raw.lower(), constants.fonts.WEIGHT_NORMAL)
+            else:
+                try:
+                    weight_val = int(weight_raw)
+                except (ValueError, TypeError):
+                    weight_val = constants.fonts.WEIGHT_DEMIBOLD
+
             return cls(
-                color_coding=config.get('color_coding', constants.config.defaults.DEFAULT_COLOR_CODING),
-                graph_enabled=config.get('graph_enabled', constants.config.defaults.DEFAULT_GRAPH_ENABLED),
+                color_coding=bool(config.get('color_coding', constants.config.defaults.DEFAULT_COLOR_CODING)),
+                graph_enabled=bool(config.get('graph_enabled', constants.config.defaults.DEFAULT_GRAPH_ENABLED)),
                 high_speed_threshold=float(config.get('high_speed_threshold', constants.config.defaults.DEFAULT_HIGH_SPEED_THRESHOLD)),
                 low_speed_threshold=float(config.get('low_speed_threshold', constants.config.defaults.DEFAULT_LOW_SPEED_THRESHOLD)),
                 arrow_width=constants.renderer.DEFAULT_ARROW_WIDTH, # No longer in config
-                font_family=config.get('font_family', constants.config.defaults.DEFAULT_FONT_FAMILY),
+                font_family=str(config.get('font_family', constants.config.defaults.DEFAULT_FONT_FAMILY)),
                 font_size=int(config.get('font_size', constants.config.defaults.DEFAULT_FONT_SIZE)),
-                font_weight=int(config.get('font_weight', constants.config.defaults.DEFAULT_FONT_WEIGHT)),
-                default_color=config.get('default_color', constants.config.defaults.DEFAULT_COLOR),
-                high_speed_color=config.get('high_speed_color', constants.config.defaults.DEFAULT_HIGH_SPEED_COLOR),
-                low_speed_color=config.get('low_speed_color', constants.config.defaults.DEFAULT_LOW_SPEED_COLOR),
-                background_color=config.get('background_color', constants.config.defaults.DEFAULT_BACKGROUND_COLOR),
+                font_weight=weight_val,
+                default_color=str(config.get('default_color', constants.config.defaults.DEFAULT_COLOR)),
+                high_speed_color=str(config.get('high_speed_color', constants.config.defaults.DEFAULT_HIGH_SPEED_COLOR)),
+                low_speed_color=str(config.get('low_speed_color', constants.config.defaults.DEFAULT_LOW_SPEED_COLOR)),
+                background_color=str(config.get('background_color', constants.config.defaults.DEFAULT_BACKGROUND_COLOR)),
                 background_opacity=max(0.0, min(1.0, float(config.get('background_opacity', constants.config.defaults.DEFAULT_BACKGROUND_OPACITY)) / 100.0)),
                 graph_opacity=max(0.0, min(1.0, opacity)),
-                speed_display_mode=config.get('speed_display_mode', constants.config.defaults.DEFAULT_SPEED_DISPLAY_MODE),
+                speed_display_mode=str(config.get('speed_display_mode', constants.config.defaults.DEFAULT_SPEED_DISPLAY_MODE)),
                 decimal_places=int(config.get('decimal_places', constants.config.defaults.DEFAULT_DECIMAL_PLACES)),
-                text_alignment=config.get('text_alignment', constants.config.defaults.DEFAULT_TEXT_ALIGNMENT),
-                force_decimals=config.get('force_decimals', constants.config.defaults.DEFAULT_FORCE_DECIMALS),
-                unit_type=config.get('unit_type', constants.config.defaults.DEFAULT_UNIT_TYPE),
-                swap_upload_download=config.get('swap_upload_download', constants.config.defaults.DEFAULT_SWAP_UPLOAD_DOWNLOAD),
-                hide_arrows=config.get('hide_arrows', constants.config.defaults.DEFAULT_HIDE_ARROWS),
-                hide_unit_suffix=config.get('hide_unit_suffix', constants.config.defaults.DEFAULT_HIDE_UNIT_SUFFIX),
-                short_unit_labels=config.get('short_unit_labels', constants.config.defaults.DEFAULT_SHORT_UNIT_LABELS)
+                text_alignment=str(config.get('text_alignment', constants.config.defaults.DEFAULT_TEXT_ALIGNMENT)),
+                force_decimals=bool(config.get('force_decimals', constants.config.defaults.DEFAULT_FORCE_DECIMALS)),
+                unit_type=str(config.get('unit_type', constants.config.defaults.DEFAULT_UNIT_TYPE)),
+                swap_upload_download=bool(config.get('swap_upload_download', constants.config.defaults.DEFAULT_SWAP_UPLOAD_DOWNLOAD)),
+                hide_arrows=bool(config.get('hide_arrows', constants.config.defaults.DEFAULT_HIDE_ARROWS)),
+                hide_unit_suffix=bool(config.get('hide_unit_suffix', constants.config.defaults.DEFAULT_HIDE_UNIT_SUFFIX)),
+                short_unit_labels=bool(config.get('short_unit_labels', constants.config.defaults.DEFAULT_SHORT_UNIT_LABELS)),
+                max_samples=max_samples,
+                use_separate_arrow_font=bool(config.get('use_separate_arrow_font', False)),
+                arrow_font_family=str(config.get('arrow_font_family', constants.config.defaults.DEFAULT_FONT_FAMILY)),
+                arrow_font_size=int(config.get('arrow_font_size', constants.config.defaults.DEFAULT_FONT_SIZE)),
+                arrow_font_weight=int(config.get('arrow_font_weight', constants.fonts.WEIGHT_DEMIBOLD))
             )
-        except (ValueError, TypeError) as e:
-            logger.error("Failed to create RenderConfig from dict: %s", e)
-            raise ValueError("Invalid rendering configuration") from e
+        except Exception as e:
+            logger.error("Failed to create RenderConfig from dict: %s", e, exc_info=True)
+            # Re-raise as ValueError with context to allow upstream handling
+            raise ValueError(f"Invalid rendering configuration: {e}") from e
 
 
 class WidgetRenderer:
@@ -102,8 +133,17 @@ class WidgetRenderer:
                 self.default_color = QColor(self.config.default_color)
                 self.high_color = QColor(self.config.high_speed_color)
                 self.low_color = QColor(self.config.low_speed_color)
-                self.font = QFont(self.config.font_family, self.config.font_size, self.config.font_weight)
+                # FIX for #89: Ensure font weight is int
+                weight = int(self.config.font_weight)
+                self.font = QFont(self.config.font_family, self.config.font_size, weight)
                 self.metrics = QFontMetrics(self.font)
+                
+                # Arrow font
+                if self.config.use_separate_arrow_font:
+                    self.arrow_font = QFont(self.config.arrow_font_family, self.config.arrow_font_size, int(self.config.arrow_font_weight))
+                else:
+                    self.arrow_font = self.font
+                self.arrow_metrics = QFontMetrics(self.arrow_font)
                 
                 self._last_text_rect = QRect()
                 self._last_widget_size: Tuple[int, int] = (0, 0)
@@ -112,9 +152,10 @@ class WidgetRenderer:
                 self._last_history_hash: int = 0
                 
                 self.paused = False
-                self.logger.info("WidgetRenderer initialized.")
+                self.logger.debug("WidgetRenderer initialized.")
             except Exception as e:
                 self.logger.error("Failed to initialize WidgetRenderer: %s", e)
+                # Fail gracefully
                 self.config = None
                 self.font = QFont()
                 self.metrics = QFontMetrics(self.font)
@@ -126,8 +167,10 @@ class WidgetRenderer:
         painter.save()
         painter.fillRect(rect, QColor(150, 0, 0, 200))
         painter.setPen(Qt.GlobalColor.white)
+        # Use simple fallback if config failed
+        base_size = self.config.font_size if self.config else 9
         error_font = QFont(self.font)
-        error_font.setPointSize(max(6, self.config.font_size - 2))
+        error_font.setPointSize(max(6, base_size - 2))
         painter.setFont(error_font)
         painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, message)
         painter.restore()
@@ -170,6 +213,18 @@ class WidgetRenderer:
             self._last_text_rect = QRect()
 
 
+    # ... (skipping _draw_vertical_layout and _draw_horizontal_layout and helpers as they are unchanged) ...
+    # Wait, I need to keep them or the tool will delete them if I don't include them in the range or chunk.
+    # The user asked for "ReplacementContent" for the replaced range.
+    # I should target the Class RenderConfig and WidgetRenderer.__init__ and draw_mini_graph?
+    # No, I should replace blocks.
+    
+    # Let's replace the whole top part of file including RenderConfig.
+    # And then a second chunk for draw_mini_graph?
+    # Ah, the tool `replace_file_content` is for single contiguous block.
+    # `multi_replace_file_content` is better here.
+    pass
+
     def _draw_vertical_layout(self, painter: QPainter, upload: float, download: float, width: int, height: int, config: RenderConfig, always_mbps: bool, decimal_places: int, force_decimals: bool, unit_type: str, swap_order: bool, short_labels: bool) -> None:
         """Draws the standard two-line vertical layout with correct compact centering."""
         line_height = self.metrics.height()
@@ -190,7 +245,7 @@ class WidgetRenderer:
         hide_arrows = config.hide_arrows
         hide_unit = config.hide_unit_suffix
         
-        arrow_width = 0 if hide_arrows else self.metrics.horizontalAdvance(self.i18n.UPLOAD_ARROW)
+        arrow_width = 0 if hide_arrows else self.arrow_metrics.horizontalAdvance(self.i18n.UPLOAD_ARROW)
         arrow_gap = 0 if hide_arrows else constants.renderer.ARROW_NUMBER_GAP
         
         # Use helpers for reference strings and labels
@@ -221,7 +276,9 @@ class WidgetRenderer:
         def draw_line(y_pos: int, arrow_char: str, val_str: str, unit_str: str, color: QColor):
             painter.setPen(color)
             if not hide_arrows:
+                painter.setFont(self.arrow_font)
                 painter.drawText(margin, y_pos, arrow_char)
+                painter.setFont(self.font)
             
             # Right-align numbers within the fixed-width number column
             # This keeps digits stable regardless of value magnitude
@@ -248,50 +305,78 @@ class WidgetRenderer:
 
     def _draw_horizontal_layout(self, painter: QPainter, upload: float, download: float, width: int, height: int, config: RenderConfig, always_mbps: bool, decimal_places: int, force_decimals: bool, unit_type: str, swap_order: bool, short_labels: bool) -> None:
         """Draws the compact single-line horizontal layout."""
-        upload_text_full, download_text_full = self._format_speed_texts(upload, download, always_mbps, decimal_places, force_decimals, unit_type, short_labels=short_labels, full_string=True)
+        # Get split value/unit pairs
+        upload_pair, download_pair = self._format_speed_texts(upload, download, always_mbps, decimal_places, force_decimals, unit_type, short_labels=short_labels, full_string=False)
         
-        # Handle swap order
-        if swap_order:
-            first_arrow = self.i18n.DOWNLOAD_ARROW
-            first_text = download_text_full
-            first_speed = download
-            second_arrow = self.i18n.UPLOAD_ARROW
-            second_text = upload_text_full
-            second_speed = upload
-        else:
-            first_arrow = self.i18n.UPLOAD_ARROW
-            first_text = upload_text_full
-            first_speed = upload
-            second_arrow = self.i18n.DOWNLOAD_ARROW
-            second_text = download_text_full
-            second_speed = download
-        
-        first_str = f"{first_arrow} {first_text}"
-        second_str = f"{second_arrow} {second_text}"
-        separator = constants.layout.HORIZONTAL_LAYOUT_SEPARATOR
-        
-        first_width = self.metrics.horizontalAdvance(first_str)
-        second_width = self.metrics.horizontalAdvance(second_str)
-        separator_width = self.metrics.horizontalAdvance(separator)
-        content_width = first_width + separator_width + second_width
+        up_val, up_unit = upload_pair
+        down_val, down_unit = download_pair
+
+        hide_arrows = config.hide_arrows
+        hide_unit = config.hide_unit_suffix
+
+        def build_string(arrow_char: str, val_str: str, unit_str: str) -> str:
+            parts = []
+            if not hide_arrows:
+                parts.append(arrow_char)
+            parts.append(val_str)
+            if not hide_unit:
+                parts.append(unit_str)
+            # Note: For horizontal layout, we still use full string drawing usually,
+            # but if using separate fonts we must draw parts manually.
+            pass
+
+        def draw_part_h(x_pos: int, arrow_char: str, val_str: str, unit_str: str, color: QColor) -> int:
+            painter.setPen(color)
+            current_x = x_pos
+            if not hide_arrows:
+                painter.setFont(self.arrow_font)
+                painter.drawText(current_x, y_pos, arrow_char)
+                current_x += self.arrow_metrics.horizontalAdvance(arrow_char) + self.arrow_metrics.horizontalAdvance(" ")
+                painter.setFont(self.font)
+            
+            painter.drawText(current_x, y_pos, val_str)
+            current_x += self.metrics.horizontalAdvance(val_str)
+            
+            if not hide_unit:
+                painter.drawText(current_x, y_pos, " " + unit_str)
+                current_x += self.metrics.horizontalAdvance(" " + unit_str)
+            
+            return current_x
 
         y_pos = int((height - self.metrics.height()) / 2 + self.metrics.ascent())
-        margin = self._calculate_margin(width, content_width, config.text_alignment)
         
-        first_x = margin
-        separator_x = first_x + first_width
-        second_x = separator_x + separator_width
+        # Calculate totals for alignment
+        def get_width(arrow_char, val, unit):
+            w = 0
+            if not hide_arrows:
+                w += self.arrow_metrics.horizontalAdvance(arrow_char) + self.arrow_metrics.horizontalAdvance(" ")
+            w += self.metrics.horizontalAdvance(val)
+            if not hide_unit:
+                w += self.metrics.horizontalAdvance(" " + unit)
+            return w
 
-        painter.setPen(self._get_speed_color(first_speed, config))
-        painter.drawText(first_x, y_pos, first_str)
+        up_width = get_width(self.i18n.UPLOAD_ARROW, up_val, up_unit)
+        down_width = get_width(self.i18n.DOWNLOAD_ARROW, down_val, down_unit)
+        sep = constants.layout.HORIZONTAL_LAYOUT_SEPARATOR
+        sep_width = self.metrics.horizontalAdvance(sep)
         
-        painter.setPen(self.default_color)
-        painter.drawText(separator_x, y_pos, separator)
+        total_width = up_width + sep_width + down_width
+        start_x = self._calculate_margin(width, total_width, config.text_alignment)
         
-        painter.setPen(self._get_speed_color(second_speed, config))
-        painter.drawText(second_x, y_pos, second_str)
+        painter.setFont(self.font) # Default starting font
 
-        self._last_text_rect = QRect(margin, (height - self.metrics.height()) // 2, int(content_width), self.metrics.height())
+        if swap_order:
+            next_x = draw_part_h(start_x, self.i18n.DOWNLOAD_ARROW, down_val, down_unit, self._get_speed_color(download, config))
+            painter.setPen(self.default_color)
+            painter.drawText(next_x, y_pos, sep)
+            draw_part_h(next_x + sep_width, self.i18n.UPLOAD_ARROW, up_val, up_unit, self._get_speed_color(upload, config))
+        else:
+            next_x = draw_part_h(start_x, self.i18n.UPLOAD_ARROW, up_val, up_unit, self._get_speed_color(upload, config))
+            painter.setPen(self.default_color)
+            painter.drawText(next_x, y_pos, sep)
+            draw_part_h(next_x + sep_width, self.i18n.DOWNLOAD_ARROW, down_val, down_unit, self._get_speed_color(download, config))
+            
+        self._last_text_rect = QRect(start_x, int(y_pos - self.metrics.ascent()), int(total_width), self.metrics.height())
 
 
     def _format_speed_texts(self, upload: float, download: float, always_mbps: bool, decimal_places: int, force_decimals: bool, unit_type: str = "bits_decimal", short_labels: bool = False, full_string: bool = False) -> Tuple[Any, Any]:
@@ -375,14 +460,25 @@ class WidgetRenderer:
 
                 padded_max_speed = max_speed_val * constants.renderer.GRAPH_Y_AXIS_PADDING_FACTOR
                 max_y = max(padded_max_speed, constants.renderer.MIN_Y_SCALE)
-                step_x = graph_rect.width() / (num_points - 1) if num_points > 1 else 0
+                
+                # FIX for #91: Use max_samples for fixed time scaling
+                max_samples = max(2, config.max_samples) # Ensure divisor is valid
+                step_x = graph_rect.width() / (max_samples - 1)
+
+                # Points are plotted from Right (Newest) to Left (Oldest)
+                # history[-1] (newest) should be at right edge
+                # history[0] (oldest available) should be at right_edge - (num_points-1)*step_x
+                
+                right_edge = float(graph_rect.right())
+                base_y = float(graph_rect.bottom())
+                h = float(graph_rect.height())
 
                 self._cached_upload_points = [
-                    QPointF(graph_rect.left() + i * step_x, graph_rect.bottom() - (d.upload / max_y) * graph_rect.height())
+                    QPointF(right_edge - (num_points - 1 - i) * step_x, base_y - (d.upload / max_y) * h)
                     for i, d in enumerate(history)
                 ]
                 self._cached_download_points = [
-                    QPointF(graph_rect.left() + i * step_x, graph_rect.bottom() - (d.download / max_y) * graph_rect.height())
+                    QPointF(right_edge - (num_points - 1 - i) * step_x, base_y - (d.download / max_y) * h)
                     for i, d in enumerate(history)
                 ]
                 self._last_widget_size = (width, height)

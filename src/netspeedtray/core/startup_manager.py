@@ -50,10 +50,10 @@ class StartupManager:
         self.logger.debug(f"Syncing startup task. Config says: {should_be_enabled}, Registry says: {is_actually_enabled}")
 
         if should_be_enabled and not is_actually_enabled:
-            self.logger.info("Re-enabling startup task to match configuration.")
+            self.logger.debug("Re-enabling startup task to match configuration.")
             self._set_startup_registry(True)
         elif not should_be_enabled and is_actually_enabled:
-            self.logger.info("Disabling startup task to match configuration.")
+            self.logger.debug("Disabling startup task to match configuration.")
             self._set_startup_registry(False)
 
     def _get_executable_path(self) -> str:

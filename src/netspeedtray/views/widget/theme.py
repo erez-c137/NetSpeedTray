@@ -59,7 +59,7 @@ class WidgetThemeManager:
 
     def on_theme_changed(self) -> None:
         """Handles Windows theme change (Light/Dark mode)."""
-        self.logger.info("Theme change detected. Refreshing styles.")
+        self.logger.debug("Theme change detected. Refreshing styles.")
         self.apply_theme_aware_defaults()
         self.widget.update()
 

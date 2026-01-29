@@ -44,6 +44,8 @@ from netspeedtray.views.settings.pages.troubleshooting import TroubleshootingPag
 from netspeedtray.views.settings.pages.interfaces import InterfacesPage
 from netspeedtray.views.settings.pages.general import GeneralPage
 from netspeedtray.views.settings.pages.appearance import AppearancePage
+from netspeedtray.views.settings.pages.colors import ColorsPage
+from netspeedtray.views.settings.pages.arrows import ArrowsPage
 
 
 class AdaptiveStackedWidget(QStackedWidget):
@@ -158,6 +160,8 @@ class SettingsDialog(QDialog):
             self.sidebar.addItems([
                 self.i18n.GENERAL_SETTINGS_GROUP, 
                 self.i18n.APPEARANCE_SETTINGS_GROUP,
+                self.i18n.COLOR_CODING_GROUP,
+                self.i18n.ARROWS_SETTINGS_GROUP,
                 self.i18n.MINI_GRAPH_SETTINGS_GROUP, 
                 self.i18n.UNITS_GROUP,
                 self.i18n.NETWORK_INTERFACES_GROUP, 
@@ -188,6 +192,19 @@ class SettingsDialog(QDialog):
                 self._open_font_dialog,
                 self._open_color_dialog
             )
+            
+            self.colors_page = ColorsPage(
+                self.i18n,
+                self._schedule_settings_update,
+                self._open_color_dialog
+            )
+            
+            self.arrows_page = ArrowsPage(
+                self.i18n,
+                self._schedule_settings_update,
+                self._open_font_dialog
+            )
+            
             self.graph_page = GraphPage(self.i18n, self._schedule_settings_update)
             self.units_page = UnitsPage(self.i18n, self._schedule_settings_update)
             self.interfaces_page = InterfacesPage(
@@ -200,6 +217,8 @@ class SettingsDialog(QDialog):
             # Add to stack
             self.stack.addWidget(self.general_page)
             self.stack.addWidget(self.appearance_page)
+            self.stack.addWidget(self.colors_page)
+            self.stack.addWidget(self.arrows_page)
             self.stack.addWidget(self.graph_page)
             self.stack.addWidget(self.units_page)
             self.stack.addWidget(self.interfaces_page)
@@ -245,6 +264,8 @@ class SettingsDialog(QDialog):
         try:
             self.general_page.load_settings(self.config, self.startup_enabled_initial_state)
             self.appearance_page.load_settings(self.config)
+            self.colors_page.load_settings(self.config)
+            self.arrows_page.load_settings(self.config)
             self.graph_page.load_settings(self.config)
             self.units_page.load_settings(self.config)
             self.interfaces_page.load_settings(self.config)
@@ -262,7 +283,36 @@ class SettingsDialog(QDialog):
         self.stack.setCurrentIndex(row)
         # Adjust size to fit the new page content
         QApplication.processEvents()  # Ensure layout updates before resizing
+        self._adjust_size_and_reposition()
+
+    def _adjust_size_and_reposition(self) -> None:
+        """
+        Resizes the dialog to fit content, ensuring it stays within screen bounds.
+        If expansion would push it off-screen (e.g. under taskbar), it moves upwards.
+        """
+        old_geometry = self.geometry()
         self.adjustSize()
+        new_geometry = self.geometry()
+        
+        screen = self.screen()
+        if not screen: return
+        
+        available_rect = screen.availableGeometry()
+        
+        # Check if expanding downwards pushed us off the bottom
+        bottom_overflow = new_geometry.bottom() - available_rect.bottom()
+        if bottom_overflow > 0:
+            new_y = new_geometry.y() - bottom_overflow
+            # Ensure we don't go off the top
+            if new_y < available_rect.top():
+                new_y = available_rect.top()
+            
+            self.move(new_geometry.x(), new_y)
+            
+        # Also check if we grew too tall for the screen entirely (unlikely but possible)
+        if self.frameGeometry().height() > available_rect.height():
+             self.resize(self.width(), available_rect.height())
+             self.move(self.x(), available_rect.top())
 
     def _schedule_settings_update(self) -> None:
         """Starts the throttle timer to emit settings_changed."""
@@ -280,6 +330,8 @@ class SettingsDialog(QDialog):
             settings = self.config.copy()
             settings.update(self.general_page.get_settings())
             settings.update(self.appearance_page.get_settings())
+            settings.update(self.colors_page.get_settings())
+            settings.update(self.arrows_page.get_settings())
             settings.update(self.graph_page.get_settings())
             settings.update(self.units_page.get_settings())
             settings.update(self.interfaces_page.get_settings())
@@ -309,10 +361,13 @@ class SettingsDialog(QDialog):
 
     # --- Callbacks ---
 
-    def _open_font_dialog(self, initial_font: QFont) -> None:
-        ok, font = QFontDialog.getFont(initial_font, self)
+    def _open_font_dialog(self, initial_font: QFont, target: str = "main") -> None:
+        font, ok = QFontDialog.getFont(initial_font, self)
         if ok:
-            self.appearance_page.set_font_family(font)
+            if target == "main":
+                self.appearance_page.set_font_family(font)
+            else:
+                self.arrows_page.set_arrow_font_family(font)
 
     def _open_color_dialog(self, key_name: str) -> None:
         # Get current color from the page to set initial state
@@ -321,7 +376,12 @@ class SettingsDialog(QDialog):
         
         color = QColorDialog.getColor(QColor(initial_hex), self, "Select Color")
         if color.isValid():
-            self.appearance_page.set_color_input(key_name, color.name().upper())
+            new_hex = color.name().upper()
+            if key_name in ["high_speed_color", "low_speed_color"]:
+                self.colors_page.set_color_input(key_name.replace("_color", ""), new_hex)
+            else:
+                self.appearance_page.set_color_input(key_name.replace("_color", ""), new_hex)
+            
             if key_name == "default_color":
                 self._user_chose_default_color = True
             self._schedule_settings_update()
@@ -367,26 +427,40 @@ class SettingsDialog(QDialog):
 
     def _save_and_close(self) -> None:
         """Saves settings and closes."""
-        final_settings = self.get_settings()
-        if not final_settings: return
+        self.logger.debug("Save and close requested.")
+        try:
+            final_settings = self.get_settings()
+            if not final_settings:
+                self.logger.warning("Could not retrieve settings from pages.")
+                return
 
-        selected_language = final_settings.get("language")
-        language_changed = selected_language and (selected_language != self.initial_language)
+            selected_language = final_settings.get("language")
+            language_changed = selected_language and (selected_language != self.initial_language)
 
-        if hasattr(self.parent_widget, 'handle_settings_changed'):
-            self.parent_widget.handle_settings_changed(final_settings, save_to_disk=True)
-        
-        # Determine startup change
-        # GeneralPage returns the checkbox state in settings
-        requested_startup = final_settings.get("start_with_windows", False)
-        if requested_startup != self.startup_enabled_initial_state:
-             if hasattr(self.parent_widget, 'toggle_startup'):
-                 self.parent_widget.toggle_startup(requested_startup)
-
-        if language_changed:
-            QMessageBox.information(self, self.i18n.LANGUAGE_RESTART_TITLE, self.i18n.LANGUAGE_RESTART_MESSAGE)
+            # Apply settings to the main widget/application
+            if hasattr(self.parent_widget, 'handle_settings_changed'):
+                self.parent_widget.handle_settings_changed(final_settings, save_to_disk=True)
             
-        self.hide()
+            # Determine startup change
+            requested_startup = final_settings.get("start_with_windows", False)
+            if requested_startup != self.startup_enabled_initial_state:
+                 if hasattr(self.parent_widget, 'toggle_startup'):
+                     self.parent_widget.toggle_startup(requested_startup)
+
+            if language_changed:
+                QMessageBox.information(
+                    self, self.i18n.LANGUAGE_RESTART_TITLE, 
+                    self.i18n.LANGUAGE_RESTART_MESSAGE
+                )
+                
+            self.hide()
+            self.logger.info("Settings saved and dialog hidden.")
+        except Exception as e:
+            self.logger.error(f"Failed to save settings: {e}", exc_info=True)
+            QMessageBox.critical(
+                self, self.i18n.ERROR_TITLE,
+                f"{self.i18n.SETTINGS_ERROR_MESSAGE}\n\n{str(e)}"
+            )
 
     def _cancel_and_close(self) -> None:
         """Reverts and closes."""
