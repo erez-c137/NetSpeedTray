@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [1.2.4] - Unreleased
+
+### 📊 Graph & Visualization
+*   **Tooltip Accuracy:** Fixed a critical coordinate drift issue where the graph tooltip values would become "stuck" or show incorrect time segments during mouse movement.
+*   **Smooth Crosshairs:** Restored fluid crosshair movement by ensuring efficient canvas redraws on hover.
+
+---
+
 ## [1.2.3] - January 29, 2026
 
 This release addresses the remaining critical bug reports tracked in the v1.2.x series, focusing on graph performance and accuracy, settings UX, and rendering glitches.
