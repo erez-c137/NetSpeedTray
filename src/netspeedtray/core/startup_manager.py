@@ -109,7 +109,8 @@ class StartupManager:
                 if val_norm == exp_norm:
                     return True
                 else:
-                    self.logger.warning(f"Startup key exists but path mismatch. Reg: {value}, Exp: {expected_path}")
+                    if getattr(sys, 'frozen', False):
+                        self.logger.warning(f"Startup key exists but path mismatch. Reg: {value}, Exp: {expected_path}")
                     return False # Treat as "not enabled" so we re-set it correctly
                     
             except FileNotFoundError:

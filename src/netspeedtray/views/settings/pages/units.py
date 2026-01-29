@@ -146,7 +146,7 @@ class UnitsPage(QWidget):
         self.short_unit_labels.setChecked(config.get("short_unit_labels", constants.config.defaults.DEFAULT_SHORT_UNIT_LABELS))
         
         # Offset
-        self.tray_offset.setValue(config.get("tray_icon_offset", 0))
+        self.tray_offset.setValue(config.get("tray_offset_x", 0))
 
     def get_settings(self) -> Dict[str, Any]:
         # Inverse mapping
@@ -163,5 +163,5 @@ class UnitsPage(QWidget):
             "hide_arrows": self.hide_arrows.isChecked(),
             "hide_unit_suffix": self.hide_unit_suffix.isChecked(),
             "short_unit_labels": self.short_unit_labels.isChecked(),
-            "tray_icon_offset": self.tray_offset.value()
+            "tray_offset_x": self.tray_offset.value()
         }

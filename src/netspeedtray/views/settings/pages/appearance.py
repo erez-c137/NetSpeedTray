@@ -269,7 +269,7 @@ class AppearancePage(QWidget):
         set_color_ui("low_speed_color", self.low_speed_color_button, self.low_speed_color_input)
 
         # Color Coding
-        enabled = config.get("color_coding_enabled", constants.config.defaults.DEFAULT_COLOR_CODING)
+        enabled = config.get("color_coding", constants.config.defaults.DEFAULT_COLOR_CODING)
         self.enable_colors.setChecked(enabled)
         self.color_container.setVisible(enabled)
 
@@ -296,7 +296,7 @@ class AppearancePage(QWidget):
             "font_size": self.font_size.value(),
             "font_weight": weight_val,
             "default_color": self.default_color_input.text(),
-            "color_coding_enabled": self.enable_colors.isChecked(),
+            "color_coding": self.enable_colors.isChecked(),
             "high_speed_threshold": self.high_speed_threshold.value(),
             "low_speed_threshold": self.low_speed_threshold.value(),
             "high_speed_color": self.high_speed_color_input.text(),

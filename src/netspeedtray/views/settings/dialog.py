@@ -132,6 +132,9 @@ class SettingsDialog(QDialog):
             dialog_center = self.rect().center()
             self.move(screen_center - dialog_center)
 
+        # Set a safe minimum size to prevent layout breakage on small screens or long translations
+        self.setMinimumSize(620, 500)
+
         self.logger.debug("SettingsDialog initialization completed.")
 
 
@@ -149,6 +152,7 @@ class SettingsDialog(QDialog):
             sidebar_layout.setContentsMargins(0,0,0,0)
             self.sidebar = QListWidget()
             self.sidebar.setFixedWidth(constants.layout.SIDEBAR_WIDTH)
+            self.sidebar.setMinimumWidth(180)
             self.sidebar.setStyleSheet(style_utils.sidebar_style())
             self.sidebar.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             self.sidebar.addItems([

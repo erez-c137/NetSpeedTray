@@ -95,7 +95,7 @@ class InterfacesPage(QWidget):
         # Note: calling code needs to re-apply selection state (load_settings) after update if needed
 
     def load_settings(self, config: Dict[str, Any]):
-        mode = config.get("monitoring_mode", "auto")
+        mode = config.get("interface_mode", "auto")
         if mode == "auto":
             self.auto_interface_radio.setChecked(True)
         elif mode == "all_physical":
@@ -121,6 +121,6 @@ class InterfacesPage(QWidget):
         selected = [iface for iface, cb in self.interface_checkboxes.items() if cb.isChecked()]
         
         return {
-            "monitoring_mode": mode,
+            "interface_mode": mode,
             "selected_interfaces": selected
         }

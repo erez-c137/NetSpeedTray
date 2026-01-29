@@ -5,6 +5,7 @@
     "EXPORT_CSV_TITLE": "Export History",
     "EXPORT_GRAPH_IMAGE_TITLE": "Save Graph Image",
     "EXPORT_ERROR_LOG_TITLE": "Export Error Log",
+    "FIXED_WIDTH_VALUES_LABEL": "Fixed Width Values",
     "SELECT_COLOR_TITLE": "Select Color",
     "SELECT_FONT_TITLE": "Select Font",
     "ERROR_TITLE": "Error",

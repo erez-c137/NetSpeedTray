@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [1.2.2] - January 29, 2026
+
+This is a hotfix release addressing immediate UI and stability issues reported after v1.2.1.
+
+### 🐛 Fixed & Triage
+*   **Settings Window Stability (#81):** Enforced a minimum size of `620x500` for the settings dialog to prevent layout breakage and hidden sidebar items.
+*   **Log Cleanup (#83):** Synchronized UI configuration keys with the backend schema to eliminate "ignoring unknown fields" warnings.
+*   **I18n Parity (#82):** Added missing `FIXED_WIDTH_VALUES_LABEL` to the English locale to resolve start-up validation warnings.
+*   **Dev Mode Silence:** Suppressed the "Startup key path mismatch" warning when running from source or virtual environments.
+
+---
+
 ## [1.2.1] - January 29, 2026
 
 This is a major stable release that combines significant performance overhauls with critical stabilization fixes. It introduces vectorized graph processing, a modular settings architecture, and definitive fixes for long-standing accuracy and layout issues.

@@ -96,7 +96,7 @@ class GeneralPage(QWidget):
         self.update_rate.setValue(rate_val)
         
         # Toggles
-        self.dynamic_update_rate.setChecked(config.get("dynamic_update_rate", constants.config.defaults.DEFAULT_DYNAMIC_UPDATE_ENABLED))
+        self.dynamic_update_rate.setChecked(config.get("dynamic_update_enabled", constants.config.defaults.DEFAULT_DYNAMIC_UPDATE_ENABLED))
         self.start_with_windows.setChecked(is_startup_enabled)
         self.free_move.setChecked(config.get("free_move", False))
         
@@ -109,7 +109,7 @@ class GeneralPage(QWidget):
         return {
             "language": self.language_combo.currentData(),
             "update_rate": self.update_rate.value() / 2.0,
-            "dynamic_update_rate": self.dynamic_update_rate.isChecked(),
+            "dynamic_update_enabled": self.dynamic_update_rate.isChecked(),
             "free_move": self.free_move.isChecked(),
             # is_startup_enabled is handled separately usually, but we return expected state
              "start_with_windows": self.start_with_windows.isChecked() 

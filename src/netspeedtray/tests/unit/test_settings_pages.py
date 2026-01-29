@@ -95,7 +95,7 @@ def test_general_page(q_app, mock_i18n, mock_callback):
     config = {
         "language": "fr",
         "update_rate": 1.5,
-        "dynamic_update_rate": True,
+        "dynamic_update_enabled": True,
         "free_move": True,
         "start_with_windows": True 
     }
@@ -105,7 +105,7 @@ def test_general_page(q_app, mock_i18n, mock_callback):
     settings = page.get_settings()
     assert settings["language"] == "fr"
     assert settings["update_rate"] == 1.5
-    assert settings["dynamic_update_rate"] is True
+    assert settings["dynamic_update_enabled"] is True
     assert settings["free_move"] is True
     assert settings["start_with_windows"] is True
 
@@ -120,7 +120,7 @@ def test_appearance_page(q_app, mock_i18n, mock_callback):
         "font_size": 10,
         "font_weight": 50, # Arbitrary int we map
         "default_color": "#FF0000",
-        "color_coding_enabled": True,
+        "color_coding": True,
         "high_speed_threshold": 50,
         "low_speed_threshold": 10
     }
@@ -132,7 +132,7 @@ def test_appearance_page(q_app, mock_i18n, mock_callback):
     assert settings["font_family"] == "Arial"
     assert settings["font_size"] == 10
     assert settings["default_color"] == "#FF0000"
-    assert settings["color_coding_enabled"] is True
+    assert settings["color_coding"] is True
 
 def test_graph_page(q_app, mock_i18n, mock_callback):
     """Test GraphPage."""
@@ -140,7 +140,7 @@ def test_graph_page(q_app, mock_i18n, mock_callback):
     
     config = {
         "graph_enabled": False,
-        "history_duration": 30,
+        "history_minutes": 30,
         "graph_opacity": 80
     }
     
@@ -148,7 +148,7 @@ def test_graph_page(q_app, mock_i18n, mock_callback):
     settings = page.get_settings()
     
     assert settings["graph_enabled"] is False
-    assert settings["history_duration"] == 30
+    assert settings["history_minutes"] == 30
     assert settings["graph_opacity"] == 80
 
 def test_units_page(q_app, mock_i18n, mock_callback):
@@ -161,7 +161,8 @@ def test_units_page(q_app, mock_i18n, mock_callback):
         "speed_display_mode": "always_mbps",
         "decimal_places": 1,
         "text_alignment": "right",
-        "swap_upload_download": True
+        "swap_upload_download": True,
+        "tray_offset_x": 10
     }
     
     page.load_settings(config)
@@ -172,20 +173,21 @@ def test_units_page(q_app, mock_i18n, mock_callback):
     assert settings["decimal_places"] == 1
     assert settings["text_alignment"] == "right"
     assert settings["swap_upload_download"] is True
+    assert settings["tray_offset_x"] == 10
 
 def test_interfaces_page(q_app, mock_i18n, mock_callback):
     """Test InterfacesPage."""
     page = InterfacesPage(mock_i18n, ["Eth0", "Wlan0"], mock_callback)
     
     config = {
-        "monitoring_mode": "selected",
+        "interface_mode": "selected",
         "selected_interfaces": ["Eth0"]
     }
     
     page.load_settings(config)
     settings = page.get_settings()
     
-    assert settings["monitoring_mode"] == "selected"
+    assert settings["interface_mode"] == "selected"
     assert settings["selected_interfaces"] == ["Eth0"]
     
     # Test update list

@@ -59,12 +59,12 @@ class GraphPage(QWidget):
 
     def load_settings(self, config: Dict[str, Any]):
         self.enable_graph.setChecked(config.get("graph_enabled", True))
-        self.history_duration.setValue(config.get("history_duration", constants.config.defaults.DEFAULT_HISTORY_MINUTES))
+        self.history_duration.setValue(config.get("history_minutes", constants.config.defaults.DEFAULT_HISTORY_MINUTES))
         self.graph_opacity.setValue(config.get("graph_opacity", constants.config.defaults.DEFAULT_GRAPH_OPACITY))
 
     def get_settings(self) -> Dict[str, Any]:
         return {
             "graph_enabled": self.enable_graph.isChecked(),
-            "history_duration": self.history_duration.value(),
+            "history_minutes": self.history_duration.value(),
             "graph_opacity": self.graph_opacity.value()
         }
