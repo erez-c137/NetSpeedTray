@@ -18,6 +18,8 @@ All notable changes to this project will be documented in this file.
 *   **Strict Edge Alignment:** Eliminated horizontal margins (`xmargin=0`) so data flows perfectly from the exact left to the exact right of the grid.
 *   **High-Res Time Labels:** Automatically switches to seconds resolution (`%H:%M:%S`) for extremely short ranges, preventing repeating labels in the Session view.
 *   **Multi-Layer Peak Markers:** Refined glowing indicator dots for Max and Peak speeds with a three-layer glow effect and magnetic snapping.
+*   **Integrated Graph Status Indicator:** Replaced overlapping "No Data" overlays with a professional, three-state status light (LIVE/LOAD/NO DATA) integrated into the stats bar.
+*   **Refined Data Retention UI:** Integrated the duration label directly into the Windows 11 slider handle and implemented conditional database size display (visible only for the "ALL" duration).
 
 ### 🛡️ Stability & Security
 *   **Explicit Exit Logic (#98):** Fixed a critical bug where closing the settings or graph windows could inadvertently shut down the entire application.
@@ -42,7 +44,6 @@ All notable changes to this project will be documented in this file.
 ### 🔍 Interaction Refinements
 *   **O(log n) Lookup:** Implemented binary search for nearest-point finding, ensuring fluid tooltip movement even on high-resolution displays.
 *   **Blitting Performance:** Cached static background with dynamic artist redraws for a smooth 60 FPS interaction experience.
-*   **Vertical Taskbar Support (#99):** Intelligent font-scaling engine for vertical taskbars with automatic text shrinking.
 
 
 ---
