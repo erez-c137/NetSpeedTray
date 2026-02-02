@@ -245,12 +245,12 @@ class GraphSettingsPanel(QWidget):
 
     def update_retention_text(self, days, db_size_mb=None):
         """Updates the retention value in the slider's integrated label."""
-        text = f"{days} Days"
+        text = self.i18n.DAYS_TEMPLATE.format(days=days)
         # Only show DB size when 365 days (ALL) is selected as requested
         if days >= 365 and db_size_mb is not None:
-             # Dropped ~ sign and rounded to nearest MB as requested
+             # Rounded to nearest MB
              rounded_mb = int(round(db_size_mb))
-             text += f" ({rounded_mb} MB)"
+             text += f" ({rounded_mb} {self.i18n.MB_UNIT})"
         
         if hasattr(self, 'keep_data_slider'):
             self.keep_data_slider.setValueText(text)

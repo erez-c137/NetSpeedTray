@@ -247,5 +247,10 @@
     "SCALING_LABEL": "Масштабирование",
     "INTERFACE_LAYOUT_GROUP": "Компоновка интерфейса",
     "DISPLAY_FORMAT_GROUP": "Формат отображения",
-    "POSITION_GROUP": "Позиционирование"
+    "POSITION_GROUP": "Позиционирование",
+    "STAT_MAX_SPEED": "МАКС. СКОРОСТЬ",
+    "STAT_AVG_SPEED": "СРЕДНЯЯ СКОР.",
+    "STAT_TOTAL_DATA": "ВСЕГО ДАННЫХ",
+    "BUTTON_RESET_VIEW": "Сбросить вид",
+    "ZOOM_HINT": "Двойной клик для сброса"
 }

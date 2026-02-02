@@ -244,8 +244,13 @@
     "FONT_WEIGHT_BOLD": "Fett",
     "FONT_WEIGHT_EXTRABOLD": "Extrafett",
     "FONT_WEIGHT_BLACK": "Schwarz",
-    "DEFAULT_STATS_TEXT_TEMPLATE": "Max: ↑{max_up:.2f} {max_up_unit}, ↓{max_down:.2f} {max_down_unit} | Gesamt: ↑{up_total:.2f} {up_unit}, ↓{down_total:.2f} {down_unit}",
+    "DEFAULT_STATS_TEXT_TEMPLATE": "Max: ↑{max_up:.2f} {max_up_unit}, ↓{max_down:.2f} {max_down_unit} | Durchschnitt: ↑{avg_up:.2f} {avg_up_unit}, ↓{avg_down:.2f} {avg_down_unit} | Gesamt: ↑{up_total:.2f} {up_unit}, ↓{down_total:.2f} {down_unit}",
     "APP_USAGE_STATS_TEXT_TEMPLATE": "Gesamt: ↑{up_total:.2f} {up_unit}, ↓{down_total:.2f} {down_unit}",
     "GRAPH_TITLE_TEMPLATE": "Geschwindigkeitsverlauf ({period})",
-    "GRAPH_STATS_TEXT_TEMPLATE": "Max: ↑{max_up:.1f} {unit} | ↓{max_down:.1f} {unit}"
+    "GRAPH_STATS_TEXT_TEMPLATE": "Max: ↑{max_up:.1f} {unit} | ↓{max_down:.1f} {unit}",
+    "STAT_MAX_SPEED": "MAX. GESCHW.",
+    "STAT_AVG_SPEED": "DURCHSCHNITT",
+    "STAT_TOTAL_DATA": "GESAMTDATEI",
+    "BUTTON_RESET_VIEW": "Ansicht zurücksetzen",
+    "ZOOM_HINT": "Doppelklick zum Zurücksetzen"
 }

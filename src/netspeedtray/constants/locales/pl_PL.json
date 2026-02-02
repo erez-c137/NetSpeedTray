@@ -207,7 +207,7 @@
     "FONT_WEIGHT_BOLD": "Pogrubiona",
     "FONT_WEIGHT_EXTRABOLD": "Bardzo pogrubiona",
     "FONT_WEIGHT_BLACK": "Czarna (maks. grubość)",
-    "DEFAULT_STATS_TEXT_TEMPLATE": "Maks: ↑{max_up:.2f} {max_up_unit}, ↓{max_down:.2f} {max_down_unit} | Łącznie: ↑{up_total:.2f} {up_unit}, ↓{down_total:.2f} {down_unit}",
+    "DEFAULT_STATS_TEXT_TEMPLATE": "Maks: ↑{max_up:.2f} {max_up_unit}, ↓{max_down:.2f} {max_down_unit} | Średnia: ↑{avg_up:.2f} {avg_up_unit}, ↓{avg_down:.2f} {avg_down_unit} | Łącznie: ↑{up_total:.2f} {up_unit}, ↓{down_total:.2f} {down_unit}",
     "APP_USAGE_STATS_TEXT_TEMPLATE": "Łącznie: ↑{up_total:.2f} {up_unit}, ↓{down_total:.2f} {down_unit}",
     "GRAPH_TITLE_TEMPLATE": "Historia prędkości ({period})",
     "GRAPH_STATS_TEXT_TEMPLATE": "Maks: ↑{max_up:.1f} {unit} | ↓{max_down:.1f} {unit}",
@@ -247,5 +247,10 @@
     "SCALING_LABEL": "Skalowanie",
     "INTERFACE_LAYOUT_GROUP": "Układ interfejsu",
     "DISPLAY_FORMAT_GROUP": "Format wyświetlania",
-    "POSITION_GROUP": "Pozycjonowanie"
+    "POSITION_GROUP": "Pozycjonowanie",
+    "STAT_MAX_SPEED": "PRĘDKOŚĆ MAKS",
+    "STAT_AVG_SPEED": "PRĘDKOŚĆ ŚRED",
+    "STAT_TOTAL_DATA": "SUMA DANYCH",
+    "BUTTON_RESET_VIEW": "Resetuj widok",
+    "ZOOM_HINT": "Kliknij dwukrotnie, aby zresetować"
 }

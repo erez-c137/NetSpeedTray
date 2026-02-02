@@ -244,8 +244,13 @@
     "FONT_WEIGHT_BOLD": "Gras",
     "FONT_WEIGHT_EXTRABOLD": "Extra-Gras",
     "FONT_WEIGHT_BLACK": "Noir",
-    "DEFAULT_STATS_TEXT_TEMPLATE": "Max : ↑{max_up:.2f} {max_up_unit}, ↓{max_down:.2f} {max_down_unit} | Total : ↑{up_total:.2f} {up_unit}, ↓{down_total:.2f} {down_unit}",
+    "DEFAULT_STATS_TEXT_TEMPLATE": "Max : ↑{max_up:.2f} {max_up_unit}, ↓{max_down:.2f} {max_down_unit} | Moyenne : ↑{avg_up:.2f} {avg_up_unit}, ↓{avg_down:.2f} {avg_down_unit} | Total : ↑{up_total:.2f} {up_unit}, ↓{down_total:.2f} {down_unit}",
     "APP_USAGE_STATS_TEXT_TEMPLATE": "Total : ↑{up_total:.2f} {up_unit}, ↓{down_total:.2f} {down_unit}",
     "GRAPH_TITLE_TEMPLATE": "Historique des Vitesses ({period})",
-    "GRAPH_STATS_TEXT_TEMPLATE": "Max : ↑{max_up:.1f} {unit} | ↓{max_down:.1f} {unit}"
+    "GRAPH_STATS_TEXT_TEMPLATE": "Max : ↑{max_up:.1f} {unit} | ↓{max_down:.1f} {unit}",
+    "STAT_MAX_SPEED": "VITESSE MAX",
+    "STAT_AVG_SPEED": "VITESSE MOY",
+    "STAT_TOTAL_DATA": "TOTAL DONNÉES",
+    "BUTTON_RESET_VIEW": "Réinitialiser la vue",
+    "ZOOM_HINT": "Double-cliquez pour réinitialiser"
 }

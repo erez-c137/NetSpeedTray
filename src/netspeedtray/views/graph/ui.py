@@ -201,9 +201,9 @@ class GraphWindowUI:
             stats_layout.setContentsMargins(12, 6, 12, 6)
             stats_layout.setSpacing(24)
 
-            self.max_stat_val = self._create_stat_card(stats_layout, "MAX SPEED")
-            self.avg_stat_val = self._create_stat_card(stats_layout, "AVG SPEED")
-            self.total_stat_val = self._create_stat_card(stats_layout, "TOTAL DATA")
+            self.max_stat_val = self._create_stat_card(stats_layout, self.i18n.STAT_MAX_SPEED)
+            self.avg_stat_val = self._create_stat_card(stats_layout, self.i18n.STAT_AVG_SPEED)
+            self.total_stat_val = self._create_stat_card(stats_layout, self.i18n.STAT_TOTAL_DATA)
             
             # 2. Loading Indicator (Pulse Widget) - NOW INSIDE STATS BAR
             stats_layout.addStretch() 
@@ -213,7 +213,7 @@ class GraphWindowUI:
             header_layout.addWidget(self.stats_bar, 1)
 
             # 3. Reset View Button
-            self.reset_zoom_btn = QPushButton("⟲ Reset View", self.header_widget)
+            self.reset_zoom_btn = QPushButton(f"⟲ {self.i18n.BUTTON_RESET_VIEW}", self.header_widget)
             self.reset_zoom_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             self.reset_zoom_btn.setStyleSheet("""
                 QPushButton {
@@ -263,7 +263,7 @@ class GraphWindowUI:
             self._graph_message_label.hide()
             
             # 6. Zoom Hint Label
-            self.zoom_hint_label = QLabel("Double-click to Reset", self.graph_widget)
+            self.zoom_hint_label = QLabel(self.i18n.ZOOM_HINT, self.graph_widget)
             self.zoom_hint_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             try:
                 self.zoom_hint_label.setStyleSheet(style_utils.zoom_hint_style())

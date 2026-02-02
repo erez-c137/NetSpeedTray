@@ -207,7 +207,7 @@
     "FONT_WEIGHT_BOLD": "Vet",
     "FONT_WEIGHT_EXTRABOLD": "Extra vet",
     "FONT_WEIGHT_BLACK": "Zwart",
-    "DEFAULT_STATS_TEXT_TEMPLATE": "Max: ↑{max_up:.2f} {max_up_unit}, ↓{max_down:.2f} {max_down_unit} | Totaal: ↑{up_total:.2f} {up_unit}, ↓{down_total:.2f} {down_unit}",
+    "DEFAULT_STATS_TEXT_TEMPLATE": "Max: ↑{max_up:.2f} {max_up_unit}, ↓{max_down:.2f} {max_down_unit} | Gemiddelde: ↑{avg_up:.2f} {avg_up_unit}, ↓{avg_down:.2f} {avg_down_unit} | Totaal: ↑{up_total:.2f} {up_unit}, ↓{down_total:.2f} {down_unit}",
     "APP_USAGE_STATS_TEXT_TEMPLATE": "Totaal: ↑{up_total:.2f} {up_unit}, ↓{down_total:.2f} {down_unit}",
     "GRAPH_TITLE_TEMPLATE": "Snelheidsgeschiedenis ({period})",
     "GRAPH_STATS_TEXT_TEMPLATE": "Max: ↑{max_up:.1f} {unit} | ↓{max_down:.1f} {unit}",
@@ -247,5 +247,10 @@
     "SCALING_LABEL": "Schalen",
     "INTERFACE_LAYOUT_GROUP": "Interface-indeling",
     "DISPLAY_FORMAT_GROUP": "Weergaveformaat",
-    "POSITION_GROUP": "Positioning"
+    "POSITION_GROUP": "Positioning",
+    "STAT_MAX_SPEED": "MAX SNELHEID",
+    "STAT_AVG_SPEED": "GEMIDDELDE",
+    "STAT_TOTAL_DATA": "TOTAAL DATA",
+    "BUTTON_RESET_VIEW": "Weergave resetten",
+    "ZOOM_HINT": "Dubbelklikken voor reset"
 }
