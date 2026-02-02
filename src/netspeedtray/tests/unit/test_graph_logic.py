@@ -47,9 +47,11 @@ def graph_window_instance(qapp) -> Iterator[GraphWindow]:
             session_start_time=datetime.now()
         )
 
-        # The constructor creates a real stats_bar in setupUi. 
-        # We must replace it with a mock so that our test assertions will work.
-        graph.stats_bar = MagicMock()
+        # The constructor creates a real UI in setupUi. 
+        # We must replace the labels with mocks so that our test assertions will work.
+        graph.ui.max_stat_val = MagicMock()
+        graph.ui.avg_stat_val = MagicMock()
+        graph.ui.total_stat_val = MagicMock()
         graph.logger = MagicMock()
         
         yield graph
@@ -60,7 +62,7 @@ def graph_window_instance(qapp) -> Iterator[GraphWindow]:
 def test_update_stats_bar_correctly_computes_values(graph_window_instance):
     """
     Tests the _update_stats_bar method to ensure it correctly calculates and
-    formats max speeds and total bandwidth.
+    updates the individual stat labels.
     """
     # ARRANGE
     graph = graph_window_instance
@@ -78,26 +80,35 @@ def test_update_stats_bar_correctly_computes_values(graph_window_instance):
     graph._update_stats_bar(history_data, total_up, total_down)
     
     # ASSERT
-    graph.stats_bar.setText.assert_called_once()
-    stats_text = graph.stats_bar.setText.call_args[0][0]
+    graph.ui.max_stat_val.setText.assert_called_once()
+    graph.ui.avg_stat_val.setText.assert_called_once()
+    graph.ui.total_stat_val.setText.assert_called_once()
     
-    # Template: "Max: ↑{max_up:.2f} {max_up_unit}, ↓{max_down:.2f} {max_down_unit} | Total: ↑{up_total:.2f} {up_unit}, ↓{down_total:.2f} {down_unit}"
-    assert "Max: ↑20.00 Mbps, ↓40.00 Mbps" in stats_text
-    assert "Total: ↑4.77 MB, ↓9.54 MB" in stats_text
+    max_text = graph.ui.max_stat_val.setText.call_args[0][0]
+    total_text = graph.ui.total_stat_val.setText.call_args[0][0]
+    
+    # Mbps calculations: 
+    # Max: (2.5 * 8) / 1e6 = 20.0 (Up), (5.0 * 8) / 1e6 = 40.0 (Down)
+    # The formatting is: "↓ {max_down:.1f}  ↑ {max_up:.1f} Mbps"
+    assert "↓ 40.0" in max_text
+    assert "↑ 20.0" in max_text
+    
+    # Total: 10,000,000 / 1024 / 1024 = 9.537
+    # 5,000,000 / 1024 / 1024 = 4.768
+    assert "↓ 9.5" in total_text
+    assert "↑ 4.7" in total_text
 
 
 def test_update_stats_bar_handles_empty_data(graph_window_instance):
     """
-    Tests that the stats bar shows the "No data" message when history is empty.
+    Tests that the stats bar remains unchanged (returns early) when history is empty.
     """
     # ARRANGE
     graph = graph_window_instance
-    
-    # Reset mock
-    graph.stats_bar.setText.reset_mock()
+    graph.ui.max_stat_val.setText.reset_mock()
     
     # ACT
     graph._update_stats_bar([])
     
     # ASSERT
-    graph.stats_bar.setText.assert_called_once_with(graph.i18n.NO_DATA_MESSAGE)
+    graph.ui.max_stat_val.setText.assert_not_called()
