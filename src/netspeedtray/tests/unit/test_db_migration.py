@@ -79,9 +79,14 @@ class TestDatabaseMigration(unittest.TestCase):
         
     def test_no_migration_needed(self):
         """Ensure migration is skipped if versions match."""
-        # Default local _DB_VERSION is 2
+        # Current _DB_VERSION is 3
         self.worker._initialize_connection()
-        self._create_v2_schema(self.worker.conn) # DB is v2
+        
+        # Create metadata with current target version
+        cursor = self.worker.conn.cursor()
+        cursor.execute("CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT)")
+        cursor.execute(f"INSERT INTO metadata (key, value) VALUES ('db_version', '{self.worker._DB_VERSION}')")
+        self.worker.conn.commit()
         
         with patch.object(self.worker, '_migrate_schema') as mock_migrate:
             self.worker._check_and_create_schema()

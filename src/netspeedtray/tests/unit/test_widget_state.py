@@ -81,13 +81,13 @@ def test_database_initialization_creates_correct_schema(managed_widget_state):
     # 1. Check if all tables were created
     cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
     tables = {row[0] for row in cursor.fetchall()}
-    expected_tables = {'metadata', 'speed_history_raw', 'speed_history_minute', 'speed_history_hour'}
+    expected_tables = {'metadata', 'speed_history_raw', 'speed_history_minute', 'speed_history_hour', 'bandwidth_history'}
     assert tables == expected_tables, "Incorrect set of tables were created."
 
     # 2. Check the database version in the metadata table
     cursor.execute("SELECT value FROM metadata WHERE key = 'db_version'")
-    # The DatabaseWorker._DB_VERSION is the source of truth, assume it is 2.
-    assert int(cursor.fetchone()[0]) == 2, "Database version is incorrect."
+    # The DatabaseWorker._DB_VERSION is the source of truth, currently 3.
+    assert int(cursor.fetchone()[0]) == 3, "Database version is incorrect."
 
     # 3. Check the schema of the 'speed_history_raw' table
     cursor.execute("PRAGMA table_info('speed_history_raw');")
@@ -121,8 +121,8 @@ def test_database_initialization_creates_correct_schema(managed_widget_state):
     # 6. Check that indexes were created
     cursor.execute("SELECT name FROM sqlite_master WHERE type='index';")
     indexes = {row[0] for row in cursor.fetchall()}
-    expected_indexes = {'idx_raw_timestamp', 'idx_minute_interface_timestamp', 'idx_hour_interface_timestamp'}
-    assert expected_indexes.issubset(indexes), "Required indexes were not created."
+    expected_indexes = {'idx_raw_timestamp', 'idx_minute_covering', 'idx_hour_covering'}
+    assert expected_indexes.issubset(indexes), f"Required indexes were not created. Found: {indexes}"
 
     conn.close()
 
