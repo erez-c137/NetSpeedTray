@@ -9,7 +9,9 @@ All notable changes to this project will be documented in this file.
 ### 🚀 Performance & Scale
 *   **Smart Downsampling (10K+ Fix):** Implemented stride-based downsampling that caps graph data at 2,000 points. Switching to long timelines like **BOOT** or **ALL** is now near-instant even with years of data.
 *   **Adaptive Gap Detection:** Resolved a UI freeze where large gaps in data caused redundant rendering loops. The system now automatically adjusts gap sensitivity based on data density.
-*   **Database Covering Indexes:** Added optimized indexes (`idx_minute_covering`, `idx_hour_covering`) to serve graph queries directly from memory.
+*   **Database Schema v3 Migration:** Upgraded the internal SQLite schema to Version 3. This includes:
+    *   **Covering Indexes:** New `idx_minute_covering` and `idx_hour_covering` indexes serve graph queries directly from memory for maximum performance.
+    *   **Advanced Metadata:** Added granular tracking for database creation time and improved migration safety with automated backups.
 *   **Instant Switch UI:** Added immediate graph clearing and a "Loading..." indicator when switching timelines to provide better feedback during data retrieval.
 
 ### 🎨 Visual Polish & Standardization
