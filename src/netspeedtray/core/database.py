@@ -31,7 +31,7 @@ class DatabaseWorker(QThread):
     error = pyqtSignal(str)
     database_updated = pyqtSignal()
 
-    _DB_VERSION = 2  # Increment this to force a schema rebuild
+    _DB_VERSION = 3  # Covering indexes, metadata tracking, eager aggregation
 
     def __init__(self, db_path: Path, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
@@ -202,14 +202,42 @@ class DatabaseWorker(QThread):
 
     def _migrate_v2_to_v3(self, cursor: sqlite3.Cursor) -> None:
         """
-        Migration from v2 to v3.
-        
-        Currently, v3 introduces no schema changes but serves as a placeholder
-        to ensure the migration pipeline handles version bumps gracefully.
+        Migration from v2 to v3:
+        - Drop old simple indexes, add covering indexes for graph queries
+        - Add created_at metadata
+        - Create total_bandwidth table if missing
         """
-        self.logger.info("Executing v2->v3 migration (No schema changes required).")
-        # Example of what would go here:
-        # cursor.execute("ALTER TABLE speed_history_raw ADD COLUMN packet_loss REAL DEFAULT 0.0")
+        self.logger.info("Executing v2->v3 migration: Adding covering indexes and metadata.")
+        
+        # Drop old indexes (they may not exist, hence IF EXISTS)
+        cursor.execute("DROP INDEX IF EXISTS idx_minute_interface_timestamp")
+        cursor.execute("DROP INDEX IF EXISTS idx_minute_timestamp")
+        cursor.execute("DROP INDEX IF EXISTS idx_hour_interface_timestamp")
+        cursor.execute("DROP INDEX IF EXISTS idx_hour_timestamp")
+        
+        # Create covering indexes
+        cursor.execute(f"""
+            CREATE INDEX IF NOT EXISTS idx_minute_covering ON {constants.data.SPEED_TABLE_MINUTE} 
+            (timestamp DESC, interface_name, upload_avg, download_avg)
+        """)
+        cursor.execute(f"""
+            CREATE INDEX IF NOT EXISTS idx_hour_covering ON {constants.data.SPEED_TABLE_HOUR} 
+            (timestamp DESC, interface_name, upload_avg, download_avg)
+        """)
+        
+        # Add created_at metadata if missing
+        now_ts = int(datetime.now().timestamp())
+        cursor.execute("INSERT OR IGNORE INTO metadata (key, value) VALUES ('created_at', ?)", (str(now_ts),))
+        
+        # Create total_bandwidth table if missing
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {constants.data.BANDWIDTH_TABLE} (
+                interface_name TEXT PRIMARY KEY,
+                total_upload_bytes REAL NOT NULL DEFAULT 0,
+                total_download_bytes REAL NOT NULL DEFAULT 0
+            )
+        """)
+
 
     def _check_and_create_schema(self) -> None:
         """
@@ -250,6 +278,7 @@ class DatabaseWorker(QThread):
 
 
         # Create new schema
+        now_ts = int(datetime.now().timestamp())
         self.logger.info("Creating new database schema (Version %d)...", self._DB_VERSION)
         cursor.executescript(f"""
             CREATE TABLE metadata (
@@ -257,6 +286,7 @@ class DatabaseWorker(QThread):
                 value TEXT NOT NULL
             );
             INSERT INTO metadata (key, value) VALUES ('db_version', '{self._DB_VERSION}');
+            INSERT INTO metadata (key, value) VALUES ('created_at', '{now_ts}');
 
             CREATE TABLE {constants.data.SPEED_TABLE_RAW} (
                 timestamp INTEGER NOT NULL,
@@ -276,7 +306,9 @@ class DatabaseWorker(QThread):
                 download_max REAL NOT NULL,
                 PRIMARY KEY (timestamp, interface_name)
             );
-            CREATE INDEX idx_minute_interface_timestamp ON {constants.data.SPEED_TABLE_MINUTE} (interface_name, timestamp DESC);
+            -- Covering index for graph queries (includes data columns to avoid table lookup)
+            CREATE INDEX idx_minute_covering ON {constants.data.SPEED_TABLE_MINUTE} 
+                (timestamp DESC, interface_name, upload_avg, download_avg);
 
             CREATE TABLE {constants.data.SPEED_TABLE_HOUR} (
                 timestamp INTEGER NOT NULL,
@@ -287,7 +319,15 @@ class DatabaseWorker(QThread):
                 download_max REAL NOT NULL,
                 PRIMARY KEY (timestamp, interface_name)
             );
-            CREATE INDEX idx_hour_interface_timestamp ON {constants.data.SPEED_TABLE_HOUR} (interface_name, timestamp DESC);
+            -- Covering index for graph queries
+            CREATE INDEX idx_hour_covering ON {constants.data.SPEED_TABLE_HOUR} 
+                (timestamp DESC, interface_name, upload_avg, download_avg);
+
+            CREATE TABLE {constants.data.BANDWIDTH_TABLE} (
+                interface_name TEXT PRIMARY KEY,
+                total_upload_bytes REAL NOT NULL DEFAULT 0,
+                total_download_bytes REAL NOT NULL DEFAULT 0
+            );
         """)
         self.conn.commit()
         self.logger.info("New database schema created successfully.")
@@ -331,6 +371,14 @@ class DatabaseWorker(QThread):
             pruned = self._prune_data_with_grace_period(cursor, config, _now)
             
             self.conn.commit()
+            
+            # Track last maintenance time for diagnostics
+            cursor.execute(
+                "INSERT OR REPLACE INTO metadata (key, value) VALUES ('last_maintenance_at', ?)",
+                (str(int(_now.timestamp())),)
+            )
+            self.conn.commit()
+            
             self.logger.info("Database maintenance tasks committed successfully.")
             
             if pruned:

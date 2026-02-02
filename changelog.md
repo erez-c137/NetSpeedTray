@@ -4,13 +4,49 @@ All notable changes to this project will be documented in this file.
 
 ---
 
-## [1.2.4] - Unreleased
+## [1.2.4] - February 2, 2026
 
-### 📊 Graph & Visualization
-*   **Tooltip Accuracy:** Fixed a critical coordinate drift issue where the graph tooltip values would become "stuck" or show incorrect time segments during mouse movement.
-*   **Smooth Crosshairs:** Restored fluid crosshair movement by ensuring efficient canvas redraws on hover.
+### 🚀 Performance & Scale
+*   **Smart Downsampling (10K+ Fix):** Implemented stride-based downsampling that caps graph data at 2,000 points. Switching to long timelines like **BOOT** or **ALL** is now near-instant even with years of data.
+*   **Adaptive Gap Detection:** Resolved a UI freeze where large gaps in data caused redundant rendering loops. The system now automatically adjusts gap sensitivity based on data density.
+*   **Database Covering Indexes:** Added optimized indexes (`idx_minute_covering`, `idx_hour_covering`) to serve graph queries directly from memory.
+*   **Instant Switch UI:** Added immediate graph clearing and a "Loading..." indicator when switching timelines to provide better feedback during data retrieval.
+
+### 🎨 Visual Polish & Standardization
+*   **Locked Graph Layout:** Standardized subplot margins (8% left) so the "graph box" width remains identical across all views, regardless of Y-axis label length. No more "jumping" grid boxes.
+*   **Trailing Bridges to "Now":** Added dashed bridging lines that connect the last recorded data point to the current time, ensuring the graph always feels active and fills the entire X-axis.
+*   **Strict Edge Alignment:** Eliminated horizontal margins (`xmargin=0`) so data flows perfectly from the exact left to the exact right of the grid.
+*   **High-Res Time Labels:** Automatically switches to seconds resolution (`%H:%M:%S`) for extremely short ranges, preventing repeating labels in the Session view.
+*   **Multi-Layer Peak Markers:** Refined glowing indicator dots for Max and Peak speeds with a three-layer glow effect and magnetic snapping.
+
+### 🛡️ Stability & Security
+*   **Explicit Exit Logic (#98):** Fixed a critical bug where closing the settings or graph windows could inadvertently shut down the entire application.
+*   **Y-Axis Sticky Logic:** Integrated "Sticky Top" scaling that prevents the Y-axis from jittering when speed fluctuates slightly, while still adapting to huge spikes.
+*   **Thread-Safe Cleanup:** Hardened the exit sequence for database workers and background monitors to ensure zero "dangling" processes on shutdown.
+
+### 🌍 Localization
+*   **Korean (ko_KR) Refinement (#97):** Major update with idiomatic phrasing and improved technical terms. (Thanks @VenusGirl!)
+*   **Universal Locale Parity (#90):** Synchronized all 9 supported languages with new descriptive tooltips and technical parity.
+
+### 📏 Widget Layout & Positioning
+*   **Vertical Taskbar Support (#99):** Intelligent font-scaling engine for vertical taskbars with automatic text shrinking.
+*   **Geometry Debouncing:** High-frequency coordinate filter eliminates redundant UI operations.
+*   **Intelligent Drag Persistence:** Smart anchoring remembers relative offset from taskbar tray.
+*   **Window State Persistence:** Settings Menu and Graph Window remember their last screen positions.
+
+### 🧭 Navigation & UX
+*   **Instant Timeline Pills:** Replaced the legacy slider with a modern segmented button array: `SESS | BOOT | 24H | WEEK | MONTH | ALL`.
+*   **Optimized Defaults:** The graph now defaults to the **24H** timeline, identified as the most useful starting point for most users.
+*   **Window State Persistence:** Settings and Graph windows now remember their last screen positions across app restarts.
+
+### 🔍 Interaction Refinements
+*   **O(log n) Lookup:** Implemented binary search for nearest-point finding, ensuring fluid tooltip movement even on high-resolution displays.
+*   **Blitting Performance:** Cached static background with dynamic artist redraws for a smooth 60 FPS interaction experience.
+*   **Vertical Taskbar Support (#99):** Intelligent font-scaling engine for vertical taskbars with automatic text shrinking.
+
 
 ---
+
 
 ## [1.2.3] - January 29, 2026
 

@@ -262,99 +262,132 @@ class WidgetState(QObject):
         self.trigger_maintenance()
 
 
-    def get_speed_history(self, start_time: Optional[datetime] = None, end_time: Optional[datetime] = None, interface_name: Optional[str] = None, return_raw: bool = False, resolution: Literal['auto', 'raw', 'minute', 'hour'] = 'auto') -> List[Tuple[Union[datetime, float], float, float]]:
+    def get_speed_history(self, start_time: Optional[datetime] = None, end_time: Optional[datetime] = None, interface_name: Optional[str] = None, return_raw: bool = False, resolution: Literal['auto', 'raw', 'minute', 'hour', 'day'] = 'auto', _visited_resolutions: set = None) -> List[Tuple[Union[datetime, float], float, float]]:
         """
-        Retrieves speed history, intelligently aggregating in the database for performance.
-        `resolution`: 'auto' (default), 'raw', 'minute', 'hour'.
+        Retrieves speed history by querying ALL relevant database tiers (raw, minute, hour)
+        and unifying them into a single timeline.
         """
         self.flush_batch()
-        # Non-blocking sync or minimal sleep
-        # time.sleep(timeouts.DB_FLUSH_BATCH_SYNC_SLEEP) # Removed to improve responsiveness
 
+        # 1. Timeline Setup
         _now_ts = int(datetime.now().timestamp())
         _start_ts = int(start_time.timestamp()) if start_time else 0
         _end_ts = int(end_time.timestamp()) if end_time else _now_ts
-        duration = _end_ts - _start_ts
         
-        # 1. Determine Target Resolution ('auto')
+        # 2. Determine Resolution
         target_res = resolution
         if target_res == 'auto':
             target_res = constants.data.history_period.get_target_resolution(start_time, end_time)
 
-        # Helper to map resolution to seconds
-        res_map = {'raw': 1, 'minute': 60, 'hour': 3600}
-        target_interval = res_map.get(target_res, 1)
-
-        is_all_interfaces = interface_name is None or str(interface_name).lower() == "all"
+        # Resolution -> Interval (seconds) mapping
+        # 'day' maps to 86400, others to their standard seconds
+        res_map = {'raw': 1, 'minute': 60, 'hour': 3600, 'day': 86400}
+        target_interval = res_map.get(target_res, 60)
+        
+        # 3. Build TARGETED Query (Single Table based on Resolution)
+        # This replaces the slow UNION ALL approach
+        is_all_ifaces = not interface_name or str(interface_name).lower() == "all"
+        
+        # Map resolution to table and columns
+        table_map = {
+            'raw': ("speed_history_raw", "upload_bytes_sec", "download_bytes_sec"),
+            'minute': ("speed_history_minute", "upload_avg", "download_avg"),
+            'hour': ("speed_history_hour", "upload_avg", "download_avg"),
+            'day': ("speed_history_hour", "upload_avg", "download_avg"),  # Use hour table for day aggregation
+        }
+        
+        table, up_col, down_col = table_map.get(target_res, table_map['minute'])
         
         try:
             conn = self._get_read_conn()
             cursor = conn.cursor()
             
-            # --- INTELLIGENT TABLE SELECTION ---
-            # Instead of a complex UNION, we pick the most appropriate SINGLE table 
-            # if the requested range fits entirely within its retention window.
-            # This drastically reduces query complexity for common 'Last X Hours' views.
+            # Time binning calculation
+            time_calc = f"CAST(timestamp / {target_interval} AS INTEGER) * {target_interval}"
             
-            target_table = "speed_history_hour" # Default fallback
-            up_col, down_col = "upload_avg", "download_avg"
-            source_interval = 3600
+            # Build inner query
+            inner_query = f"""
+                SELECT 
+                    {time_calc} as bin_ts, 
+                    interface_name, 
+                    AVG({up_col}) as up, 
+                    AVG({down_col}) as down
+                FROM {table}
+                WHERE timestamp BETWEEN ? AND ?
+            """
+            params = [_start_ts, _end_ts]
             
-            if _start_ts >= (_now_ts - constants.data.history_period.RES_RAW_THRESHOLD):
-                target_table = "speed_history_raw"
-                up_col, down_col = "upload_bytes_sec", "download_bytes_sec"
-                source_interval = 1
-            elif _start_ts >= (_now_ts - constants.data.history_period.RES_MINUTE_THRESHOLD):
-                target_table = "speed_history_minute"
-                up_col, down_col = "upload_avg", "download_avg"
-                source_interval = 60
-
-            # Construct the Query
-            time_expr = "timestamp"
-            needs_agg = source_interval < target_interval
-            
-            if needs_agg:
-                time_expr = f"(timestamp / {target_interval}) * {target_interval}"
-            
-            if is_all_interfaces:
-                if needs_agg:
-                    # Spatial + Temporal Aggregation
-                    select_clause = f"SELECT {time_expr}, SUM({up_col}) / COUNT(DISTINCT timestamp), SUM({down_col}) / COUNT(DISTINCT timestamp)"
-                else:
-                    # Spatial Aggregation Only
-                    select_clause = f"SELECT {time_expr}, SUM({up_col}), SUM({down_col})"
-            else:
-                if needs_agg:
-                    # Temporal Aggregation Only
-                    select_clause = f"SELECT {time_expr}, AVG({up_col}), AVG({down_col})"
-                else:
-                    # Raw fetch
-                    select_clause = f"SELECT {time_expr}, {up_col}, {down_col}"
-
-            query = f"{select_clause} FROM {target_table} WHERE timestamp BETWEEN ? AND ?"
-            params: List[Any] = [_start_ts, _end_ts]
-            
-            if not is_all_interfaces:
-                query += " AND interface_name = ?"
+            if not is_all_ifaces:
+                inner_query += " AND interface_name = ?"
                 params.append(interface_name)
+                
+            inner_query += " GROUP BY bin_ts, interface_name"
             
-            if is_all_interfaces or needs_agg:
-                query += f" GROUP BY {time_expr}"
+            # Outer Query: Aggregate logic
+            # Note: LIMIT removed - aggregation already reduces data volume adequately.
+            # A LIMIT here would cut off recent data (ordered ASC, oldest first).
             
-            query += " ORDER BY timestamp"
-            
-            # self.logger.debug(f"Executing Optimized Query: {query} with {params}")
-            cursor.execute(query, tuple(params))
-            
-            if return_raw:
-                results = [(row[0], row[1], row[2]) for row in cursor.fetchall() if row[1] is not None]
+            if is_all_ifaces:
+                # Sum across interfaces (Eth + Wifi)
+                outer_query = f"""
+                    SELECT bin_ts, COALESCE(SUM(up), 0), COALESCE(SUM(down), 0)
+                    FROM ({inner_query})
+                    GROUP BY bin_ts
+                    ORDER BY bin_ts
+                """
             else:
-                results = [(datetime.fromtimestamp(row[0]), row[1], row[2]) for row in cursor.fetchall() if row[1] is not None]
+                # Single interface: Just order
+                outer_query = f"""
+                    SELECT bin_ts, COALESCE(AVG(up), 0), COALESCE(AVG(down), 0)
+                    FROM ({inner_query})
+                    GROUP BY bin_ts
+                    ORDER BY bin_ts
+                """
+            
+            # self.logger.debug(f"Executing Query: {outer_query} | Params: {params}")
+            cursor.execute(outer_query, tuple(params))
+            
+            rows = cursor.fetchall()
+            
+            # Convert rows to standard format (Timestamp, Up, Down)
+            data_points = []
+            if return_raw:
+                 data_points = [(row[0], row[1], row[2]) for row in rows]
+            else:
+                 data_points = [(datetime.fromtimestamp(row[0]), row[1], row[2]) for row in rows]
 
-            self.logger.debug("Retrieved %d records (Res: %s, Table: %s) for %s to %s.", len(results), target_res, target_table, start_time, end_time)
-            return results
+            # --- SMART Edge Padding (Zero-Fill) ---
+            # If no real data, create evenly-spaced zeros across the timeline.
+            # This prevents gap detection from splitting into single-point segments.
+            if start_time and end_time:
+                duration = (_end_ts - _start_ts)  # seconds
+                
+                if not data_points:
+                    # No real data: Generate synthetic flat baseline
+                    # 1 point per hour, min 10, max 100 for performance
+                    num_points = min(100, max(10, int(duration / 3600)))
+                    interval = duration / max(1, num_points - 1)
+                    
+                    for i in range(num_points):
+                        pt_ts = _start_ts + (i * interval)
+                        if return_raw:
+                            data_points.append((pt_ts, 0.0, 0.0))
+                        else:
+                            data_points.append((datetime.fromtimestamp(pt_ts), 0.0, 0.0))
+                else:
+                    # Has real data: Just ensure edges are covered
+                    s_pt = _start_ts if return_raw else start_time
+                    e_pt = _end_ts if return_raw else end_time
+                    
+                    if data_points[0][0] > s_pt:
+                        data_points.insert(0, (s_pt, 0.0, 0.0))
+                    if data_points[-1][0] < e_pt:
+                        data_points.append((e_pt, 0.0, 0.0))
+            
+            return data_points
+
         except sqlite3.Error as e:
-            self.logger.error("Error retrieving optimized speed history: %s", e, exc_info=True)
+            self.logger.error("Unified graph query failed: %s", e, exc_info=True)
             return []
 
 

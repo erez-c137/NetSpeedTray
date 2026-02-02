@@ -91,7 +91,7 @@ release-template.md
 .pylintrc
 
 # Developer utility scripts
-populate_db.py
+scripts/
 
 # Documentation
 Docs/

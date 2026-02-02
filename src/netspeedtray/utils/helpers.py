@@ -13,6 +13,7 @@ from logging.handlers import RotatingFileHandler
 from typing import Optional, Tuple, List
 from pathlib import Path
 from datetime import datetime
+import numpy as np
 
 from netspeedtray import constants
 
@@ -311,42 +312,98 @@ def format_data_size(data_bytes: int | float, i18n, precision: int = 2) -> Tuple
 
 # --- Data Processing Utilities ---
 
-def downsample_data(data: List[Tuple[datetime, float, float]], max_points: int) -> List[Tuple[datetime, float, float]]:
+def calculate_monotone_cubic_interpolation(x_coords: List[float], y_coords: List[float], density: int = 10) -> Tuple[List[float], List[float]]:
     """
-    Reduces the number of data points to a maximum limit for efficient plotting.
-
-    This function uses a binning method that preserves the most significant data point
-    (the one with the highest combined upload/download speed) within each bin. This
-    ensures that visual spikes in network activity are not lost during downsampling.
-
+    Computes a Monotone Cubic Spline for smooth, non-overshooting interpolation.
+    
     Args:
-        data: The input data as a list of (timestamp, upload, download) tuples.
-        max_points: The maximum number of points the output should contain.
-
-    Returns:
-        A downsampled list of data points, or the original list if it's already
-        within the max_points limit.
-    """
-    if len(data) <= max_points:
-        return data
-
-    downsampled = []
-    num_points = len(data)
-    # Ensure bin_size is at least 1, even if max_points is > num_points (should not happen with the guard clause)
-    bin_size = max(1.0, num_points / max_points)
-
-    for i in range(max_points):
-        start_index = int(i * bin_size)
-        end_index = int((i + 1) * bin_size)
-        if start_index >= num_points:
-            break
+        x_coords: List of X values (must be strictly increasing).
+        y_coords: List of Y values.
+        density: Number of interpolated points to generate *between* each pair of original points.
         
-        bin_data = data[start_index:end_index]
-        if not bin_data:
-            continue
-
-        # Find the point with the highest combined speed in the bin to preserve spikes
-        peak_point = max(bin_data, key=lambda point: point[1] + point[2])
-        downsampled.append(peak_point)
-
-    return downsampled
+    Returns:
+        tuple(interp_x, interp_y): Dense arrays of smoothed points.
+    """
+    x = np.array(x_coords, dtype=float)
+    y = np.array(y_coords, dtype=float)
+    n = len(x)
+    
+    if n < 2:
+        return list(x), list(y)
+        
+    # 1. Calculate linear slopes (secants)
+    dx = np.diff(x)
+    dy = np.diff(y)
+    
+    # Avoid division by zero
+    dx[dx == 0] = 1e-9
+    secants = dy / dx
+    
+    # 2. Initialize tangents
+    tangents = np.zeros(n)
+    
+    # 3. Calculate inner tangents (Fritsch-Carlson)
+    # The tangent at k is determined by the secants on either side.
+    # If secants have different signs, tangent is 0 (local extrema).
+    for i in range(1, n-1):
+        m_prev = secants[i-1]
+        m_next = secants[i]
+        
+        if m_prev * m_next <= 0:
+            tangents[i] = 0.0
+        else:
+            # Harmonic mean ensures the tangent doesn't cause overshoot
+            tangents[i] = (3 * m_prev * m_next) / (max(m_next, m_prev) + 2 * min(m_next, m_prev))
+            
+    # 4. Boundary conditions (One-sided diffs)
+    tangents[0] = secants[0]
+    tangents[-1] = secants[-1]
+    
+    # 5. Generate high-density points (Vectorized)
+    # We want 'density' points between each pair of knots.
+    # Total new points: (n-1) * density
+    
+    # Create T vector [0, 1/d, 2/d, ... (d-1)/d] for each segment
+    # Shape: (density, )
+    t = np.linspace(0, 1, density + 1)[:-1] 
+    
+    # Precompute Hermite basis functions for all t
+    # Shape: (density, )
+    t2 = t*t
+    t3 = t*t*t
+    
+    h00 = 2*t3 - 3*t2 + 1
+    h10 = t3 - 2*t2 + t
+    h01 = -2*t3 + 3*t2
+    h11 = t3 - t2
+    
+    # Prepare segment arrays
+    # Shape: (n-1, 1) for broadcasting against (density,)
+    x_start = x[:-1, np.newaxis]
+    x_end   = x[1:, np.newaxis]
+    y_start = y[:-1, np.newaxis]
+    y_end   = y[1:, np.newaxis]
+    m_start = tangents[:-1, np.newaxis]
+    m_end   = tangents[1:, np.newaxis]
+    
+    seg_dx = x_end - x_start
+    
+    # Interpolate Y
+    # Result shape: (n-1, density)
+    # h00 * y0 + h10 * dx * m0 + h01 * y1 + h11 * dx * m1
+    # Broadcasting: (n-1, 1) * (density,) -> (n-1, density)
+    
+    seg_y = (y_start * h00) + (seg_dx * m_start * h10) + (y_end * h01) + (seg_dx * m_end * h11)
+    
+    # Interpolate X
+    # x0 + t * dx
+    seg_x = x_start + t * seg_dx
+    
+    # Flatten and append final point
+    interp_x = seg_x.flatten().tolist()
+    interp_y = seg_y.flatten().tolist()
+    
+    interp_x.append(x[-1])
+    interp_y.append(y[-1])
+    
+    return interp_x, interp_y

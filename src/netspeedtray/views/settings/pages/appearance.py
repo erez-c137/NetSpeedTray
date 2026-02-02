@@ -237,9 +237,9 @@ class AppearancePage(QWidget):
         self.on_change()
 
     def set_color_input(self, key: str, hex_code: str):
-        if hasattr(self, f"{key}_input"):
-            getattr(self, f"{key}_input").setText(hex_code)
-            getattr(self, f"{key}_button").setStyleSheet(f"background-color: {hex_code}; border: none;")
+        if hasattr(self, f"{key}_color_input"):
+            getattr(self, f"{key}_color_input").setText(hex_code)
+            getattr(self, f"{key}_color_button").setStyleSheet(f"background-color: {hex_code}; border: none;")
             self.on_change()
 
     def _on_font_weight_changed(self, idx: int):

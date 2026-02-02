@@ -197,11 +197,12 @@ def graph_settings_panel_style() -> str:
         }}
         #settingsPanel QLabel#settingsTitleLabel {{
             font-family: 'Segoe UI Variable';
-            font-size: 15px;
+            font-size: 14px;
             font-weight: 600;
             color: {style_constants.DARK_MODE_TEXT_COLOR};
-            padding: 5px 0 10px 0;
+            padding: 2px 0 8px 0;
         }}
+
         #settingsPanel QComboBox {{
             background-color: {style_constants.COMBOBOX_BG_DARK};
             border: 1px solid {style_constants.COMBOBOX_BORDER_DARK};
@@ -236,22 +237,34 @@ def graph_tooltip_style() -> str:
     """
 
 
+def zoom_hint_style() -> str:
+    """Returns the stylesheet for the 'Double-click to Reset' hint."""
+    return """
+        QLabel {
+            background-color: rgba(0, 0, 0, 0.6);
+            color: rgba(255, 255, 255, 0.9);
+            border-radius: 12px;
+            padding: 4px 12px;
+            font-size: 11px;
+            font-family: 'Segoe UI Variable', sans-serif;
+            font-weight: 500;
+        }
+    """
+
+
 def graph_overlay_style() -> str:
     """
-    Returns a stylesheet for the overlay elements on the graph (stats bar, hamburger).
+    Returns a stylesheet for the overlay elements on the graph (hamburger button).
     """
     return """
-        QLabel, QPushButton {
+        QPushButton {
             background-color: rgba(40, 40, 40, 0.85);
             color: white;
-            padding: 4px;
+            padding: 2px;
             font-size: 13px;
             font-family: 'Segoe UI Variable';
             border-radius: 4px;
             border: none;
-        }
-        QPushButton {
-            padding: 2px;
         }
         QPushButton:hover {
             background-color: rgba(55, 55, 55, 0.9);
@@ -260,6 +273,106 @@ def graph_overlay_style() -> str:
             background-color: rgba(25, 25, 25, 0.95);
         }
     """
+
+
+def graph_stats_bar_style() -> str:
+    """
+    Returns a stylesheet for the graph stats bar container.
+    """
+    return """
+        QWidget#statsBar {
+            background-color: rgba(40, 40, 40, 0.85);
+            border-radius: 4px;
+            border: none;
+        }
+    """
+
+
+def graph_stats_card_style() -> str:
+    """Style for an individual stat card container."""
+    return """
+        QWidget {
+            background-color: transparent;
+            padding: 2px;
+        }
+    """
+
+
+def graph_stats_title_style() -> str:
+    """Style for the uppercase title of a stat card."""
+    return """
+        QLabel {
+            color: #888;
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+            font-family: 'Segoe UI Variable', 'Segoe UI', sans-serif;
+            background-color: transparent;
+        }
+    """
+
+
+def graph_stats_value_style() -> str:
+    """Style for the large monospace value in a stat card."""
+    return """
+        QLabel {
+            color: white;
+            font-size: 14px;
+            font-weight: 600;
+            font-family: 'Cascadia Mono', 'Consolas', 'SF Mono', monospace;
+            background-color: transparent;
+        }
+    """
+
+
+def timeline_pills_style() -> str:
+    """
+    Returns stylesheet for the segmented timeline control (Time Pills).
+    Uses the Windows accent color for the active pill.
+    """
+    accent_qcolor = get_accent_color()
+    accent_rgb = f"rgb({accent_qcolor.red()}, {accent_qcolor.green()}, {accent_qcolor.blue()})"
+    accent_hover = accent_qcolor.lighter(110).name()
+    
+    return f"""
+        QWidget#timelinePills {{
+            background: transparent;
+        }}
+        QWidget#timelinePills QPushButton {{
+            background: rgba(255, 255, 255, 0.05);
+            color: #ccc;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-right: none; /* Join pills */
+            margin: 0px;
+            padding: 4px 2px;
+            font-size: 10px;
+            font-weight: 600;
+            font-family: 'Segoe UI Variable', 'Segoe UI', sans-serif;
+        }}
+        QPushButton#pillFirst {{
+            border-top-left-radius: 6px;
+            border-bottom-left-radius: 6px;
+        }}
+        QPushButton#pillLast {{
+            border-top-right-radius: 6px;
+            border-bottom-right-radius: 6px;
+            border-right: 1px solid rgba(255, 255, 255, 0.1);
+        }}
+        QPushButton:hover:!checked {{
+            background: rgba(255, 255, 255, 0.15);
+            color: white;
+        }}
+        QWidget#timelinePills QPushButton:checked {{
+            background-color: {accent_rgb} !important;
+            color: white !important;
+            border: 1px solid {accent_rgb} !important;
+            font-weight: bold;
+        }}
+        QWidget#timelinePills QPushButton#pillLast:checked {{
+            border-right: 1px solid {accent_rgb} !important;
+        }}
+    """
+
 
 
 def toggle_style(total_track_width: int, total_track_height: int) -> str:

@@ -117,6 +117,7 @@ class NetworkSpeedWidget(QWidget):
         self._is_context_menu_visible: bool = False
         self.last_tray_rect: Optional[Tuple[int, int, int, int]] = None
         self._taskbar_lost_count: int = 0
+        self._will_quit_app: bool = False # Flag to distinguish hide vs exit
         
         # Hooks for system events
         self.system_event_handler: SystemEventHandler
@@ -278,8 +279,12 @@ class NetworkSpeedWidget(QWidget):
                 self._ensure_win32_topmost()
 
         except Exception as e:
-            self.logger.error(f"Critical error in _execute_refresh: {e}", exc_info=True)
-            if self.isVisible(): self.setVisible(False)
+            self.logger.error(f"Critical error in _execute_refresh (failure count: {self._taskbar_lost_count}): {e}")
+            # If we've had many consecutive failures, only then hide as a last resort.
+            # Otherwise, keep it visible and hope for recovery on next tick.
+            if self._taskbar_lost_count > 30 and self.isVisible():
+                 self.logger.warning("Hiding widget as a last resort after sustained detection failure.")
+                 self.setVisible(False)
 
 
     def _delayed_initial_show(self) -> None:
@@ -573,20 +578,35 @@ class NetworkSpeedWidget(QWidget):
 
 
     def closeEvent(self, event: QCloseEvent) -> None:
-        self.logger.debug("Close event received. Initiating cleanup...")
-        try:
-            self.cleanup()
-            event.accept()
-            self.logger.debug("Widget cleanup complete. Proceeding to close.")
-            app = QApplication.instance()
-            if app:
-                app.quit()
-        except Exception as e:
-            self.logger.error(f"Error during closeEvent cleanup: {e}", exc_info=True)
-            event.accept()
-            app = QApplication.instance()
-            if app:
-                app.quit()
+        """
+        Handles widget closure.
+        By default, closing the widget just hides it (standard Tray behavior).
+        The application only exits if _will_quit_app is set to True.
+        """
+        if self._will_quit_app:
+            self.logger.info("Application exit requested. Cleaning up...")
+            try:
+                self.cleanup()
+                event.accept()
+                
+                # Explicitly ensure the app quits loop
+                app = QApplication.instance()
+                if app:
+                    app.quit()
+                    
+            except Exception as e:
+                self.logger.error(f"Error during shutdown cleanup: {e}", exc_info=True)
+                event.accept()
+        else:
+            self.logger.debug("Close event received but not quitting app. Hiding widget.")
+            self.setVisible(False)
+            event.ignore() # Prevent destruction of the widget
+
+    def fully_exit_application(self) -> None:
+        """Helper to cleanly exit the entire application."""
+        self.logger.info("Fully exiting application...")
+        self._will_quit_app = True
+        self.close()
 
 
 
@@ -892,6 +912,11 @@ class NetworkSpeedWidget(QWidget):
                 self.position_manager.stop_monitoring()
             
             if self._state_watcher_timer.isActive(): self._state_watcher_timer.stop()
+            
+            # --- Stop the background monitor thread ---
+            if hasattr(self, 'monitor_thread') and self.monitor_thread:
+                self.logger.debug("Stopping NetworkMonitorThread...")
+                self.monitor_thread.stop()
 
             # --- Clean up core components ---
             if self.timer_manager: self.timer_manager.cleanup()

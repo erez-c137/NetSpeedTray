@@ -12,7 +12,7 @@ class GraphConstants:
     GRAPH_WIDGET_WIDTH: Final[int] = 802
     GRAPH_WIDGET_HEIGHT: Final[int] = 602
     HAMBURGER_ICON_SIZE: Final[int] = 24
-    HAMBURGER_ICON_OFFSET_X: Final[int] = 5
+    HAMBURGER_ICON_OFFSET_X: Final[int] = 20
     
     # --- Timers and Performance ---
     REALTIME_UPDATE_INTERVAL_MS: Final[int] = 1000

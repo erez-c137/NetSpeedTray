@@ -92,7 +92,7 @@ class TrayIconManager(QObject):
             app_instance = QApplication.instance()
             if app_instance:
                 # We connect to widget.close() usually, which handles cleanup
-                exit_action.triggered.connect(self.widget.close)
+                exit_action.triggered.connect(self.widget.fully_exit_application)
             else:
                 exit_action.setEnabled(False)
             

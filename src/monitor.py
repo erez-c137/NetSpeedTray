@@ -8,6 +8,10 @@ import matplotlib
 matplotlib.use('QtAgg')  # Use Qt backend for embedding
 matplotlib.interactive(False)  # Disable interactive mode to prevent popups
 
+import warnings
+warnings.filterwarnings("ignore", "Tight layout not applied")
+warnings.filterwarnings("ignore", "constrained_layout not applied")
+
 import logging
 import signal
 import sys
@@ -156,6 +160,7 @@ def main() -> int:
             
             # 6. Configure the application to behave like a tray utility.
             app.setQuitOnLastWindowClosed(False)
+            app.aboutToQuit.connect(widget.cleanup)
 
             # 7. Set up signal handlers to gracefully call the widget's own cleanup routine.
             signal.signal(signal.SIGINT, lambda s, f: QApplication.instance().quit())

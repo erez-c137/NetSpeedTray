@@ -11,13 +11,11 @@ import math
 from typing import Tuple, List, Optional, Dict, Any
 from dataclasses import dataclass, field
 
-from PyQt6.QtGui import QPainter, QColor, QFont, QFontMetrics, QPen
-from PyQt6.QtCore import Qt, QPointF, QRect
-
-from netspeedtray import constants
-
 from netspeedtray.core.widget_state import SpeedDataSnapshot, AggregatedSpeedData
-from netspeedtray.utils.helpers import format_speed
+from netspeedtray.utils.helpers import format_speed, calculate_monotone_cubic_interpolation
+from PyQt6.QtGui import QPainter, QColor, QFont, QFontMetrics, QPen, QPainterPath
+from PyQt6.QtCore import Qt, QPointF, QRect
+from netspeedtray import constants
 
 logger = logging.getLogger("NetSpeedTray.WidgetRenderer")
 
@@ -226,72 +224,107 @@ class WidgetRenderer:
     pass
 
     def _draw_vertical_layout(self, painter: QPainter, upload: float, download: float, width: int, height: int, config: RenderConfig, always_mbps: bool, decimal_places: int, force_decimals: bool, unit_type: str, swap_order: bool, short_labels: bool) -> None:
-        """Draws the standard two-line vertical layout with correct compact centering."""
-        line_height = self.metrics.height()
-        ascent = self.metrics.ascent()
-        
-        # Calculate the height of ONLY the text itself to create a compact block.
-        total_text_height = line_height * 2
-        # Center this compact block vertically.
-        top_y = int((height - total_text_height) / 2 + ascent)
-        # The second line is positioned exactly one line_height below the first.
-        bottom_y = top_y + line_height
+        """
+        Draws the standard two-line vertical layout.
+        Includes INTELLIGENT SCALING to fit narrow/vertical taskbars (#99).
+        """
+        # --- Preparation & Helpers ---
+        # Helper to get current metrics
+        def get_width_metrics(current_metrics, current_arrow_metrics):
+            arrow_w = 0 if hide_arrows else current_arrow_metrics.horizontalAdvance(self.i18n.UPLOAD_ARROW)
+            arrow_g = 0 if hide_arrows else constants.renderer.ARROW_NUMBER_GAP
+            
+            ref_v = get_reference_value_string(always_mbps, decimal_places, unit_type=unit_type)
+            max_num_w = current_metrics.horizontalAdvance(ref_v)
+            
+            unit_g = 0 if hide_unit else constants.renderer.VALUE_UNIT_GAP
+            if hide_unit:
+                max_u_w = 0
+            else:
+                p_units = get_unit_labels_for_type(self.i18n, unit_type, short_labels)
+                max_u_w = max(current_metrics.horizontalAdvance(u) for u in p_units)
+                
+            total_w = arrow_w + arrow_g + max_num_w + unit_g + max_u_w
+            return total_w, arrow_w, arrow_g, max_num_w, unit_g, max_u_w
+
+        from netspeedtray.utils.helpers import get_reference_value_string, get_unit_labels_for_type
 
         upload_text, download_text = self._format_speed_texts(upload, download, always_mbps, decimal_places, force_decimals, unit_type, short_labels=short_labels)
         up_val_str, up_unit = upload_text
         down_val_str, down_unit = download_text
         
-        # Calculate widths, conditionally including arrows and units
         hide_arrows = config.hide_arrows
         hide_unit = config.hide_unit_suffix
         
-        arrow_width = 0 if hide_arrows else self.arrow_metrics.horizontalAdvance(self.i18n.UPLOAD_ARROW)
-        arrow_gap = 0 if hide_arrows else constants.renderer.ARROW_NUMBER_GAP
+        # --- Font Scaling Logic ---
+        # Start with configured fonts
+        draw_font = QFont(self.font)
+        draw_arrow_font = QFont(self.arrow_font)
         
-        # Use helpers for reference strings and labels
-        from netspeedtray.utils.helpers import get_reference_value_string, get_unit_labels_for_type
+        # Iteratively reduce size if too wide
+        min_font_size = 6
+        current_size = self.config.font_size
         
-        ref_val = get_reference_value_string(always_mbps, decimal_places, unit_type=unit_type)
-        max_number_width = self.metrics.horizontalAdvance(ref_val)
+        # Safety margin to prevent edge-touching
+        # Narrow taskbars (e.g. 60px) need strict margins
+        safe_width = width - (constants.renderer.TEXT_MARGIN * 2) 
+        if safe_width < 10: safe_width = 10 # Sanity check
         
-        # For units: determine the widest possible unit label for the current unit_type
-        # This prevents jumping when unit changes from "B" to "KiB" to "MiB" etc.
-        unit_gap = 0 if hide_unit else constants.renderer.VALUE_UNIT_GAP
+        metrics = QFontMetrics(draw_font)
+        arrow_metrics = QFontMetrics(draw_arrow_font)
         
-        if hide_unit:
-            max_unit_width = 0
-        else:
-            # Get all possible unit labels for the current unit type and find the widest
-            possible_units = get_unit_labels_for_type(self.i18n, unit_type, short_labels)
+        content_width, arrow_width, arrow_gap, max_number_width, unit_gap, max_unit_width = get_width_metrics(metrics, arrow_metrics)
+        
+        # Scaling Loop
+        while content_width > safe_width and current_size > min_font_size:
+            current_size -= 1
+            draw_font.setPointSize(current_size)
+            metrics = QFontMetrics(draw_font)
             
-            max_unit_width = max(self.metrics.horizontalAdvance(u) for u in possible_units)
-        
-        content_width = arrow_width + arrow_gap + max_number_width + unit_gap + max_unit_width
+            # Scale arrow font proportionally if it was separate, or keep in sync if same
+            if self.config.use_separate_arrow_font:
+                # Naive scaling: reduce by 1 as well? Or keep ratio?
+                # Let's just reduce by 1 to keep it simple and safe.
+                af_size = max(min_font_size, draw_arrow_font.pointSize() - 1)
+                draw_arrow_font.setPointSize(af_size)
+            else:
+                draw_arrow_font.setPointSize(current_size)
+                
+            arrow_metrics = QFontMetrics(draw_arrow_font)
+            content_width, arrow_width, arrow_gap, max_number_width, unit_gap, max_unit_width = get_width_metrics(metrics, arrow_metrics)
+
+        # --- Draw Calculation ---
+        line_height = metrics.height()
+        ascent = metrics.ascent()
+        total_text_height = line_height * 2
+        top_y = int((height - total_text_height) / 2 + ascent)
+        bottom_y = top_y + line_height
 
         margin = self._calculate_margin(width, content_width, config.text_alignment)
+        
+        # If we scaled down heavily, force centering to look better than left-aligned cramming
+        if current_size < self.config.font_size:
+             # Recalculate margin for true center in limited space
+             margin = int((width - content_width) / 2)
+
         number_starting_x_base = margin + arrow_width + arrow_gap
-        # The unit starts after the allocated number width
         unit_x = number_starting_x_base + max_number_width + unit_gap
 
         def draw_line(y_pos: int, arrow_char: str, val_str: str, unit_str: str, color: QColor):
             painter.setPen(color)
             if not hide_arrows:
-                painter.setFont(self.arrow_font)
+                painter.setFont(draw_arrow_font)
                 painter.drawText(margin, y_pos, arrow_char)
-                painter.setFont(self.font)
             
-            # Right-align numbers within the fixed-width number column
-            # This keeps digits stable regardless of value magnitude
-            val_width = self.metrics.horizontalAdvance(val_str)
+            painter.setFont(draw_font)
+            
+            val_width = metrics.horizontalAdvance(val_str)
             val_x = number_starting_x_base + max_number_width - val_width
-
             painter.drawText(int(val_x), y_pos, val_str)
             
-            # Units are left-aligned in their fixed-width column
             if not hide_unit:
                 painter.drawText(unit_x, y_pos, unit_str)
 
-        # Handle swap order: if swapped, draw download on top
         if swap_order:
             draw_line(top_y, self.i18n.DOWNLOAD_ARROW, down_val_str, down_unit, self._get_speed_color(download, config))
             draw_line(bottom_y, self.i18n.UPLOAD_ARROW, up_val_str, up_unit, self._get_speed_color(upload, config))
@@ -473,14 +506,27 @@ class WidgetRenderer:
                 # Generate Points
                 # Note: We create Polygons for the fill (start at bottom, go up, follow line, go down)
                 
-                def make_polyline(accessor):
-                    return [
-                        QPointF(right_edge - (num_points - 1 - i) * step_x, base_y - (accessor(d) / max_y) * h)
-                        for i, d in enumerate(history)
-                    ]
+                # Generate Points with Spline Interpolation for "Fluid Motion"
+                # X coordinates are relative to the right edge (0 = latest/rightmost)
+                raw_x = [right_edge - (num_points - 1 - i) * step_x for i in range(num_points)]
+                
+                def make_smooth_polyline(accessor):
+                    raw_y = [accessor(d) for d in history]
+                    
+                    # Interpolate (density=5 gives nice smoothness without costing too much CPU)
+                    cx, cy = calculate_monotone_cubic_interpolation(raw_x, raw_y, density=5)
+                    
+                    # Map to Screen Coordinates
+                    points = []
+                    for x, y in zip(cx, cy):
+                         # Clip y to 0 (spline shouldn't go below 0 due to monotonic property, but floats can drift)
+                         y = max(0, y)
+                         screen_y = base_y - (y / max_y) * h
+                         points.append(QPointF(x, screen_y))
+                    return points
 
-                self._cached_upload_points = make_polyline(lambda d: d.upload)
-                self._cached_download_points = make_polyline(lambda d: d.download)
+                self._cached_upload_points = make_smooth_polyline(lambda d: d.upload)
+                self._cached_download_points = make_smooth_polyline(lambda d: d.download)
 
                 self._last_widget_size = (width, height)
                 self._last_history_hash = current_hash
@@ -489,9 +535,13 @@ class WidgetRenderer:
             painter.setOpacity(config.graph_opacity)
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-            # --- Draw Gradients (Fill) ---
+            # --- Draw Gradients (Fill) with "Neon" Additive Blending ---
             # Helper to draw area
             from PyQt6.QtGui import QLinearGradient, QBrush, QPolygonF
+            
+            # Use Additive blending for the glow effect if opacity is low enough to benefit
+            # (CompositionMode_Plus adds colors: overlapping areas become brighter)
+            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Plus)
 
             def draw_area(points, color_hex):
                 if not points: return
@@ -501,9 +551,9 @@ class WidgetRenderer:
                 
                 grad = QLinearGradient(0, graph_rect.top(), 0, graph_rect.bottom())
                 c = QColor(color_hex)
-                c.setAlpha(100) # Start opaque
+                c.setAlpha(120) # Start semi-opaque
                 grad.setColorAt(0.0, c)
-                c.setAlpha(10)  # Fade to transparent
+                c.setAlpha(0)   # Fade to transparent
                 grad.setColorAt(1.0, c)
                 
                 painter.setPen(Qt.PenStyle.NoPen)
@@ -512,6 +562,9 @@ class WidgetRenderer:
 
             draw_area(self._cached_upload_points, constants.graph.UPLOAD_LINE_COLOR)
             draw_area(self._cached_download_points, constants.graph.DOWNLOAD_LINE_COLOR)
+            
+            # Restore Normal blending for Lines (strokes needs to be crisp on top)
+            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
 
             # --- Draw Lines (Stroke) ---
             # Thicker lines for visibility

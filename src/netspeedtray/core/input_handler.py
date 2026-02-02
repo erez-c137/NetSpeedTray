@@ -12,6 +12,7 @@ import logging
 from typing import Optional, TYPE_CHECKING
 from PyQt6.QtCore import QObject, QPoint, Qt
 from PyQt6.QtGui import QMouseEvent
+from PyQt6.QtWidgets import QApplication
 
 from netspeedtray import constants
 
@@ -50,6 +51,10 @@ class InputHandler(QObject):
         if not (event.buttons() & Qt.MouseButton.LeftButton) or not self._drag_start_pos:
             return
 
+        # Check for minimum drag distance to prevent accidental moves (Fix for sticky Free Move)
+        if (event.globalPosition().toPoint() - self._drag_start_pos).manhattanLength() < QApplication.startDragDistance():
+            return
+
         # Start dragging if we haven't already
         self._is_dragging = True
         self.widget._dragging = True # Notify widget to stop position checks
@@ -86,14 +91,68 @@ class InputHandler(QObject):
             event.accept()
 
     def _save_dragged_position(self) -> None:
-        """Saves final position and sets free_move=True."""
+        """
+        Saves the final position based on the current mode:
+        - Free Move ON: Saves absolute X/Y coordinates.
+        - Free Move OFF: Calculates and saves the offset relative to the tray/edge.
+        """
         try:
-            updates = {
-                "free_move": True,
-                "position_x": self.widget.x(),
-                "position_y": self.widget.y()
-            }
-            if hasattr(self.widget, 'update_config'):
+            config = self.widget.config
+            is_free_move = config.get("free_move", False)
+            updates = {}
+
+            if is_free_move:
+                # Save absolute coordinates
+                updates["position_x"] = self.widget.x()
+                updates["position_y"] = self.widget.y()
+            else:
+                # Calculate constrained offset
+                # We need to know WHICH offset to update (x or y) based on taskbar orientation
+                from netspeedtray.utils.taskbar_utils import get_taskbar_info
+                from netspeedtray import constants
+                
+                tb_info = get_taskbar_info()
+                edge = tb_info.get_edge_position()
+                dpi_scale = tb_info.dpi_scale if tb_info.dpi_scale > 0 else 1.0
+                
+                if edge in (constants.taskbar.edge.BOTTOM, constants.taskbar.edge.TOP):
+                    # Horizontal Taskbar: Variable is X offset from RIGHT side
+                    # Offset = RightBoundary - WidgetRight
+                    # Logic matches PositionCalculator: x = right_boundary - widget_width - offset
+                    # So: offset = right_boundary - x - widget_width
+                    
+                    # Calculate Right Boundary ( Tray Left or Screen Right )
+                    tray_rect = tb_info.get_tray_rect()
+                    right_boundary = (tray_rect[0] / dpi_scale) if tray_rect else (tb_info.rect[2] / dpi_scale)
+                    
+                    # Current Widget X
+                    current_x = self.widget.x()
+                    current_x_log = self.widget.pos().x() # Use logical pos from pos()
+                    widget_width = self.widget.width()
+                    
+                    new_offset = int(right_boundary - current_x_log - widget_width)
+                    updates["tray_offset_x"] = new_offset
+                    self.logger.debug(f"Saved Horizontal Offset: {new_offset} (RightBound={right_boundary}, X={current_x_log}, W={widget_width})")
+                    
+                elif edge in (constants.taskbar.edge.LEFT, constants.taskbar.edge.RIGHT):
+                    # Vertical Taskbar: Variable is Y offset from BOTTOM
+                    # Logic: y = bottom_boundary - widget_height - offset_y
+                    # So: offset_y = bottom_boundary - y - widget_height
+                    
+                    tray_rect = tb_info.get_tray_rect()
+                    bottom_boundary = (tray_rect[1] / dpi_scale) if tray_rect else (tb_info.rect[3] / dpi_scale)
+                    
+                    current_y = self.widget.y()
+                    current_y_log = self.widget.pos().y()
+                    widget_height = self.widget.height()
+                    
+                    new_offset = int(bottom_boundary - current_y_log - widget_height)
+                    updates["tray_offset_y"] = new_offset
+                    self.logger.debug(f"Saved Vertical Offset: {new_offset} (BottomBound={bottom_boundary}, Y={current_y_log}, H={widget_height})")
+
+            if hasattr(self.widget, 'update_config') and updates:
                 self.widget.update_config(updates)
+                self.logger.debug(f"Drag ended. Updated config: {updates}")
+                
         except Exception as e:
             self.logger.error("Failed to save dragged position: %s", e, exc_info=True)

@@ -76,8 +76,12 @@ class NetworkMonitorThread(QThread):
                     self._is_running = False
                     break
             
-            # Use precise sleep to maintain timing.
-            time.sleep(self.interval)
+            # Use sliced sleep to remain responsive to shutdown requests
+            sleep_remaining = self.interval
+            while sleep_remaining > 0 and self._is_running:
+                sleep_slice = min(0.1, sleep_remaining)
+                time.sleep(sleep_slice)
+                sleep_remaining -= sleep_slice
 
     def stop(self) -> None:
         """Gracefully stops the monitoring loop."""

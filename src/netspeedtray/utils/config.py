@@ -147,7 +147,8 @@ class ConfigManager:
         """
         try:
             cls.ensure_directories()
-            logger = logging.getLogger("NetSpeedTray")
+            # Use the root logger to catch all logs in the process (including netspeedtray and NetSpeedTray)
+            logger = logging.getLogger()
             # Set the root logger level to the most verbose level we will use.
             logger.setLevel(logging.DEBUG)
             logger.handlers.clear()

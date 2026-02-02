@@ -115,7 +115,9 @@ class ConfigConstants:
         "background_opacity": DEFAULT_BACKGROUND_OPACITY,
         "short_unit_labels": DEFAULT_SHORT_UNIT_LABELS,
         "tray_offset_x": DEFAULT_TRAY_OFFSET_X,
+        "tray_offset_x": DEFAULT_TRAY_OFFSET_X,
         "graph_window_pos": None,
+        "settings_window_pos": None,
         "history_period_slider_value": 0,  # UI-specific state
         "show_legend": False,
         "use_separate_arrow_font": DEFAULT_USE_SEPARATE_ARROW_FONT,
@@ -170,7 +172,9 @@ class ConfigConstants:
         "background_opacity": {"type": int, "default": DEFAULT_BACKGROUND_OPACITY, "min": 0, "max": 100},
         "short_unit_labels": {"type": bool, "default": DEFAULT_SHORT_UNIT_LABELS},
         "tray_offset_x": {"type": int, "default": DEFAULT_TRAY_OFFSET_X, "min": 0, "max": 500},
+        "tray_offset_x": {"type": int, "default": DEFAULT_TRAY_OFFSET_X, "min": 0, "max": 500},
         "graph_window_pos": {"type": (dict, type(None)), "default": None},
+        "settings_window_pos": {"type": (dict, type(None)), "default": None},
         "history_period_slider_value": {"type": int, "default": 0, "min": 0, "max": len(data.history_period.PERIOD_MAP) - 1},
         "show_legend": {"type": bool, "default": DEFAULT_SHOW_LEGEND},
     }

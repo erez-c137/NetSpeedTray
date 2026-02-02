@@ -15,12 +15,19 @@ from matplotlib.ticker import NullLocator
 
 from netspeedtray import constants
 from netspeedtray.constants import styles as style_constants
+from netspeedtray.utils.helpers import calculate_monotone_cubic_interpolation
+import matplotlib.colors as mcolors
+from matplotlib.patches import PathPatch
+from matplotlib.path import Path
 
 class GraphRenderer(QObject):
     """
     Handles all Matplotlib rendering logic for the GraphWindow.
     Owns the Figure, Canvas, and Axes.
     """
+    
+    # Class-level gradient cache (shared across instances, never regenerated)
+    _GRADIENT_CACHE = {}
     
     def __init__(self, parent_widget: QWidget, i18n, logger=None):
         super().__init__()
@@ -37,8 +44,67 @@ class GraphRenderer(QObject):
         
         # State
         self._current_date_formatter_type = None
+        
+        # Reusable Artists ("Reuse, Don't Recreate" pattern)
+        self.line_download = None
+        self.line_upload = None
+        self.fill_download = None
+        self.fill_upload = None
+        
+        self._gradient_im_download = None
+        self._gradient_patch_download = None
+        self._gradient_im_upload = None
+        self._gradient_patch_upload = None
+        
+        self._peak_artists_download = {}  # {'outer': artist, 'middle': artist, 'inner': artist, 'label': artist}
+        self._peak_artists_upload = {}
+        
+        # Event Markers (Boot time, etc.)
+        self._event_artists = []
 
+        self._current_ylim_up = constants.graph.MINIMUM_Y_AXIS_MBPS
+        self._current_ylim_down = constants.graph.MINIMUM_Y_AXIS_MBPS
+        
+        self._last_render_mode = None  # 'high_res' or aggregate modes
+        self._last_period_key = None
+        
         self._init_matplotlib()
+
+    def reset_ylim(self):
+        """Reset sticky Y-axis limits when timeline changes to prevent stale cached limits."""
+        self._current_ylim_up = constants.graph.MINIMUM_Y_AXIS_MBPS
+        self._current_ylim_down = constants.graph.MINIMUM_Y_AXIS_MBPS
+
+    def clear_plot(self):
+        """Clear all plot artists to prevent stale visuals while new data loads."""
+        # Clear lines
+        if self.line_download is not None:
+            self.line_download.remove()
+            self.line_download = None
+        if self.line_upload is not None:
+            self.line_upload.remove()
+            self.line_upload = None
+        
+        # Clear fills
+        if self.fill_download is not None:
+            self.fill_download.remove()
+            self.fill_download = None
+        if self.fill_upload is not None:
+            self.fill_upload.remove()
+            self.fill_upload = None
+        
+        # Clear peak markers
+        for artist in self._peak_artists_download.values():
+            if hasattr(artist, 'remove'):
+                artist.remove()
+        for artist in self._peak_artists_upload.values():
+            if hasattr(artist, 'remove'):
+                artist.remove()
+        self._peak_artists_download = {}
+        self._peak_artists_upload = {}
+        
+        # Redraw
+        self.canvas.draw_idle()
 
     def _init_matplotlib(self):
         """Initialize matplotlib with a dual-axis, stacked subplot layout."""
@@ -46,7 +112,8 @@ class GraphRenderer(QObject):
         
         # Create Figure
         self.figure = Figure(figsize=(8, 4), dpi=100)
-        self.figure.set_layout_engine('tight')
+        # Use subplots_adjust instead of constrained_layout for fixed margins
+        # This prevents the graph box from shifting when Y-label width changes.
         
         # Create Canvas (Widget)
         self.canvas = FigureCanvas(self.figure)
@@ -75,57 +142,359 @@ class GraphRenderer(QObject):
 
     def _format_axes(self):
         """Initial configuration of axes properties."""
+        # Ensure default color if not set
+        if not hasattr(self, '_current_text_color'):
+             # Default to light mode if unknown (or check system theme?)
+             # Usually apply_theme is called immediately after init.
+             self._current_text_color = style_constants.LIGHT_MODE_TEXT_COLOR
+        
+        if not hasattr(self, '_current_grid_color'):
+             self._current_grid_color = style_constants.GRID_COLOR_LIGHT
+
         # Download Axis (Top)
-        self.ax_download.set_ylabel(self.i18n.DOWNLOAD_LABEL)
-        self.ax_download.tick_params(labelbottom=False) # Hide x-labels on top plot
-        self.ax_download.grid(True, linestyle=constants.graph.GRID_LINESTYLE, alpha=constants.graph.GRID_ALPHA)
+        self.ax_download.set_ylabel(self.i18n.DOWNLOAD_LABEL, color=self._current_text_color)
+        self.ax_download.tick_params(labelbottom=False, colors=self._current_text_color, which='both') 
+        self.ax_download.grid(True, linestyle=constants.graph.GRID_LINESTYLE, alpha=constants.graph.GRID_ALPHA, color=self._current_grid_color)
+        self.ax_download.yaxis.label.set_color(self._current_text_color) # Redundant but safe
 
         # Upload Axis (Bottom)
-        self.ax_upload.set_ylabel(self.i18n.UPLOAD_LABEL)
-        self.ax_upload.grid(True, linestyle=constants.graph.GRID_LINESTYLE, alpha=constants.graph.GRID_ALPHA)
+        self.ax_upload.set_ylabel(self.i18n.UPLOAD_LABEL, color=self._current_text_color)
+        self.ax_upload.tick_params(colors=self._current_text_color, which='both')
+        self.ax_upload.grid(True, linestyle=constants.graph.GRID_LINESTYLE, alpha=constants.graph.GRID_ALPHA, color=self._current_grid_color)
+        self.ax_upload.yaxis.label.set_color(self._current_text_color)
 
         # Common
         for ax in self.axes:
             ax.spines['right'].set_visible(False)
             ax.spines['top'].set_visible(False)
-            ax.margins(x=0) # Tight x-axis
+            ax.set_xmargin(0) # Strict zero margin for X-axis
+            
+            # Update spines color
+            for spine in ax.spines.values():
+                spine.set_color(self._current_grid_color)
+
+        # Fixed Subplots Adjust to keep graph area size constant
+        self.figure.subplots_adjust(
+            left=0.08,   # Enough space for "100.0 Mbps" labels
+            right=0.98,  # Minimum right margin
+            top=0.95,    # Space for peak labels
+            bottom=0.12, # Space for time labels
+            hspace=0.25  # Space between up/down plots
+        )
 
         # Re-enable top spine for upload to separate plots clearly? 
-        # Or just rely on layout.
         self.ax_upload.spines['top'].set_visible(True)
+        self.ax_upload.spines['top'].set_color(self._current_grid_color) # Ensure separator is visible
 
     def apply_theme(self, is_dark_mode: bool):
         """Applies colors based on theme."""
+        self._is_dark_mode = is_dark_mode # Save state
         graph_bg = style_constants.GRAPH_BG_DARK if is_dark_mode else style_constants.GRAPH_BG_LIGHT
-        text_color = style_constants.DARK_MODE_TEXT_COLOR if is_dark_mode else style_constants.LIGHT_MODE_TEXT_COLOR
-        grid_color = style_constants.GRID_COLOR_DARK if is_dark_mode else style_constants.GRID_COLOR_LIGHT
+        
+        # PERSIST COLORS
+        self._current_text_color = style_constants.DARK_MODE_TEXT_COLOR if is_dark_mode else style_constants.LIGHT_MODE_TEXT_COLOR
+        self._current_grid_color = style_constants.GRID_COLOR_DARK if is_dark_mode else style_constants.GRID_COLOR_LIGHT
         
         self.figure.patch.set_facecolor(graph_bg)
         
         for ax in self.axes:
             ax.set_facecolor(graph_bg)
-            ax.xaxis.label.set_color(text_color)
-            ax.yaxis.label.set_color(text_color)
-            ax.tick_params(colors=text_color, which='both')
-            ax.grid(True, linestyle=constants.graph.GRID_LINESTYLE, alpha=constants.graph.GRID_ALPHA, color=grid_color)
+            
+            # Explicitly set label colors
+            ax.xaxis.label.set_color(self._current_text_color)
+            ax.yaxis.label.set_color(self._current_text_color)
+            
+            # Update tick labels
+            ax.tick_params(axis='x', colors=self._current_text_color)
+            ax.tick_params(axis='y', colors=self._current_text_color)
+            
+            # Update spines
+            ax.grid(True, linestyle=constants.graph.GRID_LINESTYLE, alpha=constants.graph.GRID_ALPHA, color=self._current_grid_color)
             for spine in ax.spines.values():
-                spine.set_color(grid_color)
+                spine.set_color(self._current_grid_color)
+            
+            # Force update of existing labels if they persist
+            ylabel = ax.get_ylabel()
+            if ylabel:
+                ax.set_ylabel(ylabel, color=self._current_text_color)
             
             # Legend
             leg = ax.get_legend()
             if leg:
                 for text_obj in leg.get_texts():
-                    text_obj.set_color(text_color)
+                    text_obj.set_color(self._current_text_color)
                 leg.get_frame().set_facecolor(graph_bg)
-                leg.get_frame().set_edgecolor(grid_color)
+                leg.get_frame().set_edgecolor(self._current_grid_color)
         
         self.canvas.draw_idle()
+        
+        # Invalidate gradient artists when theme changes (they need recapture)
+        self._gradient_im_download = None
+        self._gradient_im_upload = None
 
-    def render(self, history_data: List[Tuple[float, float, float]], start_time: datetime, end_time: datetime, period_key: str):
+    @classmethod
+    def _get_cached_gradient(cls, color_hex: str) -> np.ndarray:
         """
-        Renders the graph.
-        Returns: Tuple of numpy arrays (timestamps, upload_mbps, download_mbps) for interaction cache,
-                 or None if no data.
+        Returns a cached gradient array for the given color.
+        The gradient is 256x1 RGBA, fading from color at top to transparent at bottom.
+        This is called once per color, then reused forever.
+        """
+        if color_hex not in cls._GRADIENT_CACHE:
+            rgb = mcolors.to_rgb(color_hex)
+            gradient = np.zeros((256, 1, 4))
+            gradient[:, 0, :3] = rgb
+            gradient[:, 0, 3] = np.linspace(0.35, 0.0, 256)  # Alpha: 35% at top, 0% at bottom
+            cls._GRADIENT_CACHE[color_hex] = gradient
+        return cls._GRADIENT_CACHE[color_hex]
+
+    def _apply_gradient_fill(self, ax, x_data, y_data, color_hex: str, artist_prefix: str):
+        """
+        Creates or updates a gradient-filled area under a line plot.
+        Uses the 'Reuse, Don't Recreate' pattern for live update performance.
+        
+        Args:
+            ax: The matplotlib axes
+            x_data: X coordinates (datetime objects or matplotlib float days)
+            y_data: Y coordinates (speed values in Mbps)
+            color_hex: Hex color string (e.g., '#00ff00')
+            artist_prefix: 'download' or 'upload' - used to store artist references
+        """
+        if len(x_data) == 0 or len(y_data) == 0:
+            return
+        
+        # Get cached gradient array (never regenerated after first call)
+        gradient_array = self._get_cached_gradient(color_hex)
+        
+        # Calculate extent for the gradient image
+        x_min = mdates.date2num(x_data[0]) if isinstance(x_data[0], datetime) else x_data.min()
+        x_max = mdates.date2num(x_data[-1]) if isinstance(x_data[-1], datetime) else x_data.max()
+        
+        # Guard: Prevent singular extent (warning fix)
+        if abs(x_max - x_min) < 1e-9:
+             x_max += 1e-9 # Add tiny epsilon
+             
+        y_max = float(np.max(y_data)) * 1.05  # Slight padding
+        
+        # Guard: Prevent singular Y extent if y_max is 0 (flat line)
+        if y_max < 0.001: 
+             y_max = 1.0  # Default to 1 Mbps range if flat 0
+             
+        extent = [x_min, x_max, 0, y_max]
+        
+        # Create polygon path for clipping
+        x_numeric = mdates.date2num(x_data) if isinstance(x_data[0], datetime) else x_data
+        verts = list(zip(x_numeric, y_data))
+        verts.append((x_numeric[-1], 0))  # Close to baseline (right)
+        verts.append((x_numeric[0], 0))   # Close to baseline (left)
+        codes = [Path.MOVETO] + [Path.LINETO] * (len(verts) - 1)
+        path = Path(verts, codes)
+        
+        # Get existing artists or create new ones
+        im_attr = f'_gradient_im_{artist_prefix}'
+        patch_attr = f'_gradient_patch_{artist_prefix}'
+        
+        existing_im = getattr(self, im_attr, None)
+        existing_patch = getattr(self, patch_attr, None)
+        
+        # FAST PATH: Update existing artists
+        if existing_im is not None and existing_im.axes is not None:
+            try:
+                # Update extent (changes position/scale)
+                existing_im.set_extent(extent)
+                # Update clip path (new data shape)
+                new_patch = PathPatch(path, facecolor='none', edgecolor='none')
+                ax.add_patch(new_patch)
+                existing_im.set_clip_path(new_patch)
+                # Remove old patch
+                if existing_patch is not None:
+                    try:
+                        existing_patch.remove()
+                    except Exception:
+                        pass
+                setattr(self, patch_attr, new_patch)
+                return
+            except Exception as e:
+                self.logger.debug(f"Gradient update failed, recreating: {e}")
+        
+        # SLOW PATH: Create new artists (first render or after theme change)
+        patch = PathPatch(path, facecolor='none', edgecolor='none')
+        ax.add_patch(patch)
+        
+        im = ax.imshow(
+            gradient_array, 
+            aspect='auto', 
+            extent=extent, 
+            origin='lower', 
+            zorder=1,  # Behind the line (which is zorder=10)
+            interpolation='bilinear'
+        )
+        im.set_clip_path(patch)
+        
+        # Store references for future updates
+        setattr(self, im_attr, im)
+        setattr(self, patch_attr, patch)
+
+    # ========== PHASE 3: ANALYTICAL INTELLIGENCE ==========
+    
+    def _add_peak_markers(self, ax, x_data, y_data, color_hex: str, label_prefix: str, artist_prefix: str):
+        """
+        Adds or updates a marker at the maximum value with a persistent label.
+        Creates a "glowing dot" effect with outer glow + inner dot.
+        Uses the 'Reuse, Don't Recreate' pattern.
+        """
+        if y_data is None or len(y_data) == 0:
+            # Hide existing artists if no data
+            artist_dict = getattr(self, f'_peak_artists_{artist_prefix}', {})
+            for artist in artist_dict.values():
+                if artist: artist.set_visible(False)
+            return
+        
+        try:
+            peak_idx = np.argmax(y_data)
+            peak_x = x_data[peak_idx]
+            peak_y = y_data[peak_idx]
+            
+            # Skip if peak is negligible (< 0.1 Mbps)
+            if peak_y < 0.1:
+                artist_dict = getattr(self, f'_peak_artists_{artist_prefix}', {})
+                for artist in artist_dict.values():
+                    if artist: artist.set_visible(False)
+                return
+            
+            # Convert to matplotlib date number if needed
+            if isinstance(peak_x, datetime):
+                peak_x = mdates.date2num(peak_x)
+            
+            artist_dict = getattr(self, f'_peak_artists_{artist_prefix}', {})
+            
+            # FAST PATH: Update existing artists
+            if artist_dict and 'inner' in artist_dict and artist_dict['inner'].axes is not None:
+                artist_dict['outer'].set_data([peak_x], [peak_y])
+                artist_dict['middle'].set_data([peak_x], [peak_y])
+                artist_dict['inner'].set_data([peak_x], [peak_y])
+                
+                label = artist_dict['label']
+                label.set_position((peak_x, peak_y))
+                label.set_text(f"{label_prefix}: {peak_y:.1f} Mbps")
+                label.get_bbox_patch().set_edgecolor(color_hex)
+                
+                for artist in artist_dict.values():
+                    artist.set_visible(True)
+                return
+
+            # SLOW PATH: Create new artists
+            artist_dict = {}
+            
+            # Outer glow (soft, large, transparent)
+            artist_dict['outer'] = ax.plot(peak_x, peak_y, 'o', 
+                    markersize=14, 
+                    color=color_hex, 
+                    alpha=0.15,
+                    zorder=10)[0]
+            
+            # Middle glow
+            artist_dict['middle'] = ax.plot(peak_x, peak_y, 'o', 
+                    markersize=9, 
+                    color=color_hex, 
+                    alpha=0.35,
+                    zorder=11)[0]
+            
+            # Inner dot (solid, small)
+            artist_dict['inner'] = ax.plot(peak_x, peak_y, 'o', 
+                    markersize=5, 
+                    color=color_hex, 
+                    alpha=1.0,
+                    zorder=12)[0]
+            
+            # Label with background
+            artist_dict['label'] = ax.annotate(
+                f"{label_prefix}: {peak_y:.1f} Mbps",
+                xy=(peak_x, peak_y),
+                xytext=(8, 8),
+                textcoords='offset points',
+                fontsize=8,
+                color='white',
+                weight='medium',
+                bbox=dict(
+                    boxstyle='round,pad=0.3', 
+                    facecolor='#2d2d2d', 
+                    edgecolor=color_hex,
+                    linewidth=0.5,
+                    alpha=0.9
+                ),
+                zorder=13
+            )
+            
+            setattr(self, f'_peak_artists_{artist_prefix}', artist_dict)
+            
+        except Exception as e:
+            self.logger.debug(f"Could not add/update peak marker: {e}")
+
+    def _add_event_markers(self, ax, start_time: datetime, end_time: datetime, boot_time: Optional[datetime] = None):
+        """
+        Draws or updates vertical lines for significant system events (e.g., boot time).
+        Uses 'Reuse, Don't Recreate' strategy.
+        """
+        if boot_time is None:
+            for artist in self._event_artists:
+                if artist: artist.set_visible(False)
+            return
+        
+        try:
+            # HARDENING: Ensure all values are datetimes before comparison
+            if start_time is None or boot_time is None or end_time is None:
+                 is_visible = False
+            else:
+                 is_visible = (start_time <= boot_time <= end_time)
+            
+            if self._event_artists and self._event_artists[0].axes is not None:
+                # Update existing
+                line, text = self._event_artists
+                if is_visible:
+                    boot_x = mdates.date2num(boot_time)
+                    line.set_xdata([boot_x, boot_x])
+                    y_top = ax.get_ylim()[1]
+                    text.set_position((boot_x, y_top * 0.92))
+                    
+                line.set_visible(is_visible)
+                text.set_visible(is_visible)
+                return
+
+            if not is_visible:
+                return
+
+            # Create new
+            boot_x = mdates.date2num(boot_time)
+            line = ax.axvline(
+                x=boot_x, 
+                color='#666', 
+                linestyle='--', 
+                linewidth=1, 
+                alpha=0.6,
+                zorder=5
+            )
+            
+            y_top = ax.get_ylim()[1]
+            text = ax.text(
+                boot_x, y_top * 0.92, 
+                ' ↑ Boot', 
+                fontsize=7, 
+                color='#888', 
+                va='top',
+                ha='left',
+                style='italic',
+                zorder=6
+            )
+            self._event_artists = [line, text]
+
+        except Exception as e:
+            self.logger.debug(f"Could not add/update event marker: {e}")
+
+
+    def render(self, history_data: List[Tuple[float, float, float]], start_time: datetime, end_time: datetime, period_key: str, boot_time: Optional[datetime] = None, force_rebuild: bool = False):
+        """
+        Renders the graph. 
+        Uses 'Zero-Clear' optimization to update artists in-place when possible.
         """
         if not history_data:
             for ax in self.axes:
@@ -133,74 +502,86 @@ class GraphRenderer(QObject):
             self.canvas.draw_idle()
             return None
 
-        # Data Processing
+        # Determine current render mode based on data span
+        num_points = len(history_data)
         raw_data = np.array(history_data, dtype=float)
         timestamps = raw_data[:, 0]
-        upload_speeds = raw_data[:, 1]
-        download_speeds = raw_data[:, 2]
-
-        # Convert to Mbps for plotting
-        upload_mbps = (upload_speeds * constants.network.units.BITS_PER_BYTE) / constants.network.units.MEGA_DIVISOR
-        download_mbps = (download_speeds * constants.network.units.BITS_PER_BYTE) / constants.network.units.MEGA_DIVISOR
         
+        actual_start = start_time or datetime.fromtimestamp(timestamps.min())
+        actual_end = end_time or datetime.fromtimestamp(timestamps.max())
+        
+        # HARDENING: Ensure we don't subtract None from datetime
+        if actual_start is None or actual_end is None:
+            duration_sec = 0
+        else:
+            duration_sec = (actual_end - actual_start).total_seconds()
+        
+        current_mode = "high_res"
+        if duration_sec > constants.data.history_period.PLOT_HOURLY_THRESHOLD:
+            current_mode = "daily"
+        elif duration_sec > constants.data.history_period.PLOT_MINUTE_THRESHOLD:
+            current_mode = "hourly"
+        elif duration_sec > constants.data.history_period.RES_RAW_THRESHOLD:
+            current_mode = "minute"
+
+        # Check if we need to clear everything
+        rebuild_required = (
+            force_rebuild or 
+            current_mode != self._last_render_mode or 
+            period_key != self._last_period_key or
+            self.line_download is None
+        )
+        
+        self._last_render_mode = current_mode
+        self._last_period_key = period_key
+
+        if rebuild_required:
+            for ax in self.axes:
+                ax.clear()
+            self._format_axes()
+            # Reset state for rebuilt artists
+            self.line_download = None
+            self.line_upload = None
+            self.fill_download = None
+            self.fill_upload = None
+            self.bars_download = None
+            self.bars_upload = None
+
+        # Speeds in Mbps
+        upload_mbps = (raw_data[:, 1] * constants.network.units.BITS_PER_BYTE) / constants.network.units.MEGA_DIVISOR
+        download_mbps = (raw_data[:, 2] * constants.network.units.BITS_PER_BYTE) / constants.network.units.MEGA_DIVISOR
         upload_mbps = np.maximum(upload_mbps, 0)
         download_mbps = np.maximum(download_mbps, 0)
 
-        # Clear Axes and re-apply formatting
-        for ax in self.axes:
-            ax.clear()
-        
-        # Re-apply axis formatting (grid, spines, labels)
-        self._format_axes()
+        # Convert to local datetimes
+        plot_datetimes = [datetime.fromtimestamp(t) for t in timestamps]
+        plot_datetimes_array = np.array(plot_datetimes)
 
-        # Convert UTC epoch floats to local datetime objects for robust plotting
-        # Matplotlib handles datetime objects natively and correctly manages its internal epoch.
-        # OPTIMIZATION: This loop was identified as a bottleneck. 
-        # Since we now cap data at 800 points in the worker, this is O(800) which is negligible (<1ms).
-        # We rely on the worker to protect this thread.
-        try:
-             plot_datetimes = [datetime.fromtimestamp(t) for t in timestamps]
-             plot_datetimes_array = np.array(plot_datetimes)
-        except Exception as e:
-             self.logger.error(f"Error converting timestamps to datetime: {e}")
-             return None
-
-        # Determine Aggregation Level
-        # < 2 days: High-res
-        # 2-14 days: Hourly
-        # > 14 days: Daily
-        timespan_days = 0
-        if start_time and end_time:
-            timespan_days = (end_time - start_time).days
-        elif start_time is None: # TIMELINE_ALL
-            timespan_days = 365 # Assume long
-            
-        # Plotting Logic
-        # Plotting Logic
-        plotted_ts, plotted_x_coords, plotted_up, plotted_down = None, None, None, None
-        
-        # Aggregation Logic
-        # < 6 hours: High-res (Raw)
-        # 6 hours - 2 days: Minute Aggregation
-        # 2 - 14 days: Hourly Aggregation
-        # > 14 days: Daily Aggregation
-        
-        if timespan_days == 0 and (end_time - start_time).total_seconds() <= constants.data.history_period.RES_RAW_THRESHOLD:
-             self._plot_high_res(plot_datetimes_array, upload_mbps, download_mbps)
-             plotted_ts = timestamps # Keep original floats for high-res
-             plotted_up = upload_mbps
-             plotted_down = download_mbps
-        elif timespan_days == 0 or (end_time - start_time).total_seconds() <= constants.data.history_period.PLOT_MINUTE_THRESHOLD:
-            plotted_ts, plotted_up, plotted_down = self._plot_aggregated(plot_datetimes_array, upload_mbps, download_mbps, mode="minute")
-        elif (end_time - start_time).total_seconds() <= constants.data.history_period.PLOT_HOURLY_THRESHOLD:
-            plotted_ts, plotted_up, plotted_down = self._plot_aggregated(plot_datetimes_array, upload_mbps, download_mbps, mode="hourly")
+        # Plotting
+        if current_mode == "high_res":
+             plotted_ts, plotted_up, plotted_down = self._plot_high_res(plot_datetimes_array, upload_mbps, download_mbps, target_end_time=actual_end)
         else:
-            plotted_ts, plotted_up, plotted_down = self._plot_aggregated(plot_datetimes_array, upload_mbps, download_mbps, mode="daily")
+             plotted_ts, plotted_up, plotted_down = self._plot_aggregated(plot_datetimes_array, upload_mbps, download_mbps, mode=current_mode, target_end_time=actual_end)
 
-        # Configure Limits and Formats
+        # Configure Limits and Formats (Handles adaptive Y-axis)
         self._configure_axes(start_time, end_time, period_key, timestamps, upload_mbps, download_mbps)
         
+        # Add Peak Markers (glowing dots at max values)
+        if plotted_ts is not None and len(plotted_ts) > 0:
+            self._add_peak_markers(
+                self.ax_download, plotted_ts, plotted_down,
+                constants.graph.DOWNLOAD_LINE_COLOR, "↓ Peak", 'download'
+            )
+            self._add_peak_markers(
+                self.ax_upload, plotted_ts, plotted_up,
+                constants.graph.UPLOAD_LINE_COLOR, "↑ Peak", 'upload'
+            )
+        
+        # Add Event Markers (system boot)
+        self._add_event_markers(self.ax_download, start_time, end_time, boot_time=boot_time)
+        
         self.canvas.draw_idle()
+
         
         # Return the DATA THAT WAS ACTUALLY PLOTTED, so interactions match the visual lines.
         # InteractionHandler needs BOTH:
@@ -225,111 +606,342 @@ class GraphRenderer(QObject):
 
         return plotted_ts, plotted_x_coords, plotted_up, plotted_down
 
-    def _plot_aggregated(self, plot_datetimes, upload_mbps, download_mbps, mode="daily"):
-        """Adaptive Aggregation (Daily, Hourly, or Minute) and Plotting"""
-        if len(plot_datetimes) == 0: return None, None, None, None
+    def _plot_aggregated(self, plot_datetimes, upload_mbps, download_mbps, mode="daily", target_end_time=None):
+        """
+        Plots aggregated data using Bar Charts for "thicker" visibility.
+        Uses ax.bar for distinct time blocks.
+        """
+        if len(plot_datetimes) == 0: return [], [], []
 
+        # Binning logic... (rest of the code remains same until end of method)
+
+        # 1. Binning Logic (Safety: ensures alignment even if SQL returns slight offsets)
         if mode == "daily":
-            # Bin by day
+            # Bin by ord day
             bins = np.array([dt.date().toordinal() for dt in plot_datetimes])
+            bar_width = 0.8 # Days
         elif mode == "hourly":
-            # Bin by hour: (Ordinal * 24) + Hour
+            # Bin by hour: ordinal * 24 + hour
             bins = np.array([dt.date().toordinal() * 24 + dt.hour for dt in plot_datetimes])
-        else: # minute
-            # Bin by minute: (Ordinal * 1440) + (Hour * 60) + Minute
-            bins = np.array([dt.date().toordinal() * 1440 + dt.hour * 60 + dt.minute for dt in plot_datetimes])
+            bar_width = 0.8 / 24.0 # Hours converted to days
+        else:
+             # Fallback to lines for minute/raw
+             return self._plot_high_res(plot_datetimes, upload_mbps, download_mbps)
             
         unique_bins, indices = np.unique(bins, return_inverse=True)
-        
         counts = np.bincount(indices)
+        
+        # Calculate Mean Speeds for the Bar Height
         down_mean = np.bincount(indices, weights=download_mbps) / counts
         up_mean = np.bincount(indices, weights=upload_mbps) / counts
         
-        # Min/Max aggregation for fill
-        change_points = np.where(np.diff(indices) > 0)[0] + 1
-        reduce_indices = np.concatenate(([0], change_points))
-        
-        if len(reduce_indices) == len(unique_bins):
-            up_max = np.maximum.reduceat(upload_mbps, reduce_indices)
-            up_min = np.minimum.reduceat(upload_mbps, reduce_indices)
-            down_max = np.maximum.reduceat(download_mbps, reduce_indices)
-            down_min = np.minimum.reduceat(download_mbps, reduce_indices)
-        else:
-            up_max = up_mean; up_min = up_mean
-            down_max = down_mean; down_min = down_mean
-
-        # FIX: Instead of mapping back to the START of the bin (e.g. 15:00), 
-        # we calculate the MEAN timestamp of all points within the bin.
-        # This prevents the visual "lag" or "shift" in aggregated views.
+        # Calculate Bin Centers (Timestamps)
         timestamps_float = np.array([dt.timestamp() for dt in plot_datetimes])
         bin_timestamps = np.bincount(indices, weights=timestamps_float) / counts
         agg_dates = [datetime.fromtimestamp(ts) for ts in bin_timestamps]
         
-        # Store references to lines for potential updates (though aggregated view updates are rare)
-        self.line_download, = self.ax_download.plot(agg_dates, down_mean, color=constants.graph.DOWNLOAD_LINE_COLOR, linewidth=1.5, zorder=10)
-        self.fill_download = self.ax_download.fill_between(agg_dates, down_min, down_max, color=constants.graph.DOWNLOAD_LINE_COLOR, alpha=0.3)
-        self.line_upload, = self.ax_upload.plot(agg_dates, up_mean, color=constants.graph.UPLOAD_LINE_COLOR, linewidth=1.5, zorder=10)
-        self.fill_upload = self.ax_upload.fill_between(agg_dates, up_min, up_max, color=constants.graph.UPLOAD_LINE_COLOR, alpha=0.3)
+        # 2. Render Bars
+        # Since bars are hard to animate efficiently (number of bars changes),
+        # we treat this as a "Rebuild" scenario for simplicity. 
+        # Aggregated views don't update frequently enough to cause lag.
         
-        # Return the aggregated data for the interaction handler
+        # Clear previous lines if switching modes
+        if self.line_download: 
+            self.line_download.remove(); self.line_download = None
+        if self.line_upload:
+            self.line_upload.remove(); self.line_upload = None
+        if self.fill_download:
+            self.fill_download.remove(); self.fill_download = None
+        if self.fill_upload:
+            self.fill_upload.remove(); self.fill_upload = None
+            
+        # Check for existing bars to update (optimization)
+        # We store the container in self.bars_download / self.bars_upload
+        existing_bars_down = getattr(self, 'bars_download', None)
+        existing_bars_up = getattr(self, 'bars_upload', None)
+        
+        # If count matches, we can update heights? No, positions might change.
+        # Safest is to remove and redraw for bars.
+        if existing_bars_down:
+            for b in existing_bars_down: b.remove()
+        if existing_bars_up:
+            for b in existing_bars_up: b.remove()
+            
+        self.bars_download = self.ax_download.bar(
+            agg_dates, down_mean, width=bar_width,
+            color=constants.graph.DOWNLOAD_LINE_COLOR, alpha=0.9, zorder=10
+        )
+        
+        self.bars_upload = self.ax_upload.bar(
+            agg_dates, up_mean, width=bar_width,
+            color=constants.graph.UPLOAD_LINE_COLOR, alpha=0.9, zorder=10
+        )
+        
+        # Store for cleanup
+        setattr(self, 'bars_download', self.bars_download)
+        setattr(self, 'bars_upload', self.bars_upload)
+
+        # === TRAILING BRIDGE for Aggregated Views ===
+        # If bars don't reach now, draw a subtle flat line
+        if target_end_time is not None and len(agg_dates) > 0:
+            last_date = agg_dates[-1]
+            gap_to_now = (target_end_time - last_date).total_seconds()
+            
+            # Use appropriate threshold based on mode
+            threshold = 3600 * 24 if mode == "daily" else 3600
+            
+            if gap_to_now > threshold:
+                bridge_ts = [last_date, target_end_time]
+                bridge_zero = [0.0, 0.0]
+                self.ax_download.plot(bridge_ts, bridge_zero, color=constants.graph.DOWNLOAD_LINE_COLOR, linewidth=1.5, zorder=9, alpha=0.4, linestyle='--')
+                self.ax_upload.plot(bridge_ts, bridge_zero, color=constants.graph.UPLOAD_LINE_COLOR, linewidth=1.5, zorder=9, alpha=0.4, linestyle='--')
+
         return agg_dates, up_mean, down_mean
 
-    def _plot_high_res(self, plot_datetimes, upload_mbps, download_mbps):
-        """Segmented Plotting with Gap Detection"""
-        # Detect gaps > 10 seconds to account for jitter or sleep.
+    def _plot_high_res(self, plot_datetimes, upload_mbps, download_mbps, target_end_time=None):
+        """Segmented Plotting with Gap Detection, Gradient Fills, and Fluid Interpolation"""
+        if len(plot_datetimes) == 0:
+            return plot_datetimes, upload_mbps, download_mbps
+
+        # Adaptive Gap Detection: Calculate threshold from data's natural interval
+        # A "gap" is when time between points is significantly larger than normal
         timestamps_float = np.array([dt.timestamp() for dt in plot_datetimes])
-        gaps = np.diff(timestamps_float) > 10.0
+        intervals = np.diff(timestamps_float)
         
+        if len(intervals) > 0:
+            median_interval = np.median(intervals)
+            # Gap = any interval > 2x the median (accounts for jitter + actual gaps)
+            gap_threshold = max(median_interval * 2.5, 10.0)  # minimum 10s for raw data
+        else:
+            gap_threshold = 10.0
+            
+        gaps = intervals > gap_threshold
+        
+        # Prepare lists for collecting interpolated segments
+        final_ts, final_up, final_down = [], [], []
+        
+        # Adaptive Quality: If we have > 600 points, interpolation is visually redundant.
+        # Skip it to save CPU.
+        ENABLE_SPLINE = len(plot_datetimes) <= 600
+        
+        # Helper to process and plot a single segment
+        def process_segment(ts, up, down):
+            if not ENABLE_SPLINE or len(ts) < 2:
+                # Bypass interpolation
+                return ts, up, down
+                
+            # FLUID MOTION: Apply Monotone Cubic Spline (Vectorized)
+            # We interpolate based on timestamp float values
+            ts_floats = [t.timestamp() for t in ts]
+            
+            # Density 4 provides ample smoothness
+            dense_ts_floats, dense_down = calculate_monotone_cubic_interpolation(ts_floats, down, density=4)
+            _, dense_up = calculate_monotone_cubic_interpolation(ts_floats, up, density=4)
+            
+            # Clip negative values
+            dense_down = np.maximum(dense_down, 0)
+            dense_up = np.maximum(dense_up, 0)
+            
+            # Convert back to datetimes for Matplotlib
+            dense_ts_dt = [datetime.fromtimestamp(t) for t in dense_ts_floats]
+            
+            return dense_ts_dt, dense_up, dense_down
+
         if np.any(gaps):
+            # Segmented mode - multiple disconnected line segments
+            self.ax_download.clear()
+            self.ax_upload.clear()
+            self._format_axes()
+            self.line_download = None # Sentinel
+            
             gap_indices = np.where(gaps)[0] + 1
             segments_ts = np.split(plot_datetimes, gap_indices)
             segments_up = np.split(upload_mbps, gap_indices)
             segments_down = np.split(download_mbps, gap_indices)
             
-            for ts, up, down in zip(segments_ts, segments_up, segments_down):
+            prev_seg_end = None  # Track end of previous segment for bridging
+            
+            for seg_idx, (ts, up, down) in enumerate(zip(segments_ts, segments_up, segments_down)):
                 if len(ts) == 0: continue
                 
-                self.ax_download.plot(ts, down, color=constants.graph.DOWNLOAD_LINE_COLOR, linewidth=1.5)
-                self.ax_download.fill_between(ts, 0, down, color=constants.graph.DOWNLOAD_LINE_COLOR, alpha=0.1)
+                # === GAP BRIDGING: Draw flat line at 0 between segments ===
+                if prev_seg_end is not None:
+                    # Draw a bridge from previous segment end to this segment start
+                    # Goes down to 0, across, then back up (like ECG flatline)
+                    bridge_start = prev_seg_end
+                    bridge_end = ts[0]
+                    
+                    # Flat line at 0 across the gap
+                    bridge_ts = [bridge_start, bridge_end]
+                    bridge_zero = [0.0, 0.0]
+                    
+                    self.ax_download.plot(bridge_ts, bridge_zero, color=constants.graph.DOWNLOAD_LINE_COLOR, linewidth=1.5, zorder=9, alpha=0.5, linestyle='--')
+                    self.ax_upload.plot(bridge_ts, bridge_zero, color=constants.graph.UPLOAD_LINE_COLOR, linewidth=1.5, zorder=9, alpha=0.5, linestyle='--')
                 
-                self.ax_upload.plot(ts, up, color=constants.graph.UPLOAD_LINE_COLOR, linewidth=1.5)
-                self.ax_upload.fill_between(ts, 0, up, color=constants.graph.UPLOAD_LINE_COLOR, alpha=0.1)
+                # Interpolate this segment
+                seg_ts, seg_up, seg_down = process_segment(ts, up, down)
                 
-            # Sentinel to indicate we can't easily update via set_data
-            self.line_download = None
-            self.line_upload = None
-            
+                # Plot
+                self.ax_download.plot(seg_ts, seg_down, color=constants.graph.DOWNLOAD_LINE_COLOR, linewidth=1.5, zorder=10)
+                self.ax_upload.plot(seg_ts, seg_up, color=constants.graph.UPLOAD_LINE_COLOR, linewidth=1.5, zorder=10)
+                
+                # Add Gradient (per segment)
+                self._apply_gradient_fill(self.ax_download, np.array(seg_ts), seg_down, constants.graph.DOWNLOAD_LINE_COLOR, 'download')
+                self._apply_gradient_fill(self.ax_upload, np.array(seg_ts), seg_up, constants.graph.UPLOAD_LINE_COLOR, 'upload')
+                
+                # Accrue for return (just raw or interpolated? detailed return allows tooltips to snap to curve)
+                final_ts.extend(seg_ts)
+                final_up.extend(seg_up)
+                final_down.extend(seg_down)
+                
+                # Track for next iteration
+                prev_seg_end = ts[-1]
+
+            # === TRAILING BRIDGE: Bridge from last point to now ===
+            if target_end_time is not None:
+                last_ts = plot_datetimes[-1]
+                gap_to_now = (target_end_time - last_ts).total_seconds()
+                
+                if gap_to_now > gap_threshold:
+                    bridge_ts = [last_ts, target_end_time]
+                    bridge_zero = [0.0, 0.0]
+                    self.ax_download.plot(bridge_ts, bridge_zero, color=constants.graph.DOWNLOAD_LINE_COLOR, linewidth=1.5, zorder=9, alpha=0.5, linestyle='--')
+                    self.ax_upload.plot(bridge_ts, bridge_zero, color=constants.graph.UPLOAD_LINE_COLOR, linewidth=1.5, zorder=9, alpha=0.5, linestyle='--')
+                
         else:
-            # Single continuous line - OPTIMIZED PATH
-            self.line_download, = self.ax_download.plot(plot_datetimes, download_mbps, color=constants.graph.DOWNLOAD_LINE_COLOR, linewidth=1.5)
-            self.fill_download = self.ax_download.fill_between(plot_datetimes, 0, download_mbps, color=constants.graph.DOWNLOAD_LINE_COLOR, alpha=0.1)
+            # FAST PATH: Single continuous line
+            # Interpolate the whole chunk
+            dense_ts, dense_up, dense_down = process_segment(plot_datetimes, upload_mbps, download_mbps)
             
-            self.line_upload, = self.ax_upload.plot(plot_datetimes, upload_mbps, color=constants.graph.UPLOAD_LINE_COLOR, linewidth=1.5)
-            self.fill_upload = self.ax_upload.fill_between(plot_datetimes, 0, upload_mbps, color=constants.graph.UPLOAD_LINE_COLOR, alpha=0.1)
+            final_ts, final_up, final_down = dense_ts, dense_up, dense_down
+            
+            if self.line_download is not None and self.line_download.axes is not None:
+                try:
+                    self.line_download.set_data(dense_ts, dense_down)
+                    self.line_upload.set_data(dense_ts, dense_up)
+                except Exception as e:
+                    self.logger.debug(f"High-res update failed, rebuilding: {e}")
+                    self.line_download, = self.ax_download.plot(dense_ts, dense_down, color=constants.graph.DOWNLOAD_LINE_COLOR, linewidth=1.5, zorder=10)
+                    self.line_upload, = self.ax_upload.plot(dense_ts, dense_up, color=constants.graph.UPLOAD_LINE_COLOR, linewidth=1.5, zorder=10)
+            else:
+                self.line_download, = self.ax_download.plot(
+                    dense_ts, dense_down, 
+                    color=constants.graph.DOWNLOAD_LINE_COLOR, linewidth=1.5, zorder=10
+                )
+                self.line_upload, = self.ax_upload.plot(
+                    dense_ts, dense_up, 
+                    color=constants.graph.UPLOAD_LINE_COLOR, linewidth=1.5, zorder=10
+                )
+            
+            # Apply premium gradient fills
+            self._apply_gradient_fill(
+                self.ax_download, np.array(dense_ts), dense_down,
+                constants.graph.DOWNLOAD_LINE_COLOR, 'download'
+            )
+            self._apply_gradient_fill(
+                self.ax_upload, np.array(dense_ts), dense_up,
+                constants.graph.UPLOAD_LINE_COLOR, 'upload'
+            )
+
+            # === TRAILING BRIDGE (Fast Path): Bridge from last point to now ===
+            if target_end_time is not None:
+                last_ts = plot_datetimes[-1]
+                gap_to_now = (target_end_time - last_ts).total_seconds()
+                
+                if gap_to_now > gap_threshold:
+                    bridge_ts = [last_ts, target_end_time]
+                    bridge_zero = [0.0, 0.0]
+                    self.ax_download.plot(bridge_ts, bridge_zero, color=constants.graph.DOWNLOAD_LINE_COLOR, linewidth=1.5, zorder=9, alpha=0.5, linestyle='--')
+                    self.ax_upload.plot(bridge_ts, bridge_zero, color=constants.graph.UPLOAD_LINE_COLOR, linewidth=1.5, zorder=9, alpha=0.5, linestyle='--')
+
+        # Return the INTERPOLATED data so interactions snap to the smooth line
+        return np.array(final_ts), np.array(final_up), np.array(final_down)
+
 
     def _configure_axes(self, start_time, end_time, period_key, timestamps, upload_mbps, download_mbps):
-        """Sets limits and Formatters."""
-        # Y-Axis Scaling
+        """Sets limits and Formatters with sticky behavior to prevent jitter."""
+        # Y-Axis Scaling (Sticky Logic)
         max_up = np.max(upload_mbps) if len(upload_mbps) > 0 else 0
         max_down = np.max(download_mbps) if len(download_mbps) > 0 else 0
         
-        y_top_up = self._get_nice_y_axis_top(max_up)
-        y_top_down = self._get_nice_y_axis_top(max_down)
+        y_top_up = self._get_sticky_y_top(max_up, self._current_ylim_up)
+        y_top_down = self._get_sticky_y_top(max_down, self._current_ylim_down)
         
+        self._current_ylim_up = y_top_up
+        self._current_ylim_down = y_top_down
+        
+        # X-Axis Limits
+        # Ensure tight fit and consistent range extension
+        if len(timestamps) > 0:
+            if period_key == "TIMELINE_SESSION":
+                # Fit tightly to actual data range for SESSION
+                min_dt = datetime.fromtimestamp(timestamps.min())
+                max_dt = datetime.fromtimestamp(timestamps.max())
+                self.ax_upload.set_xlim(min_dt, max_dt)
+                self.ax_download.set_xlim(min_dt, max_dt)
+            elif start_time and end_time:
+                # Use requested range (standardizes width for BOOT, 24H, etc.)
+                self.ax_upload.set_xlim(start_time, end_time)
+                self.ax_download.set_xlim(start_time, end_time)
+            else:
+                # Fallback: tight fit if no range requested
+                min_dt = datetime.fromtimestamp(timestamps.min())
+                max_dt = datetime.fromtimestamp(timestamps.max())
+                self.ax_upload.set_xlim(min_dt, max_dt)
+                self.ax_download.set_xlim(min_dt, max_dt)
+        elif start_time and end_time:
+             # Even if no data, show the requested range empty
+             self.ax_upload.set_xlim(start_time, end_time)
+             self.ax_download.set_xlim(start_time, end_time)
+
+        # === SMART SCALING (SYMLOG) ===
+        # Linear view for low speeds (0-1 Mbps), Logarithmic for high speeds.
+        # This allows seeing small background usage AND large download spikes simultaneously.
+        
+        linthresh = 1.0 # 1 Mbps linear threshold
+        
+        # Only apply SymLog if we have significant peaks (max > 10 Mbps)
+        # preventing "weird" linear-log transitions for purely low-speed sessions.
+        if self._current_ylim_down > 10:
+            self.ax_download.set_yscale('symlog', linthresh=linthresh, subs=[2, 3, 4, 5, 6, 7, 8, 9])
+            # Custom formatter to avoid "10^0", "10^1" scientific notation
+            self.ax_download.yaxis.set_major_formatter(lambda x, pos: f"{int(x)}" if x >= 10 else f"{x:.1f}")
+        else:
+            self.ax_download.set_yscale('linear')
+            self.ax_download.yaxis.set_major_formatter(lambda x, pos: f"{x:.1f}")
+
+        if self._current_ylim_up > 10:
+            self.ax_upload.set_yscale('symlog', linthresh=linthresh, subs=[2, 3, 4, 5, 6, 7, 8, 9])
+            self.ax_upload.yaxis.set_major_formatter(lambda x, pos: f"{int(x)}" if x >= 10 else f"{x:.1f}")
+        else:
+            self.ax_upload.set_yscale('linear')
+            self.ax_upload.yaxis.set_major_formatter(lambda x, pos: f"{x:.1f}")
+
         self.ax_upload.set_ylim(bottom=0, top=y_top_up)
         self.ax_download.set_ylim(bottom=0, top=y_top_down)
-
-        if start_time and end_time:
-             self.ax_upload.set_xlim(start_time, end_time)
-        elif len(timestamps) > 0:
-             # Auto-range logic
-             min_dt = datetime.fromtimestamp(timestamps.min())
-             max_dt = datetime.fromtimestamp(timestamps.max())
-             self.ax_upload.set_xlim(min_dt, max_dt)
 
         # X-Axis Formatting
         self._configure_xaxis_format(period_key)
 
+
+    def _get_sticky_y_top(self, max_speed: float, current_top: float) -> float:
+        """
+        Calculates a top limit with sticky behavior.
+        Only updates if we exceed current or drop significantly below it.
+        """
+        min_limit = constants.graph.MINIMUM_Y_AXIS_MBPS
+        
+        # 1. If we exceed current, scale up immediately
+        if max_speed > current_top:
+            return max_speed * 1.1
+            
+        # 2. If we drop below 70% of current, scale down
+        if max_speed < current_top * 0.7:
+            suggested = max_speed * 1.1
+            return max(suggested, min_limit)
+            
+        # 3. Otherwise, stay sticky
+        return current_top
 
     def _get_nice_y_axis_top(self, max_speed: float) -> float:
         """Calculates a top limit with ~10% padding."""
@@ -349,6 +961,14 @@ class GraphRenderer(QObject):
         major_locator = mdates.AutoDateLocator(maxticks=8)
         major_formatter = mdates.DateFormatter('%H:%M') 
 
+        # For extremely short views (e.g. freshly started Session), show seconds
+        # This prevents repeating labels like "19:27, 19:27, 19:27"
+        xlim = axis.get_xlim()
+        if xlim[0] < xlim[1]:
+            duration_days = xlim[1] - xlim[0]
+            duration_sec = duration_days * 86400
+            if duration_sec < 120: # Less than 2 minutes
+                major_formatter = mdates.DateFormatter('%H:%M:%S')
         if period_key == "TIMELINE_WEEK":
             major_formatter = mdates.DateFormatter('%a %d')
         elif period_key == "TIMELINE_MONTH":
@@ -368,42 +988,28 @@ class GraphRenderer(QObject):
     def update_data(self, plot_datetimes, upload_mbps, download_mbps, start_time, end_time):
         """
         Efficiently updates the graph data without clearing axes, if possible.
+        Uses gradient fills for premium visual effect.
         """
-        # Check if we have valid line objects to update AND they are still attached to axes
-        # (if axes were cleared to show a message, artist.axes will be None)
-        if not hasattr(self, 'line_download') or not self.line_download or self.line_download.axes is None or \
-           not hasattr(self, 'line_upload') or not self.line_upload or self.line_upload.axes is None:
-               # Fallback to full render if we don't have updateable lines (e.g. segmented or cleared)
-               return False
-               
-        # Update X/Y data
+        if not hasattr(self, 'line_download') or not self.line_download or self.line_download.axes is None:
+            return False
+                
+        # Update X/Y data for lines
         self.line_download.set_data(plot_datetimes, download_mbps)
         self.line_upload.set_data(plot_datetimes, upload_mbps)
         
-        # Updating fill_between is tricky. It creates a PolyCollection.
-        # The most robust way for fill is to remove the old one and add a new one, 
-        # which is still faster than full ax.clear() + reformatting.
+        # Update gradient fills
+        self._apply_gradient_fill(
+            self.ax_download, np.array(plot_datetimes), download_mbps,
+            constants.graph.DOWNLOAD_LINE_COLOR, 'download'
+        )
+        self._apply_gradient_fill(
+            self.ax_upload, np.array(plot_datetimes), upload_mbps,
+            constants.graph.UPLOAD_LINE_COLOR, 'upload'
+        )
         
-        try:
-            if hasattr(self, 'fill_download') and self.fill_download:
-                self.fill_download.remove()
-            if hasattr(self, 'fill_upload') and self.fill_upload:
-                self.fill_upload.remove()
-        except Exception:
-            pass # Already removed or invalid
-
-        self.fill_download = self.ax_download.fill_between(plot_datetimes, 0, download_mbps, color=constants.graph.DOWNLOAD_LINE_COLOR, alpha=0.1)
-        self.fill_upload = self.ax_upload.fill_between(plot_datetimes, 0, upload_mbps, color=constants.graph.UPLOAD_LINE_COLOR, alpha=0.1)
-        
-        # Update Limits
-        self.ax_upload.set_xlim(start_time, end_time)
-        self.ax_download.set_xlim(start_time, end_time)
-        
-        # Update Y-Limits
-        max_up = np.max(upload_mbps) if len(upload_mbps) > 0 else 0
-        max_down = np.max(download_mbps) if len(download_mbps) > 0 else 0
-        self.ax_upload.set_ylim(0, self._get_nice_y_axis_top(max_up))
-        self.ax_download.set_ylim(0, self._get_nice_y_axis_top(max_down))
+        # Update Limits and Formatters (Using sticky logic)
+        timestamps = np.array([dt.timestamp() for dt in plot_datetimes])
+        self._configure_axes(start_time, end_time, "TIMELINE_SESSION", timestamps, upload_mbps, download_mbps)
         
         self.canvas.draw_idle()
         return True

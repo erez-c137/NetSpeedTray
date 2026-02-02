@@ -108,58 +108,72 @@ class WidgetLayoutManager:
 
         try:
             taskbar_info = get_taskbar_info()
+            edge = taskbar_info.get_edge_position()
+            is_horizontal = edge in (constants.TaskbarEdge.TOP, constants.TaskbarEdge.BOTTOM)
+            dpi_scale = taskbar_info.dpi_scale if taskbar_info.dpi_scale > 0 else 1.0
+            
             is_small = is_small_taskbar(taskbar_info)
-            self.logger.debug(f"Small taskbar detected: {is_small}")
+            self.logger.debug(f"Taskbar edge: {edge}, Small: {is_small}")
 
             precision = self.widget.config.get("decimal_places", constants.config.defaults.DEFAULT_DECIMAL_PLACES)
             margin = constants.renderer.TEXT_MARGIN
             hide_arrows = self.widget.config.get("hide_arrows", False)
             hide_units = self.widget.config.get("hide_unit_suffix", False)
             
-            if is_small:
-                # Horizontal Layout
-                # Note: We must mimic the logic in Renderer._draw_horizontal_layout
-                unit_type = self.widget.config.get("unit_type", constants.config.defaults.DEFAULT_UNIT_TYPE)
-                upload_pair, download_pair = self.widget.renderer._format_speed_texts(9.99, 99.99, False, precision, True, unit_type, full_string=False)
-                
-                up_val, up_unit = upload_pair
-                down_val, down_unit = download_pair
-                
-                def get_part_width(arrow_char, val, unit):
-                    w = 0
-                    if not hide_arrows:
-                        w += self.arrow_metrics.horizontalAdvance(arrow_char) + self.arrow_metrics.horizontalAdvance(" ")
-                    w += self.metrics.horizontalAdvance(val)
-                    if not hide_units:
-                        w += self.metrics.horizontalAdvance(" ") + self.metrics.horizontalAdvance(unit)
-                    return w
+            if is_horizontal:
+                # --- HORIZONTAL TASKBAR (TOP/BOTTOM) ---
+                if is_small:
+                    # Small Horizontal Layout Width Calculation
+                    unit_type = self.widget.config.get("unit_type", constants.config.defaults.DEFAULT_UNIT_TYPE)
+                    upload_pair, download_pair = self.widget.renderer._format_speed_texts(9.99, 99.99, False, precision, True, unit_type, full_string=False)
+                    
+                    up_val, up_unit = upload_pair
+                    down_val, down_unit = download_pair
+                    
+                    def get_part_width(arrow_char, val, unit):
+                        w = 0
+                        if not hide_arrows:
+                            w += self.arrow_metrics.horizontalAdvance(arrow_char) + self.arrow_metrics.horizontalAdvance(" ")
+                        w += self.metrics.horizontalAdvance(val)
+                        if not hide_units:
+                            w += self.metrics.horizontalAdvance(" ") + self.metrics.horizontalAdvance(unit)
+                        return w
 
-                up_width = get_part_width(self.widget.i18n.UPLOAD_ARROW, up_val, up_unit)
-                down_width = get_part_width(self.widget.i18n.DOWNLOAD_ARROW, down_val, down_unit)
-                sep_width = self.metrics.horizontalAdvance(constants.layout.HORIZONTAL_LAYOUT_SEPARATOR)
+                    up_width = get_part_width(self.widget.i18n.UPLOAD_ARROW, up_val, up_unit)
+                    down_width = get_part_width(self.widget.i18n.DOWNLOAD_ARROW, down_val, down_unit)
+                    sep_width = self.metrics.horizontalAdvance(constants.layout.HORIZONTAL_LAYOUT_SEPARATOR)
+                    
+                    calculated_width = up_width + sep_width + down_width + (margin * 2)
+                else:
+                    # Large Horizontal Layout Width Calculation (Vertical Mode)
+                    always_mbps = self.widget.config.get("speed_display_mode", constants.config.defaults.DEFAULT_SPEED_DISPLAY_MODE) == "always_mbps"
+                    
+                    from netspeedtray.utils.helpers import get_all_possible_unit_labels, get_reference_value_string
+                    
+                    max_number_str = get_reference_value_string(always_mbps, precision)
+                    max_number_width = self.metrics.horizontalAdvance(max_number_str)
+                    
+                    possible_units = get_all_possible_unit_labels(self.widget.i18n)
+                    max_unit_width = max(self.metrics.horizontalAdvance(unit) for unit in possible_units) if not hide_units else 0
+                    
+                    arrow_width = self.metrics.horizontalAdvance(self.widget.i18n.UPLOAD_ARROW) if not hide_arrows else 0
+                    arrow_gap = constants.renderer.ARROW_NUMBER_GAP if not hide_arrows else 0
+                    unit_gap = constants.renderer.VALUE_UNIT_GAP if not hide_units else 0
+
+                    calculated_width = (margin + arrow_width + arrow_gap +
+                                        max_number_width + unit_gap +
+                                        max_unit_width + margin)
                 
-                calculated_width = up_width + sep_width + down_width + (margin * 2)
-                calculated_height = self.widget.taskbar_height
+                # Height is the full taskbar height for horizontal docking
+                calculated_height = (taskbar_info.rect[3] - taskbar_info.rect[1]) / dpi_scale
+
             else:
-                # Vertical Layout Calculation
-                always_mbps = self.widget.config.get("speed_display_mode", constants.config.defaults.DEFAULT_SPEED_DISPLAY_MODE) == "always_mbps"
-                
-                from netspeedtray.utils.helpers import get_all_possible_unit_labels, get_reference_value_string
-                
-                max_number_str = get_reference_value_string(always_mbps, precision)
-                max_number_width = self.metrics.horizontalAdvance(max_number_str)
-                
-                possible_units = get_all_possible_unit_labels(self.widget.i18n)
-                max_unit_width = max(self.metrics.horizontalAdvance(unit) for unit in possible_units) if not hide_units else 0
-                
-                arrow_width = self.metrics.horizontalAdvance(self.widget.i18n.UPLOAD_ARROW) if not hide_arrows else 0
-                arrow_gap = constants.renderer.ARROW_NUMBER_GAP if not hide_arrows else 0
-                unit_gap = constants.renderer.VALUE_UNIT_GAP if not hide_units else 0
-
-                calculated_width = (margin + arrow_width + arrow_gap +
-                                    max_number_width + unit_gap +
-                                    max_unit_width + margin)
-                calculated_height = self.widget.taskbar_height
+                # --- VERTICAL TASKBAR (LEFT/RIGHT) ---
+                # Width is determined by the taskbar width
+                calculated_width = (taskbar_info.rect[2] - taskbar_info.rect[0]) / dpi_scale
+                # Height is calculated to fit exactly two lines of text + small padding
+                # This prevents the widget from stretching the full length of the screen.
+                calculated_height = self.metrics.height() * 2 + (margin * 4)
 
             # FIX for #88: Ensure minimum size to prevents widget from disappearing
             final_width = max(calculated_width, 50) 

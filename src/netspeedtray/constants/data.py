@@ -56,26 +56,32 @@ class DataRetentionConstants:
 class HistoryPeriodConstants:
     """Constants for history periods in graphs."""
     # Use i18n keys, not display strings
+    # Optimized 6-pill design: SESS, BOOT, 24H, WEEK, MONTH, ALL
     PERIOD_MAP: Final[Dict[int, str]] = {
-        0: "TIMELINE_SESSION", 1: "TIMELINE_SYSTEM_UPTIME", 2: "TIMELINE_3_HOURS",
-        3: "TIMELINE_6_HOURS", 4: "TIMELINE_12_HOURS", 5: "TIMELINE_24_HOURS",
-        6: "TIMELINE_WEEK", 7: "TIMELINE_MONTH", 8: "TIMELINE_ALL",
+        0: "TIMELINE_SESSION", 
+        1: "TIMELINE_SYSTEM_UPTIME", 
+        2: "TIMELINE_24_HOURS",
+        3: "TIMELINE_WEEK", 
+        4: "TIMELINE_MONTH", 
+        5: "TIMELINE_ALL",
     }
-    DEFAULT_PERIOD: Final[str] = PERIOD_MAP[0] # "TIMELINE_SESSION"
+    DEFAULT_PERIOD: Final[str] = PERIOD_MAP[2]  # "TIMELINE_24_HOURS" - most universally useful
 
     # Aggregation thresholds (seconds) for choosing DB source and plotting resolution
-    RES_RAW_THRESHOLD: Final[int] = 23 * 3600      # Use Raw for < 23h
-    RES_MINUTE_THRESHOLD: Final[int] = 29 * 86400  # Use Minute for < 29d
+    # OPTIMIZED for Performance:
+    # 24H view (86400s) -> Must use Minute (1440 pts), NOT Raw (86400 pts).
+    # Week view (604800s) -> Must use Hour (168 pts), NOT Minute (10080 pts).
     
-    # Plotting resolution thresholds (seconds)
+    RES_RAW_THRESHOLD: Final[int] = 6 * 3600       # Use Raw for < 6 hours (~21k pts max)
+    RES_MINUTE_THRESHOLD: Final[int] = 3 * 86400   # Use Minute for < 3 days (~4.3k pts max)
+    RES_HOUR_THRESHOLD: Final[int] = 90 * 86400    # Use Hour for < 90 days (Month=720 pts, Week=168 pts)
+    
+    # Plotting resolution thresholds (seconds) - unused by current logic but kept for reference
     PLOT_MINUTE_THRESHOLD: Final[int] = 30 * 86400 # Use minute bins for < 30 days
     PLOT_HOURLY_THRESHOLD: Final[int] = 90 * 86400 # Use hourly bins for < 90 days
     
     # Mapping of period keys to their duration in days for standard ranges
     CUTOFF_DAYS: Final[Dict[str, float]] = {
-        "TIMELINE_3_HOURS": 3 / 24, 
-        "TIMELINE_6_HOURS": 6 / 24, 
-        "TIMELINE_12_HOURS": 12 / 24,
         "TIMELINE_24_HOURS": 1, 
         "TIMELINE_WEEK": 7, 
         "TIMELINE_MONTH": 30, 
@@ -94,23 +100,31 @@ class HistoryPeriodConstants:
             return boot_time
         elif period_key in HistoryPeriodConstants.CUTOFF_DAYS:
             if period_key == "TIMELINE_ALL":
-                return None
+                # Ensure we have a start time for 'ALL' to calculate duration correctly
+                if earliest_db:
+                     return earliest_db
+                return now - timedelta(days=365*10) 
             return now - timedelta(days=HistoryPeriodConstants.CUTOFF_DAYS[period_key])
         return None
 
     @staticmethod
     def get_target_resolution(start_time: Optional[datetime], end_time: datetime) -> str:
-        """Determines the data resolution (raw, minute, hour) for a given time range."""
-        if not start_time:
-            return 'hour'
+        """Determines the data resolution (raw, minute, hour, day) for a given time range."""
+        if not start_time or not end_time:
+            # If no start time, assume infinite duration -> cheapest resolution
+            return 'day' 
         
         duration = (end_time - start_time).total_seconds()
+        
+        # Guard: If duration is huge (e.g. ALL view with 1 year data), use appropriate
         if duration <= HistoryPeriodConstants.RES_RAW_THRESHOLD:
             return 'raw'
         elif duration <= HistoryPeriodConstants.RES_MINUTE_THRESHOLD:
             return 'minute'
-        else:
+        elif duration <= HistoryPeriodConstants.RES_HOUR_THRESHOLD:
             return 'hour'
+        else:
+            return 'day'
 
     def __init__(self) -> None:
         self.validate()

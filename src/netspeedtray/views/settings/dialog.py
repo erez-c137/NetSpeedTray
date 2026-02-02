@@ -251,7 +251,7 @@ class SettingsDialog(QDialog):
             QTimer.singleShot(0, self.reject)
 
     def _init_ui_state(self) -> None:
-        """Loads current configuration into all UI elements."""
+        """Loads current configuration into all UI elements and restores window position."""
         self.logger.debug("Initializing UI state from config...")
         try:
             self.general_page.load_settings(self.config, self.startup_enabled_initial_state)
@@ -260,7 +260,18 @@ class SettingsDialog(QDialog):
             self.graph_page.load_settings(self.config)
             self.units_page.load_settings(self.config)
             self.interfaces_page.load_settings(self.config)
-            # Troubleshooting has no state to load
+            
+            # Restore window position if saved
+            saved_pos = self.config.get("settings_window_pos")
+            if saved_pos and isinstance(saved_pos, dict):
+                 x, y = saved_pos.get("x"), saved_pos.get("y")
+                 if x is not None and y is not None:
+                     # Basic validation to ensure it's on-screen is handled by OS/Qt usually, 
+                     # but we could add ScreenUtils validation here if imported.
+                     # For now, trust the save.
+                     self.move(x, y)
+                     self.logger.debug(f"Restored Settings Dialog position to ({x}, {y})")
+
         except Exception as e:
              self.logger.error(f"Error initializing UI state: {e}", exc_info=True)
 
@@ -277,18 +288,17 @@ class SettingsDialog(QDialog):
     def _adjust_size_and_reposition(self) -> None:
         """
         Resizes the dialog to fit content, ensuring it stays within screen bounds.
-        If expansion would push it off-screen (e.g. under taskbar), it moves upwards.
         """
         # Ensure layout has processed visibility changes before we calculate size
         QApplication.processEvents()
         
         old_geometry = self.geometry()
-        # Reset to minimum size hint to allow shrinking if content got smaller,
-        # otherwise adjustSize might respect current larger size
         self.resize(self.minimumSizeHint()) 
         self.adjustSize()
         
         new_geometry = self.geometry()
+        # If we just corrected position from config, try to respect it
+        # But ensure we don't go off-screen due to resize
         
         screen = self.screen()
         if not screen: return
@@ -299,19 +309,14 @@ class SettingsDialog(QDialog):
         bottom_overflow = new_geometry.bottom() - available_rect.bottom()
         
         if bottom_overflow > 0:
-            # We need to move up
             new_y = new_geometry.y() - bottom_overflow
-            
-            # Ensure we don't go off the top
             if new_y < available_rect.top():
                 new_y = available_rect.top()
-                # If we hit the top and still overflow bottom, we must shrink height
                 if new_geometry.height() > available_rect.height():
                     self.resize(new_geometry.width(), available_rect.height())
             
             self.move(new_geometry.x(), new_y)
             
-        # Double check we are not entirely too tall (e.g. low res screen)
         current_geo = self.geometry()
         if current_geo.height() > available_rect.height():
              self.resize(current_geo.width(), available_rect.height())
@@ -338,10 +343,8 @@ class SettingsDialog(QDialog):
             settings.update(self.units_page.get_settings())
             settings.update(self.interfaces_page.get_settings())
             
-            # Handle implied defaults or overrides
-            # Example: Appearance page handles default color logic inside get_settings? 
-            # Actually AppearancePage returns the hex string. 
-            # We might need to handle 'color_is_automatic' logic here if it spans logic not in page.
+            # Save current window position
+            settings["settings_window_pos"] = {"x": self.pos().x(), "y": self.pos().y()}
             
             # Re-implement color logic check:
             if self._user_chose_default_color:
@@ -349,8 +352,7 @@ class SettingsDialog(QDialog):
             else:
                  settings["color_is_automatic"] = self.original_config.get("color_is_automatic", True)
                  
-            # Fix dynamic update rate vs slider logic from original (now roughly handled in GeneralPage get_settings)
-            # GeneralPage returns raw slider value. We need to apply the logic:
+            # Fix dynamic update rate vs slider logic
             if settings["update_rate"] == 0:
                  settings["update_rate"] = constants.timers.SMART_MODE_INTERVAL_MS / 1000.0
             else:
@@ -372,8 +374,12 @@ class SettingsDialog(QDialog):
                 self.appearance_page.set_arrow_font_family(font)
 
     def _open_color_dialog(self, key_name: str) -> None:
-        # Get current color from the page to set initial state
-        current_settings = self.appearance_page.get_settings()
+        # Get current color from the correct page to set initial state
+        if key_name in ["high_speed_color", "low_speed_color"]:
+            current_settings = self.colors_page.get_settings()
+        else:
+            current_settings = self.appearance_page.get_settings()
+            
         initial_hex = current_settings.get(key_name, "#FFFFFF")
         
         color = QColorDialog.getColor(QColor(initial_hex), self, "Select Color")

@@ -258,6 +258,7 @@ class PositionManager(QObject):
         
         # Internal State
         self._last_tray_rect: Optional[Tuple[int, int, int, int]] = None
+        self._last_applied_geometry: Optional[QRect] = None
         self._taskbar_lost_count: int = 0
         
         # Timers
@@ -317,7 +318,7 @@ class PositionManager(QObject):
 
         widget_size = (self._state.widget.width(), self._state.widget.height())
         if ScreenUtils.is_position_valid(saved_x, saved_y, widget_size, screen):
-            self._state.widget.move(saved_x, saved_y)
+            self._apply_geometry(saved_x, saved_y)
             return True
         
         return False
@@ -326,9 +327,28 @@ class PositionManager(QObject):
         """Calculates and applies position based on taskbar rules."""
         target_pos = self.get_calculated_position()
         if target_pos:
-            self._state.widget.move(target_pos.x, target_pos.y)
+            self._apply_geometry(target_pos.x, target_pos.y)
             return True
         return False
+
+    def _apply_geometry(self, x: int, y: int) -> None:
+        """Moves the widget with geometry debouncing to prevent redundant OS calls."""
+        # Note: We use QRect to track both position and size, as a size change 
+        # (calculated in layout.py) should also invalidate the debounce.
+        new_rect = QRect(x, y, self._state.widget.width(), self._state.widget.height())
+        
+        if self._last_applied_geometry == new_rect:
+            return
+
+        # Double check against current actual position to avoid even one redundant call
+        # if the widget was moved by external means but matches our target.
+        if self._state.widget.pos() == QPoint(x, y):
+            self._last_applied_geometry = new_rect
+            return
+
+        self._state.widget.move(x, y)
+        self._last_applied_geometry = new_rect
+        logger.debug("Widget geometry updated to: %s", new_rect)
 
     def get_calculated_position(self) -> Optional[ScreenPosition]:
         """Returns the intended position without moving the widget."""

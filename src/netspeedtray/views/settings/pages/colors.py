@@ -43,6 +43,7 @@ class ColorsPage(QWidget):
             spin = QDoubleSpinBox()
             spin.setRange(0, 10000)
             spin.setSuffix(" Mbps")
+            spin.setToolTip(getattr(self.i18n, f"{key.upper()}_THRESHOLD_TOOLTIP", ""))
             spin.valueChanged.connect(self.on_change)
             setattr(self, f"{key}_threshold", spin)
             cc_v_layout.addWidget(spin)
@@ -50,6 +51,7 @@ class ColorsPage(QWidget):
             color_h = QHBoxLayout()
             btn = QPushButton()
             btn.setObjectName(f"{key}_color")
+            btn.setToolTip(getattr(self.i18n, f"{key.upper()}_COLOR_TOOLTIP", ""))
             btn.clicked.connect(lambda checked, k=f"{key}_color": self.open_color_dialog(k))
             inp = QLineEdit()
             inp.setMaxLength(7)
@@ -92,7 +94,7 @@ class ColorsPage(QWidget):
         self.on_change()
 
     def set_color_input(self, key: str, hex_code: str):
-        if hasattr(self, f"{key}_input"):
-            getattr(self, f"{key}_input").setText(hex_code)
-            getattr(self, f"{key}_button").setStyleSheet(f"background-color: {hex_code}; border: none;")
+        if hasattr(self, f"{key}_color_input"):
+            getattr(self, f"{key}_color_input").setText(hex_code)
+            getattr(self, f"{key}_color_button").setStyleSheet(f"background-color: {hex_code}; border: none;")
             self.on_change()

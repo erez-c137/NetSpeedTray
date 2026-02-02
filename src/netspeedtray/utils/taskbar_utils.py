@@ -202,8 +202,20 @@ class TaskbarInfo:
         logger.warning("Creating fallback TaskbarInfo using primary screen details.")
         primary_screen = QApplication.primaryScreen()
         if not primary_screen:
-            logger.critical("No primary screen available to create fallback TaskbarInfo.")
-            raise RuntimeError("Cannot create fallback TaskbarInfo: No primary screen detected.")
+            logger.warning("No primary screen detected during fallback creation. Using absolute defaults.")
+            # Absolute recovery fallback (1080p assumption, 1.0 DPI)
+            return TaskbarInfo(
+                hwnd=0,
+                tray_hwnd=None,
+                tasklist_rect=None,
+                rect=(0, 0, 0, 0),
+                screen_name="SUPER_FALLBACK",
+                screen_geometry=(0, 0, 1920, 1080),
+                work_area=(0, 0, 1920, 1040),
+                dpi_scale=1.0,
+                is_primary=True,
+                height=constants.taskbar.taskbar.DEFAULT_HEIGHT
+            )
 
         dpi_scale = get_dpi_for_monitor(win32api.MonitorFromPoint((0, 0), MONITOR_DEFAULTTONEAREST))
         if dpi_scale is None:

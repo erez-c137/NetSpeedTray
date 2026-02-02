@@ -244,13 +244,14 @@ class Win11Slider(QWidget):
     def __init__(self, min_value: int = 0, max_value: int = 100, value: int = 0, 
                  page_step: int = 1, has_ticks: bool = False, 
                  parent: Optional[QWidget] = None, value_label_text_color: Optional[str] = None,
-                 editable: bool = True, suffix: str = "") -> None:
+                 editable: bool = True, suffix: str = "", auto_update_label: bool = True) -> None:
         super().__init__(parent)
         self._value_input: Optional[QLineEdit] = None
         self._value_label: Optional[QLabel] = None
         self._value_label_text_color: Optional[str] = value_label_text_color
         self._editable: bool = editable
         self._suffix: str = suffix
+        self._auto_update_label: bool = auto_update_label
         
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         # Explicitly set border and outline to none for the QWidget container
@@ -359,7 +360,8 @@ class Win11Slider(QWidget):
 
 
     def _on_internal_slider_value_changed(self, value: int) -> None:
-        self.setValueText(f"{value}{self._suffix}")
+        if self._auto_update_label:
+            self.setValueText(f"{value}{self._suffix}")
         self.valueChanged.emit(value)
 
 
