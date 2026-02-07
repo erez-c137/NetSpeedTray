@@ -144,13 +144,16 @@ class PositionCalculator:
             
             if edge in (constants.taskbar.edge.BOTTOM, constants.taskbar.edge.TOP):
                 # --- HORIZONTAL TASKBAR LOGIC ---
-                tb_top_log = round(taskbar_info.rect[1] / dpi_scale)
-                tb_height_log = round((taskbar_info.rect[3] - taskbar_info.rect[1]) / dpi_scale)
+                tb_top_log = math.ceil(taskbar_info.rect[1] / dpi_scale)
+                tb_height_log = math.ceil((taskbar_info.rect[3] - taskbar_info.rect[1]) / dpi_scale)
                 
-                right_boundary = round(taskbar_info.get_tray_rect()[0] / dpi_scale) if taskbar_info.get_tray_rect() else round(taskbar_info.rect[2] / dpi_scale)
-                left_boundary = round(taskbar_info.tasklist_rect[2] / dpi_scale) if taskbar_info.tasklist_rect else round(taskbar_info.rect[0] / dpi_scale)
+                right_boundary = math.ceil(taskbar_info.get_tray_rect()[0] / dpi_scale) if taskbar_info.get_tray_rect() else math.ceil(taskbar_info.rect[2] / dpi_scale)
+                left_boundary = math.ceil(taskbar_info.tasklist_rect[2] / dpi_scale) if taskbar_info.tasklist_rect else math.ceil(taskbar_info.rect[0] / dpi_scale)
 
-                y = tb_top_log + (tb_height_log - widget_height) // 2
+                y_center = tb_top_log + (tb_height_log - widget_height) // 2
+                offset_y = config.get('tray_offset_y', constants.config.defaults.DEFAULT_TRAY_OFFSET_Y)
+                y = y_center + offset_y
+
                 offset = config.get('tray_offset_x', constants.config.defaults.DEFAULT_TRAY_OFFSET_X)
                 x = right_boundary - widget_width - offset
 
@@ -160,16 +163,16 @@ class PositionCalculator:
 
             elif edge in (constants.taskbar.edge.LEFT, constants.taskbar.edge.RIGHT):
                 # --- VERTICAL TASKBAR LOGIC ---
-                tb_left_log = round(taskbar_info.rect[0] / dpi_scale)
-                tb_width_log = round((taskbar_info.rect[2] - taskbar_info.rect[0]) / dpi_scale)
+                tb_left_log = math.ceil(taskbar_info.rect[0] / dpi_scale)
+                tb_width_log = math.ceil((taskbar_info.rect[2] - taskbar_info.rect[0]) / dpi_scale)
                 
-                bottom_boundary = round(taskbar_info.get_tray_rect()[1] / dpi_scale) if taskbar_info.get_tray_rect() else round(taskbar_info.rect[3] / dpi_scale)
-                top_boundary = round(taskbar_info.tasklist_rect[3] / dpi_scale) if taskbar_info.tasklist_rect else round(taskbar_info.rect[1] / dpi_scale)
+                bottom_boundary = math.ceil(taskbar_info.get_tray_rect()[1] / dpi_scale) if taskbar_info.get_tray_rect() else math.ceil(taskbar_info.rect[3] / dpi_scale)
+                top_boundary = math.ceil(taskbar_info.tasklist_rect[3] / dpi_scale) if taskbar_info.tasklist_rect else math.ceil(taskbar_info.rect[1] / dpi_scale)
                 
                 x = tb_left_log + (tb_width_log - widget_width) // 2
                 
                 # Align to bottom (near tray) instead of absolute center
-                offset_y = config.get('tray_offset_y', constants.config.defaults.DEFAULT_TRAY_OFFSET_X)
+                offset_y = config.get('tray_offset_y', constants.config.defaults.DEFAULT_TRAY_OFFSET_Y)
                 y = bottom_boundary - widget_height - offset_y
             
             else:

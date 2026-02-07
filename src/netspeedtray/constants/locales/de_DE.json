@@ -228,6 +228,8 @@
     "INTERFACE_LAYOUT_GROUP": "Schnittstellenlayout",
     "POSITION_GROUP": "Positionierung",
     "TRAY_OFFSET_LABEL": "Tray-Versatz (px)",
+    "TRAY_OFFSET_X_LABEL": "Horizontaler Versatz:",
+    "TRAY_OFFSET_Y_LABEL": "Vertikaler Versatz:",
     "CSV_FILE_FILTER": "CSV-Dateien (*.csv);;Alle Dateien (*.*)",
     "PNG_FILE_FILTER": "PNG-Bilder (*.png);;Alle Dateien (*.*)",
     "LOG_FILES_FILTER": "Protokolldateien",

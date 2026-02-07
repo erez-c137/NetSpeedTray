@@ -144,6 +144,7 @@ class WidgetLayoutManager:
                     sep_width = self.metrics.horizontalAdvance(constants.layout.HORIZONTAL_LAYOUT_SEPARATOR)
                     
                     calculated_width = up_width + sep_width + down_width + (margin * 2)
+                    calculated_height = self.metrics.height() + (margin * 2)
                 else:
                     # Large Horizontal Layout Width Calculation (Vertical Mode)
                     always_mbps = self.widget.config.get("speed_display_mode", constants.config.defaults.DEFAULT_SPEED_DISPLAY_MODE) == "always_mbps"
@@ -163,16 +164,16 @@ class WidgetLayoutManager:
                     calculated_width = (margin + arrow_width + arrow_gap +
                                         max_number_width + unit_gap +
                                         max_unit_width + margin)
+                    calculated_height = self.metrics.height() * 2 + (margin * 4)
                 
-                # Height is the full taskbar height for horizontal docking
-                calculated_height = (taskbar_info.rect[3] - taskbar_info.rect[1]) / dpi_scale
+                # Height fallback logic removed to allow centered floating in horizontal mode
+                # calculated_height = (taskbar_info.rect[3] - taskbar_info.rect[1]) / dpi_scale
 
             else:
                 # --- VERTICAL TASKBAR (LEFT/RIGHT) ---
                 # Width is determined by the taskbar width
                 calculated_width = (taskbar_info.rect[2] - taskbar_info.rect[0]) / dpi_scale
                 # Height is calculated to fit exactly two lines of text + small padding
-                # This prevents the widget from stretching the full length of the screen.
                 calculated_height = self.metrics.height() * 2 + (margin * 4)
 
             # FIX for #88: Ensure minimum size to prevents widget from disappearing

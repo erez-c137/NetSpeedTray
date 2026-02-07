@@ -228,6 +228,8 @@
     "INTERFACE_LAYOUT_GROUP": "Disposition de l'interface",
     "POSITION_GROUP": "Positionnement",
     "TRAY_OFFSET_LABEL": "Décalage du plateau (px)",
+    "TRAY_OFFSET_X_LABEL": "Décalage Horizontal :",
+    "TRAY_OFFSET_Y_LABEL": "Décalage Vertical :",
     "CSV_FILE_FILTER": "Fichiers CSV (*.csv);;Tous les Fichiers (*.*)",
     "PNG_FILE_FILTER": "Images PNG (*.png);;Tous les Fichiers (*.*)",
     "LOG_FILES_FILTER": "Fichiers Journaux",
