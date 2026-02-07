@@ -204,6 +204,8 @@
     "HIDE_ARROWS_LABEL": "화살표 숨기기",
     "HIDE_UNIT_SUFFIX_LABEL": "단위 접미사 숨기기",
     "TRAY_OFFSET_LABEL": "트레이 오프셋 (px)",
+    "TRAY_OFFSET_X_LABEL": "가로 오프셋:",
+    "TRAY_OFFSET_Y_LABEL": "세로 오프셋:",
     "CSV_FILE_FILTER": "CSV 파일 (*.csv);;모든 파일 (*.*)",
     "PNG_FILE_FILTER": "PNG 이미지 (*.png);;모든 파일 (*.*)",
     "LOG_FILES_FILTER": "로그 파일",

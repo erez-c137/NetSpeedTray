@@ -107,11 +107,19 @@ class UnitsPage(QWidget):
         pos_group = QGroupBox(getattr(self.i18n, 'POSITION_GROUP', "Positioning"))
         pos_layout = QGridLayout(pos_group)
         
-        pos_layout.addWidget(QLabel(self.i18n.TRAY_OFFSET_LABEL), 0, 0, Qt.AlignmentFlag.AlignVCenter)
-        self.tray_offset = Win11Slider()
-        self.tray_offset.setRange(0, 50)
-        self.tray_offset.valueChanged.connect(self.on_change)
-        pos_layout.addWidget(self.tray_offset, 0, 1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        # Horizontal Offset
+        pos_layout.addWidget(QLabel(getattr(self.i18n, 'TRAY_OFFSET_X_LABEL', "Horizontal Offset")), 0, 0, Qt.AlignmentFlag.AlignVCenter)
+        self.tray_offset_x = Win11Slider()
+        self.tray_offset_x.setRange(0, 500)
+        self.tray_offset_x.valueChanged.connect(self.on_change)
+        pos_layout.addWidget(self.tray_offset_x, 0, 1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        
+        # Vertical Offset
+        pos_layout.addWidget(QLabel(getattr(self.i18n, 'TRAY_OFFSET_Y_LABEL', "Vertical Offset")), 1, 0, Qt.AlignmentFlag.AlignVCenter)
+        self.tray_offset_y = Win11Slider()
+        self.tray_offset_y.setRange(-100, 100) # Allow negative for upward correction
+        self.tray_offset_y.valueChanged.connect(self.on_change)
+        pos_layout.addWidget(self.tray_offset_y, 1, 1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         
         pos_layout.setColumnStretch(0, 1)
         pos_layout.setColumnStretch(1, 0)
@@ -145,8 +153,9 @@ class UnitsPage(QWidget):
         self.hide_unit_suffix.setChecked(config.get("hide_unit_suffix", False))
         self.short_unit_labels.setChecked(config.get("short_unit_labels", constants.config.defaults.DEFAULT_SHORT_UNIT_LABELS))
         
-        # Offset
-        self.tray_offset.setValue(config.get("tray_offset_x", 0))
+        # Offsets
+        self.tray_offset_x.setValue(config.get("tray_offset_x", constants.config.defaults.DEFAULT_TRAY_OFFSET_X))
+        self.tray_offset_y.setValue(config.get("tray_offset_y", constants.config.defaults.DEFAULT_TRAY_OFFSET_Y))
 
     def get_settings(self) -> Dict[str, Any]:
         # Inverse mapping
@@ -163,5 +172,6 @@ class UnitsPage(QWidget):
             "hide_arrows": self.hide_arrows.isChecked(),
             "hide_unit_suffix": self.hide_unit_suffix.isChecked(),
             "short_unit_labels": self.short_unit_labels.isChecked(),
-            "tray_offset_x": self.tray_offset.value()
+            "tray_offset_x": self.tray_offset_x.value(),
+            "tray_offset_y": self.tray_offset_y.value()
         }

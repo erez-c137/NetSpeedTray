@@ -228,6 +228,8 @@
     "INTERFACE_LAYOUT_GROUP": "Interface Layout",
     "POSITION_GROUP": "Positioning",
     "TRAY_OFFSET_LABEL": "Tray Offset (px)",
+    "TRAY_OFFSET_X_LABEL": "Horizontal Offset:",
+    "TRAY_OFFSET_Y_LABEL": "Vertical Offset:",
     "CSV_FILE_FILTER": "CSV Files (*.csv);;All Files (*.*)",
     "PNG_FILE_FILTER": "PNG Images (*.png);;All Files (*.*)",
     "LOG_FILES_FILTER": "Log Files",

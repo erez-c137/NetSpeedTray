@@ -227,6 +227,8 @@
     "HIDE_ARROWS_LABEL": "Ocultar flechas",
     "HIDE_UNIT_SUFFIX_LABEL": "Ocultar sufijo de unidad",
     "TRAY_OFFSET_LABEL": "Desplazamiento (px)",
+    "TRAY_OFFSET_X_LABEL": "Desplazamiento Horizontal:",
+    "TRAY_OFFSET_Y_LABEL": "Desplazamiento Vertical:",
     "KIBPS_SHORT_LABEL": "KiB",
     "MIBITS_SHORT_LABEL": "Mib",
     "MBPS_SHORT_LABEL": "MB",

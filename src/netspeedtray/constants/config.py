@@ -69,6 +69,7 @@ class ConfigConstants:
     DEFAULT_FORCE_DECIMALS: Final[bool] = True
     DEFAULT_START_WITH_WINDOWS: Final[bool] = True
     DEFAULT_TRAY_OFFSET_X: Final[int] = 1
+    DEFAULT_TRAY_OFFSET_Y: Final[int] = 0
     DEFAULT_LEGEND_POSITION: Final[str] = data.legend_position.DEFAULT_LEGEND_POSITION
     DEFAULT_SHOW_LEGEND: Final[bool] = True
 
@@ -115,7 +116,7 @@ class ConfigConstants:
         "background_opacity": DEFAULT_BACKGROUND_OPACITY,
         "short_unit_labels": DEFAULT_SHORT_UNIT_LABELS,
         "tray_offset_x": DEFAULT_TRAY_OFFSET_X,
-        "tray_offset_x": DEFAULT_TRAY_OFFSET_X,
+        "tray_offset_y": DEFAULT_TRAY_OFFSET_Y,
         "graph_window_pos": None,
         "settings_window_pos": None,
         "history_period_slider_value": 0,  # UI-specific state
@@ -172,7 +173,7 @@ class ConfigConstants:
         "background_opacity": {"type": int, "default": DEFAULT_BACKGROUND_OPACITY, "min": 0, "max": 100},
         "short_unit_labels": {"type": bool, "default": DEFAULT_SHORT_UNIT_LABELS},
         "tray_offset_x": {"type": int, "default": DEFAULT_TRAY_OFFSET_X, "min": 0, "max": 500},
-        "tray_offset_x": {"type": int, "default": DEFAULT_TRAY_OFFSET_X, "min": 0, "max": 500},
+        "tray_offset_y": {"type": int, "default": DEFAULT_TRAY_OFFSET_Y, "min": -100, "max": 100},
         "graph_window_pos": {"type": (dict, type(None)), "default": None},
         "settings_window_pos": {"type": (dict, type(None)), "default": None},
         "history_period_slider_value": {"type": int, "default": 0, "min": 0, "max": len(data.history_period.PERIOD_MAP) - 1},
