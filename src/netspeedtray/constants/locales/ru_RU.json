@@ -93,6 +93,7 @@
     "DYNAMIC_UPDATE_RATE_LABEL": "Динамическая частота обновления",
     "START_WITH_WINDOWS_LABEL": "Запускать с Windows",
     "FREE_MOVE_LABEL": "Свободное перемещение (без прилипания)",
+    "KEEP_VISIBLE_FULLSCREEN_LABEL": "Оставаться видимым в полноэкранном режиме",
     "FONT_SIZE_LABEL": "Размер шрифта:",
     "FONT_FAMILY_LABEL": "Шрифт:",
     "FONT_WEIGHT_LABEL": "Насыщенность:",

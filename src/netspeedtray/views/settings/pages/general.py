@@ -78,6 +78,13 @@ class GeneralPage(QWidget):
         options_layout.addWidget(fm_label, 2, 0, Qt.AlignmentFlag.AlignVCenter)
         options_layout.addWidget(self.free_move, 2, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
+        kvf_label = QLabel(self.i18n.KEEP_VISIBLE_FULLSCREEN_LABEL)
+        self.keep_visible_fullscreen = Win11Toggle(label_text="")
+        self.keep_visible_fullscreen.toggled.connect(self.on_change)
+
+        options_layout.addWidget(kvf_label, 3, 0, Qt.AlignmentFlag.AlignVCenter)
+        options_layout.addWidget(self.keep_visible_fullscreen, 3, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
         options_layout.setColumnStretch(0, 0)
         options_layout.setColumnStretch(1, 1)
         layout.addWidget(options_group)
@@ -99,6 +106,7 @@ class GeneralPage(QWidget):
         self.dynamic_update_rate.setChecked(config.get("dynamic_update_enabled", constants.config.defaults.DEFAULT_DYNAMIC_UPDATE_ENABLED))
         self.start_with_windows.setChecked(is_startup_enabled)
         self.free_move.setChecked(config.get("free_move", False))
+        self.keep_visible_fullscreen.setChecked(config.get("keep_visible_fullscreen", constants.config.defaults.DEFAULT_KEEP_VISIBLE_FULLSCREEN))
         
         # Special case labels handling for update rate can stay in the slider logic or be added here if needed
         # The Win11Slider handles its own label updates if set up, but let's see if we need text formatting.
@@ -111,6 +119,7 @@ class GeneralPage(QWidget):
             "update_rate": self.update_rate.value() / 2.0,
             "dynamic_update_enabled": self.dynamic_update_rate.isChecked(),
             "free_move": self.free_move.isChecked(),
+            "keep_visible_fullscreen": self.keep_visible_fullscreen.isChecked(),
             # is_startup_enabled is handled separately usually, but we return expected state
              "start_with_windows": self.start_with_windows.isChecked() 
         }

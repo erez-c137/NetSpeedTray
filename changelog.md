@@ -4,6 +4,104 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [Unreleased] - Phase 4 P0: Critical Fixes
+
+### 🔴 CRITICAL: Taskbar Widget Reliability
+
+#### P0.1: Config Version Validation - Silent Failure Prevention
+
+**Issue:** Configuration version validation silently returned `False` on invalid version strings, potentially skipping critical migrations and causing data loss during upgrades.
+
+**Solution:**
+- Added custom `ConfigError` exception for configuration-related errors
+- Updated `_version_less_than()` to explicitly raise `ConfigError` on invalid version format instead of silently returning `False`
+- Enhanced `_migrate_config()` with proper error handling: on corruption detected, logs error and safely resets to defaults
+- Added comprehensive docstrings documenting error behavior
+- **Impact:** Prevents silent config corruption; ensures users are aware of migration issues
+
+**Tests Added:** 7 new unit tests covering valid versions, invalid formats, empty strings, corrupted configs, and edge cases.
+
+#### P0.2: PositionManager Widget Bounds - Prevent Off-Screen Widgets
+
+**Issue:** Widget size validation only checked for positive values, no upper bounds. A positioning bug could create oversized widgets (2000px+) positioned off-screen and invisible.
+
+**Solution:**
+- Added `WidgetConstraints` to `constants/ui.py`:
+  - `MAX_WIDGET_WIDTH_PX = 500`, `MAX_WIDGET_HEIGHT_PX = 200`
+  - `MIN_WIDGET_WIDTH_PX = 40`, `MIN_WIDGET_HEIGHT_PX = 16`
+  - `SCREEN_EDGE_MARGIN_PX = 10`
+- Implemented size clamping in `PositionCalculator.calculate_position()`:
+  - Checks widget dimensions against maximums
+  - Clamps oversized widgets to safe bounds with warning logs
+  - Preserves existing position validation logic for multi-monitor scenarios
+- **Impact:** Prevents invisible widget bug (catastrophic UX failure for taskbar widget)
+
+**Tests Added:** 4 new tests covering oversized width, oversized height, zero/negative sizes, and screen bounds validation.
+
+#### P0.3: Ultrawide & Mixed-DPI Edge Case Test Suite
+
+**Issue:** NetSpeedTray must work flawlessly on ultrawide (3440x1440, 5120x1440) and mixed-DPI setups (1080p + 4K on same desktop). No existing tests covered these critical scenarios.
+
+**Solution:**
+- Created comprehensive test file: `test_positioning_edge_cases.py`
+- **20 focused tests** covering:
+  - Ultrawide displays (21:9, 32:9, vertical ultrawide)
+  - Mixed-DPI transitions (100%→200%, 125%→150%, etc.)
+  - Taskbar positioning at all edges (top, bottom, left, right)
+  - Multi-monitor boundaries (side-by-side, vertical stacking, extended desktops)
+  - Extreme resolutions (800×600 to 8K)
+- **Impact:** Catches positioning regressions before they affect real users; validates "just works" on gamer/enterprise setups
+
+**Tests Added:** 20 parametrized tests using `pytest.mark.parametrize` for comprehensive coverage.
+
+### 📊 Phase 4 P0 Summary
+
+| Item | Type | Impact |
+|------|------|--------|
+| Config validation | Module refactor | Prevents silent data loss |
+| Widget bounds | New constraints | Prevents invisible widget |
+| Edge case tests | Test suite +20 | Multimon/ultrawide support |
+
+**Effort:** 2 hours implementation + testing  
+**Test Growth:** 128 total unit tests (was 97, +31 new)  
+**Risk Level:** Very low (error paths and edge cases only)
+
+---
+
+## [1.2.5] - February 16, 2026
+
+### 🐛 Bug Fixes
+*   **Removed Legend Toggle (#100):** Eliminated non-functional legend toggle that caused crashes in dual-graph mode.
+*   **Fixed Window Shrinking (#103):** Graph settings panel now maintains consistent width when toggling visibility, preventing cascading shrinks.
+*   **Fixed High-DPI Widget Positioning (#104):** Corrected off-by-pixel positioning on 125%/150% DPI displays by eliminating cumulative rounding errors.
+*   **Fixed Unit Suffix Truncation (#106):** Layout now accounts for `short_unit_labels` setting, preventing text misalignment and truncation.
+*   **Fixed Multi-Monitor Free Floating (#102):** Widget can now be dragged across multiple monitors in free-move mode.
+*   **Vertical Taskbar Support (#99):** Added intelligent font scaling for narrow vertical taskbars.
+
+### ✨ New Features
+*   **Keep Widget Visible in Fullscreen (#107):** Added optional `keep_visible_fullscreen` setting to keep the widget visible during fullscreen applications (F11 browser, games, etc.). Default: disabled.
+*   **Color Coding Settings (#90):** New settings page for configuring speed color thresholds and colors.
+
+### 🌍 Localization
+*   **Korean (ko_KR):** Updated with improved phrasing and technical terminology (PR #101).
+
+### 🧪 Testing & Code Quality
+*   **Comprehensive Test Suite:** Added 30+ unit tests covering positioning and resize stability:
+    *   DPI-aware positioning at 100%, 125%, 150%, 200% scaling
+    *   Multi-monitor scenarios (side-by-side, vertical stacking, extended desktops)
+    *   Window resize idempotence when toggling settings panel
+*   **Code Refactoring:** Improved `PositionManager` for better maintainability and testability.
+*   **Magic Numbers Extraction:** Extracted 20+ hardcoded rendering parameters to tunable constants in `RendererConstants`:
+    *   Gap detection thresholds (2.5x multiplier, 10.0s minimum)
+    *   Spline interpolation settings (600 point threshold, density=4)
+    *   Peak marker styling (14/9/5 pt sizes, transparency levels)
+    *   Gradient and axis configuration
+*   **Thread-Safety Improvements:** Added `threading.Lock` to gradient cache in `GraphRenderer` to prevent race conditions during concurrent access.
+*   **Input Validation:** Enhanced `PositionCalculator.calculate_position()` with comprehensive parameter validation and clear error messages.
+*   **Method Extraction:** Refactored nested interpolation function to standalone `_process_plot_segment()` method for improved testability and maintainability.
+
+---
+
 ## [1.2.4] - February 2, 2026
 
 ### 🚀 Performance & Scale

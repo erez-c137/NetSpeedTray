@@ -93,6 +93,7 @@
     "DYNAMIC_UPDATE_RATE_LABEL": "Frecuencia Dinámica",
     "START_WITH_WINDOWS_LABEL": "Iniciar con Windows",
     "FREE_MOVE_LABEL": "Movimiento Libre (sin ajuste)",
+    "KEEP_VISIBLE_FULLSCREEN_LABEL": "Mantener visible en pantalla completa",
     "FONT_SIZE_LABEL": "Tamaño de Fuente:",
     "FONT_FAMILY_LABEL": "Fuente:",
     "FONT_WEIGHT_LABEL": "Peso:",

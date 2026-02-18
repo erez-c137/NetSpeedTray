@@ -32,13 +32,14 @@ from netspeedtray.views.graph.logic import GraphLogic
 from netspeedtray.views.graph.controls import GraphSettingsPanel
 from netspeedtray.views.graph.config_handler import GraphConfigHandler
 from netspeedtray.views.graph.coordinator import GraphCoordinator
+from netspeedtray.views.graph.request import DataRequest
 
 class GraphWindow(QWidget):
     """
     A lean controller for the Graph Window.
     Delegates logic to specialized handlers.
     """
-    request_data_processing = pyqtSignal(object, object, object, bool, int)
+    request_data_processing = pyqtSignal(DataRequest)
     window_closed = pyqtSignal()
 
     def __init__(self, main_widget, parent=None, logger=None, i18n=None, session_start_time: Optional[datetime] = None):
@@ -60,6 +61,7 @@ class GraphWindow(QWidget):
         self._last_processed_id = -1
         self.interface_filter = None
         self._show_loading_status = self.config.get("show_loading", False)
+        self._settings_panel_base_width = 0  # Will be set at initialization
         
         # Handlers
         self.ui = GraphWindowUI(self)
@@ -99,18 +101,19 @@ class GraphWindow(QWidget):
             if not hasattr(self, 'settings_widget') or self.settings_widget is None:
                 self._init_settings_panel()
             
-            # Use a slightly wider panel (320px)
-            panel_width = 320
-            
             if self.settings_widget.isVisible():
                 self.settings_widget.hide()
-                # Shrink window back (CONTRACT)
-                self.resize(self.width() - panel_width, self.height())
+                # Calculate current panel width and shrink window
+                # FIX for #103: Use stored base width, not hardcoded 320px
+                # This prevents shrinking more than intended on each toggle
+                current_width = self.settings_widget.width() if self.settings_widget.width() > 0 else self._settings_panel_base_width
+                self.resize(self.width() - current_width, self.height())
             else:
-                # Ensure panel has correct width
+                # Show the panel and expand window to accommodate it
+                # Use the base width measured at init (self._settings_panel_base_width)
+                # instead of hardcoded value. This ensures consistent delta on all toggles.
+                panel_width = self._settings_panel_base_width if self._settings_panel_base_width > 0 else 320
                 self.settings_widget.setFixedWidth(panel_width)
-                
-                # Expand window to the RIGHT (EXPAND)
                 self.resize(self.width() + panel_width, self.height())
                 self.settings_widget.show()
                 
@@ -128,7 +131,6 @@ class GraphWindow(QWidget):
             'is_live_update_enabled': self._is_live_update_enabled,
             'history_period_value': self._history_period_value,
             'retention_days': self.config.get("keep_data", 30),
-            'show_legend': self.config.get("show_legend", True),
             'show_loading': self._show_loading_status,
             'db_size_mb': db_size_mb
         }
@@ -142,6 +144,29 @@ class GraphWindow(QWidget):
         self.settings_widget.populate_interfaces(self._main_widget.get_unified_interface_list())
         self._connect_settings_signals()
         self.interface_filter.view().parent().installEventFilter(self)
+        
+        # FIX for Issue #103: Measure and cache the base panel width at initialization
+        # ============================================================================
+        # Bug: Window shrinks with each settings toggle click
+        # Root cause: Previous code used hardcoded 320px, but actual panel was 340-350px
+        #            Each hide-show cycle shrank window by (actual - 320) = 20-30px cumulative
+        #
+        # Solution: Measure the actual panel at init using sizeHint()
+        #           Cache result in self._settings_panel_base_width
+        #           All future toggles use this consistent delta
+        #
+        # Why measurement at init?
+        #   - Panel size is determined by its largest tab's content (usually "Display" tab)
+        #   - This doesn't change during runtime (tabs are populated once)
+        #   - Measuring once at init is efficient (avoids sizeHint() calls on every toggle)
+        #   - Fallback to 320px if measurement fails (minimum reasonable width)
+        #
+        # Calculate and store base panel width (size of largest tab, typically Display)
+        self.settings_widget.setVisible(True)  # Temporarily show to measure
+        self._settings_panel_base_width = self.settings_widget.sizeHint().width()
+        if self._settings_panel_base_width < 300:
+            self._settings_panel_base_width = 320  # Fallback to minimum reasonable width
+        self.settings_widget.setHidden(True)  # Hide again
 
     def _populate_interface_filter(self):
         """ database refresh hook. """
@@ -202,7 +227,6 @@ class GraphWindow(QWidget):
         sw.timeline_changed.connect(self.coordinator.handle_timeline_change)
         sw.retention_changed.connect(self._on_retention_changed)
         sw.retention_changing.connect(self._update_keep_data_text)
-        sw.show_legend_toggled.connect(self._on_legend_toggled)
         sw.show_loading_toggled.connect(self._on_loading_toggled)
 
     def _on_interaction_detected(self):
@@ -223,14 +247,28 @@ class GraphWindow(QWidget):
         interface = self.interface_filter.currentData() if self.interface_filter else None
         period_key = GraphLogic.get_period_key(self._history_period_value)
         self._current_request_id += 1
-        self.request_data_processing.emit(start, end, None if interface=="all" else interface, period_key=="TIMELINE_SESSION", self._current_request_id)
+        request = DataRequest(
+            start_time=start,
+            end_time=end,
+            interface_name=None if interface == "all" else interface,
+            is_session_view=period_key == "TIMELINE_SESSION",
+            sequence_id=self._current_request_id
+        )
+        self.request_data_processing.emit(request)
 
     def update_graph_range(self, start, end):
         if self._is_closing: return
         interface = self.interface_filter.currentData() if self.interface_filter else None
         period_key = GraphLogic.get_period_key(self._history_period_value)
         self._current_request_id += 1
-        self.request_data_processing.emit(start, end, None if interface=="all" else interface, period_key=="TIMELINE_SESSION", self._current_request_id)
+        request = DataRequest(
+            start_time=start,
+            end_time=end,
+            interface_name=None if interface == "all" else interface,
+            is_session_view=period_key == "TIMELINE_SESSION",
+            sequence_id=self._current_request_id
+        )
+        self.request_data_processing.emit(request)
 
     def toggle_dark_mode(self, checked):
         self._is_dark_mode = checked
@@ -248,9 +286,46 @@ class GraphWindow(QWidget):
     def _on_interface_filter_changed(self, name):
         self.coordinator.reset_zoom_state(trigger_update=True)
 
-    def _on_legend_toggled(self, checked):
-        self.config_handler.queue_config_update({"show_legend": checked})
-        self.renderer.toggle_legend(checked)
+    def _on_settings_layout_changed(self):
+        """
+        Handle dynamic resizing when settings panel internal layout changes.
+        
+        Context (Issue #103):
+        - Settings panel has expandable sections with arrow toggles
+        - When section expands/collapses, panel width might change
+        - Window must adjust to prevent panel from being cut off
+        
+        Strategy:
+        1. Get new panel size from sizeHint()
+        2. Calculate delta from base width measured at init
+        3. Adjust window width by delta if change is significant
+        4. Only resize if delta > ~10px (avoid micro-adjustments)
+        
+        Why this approach:
+        - Efficient: Only called when layout actually changes (rare)
+        - Precise: Uses actual sizeHint() for accurate measurement
+        - Safe: Works with any panel modifications (arrows, expansions, etc.)
+        """
+        if not self.settings_widget or not self.settings_widget.isVisible():
+            return
+        
+        try:
+            # Get the new required size for the settings panel
+            new_width = self.settings_widget.sizeHint().width()
+            if new_width <= 0:
+                new_width = self._settings_panel_base_width
+            
+            # Calculate the difference from base width
+            width_delta = new_width - self._settings_panel_base_width
+            
+            # Adjust window width if needed (only for significant changes > 5px)
+            if abs(width_delta) > 5:
+                new_window_width = self.width() + width_delta
+                self.resize(new_window_width, self.height())
+                self.settings_widget.setFixedWidth(new_width)
+                self.ui.reposition_overlay_elements()
+        except Exception as e:
+            self.logger.error(f"Error resizing settings panel: {e}")
 
     def _on_loading_toggled(self, checked):
         self._show_loading_status = checked

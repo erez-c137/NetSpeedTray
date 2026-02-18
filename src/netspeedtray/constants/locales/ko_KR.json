@@ -252,5 +252,6 @@
     "STAT_AVG_SPEED": "평균 속도",
     "STAT_TOTAL_DATA": "전체 데이터",
     "BUTTON_RESET_VIEW": "뷰 초기화",
-    "ZOOM_HINT": "재설정하려면 두 번 클릭"
+    "ZOOM_HINT": "재설정하려면 두 번 클릭",
+    "KEEP_VISIBLE_FULLSCREEN_LABEL": "전체화면에서도 위젯 유지"
 }

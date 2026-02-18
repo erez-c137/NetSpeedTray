@@ -5,8 +5,6 @@ import logging
 import math
 import os
 import sys
-import time
-import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
@@ -38,11 +36,6 @@ from netspeedtray.utils.taskbar_utils import (
 )
 
 from netspeedtray.utils.widget_renderer import WidgetRenderer as CoreWidgetRenderer, RenderConfig
-from netspeedtray.core.system_events import SystemEventHandler
-from netspeedtray.views.widget.layout import WidgetLayoutManager
-from netspeedtray.core.system_events import SystemEventHandler
-from netspeedtray.views.widget.layout import WidgetLayoutManager
-from netspeedtray.views.widget.theme import WidgetThemeManager
 from netspeedtray.core.system_events import SystemEventHandler
 from netspeedtray.views.widget.layout import WidgetLayoutManager
 from netspeedtray.views.widget.theme import WidgetThemeManager
@@ -265,7 +258,9 @@ class NetworkSpeedWidget(QWidget):
             if hwnd == 0:
                 hwnd = win32gui.GetForegroundWindow()
 
-            should_be_visible = is_taskbar_visible(taskbar_info) and not is_taskbar_obstructed(taskbar_info, hwnd)
+            # Allow user override to keep widget visible even when a fullscreen window is present
+            keep_visible = self.config.get("keep_visible_fullscreen", False)
+            should_be_visible = is_taskbar_visible(taskbar_info) and (keep_visible or not is_taskbar_obstructed(taskbar_info, hwnd))
 
             if self.isVisible() != should_be_visible:
                 self.setVisible(should_be_visible)

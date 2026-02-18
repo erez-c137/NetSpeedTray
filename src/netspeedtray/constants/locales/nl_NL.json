@@ -93,6 +93,7 @@
     "DYNAMIC_UPDATE_RATE_LABEL": "Dynamische update frequentie",
     "START_WITH_WINDOWS_LABEL": "Starten met Windows",
     "FREE_MOVE_LABEL": "Vrij bewegen (geen uitlijning)",
+    "KEEP_VISIBLE_FULLSCREEN_LABEL": "Zichtbaar houden in volledig scherm",
     "FONT_SIZE_LABEL": "Lettergrootte:",
     "FONT_FAMILY_LABEL": "Lettertype:",
     "FONT_WEIGHT_LABEL": "Dikte:",

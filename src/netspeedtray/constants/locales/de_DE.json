@@ -93,6 +93,7 @@
     "DYNAMIC_UPDATE_RATE_LABEL": "Dynamische Aktualisierungsrate",
     "START_WITH_WINDOWS_LABEL": "Mit Windows starten",
     "FREE_MOVE_LABEL": "Frei beweglich (kein Einrasten)",
+    "KEEP_VISIBLE_FULLSCREEN_LABEL": "Im Vollbild sichtbar halten",
     "FONT_SIZE_LABEL": "Schriftgröße:",
     "FONT_FAMILY_LABEL": "Schriftart:",
     "FONT_WEIGHT_LABEL": "Stärke:",

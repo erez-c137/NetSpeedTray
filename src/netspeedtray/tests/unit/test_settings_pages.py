@@ -94,6 +94,7 @@ def mock_i18n():
     i18n.BACKGROUND_COLOR_TOOLTIP = "Select Bg"
     i18n.BACKGROUND_OPACITY_LABEL = "Opacity"
     i18n.SHORT_UNIT_LABELS_LABEL = "Short Labels"
+    i18n.KEEP_VISIBLE_FULLSCREEN_LABEL = "Keep Visible in Fullscreen"
 
     # Font Weight Labels (used in Win11Slider.setValueText)
     for key in constants.fonts.WEIGHT_MAP.values():

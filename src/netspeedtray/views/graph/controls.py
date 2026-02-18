@@ -114,7 +114,6 @@ class GraphSettingsPanel(QWidget):
     retention_changing = pyqtSignal(int)       # Dragging (Update Text)
     dark_mode_toggled = pyqtSignal(bool)
     live_update_toggled = pyqtSignal(bool)
-    show_legend_toggled = pyqtSignal(bool)
     show_loading_toggled = pyqtSignal(bool)
     
     # DEPRECATED: Kept for backwards compatibility during transition
@@ -133,7 +132,6 @@ class GraphSettingsPanel(QWidget):
         self.keep_data_slider = None
         self.dark_mode_toggle = None
         self.realtime_toggle = None
-        self.show_legend_toggle = None
         self.show_loading_toggle = None
         
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -219,14 +217,6 @@ class GraphSettingsPanel(QWidget):
         group_layout.addWidget(self.realtime_toggle, current_row, 1, Qt.AlignmentFlag.AlignLeft)
         current_row += 1
         
-        # Show Legend
-        sl_label = QLabel(getattr(self.i18n, 'SHOW_LEGEND_LABEL', 'Show Legend'))
-        show_legend = self.initial_state.get('show_legend', True)
-        self.show_legend_toggle = Win11Toggle(initial_state=show_legend)
-        group_layout.addWidget(sl_label, current_row, 0)
-        group_layout.addWidget(self.show_legend_toggle, current_row, 1, Qt.AlignmentFlag.AlignLeft)
-        current_row += 1
-
         # Show Loading Status (Hidden for now)
         # ls_label = QLabel(getattr(self.i18n, 'SHOW_LOADING_LABEL', 'Show Status'))
         show_loading = self.initial_state.get('show_loading', True)
@@ -289,7 +279,6 @@ class GraphSettingsPanel(QWidget):
         # Toggles
         self.dark_mode_toggle.toggled.connect(self.dark_mode_toggled.emit)
         self.realtime_toggle.toggled.connect(self.live_update_toggled.emit)
-        self.show_legend_toggle.toggled.connect(self.show_legend_toggled.emit)
         self.show_loading_toggle.toggled.connect(self.show_loading_toggled.emit)
     
     def _on_timeline_changed(self, period_key: str):

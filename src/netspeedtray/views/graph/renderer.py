@@ -2,6 +2,7 @@ import logging
 import math
 from typing import List, Tuple, Optional
 from datetime import datetime
+import threading
 
 import numpy as np
 from PyQt6.QtCore import QObject, Qt, pyqtSignal
@@ -15,6 +16,7 @@ from matplotlib.ticker import NullLocator
 
 from netspeedtray import constants
 from netspeedtray.constants import styles as style_constants
+from netspeedtray.constants.renderer import RendererConstants
 from netspeedtray.utils.helpers import calculate_monotone_cubic_interpolation
 import matplotlib.colors as mcolors
 from matplotlib.patches import PathPatch
@@ -28,6 +30,7 @@ class GraphRenderer(QObject):
     
     # Class-level gradient cache (shared across instances, never regenerated)
     _GRADIENT_CACHE = {}
+    _GRADIENT_CACHE_LOCK = threading.Lock()  # Thread-safety for cache access
     
     def __init__(self, parent_widget: QWidget, i18n, logger=None):
         super().__init__()
@@ -238,14 +241,17 @@ class GraphRenderer(QObject):
         Returns a cached gradient array for the given color.
         The gradient is 256x1 RGBA, fading from color at top to transparent at bottom.
         This is called once per color, then reused forever.
+        
+        Thread-safe: Uses lock to protect concurrent access to shared cache.
         """
-        if color_hex not in cls._GRADIENT_CACHE:
-            rgb = mcolors.to_rgb(color_hex)
-            gradient = np.zeros((256, 1, 4))
-            gradient[:, 0, :3] = rgb
-            gradient[:, 0, 3] = np.linspace(0.35, 0.0, 256)  # Alpha: 35% at top, 0% at bottom
-            cls._GRADIENT_CACHE[color_hex] = gradient
-        return cls._GRADIENT_CACHE[color_hex]
+        with cls._GRADIENT_CACHE_LOCK:
+            if color_hex not in cls._GRADIENT_CACHE:
+                rgb = mcolors.to_rgb(color_hex)
+                gradient = np.zeros((RendererConstants.GRADIENT_IMAGE_HEIGHT, 1, 4))
+                gradient[:, 0, :3] = rgb
+                gradient[:, 0, 3] = np.linspace(RendererConstants.GRADIENT_ALPHA_TOP, RendererConstants.GRADIENT_ALPHA_BOTTOM, RendererConstants.GRADIENT_IMAGE_HEIGHT)
+                cls._GRADIENT_CACHE[color_hex] = gradient
+            return cls._GRADIENT_CACHE[color_hex]
 
     def _apply_gradient_fill(self, ax, x_data, y_data, color_hex: str, artist_prefix: str):
         """
@@ -270,14 +276,14 @@ class GraphRenderer(QObject):
         x_max = mdates.date2num(x_data[-1]) if isinstance(x_data[-1], datetime) else x_data.max()
         
         # Guard: Prevent singular extent (warning fix)
-        if abs(x_max - x_min) < 1e-9:
-             x_max += 1e-9 # Add tiny epsilon
+        if abs(x_max - x_min) < RendererConstants.EXTENT_EPSILON:
+             x_max += RendererConstants.EXTENT_EPSILON # Add tiny epsilon
              
-        y_max = float(np.max(y_data)) * 1.05  # Slight padding
+        y_max = float(np.max(y_data)) * RendererConstants.Y_AXIS_PADDING_FACTOR  # Slight padding
         
         # Guard: Prevent singular Y extent if y_max is 0 (flat line)
         if y_max < 0.001: 
-             y_max = 1.0  # Default to 1 Mbps range if flat 0
+             y_max = RendererConstants.FLAT_DATA_FALLBACK_RANGE  # Default to 1 Mbps range if flat 0
              
         extent = [x_min, x_max, 0, y_max]
         
@@ -387,23 +393,23 @@ class GraphRenderer(QObject):
             
             # Outer glow (soft, large, transparent)
             artist_dict['outer'] = ax.plot(peak_x, peak_y, 'o', 
-                    markersize=14, 
+                    markersize=RendererConstants.PEAK_MARKER_SIZE_OUTER, 
                     color=color_hex, 
-                    alpha=0.15,
+                    alpha=RendererConstants.PEAK_MARKER_ALPHA_OUTER,
                     zorder=10)[0]
             
             # Middle glow
             artist_dict['middle'] = ax.plot(peak_x, peak_y, 'o', 
-                    markersize=9, 
+                    markersize=RendererConstants.PEAK_MARKER_SIZE_MIDDLE, 
                     color=color_hex, 
-                    alpha=0.35,
+                    alpha=RendererConstants.PEAK_MARKER_ALPHA_MIDDLE,
                     zorder=11)[0]
             
             # Inner dot (solid, small)
             artist_dict['inner'] = ax.plot(peak_x, peak_y, 'o', 
-                    markersize=5, 
+                    markersize=RendererConstants.PEAK_MARKER_SIZE_INNER, 
                     color=color_hex, 
-                    alpha=1.0,
+                    alpha=RendererConstants.PEAK_MARKER_ALPHA_INNER,
                     zorder=12)[0]
             
             # Label with background
@@ -711,9 +717,9 @@ class GraphRenderer(QObject):
         if len(intervals) > 0:
             median_interval = np.median(intervals)
             # Gap = any interval > 2x the median (accounts for jitter + actual gaps)
-            gap_threshold = max(median_interval * 2.5, 10.0)  # minimum 10s for raw data
+            gap_threshold = max(median_interval * RendererConstants.GAP_DETECTION_MULTIPLIER, RendererConstants.MIN_GAP_THRESHOLD_SEC)
         else:
-            gap_threshold = 10.0
+            gap_threshold = RendererConstants.MIN_GAP_THRESHOLD_SEC
             
         gaps = intervals > gap_threshold
         
@@ -722,31 +728,8 @@ class GraphRenderer(QObject):
         
         # Adaptive Quality: If we have > 600 points, interpolation is visually redundant.
         # Skip it to save CPU.
-        ENABLE_SPLINE = len(plot_datetimes) <= 600
+        ENABLE_SPLINE = len(plot_datetimes) <= RendererConstants.SPLINE_INTERPOLATION_POINT_THRESHOLD
         
-        # Helper to process and plot a single segment
-        def process_segment(ts, up, down):
-            if not ENABLE_SPLINE or len(ts) < 2:
-                # Bypass interpolation
-                return ts, up, down
-                
-            # FLUID MOTION: Apply Monotone Cubic Spline (Vectorized)
-            # We interpolate based on timestamp float values
-            ts_floats = [t.timestamp() for t in ts]
-            
-            # Density 4 provides ample smoothness
-            dense_ts_floats, dense_down = calculate_monotone_cubic_interpolation(ts_floats, down, density=4)
-            _, dense_up = calculate_monotone_cubic_interpolation(ts_floats, up, density=4)
-            
-            # Clip negative values
-            dense_down = np.maximum(dense_down, 0)
-            dense_up = np.maximum(dense_up, 0)
-            
-            # Convert back to datetimes for Matplotlib
-            dense_ts_dt = [datetime.fromtimestamp(t) for t in dense_ts_floats]
-            
-            return dense_ts_dt, dense_up, dense_down
-
         if np.any(gaps):
             # Segmented mode - multiple disconnected line segments
             self.ax_download.clear()
@@ -778,8 +761,8 @@ class GraphRenderer(QObject):
                     self.ax_download.plot(bridge_ts, bridge_zero, color=constants.graph.DOWNLOAD_LINE_COLOR, linewidth=1.5, zorder=9, alpha=0.5, linestyle='--')
                     self.ax_upload.plot(bridge_ts, bridge_zero, color=constants.graph.UPLOAD_LINE_COLOR, linewidth=1.5, zorder=9, alpha=0.5, linestyle='--')
                 
-                # Interpolate this segment
-                seg_ts, seg_up, seg_down = process_segment(ts, up, down)
+                # Process and interpolate this segment
+                seg_ts, seg_up, seg_down = self._process_plot_segment(ts, up, down, enable_spline=ENABLE_SPLINE)
                 
                 # Plot
                 self.ax_download.plot(seg_ts, seg_down, color=constants.graph.DOWNLOAD_LINE_COLOR, linewidth=1.5, zorder=10)
@@ -810,8 +793,8 @@ class GraphRenderer(QObject):
                 
         else:
             # FAST PATH: Single continuous line
-            # Interpolate the whole chunk
-            dense_ts, dense_up, dense_down = process_segment(plot_datetimes, upload_mbps, download_mbps)
+            # Process and interpolate the whole chunk
+            dense_ts, dense_up, dense_down = self._process_plot_segment(plot_datetimes, upload_mbps, download_mbps, enable_spline=ENABLE_SPLINE)
             
             final_ts, final_up, final_down = dense_ts, dense_up, dense_down
             
@@ -856,6 +839,50 @@ class GraphRenderer(QObject):
 
         # Return the INTERPOLATED data so interactions snap to the smooth line
         return np.array(final_ts), np.array(final_up), np.array(final_down)
+
+    def _process_plot_segment(self, ts_dates, upload_data, download_data, enable_spline: bool = True):
+        """
+        Process and interpolate a single plot segment.
+        
+        Extracted from nested function in _plot_high_res for unit testability.
+        Applies monotone cubic interpolation if enabled and data allows.
+        
+        Args:
+            ts_dates: Array of datetime objects
+            upload_data: Array of upload speeds in Mbps
+            download_data: Array of download speeds in Mbps
+            enable_spline: Whether to enable interpolation
+            
+        Returns:
+            Tuple of (interpolated_datetimes, interpolated_upload, interpolated_download) 
+        """
+        if not enable_spline or len(ts_dates) < 2:
+            # Bypass interpolation, return raw data
+            return ts_dates, upload_data, download_data
+        
+        try:
+            # FLUID MOTION: Apply Monotone Cubic Spline (Vectorized)
+            # We interpolate based on timestamp float values
+            ts_floats = np.array([t.timestamp() for t in ts_dates])
+            
+            # Density 4 provides ample smoothness
+            dense_ts_floats, dense_down = calculate_monotone_cubic_interpolation(ts_floats, download_data, density=RendererConstants.SPLINE_INTERPOLATION_DENSITY)
+            _, dense_up = calculate_monotone_cubic_interpolation(ts_floats, upload_data, density=RendererConstants.SPLINE_INTERPOLATION_DENSITY)
+            
+            # Clip negative values
+            dense_down = np.maximum(dense_down, 0)
+            dense_up = np.maximum(dense_up, 0)
+            
+            # Convert back to datetimes for Matplotlib
+            dense_ts_dt = [datetime.fromtimestamp(t) for t in dense_ts_floats]
+            
+            return dense_ts_dt, dense_up, dense_down
+            
+        except Exception as e:
+            # If interpolation fails, return raw data as fallback
+            self.logger.debug(f"Segment interpolation failed, using raw data: {e}")
+            return ts_dates, upload_data, download_data
+
 
 
     def _configure_axes(self, start_time, end_time, period_key, timestamps, upload_mbps, download_mbps):

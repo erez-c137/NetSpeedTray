@@ -51,6 +51,21 @@ class UIGroup:
         self.sliders = SliderConstants()
         self.history = HistoryConstants()
         self.interfaces = InterfaceGroupConstants()
+        # Widget sizing & layout constraints
+        class WidgetConstraints:
+            """Constraints for widget sizing to ensure visibility and usability."""
+            # Absolute maximum widget size (prevents off-screen positioning bugs)
+            MAX_WIDGET_WIDTH_PX: int = 500
+            MAX_WIDGET_HEIGHT_PX: int = 200
+
+            # Minimum widget size (ensures readability)
+            MIN_WIDGET_WIDTH_PX: int = 40
+            MIN_WIDGET_HEIGHT_PX: int = 16
+
+            # Safety margins for positioning
+            SCREEN_EDGE_MARGIN_PX: int = 10
+
+        self.widget = WidgetConstraints()
 
 # Singleton instance for easy access
 ui = UIGroup()

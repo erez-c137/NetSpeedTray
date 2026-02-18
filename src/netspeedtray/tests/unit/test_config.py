@@ -6,7 +6,7 @@ from unittest.mock import patch, mock_open
 import json
 from pathlib import Path
 from netspeedtray import constants
-from netspeedtray.utils.config import ConfigManager
+from netspeedtray.utils.config import ConfigManager, ConfigError
 
 @pytest.fixture
 def config_manager(tmp_path):
@@ -63,3 +63,108 @@ def test_validate_config_handles_threshold_swap(config_manager):
         validated_config = config_manager._validate_config(swapped_config)
         assert validated_config["low_speed_threshold"] == 50.0
         assert validated_config["high_speed_threshold"] == 50.0
+
+
+# ============================================================================
+# P0.1: Tests for Config Version Validation (NEW)
+# ============================================================================
+
+def test_version_less_than_valid_versions(config_manager):
+    """Verify _version_less_than correctly compares valid versions."""
+    # Valid comparisons
+    assert config_manager._version_less_than("1.0", "2.0") is True
+    assert config_manager._version_less_than("1.0", "1.1") is True
+    assert config_manager._version_less_than("1.5", "2.0") is True
+    assert config_manager._version_less_than("2.0", "1.9") is False
+    assert config_manager._version_less_than("1.0", "1.0") is False
+
+
+def test_version_less_than_invalid_format_raises_error(config_manager):
+    """Verify _version_less_than raises ConfigError on invalid version strings."""
+    # Invalid first parameter
+    with pytest.raises(ConfigError, match="Invalid version format"):
+        config_manager._version_less_than("invalid", "1.0")
+    
+    # Invalid second parameter
+    with pytest.raises(ConfigError, match="Invalid version format"):
+        config_manager._version_less_than("1.0", "not_a_version")
+    
+    # Non-numeric components
+    with pytest.raises(ConfigError, match="Invalid version format"):
+        config_manager._version_less_than("1.0.alpha", "2.0")
+    
+    # Too many components (non-numeric)
+    with pytest.raises(ConfigError, match="Invalid version format"):
+        config_manager._version_less_than("1.0.0.0.too.many", "2.0")
+
+
+def test_version_less_than_empty_string_raises_error(config_manager):
+    """Verify _version_less_than rejects empty version strings."""
+    with pytest.raises(ConfigError, match="Invalid version format"):
+        config_manager._version_less_than("", "1.0")
+    
+    with pytest.raises(ConfigError, match="Invalid version format"):
+        config_manager._version_less_than("1.0", "")
+
+
+def test_config_migration_with_corrupted_version(config_manager):
+    """Verify migration gracefully handles corrupted version strings."""
+    corrupted_config = {
+        "config_version": "INVALID_VERSION",
+        "update_rate": 1.5,
+        "font_size": 12,
+    }
+    
+    # Should not raise, should reset to defaults
+    result = config_manager._migrate_config(corrupted_config)
+    
+    # Should reset to defaults, not crash
+    assert result["config_version"] == constants.config.defaults.CONFIG_SCHEMA_VERSION
+    # Verify it's a proper default config (has all required keys)
+    assert "update_rate" in result
+    assert "font_size" in result
+
+
+def test_config_migration_with_valid_version(config_manager):
+    """Verify migration succeeds with valid version strings."""
+    current_version = constants.config.defaults.CONFIG_SCHEMA_VERSION
+    valid_config = {
+        "config_version": "1.0",
+        "update_rate": 1.5,
+        "font_size": 12,
+    }
+    
+    # Should not raise, should migrate successfully
+    result = config_manager._migrate_config(valid_config)
+    
+    # Should maintain the migrated version
+    assert result["config_version"] == current_version
+    # Original values should be preserved (validated)
+    assert "update_rate" in result
+    assert "font_size" in result
+
+
+def test_config_migration_with_non_string_version(config_manager):
+    """Verify migration handles non-string version values (edge case)."""
+    invalid_config = {
+        "config_version": 123,  # Integer instead of string
+        "update_rate": 1.5,
+    }
+    
+    # Should handle gracefully
+    result = config_manager._migrate_config(invalid_config)
+    assert result["config_version"] == constants.config.defaults.CONFIG_SCHEMA_VERSION
+
+
+def test_config_migration_missing_version_defaults_to_1_0(config_manager):
+    """Verify migration defaults to version 1.0 if config_version is missing."""
+    config_without_version = {
+        "update_rate": 1.5,
+        "font_size": 12,
+    }
+    
+    # Should not raise, should default to 1.0 and migrate
+    result = config_manager._migrate_config(config_without_version)
+    
+    # Should set to current version
+    assert result["config_version"] == constants.config.defaults.CONFIG_SCHEMA_VERSION

@@ -94,6 +94,7 @@
     "DYNAMIC_UPDATE_RATE_LABEL": "Taux de Mise à Jour Dynamique",
     "START_WITH_WINDOWS_LABEL": "Lancer avec Windows",
     "FREE_MOVE_LABEL": "Déplacement Libre (Pas de Collage)",
+    "KEEP_VISIBLE_FULLSCREEN_LABEL": "Rester visible en plein écran",
     "FONT_SIZE_LABEL": "Taille de Police :",
     "FONT_FAMILY_LABEL": "Police:",
     "FONT_WEIGHT_LABEL": "Graisse:",

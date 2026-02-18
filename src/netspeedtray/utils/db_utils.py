@@ -22,7 +22,7 @@ import os
 import sqlite3
 import threading
 from collections import namedtuple
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union, Any
 
@@ -171,8 +171,6 @@ def get_speed_history(db_path: Union[str, Path], start_time: Optional[datetime] 
     Returns:
         A list of tuples, each containing (timestamp, upload_bytes_sec, download_bytes_sec).
     """
-    from datetime import timedelta
-
     logger = logging.getLogger("NetSpeedTray.db_utils")
     if end_time is None:
         end_time = datetime.now()

@@ -5,6 +5,7 @@ import time
 from typing import List, Tuple, Dict, Any
 from typing import List, Tuple, Optional
 from datetime import datetime
+from netspeedtray.views.graph.request import DataRequest
 
 class GraphDataWorker(QObject):
     """
@@ -38,28 +39,36 @@ class GraphDataWorker(QObject):
         self._cache_ttl = 30.0  # seconds
 
 
-    def process_data(self, start_time: Optional[datetime], end_time: datetime, interface_name: Optional[str], is_session_view: bool = False, sequence_id: int = 0):
-        """Processes speed history data in a background thread."""
+    def process_data(self, request: DataRequest):
+        """
+        Processes speed history data in a background thread.
+        
+        Args:
+            request: DataRequest object containing all parameters for data fetching
+        """
         try:
-            # Check if this request is already obsolete
-            if sequence_id < self._last_received_id:
+            # Validate request
+            if not isinstance(request, DataRequest):
+                self.error.emit(f"Invalid request type: {type(request).__name__}. Expected DataRequest.")
                 return
-            self._last_received_id = sequence_id
+            
+            # Check if this request is already obsolete
+            if request.sequence_id < self._last_received_id:
+                return
+            self._last_received_id = request.sequence_id
 
             if not self.widget_state:
                 self.error.emit("Data source (WidgetState) not available.")
                 return
 
-
-
             total_up, total_down = 0.0, 0.0
 
-            if is_session_view:
+            if request.is_session_view:
                 # OPTIMIZATION: Use the pre-calculated aggregated history from WidgetState.
                 aggregated_data = self.widget_state.get_aggregated_speed_history()
                 
-                start_ts = start_time.timestamp() if start_time else 0
-                end_ts = end_time.timestamp() if end_time else float('inf')
+                start_ts = request.start_time.timestamp() if request.start_time else 0
+                end_ts = request.end_time.timestamp()
 
                 processed_history = []
                 for d in aggregated_data:
@@ -78,19 +87,19 @@ class GraphDataWorker(QObject):
             else:
                 # For all other timelines, get data from the database.
                 history_data = self.widget_state.get_speed_history(
-                    start_time=start_time, end_time=end_time, 
-                    interface_name=interface_name
+                    start_time=request.start_time, 
+                    end_time=request.end_time, 
+                    interface_name=request.interface_name
                 )
                 
                 # Convert list of (datetime, up, down) to list of (float_timestamp, up, down)
                 history_data = [(dt.timestamp(), up, down) for dt, up, down in history_data]
                 
-
                 # Fetch totals from DB as well (DURING the worker thread to avoid UI freeze)
                 total_up, total_down = self.widget_state.get_total_bandwidth_for_period(
-                    start_time=start_time,
-                    end_time=end_time,
-                    interface_name=interface_name
+                    start_time=request.start_time,
+                    end_time=request.end_time,
+                    interface_name=request.interface_name
                 )
 
             # Smart Downsampling: Cap at MAX_DATA_POINTS for rendering performance
@@ -100,11 +109,11 @@ class GraphDataWorker(QObject):
                 history_data = history_data[::stride]
 
             if not history_data or len(history_data) < 2:
-                self.data_ready.emit([], 0.0, 0.0, sequence_id)
+                self.data_ready.emit([], 0.0, 0.0, request.sequence_id)
                 return
 
             # Pass the processed data and pre-calculated totals back to the UI.
-            self.data_ready.emit(history_data, total_up, total_down, sequence_id)
+            self.data_ready.emit(history_data, total_up, total_down, request.sequence_id)
         except Exception as e:
             logging.getLogger(__name__).error(f"Error in data worker: {e}", exc_info=True)
             self.error.emit(str(e))

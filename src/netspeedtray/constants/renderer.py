@@ -29,6 +29,46 @@ class RendererConstants:
     # --- Theming ---
     GRAPH_LINE_COLOR: Final[str] = color.WHITE # Reference master palette
 
+    # ========== MATPLOTLIB GRAPH WINDOW CONSTANTS ==========
+    
+    # Gap Detection & Interpolation
+    GAP_DETECTION_MULTIPLIER: Final[float] = 2.5  # median_interval * multiplier = gap threshold
+    MIN_GAP_THRESHOLD_SEC: Final[float] = 10.0    # Minimum gap size (prevents noise)
+    SPLINE_INTERPOLATION_POINT_THRESHOLD: Final[int] = 600  # Skip interpolation if > this many points
+    SPLINE_INTERPOLATION_DENSITY: Final[int] = 4  # Interpolate 3 new points between each pair
+    
+    # Axis & Display
+    Y_AXIS_PADDING_FACTOR: Final[float] = 1.05   # Extra space for peak labels
+    MIN_Y_AXIS_RANGE_MBPS: Final[float] = 1.0    # Fallback range when data is flat
+    
+    # Settings Panel Resizing
+    PANEL_RESIZE_THRESHOLD_PX: Final[int] = 5    # Threshold to detect actual panel changes
+    MIN_SETTINGS_PANEL_WIDTH_PX: Final[int] = 320  # Fallback panel width
+    
+    # Peak Markers - Glowing Effects
+    PEAK_MARKER_SIZE_OUTER: Final[int] = 14      # Outer circle size (pts)
+    PEAK_MARKER_SIZE_MIDDLE: Final[int] = 9      # Middle circle size (pts)
+    PEAK_MARKER_SIZE_INNER: Final[int] = 5       # Inner circle size (pts)
+    PEAK_MARKER_ALPHA_OUTER: Final[float] = 0.15 # Outer transparency
+    PEAK_MARKER_ALPHA_MIDDLE: Final[float] = 0.35  # Middle transparency
+    PEAK_MARKER_ALPHA_INNER: Final[float] = 1.0  # Inner (solid)
+    MIN_SPEED_FOR_PEAK_MARKER_MBPS: Final[float] = 0.1  # Don't show markers for negligible peaks
+    
+    # Gradient Fills
+    GRADIENT_ALPHA_TOP: Final[float] = 0.35      # Gradient opacity at top
+    GRADIENT_ALPHA_BOTTOM: Final[float] = 0.0    # Gradient opacity at bottom
+    GRADIENT_IMAGE_HEIGHT: Final[int] = 256      # Gradient resolution
+    
+    # Event Markers - System Boot Time
+    BOOT_MARKER_LINEWIDTH: Final[int] = 1        # Boot marker line width
+    BOOT_MARKER_ALPHA: Final[float] = 0.6        # Boot marker transparency
+    BOOT_MARKER_LINESTYLE: Final[str] = '--'     # Dashed line
+    BOOT_LABEL_Y_POSITION: Final[float] = 0.92   # Label Y position (% of axis)
+    
+    # Interpolation Guards
+    EXTENT_EPSILON: Final[float] = 1e-9          # Prevent singular extent errors
+    FLAT_DATA_FALLBACK_RANGE: Final[float] = 1.0  # Range when all data is 0
+
     def __init__(self) -> None:
         self.validate()
 

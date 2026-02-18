@@ -32,6 +32,13 @@ class ConfigMessages:
 
 class ConfigConstants:
     """Defines default values and constraints for all application settings."""
+    # --- Schema Versioning ---
+    # When the config structure changes, increment this version.
+    # The migration system will use this to determine which upgrades to apply.
+    # Current version history:
+    #   v1.0: Initial schema with all current fields (as of 2026-02-18)
+    CONFIG_SCHEMA_VERSION: Final[str] = "1.0"
+    
     # --- Default Values for Individual Settings (referencing other constants) ---
     DEFAULT_UPDATE_RATE: Final[float] = 1.0
     MINIMUM_UPDATE_RATE: Final[float] = timers.MINIMUM_INTERVAL_MS / 1000.0
@@ -66,6 +73,7 @@ class ConfigConstants:
     DEFAULT_DECIMAL_PLACES: Final[int] = 1  # One decimal is sufficient and cleaner
     DEFAULT_TEXT_ALIGNMENT: Final[str] = "center"
     DEFAULT_FREE_MOVE: Final[bool] = False
+    DEFAULT_KEEP_VISIBLE_FULLSCREEN: Final[bool] = False
     DEFAULT_FORCE_DECIMALS: Final[bool] = True
     DEFAULT_START_WITH_WINDOWS: Final[bool] = True
     DEFAULT_TRAY_OFFSET_X: Final[int] = 1
@@ -75,6 +83,7 @@ class ConfigConstants:
     CONFIG_FILENAME: Final[str] = "NetSpeedTray_Config.json"
     
     DEFAULT_CONFIG: Final[Dict[str, Any]] = {
+        "config_version": CONFIG_SCHEMA_VERSION,
         "start_with_windows": DEFAULT_START_WITH_WINDOWS,
         "language": None,  # None means auto-detect
         "update_rate": DEFAULT_UPDATE_RATE,
@@ -106,6 +115,7 @@ class ConfigConstants:
         "decimal_places": DEFAULT_DECIMAL_PLACES,
         "text_alignment": DEFAULT_TEXT_ALIGNMENT,
         "free_move": DEFAULT_FREE_MOVE,
+        "keep_visible_fullscreen": DEFAULT_KEEP_VISIBLE_FULLSCREEN,
         "force_decimals": DEFAULT_FORCE_DECIMALS,
         "unit_type": DEFAULT_UNIT_TYPE,
         "swap_upload_download": DEFAULT_SWAP_UPLOAD_DOWNLOAD,
@@ -128,6 +138,7 @@ class ConfigConstants:
     
     # --- Schema Definition for Modern Config Validation ---
     VALIDATION_SCHEMA: Final[Dict[str, Dict[str, Any]]] = {
+        "config_version": {"type": str, "default": CONFIG_SCHEMA_VERSION},
         "start_with_windows": {"type": bool, "default": DEFAULT_START_WITH_WINDOWS},
         "language": {"type": (str, type(None)), "default": None, "choices": list(I18nStrings.LANGUAGE_MAP.keys()) + [None]},
         "update_rate": {"type": (int, float), "default": DEFAULT_UPDATE_RATE, "min": MINIMUM_UPDATE_RATE, "max": timers.MAXIMUM_UPDATE_RATE_SECONDS},
@@ -163,6 +174,7 @@ class ConfigConstants:
         "arrow_font_size": {"type": int, "default": DEFAULT_ARROW_FONT_SIZE, "min": fonts.FONT_SIZE_MIN, "max": fonts.FONT_SIZE_MAX},
         "arrow_font_weight": {"type": int, "default": DEFAULT_ARROW_FONT_WEIGHT, "min": 1, "max": 1000},
         "free_move": {"type": bool, "default": DEFAULT_FREE_MOVE},
+        "keep_visible_fullscreen": {"type": bool, "default": DEFAULT_KEEP_VISIBLE_FULLSCREEN},
         "force_decimals": {"type": bool, "default": DEFAULT_FORCE_DECIMALS},
         "unit_type": {"type": str, "default": DEFAULT_UNIT_TYPE, "choices": ["bits_decimal", "bits_binary", "bytes_decimal", "bytes_binary"]},
         "swap_upload_download": {"type": bool, "default": DEFAULT_SWAP_UPLOAD_DOWNLOAD},
