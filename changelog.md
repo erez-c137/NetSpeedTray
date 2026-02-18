@@ -27,7 +27,7 @@ All notable changes to this project will be documented in this file.
 
 **Solution:**
 - Added `WidgetConstraints` to `constants/ui.py`:
-  - `MAX_WIDGET_WIDTH_PX = 500`, `MAX_WIDGET_HEIGHT_PX = 200`
+  - `MAX_WIDGET_WIDTH_PX = 500`, `MAX_WIDGET_HEIGHT_PX = 100`
   - `MIN_WIDGET_WIDTH_PX = 40`, `MIN_WIDGET_HEIGHT_PX = 16`
   - `SCREEN_EDGE_MARGIN_PX = 10`
 - Implemented size clamping in `PositionCalculator.calculate_position()`:

@@ -56,7 +56,7 @@ class UIGroup:
             """Constraints for widget sizing to ensure visibility and usability."""
             # Absolute maximum widget size (prevents off-screen positioning bugs)
             MAX_WIDGET_WIDTH_PX: int = 500
-            MAX_WIDGET_HEIGHT_PX: int = 200
+            MAX_WIDGET_HEIGHT_PX: int = 100
 
             # Minimum widget size (ensures readability)
             MIN_WIDGET_WIDTH_PX: int = 40
