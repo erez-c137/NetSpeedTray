@@ -144,13 +144,17 @@ class PositionCalculator:
             
             if edge in (constants.taskbar.edge.BOTTOM, constants.taskbar.edge.TOP):
                 # --- HORIZONTAL TASKBAR LOGIC ---
-                tb_top_log = round(taskbar_info.rect[1] / dpi_scale)
-                tb_height_log = round((taskbar_info.rect[3] - taskbar_info.rect[1]) / dpi_scale)
+                # Use floating-point center calculation to avoid rounding mismatches
+                # between taskbar height (round) and widget height (ceil) at fractional DPI.
+                tb_top_phys = taskbar_info.rect[1]
+                tb_bottom_phys = taskbar_info.rect[3]
+                tb_center_log = (tb_top_phys + tb_bottom_phys) / 2.0 / dpi_scale
+                y = round(tb_center_log - widget_height / 2.0)
+
+                tb_height_log = round((tb_bottom_phys - tb_top_phys) / dpi_scale)
                 
                 right_boundary = round(taskbar_info.get_tray_rect()[0] / dpi_scale) if taskbar_info.get_tray_rect() else round(taskbar_info.rect[2] / dpi_scale)
                 left_boundary = round(taskbar_info.tasklist_rect[2] / dpi_scale) if taskbar_info.tasklist_rect else round(taskbar_info.rect[0] / dpi_scale)
-
-                y = tb_top_log + (tb_height_log - widget_height) // 2
                 offset = config.get('tray_offset_x', constants.config.defaults.DEFAULT_TRAY_OFFSET_X)
                 x = right_boundary - widget_width - offset
 
@@ -214,10 +218,9 @@ class PositionCalculator:
             dpi_scale = taskbar_info.dpi_scale if taskbar_info.dpi_scale > 0 else 1.0
 
             if edge in (constants.taskbar.edge.BOTTOM, constants.taskbar.edge.TOP):
-                # Horizontal Constraint
-                tb_top_log = round(taskbar_info.rect[1] / dpi_scale)
-                tb_height_log = round((taskbar_info.rect[3] - taskbar_info.rect[1]) / dpi_scale)
-                fixed_y = tb_top_log + (tb_height_log - widget_height) // 2
+                # Horizontal Constraint — use float center to avoid rounding mismatches at fractional DPI
+                tb_center_log = (taskbar_info.rect[1] + taskbar_info.rect[3]) / 2.0 / dpi_scale
+                fixed_y = round(tb_center_log - widget_height / 2.0)
                 
                 right_boundary = (round(taskbar_info.get_tray_rect()[0] / dpi_scale) - widget_width - constants.layout.DEFAULT_PADDING) if taskbar_info.get_tray_rect() else (screen.geometry().right() - widget_width)
                 left_boundary = (round(taskbar_info.tasklist_rect[2] / dpi_scale) + constants.layout.DEFAULT_PADDING) if taskbar_info.tasklist_rect else screen.geometry().left()
