@@ -144,14 +144,24 @@ class PositionCalculator:
             
             if edge in (constants.taskbar.edge.BOTTOM, constants.taskbar.edge.TOP):
                 # --- HORIZONTAL TASKBAR LOGIC ---
-                # Use floating-point center calculation to avoid rounding mismatches
-                # between taskbar height (round) and widget height (ceil) at fractional DPI.
-                tb_top_phys = taskbar_info.rect[1]
-                tb_bottom_phys = taskbar_info.rect[3]
-                tb_center_log = (tb_top_phys + tb_bottom_phys) / 2.0 / dpi_scale
-                y = round(tb_center_log - widget_height / 2.0)
+                # On Windows 11 with high DPI, Shell_TrayWnd includes invisible
+                # padding above the visible taskbar. Use the screen's available
+                # geometry to find the actual visible taskbar area for centering.
+                screen_obj = taskbar_info.get_screen()
+                if screen_obj and edge == constants.taskbar.edge.BOTTOM:
+                    visible_tb_top = screen_obj.availableGeometry().bottom() + 1
+                    visible_tb_bottom = screen_obj.geometry().bottom() + 1
+                elif screen_obj and edge == constants.taskbar.edge.TOP:
+                    visible_tb_top = screen_obj.geometry().top()
+                    visible_tb_bottom = screen_obj.availableGeometry().top()
+                else:
+                    visible_tb_top = round(taskbar_info.rect[1] / dpi_scale)
+                    visible_tb_bottom = round(taskbar_info.rect[3] / dpi_scale)
 
-                tb_height_log = round((tb_bottom_phys - tb_top_phys) / dpi_scale)
+                visible_tb_center = (visible_tb_top + visible_tb_bottom) / 2.0
+                y = round(visible_tb_center - widget_height / 2.0)
+
+                tb_height_log = round((taskbar_info.rect[3] - taskbar_info.rect[1]) / dpi_scale)
                 
                 right_boundary = round(taskbar_info.get_tray_rect()[0] / dpi_scale) if taskbar_info.get_tray_rect() else round(taskbar_info.rect[2] / dpi_scale)
                 left_boundary = round(taskbar_info.tasklist_rect[2] / dpi_scale) if taskbar_info.tasklist_rect else round(taskbar_info.rect[0] / dpi_scale)
@@ -218,9 +228,18 @@ class PositionCalculator:
             dpi_scale = taskbar_info.dpi_scale if taskbar_info.dpi_scale > 0 else 1.0
 
             if edge in (constants.taskbar.edge.BOTTOM, constants.taskbar.edge.TOP):
-                # Horizontal Constraint — use float center to avoid rounding mismatches at fractional DPI
-                tb_center_log = (taskbar_info.rect[1] + taskbar_info.rect[3]) / 2.0 / dpi_scale
-                fixed_y = round(tb_center_log - widget_height / 2.0)
+                # Horizontal Constraint — center on visible taskbar area
+                screen_obj = taskbar_info.get_screen()
+                if screen_obj and edge == constants.taskbar.edge.BOTTOM:
+                    vis_top = screen_obj.availableGeometry().bottom() + 1
+                    vis_bot = screen_obj.geometry().bottom() + 1
+                elif screen_obj and edge == constants.taskbar.edge.TOP:
+                    vis_top = screen_obj.geometry().top()
+                    vis_bot = screen_obj.availableGeometry().top()
+                else:
+                    vis_top = round(taskbar_info.rect[1] / dpi_scale)
+                    vis_bot = round(taskbar_info.rect[3] / dpi_scale)
+                fixed_y = round((vis_top + vis_bot) / 2.0 - widget_height / 2.0)
                 
                 right_boundary = (round(taskbar_info.get_tray_rect()[0] / dpi_scale) - widget_width - constants.layout.DEFAULT_PADDING) if taskbar_info.get_tray_rect() else (screen.geometry().right() - widget_width)
                 left_boundary = (round(taskbar_info.tasklist_rect[2] / dpi_scale) + constants.layout.DEFAULT_PADDING) if taskbar_info.tasklist_rect else screen.geometry().left()
