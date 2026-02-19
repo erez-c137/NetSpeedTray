@@ -146,14 +146,10 @@ class PositionCalculator:
                 # --- HORIZONTAL TASKBAR LOGIC ---
                 # Use floating-point center calculation to avoid rounding mismatches
                 # between taskbar height (round) and widget height (ceil) at fractional DPI.
-                # Add a small downward bias to account for the Windows 11 taskbar's
-                # visual top separator — the Shell_TrayWnd rect includes this padding,
-                # so pure geometric centering appears slightly too high.
                 tb_top_phys = taskbar_info.rect[1]
                 tb_bottom_phys = taskbar_info.rect[3]
                 tb_center_log = (tb_top_phys + tb_bottom_phys) / 2.0 / dpi_scale
-                visual_bias = round(dpi_scale)  # ~1px at 1x, ~2px at 2x DPI
-                y = round(tb_center_log - widget_height / 2.0) + visual_bias
+                y = round(tb_center_log - widget_height / 2.0)
 
                 tb_height_log = round((tb_bottom_phys - tb_top_phys) / dpi_scale)
                 
@@ -224,8 +220,7 @@ class PositionCalculator:
             if edge in (constants.taskbar.edge.BOTTOM, constants.taskbar.edge.TOP):
                 # Horizontal Constraint — use float center to avoid rounding mismatches at fractional DPI
                 tb_center_log = (taskbar_info.rect[1] + taskbar_info.rect[3]) / 2.0 / dpi_scale
-                visual_bias = round(dpi_scale)
-                fixed_y = round(tb_center_log - widget_height / 2.0) + visual_bias
+                fixed_y = round(tb_center_log - widget_height / 2.0)
                 
                 right_boundary = (round(taskbar_info.get_tray_rect()[0] / dpi_scale) - widget_width - constants.layout.DEFAULT_PADDING) if taskbar_info.get_tray_rect() else (screen.geometry().right() - widget_width)
                 left_boundary = (round(taskbar_info.tasklist_rect[2] / dpi_scale) + constants.layout.DEFAULT_PADDING) if taskbar_info.tasklist_rect else screen.geometry().left()

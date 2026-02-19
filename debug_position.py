@@ -1,11 +1,13 @@
+"""Debug: shows widget boundaries with a red border to visualize positioning."""
 import sys, math
 sys.path.insert(0, "src")
 
-from PyQt6.QtWidgets import QApplication
-from PyQt6.QtGui import QFont, QFontMetrics
+from PyQt6.QtWidgets import QApplication, QWidget
+from PyQt6.QtGui import QPainter, QColor, QPen, QFont, QFontMetrics
+from PyQt6.QtCore import Qt, QTimer
 app = QApplication(sys.argv)
 
-from netspeedtray.utils.taskbar_utils import get_taskbar_info, is_small_taskbar
+from netspeedtray.utils.taskbar_utils import get_taskbar_info
 from netspeedtray import constants
 
 tb = get_taskbar_info()
@@ -13,47 +15,79 @@ dpi = tb.dpi_scale
 tb_height_phys = tb.rect[3] - tb.rect[1]
 tb_height_log = tb_height_phys / dpi
 
-print(f"=== Display Info ===")
-for screen in app.screens():
-    print(f"Screen: {screen.name()}")
-    print(f"  Geometry: {screen.geometry()}")
-    print(f"  DPR: {screen.devicePixelRatio()}")
-
-print(f"\n=== Taskbar Info ===")
-print(f"HWND: {tb.hwnd}")
+print(f"=== Taskbar ===")
 print(f"Rect (physical): {tb.rect}")
-print(f"DPI scale: {dpi}")
-print(f"Height physical: {tb_height_phys}")
-print(f"Height logical: {tb_height_log}")
-print(f"Is small taskbar: {is_small_taskbar(tb)}")
+print(f"DPI: {dpi}")
+print(f"Height physical: {tb_height_phys}, logical: {tb_height_log}")
 
-print(f"\n=== Widget Sizing ===")
-widget_height = math.ceil(tb_height_log)
-print(f"Widget height (ceil): {widget_height}")
+widget_w = 150
+widget_h = math.ceil(tb_height_log)
+widget_y = round((tb.rect[1] + tb.rect[3]) / 2.0 / dpi - widget_h / 2.0)
+widget_x = round(tb.rect[2] / dpi) - widget_w - 400
 
-# Simulate font metrics
-font = QFont(constants.config.defaults.DEFAULT_FONT_FAMILY, constants.config.defaults.DEFAULT_FONT_SIZE, 63)
-metrics = QFontMetrics(font)
-line_height = metrics.height()
-ascent = metrics.ascent()
-total_text_height = line_height * 2
-top_y = int((widget_height - total_text_height) / 2 + ascent)
-bottom_y = top_y + line_height
+print(f"Widget: {widget_w}x{widget_h} at ({widget_x}, {widget_y})")
 
-print(f"Font: {font.family()} @ {font.pointSize()}pt")
-print(f"Line height: {line_height}")
-print(f"Ascent: {ascent}")
-print(f"Total text height: {total_text_height}")
-print(f"top_y (first line baseline): {top_y}")
-print(f"bottom_y (second line baseline): {bottom_y}")
-print(f"Text block top: {top_y - ascent}")
-print(f"Text block bottom: {bottom_y - ascent + line_height}")
-print(f"Vertical padding top: {top_y - ascent}")
-print(f"Vertical padding bottom: {widget_height - (bottom_y - ascent + line_height)}")
+class DebugWidget(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint |
+            Qt.WindowType.WindowStaysOnTopHint |
+            Qt.WindowType.Tool
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setFixedSize(widget_w, widget_h)
+        self.move(widget_x, widget_y)
+    
+    def paintEvent(self, event):
+        p = QPainter(self)
+        w, h = self.width(), self.height()
+        
+        print(f"\n=== paintEvent ===")
+        print(f"Widget size in paint: {w}x{h}")
+        print(f"Device pixel ratio: {self.devicePixelRatio()}")
+        
+        # Semi-transparent background
+        p.fillRect(0, 0, w, h, QColor(40, 40, 40, 200))
+        
+        # Red border to show widget bounds
+        pen = QPen(QColor(255, 0, 0), 2)
+        p.setPen(pen)
+        p.drawRect(1, 1, w-2, h-2)
+        
+        # Draw centered text like the real widget
+        font = QFont(constants.config.defaults.DEFAULT_FONT_FAMILY, 
+                     constants.config.defaults.DEFAULT_FONT_SIZE, 63)
+        p.setFont(font)
+        metrics = QFontMetrics(font)
+        
+        line_height = metrics.height()
+        ascent = metrics.ascent()
+        total_text_height = line_height * 2
+        top_y = int((h - total_text_height) / 2 + ascent)
+        bottom_y = top_y + line_height
+        
+        print(f"Font metrics - height: {line_height}, ascent: {ascent}")
+        print(f"Total text height: {total_text_height}")
+        print(f"top_y: {top_y}, bottom_y: {bottom_y}")
+        print(f"Visual top: {top_y - ascent}, Visual bottom: {bottom_y - ascent + line_height}")
+        print(f"Padding - top: {top_y - ascent}, bottom: {h - (bottom_y - ascent + line_height)}")
+        
+        # Green horizontal line at widget center
+        p.setPen(QPen(QColor(0, 255, 0), 1))
+        p.drawLine(0, h // 2, w, h // 2)
+        
+        # Draw speed text
+        p.setPen(QColor(200, 200, 200))
+        p.drawText(8, top_y, "↑ 65.1 MB/s")
+        p.drawText(8, bottom_y, "↓ 0.1 MB/s")
+        
+        p.end()
 
-print(f"\n=== Position ===")
-y_pos = round((tb.rect[1] + tb.rect[3]) / 2.0 / dpi - widget_height / 2.0)
-print(f"Widget Y: {y_pos}")
-print(f"Taskbar top (logical): {tb.rect[1] / dpi}")
-print(f"Widget bottom: {y_pos + widget_height}")
-print(f"Taskbar bottom (logical): {tb.rect[3] / dpi}")
+widget = DebugWidget()
+widget.show()
+
+# Auto-close after 10 seconds
+QTimer.singleShot(10000, app.quit)
+print("\nWidget visible for 10 seconds. Check alignment vs taskbar...")
+app.exec()
