@@ -448,13 +448,13 @@ def test_get_speed_history_unified_tiers(managed_widget_state):
     now = datetime.now()
     now_ts = int(now.timestamp())
     
-    # Tier 1: Raw (Last few minutes)
-    cursor.execute("INSERT INTO speed_history_raw VALUES (?, 'eth0', 100, 200)", (now_ts - 60,))
+    # Tier 1: Raw (10 seconds ago - will bin to current minute)
+    cursor.execute("INSERT INTO speed_history_raw VALUES (?, 'eth0', 100, 200)", (now_ts - 10,))
     
-    # Tier 2: Minute (2 days ago)
+    # Tier 2: Minute (2 days ago - distinct from current minute)
     cursor.execute("INSERT INTO speed_history_minute VALUES (?, 'eth0', 50, 60, 70, 80)", (now_ts - 2 * 86400,))
     
-    # Tier 3: Hour (40 days ago)
+    # Tier 3: Hour (40 days ago - distinct from recent time)
     cursor.execute("INSERT INTO speed_history_hour VALUES (?, 'eth0', 10, 20, 30, 40)", (now_ts - 40 * 86400,))
     
     conn.commit()
@@ -463,12 +463,16 @@ def test_get_speed_history_unified_tiers(managed_widget_state):
     # ACT: Request "All" time range (None start time)
     results = state.get_speed_history(start_time=None, end_time=now)
     
-    # ASSERT: With the new "Single Table" optimization, for a 40-day range,
-    # the system selects 'speed_history_hour'. 
-    # Since we manually inserted data into separate tables and did NOT run aggregation,
-    # the query will only return the record that physically exists in 'speed_history_hour'.
-    assert len(results) == 1
+    # ASSERT: The new multi-tier UNION query correctly returns data from all tiers
+    # that have data for the requested range. Since we inserted data at distinct time periods,
+    # we should get 3 data points (potentially more if binning creates additional buckets,
+    # but at minimum we have 3 distinct time boundaries covered).
+    assert len(results) >= 3, f"Expected at least 3 results from multi-tier query, got {len(results)}"
     
-    # Verify it retrieved the hourly record (the oldest one)
-    # 40 days ago = 10.0 upload
-    assert results[0][1] == 10.0
+    # Verify we can find data from all three tiers by checking for characteristic uploads
+    uploads = [r[1] for r in results]
+    assert 10.0 in uploads, "Missing hour tier data"
+    assert 50.0 in uploads, "Missing minute tier data"
+    assert 100.0 in uploads, "Missing raw tier data"
+
+

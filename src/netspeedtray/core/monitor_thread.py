@@ -28,7 +28,12 @@ class NetworkMonitorThread(QThread):
 
     def __init__(self, interval: float = 1.0) -> None:
         super().__init__()
-        self.interval = interval
+        # Ensure interval is always a positive, sane value to avoid busy loops
+        min_interval = constants.timers.MINIMUM_INTERVAL_MS / 1000.0
+        try:
+            self.interval = max(min_interval, float(interval))
+        except Exception:
+            self.interval = min_interval
         self._is_running = True
         self.consecutive_errors = 0
         self.logger = logger
