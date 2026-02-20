@@ -2,6 +2,7 @@ import logging
 import math
 from typing import List, Tuple, Optional
 from datetime import datetime
+import threading
 
 import numpy as np
 from PyQt6.QtCore import QObject, Qt, pyqtSignal
@@ -15,6 +16,7 @@ from matplotlib.ticker import NullLocator
 
 from netspeedtray import constants
 from netspeedtray.constants import styles as style_constants
+from netspeedtray.constants.renderer import RendererConstants
 from netspeedtray.utils.helpers import calculate_monotone_cubic_interpolation
 import matplotlib.colors as mcolors
 from matplotlib.patches import PathPatch
@@ -28,6 +30,7 @@ class GraphRenderer(QObject):
     
     # Class-level gradient cache (shared across instances, never regenerated)
     _GRADIENT_CACHE = {}
+    _GRADIENT_CACHE_LOCK = threading.Lock()  # Thread-safety for cache access
     
     def __init__(self, parent_widget: QWidget, i18n, logger=None):
         super().__init__()
@@ -175,7 +178,7 @@ class GraphRenderer(QObject):
 
         # Fixed Subplots Adjust to keep graph area size constant
         self.figure.subplots_adjust(
-            left=0.08,   # Enough space for "100.0 Mbps" labels
+            left=0.12,   # Expanded to 12% to prevent 5-digit speeds from pushing the Y-axis label off-screen
             right=0.98,  # Minimum right margin
             top=0.95,    # Space for peak labels
             bottom=0.12, # Space for time labels
@@ -238,14 +241,17 @@ class GraphRenderer(QObject):
         Returns a cached gradient array for the given color.
         The gradient is 256x1 RGBA, fading from color at top to transparent at bottom.
         This is called once per color, then reused forever.
+        
+        Thread-safe: Uses lock to protect concurrent access to shared cache.
         """
-        if color_hex not in cls._GRADIENT_CACHE:
-            rgb = mcolors.to_rgb(color_hex)
-            gradient = np.zeros((256, 1, 4))
-            gradient[:, 0, :3] = rgb
-            gradient[:, 0, 3] = np.linspace(0.35, 0.0, 256)  # Alpha: 35% at top, 0% at bottom
-            cls._GRADIENT_CACHE[color_hex] = gradient
-        return cls._GRADIENT_CACHE[color_hex]
+        with cls._GRADIENT_CACHE_LOCK:
+            if color_hex not in cls._GRADIENT_CACHE:
+                rgb = mcolors.to_rgb(color_hex)
+                gradient = np.zeros((RendererConstants.GRADIENT_IMAGE_HEIGHT, 1, 4))
+                gradient[:, 0, :3] = rgb
+                gradient[:, 0, 3] = np.linspace(RendererConstants.GRADIENT_ALPHA_TOP, RendererConstants.GRADIENT_ALPHA_BOTTOM, RendererConstants.GRADIENT_IMAGE_HEIGHT)
+                cls._GRADIENT_CACHE[color_hex] = gradient
+            return cls._GRADIENT_CACHE[color_hex]
 
     def _apply_gradient_fill(self, ax, x_data, y_data, color_hex: str, artist_prefix: str):
         """
@@ -270,14 +276,14 @@ class GraphRenderer(QObject):
         x_max = mdates.date2num(x_data[-1]) if isinstance(x_data[-1], datetime) else x_data.max()
         
         # Guard: Prevent singular extent (warning fix)
-        if abs(x_max - x_min) < 1e-9:
-             x_max += 1e-9 # Add tiny epsilon
+        if abs(x_max - x_min) < RendererConstants.EXTENT_EPSILON:
+             x_max += RendererConstants.EXTENT_EPSILON # Add tiny epsilon
              
-        y_max = float(np.max(y_data)) * 1.05  # Slight padding
+        y_max = float(np.max(y_data)) * RendererConstants.Y_AXIS_PADDING_FACTOR  # Slight padding
         
         # Guard: Prevent singular Y extent if y_max is 0 (flat line)
         if y_max < 0.001: 
-             y_max = 1.0  # Default to 1 Mbps range if flat 0
+             y_max = RendererConstants.FLAT_DATA_FALLBACK_RANGE  # Default to 1 Mbps range if flat 0
              
         extent = [x_min, x_max, 0, y_max]
         
@@ -387,23 +393,23 @@ class GraphRenderer(QObject):
             
             # Outer glow (soft, large, transparent)
             artist_dict['outer'] = ax.plot(peak_x, peak_y, 'o', 
-                    markersize=14, 
+                    markersize=RendererConstants.PEAK_MARKER_SIZE_OUTER, 
                     color=color_hex, 
-                    alpha=0.15,
+                    alpha=RendererConstants.PEAK_MARKER_ALPHA_OUTER,
                     zorder=10)[0]
             
             # Middle glow
             artist_dict['middle'] = ax.plot(peak_x, peak_y, 'o', 
-                    markersize=9, 
+                    markersize=RendererConstants.PEAK_MARKER_SIZE_MIDDLE, 
                     color=color_hex, 
-                    alpha=0.35,
+                    alpha=RendererConstants.PEAK_MARKER_ALPHA_MIDDLE,
                     zorder=11)[0]
             
             # Inner dot (solid, small)
             artist_dict['inner'] = ax.plot(peak_x, peak_y, 'o', 
-                    markersize=5, 
+                    markersize=RendererConstants.PEAK_MARKER_SIZE_INNER, 
                     color=color_hex, 
-                    alpha=1.0,
+                    alpha=RendererConstants.PEAK_MARKER_ALPHA_INNER,
                     zorder=12)[0]
             
             # Label with background
@@ -564,7 +570,10 @@ class GraphRenderer(QObject):
              plotted_ts, plotted_up, plotted_down = self._plot_aggregated(plot_datetimes_array, upload_mbps, download_mbps, mode=current_mode, target_end_time=actual_end)
 
         # Configure Limits and Formats (Handles adaptive Y-axis)
-        self._configure_axes(start_time, end_time, period_key, timestamps, upload_mbps, download_mbps)
+        # Use plotted_up and plotted_down so axes match the visible data, not raw anomalies.
+        safe_up = plotted_up if plotted_up is not None else []
+        safe_down = plotted_down if plotted_down is not None else []
+        self._configure_axes(start_time, end_time, period_key, timestamps, safe_up, safe_down)
         
         # Add Peak Markers (glowing dots at max values)
         if plotted_ts is not None and len(plotted_ts) > 0:
@@ -711,9 +720,9 @@ class GraphRenderer(QObject):
         if len(intervals) > 0:
             median_interval = np.median(intervals)
             # Gap = any interval > 2x the median (accounts for jitter + actual gaps)
-            gap_threshold = max(median_interval * 2.5, 10.0)  # minimum 10s for raw data
+            gap_threshold = max(median_interval * RendererConstants.GAP_DETECTION_MULTIPLIER, RendererConstants.MIN_GAP_THRESHOLD_SEC)
         else:
-            gap_threshold = 10.0
+            gap_threshold = RendererConstants.MIN_GAP_THRESHOLD_SEC
             
         gaps = intervals > gap_threshold
         
@@ -722,31 +731,8 @@ class GraphRenderer(QObject):
         
         # Adaptive Quality: If we have > 600 points, interpolation is visually redundant.
         # Skip it to save CPU.
-        ENABLE_SPLINE = len(plot_datetimes) <= 600
+        ENABLE_SPLINE = len(plot_datetimes) <= RendererConstants.SPLINE_INTERPOLATION_POINT_THRESHOLD
         
-        # Helper to process and plot a single segment
-        def process_segment(ts, up, down):
-            if not ENABLE_SPLINE or len(ts) < 2:
-                # Bypass interpolation
-                return ts, up, down
-                
-            # FLUID MOTION: Apply Monotone Cubic Spline (Vectorized)
-            # We interpolate based on timestamp float values
-            ts_floats = [t.timestamp() for t in ts]
-            
-            # Density 4 provides ample smoothness
-            dense_ts_floats, dense_down = calculate_monotone_cubic_interpolation(ts_floats, down, density=4)
-            _, dense_up = calculate_monotone_cubic_interpolation(ts_floats, up, density=4)
-            
-            # Clip negative values
-            dense_down = np.maximum(dense_down, 0)
-            dense_up = np.maximum(dense_up, 0)
-            
-            # Convert back to datetimes for Matplotlib
-            dense_ts_dt = [datetime.fromtimestamp(t) for t in dense_ts_floats]
-            
-            return dense_ts_dt, dense_up, dense_down
-
         if np.any(gaps):
             # Segmented mode - multiple disconnected line segments
             self.ax_download.clear()
@@ -778,8 +764,8 @@ class GraphRenderer(QObject):
                     self.ax_download.plot(bridge_ts, bridge_zero, color=constants.graph.DOWNLOAD_LINE_COLOR, linewidth=1.5, zorder=9, alpha=0.5, linestyle='--')
                     self.ax_upload.plot(bridge_ts, bridge_zero, color=constants.graph.UPLOAD_LINE_COLOR, linewidth=1.5, zorder=9, alpha=0.5, linestyle='--')
                 
-                # Interpolate this segment
-                seg_ts, seg_up, seg_down = process_segment(ts, up, down)
+                # Process and interpolate this segment
+                seg_ts, seg_up, seg_down = self._process_plot_segment(ts, up, down, enable_spline=ENABLE_SPLINE)
                 
                 # Plot
                 self.ax_download.plot(seg_ts, seg_down, color=constants.graph.DOWNLOAD_LINE_COLOR, linewidth=1.5, zorder=10)
@@ -810,8 +796,8 @@ class GraphRenderer(QObject):
                 
         else:
             # FAST PATH: Single continuous line
-            # Interpolate the whole chunk
-            dense_ts, dense_up, dense_down = process_segment(plot_datetimes, upload_mbps, download_mbps)
+            # Process and interpolate the whole chunk
+            dense_ts, dense_up, dense_down = self._process_plot_segment(plot_datetimes, upload_mbps, download_mbps, enable_spline=ENABLE_SPLINE)
             
             final_ts, final_up, final_down = dense_ts, dense_up, dense_down
             
@@ -857,10 +843,54 @@ class GraphRenderer(QObject):
         # Return the INTERPOLATED data so interactions snap to the smooth line
         return np.array(final_ts), np.array(final_up), np.array(final_down)
 
+    def _process_plot_segment(self, ts_dates, upload_data, download_data, enable_spline: bool = True):
+        """
+        Process and interpolate a single plot segment.
+        
+        Extracted from nested function in _plot_high_res for unit testability.
+        Applies monotone cubic interpolation if enabled and data allows.
+        
+        Args:
+            ts_dates: Array of datetime objects
+            upload_data: Array of upload speeds in Mbps
+            download_data: Array of download speeds in Mbps
+            enable_spline: Whether to enable interpolation
+            
+        Returns:
+            Tuple of (interpolated_datetimes, interpolated_upload, interpolated_download) 
+        """
+        if not enable_spline or len(ts_dates) < 2:
+            # Bypass interpolation, return raw data
+            return ts_dates, upload_data, download_data
+        
+        try:
+            # FLUID MOTION: Apply Monotone Cubic Spline (Vectorized)
+            # We interpolate based on timestamp float values
+            ts_floats = np.array([t.timestamp() for t in ts_dates])
+            
+            # Density 4 provides ample smoothness
+            dense_ts_floats, dense_down = calculate_monotone_cubic_interpolation(ts_floats, download_data, density=RendererConstants.SPLINE_INTERPOLATION_DENSITY)
+            _, dense_up = calculate_monotone_cubic_interpolation(ts_floats, upload_data, density=RendererConstants.SPLINE_INTERPOLATION_DENSITY)
+            
+            # Clip negative values
+            dense_down = np.maximum(dense_down, 0)
+            dense_up = np.maximum(dense_up, 0)
+            
+            # Convert back to datetimes for Matplotlib
+            dense_ts_dt = [datetime.fromtimestamp(t) for t in dense_ts_floats]
+            
+            return dense_ts_dt, dense_up, dense_down
+            
+        except Exception as e:
+            # If interpolation fails, return raw data as fallback
+            self.logger.debug(f"Segment interpolation failed, using raw data: {e}")
+            return ts_dates, upload_data, download_data
+
+
 
     def _configure_axes(self, start_time, end_time, period_key, timestamps, upload_mbps, download_mbps):
         """Sets limits and Formatters with sticky behavior to prevent jitter."""
-        # Y-Axis Scaling (Sticky Logic)
+        # Y-Axis Scaling (Sticky Logic with smart rounding)
         max_up = np.max(upload_mbps) if len(upload_mbps) > 0 else 0
         max_down = np.max(download_mbps) if len(download_mbps) > 0 else 0
         
@@ -894,28 +924,18 @@ class GraphRenderer(QObject):
              self.ax_upload.set_xlim(start_time, end_time)
              self.ax_download.set_xlim(start_time, end_time)
 
-        # === SMART SCALING (SYMLOG) ===
-        # Linear view for low speeds (0-1 Mbps), Logarithmic for high speeds.
-        # This allows seeing small background usage AND large download spikes simultaneously.
+        # === Y-AXIS: Linear scale with smart tick placement ===
+        # Only show significant tick marks (multiples that make sense for the range)
+        self.ax_upload.set_yscale('linear')
+        self.ax_download.set_yscale('linear')
         
-        linthresh = 1.0 # 1 Mbps linear threshold
+        # Set smart integer ticks based on the Y-axis range
+        self._set_smart_y_ticks(self.ax_upload, y_top_up)
+        self._set_smart_y_ticks(self.ax_download, y_top_down)
         
-        # Only apply SymLog if we have significant peaks (max > 10 Mbps)
-        # preventing "weird" linear-log transitions for purely low-speed sessions.
-        if self._current_ylim_down > 10:
-            self.ax_download.set_yscale('symlog', linthresh=linthresh, subs=[2, 3, 4, 5, 6, 7, 8, 9])
-            # Custom formatter to avoid "10^0", "10^1" scientific notation
-            self.ax_download.yaxis.set_major_formatter(lambda x, pos: f"{int(x)}" if x >= 10 else f"{x:.1f}")
-        else:
-            self.ax_download.set_yscale('linear')
-            self.ax_download.yaxis.set_major_formatter(lambda x, pos: f"{x:.1f}")
-
-        if self._current_ylim_up > 10:
-            self.ax_upload.set_yscale('symlog', linthresh=linthresh, subs=[2, 3, 4, 5, 6, 7, 8, 9])
-            self.ax_upload.yaxis.set_major_formatter(lambda x, pos: f"{int(x)}" if x >= 10 else f"{x:.1f}")
-        else:
-            self.ax_upload.set_yscale('linear')
-            self.ax_upload.yaxis.set_major_formatter(lambda x, pos: f"{x:.1f}")
+        # Formatters for clean labels (no decimals for large ranges)
+        self.ax_upload.yaxis.set_major_formatter(lambda x, pos: f"{int(x)}" if x >= 1 else f"{x:.1f}")
+        self.ax_download.yaxis.set_major_formatter(lambda x, pos: f"{int(x)}" if x >= 1 else f"{x:.1f}")
 
         self.ax_upload.set_ylim(bottom=0, top=y_top_up)
         self.ax_download.set_ylim(bottom=0, top=y_top_down)
@@ -923,33 +943,68 @@ class GraphRenderer(QObject):
         # X-Axis Formatting
         self._configure_xaxis_format(period_key)
 
+    def _set_smart_y_ticks(self, ax, y_max: float):
+        """
+        Sets intelligent Y-axis tick locations using Matplotlib's MaxNLocator.
+        This provides clean, non-overlapping labels regardless of the data scale.
+        """
+        from matplotlib.ticker import MaxNLocator
+        
+        if y_max <= 0:
+            ax.set_yticks([0])
+            return
+        
+        # Use MaxNLocator for robust, nicely-spaced ticks without overlap
+        ax.yaxis.set_major_locator(MaxNLocator(nbins=5, steps=[1, 2, 2.5, 5, 10], min_n_ticks=3))
 
+
+    def _get_nice_y_axis_top(self, max_speed: float) -> float:
+        """
+        Calculates a "nice" top limit with flat ~12% padding and logical step rounding.
+        Prevents massive empty space jumps (e.g. snapping 1000 to 2000).
+        """
+        if max_speed <= constants.graph.MINIMUM_Y_AXIS_MBPS:
+            return constants.graph.MINIMUM_Y_AXIS_MBPS
+        
+        # Add ~12% padding for visual breathing room
+        padded = max_speed * 1.12
+        
+        # Logical rounding steps based on the value size
+        if padded <= 10:
+            step = 1
+        elif padded <= 50:
+            step = 5
+        elif padded <= 100:
+            step = 10
+        elif padded <= 500:
+            step = 50
+        elif padded <= 1000:
+            step = 100
+        else:
+            step = 250
+            
+        # Round up to the nearest multiple of the step
+        return float(math.ceil(padded / step) * step)
+    
     def _get_sticky_y_top(self, max_speed: float, current_top: float) -> float:
         """
         Calculates a top limit with sticky behavior.
         Only updates if we exceed current or drop significantly below it.
+        Uses smart rounding to nice numbers.
         """
         min_limit = constants.graph.MINIMUM_Y_AXIS_MBPS
         
-        # 1. If we exceed current, scale up immediately
+        # 1. If we exceed current, scale up immediately to nice number
         if max_speed > current_top:
-            return max_speed * 1.1
+            return self._get_nice_y_axis_top(max_speed)
             
-        # 2. If we drop below 70% of current, scale down
+        # 2. If we drop below 70% of current, scale down to nice number
         if max_speed < current_top * 0.7:
-            suggested = max_speed * 1.1
+            suggested = self._get_nice_y_axis_top(max_speed)
             return max(suggested, min_limit)
             
         # 3. Otherwise, stay sticky
         return current_top
-
-    def _get_nice_y_axis_top(self, max_speed: float) -> float:
-        """Calculates a top limit with ~10% padding."""
-        if max_speed <= constants.graph.MINIMUM_Y_AXIS_MBPS:
-            return constants.graph.MINIMUM_Y_AXIS_MBPS
-
-        # User requested tight 10% padding (e.g. 1000 -> 1100, not 2000)
-        return max_speed * 1.1
 
     def _configure_xaxis_format(self, period_key: str) -> None:
         """

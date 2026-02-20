@@ -7,3 +7,4 @@ numpy
 wmi
 pandas>=2.3.3
 fonttools>=4.61.0   # Explicitly added to enforce Security CVE fix
+pillow>=12.1.1      # Security: ensure patched Pillow (CVE fix)

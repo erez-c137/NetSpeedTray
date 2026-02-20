@@ -14,7 +14,7 @@ from netspeedtray.views.graph import GraphWindow
 class TestGraphVectorization(unittest.TestCase):
     def setUp(self):
         self.mock_main_widget = MagicMock()
-        self.mock_main_widget.config = {"show_legend": True}
+        self.mock_main_widget.config = {}
         
         # Mock i18n
         self.mock_i18n = MagicMock()

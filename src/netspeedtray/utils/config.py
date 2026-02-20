@@ -69,7 +69,19 @@ class ObfuscatingFormatter(logging.Formatter):
 
 
 class ConfigError(Exception):
-    """Custom exception for configuration-related errors, such as I/O or permission issues."""
+    """
+    Custom exception for configuration-related errors.
+    
+    Raised when:
+    - Configuration version strings are invalid or malformed
+    - Configuration file I/O operations fail
+    - Configuration migration encounters critical issues
+    - Configuration data is corrupted or unrecoverable
+    
+    By raising ConfigError instead of silently failing, we ensure that
+    configuration issues are caught early and logged explicitly, preventing
+    silent data corruption or incompatibilities.
+    """
 
 
 class ConfigManager:
@@ -92,8 +104,40 @@ class ConfigManager:
     def _migrate_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
         """
         Migrates old configuration fields to the current schema.
+        Handles both field renaming and version-based schema upgrades.
+        
+        Migration strategy:
+        1. Extract the config version (defaults to "1.0" if missing)
+        2. Validate version format (will raise ConfigError if invalid)
+        3. Apply field migrations (support for renamed/removed fields)
+        4. Apply version-based migrations if needed
+        5. Update config_version to current schema version
+        
+        Args:
+            config: Configuration dictionary to migrate
+        
+        Returns:
+            Migrated configuration dictionary with current schema version
+        
+        Raises:
+            ConfigError: If configuration version is invalid/corrupted (logs error and returns defaults)
+        
         This ensures a smooth transition and preserves user settings when fields are renamed.
         """
+        current_version = constants.config.defaults.CONFIG_SCHEMA_VERSION
+        loaded_version = config.get("config_version", "1.0")  # Default to 1.0 for configs predating versioning
+        
+        self.logger.info(f"Migrating config from version {loaded_version} to {current_version}")
+        
+        # NEW: Validate version format before proceeding (prevent silent failures)
+        try:
+            self._version_less_than(loaded_version, current_version)
+        except ConfigError as e:
+            self.logger.error(f"Config corruption detected: {e}")
+            self.logger.warning("Resetting config to defaults due to version corruption")
+            return constants.config.defaults.DEFAULT_CONFIG.copy()
+        
+        # Field renaming / removal (legacy migrations)
         migration_map = {
             "monitoring_mode": "interface_mode",
             "tray_icon_offset": "tray_offset_x",
@@ -130,8 +174,55 @@ class ConfigManager:
             migrated["unit_type"] = unit_migration[current_unit]
             self.logger.info(f"Migrated unit_type: '{current_unit}' -> '{migrated['unit_type']}'")
             changes_made = True
+        
+        # Version-based migrations (applied if loaded_version < target version)
+        # Example structure for future versions:
+        # if self._version_less_than(loaded_version, "2.0"):
+        #     migrated = self._migrate_to_v2_0(migrated)
+        #     changes_made = True
+        
+        # Update config_version to current
+        if migrated.get("config_version") != current_version:
+            migrated["config_version"] = current_version
+            if not changes_made:
+                self.logger.info(f"Updated config_version from {loaded_version} to {current_version}")
+            else:
+                self.logger.info(f"Updated config_version from {loaded_version} to {current_version} (with other migrations)")
+            changes_made = True
+        
+        if changes_made and loaded_version != current_version:
+            self.logger.info(f"Config migration completed. User should be notified of any breaking changes.")
 
         return migrated
+    
+    def _version_less_than(self, version_a: str, version_b: str) -> bool:
+        """
+        Compare two semantic versions. Returns True if version_a < version_b.
+        
+        Args:
+            version_a: Version string (e.g., "1.0", "2.1")
+            version_b: Version string to compare against
+        
+        Returns:
+            True if version_a < version_b, False otherwise
+        
+        Raises:
+            ConfigError: If either version string is invalid or malformed.
+                Prevents silent failures that could skip critical migrations.
+        
+        Examples:
+            _version_less_than("1.0", "2.0") → True
+            _version_less_than("2.0", "1.0") → False
+            _version_less_than("invalid", "1.0") → raises ConfigError
+        """
+        try:
+            parts_a = tuple(map(int, version_a.split(".")))
+            parts_b = tuple(map(int, version_b.split(".")))
+            return parts_a < parts_b
+        except (ValueError, AttributeError) as e:
+            error_msg = f"Invalid version format: version_a={version_a}, version_b={version_b}"
+            self.logger.error(error_msg)
+            raise ConfigError(error_msg) from e
 
 
     @classmethod

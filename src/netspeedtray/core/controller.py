@@ -45,6 +45,10 @@ class NetworkController(QObject):
         self.last_primary_check_time: float = 0.0
 
         self.repriming_needed: int = 0  # Number of priming cycles needed after a resume
+        
+        # Historical speed data for spike detection (deque of last 20 samples per interface)
+        from collections import deque
+        self.recent_speeds: Dict[str, deque] = {}
 
         self.logger.debug("NetworkController initialized.")
 
@@ -119,25 +123,86 @@ class NetworkController(QObject):
 
                 up_diff = current.bytes_sent - last.bytes_sent
                 down_diff = current.bytes_recv - last.bytes_recv
+
+                # Protect against extremely small time deltas which can produce
+                # artificially large speeds due to scheduling jitter. Clamp the
+                # divisor to a small positive minimum defined in constants.
+                safe_time_diff = max(time_diff, constants.network.speed.MIN_TIME_DIFF)
+
+                up_speed_bps = int(up_diff / safe_time_diff)
+                down_speed_bps = int(down_diff / safe_time_diff)
                 
-                up_speed_bps = int(up_diff / time_diff)
-                down_speed_bps = int(down_diff / time_diff)
+                # --- LAYER 4: SANITY CHECK AGAINST PHYSICAL LINK SPEED ---
+                # Default to the massive fallback (100 Gbps)
+                max_speed_bps = constants.network.interface.MAX_REASONABLE_SPEED_BPS
                 
-                # --- LAYER 4: SANITY CHECK ---
-                max_speed = constants.network.interface.MAX_REASONABLE_SPEED_BPS
-                if up_speed_bps > max_speed or down_speed_bps > max_speed:
+                # Try to get the actual hardware link speed for THIS specific adapter
+                try:
+                    if_stats = psutil.net_if_stats()
+                    if name in if_stats:
+                        link_speed_mbps = if_stats[name].speed
+                        # speed is 0 if it can't be determined (e.g. virtual adapters or disconnected)
+                        if link_speed_mbps > 0:
+                            # Convert Mbps to Bytes/sec and add a 5% margin for scheduling jitter
+                            max_speed_bps = int((link_speed_mbps * 1_000_000 / 8) * 1.05)
+                except Exception as e:
+                    self.logger.debug(f"Could not fetch link speed for {name}: {e}")
+
+                if up_speed_bps > max_speed_bps or down_speed_bps > max_speed_bps:
                     self.logger.warning(
                         f"Discarding impossibly high speed for '{name}': "
-                        f"Up={up_speed_bps} B/s, Down={down_speed_bps} B/s."
+                        f"Up={up_speed_bps} B/s, Down={down_speed_bps} B/s. "
+                        f"(Hardware Max: {max_speed_bps} B/s)"
                     )
                     continue
 
-                self.current_speed_data[name] = (up_speed_bps, down_speed_bps)
+                # --- LAYER 5: HISTORICAL SPIKE DETECTION ---
+                # Check if this speed is realistic compared to recent history
+                # If speed jumps >5x from recent average, clamp it as a likely phantom spike
+                final_up_speed_bps = up_speed_bps
+                final_down_speed_bps = down_speed_bps
+                
+                if name not in self.recent_speeds:
+                    from collections import deque
+                    self.recent_speeds[name] = deque(maxlen=20)
+                
+                recent_history = self.recent_speeds[name]
+                if recent_history and len(recent_history) >= 5:  # Only apply after 5 samples
+                    recent_ups = [s[0] for s in recent_history]
+                    recent_downs = [s[1] for s in recent_history]
+                    
+                    # Calculate mean (account for outliers by using median-based approach)
+                    recent_up_avg = sum(sorted(recent_ups)[1:-1]) / max(1, len(recent_ups) - 2) if len(recent_ups) > 2 else sum(recent_ups) / len(recent_ups)
+                    recent_down_avg = sum(sorted(recent_downs)[1:-1]) / max(1, len(recent_downs) - 2) if len(recent_downs) > 2 else sum(recent_downs) / len(recent_downs)
+                    
+                    # If either direction jumped >5x, clamp to 2x as likely spike
+                    threshold_multiplier = 5.0
+                    clamp_multiplier = 2.0
+                    
+                    if recent_up_avg > 1000 and final_up_speed_bps > recent_up_avg * threshold_multiplier:
+                        self.logger.warning(
+                            f"Spike detected for {name} upload: {final_up_speed_bps} B/s "
+                            f"(recent avg: {recent_up_avg:.0f} B/s). Clamping. "
+                        )
+                        final_up_speed_bps = int(recent_up_avg * clamp_multiplier)
+                    
+                    if recent_down_avg > 1000 and final_down_speed_bps > recent_down_avg * threshold_multiplier:
+                        self.logger.warning(
+                            f"Spike detected for {name} download: {final_down_speed_bps} B/s "
+                            f"(recent avg: {recent_down_avg:.0f} B/s). Clamping."
+                        )
+                        final_down_speed_bps = int(recent_down_avg * clamp_multiplier)
 
-        if self.current_speed_data:
-            self.widget_state.add_speed_data(self.current_speed_data)
+                self.current_speed_data[name] = (final_up_speed_bps, final_down_speed_bps)
+                
+                # Store for next comparison
+                self.recent_speeds[name].append((up_speed_bps, down_speed_bps))
 
         agg_upload, agg_download = self._aggregate_for_display(self.current_speed_data)
+
+        if self.current_speed_data:
+            if self.widget_state:
+                self.widget_state.add_speed_data(self.current_speed_data, aggregated_up=agg_upload, aggregated_down=agg_download)
 
         upload_mbps = (agg_upload * 8) / 1_000_000
         download_mbps = (agg_download * 8) / 1_000_000

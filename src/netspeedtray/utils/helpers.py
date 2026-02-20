@@ -164,7 +164,7 @@ def get_all_possible_unit_labels(i18n) -> List[str]:
     return sorted(list(all_labels))
 
 
-def get_reference_value_string(always_mbps: bool, decimal_places: int, unit_type: str = "bits_decimal") -> str:
+def get_reference_value_string(force_mega_unit: bool, decimal_places: int, unit_type: str = "bits_decimal") -> str:
     """
     Returns a reference number string (e.g., '888.8' or '8888.88') used to 
     calculate the maximum width needed for speed values in the UI.
@@ -176,7 +176,7 @@ def get_reference_value_string(always_mbps: bool, decimal_places: int, unit_type
     # we need 4 digits to accommodate Gigabit speeds (1000 Mbps).
     # If units are Bytes, 3 digits covers up to 999 MB/s (approx 8 Gbps), which is plenty.
     # If scaling is Auto (not always_mbps), 3 digits covers "999 Kbps" or "1.2 Gbps".
-    if always_mbps and not is_bytes:
+    if force_mega_unit and not is_bytes:
         integer_part = "8888"
     else:
         integer_part = "888" 
@@ -191,7 +191,7 @@ def format_speed(
     i18n, 
     use_megabytes: bool = False,  # Deprecated
     *, 
-    always_mbps: bool = False, 
+    force_mega_unit: bool = False, 
     decimal_places: int = 1,
     unit_type: str = "bits_decimal",
     fixed_width: bool = False,
@@ -235,8 +235,8 @@ def format_speed(
     # Determine scale and unit
     if current_speed < network_consts.MINIMUM_DISPLAY_SPEED:
         val = 0.0
-        unit = labels[2] if always_mbps else labels[1]
-    elif always_mbps:
+        unit = labels[2] if force_mega_unit else labels[1]
+    elif force_mega_unit:
         val = speed_value / mega_div
         unit = labels[2]
     else:
@@ -261,7 +261,7 @@ def format_speed(
     
     if fixed_width:
         # Use reference string to match logic in layout/renderer
-        ref_val = get_reference_value_string(always_mbps, decimal_places, unit_type=unit_type)
+        ref_val = get_reference_value_string(force_mega_unit, decimal_places, unit_type=unit_type)
         formatted_val = formatted_val.rjust(len(ref_val))
     
     if split_unit:

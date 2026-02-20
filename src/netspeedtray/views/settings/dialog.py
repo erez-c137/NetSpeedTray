@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional, TYPE_CHECKING
 if TYPE_CHECKING:
     from netspeedtray.views.widget import NetworkSpeedWidget
 
-from PyQt6.QtCore import Qt, pyqtSignal, QTimer
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QSize
 from PyQt6.QtGui import QColor, QFont, QIcon, QCloseEvent
 from PyQt6.QtWidgets import (
     QApplication, QColorDialog, QDialog, QFileDialog, QFontDialog,
@@ -45,21 +45,51 @@ from netspeedtray.views.settings.pages.interfaces import InterfacesPage
 from netspeedtray.views.settings.pages.general import GeneralPage
 from netspeedtray.views.settings.pages.appearance import AppearancePage
 from netspeedtray.views.settings.pages.colors import ColorsPage
+from netspeedtray.constants.update_mode import UpdateMode
 
 
 class AdaptiveStackedWidget(QStackedWidget):
     """
-    A QStackedWidget that adjusts its size hint to match the currently visible widget.
-    This prevents the dialog from being locked to the size of the largest widget in the stack.
+    A QStackedWidget that adjusts its size to accommodate all pages.
+    
+    The dialog maintains a consistent size based on the largest page,
+    preventing the window from resizing when switching between tabs.
+    This provides a stable, professional user experience.
     """
     def sizeHint(self):
-        if self.currentWidget():
-            return self.currentWidget().sizeHint()
+        """Returns the size needed to fit the largest page in the stack."""
+        max_width = 0
+        max_height = 0
+        
+        # Calculate the maximum dimensions needed by any page
+        for i in range(self.count()):
+            widget = self.widget(i)
+            if widget:
+                hint = widget.sizeHint()
+                max_width = max(max_width, hint.width())
+                max_height = max(max_height, hint.height())
+        
+        # Return the maximum size found, or fallback to parent implementation
+        if max_width > 0 and max_height > 0:
+            return QSize(max_width, max_height)
         return super().sizeHint()
 
     def minimumSizeHint(self):
-        if self.currentWidget():
-            return self.currentWidget().minimumSizeHint()
+        """Returns the minimum size needed to fit the largest page in the stack."""
+        max_width = 0
+        max_height = 0
+        
+        # Calculate the maximum minimum dimensions needed by any page
+        for i in range(self.count()):
+            widget = self.widget(i)
+            if widget:
+                hint = widget.minimumSizeHint()
+                max_width = max(max_width, hint.width())
+                max_height = max(max_height, hint.height())
+        
+        # Return the maximum minimum size found, or fallback to parent implementation
+        if max_width > 0 and max_height > 0:
+            return QSize(max_width, max_height)
         return super().minimumSizeHint()
 
 
@@ -279,6 +309,33 @@ class SettingsDialog(QDialog):
         """Connects additional global signals."""
         self.appearance_page.layout_changed.connect(self._adjust_size_and_reposition)
         self.interfaces_page.layout_changed.connect(self._adjust_size_and_reposition)
+        # When Force MB toggle is changed, ensure SMART update_rate is not selected
+        try:
+            self.units_page.speed_display_mode.toggled.connect(self._on_force_mb_toggled)
+        except Exception:
+            # Defensive: if widget API differs, ignore
+            pass
+
+    def _on_force_mb_toggled(self, checked: bool) -> None:
+        """When Force MB is toggled, ensure update_rate SMART is not selected when Force MB is OFF.
+
+        If the toggle is turned OFF (auto mode) and the update rate slider is on SMART (position 0),
+        move it to AGGRESSIVE (1s) to prevent jitter. This enforces the UI-level rule immediately
+        so users can't save an incompatible combination.
+        """
+        try:
+            # If turned off, ensure GeneralPage slider isn't set to SMART
+            if not checked and hasattr(self, 'general_page'):
+                try:
+                    if self.general_page.update_rate.value() == 0:
+                        self.general_page.update_rate.setValue(1)
+                        self.general_page.update_rate.setValueText(self.general_page._format_update_rate_label(1))
+                        # Propagate change immediately
+                        self._schedule_settings_update()
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     def _on_sidebar_selection_changed(self, row: int) -> None:
         """Handles sidebar row changes to switch the stacked page."""
@@ -352,11 +409,12 @@ class SettingsDialog(QDialog):
             else:
                  settings["color_is_automatic"] = self.original_config.get("color_is_automatic", True)
                  
-            # Fix dynamic update rate vs slider logic
-            if settings["update_rate"] == 0:
-                 settings["update_rate"] = constants.timers.SMART_MODE_INTERVAL_MS / 1000.0
-            else:
-                 settings["update_rate"] = max(constants.config.defaults.MINIMUM_UPDATE_RATE, settings["update_rate"])
+            # UI-level rule: if Force MB is OFF (speed_display_mode == 'auto') then SMART
+            # adaptive update mode is not allowed because it causes rapid unit flips.
+            # Enforce at UI collection time by forcing to 1s (AGGRESSIVE) when needed.
+            if settings.get("speed_display_mode") == "auto" and float(settings.get("update_rate", 1.0)) <= 0:
+                self.logger.info("Force MB is off and SMART was selected; forcing update_rate to %ss", UpdateMode.AGGRESSIVE)
+                settings["update_rate"] = float(UpdateMode.AGGRESSIVE)
 
             return settings
         except Exception as e:

@@ -94,6 +94,14 @@ def mock_i18n():
     i18n.BACKGROUND_COLOR_TOOLTIP = "Select Bg"
     i18n.BACKGROUND_OPACITY_LABEL = "Opacity"
     i18n.SHORT_UNIT_LABELS_LABEL = "Short Labels"
+    i18n.KEEP_VISIBLE_FULLSCREEN_LABEL = "Keep Visible in Fullscreen"
+
+    # For GeneralPage update rate slider
+    i18n.SMART_MODE_LABEL = "Smart"
+    i18n.UPDATE_MODE_AGGRESSIVE_LABEL = "Aggressive"
+    i18n.UPDATE_MODE_BALANCED_LABEL = "Balanced"
+    i18n.UPDATE_MODE_EFFICIENT_LABEL = "Efficient"
+    i18n.UPDATE_MODE_POWER_SAVER_LABEL = "Power Saver"
 
     # Font Weight Labels (used in Win11Slider.setValueText)
     for key in constants.fonts.WEIGHT_MAP.values():
@@ -110,10 +118,10 @@ def test_general_page(q_app, mock_i18n, mock_callback):
     """Test GeneralPage load and get settings."""
     page = GeneralPage(mock_i18n, mock_callback)
     
+    # Test with fixed update rate
     config = {
         "language": "fr_FR",
-        "update_rate": 1.5,
-        "dynamic_update_enabled": True,
+        "update_rate": 2.0,
         "free_move": True,
         "start_with_windows": True 
     }
@@ -122,10 +130,22 @@ def test_general_page(q_app, mock_i18n, mock_callback):
     
     settings = page.get_settings()
     assert settings["language"] == "fr_FR"
-    assert settings["update_rate"] == 1.5
-    assert settings["dynamic_update_enabled"] is True
+    assert settings["update_rate"] == 2.0
     assert settings["free_move"] is True
     assert settings["start_with_windows"] is True
+    
+    # Test with Smart mode (update_rate = -1.0)
+    config_smart = {
+        "language": "en_US",
+        "update_rate": -1.0,  # SMART sentinel
+        "free_move": False,
+    }
+    
+    page.load_settings(config_smart, is_startup_enabled=False)
+    settings_smart = page.get_settings()
+    assert settings_smart["update_rate"] == -1.0  # Smart mode
+    assert settings_smart["language"] == "en_US"
+    assert settings_smart["free_move"] is False
 
 def test_appearance_page(q_app, mock_i18n, mock_callback):
     """Test AppearancePage."""
@@ -198,7 +218,7 @@ def test_units_page(q_app, mock_i18n, mock_callback):
     
     config = {
         "unit_type": "bits_binary",
-        "speed_display_mode": "always_mbps",
+        "speed_display_mode": "auto",
         "decimal_places": 2,
         "text_alignment": "center",
         "swap_upload_download": False,
@@ -212,7 +232,7 @@ def test_units_page(q_app, mock_i18n, mock_callback):
     settings = page.get_settings()
     
     assert settings["unit_type"] == "bits_binary"
-    assert settings["speed_display_mode"] == "always_mbps"
+    assert settings["speed_display_mode"] == "auto"
     assert settings["decimal_places"] == 2
     assert settings["text_alignment"] == "center"
     assert settings["swap_upload_download"] is False

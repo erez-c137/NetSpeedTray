@@ -76,6 +76,7 @@ class GraphLogic:
     def calculate_stats(history_data: List[Tuple[float, float, float]]) -> Dict[str, float]:
         """
         Calculates Max and Average speeds (Mbps) from raw history data.
+        Uses IQR-based outlier filtering to eliminate phantom spikes.
         """
         stats = {
             'max_up': 0.0, 'max_down': 0.0,
@@ -91,12 +92,46 @@ class GraphLogic:
         # Mbps conversion factors
         mbps_factor = constants.network.units.BITS_PER_BYTE / constants.network.units.MEGA_DIVISOR
         
-        if upload_bytes_sec:
-            stats['max_up'] = max(upload_bytes_sec) * mbps_factor
-            stats['avg_up'] = (sum(upload_bytes_sec) / len(upload_bytes_sec)) * mbps_factor
+        def filter_outliers_iqr(values: List[float]) -> List[float]:
+            """
+            Remove outliers using Interquartile Range (IQR) method.
+            Filters values > Q3 + 1.5*IQR (eliminates phantom spikes).
+            """
+            if len(values) < 4:
+                return values
             
-        if download_bytes_sec:
-            stats['max_down'] = max(download_bytes_sec) * mbps_factor
-            stats['avg_down'] = (sum(download_bytes_sec) / len(download_bytes_sec)) * mbps_factor
+            try:
+                import numpy as np
+                q1 = float(np.percentile(values, 25))
+                q3 = float(np.percentile(values, 75))
+                iqr = q3 - q1
+                
+                # If IQR is 0 (all same value), don't filter
+                if iqr <= 0:
+                    return values
+                
+                lower_bound = q1 - 1.5 * iqr
+                upper_bound = q3 + 1.5 * iqr
+                
+                filtered = [v for v in values if lower_bound <= v <= upper_bound]
+                
+                # Ensure we don't filter out all data
+                return filtered if filtered else values
+            except ImportError:
+                return values
+            except Exception:
+                # If filtering fails, return original data
+                return values
+        
+        filtered_upload = filter_outliers_iqr(upload_bytes_sec)
+        filtered_download = filter_outliers_iqr(download_bytes_sec)
+        
+        if filtered_upload:
+            stats['max_up'] = max(filtered_upload) * mbps_factor
+            stats['avg_up'] = (sum(filtered_upload) / len(filtered_upload)) * mbps_factor
+            
+        if filtered_download:
+            stats['max_down'] = max(filtered_download) * mbps_factor
+            stats['avg_down'] = (sum(filtered_download) / len(filtered_download)) * mbps_factor
             
         return stats

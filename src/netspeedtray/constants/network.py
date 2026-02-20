@@ -72,7 +72,9 @@ class UnitConstants:
 class NetworkSpeedConstants:
     """Constants for network speed calculations."""
     DEFAULT_SPEED: Final[float] = 0.0
-    MIN_TIME_DIFF: Final[float] = 1e-6
+    # Clamp time deltas to prevent scheduling jitter from producing phantom spikes.
+    # 10ms (0.01s) is conservative but significantly reduces false positives from OS scheduling artifacts.
+    MIN_TIME_DIFF: Final[float] = 0.01
     MIN_RECORDABLE_SPEED_BPS: Final[float] = 1.0
     
     # These are now i18n keys
@@ -98,8 +100,8 @@ class InterfaceConstants:
         "loopback", "teredo", "isatap", "bluetooth", "vpn", "virtual", "vmware", "vbox"
     ]
     
-    # Maximum plausible speed in bytes per second (10 Gbps) to filter out anomalies.
-    MAX_REASONABLE_SPEED_BPS: Final[int] = 1_250_000_000
+    # Absolute fallback ceiling (100 Gbps) for when physical link speeds cannot be determined (e.g. virtual adapters) 
+    MAX_REASONABLE_SPEED_BPS: Final[int] = 12_500_000_000
 
     def __init__(self) -> None:
         self.validate()

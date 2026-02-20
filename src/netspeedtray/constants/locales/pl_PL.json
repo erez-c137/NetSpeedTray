@@ -93,6 +93,7 @@
     "DYNAMIC_UPDATE_RATE_LABEL": "Dynamiczne odświeżanie",
     "START_WITH_WINDOWS_LABEL": "Uruchamiaj z systemem Windows",
     "FREE_MOVE_LABEL": "Swobodne przesuwanie (bez przyciągania)",
+    "KEEP_VISIBLE_FULLSCREEN_LABEL": "Pozostań widoczny w trybie pełnoekranowym",
     "FONT_SIZE_LABEL": "Rozmiar czcionki:",
     "FONT_FAMILY_LABEL": "Czcionka:",
     "FONT_WEIGHT_LABEL": "Grubość:",
@@ -252,5 +253,10 @@
     "STAT_AVG_SPEED": "PRĘDKOŚĆ ŚRED",
     "STAT_TOTAL_DATA": "SUMA DANYCH",
     "BUTTON_RESET_VIEW": "Resetuj widok",
-    "ZOOM_HINT": "Kliknij dwukrotnie, aby zresetować"
+    "ZOOM_HINT": "Kliknij dwukrotnie, aby zresetować",
+    "FORCE_MB_LABEL": "Wymuś wyświetlanie w MB",
+    "UPDATE_MODE_AGGRESSIVE_LABEL": "Agresywny (1s)",
+    "UPDATE_MODE_BALANCED_LABEL": "Zrównoważony (2s)",
+    "UPDATE_MODE_EFFICIENT_LABEL": "Wydajny (5s)",
+    "UPDATE_MODE_POWER_SAVER_LABEL": "Oszczędzanie energii (10s)"
 }

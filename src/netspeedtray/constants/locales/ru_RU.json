@@ -93,6 +93,7 @@
     "DYNAMIC_UPDATE_RATE_LABEL": "Динамическая частота обновления",
     "START_WITH_WINDOWS_LABEL": "Запускать с Windows",
     "FREE_MOVE_LABEL": "Свободное перемещение (без прилипания)",
+    "KEEP_VISIBLE_FULLSCREEN_LABEL": "Оставаться видимым в полноэкранном режиме",
     "FONT_SIZE_LABEL": "Размер шрифта:",
     "FONT_FAMILY_LABEL": "Шрифт:",
     "FONT_WEIGHT_LABEL": "Насыщенность:",
@@ -252,5 +253,10 @@
     "STAT_AVG_SPEED": "СРЕДНЯЯ СКОР.",
     "STAT_TOTAL_DATA": "ВСЕГО ДАННЫХ",
     "BUTTON_RESET_VIEW": "Сбросить вид",
-    "ZOOM_HINT": "Двойной клик для сброса"
+    "ZOOM_HINT": "Двойной клик для сброса",
+    "FORCE_MB_LABEL": "Принудительно отображать в МБ",
+    "UPDATE_MODE_AGGRESSIVE_LABEL": "Агрессивный (1с)",
+    "UPDATE_MODE_BALANCED_LABEL": "Сбалансированный (2с)",
+    "UPDATE_MODE_EFFICIENT_LABEL": "Эффективный (5с)",
+    "UPDATE_MODE_POWER_SAVER_LABEL": "Энергосберегающий (10с)"
 }

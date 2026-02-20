@@ -504,11 +504,17 @@ class GraphInteractionHandler(QObject):
             up_str = format_speed(upload_bps, self.window.i18n, unit_type=unit_type, decimal_places=decimal_places, short_labels=True)
             down_str = format_speed(download_bps, self.window.i18n, unit_type=unit_type, decimal_places=decimal_places, short_labels=True)
             
+            # Get max speeds from current visible graph data for display in tooltip
+            max_download_bps = np.max(self._graph_data_downs) if len(self._graph_data_downs) > 0 else 0
+            max_upload_bps = np.max(self._graph_data_ups) if len(self._graph_data_ups) > 0 else 0
+            max_down_str = format_speed(max_download_bps, self.window.i18n, unit_type=unit_type, decimal_places=decimal_places, short_labels=True)
+            max_up_str = format_speed(max_upload_bps, self.window.i18n, unit_type=unit_type, decimal_places=decimal_places, short_labels=True)
+            
+            # Tooltip with 2 lines: download and upload with max speeds
             tooltip_text = (
-                f'<div style="font-family: Segoe UI, sans-serif; font-size: 11px; font-weight: 400; line-height: 1.4;">'
-                f'<span style="color: #888;">{timestamp_dt.strftime("%Y-%m-%d")}</span> <span style="color: #ccc;">{timestamp_dt.strftime("%H:%M:%S")}</span><br/>'
-                f'<span style="color: {constants.graph.DOWNLOAD_LINE_COLOR};">▼ {down_str}</span><br/>'
-                f'<span style="color: {constants.graph.UPLOAD_LINE_COLOR};">▲ {up_str}</span>'
+                f'<div style="font-family: Segoe UI, sans-serif; font-size: 10px; font-weight: 400; line-height: 1.6;">'
+                f'<div style="color: {constants.graph.DOWNLOAD_LINE_COLOR};">▼ {max_down_str}  {down_str}</div>'
+                f'<div style="color: {constants.graph.UPLOAD_LINE_COLOR};">▲ {max_up_str}  {up_str}</div>'
                 f'</div>'
             )
             self.tooltip.setText(tooltip_text)

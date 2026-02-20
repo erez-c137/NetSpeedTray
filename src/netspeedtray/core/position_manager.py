@@ -125,9 +125,30 @@ class PositionCalculator:
     def calculate_position(self, taskbar_info: TaskbarInfo, widget_size: Tuple[int, int], config: Dict[str, Any]) -> ScreenPosition:
         """
         Calculates the widget's optimal position based on taskbar edge and tray location.
+        
+        Args:
+            taskbar_info: TaskbarInfo object with position/edge information
+            widget_size: Tuple of (width, height) in pixels
+            config: Configuration dictionary with positioning options
+            
+        Returns:
+            ScreenPosition with calculated x, y coordinates
+            
+        Raises:
+            ValueError: If inputs are invalid/malformed
         """
         try:
-             # Fallback for invalid taskbar
+            # Input validation
+            if taskbar_info is None:
+                raise ValueError("taskbar_info cannot be None")
+            if not isinstance(widget_size, (tuple, list)) or len(widget_size) != 2:
+                raise ValueError(f"widget_size must be a tuple of (width, height), got {widget_size}")
+            if not all(isinstance(d, int) and d > 0 for d in widget_size):
+                raise ValueError(f"widget_size dimensions must be positive integers, got {widget_size}")
+            if config is None or not isinstance(config, dict):
+                raise ValueError(f"config must be a dictionary, got {config}")
+            
+            # Fallback for invalid taskbar
             if taskbar_info.hwnd == 0:
                 logger.warning("Calculation requested for fallback taskbar. Using safe fallback.")
                 return self._get_safe_fallback_position(widget_size)
@@ -140,46 +161,117 @@ class PositionCalculator:
             dpi_scale = taskbar_info.dpi_scale if taskbar_info.dpi_scale > 0 else 1.0
             widget_width, widget_height = widget_size
 
+            # NEW: Clamp widget size to reasonable bounds to prevent off-screen/huge widgets
+            ui_widget = getattr(constants.ui, 'widget', None)
+            if ui_widget:
+                # Clamp width
+                if widget_width > ui_widget.MAX_WIDGET_WIDTH_PX:
+                    logger.warning(
+                        "Widget width %s exceeds max %spx. Clamping to prevent off-screen positioning.",
+                        widget_width, ui_widget.MAX_WIDGET_WIDTH_PX
+                    )
+                    widget_width = ui_widget.MAX_WIDGET_WIDTH_PX
+                # Clamp height
+                if widget_height > ui_widget.MAX_WIDGET_HEIGHT_PX:
+                    logger.warning(
+                        "Widget height %s exceeds max %spx. Clamping to prevent off-screen positioning.",
+                        widget_height, ui_widget.MAX_WIDGET_HEIGHT_PX
+                    )
+                    widget_height = ui_widget.MAX_WIDGET_HEIGHT_PX
+
+            # Use possibly-clamped size for subsequent calculations
+            widget_size = (widget_width, widget_height)
+
             x, y = 0, 0
             
             if edge in (constants.taskbar.edge.BOTTOM, constants.taskbar.edge.TOP):
-                # --- HORIZONTAL TASKBAR LOGIC ---
-                tb_top_log = round(taskbar_info.rect[1] / dpi_scale)
-                tb_height_log = round((taskbar_info.rect[3] - taskbar_info.rect[1]) / dpi_scale)
-                
-                right_boundary = round(taskbar_info.get_tray_rect()[0] / dpi_scale) if taskbar_info.get_tray_rect() else round(taskbar_info.rect[2] / dpi_scale)
-                left_boundary = round(taskbar_info.tasklist_rect[2] / dpi_scale) if taskbar_info.tasklist_rect else round(taskbar_info.rect[0] / dpi_scale)
-
-                y = tb_top_log + (tb_height_log - widget_height) // 2
-                offset = config.get('tray_offset_x', constants.config.defaults.DEFAULT_TRAY_OFFSET_X)
-                x = right_boundary - widget_width - offset
-
-                if x < left_boundary:
-                    logger.warning("Calculated position overlaps app icons; snapping to safe zone.")
-                    x = left_boundary + constants.layout.DEFAULT_PADDING
-
+                # Horizontal taskbar: calculate Y position (centered in taskbar gap)
+                x, y = self._calculate_horizontal_position(taskbar_info, widget_size, config, dpi_scale)
             elif edge in (constants.taskbar.edge.LEFT, constants.taskbar.edge.RIGHT):
-                # --- VERTICAL TASKBAR LOGIC ---
-                tb_left_log = round(taskbar_info.rect[0] / dpi_scale)
-                tb_width_log = round((taskbar_info.rect[2] - taskbar_info.rect[0]) / dpi_scale)
-                
-                bottom_boundary = round(taskbar_info.get_tray_rect()[1] / dpi_scale) if taskbar_info.get_tray_rect() else round(taskbar_info.rect[3] / dpi_scale)
-                top_boundary = round(taskbar_info.tasklist_rect[3] / dpi_scale) if taskbar_info.tasklist_rect else round(taskbar_info.rect[1] / dpi_scale)
-                
-                x = tb_left_log + (tb_width_log - widget_width) // 2
-                
-                # Align to bottom (near tray) instead of absolute center
-                offset_y = config.get('tray_offset_y', constants.config.defaults.DEFAULT_TRAY_OFFSET_X)
-                y = bottom_boundary - widget_height - offset_y
-            
+                # Vertical taskbar: calculate X position (centered in taskbar gap)
+                x, y = self._calculate_vertical_position(taskbar_info, widget_size, config, dpi_scale)
             else:
                 return self._get_safe_fallback_position(widget_size)
 
             return ScreenUtils.validate_position(x, y, widget_size, screen)
 
+        except ValueError as e:
+            logger.error("Invalid parameter in position calculation: %s", e, exc_info=True)
+            return self._get_safe_fallback_position(widget_size)
         except Exception as e:
             logger.error("Error calculating position: %s", e, exc_info=True)
             return self._get_safe_fallback_position(widget_size)
+
+    def _calculate_horizontal_position(self, taskbar_info: TaskbarInfo, widget_size: Tuple[int, int], 
+                                       config: Dict[str, Any], dpi_scale: float) -> Tuple[int, int]:
+        """
+        Calculate position for horizontal (top/bottom) taskbar.
+        
+        Returns:
+            (x, y) tuple with calculated position
+            
+        For horizontal taskbars:
+        - Y position: centered vertically in the taskbar gap
+        - X position: aligned to right edge (near system tray)
+        """
+        widget_width, widget_height = widget_size
+        
+        # Convert physical coordinates to logical (screen coordinates)
+        tb_top_log = taskbar_info.rect[1] / dpi_scale
+        tb_height_log = (taskbar_info.rect[3] - taskbar_info.rect[1]) / dpi_scale
+        
+        # Determine horizontal boundaries (left = app icons, right = system tray)
+        right_boundary = (taskbar_info.get_tray_rect()[0] if taskbar_info.get_tray_rect() else taskbar_info.rect[2]) / dpi_scale
+        left_boundary = (taskbar_info.tasklist_rect[2] if taskbar_info.tasklist_rect else taskbar_info.rect[0]) / dpi_scale
+        
+        # Calculate Y: center widget vertically in taskbar gap
+        # Using float intermediates to prevent rounding errors (Issue #104)
+        y_center = tb_top_log + (tb_height_log - widget_height) / 2.0
+        y = round(y_center)
+        
+        # Calculate X: align to right (system tray side) with offset
+        offset = config.get('tray_offset_x', constants.config.defaults.DEFAULT_TRAY_OFFSET_X)
+        x = round(right_boundary - widget_width - offset)
+        
+        # Safety check: don't overlap with app icons on left
+        if x < left_boundary:
+            logger.warning("Calculated position overlaps app icons; snapping to safe zone.")
+            x = round(left_boundary + constants.layout.DEFAULT_PADDING)
+        
+        return x, y
+
+    def _calculate_vertical_position(self, taskbar_info: TaskbarInfo, widget_size: Tuple[int, int],
+                                     config: Dict[str, Any], dpi_scale: float) -> Tuple[int, int]:
+        """
+        Calculate position for vertical (left/right) taskbar.
+        
+        Returns:
+            (x, y) tuple with calculated position
+            
+        For vertical taskbars:
+        - X position: centered horizontally in the taskbar gap
+        - Y position: aligned to bottom edge (near system tray)
+        """
+        widget_width, widget_height = widget_size
+        
+        # Convert physical coordinates to logical (screen coordinates)
+        tb_left_log = taskbar_info.rect[0] / dpi_scale
+        tb_width_log = (taskbar_info.rect[2] - taskbar_info.rect[0]) / dpi_scale
+        
+        # Determine vertical boundaries (top = app icons, bottom = system tray)
+        bottom_boundary = (taskbar_info.get_tray_rect()[1] if taskbar_info.get_tray_rect() else taskbar_info.rect[3]) / dpi_scale
+        top_boundary = (taskbar_info.tasklist_rect[3] if taskbar_info.tasklist_rect else taskbar_info.rect[1]) / dpi_scale
+        
+        # Calculate X: center widget horizontally in taskbar gap
+        # Using float intermediates to prevent rounding errors (Issue #104)
+        x_center = tb_left_log + (tb_width_log - widget_width) / 2.0
+        x = round(x_center)
+        
+        # Calculate Y: align to bottom (system tray side) with offset
+        offset_y = config.get('tray_offset_y', constants.config.defaults.DEFAULT_TRAY_OFFSET_X)
+        y = round(bottom_boundary - widget_height - offset_y)
+        
+        return x, y
 
     def _get_safe_fallback_position(self, widget_size: Tuple[int, int]) -> ScreenPosition:
         """Provides a default fallback position (bottom-right of primary screen)."""
@@ -190,10 +282,11 @@ class PositionCalculator:
 
             screen_rect: QRect = primary_screen.availableGeometry()
             widget_width, widget_height = widget_size
-            margin = constants.taskbar.position.SCREEN_EDGE_MARGIN
+            ui_widget = getattr(constants.ui, 'widget', None)
+            margin_px = ui_widget.SCREEN_EDGE_MARGIN_PX if ui_widget else 10
 
-            fallback_x = screen_rect.right() - widget_width - margin + 1
-            fallback_y = screen_rect.bottom() - widget_height - margin + 1
+            fallback_x = screen_rect.right() - widget_width - margin_px
+            fallback_y = screen_rect.bottom() - widget_height - margin_px
 
             return ScreenPosition(
                 max(screen_rect.left(), fallback_x),
@@ -401,7 +494,13 @@ class PositionManager(QObject):
         # FIX for #87: specific check for Free Move
         if self._state.config.get("free_move", False):
             # If Free Move is enabled, only constrain to screen bounds (prevent total loss)
-            screen = self._state.taskbar_info.get_screen() if self._state.taskbar_info else QApplication.screenAt(pos)
+            # FIX for #102: Use the screen at the drag destination, not the taskbar's screen
+            # This allows the widget to be dragged freely across all connected monitors
+            screen = QApplication.screenAt(pos)
+            if not screen:
+                # Fallback to taskbar screen if no screen found at pos (shouldn't happen)
+                screen = self._state.taskbar_info.get_screen() if self._state.taskbar_info else None
+            
             if screen:
                 widget_size = (self._state.widget.width(), self._state.widget.height())
                 validated = ScreenUtils.validate_position(pos.x(), pos.y(), widget_size, screen)

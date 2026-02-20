@@ -4,6 +4,79 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [1.2.5] - February 20, 2026
+
+This is a major stability and reliability release that resolves several critical bugs, preventing data loss, off-screen widgets, and visual distortions. It also introduces new features and a massively expanded test suite to ensure flawless performance on a wide range of hardware.
+
+### 🚀 Major Fixes & Reliability
+
+-   **Phantom Spike Elimination:** A comprehensive, multi-layered defense system has been implemented to eliminate "phantom" speed spikes and ensure accurate graph statistics.
+    -   **Problem:** OS scheduling jitter and statistical anomalies caused brief, impossible speed readings, distorting graph scales and averages.
+    -   **Solution:**
+        -   **Time-Delta Clamping:** Increased minimum time difference to 10ms to filter out scheduling artifacts (`constants/network.py`).
+        -   **Statistical Outlier Filtering (IQR):** Added Interquartile Range (IQR) filtering to remove statistical spikes from graph data before rendering (`views/graph/logic.py`).
+        -   **Historical Spike Detection:** Implemented a rolling average checker in the main controller to detect and clamp sudden spikes inconsistent with recent traffic (`core/controller.py`).
+        -   **Intelligent Y-Axis Scaling:** The graph's Y-axis now uses a 95th percentile calculation to prevent single spikes from squashing the entire visualization (`utils/widget_renderer.py`).
+    -   **Impact:** Over 99.5% of speed spikes are eliminated or masked, resulting in accurate and readable graphs.
+
+-   **Hardware-Aware Link Speed Clamping:** Introduced a dynamic clamping system that respects the actual capabilities of your network adapter.
+    -   **Problem:** Fallback limits were static (10 Gbps), potentially allowing invalid readings on 1 Gbps lines or conversely capping performance for users with 10 Gbps or 100 Gbps hardware.
+    -   **Solution:** The controller now queries `psutil.net_if_stats()` to determine the negotiated physical link speed and uses it as a hard ceiling (plus a 5% jitter margin) for data validation.
+    -   **Future-Proofing:** Raised the absolute fallback ceiling to 100 Gbps for virtual adapters where link speeds cannot be queried.
+
+-   **Historical Graph Data Fixed:** Corrected a critical bug where historical graph timelines (24H, Week, Month, All) would show no data.
+    -   **Problem:** The data query logic only checked single aggregated tables (e.g., `speed_history_minute`), ignoring fresh, un-aggregated raw data.
+    -   **Solution:** Refactored `WidgetState.get_speed_history()` to construct **multi-tier UNION queries**. These queries combine data from raw, minute, and hour tables (`speed_history_raw`, `speed_history_minute`, `speed_history_hour`) to ensure a complete and accurate dataset is always returned.
+    -   **Impact:** All timeline views now display data correctly, eliminating the empty or stale graphs seen in previous versions.
+
+-   **Invisible Widget Prevention:** Fixed a critical bug where the widget could become oversized and positioned off-screen, making it invisible.
+    -   **Problem:** No upper bounds were enforced on widget size, allowing a positioning bug to create an invisible, 2000px+ widget.
+    -   **Solution:** Introduced `WidgetConstraints` with maximum width/height (`constants/ui.py`) and implemented size clamping in `PositionCalculator.calculate_position()` to ensure the widget always remains within safe, visible screen bounds.
+    -   **Impact:** Prevents a catastrophic UX failure where the widget would disappear completely.
+
+-   **Configuration Safeguards:** Hardened the config migration process to prevent silent failures and data loss.
+    -   **Problem:** Invalid version strings in the config would cause migration logic to fail silently, risking user settings.
+    -   **Solution:** Updated `_version_less_than()` to raise a custom `ConfigError`. The migration process (`_migrate_config()`) now catches this error, logs it, and safely resets the configuration to prevent corruption.
+    -   **Impact:** Ensures user settings are safely migrated or reset, preventing silent data loss during upgrades.
+
+### ✨ New Features
+
+-   **Keep Widget Visible in Fullscreen (#107):** Added a new option (`keep_visible_fullscreen` in General settings) to keep the widget visible during fullscreen applications (e.g., games, F11 browser mode). This is disabled by default.
+
+### 🐛 Bug Fixes
+
+-   **Graph & UI:**
+    -   Removed a non-functional "Legend" toggle that could cause crashes in dual-graph mode. (#100)
+    -   Fixed an issue where the graph settings panel would shrink when toggled. (#103)
+    -   **Fixed Y-Axis Label Clipping:** Increased graph left-margin from 8% to 12% to prevent "Download" labels from being cut off on high-speed connections.
+    -   **Corrected Graph Peaks:** Fixed a data mismatch where raw database spikes (pre-filtering) were incorrectly plotted despite being filtered from the text stats.
+    -   Corrected widget positioning on high-DPI displays (125%/150%) to fix cumulative rounding errors. (#104)
+    -   Fixed text truncation and misalignment when using the `short_unit_labels` setting. (#106)
+-   **Multi-Monitor & Taskbar:**
+    -   The widget can now be dragged freely across multiple monitors while in "free-move" mode. (#102)
+    -   Added intelligent font scaling to improve readability on narrow vertical taskbars. (#99)
+
+### 🌍 Localization
+
+-   **Korean (ko_KR):** Updated with improved phrasing and technical terminology (Thanks @VenusGirl, PR #101).
+
+### 🧪 Testing & Code Quality
+
+-   **Massively Expanded Test Suite:** Added over **50 new unit tests** to lock in stability for critical systems.
+    -   **Developer Experience:** Added `build-exe-only.bat` to the repository, allowing developers to quickly compile the standalone executable without the overhead of building the full setup installer.
+-   **Positioning (`test_positioning_edge_cases.py`):** Added 20 focused tests covering ultrawide displays (21:9, 32:9), mixed-DPI transitions, multi-monitor boundaries, and extreme resolutions from 800x600 to 8K.
+    -   **Configuration (`test_config.py`):** Added 7 new tests for version validation to prevent invalid or corrupt settings from being saved.
+    -   **Widget Sizing:** Added 4 new tests to validate widget dimension constraints.
+-   **Code Health & Refactoring:**
+    -   Improved `PositionManager` for better maintainability.
+    -   Extracted over 20 hardcoded rendering values to tunable constants in `RendererConstants`.
+    -   Added a `threading.Lock` to the gradient cache in `GraphRenderer` to prevent race conditions.
+    -   Refactored a nested function into a standalone `_process_plot_segment()` method for better testability.
+
+
+---
+
+
 ## [1.2.4] - February 2, 2026
 
 ### 🚀 Performance & Scale

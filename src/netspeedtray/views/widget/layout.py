@@ -119,13 +119,22 @@ class WidgetLayoutManager:
             margin = constants.renderer.TEXT_MARGIN
             hide_arrows = self.widget.config.get("hide_arrows", False)
             hide_units = self.widget.config.get("hide_unit_suffix", False)
+            # FIX for Issue #106: Read short_unit_labels config to ensure consistency
+            # Bug: Layout width calculation wasn't using same label format as render-time formatter
+            #      This caused text truncation when layout predicted smaller width than actual render
+            # Solution: Pass short_labels consistently to both layout calculation and actual rendering
+            short_labels = self.widget.config.get("short_unit_labels", constants.config.defaults.DEFAULT_SHORT_UNIT_LABELS)
             
             if is_horizontal:
                 # --- HORIZONTAL TASKBAR (TOP/BOTTOM) ---
                 if is_small:
                     # Small Horizontal Layout Width Calculation
                     unit_type = self.widget.config.get("unit_type", constants.config.defaults.DEFAULT_UNIT_TYPE)
-                    upload_pair, download_pair = self.widget.renderer._format_speed_texts(9.99, 99.99, False, precision, True, unit_type, full_string=False)
+                    # FIX for #106: Pass short_labels to formatter to match render-time behavior
+                    # This ensures layout calculation predicts the same width as actual rendering
+                    # Example: short_labels=True → "9.99 Mb/s" (shorter)
+                    #         short_labels=False → "9.99 Megabits/s" (longer, needs more width)
+                    upload_pair, download_pair = self.widget.renderer._format_speed_texts(9.99, 99.99, False, precision, True, unit_type, short_labels=short_labels, full_string=False)
                     
                     up_val, up_unit = upload_pair
                     down_val, down_unit = download_pair

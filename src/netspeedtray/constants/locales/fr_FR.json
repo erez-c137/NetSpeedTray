@@ -94,6 +94,7 @@
     "DYNAMIC_UPDATE_RATE_LABEL": "Taux de Mise à Jour Dynamique",
     "START_WITH_WINDOWS_LABEL": "Lancer avec Windows",
     "FREE_MOVE_LABEL": "Déplacement Libre (Pas de Collage)",
+    "KEEP_VISIBLE_FULLSCREEN_LABEL": "Rester visible en plein écran",
     "FONT_SIZE_LABEL": "Taille de Police :",
     "FONT_FAMILY_LABEL": "Police:",
     "FONT_WEIGHT_LABEL": "Graisse:",
@@ -252,5 +253,10 @@
     "STAT_AVG_SPEED": "VITESSE MOY",
     "STAT_TOTAL_DATA": "TOTAL DONNÉES",
     "BUTTON_RESET_VIEW": "Réinitialiser la vue",
-    "ZOOM_HINT": "Double-cliquez pour réinitialiser"
+    "ZOOM_HINT": "Double-cliquez pour réinitialiser",
+    "FORCE_MB_LABEL": "Forcer l'affichage en Mo",
+    "UPDATE_MODE_AGGRESSIVE_LABEL": "Agressif (1s)",
+    "UPDATE_MODE_BALANCED_LABEL": "Équilibré (2s)",
+    "UPDATE_MODE_EFFICIENT_LABEL": "Efficace (5s)",
+    "UPDATE_MODE_POWER_SAVER_LABEL": "Économie d'énergie (10s)"
 }

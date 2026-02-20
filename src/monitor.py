@@ -117,6 +117,11 @@ def main() -> int:
     ConfigManager.setup_logging()
     logger = logging.getLogger("NetSpeedTray.Main")
     
+    def excepthook(exc_type, exc_value, exc_tb):
+        logger.critical("Unhandled exception:", exc_info=(exc_type, exc_value, exc_tb))
+    
+    sys.excepthook = excepthook
+    
     # The QApplication must be created before any UI elements.
     app = QApplication(sys.argv)
 

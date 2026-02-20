@@ -87,6 +87,10 @@ class WidgetState(QObject):
         self.maintenance_timer = QTimer(self)
         self.maintenance_timer.timeout.connect(self.trigger_maintenance)
         self.maintenance_timer.start(60 * 60 * 1000) # Run maintenance every hour
+        
+        # Run initial maintenance on startup to aggregate raw data into minute/hour tables
+        # This ensures historical timelines show data immediately instead of waiting 1 hour
+        self.trigger_maintenance()
 
         # Persistent Read Connections (per-thread)
         self._read_conns: Dict[int, sqlite3.Connection] = {}
@@ -123,7 +127,7 @@ class WidgetState(QObject):
             return self._read_conns[tid]
 
 
-    def add_speed_data(self, speed_data: Dict[str, Tuple[float, float]], now: Optional[datetime] = None) -> None:
+    def add_speed_data(self, speed_data: Dict[str, Tuple[float, float]], now: Optional[datetime] = None, aggregated_up: Optional[float] = None, aggregated_down: Optional[float] = None) -> None:
         """
         Adds new per-interface speed data. Updates in-memory state and adds
         to the database write batch.
@@ -143,8 +147,13 @@ class WidgetState(QObject):
 
         # --- PRE-AGGREGATION OPTIMIZATION ---
         # Sum all interface speeds now so the renderer doesn't have to do it every frame.
-        total_up = sum(speeds[0] for speeds in speed_data.values())
-        total_down = sum(speeds[1] for speeds in speed_data.values())
+        if aggregated_up is not None and aggregated_down is not None:
+            total_up = aggregated_up
+            total_down = aggregated_down
+        else:
+            total_up = sum(speeds[0] for speeds in speed_data.values())
+            total_down = sum(speeds[1] for speeds in speed_data.values())
+            
         self.aggregated_history.append(AggregatedSpeedData(
             upload=total_up,
             download=total_down,
@@ -153,10 +162,15 @@ class WidgetState(QObject):
 
         timestamp = int(_now.timestamp())
         min_speed = network.speed.MIN_RECORDABLE_SPEED_BPS
+        max_speed = network.interface.MAX_REASONABLE_SPEED_BPS
+        
         for interface, (up_speed, down_speed) in speed_data.items():
             # Only add to the database batch if the speed is significant
             if up_speed >= min_speed or down_speed >= min_speed:
-                self._db_batch.append((timestamp, interface, up_speed, down_speed))
+                # HARD CLAMP: Prevent OS counter corruption (sleep wakes) from ruining the DB
+                clamped_up = min(up_speed, max_speed)
+                clamped_down = min(down_speed, max_speed)
+                self._db_batch.append((timestamp, interface, clamped_up, clamped_down))
 
 
     def get_total_bandwidth_for_period(self, start_time: Optional[datetime], end_time: datetime, interface_name: Optional[str] = None) -> Tuple[float, float]:
@@ -285,15 +299,16 @@ class WidgetState(QObject):
         target_interval = res_map.get(target_res, 60)
         
         # 3. Build TARGETED Query (Single Table based on Resolution)
-        # This replaces the slow UNION ALL approach
+        # For multi-tier queries (minute/hour), we query both the aggregated table AND raw table
+        # to ensure we capture recent data that hasn't been moved to aggregates yet.
         is_all_ifaces = not interface_name or str(interface_name).lower() == "all"
         
-        # Map resolution to table and columns
+        # Map resolution to primary table and columns
         table_map = {
             'raw': ("speed_history_raw", "upload_bytes_sec", "download_bytes_sec"),
             'minute': ("speed_history_minute", "upload_avg", "download_avg"),
             'hour': ("speed_history_hour", "upload_avg", "download_avg"),
-            'day': ("speed_history_hour", "upload_avg", "download_avg"),  # Use hour table for day aggregation
+            'day': ("speed_history_hour", "upload_avg", "download_avg"),
         }
         
         table, up_col, down_col = table_map.get(target_res, table_map['minute'])
@@ -305,30 +320,96 @@ class WidgetState(QObject):
             # Time binning calculation
             time_calc = f"CAST(timestamp / {target_interval} AS INTEGER) * {target_interval}"
             
-            # Build inner query
-            inner_query = f"""
-                SELECT 
-                    {time_calc} as bin_ts, 
-                    interface_name, 
-                    AVG({up_col}) as up, 
-                    AVG({down_col}) as down
-                FROM {table}
-                WHERE timestamp BETWEEN ? AND ?
-            """
-            params = [_start_ts, _end_ts]
-            
-            if not is_all_ifaces:
-                inner_query += " AND interface_name = ?"
-                params.append(interface_name)
+            # Build inner query. For aggregated resolutions, construct a UNION
+            # to cover both recent raw data and older aggregated data.
+            if target_res in ('minute', 'hour', 'day'):
+                # Multi-tier: union raw + minute (for minute res) or minute + hour (for hour/day res)
+                if target_res == 'minute':
+                    # For minute resolution, query raw (recent) + minute (older)
+                    raw_q = f"""
+                        SELECT 
+                            {time_calc} as bin_ts,
+                            interface_name,
+                            upload_bytes_sec as up,
+                            download_bytes_sec as down
+                        FROM {constants.data.SPEED_TABLE_RAW}
+                        WHERE timestamp BETWEEN ? AND ?
+                    """
+                    minute_q = f"""
+                        SELECT
+                            {time_calc} as bin_ts,
+                            interface_name,
+                            upload_avg as up,
+                            download_avg as down
+                        FROM {constants.data.SPEED_TABLE_MINUTE}
+                        WHERE timestamp BETWEEN ? AND ?
+                    """
+                    params = [_start_ts, _end_ts, _start_ts, _end_ts]
+                    if not is_all_ifaces:
+                        raw_q += " AND interface_name = ?"
+                        minute_q += " AND interface_name = ?"
+                        params.insert(2, interface_name)
+                        params.append(interface_name)
+                    inner_query = f"({raw_q} UNION ALL {minute_q})"
+                else:
+                    # For hour/day resolution, use raw + minute + hour tiers
+                    raw_q = f"""
+                        SELECT 
+                            {time_calc} as bin_ts,
+                            interface_name,
+                            upload_bytes_sec as up,
+                            download_bytes_sec as down
+                        FROM {constants.data.SPEED_TABLE_RAW}
+                        WHERE timestamp BETWEEN ? AND ?
+                    """
+                    minute_q = f"""
+                        SELECT
+                            {time_calc} as bin_ts,
+                            interface_name,
+                            upload_avg as up,
+                            download_avg as down
+                        FROM {constants.data.SPEED_TABLE_MINUTE}
+                        WHERE timestamp BETWEEN ? AND ?
+                    """
+                    hour_q = f"""
+                        SELECT
+                            {time_calc} as bin_ts,
+                            interface_name,
+                            upload_avg as up,
+                            download_avg as down
+                        FROM {constants.data.SPEED_TABLE_HOUR}
+                        WHERE timestamp BETWEEN ? AND ?
+                    """
+                    params = [_start_ts, _end_ts, _start_ts, _end_ts, _start_ts, _end_ts]
+                    if not is_all_ifaces:
+                        raw_q += " AND interface_name = ?"
+                        minute_q += " AND interface_name = ?"
+                        hour_q += " AND interface_name = ?"
+                        params.insert(2, interface_name)
+                        params.insert(5, interface_name)
+                        params.append(interface_name)
+                    inner_query = f"({raw_q} UNION ALL {minute_q} UNION ALL {hour_q})"
                 
-            inner_query += " GROUP BY bin_ts, interface_name"
-            
-            # Outer Query: Aggregate logic
-            # Note: LIMIT removed - aggregation already reduces data volume adequately.
-            # A LIMIT here would cut off recent data (ordered ASC, oldest first).
-            
+                # Wrap the UNION in a SELECT for aggregation
+                inner_query = f"SELECT bin_ts, interface_name, up, down FROM {inner_query}"
+            else:
+                # Raw resolution: single table query
+                inner_query = f"""
+                    SELECT 
+                        {time_calc} as bin_ts, 
+                        interface_name, 
+                        {up_col} as up, 
+                        {down_col} as down
+                    FROM {table}
+                    WHERE timestamp BETWEEN ? AND ?
+                """
+                params = [_start_ts, _end_ts]
+                if not is_all_ifaces:
+                    inner_query += " AND interface_name = ?"
+                    params.append(interface_name)
+                
+            # Outer query: aggregate bins
             if is_all_ifaces:
-                # Sum across interfaces (Eth + Wifi)
                 outer_query = f"""
                     SELECT bin_ts, COALESCE(SUM(up), 0), COALESCE(SUM(down), 0)
                     FROM ({inner_query})
@@ -336,7 +417,6 @@ class WidgetState(QObject):
                     ORDER BY bin_ts
                 """
             else:
-                # Single interface: Just order
                 outer_query = f"""
                     SELECT bin_ts, COALESCE(AVG(up), 0), COALESCE(AVG(down), 0)
                     FROM ({inner_query})
@@ -344,10 +424,9 @@ class WidgetState(QObject):
                     ORDER BY bin_ts
                 """
             
-            # self.logger.debug(f"Executing Query: {outer_query} | Params: {params}")
             cursor.execute(outer_query, tuple(params))
-            
             rows = cursor.fetchall()
+            self.logger.debug("History query: target_res=%s fetched_rows=%d", target_res, len(rows))
             
             # Convert rows to standard format (Timestamp, Up, Down)
             data_points = []
@@ -355,6 +434,25 @@ class WidgetState(QObject):
                  data_points = [(row[0], row[1], row[2]) for row in rows]
             else:
                  data_points = [(datetime.fromtimestamp(row[0]), row[1], row[2]) for row in rows]
+
+            # If targeted-table query returned no rows and we targeted an aggregated
+            # table (minute/hour/day), fall back to the more comprehensive
+            # optimized query in utils.db_utils which unions tiers. This allows
+            # freshly-started apps (with only raw data present) to still show
+            # historical ranges by reading directly from raw where appropriate.
+            if not data_points and target_res != 'raw':
+                try:
+                    from netspeedtray.utils.db_utils import get_speed_history as util_get_speed_history
+                    self.logger.debug("Targeted query returned no rows; falling back to unified DB query.")
+                    fallback = util_get_speed_history(self.db_worker.db_path, start_time=start_time, end_time=end_time, interface_name=interface_name)
+                    self.logger.debug("Fallback unified DB query returned %d rows", len(fallback) if fallback else 0)
+                    if fallback:
+                        if return_raw:
+                            data_points = [(int(dt.timestamp()), up, down) for dt, up, down in fallback]
+                        else:
+                            data_points = [(dt, up, down) for dt, up, down in fallback]
+                except Exception:
+                    self.logger.exception("Fallback unified DB query failed.")
 
             # --- SMART Edge Padding (Zero-Fill) ---
             # If no real data, create evenly-spaced zeros across the timeline.

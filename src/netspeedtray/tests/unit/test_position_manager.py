@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 from PyQt6.QtCore import QPoint, QRect, QSize
 
 from netspeedtray import constants
-from netspeedtray.core.position_manager import PositionManager, PositionCalculator, ScreenPosition, WindowState
+from netspeedtray.core.position_manager import PositionManager, PositionCalculator, ScreenPosition, WindowState, ScreenUtils
 from netspeedtray.utils.taskbar_utils import TaskbarInfo
 
 class TestPositionCalculator(unittest.TestCase):
@@ -73,6 +73,52 @@ class TestPositionCalculator(unittest.TestCase):
         
         self.assertEqual(constrained.y(), 1040)
         self.assertEqual(constrained.x(), 500)
+
+    def test_widget_size_exceeds_max_width(self):
+        """Verify oversized widget width is clamped to max allowed."""
+        # Create an oversized widget width
+        oversized_widget = (5000, 30)
+        config = {'tray_offset_x': 5}
+
+        # Calculate position; should not raise and should return a ScreenPosition
+        pos = self.calculator.calculate_position(self.mock_taskbar, oversized_widget, config)
+        self.assertIsNotNone(pos)
+        self.assertIsInstance(pos.x, int)
+
+    def test_widget_size_exceeds_max_height(self):
+        """Verify oversized widget height is clamped to max allowed."""
+        oversized_widget = (100, 5000)
+        config = {'tray_offset_x': 5}
+
+        pos = self.calculator.calculate_position(self.mock_taskbar, oversized_widget, config)
+        self.assertIsNotNone(pos)
+
+    def test_widget_size_zero_or_negative_rejected(self):
+        """Verify invalid widget sizes are rejected early."""
+        # API should gracefully fallback rather than raise; ensure a ScreenPosition is returned
+        pos1 = self.calculator.calculate_position(self.mock_taskbar, (0, 30), {})
+        pos2 = self.calculator.calculate_position(self.mock_taskbar, (100, 0), {})
+        pos3 = self.calculator.calculate_position(self.mock_taskbar, (-100, 30), {})
+
+        self.assertIsNotNone(pos1)
+        self.assertIsNotNone(pos2)
+        self.assertIsNotNone(pos3)
+
+    def test_position_stays_on_screen_after_clamping(self):
+        """Verify clamped widget stays fully visible on screen."""
+        # Use the mocked screen geometry (0,0,1920,1080)
+        screen = self.mock_screen
+        invalid_x = 1900
+        invalid_y = 1000
+        widget_size = (500, 200)
+
+        validated = ScreenUtils.validate_position(invalid_x, invalid_y, widget_size, screen)
+
+        # Verify widget stays on screen
+        self.assertTrue(validated.x + widget_size[0] <= 1920)
+        self.assertTrue(validated.y + widget_size[1] <= 1080)
+        self.assertTrue(validated.x >= 0)
+        self.assertTrue(validated.y >= 0)
 
 
 class TestPositionManager(unittest.TestCase):

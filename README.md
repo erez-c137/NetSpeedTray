@@ -95,7 +95,7 @@ The core of NetSpeedTray. It sits on your taskbar, showing your live network spe
 A clean, modern UI to control every aspect of the widget's appearance and behavior.
 
 <div align="center">
-  <img src="screenshots/settings_1.1.7.png" alt="Settings Dialog" width="600"/><br/>
+  <img src="screenshots/settings_1.2.5.png" alt="Settings Dialog" width="600"/><br/>
 </div>
 
 #### Detailed History Graph
@@ -103,7 +103,7 @@ A clean, modern UI to control every aspect of the widget's appearance and behavi
 Double-click the widget to see a detailed, filterable graph of your network history.
 
 <div align="center">
-  <img src="screenshots/main_graph_1.1.7.png" alt="Graph View" width="600"/><br/>
+  <img src="screenshots/main_graph_1.2.5.png" alt="Graph View" width="600"/><br/>
 </div>
 
 ---
@@ -191,12 +191,15 @@ Can't contribute financially? No problem! **Sharing & Starring the repo** on Git
     ```
 
 6.  **Build the Executable and Installer (Optional):**
-    -   Ensure Inno Setup 6 is installed and in your system's PATH.
-    -   Run the automated build script:
-    ```bash
-    .\build\build.bat
-    ```
-    -   The final installer and portable executable will be created in the `dist` folder.
+    -   **Full Package:** To build both the executable and the Inno Setup installer:
+        ```bash
+        .\build\build.bat
+        ```
+    -   **Executable Only:** To build just the standalone executable (no installer):
+        ```bash
+        .\build\build-exe-only.bat
+        ```
+    -   The final files will be created in the `dist` folder.
 
 </details>
 

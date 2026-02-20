@@ -7,6 +7,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QGroupBox, QComboBox, QLabel, QGridLayout
 
 from netspeedtray import constants
+from netspeedtray.constants.update_mode import UpdateMode
 from netspeedtray.utils.components import Win11Slider, Win11Toggle
 
 class GeneralPage(QWidget):
@@ -39,10 +40,14 @@ class GeneralPage(QWidget):
         update_group_layout = QVBoxLayout(update_group)
         update_group_layout.setSpacing(8)
         self.update_rate = Win11Slider(editable=False)
-        self.update_rate.setRange(0, int(constants.timers.MAXIMUM_UPDATE_RATE_SECONDS * 2))
         
-        # Connect change signal
-        self.update_rate.valueChanged.connect(self.on_change)
+        # Slider range: 0-4 = 5 discrete presets mapped to update modes
+        # 0=SMART, 1=FAST, 2=BALANCED, 3=EFFICIENT, 4=POWER_SAVER
+        self.update_rate.setRange(0, 4)
+        self.update_rate.setSingleStep(1)
+        
+        # Connect change signal: update textual label while dragging and propagate change
+        self.update_rate.valueChanged.connect(self._on_update_rate_changed)
 
         update_group_layout.addWidget(QLabel(self.i18n.UPDATE_INTERVAL_LABEL))
         update_group_layout.addWidget(self.update_rate)
@@ -54,29 +59,26 @@ class GeneralPage(QWidget):
         options_layout.setVerticalSpacing(10)
         options_layout.setHorizontalSpacing(8)
 
-        du_label = QLabel(self.i18n.DYNAMIC_UPDATE_RATE_LABEL)
-        self.dynamic_update_rate = Win11Toggle(label_text="")
-        self.dynamic_update_rate.toggled.connect(self.on_change)
-        
-        options_layout.addWidget(du_label, 0, 0, Qt.AlignmentFlag.AlignVCenter)
-        options_layout.addWidget(self.dynamic_update_rate, 0, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-
         sww_label = QLabel(self.i18n.START_WITH_WINDOWS_LABEL)
         self.start_with_windows = Win11Toggle(label_text="")
-        # Note: Startup changes usually require specific logic (registry), 
-        # but for the dialog UI we just capture the state. 
-        # The main dialog might need to handle the actual application of this.
         self.start_with_windows.toggled.connect(self.on_change)
 
-        options_layout.addWidget(sww_label, 1, 0, Qt.AlignmentFlag.AlignVCenter)
-        options_layout.addWidget(self.start_with_windows, 1, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        options_layout.addWidget(sww_label, 0, 0, Qt.AlignmentFlag.AlignVCenter)
+        options_layout.addWidget(self.start_with_windows, 0, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         
         fm_label = QLabel(self.i18n.FREE_MOVE_LABEL)
         self.free_move = Win11Toggle(label_text="")
         self.free_move.toggled.connect(self.on_change)
         
-        options_layout.addWidget(fm_label, 2, 0, Qt.AlignmentFlag.AlignVCenter)
-        options_layout.addWidget(self.free_move, 2, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        options_layout.addWidget(fm_label, 1, 0, Qt.AlignmentFlag.AlignVCenter)
+        options_layout.addWidget(self.free_move, 1, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
+        kvf_label = QLabel(self.i18n.KEEP_VISIBLE_FULLSCREEN_LABEL)
+        self.keep_visible_fullscreen = Win11Toggle(label_text="")
+        self.keep_visible_fullscreen.toggled.connect(self.on_change)
+
+        options_layout.addWidget(kvf_label, 2, 0, Qt.AlignmentFlag.AlignVCenter)
+        options_layout.addWidget(self.keep_visible_fullscreen, 2, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
         options_layout.setColumnStretch(0, 0)
         options_layout.setColumnStretch(1, 1)
@@ -91,26 +93,79 @@ class GeneralPage(QWidget):
         if index >= 0:
             self.language_combo.setCurrentIndex(index)
 
-        # Update Rate
-        rate_val = int(config.get("update_rate", constants.config.defaults.DEFAULT_UPDATE_RATE) * 2)
-        self.update_rate.setValue(rate_val)
+        # Update Rate - Map config value to slider position (0-4)
+        raw_rate = float(config.get("update_rate", constants.config.defaults.DEFAULT_UPDATE_RATE))
         
-        # Toggles
-        self.dynamic_update_rate.setChecked(config.get("dynamic_update_enabled", constants.config.defaults.DEFAULT_DYNAMIC_UPDATE_ENABLED))
+        # Convert to slider position
+        slider_position = self._rate_to_slider_position(raw_rate)
+        self.update_rate.setValue(slider_position)
+        self.update_rate.setValueText(self._format_update_rate_label(slider_position))
+        
+        # Other toggles
         self.start_with_windows.setChecked(is_startup_enabled)
         self.free_move.setChecked(config.get("free_move", False))
-        
-        # Special case labels handling for update rate can stay in the slider logic or be added here if needed
-        # The Win11Slider handles its own label updates if set up, but let's see if we need text formatting.
-        # Original code used `rate_to_text`. I should probably implement that helper or pass it.
-        # For now, relying on basic slider behavior.
+        self.keep_visible_fullscreen.setChecked(config.get("keep_visible_fullscreen", constants.config.defaults.DEFAULT_KEEP_VISIBLE_FULLSCREEN))
 
     def get_settings(self) -> Dict[str, Any]:
+        # Get slider position and convert to update_rate value
+        slider_position = self.update_rate.value()
+        update_rate_value = self._slider_position_to_rate(slider_position)
+
         return {
             "language": self.language_combo.currentData(),
-            "update_rate": self.update_rate.value() / 2.0,
-            "dynamic_update_enabled": self.dynamic_update_rate.isChecked(),
+            "update_rate": update_rate_value,
             "free_move": self.free_move.isChecked(),
-            # is_startup_enabled is handled separately usually, but we return expected state
-             "start_with_windows": self.start_with_windows.isChecked() 
+            "keep_visible_fullscreen": self.keep_visible_fullscreen.isChecked(),
+            "start_with_windows": self.start_with_windows.isChecked() 
         }
+
+    def _on_update_rate_changed(self, value: int) -> None:
+        """Update the slider textual label in real time and propagate change."""
+        try:
+            label = self._format_update_rate_label(value)
+            self.update_rate.setValueText(label)
+        except Exception:
+            pass
+        # Propagate change notification
+        self.on_change()
+    
+    def _format_update_rate_label(self, slider_position: int) -> str:
+        """Format slider position as a human-readable label."""
+        # Map slider position (0-4) to update mode label
+        position_to_mode = {
+            0: self.i18n.SMART_MODE_LABEL,
+            1: f"{int(UpdateMode.AGGRESSIVE)}s" if not hasattr(self.i18n, 'UPDATE_MODE_AGGRESSIVE_LABEL') else self.i18n.UPDATE_MODE_AGGRESSIVE_LABEL,
+            2: f"{int(UpdateMode.BALANCED)}s" if not hasattr(self.i18n, 'UPDATE_MODE_BALANCED_LABEL') else self.i18n.UPDATE_MODE_BALANCED_LABEL,
+            3: f"{int(UpdateMode.EFFICIENT)}s" if not hasattr(self.i18n, 'UPDATE_MODE_EFFICIENT_LABEL') else self.i18n.UPDATE_MODE_EFFICIENT_LABEL,
+            4: f"{int(UpdateMode.POWER_SAVER)}s" if not hasattr(self.i18n, 'UPDATE_MODE_POWER_SAVER_LABEL') else self.i18n.UPDATE_MODE_POWER_SAVER_LABEL,
+        }
+        return position_to_mode.get(slider_position, "Unknown")
+
+    def _rate_to_slider_position(self, update_rate: float) -> int:
+        """Convert update_rate value to slider position (0-4)."""
+        # Map update rates to slider positions
+        if update_rate < 0:  # SMART sentinel
+            return 0
+        elif abs(update_rate - UpdateMode.AGGRESSIVE) < 0.1:
+            return 1
+        elif abs(update_rate - UpdateMode.BALANCED) < 0.1:
+            return 2
+        elif abs(update_rate - UpdateMode.EFFICIENT) < 0.1:
+            return 3
+        elif abs(update_rate - UpdateMode.POWER_SAVER) < 0.1:
+            return 4
+        else:
+            # Default to BALANCED if unrecognized
+            return 2
+
+    def _slider_position_to_rate(self, slider_position: int) -> float:
+        """Convert slider position (0-4) to update_rate value."""
+        position_to_rate = {
+            0: UpdateMode.SMART,        # -1.0
+            1: UpdateMode.AGGRESSIVE,   # 1.0
+            2: UpdateMode.BALANCED,     # 2.0
+            3: UpdateMode.EFFICIENT,    # 5.0
+            4: UpdateMode.POWER_SAVER,  # 10.0
+        }
+        return position_to_rate.get(slider_position, UpdateMode.BALANCED)
+

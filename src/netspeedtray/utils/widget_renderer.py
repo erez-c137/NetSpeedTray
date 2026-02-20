@@ -195,16 +195,16 @@ class WidgetRenderer:
     def draw_network_speeds(self, painter: QPainter, upload: float, download: float, width: int, height: int, config: RenderConfig, layout_mode: str = 'vertical') -> None:
         """Draws upload/download speeds, adapting to vertical or horizontal layouts."""
         try:
-            always_mbps = config.speed_display_mode == "always_mbps"
+            force_mega_unit = config.speed_display_mode == "always_mbps"
             decimal_places = max(0, min(2, config.decimal_places))
             force_decimals = config.force_decimals
             unit_type = config.unit_type
             swap_order = config.swap_upload_download
             
             if layout_mode == 'horizontal':
-                self._draw_horizontal_layout(painter, upload, download, width, height, config, always_mbps, decimal_places, force_decimals, unit_type, swap_order, config.short_unit_labels)
+                self._draw_horizontal_layout(painter, upload, download, width, height, config, force_mega_unit, decimal_places, force_decimals, unit_type, swap_order, config.short_unit_labels)
             else: # Default to vertical
-                self._draw_vertical_layout(painter, upload, download, width, height, config, always_mbps, decimal_places, force_decimals, unit_type, swap_order, config.short_unit_labels)
+                self._draw_vertical_layout(painter, upload, download, width, height, config, force_mega_unit, decimal_places, force_decimals, unit_type, swap_order, config.short_unit_labels)
 
         except Exception as e:
             self.logger.error("Failed to draw speeds: %s", e, exc_info=True)
@@ -223,7 +223,7 @@ class WidgetRenderer:
     # `multi_replace_file_content` is better here.
     pass
 
-    def _draw_vertical_layout(self, painter: QPainter, upload: float, download: float, width: int, height: int, config: RenderConfig, always_mbps: bool, decimal_places: int, force_decimals: bool, unit_type: str, swap_order: bool, short_labels: bool) -> None:
+    def _draw_vertical_layout(self, painter: QPainter, upload: float, download: float, width: int, height: int, config: RenderConfig, force_mega_unit: bool, decimal_places: int, force_decimals: bool, unit_type: str, swap_order: bool, short_labels: bool) -> None:
         """
         Draws the standard two-line vertical layout.
         Includes INTELLIGENT SCALING to fit narrow/vertical taskbars (#99).
@@ -234,7 +234,7 @@ class WidgetRenderer:
             arrow_w = 0 if hide_arrows else current_arrow_metrics.horizontalAdvance(self.i18n.UPLOAD_ARROW)
             arrow_g = 0 if hide_arrows else constants.renderer.ARROW_NUMBER_GAP
             
-            ref_v = get_reference_value_string(always_mbps, decimal_places, unit_type=unit_type)
+            ref_v = get_reference_value_string(force_mega_unit, decimal_places, unit_type=unit_type)
             max_num_w = current_metrics.horizontalAdvance(ref_v)
             
             unit_g = 0 if hide_unit else constants.renderer.VALUE_UNIT_GAP
@@ -249,7 +249,7 @@ class WidgetRenderer:
 
         from netspeedtray.utils.helpers import get_reference_value_string, get_unit_labels_for_type
 
-        upload_text, download_text = self._format_speed_texts(upload, download, always_mbps, decimal_places, force_decimals, unit_type, short_labels=short_labels)
+        upload_text, download_text = self._format_speed_texts(upload, download, force_mega_unit, decimal_places, force_decimals, unit_type, short_labels=short_labels)
         up_val_str, up_unit = upload_text
         down_val_str, down_unit = download_text
         
@@ -336,10 +336,10 @@ class WidgetRenderer:
 
 
 
-    def _draw_horizontal_layout(self, painter: QPainter, upload: float, download: float, width: int, height: int, config: RenderConfig, always_mbps: bool, decimal_places: int, force_decimals: bool, unit_type: str, swap_order: bool, short_labels: bool) -> None:
+    def _draw_horizontal_layout(self, painter: QPainter, upload: float, download: float, width: int, height: int, config: RenderConfig, force_mega_unit: bool, decimal_places: int, force_decimals: bool, unit_type: str, swap_order: bool, short_labels: bool) -> None:
         """Draws the compact single-line horizontal layout."""
         # Get split value/unit pairs
-        upload_pair, download_pair = self._format_speed_texts(upload, download, always_mbps, decimal_places, force_decimals, unit_type, short_labels=short_labels, full_string=False)
+        upload_pair, download_pair = self._format_speed_texts(upload, download, force_mega_unit, decimal_places, force_decimals, unit_type, short_labels=short_labels, full_string=False)
         
         up_val, up_unit = upload_pair
         down_val, down_unit = download_pair
@@ -412,14 +412,14 @@ class WidgetRenderer:
         self._last_text_rect = QRect(start_x, int(y_pos - self.metrics.ascent()), int(total_width), self.metrics.height())
 
 
-    def _format_speed_texts(self, upload: float, download: float, always_mbps: bool, decimal_places: int, force_decimals: bool, unit_type: str = "bits_decimal", short_labels: bool = False, full_string: bool = False) -> Tuple[Any, Any]:
+    def _format_speed_texts(self, upload: float, download: float, force_mega_unit: bool, decimal_places: int, force_decimals: bool, unit_type: str = "bits_decimal", short_labels: bool = False, full_string: bool = False) -> Tuple[Any, Any]:
         """Helper to format speed values into final strings or tuples using centralized logic."""
         up_formatted = format_speed(
-            upload, self.i18n, always_mbps=always_mbps, decimal_places=decimal_places, 
+            upload, self.i18n, force_mega_unit=force_mega_unit, decimal_places=decimal_places, 
             unit_type=unit_type, split_unit=not full_string, short_labels=short_labels
         )
         down_formatted = format_speed(
-            download, self.i18n, always_mbps=always_mbps, decimal_places=decimal_places, 
+            download, self.i18n, force_mega_unit=force_mega_unit, decimal_places=decimal_places, 
             unit_type=unit_type, split_unit=not full_string, short_labels=short_labels
         )
         
@@ -492,6 +492,17 @@ class WidgetRenderer:
                     max(d.upload for d in history),
                     max(d.download for d in history)
                 ) if history else 0
+
+                # Filter extreme outliers that would distort Y-axis scaling
+                # Use 95th percentile if max is significantly higher than typical range
+                if len(history) > 10:
+                    all_speeds = [d.upload for d in history] + [d.download for d in history]
+                    all_speeds_sorted = sorted(all_speeds)
+                    percentile_95 = all_speeds_sorted[int(len(all_speeds_sorted) * 0.95)]
+                    
+                    # If max is >3x the 95th percentile, likely a phantom spike. Use 95th instead.
+                    if percentile_95 > 0 and max_speed_val > percentile_95 * 3.0:
+                        max_speed_val = percentile_95
 
                 padded_max_speed = max_speed_val * constants.renderer.GRAPH_Y_AXIS_PADDING_FACTOR
                 max_y = max(padded_max_speed, constants.renderer.MIN_Y_SCALE)

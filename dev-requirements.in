@@ -8,3 +8,5 @@ pytest-cov
 freezegun
 pip-tools
 wheel>=0.46.2  # Explicitly added to enforce Security CVE fix
+pillow>=12.1.1  # Development env should also use patched Pillow
+parameterized
