@@ -253,5 +253,10 @@
     "STAT_AVG_SPEED": "POVPREČJE",
     "STAT_TOTAL_DATA": "SKUPAJ PODATKI",
     "BUTTON_RESET_VIEW": "Ponastavi pogled",
-    "ZOOM_HINT": "Dvojni klik za ponastavitev"
+    "ZOOM_HINT": "Dvojni klik za ponastavitev",
+    "FORCE_MB_LABEL": "Vsili prikaz v MB",
+    "UPDATE_MODE_AGGRESSIVE_LABEL": "Agresivno (1s)",
+    "UPDATE_MODE_BALANCED_LABEL": "Uravnoteženo (2s)",
+    "UPDATE_MODE_EFFICIENT_LABEL": "Učinkovito (5s)",
+    "UPDATE_MODE_POWER_SAVER_LABEL": "Varčevanje z energijo (10s)"
 }

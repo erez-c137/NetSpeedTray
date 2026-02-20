@@ -44,7 +44,7 @@ def test_save_removes_null_keys_from_file(config_manager):
 
 def test_validate_config_corrects_invalid_values(config_manager):
     invalid_config = {
-        "update_rate": -1,
+        "update_rate": -2,
         "default_color": "not-a-hex-code",
         "color_coding": "not-a-boolean",
         "selected_interfaces": "not-a-list",

@@ -253,5 +253,10 @@
     "STAT_AVG_SPEED": "AVG SPEED",
     "STAT_TOTAL_DATA": "TOTAL DATA",
     "BUTTON_RESET_VIEW": "Reset View",
-    "ZOOM_HINT": "Double-click to Reset"
+    "ZOOM_HINT": "Double-click to Reset",
+    "FORCE_MB_LABEL": "Force MB Display",
+    "UPDATE_MODE_AGGRESSIVE_LABEL": "Aggressive (1s)",
+    "UPDATE_MODE_BALANCED_LABEL": "Balanced (2s)",
+    "UPDATE_MODE_EFFICIENT_LABEL": "Efficient (5s)",
+    "UPDATE_MODE_POWER_SAVER_LABEL": "Power Saver (10s)"
 }

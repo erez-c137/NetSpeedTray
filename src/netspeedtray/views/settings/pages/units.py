@@ -40,11 +40,11 @@ class UnitsPage(QWidget):
         format_layout.addWidget(self.unit_type, format_row, 1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         format_row += 1
 
-        # Scaling (Speed Display Mode)
-        format_layout.addWidget(QLabel(getattr(self.i18n, 'SCALING_LABEL', "Unit Scaling")), format_row, 0, Qt.AlignmentFlag.AlignVCenter)
-        self.speed_display_mode = Win11Slider(editable=False)
-        self.speed_display_mode.setRange(0, 1)
-        self.speed_display_mode.valueChanged.connect(self.on_change)
+        # Force MB Display (toggle)
+        format_layout.addWidget(QLabel(getattr(self.i18n, 'FORCE_MB_LABEL', "Force MB Display")), format_row, 0, Qt.AlignmentFlag.AlignVCenter)
+        self.speed_display_mode = Win11Toggle(label_text="")
+        # When toggled ON we force the unit type to MB (bytes_decimal) and disable manual selection.
+        self.speed_display_mode.toggled.connect(self._on_force_mb_toggled)
         format_layout.addWidget(self.speed_display_mode, format_row, 1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         format_row += 1
 
@@ -125,11 +125,11 @@ class UnitsPage(QWidget):
         idx = self.unit_type.findData(ut)
         if idx >= 0: self.unit_type.setCurrentIndex(idx)
         
-        # Scaling
-        # Mapping: auto=0, always_mbps=1
+        # Force MB toggle
         mode = config.get("speed_display_mode", "auto")
-        val = 1 if mode == "always_mbps" else 0
-        self.speed_display_mode.setValue(val)
+        is_forced_mb = True if mode == "always_mbps" else False
+        self.speed_display_mode.setChecked(is_forced_mb)
+        self.unit_type.setEnabled(True)
         
         # Others
         self.decimal_places.setValue(config.get("decimal_places", constants.config.defaults.DEFAULT_DECIMAL_PLACES))
@@ -150,12 +150,13 @@ class UnitsPage(QWidget):
 
     def get_settings(self) -> Dict[str, Any]:
         # Inverse mapping
-        speed_mode = "always_mbps" if self.speed_display_mode.value() == 1 else "auto"
+        speed_mode = "always_mbps" if self.speed_display_mode.isChecked() else "auto"
         align_map_inv = {0: "left", 1: "center", 2: "right"}
         align = align_map_inv.get(self.text_alignment.value(), "left")
-        
+        unit_type = self.unit_type.currentData()
+
         return {
-            "unit_type": self.unit_type.currentData(),
+            "unit_type": unit_type,
             "speed_display_mode": speed_mode,
             "decimal_places": self.decimal_places.value(),
             "text_alignment": align,
@@ -165,3 +166,8 @@ class UnitsPage(QWidget):
             "short_unit_labels": self.short_unit_labels.isChecked(),
             "tray_offset_x": self.tray_offset.value()
         }
+
+    def _on_force_mb_toggled(self, checked: bool) -> None:
+        """Handler when the Force MB toggle changes."""
+        # The toggle state is saved, and the rendering logic will handle the display.
+        self.on_change()

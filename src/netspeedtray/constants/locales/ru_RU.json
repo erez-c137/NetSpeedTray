@@ -253,5 +253,10 @@
     "STAT_AVG_SPEED": "СРЕДНЯЯ СКОР.",
     "STAT_TOTAL_DATA": "ВСЕГО ДАННЫХ",
     "BUTTON_RESET_VIEW": "Сбросить вид",
-    "ZOOM_HINT": "Двойной клик для сброса"
+    "ZOOM_HINT": "Двойной клик для сброса",
+    "FORCE_MB_LABEL": "Принудительно отображать в МБ",
+    "UPDATE_MODE_AGGRESSIVE_LABEL": "Агрессивный (1с)",
+    "UPDATE_MODE_BALANCED_LABEL": "Сбалансированный (2с)",
+    "UPDATE_MODE_EFFICIENT_LABEL": "Эффективный (5с)",
+    "UPDATE_MODE_POWER_SAVER_LABEL": "Энергосберегающий (10с)"
 }

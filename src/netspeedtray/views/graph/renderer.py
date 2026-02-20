@@ -178,7 +178,7 @@ class GraphRenderer(QObject):
 
         # Fixed Subplots Adjust to keep graph area size constant
         self.figure.subplots_adjust(
-            left=0.08,   # Enough space for "100.0 Mbps" labels
+            left=0.12,   # Expanded to 12% to prevent 5-digit speeds from pushing the Y-axis label off-screen
             right=0.98,  # Minimum right margin
             top=0.95,    # Space for peak labels
             bottom=0.12, # Space for time labels
@@ -570,7 +570,10 @@ class GraphRenderer(QObject):
              plotted_ts, plotted_up, plotted_down = self._plot_aggregated(plot_datetimes_array, upload_mbps, download_mbps, mode=current_mode, target_end_time=actual_end)
 
         # Configure Limits and Formats (Handles adaptive Y-axis)
-        self._configure_axes(start_time, end_time, period_key, timestamps, upload_mbps, download_mbps)
+        # Use plotted_up and plotted_down so axes match the visible data, not raw anomalies.
+        safe_up = plotted_up if plotted_up is not None else []
+        safe_down = plotted_down if plotted_down is not None else []
+        self._configure_axes(start_time, end_time, period_key, timestamps, safe_up, safe_down)
         
         # Add Peak Markers (glowing dots at max values)
         if plotted_ts is not None and len(plotted_ts) > 0:
@@ -887,7 +890,7 @@ class GraphRenderer(QObject):
 
     def _configure_axes(self, start_time, end_time, period_key, timestamps, upload_mbps, download_mbps):
         """Sets limits and Formatters with sticky behavior to prevent jitter."""
-        # Y-Axis Scaling (Sticky Logic)
+        # Y-Axis Scaling (Sticky Logic with smart rounding)
         max_up = np.max(upload_mbps) if len(upload_mbps) > 0 else 0
         max_down = np.max(download_mbps) if len(download_mbps) > 0 else 0
         
@@ -921,28 +924,18 @@ class GraphRenderer(QObject):
              self.ax_upload.set_xlim(start_time, end_time)
              self.ax_download.set_xlim(start_time, end_time)
 
-        # === SMART SCALING (SYMLOG) ===
-        # Linear view for low speeds (0-1 Mbps), Logarithmic for high speeds.
-        # This allows seeing small background usage AND large download spikes simultaneously.
+        # === Y-AXIS: Linear scale with smart tick placement ===
+        # Only show significant tick marks (multiples that make sense for the range)
+        self.ax_upload.set_yscale('linear')
+        self.ax_download.set_yscale('linear')
         
-        linthresh = 1.0 # 1 Mbps linear threshold
+        # Set smart integer ticks based on the Y-axis range
+        self._set_smart_y_ticks(self.ax_upload, y_top_up)
+        self._set_smart_y_ticks(self.ax_download, y_top_down)
         
-        # Only apply SymLog if we have significant peaks (max > 10 Mbps)
-        # preventing "weird" linear-log transitions for purely low-speed sessions.
-        if self._current_ylim_down > 10:
-            self.ax_download.set_yscale('symlog', linthresh=linthresh, subs=[2, 3, 4, 5, 6, 7, 8, 9])
-            # Custom formatter to avoid "10^0", "10^1" scientific notation
-            self.ax_download.yaxis.set_major_formatter(lambda x, pos: f"{int(x)}" if x >= 10 else f"{x:.1f}")
-        else:
-            self.ax_download.set_yscale('linear')
-            self.ax_download.yaxis.set_major_formatter(lambda x, pos: f"{x:.1f}")
-
-        if self._current_ylim_up > 10:
-            self.ax_upload.set_yscale('symlog', linthresh=linthresh, subs=[2, 3, 4, 5, 6, 7, 8, 9])
-            self.ax_upload.yaxis.set_major_formatter(lambda x, pos: f"{int(x)}" if x >= 10 else f"{x:.1f}")
-        else:
-            self.ax_upload.set_yscale('linear')
-            self.ax_upload.yaxis.set_major_formatter(lambda x, pos: f"{x:.1f}")
+        # Formatters for clean labels (no decimals for large ranges)
+        self.ax_upload.yaxis.set_major_formatter(lambda x, pos: f"{int(x)}" if x >= 1 else f"{x:.1f}")
+        self.ax_download.yaxis.set_major_formatter(lambda x, pos: f"{int(x)}" if x >= 1 else f"{x:.1f}")
 
         self.ax_upload.set_ylim(bottom=0, top=y_top_up)
         self.ax_download.set_ylim(bottom=0, top=y_top_down)
@@ -950,33 +943,68 @@ class GraphRenderer(QObject):
         # X-Axis Formatting
         self._configure_xaxis_format(period_key)
 
+    def _set_smart_y_ticks(self, ax, y_max: float):
+        """
+        Sets intelligent Y-axis tick locations using Matplotlib's MaxNLocator.
+        This provides clean, non-overlapping labels regardless of the data scale.
+        """
+        from matplotlib.ticker import MaxNLocator
+        
+        if y_max <= 0:
+            ax.set_yticks([0])
+            return
+        
+        # Use MaxNLocator for robust, nicely-spaced ticks without overlap
+        ax.yaxis.set_major_locator(MaxNLocator(nbins=5, steps=[1, 2, 2.5, 5, 10], min_n_ticks=3))
 
+
+    def _get_nice_y_axis_top(self, max_speed: float) -> float:
+        """
+        Calculates a "nice" top limit with flat ~12% padding and logical step rounding.
+        Prevents massive empty space jumps (e.g. snapping 1000 to 2000).
+        """
+        if max_speed <= constants.graph.MINIMUM_Y_AXIS_MBPS:
+            return constants.graph.MINIMUM_Y_AXIS_MBPS
+        
+        # Add ~12% padding for visual breathing room
+        padded = max_speed * 1.12
+        
+        # Logical rounding steps based on the value size
+        if padded <= 10:
+            step = 1
+        elif padded <= 50:
+            step = 5
+        elif padded <= 100:
+            step = 10
+        elif padded <= 500:
+            step = 50
+        elif padded <= 1000:
+            step = 100
+        else:
+            step = 250
+            
+        # Round up to the nearest multiple of the step
+        return float(math.ceil(padded / step) * step)
+    
     def _get_sticky_y_top(self, max_speed: float, current_top: float) -> float:
         """
         Calculates a top limit with sticky behavior.
         Only updates if we exceed current or drop significantly below it.
+        Uses smart rounding to nice numbers.
         """
         min_limit = constants.graph.MINIMUM_Y_AXIS_MBPS
         
-        # 1. If we exceed current, scale up immediately
+        # 1. If we exceed current, scale up immediately to nice number
         if max_speed > current_top:
-            return max_speed * 1.1
+            return self._get_nice_y_axis_top(max_speed)
             
-        # 2. If we drop below 70% of current, scale down
+        # 2. If we drop below 70% of current, scale down to nice number
         if max_speed < current_top * 0.7:
-            suggested = max_speed * 1.1
+            suggested = self._get_nice_y_axis_top(max_speed)
             return max(suggested, min_limit)
             
         # 3. Otherwise, stay sticky
         return current_top
-
-    def _get_nice_y_axis_top(self, max_speed: float) -> float:
-        """Calculates a top limit with ~10% padding."""
-        if max_speed <= constants.graph.MINIMUM_Y_AXIS_MBPS:
-            return constants.graph.MINIMUM_Y_AXIS_MBPS
-
-        # User requested tight 10% padding (e.g. 1000 -> 1100, not 2000)
-        return max_speed * 1.1
 
     def _configure_xaxis_format(self, period_key: str) -> None:
         """

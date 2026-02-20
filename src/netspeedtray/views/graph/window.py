@@ -200,7 +200,7 @@ class GraphWindow(QWidget):
             if not screen: return self.move(100, 100)
             
             saved_pos = self.config.get("graph_window_pos", {})
-            if "x" in saved_pos and "y" in saved_pos:
+            if saved_pos and "x" in saved_pos and "y" in saved_pos:
                 validated = ScreenUtils.validate_position(saved_pos["x"], saved_pos["y"], (self.width(), self.height()), screen)
                 self.move(validated.x, validated.y)
             else:

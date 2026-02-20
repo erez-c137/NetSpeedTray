@@ -253,5 +253,10 @@
     "STAT_AVG_SPEED": "VEL. PROMEDIO",
     "STAT_TOTAL_DATA": "DATOS TOTALES",
     "BUTTON_RESET_VIEW": "Restablecer vista",
-    "ZOOM_HINT": "Doble clic para reiniciar"
+    "ZOOM_HINT": "Doble clic para reiniciar",
+    "FORCE_MB_LABEL": "Forzar Visualización en MB",
+    "UPDATE_MODE_AGGRESSIVE_LABEL": "Agresivo (1s)",
+    "UPDATE_MODE_BALANCED_LABEL": "Equilibrado (2s)",
+    "UPDATE_MODE_EFFICIENT_LABEL": "Eficiente (5s)",
+    "UPDATE_MODE_POWER_SAVER_LABEL": "Ahorro de Energía (10s)"
 }

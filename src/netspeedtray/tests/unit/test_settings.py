@@ -50,7 +50,7 @@ def test_get_settings_translates_ui_state_to_config(settings_dialog):
     """
     # Arrange: Simulate user interaction
     # Access widgets via the page objects
-    settings_dialog.general_page.update_rate.setValue(5)
+    settings_dialog.general_page.update_rate.setValue(2) # Set to BALANCED mode
     
     # Simulate the user choosing to select specific interfaces
     # Interface controls are now on interfaces_page
@@ -62,6 +62,6 @@ def test_get_settings_translates_ui_state_to_config(settings_dialog):
     new_settings = settings_dialog.get_settings()
 
     # Assert
-    assert new_settings["update_rate"] == 2.5
+    assert new_settings["update_rate"] == 2.0
     assert new_settings["interface_mode"] == "selected"
     assert set(new_settings["selected_interfaces"]) == {"Wi-Fi"}

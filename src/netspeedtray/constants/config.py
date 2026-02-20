@@ -12,6 +12,7 @@ from netspeedtray.constants.color import color
 from netspeedtray.constants.fonts import fonts
 from netspeedtray.constants.i18n import I18nStrings
 from netspeedtray.constants.ui import ui as ui_constants
+from netspeedtray.constants.update_mode import UpdateMode
 
 
 class ConfigMessages:
@@ -58,25 +59,25 @@ class ConfigConstants:
     DEFAULT_BACKGROUND_COLOR: Final[str] = "#000000" # Black
     DEFAULT_BACKGROUND_OPACITY: Final[int] = 0 # Percentage (0-100), default transparent
     DEFAULT_GRAPH_ENABLED: Final[bool] = False
-    DEFAULT_HISTORY_MINUTES: Final[int] = 30
+    DEFAULT_HISTORY_MINUTES: Final[int] = 15
     DEFAULT_GRAPH_OPACITY: Final[int] = 30
     DEFAULT_INTERFACE_MODE: Final[str] = network.interface.DEFAULT_MODE
     DEFAULT_KEEP_DATA_DAYS: Final[int] = data.retention.DAYS_MAP[6] # 365 days (1 Year) default
     DEFAULT_DARK_MODE: Final[bool] = True
     DEFAULT_DYNAMIC_UPDATE_ENABLED: Final[bool] = True
     DEFAULT_SPEED_DISPLAY_MODE: Final[str] = "always_mbps"  # Prevents constant B/KB/MB jumping
-    DEFAULT_UNIT_TYPE: Final[str] = "bytes_binary"  # Most users prefer MB/s (Bytes) akin to file downloads
+    DEFAULT_UNIT_TYPE: Final[str] = "bits_decimal"  # Default to Bits (Kbps, Mbps)
     DEFAULT_SWAP_UPLOAD_DOWNLOAD: Final[bool] = True # Download on top is standard convention
     DEFAULT_HIDE_ARROWS: Final[bool] = False
     DEFAULT_HIDE_UNIT_SUFFIX: Final[bool] = False
-    DEFAULT_SHORT_UNIT_LABELS: Final[bool] = True  # Shorter labels ("MB" vs "MB/s") for cleaner look
-    DEFAULT_DECIMAL_PLACES: Final[int] = 1  # One decimal is sufficient and cleaner
+    DEFAULT_SHORT_UNIT_LABELS: Final[bool] = False
+    DEFAULT_DECIMAL_PLACES: Final[int] = 2
     DEFAULT_TEXT_ALIGNMENT: Final[str] = "center"
     DEFAULT_FREE_MOVE: Final[bool] = False
     DEFAULT_KEEP_VISIBLE_FULLSCREEN: Final[bool] = False
     DEFAULT_FORCE_DECIMALS: Final[bool] = True
     DEFAULT_START_WITH_WINDOWS: Final[bool] = True
-    DEFAULT_TRAY_OFFSET_X: Final[int] = 1
+    DEFAULT_TRAY_OFFSET_X: Final[int] = 3
     DEFAULT_LEGEND_POSITION: Final[str] = data.legend_position.DEFAULT_LEGEND_POSITION
     DEFAULT_SHOW_LEGEND: Final[bool] = True
 
@@ -125,7 +126,6 @@ class ConfigConstants:
         "background_opacity": DEFAULT_BACKGROUND_OPACITY,
         "short_unit_labels": DEFAULT_SHORT_UNIT_LABELS,
         "tray_offset_x": DEFAULT_TRAY_OFFSET_X,
-        "tray_offset_x": DEFAULT_TRAY_OFFSET_X,
         "graph_window_pos": None,
         "settings_window_pos": None,
         "history_period_slider_value": 0,  # UI-specific state
@@ -141,7 +141,8 @@ class ConfigConstants:
         "config_version": {"type": str, "default": CONFIG_SCHEMA_VERSION},
         "start_with_windows": {"type": bool, "default": DEFAULT_START_WITH_WINDOWS},
         "language": {"type": (str, type(None)), "default": None, "choices": list(I18nStrings.LANGUAGE_MAP.keys()) + [None]},
-        "update_rate": {"type": (int, float), "default": DEFAULT_UPDATE_RATE, "min": MINIMUM_UPDATE_RATE, "max": timers.MAXIMUM_UPDATE_RATE_SECONDS},
+        # Allow -1.0 sentinel for SMART/adaptive mode in addition to positive intervals
+        "update_rate": {"type": (int, float), "default": DEFAULT_UPDATE_RATE, "min": -1.0, "max": timers.MAXIMUM_UPDATE_RATE_SECONDS},
         "font_family": {"type": str, "default": DEFAULT_FONT_FAMILY},
         "font_size": {"type": int, "default": DEFAULT_FONT_SIZE, "min": fonts.FONT_SIZE_MIN, "max": fonts.FONT_SIZE_MAX},
         "font_weight": {"type": int, "default": DEFAULT_FONT_WEIGHT, "min": 1, "max": 1000},
@@ -184,7 +185,6 @@ class ConfigConstants:
         "background_opacity": {"type": int, "default": DEFAULT_BACKGROUND_OPACITY, "min": 0, "max": 100},
         "short_unit_labels": {"type": bool, "default": DEFAULT_SHORT_UNIT_LABELS},
         "tray_offset_x": {"type": int, "default": DEFAULT_TRAY_OFFSET_X, "min": 0, "max": 500},
-        "tray_offset_x": {"type": int, "default": DEFAULT_TRAY_OFFSET_X, "min": 0, "max": 500},
         "graph_window_pos": {"type": (dict, type(None)), "default": None},
         "settings_window_pos": {"type": (dict, type(None)), "default": None},
         "history_period_slider_value": {"type": int, "default": 0, "min": 0, "max": len(data.history_period.PERIOD_MAP) - 1},
@@ -197,8 +197,6 @@ class ConfigConstants:
 
 
     def validate(self) -> None:
-        if self.DEFAULT_UPDATE_RATE < self.MINIMUM_UPDATE_RATE:
-            raise ValueError(f"DEFAULT_UPDATE_RATE must be >= {self.MINIMUM_UPDATE_RATE}")
         if self.DEFAULT_FONT_SIZE < 1:
             raise ValueError("DEFAULT_FONT_SIZE must be positive")
         if not (0 <= self.DEFAULT_GRAPH_OPACITY <= 100):

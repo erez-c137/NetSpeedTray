@@ -47,16 +47,17 @@ def calculate_timer_interval(update_rate: float) -> int:
         >>> calculate_timer_interval(0)
         500  # Assuming SMART_MODE_INTERVAL_MS is 500
     """
-    if update_rate < 0:
-        logger.error("Update rate cannot be negative: %.2f", update_rate)
-        raise ValueError(f"Update rate cannot be negative: {update_rate}")
-
-    if update_rate == 0:
+    # Treat non-positive values as the "smart" signal. This accepts both the
+    # historical sentinel of 0 and the explicit UpdateMode.SMART (-1.0).
+    if update_rate <= 0:
         interval = constants.timers.SMART_MODE_INTERVAL_MS
-        logger.debug("Using smart mode interval: %dms", interval)
-    else:
-        interval = max(constants.timers.MINIMUM_INTERVAL_MS, int(update_rate * 1000))
-        logger.debug("Calculated timer interval: %dms from update_rate %.2fs", interval, update_rate)
+        logger.debug("Using smart mode interval: %dms (update_rate=%s)", interval, update_rate)
+        return interval
+
+    # Positive values are interpreted as seconds and converted to milliseconds,
+    # but must respect the global MINIMUM_INTERVAL_MS bound.
+    interval = max(constants.timers.MINIMUM_INTERVAL_MS, int(update_rate * 1000))
+    logger.debug("Calculated timer interval: %dms from update_rate %.2fs", interval, update_rate)
     return interval
 
 

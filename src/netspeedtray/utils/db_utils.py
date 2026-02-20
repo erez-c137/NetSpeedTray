@@ -21,6 +21,7 @@ import logging
 import os
 import sqlite3
 import threading
+from contextlib import nullcontext
 from collections import namedtuple
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -93,7 +94,7 @@ def persist_speed_batch(db_path: Union[str, Path], batch: List[Tuple[int, float,
     if not batch:
         return
     try:
-        with db_lock, sqlite3.connect(db_path, timeout=10) as conn:
+        with (db_lock or nullcontext()), sqlite3.connect(db_path, timeout=10) as conn:
             cursor = conn.cursor()
             # CORRECTED: Added comma between SQL string and batch parameter
             cursor.executemany(
@@ -115,7 +116,7 @@ def persist_bandwidth_batch(db_path: Union[str, Path], batch: List[Tuple[int, in
     if not batch:
         return
     try:
-        with db_lock, sqlite3.connect(db_path, timeout=10) as conn:
+        with (db_lock or nullcontext()), sqlite3.connect(db_path, timeout=10) as conn:
             cursor = conn.cursor()
             # CORRECTED: Added comma between SQL string and batch parameter
             cursor.executemany(
@@ -137,7 +138,7 @@ def persist_app_bandwidth_batch(db_path: Union[str, Path], batch: List[Tuple[int
     if not batch:
         return
     try:
-        with db_lock, sqlite3.connect(db_path, timeout=10) as conn:
+        with (db_lock or nullcontext()), sqlite3.connect(db_path, timeout=10) as conn:
             cursor = conn.cursor()
             # CORRECTED: Added comma between SQL string and batch parameter
             cursor.executemany(
@@ -178,64 +179,54 @@ def get_speed_history(db_path: Union[str, Path], start_time: Optional[datetime] 
     # USE CONSTANT: Define the threshold where we switch from raw to aggregated data.
     aggregation_cutoff_time = end_time - timedelta(days=constants.data.AGGREGATION_CUTOFF_DAYS)
 
-    use_only_raw = start_time and start_time > aggregation_cutoff_time
-    params = []
-    queries = []
+    # Build queries for modern schema: raw, minute, hour
+    queries: List[str] = []
+    params: List[Union[float, str]] = []
 
-    if not start_time or end_time > aggregation_cutoff_time:
-        raw_start_time = max(start_time, aggregation_cutoff_time) if start_time else aggregation_cutoff_time
-        
-        raw_query_parts = [
-            f"SELECT timestamp, upload, download FROM {constants.data.SPEED_TABLE}",
-            "WHERE timestamp >= ? AND timestamp <= ?"
-        ]
-        params.extend([raw_start_time.timestamp(), end_time.timestamp()])
-
-        if interface_name:
-            raw_query_parts.append("AND interface = ?")
-            params.append(interface_name)
-        
-        queries.append(" ".join(raw_query_parts))
-
-    if not use_only_raw and (not start_time or start_time < aggregation_cutoff_time):
-        agg_end_time = aggregation_cutoff_time
-        
-        agg_query_parts = [
-            f"SELECT period_end as timestamp, avg_upload as upload, avg_download as download FROM {constants.data.AGGREGATED_TABLE}",
-            "WHERE period_end <= ?"
-        ]
-        params.append(agg_end_time.timestamp())
-
-        if start_time:
-            agg_query_parts.append("AND period_end >= ?")
-            params.append(start_time.timestamp())
-        
-        if interface_name:
-            agg_query_parts.append("AND interface = ?")
-            params.append(interface_name)
-            
-        queries.append(" ".join(agg_query_parts))
-
-    if not queries:
-        return []
-
-    final_query = " UNION ALL ".join(queries) + " ORDER BY timestamp ASC"
-    results = []
-
+    # Raw: recent high-resolution data
     try:
-        with db_lock, sqlite3.connect(db_path, timeout=10) as conn:
+        if not start_time or end_time > aggregation_cutoff_time:
+            raw_start_ts = int(max(start_time, aggregation_cutoff_time).timestamp()) if start_time else int(aggregation_cutoff_time.timestamp())
+            raw_end_ts = int(end_time.timestamp())
+            raw_q = f"SELECT timestamp, upload_bytes_sec, download_bytes_sec FROM {constants.data.SPEED_TABLE_RAW} WHERE timestamp BETWEEN ? AND ?"
+            raw_params = [raw_start_ts, raw_end_ts]
+            if interface_name:
+                raw_q += " AND interface_name = ?"
+                raw_params.append(interface_name)
+            queries.append(raw_q)
+            params.extend(raw_params)
+
+        # Aggregated minute/hour: older ranges
+        if not start_time or start_time < aggregation_cutoff_time:
+            agg_start_ts = int(start_time.timestamp()) if start_time else 0
+            agg_end_ts = int(min(end_time, aggregation_cutoff_time).timestamp())
+            # Use minute table for aggregated portion
+            agg_q = f"SELECT timestamp, upload_avg as upload, download_avg as download FROM {constants.data.SPEED_TABLE_MINUTE} WHERE timestamp BETWEEN ? AND ?"
+            agg_params = [agg_start_ts, agg_end_ts]
+            if interface_name:
+                agg_q += " AND interface_name = ?"
+                agg_params.append(interface_name)
+            queries.append(agg_q)
+            params.extend(agg_params)
+
+        if not queries:
+            return []
+
+        final_query = " UNION ALL ".join(queries) + " ORDER BY timestamp ASC"
+        results: List[Tuple[datetime, float, float]] = []
+
+        with (db_lock or nullcontext()), sqlite3.connect(db_path, timeout=10) as conn:
             cursor = conn.cursor()
-            logger.debug("Executing optimized speed history query with %d params", len(params))
-            cursor.execute(final_query, params)
-            results = [
-                (datetime.fromtimestamp(row[0]), float(row[1]), float(row[2]))
-                for row in cursor.fetchall()
-            ]
-            logger.debug("Retrieved %d records with optimized query.", len(results))
+            logger.debug("Executing modern optimized speed history query with %d params", len(params))
+            cursor.execute(final_query, tuple(params))
+            rows = cursor.fetchall()
+            for row in rows:
+                results.append((datetime.fromtimestamp(int(row[0])), float(row[1]), float(row[2])))
+            logger.debug("Retrieved %d records with modern optimized query.", len(results))
+        return results
     except sqlite3.Error as e:
         logger.error("Failed to retrieve optimized speed history: %s", e, exc_info=True)
-
-    return results
+        return []
 
 
 def get_total_bandwidth_for_period(db_path: Union[str, Path], start_time: Optional[datetime],
@@ -320,7 +311,7 @@ def get_max_speeds(db_path: Union[str, Path], start_time: Optional[int] = None, 
     query = " ".join(query_parts)
 
     try:
-        with db_lock, sqlite3.connect(db_path, timeout=10) as conn:
+        with (db_lock or nullcontext()), sqlite3.connect(db_path, timeout=10) as conn:
             cursor = conn.cursor()
             cursor.execute(query, params)
             row = cursor.fetchone()
@@ -332,55 +323,6 @@ def get_max_speeds(db_path: Union[str, Path], start_time: Optional[int] = None, 
 
     return 0.0, 0.0
 
-
-def get_max_speeds(db_path: Union[str, Path], start_time: Optional[int] = None, interfaces: Optional[List[str]] = None,
-                   db_lock: threading.Lock = None) -> Tuple[float, float]:
-    """
-    Retrieve maximum upload and download speeds using an efficient, aggregated query.
-    """
-    logger = logging.getLogger("NetSpeedTray.db_utils")
-    logger.debug("Fetching max speeds with start_time=%s, interfaces=%s", start_time, interfaces)
-
-    query_parts = [
-        "SELECT MAX(max_upload), MAX(max_download) FROM (",
-        f"SELECT MAX(upload) as max_upload, MAX(download) as max_download FROM {constants.data.SPEED_TABLE} WHERE deleted_at IS NULL",
-        f"UNION ALL SELECT MAX(avg_upload), MAX(avg_download) FROM {constants.data.AGGREGATED_TABLE} WHERE deleted_at IS NULL",
-        ")"
-    ]
-    params = []
-    
-    # --- Build WHERE clause with proper parameterization ---
-    where_clauses = []
-    if start_time:
-        where_clauses.append("timestamp >= ?")
-        params.append(start_time)
-    if interfaces:
-        placeholders = ", ".join("?" for _ in interfaces)
-        where_clauses.append(f"interface IN ({placeholders})")
-        params.extend(interfaces)
-
-    if where_clauses:
-        # This is a bit complex, but it correctly applies the WHERE to both subqueries
-        where_str = " AND ".join(where_clauses)
-        query_parts[1] += f" AND {where_str.replace('timestamp', 'timestamp')}"
-        query_parts[2] += f" AND {where_str.replace('timestamp', 'period_end')}"
-        # The params list is duplicated because the conditions apply to both sides of the UNION
-        params.extend(params)
-
-    query = " ".join(query_parts)
-
-    try:
-        with db_lock, sqlite3.connect(db_path, timeout=10) as conn:
-            cursor = conn.cursor()
-            cursor.execute(query, params)
-            row = cursor.fetchone()
-            if row and row[0] is not None:
-                return float(row[0]), float(row[1])
-    except sqlite3.Error as e:
-        logger.error("Failed to retrieve max speeds: %s", e)
-        raise
-
-    return 0.0, 0.0
 
 
 def get_bandwidth_usage(db_path: Union[str, Path], start_time: Optional[int] = None, interfaces: Optional[List[str]] = None,
@@ -503,7 +445,7 @@ def get_earliest_timestamp(db_path: Union[str, Path], db_lock: threading.Lock) -
     earliest_ts = None
 
     try:
-        with db_lock, sqlite3.connect(db_path, timeout=5) as conn:
+        with (db_lock or nullcontext()), sqlite3.connect(db_path, timeout=5) as conn:
             cursor = conn.cursor()
             
             # Query for the minimum timestamp in both tables
@@ -549,7 +491,7 @@ def aggregate_speed_history(db_path: Union[str, Path], cutoff_timestamp: int, db
     aggregated_count = 0
 
     try:
-        with db_lock, sqlite3.connect(db_path, timeout=10) as conn:
+        with (db_lock or nullcontext()), sqlite3.connect(db_path, timeout=10) as conn:
             cursor = conn.cursor()
 
             # Step 1: Aggregate per-second data into per-minute periods and insert into the aggregated table.

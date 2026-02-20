@@ -174,8 +174,32 @@ class NetworkSpeedWidget(QWidget):
             self.timer_manager = SpeedTimerManager(self.config, parent=self)
             
             # Background Monitoring Thread
-            update_rate = self.config.get("update_rate", constants.config.defaults.DEFAULT_UPDATE_RATE)
-            self.monitor_thread = NetworkMonitorThread(interval=update_rate)
+            # Determine effective monitor interval. Support SMART sentinel (-1.0)
+            cfg_rate = self.config.get("update_rate", constants.config.defaults.DEFAULT_UPDATE_RATE)
+
+            # If the user is using "auto" scaling (unit auto-selection), running in
+            # SMART adaptive mode produces very frequent UI changes that can be
+            # visually jarring (e.g. rapid unit switching). Enforce a safe fallback:
+            # when speed_display_mode == "auto" and update_rate signals SMART (<=0),
+            # fall back to a sensible default fixed rate to avoid live-mode jitter.
+            speed_mode = str(self.config.get("speed_display_mode", constants.config.defaults.DEFAULT_SPEED_DISPLAY_MODE))
+            if isinstance(cfg_rate, (int, float)) and cfg_rate < 0:
+                if speed_mode == "auto":
+                    # Log and fallback to default fixed update rate (do not persist silently)
+                    self.logger.warning(
+                        "Incompatible settings: speed_display_mode='auto' with SMART update_rate. Falling back to default update rate %.1fs to avoid live-mode jitter.",
+                        constants.config.defaults.DEFAULT_UPDATE_RATE
+                    )
+                    cfg_rate = constants.config.defaults.DEFAULT_UPDATE_RATE
+                    effective_interval = max(constants.config.defaults.MINIMUM_UPDATE_RATE, min(float(cfg_rate), constants.timers.MAXIMUM_UPDATE_RATE_SECONDS))
+                else:
+                    # SMART mode (-1.0): Use adaptive interval
+                    effective_interval = constants.timers.SMART_MODE_INTERVAL_MS / 1000.0
+            else:
+                # Fixed interval: Clamp to allowed min/max
+                effective_interval = max(constants.config.defaults.MINIMUM_UPDATE_RATE, min(float(cfg_rate), constants.timers.MAXIMUM_UPDATE_RATE_SECONDS))
+
+            self.monitor_thread = NetworkMonitorThread(interval=effective_interval)
             
             self.controller = CoreController(config=self.config, widget_state=self.widget_state)
             self.controller.set_view(self)
