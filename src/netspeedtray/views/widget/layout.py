@@ -173,8 +173,19 @@ class WidgetLayoutManager:
                                         max_number_width + unit_gap +
                                         max_unit_width + margin)
                 
-                # Height is the full taskbar height for horizontal docking
-                calculated_height = (taskbar_info.rect[3] - taskbar_info.rect[1]) / dpi_scale
+                # Height: use visible taskbar area (availableGeometry), not Shell_TrayWnd
+                # which can include invisible padding on high-DPI Windows 11 displays.
+                screen_obj = taskbar_info.get_screen()
+                if screen_obj:
+                    avail = screen_obj.availableGeometry()
+                    full = screen_obj.geometry()
+                    visible_height = full.height() - avail.height()
+                    if visible_height > 0:
+                        calculated_height = visible_height
+                    else:
+                        calculated_height = (taskbar_info.rect[3] - taskbar_info.rect[1]) / dpi_scale
+                else:
+                    calculated_height = (taskbar_info.rect[3] - taskbar_info.rect[1]) / dpi_scale
 
             else:
                 # --- VERTICAL TASKBAR (LEFT/RIGHT) ---
