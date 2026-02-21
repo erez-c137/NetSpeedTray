@@ -78,6 +78,87 @@ def test_database_initialization_creates_correct_schema(managed_widget_state):
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
+"""
+Unit tests for the WidgetState and its associated DatabaseWorker.
+
+These tests verify the correctness of the data layer, including database schema
+creation, data ingestion, aggregation, pruning, and maintenance logic.
+"""
+
+import pytest
+import sqlite3
+import time
+from pathlib import Path
+from unittest.mock import patch
+from datetime import datetime, timedelta
+from typing import Iterator
+
+from PyQt6.QtCore import QThread
+
+from netspeedtray.core.widget_state import WidgetState
+from netspeedtray import constants
+from netspeedtray.core.database import DatabaseWorker
+
+
+@pytest.fixture
+def mock_config() -> dict:
+    """Provides a default configuration dictionary for tests."""
+    return constants.config.defaults.DEFAULT_CONFIG.copy()
+
+
+@pytest.fixture
+def managed_widget_state(tmp_path: Path, mock_config: dict) -> Iterator[tuple[WidgetState, Path]]:
+    """
+    Provides a WidgetState instance with a temporary DB for SYNCHRONOUS testing.
+    It PREVENTS the DatabaseWorker QThread from starting and initializes the DB directly.
+    """
+    db_path = tmp_path / "speed_history.db"
+    
+    with patch.object(QThread, 'start', lambda self: None):
+        # Patch the helper function to ensure WidgetState uses our temporary path.
+        with patch('netspeedtray.core.widget_state.get_app_data_path', return_value=tmp_path):
+            state = WidgetState(mock_config)
+        
+        # Get the worker instance *after* WidgetState has created it.
+        worker = state.db_worker
+        
+        # Manually ensure its db_path is set to our temporary path. This is crucial.
+        worker.db_path = db_path
+        
+        # Now, call the setup methods synchronously.
+        worker._initialize_connection() 
+        worker._check_and_create_schema()
+        
+        # The connection IS LEFT OPEN for the duration of the test.
+        # This is necessary for the test functions to write data to it.
+        
+        yield state, db_path # Hand over the ready-to-use state object
+        
+        # Teardown: close the connection we manually opened.
+        worker._close_connection()
+        state.cleanup()
+
+
+def test_database_initialization_creates_correct_schema(managed_widget_state):
+    """
+    Tests if the DatabaseWorker correctly creates all required tables and metadata
+    on its first run with a non-existent database file.
+    """
+    # ARRANGE
+    state, db_path = managed_widget_state
+    
+    # ACT
+    # The fixture already initializes the worker. We just need to give it a moment
+    # to create the database file and schema. 200ms is more than enough time.
+    time.sleep(0.2) 
+
+    # ASSERT
+    assert db_path.exists(), "Database file was not created."
+
+    # Connect directly to the database to inspect its schema
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
     # 1. Check if all tables were created
     cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
     tables = {row[0] for row in cursor.fetchall()}
@@ -86,8 +167,9 @@ def test_database_initialization_creates_correct_schema(managed_widget_state):
 
     # 2. Check the database version in the metadata table
     cursor.execute("SELECT value FROM metadata WHERE key = 'db_version'")
-    # The DatabaseWorker._DB_VERSION is the source of truth, currently 3.
-    assert int(cursor.fetchone()[0]) == 3, "Database version is incorrect."
+    # The DatabaseWorker._DB_VERSION is the source of truth.
+    assert int(cursor.fetchone()[0]) == DatabaseWorker._DB_VERSION, "Database version is incorrect."
+
 
     # 3. Check the schema of the 'speed_history_raw' table
     cursor.execute("PRAGMA table_info('speed_history_raw');")
@@ -110,6 +192,7 @@ def test_database_initialization_creates_correct_schema(managed_widget_state):
         'download_avg': ('REAL', 0),
         'upload_max': ('REAL', 0),
         'download_max': ('REAL', 0),
+        'sample_count': ('INTEGER', 0),
     }
     assert columns_minute == expected_minute_hour, "Schema for 'speed_history_minute' is incorrect."
     
@@ -470,9 +553,10 @@ def test_get_speed_history_unified_tiers(managed_widget_state):
     assert len(results) >= 3, f"Expected at least 3 results from multi-tier query, got {len(results)}"
     
     # Verify we can find data from all three tiers by checking for characteristic uploads
+    # Note: Historical queries now preserve peaks (MAX) instead of averages to ensure visibility.
     uploads = [r[1] for r in results]
-    assert 10.0 in uploads, "Missing hour tier data"
-    assert 50.0 in uploads, "Missing minute tier data"
+    assert 30.0 in uploads, "Missing hour tier data (peak)"
+    assert 70.0 in uploads, "Missing minute tier data (peak)"
     assert 100.0 in uploads, "Missing raw tier data"
 
 
