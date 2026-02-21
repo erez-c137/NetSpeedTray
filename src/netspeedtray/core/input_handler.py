@@ -121,12 +121,15 @@ class InputHandler(QObject):
                     # Logic matches PositionCalculator: x = right_boundary - widget_width - offset
                     # So: offset = right_boundary - x - widget_width
                     
-                    # Calculate Right Boundary ( Tray Left or Screen Right )
+                    # Calculate Right Boundary (tray left or screen right edge)
                     tray_rect = tb_info.get_tray_rect()
-                    right_boundary = (tray_rect[0] / dpi_scale) if tray_rect else (tb_info.rect[2] / dpi_scale)
+                    if tray_rect:
+                        right_boundary = tray_rect[0] / dpi_scale
+                    else:
+                        screen = tb_info.get_screen()
+                        right_boundary = float(screen.geometry().right() + 1) if screen else (tb_info.rect[2] / dpi_scale)
                     
                     # Current Widget X
-                    current_x = self.widget.x()
                     current_x_log = self.widget.pos().x() # Use logical pos from pos()
                     widget_width = self.widget.width()
                     
@@ -140,9 +143,12 @@ class InputHandler(QObject):
                     # So: offset_y = bottom_boundary - y - widget_height
                     
                     tray_rect = tb_info.get_tray_rect()
-                    bottom_boundary = (tray_rect[1] / dpi_scale) if tray_rect else (tb_info.rect[3] / dpi_scale)
+                    if tray_rect:
+                        bottom_boundary = tray_rect[1] / dpi_scale
+                    else:
+                        screen = tb_info.get_screen()
+                        bottom_boundary = float(screen.geometry().bottom() + 1) if screen else (tb_info.rect[3] / dpi_scale)
                     
-                    current_y = self.widget.y()
                     current_y_log = self.widget.pos().y()
                     widget_height = self.widget.height()
                     

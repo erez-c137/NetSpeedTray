@@ -341,6 +341,39 @@ class GraphRenderer(QObject):
         setattr(self, patch_attr, patch)
 
     # ========== PHASE 3: ANALYTICAL INTELLIGENCE ==========
+    def _get_peak_label_placement(self, ax, peak_x: float, peak_y: float) -> Tuple[Tuple[int, int], str, str]:
+        """
+        Decide peak label offset/alignment so labels stay inside the plot area.
+        Returns (xytext_offset_points, horizontal_alignment, vertical_alignment).
+        """
+        x_offset = 8
+        y_offset = 8
+        ha = 'left'
+        va = 'bottom'
+
+        try:
+            x_min, x_max = ax.get_xlim()
+            y_min, y_max = ax.get_ylim()
+
+            if x_max > x_min:
+                x_norm = (peak_x - x_min) / (x_max - x_min)
+                # If peak is in the right 20% of the graph, flip label to the left
+                # Threshold reduced from 0.88 to 0.8 to be more aggressive against cutoffs.
+                if x_norm >= 0.8:
+                    x_offset = -8
+                    ha = 'right'
+
+            if y_max > y_min:
+                y_norm = (peak_y - y_min) / (y_max - y_min)
+                # If peak is in the top 10% of the graph, move label below peak
+                if y_norm >= 0.9:
+                    y_offset = -8
+                    va = 'top'
+        except Exception as e:
+            self.logger.debug(f"Error calculating peak label placement: {e}")
+            # Keep defaults if calculation fails
+
+        return (x_offset, y_offset), ha, va
     
     def _add_peak_markers(self, ax, x_data, y_data, color_hex: str, label_prefix: str, artist_prefix: str):
         """
@@ -380,7 +413,11 @@ class GraphRenderer(QObject):
                 artist_dict['inner'].set_data([peak_x], [peak_y])
                 
                 label = artist_dict['label']
-                label.set_position((peak_x, peak_y))
+                label_offset, label_ha, label_va = self._get_peak_label_placement(ax, peak_x, peak_y)
+                label.xy = (peak_x, peak_y)
+                label.set_position(label_offset)
+                label.set_ha(label_ha)
+                label.set_va(label_va)
                 label.set_text(f"{label_prefix}: {peak_y:.1f} Mbps")
                 label.get_bbox_patch().set_edgecolor(color_hex)
                 
@@ -411,16 +448,20 @@ class GraphRenderer(QObject):
                     color=color_hex, 
                     alpha=RendererConstants.PEAK_MARKER_ALPHA_INNER,
                     zorder=12)[0]
+
+            label_offset, label_ha, label_va = self._get_peak_label_placement(ax, peak_x, peak_y)
             
             # Label with background
             artist_dict['label'] = ax.annotate(
                 f"{label_prefix}: {peak_y:.1f} Mbps",
                 xy=(peak_x, peak_y),
-                xytext=(8, 8),
+                xytext=label_offset,
                 textcoords='offset points',
                 fontsize=8,
                 color='white',
                 weight='medium',
+                ha=label_ha,
+                va=label_va,
                 bbox=dict(
                     boxstyle='round,pad=0.3', 
                     facecolor='#2d2d2d', 
@@ -640,9 +681,13 @@ class GraphRenderer(QObject):
         unique_bins, indices = np.unique(bins, return_inverse=True)
         counts = np.bincount(indices)
         
-        # Calculate Mean Speeds for the Bar Height
-        down_mean = np.bincount(indices, weights=download_mbps) / counts
-        up_mean = np.bincount(indices, weights=upload_mbps) / counts
+        # Use per-bin peak speeds so timeline changes preserve event amplitude.
+        down_peak = np.full(len(unique_bins), -np.inf, dtype=float)
+        up_peak = np.full(len(unique_bins), -np.inf, dtype=float)
+        np.maximum.at(down_peak, indices, download_mbps)
+        np.maximum.at(up_peak, indices, upload_mbps)
+        down_peak = np.where(np.isfinite(down_peak), down_peak, 0.0)
+        up_peak = np.where(np.isfinite(up_peak), up_peak, 0.0)
         
         # Calculate Bin Centers (Timestamps)
         timestamps_float = np.array([dt.timestamp() for dt in plot_datetimes])
@@ -677,12 +722,12 @@ class GraphRenderer(QObject):
             for b in existing_bars_up: b.remove()
             
         self.bars_download = self.ax_download.bar(
-            agg_dates, down_mean, width=bar_width,
+            agg_dates, down_peak, width=bar_width,
             color=constants.graph.DOWNLOAD_LINE_COLOR, alpha=0.9, zorder=10
         )
         
         self.bars_upload = self.ax_upload.bar(
-            agg_dates, up_mean, width=bar_width,
+            agg_dates, up_peak, width=bar_width,
             color=constants.graph.UPLOAD_LINE_COLOR, alpha=0.9, zorder=10
         )
         
@@ -705,7 +750,7 @@ class GraphRenderer(QObject):
                 self.ax_download.plot(bridge_ts, bridge_zero, color=constants.graph.DOWNLOAD_LINE_COLOR, linewidth=1.5, zorder=9, alpha=0.4, linestyle='--')
                 self.ax_upload.plot(bridge_ts, bridge_zero, color=constants.graph.UPLOAD_LINE_COLOR, linewidth=1.5, zorder=9, alpha=0.4, linestyle='--')
 
-        return agg_dates, up_mean, down_mean
+        return agg_dates, up_peak, down_peak
 
     def _plot_high_res(self, plot_datetimes, upload_mbps, download_mbps, target_end_time=None):
         """Segmented Plotting with Gap Detection, Gradient Fills, and Fluid Interpolation"""

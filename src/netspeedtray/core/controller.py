@@ -180,14 +180,14 @@ class NetworkController(QObject):
                     clamp_multiplier = 2.0
                     
                     if recent_up_avg > 1000 and final_up_speed_bps > recent_up_avg * threshold_multiplier:
-                        self.logger.warning(
+                        self.logger.debug(
                             f"Spike detected for {name} upload: {final_up_speed_bps} B/s "
                             f"(recent avg: {recent_up_avg:.0f} B/s). Clamping. "
                         )
                         final_up_speed_bps = int(recent_up_avg * clamp_multiplier)
                     
                     if recent_down_avg > 1000 and final_down_speed_bps > recent_down_avg * threshold_multiplier:
-                        self.logger.warning(
+                        self.logger.debug(
                             f"Spike detected for {name} download: {final_down_speed_bps} B/s "
                             f"(recent avg: {recent_down_avg:.0f} B/s). Clamping."
                         )

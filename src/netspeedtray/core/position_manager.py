@@ -216,20 +216,47 @@ class PositionCalculator:
         """
         widget_width, widget_height = widget_size
         
-        # Convert physical coordinates to logical (screen coordinates)
-        tb_top_log = taskbar_info.rect[1] / dpi_scale
-        tb_height_log = (taskbar_info.rect[3] - taskbar_info.rect[1]) / dpi_scale
+        # Use screen available geometry to find the TRUE visible taskbar region (Fixes #104/PR #110)
+        screen = taskbar_info.get_screen()
+        full_geom = screen.geometry()
+        avail_geom = screen.availableGeometry()
+        if not isinstance(avail_geom, QRect):
+            avail_geom = full_geom
         
-        # Determine horizontal boundaries (left = app icons, right = system tray)
-        right_boundary = (taskbar_info.get_tray_rect()[0] if taskbar_info.get_tray_rect() else taskbar_info.rect[2]) / dpi_scale
-        left_boundary = (taskbar_info.tasklist_rect[2] if taskbar_info.tasklist_rect else taskbar_info.rect[0]) / dpi_scale
+        edge = taskbar_info.get_edge_position()
         
-        # Calculate Y: center widget vertically in taskbar gap
-        # Using float intermediates to prevent rounding errors (Issue #104)
-        y_center = tb_top_log + (tb_height_log - widget_height) / 2.0
+        if edge == constants.taskbar.edge.BOTTOM:
+            # Visible taskbar is the space below available geometry
+            visible_tb_height = full_geom.bottom() - avail_geom.bottom()
+            y_origin = avail_geom.bottom() + 1
+            if visible_tb_height <= 0:
+                visible_tb_height = (taskbar_info.rect[3] - taskbar_info.rect[1]) / dpi_scale
+                y_origin = taskbar_info.rect[1] / dpi_scale
+        elif edge == constants.taskbar.edge.TOP:
+            # Visible taskbar is the space above available geometry
+            visible_tb_height = avail_geom.top() - full_geom.top()
+            y_origin = full_geom.top()
+            if visible_tb_height <= 0:
+                visible_tb_height = (taskbar_info.rect[3] - taskbar_info.rect[1]) / dpi_scale
+                y_origin = taskbar_info.rect[1] / dpi_scale
+        else:
+            # Fallback to rect-based if we're not sure
+            visible_tb_height = (taskbar_info.rect[3] - taskbar_info.rect[1]) / dpi_scale
+            y_origin = taskbar_info.rect[1] / dpi_scale
+
+        # Calculate Y: center widget vertically in the *visible* taskbar gap
+        y_center = y_origin + (visible_tb_height - widget_height) / 2.0
         y = round(y_center)
         
-        # Calculate X: align to right (system tray side) with offset
+        # Calculate X: align to right (system tray side) with offset.
+        # right_boundary is the left edge of the tray/notification area when available.
+        tray_rect = taskbar_info.get_tray_rect()
+        right_boundary = round(tray_rect[0] / dpi_scale) if tray_rect else (full_geom.right() + 1)
+
+        # left_boundary is the right edge of the task list/app-icons region when available.
+        tasklist_rect = taskbar_info.tasklist_rect
+        left_boundary = round(tasklist_rect[2] / dpi_scale) if tasklist_rect else full_geom.left()
+
         offset = config.get('tray_offset_x', constants.config.defaults.DEFAULT_TRAY_OFFSET_X)
         x = round(right_boundary - widget_width - offset)
         
@@ -254,22 +281,47 @@ class PositionCalculator:
         """
         widget_width, widget_height = widget_size
         
-        # Convert physical coordinates to logical (screen coordinates)
-        tb_left_log = taskbar_info.rect[0] / dpi_scale
-        tb_width_log = (taskbar_info.rect[2] - taskbar_info.rect[0]) / dpi_scale
+        # Use screen available geometry to find the TRUE visible taskbar region (Fixes #104/PR #110)
+        screen = taskbar_info.get_screen()
+        full_geom = screen.geometry()
+        avail_geom = screen.availableGeometry()
+        if not isinstance(avail_geom, QRect):
+            avail_geom = full_geom
         
-        # Determine vertical boundaries (top = app icons, bottom = system tray)
-        bottom_boundary = (taskbar_info.get_tray_rect()[1] if taskbar_info.get_tray_rect() else taskbar_info.rect[3]) / dpi_scale
-        top_boundary = (taskbar_info.tasklist_rect[3] if taskbar_info.tasklist_rect else taskbar_info.rect[1]) / dpi_scale
+        edge = taskbar_info.get_edge_position()
         
+        if edge == constants.taskbar.edge.RIGHT:
+            # Visible taskbar is the space to the right of available geometry
+            visible_tb_width = full_geom.right() - avail_geom.right()
+            x_origin = avail_geom.right() + 1
+            if visible_tb_width <= 0:
+                visible_tb_width = (taskbar_info.rect[2] - taskbar_info.rect[0]) / dpi_scale
+                x_origin = taskbar_info.rect[0] / dpi_scale
+        else: # LEFT
+            # Visible taskbar is the space to the left of available geometry
+            visible_tb_width = avail_geom.left() - full_geom.left()
+            x_origin = full_geom.left()
+            if visible_tb_width <= 0:
+                visible_tb_width = (taskbar_info.rect[2] - taskbar_info.rect[0]) / dpi_scale
+                x_origin = taskbar_info.rect[0] / dpi_scale
+            
         # Calculate X: center widget horizontally in taskbar gap
-        # Using float intermediates to prevent rounding errors (Issue #104)
-        x_center = tb_left_log + (tb_width_log - widget_width) / 2.0
+        x_center = x_origin + (visible_tb_width - widget_width) / 2.0
         x = round(x_center)
         
-        # Calculate Y: align to bottom (system tray side) with offset
+        # Calculate Y: align to bottom (system tray side) with offset.
+        tray_rect = taskbar_info.get_tray_rect()
+        bottom_boundary = round(tray_rect[1] / dpi_scale) if tray_rect else (full_geom.bottom() + 1)
+
         offset_y = config.get('tray_offset_y', constants.config.defaults.DEFAULT_TRAY_OFFSET_X)
         y = round(bottom_boundary - widget_height - offset_y)
+
+        # Safety check: avoid overlapping top-side icons on vertical taskbars.
+        tasklist_rect = taskbar_info.tasklist_rect
+        top_boundary = round(tasklist_rect[3] / dpi_scale) if tasklist_rect else full_geom.top()
+        if y < top_boundary:
+            logger.warning("Calculated position overlaps taskbar icons; snapping to safe zone.")
+            y = round(top_boundary + constants.layout.DEFAULT_PADDING)
         
         return x, y
 

@@ -340,8 +340,11 @@ class GraphInteractionHandler(QObject):
         else:
             self._graph_x_cache = None
 
-        self._graph_data_ups = upload_speeds * constants.network.units.BITS_PER_BYTE
-        self._graph_data_downs = download_speeds * constants.network.units.BITS_PER_BYTE
+        # Keep raw cache values in BYTES/sec.
+        # format_speed() expects bytes/sec and handles unit conversion itself.
+        # Converting here would cause 8x inflation in tooltip values.
+        self._graph_data_ups = np.asarray(upload_speeds, dtype=float)
+        self._graph_data_downs = np.asarray(download_speeds, dtype=float)
         self._graph_data_ts_raw = timestamps
         
         # Invalidate blit background when data changes
@@ -456,15 +459,15 @@ class GraphInteractionHandler(QObject):
                 return
             
             raw_ts = self._graph_data_ts_raw[index]
-            upload_bps = self._graph_data_ups[index]
-            download_bps = self._graph_data_downs[index]
+            upload_bytes_sec = self._graph_data_ups[index]
+            download_bytes_sec = self._graph_data_downs[index]
             
             timestamp_dt = datetime.fromtimestamp(raw_ts)
             timestamp_mpl = self._graph_x_cache[index]
             
             # Calculate Mbps for focus dots
-            download_mbps = download_bps / 1_000_000
-            upload_mbps = upload_bps / 1_000_000
+            download_mbps = (download_bytes_sec * constants.network.units.BITS_PER_BYTE) / constants.network.units.MEGA_DIVISOR
+            upload_mbps = (upload_bytes_sec * constants.network.units.BITS_PER_BYTE) / constants.network.units.MEGA_DIVISOR
 
             # Update Crosshairs (snap to data point X)
             for line in [self.crosshair_v_download, self.crosshair_v_upload]:
@@ -498,23 +501,44 @@ class GraphInteractionHandler(QObject):
                 self.focus_dot_upload_inner.set_visible(True)
 
             # Tooltip Formatting
-            from netspeedtray.utils.helpers import format_speed
+            from netspeedtray.utils.helpers import format_speed, format_data_size
             unit_type = self.window.config.get("unit_type", "bits_decimal")
             decimal_places = self.window.config.get("decimal_places", 1)
-            up_str = format_speed(upload_bps, self.window.i18n, unit_type=unit_type, decimal_places=decimal_places, short_labels=True)
-            down_str = format_speed(download_bps, self.window.i18n, unit_type=unit_type, decimal_places=decimal_places, short_labels=True)
+            use_short_labels = bool(self.window.config.get("short_unit_labels", False))
+            force_mega_unit = self.window.config.get("speed_display_mode", "auto") == "always_mbps"
+            bw_precision = max(0, int(decimal_places))
+
+            # Bandwidth display (left value): always byte-based units (MB/GB family).
+            # Speed display (right value): follows user-selected unit settings.
+            down_bw_value, down_bw_unit = format_data_size(download_bytes_sec, self.window.i18n, precision=bw_precision)
+            up_bw_value, up_bw_unit = format_data_size(upload_bytes_sec, self.window.i18n, precision=bw_precision)
+            down_bw_str = f"{down_bw_value:.{bw_precision}f} {down_bw_unit}" if bw_precision > 0 else f"{int(down_bw_value)} {down_bw_unit}"
+            up_bw_str = f"{up_bw_value:.{bw_precision}f} {up_bw_unit}" if bw_precision > 0 else f"{int(up_bw_value)} {up_bw_unit}"
+
+            up_speed_str = format_speed(
+                upload_bytes_sec,
+                self.window.i18n,
+                force_mega_unit=force_mega_unit,
+                unit_type=unit_type,
+                decimal_places=decimal_places,
+                short_labels=use_short_labels,
+            )
+            down_speed_str = format_speed(
+                download_bytes_sec,
+                self.window.i18n,
+                force_mega_unit=force_mega_unit,
+                unit_type=unit_type,
+                decimal_places=decimal_places,
+                short_labels=use_short_labels,
+            )
             
-            # Get max speeds from current visible graph data for display in tooltip
-            max_download_bps = np.max(self._graph_data_downs) if len(self._graph_data_downs) > 0 else 0
-            max_upload_bps = np.max(self._graph_data_ups) if len(self._graph_data_ups) > 0 else 0
-            max_down_str = format_speed(max_download_bps, self.window.i18n, unit_type=unit_type, decimal_places=decimal_places, short_labels=True)
-            max_up_str = format_speed(max_upload_bps, self.window.i18n, unit_type=unit_type, decimal_places=decimal_places, short_labels=True)
-            
-            # Tooltip with 2 lines: download and upload with max speeds
+            # Tooltip with 2 lines:
+            # - left  value: bandwidth in MB/GB family
+            # - right value: speed in selected user unit
             tooltip_text = (
                 f'<div style="font-family: Segoe UI, sans-serif; font-size: 10px; font-weight: 400; line-height: 1.6;">'
-                f'<div style="color: {constants.graph.DOWNLOAD_LINE_COLOR};">▼ {max_down_str}  {down_str}</div>'
-                f'<div style="color: {constants.graph.UPLOAD_LINE_COLOR};">▲ {max_up_str}  {up_str}</div>'
+                f'<div style="color: {constants.graph.DOWNLOAD_LINE_COLOR};">▼ {down_bw_str}  {down_speed_str}</div>'
+                f'<div style="color: {constants.graph.UPLOAD_LINE_COLOR};">▲ {up_bw_str}  {up_speed_str}</div>'
                 f'</div>'
             )
             self.tooltip.setText(tooltip_text)

@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.2.6] - 2026-02-21
+
+### Added
+- **High-DPI Alignment Fix:** Improved vertical centering of the widget on Windows 11 high-DPI displays by accurately calculating the visible taskbar region.
+- **Widget Visibility Constraints:** Added `MAX_WIDGET_WIDTH_PX` (500) and `MAX_WIDGET_HEIGHT_PX` (100) constraints to prevent the widget from growing too large and becoming inaccessible.
+- **Graph Peak Tag Improvements:** Lowered the horizontal flip threshold (0.88 -> 0.8) and improved vertical alignment to prevent peak labels from being cut off on graph edges.
+- **Unit Testing:** Added `test_renderer_logic.py` and updated `test_position_manager.py` to ensure regression-free positioning and rendering.
+
+### Changed
+- **Settings UI Enhancement:** Increased the Settings Dialog minimum size to 650x560 to ensure compatibility with high-DPI screens and longer translations.
+- **Smart Updates Constraint:** Unified "Force MB" and "SMART" update rate logic; SMART mode is now automatically disabled when "Force MB" is off to prevent unit-switching jitter.
+- **Layout Precision:** Fixed layout width calculations in `WidgetLayoutManager` to correctly respect the `short_unit_labels` setting, preventing text truncation.
+- **Positioning Robustness:** Enhanced `PositionCalculator` with unified property calculation and improved error handling for temporary taskbar detection failures.
+- **Settings Consolidation:** Merged arrow styling settings into the Appearance page for a more streamlined configuration flow.
+- **Log Noise Reduction:** Reduced log chatter by changing "Spike detected" messages from `WARNING` to `DEBUG` level.
+
+### Fixed
+- Resolved an issue where the widget could "disappear" or be positioned incorrectly when used with very large fonts or small taskbars.
+- Fixed a rare race condition where the widget would fail to re-anchor correctly after a shell restart or display change.
+- Corrected peak tag positioning in corner cases (top-right and top-left peaks).
+
 All notable changes to this project will be documented in this file.
 
 ---

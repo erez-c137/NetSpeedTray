@@ -31,7 +31,7 @@ class DatabaseWorker(QThread):
     error = pyqtSignal(str)
     database_updated = pyqtSignal()
 
-    _DB_VERSION = 3  # Covering indexes, metadata tracking, eager aggregation
+    _DB_VERSION = 4  # Covering indexes, metadata tracking, eager aggregation, sample_count
 
     def __init__(self, db_path: Path, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
@@ -200,6 +200,25 @@ class DatabaseWorker(QThread):
             self.conn.rollback()
             raise 
 
+    def _migrate_v3_to_v4(self, cursor: sqlite3.Cursor) -> None:
+        """
+        Migration from v3 to v4:
+        - Add sample_count column to aggregated tables to allow accurate averaging and bandwidth calculation.
+        """
+        self.logger.info("Executing v3->v4 migration: Adding sample_count column.")
+        
+        # Add sample_count column to minute and hour tables
+        # Using DEFAULT 1 ensures existing data is treated as representing 1 second/minute respectively
+        # (though this is an approximation for legacy data, it's safer than NULL).
+        try:
+            cursor.execute(f"ALTER TABLE {constants.data.SPEED_TABLE_MINUTE} ADD COLUMN sample_count INTEGER NOT NULL DEFAULT 1")
+            cursor.execute(f"ALTER TABLE {constants.data.SPEED_TABLE_HOUR} ADD COLUMN sample_count INTEGER NOT NULL DEFAULT 1")
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" in str(e).lower():
+                self.logger.warning("sample_count column already exists.")
+            else:
+                raise
+
     def _migrate_v2_to_v3(self, cursor: sqlite3.Cursor) -> None:
         """
         Migration from v2 to v3:
@@ -304,6 +323,7 @@ class DatabaseWorker(QThread):
                 download_avg REAL NOT NULL,
                 upload_max REAL NOT NULL,
                 download_max REAL NOT NULL,
+                sample_count INTEGER NOT NULL DEFAULT 1,
                 PRIMARY KEY (timestamp, interface_name)
             );
             -- Covering index for graph queries (includes data columns to avoid table lookup)
@@ -317,6 +337,7 @@ class DatabaseWorker(QThread):
                 download_avg REAL NOT NULL,
                 upload_max REAL NOT NULL,
                 download_max REAL NOT NULL,
+                sample_count INTEGER NOT NULL DEFAULT 1,
                 PRIMARY KEY (timestamp, interface_name)
             );
             -- Covering index for graph queries
@@ -398,14 +419,15 @@ class DatabaseWorker(QThread):
         self.logger.debug("Aggregating raw data older than %s...", datetime.fromtimestamp(cutoff))
         
         cursor.execute(f"""
-            INSERT OR IGNORE INTO {constants.data.SPEED_TABLE_MINUTE} (timestamp, interface_name, upload_avg, download_avg, upload_max, download_max)
+            INSERT OR IGNORE INTO {constants.data.SPEED_TABLE_MINUTE} (timestamp, interface_name, upload_avg, download_avg, upload_max, download_max, sample_count)
             SELECT
                 (timestamp / 60) * 60 AS minute_timestamp,
                 interface_name,
                 AVG(upload_bytes_sec),
                 AVG(download_bytes_sec),
                 MAX(upload_bytes_sec),
-                MAX(download_bytes_sec)
+                MAX(download_bytes_sec),
+                COUNT(*)
             FROM {constants.data.SPEED_TABLE_RAW}
             WHERE timestamp < ?
             GROUP BY minute_timestamp, interface_name
@@ -422,14 +444,15 @@ class DatabaseWorker(QThread):
         self.logger.debug("Aggregating minute data older than %s...", datetime.fromtimestamp(cutoff))
 
         cursor.execute(f"""
-            INSERT OR IGNORE INTO {constants.data.SPEED_TABLE_HOUR} (timestamp, interface_name, upload_avg, download_avg, upload_max, download_max)
+            INSERT OR IGNORE INTO {constants.data.SPEED_TABLE_HOUR} (timestamp, interface_name, upload_avg, download_avg, upload_max, download_max, sample_count)
             SELECT
                 (timestamp / 3600) * 3600 AS hour_timestamp,
                 interface_name,
-                AVG(upload_avg),
-                AVG(download_avg),
+                SUM(upload_avg * sample_count) / NULLIF(SUM(sample_count), 0),
+                SUM(download_avg * sample_count) / NULLIF(SUM(sample_count), 0),
                 MAX(upload_max),
-                MAX(download_max)
+                MAX(download_max),
+                SUM(sample_count)
             FROM {constants.data.SPEED_TABLE_MINUTE}
             WHERE timestamp < ?
             GROUP BY hour_timestamp, interface_name

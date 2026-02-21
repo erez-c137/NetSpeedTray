@@ -173,13 +173,32 @@ class WidgetLayoutManager:
                                         max_number_width + unit_gap +
                                         max_unit_width + margin)
                 
-                # Height is the full taskbar height for horizontal docking
-                calculated_height = (taskbar_info.rect[3] - taskbar_info.rect[1]) / dpi_scale
+                # Height is the TRUE visible taskbar height for horizontal docking (Fixes #104/PR #110)
+                screen = taskbar_info.get_screen()
+                full_geom = screen.geometry()
+                avail_geom = screen.availableGeometry()
+                
+                if edge == constants.TaskbarEdge.BOTTOM:
+                    visible_tb_height = full_geom.bottom() - avail_geom.bottom()
+                elif edge == constants.TaskbarEdge.TOP:
+                    visible_tb_height = avail_geom.top() - full_geom.top()
+                else:
+                    visible_tb_height = (taskbar_info.rect[3] - taskbar_info.rect[1]) / dpi_scale
+
+                calculated_height = visible_tb_height
 
             else:
-                # --- VERTICAL TASKBAR (LEFT/RIGHT) ---
-                # Width is determined by the taskbar width
-                calculated_width = (taskbar_info.rect[2] - taskbar_info.rect[0]) / dpi_scale
+                # Width is the TRUE visible taskbar width for vertical docking (Fixes #104/PR #110)
+                screen = taskbar_info.get_screen()
+                full_geom = screen.geometry()
+                avail_geom = screen.availableGeometry()
+                
+                if edge == constants.TaskbarEdge.RIGHT:
+                    visible_tb_width = full_geom.right() - avail_geom.right()
+                else: # LEFT
+                    visible_tb_width = avail_geom.left() - full_geom.left()
+
+                calculated_width = visible_tb_width
                 # Height is calculated to fit exactly two lines of text + small padding
                 # This prevents the widget from stretching the full length of the screen.
                 calculated_height = self.metrics.height() * 2 + (margin * 4)

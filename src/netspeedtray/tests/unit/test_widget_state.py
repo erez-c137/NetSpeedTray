@@ -318,15 +318,15 @@ def test_aggregation_minute_to_hour(managed_widget_state, mock_config):
     # "Old" minute-level data from 31 days ago
     old_timestamp_base = int((now - timedelta(days=31)).timestamp())
     old_data_minute = [
-        (old_timestamp_base + 60, "Wi-Fi", 100.0, 200.0, 150.0, 250.0),
-        (old_timestamp_base + 120, "Wi-Fi", 300.0, 400.0, 350.0, 450.0),
+        (old_timestamp_base + 60, "Wi-Fi", 100.0, 200.0, 150.0, 250.0, 60),
+        (old_timestamp_base + 120, "Wi-Fi", 300.0, 400.0, 350.0, 450.0, 60),
     ]
 
     # "Recent" minute-level data from 10 days ago
     recent_timestamp_base = int((now - timedelta(days=10)).timestamp())
-    recent_data_minute = [ (recent_timestamp_base + 60, "Wi-Fi", 1000.0, 2000.0, 1500.0, 2500.0) ]
+    recent_data_minute = [ (recent_timestamp_base + 60, "Wi-Fi", 1000.0, 2000.0, 1500.0, 2500.0, 60) ]
     
-    cursor.executemany("INSERT INTO speed_history_minute VALUES (?, ?, ?, ?, ?, ?)", old_data_minute + recent_data_minute)
+    cursor.executemany("INSERT INTO speed_history_minute VALUES (?, ?, ?, ?, ?, ?, ?)", old_data_minute + recent_data_minute)
     conn.commit()
     conn.close()
 
@@ -381,8 +381,8 @@ def test_pruning_with_grace_period(managed_widget_state, mock_config):
     recent_timestamp = int((now - timedelta(days=10)).timestamp())
     
     # Insert placeholder data into the hour table (the target for pruning)
-    cursor.execute("INSERT INTO speed_history_hour VALUES (?, 'Wi-Fi', 0, 0, 0, 0)", (very_old_timestamp,))
-    cursor.execute("INSERT INTO speed_history_hour VALUES (?, 'Wi-Fi', 0, 0, 0, 0)", (recent_timestamp,))
+    cursor.execute("INSERT INTO speed_history_hour VALUES (?, 'Wi-Fi', 0, 0, 0, 0, 1)", (very_old_timestamp,))
+    cursor.execute("INSERT INTO speed_history_hour VALUES (?, 'Wi-Fi', 0, 0, 0, 0, 1)", (recent_timestamp,))
     
     # Set the initial, long retention period in the database metadata
     cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES ('current_retention_days', '365')")
@@ -452,10 +452,10 @@ def test_get_speed_history_unified_tiers(managed_widget_state):
     cursor.execute("INSERT INTO speed_history_raw VALUES (?, 'eth0', 100, 200)", (now_ts - 10,))
     
     # Tier 2: Minute (2 days ago - distinct from current minute)
-    cursor.execute("INSERT INTO speed_history_minute VALUES (?, 'eth0', 50, 60, 70, 80)", (now_ts - 2 * 86400,))
+    cursor.execute("INSERT INTO speed_history_minute VALUES (?, 'eth0', 50, 60, 70, 80, 60)", (now_ts - 2 * 86400,))
     
     # Tier 3: Hour (40 days ago - distinct from recent time)
-    cursor.execute("INSERT INTO speed_history_hour VALUES (?, 'eth0', 10, 20, 30, 40)", (now_ts - 40 * 86400,))
+    cursor.execute("INSERT INTO speed_history_hour VALUES (?, 'eth0', 10, 20, 30, 40, 60)", (now_ts - 40 * 86400,))
     
     conn.commit()
     conn.close()
@@ -474,5 +474,152 @@ def test_get_speed_history_unified_tiers(managed_widget_state):
     assert 10.0 in uploads, "Missing hour tier data"
     assert 50.0 in uploads, "Missing minute tier data"
     assert 100.0 in uploads, "Missing raw tier data"
+
+
+def test_get_speed_history_minute_resolution_never_returns_null_timestamp(managed_widget_state):
+    """
+    Regression test for graph worker crashes:
+    minute/hour/day queries must not synthesize NULL bin timestamps.
+    """
+    state, _ = managed_widget_state
+    now = datetime.now()
+    start = now - timedelta(hours=6)
+
+    # No inserted data on purpose: query should return either empty+padding data,
+    # but it must never raise from datetime.fromtimestamp(None).
+    results = state.get_speed_history(
+        start_time=start,
+        end_time=now,
+        interface_name="All",
+        resolution="minute"
+    )
+
+    assert results, "Expected padded timeline points for empty minute-resolution history."
+    assert all(isinstance(ts, datetime) for ts, _, _ in results)
+
+
+def test_get_speed_history_merges_overlapping_tiers_without_double_count(managed_widget_state):
+    """
+    Regression test for timeline consistency:
+    when raw+minute overlap in the same bin, "All interfaces" must not double-count.
+    """
+    state, db_path = managed_widget_state
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    now_ts = int(datetime.now().timestamp())
+    minute_start = (now_ts // 60) * 60
+
+    # One second represented in raw + the rest of the minute represented in minute tier.
+    cursor.execute(
+        "INSERT INTO speed_history_raw VALUES (?, 'eth0', 100.0, 200.0)",
+        (minute_start + 59,)
+    )
+    cursor.execute(
+        "INSERT INTO speed_history_minute VALUES (?, 'eth0', 100.0, 200.0, 100.0, 200.0, 59)",
+        (minute_start,)
+    )
+    conn.commit()
+    conn.close()
+
+    start = datetime.fromtimestamp(minute_start)
+    end = datetime.fromtimestamp(minute_start + 59)
+    results = state.get_speed_history(
+        start_time=start,
+        end_time=end,
+        interface_name="All",
+        resolution="minute"
+    )
+
+    non_zero = [(up, down) for _, up, down in results if up > 0 or down > 0]
+    assert non_zero, "Expected at least one non-zero point."
+    max_up = max(up for up, _ in non_zero)
+    max_down = max(down for _, down in non_zero)
+    assert max_up == pytest.approx(100.0)
+    assert max_down == pytest.approx(200.0)
+
+
+def test_minute_to_hour_aggregation_uses_weighted_average(managed_widget_state, mock_config):
+    """
+    Ensures hour aggregation respects sample_count and does not use simple AVG(upload_avg).
+    """
+    state, db_path = managed_widget_state
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    old_ts = int((datetime.now() - timedelta(days=31)).timestamp())
+    hour_start = (old_ts // 3600) * 3600
+
+    # Same hour, very different sample counts.
+    cursor.execute(
+        "INSERT INTO speed_history_minute VALUES (?, 'Wi-Fi', 100.0, 100.0, 100.0, 100.0, 60)",
+        (hour_start + 60,)
+    )
+    cursor.execute(
+        "INSERT INTO speed_history_minute VALUES (?, 'Wi-Fi', 1000.0, 1000.0, 1000.0, 1000.0, 1)",
+        (hour_start + 120,)
+    )
+    conn.commit()
+    conn.close()
+
+    state.db_worker._run_maintenance(mock_config)
+
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT upload_avg, download_avg, sample_count FROM speed_history_hour WHERE timestamp = ? AND interface_name = 'Wi-Fi'",
+        (hour_start,)
+    )
+    row = cursor.fetchone()
+    conn.close()
+
+    assert row is not None, "Expected aggregated hour row to exist."
+    expected_weighted = (100.0 * 60 + 1000.0 * 1) / 61
+    assert row[0] == pytest.approx(expected_weighted)
+    assert row[1] == pytest.approx(expected_weighted)
+    assert row[2] == 61
+
+
+def test_get_speed_history_peak_is_consistent_across_resolutions(managed_widget_state):
+    """
+    The same spike should keep its peak value across minute/hour/day timeline resolutions.
+    """
+    state, db_path = managed_widget_state
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    now_ts = int(datetime.now().timestamp())
+    hour_start = (now_ts // 3600) * 3600
+
+    # Two samples in the same minute/hour/day bin: one low, one peak.
+    cursor.execute("INSERT INTO speed_history_raw VALUES (?, 'eth0', 1.0, 2.0)", (hour_start + 10,))
+    cursor.execute("INSERT INTO speed_history_raw VALUES (?, 'eth0', 200.0, 400.0)", (hour_start + 20,))
+    conn.commit()
+    conn.close()
+
+    start = datetime.fromtimestamp(hour_start)
+    end = datetime.fromtimestamp(hour_start + 59)
+
+    peaks = {}
+    for res in ("minute", "hour", "day"):
+        points = state.get_speed_history(
+            start_time=start,
+            end_time=end,
+            interface_name="All",
+            resolution=res
+        )
+        non_zero = [(u, d) for _, u, d in points if u > 0 or d > 0]
+        assert non_zero, f"Expected non-zero points for resolution={res}"
+        peaks[res] = (
+            max(u for u, _ in non_zero),
+            max(d for _, d in non_zero),
+        )
+
+    assert peaks["minute"][0] == pytest.approx(200.0)
+    assert peaks["minute"][1] == pytest.approx(400.0)
+    assert peaks["hour"][0] == pytest.approx(200.0)
+    assert peaks["hour"][1] == pytest.approx(400.0)
+    assert peaks["day"][0] == pytest.approx(200.0)
+    assert peaks["day"][1] == pytest.approx(400.0)
 
 

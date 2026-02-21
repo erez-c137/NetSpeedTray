@@ -134,6 +134,7 @@ class TestPositionManager(unittest.TestCase):
         # Provide get_screen so it returns a mock to avoid segfaults/errors
         mock_screen = MagicMock()
         mock_screen.geometry.return_value = QRect(0,0,1920,1080)
+        mock_screen.availableGeometry.return_value = QRect(0,0,1920,1040)
         self.mock_taskbar.get_screen.return_value = mock_screen
         self.mock_taskbar.get_edge_position.return_value = constants.taskbar.edge.BOTTOM
         self.mock_taskbar.rect = (0, 1040, 1920, 1080)

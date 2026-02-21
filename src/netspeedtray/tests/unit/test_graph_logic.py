@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import QApplication
 
 from netspeedtray import constants
 from netspeedtray.views.graph import GraphWindow
+from netspeedtray.views.graph.logic import GraphLogic
 
 # --- Fixtures ---
 @pytest.fixture(scope="session")
@@ -112,3 +113,19 @@ def test_update_stats_bar_handles_empty_data(graph_window_instance):
     
     # ASSERT
     graph.ui.max_stat_val.setText.assert_not_called()
+
+
+def test_calculate_stats_preserves_real_peaks():
+    """
+    Peak stats should reflect true maxima from the timeline data.
+    """
+    history_data = [
+        (1.0, 10.0, 20.0),
+        (2.0, 20.0, 30.0),
+        (3.0, 50_000_000.0, 100_000_000.0),
+    ]
+
+    stats = GraphLogic.calculate_stats(history_data)
+
+    assert stats["max_up"] == pytest.approx(400.0)
+    assert stats["max_down"] == pytest.approx(800.0)

@@ -21,6 +21,26 @@ class GraphDataWorker(QObject):
     # Maximum data points to return (prevents excessive rendering time)
     MAX_DATA_POINTS = 2000
 
+    @staticmethod
+    def _preserve_global_peaks(data: List[Tuple[float, float, float]], sampled: List[Tuple[float, float, float]]) -> List[Tuple[float, float, float]]:
+        """
+        Ensures stride downsampling does not drop global upload/download peaks.
+        """
+        if not data or not sampled:
+            return sampled
+
+        peak_up = max(data, key=lambda point: float(point[1] or 0.0))
+        peak_down = max(data, key=lambda point: float(point[2] or 0.0))
+
+        sampled_set = set(sampled)
+        if peak_up not in sampled_set:
+            sampled.append(peak_up)
+            sampled_set.add(peak_up)
+        if peak_down not in sampled_set:
+            sampled.append(peak_down)
+
+        return sorted(sampled, key=lambda point: point[0])
+
     def __init__(self, widget_state):
         """
         Initializes the worker.
@@ -106,7 +126,8 @@ class GraphDataWorker(QObject):
             # Uses stride-based sampling to preserve temporal distribution
             if len(history_data) > self.MAX_DATA_POINTS:
                 stride = len(history_data) // self.MAX_DATA_POINTS
-                history_data = history_data[::stride]
+                downsampled = history_data[::stride]
+                history_data = self._preserve_global_peaks(history_data, downsampled)
 
             if not history_data or len(history_data) < 2:
                 self.data_ready.emit([], 0.0, 0.0, request.sequence_id)

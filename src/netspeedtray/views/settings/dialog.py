@@ -164,7 +164,8 @@ class SettingsDialog(QDialog):
             self.move(screen_center - dialog_center)
 
         # Set a safe minimum size to prevent layout breakage on small screens or long translations
-        self.setMinimumSize(620, 500)
+        # Increased for #104/high-DPI compatibility where OS min-track might be > 620x500
+        self.setMinimumSize(650, 560)
 
         self.logger.debug("SettingsDialog initialization completed.")
 

@@ -199,10 +199,10 @@ class WidgetState(QObject):
                 tiers.append(("speed_history_raw", "upload_bytes_sec", "download_bytes_sec"))
             
             if start_ts < (now_ts - 24*3600): # Might have minute data
-                tiers.append(("speed_history_minute", "upload_avg * 60", "download_avg * 60"))
+                tiers.append(("speed_history_minute", "upload_avg * sample_count", "download_avg * sample_count"))
                 
             if start_ts < (now_ts - 30*86400): # Might have hour data
-                tiers.append(("speed_history_hour", "upload_avg * 3600", "download_avg * 3600"))
+                tiers.append(("speed_history_hour", "upload_avg * sample_count", "download_avg * sample_count"))
 
             for table, up_expr, down_expr in tiers:
                 query = f"SELECT SUM({up_expr}), SUM({down_expr}) FROM {table} WHERE timestamp BETWEEN ? AND ?"
@@ -321,85 +321,56 @@ class WidgetState(QObject):
             time_calc = f"CAST(timestamp / {target_interval} AS INTEGER) * {target_interval}"
             
             # Build inner query. For aggregated resolutions, construct a UNION
-            # to cover both recent raw data and older aggregated data.
+            # and keep peak speed semantics (MAX) across tiers so timeline
+            # changes do not dilute/reshape the same event differently.
             if target_res in ('minute', 'hour', 'day'):
-                # Multi-tier: union raw + minute (for minute res) or minute + hour (for hour/day res)
-                if target_res == 'minute':
-                    # For minute resolution, query raw (recent) + minute (older)
-                    raw_q = f"""
-                        SELECT 
-                            {time_calc} as bin_ts,
-                            interface_name,
-                            upload_bytes_sec as up,
-                            download_bytes_sec as down
-                        FROM {constants.data.SPEED_TABLE_RAW}
-                        WHERE timestamp BETWEEN ? AND ?
-                    """
-                    minute_q = f"""
+                # Multi-tier merge with explicit peak-preserving logic.
+                tier_queries = []
+                params = []
+
+                def add_tier_query(table_name: str, up_expr: str, down_expr: str) -> None:
+                    q = f"""
                         SELECT
                             {time_calc} as bin_ts,
                             interface_name,
-                            upload_avg as up,
-                            download_avg as down
-                        FROM {constants.data.SPEED_TABLE_MINUTE}
+                            {up_expr} as up,
+                            {down_expr} as down
+                        FROM {table_name}
                         WHERE timestamp BETWEEN ? AND ?
                     """
-                    params = [_start_ts, _end_ts, _start_ts, _end_ts]
+                    tier_params = [_start_ts, _end_ts]
                     if not is_all_ifaces:
-                        raw_q += " AND interface_name = ?"
-                        minute_q += " AND interface_name = ?"
-                        params.insert(2, interface_name)
-                        params.append(interface_name)
-                    inner_query = f"({raw_q} UNION ALL {minute_q})"
-                else:
-                    # For hour/day resolution, use raw + minute + hour tiers
-                    raw_q = f"""
-                        SELECT 
-                            {time_calc} as bin_ts,
-                            interface_name,
-                            upload_bytes_sec as up,
-                            download_bytes_sec as down
-                        FROM {constants.data.SPEED_TABLE_RAW}
-                        WHERE timestamp BETWEEN ? AND ?
-                    """
-                    minute_q = f"""
-                        SELECT
-                            {time_calc} as bin_ts,
-                            interface_name,
-                            upload_avg as up,
-                            download_avg as down
-                        FROM {constants.data.SPEED_TABLE_MINUTE}
-                        WHERE timestamp BETWEEN ? AND ?
-                    """
-                    hour_q = f"""
-                        SELECT
-                            {time_calc} as bin_ts,
-                            interface_name,
-                            upload_avg as up,
-                            download_avg as down
-                        FROM {constants.data.SPEED_TABLE_HOUR}
-                        WHERE timestamp BETWEEN ? AND ?
-                    """
-                    params = [_start_ts, _end_ts, _start_ts, _end_ts, _start_ts, _end_ts]
-                    if not is_all_ifaces:
-                        raw_q += " AND interface_name = ?"
-                        minute_q += " AND interface_name = ?"
-                        hour_q += " AND interface_name = ?"
-                        params.insert(2, interface_name)
-                        params.insert(5, interface_name)
-                        params.append(interface_name)
-                    inner_query = f"({raw_q} UNION ALL {minute_q} UNION ALL {hour_q})"
-                
-                # Wrap the UNION in a SELECT for aggregation
-                inner_query = f"SELECT bin_ts, interface_name, up, down FROM {inner_query}"
+                        q += " AND interface_name = ?"
+                        tier_params.append(interface_name)
+                    tier_queries.append(q)
+                    params.extend(tier_params)
+
+                # Raw keeps exact per-second peaks.
+                add_tier_query(constants.data.SPEED_TABLE_RAW, "upload_bytes_sec", "download_bytes_sec")
+                # Aggregated tiers use preserved per-bucket maxima.
+                add_tier_query(constants.data.SPEED_TABLE_MINUTE, "upload_max", "download_max")
+
+                if target_res in ('hour', 'day'):
+                    add_tier_query(constants.data.SPEED_TABLE_HOUR, "upload_max", "download_max")
+
+                union_query = " UNION ALL ".join(tier_queries)
+                inner_query = f"""
+                    SELECT
+                        bin_ts,
+                        interface_name,
+                        MAX(up) as up,
+                        MAX(down) as down
+                    FROM ({union_query})
+                    GROUP BY bin_ts, interface_name
+                """
             else:
                 # Raw resolution: single table query
                 inner_query = f"""
                     SELECT 
                         {time_calc} as bin_ts, 
                         interface_name, 
-                        {up_col} as up, 
-                        {down_col} as down
+                        AVG({up_col}) as up, 
+                        AVG({down_col}) as down
                     FROM {table}
                     WHERE timestamp BETWEEN ? AND ?
                 """
@@ -407,6 +378,7 @@ class WidgetState(QObject):
                 if not is_all_ifaces:
                     inner_query += " AND interface_name = ?"
                     params.append(interface_name)
+                inner_query += " GROUP BY bin_ts, interface_name"
                 
             # Outer query: aggregate bins
             if is_all_ifaces:
@@ -429,11 +401,19 @@ class WidgetState(QObject):
             self.logger.debug("History query: target_res=%s fetched_rows=%d", target_res, len(rows))
             
             # Convert rows to standard format (Timestamp, Up, Down)
+            valid_rows = [row for row in rows if row and row[0] is not None]
+            if len(valid_rows) != len(rows):
+                self.logger.warning(
+                    "Dropping %d invalid graph rows with NULL timestamp (resolution=%s).",
+                    len(rows) - len(valid_rows),
+                    target_res
+                )
+
             data_points = []
             if return_raw:
-                 data_points = [(row[0], row[1], row[2]) for row in rows]
+                 data_points = [(int(row[0]), float(row[1] or 0.0), float(row[2] or 0.0)) for row in valid_rows]
             else:
-                 data_points = [(datetime.fromtimestamp(row[0]), row[1], row[2]) for row in rows]
+                 data_points = [(datetime.fromtimestamp(int(row[0])), float(row[1] or 0.0), float(row[2] or 0.0)) for row in valid_rows]
 
             # If targeted-table query returned no rows and we targeted an aggregated
             # table (minute/hour/day), fall back to the more comprehensive
