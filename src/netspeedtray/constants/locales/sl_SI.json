@@ -68,6 +68,8 @@
     "TROUBLESHOOTING_GROUP": "Odpravljanje težav",
     "MONITOR_CPU_LABEL": "Nadzor porabe CPU",
     "MONITOR_GPU_LABEL": "Nadzor porabe GPU",
+    "MONITOR_RAM_LABEL": "Prikaži porabo RAM-a",
+    "MONITOR_VRAM_LABEL": "Prikaži porabo VRAM-a",
     "WIDGET_DISPLAY_MODE_LABEL": "Način prikaza gradnika",
     "DISPLAY_MODE_NETWORK": "Samo omrežje",
     "DISPLAY_MODE_CPU": "Samo CPU",

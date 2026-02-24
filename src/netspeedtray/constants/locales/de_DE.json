@@ -68,6 +68,8 @@
     "TROUBLESHOOTING_GROUP": "Fehlerbehebung",
     "MONITOR_CPU_LABEL": "CPU-Auslastung überwachen",
     "MONITOR_GPU_LABEL": "GPU-Auslastung überwachen",
+    "MONITOR_RAM_LABEL": "RAM-Auslastung anzeigen",
+    "MONITOR_VRAM_LABEL": "VRAM-Auslastung anzeigen",
     "WIDGET_DISPLAY_MODE_LABEL": "Anzeigemodus des Widgets",
     "DISPLAY_MODE_NETWORK": "Nur Netzwerk",
     "DISPLAY_MODE_CPU": "Nur CPU",

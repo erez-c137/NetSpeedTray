@@ -68,6 +68,8 @@
     "TROUBLESHOOTING_GROUP": "Dépannage",
     "MONITOR_CPU_LABEL": "Surveiller l'utilisation du processeur",
     "MONITOR_GPU_LABEL": "Surveiller l'utilisation du GPU",
+    "MONITOR_RAM_LABEL": "Afficher l'utilisation de la RAM",
+    "MONITOR_VRAM_LABEL": "Afficher l'utilisation de la VRAM",
     "WIDGET_DISPLAY_MODE_LABEL": "Mode d'affichage du widget",
     "DISPLAY_MODE_NETWORK": "Réseau uniquement",
     "DISPLAY_MODE_CPU": "Processeur uniquement",

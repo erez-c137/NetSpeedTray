@@ -3,7 +3,8 @@
 ## [1.2.7] - 2026-02-24
 
 ### Added
-- **Hardware Monitoring:** Integrated CPU and GPU usage monitoring into the core engine.
+- **Universal GPU Monitoring:** Implemented hardware utilization and VRAM tracking via Windows Performance Counters (PDH). This provides native support for Intel, AMD, and NVIDIA GPUs without administrative privileges.
+- **Hybrid GPU Polling:** Optimized `nvidia-smi` usage to be optional and vendor-specific (temperature only), reducing overhead and dependencies.
 - **"Overview" Tab:** Added a unified overview tab to the Graph Window, featuring synchronized subplots for Network, CPU, and GPU performance history.
 - **Side-by-Side Widget Mode:** Implemented a new "Side-by-Side" (horizontal) display mode for the tray widget, allowing multiple stats to be viewed at once.
 - **Customizable Display Order:** Users can now customize the order (Network, CPU, GPU) and visibility of statistics within the tray widget via the Hardware settings page.
@@ -14,6 +15,9 @@
 - **Hardware Settings UI:** Redesigned the Hardware page with a cleaner layout and intuitive "Display Order" configuration.
 
 ### Fixed
+- **Startup Reliability:** Fixed a critical `AttributeError` in `WidgetRenderer` where dictionary configuration was accessed via dot-notation.
+- **Localization Parity:** Synchronized all 9 locales with missing hardware monitoring labels (`MONITOR_RAM_LABEL`, `MONITOR_VRAM_LABEL`), eliminating startup validation warnings.
+- **WMI Resilience:** Improved CPU temperature polling with thread-safe initialization and automated reconnection for RPC errors.
 - **Widget Rendering:** Resolved an issue where network speeds could be hidden or misaligned when multiple hardware monitors were enabled.
 - **Taskbar Awareness:** Improved widget centering on Windows 11 high-DPI displays by refining the visible taskbar region calculation.
 - **State Robustness:** Fixed a potential crash when switching between "Cycle" and "Side-by-Side" display modes.

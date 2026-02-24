@@ -137,6 +137,13 @@ class WidgetRenderer:
             """
             self.logger = logger
             self.i18n = i18n
+            
+            # Ensure config is a RenderConfig object if a dict is passed
+            if isinstance(config, dict):
+                self.config = RenderConfig.from_dict(config)
+            else:
+                self.config = config
+                
             try:
                 self.paused = False
                 

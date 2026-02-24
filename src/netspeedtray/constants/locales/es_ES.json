@@ -68,6 +68,8 @@
     "TROUBLESHOOTING_GROUP": "Solución de Problemas",
     "MONITOR_CPU_LABEL": "Monitorear uso de CPU",
     "MONITOR_GPU_LABEL": "Monitorear uso de GPU",
+    "MONITOR_RAM_LABEL": "Mostrar uso de RAM",
+    "MONITOR_VRAM_LABEL": "Mostrar uso de VRAM",
     "WIDGET_DISPLAY_MODE_LABEL": "Modo de visualización del widget",
     "DISPLAY_MODE_NETWORK": "Solo red",
     "DISPLAY_MODE_CPU": "Solo CPU",
