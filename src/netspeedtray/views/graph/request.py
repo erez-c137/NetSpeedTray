@@ -45,6 +45,7 @@ class DataRequest:
     interface_name: Optional[str]
     is_session_view: bool
     sequence_id: int
+    stat_type: str = "network" # Added for hardware stats (e.g., 'cpu', 'gpu')
     
     def __post_init__(self):
         """Validate request parameters."""
@@ -65,10 +66,13 @@ class DataRequest:
         
         if self.interface_name is not None and not isinstance(self.interface_name, str):
             raise TypeError(f"interface_name must be str or None, got {type(self.interface_name)}")
+
+        if not isinstance(self.stat_type, str):
+            raise TypeError(f"stat_type must be str, got {type(self.stat_type)}")
     
     def __hash__(self):
         """Allow DataRequest to be used in sets/dicts if needed."""
-        return hash((self.start_time, self.end_time, self.interface_name, self.is_session_view, self.sequence_id))
+        return hash((self.start_time, self.end_time, self.interface_name, self.is_session_view, self.sequence_id, self.stat_type))
     
     def __eq__(self, other):
         """Compare requests by their content."""
@@ -80,6 +84,7 @@ class DataRequest:
             and self.interface_name == other.interface_name
             and self.is_session_view == other.is_session_view
             and self.sequence_id == other.sequence_id
+            and self.stat_type == other.stat_type
         )
     
     def __repr__(self):
@@ -87,5 +92,6 @@ class DataRequest:
         return (
             f"DataRequest(sequence_id={self.sequence_id}, "
             f"start={self.start_time}, end={self.end_time}, "
-            f"interface={self.interface_name}, session={self.is_session_view})"
+            f"interface={self.interface_name}, session={self.is_session_view}, "
+            f"stat_type={self.stat_type})"
         )

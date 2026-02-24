@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.2.7] - 2026-02-24
+
+### Added
+- **Hardware Monitoring:** Integrated CPU and GPU usage monitoring into the core engine.
+- **"Overview" Tab:** Added a unified overview tab to the Graph Window, featuring synchronized subplots for Network, CPU, and GPU performance history.
+- **Side-by-Side Widget Mode:** Implemented a new "Side-by-Side" (horizontal) display mode for the tray widget, allowing multiple stats to be viewed at once.
+- **Customizable Display Order:** Users can now customize the order (Network, CPU, GPU) and visibility of statistics within the tray widget via the Hardware settings page.
+
+### Changed
+- **Universal Locale Synchronization:** Performed a massive refactor of all 9 supported locale files (`en_US`, `ru_RU`, `de_DE`, `pl_PL`, `sl_SI`, `es_ES`, `fr_FR`, `nl_NL`, `ko_KR`). All files now have 100% key parity and identical internal ordering for easier maintenance.
+- **Layout Precision:** Refactored `WidgetLayoutManager` to accurately calculate widths for multi-segment "Side-by-Side" layouts, including improved gap handling.
+- **Hardware Settings UI:** Redesigned the Hardware page with a cleaner layout and intuitive "Display Order" configuration.
+
+### Fixed
+- **Widget Rendering:** Resolved an issue where network speeds could be hidden or misaligned when multiple hardware monitors were enabled.
+- **Taskbar Awareness:** Improved widget centering on Windows 11 high-DPI displays by refining the visible taskbar region calculation.
+- **State Robustness:** Fixed a potential crash when switching between "Cycle" and "Side-by-Side" display modes.
+
 ## [1.2.6] - 2026-02-21
 
 ### Added

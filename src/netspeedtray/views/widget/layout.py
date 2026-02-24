@@ -159,7 +159,7 @@ class WidgetLayoutManager:
                     
                     from netspeedtray.utils.helpers import get_all_possible_unit_labels, get_reference_value_string
                     
-                    max_number_str = get_reference_value_string(always_mbps, precision)
+                    max_number_str = get_reference_value_string(always_mbps, precision, min_digits=4)
                     max_number_width = self.metrics.horizontalAdvance(max_number_str)
                     
                     possible_units = get_all_possible_unit_labels(self.widget.i18n)
@@ -172,6 +172,39 @@ class WidgetLayoutManager:
                     calculated_width = (margin + arrow_width + arrow_gap +
                                         max_number_width + unit_gap +
                                         max_unit_width + margin)
+
+                # --- SIDE-BY-SIDE MODE ADJUSTMENT ---
+                # If in side-by-side mode, we need to multiply the basic width by the number of segments
+                display_mode = self.widget.config.get("widget_display_mode", "network_only")
+                if display_mode == "side_by_side":
+                    active_segments = 0
+                    monitor_cpu = self.widget.config.get("monitor_cpu_enabled", False)
+                    monitor_gpu = self.widget.config.get("monitor_gpu_enabled", False)
+                    
+                    display_order = self.widget.config.get("widget_display_order", ["network", "cpu", "gpu"])
+                    if "network" in display_order: active_segments += 1
+                    if "cpu" in display_order and monitor_cpu: active_segments += 1
+                    if "gpu" in display_order and monitor_gpu: active_segments += 1
+                    
+                    # Ensure at least 1 segment
+                    active_segments = max(1, active_segments)
+                    
+                    # Account for temperature and memory text in the width estimate if monitors are enabled
+                    # " (99°C)" is about 5-6 chars. " | 16.0/16.0G" is about 12 chars.
+                    # Total buffer around 18-20 chars.
+                    temp_mem_buffer = 0
+                    if monitor_cpu or monitor_gpu:
+                        # Estimate for both temperature and memory
+                        temp_mem_buffer = self.metrics.horizontalAdvance(" (99°C) | 16.0/16.0G")
+                    
+                    # We add a small separator gap between segments
+                    segment_gap = 10
+                    segment_width = calculated_width + temp_mem_buffer
+                    calculated_width = (segment_width * active_segments) + (segment_gap * (active_segments - 1))
+                elif display_mode in ["cpu_only", "gpu_only", "combined"]:
+                    # Just one segment but potentially with temperature and memory
+                    temp_mem_buffer = self.metrics.horizontalAdvance(" (99°C) | 16.0/16.0G")
+                    calculated_width += temp_mem_buffer
                 
                 # Height is the TRUE visible taskbar height for horizontal docking (Fixes #104/PR #110)
                 screen = taskbar_info.get_screen()

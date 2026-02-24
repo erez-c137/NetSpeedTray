@@ -26,8 +26,13 @@ class RendererConstants:
     MIN_Y_SCALE: Final[int] = 62500
     GRAPH_Y_AXIS_PADDING_FACTOR: Final[float] = 1.15 # Add 15% headroom
     
+    # --- Display Cycling ---
+    CYCLE_INTERVAL_MS: Final[int] = 5000 # 5 seconds per metric
+    
     # --- Theming ---
     GRAPH_LINE_COLOR: Final[str] = color.WHITE # Reference master palette
+    CPU_LINE_COLOR: Final[str] = "#3498db" # Blue
+    GPU_LINE_COLOR: Final[str] = "#e74c3c" # Red
 
     # ========== MATPLOTLIB GRAPH WINDOW CONSTANTS ==========
     

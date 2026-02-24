@@ -81,9 +81,54 @@ class GraphDataWorker(QObject):
                 self.error.emit("Data source (WidgetState) not available.")
                 return
 
-            total_up, total_down = 0.0, 0.0
+            if request.stat_type == "overview":
+                # Multi-dataset fetch for Overview tab
+                if request.is_session_view:
+                    net_data = self.widget_state.get_aggregated_speed_history()
+                    cpu_data = self.widget_state.cpu_history
+                    gpu_data = self.widget_state.gpu_history
+                    
+                    start_ts = request.start_time.timestamp() if request.start_time else 0
+                    end_ts = request.end_time.timestamp()
+                    
+                    history_data = {
+                        "network": [(d.timestamp.timestamp(), d.upload, d.download) for d in net_data if start_ts <= d.timestamp.timestamp() <= end_ts],
+                        "cpu": [(d.timestamp.timestamp(), d.value, 0.0) for d in cpu_data if start_ts <= d.timestamp.timestamp() <= end_ts],
+                        "gpu": [(d.timestamp.timestamp(), d.value, 0.0) for d in gpu_data if start_ts <= d.timestamp.timestamp() <= end_ts]
+                    }
+                else:
+                    net_data = self.widget_state.get_speed_history(request.start_time, request.end_time, request.interface_name)
+                    cpu_data = self.widget_state.get_hardware_history("cpu", request.start_time, request.end_time)
+                    gpu_data = self.widget_state.get_hardware_history("gpu", request.start_time, request.end_time)
+                    
+                    history_data = {
+                        "network": [(dt.timestamp(), up, dw) for dt, up, dw in net_data],
+                        "cpu": [(dt.timestamp(), val, 0.0) for dt, val in cpu_data],
+                        "gpu": [(dt.timestamp(), val, 0.0) for dt, val in gpu_data]
+                    }
+                # For Overview, we don't downsample here for simplicity, or handle per-key
+                # We'll return early with this dict
+                self.data_ready.emit(history_data, 0.0, 0.0, request.sequence_id)
+                return
 
-            if request.is_session_view:
+            if request.stat_type in ("cpu", "gpu"):
+                if request.is_session_view:
+                    # In-memory session data
+                    aggregated_data = self.widget_state.cpu_history if request.stat_type == "cpu" else self.widget_state.gpu_history
+                    start_ts = request.start_time.timestamp() if request.start_time else 0
+                    end_ts = request.end_time.timestamp()
+                    
+                    history_data = []
+                    for d in aggregated_data:
+                        ts = d.timestamp.timestamp()
+                        if ts < start_ts or ts > end_ts: continue
+                        history_data.append((ts, d.value, 0.0)) # Hardware is single value, reuse second slot for convenience or pass 0
+                else:
+                    # Database data
+                    raw_history = self.widget_state.get_hardware_history(request.stat_type, request.start_time, request.end_time)
+                    history_data = [(dt.timestamp(), val, 0.0) for dt, val in raw_history]
+
+            elif request.is_session_view:
                 # OPTIMIZATION: Use the pre-calculated aggregated history from WidgetState.
                 aggregated_data = self.widget_state.get_aggregated_speed_history()
                 
@@ -123,11 +168,13 @@ class GraphDataWorker(QObject):
                 )
 
             # Smart Downsampling: Cap at MAX_DATA_POINTS for rendering performance
-            # Uses stride-based sampling to preserve temporal distribution
             if len(history_data) > self.MAX_DATA_POINTS:
                 stride = len(history_data) // self.MAX_DATA_POINTS
                 downsampled = history_data[::stride]
-                history_data = self._preserve_global_peaks(history_data, downsampled)
+                if request.stat_type == "network":
+                    history_data = self._preserve_global_peaks(history_data, downsampled)
+                else:
+                    history_data = downsampled
 
             if not history_data or len(history_data) < 2:
                 self.data_ready.emit([], 0.0, 0.0, request.sequence_id)

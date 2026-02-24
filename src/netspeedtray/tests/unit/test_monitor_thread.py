@@ -1,5 +1,5 @@
 """
-Unit tests for the NetworkMonitorThread class, specifically focusing on the circuit breaker logic.
+Unit tests for the StatsMonitorThread class, specifically focusing on the circuit breaker logic.
 """
 
 import time
@@ -7,14 +7,14 @@ import pytest
 from unittest.mock import MagicMock, patch
 from PyQt6.QtCore import QThread
 
-from netspeedtray.core.monitor_thread import NetworkMonitorThread
+from netspeedtray.core.monitor_thread import StatsMonitorThread
 
 class TestNetworkMonitorThread:
     
     @pytest.fixture
     def monitor_thread(self, q_app):
         """Creates a thread instance with a very short interval for testing."""
-        thread = NetworkMonitorThread(interval=0.01)
+        thread = StatsMonitorThread(interval=0.01)
         yield thread
         if thread.isRunning():
             thread.stop()
@@ -58,7 +58,7 @@ class TestNetworkMonitorThread:
     def test_circuit_breaker_trips(self, q_app):
         """Test that >10 errors stops the thread."""
         with patch('netspeedtray.core.monitor_thread.constants.timers.MINIMUM_INTERVAL_MS', 10):
-            monitor_thread = NetworkMonitorThread(interval=0.01)
+            monitor_thread = StatsMonitorThread(interval=0.01)
             
             with patch('netspeedtray.core.monitor_thread.psutil.net_io_counters', side_effect=OSError("Persistent Error")):
                  # We need to ensure it runs enough times to trip.

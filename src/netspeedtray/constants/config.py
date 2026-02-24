@@ -1,7 +1,7 @@
 """
 Constants for application configuration defaults and constraints.
 """
-from typing import Final, Dict, Any
+from typing import Final, Dict, Any, List
 
 # --- IMPORT OTHER CONSTANTS TO CREATE A SINGLE SOURCE OF TRUTH ---
 from netspeedtray.constants.timers import timers
@@ -38,7 +38,7 @@ class ConfigConstants:
     # The migration system will use this to determine which upgrades to apply.
     # Current version history:
     #   v1.0: Initial schema with all current fields (as of 2026-02-18)
-    CONFIG_SCHEMA_VERSION: Final[str] = "1.0"
+    CONFIG_SCHEMA_VERSION: Final[str] = "1.1"
     
     # --- Default Values for Individual Settings (referencing other constants) ---
     DEFAULT_UPDATE_RATE: Final[float] = 1.0
@@ -80,6 +80,17 @@ class ConfigConstants:
     DEFAULT_TRAY_OFFSET_X: Final[int] = 3
     DEFAULT_LEGEND_POSITION: Final[str] = data.legend_position.DEFAULT_LEGEND_POSITION
     DEFAULT_SHOW_LEGEND: Final[bool] = True
+    
+    # --- CPU/GPU Monitoring ---
+    DEFAULT_MONITOR_CPU_ENABLED: Final[bool] = False
+    DEFAULT_MONITOR_GPU_ENABLED: Final[bool] = False
+    DEFAULT_WIDGET_DISPLAY_MODE: Final[str] = "network_only" # Choices: network_only, cycle, side_by_side
+    DEFAULT_WIDGET_DISPLAY_ORDER: Final[List[str]] = ["network", "cpu", "gpu"]
+    DEFAULT_WIDGET_CYCLE_INTERVAL: Final[int] = 3 # Seconds
+    DEFAULT_CPU_LOAD_HIGH_THRESHOLD: Final[float] = 80.0
+    DEFAULT_CPU_LOAD_LOW_THRESHOLD: Final[float] = 50.0
+    DEFAULT_GPU_LOAD_HIGH_THRESHOLD: Final[float] = 80.0
+    DEFAULT_GPU_LOAD_LOW_THRESHOLD: Final[float] = 50.0
 
     CONFIG_FILENAME: Final[str] = "NetSpeedTray_Config.json"
     
@@ -134,6 +145,15 @@ class ConfigConstants:
         "arrow_font_family": DEFAULT_ARROW_FONT_FAMILY,
         "arrow_font_size": DEFAULT_ARROW_FONT_SIZE,
         "arrow_font_weight": DEFAULT_ARROW_FONT_WEIGHT,
+        "monitor_cpu_enabled": DEFAULT_MONITOR_CPU_ENABLED,
+        "monitor_gpu_enabled": DEFAULT_MONITOR_GPU_ENABLED,
+        "widget_display_mode": DEFAULT_WIDGET_DISPLAY_MODE,
+        "widget_display_order": DEFAULT_WIDGET_DISPLAY_ORDER,
+        "widget_cycle_interval": DEFAULT_WIDGET_CYCLE_INTERVAL,
+        "cpu_load_high_threshold": DEFAULT_CPU_LOAD_HIGH_THRESHOLD,
+        "cpu_load_low_threshold": DEFAULT_CPU_LOAD_LOW_THRESHOLD,
+        "gpu_load_high_threshold": DEFAULT_GPU_LOAD_HIGH_THRESHOLD,
+        "gpu_load_low_threshold": DEFAULT_GPU_LOAD_LOW_THRESHOLD,
     }
     
     # --- Schema Definition for Modern Config Validation ---
@@ -189,6 +209,15 @@ class ConfigConstants:
         "settings_window_pos": {"type": (dict, type(None)), "default": None},
         "history_period_slider_value": {"type": int, "default": 0, "min": 0, "max": len(data.history_period.PERIOD_MAP) - 1},
         "show_legend": {"type": bool, "default": DEFAULT_SHOW_LEGEND},
+        "monitor_cpu_enabled": {"type": bool, "default": DEFAULT_MONITOR_CPU_ENABLED},
+        "monitor_gpu_enabled": {"type": bool, "default": DEFAULT_MONITOR_GPU_ENABLED},
+        "widget_display_mode": {"type": str, "default": DEFAULT_WIDGET_DISPLAY_MODE, "choices": ["network_only", "cycle", "side_by_side"]},
+        "widget_display_order": {"type": list, "default": DEFAULT_WIDGET_DISPLAY_ORDER, "item_type": str},
+        "widget_cycle_interval": {"type": int, "default": DEFAULT_WIDGET_CYCLE_INTERVAL, "min": 1, "max": 60},
+        "cpu_load_high_threshold": {"type": (int, float), "default": DEFAULT_CPU_LOAD_HIGH_THRESHOLD, "min": 0, "max": 100},
+        "cpu_load_low_threshold": {"type": (int, float), "default": DEFAULT_CPU_LOAD_LOW_THRESHOLD, "min": 0, "max": 100},
+        "gpu_load_high_threshold": {"type": (int, float), "default": DEFAULT_GPU_LOAD_HIGH_THRESHOLD, "min": 0, "max": 100},
+        "gpu_load_low_threshold": {"type": (int, float), "default": DEFAULT_GPU_LOAD_LOW_THRESHOLD, "min": 0, "max": 100},
     }
 
 

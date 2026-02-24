@@ -8,7 +8,7 @@ Handles live updates to the parent widget via signals and throttling.
 
 from __future__ import annotations
 
-from netspeedtray.core.controller import NetworkController
+from netspeedtray.core.controller import StatsController
 
 import logging
 import shutil
@@ -45,6 +45,7 @@ from netspeedtray.views.settings.pages.interfaces import InterfacesPage
 from netspeedtray.views.settings.pages.general import GeneralPage
 from netspeedtray.views.settings.pages.appearance import AppearancePage
 from netspeedtray.views.settings.pages.colors import ColorsPage
+from netspeedtray.views.settings.pages.hardware import HardwarePage
 from netspeedtray.constants.update_mode import UpdateMode
 
 
@@ -193,6 +194,7 @@ class SettingsDialog(QDialog):
                 self.i18n.COLOR_CODING_GROUP,
                 # Arrow settings group removed (merged into Appearance)
                 self.i18n.MINI_GRAPH_SETTINGS_GROUP, 
+                self.i18n.HARDWARE_MONITORING_GROUP,
                 self.i18n.UNITS_GROUP,
                 self.i18n.NETWORK_INTERFACES_GROUP, 
                 self.i18n.TROUBLESHOOTING_GROUP
@@ -230,6 +232,7 @@ class SettingsDialog(QDialog):
             )
             
             self.graph_page = GraphPage(self.i18n, self._schedule_settings_update)
+            self.hardware_page = HardwarePage(self.i18n, self._schedule_settings_update)
             self.units_page = UnitsPage(self.i18n, self._schedule_settings_update)
             self.interfaces_page = InterfacesPage(
                 self.i18n, 
@@ -243,6 +246,7 @@ class SettingsDialog(QDialog):
             self.stack.addWidget(self.appearance_page)
             self.stack.addWidget(self.colors_page)
             self.stack.addWidget(self.graph_page)
+            self.stack.addWidget(self.hardware_page)
             self.stack.addWidget(self.units_page)
             self.stack.addWidget(self.interfaces_page)
             self.stack.addWidget(self.troubleshooting_page)
@@ -289,6 +293,7 @@ class SettingsDialog(QDialog):
             self.appearance_page.load_settings(self.config)
             self.colors_page.load_settings(self.config)
             self.graph_page.load_settings(self.config)
+            self.hardware_page.load_settings(self.config)
             self.units_page.load_settings(self.config)
             self.interfaces_page.load_settings(self.config)
             
@@ -398,6 +403,7 @@ class SettingsDialog(QDialog):
             settings.update(self.appearance_page.get_settings())
             settings.update(self.colors_page.get_settings())
             settings.update(self.graph_page.get_settings())
+            settings.update(self.hardware_page.get_settings())
             settings.update(self.units_page.get_settings())
             settings.update(self.interfaces_page.get_settings())
             

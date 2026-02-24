@@ -1,5 +1,5 @@
 """
-Unit tests for the NetworkController class.
+Unit tests for the StatsController class.
 
 These tests verify the correctness of the network speed calculation,
 interface filtering, and aggregation logic.
@@ -10,7 +10,7 @@ from unittest.mock import patch, MagicMock
 import time
 
 from netspeedtray import constants
-from netspeedtray.core.controller import NetworkController
+from netspeedtray.core.controller import StatsController
 from netspeedtray.core.widget_state import WidgetState
 
 
@@ -38,9 +38,9 @@ def mock_widget_state() -> MagicMock:
 
 
 @pytest.fixture
-def controller_instance(mock_config: dict, mock_widget_state: MagicMock) -> NetworkController:
+def controller_instance(mock_config: dict, mock_widget_state: MagicMock) -> StatsController:
     """Provides a fresh, configured NetworkController instance for each test."""
-    return NetworkController(config=mock_config, widget_state=mock_widget_state)
+    return StatsController(config=mock_config, widget_state=mock_widget_state)
 
 
 def test_update_speeds_calculates_and_emits_correctly(controller_instance, mock_widget_state):
@@ -77,7 +77,7 @@ def test_update_speeds_calculates_and_emits_correctly(controller_instance, mock_
     # ACT
     # Simulate the passage of 2 seconds and the new psutil data
     with patch('time.monotonic', return_value=controller.last_check_time + 2.0):
-        controller.handle_network_counters(second_counters)
+        controller._handle_network_counters(second_counters)
 
     # ASSERT
     mock_widget_state.add_speed_data.assert_called_once()
@@ -99,7 +99,7 @@ def test_update_speeds_handles_resume_from_sleep(controller_instance, mock_widge
     # ARRANGE
     controller = controller_instance
     initial_counters = { "Wi-Fi": MockNetIO(bytes_sent=1000, bytes_recv=2000) }
-    controller.handle_network_counters(initial_counters)
+    controller._handle_network_counters(initial_counters)
 
     second_counters = { "Wi-Fi": MockNetIO(bytes_sent=1500, bytes_recv=2500) }
     mock_view = MagicMock()
@@ -110,7 +110,7 @@ def test_update_speeds_handles_resume_from_sleep(controller_instance, mock_widge
     
     # ACT
     with patch('time.monotonic', return_value=time_before_sleep + 600.0):
-        controller.handle_network_counters(second_counters)
+        controller._handle_network_counters(second_counters)
 
     # ASSERT
     mock_widget_state.add_speed_data.assert_not_called()
@@ -171,7 +171,7 @@ def test_update_speeds_handles_short_lag_spike(controller_instance, mock_widget_
     
     # ACT: Simulate a 12-second lag, which is > max(10s, 1s * 5.0)
     with patch('time.monotonic', return_value=time_before_lag + 12.0):
-        controller.handle_network_counters(second_counters)
+        controller._handle_network_counters(second_counters)
 
     # ASSERT
     # With the new logic, no speed should be calculated or stored

@@ -148,6 +148,10 @@ class DataConstants:
     SPEED_TABLE_MINUTE: Final[str] = "speed_history_minute"
     SPEED_TABLE_HOUR: Final[str] = "speed_history_hour"
     
+    # Hardware Stats Schema (v5+)
+    HARDWARE_STATS_TABLE_RAW: Final[str] = "hardware_stats_raw"
+    HARDWARE_STATS_TABLE_MINUTE: Final[str] = "hardware_stats_minute"
+    
     # Legacy Schema (v1) - To be removed after full transition
     SPEED_TABLE: Final[str] = "speed_history"
     AGGREGATED_TABLE: Final[str] = "speed_history_aggregated"

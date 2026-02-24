@@ -8,7 +8,7 @@ supports multiple layouts (e.g., vertical, horizontal) to adapt to different UI 
 
 import logging
 import math
-from typing import Tuple, List, Optional, Dict, Any
+from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 from dataclasses import dataclass, field
 
 from netspeedtray.core.widget_state import SpeedDataSnapshot, AggregatedSpeedData
@@ -23,6 +23,7 @@ logger = logging.getLogger("NetSpeedTray.WidgetRenderer")
 @dataclass
 class RenderConfig:
     """A data class holding a snapshot of all configuration relevant to rendering."""
+    # ... (existing fields) ...
     color_coding: bool
     graph_enabled: bool
     high_speed_threshold: float
@@ -51,23 +52,28 @@ class RenderConfig:
     arrow_font_family: str = constants.config.defaults.DEFAULT_FONT_FAMILY
     arrow_font_size: int = 9
     arrow_font_weight: int = constants.fonts.WEIGHT_DEMIBOLD
+    
+    # New: Hardware Monitoring Toggles
+    monitor_cpu_enabled: bool = False
+    monitor_gpu_enabled: bool = False
+    monitor_ram_enabled: bool = False
+    monitor_vram_enabled: bool = False
+    widget_display_mode: str = "network_only"
+    widget_display_order: List[str] = field(default_factory=lambda: ["network", "cpu", "gpu"])
 
 
     @classmethod
     def from_dict(cls, config: Dict[str, Any]) -> 'RenderConfig':
         """Creates a RenderConfig instance from a standard application config dictionary."""
         try:
-            # Use constants for all default fallbacks
             opacity_raw = config.get('graph_opacity', constants.config.defaults.DEFAULT_GRAPH_OPACITY)
             opacity = float(opacity_raw) / 100.0 if opacity_raw is not None else (constants.config.defaults.DEFAULT_GRAPH_OPACITY / 100.0)
             
-            # Calculate max samples for graph scaling (#91)
             hist_mins = int(config.get('history_minutes', constants.config.defaults.DEFAULT_HISTORY_MINUTES))
             rate = float(config.get('update_rate', constants.config.defaults.DEFAULT_UPDATE_RATE))
             if rate <= 0: rate = 1.0
             max_samples = int((hist_mins * 60) / rate)
 
-            # Font Weight handling (robust against legacy string values)
             weight_raw = config.get('font_weight', constants.fonts.WEIGHT_DEMIBOLD)
             if isinstance(weight_raw, str):
                 weight_val = {
@@ -75,17 +81,15 @@ class RenderConfig:
                     "bold": constants.fonts.WEIGHT_BOLD
                 }.get(weight_raw.lower(), constants.fonts.WEIGHT_NORMAL)
             else:
-                try:
-                    weight_val = int(weight_raw)
-                except (ValueError, TypeError):
-                    weight_val = constants.fonts.WEIGHT_DEMIBOLD
+                try: weight_val = int(weight_raw)
+                except: weight_val = constants.fonts.WEIGHT_DEMIBOLD
 
             return cls(
                 color_coding=bool(config.get('color_coding', constants.config.defaults.DEFAULT_COLOR_CODING)),
                 graph_enabled=bool(config.get('graph_enabled', constants.config.defaults.DEFAULT_GRAPH_ENABLED)),
                 high_speed_threshold=float(config.get('high_speed_threshold', constants.config.defaults.DEFAULT_HIGH_SPEED_THRESHOLD)),
                 low_speed_threshold=float(config.get('low_speed_threshold', constants.config.defaults.DEFAULT_LOW_SPEED_THRESHOLD)),
-                arrow_width=constants.renderer.DEFAULT_ARROW_WIDTH, # No longer in config
+                arrow_width=constants.renderer.DEFAULT_ARROW_WIDTH,
                 font_family=str(config.get('font_family', constants.config.defaults.DEFAULT_FONT_FAMILY)),
                 font_size=int(config.get('font_size', constants.config.defaults.DEFAULT_FONT_SIZE)),
                 font_weight=weight_val,
@@ -108,12 +112,19 @@ class RenderConfig:
                 use_separate_arrow_font=bool(config.get('use_separate_arrow_font', False)),
                 arrow_font_family=str(config.get('arrow_font_family', constants.config.defaults.DEFAULT_FONT_FAMILY)),
                 arrow_font_size=int(config.get('arrow_font_size', constants.config.defaults.DEFAULT_FONT_SIZE)),
-                arrow_font_weight=int(config.get('arrow_font_weight', constants.fonts.WEIGHT_DEMIBOLD))
+                arrow_font_weight=int(config.get('arrow_font_weight', constants.fonts.WEIGHT_DEMIBOLD)),
+                
+                # New
+                monitor_cpu_enabled=bool(config.get('monitor_cpu_enabled', False)),
+                monitor_gpu_enabled=bool(config.get('monitor_gpu_enabled', False)),
+                monitor_ram_enabled=bool(config.get('monitor_ram_enabled', False)),
+                monitor_vram_enabled=bool(config.get('monitor_vram_enabled', False)),
+                widget_display_mode=str(config.get('widget_display_mode', 'network_only')),
+                widget_display_order=list(config.get('widget_display_order', ["network", "cpu", "gpu"]))
             )
         except Exception as e:
-            logger.error("Failed to create RenderConfig from dict: %s", e, exc_info=True)
-            # Re-raise as ValueError with context to allow upstream handling
-            raise ValueError(f"Invalid rendering configuration: {e}") from e
+            logger.error("Failed to create RenderConfig: %s", e)
+            raise ValueError(f"Invalid rendering config: {e}")
 
 
 class WidgetRenderer:
@@ -127,29 +138,14 @@ class WidgetRenderer:
             self.logger = logger
             self.i18n = i18n
             try:
-                self.config = RenderConfig.from_dict(config)
-                self.default_color = QColor(self.config.default_color)
-                self.high_color = QColor(self.config.high_speed_color)
-                self.low_color = QColor(self.config.low_speed_color)
-                # FIX for #89: Ensure font weight is int
-                weight = int(self.config.font_weight)
-                self.font = QFont(self.config.font_family, self.config.font_size, weight)
-                self.metrics = QFontMetrics(self.font)
-                
-                # Arrow font
-                if self.config.use_separate_arrow_font:
-                    self.arrow_font = QFont(self.config.arrow_font_family, self.config.arrow_font_size, int(self.config.arrow_font_weight))
-                else:
-                    self.arrow_font = self.font
-                self.arrow_metrics = QFontMetrics(self.arrow_font)
-                
-                self._last_text_rect = QRect()
-                self._last_widget_size: Tuple[int, int] = (0, 0)
-                self._cached_upload_points: List[QPointF] = []
-                self._cached_download_points: List[QPointF] = []
-                self._last_history_hash: int = 0
-                
                 self.paused = False
+                
+                # Caching for high-frequency paint events
+                self._cached_pens = {}
+                self._cached_bg_color = None
+                self._cached_bg_opacity = -1.0
+                self._refresh_resource_cache()
+                
                 self.logger.debug("WidgetRenderer initialized.")
             except Exception as e:
                 self.logger.error("Failed to initialize WidgetRenderer: %s", e)
@@ -158,6 +154,34 @@ class WidgetRenderer:
                 self.font = QFont()
                 self.metrics = QFontMetrics(self.font)
                 raise RuntimeError("Renderer initialization failed") from e
+
+    def _refresh_resource_cache(self) -> None:
+        """Pre-calculates colors, fonts, and pens to avoid allocation in paint loop."""
+        if not self.config:
+            return
+            
+        self.default_color = QColor(self.config.default_color)
+        self.high_color = QColor(self.config.high_speed_color)
+        self.low_color = QColor(self.config.low_speed_color)
+        
+        weight = int(self.config.font_weight)
+        self.font = QFont(self.config.font_family, self.config.font_size, weight)
+        self.metrics = QFontMetrics(self.font)
+        
+        if self.config.use_separate_arrow_font:
+            self.arrow_font = QFont(self.config.arrow_font_family, self.config.arrow_font_size, int(self.config.arrow_font_weight))
+        else:
+            self.arrow_font = self.font
+        self.arrow_metrics = QFontMetrics(self.arrow_font)
+        
+        # Pre-cache pens
+        self._cached_pens = {
+            'default': QPen(self.default_color),
+            'high': QPen(self.high_color),
+            'low': QPen(self.low_color),
+            'cpu': QPen(QColor(constants.renderer.CPU_LINE_COLOR)),
+            'gpu': QPen(QColor(constants.renderer.GPU_LINE_COLOR))
+        }
 
 
     def _draw_error(self, painter: QPainter, rect: QRect, message: str) -> None:
@@ -176,368 +200,300 @@ class WidgetRenderer:
 
     def draw_background(self, painter: QPainter, rect: QRect, config: RenderConfig) -> None:
         """Draws the widget background. Ensures at least minimal opacity for hit testing."""
+        # Check if we need to refresh cache (if config values moved)
+        if (self._cached_bg_color is None or 
+            self._cached_bg_opacity != config.background_opacity or
+            self.config.background_color != config.background_color):
+            
+            self._cached_bg_color = QColor(config.background_color)
+            self._cached_bg_opacity = config.background_opacity
+            # Ensure minimum opacity for hit-testing
+            min_alpha = 1.0 / 255.0
+            self._cached_bg_color.setAlphaF(max(config.background_opacity, min_alpha))
+            
+        painter.fillRect(rect, self._cached_bg_color)
+
+    def draw_network_speeds(self, painter: QPainter, upload: float, download: float, width: int, height: int, config: RenderConfig, layout_mode: str = 'vertical', x_offset: int = 0, fixed_width: Optional[int] = None) -> None:
+        """Draws current upload and download speeds."""
+        try:
+            # Format speeds
+            up_val, up_unit = format_speed(
+                upload, self.i18n, force_mega_unit=(config.speed_display_mode == "always_mbps"),
+                decimal_places=config.decimal_places, unit_type=config.unit_type,
+                short_labels=config.short_unit_labels, split_unit=True
+            )
+            dw_val, dw_unit = format_speed(
+                download, self.i18n, force_mega_unit=(config.speed_display_mode == "always_mbps"),
+                decimal_places=config.decimal_places, unit_type=config.unit_type,
+                short_labels=config.short_unit_labels, split_unit=True
+            )
+
+            painter.setFont(self.font)
+            line_height = self.metrics.height()
+            ascent = self.metrics.ascent()
+            
+            # --- FIXED/DYNAMIC WIDTH CALCULATIONS ---
+            # We want units to stay put for 3 digits, but move for 4.
+            from netspeedtray.utils.helpers import get_reference_value_string
+            
+            # 1. Base 3-digit width for alignment stability
+            # We use a 3-digit ref string to pin the "normal" unit position
+            ref_str_3 = get_reference_value_string(False, config.decimal_places, config.unit_type, min_digits=3)
+            base_number_width = self.metrics.horizontalAdvance(ref_str_3)
+            
+            # 2. Actual max width of currently displayed values
+            actual_up_width = self.metrics.horizontalAdvance(up_val)
+            actual_dw_width = self.metrics.horizontalAdvance(dw_val)
+            actual_max_width = max(actual_up_width, actual_dw_width)
+            
+            # The area width follows the baseline, but expands if actual values are wider (4 digits)
+            number_area_width = max(base_number_width, actual_max_width)
+
+            # 3. Arrow Width (use max of UP/DW arrows)
+            arrow_up = self.i18n.UPLOAD_ARROW
+            arrow_dw = self.i18n.DOWNLOAD_ARROW
+            max_arrow_width = max(
+                self.arrow_metrics.horizontalAdvance(arrow_up),
+                self.arrow_metrics.horizontalAdvance(arrow_dw)
+            ) if not config.hide_arrows else 0
+            
+            # Constants for gaps
+            arrow_gap = constants.renderer.ARROW_NUMBER_GAP if not config.hide_arrows else 0
+            unit_gap = constants.renderer.VALUE_UNIT_GAP if not config.hide_unit_suffix else 0
+            vertical_gap = 1
+            margin = constants.renderer.TEXT_MARGIN
+            
+            # Fixed Offsets (Arrow and Number start are fixed)
+            arrow_x = x_offset + margin
+            number_x = arrow_x + max_arrow_width + arrow_gap
+            
+            # Unit offset is relative to the (potentially expanded) number area
+            unit_x = number_x + number_area_width + unit_gap
+            
+            # Default Vertical Layout (Stack UP over DW)
+            total_height = (line_height * 2) + vertical_gap
+            top_y = int((height - total_height) / 2 + ascent)
+            
+            # Draw UP
+            self._draw_speed_line_fixed(painter, config.swap_upload_download, up_val, up_unit, arrow_x, number_x, unit_x, top_y, config, number_area_width)
+            
+            # Draw DW
+            dw_y = top_y + line_height + vertical_gap
+            self._draw_speed_line(painter, not config.swap_upload_download, dw_val, dw_unit, arrow_x, number_x, unit_x, dw_y, config, number_area_width)
+
+        except Exception as e:
+            self.logger.error("Failed to draw network speeds: %s", e)
+
+    def _draw_speed_line(self, painter: QPainter, is_upload: bool, val: str, unit: str, arrow_x: int, number_x: int, unit_x: int, y: int, config: RenderConfig, number_area_width: int) -> None:
+        """Unified helper to draw a single speed line (Arrow + Value + Unit) with stable alignment."""
+        # Color coding
+        if config.color_coding:
+            try:
+                # Clean up commas and spaces for float conversion
+                clean_val = val.replace(',', '').replace(' ', '').strip()
+                f_val = float(clean_val)
+                if f_val >= config.high_speed_threshold: 
+                    painter.setPen(self._cached_pens['high'])
+                elif f_val <= config.low_speed_threshold: 
+                    painter.setPen(self._cached_pens['low'])
+                else: 
+                    painter.setPen(self._cached_pens['default'])
+            except:
+                painter.setPen(self._cached_pens['default'])
+        else:
+            painter.setPen(self._cached_pens['default'])
+
+        # 1. Draw Arrow
+        if not config.hide_arrows:
+            painter.setFont(self.arrow_font)
+            arrow = self.i18n.UPLOAD_ARROW if is_upload else self.i18n.DOWNLOAD_ARROW
+            painter.drawText(arrow_x, y, arrow)
+
+        # 2. Draw Value (Right-aligned within fixed/expanded number area)
+        painter.setFont(self.font)
+        val_width = self.metrics.horizontalAdvance(val)
+        aligned_number_x = number_x + (number_area_width - val_width)
+        painter.drawText(int(aligned_number_x), y, val)
+        
+        # 3. Draw Unit
+        if not config.hide_unit_suffix:
+            painter.drawText(unit_x, y, unit)
+
+    def _draw_speed_line_fixed(self, *args, **kwargs):
+        """Deprecated alias for _draw_speed_line."""
+        return self._draw_speed_line(*args, **kwargs)
+
+
+
+
+    def draw_hardware_stats(self, painter: QPainter, cpu_usage: Optional[float], gpu_usage: Optional[float], 
+                           width: int, height: int, config: RenderConfig, 
+                           cpu_temp: Optional[float] = None, gpu_temp: Optional[float] = None,
+                           ram_info: Optional[Tuple[float, float]] = None, 
+                           vram_info: Optional[Tuple[float, float]] = None,
+                           layout_mode: str = 'vertical', x_offset: int = 0, fixed_width: Optional[int] = None) -> None:
+        """Draws CPU and/or GPU utilization statistics with optional temperature and memory."""
+        try:
+            enabled_stats = []
+            if cpu_usage is not None: 
+                enabled_stats.append(('CPU', cpu_usage, cpu_temp, ram_info, constants.renderer.CPU_LINE_COLOR))
+            if gpu_usage is not None: 
+                enabled_stats.append(('GPU', gpu_usage, gpu_temp, vram_info, constants.renderer.GPU_LINE_COLOR))
+            
+            if not enabled_stats: return
+            
+            painter.setFont(self.font)
+            
+            line_height = self.metrics.height()
+            ascent = self.metrics.ascent()
+            total_height = line_height * len(enabled_stats)
+            top_y = int((height - total_height) / 2 + ascent)
+            
+            margin = constants.renderer.TEXT_MARGIN
+            current_x = x_offset + margin
+            
+            # Use color differentiator but icons are the primary identifier now
+            for i, (label, val, temp, mem_info, color_hex) in enumerate(enabled_stats):
+                y_pos = top_y + (i * line_height)
+                icon_color = QColor(color_hex)
+                self._draw_icon(painter, label, current_x, y_pos, icon_color)
+                
+                # Format: "Usage% (Temp) | Used/Total"
+                val_str = f"{int(val)}%"
+                if temp is not None:
+                    val_str += f" ({int(temp)}°C)"
+                
+                if mem_info and mem_info[0] is not None:
+                    used, total = mem_info
+                    if total is not None:
+                        val_str += f" | {used:.1f}/{total:.1f}G"
+                    else:
+                        # Fallback for universal PDH where total might be unknown
+                        val_str += f" | {used:.1f}G"
+                    
+                val_x = current_x + 14 # Icon width + gap
+                # Stick to default color for text to keep it clean, or use color if it helps
+                # User said "not loving color as differentiator", so primary focus is icons.
+                # However, subtle color helps grouping. I'll use default color for text for maximum cleanliness.
+                painter.setPen(self.default_color)
+                painter.drawText(val_x, y_pos, val_str)
+
+        except Exception as e:
+            self.logger.error("Failed to draw hardware stats: %s", e)
+
+
+    def _draw_icon(self, painter: QPainter, icon_type: str, x: int, y_ascent: int, color: Optional[QColor] = None) -> None:
+        """Draws a tiny symbolic icon for CPU or GPU."""
         painter.save()
-        bg_color = QColor(config.background_color)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         
-        # CRITICAL FIX: Ensure minimum opacity of ~0.004 (1/255) so the window system
-        # treats the window as "hit-testable" even if visually transparent.
-        # This prevents clicks from falling through or causing undefined behavior.
-        min_opacity = 1.0 / 255.0
-        effective_opacity = max(config.background_opacity, min_opacity)
+        # Icon box size
+        size = 11
+        rect = QRect(x, y_ascent - size + 1, size, size)
         
-        bg_color.setAlphaF(effective_opacity)
-        painter.setBrush(bg_color)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.drawRoundedRect(rect, 4, 4) # Rounded corners for polish
+        draw_color = color if color else self.default_color
+        pen = QPen(draw_color, 1)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        
+        if icon_type == 'CPU':
+            # Microchip with 'C'
+            inner_rect = rect.adjusted(2, 2, -2, -2)
+            painter.drawRect(inner_rect)
+            # "Pins"
+            for offset in [0, 5, 9]: # top/bottom
+                painter.drawLine(rect.left() + offset, rect.top(), rect.left() + offset, rect.top() + 1)
+                painter.drawLine(rect.left() + offset, rect.bottom() - 1, rect.left() + offset, rect.bottom())
+            for offset in [2, 6, 8]: # left/right
+                painter.drawLine(rect.left(), rect.top() + offset, rect.left() + 1, rect.top() + offset)
+                painter.drawLine(rect.right() - 1, rect.top() + offset, rect.right(), rect.top() + offset)
+            
+            # Tiny 'C'
+            small_font = QFont(self.font.family(), 6)
+            painter.setFont(small_font)
+            painter.drawText(inner_rect, Qt.AlignmentFlag.AlignCenter, "C")
+
+        elif icon_type == 'GPU':
+            # Graphics card with 'G' and Fan
+            card_rect = rect.adjusted(0, 3, 0, -1)
+            painter.drawRect(card_rect)
+            # Bracket on left
+            painter.drawLine(rect.left(), rect.top(), rect.left(), rect.bottom())
+            # Fan circle
+            fan_size = 5
+            fan_rect = QRect(rect.center().x() - 1, rect.center().y() + 1, fan_size, fan_size)
+            painter.drawEllipse(fan_rect.adjusted(-2, -1, -2, -1))
+            
+            # Tiny 'G'
+            small_font = QFont(self.font.family(), 6)
+            painter.setFont(small_font)
+            painter.drawText(card_rect, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, "G")
+            
         painter.restore()
 
 
-    def draw_network_speeds(self, painter: QPainter, upload: float, download: float, width: int, height: int, config: RenderConfig, layout_mode: str = 'vertical') -> None:
-        """Draws upload/download speeds, adapting to vertical or horizontal layouts."""
-        try:
-            force_mega_unit = config.speed_display_mode == "always_mbps"
-            decimal_places = max(0, min(2, config.decimal_places))
-            force_decimals = config.force_decimals
-            unit_type = config.unit_type
-            swap_order = config.swap_upload_download
-            
-            if layout_mode == 'horizontal':
-                self._draw_horizontal_layout(painter, upload, download, width, height, config, force_mega_unit, decimal_places, force_decimals, unit_type, swap_order, config.short_unit_labels)
-            else: # Default to vertical
-                self._draw_vertical_layout(painter, upload, download, width, height, config, force_mega_unit, decimal_places, force_decimals, unit_type, swap_order, config.short_unit_labels)
-
-        except Exception as e:
-            self.logger.error("Failed to draw speeds: %s", e, exc_info=True)
-            self._last_text_rect = QRect()
-
-
-    # ... (skipping _draw_vertical_layout and _draw_horizontal_layout and helpers as they are unchanged) ...
-    # Wait, I need to keep them or the tool will delete them if I don't include them in the range or chunk.
-    # The user asked for "ReplacementContent" for the replaced range.
-    # I should target the Class RenderConfig and WidgetRenderer.__init__ and draw_mini_graph?
-    # No, I should replace blocks.
-    
-    # Let's replace the whole top part of file including RenderConfig.
-    # And then a second chunk for draw_mini_graph?
-    # Ah, the tool `replace_file_content` is for single contiguous block.
-    # `multi_replace_file_content` is better here.
-    pass
-
-    def _draw_vertical_layout(self, painter: QPainter, upload: float, download: float, width: int, height: int, config: RenderConfig, force_mega_unit: bool, decimal_places: int, force_decimals: bool, unit_type: str, swap_order: bool, short_labels: bool) -> None:
-        """
-        Draws the standard two-line vertical layout.
-        Includes INTELLIGENT SCALING to fit narrow/vertical taskbars (#99).
-        """
-        # --- Preparation & Helpers ---
-        # Helper to get current metrics
-        def get_width_metrics(current_metrics, current_arrow_metrics):
-            arrow_w = 0 if hide_arrows else current_arrow_metrics.horizontalAdvance(self.i18n.UPLOAD_ARROW)
-            arrow_g = 0 if hide_arrows else constants.renderer.ARROW_NUMBER_GAP
-            
-            ref_v = get_reference_value_string(force_mega_unit, decimal_places, unit_type=unit_type)
-            max_num_w = current_metrics.horizontalAdvance(ref_v)
-            
-            unit_g = 0 if hide_unit else constants.renderer.VALUE_UNIT_GAP
-            if hide_unit:
-                max_u_w = 0
-            else:
-                p_units = get_unit_labels_for_type(self.i18n, unit_type, short_labels)
-                max_u_w = max(current_metrics.horizontalAdvance(u) for u in p_units)
-                
-            total_w = arrow_w + arrow_g + max_num_w + unit_g + max_u_w
-            return total_w, arrow_w, arrow_g, max_num_w, unit_g, max_u_w
-
-        from netspeedtray.utils.helpers import get_reference_value_string, get_unit_labels_for_type
-
-        upload_text, download_text = self._format_speed_texts(upload, download, force_mega_unit, decimal_places, force_decimals, unit_type, short_labels=short_labels)
-        up_val_str, up_unit = upload_text
-        down_val_str, down_unit = download_text
-        
-        hide_arrows = config.hide_arrows
-        hide_unit = config.hide_unit_suffix
-        
-        # --- Font Scaling Logic ---
-        # Start with configured fonts
-        draw_font = QFont(self.font)
-        draw_arrow_font = QFont(self.arrow_font)
-        
-        # Iteratively reduce size if too wide
-        min_font_size = 6
-        current_size = self.config.font_size
-        
-        # Safety margin to prevent edge-touching
-        # Narrow taskbars (e.g. 60px) need strict margins
-        safe_width = width - (constants.renderer.TEXT_MARGIN * 2) 
-        if safe_width < 10: safe_width = 10 # Sanity check
-        
-        metrics = QFontMetrics(draw_font)
-        arrow_metrics = QFontMetrics(draw_arrow_font)
-        
-        content_width, arrow_width, arrow_gap, max_number_width, unit_gap, max_unit_width = get_width_metrics(metrics, arrow_metrics)
-        
-        # Scaling Loop
-        while content_width > safe_width and current_size > min_font_size:
-            current_size -= 1
-            draw_font.setPointSize(current_size)
-            metrics = QFontMetrics(draw_font)
-            
-            # Scale arrow font proportionally if it was separate, or keep in sync if same
-            if self.config.use_separate_arrow_font:
-                # Naive scaling: reduce by 1 as well? Or keep ratio?
-                # Let's just reduce by 1 to keep it simple and safe.
-                af_size = max(min_font_size, draw_arrow_font.pointSize() - 1)
-                draw_arrow_font.setPointSize(af_size)
-            else:
-                draw_arrow_font.setPointSize(current_size)
-                
-            arrow_metrics = QFontMetrics(draw_arrow_font)
-            content_width, arrow_width, arrow_gap, max_number_width, unit_gap, max_unit_width = get_width_metrics(metrics, arrow_metrics)
-
-        # --- Draw Calculation ---
-        line_height = metrics.height()
-        ascent = metrics.ascent()
-        total_text_height = line_height * 2
-        top_y = int((height - total_text_height) / 2 + ascent)
-        bottom_y = top_y + line_height
-
-        margin = self._calculate_margin(width, content_width, config.text_alignment)
-        
-        # If we scaled down heavily, force centering to look better than left-aligned cramming
-        if current_size < self.config.font_size:
-             # Recalculate margin for true center in limited space
-             margin = int((width - content_width) / 2)
-
-        number_starting_x_base = margin + arrow_width + arrow_gap
-        unit_x = number_starting_x_base + max_number_width + unit_gap
-
-        def draw_line(y_pos: int, arrow_char: str, val_str: str, unit_str: str, color: QColor):
-            painter.setPen(color)
-            if not hide_arrows:
-                painter.setFont(draw_arrow_font)
-                painter.drawText(margin, y_pos, arrow_char)
-            
-            painter.setFont(draw_font)
-            
-            val_width = metrics.horizontalAdvance(val_str)
-            val_x = number_starting_x_base + max_number_width - val_width
-            painter.drawText(int(val_x), y_pos, val_str)
-            
-            if not hide_unit:
-                painter.drawText(unit_x, y_pos, unit_str)
-
-        if swap_order:
-            draw_line(top_y, self.i18n.DOWNLOAD_ARROW, down_val_str, down_unit, self._get_speed_color(download, config))
-            draw_line(bottom_y, self.i18n.UPLOAD_ARROW, up_val_str, up_unit, self._get_speed_color(upload, config))
-        else:
-            draw_line(top_y, self.i18n.UPLOAD_ARROW, up_val_str, up_unit, self._get_speed_color(upload, config))
-            draw_line(bottom_y, self.i18n.DOWNLOAD_ARROW, down_val_str, down_unit, self._get_speed_color(download, config))
-        
-        self._last_text_rect = QRect(margin, int(top_y - ascent), int(content_width), int(total_text_height))
-
-
-
-    def _draw_horizontal_layout(self, painter: QPainter, upload: float, download: float, width: int, height: int, config: RenderConfig, force_mega_unit: bool, decimal_places: int, force_decimals: bool, unit_type: str, swap_order: bool, short_labels: bool) -> None:
-        """Draws the compact single-line horizontal layout."""
-        # Get split value/unit pairs
-        upload_pair, download_pair = self._format_speed_texts(upload, download, force_mega_unit, decimal_places, force_decimals, unit_type, short_labels=short_labels, full_string=False)
-        
-        up_val, up_unit = upload_pair
-        down_val, down_unit = download_pair
-
-        hide_arrows = config.hide_arrows
-        hide_unit = config.hide_unit_suffix
-
-        def build_string(arrow_char: str, val_str: str, unit_str: str) -> str:
-            parts = []
-            if not hide_arrows:
-                parts.append(arrow_char)
-            parts.append(val_str)
-            if not hide_unit:
-                parts.append(unit_str)
-            # Note: For horizontal layout, we still use full string drawing usually,
-            # but if using separate fonts we must draw parts manually.
-            pass
-
-        def draw_part_h(x_pos: int, arrow_char: str, val_str: str, unit_str: str, color: QColor) -> int:
-            painter.setPen(color)
-            current_x = x_pos
-            if not hide_arrows:
-                painter.setFont(self.arrow_font)
-                painter.drawText(current_x, y_pos, arrow_char)
-                current_x += self.arrow_metrics.horizontalAdvance(arrow_char) + self.arrow_metrics.horizontalAdvance(" ")
-                painter.setFont(self.font)
-            
-            painter.drawText(current_x, y_pos, val_str)
-            current_x += self.metrics.horizontalAdvance(val_str)
-            
-            if not hide_unit:
-                painter.drawText(current_x, y_pos, " " + unit_str)
-                current_x += self.metrics.horizontalAdvance(" " + unit_str)
-            
-            return current_x
-
-        y_pos = int((height - self.metrics.height()) / 2 + self.metrics.ascent())
-        
-        # Calculate totals for alignment
-        def get_width(arrow_char, val, unit):
-            w = 0
-            if not hide_arrows:
-                w += self.arrow_metrics.horizontalAdvance(arrow_char) + self.arrow_metrics.horizontalAdvance(" ")
-            w += self.metrics.horizontalAdvance(val)
-            if not hide_unit:
-                w += self.metrics.horizontalAdvance(" " + unit)
-            return w
-
-        up_width = get_width(self.i18n.UPLOAD_ARROW, up_val, up_unit)
-        down_width = get_width(self.i18n.DOWNLOAD_ARROW, down_val, down_unit)
-        sep = constants.layout.HORIZONTAL_LAYOUT_SEPARATOR
-        sep_width = self.metrics.horizontalAdvance(sep)
-        
-        total_width = up_width + sep_width + down_width
-        start_x = self._calculate_margin(width, total_width, config.text_alignment)
-        
-        painter.setFont(self.font) # Default starting font
-
-        if swap_order:
-            next_x = draw_part_h(start_x, self.i18n.DOWNLOAD_ARROW, down_val, down_unit, self._get_speed_color(download, config))
-            painter.setPen(self.default_color)
-            painter.drawText(next_x, y_pos, sep)
-            draw_part_h(next_x + sep_width, self.i18n.UPLOAD_ARROW, up_val, up_unit, self._get_speed_color(upload, config))
-        else:
-            next_x = draw_part_h(start_x, self.i18n.UPLOAD_ARROW, up_val, up_unit, self._get_speed_color(upload, config))
-            painter.setPen(self.default_color)
-            painter.drawText(next_x, y_pos, sep)
-            draw_part_h(next_x + sep_width, self.i18n.DOWNLOAD_ARROW, down_val, down_unit, self._get_speed_color(download, config))
-            
-        self._last_text_rect = QRect(start_x, int(y_pos - self.metrics.ascent()), int(total_width), self.metrics.height())
-
-
-    def _format_speed_texts(self, upload: float, download: float, force_mega_unit: bool, decimal_places: int, force_decimals: bool, unit_type: str = "bits_decimal", short_labels: bool = False, full_string: bool = False) -> Tuple[Any, Any]:
-        """Helper to format speed values into final strings or tuples using centralized logic."""
-        up_formatted = format_speed(
-            upload, self.i18n, force_mega_unit=force_mega_unit, decimal_places=decimal_places, 
-            unit_type=unit_type, split_unit=not full_string, short_labels=short_labels
-        )
-        down_formatted = format_speed(
-            download, self.i18n, force_mega_unit=force_mega_unit, decimal_places=decimal_places, 
-            unit_type=unit_type, split_unit=not full_string, short_labels=short_labels
-        )
-        
-        # If full_string is True, format_speed returns a string.
-        # If full_string is False (split_unit is True), format_speed returns Tuple[str, str].
-        return up_formatted, down_formatted
-
-
-    def _calculate_margin(self, width: int, content_width: float, alignment_str: str) -> int:
-        """Calculates the starting X coordinate as an integer based on text alignment."""
-        align_map = {"left": Qt.AlignmentFlag.AlignLeft, "center": Qt.AlignmentFlag.AlignHCenter, "right": Qt.AlignmentFlag.AlignRight}
-        alignment = align_map.get(alignment_str, Qt.AlignmentFlag.AlignHCenter)
-        
-        margin_px = constants.renderer.TEXT_MARGIN
-
-        if alignment == Qt.AlignmentFlag.AlignLeft:
-            return margin_px
-        elif alignment == Qt.AlignmentFlag.AlignRight:
-            return int(max(width - content_width - margin_px, margin_px))
-        else: # Center
-            return int(max((width - content_width) / 2, margin_px))
-
-
-    def _get_speed_color(self, speed: float, config: RenderConfig) -> QColor:
-        """Returns color based on speed thresholds."""
-        if not config.color_coding:
-            return self.default_color
-        
-        # Thresholds are in Mbps, speed is in bytes/sec. Convert for comparison.
-        speed_mbps = (speed * constants.network.units.BITS_PER_BYTE) / constants.network.units.MEGA_DIVISOR
-        
-        if speed_mbps >= config.high_speed_threshold:
-            return self.high_color
-        if speed_mbps >= config.low_speed_threshold:
-            return self.low_color
-        return self.default_color
-
-
-    def draw_mini_graph(self, painter: QPainter, width: int, height: int, config: RenderConfig, history: List[AggregatedSpeedData], layout_mode: str = 'vertical') -> None:
-        """Draws a mini graph of speed history with gradient area fill."""
+    def draw_mini_graph(self, painter: QPainter, width: int, height: int, config: RenderConfig, 
+                        history: List[Any], layout_mode: str = 'vertical', 
+                        is_hardware: bool = False, hardware_color: str = "#FFFFFF") -> None:
+        """Draws a mini graph of history (speed or hardware utilization)."""
         if not config.graph_enabled or len(history) < constants.renderer.MIN_GRAPH_POINTS:
             return
 
         try:
-            # Layout Logic: Use full widget width/height minus margins, 
-            # instead of relying on potentially uninitialized text rects.
             side_margin = constants.renderer.GRAPH_LEFT_PADDING
             top_margin = constants.renderer.GRAPH_MARGIN
             bottom_margin = constants.renderer.GRAPH_BOTTOM_PADDING
             
-            # Reduce height slightly to avoid text overlap if needed, but since it's background, 
-            # full coverage looks better (Area Chart style).
-            graph_rect = QRect(
-                side_margin, 
-                top_margin, 
-                width - (side_margin * 2), 
-                height - (top_margin + bottom_margin)
-            )
-
+            graph_rect = QRect(side_margin, top_margin, width - (side_margin * 2), height - (top_margin + bottom_margin))
             if graph_rect.width() <= 0 or graph_rect.height() <= 0: return
 
             # Hash check for caching
-            current_hash = hash(tuple(history))
+            current_hash = hash((tuple(history), is_hardware))
 
             if self._last_widget_size != (width, height) or self._last_history_hash != current_hash:
                 num_points = len(history)
-                if not history: return
-
-                max_speed_val = max(
-                    max(d.upload for d in history),
-                    max(d.download for d in history)
-                ) if history else 0
-
-                # Filter extreme outliers that would distort Y-axis scaling
-                # Use 95th percentile if max is significantly higher than typical range
-                if len(history) > 10:
-                    all_speeds = [d.upload for d in history] + [d.download for d in history]
-                    all_speeds_sorted = sorted(all_speeds)
-                    percentile_95 = all_speeds_sorted[int(len(all_speeds_sorted) * 0.95)]
+                
+                if is_hardware:
+                    from netspeedtray.core.widget_state import HardwareStatSnapshot
+                    # Hardware is 0-100%
+                    max_y = 100.0
+                else:
+                    # Speed history
+                    max_speed_val = max(
+                        max(d.upload for d in history),
+                        max(d.download for d in history)
+                    ) if history else 0
                     
-                    # If max is >3x the 95th percentile, likely a phantom spike. Use 95th instead.
-                    if percentile_95 > 0 and max_speed_val > percentile_95 * 3.0:
-                        max_speed_val = percentile_95
+                    if len(history) > 10:
+                        all_speeds = [d.upload for d in history] + [d.download for d in history]
+                        all_speeds_sorted = sorted(all_speeds)
+                        percentile_95 = all_speeds_sorted[int(len(all_speeds_sorted) * 0.95)]
+                        if percentile_95 > 0 and max_speed_val > percentile_95 * 3.0:
+                            max_speed_val = percentile_95
 
-                padded_max_speed = max_speed_val * constants.renderer.GRAPH_Y_AXIS_PADDING_FACTOR
-                max_y = max(padded_max_speed, constants.renderer.MIN_Y_SCALE)
+                    padded_max_speed = max_speed_val * constants.renderer.GRAPH_Y_AXIS_PADDING_FACTOR
+                    max_y = max(padded_max_speed, constants.renderer.MIN_Y_SCALE)
                 
                 max_samples = max(2, config.max_samples)
                 step_x = graph_rect.width() / (max_samples - 1)
-
                 right_edge = float(graph_rect.right())
                 base_y = float(graph_rect.bottom())
                 h = float(graph_rect.height())
 
-                # Generate Points
-                # Note: We create Polygons for the fill (start at bottom, go up, follow line, go down)
-                
-                # Generate Points with Spline Interpolation for "Fluid Motion"
-                # X coordinates are relative to the right edge (0 = latest/rightmost)
                 raw_x = [right_edge - (num_points - 1 - i) * step_x for i in range(num_points)]
                 
                 def make_smooth_polyline(accessor):
                     raw_y = [accessor(d) for d in history]
-                    
-                    # Interpolate (density=5 gives nice smoothness without costing too much CPU)
                     cx, cy = calculate_monotone_cubic_interpolation(raw_x, raw_y, density=5)
-                    
-                    # Map to Screen Coordinates
-                    points = []
-                    for x, y in zip(cx, cy):
-                         # Clip y to 0 (spline shouldn't go below 0 due to monotonic property, but floats can drift)
-                         y = max(0, y)
-                         screen_y = base_y - (y / max_y) * h
-                         points.append(QPointF(x, screen_y))
+                    points = [QPointF(x, base_y - (max(0, y) / max_y) * h) for x, y in zip(cx, cy)]
                     return points
 
-                self._cached_upload_points = make_smooth_polyline(lambda d: d.upload)
-                self._cached_download_points = make_smooth_polyline(lambda d: d.download)
+                if is_hardware:
+                    self._cached_upload_points = make_smooth_polyline(lambda d: d.value)
+                    self._cached_download_points = []
+                else:
+                    self._cached_upload_points = make_smooth_polyline(lambda d: d.upload)
+                    self._cached_download_points = make_smooth_polyline(lambda d: d.download)
 
                 self._last_widget_size = (width, height)
                 self._last_history_hash = current_hash
@@ -545,56 +501,57 @@ class WidgetRenderer:
             painter.save()
             painter.setOpacity(config.graph_opacity)
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-            # --- Draw Gradients (Fill) with "Neon" Additive Blending ---
-            # Helper to draw area
-            from PyQt6.QtGui import QLinearGradient, QBrush, QPolygonF
-            
-            # Use Additive blending for the glow effect if opacity is low enough to benefit
-            # (CompositionMode_Plus adds colors: overlapping areas become brighter)
             painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Plus)
+
+            from PyQt6.QtGui import QLinearGradient, QBrush, QPolygonF
 
             def draw_area(points, color_hex):
                 if not points: return
-                poly_points = [QPointF(points[0].x(), float(graph_rect.bottom()))] # Start bottom-left
+                poly_points = [QPointF(points[0].x(), float(graph_rect.bottom()))]
                 poly_points.extend(points)
-                poly_points.append(QPointF(points[-1].x(), float(graph_rect.bottom()))) # End bottom-right
+                poly_points.append(QPointF(points[-1].x(), float(graph_rect.bottom())))
                 
                 grad = QLinearGradient(0, graph_rect.top(), 0, graph_rect.bottom())
                 c = QColor(color_hex)
-                c.setAlpha(120) # Start semi-opaque
+                c.setAlpha(120)
                 grad.setColorAt(0.0, c)
-                c.setAlpha(0)   # Fade to transparent
+                c.setAlpha(0)
                 grad.setColorAt(1.0, c)
                 
                 painter.setPen(Qt.PenStyle.NoPen)
                 painter.setBrush(QBrush(grad))
                 painter.drawPolygon(QPolygonF(poly_points))
 
-            draw_area(self._cached_upload_points, constants.graph.UPLOAD_LINE_COLOR)
-            draw_area(self._cached_download_points, constants.graph.DOWNLOAD_LINE_COLOR)
+            if is_hardware:
+                draw_area(self._cached_upload_points, hardware_color)
+            else:
+                draw_area(self._cached_upload_points, constants.graph.UPLOAD_LINE_COLOR)
+                draw_area(self._cached_download_points, constants.graph.DOWNLOAD_LINE_COLOR)
             
-            # Restore Normal blending for Lines (strokes needs to be crisp on top)
             painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
-
-            # --- Draw Lines (Stroke) ---
-            # Thicker lines for visibility
             stroke_width = 1.5 
 
-            upload_pen = QPen(QColor(constants.graph.UPLOAD_LINE_COLOR), stroke_width)
-            upload_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-            painter.setPen(upload_pen)
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawPolyline(self._cached_upload_points)
+            if is_hardware:
+                hw_pen = QPen(QColor(hardware_color), stroke_width)
+                hw_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+                painter.setPen(hw_pen)
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawPolyline(self._cached_upload_points)
+            else:
+                upload_pen = QPen(QColor(constants.graph.UPLOAD_LINE_COLOR), stroke_width)
+                upload_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+                painter.setPen(upload_pen)
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawPolyline(self._cached_upload_points)
 
-            download_pen = QPen(QColor(constants.graph.DOWNLOAD_LINE_COLOR), stroke_width)
-            download_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-            painter.setPen(download_pen)
-            painter.drawPolyline(self._cached_download_points)
+                download_pen = QPen(QColor(constants.graph.DOWNLOAD_LINE_COLOR), stroke_width)
+                download_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+                painter.setPen(download_pen)
+                painter.drawPolyline(self._cached_download_points)
 
             painter.restore()
         except Exception as e:
-            self.logger.error("Failed to draw mini graph: %s", e, exc_info=True)
+            self.logger.error("Failed to draw mini graph: %s", e)
 
 
     def update_config(self, config_dict: Dict[str, Any]) -> None:

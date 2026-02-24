@@ -166,13 +166,30 @@ class GraphWindowUI:
         self.tab_widget = QTabWidget(self.content_container)
         self.content_layout.addWidget(self.tab_widget)
 
-        # Graph tab
+        # Sub-widgets for tabs
+        self.overview_widget = QWidget()
+        self.overview_widget.setLayout(QVBoxLayout())
+        self.overview_widget.layout().setContentsMargins(0, 0, 0, 0)
+        self.tab_widget.addTab(self.overview_widget, "Overview") # TODO: i18n
+
         self.graph_widget = QWidget()
-        self.graph_layout = QVBoxLayout(self.graph_widget)
+        self.graph_widget.setLayout(QVBoxLayout())
+        self.graph_widget.layout().setContentsMargins(0, 0, 0, 0)
+        self.graph_layout = self.graph_widget.layout() # Update graph_layout to point to the new layout
         self.tab_widget.addTab(self.graph_widget, self.i18n.SPEED_GRAPH_TAB_LABEL)
         
-        # Hide the tab bar as it's not needed for a single tab
-        self.tab_widget.tabBar().setVisible(False)
+        # CPU tab
+        self.cpu_widget = QWidget()
+        self.cpu_layout = QVBoxLayout(self.cpu_widget)
+        self.tab_widget.addTab(self.cpu_widget, "CPU") # TODO: i18n
+        
+        # GPU tab
+        self.gpu_widget = QWidget()
+        self.gpu_layout = QVBoxLayout(self.gpu_widget)
+        self.tab_widget.addTab(self.gpu_widget, "GPU") # TODO: i18n
+        
+        # Ensure tab bar is visible
+        self.tab_widget.tabBar().setVisible(True)
 
     def add_settings_panel(self, settings_widget: QWidget):
         """Adds the settings widget to the side of the main content."""

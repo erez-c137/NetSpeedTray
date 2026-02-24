@@ -43,6 +43,8 @@ class GraphRenderer(QObject):
         self.canvas = None
         self.ax_download = None
         self.ax_upload = None
+        self.ax_cpu = None
+        self.ax_gpu = None
         self.axes = []
         
         # State
@@ -110,38 +112,28 @@ class GraphRenderer(QObject):
         self.canvas.draw_idle()
 
     def _init_matplotlib(self):
-        """Initialize matplotlib with a dual-axis, stacked subplot layout."""
+        """Initialize matplotlib canvas."""
         self.logger.debug("Initializing Matplotlib canvas...")
         
         # Create Figure
         self.figure = Figure(figsize=(8, 4), dpi=100)
-        # Use subplots_adjust instead of constrained_layout for fixed margins
-        # This prevents the graph box from shifting when Y-label width changes.
         
         # Create Canvas (Widget)
         self.canvas = FigureCanvas(self.figure)
         self.canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.canvas.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
-        self.canvas.setMouseTracking(True)  # Essential for hover events
+        self.canvas.setMouseTracking(True)
         
-        # Add canvas to parent layout - layout MUST exist (created in window.setupUi)
         existing_layout = self.parent_widget.layout()
         if existing_layout is not None:
             existing_layout.addWidget(self.canvas)
         else:
-            # Fallback: create layout if none exists
-            self.logger.warning("No existing layout found for graph widget, creating one")
             layout = QVBoxLayout(self.parent_widget)
             layout.setContentsMargins(0, 0, 0, 0)
             layout.addWidget(self.canvas)
 
-        # Create Stacked Subplots (2 rows, 1 column)
-        self.ax_download = self.figure.add_subplot(2, 1, 1)
-        self.ax_upload = self.figure.add_subplot(2, 1, 2, sharex=self.ax_download)
-        self.axes = [self.ax_download, self.ax_upload]
-        
-        # Initial formatting
-        self._format_axes()
+        # We'll create axes dynamically in render() to avoid fixed subplot limits
+        self._setup_standard_axes()
 
     def _format_axes(self):
         """Initial configuration of axes properties."""
@@ -538,99 +530,168 @@ class GraphRenderer(QObject):
             self.logger.debug(f"Could not add/update event marker: {e}")
 
 
-    def render(self, history_data: List[Tuple[float, float, float]], start_time: datetime, end_time: datetime, period_key: str, boot_time: Optional[datetime] = None, force_rebuild: bool = False):
+    def render(self, history_data, start_time: datetime, end_time: datetime, period_key: str, boot_time: Optional[datetime] = None, force_rebuild: bool = False, stat_type: str = "network"):
         """
         Renders the graph. 
-        Uses 'Zero-Clear' optimization to update artists in-place when possible.
         """
         if not history_data:
-            for ax in self.axes:
-                ax.clear()
+            for ax in self.axes: ax.clear()
             self.canvas.draw_idle()
             return None
-
-        # Determine current render mode based on data span
-        num_points = len(history_data)
-        raw_data = np.array(history_data, dtype=float)
-        timestamps = raw_data[:, 0]
-        
-        actual_start = start_time or datetime.fromtimestamp(timestamps.min())
-        actual_end = end_time or datetime.fromtimestamp(timestamps.max())
-        
-        # HARDENING: Ensure we don't subtract None from datetime
-        if actual_start is None or actual_end is None:
-            duration_sec = 0
-        else:
-            duration_sec = (actual_end - actual_start).total_seconds()
-        
-        current_mode = "high_res"
-        if duration_sec > constants.data.history_period.PLOT_HOURLY_THRESHOLD:
-            current_mode = "daily"
-        elif duration_sec > constants.data.history_period.PLOT_MINUTE_THRESHOLD:
-            current_mode = "hourly"
-        elif duration_sec > constants.data.history_period.RES_RAW_THRESHOLD:
-            current_mode = "minute"
 
         # Check if we need to clear everything
         rebuild_required = (
             force_rebuild or 
-            current_mode != self._last_render_mode or 
             period_key != self._last_period_key or
-            self.line_download is None
+            stat_type != getattr(self, '_last_stat_type', 'network') or
+            (stat_type != "overview" and self.line_download is None) # Overview handles its own lines
         )
         
-        self._last_render_mode = current_mode
         self._last_period_key = period_key
+        self._last_stat_type = stat_type
 
         if rebuild_required:
-            for ax in self.axes:
-                ax.clear()
-            self._format_axes()
-            # Reset state for rebuilt artists
+            self.figure.clear()
+            if stat_type == "overview":
+                self._setup_overview_axes()
+                # Overlays (peak markers, etc) are more complex in Overview, skip for now
+            elif stat_type == "network":
+                self._setup_standard_axes()
+                self._format_axes()
+            else:
+                self._setup_standard_axes()
+                self.ax_upload.set_visible(False)
+                self.figure.subplots_adjust(hspace=0, bottom=0.15)
+                self._format_hardware_axes(stat_type)
+            
             self.line_download = None
             self.line_upload = None
-            self.fill_download = None
-            self.fill_upload = None
-            self.bars_download = None
-            self.bars_upload = None
 
-        # Speeds in Mbps
-        upload_mbps = (raw_data[:, 1] * constants.network.units.BITS_PER_BYTE) / constants.network.units.MEGA_DIVISOR
-        download_mbps = (raw_data[:, 2] * constants.network.units.BITS_PER_BYTE) / constants.network.units.MEGA_DIVISOR
-        upload_mbps = np.maximum(upload_mbps, 0)
-        download_mbps = np.maximum(download_mbps, 0)
-
-        # Convert to local datetimes
-        plot_datetimes = [datetime.fromtimestamp(t) for t in timestamps]
-        plot_datetimes_array = np.array(plot_datetimes)
-
-        # Plotting
-        if current_mode == "high_res":
-             plotted_ts, plotted_up, plotted_down = self._plot_high_res(plot_datetimes_array, upload_mbps, download_mbps, target_end_time=actual_end)
+        if stat_type == "overview":
+            self._render_overview(history_data, actual_end=end_time)
+        elif stat_type == "network":
+            raw_data = np.array(history_data, dtype=float)
+            timestamps = raw_data[:, 0]
+            plot_datetimes = [datetime.fromtimestamp(t) for t in timestamps]
+            plot_datetimes_array = np.array(plot_datetimes)
+            
+            upload_mbps = (raw_data[:, 1] * constants.network.units.BITS_PER_BYTE) / constants.network.units.MEGA_DIVISOR
+            download_mbps = (raw_data[:, 2] * constants.network.units.BITS_PER_BYTE) / constants.network.units.MEGA_DIVISOR
+            
+            plotted_ts, plotted_up, plotted_down = self._plot_high_res(plot_datetimes_array, upload_mbps, download_mbps, target_end_time=end_time)
+            self._configure_axes(start_time, end_time, period_key, timestamps, plotted_up, plotted_down)
         else:
-             plotted_ts, plotted_up, plotted_down = self._plot_aggregated(plot_datetimes_array, upload_mbps, download_mbps, mode=current_mode, target_end_time=actual_end)
+            raw_data = np.array(history_data, dtype=float)
+            timestamps = raw_data[:, 0]
+            plot_datetimes = [datetime.fromtimestamp(t) for t in timestamps]
+            plot_datetimes_array = np.array(plot_datetimes)
+            values = raw_data[:, 1]
+            color = constants.renderer.CPU_LINE_COLOR if stat_type == "cpu" else constants.renderer.GPU_LINE_COLOR
+            plotted_ts, _, plotted_vals = self._plot_high_res(plot_datetimes_array, np.zeros_like(values), values, target_end_time=end_time, color=color)
+            self._configure_hardware_axes(start_time, end_time, period_key, timestamps, plotted_vals)
 
-        # Configure Limits and Formats (Handles adaptive Y-axis)
-        # Use plotted_up and plotted_down so axes match the visible data, not raw anomalies.
-        safe_up = plotted_up if plotted_up is not None else []
-        safe_down = plotted_down if plotted_down is not None else []
-        self._configure_axes(start_time, end_time, period_key, timestamps, safe_up, safe_down)
+        self.canvas.draw_idle()
+
+    def _setup_standard_axes(self):
+        """Creates standard 2-row layout."""
+        self.ax_download = self.figure.add_subplot(2, 1, 1)
+        self.ax_upload = self.figure.add_subplot(2, 1, 2, sharex=self.ax_download)
+        self.axes = [self.ax_download, self.ax_upload]
+
+    def _setup_overview_axes(self):
+        """Creates 4-row layout for Overview."""
+        self.ax_download = self.figure.add_subplot(4, 1, 1)
+        self.ax_upload = self.figure.add_subplot(4, 1, 2, sharex=self.ax_download)
+        self.ax_cpu = self.figure.add_subplot(4, 1, 3, sharex=self.ax_download)
+        self.ax_gpu = self.figure.add_subplot(4, 1, 4, sharex=self.ax_download)
+        self.axes = [self.ax_download, self.ax_upload, self.ax_cpu, self.ax_gpu]
         
-        # Add Peak Markers (glowing dots at max values)
-        if plotted_ts is not None and len(plotted_ts) > 0:
-            self._add_peak_markers(
-                self.ax_download, plotted_ts, plotted_down,
-                constants.graph.DOWNLOAD_LINE_COLOR, "↓ Peak", 'download'
-            )
-            self._add_peak_markers(
-                self.ax_upload, plotted_ts, plotted_up,
-                constants.graph.UPLOAD_LINE_COLOR, "↑ Peak", 'upload'
-            )
-        
+        # Basic overview formatting
+        self.figure.subplots_adjust(left=0.12, right=0.98, top=0.95, bottom=0.1, hspace=0.3)
+        for ax in self.axes:
+            ax.spines['right'].set_visible(False)
+            ax.spines['top'].set_visible(False)
+            ax.tick_params(colors=getattr(self, '_current_text_color', 'white'), labelsize=8)
+            ax.grid(True, linestyle=':', alpha=0.3)
+            if ax != self.ax_gpu:
+                ax.tick_params(labelbottom=False)
+
+        self.ax_download.set_ylabel("DW", fontsize=8)
+        self.ax_upload.set_ylabel("UP", fontsize=8)
+        self.ax_cpu.set_ylabel("CPU", fontsize=8)
+        self.ax_gpu.set_ylabel("GPU", fontsize=8)
+
+    def _render_overview(self, data_dict, actual_end):
+        """Internal helper for overview plotting."""
+        # Plot Network
+        net = np.array(data_dict.get("network", []), dtype=float)
+        if len(net) > 0:
+            ts = [datetime.fromtimestamp(t) for t in net[:, 0]]
+            up = (net[:, 1] * 8) / 1e6
+            dw = (net[:, 2] * 8) / 1e6
+            self.ax_download.plot(ts, dw, color=constants.graph.DOWNLOAD_LINE_COLOR, linewidth=1)
+            self.ax_upload.plot(ts, up, color=constants.graph.UPLOAD_LINE_COLOR, linewidth=1)
+            self.ax_download.set_ylim(bottom=0, top=max(dw)*1.2 if max(dw)>0 else 1)
+            self.ax_upload.set_ylim(bottom=0, top=max(up)*1.2 if max(up)>0 else 1)
+
+        # Plot CPU
+        cpu = np.array(data_dict.get("cpu", []), dtype=float)
+        if len(cpu) > 0:
+            ts = [datetime.fromtimestamp(t) for t in cpu[:, 0]]
+            self.ax_cpu.plot(ts, cpu[:, 1], color=constants.renderer.CPU_LINE_COLOR, linewidth=1)
+            self.ax_cpu.set_ylim(0, 100)
+
+        # Plot GPU
+        gpu = np.array(data_dict.get("gpu", []), dtype=float)
+        if len(gpu) > 0:
+            ts = [datetime.fromtimestamp(t) for t in gpu[:, 0]]
+            self.ax_gpu.plot(ts, gpu[:, 1], color=constants.renderer.GPU_LINE_COLOR, linewidth=1)
+            self.ax_gpu.set_ylim(0, 100)
+
         # Add Event Markers (system boot)
         self._add_event_markers(self.ax_download, start_time, end_time, boot_time=boot_time)
         
         self.canvas.draw_idle()
+
+        # Return the DATA THAT WAS ACTUALLY PLOTTED
+        plotted_x_coords = None
+        if plotted_ts is not None and len(plotted_ts) > 0 and isinstance(plotted_ts[0], datetime):
+             plotted_x_coords = date2num(plotted_ts)
+             plotted_ts = np.array([dt.timestamp() for dt in plotted_ts])
+
+        if stat_type == "network":
+            # Convert Mbps back to Bytes/s
+            if plotted_up is not None:
+                plotted_up = (plotted_up * constants.network.units.MEGA_DIVISOR) / constants.network.units.BITS_PER_BYTE
+            if plotted_down is not None:
+                plotted_down = (plotted_down * constants.network.units.MEGA_DIVISOR) / constants.network.units.BITS_PER_BYTE
+            return plotted_ts, plotted_x_coords, plotted_up, plotted_down
+        else:
+            return plotted_ts, plotted_x_coords, np.zeros_like(plotted_vals), plotted_vals
+
+    def _format_hardware_axes(self, stat_type: str):
+        """Formats the single axis for hardware utilization."""
+        label = "CPU Utilization (%)" if stat_type == "cpu" else "GPU Utilization (%)"
+        self.ax_download.set_ylabel(label, color=self._current_text_color)
+        self.ax_download.tick_params(labelbottom=True, colors=self._current_text_color, which='both')
+        self.ax_download.grid(True, linestyle=constants.graph.GRID_LINESTYLE, alpha=constants.graph.GRID_ALPHA, color=self._current_grid_color)
+        
+        # Make the top plot take up more space
+        self.ax_download.set_position([0.12, 0.15, 0.86, 0.80])
+
+    def _configure_hardware_axes(self, start_time, end_time, period_key, timestamps, values):
+        """Sets limits and formatters for hardware stats."""
+        # Y-Axis is always 0-100 for utilization
+        self.ax_download.set_ylim(0, 100)
+        self.ax_download.yaxis.set_major_formatter(lambda x, pos: f"{int(x)}%")
+        
+        # X-Axis limits
+        if len(timestamps) > 0:
+            xlim_start = start_time or datetime.fromtimestamp(timestamps.min())
+            xlim_end = end_time or datetime.fromtimestamp(timestamps.max())
+            self.ax_download.set_xlim(xlim_start, xlim_end)
+        
+        self._configure_xaxis_format(period_key)
 
         
         # Return the DATA THAT WAS ACTUALLY PLOTTED, so interactions match the visual lines.
@@ -752,10 +813,14 @@ class GraphRenderer(QObject):
 
         return agg_dates, up_peak, down_peak
 
-    def _plot_high_res(self, plot_datetimes, upload_mbps, download_mbps, target_end_time=None):
+    def _plot_high_res(self, plot_datetimes, upload_mbps, download_mbps, target_end_time=None, color=None):
         """Segmented Plotting with Gap Detection, Gradient Fills, and Fluid Interpolation"""
         if len(plot_datetimes) == 0:
             return plot_datetimes, upload_mbps, download_mbps
+
+        # Colors
+        color_down = color or constants.graph.DOWNLOAD_LINE_COLOR
+        color_up = constants.graph.UPLOAD_LINE_COLOR
 
         # Adaptive Gap Detection: Calculate threshold from data's natural interval
         # A "gap" is when time between points is significantly larger than normal
@@ -806,19 +871,19 @@ class GraphRenderer(QObject):
                     bridge_ts = [bridge_start, bridge_end]
                     bridge_zero = [0.0, 0.0]
                     
-                    self.ax_download.plot(bridge_ts, bridge_zero, color=constants.graph.DOWNLOAD_LINE_COLOR, linewidth=1.5, zorder=9, alpha=0.5, linestyle='--')
-                    self.ax_upload.plot(bridge_ts, bridge_zero, color=constants.graph.UPLOAD_LINE_COLOR, linewidth=1.5, zorder=9, alpha=0.5, linestyle='--')
+                    self.ax_download.plot(bridge_ts, bridge_zero, color=color_down, linewidth=1.5, zorder=9, alpha=0.5, linestyle='--')
+                    self.ax_upload.plot(bridge_ts, bridge_zero, color=color_up, linewidth=1.5, zorder=9, alpha=0.5, linestyle='--')
                 
                 # Process and interpolate this segment
                 seg_ts, seg_up, seg_down = self._process_plot_segment(ts, up, down, enable_spline=ENABLE_SPLINE)
                 
                 # Plot
-                self.ax_download.plot(seg_ts, seg_down, color=constants.graph.DOWNLOAD_LINE_COLOR, linewidth=1.5, zorder=10)
-                self.ax_upload.plot(seg_ts, seg_up, color=constants.graph.UPLOAD_LINE_COLOR, linewidth=1.5, zorder=10)
+                self.ax_download.plot(seg_ts, seg_down, color=color_down, linewidth=1.5, zorder=10)
+                self.ax_upload.plot(seg_ts, seg_up, color=color_up, linewidth=1.5, zorder=10)
                 
                 # Add Gradient (per segment)
-                self._apply_gradient_fill(self.ax_download, np.array(seg_ts), seg_down, constants.graph.DOWNLOAD_LINE_COLOR, 'download')
-                self._apply_gradient_fill(self.ax_upload, np.array(seg_ts), seg_up, constants.graph.UPLOAD_LINE_COLOR, 'upload')
+                self._apply_gradient_fill(self.ax_download, np.array(seg_ts), seg_down, color_down, 'download')
+                self._apply_gradient_fill(self.ax_upload, np.array(seg_ts), seg_up, color_up, 'upload')
                 
                 # Accrue for return (just raw or interpolated? detailed return allows tooltips to snap to curve)
                 final_ts.extend(seg_ts)
@@ -852,26 +917,26 @@ class GraphRenderer(QObject):
                     self.line_upload.set_data(dense_ts, dense_up)
                 except Exception as e:
                     self.logger.debug(f"High-res update failed, rebuilding: {e}")
-                    self.line_download, = self.ax_download.plot(dense_ts, dense_down, color=constants.graph.DOWNLOAD_LINE_COLOR, linewidth=1.5, zorder=10)
-                    self.line_upload, = self.ax_upload.plot(dense_ts, dense_up, color=constants.graph.UPLOAD_LINE_COLOR, linewidth=1.5, zorder=10)
+                    self.line_download, = self.ax_download.plot(dense_ts, dense_down, color=color_down, linewidth=1.5, zorder=10)
+                    self.line_upload, = self.ax_upload.plot(dense_ts, dense_up, color=color_up, linewidth=1.5, zorder=10)
             else:
                 self.line_download, = self.ax_download.plot(
                     dense_ts, dense_down, 
-                    color=constants.graph.DOWNLOAD_LINE_COLOR, linewidth=1.5, zorder=10
+                    color=color_down, linewidth=1.5, zorder=10
                 )
                 self.line_upload, = self.ax_upload.plot(
                     dense_ts, dense_up, 
-                    color=constants.graph.UPLOAD_LINE_COLOR, linewidth=1.5, zorder=10
+                    color=color_up, linewidth=1.5, zorder=10
                 )
             
             # Apply premium gradient fills
             self._apply_gradient_fill(
                 self.ax_download, np.array(dense_ts), dense_down,
-                constants.graph.DOWNLOAD_LINE_COLOR, 'download'
+                color_down, 'download'
             )
             self._apply_gradient_fill(
                 self.ax_upload, np.array(dense_ts), dense_up,
-                constants.graph.UPLOAD_LINE_COLOR, 'upload'
+                color_up, 'upload'
             )
 
             # === TRAILING BRIDGE (Fast Path): Bridge from last point to now ===
@@ -882,8 +947,8 @@ class GraphRenderer(QObject):
                 if gap_to_now > gap_threshold:
                     bridge_ts = [last_ts, target_end_time]
                     bridge_zero = [0.0, 0.0]
-                    self.ax_download.plot(bridge_ts, bridge_zero, color=constants.graph.DOWNLOAD_LINE_COLOR, linewidth=1.5, zorder=9, alpha=0.5, linestyle='--')
-                    self.ax_upload.plot(bridge_ts, bridge_zero, color=constants.graph.UPLOAD_LINE_COLOR, linewidth=1.5, zorder=9, alpha=0.5, linestyle='--')
+                    self.ax_download.plot(bridge_ts, bridge_zero, color=color_down, linewidth=1.5, zorder=9, alpha=0.5, linestyle='--')
+                    self.ax_upload.plot(bridge_ts, bridge_zero, color=color_up, linewidth=1.5, zorder=9, alpha=0.5, linestyle='--')
 
         # Return the INTERPOLATED data so interactions snap to the smooth line
         return np.array(final_ts), np.array(final_up), np.array(final_down)

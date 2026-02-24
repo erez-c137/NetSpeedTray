@@ -54,12 +54,19 @@ class SpeedDataSnapshot:
     timestamp: datetime
 
 
+@dataclass(slots=True, frozen=True)
+class HardwareStatSnapshot:
+    """Represents a single hardware utilization data point."""
+    value: float
+    timestamp: datetime
+
+
 # --- Database Worker Thread ---
 from netspeedtray.core.database import DatabaseWorker
 
 
 class WidgetState(QObject):
-    """Manages all network speed and bandwidth history for the NetworkSpeedWidget."""
+    """Manages all system statistics and bandwidth history for the Tray Widget."""
 
     def __init__(self, config: Dict[str, Any]) -> None:
         super().__init__()
@@ -70,8 +77,14 @@ class WidgetState(QObject):
         self.max_history_points: int = self._get_max_history_points()
         self.in_memory_history: Deque[SpeedDataSnapshot] = deque(maxlen=self.max_history_points)
         self.aggregated_history: Deque[AggregatedSpeedData] = deque(maxlen=self.max_history_points)
-        # Batching list for database writes
+        
+        # New: Hardware history for mini-graph tabs
+        self.cpu_history: Deque[HardwareStatSnapshot] = deque(maxlen=self.max_history_points)
+        self.gpu_history: Deque[HardwareStatSnapshot] = deque(maxlen=self.max_history_points)
+        
+        # Batching lists for database writes
         self._db_batch: List[Tuple[int, str, float, float]] = []
+        self._hw_batch: List[Tuple[int, str, float]] = []
 
         # Database Worker Thread
         db_path = Path(get_app_data_path()) / "speed_history.db"
@@ -88,11 +101,8 @@ class WidgetState(QObject):
         self.maintenance_timer.timeout.connect(self.trigger_maintenance)
         self.maintenance_timer.start(60 * 60 * 1000) # Run maintenance every hour
         
-        # Run initial maintenance on startup to aggregate raw data into minute/hour tables
-        # This ensures historical timelines show data immediately instead of waiting 1 hour
         self.trigger_maintenance()
 
-        # Persistent Read Connections (per-thread)
         self._read_conns: Dict[int, sqlite3.Connection] = {}
         self._read_conns_lock = threading.Lock()
 
@@ -100,80 +110,102 @@ class WidgetState(QObject):
 
 
     def _get_read_conn(self) -> sqlite3.Connection:
-        """
-        Provides a thread-specific, read-only SQLite connection.
-        Using a persistent connection reduces the overhead of repeatedly 
-        opening/closing the database during UI updates or graph rendering.
-        """
-        tid = threading.get_ident()
-        
+        """Returns a thread-local read-only database connection."""
+        thread_id = threading.get_ident()
         with self._read_conns_lock:
-            if tid not in self._read_conns:
-                self.logger.debug("Opening persistent READ connection for thread %d", tid)
-                try:
-                    # Use 'ro' mode for safety; timeout allows for occasional write locks
-                    conn = sqlite3.connect(
-                        f"file:{self.db_worker.db_path}?mode=ro", 
-                        uri=True, 
-                        timeout=timeouts.DB_BUSY_TIMEOUT_MS / 1000.0
-                    )
-                    conn.execute(f"PRAGMA busy_timeout = {timeouts.DB_BUSY_TIMEOUT_MS};")
-                    self._read_conns[tid] = conn
-                except sqlite3.Error as e:
-                    self.logger.error("Failed to open read connection for thread %d: %s", tid, e)
-                    # Fallback: try opening a non-URI connection if URI fails (though it shouldn't)
-                    return sqlite3.connect(self.db_worker.db_path, timeout=5)
-            
-            return self._read_conns[tid]
-
+            if thread_id not in self._read_conns:
+                db_path = Path(get_app_data_path()) / "speed_history.db"
+                conn = sqlite3.connect(db_path, check_same_thread=False)
+                conn.row_factory = sqlite3.Row
+                self._read_conns[thread_id] = conn
+            return self._read_conns[thread_id]
 
     def add_speed_data(self, speed_data: Dict[str, Tuple[float, float]], now: Optional[datetime] = None, aggregated_up: Optional[float] = None, aggregated_down: Optional[float] = None) -> None:
-        """
-        Adds new per-interface speed data. Updates in-memory state and adds
-        to the database write batch.
-
-        Args:
-            speed_data: A dictionary mapping interface names to a tuple of
-                        (upload_bytes_sec, download_bytes_sec) as FLOATS.
-            now: Optional datetime override (defaults to datetime.now()).
-        """
+        """Adds new per-interface speed data."""
         _now = now or datetime.now()
-        
-        # The in-memory history now stores the full per-interface data for live filtering.
-        self.in_memory_history.append(SpeedDataSnapshot(
-            speeds=speed_data.copy(),
-            timestamp=_now
-        ))
+        self.in_memory_history.append(SpeedDataSnapshot(speeds=speed_data.copy(), timestamp=_now))
 
-        # --- PRE-AGGREGATION OPTIMIZATION ---
-        # Sum all interface speeds now so the renderer doesn't have to do it every frame.
         if aggregated_up is not None and aggregated_down is not None:
-            total_up = aggregated_up
-            total_down = aggregated_down
+            total_up, total_down = aggregated_up, aggregated_down
         else:
             total_up = sum(speeds[0] for speeds in speed_data.values())
             total_down = sum(speeds[1] for speeds in speed_data.values())
             
-        self.aggregated_history.append(AggregatedSpeedData(
-            upload=total_up,
-            download=total_down,
-            timestamp=_now
-        ))
+        self.aggregated_history.append(AggregatedSpeedData(upload=total_up, download=total_down, timestamp=_now))
 
         timestamp = int(_now.timestamp())
-        min_speed = network.speed.MIN_RECORDABLE_SPEED_BPS
         max_speed = network.interface.MAX_REASONABLE_SPEED_BPS
         
         for interface, (up_speed, down_speed) in speed_data.items():
-            # Only add to the database batch if the speed is significant
-            if up_speed >= min_speed or down_speed >= min_speed:
-                # HARD CLAMP: Prevent OS counter corruption (sleep wakes) from ruining the DB
-                clamped_up = min(up_speed, max_speed)
-                clamped_down = min(down_speed, max_speed)
-                self._db_batch.append((timestamp, interface, clamped_up, clamped_down))
+            if up_speed >= network.speed.MIN_RECORDABLE_SPEED_BPS or down_speed >= network.speed.MIN_RECORDABLE_SPEED_BPS:
+                self._db_batch.append((timestamp, interface, min(up_speed, max_speed), min(down_speed, max_speed)))
 
 
-    def get_total_bandwidth_for_period(self, start_time: Optional[datetime], end_time: datetime, interface_name: Optional[str] = None) -> Tuple[float, float]:
+    def add_hardware_stat(self, stat_type: str, value: float, now: Optional[datetime] = None) -> None:
+        """Adds new CPU or GPU utilization data point."""
+        _now = now or datetime.now()
+        snapshot = HardwareStatSnapshot(value=value, timestamp=_now)
+        
+        if stat_type == 'cpu':
+            self.cpu_history.append(snapshot)
+        elif stat_type == 'gpu':
+            self.gpu_history.append(snapshot)
+            
+        # Add to database batch (clamped 0-100)
+        self._hw_batch.append((int(_now.timestamp()), stat_type, max(0.0, min(100.0, value))))
+
+
+    def flush_batch(self) -> None:
+        """Sends all batches to the database worker."""
+        if self._db_batch:
+            self.db_worker.enqueue_task("persist_speed", self._db_batch.copy())
+            self._db_batch.clear()
+            
+        if self._hw_batch:
+            self.db_worker.enqueue_task("persist_hardware", self._hw_batch.copy())
+            self._hw_batch.clear()
+
+
+    def get_cpu_history(self) -> List[HardwareStatSnapshot]:
+        """Returns in-memory CPU utilization history."""
+        return list(self.cpu_history)
+
+
+    def get_gpu_history(self) -> List[HardwareStatSnapshot]:
+        """Returns in-memory GPU utilization history."""
+        return list(self.gpu_history)
+
+
+    def get_hardware_history(self, stat_type: str, start_time: Optional[datetime] = None, end_time: Optional[datetime] = None) -> List[Tuple[datetime, float]]:
+        """
+        Retrieves historical hardware utilization data from the database.
+        Returns: A list of (timestamp, value) tuples.
+        """
+        if not hasattr(self, 'db_worker') or not self.db_worker:
+            return []
+
+        try:
+            conn = self._get_read_conn()
+            cursor = conn.cursor()
+            
+            _end = end_time or datetime.now()
+            _start = start_time or (_end - timedelta(hours=24))
+            
+            start_ts = int(_start.timestamp())
+            end_ts = int(_end.timestamp())
+            
+            # Use minute table for large ranges, raw for small sessions
+            is_large_range = (end_ts - start_ts) > 6 * 3600 # > 6 hours use minute data
+            table = constants.data.HARDWARE_STATS_TABLE_MINUTE if is_large_range else constants.data.HARDWARE_STATS_TABLE_RAW
+            val_col = "avg_value" if is_large_range else "value"
+            
+            query = f"SELECT timestamp, {val_col} FROM {table} WHERE stat_type = ? AND timestamp BETWEEN ? AND ? ORDER BY timestamp ASC"
+            cursor.execute(query, (stat_type, start_ts, end_ts))
+            
+            return [(datetime.fromtimestamp(row[0]), row[1]) for row in cursor.fetchall()]
+        except Exception as e:
+            self.logger.error("Error fetching hardware history: %s", e, exc_info=True)
+            return []
         """
         Calculates the total upload and download bandwidth for a given period
         by running SUM queries across all data tiers.

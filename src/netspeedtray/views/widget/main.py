@@ -22,9 +22,9 @@ from PyQt6.QtWidgets import QApplication, QMenu, QMessageBox, QWidget
 
 # --- First-Party (Local) Imports ---
 from netspeedtray import constants
-from netspeedtray.core.controller import NetworkController as CoreController
+from netspeedtray.core.controller import StatsController as CoreController
 from netspeedtray.core.timer_manager import SpeedTimerManager
-from netspeedtray.core.monitor_thread import NetworkMonitorThread
+from netspeedtray.core.monitor_thread import StatsMonitorThread
 from netspeedtray.core.tray_manager import TrayIconManager
 from netspeedtray.core.widget_state import WidgetState as CoreWidgetState
 from netspeedtray.utils.config import ConfigManager as CoreConfigManager
@@ -94,13 +94,28 @@ class NetworkSpeedWidget(QWidget):
         self.layout_manager: WidgetLayoutManager
         self.theme_manager: WidgetThemeManager
         self.tray_manager: TrayIconManager
-        self.monitor_thread: NetworkMonitorThread
+        self.monitor_thread: StatsMonitorThread
         self.graph_window: Optional[GraphWindow] = None
         self.app_icon: QIcon
         # Note: self.current_font and self.current_metrics are initialized earlier before _init_managers()
         
         self.upload_speed: float = 0.0
         self.download_speed: float = 0.0
+        self.cpu_usage: float = 0.0
+        self.gpu_usage: float = 0.0
+        self.cpu_temp: Optional[float] = None
+        self.gpu_temp: Optional[float] = None
+        self.ram_used: Optional[float] = None
+        self.ram_total: Optional[float] = None
+        self.vram_used: Optional[float] = None
+        self.vram_total: Optional[float] = None
+        
+        # Cycling State
+        self._cycle_index: int = 0
+        self._current_cycle_mode: str = "network_only"
+        self._cycle_timer = QTimer(self)
+        self._cycle_timer.timeout.connect(self._rotate_cycle)
+
         self.taskbar_height: int = taskbar_height
         self._dragging: bool = False
         self._drag_offset: QPoint = QPoint()
@@ -159,12 +174,17 @@ class NetworkSpeedWidget(QWidget):
         self._state_watcher_timer.start()
         self.logger.debug(f"Safety net state watcher timer started ({constants.timeouts.STATE_WATCHER_INTERVAL_MS}ms).")
 
+        # Cycle Timer
+        if self.config.get("widget_display_mode") == "cycle":
+            self._cycle_timer.start(constants.renderer.renderer.CYCLE_INTERVAL_MS)
+            self.logger.debug("Cycle timer started.")
+
 
     def _init_core_components(self) -> None:
         """
         Initialize non-UI core logic components.
 
-        Sets up WidgetState, SpeedTimerManager, NetworkController, and WidgetRenderer.
+        Sets up WidgetState, SpeedTimerManager, StatsController, and WidgetRenderer.
         """
         self.logger.debug("Initializing core components...")
         if not self.config:
@@ -199,7 +219,7 @@ class NetworkSpeedWidget(QWidget):
                 # Fixed interval: Clamp to allowed min/max
                 effective_interval = max(constants.config.defaults.MINIMUM_UPDATE_RATE, min(float(cfg_rate), constants.timers.MAXIMUM_UPDATE_RATE_SECONDS))
 
-            self.monitor_thread = NetworkMonitorThread(interval=effective_interval)
+            self.monitor_thread = StatsMonitorThread(interval=effective_interval, config=self.config)
             
             self.controller = CoreController(config=self.config, widget_state=self.widget_state)
             self.controller.set_view(self)
@@ -365,6 +385,64 @@ class NetworkSpeedWidget(QWidget):
         self.update() # Trigger a repaint
 
 
+    def update_cpu_usage(self, usage: float) -> None:
+        """Update CPU usage and trigger repaint."""
+        self.cpu_usage = usage
+        if self.config.get("widget_display_mode") in ["cpu_only", "combined", "side_by_side", "cycle"]:
+            self.update()
+
+    def update_gpu_usage(self, usage: float) -> None:
+        """Update GPU usage and trigger repaint."""
+        self.gpu_usage = usage
+        if self.config.get("widget_display_mode") in ["gpu_only", "combined", "side_by_side", "cycle"]:
+            self.update()
+
+    def update_cpu_temp(self, temp: float) -> None:
+        """Update CPU temperature and trigger repaint."""
+        self.cpu_temp = temp
+        if self.config.get("widget_display_mode") in ["cpu_only", "combined", "side_by_side", "cycle"]:
+            self.update()
+
+    def update_gpu_temp(self, temp: float) -> None:
+        """Update GPU temperature and trigger repaint."""
+        self.gpu_temp = temp
+        if self.config.get("widget_display_mode") in ["gpu_only", "combined", "side_by_side", "cycle"]:
+            self.update()
+
+    def update_ram_info(self, used: float, total: float) -> None:
+        """Update RAM info and trigger repaint."""
+        self.ram_used = used
+        self.ram_total = total
+        if self.config.get("widget_display_mode") in ["cpu_only", "combined", "side_by_side", "cycle"]:
+            self.update()
+
+    def update_vram_info(self, used: float, total: float) -> None:
+        """Update VRAM info and trigger repaint."""
+        self.vram_used = used
+        self.vram_total = total
+        if self.config.get("widget_display_mode") in ["gpu_only", "combined", "side_by_side", "cycle"]:
+            self.update()
+
+    def update_display_hardware(self, cpu: Optional[float] = None, gpu: Optional[float] = None) -> None:
+        # Legacy method kept for safety but we prefer the individual ones above
+        if cpu is not None: self.cpu_usage = cpu
+        if gpu is not None: self.gpu_usage = gpu
+        self.update()
+
+
+    def _rotate_cycle(self) -> None:
+        """Rotates the displayed metric when in 'cycle' mode."""
+        modes = ["network_only"]
+        if self.config.get("monitor_cpu_enabled", False): modes.append("cpu_only")
+        if self.config.get("monitor_gpu_enabled", False): modes.append("gpu_only")
+        
+        if not modes: return
+        
+        self._cycle_index = (self._cycle_index + 1) % len(modes)
+        self._current_cycle_mode = modes[self._cycle_index]
+        self.update() # Trigger repaint with new mode
+
+
 
 
 
@@ -410,9 +488,12 @@ class NetworkSpeedWidget(QWidget):
             raise RuntimeError("Core components missing during signal connection setup.")
         try:
             # Connect core component signals
-            # self.timer_manager.stats_updated.connect(self.controller.update_speeds) # Deprecated
-            self.monitor_thread.counters_ready.connect(self.controller.handle_network_counters)
+            self.monitor_thread.stats_ready.connect(self.controller.handle_stats)
             self.controller.display_speed_updated.connect(self.update_display_speeds)
+            
+            # New Hardware signals
+            self.controller.cpu_usage_updated.connect(lambda val: self.update_display_hardware(cpu=val))
+            self.controller.gpu_usage_updated.connect(lambda val: self.update_display_hardware(gpu=val))
             
             # Start the monitoring thread
             self.monitor_thread.start()
@@ -450,65 +531,100 @@ class NetworkSpeedWidget(QWidget):
 
 
     def paintEvent(self, event: QPaintEvent) -> None:
-        """
-        Handles all painting for the widget by delegating to the renderer.
-        """
+        """Handles all painting for the widget by delegating to the renderer."""
         if not self.isVisible():
             return
         
         painter = QPainter(self)
         try:
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            # painter.fillRect(self.rect(), QColor(0, 0, 0, 1)) # Removed hardcoded fill
-
-            render_config = RenderConfig.from_dict(self.config)
             
-            # Draw user-configurable background
+            # 1. Base Hit-Test Layer (nearly transparent)
+            painter.fillRect(self.rect(), QColor(0, 0, 0, 1))
+
+            render_config = self.renderer.config
+            display_mode = render_config.widget_display_mode
+            if display_mode == "cycle":
+                display_mode = self._current_cycle_mode
+
+            # 2. Visual Background
             self.renderer.draw_background(painter, self.rect(), render_config)
 
             if not self.renderer or not self.current_metrics:
-                self.logger.error("Renderer or metrics not initialized during paintEvent")
                 self._draw_paint_error(painter, "Render Error")
                 return
             
-            # Detect layout mode and pass to renderer
+            # Detect layout mode
             taskbar_info = get_taskbar_info()
             layout_mode = 'horizontal' if is_small_taskbar(taskbar_info) else 'vertical'
             
-            # Draw Mini-Graph (Background Layer)
-            # Must be drawn BEFORE text to prevent obscuring readability
+            # 3. Mini-Graph Layer
             if render_config.graph_enabled:
-                history = self.widget_state.get_aggregated_speed_history()
-                self.renderer.draw_mini_graph(
-                    painter=painter,
-                    width=self.width(),
-                    height=self.height(),
-                    config=render_config,
-                    history=history,
-                    layout_mode=layout_mode
-                )
+                self._draw_widget_graph(painter, render_config, display_mode, layout_mode)
 
+            # 4. Foreground Content (Text/Stats)
             painter.setFont(self.current_font)
-
-            upload_bytes_sec = (self.upload_speed * constants.network.units.MEGA_DIVISOR) / constants.network.units.BITS_PER_BYTE
-            download_bytes_sec = (self.download_speed * constants.network.units.MEGA_DIVISOR) / constants.network.units.BITS_PER_BYTE
-            
-            self.renderer.draw_network_speeds(
-                painter=painter,
-                upload=upload_bytes_sec,
-                download=download_bytes_sec,
-                width=self.width(),
-                height=self.height(),
-                config=render_config,
-                layout_mode=layout_mode
-            )
+            self._draw_widget_foreground(painter, render_config, display_mode, layout_mode)
             
         except Exception as e:
             self.logger.error(f"Error in paintEvent: {e}", exc_info=True)
         finally:
             if painter.isActive():
                 painter.end()
+
+    def _draw_widget_graph(self, painter: QPainter, config: RenderConfig, mode: str, layout: str) -> None:
+        """Draws the mini-graph background layer based on current mode."""
+        if mode == "cpu_only":
+            history = list(self.widget_state.cpu_history)
+            self.renderer.draw_mini_graph(painter, self.width(), self.height(), config, history, layout, is_hardware=True, hardware_color=constants.graph.CPU_LINE_COLOR)
+        elif mode == "gpu_only":
+            history = list(self.widget_state.gpu_history)
+            self.renderer.draw_mini_graph(painter, self.width(), self.height(), config, history, layout, is_hardware=True, hardware_color=constants.graph.GPU_LINE_COLOR)
+        else:
+            history = self.widget_state.get_aggregated_speed_history()
+            self.renderer.draw_mini_graph(painter, self.width(), self.height(), config, history, layout)
+
+    def _draw_widget_foreground(self, painter: QPainter, config: RenderConfig, mode: str, layout: str) -> None:
+        """Draws the text and stats foreground layer based on current mode."""
+        if mode == "side_by_side":
+            self._draw_side_by_side_layout(painter, config, layout)
+        elif mode == "network_only":
+            up_bytes = (self.upload_speed * constants.network.units.MEGA_DIVISOR) / constants.network.units.BITS_PER_BYTE
+            dw_bytes = (self.download_speed * constants.network.units.MEGA_DIVISOR) / constants.network.units.BITS_PER_BYTE
+            self.renderer.draw_network_speeds(painter, up_bytes, dw_bytes, self.width(), self.height(), config, layout)
+        elif mode == "cpu_only":
+            ram = (self.ram_used, self.ram_total) if config.monitor_ram_enabled else None
+            self.renderer.draw_hardware_stats(painter, self.cpu_usage, None, self.width(), self.height(), config, self.cpu_temp, None, ram, None, layout)
+        elif mode == "gpu_only":
+            vram = (self.vram_used, self.vram_total) if config.monitor_vram_enabled else None
+            self.renderer.draw_hardware_stats(painter, None, self.gpu_usage, self.width(), self.height(), config, None, self.gpu_temp, None, vram, layout)
+        elif mode == "combined":
+            ram = (self.ram_used, self.ram_total) if config.monitor_ram_enabled else None
+            vram = (self.vram_used, self.vram_total) if config.monitor_vram_enabled else None
+            self.renderer.draw_hardware_stats(painter, self.cpu_usage, self.gpu_usage, self.width(), self.height(), config, self.cpu_temp, self.gpu_temp, ram, vram, layout)
+
+    def _draw_side_by_side_layout(self, painter: QPainter, config: RenderConfig, layout: str) -> None:
+        """Helper for multi-segment side-by-side painting."""
+        active_keys = [k for k in config.widget_display_order if k != "none"]
+        if not active_keys: active_keys = ["network"]
+        
+        num_active = len(active_keys)
+        total_gap = (num_active - 1) * 10
+        seg_width = (self.width() - total_gap) // num_active
+        current_x = 0
+        
+        for key in active_keys:
+            if key == "network":
+                up_bytes = (self.upload_speed * constants.network.units.MEGA_DIVISOR) / constants.network.units.BITS_PER_BYTE
+                dw_bytes = (self.download_speed * constants.network.units.MEGA_DIVISOR) / constants.network.units.BITS_PER_BYTE
+                self.renderer.draw_network_speeds(painter, up_bytes, dw_bytes, seg_width, self.height(), config, layout, x_offset=current_x)
+            elif key == "cpu" and config.monitor_cpu_enabled:
+                ram = (self.ram_used, self.ram_total) if config.monitor_ram_enabled else None
+                self.renderer.draw_hardware_stats(painter, self.cpu_usage, None, seg_width, self.height(), config, self.cpu_temp, None, ram, None, layout, x_offset=current_x)
+            elif key == "gpu" and config.monitor_gpu_enabled:
+                vram = (self.vram_used, self.vram_total) if config.monitor_vram_enabled else None
+                self.renderer.draw_hardware_stats(painter, None, self.gpu_usage, seg_width, self.height(), config, None, self.gpu_temp, None, vram, layout, x_offset=current_x)
+            current_x += seg_width + 10
 
 
     def _draw_paint_error(self, painter: Optional[QPainter], text: str) -> None:
@@ -934,7 +1050,7 @@ class NetworkSpeedWidget(QWidget):
             
             # --- Stop the background monitor thread ---
             if hasattr(self, 'monitor_thread') and self.monitor_thread:
-                self.logger.debug("Stopping NetworkMonitorThread...")
+                self.logger.debug("Stopping StatsMonitorThread...")
                 self.monitor_thread.stop()
 
             # --- Clean up core components ---
