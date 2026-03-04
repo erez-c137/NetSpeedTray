@@ -34,6 +34,8 @@ def mock_i18n():
     """Provides mock translations."""
     i18n = MagicMock()
     i18n.SETTINGS_MENU_ITEM = "Settings"
+    i18n.APP_USAGE_TAB_LABEL = "App Usage"
+    i18n.SHOW_APP_ACTIVITY_MENU_ITEM = "Show App Usage"
     i18n.EXIT_MENU_ITEM = "Exit"
     return i18n
 
