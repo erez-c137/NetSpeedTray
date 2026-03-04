@@ -47,6 +47,7 @@ if TYPE_CHECKING:
     from netspeedtray.constants.i18n import I18nStrings
     from netspeedtray.views.graph import GraphWindow
     from netspeedtray.views.settings import SettingsDialog
+    from netspeedtray.views.app_activity import AppActivityWindow
 
 
 class NetworkSpeedWidget(QWidget):
@@ -96,6 +97,7 @@ class NetworkSpeedWidget(QWidget):
         self.tray_manager: TrayIconManager
         self.monitor_thread: NetworkMonitorThread
         self.graph_window: Optional[GraphWindow] = None
+        self.app_activity_window: Optional[AppActivityWindow] = None
         self.app_icon: QIcon
         # Note: self.current_font and self.current_metrics are initialized earlier before _init_managers()
         
@@ -780,6 +782,35 @@ class NetworkSpeedWidget(QWidget):
             self.logger.error(f"Error showing graph window: {e}", exc_info=True)
             QMessageBox.critical(self, "Error", f"Could not open the graph window:\n\n{str(e)}")
 
+    def open_app_activity_window(self) -> None:
+        """Creates and displays the per-application network activity window."""
+        self.logger.debug("Request to show app activity window.")
+        if not self.i18n:
+            self.logger.error("Cannot show app activity view: i18n not initialized.")
+            QMessageBox.critical(self, "Error", "Internal error: Required components not available.")
+            return
+
+        try:
+            from netspeedtray.views.app_activity import AppActivityWindow
+
+            if self.app_activity_window is None or not self.app_activity_window.isVisible():
+                self.logger.debug("Creating new AppActivityWindow instance.")
+                self.app_activity_window = AppActivityWindow(
+                    main_widget=self,
+                    parent=None,
+                    i18n=self.i18n,
+                )
+                self.app_activity_window.window_closed.connect(self._on_app_activity_window_closed)
+                self.app_activity_window.show()
+            else:
+                self.logger.debug("App activity window already exists. Activating.")
+                self.app_activity_window.show()
+                self.app_activity_window.raise_()
+                self.app_activity_window.activateWindow()
+        except Exception as e:
+            self.logger.error(f"Error showing app activity window: {e}", exc_info=True)
+            QMessageBox.critical(self, self.i18n.ERROR_TITLE, f"Could not open app activity window:\n\n{str(e)}")
+
 
     def _on_graph_window_closed(self) -> None:
         """
@@ -799,6 +830,11 @@ class NetworkSpeedWidget(QWidget):
 
         # Use singleShot with a slightly longer delay to allow Windows focus settling
         QTimer.singleShot(constants.timeouts.GRAPH_CLOSE_REFRESH_DELAY_MS, self._execute_refresh)
+
+    def _on_app_activity_window_closed(self) -> None:
+        """Handles app activity window destruction."""
+        self.logger.debug("App activity window destroyed.")
+        self.app_activity_window = None
 
 
     # update_config (redundant definition) removed
@@ -953,6 +989,10 @@ class NetworkSpeedWidget(QWidget):
                 self.graph_window._is_closing = True
                 self.graph_window.close()
                 self.graph_window = None
+
+            if self.app_activity_window:
+                self.app_activity_window.close()
+                self.app_activity_window = None
 
             if self.config.get("free_move", False):
                 pos = self.pos()
