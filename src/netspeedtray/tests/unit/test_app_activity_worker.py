@@ -5,6 +5,7 @@ Unit tests for the AppActivityWorker.
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import psutil
 import pytest
 import socket
 
@@ -73,10 +74,11 @@ def test_sample_groups_by_pid_and_calculates_deltas():
     assert first_row["download_bps"] == pytest.approx(500.0)
     assert first_row["upload_bps"] == pytest.approx(600.0)
     assert first_row["connection_count"] == 2
-    assert "93.184.216.34:443" in first_row["endpoint_preview"]
+    assert any("93.184.216.34:443" in endpoint for endpoint in first_row["endpoints"])
 
     assert second_payload["total_down_bps"] == pytest.approx(900.0)
     assert second_payload["total_up_bps"] == pytest.approx(700.0)
+    assert second_payload["access_limited"] is False
 
 
 def test_sample_handles_empty_connections():
@@ -95,3 +97,48 @@ def test_sample_handles_empty_connections():
     assert payload["rows"] == []
     assert payload["total_down_bps"] == 0.0
     assert payload["total_up_bps"] == 0.0
+    assert payload["access_limited"] is False
+
+
+def test_sample_falls_back_when_global_connections_are_denied():
+    worker = AppActivityWorker()
+    payloads = []
+    worker.data_ready.connect(payloads.append)
+
+    class FallbackProc:
+        def __init__(self, pid: int, allow: bool):
+            self.pid = pid
+            self._allow = allow
+
+        def net_connections(self, kind: str):
+            assert kind == "inet"
+            if not self._allow:
+                raise psutil.AccessDenied(pid=self.pid)
+            return [_conn(self.pid, "127.0.0.1", 53000, "1.1.1.1", 443, "ESTABLISHED")]
+
+    class FakeProcess:
+        def __init__(self, pid: int):
+            self.pid = pid
+
+        def name(self) -> str:
+            return "allowed.exe"
+
+        def io_counters(self):
+            return SimpleNamespace(read_bytes=1000, write_bytes=2000)
+
+    with (
+        patch("netspeedtray.views.app_activity.worker.psutil.net_connections", side_effect=psutil.AccessDenied()),
+        patch(
+            "netspeedtray.views.app_activity.worker.psutil.process_iter",
+            return_value=[FallbackProc(777, True), FallbackProc(888, False)],
+        ),
+        patch("netspeedtray.views.app_activity.worker.psutil.Process", side_effect=lambda pid: FakeProcess(pid)),
+        patch("netspeedtray.views.app_activity.worker.time.monotonic", return_value=100.0),
+    ):
+        worker.sample()
+
+    assert len(payloads) == 1
+    payload = payloads[0]
+    assert payload["access_limited"] is True
+    assert len(payload["rows"]) == 1
+    assert payload["rows"][0]["pid"] == 777

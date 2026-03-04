@@ -86,8 +86,7 @@ class TrayIconManager(QObject):
                 settings_action.triggered.connect(self.widget.show_settings)
 
             # App activity view (Issue #112)
-            app_usage_label = getattr(self.i18n, "SHOW_APP_ACTIVITY_MENU_ITEM", f"Show {getattr(self.i18n, 'APP_USAGE_TAB_LABEL', 'App Usage')}")
-            app_usage_action = self.context_menu.addAction(app_usage_label)
+            app_usage_action = self.context_menu.addAction(self.i18n.SHOW_APP_ACTIVITY_MENU_ITEM)
             if hasattr(self.widget, 'open_app_activity_window'):
                 app_usage_action.triggered.connect(self.widget.open_app_activity_window)
             

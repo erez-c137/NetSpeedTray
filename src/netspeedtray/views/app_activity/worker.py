@@ -27,8 +27,6 @@ class AppActivityWorker(QObject):
     data_ready = pyqtSignal(object)
     error = pyqtSignal(str)
 
-    ENDPOINT_PREVIEW_LIMIT = 3
-
     def __init__(self) -> None:
         super().__init__()
         self.logger = logging.getLogger("NetSpeedTray.AppActivityWorker")
@@ -40,7 +38,7 @@ class AppActivityWorker(QObject):
     def sample(self) -> None:
         """Capture one snapshot and emit normalized payload for the UI."""
         try:
-            pid_connections = self._collect_connections_by_pid()
+            pid_connections, access_limited = self._collect_connections_by_pid()
 
             now = time.monotonic()
             elapsed = 0.0 if self._last_sample_time is None else max(0.001, now - self._last_sample_time)
@@ -57,10 +55,6 @@ class AppActivityWorker(QObject):
                     next_io_counters[pid] = io_snapshot
 
                 unique_endpoints = list(dict.fromkeys(endpoints))
-                preview_items = unique_endpoints[: self.ENDPOINT_PREVIEW_LIMIT]
-                preview = "; ".join(preview_items) if preview_items else "-"
-                if len(unique_endpoints) > self.ENDPOINT_PREVIEW_LIMIT:
-                    preview = f"{preview}; (+{len(unique_endpoints) - self.ENDPOINT_PREVIEW_LIMIT} more)"
 
                 rows.append(
                     {
@@ -69,7 +63,6 @@ class AppActivityWorker(QObject):
                         "download_bps": download_bps,
                         "upload_bps": upload_bps,
                         "connection_count": len(unique_endpoints),
-                        "endpoint_preview": preview,
                         "endpoints": unique_endpoints,
                     }
                 )
@@ -94,21 +87,48 @@ class AppActivityWorker(QObject):
                     "rows": rows,
                     "total_down_bps": total_down_bps,
                     "total_up_bps": total_up_bps,
+                    "access_limited": access_limited,
                 }
             )
         except Exception as exc:
             self.logger.error("Failed to sample app activity: %s", exc, exc_info=True)
             self.error.emit(str(exc))
 
-    def _collect_connections_by_pid(self) -> Dict[int, List[str]]:
+    def _collect_connections_by_pid(self) -> Tuple[Dict[int, List[str]], bool]:
         grouped: Dict[int, List[str]] = defaultdict(list)
-        for conn in psutil.net_connections(kind="inet"):
-            pid = getattr(conn, "pid", None)
-            if pid is None:
+        try:
+            for conn in psutil.net_connections(kind="inet"):
+                pid = getattr(conn, "pid", None)
+                if pid is None:
+                    continue
+                endpoint = self._format_connection(conn)
+                if endpoint:
+                    grouped[int(pid)].append(endpoint)
+            return grouped, False
+        except (psutil.AccessDenied, OSError) as exc:
+            self.logger.info(
+                "Global net_connections access denied/unavailable. Falling back to best-effort per-process sampling: %s",
+                exc,
+            )
+            return self._collect_connections_by_pid_best_effort(), True
+
+    def _collect_connections_by_pid_best_effort(self) -> Dict[int, List[str]]:
+        """
+        Best-effort fallback for non-admin sessions:
+        sample only processes and connections currently accessible.
+        """
+        grouped: Dict[int, List[str]] = defaultdict(list)
+        for proc in psutil.process_iter(["pid"]):
+            try:
+                pid = int(proc.pid)
+                for conn in proc.net_connections(kind="inet"):
+                    endpoint = self._format_connection(conn)
+                    if endpoint:
+                        grouped[pid].append(endpoint)
+            except (psutil.NoSuchProcess, psutil.ZombieProcess):
                 continue
-            endpoint = self._format_connection(conn)
-            if endpoint:
-                grouped[int(pid)].append(endpoint)
+            except (psutil.AccessDenied, OSError):
+                continue
         return grouped
 
     def _collect_process_snapshot(

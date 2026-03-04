@@ -37,6 +37,7 @@ class AppActivityWindow(QWidget):
     window_closed = pyqtSignal()
 
     POLL_INTERVAL_MS = 1000
+    ENDPOINT_PREVIEW_LIMIT = 3
 
     def __init__(self, main_widget: QWidget | None, parent: QWidget | None = None, i18n=None) -> None:
         super().__init__(parent)
@@ -60,19 +61,22 @@ class AppActivityWindow(QWidget):
         self._init_worker_thread()
 
     def _build_ui(self) -> None:
-        self.setWindowTitle(f"{constants.app.APP_NAME} - {getattr(self.i18n, 'APP_USAGE_TAB_LABEL', 'App Usage')}")
+        self.setWindowTitle(f"{constants.app.APP_NAME} - {self._tr('APP_ACTIVITY_WINDOW_TITLE', 'App Network Activity')}")
         self.resize(980, 620)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(10, 10, 10, 10)
         root.setSpacing(8)
 
-        self.summary_label = QLabel("Loading application activity...", self)
+        self.summary_label = QLabel(self._tr("APP_ACTIVITY_LOADING_MESSAGE", "Loading application activity..."), self)
         self.summary_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         root.addWidget(self.summary_label)
 
         self.hint_label = QLabel(
-            "Per-app speed is estimated from process I/O deltas while connections are active.",
+            self._tr(
+                "APP_ACTIVITY_HINT_TEXT",
+                "Per-app speed is estimated from process I/O deltas while connections are active.",
+            ),
             self,
         )
         self.hint_label.setWordWrap(True)
@@ -83,12 +87,12 @@ class AppActivityWindow(QWidget):
         self.table.setColumnCount(6)
         self.table.setHorizontalHeaderLabels(
             [
-                "Process",
-                "PID",
+                self._tr("APP_ACTIVITY_PROCESS_HEADER", "Process"),
+                self._tr("APP_ACTIVITY_PID_HEADER", "PID"),
                 getattr(self.i18n, "DOWNLOAD_LABEL", "Download"),
                 getattr(self.i18n, "UPLOAD_LABEL", "Upload"),
-                "Connections",
-                "Endpoints",
+                self._tr("APP_ACTIVITY_CONNECTIONS_HEADER", "Connections"),
+                self._tr("APP_ACTIVITY_ENDPOINTS_HEADER", "Endpoints"),
             ]
         )
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -107,7 +111,7 @@ class AppActivityWindow(QWidget):
         header.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
         root.addWidget(self.table, 1)
 
-        details_title = QLabel("Connection Details", self)
+        details_title = QLabel(self._tr("APP_ACTIVITY_DETAILS_TITLE", "Connection Details"), self)
         root.addWidget(details_title)
 
         self.details_box = QPlainTextEdit(self)
@@ -117,8 +121,8 @@ class AppActivityWindow(QWidget):
 
         button_row = QHBoxLayout()
         button_row.addStretch(1)
-        self.refresh_button = QPushButton("Refresh", self)
-        self.close_button = QPushButton("Close", self)
+        self.refresh_button = QPushButton(self._tr("APP_ACTIVITY_REFRESH_BUTTON", "Refresh"), self)
+        self.close_button = QPushButton(self._tr("APP_ACTIVITY_CLOSE_BUTTON", "Close"), self)
         button_row.addWidget(self.refresh_button)
         button_row.addWidget(self.close_button)
         root.addLayout(button_row)
@@ -178,6 +182,7 @@ class AppActivityWindow(QWidget):
             return
 
         rows = payload.get("rows", [])
+        access_limited = bool(payload.get("access_limited", False))
         self._rows = rows
         self._render_rows(rows)
 
@@ -185,30 +190,46 @@ class AppActivityWindow(QWidget):
             download_text = self._format_speed(float(payload.get("total_down_bps", 0.0)))
             upload_text = self._format_speed(float(payload.get("total_up_bps", 0.0)))
             updated_at = payload.get("updated_at", "--:--:--")
-            self.summary_label.setText(
-                f"Live now: {len(rows)} apps | Download {download_text} | Upload {upload_text} | Updated {updated_at}"
+            summary = self._tr(
+                "APP_ACTIVITY_SUMMARY_TEMPLATE",
+                "Live now: {app_count} apps | Download {download} | Upload {upload} | Updated {updated_at}",
+            ).format(
+                app_count=len(rows),
+                download=download_text,
+                upload=upload_text,
+                updated_at=updated_at,
             )
+            if access_limited:
+                summary = f"{summary} {self._tr('APP_ACTIVITY_SUMMARY_LIMITED_SUFFIX', '(limited access without admin rights)')}"
+            self.summary_label.setText(summary)
             if self.table.rowCount() > 0 and not self.table.selectionModel().selectedRows():
                 self.table.selectRow(0)
         else:
-            empty_text = getattr(self.i18n, "NO_APP_DATA_MESSAGE", "No application usage data available.")
+            if access_limited:
+                empty_text = self._tr(
+                    "APP_ACTIVITY_ACCESS_LIMITED_MESSAGE",
+                    "Limited permissions detected. Showing only processes you can access.",
+                )
+            else:
+                empty_text = getattr(self.i18n, "NO_APP_DATA_MESSAGE", "No application usage data available.")
             self.summary_label.setText(empty_text)
             self.details_box.setPlainText(empty_text)
 
     def _on_worker_error(self, error_text: str) -> None:
         self.logger.error("App activity worker error: %s", error_text)
         message = getattr(self.i18n, "APP_USAGE_ERROR_MESSAGE", "Failed to load app usage data.")
-        self.summary_label.setText(f"{message} ({error_text})")
+        template = self._tr("APP_ACTIVITY_ERROR_TEMPLATE", "{message} ({error})")
+        self.summary_label.setText(template.format(message=message, error=error_text))
 
     def _render_rows(self, rows: List[Dict[str, Any]]) -> None:
         self.table.setRowCount(len(rows))
         for row_index, row in enumerate(rows):
-            process_name = str(row.get("process_name", "Unknown"))
+            process_name = str(row.get("process_name", self._tr("APP_ACTIVITY_UNKNOWN_PROCESS", "Unknown")))
             pid = int(row.get("pid", 0))
             download_text = self._format_speed(float(row.get("download_bps", 0.0)))
             upload_text = self._format_speed(float(row.get("upload_bps", 0.0)))
             connections = str(int(row.get("connection_count", 0)))
-            preview = str(row.get("endpoint_preview", "-"))
+            preview = self._build_endpoint_preview(row.get("endpoints", []))
 
             row_values = [process_name, str(pid), download_text, upload_text, connections, preview]
             for col, value in enumerate(row_values):
@@ -234,9 +255,24 @@ class AppActivityWindow(QWidget):
             detail_lines = [f"{idx + 1}. {endpoint}" for idx, endpoint in enumerate(endpoints)]
             details = "\n".join(detail_lines)
         else:
-            details = "No connection details available."
+            details = self._tr("APP_ACTIVITY_NO_CONNECTION_DETAILS", "No connection details available.")
 
-        self.details_box.setPlainText(f"{process_name} (PID {pid})\n\n{details}")
+        selected_template = self._tr("APP_ACTIVITY_SELECTED_APP_TEMPLATE", "{process_name} (PID {pid})")
+        app_header = selected_template.format(process_name=process_name, pid=pid)
+        self.details_box.setPlainText(f"{app_header}\n\n{details}")
+
+    def _build_endpoint_preview(self, endpoints: List[Any]) -> str:
+        normalized = [str(endpoint) for endpoint in endpoints if endpoint]
+        if not normalized:
+            return "-"
+
+        preview_items = normalized[: self.ENDPOINT_PREVIEW_LIMIT]
+        preview = "; ".join(preview_items)
+        remaining = len(normalized) - len(preview_items)
+        if remaining > 0:
+            suffix = self._tr("APP_ACTIVITY_ENDPOINT_MORE_TEMPLATE", "(+{count} more)").format(count=remaining)
+            preview = f"{preview}; {suffix}"
+        return preview
 
     def _format_speed(self, speed_bps: float) -> str:
         if self.i18n is None:
@@ -257,3 +293,8 @@ class AppActivityWindow(QWidget):
             unit_type=unit_type,
             short_labels=short_labels,
         )
+
+    def _tr(self, key: str, default: str) -> str:
+        if self.i18n is None:
+            return default
+        return str(getattr(self.i18n, key, default))
