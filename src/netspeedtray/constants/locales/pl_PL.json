@@ -258,5 +258,24 @@
     "UPDATE_MODE_AGGRESSIVE_LABEL": "Agresywny (1s)",
     "UPDATE_MODE_BALANCED_LABEL": "Zrównoważony (2s)",
     "UPDATE_MODE_EFFICIENT_LABEL": "Wydajny (5s)",
-    "UPDATE_MODE_POWER_SAVER_LABEL": "Oszczędzanie energii (10s)"
-}
+    "UPDATE_MODE_POWER_SAVER_LABEL": "Oszczędzanie energii (10s)",
+    "SHOW_APP_ACTIVITY_MENU_ITEM": "Show &App Activity",
+    "APP_ACTIVITY_WINDOW_TITLE": "App Network Activity",
+    "APP_ACTIVITY_LOADING_MESSAGE": "Loading application activity...",
+    "APP_ACTIVITY_HINT_TEXT": "Per-app speed is estimated from process I/O deltas while connections are active.",
+    "APP_ACTIVITY_PROCESS_HEADER": "Process",
+    "APP_ACTIVITY_PID_HEADER": "PID",
+    "APP_ACTIVITY_CONNECTIONS_HEADER": "Connections",
+    "APP_ACTIVITY_ENDPOINTS_HEADER": "Endpoints",
+    "APP_ACTIVITY_DETAILS_TITLE": "Connection Details",
+    "APP_ACTIVITY_REFRESH_BUTTON": "Refresh",
+    "APP_ACTIVITY_CLOSE_BUTTON": "Close",
+    "APP_ACTIVITY_SUMMARY_TEMPLATE": "Live now: {app_count} apps | Download {download} | Upload {upload} | Updated {updated_at}",
+    "APP_ACTIVITY_SUMMARY_LIMITED_SUFFIX": "(limited access without admin rights)",
+    "APP_ACTIVITY_ACCESS_LIMITED_MESSAGE": "Limited permissions detected. Showing only processes you can access.",
+    "APP_ACTIVITY_ERROR_TEMPLATE": "{message} ({error})",
+    "APP_ACTIVITY_UNKNOWN_PROCESS": "Unknown",
+    "APP_ACTIVITY_NO_CONNECTION_DETAILS": "No connection details available.",
+    "APP_ACTIVITY_SELECTED_APP_TEMPLATE": "{process_name} (PID {pid})",
+    "APP_ACTIVITY_ENDPOINT_MORE_TEMPLATE": "(+{count} more)"}
+

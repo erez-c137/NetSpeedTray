@@ -84,6 +84,11 @@ class TrayIconManager(QObject):
             settings_action = self.context_menu.addAction(self.i18n.SETTINGS_MENU_ITEM)
             if hasattr(self.widget, 'show_settings'):
                 settings_action.triggered.connect(self.widget.show_settings)
+
+            # App activity view (Issue #112)
+            app_usage_action = self.context_menu.addAction(self.i18n.SHOW_APP_ACTIVITY_MENU_ITEM)
+            if hasattr(self.widget, 'open_app_activity_window'):
+                app_usage_action.triggered.connect(self.widget.open_app_activity_window)
             
             self.context_menu.addSeparator()
             
