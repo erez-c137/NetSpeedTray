@@ -27,6 +27,9 @@ class LayoutConstants:
     SMALL_TASKBAR_HEIGHT_THRESHOLD: Final[int] = 34
     HORIZONTAL_LAYOUT_SEPARATOR: Final[str] = " | "
     MINI_GRAPH_HORIZONTAL_WIDTH: Final[int] = 40
+    # Segment gaps for Side-by-Side mode (Network | CPU/GPU)
+    WIDGET_SEGMENT_GAP_AFTER_NETWORK_PX: Final[int] = 18
+    WIDGET_SEGMENT_GAP_BETWEEN_HARDWARE_PX: Final[int] = 5
 
     def __init__(self) -> None:
         self.validate()

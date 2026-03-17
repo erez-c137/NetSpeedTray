@@ -78,6 +78,7 @@ def test_update_stats_bar_correctly_computes_values(graph_window_instance):
     # ACT
     total_up = 5_000_000.0
     total_down = 10_000_000.0
+    graph.ui.tab_widget.setCurrentIndex(1) # Select Network Tab
     graph._update_stats_bar(history_data, total_up, total_down)
     
     # ASSERT

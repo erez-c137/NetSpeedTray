@@ -58,8 +58,11 @@ class RenderConfig:
     monitor_gpu_enabled: bool = False
     monitor_ram_enabled: bool = False
     monitor_vram_enabled: bool = False
+    stack_hardware_stats: bool = False
+    hardware_label_style: str = "icons_colored"
     widget_display_mode: str = "network_only"
     widget_display_order: List[str] = field(default_factory=lambda: ["network", "cpu", "gpu"])
+    show_hardware_temps: bool = False
 
 
     @classmethod
@@ -107,6 +110,7 @@ class RenderConfig:
                 swap_upload_download=bool(config.get('swap_upload_download', constants.config.defaults.DEFAULT_SWAP_UPLOAD_DOWNLOAD)),
                 hide_arrows=bool(config.get('hide_arrows', constants.config.defaults.DEFAULT_HIDE_ARROWS)),
                 hide_unit_suffix=bool(config.get('hide_unit_suffix', constants.config.defaults.DEFAULT_HIDE_UNIT_SUFFIX)),
+                hardware_label_style=str(config.get('hardware_label_style', 'icons_colored')),
                 short_unit_labels=bool(config.get('short_unit_labels', constants.config.defaults.DEFAULT_SHORT_UNIT_LABELS)),
                 max_samples=max_samples,
                 use_separate_arrow_font=bool(config.get('use_separate_arrow_font', False)),
@@ -119,8 +123,10 @@ class RenderConfig:
                 monitor_gpu_enabled=bool(config.get('monitor_gpu_enabled', False)),
                 monitor_ram_enabled=bool(config.get('monitor_ram_enabled', False)),
                 monitor_vram_enabled=bool(config.get('monitor_vram_enabled', False)),
+                stack_hardware_stats=bool(config.get('stack_hardware_stats', False)),
                 widget_display_mode=str(config.get('widget_display_mode', 'network_only')),
-                widget_display_order=list(config.get('widget_display_order', ["network", "cpu", "gpu"]))
+                widget_display_order=list(config.get('widget_display_order', ["network", "cpu", "gpu"])),
+                show_hardware_temps=bool(config.get('show_hardware_temps', False))
             )
         except Exception as e:
             logger.error("Failed to create RenderConfig: %s", e)
@@ -146,6 +152,15 @@ class WidgetRenderer:
                 
             try:
                 self.paused = False
+                
+                # Bounding rect for coordinates
+                self._last_text_rect = QRect()
+                
+                # Mini graph state cache tracking
+                self._last_widget_size = (0, 0)
+                self._last_history_hash = 0
+                self._cached_upload_points = []
+                self._cached_download_points = []
                 
                 # Caching for high-frequency paint events
                 self._cached_pens = {}
@@ -288,6 +303,11 @@ class WidgetRenderer:
             dw_y = top_y + line_height + vertical_gap
             self._draw_speed_line(painter, not config.swap_upload_download, dw_val, dw_unit, arrow_x, number_x, unit_x, dw_y, config, number_area_width)
 
+            # Update bounding rect for context menu positioning
+            max_unit_width = max(self.metrics.horizontalAdvance(up_unit), self.metrics.horizontalAdvance(dw_unit)) if not config.hide_unit_suffix else 0
+            total_width = (unit_x - arrow_x) + max_unit_width
+            self._last_text_rect = QRect(arrow_x, top_y, total_width, total_height)
+
         except Exception as e:
             self.logger.error("Failed to draw network speeds: %s", e)
 
@@ -341,11 +361,22 @@ class WidgetRenderer:
                            layout_mode: str = 'vertical', x_offset: int = 0, fixed_width: Optional[int] = None) -> None:
         """Draws CPU and/or GPU utilization statistics with optional temperature and memory."""
         try:
-            enabled_stats = []
+            order = getattr(config, 'widget_display_order', ["network", "cpu", "gpu"])
+            cpu_idx = order.index("cpu") if "cpu" in order else 999
+            gpu_idx = order.index("gpu") if "gpu" in order else 999
+            
+            style = getattr(config, 'hardware_label_style', 'icons_colored')
+            cpu_color = "#FFFFFF" if style == "icons_monochrome" else constants.renderer.CPU_LINE_COLOR
+            gpu_color = "#FFFFFF" if style == "icons_monochrome" else constants.renderer.GPU_LINE_COLOR
+
+            items = []
             if cpu_usage is not None: 
-                enabled_stats.append(('CPU', cpu_usage, cpu_temp, ram_info, constants.renderer.CPU_LINE_COLOR))
+                items.append((cpu_idx, ('CPU', cpu_usage, cpu_temp, ram_info, cpu_color)))
             if gpu_usage is not None: 
-                enabled_stats.append(('GPU', gpu_usage, gpu_temp, vram_info, constants.renderer.GPU_LINE_COLOR))
+                items.append((gpu_idx, ('GPU', gpu_usage, gpu_temp, vram_info, gpu_color)))
+                
+            items.sort(key=lambda x: x[0])
+            enabled_stats = [x[1] for x in items]
             
             if not enabled_stats: return
             
@@ -359,31 +390,62 @@ class WidgetRenderer:
             margin = constants.renderer.TEXT_MARGIN
             current_x = x_offset + margin
             
-            # Use color differentiator but icons are the primary identifier now
-            for i, (label, val, temp, mem_info, color_hex) in enumerate(enabled_stats):
-                y_pos = top_y + (i * line_height)
-                icon_color = QColor(color_hex)
-                self._draw_icon(painter, label, current_x, y_pos, icon_color)
+            is_compact = getattr(config, 'widget_display_mode', 'network_only') == "compact_stack" or len(enabled_stats) > 1
+            
+            render_rows = []
+            for (label, val, temp, mem_info, color_hex) in enabled_stats:
+                main_text = f"{int(val)}%"
+                if getattr(config, "show_hardware_temps", False):
+                    # Show a placeholder when temps are unavailable so the toggle has a visible effect.
+                    try:
+                        temp_ok = temp is not None and math.isfinite(float(temp))
+                    except Exception:
+                        temp_ok = False
+
+                    if temp_ok:
+                        main_text += f" ({int(float(temp))}°C)"
+                    else:
+                        main_text += f" ({self.i18n.DEFAULT_TEXT})"
                 
-                # Format: "Usage% (Temp) | Used/Total"
-                val_str = f"{int(val)}%"
-                if temp is not None:
-                    val_str += f" ({int(temp)}°C)"
-                
+                mem_text = ""
                 if mem_info and mem_info[0] is not None:
                     used, total = mem_info
-                    if total is not None:
-                        val_str += f" | {used:.1f}/{total:.1f}G"
+                    mem_text = f"{used:.1f}/{total:.1f}G" if total and total > 0 else f"{used:.1f}G"
+                
+                if mem_text:
+                    if is_compact:
+                        main_text += f" | {mem_text}"
+                        render_rows.append({'label': label, 'text': main_text, 'color': color_hex, 'draw_icon': True})
                     else:
-                        # Fallback for universal PDH where total might be unknown
-                        val_str += f" | {used:.1f}G"
+                        render_rows.append({'label': label, 'text': main_text, 'color': color_hex, 'draw_icon': True})
+                        render_rows.append({'label': label, 'text': mem_text, 'color': color_hex, 'draw_icon': False})
+                else:
+                    render_rows.append({'label': label, 'text': main_text, 'color': color_hex, 'draw_icon': True})
                     
-                val_x = current_x + 14 # Icon width + gap
-                # Stick to default color for text to keep it clean, or use color if it helps
-                # User said "not loving color as differentiator", so primary focus is icons.
-                # However, subtle color helps grouping. I'll use default color for text for maximum cleanliness.
+            total_height = line_height * len(render_rows)
+            top_y = int((height - total_height) / 2 + ascent)
+            current_x = x_offset + margin
+            
+            style = getattr(config, 'hardware_label_style', 'icons_colored')
+            for i, row in enumerate(render_rows):
+                y_pos = top_y + (i * line_height)
+                if row['draw_icon']:
+                    if style == "text":
+                        painter.setPen(QPen(QColor(row['color'])))
+                        painter.drawText(current_x, y_pos, row['label'])
+                        val_x = current_x + self.metrics.horizontalAdvance(row['label']) + 4
+                    else:
+                        self._draw_icon(painter, row['label'], current_x, y_pos, QColor(row['color']))
+                        val_x = current_x + 14
+                else:
+                    val_x = current_x # Align with icon, no indent!
+                
                 painter.setPen(self.default_color)
-                painter.drawText(val_x, y_pos, val_str)
+                painter.drawText(val_x, y_pos, row['text'])
+                
+            # Update bounding rect for accurate spacing in side-by-side or grouped layout views
+            max_text_width = max((14 if row['draw_icon'] else 0) + self.metrics.horizontalAdvance(row['text']) for row in render_rows)
+            self._last_text_rect = QRect(x_offset, top_y, max_text_width + margin, total_height)
 
         except Exception as e:
             self.logger.error("Failed to draw hardware stats: %s", e)
@@ -404,21 +466,26 @@ class WidgetRenderer:
         painter.setBrush(Qt.BrushStyle.NoBrush)
         
         if icon_type == 'CPU':
-            # Microchip with 'C'
-            inner_rect = rect.adjusted(2, 2, -2, -2)
-            painter.drawRect(inner_rect)
-            # "Pins"
-            for offset in [0, 5, 9]: # top/bottom
-                painter.drawLine(rect.left() + offset, rect.top(), rect.left() + offset, rect.top() + 1)
-                painter.drawLine(rect.left() + offset, rect.bottom() - 1, rect.left() + offset, rect.bottom())
-            for offset in [2, 6, 8]: # left/right
-                painter.drawLine(rect.left(), rect.top() + offset, rect.left() + 1, rect.top() + offset)
-                painter.drawLine(rect.right() - 1, rect.top() + offset, rect.right(), rect.top() + offset)
+            # Microchip with visible legs extending from PCB edge
+            for dx in [3, 5, 7]:
+                painter.drawLine(rect.left() + dx, rect.top(), rect.left() + dx, rect.top() + 1)
+                painter.drawLine(rect.left() + dx, rect.bottom() - 1, rect.left() + dx, rect.bottom())
+            for dy in [3, 5, 7]:
+                painter.drawLine(rect.left(), rect.top() + dy, rect.left() + 1, rect.top() + dy)
+                painter.drawLine(rect.right() - 1, rect.top() + dy, rect.right(), rect.top() + dy)
+
+            # Draw PCB package (Outer outline)
+            painter.drawRect(rect)
+                
+            # Draw Integrated Heatspreader (Inner filled package)
+            ihs_rect = rect.adjusted(2, 2, -2, -2)
+            painter.setBrush(painter.pen().color())
+            painter.drawRect(ihs_rect) # Solid-filled IHS
+            painter.setBrush(Qt.BrushStyle.NoBrush)
             
-            # Tiny 'C'
-            small_font = QFont(self.font.family(), 6)
-            painter.setFont(small_font)
-            painter.drawText(inner_rect, Qt.AlignmentFlag.AlignCenter, "C")
+            # Silicon Die Core (Inner dark center)
+            core_rect = rect.adjusted(4, 4, -4, -4) 
+            painter.fillRect(core_rect, QColor("#121212")) 
 
         elif icon_type == 'GPU':
             # Graphics card with 'G' and Fan
@@ -481,8 +548,8 @@ class WidgetRenderer:
                     padded_max_speed = max_speed_val * constants.renderer.GRAPH_Y_AXIS_PADDING_FACTOR
                     max_y = max(padded_max_speed, constants.renderer.MIN_Y_SCALE)
                 
-                max_samples = max(2, config.max_samples)
-                step_x = graph_rect.width() / (max_samples - 1)
+                num_points = len(history)
+                step_x = graph_rect.width() / (num_points - 1) if num_points > 1 else graph_rect.width()
                 right_edge = float(graph_rect.right())
                 base_y = float(graph_rect.bottom())
                 h = float(graph_rect.height())

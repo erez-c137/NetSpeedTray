@@ -152,15 +152,20 @@ def get_unit_labels_for_type(i18n, unit_type: str, short_labels: bool = False) -
     return [getattr(i18n, key) for key in keys]
 
 
-def get_all_possible_unit_labels(i18n) -> List[str]:
+from typing import Optional, Tuple, List
+
+def get_all_possible_unit_labels(i18n, short_labels: Optional[bool] = None) -> List[str]:
     """
     Returns all unique translated unit labels across all unit types and formats.
     Used for calculating reference widths in the UI.
     """
     all_labels = set()
     for ut in ["bits_decimal", "bits_binary", "bytes_decimal", "bytes_binary"]:
-        all_labels.update(get_unit_labels_for_type(i18n, ut, False))
-        all_labels.update(get_unit_labels_for_type(i18n, ut, True))
+        if short_labels is None:
+            all_labels.update(get_unit_labels_for_type(i18n, ut, False))
+            all_labels.update(get_unit_labels_for_type(i18n, ut, True))
+        else:
+            all_labels.update(get_unit_labels_for_type(i18n, ut, short_labels))
     return sorted(list(all_labels))
 
 

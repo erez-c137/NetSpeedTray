@@ -139,7 +139,7 @@ class StatsMonitorThread(QThread):
             self._gpu_util_counters = []
             self._gpu_vram_counters = []
 
-    def _poll_gpu_hybrid(self) -> Tuple[float, Optional[float], Optional[float], Optional[float]]:
+    def _poll_gpu_hybrid(self, include_temp: bool = True) -> Tuple[float, Optional[float], Optional[float], Optional[float]]:
         """
         Collects GPU stats using a hybrid approach:
         - Utilization & VRAM via Universal PDH (all vendors)
@@ -178,7 +178,7 @@ class StatsMonitorThread(QThread):
             self.logger.debug("GPU PDH polling error: %s", e)
 
         # 3. Vendor-specific Temperature (NVIDIA only for now)
-        if self._nvidia_smi_path:
+        if include_temp and self._nvidia_smi_path:
             try:
                 output = subprocess.check_output(
                     [self._nvidia_smi_path, "--query-gpu=temperature.gpu", "--format=csv,noheader,nounits"],
@@ -196,7 +196,25 @@ class StatsMonitorThread(QThread):
     @lru_cache(maxsize=4)
     def _get_cached_path(self, binary: str) -> Optional[str]:
         """Caches the location of system binaries."""
-        return shutil.which(binary)
+        path = shutil.which(binary)
+        if path:
+            return path
+
+        # Common Windows install path for NVIDIA's NVSMI tooling when it's not on PATH.
+        if binary.lower() in ("nvidia-smi", "nvidia-smi.exe"):
+            try:
+                import os
+                for env in ("ProgramW6432", "ProgramFiles", "ProgramFiles(x86)"):
+                    root = os.environ.get(env)
+                    if not root:
+                        continue
+                    candidate = os.path.join(root, "NVIDIA Corporation", "NVSMI", "nvidia-smi.exe")
+                    if os.path.isfile(candidate):
+                        return candidate
+            except Exception:
+                pass
+
+        return None
 
     def _poll_cpu_temperature(self) -> Optional[float]:
         """Polls CPU temperature via WMI (MSAcpi_ThermalZoneTemperature)."""
@@ -208,7 +226,14 @@ class StatsMonitorThread(QThread):
                 # Initialize WMI with specific namespace and co-initialize for thread safety
                 import pythoncom
                 pythoncom.CoInitialize()
-                self._wmi = win32com.client.GetObject("winmgmts:/root/wmi")
+
+                # Use the standard WMI moniker; the previous forward-slash variant fails on
+                # real systems and results in temps always being None.
+                try:
+                    self._wmi = win32com.client.GetObject("winmgmts:\\\\.\\root\\wmi")
+                except Exception:
+                    # Fallback moniker format used by some environments.
+                    self._wmi = win32com.client.GetObject("winmgmts:root\\wmi")
                 
             # Perform query
             temps = self._wmi.ExecQuery("SELECT CurrentTemperature FROM MSAcpi_ThermalZoneTemperature")
@@ -268,7 +293,8 @@ class StatsMonitorThread(QThread):
                 if self.config.get('monitor_cpu_enabled', False):
                     # non-blocking (percpu=False)
                     stats['cpu'] = psutil.cpu_percent(interval=None)
-                    stats['cpu_temp'] = self._poll_cpu_temperature()
+                    if self.config.get('show_hardware_temps', False):
+                        stats['cpu_temp'] = self._poll_cpu_temperature()
                     
                     # RAM is often grouped with CPU in simple monitors
                     mem = psutil.virtual_memory()
@@ -277,10 +303,12 @@ class StatsMonitorThread(QThread):
                 
                 # 3. GPU / VRAM (Optional)
                 if self.config.get('monitor_gpu_enabled', False):
-                    gpu_util, vram_used, _, gpu_temp = self._poll_gpu_hybrid()
+                    include_temp = bool(self.config.get('show_hardware_temps', False))
+                    gpu_util, vram_used, _, gpu_temp = self._poll_gpu_hybrid(include_temp=include_temp)
                     
                     stats['gpu'] = gpu_util
-                    stats['gpu_temp'] = gpu_temp
+                    if include_temp:
+                        stats['gpu_temp'] = gpu_temp
                     
                     if vram_used is not None:
                         stats['vram_used'] = vram_used / 1024.0 # MiB to GiB

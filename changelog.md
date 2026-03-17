@@ -1,26 +1,22 @@
 # Changelog
 
-## [1.2.7] - 2026-02-24
+## [1.3.0] - Unreleased
 
 ### Added
-- **Universal GPU Monitoring:** Implemented hardware utilization and VRAM tracking via Windows Performance Counters (PDH). This provides native support for Intel, AMD, and NVIDIA GPUs without administrative privileges.
-- **Hybrid GPU Polling:** Optimized `nvidia-smi` usage to be optional and vendor-specific (temperature only), reducing overhead and dependencies.
-- **"Overview" Tab:** Added a unified overview tab to the Graph Window, featuring synchronized subplots for Network, CPU, and GPU performance history.
-- **Side-by-Side Widget Mode:** Implemented a new "Side-by-Side" (horizontal) display mode for the tray widget, allowing multiple stats to be viewed at once.
-- **Customizable Display Order:** Users can now customize the order (Network, CPU, GPU) and visibility of statistics within the tray widget via the Hardware settings page.
+- **App Activity Window:** Added an App Activity window (accessible from the tray menu) to view estimated per-app network activity (includes a non-admin mode with reduced accuracy).
+- **Hardware Monitoring:** Added CPU/GPU utilization tracking and optional RAM/VRAM readouts (vendor-agnostic GPU support via Windows Performance Counters / PDH).
+- **Optional Temperature Readouts:** Added a widget toggle to show CPU/GPU temperatures when available (NVIDIA GPU temp via `nvidia-smi`; AMD GPU temps are not supported yet).
+- **Graph Window Hardware Views:** Added CPU and GPU history tabs, plus a refreshed Overview tab with live-updating, synchronized Network/CPU/GPU charts and quick at-a-glance stats.
+- **Widget Layout Modes:** Added Side-by-Side and Cycle display modes, a stacked CPU+GPU column option, and per-segment display ordering (Network/CPU/GPU/None).
 
 ### Changed
-- **Universal Locale Synchronization:** Performed a massive refactor of all 9 supported locale files (`en_US`, `ru_RU`, `de_DE`, `pl_PL`, `sl_SI`, `es_ES`, `fr_FR`, `nl_NL`, `ko_KR`). All files now have 100% key parity and identical internal ordering for easier maintenance.
-- **Layout Precision:** Refactored `WidgetLayoutManager` to accurately calculate widths for multi-segment "Side-by-Side" layouts, including improved gap handling.
-- **Hardware Settings UI:** Redesigned the Hardware page with a cleaner layout and intuitive "Display Order" configuration.
+- **Hardware Settings UI:** Expanded the Hardware settings page with clearer Windows 11-style controls (hardware toggles, label style, widget mode, display order, temperature option).
+- **Graph Window Layout:** Unified spacing/padding and status-bar placement across tabs for a more consistent Windows 11 look and feel.
+- **Widget Layout:** Improved width budgeting for multi-segment modes and increased spacing between the Network and CPU/GPU sections.
+- **Localization:** Reduced hardcoded UI strings and kept all supported locales in strict key parity across the new hardware/graph/app-activity UI.
 
 ### Fixed
-- **Startup Reliability:** Fixed a critical `AttributeError` in `WidgetRenderer` where dictionary configuration was accessed via dot-notation.
-- **Localization Parity:** Synchronized all 9 locales with missing hardware monitoring labels (`MONITOR_RAM_LABEL`, `MONITOR_VRAM_LABEL`), eliminating startup validation warnings.
-- **WMI Resilience:** Improved CPU temperature polling with thread-safe initialization and automated reconnection for RPC errors.
-- **Widget Rendering:** Resolved an issue where network speeds could be hidden or misaligned when multiple hardware monitors were enabled.
-- **Taskbar Awareness:** Improved widget centering on Windows 11 high-DPI displays by refining the visible taskbar region calculation.
-- **State Robustness:** Fixed a potential crash when switching between "Cycle" and "Side-by-Side" display modes.
+- **Widget Stability:** Fixed a crash in the taskbar widget renderer caused by invalid config attribute access.
 
 ## [1.2.6] - 2026-02-21
 

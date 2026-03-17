@@ -206,6 +206,9 @@ class WidgetState(QObject):
         except Exception as e:
             self.logger.error("Error fetching hardware history: %s", e, exc_info=True)
             return []
+
+
+    def get_total_bandwidth_for_period(self, start_time: Optional[datetime], end_time: Optional[datetime], interface_name: Optional[str] = None) -> Tuple[float, float]:
         """
         Calculates the total upload and download bandwidth for a given period
         by running SUM queries across all data tiers.
@@ -276,12 +279,7 @@ class WidgetState(QObject):
         return list(self.aggregated_history)
 
 
-    def flush_batch(self) -> None:
-        """Sends the current batch of speed data to the database worker."""
-        if self._db_batch:
-            batch_to_send = self._db_batch.copy()
-            self._db_batch.clear()
-            self.db_worker.enqueue_task("persist_speed", batch_to_send)
+
 
 
     def trigger_maintenance(self, now: Optional[datetime] = None) -> None:

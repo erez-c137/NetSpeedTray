@@ -103,19 +103,25 @@ class StatsController(QObject):
             # Emit signals for UI components
             if cpu is not None:
                 self.cpu_usage_updated.emit(cpu)
+                if self.widget_state:
+                    self.widget_state.add_hardware_stat('cpu', cpu)
             if gpu is not None:
                 self.gpu_usage_updated.emit(gpu)
+                if self.widget_state:
+                    self.widget_state.add_hardware_stat('gpu', gpu)
             if cpu_temp is not None:
                 self.cpu_temp_updated.emit(cpu_temp)
-            if self.widget_state:
-                self.widget_state.add_hardware_stat('gpu', gpu_val)
-            self.gpu_usage_updated.emit(gpu_val)
             if gpu_temp is not None:
                 self.gpu_temp_updated.emit(gpu_temp)
                 
-            # Group VRAM with GPU
-            if 'vram_used' in stats and 'vram_total' in stats:
-                self.vram_info_updated.emit(stats['vram_used'], stats['vram_total'])
+            # 4. Handle RAM / VRAM Info
+            if stats.get('ram_used') is not None and stats.get('ram_total') is not None:
+                self.ram_info_updated.emit(stats['ram_used'], stats['ram_total'])
+                
+            if stats.get('vram_used') is not None:
+                v_total = stats.get('vram_total')
+                v_total_val = float(v_total) if v_total is not None else -1.0
+                self.vram_info_updated.emit(stats['vram_used'], v_total_val)
 
 
     def _handle_network_counters(self, current_counters: Dict[str, Any]) -> None:

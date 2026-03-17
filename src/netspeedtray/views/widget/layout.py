@@ -159,10 +159,15 @@ class WidgetLayoutManager:
                     
                     from netspeedtray.utils.helpers import get_all_possible_unit_labels, get_reference_value_string
                     
-                    max_number_str = get_reference_value_string(always_mbps, precision, min_digits=4)
-                    max_number_width = self.metrics.horizontalAdvance(max_number_str)
+                    # Use current live rates dimensions instead of fixed templates
+                    up_val = getattr(self.widget, 'upload_speed', 0.0)
+                    dw_val = getattr(self.widget, 'download_speed', 0.0)
+                    up_str = f"{up_val:.{precision}f}"
+                    dw_str = f"{dw_val:.{precision}f}"
+                    max_number_width = max(self.metrics.horizontalAdvance(up_str), self.metrics.horizontalAdvance(dw_str))
                     
-                    possible_units = get_all_possible_unit_labels(self.widget.i18n)
+                    short_labels = self.widget.config.get("short_unit_labels", False)
+                    possible_units = get_all_possible_unit_labels(self.widget.i18n, short_labels=short_labels)
                     max_unit_width = max(self.metrics.horizontalAdvance(unit) for unit in possible_units) if not hide_units else 0
                     
                     arrow_width = self.metrics.horizontalAdvance(self.widget.i18n.UPLOAD_ARROW) if not hide_arrows else 0
@@ -173,38 +178,105 @@ class WidgetLayoutManager:
                                         max_number_width + unit_gap +
                                         max_unit_width + margin)
 
+                # Save calculated network width for other layout consumers (e.g. mini-graph)
+                self._network_width = calculated_width
+
                 # --- SIDE-BY-SIDE MODE ADJUSTMENT ---
-                # If in side-by-side mode, we need to multiply the basic width by the number of segments
                 display_mode = self.widget.config.get("widget_display_mode", "network_only")
+                monitor_ram = self.widget.config.get("monitor_ram_enabled", False)
+                monitor_vram = self.widget.config.get("monitor_vram_enabled", False)
                 if display_mode == "side_by_side":
                     active_segments = 0
                     monitor_cpu = self.widget.config.get("monitor_cpu_enabled", False)
                     monitor_gpu = self.widget.config.get("monitor_gpu_enabled", False)
+                    stack_hw = self.widget.config.get("stack_hardware_stats", False)
                     
                     display_order = self.widget.config.get("widget_display_order", ["network", "cpu", "gpu"])
                     if "network" in display_order: active_segments += 1
-                    if "cpu" in display_order and monitor_cpu: active_segments += 1
-                    if "gpu" in display_order and monitor_gpu: active_segments += 1
+                    
+                    if stack_hw and monitor_cpu and monitor_gpu:
+                        active_segments += 1  # CPU and GPU stack in 1 column
+                    else:
+                        if "cpu" in display_order and monitor_cpu: active_segments += 1
+                        if "gpu" in display_order and monitor_gpu: active_segments += 1
                     
                     # Ensure at least 1 segment
                     active_segments = max(1, active_segments)
                     
-                    # Account for temperature and memory text in the width estimate if monitors are enabled
-                    # " (99°C)" is about 5-6 chars. " | 16.0/16.0G" is about 12 chars.
-                    # Total buffer around 18-20 chars.
-                    temp_mem_buffer = 0
-                    if monitor_cpu or monitor_gpu:
-                        # Estimate for both temperature and memory
-                        temp_mem_buffer = self.metrics.horizontalAdvance(" (99°C) | 16.0/16.0G")
-                    
-                    # We add a small separator gap between segments
-                    segment_gap = 10
-                    segment_width = calculated_width + temp_mem_buffer
-                    calculated_width = (segment_width * active_segments) + (segment_gap * (active_segments - 1))
+                    calculated_width_accum = 0
+                    if "network" in display_order:
+                        calculated_width_accum += calculated_width
+                        
+                    # Calculate Sub-Widths
+                    style = self.widget.config.get('hardware_label_style', 'icons_colored')
+                    label_offset = self.metrics.horizontalAdvance("CPU ") if style == "text" else 14
+                    show_temps = bool(self.widget.config.get("show_hardware_temps", False))
+                    cpu_width = 0
+                    if "cpu" in display_order and monitor_cpu:
+                        cpu_val = int(getattr(self.widget, 'cpu_usage', 0))
+                        cpu_width = label_offset + self.metrics.horizontalAdvance(" 100%")
+                        if show_temps:
+                            # Reserve space even if temp is unavailable yet (we display a placeholder).
+                            cpu_width += self.metrics.horizontalAdvance(" (100°C)")
+                        if monitor_ram and getattr(self.widget, 'ram_used', None) is not None:
+                            used = getattr(self.widget, 'ram_used', 0)
+                            total = getattr(self.widget, 'ram_total', -1.0)
+                            mem_text = f"{used:.1f}/{total:.1f}G" if total and total > 0 else f"{used:.1f}G"
+                            if stack_hw: # inline
+                                cpu_width += self.metrics.horizontalAdvance(f" | {mem_text}")
+                            else: # row
+                                cpu_width = max(cpu_width, self.metrics.horizontalAdvance(mem_text))
+                        cpu_width += margin # Reclaim Left Margin offset budget from draw_hardware_stats
+                                
+                    gpu_width = 0
+                    if "gpu" in display_order and monitor_gpu:
+                        gpu_val = int(getattr(self.widget, 'gpu_usage', 0))
+                        gpu_width = label_offset + self.metrics.horizontalAdvance(" 100%")
+                        if show_temps:
+                            gpu_width += self.metrics.horizontalAdvance(" (100°C)")
+                        if monitor_vram and getattr(self.widget, 'vram_used', None) is not None:
+                            used = getattr(self.widget, 'vram_used', 0)
+                            total = getattr(self.widget, 'vram_total', -1.0)
+                            mem_text = f"{used:.1f}/{total:.1f}G" if total and total > 0 else f"{used:.1f}G"
+                            if stack_hw: # inline
+                                gpu_width += self.metrics.horizontalAdvance(f" | {mem_text}")
+                            else: # row
+                                gpu_width = max(gpu_width, self.metrics.horizontalAdvance(mem_text))
+                        gpu_width += margin # Reclaim Left Margin offset budget
+                            
+                    if stack_hw and monitor_cpu and monitor_gpu:
+                        calculated_width_accum += max(cpu_width, gpu_width)
+                    else:
+                        calculated_width_accum += cpu_width + gpu_width
+                        
+                    calculated_width_accum += margin # Add padding for the rightmost edge of the window frame
+                        
+                    gaps = 0
+                    if "network" in display_order and (monitor_cpu or monitor_gpu):
+                        gaps += constants.layout.WIDGET_SEGMENT_GAP_AFTER_NETWORK_PX # Gap after Network
+                    if monitor_cpu and monitor_gpu and not stack_hw:
+                        gaps += constants.layout.WIDGET_SEGMENT_GAP_BETWEEN_HARDWARE_PX  # Gap between CPU and GPU
+                    calculated_width = calculated_width_accum + gaps
                 elif display_mode in ["cpu_only", "gpu_only", "combined"]:
-                    # Just one segment but potentially with temperature and memory
-                    temp_mem_buffer = self.metrics.horizontalAdvance(" (99°C) | 16.0/16.0G")
-                    calculated_width += temp_mem_buffer
+                    calculated_width = 0
+                    show_temps = bool(self.widget.config.get("show_hardware_temps", False))
+                    if display_mode in ["cpu_only", "combined"]:
+                        cpu_width = label_offset + self.metrics.horizontalAdvance(" 100%")
+                        if show_temps:
+                            cpu_width += self.metrics.horizontalAdvance(" (100°C)")
+                        if monitor_ram and getattr(self.widget, 'ram_used', None) is not None:
+                            cpu_width += self.metrics.horizontalAdvance(" | 16.0/16.0G")
+                        calculated_width = max(calculated_width, cpu_width)
+                        
+                    if display_mode in ["gpu_only", "combined"]:
+                        gpu_width = label_offset + self.metrics.horizontalAdvance(" 100%")
+                        if show_temps:
+                            gpu_width += self.metrics.horizontalAdvance(" (100°C)")
+                        if monitor_vram and getattr(self.widget, 'vram_used', None) is not None:
+                            gpu_width += self.metrics.horizontalAdvance(" | 16.0/16.0G")
+                        # for Combined, they are drawn stacked, so width is max of either line
+                        calculated_width = max(calculated_width, gpu_width)
+                
                 
                 # Height is the TRUE visible taskbar height for horizontal docking (Fixes #104/PR #110)
                 screen = taskbar_info.get_screen()
@@ -242,6 +314,9 @@ class WidgetLayoutManager:
 
             self.widget.setFixedSize(math.ceil(final_width), math.ceil(final_height))
             self.logger.debug(f"Widget resized to: {self.widget.width()}x{self.widget.height()}px")
+            
+            if hasattr(self.widget, 'update_position'):
+                self.widget.update_position()
 
         except Exception as e:
             self.logger.error(f"Failed to resize widget: {e}", exc_info=True)

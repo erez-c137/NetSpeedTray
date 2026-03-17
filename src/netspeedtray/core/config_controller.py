@@ -86,12 +86,6 @@ class ConfigController:
             
             current_mode = updated_config.get('widget_display_mode', old_config.get('widget_display_mode', 'network_only'))
 
-            # Rule 1: Auto-switch to side-by-side if hardware/memory is enabled while in network-only mode
-            if (cpu_enabled or gpu_enabled or ram_enabled or vram_enabled) and current_mode == "network_only":
-                self.logger.info("Hardware/Memory monitoring enabled in network-only mode. Auto-switching to side-by-side.")
-                updated_config['widget_display_mode'] = "side_by_side"
-                current_mode = "side_by_side"
-
             # Rule 2: Fallback to network-only if the current mode depends on a disabled monitor
             if (current_mode == "cpu_only" and not cpu_enabled and not ram_enabled) or \
                (current_mode == "gpu_only" and not gpu_enabled and not vram_enabled) or \
@@ -162,6 +156,14 @@ class ConfigController:
             w.default_color = QColor(w.config.get("default_color", constants.config.defaults.DEFAULT_COLOR))
             w.high_color = QColor(w.config.get("high_speed_color", constants.config.defaults.DEFAULT_HIGH_SPEED_COLOR))
             w.low_color = QColor(w.config.get("low_speed_color", constants.config.defaults.DEFAULT_LOW_SPEED_COLOR))
+
+            # If the user disables temperature display/polling, clear any stale values
+            # so layout calculation and rendering immediately reflect the change.
+            if not w.config.get("show_hardware_temps", False):
+                if hasattr(w, "cpu_temp"):
+                    w.cpu_temp = None
+                if hasattr(w, "gpu_temp"):
+                    w.gpu_temp = None
 
             # 2. Directly set the font, which also triggers the resize.
             self.logger.debug("Applying font and resizing via layout manager...")

@@ -42,6 +42,16 @@ class HardwarePage(QWidget):
         self.monitor_vram = Win11Toggle(label_text="")
         self.monitor_vram.toggled.connect(self.on_change)
 
+        temps_label = QLabel(self.i18n.SHOW_HARDWARE_TEMPS_LABEL)
+        temps_label.setToolTip(self.i18n.SHOW_HARDWARE_TEMPS_TOOLTIP)
+        self.show_temps = Win11Toggle(label_text="")
+        self.show_temps.setToolTip(self.i18n.SHOW_HARDWARE_TEMPS_TOOLTIP)
+        self.show_temps.toggled.connect(self.on_change)
+
+        temps_note = QLabel(self.i18n.HARDWARE_TEMPS_LIMITATION_NOTE)
+        temps_note.setWordWrap(True)
+        temps_note.setStyleSheet("color: gray; font-size: 10px;")
+
         hw_layout.addWidget(cpu_label, 0, 0, Qt.AlignmentFlag.AlignVCenter)
         hw_layout.addWidget(self.monitor_cpu, 0, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         hw_layout.addWidget(ram_label, 1, 0, Qt.AlignmentFlag.AlignVCenter)
@@ -52,6 +62,20 @@ class HardwarePage(QWidget):
         hw_layout.addWidget(vram_label, 3, 0, Qt.AlignmentFlag.AlignVCenter)
         hw_layout.addWidget(self.monitor_vram, 3, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
+        hw_layout.addWidget(temps_label, 4, 0, Qt.AlignmentFlag.AlignVCenter)
+        hw_layout.addWidget(self.show_temps, 4, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        hw_layout.addWidget(temps_note, 5, 0, 1, 2)
+
+        style_label = QLabel(self.i18n.HARDWARE_LABEL_STYLE_LABEL)
+        self.label_style = QComboBox()
+        self.label_style.addItem(self.i18n.HARDWARE_LABEL_STYLE_COLORED_ICONS, userData="icons_colored")
+        self.label_style.addItem(self.i18n.HARDWARE_LABEL_STYLE_MONOCHROME_ICONS, userData="icons_monochrome")
+        self.label_style.addItem(self.i18n.HARDWARE_LABEL_STYLE_TEXT_LABELS, userData="text")
+        self.label_style.currentIndexChanged.connect(self.on_change)
+        
+        hw_layout.addWidget(style_label, 6, 0, Qt.AlignmentFlag.AlignVCenter)
+        hw_layout.addWidget(self.label_style, 6, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
         layout.addWidget(hw_group)
 
         # --- Display Mode Group ---
@@ -60,9 +84,8 @@ class HardwarePage(QWidget):
         
         self.display_mode_combo = QComboBox()
         self.display_mode_combo.addItem(self.i18n.DISPLAY_MODE_NETWORK, userData="network_only")
-        self.display_mode_combo.addItem(self.i18n.DISPLAY_MODE_CPU, userData="cpu_only")
-        self.display_mode_combo.addItem(self.i18n.DISPLAY_MODE_GPU, userData="gpu_only")
         self.display_mode_combo.addItem(self.i18n.DISPLAY_MODE_COMBINED, userData="side_by_side")
+        self.display_mode_combo.addItem(self.i18n.DISPLAY_MODE_STACKED_COLUMN, userData="side_by_stack")
         self.display_mode_combo.addItem(self.i18n.DISPLAY_MODE_CYCLE, userData="cycle")
         
         self.display_mode_combo.currentIndexChanged.connect(self.on_change)
@@ -88,7 +111,7 @@ class HardwarePage(QWidget):
             combo.addItem(self.i18n.ORDER_TYPE_GPU, userData="gpu")
             combo.addItem(self.i18n.ORDER_TYPE_NONE, userData="none")
             
-            combo.currentIndexChanged.connect(self.on_change)
+            combo.currentIndexChanged.connect(lambda _, idx=i: self._on_pos_changed(idx))
             order_layout.addWidget(label, i, 0)
             order_layout.addWidget(combo, i, 1)
             self.pos_combos.append(combo)
@@ -98,15 +121,35 @@ class HardwarePage(QWidget):
         layout.addStretch()
 
     def load_settings(self, config: Dict[str, Any]):
+        # Block signals to prevent setChecked from triggering _on_monitor_toggled
+        # which would auto-switch the display mode dropdown unexpectedly during load.
+        self.monitor_cpu.blockSignals(True)
+        self.monitor_gpu.blockSignals(True)
+        self.monitor_ram.blockSignals(True)
+        self.monitor_vram.blockSignals(True)
+        self.show_temps.blockSignals(True)
+
         self.monitor_cpu.setChecked(config.get("monitor_cpu_enabled", False))
         self.monitor_gpu.setChecked(config.get("monitor_gpu_enabled", False))
         self.monitor_ram.setChecked(config.get("monitor_ram_enabled", False))
         self.monitor_vram.setChecked(config.get("monitor_vram_enabled", False))
+        self.show_temps.setChecked(config.get("show_hardware_temps", False))
+        
+        style_val = config.get("hardware_label_style", "icons_colored")
+        style_idx = self.label_style.findData(style_val)
+        if style_idx >= 0:
+            self.label_style.setCurrentIndex(style_idx)
+        
+        self.monitor_cpu.blockSignals(False)
+        self.monitor_gpu.blockSignals(False)
+        self.monitor_ram.blockSignals(False)
+        self.monitor_vram.blockSignals(False)
+        self.show_temps.blockSignals(False)
         
         mode = config.get("widget_display_mode", "network_only")
-        # Handle 'combined' migration to 'side_by_side' if needed
-        if mode == "combined": mode = "side_by_side"
-        
+        if mode == "side_by_side" and config.get("stack_hardware_stats", False):
+            mode = "side_by_stack"
+            
         index = self.display_mode_combo.findData(mode)
         if index >= 0:
             self.display_mode_combo.setCurrentIndex(index)
@@ -121,23 +164,48 @@ class HardwarePage(QWidget):
     def _on_monitor_toggled(self, checked: bool):
         """Handle monitor toggling with auto-mode switching."""
         if checked:
-            # Auto-switch to side_by_side if currently in network_only
             current_mode = self.display_mode_combo.currentData()
             if current_mode == "network_only":
                 idx = self.display_mode_combo.findData("side_by_side")
                 if idx >= 0:
                     self.display_mode_combo.setCurrentIndex(idx)
         
-        # Trigger general change notification
+        self.on_change()
+
+    def _on_pos_changed(self, combo_index: int):
+        """Prevents duplicate positional items by auto-swapping with the absent item."""
+        values = [c.currentData() for c in self.pos_combos]
+        new_val = values[combo_index]
+        if new_val == "none":
+            self.on_change()
+            return
+            
+        for i in range(3):
+            if i != combo_index and values[i] == new_val:
+                used = set(values)
+                missing = {"network", "cpu", "gpu"} - used
+                if missing:
+                    next_item = list(missing)[0]
+                    idx = self.pos_combos[i].findData(next_item)
+                    if idx >= 0:
+                        self.pos_combos[i].blockSignals(True)
+                        self.pos_combos[i].setCurrentIndex(idx)
+                        self.pos_combos[i].blockSignals(False)
+                break
         self.on_change()
 
     def get_settings(self) -> Dict[str, Any]:
         order = [c.currentData() for c in self.pos_combos]
+        mode = self.display_mode_combo.currentData()
+        
         return {
             "monitor_cpu_enabled": self.monitor_cpu.isChecked(),
             "monitor_gpu_enabled": self.monitor_gpu.isChecked(),
             "monitor_ram_enabled": self.monitor_ram.isChecked(),
             "monitor_vram_enabled": self.monitor_vram.isChecked(),
-            "widget_display_mode": self.display_mode_combo.currentData(),
+            "show_hardware_temps": self.show_temps.isChecked(),
+            "hardware_label_style": self.label_style.currentData(),
+            "stack_hardware_stats": mode == "side_by_stack",
+            "widget_display_mode": "side_by_side" if mode == "side_by_stack" else mode,
             "widget_display_order": order
         }

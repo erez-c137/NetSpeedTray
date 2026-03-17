@@ -372,7 +372,7 @@ class PositionCalculator:
                     vis_bot = round(taskbar_info.rect[3] / dpi_scale)
                 fixed_y = round((vis_top + vis_bot) / 2.0 - widget_height / 2.0)
                 
-                right_boundary = (round(taskbar_info.get_tray_rect()[0] / dpi_scale) - widget_width - constants.layout.DEFAULT_PADDING) if taskbar_info.get_tray_rect() else (screen.geometry().right() - widget_width)
+                right_boundary = (round(taskbar_info.get_tray_rect()[0] / dpi_scale) - widget_width) if taskbar_info.get_tray_rect() else (screen.geometry().right() - widget_width)
                 left_boundary = (round(taskbar_info.tasklist_rect[2] / dpi_scale) + constants.layout.DEFAULT_PADDING) if taskbar_info.tasklist_rect else screen.geometry().left()
                 
                 constrained_x = max(left_boundary, min(desired_pos.x(), right_boundary))

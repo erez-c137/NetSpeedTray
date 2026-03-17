@@ -84,6 +84,7 @@ class GraphWindow(QWidget):
         self.setWindowTitle(constants.graph.WINDOW_TITLE)
         self._apply_icon()
         self._position_window()
+        self._on_tab_changed(0) # Force layout initialization for the default tab (Overview)
 
     @property
     def config(self):
@@ -212,16 +213,51 @@ class GraphWindow(QWidget):
         """Handle tab switching by moving the renderer's canvas and updating the graph."""
         if self._is_closing: return
         
-        # Move the canvas to the new tab
-        target_widget = self.ui.tab_widget.widget(index)
-        if target_widget and hasattr(target_widget, 'layout') and target_widget.layout():
-            # Remove from old layout, add to new
-            self.renderer.canvas.setParent(None)
-            target_widget.layout().addWidget(self.renderer.canvas)
-            
-            # Reposition overlays in the NEW active layout
+        # Determine target layouts directly from UI references to avoid .layout() returning None.
+        # The Overview tab has a dedicated plot sub-layout so the dashboard cards can stay above it.
+        header_layout = None
+        canvas_layout = None
+        if index == 0:
+            header_layout = getattr(self.ui, 'overview_layout', None)
+            canvas_layout = getattr(self.ui, 'overview_plot_layout', None)
+        elif index == 1:
+            header_layout = getattr(self.ui, 'graph_layout', None)
+            canvas_layout = getattr(self.ui, 'graph_plot_layout', None)
+        elif index == 2:
+            header_layout = getattr(self.ui, 'cpu_layout', None)
+            canvas_layout = getattr(self.ui, 'cpu_plot_layout', None)
+        elif index == 3:
+            header_layout = getattr(self.ui, 'gpu_layout', None)
+            canvas_layout = getattr(self.ui, 'gpu_plot_layout', None)
+
+        if header_layout is not None:
+            # Reposition shared overlays in active layouts (all tabs keep the Header row).
             self.ui.header_widget.setParent(None)
-            target_widget.layout().insertWidget(0, self.ui.header_widget)
+            header_layout.insertWidget(0, self.ui.header_widget)
+            self.ui.header_widget.show()
+
+        if canvas_layout is not None:
+            # Always reparent the shared canvas into the active tab's plot area.
+            self.renderer.canvas.setParent(None)
+            canvas_layout.addWidget(self.renderer.canvas)
+            self.renderer.canvas.show()
+
+        # Update absolute string headers
+        if hasattr(self.ui, 'title_label'):
+            titles = [self.i18n.OVERVIEW_TAB_LABEL, self.i18n.SPEED_GRAPH_TITLE, self.i18n.ORDER_TYPE_CPU, self.i18n.ORDER_TYPE_GPU]
+            if 0 <= index < len(titles):
+                self.ui.title_label.setText(titles[index])
+                
+        # Dynamically adapt overlays sub-descriptors 
+        if hasattr(self.ui, 'max_stat_title'):
+            if index in (2, 3): # CPU or GPU
+                self.ui.max_stat_title.setText(self.i18n.STAT_MAX_UTIL)
+                self.ui.avg_stat_title.setText(self.i18n.STAT_AVG_UTIL)
+                self.ui.total_stat_title.setText(self.i18n.STAT_PROFILE)
+            else:
+                self.ui.max_stat_title.setText(self.i18n.STAT_MAX_SPEED)
+                self.ui.avg_stat_title.setText(self.i18n.STAT_AVG_SPEED)
+                self.ui.total_stat_title.setText(self.i18n.STAT_TOTAL_DATA)
             
         self.update_graph()
         self.ui.reposition_overlay_elements()
@@ -256,7 +292,7 @@ class GraphWindow(QWidget):
     def update_graph(self, show_loading=True):
         if self._is_closing: return
         if show_loading and self._show_loading_status:
-            self.ui.show_graph_message(getattr(self.i18n, 'COLLECTING_DATA_MESSAGE', "Loading..."), is_error=False)
+            self.ui.set_status("COLLECTING")
         start, end = self._get_time_range_from_ui()
         interface = self.interface_filter.currentData() if self.interface_filter else None
         period_key = GraphLogic.get_period_key(self._history_period_value)
@@ -283,13 +319,22 @@ class GraphWindow(QWidget):
         if self._is_closing: return
         interface = self.interface_filter.currentData() if self.interface_filter else None
         period_key = GraphLogic.get_period_key(self._history_period_value)
+        
+        # Keep zoomed-range requests aligned to the active tab.
+        tab_index = self.ui.tab_widget.currentIndex()
+        stat_type = "overview"
+        if tab_index == 1: stat_type = "network"
+        elif tab_index == 2: stat_type = "cpu"
+        elif tab_index == 3: stat_type = "gpu"
+
         self._current_request_id += 1
         request = DataRequest(
             start_time=start,
             end_time=end,
             interface_name=None if interface == "all" else interface,
             is_session_view=period_key == "TIMELINE_SESSION",
-            sequence_id=self._current_request_id
+            sequence_id=self._current_request_id,
+            stat_type=stat_type
         )
         self.request_data_processing.emit(request)
 
@@ -375,6 +420,10 @@ class GraphWindow(QWidget):
         self.coordinator.start_realtime()
         if not self._initial_load_done:
             self._initial_load_done = True
+            
+            # Explicitly trigger initial tab reparenting once the window is fully visible
+            self._on_tab_changed(self.ui.tab_widget.currentIndex())
+            
             QTimer.singleShot(50, lambda: self.update_graph(show_loading=True))
 
     def closeEvent(self, event):
@@ -393,7 +442,7 @@ class GraphWindow(QWidget):
     def _on_data_ready(self, data, total_up, total_down, sequence_id):
         if sequence_id < self._last_processed_id or self._is_closing: return
         self._last_processed_id = sequence_id
-        if not data: self.ui.show_graph_message(self.i18n.NO_DATA_MESSAGE, is_error=False)
+        if not data: self.ui.set_status("NO_DATA")
         try: self._render_graph(data, total_up, total_down)
         except Exception as e: self.logger.error(f"Render callback error: {e}")
 
@@ -408,34 +457,128 @@ class GraphWindow(QWidget):
             elif tab_index == 2: stat_type = "cpu"
             elif tab_index == 3: stat_type = "gpu"
 
+            # Validation to discard race condition data (tab switching during fetch)
+            if stat_type == "overview" and not isinstance(history_data, dict):
+                self.logger.debug("Discarding non-dict data for Overview tab (race condition)")
+                return
+            if stat_type != "overview" and isinstance(history_data, dict):
+                self.logger.debug("Discarding dict data for single-stat tab (race condition)")
+                return
+
             result = self.renderer.render(history_data, start, end, period_key, boot_time=getattr(self, '_cached_boot_time', None), stat_type=stat_type)
             
             # If we rendered actual data, show 'LIVE' status
             if history_data:
-                self.ui.show_graph_message("LIVE", is_error=False)
+                self.ui.set_status("LIVE")
+            else:
+                # Check if monitoring is disabled to explain empty state
+                is_enabled = True
+                if stat_type == "cpu": is_enabled = self.config.get("monitor_cpu_enabled", False)
+                elif stat_type == "gpu": is_enabled = self.config.get("monitor_gpu_enabled", False)
+                
+                if not is_enabled:
+                    stat_lbl = self.i18n.ORDER_TYPE_CPU if stat_type == "cpu" else (self.i18n.ORDER_TYPE_GPU if stat_type == "gpu" else stat_type.upper())
+                    msg = self.i18n.GRAPH_MONITORING_DISABLED_TEMPLATE.format(stat=stat_lbl)
+                    self.ui.show_graph_message(msg, is_error=True)
             if result:
                 self.interaction.update_data_cache(result[0], result[2], result[3], x_coords=result[1])
             else:
                 self.interaction.update_data_cache(np.array([]), np.array([]), np.array([]))
-            self._update_stats_bar(history_data, total_up, total_down)
+            self._update_stats_bar(history_data, total_up, total_down, start_time=start, end_time=end, period_key=period_key)
         except Exception as e: self.logger.error(f"Render error: {e}")
 
-    def _update_stats_bar(self, history_data, total_up=0.0, total_down=0.0):
+    def _update_stats_bar(self, history_data, total_up=0.0, total_down=0.0, start_time=None, end_time=None, period_key: Optional[str] = None):
         try:
             if not history_data or not self.ui.max_stat_val: return
             
             tab_index = self.ui.tab_widget.currentIndex()
             if tab_index == 0: # Overview
                 if isinstance(history_data, dict):
-                    cpu_vals = [d[1] for d in history_data.get("cpu", [])]
-                    gpu_vals = [d[1] for d in history_data.get("gpu", [])]
-                    c_avg = sum(cpu_vals)/len(cpu_vals) if cpu_vals else 0
-                    g_avg = sum(gpu_vals)/len(gpu_vals) if gpu_vals else 0
-                    self.ui.max_stat_val.setText(f"CPU Avg: {c_avg:.1f}%")
-                    self.ui.avg_stat_val.setText(f"GPU Avg: {g_avg:.1f}%")
-                    self.ui.total_stat_val.setText("System Overview")
+                    net_hist = history_data.get("network", [])
+                    cpu_vals = [float(d[1]) for d in history_data.get("cpu", []) if d and len(d) > 1 and d[1] is not None]
+                    gpu_vals = [float(d[1]) for d in history_data.get("gpu", []) if d and len(d) > 1 and d[1] is not None]
+                    
+                    # Current/avg/peak for CPU/GPU cards
+                    current_cpu = cpu_vals[-1] if cpu_vals else 0.0
+                    current_gpu = gpu_vals[-1] if gpu_vals else 0.0
+                    max_cpu = max(cpu_vals) if cpu_vals else 0.0
+                    max_gpu = max(gpu_vals) if gpu_vals else 0.0
+                    avg_cpu = (sum(cpu_vals) / len(cpu_vals)) if cpu_vals else 0.0
+                    avg_gpu = (sum(gpu_vals) / len(gpu_vals)) if gpu_vals else 0.0
+                    
+                    if hasattr(self.ui, 'card_cpu_val'):
+                        self.ui.card_cpu_val.setText(f"{current_cpu:.1f}%")
+                    if hasattr(self.ui, 'card_cpu_sub'):
+                        self.ui.card_cpu_sub.setText(f"{self.i18n.GRAPH_AVG_SHORT} {avg_cpu:.1f}% | {self.i18n.GRAPH_PEAK_SHORT} {max_cpu:.1f}%")
+                    if hasattr(self.ui, 'card_gpu_val'):
+                        self.ui.card_gpu_val.setText(f"{current_gpu:.1f}%")
+                    if hasattr(self.ui, 'card_gpu_sub'):
+                        self.ui.card_gpu_sub.setText(f"{self.i18n.GRAPH_AVG_SHORT} {avg_gpu:.1f}% | {self.i18n.GRAPH_PEAK_SHORT} {max_gpu:.1f}%")
+                        
+                    # Network updates
+                    if net_hist:
+                        last_net = net_hist[-1]
+                        up_mbps = (float(last_net[1] or 0.0) * constants.network.units.BITS_PER_BYTE) / constants.network.units.MEGA_DIVISOR
+                        dw_mbps = (float(last_net[2] or 0.0) * constants.network.units.BITS_PER_BYTE) / constants.network.units.MEGA_DIVISOR
+
+                        stats = GraphLogic.calculate_stats(net_hist)
+                        if hasattr(self.ui, 'card_net_down_val'):
+                            self.ui.card_net_down_val.setText(f"\u2193 {dw_mbps:.1f} Mbps")
+                        if hasattr(self.ui, 'card_net_down_sub'):
+                            self.ui.card_net_down_sub.setText(f"{self.i18n.GRAPH_AVG_SHORT} {stats['avg_down']:.1f} | {self.i18n.GRAPH_PEAK_SHORT} {stats['max_down']:.1f}")
+                        if hasattr(self.ui, 'card_net_up_val'):
+                            self.ui.card_net_up_val.setText(f"\u2191 {up_mbps:.1f} Mbps")
+                        if hasattr(self.ui, 'card_net_up_sub'):
+                            self.ui.card_net_up_sub.setText(f"{self.i18n.GRAPH_AVG_SHORT} {stats['avg_up']:.1f} | {self.i18n.GRAPH_PEAK_SHORT} {stats['max_up']:.1f}")
+
+                        # Header stats (keep Overview consistent with Network tab)
+                        self.ui.max_stat_val.setText(f"\u2193 {stats['max_down']:.1f}  \u2191 {stats['max_up']:.1f} Mbps")
+                        self.ui.avg_stat_val.setText(f"\u2193 {stats['avg_down']:.1f}  \u2191 {stats['avg_up']:.1f} Mbps")
+
+                        t_up_v, t_up_u = helpers.format_data_size(total_up, self.i18n)
+                        t_dw_v, t_dw_u = helpers.format_data_size(total_down, self.i18n)
+                        self.ui.total_stat_val.setText(f"\u2193 {t_dw_v}{t_dw_u}  \u2191 {t_up_v}{t_up_u}")
+                    else:
+                        # No network samples yet
+                        self.ui.max_stat_val.setText("--")
+                        self.ui.avg_stat_val.setText("--")
+                        self.ui.total_stat_val.setText("--")
+
+                    # Context line (range/interface/updated)
+                    if hasattr(self.ui, "overview_meta_label") and self.ui.overview_meta_label is not None:
+                        try:
+                            iface_txt = "All"
+                            if self.interface_filter is not None:
+                                iface_txt = self.interface_filter.currentText() or "All"
+                            period_lbl = getattr(self.i18n, period_key, period_key) if period_key else ""
+                            zoom_txt = f" {self.i18n.OVERVIEW_META_ZOOMED}" if getattr(self.coordinator, "is_custom_zoom_active", False) else ""
+
+                            if start_time and end_time:
+                                dur_sec = max(0, (end_time - start_time).total_seconds())
+                                if dur_sec < 120:
+                                    dur_str = f"{int(dur_sec)}s"
+                                elif dur_sec < 7200:
+                                    dur_str = f"{int(dur_sec // 60)}m"
+                                elif dur_sec < 172800:
+                                    dur_str = f"{dur_sec / 3600.0:.1f}h"
+                                else:
+                                    dur_str = f"{dur_sec / 86400.0:.1f}d"
+                                range_str = f"{start_time.strftime('%Y-%m-%d %H:%M')} \u2192 {end_time.strftime('%H:%M')} ({dur_str})"
+                            else:
+                                range_str = self.i18n.OVERVIEW_META_RANGE_UNKNOWN
+
+                            # Keep this compact; it sits above the cards.
+                            parts = []
+                            if period_lbl:
+                                parts.append(f"{period_lbl}{zoom_txt}")
+                            parts.append(f"{self.i18n.OVERVIEW_META_INTERFACE_LABEL}: {iface_txt}")
+                            parts.append(range_str)
+                            self.ui.overview_meta_label.setText(" | ".join(parts))
+                        except Exception:
+                            pass
                 else:
-                    self.ui.total_stat_val.setText("Loading Overview...")
+                    # Keep this transient string localized and consistent.
+                    self.ui.total_stat_val.setText(self.i18n.COLLECTING_DATA_MESSAGE)
             elif tab_index == 1: # Network
                 stats = GraphLogic.calculate_stats(history_data)
                 self.ui.max_stat_val.setText(f"↓ {stats['max_down']:.1f}  ↑ {stats['max_up']:.1f} Mbps")
@@ -447,9 +590,9 @@ class GraphWindow(QWidget):
                 vals = [d[1] for d in history_data]
                 v_max = max(vals) if vals else 0
                 v_avg = sum(vals)/len(vals) if vals else 0
-                self.ui.max_stat_val.setText(f"Max: {v_max:.1f}%")
-                self.ui.avg_stat_val.setText(f"Avg: {v_avg:.1f}%")
-                self.ui.total_stat_val.setText("Utilization Profile")
+                self.ui.max_stat_val.setText(f"{self.i18n.GRAPH_PEAK_SHORT}: {v_max:.1f}%")
+                self.ui.avg_stat_val.setText(f"{self.i18n.GRAPH_AVG_SHORT}: {v_avg:.1f}%")
+                self.ui.total_stat_val.setText(self.i18n.STAT_PROFILE)
             self.ui.hide_graph_message()
         except Exception as e: self.logger.error(f"Stats error: {e}")
 

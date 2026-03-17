@@ -534,10 +534,8 @@ class GraphRenderer(QObject):
         """
         Renders the graph. 
         """
-        if not history_data:
-            for ax in self.axes: ax.clear()
-            self.canvas.draw_idle()
-            return None
+        # Initialize for return statement
+        plotted_ts, plotted_up, plotted_down, plotted_vals = None, None, None, None
 
         # Check if we need to clear everything
         rebuild_required = (
@@ -566,9 +564,22 @@ class GraphRenderer(QObject):
             
             self.line_download = None
             self.line_upload = None
+            
+            # Re-apply theme after clearing figure (fixes dark mode load bug)
+            if hasattr(self, '_is_dark_mode'):
+                self.apply_theme(self._is_dark_mode)
+
+        if not history_data:
+            for ax in self.axes: 
+                ax.clear()
+                # Restore labels if cleared for single-axis stats (prevent empty axes look)
+                if stat_type != "overview" and stat_type != "network":
+                    self._format_hardware_axes(stat_type)
+            self.canvas.draw_idle()
+            return None
 
         if stat_type == "overview":
-            self._render_overview(history_data, actual_end=end_time)
+            self._render_overview(history_data, start_time=start_time, end_time=end_time, period_key=period_key, boot_time=boot_time)
         elif stat_type == "network":
             raw_data = np.array(history_data, dtype=float)
             timestamps = raw_data[:, 0]
@@ -590,7 +601,26 @@ class GraphRenderer(QObject):
             plotted_ts, _, plotted_vals = self._plot_high_res(plot_datetimes_array, np.zeros_like(values), values, target_end_time=end_time, color=color)
             self._configure_hardware_axes(start_time, end_time, period_key, timestamps, plotted_vals)
 
-        self.canvas.draw_idle()
+        self.canvas.draw()
+
+        # Return data for tooltip/interaction cache
+        from matplotlib.dates import date2num
+        plotted_x_coords = None
+        
+        if plotted_ts is not None and len(plotted_ts) > 0 and isinstance(plotted_ts[0], datetime):
+            plotted_x_coords = date2num(plotted_ts)
+            plotted_ts = np.array([dt.timestamp() for dt in plotted_ts])
+
+        if stat_type == "network" and plotted_ts is not None:
+            if plotted_up is not None:
+                plotted_up = (plotted_up * constants.network.units.MEGA_DIVISOR) / constants.network.units.BITS_PER_BYTE
+            if plotted_down is not None:
+                plotted_down = (plotted_down * constants.network.units.MEGA_DIVISOR) / constants.network.units.BITS_PER_BYTE
+            return plotted_ts, plotted_x_coords, plotted_up, plotted_down
+        elif plotted_ts is not None:
+            return plotted_ts, plotted_x_coords, np.zeros_like(plotted_vals), plotted_vals
+            
+        return None
 
     def _setup_standard_axes(self):
         """Creates standard 2-row layout."""
@@ -605,24 +635,42 @@ class GraphRenderer(QObject):
         self.ax_cpu = self.figure.add_subplot(4, 1, 3, sharex=self.ax_download)
         self.ax_gpu = self.figure.add_subplot(4, 1, 4, sharex=self.ax_download)
         self.axes = [self.ax_download, self.ax_upload, self.ax_cpu, self.ax_gpu]
-        
-        # Basic overview formatting
+
+        self._format_overview_axes()
+
+    def _format_overview_axes(self):
+        """Applies consistent styling for the 4-row Overview layout (used on rebuild and live refresh)."""
+        is_dark = getattr(self, "_is_dark_mode", True)
+        graph_bg = style_constants.GRAPH_BG_DARK if is_dark else style_constants.GRAPH_BG_LIGHT
+        text_color = getattr(self, "_current_text_color", "white")
+        grid_color = getattr(self, "_current_grid_color", "#444")
+
         self.figure.subplots_adjust(left=0.12, right=0.98, top=0.95, bottom=0.1, hspace=0.3)
+
         for ax in self.axes:
+            ax.set_facecolor(graph_bg)
             ax.spines['right'].set_visible(False)
             ax.spines['top'].set_visible(False)
-            ax.tick_params(colors=getattr(self, '_current_text_color', 'white'), labelsize=8)
-            ax.grid(True, linestyle=':', alpha=0.3)
-            if ax != self.ax_gpu:
+            ax.tick_params(colors=text_color, labelsize=8)
+            ax.grid(True, linestyle=constants.graph.GRID_LINESTYLE, alpha=0.3, color=grid_color)
+            for spine in ax.spines.values():
+                spine.set_color(grid_color)
+
+            if ax != getattr(self, "ax_gpu", None):
                 ax.tick_params(labelbottom=False)
 
-        self.ax_download.set_ylabel("DW", fontsize=8)
-        self.ax_upload.set_ylabel("UP", fontsize=8)
-        self.ax_cpu.set_ylabel("CPU", fontsize=8)
-        self.ax_gpu.set_ylabel("GPU", fontsize=8)
+        self.ax_download.set_ylabel(self.i18n.DOWNLOAD_LABEL, fontsize=8, color=text_color)
+        self.ax_upload.set_ylabel(self.i18n.UPLOAD_LABEL, fontsize=8, color=text_color)
+        self.ax_cpu.set_ylabel(self.i18n.ORDER_TYPE_CPU, fontsize=8, color=text_color)
+        self.ax_gpu.set_ylabel(self.i18n.ORDER_TYPE_GPU, fontsize=8, color=text_color)
 
-    def _render_overview(self, data_dict, actual_end):
+    def _render_overview(self, data_dict, start_time, end_time, period_key: str, boot_time):
         """Internal helper for overview plotting."""
+        # Clear existing artists so live refresh doesn't keep stacking lines.
+        for ax in self.axes:
+            ax.clear()
+        self._format_overview_axes()
+
         # Plot Network
         net = np.array(data_dict.get("network", []), dtype=float)
         if len(net) > 0:
@@ -638,40 +686,60 @@ class GraphRenderer(QObject):
         cpu = np.array(data_dict.get("cpu", []), dtype=float)
         if len(cpu) > 0:
             ts = [datetime.fromtimestamp(t) for t in cpu[:, 0]]
-            self.ax_cpu.plot(ts, cpu[:, 1], color=constants.renderer.CPU_LINE_COLOR, linewidth=1)
+            self.ax_cpu.plot(ts, cpu[:, 1], color=constants.graph.CPU_LINE_COLOR, linewidth=1)
             self.ax_cpu.set_ylim(0, 100)
 
         # Plot GPU
         gpu = np.array(data_dict.get("gpu", []), dtype=float)
         if len(gpu) > 0:
             ts = [datetime.fromtimestamp(t) for t in gpu[:, 0]]
-            self.ax_gpu.plot(ts, gpu[:, 1], color=constants.renderer.GPU_LINE_COLOR, linewidth=1)
+            self.ax_gpu.plot(ts, gpu[:, 1], color=constants.graph.GPU_LINE_COLOR, linewidth=1)
             self.ax_gpu.set_ylim(0, 100)
 
         # Add Event Markers (system boot)
         self._add_event_markers(self.ax_download, start_time, end_time, boot_time=boot_time)
         
-        self.canvas.draw_idle()
+        # Force X-Axis limits to match the requested interval viewport
+        self.ax_download.set_xlim(start_time, end_time)
 
-        # Return the DATA THAT WAS ACTUALLY PLOTTED
-        plotted_x_coords = None
-        if plotted_ts is not None and len(plotted_ts) > 0 and isinstance(plotted_ts[0], datetime):
-             plotted_x_coords = date2num(plotted_ts)
-             plotted_ts = np.array([dt.timestamp() for dt in plotted_ts])
+        # Apply period-aware formatting to the bottom axis (GPU row).
+        # Overview uses 4 stacked axes; we keep x labels only on the last one.
+        try:
+            axis = self.ax_gpu
+            major_locator = mdates.AutoDateLocator(maxticks=8)
+            major_formatter = mdates.DateFormatter('%H:%M')
 
-        if stat_type == "network":
-            # Convert Mbps back to Bytes/s
-            if plotted_up is not None:
-                plotted_up = (plotted_up * constants.network.units.MEGA_DIVISOR) / constants.network.units.BITS_PER_BYTE
-            if plotted_down is not None:
-                plotted_down = (plotted_down * constants.network.units.MEGA_DIVISOR) / constants.network.units.BITS_PER_BYTE
-            return plotted_ts, plotted_x_coords, plotted_up, plotted_down
-        else:
-            return plotted_ts, plotted_x_coords, np.zeros_like(plotted_vals), plotted_vals
+            xlim = axis.get_xlim()
+            if xlim[0] < xlim[1]:
+                duration_days = xlim[1] - xlim[0]
+                duration_sec = duration_days * 86400
+                if duration_sec < 120:
+                    major_formatter = mdates.DateFormatter('%H:%M:%S')
+
+            if period_key == "TIMELINE_WEEK":
+                major_formatter = mdates.DateFormatter('%a %d')
+            elif period_key == "TIMELINE_MONTH":
+                major_formatter = mdates.DateFormatter('%b %d')
+            elif period_key == "TIMELINE_ALL":
+                major_formatter = mdates.DateFormatter('%Y-%m-%d')
+            elif period_key == "TIMELINE_SYSTEM_UPTIME":
+                major_formatter = mdates.ConciseDateFormatter(major_locator)
+
+            axis.xaxis.set_major_locator(major_locator)
+            axis.xaxis.set_major_formatter(major_formatter)
+
+            if "HOURS" in (period_key or ""):
+                axis.xaxis.set_minor_locator(NullLocator())
+        except Exception:
+            pass
+        
+        self.canvas.draw()
+
+
 
     def _format_hardware_axes(self, stat_type: str):
         """Formats the single axis for hardware utilization."""
-        label = "CPU Utilization (%)" if stat_type == "cpu" else "GPU Utilization (%)"
+        label = self.i18n.GRAPH_CPU_UTIL_AXIS_LABEL if stat_type == "cpu" else self.i18n.GRAPH_GPU_UTIL_AXIS_LABEL
         self.ax_download.set_ylabel(label, color=self._current_text_color)
         self.ax_download.tick_params(labelbottom=True, colors=self._current_text_color, which='both')
         self.ax_download.grid(True, linestyle=constants.graph.GRID_LINESTYLE, alpha=constants.graph.GRID_ALPHA, color=self._current_grid_color)
@@ -694,28 +762,7 @@ class GraphRenderer(QObject):
         self._configure_xaxis_format(period_key)
 
         
-        # Return the DATA THAT WAS ACTUALLY PLOTTED, so interactions match the visual lines.
-        # InteractionHandler needs BOTH:
-        # 1. Unix Timestamps (float seconds) - For Tooltip Text
-        # 2. Bytes/sec (raw speed) - For Tooltip Text
-        # 3. MPL Float Coordinates - For Cache/Mouse Lookup
-        
-        plotted_x_coords = None
 
-        # Convert aggregated datetimes back to Unix timestamps for the interaction handler
-        if plotted_ts is not None and len(plotted_ts) > 0 and isinstance(plotted_ts[0], datetime):
-             # Save the MPL coordinates (float days) before converting timestamp
-             plotted_x_coords = date2num(plotted_ts)
-             plotted_ts = np.array([dt.timestamp() for dt in plotted_ts])
-
-        # Convert Mbps back to Bytes/s for the interaction handler (which expects raw units)
-        # Bytes/s = (Mbps * 1,000,000) / 8
-        if plotted_up is not None:
-            plotted_up = (plotted_up * constants.network.units.MEGA_DIVISOR) / constants.network.units.BITS_PER_BYTE
-        if plotted_down is not None:
-            plotted_down = (plotted_down * constants.network.units.MEGA_DIVISOR) / constants.network.units.BITS_PER_BYTE
-
-        return plotted_ts, plotted_x_coords, plotted_up, plotted_down
 
     def _plot_aggregated(self, plot_datetimes, upload_mbps, download_mbps, mode="daily", target_end_time=None):
         """
@@ -847,7 +894,13 @@ class GraphRenderer(QObject):
             # Segmented mode - multiple disconnected line segments
             self.ax_download.clear()
             self.ax_upload.clear()
-            self._format_axes()
+            
+            # Reapply correct formatting based on whether this is a hardware plot
+            if color:
+                self._format_hardware_axes(getattr(self, '_last_stat_type', 'cpu'))
+            else:
+                self._format_axes()
+                
             self.line_download = None # Sentinel
             
             gap_indices = np.where(gaps)[0] + 1

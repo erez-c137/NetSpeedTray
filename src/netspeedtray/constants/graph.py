@@ -25,6 +25,8 @@ class GraphConstants:
     # Use the master color palette as the single source of truth
     UPLOAD_LINE_COLOR: Final[str] = color.UPLOAD_LINE_COLOR
     DOWNLOAD_LINE_COLOR: Final[str] = color.DOWNLOAD_LINE_COLOR
+    CPU_LINE_COLOR: Final[str] = "#00BCD4" # Cyan
+    GPU_LINE_COLOR: Final[str] = "#FF9800" # Orange
     LINE_WIDTH: Final[float] = 1.5
     GRID_ALPHA: Final[float] = 0.5
     GRID_LINESTYLE: Final[str] = ":"

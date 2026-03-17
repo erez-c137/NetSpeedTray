@@ -15,7 +15,9 @@ class GraphDataWorker(QObject):
     Blitting only redraws changed parts of the canvas, which can significantly
     reduce render time for live data updates. See: https://matplotlib.org/stable/users/explain/animations/blitting.html
     """
-    data_ready = pyqtSignal(list, float, float, int) # history_data, total_up, total_down, sequence_id
+    # NOTE: Overview emits a dict payload (multi-dataset), while other tabs emit a list of tuples.
+    # Using `object` avoids PyQt type coercion issues that can silently break live updates on Overview.
+    data_ready = pyqtSignal(object, float, float, int) # history_data, total_up, total_down, sequence_id
     error = pyqtSignal(str)
 
     # Maximum data points to return (prevents excessive rendering time)
@@ -83,6 +85,8 @@ class GraphDataWorker(QObject):
 
             if request.stat_type == "overview":
                 # Multi-dataset fetch for Overview tab
+                total_up = 0.0
+                total_down = 0.0
                 if request.is_session_view:
                     net_data = self.widget_state.get_aggregated_speed_history()
                     cpu_data = self.widget_state.cpu_history
@@ -91,8 +95,12 @@ class GraphDataWorker(QObject):
                     start_ts = request.start_time.timestamp() if request.start_time else 0
                     end_ts = request.end_time.timestamp()
                     
+                    filtered_net = [d for d in net_data if start_ts <= d.timestamp.timestamp() <= end_ts]
+                    total_up = sum(float(d.upload or 0.0) for d in filtered_net)
+                    total_down = sum(float(d.download or 0.0) for d in filtered_net)
+
                     history_data = {
-                        "network": [(d.timestamp.timestamp(), d.upload, d.download) for d in net_data if start_ts <= d.timestamp.timestamp() <= end_ts],
+                        "network": [(d.timestamp.timestamp(), d.upload, d.download) for d in filtered_net],
                         "cpu": [(d.timestamp.timestamp(), d.value, 0.0) for d in cpu_data if start_ts <= d.timestamp.timestamp() <= end_ts],
                         "gpu": [(d.timestamp.timestamp(), d.value, 0.0) for d in gpu_data if start_ts <= d.timestamp.timestamp() <= end_ts]
                     }
@@ -100,16 +108,26 @@ class GraphDataWorker(QObject):
                     net_data = self.widget_state.get_speed_history(request.start_time, request.end_time, request.interface_name)
                     cpu_data = self.widget_state.get_hardware_history("cpu", request.start_time, request.end_time)
                     gpu_data = self.widget_state.get_hardware_history("gpu", request.start_time, request.end_time)
+
+                    # Totals for the selected interval (DB-backed views)
+                    total_up, total_down = self.widget_state.get_total_bandwidth_for_period(
+                        start_time=request.start_time,
+                        end_time=request.end_time,
+                        interface_name=request.interface_name
+                    )
                     
                     history_data = {
-                        "network": [(dt.timestamp(), up, dw) for dt, up, dw in net_data],
-                        "cpu": [(dt.timestamp(), val, 0.0) for dt, val in cpu_data],
-                        "gpu": [(dt.timestamp(), val, 0.0) for dt, val in gpu_data]
+                        "network": [(dt, up, dw) for dt, up, dw in net_data],
+                        "cpu": [(dt, val, 0.0) for dt, val in cpu_data],
+                        "gpu": [(dt, val, 0.0) for dt, val in gpu_data]
                     }
                 # For Overview, we don't downsample here for simplicity, or handle per-key
                 # We'll return early with this dict
-                self.data_ready.emit(history_data, 0.0, 0.0, request.sequence_id)
+                self.data_ready.emit(history_data, total_up, total_down, request.sequence_id)
                 return
+
+            total_up = 0.0
+            total_down = 0.0
 
             if request.stat_type in ("cpu", "gpu"):
                 if request.is_session_view:
@@ -126,7 +144,7 @@ class GraphDataWorker(QObject):
                 else:
                     # Database data
                     raw_history = self.widget_state.get_hardware_history(request.stat_type, request.start_time, request.end_time)
-                    history_data = [(dt.timestamp(), val, 0.0) for dt, val in raw_history]
+                    history_data = [(dt, val, 0.0) for dt, val in raw_history]
 
             elif request.is_session_view:
                 # OPTIMIZATION: Use the pre-calculated aggregated history from WidgetState.
@@ -135,6 +153,8 @@ class GraphDataWorker(QObject):
                 start_ts = request.start_time.timestamp() if request.start_time else 0
                 end_ts = request.end_time.timestamp()
 
+                total_up = 0.0
+                total_down = 0.0
                 processed_history = []
                 for d in aggregated_data:
                     ts = float(d.timestamp.timestamp())
@@ -181,6 +201,7 @@ class GraphDataWorker(QObject):
                 return
 
             # Pass the processed data and pre-calculated totals back to the UI.
+            self.logger.debug(f"DataWorker emitting data. StatType: {request.stat_type}, IsSession: {request.is_session_view}, Items: {len(history_data) if not isinstance(history_data, dict) else {k: len(v) for k,v in history_data.items()}}")
             self.data_ready.emit(history_data, total_up, total_down, request.sequence_id)
         except Exception as e:
             logging.getLogger(__name__).error(f"Error in data worker: {e}", exc_info=True)

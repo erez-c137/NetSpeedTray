@@ -84,6 +84,11 @@ class ConfigConstants:
     # --- CPU/GPU Monitoring ---
     DEFAULT_MONITOR_CPU_ENABLED: Final[bool] = False
     DEFAULT_MONITOR_GPU_ENABLED: Final[bool] = False
+    DEFAULT_MONITOR_RAM_ENABLED: Final[bool] = False
+    DEFAULT_MONITOR_VRAM_ENABLED: Final[bool] = False
+    DEFAULT_SHOW_HARDWARE_TEMPS: Final[bool] = False
+    DEFAULT_STACK_HARDWARE_STATS: Final[bool] = False
+    DEFAULT_HARDWARE_LABEL_STYLE: Final[str] = "icons_colored"
     DEFAULT_WIDGET_DISPLAY_MODE: Final[str] = "network_only" # Choices: network_only, cycle, side_by_side
     DEFAULT_WIDGET_DISPLAY_ORDER: Final[List[str]] = ["network", "cpu", "gpu"]
     DEFAULT_WIDGET_CYCLE_INTERVAL: Final[int] = 3 # Seconds
@@ -127,6 +132,7 @@ class ConfigConstants:
         "decimal_places": DEFAULT_DECIMAL_PLACES,
         "text_alignment": DEFAULT_TEXT_ALIGNMENT,
         "free_move": DEFAULT_FREE_MOVE,
+        "hardware_label_style": DEFAULT_HARDWARE_LABEL_STYLE,
         "keep_visible_fullscreen": DEFAULT_KEEP_VISIBLE_FULLSCREEN,
         "force_decimals": DEFAULT_FORCE_DECIMALS,
         "unit_type": DEFAULT_UNIT_TYPE,
@@ -147,6 +153,10 @@ class ConfigConstants:
         "arrow_font_weight": DEFAULT_ARROW_FONT_WEIGHT,
         "monitor_cpu_enabled": DEFAULT_MONITOR_CPU_ENABLED,
         "monitor_gpu_enabled": DEFAULT_MONITOR_GPU_ENABLED,
+        "monitor_ram_enabled": DEFAULT_MONITOR_RAM_ENABLED,
+        "monitor_vram_enabled": DEFAULT_MONITOR_VRAM_ENABLED,
+        "show_hardware_temps": DEFAULT_SHOW_HARDWARE_TEMPS,
+        "stack_hardware_stats": DEFAULT_STACK_HARDWARE_STATS,
         "widget_display_mode": DEFAULT_WIDGET_DISPLAY_MODE,
         "widget_display_order": DEFAULT_WIDGET_DISPLAY_ORDER,
         "widget_cycle_interval": DEFAULT_WIDGET_CYCLE_INTERVAL,
@@ -195,6 +205,7 @@ class ConfigConstants:
         "arrow_font_size": {"type": int, "default": DEFAULT_ARROW_FONT_SIZE, "min": fonts.FONT_SIZE_MIN, "max": fonts.FONT_SIZE_MAX},
         "arrow_font_weight": {"type": int, "default": DEFAULT_ARROW_FONT_WEIGHT, "min": 1, "max": 1000},
         "free_move": {"type": bool, "default": DEFAULT_FREE_MOVE},
+        "hardware_label_style": {"type": str, "default": DEFAULT_HARDWARE_LABEL_STYLE, "choices": ["icons_colored", "icons_monochrome", "text"]},
         "keep_visible_fullscreen": {"type": bool, "default": DEFAULT_KEEP_VISIBLE_FULLSCREEN},
         "force_decimals": {"type": bool, "default": DEFAULT_FORCE_DECIMALS},
         "unit_type": {"type": str, "default": DEFAULT_UNIT_TYPE, "choices": ["bits_decimal", "bits_binary", "bytes_decimal", "bytes_binary"]},
@@ -211,6 +222,10 @@ class ConfigConstants:
         "show_legend": {"type": bool, "default": DEFAULT_SHOW_LEGEND},
         "monitor_cpu_enabled": {"type": bool, "default": DEFAULT_MONITOR_CPU_ENABLED},
         "monitor_gpu_enabled": {"type": bool, "default": DEFAULT_MONITOR_GPU_ENABLED},
+        "monitor_ram_enabled": {"type": bool, "default": DEFAULT_MONITOR_RAM_ENABLED},
+        "monitor_vram_enabled": {"type": bool, "default": DEFAULT_MONITOR_VRAM_ENABLED},
+        "show_hardware_temps": {"type": bool, "default": DEFAULT_SHOW_HARDWARE_TEMPS},
+        "stack_hardware_stats": {"type": bool, "default": DEFAULT_STACK_HARDWARE_STATS},
         "widget_display_mode": {"type": str, "default": DEFAULT_WIDGET_DISPLAY_MODE, "choices": ["network_only", "cycle", "side_by_side"]},
         "widget_display_order": {"type": list, "default": DEFAULT_WIDGET_DISPLAY_ORDER, "item_type": str},
         "widget_cycle_interval": {"type": int, "default": DEFAULT_WIDGET_CYCLE_INTERVAL, "min": 1, "max": 60},
