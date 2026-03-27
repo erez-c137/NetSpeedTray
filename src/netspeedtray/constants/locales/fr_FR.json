@@ -61,6 +61,7 @@
     "ARROWS_SETTINGS_GROUP": "Flèches",
     "ARROW_STYLING_GROUP": "Style de flèche",
     "USE_CUSTOM_ARROW_FONT": "Utiliser une police de flèche personnalisée",
+    "ARROW_SPACING_LABEL": "Espacement des Flèches (px)",
     "MINI_GRAPH_SETTINGS_GROUP": "Mini Graphique (Widget)",
     "UNITS_GROUP": "Unités de Vitesse",
     "NETWORK_INTERFACES_GROUP": "Interfaces Réseau",

@@ -147,6 +147,14 @@ class AppearancePage(QWidget):
         # self.arrow_font_weight = ...
 
         arrow_layout.addWidget(self.arrow_font_container)
+        
+        # Arrow Spacing (outside the custom font toggle, always visible)
+        arrow_layout.addWidget(QLabel(self.i18n.ARROW_SPACING_LABEL))
+        self.arrow_spacing = Win11Slider(editable=True, suffix="px")
+        self.arrow_spacing.setRange(-10, 20)  # Negative values for very tight spacing
+        self.arrow_spacing.valueChanged.connect(self.on_change)
+        arrow_layout.addWidget(self.arrow_spacing)
+
         layout.addWidget(arrow_group)
 
         # --- Background Settings ---
@@ -202,6 +210,9 @@ class AppearancePage(QWidget):
         main_size = int(config.get("font_size", constants.config.defaults.DEFAULT_FONT_SIZE))
         self.arrow_font_size.setValue(int(config.get("arrow_font_size", main_size)))
         
+        # Arrow Spacing
+        self.arrow_spacing.setValue(int(config.get("arrow_spacing_px", constants.config.defaults.DEFAULT_ARROW_SPACING)))
+        
         # Arrow Weight ignored in UI
         
         self.arrow_font_container.setVisible(self.use_separate_arrow_font.isChecked())
@@ -218,7 +229,8 @@ class AppearancePage(QWidget):
             "use_separate_arrow_font": self.use_separate_arrow_font.isChecked(),
             "arrow_font_family": self.arrow_font_family_label.text(),
             "arrow_font_size": int(self.arrow_font_size.value()),
-            "arrow_font_weight": constants.fonts.WEIGHT_DEMIBOLD # Fixed default due to glyph fallback issues
+            "arrow_font_weight": constants.fonts.WEIGHT_DEMIBOLD, # Fixed default due to glyph fallback issues
+            "arrow_spacing_px": int(self.arrow_spacing.value())
         }
         return settings
 

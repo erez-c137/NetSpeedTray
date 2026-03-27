@@ -50,6 +50,7 @@ class ConfigConstants:
     DEFAULT_ARROW_FONT_FAMILY: Final[str] = fonts.DEFAULT_FONT
     DEFAULT_ARROW_FONT_SIZE: Final[int] = 9
     DEFAULT_ARROW_FONT_WEIGHT: Final[int] = fonts.WEIGHT_DEMIBOLD
+    DEFAULT_ARROW_SPACING: Final[int] = 5  # Pixels between arrow and speed value
     DEFAULT_COLOR: Final[str] = color.WHITE # Referencing color palette
     DEFAULT_COLOR_CODING: Final[bool] = False
     DEFAULT_HIGH_SPEED_THRESHOLD: Final[float] = 5.0
@@ -134,6 +135,7 @@ class ConfigConstants:
         "arrow_font_family": DEFAULT_ARROW_FONT_FAMILY,
         "arrow_font_size": DEFAULT_ARROW_FONT_SIZE,
         "arrow_font_weight": DEFAULT_ARROW_FONT_WEIGHT,
+        "arrow_spacing_px": DEFAULT_ARROW_SPACING,
     }
     
     # --- Schema Definition for Modern Config Validation ---
@@ -189,6 +191,7 @@ class ConfigConstants:
         "settings_window_pos": {"type": (dict, type(None)), "default": None},
         "history_period_slider_value": {"type": int, "default": 0, "min": 0, "max": len(data.history_period.PERIOD_MAP) - 1},
         "show_legend": {"type": bool, "default": DEFAULT_SHOW_LEGEND},
+        "arrow_spacing_px": {"type": int, "default": DEFAULT_ARROW_SPACING, "min": -10, "max": 20},
     }
 
 

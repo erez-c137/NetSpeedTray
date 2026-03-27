@@ -51,6 +51,7 @@ class RenderConfig:
     arrow_font_family: str = constants.config.defaults.DEFAULT_FONT_FAMILY
     arrow_font_size: int = 9
     arrow_font_weight: int = constants.fonts.WEIGHT_DEMIBOLD
+    arrow_spacing: int = constants.config.defaults.DEFAULT_ARROW_SPACING  # Pixels between arrow and speed
 
 
     @classmethod
@@ -108,7 +109,8 @@ class RenderConfig:
                 use_separate_arrow_font=bool(config.get('use_separate_arrow_font', False)),
                 arrow_font_family=str(config.get('arrow_font_family', constants.config.defaults.DEFAULT_FONT_FAMILY)),
                 arrow_font_size=int(config.get('arrow_font_size', constants.config.defaults.DEFAULT_FONT_SIZE)),
-                arrow_font_weight=int(config.get('arrow_font_weight', constants.fonts.WEIGHT_DEMIBOLD))
+                arrow_font_weight=int(config.get('arrow_font_weight', constants.fonts.WEIGHT_DEMIBOLD)),
+                arrow_spacing=int(config.get('arrow_spacing_px', constants.config.defaults.DEFAULT_ARROW_SPACING))
             )
         except Exception as e:
             logger.error("Failed to create RenderConfig from dict: %s", e, exc_info=True)
@@ -232,7 +234,7 @@ class WidgetRenderer:
         # Helper to get current metrics
         def get_width_metrics(current_metrics, current_arrow_metrics):
             arrow_w = 0 if hide_arrows else current_arrow_metrics.horizontalAdvance(self.i18n.UPLOAD_ARROW)
-            arrow_g = 0 if hide_arrows else constants.renderer.ARROW_NUMBER_GAP
+            arrow_g = 0 if hide_arrows else self.config.arrow_spacing
             
             ref_v = get_reference_value_string(force_mega_unit, decimal_places, unit_type=unit_type)
             max_num_w = current_metrics.horizontalAdvance(ref_v)
