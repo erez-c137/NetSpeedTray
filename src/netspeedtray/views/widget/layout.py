@@ -166,7 +166,7 @@ class WidgetLayoutManager:
                     max_unit_width = max(self.metrics.horizontalAdvance(unit) for unit in possible_units) if not hide_units else 0
                     
                     arrow_width = self.metrics.horizontalAdvance(self.widget.i18n.UPLOAD_ARROW) if not hide_arrows else 0
-                    arrow_gap = constants.renderer.ARROW_NUMBER_GAP if not hide_arrows else 0
+                    arrow_gap = self.widget.config.get("arrow_spacing_px", constants.config.defaults.DEFAULT_ARROW_SPACING) if not hide_arrows else 0
                     unit_gap = constants.renderer.VALUE_UNIT_GAP if not hide_units else 0
 
                     calculated_width = (margin + arrow_width + arrow_gap +

@@ -84,6 +84,7 @@ def mock_i18n():
     i18n.ARROW_STYLING_GROUP = "Arrow Styling"
     i18n.POSITION_GROUP = "Positioning"
     i18n.USE_CUSTOM_ARROW_FONT = "Use Custom Arrow Font"
+    i18n.ARROW_SPACING_LABEL = "Arrow Spacing (px)"
     i18n.FONT_WEIGHT_DEMIBOLD = "Demibold"
     i18n.FONT_WEIGHT_NORMAL = "Normal"
     i18n.FONT_WEIGHT_BOLD = "Bold"

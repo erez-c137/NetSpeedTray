@@ -60,6 +60,7 @@
     "ARROWS_SETTINGS_GROUP": "Strzałki",
     "ARROW_STYLING_GROUP": "Stylizacja strzałek",
     "USE_CUSTOM_ARROW_FONT": "Użyj niestandardowej czcionki strzałek",
+    "ARROW_SPACING_LABEL": "Odstęp strzałek (px)",
     "MINI_GRAPH_SETTINGS_GROUP": "Miniwykres (Widget)",
     "UNITS_GROUP": "Jednostki prędkości",
     "NETWORK_INTERFACES_GROUP": "Interfejsy sieciowe",

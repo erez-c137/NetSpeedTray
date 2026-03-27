@@ -60,6 +60,7 @@
     "ARROWS_SETTINGS_GROUP": "Pijlen",
     "ARROW_STYLING_GROUP": "Pijlstijl",
     "USE_CUSTOM_ARROW_FONT": "Aangepast pijllettertype gebruiken",
+    "ARROW_SPACING_LABEL": "Pijlafstand (px)",
     "MINI_GRAPH_SETTINGS_GROUP": "Mini grafiek (widget)",
     "UNITS_GROUP": "Snelheidseenheden",
     "NETWORK_INTERFACES_GROUP": "Netwerkinterfaces",
