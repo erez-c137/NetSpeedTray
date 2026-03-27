@@ -127,6 +127,7 @@ class TestPositionManager(unittest.TestCase):
         self.mock_widget.width.return_value = 100
         self.mock_widget.height.return_value = 40
         self.mock_widget.isVisible.return_value = True
+        self.mock_widget.pos.return_value = QPoint(0, 0)
         
         self.mock_taskbar = MagicMock(spec=TaskbarInfo)
         self.mock_taskbar.dpi_scale = 1.0
@@ -174,6 +175,39 @@ class TestPositionManager(unittest.TestCase):
         
         self.manager.update_position()
         self.mock_widget.move.assert_called_with(888, 999)
+
+    @patch('netspeedtray.core.position_manager.QApplication.primaryScreen')
+    @patch('netspeedtray.core.position_manager.QApplication.screenAt')
+    def test_enforce_window_bounds_clamps_negative_y_to_zero(self, mock_screen_at, mock_primary_screen):
+        """Title bar must remain reachable by clamping Y to 0 or greater."""
+        mock_screen = MagicMock()
+        mock_screen.geometry.return_value = QRect(0, 0, 1920, 1080)
+        mock_screen.name.return_value = "Mock Screen"
+        mock_screen_at.return_value = None
+        mock_primary_screen.return_value = mock_screen
+
+        self.mock_widget.pos.return_value = QPoint(120, -35)
+
+        self.manager._enforce_window_bounds()
+
+        self.mock_widget.move.assert_called_with(120, 0)
+
+    @patch('netspeedtray.core.position_manager.QApplication.primaryScreen')
+    @patch('netspeedtray.core.position_manager.QApplication.screenAt')
+    def test_enforce_window_bounds_skips_while_dragging(self, mock_screen_at, mock_primary_screen):
+        """Bounds enforcement must not fight user drag interactions."""
+        mock_screen = MagicMock()
+        mock_screen.geometry.return_value = QRect(0, 0, 1920, 1080)
+        mock_screen.name.return_value = "Mock Screen"
+        mock_screen_at.return_value = None
+        mock_primary_screen.return_value = mock_screen
+
+        self.mock_widget._dragging = True
+        self.mock_widget.pos.return_value = QPoint(120, -35)
+
+        self.manager._enforce_window_bounds()
+
+        self.mock_widget.move.assert_not_called()
 
 if __name__ == '__main__':
     unittest.main()

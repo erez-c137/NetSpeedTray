@@ -162,6 +162,7 @@ class SettingsDialog(QDialog):
             screen_center = screen.availableGeometry().center()
             dialog_center = self.rect().center()
             self.move(screen_center - dialog_center)
+            self._clamp_dialog_to_screen()
 
         # Set a safe minimum size to prevent layout breakage on small screens or long translations
         # Increased for #104/high-DPI compatibility where OS min-track might be > 620x500
@@ -297,10 +298,8 @@ class SettingsDialog(QDialog):
             if saved_pos and isinstance(saved_pos, dict):
                  x, y = saved_pos.get("x"), saved_pos.get("y")
                  if x is not None and y is not None:
-                     # Basic validation to ensure it's on-screen is handled by OS/Qt usually, 
-                     # but we could add ScreenUtils validation here if imported.
-                     # For now, trust the save.
                      self.move(x, y)
+                     self._clamp_dialog_to_screen()
                      self.logger.debug(f"Restored Settings Dialog position to ({x}, {y})")
 
         except Exception as e:
@@ -379,6 +378,44 @@ class SettingsDialog(QDialog):
         if current_geo.height() > available_rect.height():
              self.resize(current_geo.width(), available_rect.height())
              self.move(current_geo.x(), available_rect.top())
+
+        self._clamp_dialog_to_screen()
+
+    def _clamp_dialog_to_screen(self) -> None:
+        """Clamp dialog position so it stays fully reachable on screen."""
+        screen = self.screen() or QApplication.screenAt(self.frameGeometry().center()) or QApplication.primaryScreen()
+        if not screen:
+            return
+
+        available = screen.availableGeometry()
+        frame = self.frameGeometry()
+        current_pos = self.pos()
+
+        max_x = available.right() - frame.width() + 1
+        max_y = available.bottom() - frame.height() + 1
+        min_x = available.left()
+        # Hard top clamp: never allow title bar above the top edge.
+        min_y = max(0, available.top())
+
+        # If dialog is larger than available area, pin to top-left safe origin.
+        if max_x < min_x:
+            max_x = min_x
+        if max_y < min_y:
+            max_y = min_y
+
+        clamped_x = max(min_x, min(current_pos.x(), max_x))
+        clamped_y = max(min_y, min(current_pos.y(), max_y))
+
+        if clamped_x != current_pos.x() or clamped_y != current_pos.y():
+            self.move(clamped_x, clamped_y)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._clamp_dialog_to_screen()
+
+    def moveEvent(self, event) -> None:
+        super().moveEvent(event)
+        self._clamp_dialog_to_screen()
 
     def _schedule_settings_update(self) -> None:
         """Starts the throttle timer to emit settings_changed."""
