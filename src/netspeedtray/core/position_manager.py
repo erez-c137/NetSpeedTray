@@ -417,6 +417,8 @@ class PositionManager(QObject):
         # Timers
         self._tray_watcher_timer = QTimer(self)
         self._tray_watcher_timer.timeout.connect(self._check_for_tray_changes)
+        self._window_bounds_timer = QTimer(self)
+        self._window_bounds_timer.timeout.connect(self._enforce_window_bounds)
         
         logger.debug("Core PositionManager initialized.")
 
@@ -424,12 +426,65 @@ class PositionManager(QObject):
         """Starts the periodic tray watcher."""
         if not self._tray_watcher_timer.isActive():
             self._tray_watcher_timer.start(10000) # Check every 10s
+        if not self._window_bounds_timer.isActive():
+            # Keep the widget reachable even if external factors move it off-screen.
+            self._window_bounds_timer.start(500)
             logger.debug("PositionManager monitoring started.")
 
     def stop_monitoring(self) -> None:
         """Stops the periodic tray watcher."""
         self._tray_watcher_timer.stop()
+        self._window_bounds_timer.stop()
         logger.debug("PositionManager monitoring stopped.")
+
+    def _get_clamped_window_position(self) -> Optional[ScreenPosition]:
+        """Returns a clamped on-screen position for the current widget geometry."""
+        widget_width = self._state.widget.width()
+        widget_height = self._state.widget.height()
+        if widget_width <= 0 or widget_height <= 0:
+            return None
+
+        current_pos = self._state.widget.pos()
+        current_rect = QRect(current_pos.x(), current_pos.y(), widget_width, widget_height)
+        screen = ScreenUtils.find_screen_for_rect(current_rect)
+        if not screen:
+            screen = QApplication.primaryScreen()
+        if not screen:
+            return None
+
+        validated = ScreenUtils.validate_position(
+            current_pos.x(),
+            current_pos.y(),
+            (widget_width, widget_height),
+            screen,
+        )
+
+        # Keep the title bar reachable on Windows even if monitor coordinates are odd.
+        return ScreenPosition(validated.x, max(0, validated.y))
+
+    @pyqtSlot()
+    def _enforce_window_bounds(self) -> None:
+        """Continuously ensures the widget stays on-screen and reachable."""
+        if not self._state.widget.isVisible():
+            return
+        is_dragging = getattr(self._state.widget, "_dragging", False)
+        if isinstance(is_dragging, bool) and is_dragging:
+            return
+
+        clamped = self._get_clamped_window_position()
+        if not clamped:
+            return
+
+        current_pos = self._state.widget.pos()
+        if current_pos.x() != clamped.x or current_pos.y() != clamped.y:
+            logger.debug(
+                "Window out of bounds at (%s,%s); clamping to (%s,%s).",
+                current_pos.x(),
+                current_pos.y(),
+                clamped.x,
+                clamped.y,
+            )
+            self._apply_geometry(clamped.x, clamped.y)
 
     @pyqtSlot()
     def update_position(self, fresh_taskbar_info: Optional[TaskbarInfo] = None) -> None:

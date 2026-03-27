@@ -65,3 +65,11 @@ def test_get_settings_translates_ui_state_to_config(settings_dialog):
     assert new_settings["update_rate"] == 2.0
     assert new_settings["interface_mode"] == "selected"
     assert set(new_settings["selected_interfaces"]) == {"Wi-Fi"}
+
+
+def test_settings_dialog_clamps_top_edge(settings_dialog):
+    """Settings dialog should never keep its title bar above the top edge."""
+    settings_dialog.move(120, -200)
+    settings_dialog._clamp_dialog_to_screen()
+
+    assert settings_dialog.pos().y() >= 0
