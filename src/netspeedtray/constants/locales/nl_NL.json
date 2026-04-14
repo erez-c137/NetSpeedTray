@@ -56,6 +56,13 @@
     "BACKGROUND_COLOR_TOOLTIP": "Selecteer de achtergrondkleur van de widget",
     "UPDATE_RATE_GROUP_TITLE": "Update frequentie",
     "OPTIONS_GROUP_TITLE": "Opties",
+    "BEHAVIOR_GROUP_TITLE": "Gedrag",
+    "MINI_GRAPH_SECTION_TITLE": "Minigrafiek",
+    "HARDWARE_INDICATOR_STYLE_LABEL": "Indicatorstijl",
+    "MONITORING_MODE_AUTO_SUBTITLE": "Monitort de primaire actieve verbinding",
+    "MONITORING_MODE_PHYSICAL_SUBTITLE": "Sluit VPN's en virtuele adapters uit",
+    "MONITORING_MODE_VIRTUAL_SUBTITLE": "Bevat VPN's, virtuele adapters en tunnels",
+    "MONITORING_MODE_SELECTED_SUBTITLE": "Kies specifieke interfaces uit de onderstaande lijst",
     "FONT_SETTINGS_GROUP_TITLE": "Lettertype instellingen",
     "COLOR_CODING_GROUP": "Kleurcodering",
     "ARROWS_SETTINGS_GROUP": "Pijlen",
@@ -73,6 +80,8 @@
     "SHOW_HARDWARE_TEMPS_LABEL": "CPU/GPU-temperatuur tonen",
     "SHOW_HARDWARE_TEMPS_TOOLTIP": "Toont temperatuur naast CPU/GPU-gebruik indien beschikbaar.",
     "HARDWARE_TEMPS_LIMITATION_NOTE": "Opmerking: AMD GPU-temperatuur is momenteel niet beschikbaar met de universele (PDH) methode.",
+    "SHOW_HARDWARE_POWER_LABEL": "CPU/GPU-vermogen tonen (Watt)",
+    "SHOW_HARDWARE_POWER_TOOLTIP": "Toont het energieverbruik naast het CPU/GPU-gebruik. Gebruikt Intel RAPL (geen admin) voor CPU, nvidia-smi voor NVIDIA GPU en LibreHardwareMonitor voor AMD/Intel GPU.",
     "HARDWARE_LABEL_STYLE_LABEL": "Labelstijl",
     "HARDWARE_LABEL_STYLE_COLORED_ICONS": "Gekleurde pictogrammen",
     "HARDWARE_LABEL_STYLE_MONOCHROME_ICONS": "Monochrome pictogrammen (wit)",
@@ -320,5 +329,6 @@
     "APP_ACTIVITY_UNKNOWN_PROCESS": "Unknown",
     "APP_ACTIVITY_NO_CONNECTION_DETAILS": "No connection details available.",
     "APP_ACTIVITY_SELECTED_APP_TEMPLATE": "{process_name} (PID {pid})",
-    "APP_ACTIVITY_ENDPOINT_MORE_TEMPLATE": "(+{count} more)"
+    "APP_ACTIVITY_ENDPOINT_MORE_TEMPLATE": "(+{count} more)",
+    "DECIMAL_SEPARATOR": ","
 }

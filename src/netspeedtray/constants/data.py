@@ -151,6 +151,7 @@ class DataConstants:
     # Hardware Stats Schema (v5+)
     HARDWARE_STATS_TABLE_RAW: Final[str] = "hardware_stats_raw"
     HARDWARE_STATS_TABLE_MINUTE: Final[str] = "hardware_stats_minute"
+    HARDWARE_STATS_TABLE_HOUR: Final[str] = "hardware_stats_hour"
     
     # Legacy Schema (v1) - To be removed after full transition
     SPEED_TABLE: Final[str] = "speed_history"

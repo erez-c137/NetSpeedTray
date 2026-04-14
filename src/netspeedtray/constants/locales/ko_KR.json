@@ -56,6 +56,13 @@
     "BACKGROUND_COLOR_TOOLTIP": "위젯의 배경 색상 선택",
     "UPDATE_RATE_GROUP_TITLE": "업데이트 속도",
     "OPTIONS_GROUP_TITLE": "옵션",
+    "BEHAVIOR_GROUP_TITLE": "동작",
+    "MINI_GRAPH_SECTION_TITLE": "미니 그래프",
+    "HARDWARE_INDICATOR_STYLE_LABEL": "표시기 스타일",
+    "MONITORING_MODE_AUTO_SUBTITLE": "기본 활성 연결을 모니터링합니다",
+    "MONITORING_MODE_PHYSICAL_SUBTITLE": "VPN 및 가상 어댑터를 제외합니다",
+    "MONITORING_MODE_VIRTUAL_SUBTITLE": "VPN, 가상 어댑터 및 터널을 포함합니다",
+    "MONITORING_MODE_SELECTED_SUBTITLE": "아래 목록에서 특정 인터페이스를 선택하세요",
     "FONT_SETTINGS_GROUP_TITLE": "글꼴 설정",
     "COLOR_CODING_GROUP": "색상 코딩",
     "ARROWS_SETTINGS_GROUP": "화살표",
@@ -73,6 +80,8 @@
     "SHOW_HARDWARE_TEMPS_LABEL": "CPU/GPU 온도 표시",
     "SHOW_HARDWARE_TEMPS_TOOLTIP": "가능한 경우 CPU/GPU 사용률 옆에 온도를 표시합니다.",
     "HARDWARE_TEMPS_LIMITATION_NOTE": "참고: AMD GPU 온도는 현재 범용(PDH) 방식으로 사용할 수 없습니다.",
+    "SHOW_HARDWARE_POWER_LABEL": "CPU/GPU 전력 표시 (와트)",
+    "SHOW_HARDWARE_POWER_TOOLTIP": "CPU/GPU 사용량 옆에 전력 소비를 표시합니다. CPU에는 Intel RAPL(비관리자), NVIDIA GPU에는 nvidia-smi, AMD/Intel GPU에는 LibreHardwareMonitor를 사용합니다.",
     "HARDWARE_LABEL_STYLE_LABEL": "라벨 스타일",
     "HARDWARE_LABEL_STYLE_COLORED_ICONS": "색상 아이콘",
     "HARDWARE_LABEL_STYLE_MONOCHROME_ICONS": "단색 아이콘(흰색)",
@@ -320,5 +329,6 @@
     "APP_ACTIVITY_UNKNOWN_PROCESS": "Unknown",
     "APP_ACTIVITY_NO_CONNECTION_DETAILS": "No connection details available.",
     "APP_ACTIVITY_SELECTED_APP_TEMPLATE": "{process_name} (PID {pid})",
-    "APP_ACTIVITY_ENDPOINT_MORE_TEMPLATE": "(+{count} more)"
+    "APP_ACTIVITY_ENDPOINT_MORE_TEMPLATE": "(+{count} more)",
+    "DECIMAL_SEPARATOR": "."
 }

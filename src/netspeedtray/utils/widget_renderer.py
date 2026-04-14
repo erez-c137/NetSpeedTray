@@ -63,6 +63,7 @@ class RenderConfig:
     widget_display_mode: str = "network_only"
     widget_display_order: List[str] = field(default_factory=lambda: ["network", "cpu", "gpu"])
     show_hardware_temps: bool = False
+    show_hardware_power: bool = False
 
 
     @classmethod
@@ -126,7 +127,8 @@ class RenderConfig:
                 stack_hardware_stats=bool(config.get('stack_hardware_stats', False)),
                 widget_display_mode=str(config.get('widget_display_mode', 'network_only')),
                 widget_display_order=list(config.get('widget_display_order', ["network", "cpu", "gpu"])),
-                show_hardware_temps=bool(config.get('show_hardware_temps', False))
+                show_hardware_temps=bool(config.get('show_hardware_temps', False)),
+                show_hardware_power=bool(config.get('show_hardware_power', False))
             )
         except Exception as e:
             logger.error("Failed to create RenderConfig: %s", e)
@@ -297,7 +299,7 @@ class WidgetRenderer:
             top_y = int((height - total_height) / 2 + ascent)
             
             # Draw UP
-            self._draw_speed_line_fixed(painter, config.swap_upload_download, up_val, up_unit, arrow_x, number_x, unit_x, top_y, config, number_area_width)
+            self._draw_speed_line(painter, config.swap_upload_download, up_val, up_unit, arrow_x, number_x, unit_x, top_y, config, number_area_width)
             
             # Draw DW
             dw_y = top_y + line_height + vertical_gap
@@ -316,8 +318,13 @@ class WidgetRenderer:
         # Color coding
         if config.color_coding:
             try:
-                # Clean up commas and spaces for float conversion
-                clean_val = val.replace(',', '').replace(' ', '').strip()
+                # Parse back to float, respecting the locale decimal separator.
+                # e.g. German "99,9" must become "99.9", not "999".
+                decimal_sep = getattr(self.i18n, 'DECIMAL_SEPARATOR', '.')
+                if decimal_sep == ',':
+                    clean_val = val.replace(' ', '').replace(',', '.').strip()
+                else:
+                    clean_val = val.replace(',', '').replace(' ', '').strip()
                 f_val = float(clean_val)
                 if f_val >= config.high_speed_threshold: 
                     painter.setPen(self._cached_pens['high'])
@@ -346,72 +353,66 @@ class WidgetRenderer:
         if not config.hide_unit_suffix:
             painter.drawText(unit_x, y, unit)
 
-    def _draw_speed_line_fixed(self, *args, **kwargs):
-        """Deprecated alias for _draw_speed_line."""
-        return self._draw_speed_line(*args, **kwargs)
 
 
 
-
-    def draw_hardware_stats(self, painter: QPainter, cpu_usage: Optional[float], gpu_usage: Optional[float], 
-                           width: int, height: int, config: RenderConfig, 
+    def draw_hardware_stats(self, painter: QPainter, cpu_usage: Optional[float], gpu_usage: Optional[float],
+                           width: int, height: int, config: RenderConfig,
                            cpu_temp: Optional[float] = None, gpu_temp: Optional[float] = None,
-                           ram_info: Optional[Tuple[float, float]] = None, 
+                           ram_info: Optional[Tuple[float, float]] = None,
                            vram_info: Optional[Tuple[float, float]] = None,
-                           layout_mode: str = 'vertical', x_offset: int = 0, fixed_width: Optional[int] = None) -> None:
-        """Draws CPU and/or GPU utilization statistics with optional temperature and memory."""
+                           layout_mode: str = 'vertical', x_offset: int = 0, fixed_width: Optional[int] = None,
+                           cpu_power: Optional[float] = None, gpu_power: Optional[float] = None) -> None:
+        """Draws CPU and/or GPU utilization statistics with optional temperature, power, and memory."""
         try:
             order = getattr(config, 'widget_display_order', ["network", "cpu", "gpu"])
             cpu_idx = order.index("cpu") if "cpu" in order else 999
             gpu_idx = order.index("gpu") if "gpu" in order else 999
-            
+
             style = getattr(config, 'hardware_label_style', 'icons_colored')
             cpu_color = "#FFFFFF" if style == "icons_monochrome" else constants.renderer.CPU_LINE_COLOR
             gpu_color = "#FFFFFF" if style == "icons_monochrome" else constants.renderer.GPU_LINE_COLOR
 
             items = []
-            if cpu_usage is not None: 
-                items.append((cpu_idx, ('CPU', cpu_usage, cpu_temp, ram_info, cpu_color)))
-            if gpu_usage is not None: 
-                items.append((gpu_idx, ('GPU', gpu_usage, gpu_temp, vram_info, gpu_color)))
-                
+            if cpu_usage is not None:
+                items.append((cpu_idx, ('CPU', cpu_usage, cpu_temp, ram_info, cpu_color, cpu_power)))
+            if gpu_usage is not None:
+                items.append((gpu_idx, ('GPU', gpu_usage, gpu_temp, vram_info, gpu_color, gpu_power)))
+
             items.sort(key=lambda x: x[0])
             enabled_stats = [x[1] for x in items]
-            
+
             if not enabled_stats: return
-            
+
             painter.setFont(self.font)
-            
+
             line_height = self.metrics.height()
             ascent = self.metrics.ascent()
             total_height = line_height * len(enabled_stats)
             top_y = int((height - total_height) / 2 + ascent)
-            
+
             margin = constants.renderer.TEXT_MARGIN
             current_x = x_offset + margin
-            
-            is_compact = getattr(config, 'widget_display_mode', 'network_only') == "compact_stack" or len(enabled_stats) > 1
-            
-            render_rows = []
-            for (label, val, temp, mem_info, color_hex) in enabled_stats:
-                main_text = f"{int(val)}%"
-                if getattr(config, "show_hardware_temps", False):
-                    # Show a placeholder when temps are unavailable so the toggle has a visible effect.
-                    try:
-                        temp_ok = temp is not None and math.isfinite(float(temp))
-                    except Exception:
-                        temp_ok = False
 
-                    if temp_ok:
-                        main_text += f" ({int(float(temp))}°C)"
-                    else:
-                        main_text += f" ({self.i18n.DEFAULT_TEXT})"
-                
+            is_compact = getattr(config, 'widget_display_mode', 'network_only') == "compact_stack" or len(enabled_stats) > 1
+
+            show_temps = getattr(config, "show_hardware_temps", False)
+            show_power = getattr(config, "show_hardware_power", False)
+
+            render_rows = []
+            for (label, val, temp, mem_info, color_hex, power) in enabled_stats:
+                main_text = f"{int(val)}%"
+
+                # Unified parenthetical suffix: "(43°C, 7.8W)", "(43°C)", "(7.8W)", or "(N/A)"
+                suffix = self._build_hw_suffix(temp, power, show_temps, show_power)
+                if suffix:
+                    main_text += f" {suffix}"
+
                 mem_text = ""
                 if mem_info and mem_info[0] is not None:
                     used, total = mem_info
                     mem_text = f"{used:.1f}/{total:.1f}G" if total and total > 0 else f"{used:.1f}G"
-                
+
                 if mem_text:
                     if is_compact:
                         main_text += f" | {mem_text}"
@@ -506,7 +507,48 @@ class WidgetRenderer:
         painter.restore()
 
 
-    def draw_mini_graph(self, painter: QPainter, width: int, height: int, config: RenderConfig, 
+    def _build_hw_suffix(self, temp: Optional[float], power: Optional[float],
+                        show_temps: bool, show_power: bool) -> str:
+        """Builds a parenthetical suffix string from available hardware extras.
+
+        Examples: "(43°C, 7.8W)", "(43°C)", "(7.8W)", "(N/A)", or "" if nothing enabled.
+        """
+        if not show_temps and not show_power:
+            return ""
+
+        parts = []
+        has_any_data = False
+
+        if show_temps:
+            try:
+                temp_ok = temp is not None and math.isfinite(float(temp))
+            except Exception:
+                temp_ok = False
+            if temp_ok:
+                parts.append(f"{int(float(temp))}°C")
+                has_any_data = True
+            else:
+                parts.append(None)  # placeholder — will be replaced with N/A if nothing else has data
+
+        if show_power:
+            try:
+                power_ok = power is not None and math.isfinite(float(power))
+            except Exception:
+                power_ok = False
+            if power_ok:
+                parts.append(f"{float(power):.1f}W")
+                has_any_data = True
+            else:
+                parts.append(None)
+
+        if not has_any_data:
+            return f"({self.i18n.DEFAULT_TEXT})"
+
+        # Filter out None placeholders (partial data is fine — just show what we have)
+        valid_parts = [p for p in parts if p is not None]
+        return f"({', '.join(valid_parts)})"
+
+    def draw_mini_graph(self, painter: QPainter, width: int, height: int, config: RenderConfig,
                         history: List[Any], layout_mode: str = 'vertical', 
                         is_hardware: bool = False, hardware_color: str = "#FFFFFF") -> None:
         """Draws a mini graph of history (speed or hardware utilization)."""

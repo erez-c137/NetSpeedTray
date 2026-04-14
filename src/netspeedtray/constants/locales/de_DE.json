@@ -56,6 +56,13 @@
     "BACKGROUND_COLOR_TOOLTIP": "Hintergrundfarbe des Widgets auswählen",
     "UPDATE_RATE_GROUP_TITLE": "Aktualisierungsrate",
     "OPTIONS_GROUP_TITLE": "Optionen",
+    "BEHAVIOR_GROUP_TITLE": "Verhalten",
+    "MINI_GRAPH_SECTION_TITLE": "Minigrafik",
+    "HARDWARE_INDICATOR_STYLE_LABEL": "Anzeigeart",
+    "MONITORING_MODE_AUTO_SUBTITLE": "Überwacht die primäre aktive Verbindung",
+    "MONITORING_MODE_PHYSICAL_SUBTITLE": "Schließt VPNs und virtuelle Adapter aus",
+    "MONITORING_MODE_VIRTUAL_SUBTITLE": "Enthält VPNs, virtuelle Adapter und Tunnel",
+    "MONITORING_MODE_SELECTED_SUBTITLE": "Wählen Sie bestimmte Schnittstellen aus der Liste unten",
     "FONT_SETTINGS_GROUP_TITLE": "Schrift-Einstellungen",
     "COLOR_CODING_GROUP": "Farbkodierung",
     "ARROWS_SETTINGS_GROUP": "Pfeile",
@@ -73,6 +80,8 @@
     "SHOW_HARDWARE_TEMPS_LABEL": "CPU/GPU-Temperatur anzeigen",
     "SHOW_HARDWARE_TEMPS_TOOLTIP": "Zeigt die Temperatur neben der CPU/GPU-Auslastung an (falls verfügbar).",
     "HARDWARE_TEMPS_LIMITATION_NOTE": "Hinweis: AMD-GPU-Temperatur ist derzeit mit der universellen (PDH) Methode nicht verfügbar.",
+    "SHOW_HARDWARE_POWER_LABEL": "CPU/GPU-Leistung anzeigen (Watt)",
+    "SHOW_HARDWARE_POWER_TOOLTIP": "Zeigt den Stromverbrauch neben der CPU/GPU-Auslastung an. Verwendet Intel RAPL (ohne Admin) für CPU, nvidia-smi für NVIDIA GPU und LibreHardwareMonitor für AMD/Intel GPU.",
     "HARDWARE_LABEL_STYLE_LABEL": "Beschriftungsstil",
     "HARDWARE_LABEL_STYLE_COLORED_ICONS": "Farbige Symbole",
     "HARDWARE_LABEL_STYLE_MONOCHROME_ICONS": "Monochrome Symbole (Weiß)",
@@ -320,5 +329,6 @@
     "APP_ACTIVITY_UNKNOWN_PROCESS": "Unknown",
     "APP_ACTIVITY_NO_CONNECTION_DETAILS": "No connection details available.",
     "APP_ACTIVITY_SELECTED_APP_TEMPLATE": "{process_name} (PID {pid})",
-    "APP_ACTIVITY_ENDPOINT_MORE_TEMPLATE": "(+{count} more)"
+    "APP_ACTIVITY_ENDPOINT_MORE_TEMPLATE": "(+{count} more)",
+    "DECIMAL_SEPARATOR": ","
 }

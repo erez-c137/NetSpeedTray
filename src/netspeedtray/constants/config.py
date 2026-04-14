@@ -45,51 +45,53 @@ class ConfigConstants:
     MINIMUM_UPDATE_RATE: Final[float] = timers.MINIMUM_INTERVAL_MS / 1000.0
     DEFAULT_FONT_FAMILY: Final[str] = fonts.DEFAULT_FONT
     DEFAULT_FONT_SIZE: Final[int] = 9
-    DEFAULT_FONT_WEIGHT: Final[int] = fonts.WEIGHT_DEMIBOLD
-    DEFAULT_USE_SEPARATE_ARROW_FONT: Final[bool] = False
+    DEFAULT_FONT_WEIGHT: Final[int] = fonts.WEIGHT_NORMAL
+    DEFAULT_USE_SEPARATE_ARROW_FONT: Final[bool] = True
     DEFAULT_ARROW_FONT_FAMILY: Final[str] = fonts.DEFAULT_FONT
-    DEFAULT_ARROW_FONT_SIZE: Final[int] = 9
+    DEFAULT_ARROW_FONT_SIZE: Final[int] = 10
     DEFAULT_ARROW_FONT_WEIGHT: Final[int] = fonts.WEIGHT_DEMIBOLD
     DEFAULT_COLOR: Final[str] = color.WHITE # Referencing color palette
     DEFAULT_COLOR_CODING: Final[bool] = False
-    DEFAULT_HIGH_SPEED_THRESHOLD: Final[float] = 5.0
+    DEFAULT_HIGH_SPEED_THRESHOLD: Final[float] = 10.0
     DEFAULT_LOW_SPEED_THRESHOLD: Final[float] = 1.0
     DEFAULT_HIGH_SPEED_COLOR: Final[str] = color.GREEN # Referencing color palette
     DEFAULT_LOW_SPEED_COLOR: Final[str] = color.ORANGE # Referencing color palette
     DEFAULT_BACKGROUND_COLOR: Final[str] = "#000000" # Black
     DEFAULT_BACKGROUND_OPACITY: Final[int] = 0 # Percentage (0-100), default transparent
     DEFAULT_GRAPH_ENABLED: Final[bool] = False
-    DEFAULT_HISTORY_MINUTES: Final[int] = 15
-    DEFAULT_GRAPH_OPACITY: Final[int] = 30
+    DEFAULT_HISTORY_MINUTES: Final[int] = 3
+    DEFAULT_GRAPH_OPACITY: Final[int] = 66
     DEFAULT_INTERFACE_MODE: Final[str] = network.interface.DEFAULT_MODE
     DEFAULT_KEEP_DATA_DAYS: Final[int] = data.retention.DAYS_MAP[6] # 365 days (1 Year) default
     DEFAULT_DARK_MODE: Final[bool] = True
     DEFAULT_DYNAMIC_UPDATE_ENABLED: Final[bool] = True
     DEFAULT_SPEED_DISPLAY_MODE: Final[str] = "always_mbps"  # Prevents constant B/KB/MB jumping
     DEFAULT_UNIT_TYPE: Final[str] = "bits_decimal"  # Default to Bits (Kbps, Mbps)
-    DEFAULT_SWAP_UPLOAD_DOWNLOAD: Final[bool] = True # Download on top is standard convention
+    DEFAULT_SWAP_UPLOAD_DOWNLOAD: Final[bool] = False
     DEFAULT_HIDE_ARROWS: Final[bool] = False
     DEFAULT_HIDE_UNIT_SUFFIX: Final[bool] = False
     DEFAULT_SHORT_UNIT_LABELS: Final[bool] = False
-    DEFAULT_DECIMAL_PLACES: Final[int] = 2
+    DEFAULT_DECIMAL_PLACES: Final[int] = 1
     DEFAULT_TEXT_ALIGNMENT: Final[str] = "center"
     DEFAULT_FREE_MOVE: Final[bool] = False
     DEFAULT_KEEP_VISIBLE_FULLSCREEN: Final[bool] = False
     DEFAULT_FORCE_DECIMALS: Final[bool] = True
-    DEFAULT_START_WITH_WINDOWS: Final[bool] = True
-    DEFAULT_TRAY_OFFSET_X: Final[int] = 3
+    DEFAULT_START_WITH_WINDOWS: Final[bool] = False
+    DEFAULT_TRAY_OFFSET_X: Final[int] = 0
+    DEFAULT_TRAY_OFFSET_Y: Final[int] = 3
     DEFAULT_LEGEND_POSITION: Final[str] = data.legend_position.DEFAULT_LEGEND_POSITION
-    DEFAULT_SHOW_LEGEND: Final[bool] = True
+    DEFAULT_SHOW_LEGEND: Final[bool] = False
     
     # --- CPU/GPU Monitoring ---
     DEFAULT_MONITOR_CPU_ENABLED: Final[bool] = False
     DEFAULT_MONITOR_GPU_ENABLED: Final[bool] = False
     DEFAULT_MONITOR_RAM_ENABLED: Final[bool] = False
     DEFAULT_MONITOR_VRAM_ENABLED: Final[bool] = False
-    DEFAULT_SHOW_HARDWARE_TEMPS: Final[bool] = False
-    DEFAULT_STACK_HARDWARE_STATS: Final[bool] = False
-    DEFAULT_HARDWARE_LABEL_STYLE: Final[str] = "icons_colored"
-    DEFAULT_WIDGET_DISPLAY_MODE: Final[str] = "network_only" # Choices: network_only, cycle, side_by_side
+    DEFAULT_SHOW_HARDWARE_TEMPS: Final[bool] = True
+    DEFAULT_SHOW_HARDWARE_POWER: Final[bool] = False
+    DEFAULT_STACK_HARDWARE_STATS: Final[bool] = True
+    DEFAULT_HARDWARE_LABEL_STYLE: Final[str] = "icons_monochrome"
+    DEFAULT_WIDGET_DISPLAY_MODE: Final[str] = "side_by_side" # Choices: network_only, cycle, side_by_side
     DEFAULT_WIDGET_DISPLAY_ORDER: Final[List[str]] = ["network", "cpu", "gpu"]
     DEFAULT_WIDGET_CYCLE_INTERVAL: Final[int] = 3 # Seconds
     DEFAULT_CPU_LOAD_HIGH_THRESHOLD: Final[float] = 80.0
@@ -143,10 +145,11 @@ class ConfigConstants:
         "background_opacity": DEFAULT_BACKGROUND_OPACITY,
         "short_unit_labels": DEFAULT_SHORT_UNIT_LABELS,
         "tray_offset_x": DEFAULT_TRAY_OFFSET_X,
+        "tray_offset_y": DEFAULT_TRAY_OFFSET_Y,
         "graph_window_pos": None,
         "settings_window_pos": None,
         "history_period_slider_value": 0,  # UI-specific state
-        "show_legend": False,
+        "show_legend": DEFAULT_SHOW_LEGEND,
         "use_separate_arrow_font": DEFAULT_USE_SEPARATE_ARROW_FONT,
         "arrow_font_family": DEFAULT_ARROW_FONT_FAMILY,
         "arrow_font_size": DEFAULT_ARROW_FONT_SIZE,
@@ -156,6 +159,7 @@ class ConfigConstants:
         "monitor_ram_enabled": DEFAULT_MONITOR_RAM_ENABLED,
         "monitor_vram_enabled": DEFAULT_MONITOR_VRAM_ENABLED,
         "show_hardware_temps": DEFAULT_SHOW_HARDWARE_TEMPS,
+        "show_hardware_power": DEFAULT_SHOW_HARDWARE_POWER,
         "stack_hardware_stats": DEFAULT_STACK_HARDWARE_STATS,
         "widget_display_mode": DEFAULT_WIDGET_DISPLAY_MODE,
         "widget_display_order": DEFAULT_WIDGET_DISPLAY_ORDER,
@@ -216,6 +220,7 @@ class ConfigConstants:
         "background_opacity": {"type": int, "default": DEFAULT_BACKGROUND_OPACITY, "min": 0, "max": 100},
         "short_unit_labels": {"type": bool, "default": DEFAULT_SHORT_UNIT_LABELS},
         "tray_offset_x": {"type": int, "default": DEFAULT_TRAY_OFFSET_X, "min": 0, "max": 500},
+        "tray_offset_y": {"type": int, "default": DEFAULT_TRAY_OFFSET_Y, "min": 0, "max": 500},
         "graph_window_pos": {"type": (dict, type(None)), "default": None},
         "settings_window_pos": {"type": (dict, type(None)), "default": None},
         "history_period_slider_value": {"type": int, "default": 0, "min": 0, "max": len(data.history_period.PERIOD_MAP) - 1},
@@ -225,6 +230,7 @@ class ConfigConstants:
         "monitor_ram_enabled": {"type": bool, "default": DEFAULT_MONITOR_RAM_ENABLED},
         "monitor_vram_enabled": {"type": bool, "default": DEFAULT_MONITOR_VRAM_ENABLED},
         "show_hardware_temps": {"type": bool, "default": DEFAULT_SHOW_HARDWARE_TEMPS},
+        "show_hardware_power": {"type": bool, "default": DEFAULT_SHOW_HARDWARE_POWER},
         "stack_hardware_stats": {"type": bool, "default": DEFAULT_STACK_HARDWARE_STATS},
         "widget_display_mode": {"type": str, "default": DEFAULT_WIDGET_DISPLAY_MODE, "choices": ["network_only", "cycle", "side_by_side"]},
         "widget_display_order": {"type": list, "default": DEFAULT_WIDGET_DISPLAY_ORDER, "item_type": str},

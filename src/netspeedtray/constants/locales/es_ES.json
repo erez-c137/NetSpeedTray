@@ -56,6 +56,13 @@
     "BACKGROUND_COLOR_TOOLTIP": "Selecciona el color de fondo del widget",
     "UPDATE_RATE_GROUP_TITLE": "Frecuencia de Actualización",
     "OPTIONS_GROUP_TITLE": "Opciones",
+    "BEHAVIOR_GROUP_TITLE": "Comportamiento",
+    "MINI_GRAPH_SECTION_TITLE": "Mini Gráfico",
+    "HARDWARE_INDICATOR_STYLE_LABEL": "Estilo de indicador",
+    "MONITORING_MODE_AUTO_SUBTITLE": "Monitorea la conexión activa principal",
+    "MONITORING_MODE_PHYSICAL_SUBTITLE": "Excluye VPNs y adaptadores virtuales",
+    "MONITORING_MODE_VIRTUAL_SUBTITLE": "Incluye VPNs, adaptadores virtuales y túneles",
+    "MONITORING_MODE_SELECTED_SUBTITLE": "Elige interfaces específicas de la lista de abajo",
     "FONT_SETTINGS_GROUP_TITLE": "Configuración de Fuente",
     "COLOR_CODING_GROUP": "Código de color",
     "ARROWS_SETTINGS_GROUP": "Flechas",
@@ -73,6 +80,8 @@
     "SHOW_HARDWARE_TEMPS_LABEL": "Mostrar temperatura CPU/GPU",
     "SHOW_HARDWARE_TEMPS_TOOLTIP": "Muestra la temperatura junto al uso de CPU/GPU cuando esté disponible.",
     "HARDWARE_TEMPS_LIMITATION_NOTE": "Nota: La temperatura de GPU AMD no está disponible actualmente con el método universal (PDH).",
+    "SHOW_HARDWARE_POWER_LABEL": "Mostrar potencia CPU/GPU (Watts)",
+    "SHOW_HARDWARE_POWER_TOOLTIP": "Muestra el consumo de energía junto al uso de CPU/GPU. Usa Intel RAPL (sin admin) para CPU, nvidia-smi para GPU NVIDIA y LibreHardwareMonitor para GPU AMD/Intel.",
     "HARDWARE_LABEL_STYLE_LABEL": "Estilo de etiqueta",
     "HARDWARE_LABEL_STYLE_COLORED_ICONS": "Iconos de color",
     "HARDWARE_LABEL_STYLE_MONOCHROME_ICONS": "Iconos monocromos (blanco)",
@@ -320,5 +329,6 @@
     "APP_ACTIVITY_UNKNOWN_PROCESS": "Unknown",
     "APP_ACTIVITY_NO_CONNECTION_DETAILS": "No connection details available.",
     "APP_ACTIVITY_SELECTED_APP_TEMPLATE": "{process_name} (PID {pid})",
-    "APP_ACTIVITY_ENDPOINT_MORE_TEMPLATE": "(+{count} more)"
+    "APP_ACTIVITY_ENDPOINT_MORE_TEMPLATE": "(+{count} more)",
+    "DECIMAL_SEPARATOR": ","
 }

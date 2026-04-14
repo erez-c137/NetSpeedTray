@@ -261,15 +261,20 @@ def format_speed(
         formatted_val = f"{val:.0f}"
     else:
         formatted_val = f"{val:.{decimal_places}f}"
-    
+
     if fixed_width:
         # Use reference string to match logic in layout/renderer
         ref_val = get_reference_value_string(force_mega_unit, decimal_places, unit_type=unit_type)
         formatted_val = formatted_val.rjust(len(ref_val))
-    
+
+    # Apply locale-specific decimal separator (e.g. ',' for de_DE, fr_FR, ru_RU, etc.)
+    decimal_sep = getattr(i18n, 'DECIMAL_SEPARATOR', '.')
+    if decimal_sep != '.':
+        formatted_val = formatted_val.replace('.', decimal_sep)
+
     if split_unit:
         return formatted_val, unit
-    
+
     return f"{formatted_val} {unit}"
 
 

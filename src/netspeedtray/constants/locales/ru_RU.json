@@ -56,6 +56,13 @@
     "BACKGROUND_COLOR_TOOLTIP": "Выберите цвет фона виджета",
     "UPDATE_RATE_GROUP_TITLE": "Частота обновления",
     "OPTIONS_GROUP_TITLE": "Опции",
+    "BEHAVIOR_GROUP_TITLE": "Поведение",
+    "MINI_GRAPH_SECTION_TITLE": "Мини-график",
+    "HARDWARE_INDICATOR_STYLE_LABEL": "Стиль индикатора",
+    "MONITORING_MODE_AUTO_SUBTITLE": "Отслеживает основное активное подключение",
+    "MONITORING_MODE_PHYSICAL_SUBTITLE": "Исключает VPN и виртуальные адаптеры",
+    "MONITORING_MODE_VIRTUAL_SUBTITLE": "Включает VPN, виртуальные адаптеры и туннели",
+    "MONITORING_MODE_SELECTED_SUBTITLE": "Выберите конкретные интерфейсы из списка ниже",
     "FONT_SETTINGS_GROUP_TITLE": "Настройки шрифта",
     "COLOR_CODING_GROUP": "Цветовое кодирование",
     "ARROWS_SETTINGS_GROUP": "Стрелки",
@@ -73,6 +80,8 @@
     "SHOW_HARDWARE_TEMPS_LABEL": "Показывать температуру ЦП/ГП",
     "SHOW_HARDWARE_TEMPS_TOOLTIP": "Показывает температуру рядом с использованием ЦП/ГП, если доступно.",
     "HARDWARE_TEMPS_LIMITATION_NOTE": "Примечание: температура GPU AMD сейчас недоступна универсальным методом (PDH).",
+    "SHOW_HARDWARE_POWER_LABEL": "Показать мощность ЦП/ГП (Ватты)",
+    "SHOW_HARDWARE_POWER_TOOLTIP": "Показывает энергопотребление рядом с использованием ЦП/ГП. Использует Intel RAPL (без прав администратора) для ЦП, nvidia-smi для NVIDIA ГП и LibreHardwareMonitor для AMD/Intel ГП.",
     "HARDWARE_LABEL_STYLE_LABEL": "Стиль меток",
     "HARDWARE_LABEL_STYLE_COLORED_ICONS": "Цветные значки",
     "HARDWARE_LABEL_STYLE_MONOCHROME_ICONS": "Монохромные значки (белые)",
@@ -320,5 +329,6 @@
     "APP_ACTIVITY_UNKNOWN_PROCESS": "Unknown",
     "APP_ACTIVITY_NO_CONNECTION_DETAILS": "No connection details available.",
     "APP_ACTIVITY_SELECTED_APP_TEMPLATE": "{process_name} (PID {pid})",
-    "APP_ACTIVITY_ENDPOINT_MORE_TEMPLATE": "(+{count} more)"
+    "APP_ACTIVITY_ENDPOINT_MORE_TEMPLATE": "(+{count} more)",
+    "DECIMAL_SEPARATOR": ","
 }

@@ -56,6 +56,13 @@
     "BACKGROUND_COLOR_TOOLTIP": "Izberite barvo ozadja gradnika",
     "UPDATE_RATE_GROUP_TITLE": "Hitrost posodabljanja",
     "OPTIONS_GROUP_TITLE": "Možnosti",
+    "BEHAVIOR_GROUP_TITLE": "Obnašanje",
+    "MINI_GRAPH_SECTION_TITLE": "Mini graf",
+    "HARDWARE_INDICATOR_STYLE_LABEL": "Slog kazalnika",
+    "MONITORING_MODE_AUTO_SUBTITLE": "Spremlja primarno aktivno povezavo",
+    "MONITORING_MODE_PHYSICAL_SUBTITLE": "Izključi VPN-je in navidezne vmesnike",
+    "MONITORING_MODE_VIRTUAL_SUBTITLE": "Vključi VPN-je, navidezne vmesnike in tunele",
+    "MONITORING_MODE_SELECTED_SUBTITLE": "Izberite določene vmesnike iz spodnjega seznama",
     "FONT_SETTINGS_GROUP_TITLE": "Nastavitve pisave",
     "COLOR_CODING_GROUP": "Barvno kodiranje",
     "ARROWS_SETTINGS_GROUP": "Puščice",
@@ -73,6 +80,8 @@
     "SHOW_HARDWARE_TEMPS_LABEL": "Pokaži temperaturo CPU/GPU",
     "SHOW_HARDWARE_TEMPS_TOOLTIP": "Prikaže temperaturo poleg uporabe CPU/GPU, ko je na voljo.",
     "HARDWARE_TEMPS_LIMITATION_NOTE": "Opomba: Temperatura GPU AMD trenutno ni na voljo z univerzalno (PDH) metodo.",
+    "SHOW_HARDWARE_POWER_LABEL": "Prikaži moč CPU/GPU (Watt)",
+    "SHOW_HARDWARE_POWER_TOOLTIP": "Prikazuje porabo energije poleg uporabe CPU/GPU. Uporablja Intel RAPL (brez skrbnika) za CPU, nvidia-smi za NVIDIA GPU in LibreHardwareMonitor za AMD/Intel GPU.",
     "HARDWARE_LABEL_STYLE_LABEL": "Slog oznak",
     "HARDWARE_LABEL_STYLE_COLORED_ICONS": "Barvne ikone",
     "HARDWARE_LABEL_STYLE_MONOCHROME_ICONS": "Enobarvne ikone (bela)",
@@ -320,5 +329,6 @@
     "APP_ACTIVITY_UNKNOWN_PROCESS": "Unknown",
     "APP_ACTIVITY_NO_CONNECTION_DETAILS": "No connection details available.",
     "APP_ACTIVITY_SELECTED_APP_TEMPLATE": "{process_name} (PID {pid})",
-    "APP_ACTIVITY_ENDPOINT_MORE_TEMPLATE": "(+{count} more)"
+    "APP_ACTIVITY_ENDPOINT_MORE_TEMPLATE": "(+{count} more)",
+    "DECIMAL_SEPARATOR": ","
 }

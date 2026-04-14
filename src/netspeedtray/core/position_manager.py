@@ -313,7 +313,7 @@ class PositionCalculator:
         tray_rect = taskbar_info.get_tray_rect()
         bottom_boundary = round(tray_rect[1] / dpi_scale) if tray_rect else (full_geom.bottom() + 1)
 
-        offset_y = config.get('tray_offset_y', constants.config.defaults.DEFAULT_TRAY_OFFSET_X)
+        offset_y = config.get('tray_offset_y', constants.config.defaults.DEFAULT_TRAY_OFFSET_Y)
         y = round(bottom_boundary - widget_height - offset_y)
 
         # Safety check: avoid overlapping top-side icons on vertical taskbars.

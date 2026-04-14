@@ -34,6 +34,8 @@ class StatsController(QObject):
     gpu_usage_updated = pyqtSignal(float)
     cpu_temp_updated = pyqtSignal(float)
     gpu_temp_updated = pyqtSignal(float)
+    cpu_power_updated = pyqtSignal(float)
+    gpu_power_updated = pyqtSignal(float)
     ram_info_updated = pyqtSignal(float, float) # (used, total) in GB
     vram_info_updated = pyqtSignal(float, float) # (used, total) in GB
 
@@ -74,6 +76,10 @@ class StatsController(QObject):
             self.cpu_temp_updated.connect(self.view.update_cpu_temp)
         if hasattr(self.view, 'update_gpu_temp'):
             self.gpu_temp_updated.connect(self.view.update_gpu_temp)
+        if hasattr(self.view, 'update_cpu_power'):
+            self.cpu_power_updated.connect(self.view.update_cpu_power)
+        if hasattr(self.view, 'update_gpu_power'):
+            self.gpu_power_updated.connect(self.view.update_gpu_power)
         if hasattr(self.view, 'update_ram_info'):
             self.ram_info_updated.connect(self.view.update_ram_info)
         if hasattr(self.view, 'update_vram_info'):
@@ -95,11 +101,13 @@ class StatsController(QObject):
             gpu = stats.get('gpu')
             cpu_temp = stats.get('cpu_temp')
             gpu_temp = stats.get('gpu_temp')
+            cpu_power = stats.get('cpu_power')
+            gpu_power = stats.get('gpu_power')
             ram_used = stats.get('ram_used')
             ram_total = stats.get('ram_total')
             vram_used = stats.get('vram_used')
             vram_total = stats.get('vram_total')
-            
+
             # Emit signals for UI components
             if cpu is not None:
                 self.cpu_usage_updated.emit(cpu)
@@ -113,6 +121,10 @@ class StatsController(QObject):
                 self.cpu_temp_updated.emit(cpu_temp)
             if gpu_temp is not None:
                 self.gpu_temp_updated.emit(gpu_temp)
+            if cpu_power is not None:
+                self.cpu_power_updated.emit(cpu_power)
+            if gpu_power is not None:
+                self.gpu_power_updated.emit(gpu_power)
                 
             # 4. Handle RAM / VRAM Info
             if stats.get('ram_used') is not None and stats.get('ram_total') is not None:

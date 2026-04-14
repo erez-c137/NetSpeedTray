@@ -157,13 +157,18 @@ class ConfigController:
             w.high_color = QColor(w.config.get("high_speed_color", constants.config.defaults.DEFAULT_HIGH_SPEED_COLOR))
             w.low_color = QColor(w.config.get("low_speed_color", constants.config.defaults.DEFAULT_LOW_SPEED_COLOR))
 
-            # If the user disables temperature display/polling, clear any stale values
+            # If the user disables temperature/power display, clear any stale values
             # so layout calculation and rendering immediately reflect the change.
             if not w.config.get("show_hardware_temps", False):
                 if hasattr(w, "cpu_temp"):
                     w.cpu_temp = None
                 if hasattr(w, "gpu_temp"):
                     w.gpu_temp = None
+            if not w.config.get("show_hardware_power", False):
+                if hasattr(w, "cpu_power"):
+                    w.cpu_power = None
+                if hasattr(w, "gpu_power"):
+                    w.gpu_power = None
 
             # 2. Directly set the font, which also triggers the resize.
             self.logger.debug("Applying font and resizing via layout manager...")

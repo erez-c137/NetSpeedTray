@@ -22,6 +22,10 @@ class LayoutConstants:
     INTERFACE_SCROLL_MAX_ITEMS: Final[int] = 7
     INTERFACE_SCROLL_MIN_HEIGHT: Final[int] = 80
     
+    # --- Collapsible Section ---
+    COLLAPSIBLE_HEADER_HEIGHT: Final[int] = 36
+    COLLAPSIBLE_SECTION_SPACING: Final[int] = 8
+
     # --- Main Widget Specific ---
     WIDGET_DEFAULT_RIGHT_PADDING_PX: Final[int] = 10
     SMALL_TASKBAR_HEIGHT_THRESHOLD: Final[int] = 34

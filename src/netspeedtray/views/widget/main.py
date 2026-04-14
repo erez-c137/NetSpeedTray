@@ -107,6 +107,8 @@ class NetworkSpeedWidget(QWidget):
         self.gpu_usage: float = 0.0
         self.cpu_temp: Optional[float] = None
         self.gpu_temp: Optional[float] = None
+        self.cpu_power: Optional[float] = None
+        self.gpu_power: Optional[float] = None
         self.ram_used: Optional[float] = None
         self.ram_total: Optional[float] = None
         self.vram_used: Optional[float] = None
@@ -415,6 +417,18 @@ class NetworkSpeedWidget(QWidget):
             self.layout_manager.resize_widget_for_font()
             self.update()
 
+    def update_cpu_power(self, power: float) -> None:
+        """Update CPU power draw and trigger repaint."""
+        self.cpu_power = power
+        if self.config.get("widget_display_mode") in ["cpu_only", "combined", "side_by_side", "cycle"]:
+            self.update()
+
+    def update_gpu_power(self, power: float) -> None:
+        """Update GPU power draw and trigger repaint."""
+        self.gpu_power = power
+        if self.config.get("widget_display_mode") in ["gpu_only", "combined", "side_by_side", "cycle"]:
+            self.update()
+
     def update_ram_info(self, used: float, total: float) -> None:
         """Update RAM info and trigger repaint."""
         self.ram_used = used
@@ -604,14 +618,14 @@ class NetworkSpeedWidget(QWidget):
             self.renderer.draw_network_speeds(painter, up_bytes, dw_bytes, self.width(), self.height(), config, layout)
         elif mode == "cpu_only":
             ram = (self.ram_used, self.ram_total) if config.monitor_ram_enabled else None
-            self.renderer.draw_hardware_stats(painter, self.cpu_usage, None, self.width(), self.height(), config, self.cpu_temp, None, ram, None, layout)
+            self.renderer.draw_hardware_stats(painter, self.cpu_usage, None, self.width(), self.height(), config, self.cpu_temp, None, ram, None, layout, cpu_power=self.cpu_power)
         elif mode == "gpu_only":
             vram = (self.vram_used, self.vram_total) if config.monitor_vram_enabled else None
-            self.renderer.draw_hardware_stats(painter, None, self.gpu_usage, self.width(), self.height(), config, None, self.gpu_temp, None, vram, layout)
+            self.renderer.draw_hardware_stats(painter, None, self.gpu_usage, self.width(), self.height(), config, None, self.gpu_temp, None, vram, layout, gpu_power=self.gpu_power)
         elif mode == "combined":
             ram = (self.ram_used, self.ram_total) if config.monitor_ram_enabled else None
             vram = (self.vram_used, self.vram_total) if config.monitor_vram_enabled else None
-            self.renderer.draw_hardware_stats(painter, self.cpu_usage, self.gpu_usage, self.width(), self.height(), config, self.cpu_temp, self.gpu_temp, ram, vram, layout)
+            self.renderer.draw_hardware_stats(painter, self.cpu_usage, self.gpu_usage, self.width(), self.height(), config, self.cpu_temp, self.gpu_temp, ram, vram, layout, cpu_power=self.cpu_power, gpu_power=self.gpu_power)
 
     def _draw_side_by_side_layout(self, painter: QPainter, config: RenderConfig, layout: str) -> None:
         """Helper for multi-segment side-by-side painting."""
@@ -653,14 +667,14 @@ class NetworkSpeedWidget(QWidget):
                 self.renderer.draw_network_speeds(painter, up_bytes, dw_bytes, self.width(), self.height(), config, layout, x_offset=current_x)
             elif key == "cpu" and config.monitor_cpu_enabled:
                 ram = (self.ram_used, self.ram_total) if config.monitor_ram_enabled else None
-                self.renderer.draw_hardware_stats(painter, self.cpu_usage, None, self.width(), self.height(), config, self.cpu_temp, None, ram, None, layout, x_offset=current_x)
+                self.renderer.draw_hardware_stats(painter, self.cpu_usage, None, self.width(), self.height(), config, self.cpu_temp, None, ram, None, layout, x_offset=current_x, cpu_power=self.cpu_power)
             elif key == "gpu" and config.monitor_gpu_enabled:
                 vram = (self.vram_used, self.vram_total) if config.monitor_vram_enabled else None
-                self.renderer.draw_hardware_stats(painter, None, self.gpu_usage, self.width(), self.height(), config, None, self.gpu_temp, None, vram, layout, x_offset=current_x)
+                self.renderer.draw_hardware_stats(painter, None, self.gpu_usage, self.width(), self.height(), config, None, self.gpu_temp, None, vram, layout, x_offset=current_x, gpu_power=self.gpu_power)
             elif key == "hardware":
                 ram = (self.ram_used, self.ram_total) if config.monitor_ram_enabled else None
                 vram = (self.vram_used, self.vram_total) if config.monitor_vram_enabled else None
-                self.renderer.draw_hardware_stats(painter, self.cpu_usage, self.gpu_usage, self.width(), self.height(), config, self.cpu_temp, self.gpu_temp, ram, vram, layout, x_offset=current_x)
+                self.renderer.draw_hardware_stats(painter, self.cpu_usage, self.gpu_usage, self.width(), self.height(), config, self.cpu_temp, self.gpu_temp, ram, vram, layout, x_offset=current_x, cpu_power=self.cpu_power, gpu_power=self.gpu_power)
             
             if key == "network":
                 current_x += getattr(self.layout_manager, '_network_width', self.renderer.get_last_text_rect().width()) + constants.layout.WIDGET_SEGMENT_GAP_AFTER_NETWORK_PX

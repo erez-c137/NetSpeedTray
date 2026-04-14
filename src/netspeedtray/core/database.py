@@ -31,7 +31,7 @@ class DatabaseWorker(QThread):
     error = pyqtSignal(str)
     database_updated = pyqtSignal()
 
-    _DB_VERSION = 5  # Covering indexes, metadata tracking, eager aggregation, sample_count, hardware stats
+    _DB_VERSION = 6  # Covering indexes, metadata tracking, eager aggregation, sample_count, hardware stats, hardware hourly
 
     def __init__(self, db_path: Path, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
@@ -179,6 +179,21 @@ class DatabaseWorker(QThread):
             self.conn.rollback()
             raise 
 
+    def _migrate_v5_to_v6(self, cursor: sqlite3.Cursor) -> None:
+        """Migration v5 to v6: Add hardware_stats_hour table for long-term hardware history."""
+        self.logger.info("Executing v5->v6 migration: Adding hardware_stats_hour table.")
+        cursor.executescript(f"""
+            CREATE TABLE IF NOT EXISTS {constants.data.HARDWARE_STATS_TABLE_HOUR} (
+                timestamp INTEGER NOT NULL,
+                stat_type TEXT NOT NULL,
+                avg_value REAL NOT NULL,
+                max_value REAL NOT NULL,
+                sample_count INTEGER NOT NULL,
+                PRIMARY KEY (timestamp, stat_type)
+            );
+            CREATE INDEX IF NOT EXISTS idx_hw_hour_timestamp ON {constants.data.HARDWARE_STATS_TABLE_HOUR} (timestamp DESC);
+        """)
+
     def _migrate_v4_to_v5(self, cursor: sqlite3.Cursor) -> None:
         """Migration v4 to v5: Add hardware stats tables."""
         self.logger.info("Executing v4->v5 migration: Adding hardware stats tables.")
@@ -282,9 +297,10 @@ class DatabaseWorker(QThread):
         
         self.logger.info("Dropping old tables...")
         cursor.execute("PRAGMA foreign_keys = OFF;")
-        for table in [constants.data.SPEED_TABLE_RAW, constants.data.SPEED_TABLE_MINUTE, 
+        for table in [constants.data.SPEED_TABLE_RAW, constants.data.SPEED_TABLE_MINUTE,
                       constants.data.SPEED_TABLE_HOUR, constants.data.BANDWIDTH_TABLE,
-                      constants.data.HARDWARE_STATS_TABLE_RAW, constants.data.HARDWARE_STATS_TABLE_MINUTE]:
+                      constants.data.HARDWARE_STATS_TABLE_RAW, constants.data.HARDWARE_STATS_TABLE_MINUTE,
+                      constants.data.HARDWARE_STATS_TABLE_HOUR]:
             cursor.execute(f"DROP TABLE IF EXISTS {table}")
         cursor.execute("DROP TABLE IF EXISTS metadata")
         cursor.execute("PRAGMA foreign_keys = ON;")
@@ -340,6 +356,14 @@ class DatabaseWorker(QThread):
                 PRIMARY KEY (timestamp, stat_type)
             );
             CREATE INDEX idx_hw_minute_timestamp ON {constants.data.HARDWARE_STATS_TABLE_MINUTE} (timestamp DESC);
+
+            CREATE TABLE {constants.data.HARDWARE_STATS_TABLE_HOUR} (
+                timestamp INTEGER NOT NULL, stat_type TEXT NOT NULL,
+                avg_value REAL NOT NULL, max_value REAL NOT NULL,
+                sample_count INTEGER NOT NULL,
+                PRIMARY KEY (timestamp, stat_type)
+            );
+            CREATE INDEX idx_hw_hour_timestamp ON {constants.data.HARDWARE_STATS_TABLE_HOUR} (timestamp DESC);
         """)
         self.conn.commit()
         self.logger.info("New database schema created successfully.")
@@ -393,8 +417,9 @@ class DatabaseWorker(QThread):
             self._aggregate_raw_to_minute(cursor, _now)
             self._aggregate_minute_to_hour(cursor, _now)
             self._aggregate_hardware_raw_to_minute(cursor, _now)
+            self._aggregate_hardware_minute_to_hour(cursor, _now)
             pruned = self._prune_data_with_grace_period(cursor, config, _now)
-            self._prune_hardware_data(cursor, _now)
+            self._prune_hardware_data(cursor, config, _now)
             
             self.conn.commit()
             
@@ -430,12 +455,32 @@ class DatabaseWorker(QThread):
         if cursor.rowcount > 0: self.logger.info("Pruned %d raw hardware records after aggregation.", cursor.rowcount)
 
 
-    def _prune_hardware_data(self, cursor: sqlite3.Cursor, now: datetime) -> None:
-        """Prunes hardware stats older than 30 days (default for HW)."""
+    def _aggregate_hardware_minute_to_hour(self, cursor: sqlite3.Cursor, now: datetime) -> None:
+        """Aggregates per-minute hardware stats older than 30 days into per-hour records."""
         cutoff = int((now - timedelta(days=30)).timestamp())
-        self.logger.debug("Pruning hardware data older than %s...", datetime.fromtimestamp(cutoff))
+        self.logger.debug("Aggregating minute hardware data older than %s...", datetime.fromtimestamp(cutoff))
+        cursor.execute(f"""
+            INSERT OR REPLACE INTO {constants.data.HARDWARE_STATS_TABLE_HOUR} (timestamp, stat_type, avg_value, max_value, sample_count)
+            SELECT
+                (timestamp / 3600) * 3600 AS hour_timestamp,
+                stat_type,
+                SUM(avg_value * sample_count) / NULLIF(SUM(sample_count), 0),
+                MAX(max_value),
+                SUM(sample_count)
+            FROM {constants.data.HARDWARE_STATS_TABLE_MINUTE}
+            WHERE timestamp < ?
+            GROUP BY hour_timestamp, stat_type
+        """, (cutoff,))
+        if cursor.rowcount > 0: self.logger.info("Aggregated %d per-hour hardware records.", cursor.rowcount)
         cursor.execute(f"DELETE FROM {constants.data.HARDWARE_STATS_TABLE_MINUTE} WHERE timestamp < ?", (cutoff,))
-        if cursor.rowcount > 0: self.logger.info("Pruned %d minute hardware records.", cursor.rowcount)
+        if cursor.rowcount > 0: self.logger.info("Pruned %d minute hardware records after aggregation.", cursor.rowcount)
+
+    def _prune_hardware_data(self, cursor: sqlite3.Cursor, config: Dict[str, Any], now: datetime) -> None:
+        """Prunes hourly hardware stats using the same retention period as speed data."""
+        retention_days = config.get("keep_data", 365)
+        cutoff = int((now - timedelta(days=retention_days)).timestamp())
+        cursor.execute(f"DELETE FROM {constants.data.HARDWARE_STATS_TABLE_HOUR} WHERE timestamp < ?", (cutoff,))
+        if cursor.rowcount > 0: self.logger.info("Pruned %d hourly hardware records older than %d days.", cursor.rowcount, retention_days)
 
 
     def _aggregate_raw_to_minute(self, cursor: sqlite3.Cursor, now: datetime) -> None:

@@ -87,8 +87,8 @@ class WidgetState(QObject):
         self._hw_batch: List[Tuple[int, str, float]] = []
 
         # Database Worker Thread
-        db_path = Path(get_app_data_path()) / "speed_history.db"
-        self.db_worker = DatabaseWorker(db_path)
+        self._db_path = Path(get_app_data_path()) / "speed_history.db"
+        self.db_worker = DatabaseWorker(self._db_path)
         self.db_worker.error.connect(lambda msg: self.logger.error("DB Worker Error: %s", msg))
         self.db_worker.start()
 
@@ -114,8 +114,7 @@ class WidgetState(QObject):
         thread_id = threading.get_ident()
         with self._read_conns_lock:
             if thread_id not in self._read_conns:
-                db_path = Path(get_app_data_path()) / "speed_history.db"
-                conn = sqlite3.connect(db_path, check_same_thread=False)
+                conn = sqlite3.connect(self._db_path, check_same_thread=False)
                 conn.row_factory = sqlite3.Row
                 self._read_conns[thread_id] = conn
             return self._read_conns[thread_id]
@@ -194,11 +193,18 @@ class WidgetState(QObject):
             start_ts = int(_start.timestamp())
             end_ts = int(_end.timestamp())
             
-            # Use minute table for large ranges, raw for small sessions
-            is_large_range = (end_ts - start_ts) > 6 * 3600 # > 6 hours use minute data
-            table = constants.data.HARDWARE_STATS_TABLE_MINUTE if is_large_range else constants.data.HARDWARE_STATS_TABLE_RAW
-            val_col = "avg_value" if is_large_range else "value"
-            
+            # Pick the right tier: raw (<6h), minute (<30d), hour (>30d)
+            duration = end_ts - start_ts
+            if duration <= 6 * 3600:
+                table = constants.data.HARDWARE_STATS_TABLE_RAW
+                val_col = "value"
+            elif duration <= 30 * 86400:
+                table = constants.data.HARDWARE_STATS_TABLE_MINUTE
+                val_col = "avg_value"
+            else:
+                table = constants.data.HARDWARE_STATS_TABLE_HOUR
+                val_col = "avg_value"
+
             query = f"SELECT timestamp, {val_col} FROM {table} WHERE stat_type = ? AND timestamp BETWEEN ? AND ? ORDER BY timestamp ASC"
             cursor.execute(query, (stat_type, start_ts, end_ts))
             

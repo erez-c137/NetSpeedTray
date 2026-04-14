@@ -100,7 +100,8 @@ Docs/
 .antigravity/
 .agent/
 .gemini/
-gemini.md
+.claudeignore
+CLAUDE.md
 GEMINI.md
 
 # Local debug artifacts (not part of the product)

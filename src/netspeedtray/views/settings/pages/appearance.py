@@ -11,7 +11,9 @@ from PyQt6.QtWidgets import (
 )
 
 from netspeedtray import constants
-from netspeedtray.utils.components import Win11Slider
+from netspeedtray.constants import styles as style_constants
+from netspeedtray.utils import styles as style_utils
+from netspeedtray.utils.components import Win11Slider, Win11Toggle
 
 class AppearancePage(QWidget):
     layout_changed = pyqtSignal()
@@ -112,7 +114,6 @@ class AppearancePage(QWidget):
         layout.addWidget(font_group)
         
         # --- Arrow Styling Group (Merged from ArrowsPage) ---
-        from netspeedtray.utils.components import Win11Toggle
         arrow_group = QGroupBox(self.i18n.ARROW_STYLING_GROUP)
         arrow_layout = QVBoxLayout(arrow_group)
         arrow_layout.setSpacing(12)
@@ -174,6 +175,41 @@ class AppearancePage(QWidget):
         bg_main_layout.addWidget(self.bg_opacity)
 
         layout.addWidget(bg_group)
+
+        # --- Mini Graph Settings (absorbed from Graph page) ---
+        graph_group = QGroupBox(self.i18n.MINI_GRAPH_SECTION_TITLE)
+        graph_layout = QVBoxLayout(graph_group)
+        graph_layout.setSpacing(8)
+
+        enable_row = QHBoxLayout()
+        enable_row.addWidget(QLabel(self.i18n.ENABLE_GRAPH_LABEL))
+        self.enable_graph = Win11Toggle(label_text="")
+        self.enable_graph.toggled.connect(self.on_change)
+        enable_row.addWidget(self.enable_graph)
+        enable_row.addStretch()
+        graph_layout.addLayout(enable_row)
+
+        note = QLabel(self.i18n.GRAPH_NOTE_TEXT)
+        note.setWordWrap(True)
+        is_dark = style_utils.is_dark_mode()
+        subtle_color = style_constants.SUBTLE_TEXT_COLOR_DARK if is_dark else style_constants.SUBTLE_TEXT_COLOR_LIGHT
+        note.setStyleSheet(f"font-size: {constants.fonts.NOTE_FONT_SIZE}pt; color: {subtle_color};")
+        graph_layout.addWidget(note)
+
+        graph_layout.addWidget(QLabel(self.i18n.HISTORY_DURATION_LABEL))
+        self.history_duration = Win11Slider(editable=False)
+        hist_min, hist_max = constants.ui.history.HISTORY_MINUTES_RANGE
+        self.history_duration.setRange(hist_min, hist_max)
+        self.history_duration.valueChanged.connect(self.on_change)
+        graph_layout.addWidget(self.history_duration)
+
+        graph_layout.addWidget(QLabel(self.i18n.GRAPH_OPACITY_LABEL))
+        self.graph_opacity = Win11Slider(editable=False)
+        self.graph_opacity.setRange(constants.ui.sliders.OPACITY_MIN, constants.ui.sliders.OPACITY_MAX)
+        self.graph_opacity.valueChanged.connect(self.on_change)
+        graph_layout.addWidget(self.graph_opacity)
+
+        layout.addWidget(graph_group)
         layout.addStretch()
 
     def load_settings(self, config: Dict[str, Any]):
@@ -206,6 +242,11 @@ class AppearancePage(QWidget):
         
         self.arrow_font_container.setVisible(self.use_separate_arrow_font.isChecked())
 
+        # Mini Graph
+        self.enable_graph.setChecked(config.get("graph_enabled", True))
+        self.history_duration.setValue(config.get("history_minutes", constants.config.defaults.DEFAULT_HISTORY_MINUTES))
+        self.graph_opacity.setValue(config.get("graph_opacity", constants.config.defaults.DEFAULT_GRAPH_OPACITY))
+
     def get_settings(self) -> Dict[str, Any]:
         settings = {
             "font_family": self.font_family_label.text(),
@@ -218,7 +259,11 @@ class AppearancePage(QWidget):
             "use_separate_arrow_font": self.use_separate_arrow_font.isChecked(),
             "arrow_font_family": self.arrow_font_family_label.text(),
             "arrow_font_size": int(self.arrow_font_size.value()),
-            "arrow_font_weight": constants.fonts.WEIGHT_DEMIBOLD # Fixed default due to glyph fallback issues
+            "arrow_font_weight": constants.fonts.WEIGHT_DEMIBOLD, # Fixed default due to glyph fallback issues
+            # Mini Graph
+            "graph_enabled": self.enable_graph.isChecked(),
+            "history_minutes": self.history_duration.value(),
+            "graph_opacity": self.graph_opacity.value()
         }
         return settings
 

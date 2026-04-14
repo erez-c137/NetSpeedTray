@@ -103,20 +103,6 @@ class UnitsPage(QWidget):
         layout_gl.setColumnStretch(1, 0)
         layout.addWidget(layout_group)
 
-        # --- Group 3: Positioning ---
-        pos_group = QGroupBox(getattr(self.i18n, 'POSITION_GROUP', "Positioning"))
-        pos_layout = QGridLayout(pos_group)
-        
-        pos_layout.addWidget(QLabel(self.i18n.TRAY_OFFSET_LABEL), 0, 0, Qt.AlignmentFlag.AlignVCenter)
-        self.tray_offset = Win11Slider()
-        self.tray_offset.setRange(0, 50)
-        self.tray_offset.valueChanged.connect(self.on_change)
-        pos_layout.addWidget(self.tray_offset, 0, 1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        
-        pos_layout.setColumnStretch(0, 1)
-        pos_layout.setColumnStretch(1, 0)
-        layout.addWidget(pos_group)
-
         layout.addStretch()
 
     def load_settings(self, config: Dict[str, Any]):
@@ -145,8 +131,6 @@ class UnitsPage(QWidget):
         self.hide_unit_suffix.setChecked(config.get("hide_unit_suffix", False))
         self.short_unit_labels.setChecked(config.get("short_unit_labels", constants.config.defaults.DEFAULT_SHORT_UNIT_LABELS))
         
-        # Offset
-        self.tray_offset.setValue(config.get("tray_offset_x", 0))
 
     def get_settings(self) -> Dict[str, Any]:
         # Inverse mapping
@@ -163,8 +147,7 @@ class UnitsPage(QWidget):
             "swap_upload_download": self.swap_upload_download.isChecked(),
             "hide_arrows": self.hide_arrows.isChecked(),
             "hide_unit_suffix": self.hide_unit_suffix.isChecked(),
-            "short_unit_labels": self.short_unit_labels.isChecked(),
-            "tray_offset_x": self.tray_offset.value()
+            "short_unit_labels": self.short_unit_labels.isChecked()
         }
 
     def _on_force_mb_toggled(self, checked: bool) -> None:

@@ -56,6 +56,13 @@
     "BACKGROUND_COLOR_TOOLTIP": "Sélectionnez la couleur d'arrière-plan du widget",
     "UPDATE_RATE_GROUP_TITLE": "Fréquence de Mise à Jour",
     "OPTIONS_GROUP_TITLE": "Options",
+    "BEHAVIOR_GROUP_TITLE": "Comportement",
+    "MINI_GRAPH_SECTION_TITLE": "Mini Graphique",
+    "HARDWARE_INDICATOR_STYLE_LABEL": "Style d'indicateur",
+    "MONITORING_MODE_AUTO_SUBTITLE": "Surveille la connexion active principale",
+    "MONITORING_MODE_PHYSICAL_SUBTITLE": "Exclut les VPN et adaptateurs virtuels",
+    "MONITORING_MODE_VIRTUAL_SUBTITLE": "Inclut les VPN, adaptateurs virtuels et tunnels",
+    "MONITORING_MODE_SELECTED_SUBTITLE": "Choisissez des interfaces spécifiques dans la liste ci-dessous",
     "FONT_SETTINGS_GROUP_TITLE": "Paramètres de Police",
     "COLOR_CODING_GROUP": "Code couleur",
     "ARROWS_SETTINGS_GROUP": "Flèches",
@@ -73,6 +80,8 @@
     "SHOW_HARDWARE_TEMPS_LABEL": "Afficher la temperature CPU/GPU",
     "SHOW_HARDWARE_TEMPS_TOOLTIP": "Affiche la temperature a cote de l'utilisation CPU/GPU lorsque disponible.",
     "HARDWARE_TEMPS_LIMITATION_NOTE": "Note : la temperature GPU AMD n'est pas disponible actuellement avec la methode universelle (PDH).",
+    "SHOW_HARDWARE_POWER_LABEL": "Afficher la puissance CPU/GPU (Watts)",
+    "SHOW_HARDWARE_POWER_TOOLTIP": "Affiche la consommation d'énergie à côté de l'utilisation CPU/GPU. Utilise Intel RAPL (sans admin) pour le CPU, nvidia-smi pour le GPU NVIDIA et LibreHardwareMonitor pour les GPU AMD/Intel.",
     "HARDWARE_LABEL_STYLE_LABEL": "Style d'etiquette",
     "HARDWARE_LABEL_STYLE_COLORED_ICONS": "Icones colorees",
     "HARDWARE_LABEL_STYLE_MONOCHROME_ICONS": "Icones monochromes (blanc)",
@@ -320,5 +329,6 @@
     "APP_ACTIVITY_UNKNOWN_PROCESS": "Unknown",
     "APP_ACTIVITY_NO_CONNECTION_DETAILS": "No connection details available.",
     "APP_ACTIVITY_SELECTED_APP_TEMPLATE": "{process_name} (PID {pid})",
-    "APP_ACTIVITY_ENDPOINT_MORE_TEMPLATE": "(+{count} more)"
+    "APP_ACTIVITY_ENDPOINT_MORE_TEMPLATE": "(+{count} more)",
+    "DECIMAL_SEPARATOR": ","
 }

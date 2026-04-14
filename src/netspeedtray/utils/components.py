@@ -11,7 +11,7 @@ import logging
 import re
 from typing import Optional, Final
 from PyQt6.QtWidgets import (
-    QWidget, QHBoxLayout, QCheckBox, QLabel, QSlider, 
+    QWidget, QHBoxLayout, QVBoxLayout, QCheckBox, QLabel, QSlider,
     QSizePolicy, QStyleOption, QLineEdit
 )
 from PyQt6.QtCore import Qt, QSize, pyqtSignal, QPropertyAnimation, QEasingCurve, QPoint
@@ -458,3 +458,75 @@ class Win11Slider(QWidget):
         height = max(slider_sh.height(), label_sh.height()) + margins.top() + margins.bottom()
         
         return QSize(width, max(height, 28))
+
+
+class CollapsibleSection(QWidget):
+    """
+    A collapsible card section with a clickable header and expandable content area.
+    Used to reduce visual density on busy settings pages.
+    """
+    toggled = pyqtSignal(bool)
+
+    def __init__(self, title: str, expanded: bool = True, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        from netspeedtray.utils.styles import collapsible_section_style
+
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.setSpacing(constants.layout.COLLAPSIBLE_SECTION_SPACING)
+
+        # --- Header ---
+        self._header = QWidget()
+        self._header.setObjectName("collapsibleHeader")
+        self._header.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._header.setFixedHeight(constants.layout.COLLAPSIBLE_HEADER_HEIGHT)
+        self._header.setStyleSheet(collapsible_section_style())
+        self._header.mousePressEvent = self._on_header_clicked
+
+        header_layout = QHBoxLayout(self._header)
+        header_layout.setContentsMargins(8, 0, 8, 0)
+        header_layout.setSpacing(6)
+
+        self._chevron = QLabel()
+        self._chevron.setObjectName("sectionChevron")
+        self._chevron.setFixedWidth(16)
+        header_layout.addWidget(self._chevron)
+
+        self._title_label = QLabel(title)
+        self._title_label.setObjectName("sectionTitle")
+        header_layout.addWidget(self._title_label, stretch=1)
+
+        outer_layout.addWidget(self._header)
+
+        # --- Content ---
+        self._content = QWidget()
+        self._content_layout = QVBoxLayout(self._content)
+        self._content_layout.setContentsMargins(0, 0, 0, 0)
+        self._content_layout.setSpacing(10)
+        outer_layout.addWidget(self._content)
+
+        # --- Initial state ---
+        self._expanded = expanded
+        self._update_state()
+
+    def _on_header_clicked(self, event) -> None:
+        self._expanded = not self._expanded
+        self._update_state()
+        self.toggled.emit(self._expanded)
+
+    def _update_state(self) -> None:
+        self._content.setVisible(self._expanded)
+        self._chevron.setText("\u25BE" if self._expanded else "\u25B8")
+
+    def setExpanded(self, expanded: bool) -> None:
+        if self._expanded != expanded:
+            self._expanded = expanded
+            self._update_state()
+            self.toggled.emit(self._expanded)
+
+    def isExpanded(self) -> bool:
+        return self._expanded
+
+    def contentLayout(self) -> QVBoxLayout:
+        """Returns the layout to add child widgets to."""
+        return self._content_layout

@@ -106,7 +106,7 @@ def dialog_style() -> str:
             margin-top: 12px;
             color: {text_color};
             background-color: {section_bg};
-            border: 1px solid {border_color};
+            border: none;
             border-radius: 8px; /* Native Win11 radius */
             padding: 12px; 
             padding-top: 24px; /* Space for title */
@@ -120,6 +120,37 @@ def dialog_style() -> str:
         }}
         QWidget:focus, QStackedWidget:focus, QStackedWidget::widget:focus {{ 
             outline: none; 
+        }}
+    """
+
+
+def collapsible_section_style() -> str:
+    """Style for CollapsibleSection header widget."""
+    dark_mode_active = is_dark_mode()
+    text_color = style_constants.DARK_MODE_TEXT_COLOR if dark_mode_active else style_constants.LIGHT_MODE_TEXT_COLOR
+    hover_bg = "rgba(255, 255, 255, 0.05)" if dark_mode_active else "rgba(0, 0, 0, 0.03)"
+
+    return f"""
+        QWidget#collapsibleHeader {{
+            background-color: transparent;
+            border: none;
+            padding: 4px 0px;
+        }}
+        QWidget#collapsibleHeader:hover {{
+            background-color: {hover_bg};
+            border-radius: 6px;
+        }}
+        QWidget#collapsibleHeader QLabel {{
+            color: {text_color};
+            font-family: "Segoe UI Variable";
+            background-color: transparent;
+        }}
+        QWidget#collapsibleHeader QLabel#sectionTitle {{
+            font-size: 14px;
+            font-weight: 600;
+        }}
+        QWidget#collapsibleHeader QLabel#sectionChevron {{
+            font-size: 12px;
         }}
     """
 

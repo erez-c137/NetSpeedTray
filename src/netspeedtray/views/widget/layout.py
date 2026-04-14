@@ -129,16 +129,15 @@ class WidgetLayoutManager:
                 # --- HORIZONTAL TASKBAR (TOP/BOTTOM) ---
                 if is_small:
                     # Small Horizontal Layout Width Calculation
+                    # Uses stable reference values rather than a non-existent renderer method.
                     unit_type = self.widget.config.get("unit_type", constants.config.defaults.DEFAULT_UNIT_TYPE)
-                    # FIX for #106: Pass short_labels to formatter to match render-time behavior
-                    # This ensures layout calculation predicts the same width as actual rendering
-                    # Example: short_labels=True → "9.99 Mb/s" (shorter)
-                    #         short_labels=False → "9.99 Megabits/s" (longer, needs more width)
-                    upload_pair, download_pair = self.widget.renderer._format_speed_texts(9.99, 99.99, False, precision, True, unit_type, short_labels=short_labels, full_string=False)
-                    
-                    up_val, up_unit = upload_pair
-                    down_val, down_unit = download_pair
-                    
+                    always_mbps = self.widget.config.get("speed_display_mode", constants.config.defaults.DEFAULT_SPEED_DISPLAY_MODE) == "always_mbps"
+
+                    from netspeedtray.utils.helpers import get_reference_value_string, get_unit_labels_for_type
+                    ref_val_str = get_reference_value_string(always_mbps, precision, unit_type)
+                    unit_labels = get_unit_labels_for_type(self.widget.i18n, unit_type, short_labels)
+                    ref_unit = unit_labels[2]  # Mega unit as reference (most common display unit)
+
                     def get_part_width(arrow_char, val, unit):
                         w = 0
                         if not hide_arrows:
@@ -148,25 +147,22 @@ class WidgetLayoutManager:
                             w += self.metrics.horizontalAdvance(" ") + self.metrics.horizontalAdvance(unit)
                         return w
 
-                    up_width = get_part_width(self.widget.i18n.UPLOAD_ARROW, up_val, up_unit)
-                    down_width = get_part_width(self.widget.i18n.DOWNLOAD_ARROW, down_val, down_unit)
+                    up_width = get_part_width(self.widget.i18n.UPLOAD_ARROW, ref_val_str, ref_unit)
+                    down_width = get_part_width(self.widget.i18n.DOWNLOAD_ARROW, ref_val_str, ref_unit)
                     sep_width = self.metrics.horizontalAdvance(constants.layout.HORIZONTAL_LAYOUT_SEPARATOR)
-                    
+
                     calculated_width = up_width + sep_width + down_width + (margin * 2)
                 else:
                     # Large Horizontal Layout Width Calculation (Vertical Mode)
                     always_mbps = self.widget.config.get("speed_display_mode", constants.config.defaults.DEFAULT_SPEED_DISPLAY_MODE) == "always_mbps"
                     
                     from netspeedtray.utils.helpers import get_all_possible_unit_labels, get_reference_value_string
-                    
-                    # Use current live rates dimensions instead of fixed templates
-                    up_val = getattr(self.widget, 'upload_speed', 0.0)
-                    dw_val = getattr(self.widget, 'download_speed', 0.0)
-                    up_str = f"{up_val:.{precision}f}"
-                    dw_str = f"{dw_val:.{precision}f}"
-                    max_number_width = max(self.metrics.horizontalAdvance(up_str), self.metrics.horizontalAdvance(dw_str))
-                    
-                    short_labels = self.widget.config.get("short_unit_labels", False)
+
+                    unit_type = self.widget.config.get("unit_type", constants.config.defaults.DEFAULT_UNIT_TYPE)
+                    # Use stable reference string instead of live values (which start at 0.0 and change every tick)
+                    ref_str = get_reference_value_string(always_mbps, precision, unit_type)
+                    max_number_width = self.metrics.horizontalAdvance(ref_str)
+
                     possible_units = get_all_possible_unit_labels(self.widget.i18n, short_labels=short_labels)
                     max_unit_width = max(self.metrics.horizontalAdvance(unit) for unit in possible_units) if not hide_units else 0
                     
@@ -211,13 +207,23 @@ class WidgetLayoutManager:
                     style = self.widget.config.get('hardware_label_style', 'icons_colored')
                     label_offset = self.metrics.horizontalAdvance("CPU ") if style == "text" else 14
                     show_temps = bool(self.widget.config.get("show_hardware_temps", False))
+                    show_power = bool(self.widget.config.get("show_hardware_power", False))
+                    # Compute suffix width based on which extras are enabled
+                    if show_temps and show_power:
+                        hw_suffix_width = self.metrics.horizontalAdvance(" (100°C, 100.0W)")
+                    elif show_power:
+                        hw_suffix_width = self.metrics.horizontalAdvance(" (100.0W)")
+                    elif show_temps:
+                        hw_suffix_width = self.metrics.horizontalAdvance(" (100°C)")
+                    else:
+                        hw_suffix_width = 0
+
                     cpu_width = 0
                     if "cpu" in display_order and monitor_cpu:
                         cpu_val = int(getattr(self.widget, 'cpu_usage', 0))
                         cpu_width = label_offset + self.metrics.horizontalAdvance(" 100%")
-                        if show_temps:
-                            # Reserve space even if temp is unavailable yet (we display a placeholder).
-                            cpu_width += self.metrics.horizontalAdvance(" (100°C)")
+                        if hw_suffix_width:
+                            cpu_width += hw_suffix_width
                         if monitor_ram and getattr(self.widget, 'ram_used', None) is not None:
                             used = getattr(self.widget, 'ram_used', 0)
                             total = getattr(self.widget, 'ram_total', -1.0)
@@ -232,8 +238,8 @@ class WidgetLayoutManager:
                     if "gpu" in display_order and monitor_gpu:
                         gpu_val = int(getattr(self.widget, 'gpu_usage', 0))
                         gpu_width = label_offset + self.metrics.horizontalAdvance(" 100%")
-                        if show_temps:
-                            gpu_width += self.metrics.horizontalAdvance(" (100°C)")
+                        if hw_suffix_width:
+                            gpu_width += hw_suffix_width
                         if monitor_vram and getattr(self.widget, 'vram_used', None) is not None:
                             used = getattr(self.widget, 'vram_used', 0)
                             total = getattr(self.widget, 'vram_total', -1.0)
@@ -260,21 +266,30 @@ class WidgetLayoutManager:
                 elif display_mode in ["cpu_only", "gpu_only", "combined"]:
                     calculated_width = 0
                     show_temps = bool(self.widget.config.get("show_hardware_temps", False))
+                    show_power = bool(self.widget.config.get("show_hardware_power", False))
+                    if show_temps and show_power:
+                        hw_suffix_w = self.metrics.horizontalAdvance(" (100°C, 100.0W)")
+                    elif show_power:
+                        hw_suffix_w = self.metrics.horizontalAdvance(" (100.0W)")
+                    elif show_temps:
+                        hw_suffix_w = self.metrics.horizontalAdvance(" (100°C)")
+                    else:
+                        hw_suffix_w = 0
+
                     if display_mode in ["cpu_only", "combined"]:
                         cpu_width = label_offset + self.metrics.horizontalAdvance(" 100%")
-                        if show_temps:
-                            cpu_width += self.metrics.horizontalAdvance(" (100°C)")
+                        if hw_suffix_w:
+                            cpu_width += hw_suffix_w
                         if monitor_ram and getattr(self.widget, 'ram_used', None) is not None:
                             cpu_width += self.metrics.horizontalAdvance(" | 16.0/16.0G")
                         calculated_width = max(calculated_width, cpu_width)
-                        
+
                     if display_mode in ["gpu_only", "combined"]:
                         gpu_width = label_offset + self.metrics.horizontalAdvance(" 100%")
-                        if show_temps:
-                            gpu_width += self.metrics.horizontalAdvance(" (100°C)")
+                        if hw_suffix_w:
+                            gpu_width += hw_suffix_w
                         if monitor_vram and getattr(self.widget, 'vram_used', None) is not None:
                             gpu_width += self.metrics.horizontalAdvance(" | 16.0/16.0G")
-                        # for Combined, they are drawn stacked, so width is max of either line
                         calculated_width = max(calculated_width, gpu_width)
                 
                 

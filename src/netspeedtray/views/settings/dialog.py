@@ -18,12 +18,12 @@ from typing import Any, Dict, List, Optional, TYPE_CHECKING
 if TYPE_CHECKING:
     from netspeedtray.views.widget import NetworkSpeedWidget
 
-from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QSize
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from PyQt6.QtGui import QColor, QFont, QIcon, QCloseEvent
 from PyQt6.QtWidgets import (
     QApplication, QColorDialog, QDialog, QFileDialog, QFontDialog,
-    QHBoxLayout, QListWidget, QMessageBox, QPushButton, QStackedWidget, 
-    QVBoxLayout, QWidget
+    QHBoxLayout, QListWidget, QMessageBox, QPushButton, QScrollArea,
+    QStackedWidget, QVBoxLayout, QWidget
 )
 
 # --- Custom Application Imports ---
@@ -33,65 +33,14 @@ from netspeedtray.utils.helpers import get_app_data_path, get_app_asset_path
 from netspeedtray.utils.styles import is_dark_mode
 
 # --- Settings Pages ---
-from netspeedtray.views.settings.pages.units import UnitsPage as DisplayPage # Renamed in file, but logic expects DisplayPage in naming convention
-# Wait, file is units.py, Class is UnitsPage (checked content in Step 5448)
-# Step 5442 showed 'from netspeedtray.core.database import DatabaseWorker' -> But Step 5448 shows 'class UnitsPage'.
-# Let's trust content > import.
 from netspeedtray.views.settings.pages.units import UnitsPage
-from netspeedtray.views.settings.pages.graph_config import GraphPage
 from netspeedtray.utils.config import ConfigManager
-from netspeedtray.views.settings.pages.troubleshooting import TroubleshootingPage
 from netspeedtray.views.settings.pages.interfaces import InterfacesPage
 from netspeedtray.views.settings.pages.general import GeneralPage
 from netspeedtray.views.settings.pages.appearance import AppearancePage
 from netspeedtray.views.settings.pages.colors import ColorsPage
 from netspeedtray.views.settings.pages.hardware import HardwarePage
 from netspeedtray.constants.update_mode import UpdateMode
-
-
-class AdaptiveStackedWidget(QStackedWidget):
-    """
-    A QStackedWidget that adjusts its size to accommodate all pages.
-    
-    The dialog maintains a consistent size based on the largest page,
-    preventing the window from resizing when switching between tabs.
-    This provides a stable, professional user experience.
-    """
-    def sizeHint(self):
-        """Returns the size needed to fit the largest page in the stack."""
-        max_width = 0
-        max_height = 0
-        
-        # Calculate the maximum dimensions needed by any page
-        for i in range(self.count()):
-            widget = self.widget(i)
-            if widget:
-                hint = widget.sizeHint()
-                max_width = max(max_width, hint.width())
-                max_height = max(max_height, hint.height())
-        
-        # Return the maximum size found, or fallback to parent implementation
-        if max_width > 0 and max_height > 0:
-            return QSize(max_width, max_height)
-        return super().sizeHint()
-
-    def minimumSizeHint(self):
-        """Returns the minimum size needed to fit the largest page in the stack."""
-        max_width = 0
-        max_height = 0
-        
-        # Calculate the maximum minimum dimensions needed by any page
-        for i in range(self.count()):
-            widget = self.widget(i)
-            if widget:
-                hint = widget.minimumSizeHint()
-                max_width = max(max_width, hint.width())
-                max_height = max(max_height, hint.height())
-        
-        # Return the maximum minimum size found, or fallback to parent implementation
-        if max_width > 0 and max_height > 0:
-            return QSize(max_width, max_height)
-        return super().minimumSizeHint()
 
 
 class SettingsDialog(QDialog):
@@ -158,15 +107,20 @@ class SettingsDialog(QDialog):
         self._init_ui_state()
         self._connect_signals()
 
+        # Fixed dialog size — pages scroll if taller than available space
+        self.setMinimumSize(550, 400)
         screen = self.screen() or QApplication.primaryScreen()
         if screen:
-            screen_center = screen.availableGeometry().center()
-            dialog_center = self.rect().center()
-            self.move(screen_center - dialog_center)
-
-        # Set a safe minimum size to prevent layout breakage on small screens or long translations
-        # Increased for #104/high-DPI compatibility where OS min-track might be > 620x500
-        self.setMinimumSize(650, 560)
+            avail = screen.availableGeometry()
+            initial_h = min(600, avail.height() - 80)
+            self.resize(650, max(450, initial_h))
+            # Center on available geometry (excludes taskbar)
+            self.move(
+                avail.center().x() - self.width() // 2,
+                avail.center().y() - self.height() // 2
+            )
+        else:
+            self.resize(650, 560)
 
         self.logger.debug("SettingsDialog initialization completed.")
 
@@ -189,15 +143,12 @@ class SettingsDialog(QDialog):
             self.sidebar.setStyleSheet(style_utils.sidebar_style())
             self.sidebar.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             self.sidebar.addItems([
-                self.i18n.GENERAL_SETTINGS_GROUP, 
+                self.i18n.GENERAL_SETTINGS_GROUP,
                 self.i18n.APPEARANCE_SETTINGS_GROUP,
                 self.i18n.COLOR_CODING_GROUP,
-                # Arrow settings group removed (merged into Appearance)
-                self.i18n.MINI_GRAPH_SETTINGS_GROUP, 
                 self.i18n.HARDWARE_MONITORING_GROUP,
                 self.i18n.UNITS_GROUP,
-                self.i18n.NETWORK_INTERFACES_GROUP, 
-                self.i18n.TROUBLESHOOTING_GROUP
+                self.i18n.NETWORK_INTERFACES_GROUP,
             ])
             self.sidebar.setCurrentRow(0)
             sidebar_layout.addWidget(self.sidebar)
@@ -213,47 +164,50 @@ class SettingsDialog(QDialog):
             )
             content_layout.setSpacing(constants.layout.MAIN_SPACING)
 
-            self.stack = AdaptiveStackedWidget()
+            self.stack = QStackedWidget()
             content_layout.addWidget(self.stack)
 
             # Instantiate Pages
             self.general_page = GeneralPage(self.i18n, self._schedule_settings_update)
             self.appearance_page = AppearancePage(
-                self.i18n, 
+                self.i18n,
                 self._schedule_settings_update,
                 self._open_font_dialog,
                 self._open_color_dialog
             )
-            
+
             self.colors_page = ColorsPage(
                 self.i18n,
                 self._schedule_settings_update,
                 self._open_color_dialog
             )
-            
-            self.graph_page = GraphPage(self.i18n, self._schedule_settings_update)
+
             self.hardware_page = HardwarePage(self.i18n, self._schedule_settings_update)
             self.units_page = UnitsPage(self.i18n, self._schedule_settings_update)
             self.interfaces_page = InterfacesPage(
-                self.i18n, 
-                self.available_interfaces, 
+                self.i18n,
+                self.available_interfaces,
                 self._schedule_settings_update
             )
-            self.troubleshooting_page = TroubleshootingPage(self.i18n, self.export_error_log)
 
-            # Add to stack
-            self.stack.addWidget(self.general_page)
-            self.stack.addWidget(self.appearance_page)
-            self.stack.addWidget(self.colors_page)
-            self.stack.addWidget(self.graph_page)
-            self.stack.addWidget(self.hardware_page)
-            self.stack.addWidget(self.units_page)
-            self.stack.addWidget(self.interfaces_page)
-            self.stack.addWidget(self.troubleshooting_page)
+            # Add pages wrapped in scroll areas (order matches sidebar)
+            for page in [
+                self.general_page,       # 0 - General
+                self.appearance_page,    # 1 - Appearance
+                self.colors_page,        # 2 - Color Coding
+                self.hardware_page,      # 3 - Hardware
+                self.units_page,         # 4 - Display
+                self.interfaces_page,    # 5 - Interfaces
+            ]:
+                self.stack.addWidget(self._wrap_in_scroll(page))
 
-
-            # --- Bottom Buttons (Save/Cancel) ---
+            # --- Bottom Buttons (Export Log / Cancel / Save) ---
             button_layout = QHBoxLayout()
+            self.export_log_button = QPushButton(self.i18n.EXPORT_ERROR_LOG_BUTTON)
+            self.export_log_button.setStyleSheet(style_utils.button_style())
+            self.export_log_button.setToolTip(self.i18n.EXPORT_ERROR_LOG_TOOLTIP)
+            self.export_log_button.clicked.connect(self.export_error_log)
+            button_layout.addWidget(self.export_log_button)
             button_layout.addStretch()
             self.cancel_button = QPushButton(self.i18n.CANCEL_BUTTON)
             self.cancel_button.setStyleSheet(style_utils.button_style())
@@ -272,9 +226,6 @@ class SettingsDialog(QDialog):
             self.save_button.clicked.connect(self._save_and_close)
 
             self._ui_setup_done = True
-            
-            # Compact the dialog to fit its content without excess empty space
-            self.adjustSize()
 
             self.logger.debug(f"UI setup completed. Stack has {self.stack.count()} pages.")
         except Exception as e:
@@ -285,6 +236,16 @@ class SettingsDialog(QDialog):
             )
             QTimer.singleShot(0, self.reject)
 
+    @staticmethod
+    def _wrap_in_scroll(page: QWidget) -> QScrollArea:
+        """Wraps a settings page in a frameless, transparent scroll area."""
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        scroll.setWidget(page)
+        return scroll
+
     def _init_ui_state(self) -> None:
         """Loads current configuration into all UI elements and restores window position."""
         self.logger.debug("Initializing UI state from config...")
@@ -292,19 +253,20 @@ class SettingsDialog(QDialog):
             self.general_page.load_settings(self.config, self.startup_enabled_initial_state)
             self.appearance_page.load_settings(self.config)
             self.colors_page.load_settings(self.config)
-            self.graph_page.load_settings(self.config)
             self.hardware_page.load_settings(self.config)
             self.units_page.load_settings(self.config)
             self.interfaces_page.load_settings(self.config)
             
-            # Restore window position if saved
+            # Restore window position if saved (validate against available geometry)
             saved_pos = self.config.get("settings_window_pos")
             if saved_pos and isinstance(saved_pos, dict):
                  x, y = saved_pos.get("x"), saved_pos.get("y")
                  if x is not None and y is not None:
-                     # Basic validation to ensure it's on-screen is handled by OS/Qt usually, 
-                     # but we could add ScreenUtils validation here if imported.
-                     # For now, trust the save.
+                     screen = self.screen() or QApplication.primaryScreen()
+                     if screen:
+                         avail = screen.availableGeometry()
+                         x = max(avail.left(), min(x, avail.right() - self.width()))
+                         y = max(avail.top(), min(y, avail.bottom() - self.height()))
                      self.move(x, y)
                      self.logger.debug(f"Restored Settings Dialog position to ({x}, {y})")
 
@@ -315,6 +277,7 @@ class SettingsDialog(QDialog):
         """Connects additional global signals."""
         self.appearance_page.layout_changed.connect(self._adjust_size_and_reposition)
         self.interfaces_page.layout_changed.connect(self._adjust_size_and_reposition)
+        self.hardware_page.layout_changed.connect(self._adjust_size_and_reposition)
         # When Force MB toggle is changed, ensure SMART update_rate is not selected
         try:
             self.units_page.speed_display_mode.toggled.connect(self._on_force_mb_toggled)
@@ -346,44 +309,18 @@ class SettingsDialog(QDialog):
     def _on_sidebar_selection_changed(self, row: int) -> None:
         """Handles sidebar row changes to switch the stacked page."""
         self.stack.setCurrentIndex(row)
-        self._adjust_size_and_reposition()
 
     def _adjust_size_and_reposition(self) -> None:
-        """
-        Resizes the dialog to fit content, ensuring it stays within screen bounds.
-        """
-        # Ensure layout has processed visibility changes before we calculate size
-        QApplication.processEvents()
-        
-        old_geometry = self.geometry()
-        self.resize(self.minimumSizeHint()) 
-        self.adjustSize()
-        
-        new_geometry = self.geometry()
-        # If we just corrected position from config, try to respect it
-        # But ensure we don't go off-screen due to resize
-        
+        """Ensures dialog stays within screen bounds after layout changes."""
         screen = self.screen()
-        if not screen: return
-        
-        available_rect = screen.availableGeometry()
-        
-        # Check if expanding downwards pushed us off the bottom
-        bottom_overflow = new_geometry.bottom() - available_rect.bottom()
-        
-        if bottom_overflow > 0:
-            new_y = new_geometry.y() - bottom_overflow
-            if new_y < available_rect.top():
-                new_y = available_rect.top()
-                if new_geometry.height() > available_rect.height():
-                    self.resize(new_geometry.width(), available_rect.height())
-            
-            self.move(new_geometry.x(), new_y)
-            
-        current_geo = self.geometry()
-        if current_geo.height() > available_rect.height():
-             self.resize(current_geo.width(), available_rect.height())
-             self.move(current_geo.x(), available_rect.top())
+        if not screen:
+            return
+        avail = screen.availableGeometry()
+        geo = self.geometry()
+        x = max(avail.left(), min(geo.x(), avail.right() - geo.width()))
+        y = max(avail.top(), min(geo.y(), avail.bottom() - geo.height()))
+        if x != geo.x() or y != geo.y():
+            self.move(x, y)
 
     def _schedule_settings_update(self) -> None:
         """Starts the throttle timer to emit settings_changed."""
@@ -402,7 +339,6 @@ class SettingsDialog(QDialog):
             settings.update(self.general_page.get_settings())
             settings.update(self.appearance_page.get_settings())
             settings.update(self.colors_page.get_settings())
-            settings.update(self.graph_page.get_settings())
             settings.update(self.hardware_page.get_settings())
             settings.update(self.units_page.get_settings())
             settings.update(self.interfaces_page.get_settings())
