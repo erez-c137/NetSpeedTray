@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ---
 
-## [1.3.0] - Unreleased
+## [1.3.0] - April 14, 2026
 
 ### Added
 - **App Activity Window:** Added an App Activity window (accessible from the tray menu) to view estimated per-app network activity (includes a non-admin mode with reduced accuracy).
