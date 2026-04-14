@@ -8,5 +8,6 @@ pytest-cov
 freezegun
 pip-tools
 wheel>=0.46.2  # Explicitly added to enforce Security CVE fix
-pillow>=12.1.1  # Development env should also use patched Pillow
+pillow>=12.2.0  # Security: ensure patched Pillow (FITS GZIP decompression bomb)
+pytest>=9.0.3   # Security: vulnerable tmpdir handling fix
 parameterized
