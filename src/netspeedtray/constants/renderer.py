@@ -12,7 +12,7 @@ class RendererConstants:
     
     # --- Padding and Margins ---
     TEXT_MARGIN: Final[int] = 2
-    GRAPH_MARGIN: Final[int] = 1
+    GRAPH_MARGIN: Final[int] = 3
     GRAPH_LEFT_PADDING: Final[int] = 2
     GRAPH_RIGHT_PADDING: Final[int] = 2
     GRAPH_BOTTOM_PADDING: Final[int] = 1
@@ -22,12 +22,17 @@ class RendererConstants:
     # --- Sizing and Scaling ---
     GRAPH_HEIGHT_PERCENTAGE: Final[float] = 0.8
     DEFAULT_ARROW_WIDTH: Final[int] = 5
-    # Min speed for y-axis scale, in bytes/sec (500 Kbps)
-    MIN_Y_SCALE: Final[int] = 62500
+    # Min speed for y-axis scale, in bytes/sec (100 Kbps)
+    MIN_Y_SCALE: Final[int] = 12500
     GRAPH_Y_AXIS_PADDING_FACTOR: Final[float] = 1.15 # Add 15% headroom
+    
+    # --- Display Cycling ---
+    CYCLE_INTERVAL_MS: Final[int] = 5000 # 5 seconds per metric
     
     # --- Theming ---
     GRAPH_LINE_COLOR: Final[str] = color.WHITE # Reference master palette
+    CPU_LINE_COLOR: Final[str] = "#3498db" # Blue
+    GPU_LINE_COLOR: Final[str] = "#e74c3c" # Red
 
     # ========== MATPLOTLIB GRAPH WINDOW CONSTANTS ==========
     

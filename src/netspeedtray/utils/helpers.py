@@ -152,19 +152,24 @@ def get_unit_labels_for_type(i18n, unit_type: str, short_labels: bool = False) -
     return [getattr(i18n, key) for key in keys]
 
 
-def get_all_possible_unit_labels(i18n) -> List[str]:
+from typing import Optional, Tuple, List
+
+def get_all_possible_unit_labels(i18n, short_labels: Optional[bool] = None) -> List[str]:
     """
     Returns all unique translated unit labels across all unit types and formats.
     Used for calculating reference widths in the UI.
     """
     all_labels = set()
     for ut in ["bits_decimal", "bits_binary", "bytes_decimal", "bytes_binary"]:
-        all_labels.update(get_unit_labels_for_type(i18n, ut, False))
-        all_labels.update(get_unit_labels_for_type(i18n, ut, True))
+        if short_labels is None:
+            all_labels.update(get_unit_labels_for_type(i18n, ut, False))
+            all_labels.update(get_unit_labels_for_type(i18n, ut, True))
+        else:
+            all_labels.update(get_unit_labels_for_type(i18n, ut, short_labels))
     return sorted(list(all_labels))
 
 
-def get_reference_value_string(force_mega_unit: bool, decimal_places: int, unit_type: str = "bits_decimal") -> str:
+def get_reference_value_string(force_mega_unit: bool, decimal_places: int, unit_type: str = "bits_decimal", min_digits: int = 3) -> str:
     """
     Returns a reference number string (e.g., '888.8' or '8888.88') used to 
     calculate the maximum width needed for speed values in the UI.
@@ -172,14 +177,12 @@ def get_reference_value_string(force_mega_unit: bool, decimal_places: int, unit_
     # Logic driven by 'unit used' as per user request.
     is_bytes = unit_type.startswith("bytes")
     
-    # If units are Bits and we are forcing Mbps mode (common default), 
-    # we need 4 digits to accommodate Gigabit speeds (1000 Mbps).
-    # If units are Bytes, 3 digits covers up to 999 MB/s (approx 8 Gbps), which is plenty.
-    # If scaling is Auto (not always_mbps), 3 digits covers "999 Kbps" or "1.2 Gbps".
-    if force_mega_unit and not is_bytes:
+    # Base integer part depends on min_digits requested
+    integer_part = "8" * min_digits
+    
+    # Overrides for specific display modes if min_digits wasn't forced higher
+    if min_digits < 4 and force_mega_unit and not is_bytes:
         integer_part = "8888"
-    else:
-        integer_part = "888" 
 
     if decimal_places > 0:
         return f"{integer_part}.{'8' * decimal_places}"
@@ -258,15 +261,20 @@ def format_speed(
         formatted_val = f"{val:.0f}"
     else:
         formatted_val = f"{val:.{decimal_places}f}"
-    
+
     if fixed_width:
         # Use reference string to match logic in layout/renderer
         ref_val = get_reference_value_string(force_mega_unit, decimal_places, unit_type=unit_type)
         formatted_val = formatted_val.rjust(len(ref_val))
-    
+
+    # Apply locale-specific decimal separator (e.g. ',' for de_DE, fr_FR, ru_RU, etc.)
+    decimal_sep = getattr(i18n, 'DECIMAL_SEPARATOR', '.')
+    if decimal_sep != '.':
+        formatted_val = formatted_val.replace('.', decimal_sep)
+
     if split_unit:
         return formatted_val, unit
-    
+
     return f"{formatted_val} {unit}"
 
 

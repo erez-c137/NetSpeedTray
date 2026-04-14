@@ -9,7 +9,6 @@ from PyQt6.QtGui import QFont
 
 from netspeedtray.views.settings.pages.general import GeneralPage
 from netspeedtray.views.settings.pages.appearance import AppearancePage
-from netspeedtray.views.settings.pages.graph_config import GraphPage
 from netspeedtray.views.settings.pages.units import UnitsPage
 from netspeedtray.views.settings.pages.interfaces import InterfacesPage
 from netspeedtray.views.settings.pages.colors import ColorsPage
@@ -95,6 +94,13 @@ def mock_i18n():
     i18n.BACKGROUND_OPACITY_LABEL = "Opacity"
     i18n.SHORT_UNIT_LABELS_LABEL = "Short Labels"
     i18n.KEEP_VISIBLE_FULLSCREEN_LABEL = "Keep Visible in Fullscreen"
+    i18n.BEHAVIOR_GROUP_TITLE = "Behavior"
+    i18n.MINI_GRAPH_SECTION_TITLE = "Mini Graph"
+    i18n.HARDWARE_INDICATOR_STYLE_LABEL = "Indicator Style"
+    i18n.MONITORING_MODE_AUTO_SUBTITLE = "Monitors the primary active connection"
+    i18n.MONITORING_MODE_PHYSICAL_SUBTITLE = "Excludes VPNs and virtual adapters"
+    i18n.MONITORING_MODE_VIRTUAL_SUBTITLE = "Includes VPNs, virtual adapters, and tunnels"
+    i18n.MONITORING_MODE_SELECTED_SUBTITLE = "Choose specific interfaces from the list below"
 
     # For GeneralPage update rate slider
     i18n.SMART_MODE_LABEL = "Smart"
@@ -123,29 +129,33 @@ def test_general_page(q_app, mock_i18n, mock_callback):
         "language": "fr_FR",
         "update_rate": 2.0,
         "free_move": True,
-        "start_with_windows": True 
+        "start_with_windows": True,
+        "tray_offset_x": 15
     }
-    
+
     page.load_settings(config, is_startup_enabled=True)
-    
+
     settings = page.get_settings()
     assert settings["language"] == "fr_FR"
     assert settings["update_rate"] == 2.0
     assert settings["free_move"] is True
     assert settings["start_with_windows"] is True
-    
+    assert settings["tray_offset_x"] == 15
+
     # Test with Smart mode (update_rate = -1.0)
     config_smart = {
         "language": "en_US",
         "update_rate": -1.0,  # SMART sentinel
         "free_move": False,
+        "tray_offset_x": 0
     }
-    
+
     page.load_settings(config_smart, is_startup_enabled=False)
     settings_smart = page.get_settings()
     assert settings_smart["update_rate"] == -1.0  # Smart mode
     assert settings_smart["language"] == "en_US"
     assert settings_smart["free_move"] is False
+    assert settings_smart["tray_offset_x"] == 0
 
 def test_appearance_page(q_app, mock_i18n, mock_callback):
     """Test AppearancePage."""
@@ -162,16 +172,22 @@ def test_appearance_page(q_app, mock_i18n, mock_callback):
         "background_opacity": 50,
         "use_separate_arrow_font": False,
         "arrow_font_family": "Arial",
-        "arrow_font_size": 10
+        "arrow_font_size": 10,
+        "graph_enabled": False,
+        "history_minutes": 30,
+        "graph_opacity": 80
     }
-    
+
     with patch("PyQt6.QtGui.QFontDatabase.styles", return_value=["Normal", "Bold"]):
          page.load_settings(config)
-    
+
     settings = page.get_settings()
     assert settings["font_family"] == "Arial"
     assert settings["font_size"] == 10
     assert settings["default_color"] == "#FF0000"
+    assert settings["graph_enabled"] is False
+    assert settings["history_minutes"] == 30
+    assert settings["graph_opacity"] == 80
 
 def test_colors_page(q_app, mock_i18n, mock_callback):
     """Test ColorsPage."""
@@ -195,23 +211,6 @@ def test_colors_page(q_app, mock_i18n, mock_callback):
     assert settings["high_speed_color"] == "#00FF00"
     assert settings["low_speed_color"] == "#FFFF00"
 
-def test_graph_page(q_app, mock_i18n, mock_callback):
-    """Test GraphPage."""
-    page = GraphPage(mock_i18n, mock_callback)
-    
-    config = {
-        "graph_enabled": False,
-        "history_minutes": 30,
-        "graph_opacity": 80
-    }
-    
-    page.load_settings(config)
-    settings = page.get_settings()
-    
-    assert settings["graph_enabled"] is False
-    assert settings["history_minutes"] == 30
-    assert settings["graph_opacity"] == 80
-
 def test_units_page(q_app, mock_i18n, mock_callback):
     """Test UnitsPage."""
     page = UnitsPage(mock_i18n, mock_callback)
@@ -224,13 +223,12 @@ def test_units_page(q_app, mock_i18n, mock_callback):
         "swap_upload_download": False,
         "hide_arrows": True,
         "hide_unit_suffix": True,
-        "short_unit_labels": False,
-        "tray_offset_x": 10
+        "short_unit_labels": False
     }
-    
+
     page.load_settings(config)
     settings = page.get_settings()
-    
+
     assert settings["unit_type"] == "bits_binary"
     assert settings["speed_display_mode"] == "auto"
     assert settings["decimal_places"] == 2
@@ -239,7 +237,7 @@ def test_units_page(q_app, mock_i18n, mock_callback):
     assert settings["hide_arrows"] is True
     assert settings["hide_unit_suffix"] is True
     assert settings["short_unit_labels"] is False
-    assert settings["tray_offset_x"] == 10
+    assert "tray_offset_x" not in settings
 
 def test_interfaces_page(q_app, mock_i18n, mock_callback):
     """Test InterfacesPage."""

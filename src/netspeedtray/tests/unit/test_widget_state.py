@@ -162,7 +162,7 @@ def test_database_initialization_creates_correct_schema(managed_widget_state):
     # 1. Check if all tables were created
     cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
     tables = {row[0] for row in cursor.fetchall()}
-    expected_tables = {'metadata', 'speed_history_raw', 'speed_history_minute', 'speed_history_hour', 'bandwidth_history'}
+    expected_tables = {'metadata', 'speed_history_raw', 'speed_history_minute', 'speed_history_hour', 'bandwidth_history', 'hardware_stats_raw', 'hardware_stats_minute', 'hardware_stats_hour'}
     assert tables == expected_tables, "Incorrect set of tables were created."
 
     # 2. Check the database version in the metadata table

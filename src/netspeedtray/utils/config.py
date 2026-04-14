@@ -127,7 +127,10 @@ class ConfigManager:
         current_version = constants.config.defaults.CONFIG_SCHEMA_VERSION
         loaded_version = config.get("config_version", "1.0")  # Default to 1.0 for configs predating versioning
         
-        self.logger.info(f"Migrating config from version {loaded_version} to {current_version}")
+        if loaded_version != current_version:
+            self.logger.info(f"Migrating config from version {loaded_version} to {current_version}")
+        else:
+            self.logger.debug(f"Config version {loaded_version} is up to date")
         
         # NEW: Validate version format before proceeding (prevent silent failures)
         try:

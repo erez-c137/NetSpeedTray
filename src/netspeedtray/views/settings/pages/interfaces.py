@@ -37,18 +37,26 @@ class InterfacesPage(QWidget):
         self.all_physical_interfaces_radio = QRadioButton(self.i18n.MONITORING_MODE_PHYSICAL)
         self.all_virtual_interfaces_radio = QRadioButton(self.i18n.MONITORING_MODE_VIRTUAL)
         self.selected_interfaces_radio = QRadioButton(self.i18n.MONITORING_MODE_SELECTED)
-        
-        # Tooltips
-        self.auto_interface_radio.setToolTip(self.i18n.MONITORING_MODE_AUTO_TOOLTIP)
-        self.all_physical_interfaces_radio.setToolTip(self.i18n.MONITORING_MODE_PHYSICAL_TOOLTIP)
-        self.all_virtual_interfaces_radio.setToolTip(self.i18n.MONITORING_MODE_VIRTUAL_TOOLTIP)
-        self.selected_interfaces_radio.setToolTip(self.i18n.MONITORING_MODE_SELECTED_TOOLTIP)
-        
-        # Connect signals
-        for radio in [self.auto_interface_radio, self.all_physical_interfaces_radio, 
-                      self.all_virtual_interfaces_radio, self.selected_interfaces_radio]:
+
+        # Subtitle descriptions (visible below each radio, replaces tooltips)
+        is_dark = style_utils.is_dark_mode()
+        subtitle_color = style_constants.SUBTLE_TEXT_COLOR_DARK if is_dark else style_constants.SUBTLE_TEXT_COLOR_LIGHT
+        subtitle_style = f"color: {subtitle_color}; font-size: 10px; margin-left: 22px; margin-bottom: 4px;"
+
+        radio_subtitle_pairs = [
+            (self.auto_interface_radio, self.i18n.MONITORING_MODE_AUTO_SUBTITLE),
+            (self.all_physical_interfaces_radio, self.i18n.MONITORING_MODE_PHYSICAL_SUBTITLE),
+            (self.all_virtual_interfaces_radio, self.i18n.MONITORING_MODE_VIRTUAL_SUBTITLE),
+            (self.selected_interfaces_radio, self.i18n.MONITORING_MODE_SELECTED_SUBTITLE),
+        ]
+
+        for radio, subtitle_text in radio_subtitle_pairs:
             radio.toggled.connect(self._on_mode_toggled)
             interfaces_layout.addWidget(radio)
+            subtitle = QLabel(subtitle_text)
+            subtitle.setWordWrap(True)
+            subtitle.setStyleSheet(subtitle_style)
+            interfaces_layout.addWidget(subtitle)
 
         self.interface_scroll = QScrollArea()
         self.interface_scroll.setWidgetResizable(True)

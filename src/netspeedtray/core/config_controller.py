@@ -78,12 +78,20 @@ class ConfigController:
                 updated_config['position_x'] = None
                 updated_config['position_y'] = None
             
-            # Capture current position when Free Move is active upon saving
-            if free_move_is_now_enabled:
-                current_pos = self.widget.pos()
-                updated_config['position_x'] = current_pos.x()
-                updated_config['position_y'] = current_pos.y()
-                self.logger.debug(f"Free Move is active. Capturing current position ({current_pos.x()}, {current_pos.y()}) for save.")
+            # --- Hardware Monitor Integration Logic ---
+            cpu_enabled = updated_config.get('monitor_cpu_enabled', old_config.get('monitor_cpu_enabled', False))
+            gpu_enabled = updated_config.get('monitor_gpu_enabled', old_config.get('monitor_gpu_enabled', False))
+            ram_enabled = updated_config.get('monitor_ram_enabled', old_config.get('monitor_ram_enabled', False))
+            vram_enabled = updated_config.get('monitor_vram_enabled', old_config.get('monitor_vram_enabled', False))
+            
+            current_mode = updated_config.get('widget_display_mode', old_config.get('widget_display_mode', 'network_only'))
+
+            # Rule 2: Fallback to network-only if the current mode depends on a disabled monitor
+            if (current_mode == "cpu_only" and not cpu_enabled and not ram_enabled) or \
+               (current_mode == "gpu_only" and not gpu_enabled and not vram_enabled) or \
+               (current_mode in ["side_by_side", "cycle"] and not cpu_enabled and not gpu_enabled and not ram_enabled and not vram_enabled):
+                self.logger.info(f"Display mode '{current_mode}' is no longer valid. Falling back to network-only.")
+                updated_config['widget_display_mode'] = "network_only"
 
             if save_to_disk:
                 self.update_config(updated_config)
@@ -136,7 +144,7 @@ class ConfigController:
                 w.controller.apply_config(w.config)
             
             if w.monitor_thread:
-                self.logger.debug("Updating monitor thread interval...")
+                w.monitor_thread.update_config(w.config)
                 update_rate = w.config.get("update_rate", constants.config.defaults.DEFAULT_UPDATE_RATE)
                 w.monitor_thread.set_interval(update_rate)
             
@@ -149,6 +157,19 @@ class ConfigController:
             w.high_color = QColor(w.config.get("high_speed_color", constants.config.defaults.DEFAULT_HIGH_SPEED_COLOR))
             w.low_color = QColor(w.config.get("low_speed_color", constants.config.defaults.DEFAULT_LOW_SPEED_COLOR))
 
+            # If the user disables temperature/power display, clear any stale values
+            # so layout calculation and rendering immediately reflect the change.
+            if not w.config.get("show_hardware_temps", False):
+                if hasattr(w, "cpu_temp"):
+                    w.cpu_temp = None
+                if hasattr(w, "gpu_temp"):
+                    w.gpu_temp = None
+            if not w.config.get("show_hardware_power", False):
+                if hasattr(w, "cpu_power"):
+                    w.cpu_power = None
+                if hasattr(w, "gpu_power"):
+                    w.gpu_power = None
+
             # 2. Directly set the font, which also triggers the resize.
             self.logger.debug("Applying font and resizing via layout manager...")
             w.layout_manager.set_font(resize=True)
@@ -157,7 +178,17 @@ class ConfigController:
             self.logger.debug("Updating widget position...")
             w.update_position()
             
-            # 4. Schedule a repaint to reflect all changes.
+            # 4. Manage Cycling Timer
+            if w.config.get("widget_display_mode") == "cycle":
+                if not w._cycle_timer.isActive():
+                    w._cycle_timer.start(constants.renderer.CYCLE_INTERVAL_MS)
+                    self.logger.debug("Cycle timer started via ConfigController.")
+            else:
+                if w._cycle_timer.isActive():
+                    w._cycle_timer.stop()
+                    self.logger.debug("Cycle timer stopped via ConfigController.")
+
+            # 5. Schedule a repaint to reflect all changes.
             w.update()
             
             self.logger.info("All settings applied successfully.")

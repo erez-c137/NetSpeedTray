@@ -32,6 +32,7 @@ def graph_window_instance(qapp) -> Iterator[GraphWindow]:
          patch('netspeedtray.utils.helpers.get_app_asset_path', return_value=MagicMock()), \
          patch.object(GraphWindow, '_init_worker_thread', return_value=None), \
          patch.object(GraphWindow, '_connect_signals', return_value=None), \
+         patch.object(GraphWindow, '_on_tab_changed', return_value=None), \
          patch.object(GraphWindow, '_position_window', return_value=None):
 
         # Use main_widget and set parent=None to satisfy the constructor requirements.
@@ -78,6 +79,7 @@ def test_update_stats_bar_correctly_computes_values(graph_window_instance):
     # ACT
     total_up = 5_000_000.0
     total_down = 10_000_000.0
+    graph.ui.tab_widget.setCurrentIndex(1) # Select Network Tab
     graph._update_stats_bar(history_data, total_up, total_down)
     
     # ASSERT

@@ -22,11 +22,18 @@ class LayoutConstants:
     INTERFACE_SCROLL_MAX_ITEMS: Final[int] = 7
     INTERFACE_SCROLL_MIN_HEIGHT: Final[int] = 80
     
+    # --- Collapsible Section ---
+    COLLAPSIBLE_HEADER_HEIGHT: Final[int] = 36
+    COLLAPSIBLE_SECTION_SPACING: Final[int] = 8
+
     # --- Main Widget Specific ---
     WIDGET_DEFAULT_RIGHT_PADDING_PX: Final[int] = 10
     SMALL_TASKBAR_HEIGHT_THRESHOLD: Final[int] = 34
     HORIZONTAL_LAYOUT_SEPARATOR: Final[str] = " | "
     MINI_GRAPH_HORIZONTAL_WIDTH: Final[int] = 40
+    # Segment gaps for Side-by-Side mode (Network | CPU/GPU)
+    WIDGET_SEGMENT_GAP_AFTER_NETWORK_PX: Final[int] = 18
+    WIDGET_SEGMENT_GAP_BETWEEN_HARDWARE_PX: Final[int] = 5
 
     def __init__(self) -> None:
         self.validate()

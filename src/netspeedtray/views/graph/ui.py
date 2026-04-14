@@ -6,10 +6,10 @@ Separates visual construction from the main window controller.
 from PyQt6.QtCore import Qt, QPoint, QSize, QTimer
 from PyQt6.QtWidgets import (
     QVBoxLayout, QWidget, QTabWidget, QHBoxLayout, 
-    QLabel, QPushButton, QSizePolicy
+    QLabel, QPushButton, QSizePolicy, QFrame, QGridLayout
 )
 from PyQt6.QtGui import QIcon, QPainter, QColor, QBrush, QPen
-from typing import Tuple
+from typing import Tuple, Optional
 
 from netspeedtray import constants
 from netspeedtray.constants import styles as style_constants
@@ -23,14 +23,15 @@ class StatusIndicatorWidget(QWidget):
     """
     # State Definitions
     STATES = {
-        "LIVE": {"color": "#4caf50", "text": "LIVE", "pulse": True},       # Green
-        "COLLECTING": {"color": "#ff9800", "text": "LOAD", "pulse": True},  # Orange
-        "NO_DATA": {"color": "#d32f2f", "text": "NO DATA", "pulse": False}  # Red
+        "LIVE": {"color": "#4caf50", "i18n_key": "GRAPH_STATUS_LIVE", "fallback": "LIVE", "pulse": True},  # Green
+        "COLLECTING": {"color": "#ff9800", "i18n_key": "GRAPH_STATUS_LOAD", "fallback": "LOAD", "pulse": True},  # Orange
+        "NO_DATA": {"color": "#d32f2f", "i18n_key": "GRAPH_STATUS_NO_DATA", "fallback": "NO DATA", "pulse": False},  # Red
     }
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, i18n=None):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self._i18n = i18n
         self._current_state = "COLLECTING"
         self._dot_color = QColor(self.STATES["COLLECTING"]["color"])
         self._anim_timer = QTimer(self)
@@ -52,7 +53,7 @@ class StatusIndicatorWidget(QWidget):
         layout.addWidget(self._dot_spacer)
         
         # Text
-        self._text_lbl = QLabel(self.STATES["COLLECTING"]["text"])
+        self._text_lbl = QLabel(self._get_state_text("COLLECTING"))
         self._text_lbl.setStyleSheet("""
             QLabel {
                 color: #aaa;
@@ -67,6 +68,17 @@ class StatusIndicatorWidget(QWidget):
         
         self.setStyleSheet("background: transparent;")
 
+    def _get_state_text(self, state_name: str) -> str:
+        cfg = self.STATES.get(state_name, {})
+        key = cfg.get("i18n_key")
+        fallback = cfg.get("fallback", state_name)
+        if not key or self._i18n is None:
+            return fallback
+        try:
+            return getattr(self._i18n, key)
+        except Exception:
+            return fallback
+
     def setStatus(self, state_name):
         """Sets the indicator state (LIVE, COLLECTING, NO_DATA)."""
         if state_name not in self.STATES:
@@ -76,7 +88,7 @@ class StatusIndicatorWidget(QWidget):
         cfg = self.STATES[state_name]
         
         self._dot_color = QColor(cfg["color"])
-        self._text_lbl.setText(cfg["text"])
+        self._text_lbl.setText(self._get_state_text(state_name))
         
         if cfg["pulse"]:
             if not self._anim_timer.isActive():
@@ -123,6 +135,83 @@ class StatusIndicatorWidget(QWidget):
         super().hide()
         self._anim_timer.stop()
 
+class OverviewMetricCard(QFrame):
+    """
+    A compact dashboard card used by the Overview tab.
+
+    Includes a subtle left accent bar, a title, a primary value, and a secondary line.
+    """
+    def __init__(self, title: str, accent_color: str = "#4caf50", parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.setObjectName("overviewMetricCard")
+        self.setFrameShape(QFrame.Shape.StyledPanel)
+
+        # Dark-mode friendly by default (GraphWindow is primarily dark themed today).
+        self.setStyleSheet(f"""
+            QFrame#overviewMetricCard {{
+                background: rgba(32, 32, 32, 0.92);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 8px;
+            }}
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(6)
+
+        # Accent bar (separate widget to keep Qt styles simple / reliable).
+        self._accent = QWidget(self)
+        self._accent.setFixedWidth(4)
+        self._accent.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
+        self._accent.setStyleSheet(f"background: {accent_color}; border-radius: 2px;")
+
+        header_row = QHBoxLayout()
+        header_row.setContentsMargins(0, 0, 0, 0)
+        header_row.setSpacing(10)
+        header_row.addWidget(self._accent, 0, Qt.AlignmentFlag.AlignTop)
+
+        text_col = QVBoxLayout()
+        text_col.setContentsMargins(0, 0, 0, 0)
+        text_col.setSpacing(2)
+
+        self.title_lbl = QLabel(title)
+        self.title_lbl.setStyleSheet("""
+            QLabel {
+                color: rgba(220, 220, 220, 0.70);
+                font-size: 10px;
+                font-weight: 700;
+                letter-spacing: 0.6px;
+                font-family: 'Segoe UI Variable', 'Segoe UI', sans-serif;
+            }
+        """)
+
+        self.value_lbl = QLabel("--")
+        self.value_lbl.setStyleSheet("""
+            QLabel {
+                color: rgba(255, 255, 255, 0.95);
+                font-size: 22px;
+                font-weight: 700;
+                font-family: 'Cascadia Mono', 'Consolas', 'SF Mono', monospace;
+            }
+        """)
+
+        self.sub_lbl = QLabel("")
+        self.sub_lbl.setStyleSheet("""
+            QLabel {
+                color: rgba(220, 220, 220, 0.60);
+                font-size: 11px;
+                font-weight: 500;
+                font-family: 'Segoe UI Variable', 'Segoe UI', sans-serif;
+            }
+        """)
+
+        text_col.addWidget(self.title_lbl)
+        text_col.addWidget(self.value_lbl)
+        text_col.addWidget(self.sub_lbl)
+        header_row.addLayout(text_col, 1)
+
+        layout.addLayout(header_row)
+
 
 class GraphWindowUI:
     """ Handles all UI layout and component initialization for GraphWindow. """
@@ -148,6 +237,7 @@ class GraphWindowUI:
         self.max_stat_val = None
         self.avg_stat_val = None
         self.total_stat_val = None
+        self.overview_meta_label = None
 
     def setupUi(self):
         """Constructs the main layout and widgets."""
@@ -166,13 +256,118 @@ class GraphWindowUI:
         self.tab_widget = QTabWidget(self.content_container)
         self.content_layout.addWidget(self.tab_widget)
 
-        # Graph tab
+        # Sub-widgets for tabs
+        self.overview_widget = QWidget()
+        self.overview_layout = QVBoxLayout(self.overview_widget)
+        self.overview_layout.setContentsMargins(15, 15, 15, 15)
+        self.overview_layout.setSpacing(12)
+
+        # Context line (range/interface/updated) - filled in by GraphWindow on updates.
+        self.overview_meta_label = QLabel("")
+        self.overview_meta_label.setObjectName("overviewMetaLabel")
+        self.overview_meta_label.setStyleSheet("""
+            QLabel#overviewMetaLabel {
+                color: rgba(220, 220, 220, 0.55);
+                font-size: 11px;
+                font-weight: 500;
+                font-family: 'Segoe UI Variable', 'Segoe UI', sans-serif;
+                padding: 2px 2px 0px 2px;
+            }
+        """)
+        self.overview_layout.addWidget(self.overview_meta_label)
+        
+        self.dashboard_grid = QGridLayout()
+        self.dashboard_grid.setSpacing(12)
+        self.dashboard_grid.setColumnStretch(0, 1)
+        self.dashboard_grid.setColumnStretch(1, 1)
+        self.overview_layout.addLayout(self.dashboard_grid)
+
+        self.card_net_down = OverviewMetricCard(self.i18n.DOWNLOAD_LABEL, accent_color=constants.graph.DOWNLOAD_LINE_COLOR)
+        self.card_net_up = OverviewMetricCard(self.i18n.UPLOAD_LABEL, accent_color=constants.graph.UPLOAD_LINE_COLOR)
+        self.card_cpu_frame = OverviewMetricCard(self.i18n.ORDER_TYPE_CPU, accent_color=constants.graph.CPU_LINE_COLOR)
+        self.card_gpu_frame = OverviewMetricCard(self.i18n.ORDER_TYPE_GPU, accent_color=constants.graph.GPU_LINE_COLOR)
+
+        # For backward compatibility with existing update code in GraphWindow
+        self.card_net_down_val = self.card_net_down.value_lbl
+        self.card_net_up_val = self.card_net_up.value_lbl
+        self.card_cpu_val = self.card_cpu_frame.value_lbl
+        self.card_gpu_val = self.card_gpu_frame.value_lbl
+        self.card_net_down_sub = self.card_net_down.sub_lbl
+        self.card_net_up_sub = self.card_net_up.sub_lbl
+        self.card_cpu_sub = self.card_cpu_frame.sub_lbl
+        self.card_gpu_sub = self.card_gpu_frame.sub_lbl
+
+        self.dashboard_grid.addWidget(self.card_net_down, 0, 0)
+        self.dashboard_grid.addWidget(self.card_net_up, 0, 1)
+        self.dashboard_grid.addWidget(self.card_cpu_frame, 1, 0)
+        self.dashboard_grid.addWidget(self.card_gpu_frame, 1, 1)
+        
+        # Plot area: the shared Matplotlib canvas is reparented here when Overview is active.
+        self.overview_plot_container = QWidget()
+        self.overview_plot_container.setObjectName("overviewPlotContainer")
+        self.overview_plot_container.setStyleSheet("""
+            QWidget#overviewPlotContainer {
+                background: rgba(20, 20, 20, 0.35);
+                border: 1px solid rgba(255, 255, 255, 0.06);
+                border-radius: 10px;
+            }
+        """)
+        self.overview_plot_layout = QVBoxLayout(self.overview_plot_container)
+        self.overview_plot_layout.setContentsMargins(10, 8, 10, 8)
+        self.overview_plot_layout.setSpacing(0)
+        self.overview_layout.addWidget(self.overview_plot_container, 1)
+
+        self.tab_widget.addTab(self.overview_widget, getattr(self.i18n, "OVERVIEW_TAB_LABEL", "Overview"))
+
         self.graph_widget = QWidget()
         self.graph_layout = QVBoxLayout(self.graph_widget)
+        self.graph_layout.setContentsMargins(15, 15, 15, 15)
+        self.graph_layout.setSpacing(12)
+
+        self.graph_plot_container = QWidget()
+        self.graph_plot_container.setObjectName("graphPlotContainer")
+        self.graph_plot_container.setStyleSheet(self.overview_plot_container.styleSheet())
+        self.graph_plot_layout = QVBoxLayout(self.graph_plot_container)
+        self.graph_plot_layout.setContentsMargins(10, 8, 10, 8)
+        self.graph_plot_layout.setSpacing(0)
+        self.graph_layout.addWidget(self.graph_plot_container, 1)
+
         self.tab_widget.addTab(self.graph_widget, self.i18n.SPEED_GRAPH_TAB_LABEL)
         
-        # Hide the tab bar as it's not needed for a single tab
-        self.tab_widget.tabBar().setVisible(False)
+        # CPU tab
+        self.cpu_widget = QWidget()
+        self.cpu_layout = QVBoxLayout(self.cpu_widget)
+        self.cpu_layout.setContentsMargins(15, 15, 15, 15)
+        self.cpu_layout.setSpacing(12)
+
+        self.cpu_plot_container = QWidget()
+        self.cpu_plot_container.setObjectName("cpuPlotContainer")
+        self.cpu_plot_container.setStyleSheet(self.overview_plot_container.styleSheet())
+        self.cpu_plot_layout = QVBoxLayout(self.cpu_plot_container)
+        self.cpu_plot_layout.setContentsMargins(10, 8, 10, 8)
+        self.cpu_plot_layout.setSpacing(0)
+        self.cpu_layout.addWidget(self.cpu_plot_container, 1)
+
+        self.tab_widget.addTab(self.cpu_widget, self.i18n.ORDER_TYPE_CPU)
+        
+        # GPU tab
+        self.gpu_widget = QWidget()
+        self.gpu_layout = QVBoxLayout(self.gpu_widget)
+        self.gpu_layout.setContentsMargins(15, 15, 15, 15)
+        self.gpu_layout.setSpacing(12)
+
+        self.gpu_plot_container = QWidget()
+        self.gpu_plot_container.setObjectName("gpuPlotContainer")
+        self.gpu_plot_container.setStyleSheet(self.overview_plot_container.styleSheet())
+        self.gpu_plot_layout = QVBoxLayout(self.gpu_plot_container)
+        self.gpu_plot_layout.setContentsMargins(10, 8, 10, 8)
+        self.gpu_plot_layout.setSpacing(0)
+        self.gpu_layout.addWidget(self.gpu_plot_container, 1)
+
+        self.tab_widget.addTab(self.gpu_widget, self.i18n.ORDER_TYPE_GPU)
+        
+        # Ensure tab bar is visible
+        self.tab_widget.tabBar().setVisible(True)
 
     def add_settings_panel(self, settings_widget: QWidget):
         """Adds the settings widget to the side of the main content."""
@@ -201,13 +396,13 @@ class GraphWindowUI:
             stats_layout.setContentsMargins(12, 6, 12, 6)
             stats_layout.setSpacing(24)
 
-            self.max_stat_val = self._create_stat_card(stats_layout, self.i18n.STAT_MAX_SPEED)
-            self.avg_stat_val = self._create_stat_card(stats_layout, self.i18n.STAT_AVG_SPEED)
-            self.total_stat_val = self._create_stat_card(stats_layout, self.i18n.STAT_TOTAL_DATA)
+            self.max_stat_title, self.max_stat_val = self._create_stat_card(stats_layout, self.i18n.STAT_MAX_SPEED)
+            self.avg_stat_title, self.avg_stat_val = self._create_stat_card(stats_layout, self.i18n.STAT_AVG_SPEED)
+            self.total_stat_title, self.total_stat_val = self._create_stat_card(stats_layout, self.i18n.STAT_TOTAL_DATA)
             
             # 2. Loading Indicator (Pulse Widget) - NOW INSIDE STATS BAR
             stats_layout.addStretch() 
-            self.loading_indicator = StatusIndicatorWidget(self.stats_bar)
+            self.loading_indicator = StatusIndicatorWidget(self.stats_bar, i18n=self.i18n)
             stats_layout.addWidget(self.loading_indicator) 
             
             header_layout.addWidget(self.stats_bar, 1)
@@ -274,7 +469,7 @@ class GraphWindowUI:
         except Exception as e:
             self.logger.error(f"Error initializing overlay elements: {e}", exc_info=True)
 
-    def _create_stat_card(self, parent_layout: QHBoxLayout, title_text: str) -> QLabel:
+    def _create_stat_card(self, parent_layout: QHBoxLayout, title_text: str) -> Tuple[QLabel, QLabel]:
         """ Internal helper to create a stat card. """
         card = QWidget()
         card.setStyleSheet(style_utils.graph_stats_card_style())
@@ -291,7 +486,7 @@ class GraphWindowUI:
         card_layout.addWidget(title_lbl)
         card_layout.addWidget(value_lbl)
         parent_layout.addWidget(card)
-        return value_lbl
+        return title_lbl, value_lbl
 
     def reposition_overlay_elements(self):
         """Reposition overlays based on window/widget size."""
@@ -322,18 +517,9 @@ class GraphWindowUI:
             self.logger.error(f"Error repositioning overlay elements: {e}", exc_info=True)
 
     def show_graph_message(self, message: str, is_error: bool = True):
-        """Displays a message overlay or updates the status indicator."""
+        """Displays a message overlay (errors) or updates the compact status indicator (non-errors)."""
         if not is_error:
-            # Route to normalized status indicator
-            if "collecting" in message.lower() or "loading" in message.lower():
-                self.loading_indicator.setStatus("COLLECTING")
-            elif "no data" in message.lower():
-                self.loading_indicator.setStatus("NO_DATA")
-            else:
-                self.loading_indicator.setStatus("LIVE")
-            
-            self.loading_indicator.show()
-            
+            self.set_status(message)
             if self._graph_message_label.isVisible():
                 self._graph_message_label.hide()
             return
@@ -362,10 +548,40 @@ class GraphWindowUI:
         self._graph_message_label.show()
         self._graph_message_label.raise_()
 
+    def set_status(self, state_or_message: str) -> None:
+        """
+        Sets the compact status indicator state.
+
+        Callers should prefer passing explicit state names: LIVE, COLLECTING, NO_DATA.
+        For backwards-compatibility, we also map known localized messages.
+        """
+        if not hasattr(self, "loading_indicator") or self.loading_indicator is None:
+            return
+
+        normalized = (state_or_message or "").strip()
+        state = None
+
+        if normalized in StatusIndicatorWidget.STATES:
+            state = normalized
+        else:
+            # Map localized messages (do not rely on English substring parsing).
+            try:
+                if normalized == self.i18n.NO_DATA_MESSAGE:
+                    state = "NO_DATA"
+                elif normalized == self.i18n.COLLECTING_DATA_MESSAGE:
+                    state = "COLLECTING"
+            except Exception:
+                state = None
+
+        if state is None:
+            state = "LIVE"
+
+        self.loading_indicator.setStatus(state)
+        self.loading_indicator.show()
+
     def hide_graph_message(self):
-        """Hides the message overlay."""
+        """Hides the large message overlay (status indicator remains available)."""
         self._graph_message_label.hide()
-        self.loading_indicator.hide()
 
     def show_graph_error(self, message: str):
         """A convenience wrapper to display an error message on the graph."""

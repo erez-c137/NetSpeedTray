@@ -80,18 +80,12 @@ class TimelinePills(QWidget):
     
     def set_period(self, period_key: str):
         """Programmatically set the active pill without emitting signal."""
-        print(f"DEBUG: TimelinePills.set_period('{period_key}') called.")
-        found = False
         if period_key in self._buttons:
-            found = True
             for btn in self._buttons.values():
                 is_target = (btn == self._buttons[period_key])
                 btn.blockSignals(True)
                 btn.setChecked(is_target)
-                print(f"DEBUG: Setting {btn.text()} checked={is_target}")
                 btn.blockSignals(False)
-        else:
-            print(f"DEBUG: period_key '{period_key}' NOT FOUND in buttons: {list(self._buttons.keys())}")
     
     def current_period_key(self) -> str:
         """Returns the currently selected period key."""
@@ -116,10 +110,6 @@ class GraphSettingsPanel(QWidget):
     live_update_toggled = pyqtSignal(bool)
     show_loading_toggled = pyqtSignal(bool)
     
-    # DEPRECATED: Kept for backwards compatibility during transition
-    history_period_changed = pyqtSignal(int)
-    history_period_changing = pyqtSignal(int)
-    
     def __init__(self, parent=None, i18n=None, initial_state=None):
         super().__init__(parent)
         self.i18n = i18n
@@ -127,8 +117,7 @@ class GraphSettingsPanel(QWidget):
         
         # State placeholders
         self.interface_filter = None
-        self.timeline_pills = None  # NEW: Replaces history_period_slider
-        self.history_period_slider = None  # DEPRECATED: Kept for compatibility
+        self.timeline_pills = None
         self.keep_data_slider = None
         self.dark_mode_toggle = None
         self.realtime_toggle = None
@@ -285,9 +274,6 @@ class GraphSettingsPanel(QWidget):
         """Handle timeline pill selection."""
         self.timeline_changed.emit(period_key)
         
-        # SENIOR FIX: The legacy signal 'history_period_changed' is now handled 
-        # by emitting 'timeline_changed' and having the Window map the index.
-        # This prevents double-update triggers from a single click.
 
 
     def _on_interface_changed(self, text):

@@ -56,7 +56,7 @@ class GraphCoordinator(QObject):
         
         # 4. Show loading indicator for non-session views
         if period_key != "TIMELINE_SESSION" and hasattr(self.window, 'ui'):
-            self.window.ui.show_graph_message("Loading...", is_error=False)
+            self.window.ui.set_status("COLLECTING")
         
         # 5. Queue update
         self._pending_show_loading = (period_key != "TIMELINE_SESSION")

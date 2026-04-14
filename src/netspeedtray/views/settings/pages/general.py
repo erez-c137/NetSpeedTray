@@ -53,36 +53,43 @@ class GeneralPage(QWidget):
         update_group_layout.addWidget(self.update_rate)
         layout.addWidget(update_group)
 
-        # --- Options Group (Toggles) ---
-        options_group = QGroupBox(self.i18n.OPTIONS_GROUP_TITLE)
-        options_layout = QGridLayout(options_group)
-        options_layout.setVerticalSpacing(10)
-        options_layout.setHorizontalSpacing(8)
+        # --- Behavior Group (Toggles + Tray Offset) ---
+        behavior_group = QGroupBox(self.i18n.BEHAVIOR_GROUP_TITLE)
+        behavior_layout = QGridLayout(behavior_group)
+        behavior_layout.setVerticalSpacing(10)
+        behavior_layout.setHorizontalSpacing(8)
 
         sww_label = QLabel(self.i18n.START_WITH_WINDOWS_LABEL)
         self.start_with_windows = Win11Toggle(label_text="")
         self.start_with_windows.toggled.connect(self.on_change)
 
-        options_layout.addWidget(sww_label, 0, 0, Qt.AlignmentFlag.AlignVCenter)
-        options_layout.addWidget(self.start_with_windows, 0, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        
+        behavior_layout.addWidget(sww_label, 0, 0, Qt.AlignmentFlag.AlignVCenter)
+        behavior_layout.addWidget(self.start_with_windows, 0, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
         fm_label = QLabel(self.i18n.FREE_MOVE_LABEL)
         self.free_move = Win11Toggle(label_text="")
         self.free_move.toggled.connect(self.on_change)
-        
-        options_layout.addWidget(fm_label, 1, 0, Qt.AlignmentFlag.AlignVCenter)
-        options_layout.addWidget(self.free_move, 1, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
+        behavior_layout.addWidget(fm_label, 1, 0, Qt.AlignmentFlag.AlignVCenter)
+        behavior_layout.addWidget(self.free_move, 1, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
         kvf_label = QLabel(self.i18n.KEEP_VISIBLE_FULLSCREEN_LABEL)
         self.keep_visible_fullscreen = Win11Toggle(label_text="")
         self.keep_visible_fullscreen.toggled.connect(self.on_change)
 
-        options_layout.addWidget(kvf_label, 2, 0, Qt.AlignmentFlag.AlignVCenter)
-        options_layout.addWidget(self.keep_visible_fullscreen, 2, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        behavior_layout.addWidget(kvf_label, 2, 0, Qt.AlignmentFlag.AlignVCenter)
+        behavior_layout.addWidget(self.keep_visible_fullscreen, 2, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
-        options_layout.setColumnStretch(0, 0)
-        options_layout.setColumnStretch(1, 1)
-        layout.addWidget(options_group)
+        # Tray Offset (absorbed from Display page)
+        behavior_layout.addWidget(QLabel(self.i18n.TRAY_OFFSET_LABEL), 3, 0, Qt.AlignmentFlag.AlignVCenter)
+        self.tray_offset = Win11Slider()
+        self.tray_offset.setRange(0, 50)
+        self.tray_offset.valueChanged.connect(self.on_change)
+        behavior_layout.addWidget(self.tray_offset, 3, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
+        behavior_layout.setColumnStretch(0, 0)
+        behavior_layout.setColumnStretch(1, 1)
+        layout.addWidget(behavior_group)
         
         layout.addStretch()
 
@@ -106,6 +113,9 @@ class GeneralPage(QWidget):
         self.free_move.setChecked(config.get("free_move", False))
         self.keep_visible_fullscreen.setChecked(config.get("keep_visible_fullscreen", constants.config.defaults.DEFAULT_KEEP_VISIBLE_FULLSCREEN))
 
+        # Tray Offset
+        self.tray_offset.setValue(config.get("tray_offset_x", 0))
+
     def get_settings(self) -> Dict[str, Any]:
         # Get slider position and convert to update_rate value
         slider_position = self.update_rate.value()
@@ -116,7 +126,8 @@ class GeneralPage(QWidget):
             "update_rate": update_rate_value,
             "free_move": self.free_move.isChecked(),
             "keep_visible_fullscreen": self.keep_visible_fullscreen.isChecked(),
-            "start_with_windows": self.start_with_windows.isChecked() 
+            "start_with_windows": self.start_with_windows.isChecked(),
+            "tray_offset_x": self.tray_offset.value()
         }
 
     def _on_update_rate_changed(self, value: int) -> None:

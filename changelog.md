@@ -1,5 +1,44 @@
 # Changelog
 
+All notable changes to this project will be documented in this file.
+
+---
+
+## [1.3.0] - Unreleased
+
+### Added
+- **App Activity Window:** Added an App Activity window (accessible from the tray menu) to view estimated per-app network activity (includes a non-admin mode with reduced accuracy).
+- **Hardware Monitoring:** Added CPU/GPU utilization tracking and optional RAM/VRAM readouts (vendor-agnostic GPU support via Windows Performance Counters / PDH).
+- **Optional Temperature Readouts:** Added a widget toggle to show CPU/GPU temperatures when available. Sources are tried in priority order: LibreHardwareMonitor/OpenHardwareMonitor WMI (all vendors, requires admin), `nvidia-smi` (NVIDIA GPU), and Windows PDH Thermal Zone / WMI ACPI (CPU fallback).
+  > **Note:** CPU and GPU temperatures require a kernel-level driver on most modern hardware. Install [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) and run it as Administrator — NetSpeedTray will detect it automatically. NVIDIA GPU temperature also works natively via `nvidia-smi`.
+- **Optional Power Readouts:** Added a widget toggle to show CPU/GPU power draw in Watts. Uses Intel RAPL via PDH (non-admin) for CPU, `nvidia-smi` for NVIDIA GPU, and LibreHardwareMonitor/OpenHardwareMonitor for all GPU vendors.
+- **Graph Window Hardware Views:** Added CPU and GPU history tabs, plus a refreshed Overview tab with live-updating, synchronized Network/CPU/GPU charts and quick at-a-glance stats.
+- **Widget Layout Modes:** Added Side-by-Side and Cycle display modes, a stacked CPU+GPU column option, and per-segment display ordering (Network/CPU/GPU/None).
+- **Context Menu Graph Access:** Added "Show Graph" to the right-click context menu for easier graph window discovery (previously only accessible via double-click).
+- **Hardware Data Retention:** Added hourly aggregation tier for hardware stats (matching speed data's 3-tier architecture: raw 24h → minute 30d → hour user-configurable), preventing data loss after 30 days.
+- **LibreHardwareMonitor Integration:** Auto-detects a running LibreHardwareMonitor or OpenHardwareMonitor instance via WMI, enabling temperature and power readings across all GPU vendors. The probe retries each poll cycle, so LHM can be started after NetSpeedTray.
+
+### Changed
+- **Settings UI Redesign:** Consolidated settings pages from 8 to 6. Merged Mini Graph into Appearance, Troubleshooting into a footer Export Log button, and moved Tray Offset to General (renamed "Options" → "Behavior"). Removed the AdaptiveStackedWidget in favor of a fixed-size dialog with per-page scroll areas to eliminate resize oscillation and taskbar overlap on 1080p.
+- **Collapsible Hardware Settings:** Replaced the Hardware page's three QGroupBoxes with CollapsibleSection accordion widgets (Hardware Monitoring expanded, Widget Display Mode and Display Order collapsed by default) to reduce visual density on small screens.
+- **Win11 Flat Card Styling:** Removed QGroupBox borders across all settings pages, keeping subtle background + border-radius for a modern Windows 11 flat card aesthetic.
+- **Interface Mode Subtitles:** Added visible subtitle descriptions below each monitoring mode radio button (replacing hard-to-discover tooltips) explaining what each mode does.
+- **Clearer Labels:** Renamed "Force MB Display" → "Always Show Megabytes", "Stacked Column" → "Stacked", "Cycle All" → "Auto-Cycle", "All Physical Interfaces" → "Physical Adapters Only", "All Interfaces (including virtual)" → "All Adapters", and "Label Style" → "Indicator Style".
+- **Hardware Settings UI:** Expanded the Hardware settings page with clearer Windows 11-style controls (hardware toggles, label style, widget mode, display order, temperature and power options).
+- **Graph Window Layout:** Unified spacing/padding and status-bar placement across tabs for a more consistent Windows 11 look and feel.
+- **Widget Layout:** Improved width budgeting for multi-segment modes and increased spacing between the Network and CPU/GPU sections.
+- **Localization:** Translated all new UI keys (hardware power, monitoring mode subtitles, collapsible section titles) across all 9 supported locales. Maintained strict key parity via `test_locales_parity`.
+- **Log Noise Reduction:** Hardware monitor "0 temperature sensors" INFO message now only appears once per namespace per app session instead of every poll cycle.
+- **Updated Defaults:** Adjusted default configuration to better match recommended settings: font weight Normal (400), separate arrow font enabled, decimal places 1, side-by-side widget mode, monochrome hardware icons, hardware temps enabled, stacked stats enabled.
+- **GPU Polling Refactor:** Replaced the opaque GPU poll 4-tuple with a structured `GpuPollResult` NamedTuple for clearer code and extensibility (now includes power field).
+
+### Fixed
+- **Tray Offset Y Default:** Fixed a copy-paste bug where the Y-offset fallback incorrectly used the X-offset default constant.
+- **Hardware Aggregation Idempotence:** Changed hourly hardware stats aggregation from `INSERT OR IGNORE` to `INSERT OR REPLACE` to prevent silent data loss if maintenance re-runs after a crash.
+- **COM/WMI Resource Cleanup:** Added proper `CoUninitialize()` and WMI object release in the monitor thread shutdown path to prevent COM reference leaks.
+
+---
+
 ## [1.2.6] - 2026-02-21
 
 ### Added
@@ -20,8 +59,6 @@
 - Resolved an issue where the widget could "disappear" or be positioned incorrectly when used with very large fonts or small taskbars.
 - Fixed a rare race condition where the widget would fail to re-anchor correctly after a shell restart or display change.
 - Corrected peak tag positioning in corner cases (top-right and top-left peaks).
-
-All notable changes to this project will be documented in this file.
 
 ---
 
