@@ -39,7 +39,7 @@ All notable changes to this project will be documented in this file.
 
 ---
 
-## [1.2.6] - 2026-02-21
+## [1.2.6] - February 21, 2026
 
 ### Added
 - **High-DPI Alignment Fix:** Improved vertical centering of the widget on Windows 11 high-DPI displays by accurately calculating the visible taskbar region.
