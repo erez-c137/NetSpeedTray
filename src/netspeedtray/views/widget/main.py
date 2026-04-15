@@ -526,6 +526,9 @@ class NetworkSpeedWidget(QWidget):
             self.controller.cpu_usage_updated.connect(lambda val: self.update_display_hardware(cpu=val))
             self.controller.gpu_usage_updated.connect(lambda val: self.update_display_hardware(gpu=val))
             
+            # One-time LHM notice
+            self.monitor_thread.lhm_not_detected.connect(self._on_lhm_not_detected)
+
             # Start the monitoring thread
             self.monitor_thread.start()
 
@@ -1058,6 +1061,14 @@ class NetworkSpeedWidget(QWidget):
             webbrowser.open("https://ko-fi.com/erezc137")
         elif msg.clickedButton() == bmc_btn:
             webbrowser.open("https://buymeacoffee.com/erez.c137")
+
+    def _on_lhm_not_detected(self) -> None:
+        """Show a one-time notice when temperature/power readings require LibreHardwareMonitor."""
+        QMessageBox.information(
+            None,
+            self.i18n.LHM_NOT_DETECTED_TITLE,
+            self.i18n.LHM_NOT_DETECTED_TEXT
+        )
 
     def _on_graph_window_closed(self) -> None:
         """

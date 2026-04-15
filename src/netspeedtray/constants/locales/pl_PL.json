@@ -329,6 +329,8 @@
     "SUPPORT_KOFI": "Ko-fi",
     "SUPPORT_BMC": "Buy Me a Coffee",
     "SUPPORT_STAR_GITHUB": "Gwiazdka na GitHub",
+    "LHM_NOT_DETECTED_TITLE": "Temperatura i pobór mocy niedostępne",
+    "LHM_NOT_DETECTED_TEXT": "Odczyty temperatury i poboru mocy wymagają LibreHardwareMonitor (lub OpenHardwareMonitor) uruchomionego jako Administrator.\n\nDarmowe pobieranie:\nhttps://github.com/LibreHardwareMonitor/LibreHardwareMonitor\n\nTemperatura GPU NVIDIA działa również natywnie przez nvidia-smi.\n\nMożesz wyłączyć te odczyty w Ustawienia > Sprzęt.",
     "APP_ACTIVITY_WINDOW_TITLE": "App Network Activity",
     "APP_ACTIVITY_LOADING_MESSAGE": "Loading application activity...",
     "APP_ACTIVITY_HINT_TEXT": "Per-app speed is estimated from process I/O deltas while connections are active.",

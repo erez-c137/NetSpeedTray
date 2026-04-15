@@ -329,6 +329,8 @@
     "SUPPORT_KOFI": "Ko-fi",
     "SUPPORT_BMC": "Buy Me a Coffee",
     "SUPPORT_STAR_GITHUB": "Auf GitHub markieren",
+    "LHM_NOT_DETECTED_TITLE": "Temperatur & Leistung nicht verfügbar",
+    "LHM_NOT_DETECTED_TEXT": "Temperatur- und Leistungswerte erfordern LibreHardwareMonitor (oder OpenHardwareMonitor) mit Administratorrechten.\n\nKostenloser Download:\nhttps://github.com/LibreHardwareMonitor/LibreHardwareMonitor\n\nNVIDIA-GPU-Temperatur funktioniert auch nativ über nvidia-smi.\n\nSie können diese Anzeigen unter Einstellungen > Hardware deaktivieren.",
     "APP_ACTIVITY_WINDOW_TITLE": "App Network Activity",
     "APP_ACTIVITY_LOADING_MESSAGE": "Loading application activity...",
     "APP_ACTIVITY_HINT_TEXT": "Per-app speed is estimated from process I/O deltas while connections are active.",

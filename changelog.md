@@ -9,6 +9,7 @@ All notable changes to this project will be documented in this file.
 ### Added
 - **Update Checker:** The app now checks for new releases via the GitHub API on startup (every 24 hours) and offers a "Check for Updates" option in the right-click menu. Users can download the latest version, skip a specific release, or disable the check entirely in Settings > Behavior.
 - **Support Dialog:** Added a "Support this Project" menu item with links to GitHub Sponsors, Ko-fi, and Buy Me a Coffee.
+- **LibreHardwareMonitor Notice:** When temperature or power readouts are enabled but no data source is detected after startup, a one-time notification explains that LibreHardwareMonitor (or OpenHardwareMonitor) is required and links to the download page.
 - **RDP Session Detection:** Automatic detection of Remote Desktop sessions via `GetSystemMetrics(SM_REMOTESESSION)`. GPU monitoring is skipped and App Activity displays an informational message instead of attempting unreliable psutil queries in virtualized environments.
 
 ### Changed

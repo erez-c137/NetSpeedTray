@@ -54,6 +54,7 @@ class StatsMonitorThread(QThread):
     """
     stats_ready = pyqtSignal(dict)  # Contains 'network', 'cpu', 'gpu' keys if enabled
     error_occurred = pyqtSignal(str)
+    lhm_not_detected = pyqtSignal()  # Emitted once when temps/power enabled but no source found
 
     def __init__(self, interval: float = 1.0, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__()
@@ -76,6 +77,8 @@ class StatsMonitorThread(QThread):
         # None = not yet tried, False = tried and unavailable, object = connected.
         self._wmi_ohm: Any = None
         self._ohm_empty_ns_logged: set = set()  # Namespaces already warned about (log once)
+        self._lhm_notice_emitted: bool = False  # One-time notification flag
+        self._lhm_check_polls: int = 0  # Count polls before emitting notice
         self._nvidia_smi_path: Optional[str] = self._get_cached_path("nvidia-smi")
 
         # PDH Queries for GPU
@@ -668,7 +671,23 @@ class StatsMonitorThread(QThread):
                 
                 if stats:
                     self.stats_ready.emit(stats)
-                    
+
+                # One-time LHM notice: if temps/power enabled but no readings after a few polls
+                if not self._lhm_notice_emitted:
+                    wants_temps = self.config.get('show_hardware_temps', False)
+                    wants_power = self.config.get('show_hardware_power', False)
+                    if wants_temps or wants_power:
+                        self._lhm_check_polls += 1
+                        # Wait 5 polls (~5s) to give LHM time to be detected
+                        if self._lhm_check_polls >= 5:
+                            has_any_reading = any(
+                                stats.get(k) is not None
+                                for k in ('cpu_temp', 'gpu_temp', 'cpu_power', 'gpu_power')
+                            )
+                            if not has_any_reading:
+                                self._lhm_notice_emitted = True
+                                self.lhm_not_detected.emit()
+
                 # Success - reset circuit breaker
                 if self.consecutive_errors > 0:
                     self.consecutive_errors = 0
