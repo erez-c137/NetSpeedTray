@@ -105,7 +105,7 @@ class GraphDataWorker(QObject):
                         "gpu": [(d.timestamp.timestamp(), d.value, 0.0) for d in gpu_data if start_ts <= d.timestamp.timestamp() <= end_ts]
                     }
                 else:
-                    net_data = self.widget_state.get_speed_history(request.start_time, request.end_time, request.interface_name)
+                    net_data = self.widget_state.get_speed_history(request.start_time, request.end_time, request.interface_name, return_raw=True)
                     cpu_data = self.widget_state.get_hardware_history("cpu", request.start_time, request.end_time)
                     gpu_data = self.widget_state.get_hardware_history("gpu", request.start_time, request.end_time)
 
