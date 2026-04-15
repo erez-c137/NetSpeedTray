@@ -375,28 +375,26 @@ class ConfigManager:
             validated[key] = self._validate_value(key, loaded_value, rules)
 
         # Handle specific cross-field logic (Business Rules)
-        # Rule: high_speed_threshold must be strictly greater than low_speed_threshold,
-        # and both must be within the acceptable range [0, 1000] Mbps.
-        # If the pair is invalid (swapped, equal, or out of range), reset both to
-        # their defaults so that color coding works correctly on every config load.
+        # Rule: high_speed_threshold must be strictly greater than low_speed_threshold.
+        # Per-field schema validation already enforces each field's range, so we only
+        # need to check the invariant between them. If invalid (swapped, equal, or
+        # non-numeric), reset both to defaults so color coding works on every load.
         try:
             low = validated.get("low_speed_threshold")
             high = validated.get("high_speed_threshold")
             low_f = float(low) if low is not None else None
             high_f = float(high) if high is not None else None
-            if (
-                low_f is None
-                or high_f is None
-                or not (0 <= low_f < high_f <= 1000)
-            ):
+            if low_f is None or high_f is None or not (low_f < high_f):
                 self.logger.warning(
                     "Invalid speed thresholds (high=%s, low=%s): resetting both to defaults.",
                     high, low,
                 )
                 validated["high_speed_threshold"] = constants.config.defaults.DEFAULT_HIGH_SPEED_THRESHOLD
                 validated["low_speed_threshold"] = constants.config.defaults.DEFAULT_LOW_SPEED_THRESHOLD
-        except Exception:
-            pass
+        except (TypeError, ValueError) as exc:
+            self.logger.warning("Failed to evaluate threshold pair: %s. Resetting to defaults.", exc)
+            validated["high_speed_threshold"] = constants.config.defaults.DEFAULT_HIGH_SPEED_THRESHOLD
+            validated["low_speed_threshold"] = constants.config.defaults.DEFAULT_LOW_SPEED_THRESHOLD
 
         # Warn about unknown keys
         extra_keys = set(loaded_config.keys()) - set(schema.keys())

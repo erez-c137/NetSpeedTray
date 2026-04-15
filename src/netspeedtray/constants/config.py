@@ -23,7 +23,6 @@ class ConfigMessages:
     INVALID_COLOR: Final[str] = "Invalid color '{value}' for {key}, resetting to default '{default}'"
     INVALID_CHOICE: Final[str] = "Invalid {key} '{value}', resetting to default '{default}'. Valid choices: {choices}"
     INVALID_INTERFACES: Final[str] = "Invalid selected_interfaces value '{value}', resetting to default []"
-    THRESHOLD_SWAP: Final[str] = "low_speed_threshold > high_speed_threshold, setting low to high's value"
     INVALID_POSITION: Final[str] = "Invalid {key} '{value}', resetting to None"
 
 
