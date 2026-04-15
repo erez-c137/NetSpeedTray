@@ -578,7 +578,8 @@ class NetworkSpeedWidget(QWidget):
             
             # Detect layout mode
             taskbar_info = get_taskbar_info()
-            layout_mode = 'horizontal' if is_small_taskbar(taskbar_info) else 'vertical'
+            edge = taskbar_info.get_edge_position()
+            layout_mode = 'horizontal' if edge in (constants.TaskbarEdge.LEFT, constants.TaskbarEdge.RIGHT) else 'vertical'
             
             # 3. Mini-Graph Layer
             if render_config.graph_enabled:
