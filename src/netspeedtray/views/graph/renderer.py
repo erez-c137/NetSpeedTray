@@ -581,7 +581,11 @@ class GraphRenderer(QObject):
         if stat_type == "overview":
             self._render_overview(history_data, start_time=start_time, end_time=end_time, period_key=period_key, boot_time=boot_time)
         elif stat_type == "network":
-            raw_data = np.array(history_data, dtype=float)
+            safe_data = [
+                (ts.timestamp() if isinstance(ts, datetime) else float(ts), float(up), float(dn))
+                for ts, up, dn in history_data
+            ]
+            raw_data = np.array(safe_data, dtype=float)
             timestamps = raw_data[:, 0]
             plot_datetimes = [datetime.fromtimestamp(t) for t in timestamps]
             plot_datetimes_array = np.array(plot_datetimes)
