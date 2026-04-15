@@ -457,8 +457,7 @@ class WidgetRenderer:
     def _draw_icon(self, painter: QPainter, icon_type: str, x: int, y_ascent: int, color: Optional[QColor] = None) -> None:
         """Draws a tiny symbolic icon for CPU or GPU."""
         painter.save()
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        
+
         # Icon box size
         size = 11
         rect = QRect(x, y_ascent - size + 1, size, size)
@@ -618,7 +617,6 @@ class WidgetRenderer:
 
             painter.save()
             painter.setOpacity(config.graph_opacity)
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
             painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Plus)
 
             from PyQt6.QtGui import QLinearGradient, QBrush, QPolygonF

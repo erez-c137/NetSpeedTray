@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [1.3.1] - April 15, 2026
+
+### Added
+- **RDP Session Detection:** Automatic detection of Remote Desktop sessions via `GetSystemMetrics(SM_REMOTESESSION)`. GPU monitoring is skipped and App Activity displays an informational message instead of attempting unreliable psutil queries in virtualized environments.
+
+### Fixed
+- **App Crash in RDP (Windows Server):** GPU polling errors are now caught and logged independently without incrementing the circuit breaker's consecutive error counter, preventing GPU failures from killing the entire monitor thread and crashing the app.
+- **App Sluggishness in RDP:** Wrapped `psutil.net_connections()` in a daemon thread with a 2-second timeout to prevent the App Activity window from stalling the 1-second polling loop in RDP and low-privilege environments.
+- **Graph Render Crash (`datetime` type error):** Fixed `float() argument must be a string or a real number, not 'datetime.datetime'` by requesting raw numeric timestamps from the database and adding a defensive type guard before numpy conversion. Also applied to the Overview tab's database-backed path.
+- **Color Coding Always Yellow/Orange:** Fixed color coding failing on configs migrated from v1.2.6 by replacing the broken threshold repair logic (which set `low = high`, still leaving the band unreachable) with a cross-field guard that resets both thresholds to defaults when the `low < high` invariant is violated.
+- **Swap Upload/Download Checkbox:** The "Swap upload/download" setting now correctly swaps both the speed values/units and arrow icons together. Previously only the arrow icon was swapped while upload and download values always rendered in fixed positions.
+- **Vertical Taskbar Layout:** Widget layout mode is now determined from the taskbar edge position (Left/Right edge → horizontal layout, Top/Bottom edge → vertical layout) instead of the unrelated `is_small_taskbar()` height check, fixing broken widget rendering on vertical taskbars.
+- **Config Migration Resetting Display Mode:** Removed `side_by_side` from the display mode downgrade rule — it gracefully degrades to network-only at render time and no longer silently resets to `network_only` when hardware monitors are disabled. Also cleaned up dead `cpu_only`/`gpu_only` branches that could never trigger and tightened the `cycle` downgrade condition to gate only on CPU/GPU (not RAM/VRAM).
+- **Widget Flickering:** Eliminated per-paint Win32 taskbar enumeration by caching the layout mode and refreshing it only on taskbar geometry changes. Also removed redundant `setRenderHint(Antialiasing)` calls in the icon and mini-graph paint paths.
+- **High-DPI Widget Clipping:** The `MAX_WIDGET_WIDTH_PX` / `MAX_WIDGET_HEIGHT_PX` safety constraints are now scaled by the display's DPI factor, preventing text truncation on 4K and other high-DPI screens.
+
+### Security
+- Updated Pillow, pytest, and Pygments dependencies for CVE fixes.
+
+---
+
 ## [1.3.0] - April 14, 2026
 
 ### Added

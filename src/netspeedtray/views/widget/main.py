@@ -96,6 +96,7 @@ class NetworkSpeedWidget(QWidget):
         self.theme_manager: WidgetThemeManager
         self.tray_manager: TrayIconManager
         self.monitor_thread: StatsMonitorThread
+        self._cached_layout_mode: str = 'vertical'  # Updated on taskbar changes
         self.graph_window: Optional[GraphWindow] = None
         self.app_activity_window: Optional[AppActivityWindow] = None
         self.app_icon: QIcon
@@ -523,6 +524,7 @@ class NetworkSpeedWidget(QWidget):
             # 1. System Event Handler (replaces manual WinEventHooks)
             self.system_event_handler.foreground_app_changed.connect(self._execute_refresh)
             self.system_event_handler.taskbar_changed.connect(self.update_position)
+            self._refresh_cached_layout_mode()
             self.system_event_handler.theme_changed.connect(self._on_theme_changed)
             
             # For immediate hide, we just connect to a lambda that hides self
@@ -576,10 +578,7 @@ class NetworkSpeedWidget(QWidget):
                 self._draw_paint_error(painter, "Render Error")
                 return
             
-            # Detect layout mode
-            taskbar_info = get_taskbar_info()
-            edge = taskbar_info.get_edge_position()
-            layout_mode = 'horizontal' if edge in (constants.TaskbarEdge.LEFT, constants.TaskbarEdge.RIGHT) else 'vertical'
+            layout_mode = self._cached_layout_mode
             
             # 3. Mini-Graph Layer
             if render_config.graph_enabled:
@@ -1027,12 +1026,24 @@ class NetworkSpeedWidget(QWidget):
         The single, authoritative method to reposition the widget based on its current state.
         """
         self.logger.debug("Authoritative request to update widget position.")
+        self._refresh_cached_layout_mode()
         if self.position_manager:
             try:
                 self.position_manager.update_position()
             except Exception as e:
                 self.logger.error(f"Error during position update: {e}", exc_info=True)
 
+
+    def _refresh_cached_layout_mode(self) -> None:
+        """Update cached layout mode from current taskbar edge position."""
+        try:
+            taskbar_info = get_taskbar_info()
+            edge = taskbar_info.get_edge_position()
+            self._cached_layout_mode = 'horizontal' if edge in (
+                constants.TaskbarEdge.LEFT, constants.TaskbarEdge.RIGHT
+            ) else 'vertical'
+        except Exception:
+            pass  # Keep previous cached value
 
     def is_startup_enabled(self, force_check: bool = False) -> bool:
         """Checks if startup is enabled via StartupManager."""
