@@ -32,7 +32,7 @@ from netspeedtray.core.position_manager import PositionManager, WindowState
 from netspeedtray.core.input_handler import InputHandler
 from netspeedtray.utils.taskbar_utils import (
     get_taskbar_info, is_taskbar_obstructed, is_taskbar_visible,
-    is_small_taskbar, get_process_name_from_hwnd
+    get_process_name_from_hwnd
 )
 
 from netspeedtray.utils.widget_renderer import WidgetRenderer as CoreWidgetRenderer, RenderConfig
@@ -578,7 +578,8 @@ class NetworkSpeedWidget(QWidget):
             
             # Detect layout mode
             taskbar_info = get_taskbar_info()
-            layout_mode = 'horizontal' if is_small_taskbar(taskbar_info) else 'vertical'
+            edge = taskbar_info.get_edge_position()
+            layout_mode = 'horizontal' if edge in (constants.TaskbarEdge.LEFT, constants.TaskbarEdge.RIGHT) else 'vertical'
             
             # 3. Mini-Graph Layer
             if render_config.graph_enabled:
