@@ -7,7 +7,14 @@ All notable changes to this project will be documented in this file.
 ## [1.3.1] - April 15, 2026
 
 ### Added
+- **Update Checker:** The app now checks for new releases via the GitHub API on startup (every 24 hours) and offers a "Check for Updates" option in the right-click menu. Users can download the latest version, skip a specific release, or disable the check entirely in Settings > Behavior.
+- **Support Dialog:** Added a "Support this Project" menu item with links to GitHub Sponsors, Ko-fi, and Buy Me a Coffee.
 - **RDP Session Detection:** Automatic detection of Remote Desktop sessions via `GetSystemMetrics(SM_REMOTESESSION)`. GPU monitoring is skipped and App Activity displays an informational message instead of attempting unreliable psutil queries in virtualized environments.
+
+### Changed
+- **Context Menu Grouping:** Right-click menu items are now organized into logical groups with separators (windows / updates & support / exit) for easier scanning.
+- **Global Window Icon:** All application windows and dialogs (including update and support popups) now display the NetSpeedTray icon in the title bar.
+- **README Overhaul:** Rewrote the README to reflect all v1.3.0/v1.3.1 features including hardware monitoring, App Activity, display modes, and RDP detection. Moved the Support section above Building from Source for better visibility.
 
 ### Fixed
 - **App Crash in RDP (Windows Server):** GPU polling errors are now caught and logged independently without incrementing the circuit breaker's consecutive error counter, preventing GPU failures from killing the entire monitor thread and crashing the app.

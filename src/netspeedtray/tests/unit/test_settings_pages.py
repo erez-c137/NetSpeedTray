@@ -108,6 +108,7 @@ def mock_i18n():
     i18n.UPDATE_MODE_BALANCED_LABEL = "Balanced"
     i18n.UPDATE_MODE_EFFICIENT_LABEL = "Efficient"
     i18n.UPDATE_MODE_POWER_SAVER_LABEL = "Power Saver"
+    i18n.CHECK_FOR_UPDATES_LABEL = "Check for updates on startup"
 
     # Font Weight Labels (used in Win11Slider.setValueText)
     for key in constants.fonts.WEIGHT_MAP.values():

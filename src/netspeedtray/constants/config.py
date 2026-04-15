@@ -167,6 +167,9 @@ class ConfigConstants:
         "cpu_load_low_threshold": DEFAULT_CPU_LOAD_LOW_THRESHOLD,
         "gpu_load_high_threshold": DEFAULT_GPU_LOAD_HIGH_THRESHOLD,
         "gpu_load_low_threshold": DEFAULT_GPU_LOAD_LOW_THRESHOLD,
+        "check_for_updates": True,
+        "skipped_version": None,
+        "last_update_check": None,
     }
     
     # --- Schema Definition for Modern Config Validation ---
@@ -238,6 +241,9 @@ class ConfigConstants:
         "cpu_load_low_threshold": {"type": (int, float), "default": DEFAULT_CPU_LOAD_LOW_THRESHOLD, "min": 0, "max": 100},
         "gpu_load_high_threshold": {"type": (int, float), "default": DEFAULT_GPU_LOAD_HIGH_THRESHOLD, "min": 0, "max": 100},
         "gpu_load_low_threshold": {"type": (int, float), "default": DEFAULT_GPU_LOAD_LOW_THRESHOLD, "min": 0, "max": 100},
+        "check_for_updates": {"type": bool, "default": True},
+        "skipped_version": {"type": (str, type(None)), "default": None},
+        "last_update_check": {"type": (str, type(None)), "default": None},
     }
 
 

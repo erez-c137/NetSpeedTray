@@ -11,6 +11,8 @@ class AppConstants:
     VERSION: Final[str] = netspeedtray.__version__
     MUTEX_NAME: Final[str] = "Global\\NetSpeedTray_SingleInstanceMutex"
     ICON_FILENAME: Final[str] = "NetSpeedTray.ico"
+    GITHUB_OWNER: Final[str] = "erez-c137"
+    GITHUB_REPO: Final[str] = "NetSpeedTray"
 
     def __init__(self) -> None:
         self.validate()

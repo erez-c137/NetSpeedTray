@@ -164,6 +164,13 @@ def main() -> int:
             widget.set_app_version(constants.app.VERSION)
             
             # 6. Configure the application to behave like a tray utility.
+            # Set global app icon so all windows (including QMessageBox) show the logo
+            from netspeedtray.utils.helpers import get_app_asset_path
+            from PyQt6.QtGui import QIcon
+            icon_path = get_app_asset_path(constants.app.ICON_FILENAME)
+            if icon_path.exists():
+                app.setWindowIcon(QIcon(str(icon_path)))
+
             app.setQuitOnLastWindowClosed(False)
             app.aboutToQuit.connect(widget.cleanup)
 

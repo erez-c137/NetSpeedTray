@@ -41,6 +41,7 @@ from netspeedtray.views.widget.layout import WidgetLayoutManager
 from netspeedtray.views.widget.theme import WidgetThemeManager
 from netspeedtray.core.startup_manager import StartupManager
 from netspeedtray.core.config_controller import ConfigController
+from netspeedtray.core.update_checker import UpdateChecker
 
 # --- Type Checking ---
 if TYPE_CHECKING:
@@ -99,6 +100,7 @@ class NetworkSpeedWidget(QWidget):
         self._cached_layout_mode: str = 'vertical'  # Updated on taskbar changes
         self.graph_window: Optional[GraphWindow] = None
         self.app_activity_window: Optional[AppActivityWindow] = None
+        self.update_checker: Optional[UpdateChecker] = None
         self.app_icon: QIcon
         # Note: self.current_font and self.current_metrics are initialized earlier before _init_managers()
         
@@ -178,6 +180,12 @@ class NetworkSpeedWidget(QWidget):
         self._state_watcher_timer.timeout.connect(self._execute_refresh)
         self._state_watcher_timer.start()
         self.logger.debug(f"Safety net state watcher timer started ({constants.timeouts.STATE_WATCHER_INTERVAL_MS}ms).")
+
+        # Update Checker — delayed startup check
+        self.update_checker = UpdateChecker(self.config, self)
+        self.update_checker.update_available.connect(self._on_update_available)
+        if self.update_checker.should_check():
+            QTimer.singleShot(5000, self.update_checker.check_now)
 
         # Cycle Timer
         if self.config.get("widget_display_mode") == "cycle":
@@ -979,6 +987,77 @@ class NetworkSpeedWidget(QWidget):
             self.logger.error(f"Error showing app activity window: {e}", exc_info=True)
             QMessageBox.critical(self, self.i18n.ERROR_TITLE, f"Could not open app activity window:\n\n{str(e)}")
 
+
+    def check_for_updates(self) -> None:
+        """Manually trigger an update check (from menu)."""
+        if self.update_checker:
+            self.update_checker.update_available.connect(self._on_update_available_manual, Qt.ConnectionType.SingleShotConnection)
+            self.update_checker.up_to_date.connect(self._on_up_to_date_manual, Qt.ConnectionType.SingleShotConnection)
+            self.update_checker.check_failed.connect(self._on_check_failed_manual, Qt.ConnectionType.SingleShotConnection)
+            self.update_checker.check_now()
+
+    def _on_update_available(self, latest_version: str, release_url: str) -> None:
+        """Handle update available from automatic startup check."""
+        self._show_update_dialog(latest_version, release_url)
+
+    def _on_update_available_manual(self, latest_version: str, release_url: str) -> None:
+        """Handle update available from manual menu check."""
+        self._show_update_dialog(latest_version, release_url)
+
+    def _on_up_to_date_manual(self) -> None:
+        """Show up-to-date message for manual check."""
+        QMessageBox.information(
+            None, self.i18n.UPDATE_UP_TO_DATE_TITLE,
+            self.i18n.UPDATE_UP_TO_DATE_TEXT.format(current=constants.app.VERSION)
+        )
+
+    def _on_check_failed_manual(self, error: str) -> None:
+        """Show error message for manual check."""
+        QMessageBox.warning(None, "Update Check", self.i18n.UPDATE_CHECK_FAILED_TEXT)
+
+    def _show_update_dialog(self, latest_version: str, release_url: str) -> None:
+        """Show update available dialog with Download / Skip / Not Now."""
+        msg = QMessageBox(None)
+        msg.setWindowTitle(self.i18n.UPDATE_AVAILABLE_TITLE)
+        msg.setText(self.i18n.UPDATE_AVAILABLE_TEXT.format(
+            current=constants.app.VERSION, latest=latest_version.lstrip("vV")
+        ))
+        msg.setIcon(QMessageBox.Icon.Information)
+
+        download_btn = msg.addButton(self.i18n.UPDATE_DOWNLOAD_BUTTON, QMessageBox.ButtonRole.AcceptRole)
+        skip_btn = msg.addButton(self.i18n.UPDATE_SKIP_BUTTON, QMessageBox.ButtonRole.DestructiveRole)
+        msg.addButton(self.i18n.UPDATE_DISMISS_BUTTON, QMessageBox.ButtonRole.RejectRole)
+
+        msg.exec()
+
+        if msg.clickedButton() == download_btn:
+            import webbrowser
+            webbrowser.open(release_url)
+        elif msg.clickedButton() == skip_btn:
+            self.config["skipped_version"] = latest_version.lstrip("vV")
+            self.update_config({"skipped_version": self.config["skipped_version"]})
+
+    def show_support_dialog(self) -> None:
+        """Show the support/donate dialog."""
+        import webbrowser
+        msg = QMessageBox(None)
+        msg.setWindowTitle(self.i18n.SUPPORT_DIALOG_TITLE)
+        msg.setText(self.i18n.SUPPORT_DIALOG_TEXT)
+        msg.setIcon(QMessageBox.Icon.Information)
+
+        github_btn = msg.addButton(self.i18n.SUPPORT_GITHUB_SPONSORS, QMessageBox.ButtonRole.ActionRole)
+        kofi_btn = msg.addButton(self.i18n.SUPPORT_KOFI, QMessageBox.ButtonRole.ActionRole)
+        bmc_btn = msg.addButton(self.i18n.SUPPORT_BMC, QMessageBox.ButtonRole.ActionRole)
+        msg.addButton(QMessageBox.StandardButton.Close)
+
+        msg.exec()
+
+        if msg.clickedButton() == github_btn:
+            webbrowser.open("https://github.com/sponsors/erez-c137")
+        elif msg.clickedButton() == kofi_btn:
+            webbrowser.open("https://ko-fi.com/erezc137")
+        elif msg.clickedButton() == bmc_btn:
+            webbrowser.open("https://buymeacoffee.com/erez.c137")
 
     def _on_graph_window_closed(self) -> None:
         """
