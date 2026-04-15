@@ -101,7 +101,7 @@ class AppActivityWorker(QObject):
         def _fetch() -> None:
             try:
                 result.append(("ok", psutil.net_connections(kind="inet")))
-            except (psutil.AccessDenied, OSError) as exc:
+            except Exception as exc:
                 result.append(("err", exc))
 
         t = threading.Thread(target=_fetch, daemon=True)
@@ -110,8 +110,12 @@ class AppActivityWorker(QObject):
 
         if t.is_alive():
             self.logger.warning(
-                "psutil.net_connections() timed out after 2s — skipping this collection cycle"
+                "psutil.net_connections() timed out after 2s - skipping this collection cycle"
             )
+            return defaultdict(list), False
+
+        if not result:
+            self.logger.error("net_connections thread exited without a result - skipping cycle")
             return defaultdict(list), False
 
         status, value = result[0]
