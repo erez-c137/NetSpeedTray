@@ -615,6 +615,10 @@ class StatsMonitorThread(QThread):
         """Main monitoring loop."""
         self.logger.debug("StatsMonitorThread starting loop...")
 
+        # Check once at thread startup, not per-iteration — is_rdp_session() is a
+        # syscall and the session type does not change while the thread is running.
+        # If the user connects via RDP after the app has started they must restart
+        # the app for GPU monitoring to be suppressed.
         _in_rdp = is_rdp_session()
         if _in_rdp:
             self.logger.info("RDP session detected — GPU monitoring will be skipped.")
