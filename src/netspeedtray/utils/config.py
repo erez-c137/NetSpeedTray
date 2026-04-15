@@ -375,14 +375,27 @@ class ConfigManager:
             validated[key] = self._validate_value(key, loaded_value, rules)
 
         # Handle specific cross-field logic (Business Rules)
-        # Rule: Low Threshold <= High Threshold
+        # Rule: high_speed_threshold must be strictly greater than low_speed_threshold,
+        # and both must be within the acceptable range [0, 1000] Mbps.
+        # If the pair is invalid (swapped, equal, or out of range), reset both to
+        # their defaults so that color coding works correctly on every config load.
         try:
-             low = validated.get("low_speed_threshold", 0)
-             high = validated.get("high_speed_threshold", 0)
-             if low > high:
-                 self.logger.warning(constants.config.messages.THRESHOLD_SWAP)
-                 validated["low_speed_threshold"] = high
-        except Exception: 
+            low = validated.get("low_speed_threshold")
+            high = validated.get("high_speed_threshold")
+            low_f = float(low) if low is not None else None
+            high_f = float(high) if high is not None else None
+            if (
+                low_f is None
+                or high_f is None
+                or not (0 <= low_f < high_f <= 1000)
+            ):
+                self.logger.warning(
+                    "Invalid speed thresholds (high=%s, low=%s): resetting both to defaults.",
+                    high, low,
+                )
+                validated["high_speed_threshold"] = constants.config.defaults.DEFAULT_HIGH_SPEED_THRESHOLD
+                validated["low_speed_threshold"] = constants.config.defaults.DEFAULT_LOW_SPEED_THRESHOLD
+        except Exception:
             pass
 
         # Warn about unknown keys
