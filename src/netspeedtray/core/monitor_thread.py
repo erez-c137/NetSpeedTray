@@ -33,6 +33,7 @@ import shutil
 from functools import lru_cache
 
 from netspeedtray import constants
+from netspeedtray.utils.rdp_utils import is_rdp_session
 
 logger = logging.getLogger("NetSpeedTray.StatsMonitorThread")
 
@@ -613,7 +614,11 @@ class StatsMonitorThread(QThread):
     def run(self) -> None:
         """Main monitoring loop."""
         self.logger.debug("StatsMonitorThread starting loop...")
-        
+
+        _in_rdp = is_rdp_session()
+        if _in_rdp:
+            self.logger.info("RDP session detected — GPU monitoring will be skipped.")
+
         while self._is_running:
             try:
                 stats = {}
@@ -637,22 +642,25 @@ class StatsMonitorThread(QThread):
                     stats['ram_used'] = mem.used / (1024**3) # GB
                     stats['ram_total'] = mem.total / (1024**3) # GB
 
-                # 3. GPU / VRAM (Optional)
-                if self.config.get('monitor_gpu_enabled', False):
-                    include_temp = bool(self.config.get('show_hardware_temps', False))
-                    include_power = bool(self.config.get('show_hardware_power', False))
-                    gpu = self._poll_gpu_hybrid(include_temp=include_temp, include_power=include_power)
+                # 3. GPU / VRAM (Optional — skipped entirely in RDP sessions)
+                if self.config.get('monitor_gpu_enabled', False) and not _in_rdp:
+                    try:
+                        include_temp = bool(self.config.get('show_hardware_temps', False))
+                        include_power = bool(self.config.get('show_hardware_power', False))
+                        gpu = self._poll_gpu_hybrid(include_temp=include_temp, include_power=include_power)
 
-                    stats['gpu'] = gpu.util
-                    if include_temp:
-                        stats['gpu_temp'] = gpu.temp
-                    if include_power:
-                        stats['gpu_power'] = gpu.power
+                        stats['gpu'] = gpu.util
+                        if include_temp:
+                            stats['gpu_temp'] = gpu.temp
+                        if include_power:
+                            stats['gpu_power'] = gpu.power
 
-                    if gpu.vram_used is not None:
-                        stats['vram_used'] = gpu.vram_used / 1024.0  # MiB to GiB
-                    if gpu.vram_total is not None:
-                        stats['vram_total'] = gpu.vram_total / 1024.0  # MiB to GiB
+                        if gpu.vram_used is not None:
+                            stats['vram_used'] = gpu.vram_used / 1024.0  # MiB to GiB
+                        if gpu.vram_total is not None:
+                            stats['vram_total'] = gpu.vram_total / 1024.0  # MiB to GiB
+                    except Exception as gpu_err:
+                        self.logger.warning("GPU polling error (skipped, not counted against circuit breaker): %s", gpu_err)
                 
                 if stats:
                     self.stats_ready.emit(stats)
