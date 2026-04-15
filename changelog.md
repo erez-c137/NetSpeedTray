@@ -8,7 +8,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 - **Update Checker:** The app now checks for new releases via the GitHub API on startup (every 24 hours) and offers a "Check for Updates" option in the right-click menu. Users can download the latest version, skip a specific release, or disable the check entirely in Settings > Behavior.
-- **Support Dialog:** Added a "Support this Project" menu item with links to GitHub Sponsors, Ko-fi, and Buy Me a Coffee.
+- **Support Dialog:** Added a "Support this Project" menu item with links to GitHub Sponsors, Ko-fi, Buy Me a Coffee, and Star on GitHub.
 - **LibreHardwareMonitor Notice:** When temperature or power readouts are enabled but no data source is detected after startup, a one-time notification explains that LibreHardwareMonitor (or OpenHardwareMonitor) is required and links to the download page.
 - **RDP Session Detection:** Automatic detection of Remote Desktop sessions via `GetSystemMetrics(SM_REMOTESESSION)`. GPU monitoring is skipped and App Activity displays an informational message instead of attempting unreliable psutil queries in virtualized environments.
 
@@ -27,6 +27,12 @@ All notable changes to this project will be documented in this file.
 - **Config Migration Resetting Display Mode:** Removed `side_by_side` from the display mode downgrade rule — it gracefully degrades to network-only at render time and no longer silently resets to `network_only` when hardware monitors are disabled. Also cleaned up dead `cpu_only`/`gpu_only` branches that could never trigger and tightened the `cycle` downgrade condition to gate only on CPU/GPU (not RAM/VRAM).
 - **Widget Flickering:** Eliminated per-paint Win32 taskbar enumeration by caching the layout mode and refreshing it only on taskbar geometry changes. Also removed redundant `setRenderHint(Antialiasing)` calls in the icon and mini-graph paint paths.
 - **High-DPI Widget Clipping:** The `MAX_WIDGET_WIDTH_PX` / `MAX_WIDGET_HEIGHT_PX` safety constraints are now scaled by the display's DPI factor, preventing text truncation on 4K and other high-DPI screens.
+- **Dialog Close Hiding Widget:** Fixed all popup dialogs (update checker, support, LHM notice) using `parent=None`, which caused closing the dialog to also hide the widget. Dialogs now correctly parent to the widget.
+- **nvidia-smi Console Flash:** Hidden the console window that briefly appeared every poll cycle when using `nvidia-smi` for GPU temperature/power readings.
+- **Widget Spacing with Temp/Power:** Tightened the layout width reference strings for temperature and power suffixes, reducing excess gap between the widget and the system tray when hardware readouts are enabled.
+
+### Known Limitations
+- Temperature readings are displayed in °C only. Fahrenheit support is planned for v1.4.0.
 
 ### Security
 - Updated Pillow, pytest, and Pygments dependencies for CVE fixes.

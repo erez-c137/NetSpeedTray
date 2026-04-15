@@ -264,7 +264,8 @@ class StatsMonitorThread(QThread):
                 query_fields = "temperature.gpu,memory.total,power.draw"
                 output = subprocess.check_output(
                     [self._nvidia_smi_path, f"--query-gpu={query_fields}", "--format=csv,noheader,nounits"],
-                    encoding='utf-8', timeout=0.5
+                    encoding='utf-8', timeout=0.5,
+                    creationflags=subprocess.CREATE_NO_WINDOW
                 )
                 parts = output.strip().split('\n')[0].split(',')
                 if need_smi_temp and len(parts) > 0:

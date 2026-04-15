@@ -1016,11 +1016,11 @@ class NetworkSpeedWidget(QWidget):
 
     def _on_check_failed_manual(self, error: str) -> None:
         """Show error message for manual check."""
-        QMessageBox.warning(None, "Update Check", self.i18n.UPDATE_CHECK_FAILED_TEXT)
+        QMessageBox.warning(self, "Update Check", self.i18n.UPDATE_CHECK_FAILED_TEXT)
 
     def _show_update_dialog(self, latest_version: str, release_url: str) -> None:
         """Show update available dialog with Download / Skip / Not Now."""
-        msg = QMessageBox(None)
+        msg = QMessageBox(self)
         msg.setWindowTitle(self.i18n.UPDATE_AVAILABLE_TITLE)
         msg.setText(self.i18n.UPDATE_AVAILABLE_TEXT.format(
             current=constants.app.VERSION, latest=latest_version.lstrip("vV")
@@ -1043,7 +1043,7 @@ class NetworkSpeedWidget(QWidget):
     def show_support_dialog(self) -> None:
         """Show the support/donate dialog."""
         import webbrowser
-        msg = QMessageBox(None)
+        msg = QMessageBox(self)
         msg.setWindowTitle(self.i18n.SUPPORT_DIALOG_TITLE)
         msg.setText(self.i18n.SUPPORT_DIALOG_TEXT)
         msg.setIcon(QMessageBox.Icon.Information)
@@ -1051,6 +1051,7 @@ class NetworkSpeedWidget(QWidget):
         github_btn = msg.addButton(self.i18n.SUPPORT_GITHUB_SPONSORS, QMessageBox.ButtonRole.ActionRole)
         kofi_btn = msg.addButton(self.i18n.SUPPORT_KOFI, QMessageBox.ButtonRole.ActionRole)
         bmc_btn = msg.addButton(self.i18n.SUPPORT_BMC, QMessageBox.ButtonRole.ActionRole)
+        star_btn = msg.addButton(self.i18n.SUPPORT_STAR_GITHUB, QMessageBox.ButtonRole.ActionRole)
         msg.addButton(QMessageBox.StandardButton.Close)
 
         msg.exec()
@@ -1061,11 +1062,13 @@ class NetworkSpeedWidget(QWidget):
             webbrowser.open("https://ko-fi.com/erezc137")
         elif msg.clickedButton() == bmc_btn:
             webbrowser.open("https://buymeacoffee.com/erez.c137")
+        elif msg.clickedButton() == star_btn:
+            webbrowser.open("https://github.com/erez-c137/NetSpeedTray")
 
     def _on_lhm_not_detected(self) -> None:
         """Show a one-time notice when temperature/power readings require LibreHardwareMonitor."""
         QMessageBox.information(
-            None,
+            self,
             self.i18n.LHM_NOT_DETECTED_TITLE,
             self.i18n.LHM_NOT_DETECTED_TEXT
         )
