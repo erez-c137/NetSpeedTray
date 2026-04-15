@@ -79,25 +79,34 @@ class TrayIconManager(QObject):
         self.logger.debug("Initializing context menu in manager...")
         try:
             self.context_menu = QMenu(self.widget)
-            
-            # Settings
+
+            # --- Primary Actions (windows the user opens frequently) ---
             settings_action = self.context_menu.addAction(self.i18n.SETTINGS_MENU_ITEM)
             if hasattr(self.widget, 'show_settings'):
                 settings_action.triggered.connect(self.widget.show_settings)
 
-            # Show Graph Window
             graph_action = self.context_menu.addAction(self.i18n.SHOW_GRAPH_MENU_ITEM)
             if hasattr(self.widget, 'open_graph_window'):
                 graph_action.triggered.connect(self.widget.open_graph_window)
 
-            # App activity view (Issue #112)
             app_usage_action = self.context_menu.addAction(self.i18n.SHOW_APP_ACTIVITY_MENU_ITEM)
             if hasattr(self.widget, 'open_app_activity_window'):
                 app_usage_action.triggered.connect(self.widget.open_app_activity_window)
-            
+
             self.context_menu.addSeparator()
-            
-            # Exit
+
+            # --- Secondary Actions (less frequent) ---
+            update_action = self.context_menu.addAction(self.i18n.CHECK_FOR_UPDATES_MENU_ITEM)
+            if hasattr(self.widget, 'check_for_updates'):
+                update_action.triggered.connect(self.widget.check_for_updates)
+
+            support_action = self.context_menu.addAction(self.i18n.SUPPORT_MENU_ITEM)
+            if hasattr(self.widget, 'show_support_dialog'):
+                support_action.triggered.connect(self.widget.show_support_dialog)
+
+            self.context_menu.addSeparator()
+
+            # --- Exit ---
             exit_action = self.context_menu.addAction(self.i18n.EXIT_MENU_ITEM)
             app_instance = QApplication.instance()
             if app_instance:

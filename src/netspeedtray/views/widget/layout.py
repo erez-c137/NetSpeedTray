@@ -209,12 +209,13 @@ class WidgetLayoutManager:
                     show_temps = bool(self.widget.config.get("show_hardware_temps", False))
                     show_power = bool(self.widget.config.get("show_hardware_power", False))
                     # Compute suffix width based on which extras are enabled
+                    # Use 2-digit temp (99°C) and 3+1 power (250.0W) as realistic worst-case
                     if show_temps and show_power:
-                        hw_suffix_width = self.metrics.horizontalAdvance(" (100°C, 100.0W)")
+                        hw_suffix_width = self.metrics.horizontalAdvance(" (99°C, 250.0W)")
                     elif show_power:
-                        hw_suffix_width = self.metrics.horizontalAdvance(" (100.0W)")
+                        hw_suffix_width = self.metrics.horizontalAdvance(" (250.0W)")
                     elif show_temps:
-                        hw_suffix_width = self.metrics.horizontalAdvance(" (100°C)")
+                        hw_suffix_width = self.metrics.horizontalAdvance(" (99°C)")
                     else:
                         hw_suffix_width = 0
 
@@ -268,11 +269,11 @@ class WidgetLayoutManager:
                     show_temps = bool(self.widget.config.get("show_hardware_temps", False))
                     show_power = bool(self.widget.config.get("show_hardware_power", False))
                     if show_temps and show_power:
-                        hw_suffix_w = self.metrics.horizontalAdvance(" (100°C, 100.0W)")
+                        hw_suffix_w = self.metrics.horizontalAdvance(" (99°C, 250.0W)")
                     elif show_power:
-                        hw_suffix_w = self.metrics.horizontalAdvance(" (100.0W)")
+                        hw_suffix_w = self.metrics.horizontalAdvance(" (250.0W)")
                     elif show_temps:
-                        hw_suffix_w = self.metrics.horizontalAdvance(" (100°C)")
+                        hw_suffix_w = self.metrics.horizontalAdvance(" (99°C)")
                     else:
                         hw_suffix_w = 0
 

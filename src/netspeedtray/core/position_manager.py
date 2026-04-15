@@ -161,21 +161,23 @@ class PositionCalculator:
             dpi_scale = taskbar_info.dpi_scale if taskbar_info.dpi_scale > 0 else 1.0
             widget_width, widget_height = widget_size
 
-            # NEW: Clamp widget size to reasonable bounds to prevent off-screen/huge widgets
+            # Clamp widget size to reasonable bounds (scaled for DPI) to prevent off-screen/huge widgets
             ui_widget = getattr(constants.ui, 'widget', None)
             if ui_widget:
+                max_width = int(ui_widget.MAX_WIDGET_WIDTH_PX * dpi_scale)
+                max_height = int(ui_widget.MAX_WIDGET_HEIGHT_PX * dpi_scale)
                 # Clamp width
-                if widget_width > ui_widget.MAX_WIDGET_WIDTH_PX:
+                if widget_width > max_width:
                     logger.warning(
-                        "Widget width %s exceeds max %spx. Clamping to prevent off-screen positioning.",
-                        widget_width, ui_widget.MAX_WIDGET_WIDTH_PX
+                        "Widget width %s exceeds max %spx (DPI-scaled). Clamping to prevent off-screen positioning.",
+                        widget_width, max_width
                     )
-                    widget_width = ui_widget.MAX_WIDGET_WIDTH_PX
+                    widget_width = max_width
                 # Clamp height
-                if widget_height > ui_widget.MAX_WIDGET_HEIGHT_PX:
+                if widget_height > max_height:
                     logger.warning(
-                        "Widget height %s exceeds max %spx. Clamping to prevent off-screen positioning.",
-                        widget_height, ui_widget.MAX_WIDGET_HEIGHT_PX
+                        "Widget height %s exceeds max %spx (DPI-scaled). Clamping to prevent off-screen positioning.",
+                        widget_height, max_height
                     )
                     widget_height = ui_widget.MAX_WIDGET_HEIGHT_PX
 

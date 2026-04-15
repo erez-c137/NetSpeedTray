@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import socket
+import threading
 import time
 from collections import defaultdict
 from datetime import datetime
@@ -95,9 +96,32 @@ class AppActivityWorker(QObject):
             self.error.emit(str(exc))
 
     def _collect_connections_by_pid(self) -> Tuple[Dict[int, List[str]], bool]:
-        grouped: Dict[int, List[str]] = defaultdict(list)
-        try:
-            for conn in psutil.net_connections(kind="inet"):
+        result: List = []
+
+        def _fetch() -> None:
+            try:
+                result.append(("ok", psutil.net_connections(kind="inet")))
+            except Exception as exc:
+                result.append(("err", exc))
+
+        t = threading.Thread(target=_fetch, daemon=True)
+        t.start()
+        t.join(timeout=2.0)
+
+        if t.is_alive():
+            self.logger.warning(
+                "psutil.net_connections() timed out after 2s - skipping this collection cycle"
+            )
+            return defaultdict(list), False
+
+        if not result:
+            self.logger.error("net_connections thread exited without a result - skipping cycle")
+            return defaultdict(list), False
+
+        status, value = result[0]
+        if status == "ok":
+            grouped: Dict[int, List[str]] = defaultdict(list)
+            for conn in value:
                 pid = getattr(conn, "pid", None)
                 if pid is None:
                     continue
@@ -105,10 +129,10 @@ class AppActivityWorker(QObject):
                 if endpoint:
                     grouped[int(pid)].append(endpoint)
             return grouped, False
-        except (psutil.AccessDenied, OSError) as exc:
+        else:
             self.logger.info(
                 "Global net_connections access denied/unavailable. Falling back to best-effort per-process sampling: %s",
-                exc,
+                value,
             )
             return self._collect_connections_by_pid_best_effort(), True
 

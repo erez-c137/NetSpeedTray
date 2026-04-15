@@ -4,6 +4,41 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [1.3.1] - April 15, 2026
+
+### Added
+- **Update Checker:** The app now checks for new releases via the GitHub API on startup (every 24 hours) and offers a "Check for Updates" option in the right-click menu. Users can download the latest version, skip a specific release, or disable the check entirely in Settings > Behavior.
+- **Support Dialog:** Added a "Support this Project" menu item with links to GitHub Sponsors, Ko-fi, Buy Me a Coffee, and Star on GitHub.
+- **LibreHardwareMonitor Notice:** When temperature or power readouts are enabled but no data source is detected after startup, a one-time notification explains that LibreHardwareMonitor (or OpenHardwareMonitor) is required and links to the download page.
+- **RDP Session Detection:** Automatic detection of Remote Desktop sessions via `GetSystemMetrics(SM_REMOTESESSION)`. GPU monitoring is skipped and App Activity displays an informational message instead of attempting unreliable psutil queries in virtualized environments.
+
+### Changed
+- **Context Menu Grouping:** Right-click menu items are now organized into logical groups with separators (windows / updates & support / exit) for easier scanning.
+- **Global Window Icon:** All application windows and dialogs (including update and support popups) now display the NetSpeedTray icon in the title bar.
+- **README Overhaul:** Rewrote the README to reflect all v1.3.0/v1.3.1 features including hardware monitoring, App Activity, display modes, and RDP detection. Moved the Support section above Building from Source for better visibility.
+
+### Fixed
+- **App Crash in RDP (Windows Server):** GPU polling errors are now caught and logged independently without incrementing the circuit breaker's consecutive error counter, preventing GPU failures from killing the entire monitor thread and crashing the app.
+- **App Sluggishness in RDP:** Wrapped `psutil.net_connections()` in a daemon thread with a 2-second timeout to prevent the App Activity window from stalling the 1-second polling loop in RDP and low-privilege environments.
+- **Graph Render Crash (`datetime` type error):** Fixed `float() argument must be a string or a real number, not 'datetime.datetime'` by requesting raw numeric timestamps from the database and adding a defensive type guard before numpy conversion. Also applied to the Overview tab's database-backed path.
+- **Color Coding Always Yellow/Orange:** Fixed color coding failing on configs migrated from v1.2.6 by replacing the broken threshold repair logic (which set `low = high`, still leaving the band unreachable) with a cross-field guard that resets both thresholds to defaults when the `low < high` invariant is violated.
+- **Swap Upload/Download Checkbox:** The "Swap upload/download" setting now correctly swaps both the speed values/units and arrow icons together. Previously only the arrow icon was swapped while upload and download values always rendered in fixed positions.
+- **Vertical Taskbar Layout:** Widget layout mode is now determined from the taskbar edge position (Left/Right edge → horizontal layout, Top/Bottom edge → vertical layout) instead of the unrelated `is_small_taskbar()` height check, fixing broken widget rendering on vertical taskbars.
+- **Config Migration Resetting Display Mode:** Removed `side_by_side` from the display mode downgrade rule — it gracefully degrades to network-only at render time and no longer silently resets to `network_only` when hardware monitors are disabled. Also cleaned up dead `cpu_only`/`gpu_only` branches that could never trigger and tightened the `cycle` downgrade condition to gate only on CPU/GPU (not RAM/VRAM).
+- **Widget Flickering:** Eliminated per-paint Win32 taskbar enumeration by caching the layout mode and refreshing it only on taskbar geometry changes. Also removed redundant `setRenderHint(Antialiasing)` calls in the icon and mini-graph paint paths.
+- **High-DPI Widget Clipping:** The `MAX_WIDGET_WIDTH_PX` / `MAX_WIDGET_HEIGHT_PX` safety constraints are now scaled by the display's DPI factor, preventing text truncation on 4K and other high-DPI screens.
+- **Dialog Close Hiding Widget:** Fixed all popup dialogs (update checker, support, LHM notice) using `parent=None`, which caused closing the dialog to also hide the widget. Dialogs now correctly parent to the widget.
+- **nvidia-smi Console Flash:** Hidden the console window that briefly appeared every poll cycle when using `nvidia-smi` for GPU temperature/power readings.
+- **Widget Spacing with Temp/Power:** Tightened the layout width reference strings for temperature and power suffixes, reducing excess gap between the widget and the system tray when hardware readouts are enabled.
+
+### Known Limitations
+- Temperature readings are displayed in °C only. Fahrenheit support is planned for v1.4.0.
+
+### Security
+- Updated Pillow, pytest, and Pygments dependencies for CVE fixes.
+
+---
+
 ## [1.3.0] - April 14, 2026
 
 ### Added

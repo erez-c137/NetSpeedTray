@@ -33,6 +33,7 @@ import shutil
 from functools import lru_cache
 
 from netspeedtray import constants
+from netspeedtray.utils.rdp_utils import is_rdp_session
 
 logger = logging.getLogger("NetSpeedTray.StatsMonitorThread")
 
@@ -53,6 +54,7 @@ class StatsMonitorThread(QThread):
     """
     stats_ready = pyqtSignal(dict)  # Contains 'network', 'cpu', 'gpu' keys if enabled
     error_occurred = pyqtSignal(str)
+    lhm_not_detected = pyqtSignal()  # Emitted once when temps/power enabled but no source found
 
     def __init__(self, interval: float = 1.0, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__()
@@ -75,6 +77,8 @@ class StatsMonitorThread(QThread):
         # None = not yet tried, False = tried and unavailable, object = connected.
         self._wmi_ohm: Any = None
         self._ohm_empty_ns_logged: set = set()  # Namespaces already warned about (log once)
+        self._lhm_notice_emitted: bool = False  # One-time notification flag
+        self._lhm_check_polls: int = 0  # Count polls before emitting notice
         self._nvidia_smi_path: Optional[str] = self._get_cached_path("nvidia-smi")
 
         # PDH Queries for GPU
@@ -260,7 +264,8 @@ class StatsMonitorThread(QThread):
                 query_fields = "temperature.gpu,memory.total,power.draw"
                 output = subprocess.check_output(
                     [self._nvidia_smi_path, f"--query-gpu={query_fields}", "--format=csv,noheader,nounits"],
-                    encoding='utf-8', timeout=0.5
+                    encoding='utf-8', timeout=0.5,
+                    creationflags=subprocess.CREATE_NO_WINDOW
                 )
                 parts = output.strip().split('\n')[0].split(',')
                 if need_smi_temp and len(parts) > 0:
@@ -613,7 +618,15 @@ class StatsMonitorThread(QThread):
     def run(self) -> None:
         """Main monitoring loop."""
         self.logger.debug("StatsMonitorThread starting loop...")
-        
+
+        # Check once at thread startup, not per-iteration — is_rdp_session() is a
+        # syscall and the session type does not change while the thread is running.
+        # If the user connects via RDP after the app has started they must restart
+        # the app for GPU monitoring to be suppressed.
+        _in_rdp = is_rdp_session()
+        if _in_rdp:
+            self.logger.info("RDP session detected — GPU monitoring will be skipped.")
+
         while self._is_running:
             try:
                 stats = {}
@@ -637,26 +650,45 @@ class StatsMonitorThread(QThread):
                     stats['ram_used'] = mem.used / (1024**3) # GB
                     stats['ram_total'] = mem.total / (1024**3) # GB
 
-                # 3. GPU / VRAM (Optional)
-                if self.config.get('monitor_gpu_enabled', False):
-                    include_temp = bool(self.config.get('show_hardware_temps', False))
-                    include_power = bool(self.config.get('show_hardware_power', False))
-                    gpu = self._poll_gpu_hybrid(include_temp=include_temp, include_power=include_power)
+                # 3. GPU / VRAM (Optional — skipped entirely in RDP sessions)
+                if self.config.get('monitor_gpu_enabled', False) and not _in_rdp:
+                    try:
+                        include_temp = bool(self.config.get('show_hardware_temps', False))
+                        include_power = bool(self.config.get('show_hardware_power', False))
+                        gpu = self._poll_gpu_hybrid(include_temp=include_temp, include_power=include_power)
 
-                    stats['gpu'] = gpu.util
-                    if include_temp:
-                        stats['gpu_temp'] = gpu.temp
-                    if include_power:
-                        stats['gpu_power'] = gpu.power
+                        stats['gpu'] = gpu.util
+                        if include_temp:
+                            stats['gpu_temp'] = gpu.temp
+                        if include_power:
+                            stats['gpu_power'] = gpu.power
 
-                    if gpu.vram_used is not None:
-                        stats['vram_used'] = gpu.vram_used / 1024.0  # MiB to GiB
-                    if gpu.vram_total is not None:
-                        stats['vram_total'] = gpu.vram_total / 1024.0  # MiB to GiB
+                        if gpu.vram_used is not None:
+                            stats['vram_used'] = gpu.vram_used / 1024.0  # MiB to GiB
+                        if gpu.vram_total is not None:
+                            stats['vram_total'] = gpu.vram_total / 1024.0  # MiB to GiB
+                    except Exception as gpu_err:
+                        self.logger.warning("GPU polling error (skipped, not counted against circuit breaker): %s", gpu_err)
                 
                 if stats:
                     self.stats_ready.emit(stats)
-                    
+
+                # One-time LHM notice: if temps/power enabled but no readings after a few polls
+                if not self._lhm_notice_emitted:
+                    wants_temps = self.config.get('show_hardware_temps', False)
+                    wants_power = self.config.get('show_hardware_power', False)
+                    if wants_temps or wants_power:
+                        self._lhm_check_polls += 1
+                        # Wait 5 polls (~5s) to give LHM time to be detected
+                        if self._lhm_check_polls >= 5:
+                            has_any_reading = any(
+                                stats.get(k) is not None
+                                for k in ('cpu_temp', 'gpu_temp', 'cpu_power', 'gpu_power')
+                            )
+                            if not has_any_reading:
+                                self._lhm_notice_emitted = True
+                                self.lhm_not_detected.emit()
+
                 # Success - reset circuit breaker
                 if self.consecutive_errors > 0:
                     self.consecutive_errors = 0

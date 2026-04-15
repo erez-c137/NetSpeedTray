@@ -1,17 +1,12 @@
 # NetSpeedTray
 
-![GitHub release (latest by date)](https://img.shields.io/github/v/release/erez-c137/NetSpeedTray) ![GitHub all releases](https://img.shields.io/github/downloads/erez-c137/NetSpeedTray/total) [![winget install NetSpeedTray](https://img.shields.io/badge/winget-install--NetSpeedTray-blue?logo=windows&logoColor=white)](https://github.com/microsoft/winget-pkgs) ![GitHub license](https://img.shields.io/github/license/erez-c137/NetSpeedTray) ![GitHub stars](https://img.shields.io/github/stars/erez-c137/NetSpeedTray?style=social)
+![GitHub release (latest by date)](https://img.shields.io/github/v/release/erez-c137/NetSpeedTray) ![GitHub all releases](https://img.shields.io/github/downloads/erez-c137/NetSpeedTray/total) [![winget install NetSpeedTray](https://img.shields.io/badge/winget-install--NetSpeedTray-blue?logo=windows&logoColor=white)](https://github.com/microsoft/winget-pkgs) ![GitHub license](https://img.shields.io/github/license/erez-c137/NetSpeedTray) ![GitHub stars](https://img.shields.io/github/stars/erez-c137/NetSpeedTray?style=social) ![Made with Python](https://img.shields.io/badge/Made%20with-Python-3776AB?logo=python&logoColor=white) ![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6?logo=windows&logoColor=white)
 
 ![NetSpeedTray Banner](./screenshots/netspeedtray-hero.jpg)
 
-A lightweight, open-source network monitor for Windows that displays live upload/download speeds directly on the Taskbar. It's the feature Windows forgot.
+A lightweight, open-source system monitor for Windows that displays live network speeds, CPU/GPU utilization, temperatures, and power draw directly on the Taskbar. It's the feature Windows forgot.
 
 ---
-
-## Sponsors
-
-This program uses free code signing provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
-
 
 ## Installation
 
@@ -24,97 +19,131 @@ winget install --id erez-c137.NetSpeedTray
 ```
 
 ### Manual Download
-If you prefer, you can download the latest files directly from the [**Releases Page**](https://github.com/erez-c137/NetSpeedTray/releases/latest).
+Download the latest files directly from the [**Releases Page**](https://github.com/erez-c137/NetSpeedTray/releases/latest).
 
 -   **`NetSpeedTray-x.x.x-Setup.exe`:** The standard Windows installer. Recommended for most users.
--   **`NetSpeedTray-x.x.x-Portable.zip`:** The portable version. No installation needed—just extract the folder and run `NetSpeedTray.exe`.
+-   **`NetSpeedTray-x.x.x-Portable.zip`:** The portable version. No installation needed — just extract and run `NetSpeedTray.exe`.
 
 ---
 
 ## Key Features
 
--   ⚡ **High-Performance & Efficient:**
-    -   **NumPy Vectorization:** Uses optimized vectorized operations for near-instant graph rendering and zero-latency UI interaction, even with years of data.
-    -   **Dynamic Update Rate:** Automatically reduces polling frequency when the network is idle to conserve CPU and extend battery life.
-    -   **Global Debouncing:** Every adjustment feels snappy thanks to an intelligent input debouncing system that prevents UI thread freezes.
+### Network Monitoring
 
--   ✨ **Modern Native Look & Feel:**
-    -   **Fluent Design Sliders:** Designed to blend perfectly with Windows 10/11 UI using modern Fluent-inspired controls.
-    -   **Auto-Theme Detection:** Intelligently switches text and background colors based on your taskbar theme (Light/Dark/Mixed) for perfect visibility.
+-   **Live Upload/Download Speeds** on the taskbar with sub-second updates
+-   **Auto-Primary Mode:** Intelligently identifies your main internet connection, ignoring noise from VPNs and virtual adapters
+-   **Interface Filtering:** Monitor all hardware, specific adapters, or include virtual interfaces
+-   **Color Coding:** Set custom speed thresholds and colors to visualize network load at a glance
+-   **App Activity Window:** See estimated per-app network usage (with a non-admin fallback mode)
 
--   🚀 **Intelligent & Adaptive Positioning:**
-    -   **Auto-Shift:** The widget finds empty space next to your system tray and automatically shifts to make room for new icons.
-    -   **Z-Order Excellence:** Stays on top of the taskbar but gracefully hides when you use **Fullscreen applications** or open system menus (Start Menu, Action Center).
-    -   **Tray Offset Control:** Fine-tune exactly where the widget sits relative to the system tray overflow button.
+### Hardware Monitoring
 
--   📈 **Smart Network Monitoring:**
-    -   **Auto-Primary Mode:** The default mode intelligently identifies your main internet connection, ignoring "noise" from internal VPNs or virtual machine adapters.
-    -   **Physical vs. Virtual Filtering:** Choose to monitor all hardware, specific interfaces, or include virtual adapters for power-user transparency.
+-   **CPU & GPU Utilization** displayed alongside network speeds on the taskbar
+-   **Temperature Readouts** for CPU and GPU (via [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor), nvidia-smi, or Windows PDH/ACPI)
+-   **Power Draw** in Watts for CPU (Intel RAPL) and GPU (nvidia-smi / LHM)
+-   **RAM & VRAM** usage readouts
+-   **Vendor-Agnostic GPU Support** via Windows Performance Counters (PDH) — works with NVIDIA, AMD, and Intel GPUs
+-   **LibreHardwareMonitor Auto-Detection:** If LHM/OHM is running, NetSpeedTray picks it up automatically for temperature and power readings across all GPU vendors
 
--   🎨 **Total Visual Customization:**
-    -   **Free Move Mode:** Unlock the widget and place it anywhere—on another monitor or a specific spot on your desktop.
-    -   **Optional Mini-Graph:** Display a real-time area chart of recent activity directly on the widget with adjustable opacity and gradient fills.
-    -   **Arrow Styling:** Granular control over arrow symbols—customize their font, size, and weight independently of the speed values.
-    -   **Color Coding:** Set custom speed thresholds and colors to visualize network load at a glance.
+> **Tip:** CPU and GPU temperatures require a kernel-level driver. Install [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) and run it as Administrator — NetSpeedTray detects it automatically. NVIDIA GPU temps also work natively via `nvidia-smi`.
 
--   ✍️ **Granular Display Control:**
-    -   **Centralized Unit System:** Choose between Bits (Mbps), Bytes (MB/s), Binary (MiB/s), or Decimal units.
-    -   **Precision Padding:** Control decimal places (0-2) and toggle fixed-width values to prevent layout jitter as numbers change.
-    -   **Layout Options:** Align text (left/center/right) and toggle unit suffixes or activity arrows for a minimalist look.
+### Widget Layout Modes
 
--   📊 **Advanced History Graph:**
-    -   **Dual-Axis Area Charts:** Split view for Download and Upload ensures both are visible even when speeds are asymmetric.
-    -   **Symlog Scaling:** A dynamic logarithmic scale lets you see fine-grained detail in low-level traffic while still handling massive Gigabit spikes.
-    -   **Time-Dynamic Rendering:** Automatically switches between detailed line plots and "Mean & Range" plots for long-term historical trends.
-    -   **Data Export:** Export your history to `.csv` or save a high-resolution `.png` of your network activity.
+-   **Side-by-Side:** Network and hardware stats displayed together
+-   **Stacked:** CPU + GPU in a compact column
+-   **Auto-Cycle:** Rotates through Network, CPU, and GPU views
+-   **Per-Segment Ordering:** Choose the display order (Network / CPU / GPU / None)
 
--   🌍 **Globally Localized:**
-    -   Full support for **9+ languages** (Korean, French, German, Russian, Spanish, Dutch, Polish, Slovenian, and English).
-    -   **100% Key Parity:** Every language is fully translated—no missing keys or English placeholders in any supported locale.
+### History & Graphs
 
--   🛡️ **Trusted & Secure:**
-    -   **Digitally Signed:** Verified by [SignPath Foundation](https://signpath.org/) to guarantee code integrity and eliminate Windows SmartScreen warnings.
-    -   **100% Open Source:** No ads, no tracking, no telemetry. Just your data, on your machine.
+-   **Dual-Axis Area Charts** for download and upload with split view
+-   **CPU & GPU History Tabs** with dedicated graphs
+-   **Overview Tab** with synchronized Network/CPU/GPU charts and at-a-glance stats
+-   **Symlog Scaling:** Dynamic logarithmic scale shows fine detail in idle traffic and handles Gigabit spikes
+-   **Time-Dynamic Rendering:** Detailed line plots for recent data, "Mean & Range" aggregation for long-term history
+-   **Data Export:** Export to `.csv` or save high-resolution `.png` snapshots
+-   **3-Tier Data Retention:** Raw (24h) → Minute (30d) → Hourly (configurable) for both network and hardware stats
+
+### Performance
+
+-   **NumPy Vectorization** for near-instant graph rendering with years of data
+-   **Dynamic Update Rate:** Reduces polling when idle to save CPU and battery
+-   **Global Debouncing:** Intelligent input debouncing prevents UI thread freezes
+-   **RDP Session Detection:** Automatically detects Remote Desktop sessions, skipping GPU polling and adjusting App Activity to avoid performance issues in virtualized environments
+
+### Visual Customization
+
+-   **Auto-Theme Detection:** Switches text and background colors for Light, Dark, or Mixed taskbar themes
+-   **Fluent Design:** Modern Windows 10/11-style controls and flat card styling
+-   **Free Move Mode:** Place the widget anywhere — another monitor, the desktop, a specific taskbar spot
+-   **Mini-Graph Overlay:** Real-time area chart on the widget with adjustable opacity and gradient fills
+-   **Arrow Styling:** Independent font, size, and weight for arrow symbols
+-   **Font & Precision Control:** Custom fonts, 0-2 decimal places, fixed-width values to prevent layout jitter
+-   **Text Alignment & Units:** Bits (Mbps), Bytes (MB/s), Binary (MiB/s), or Decimal units with toggleable suffixes
+
+### Positioning & Integration
+
+-   **Auto-Shift:** Finds empty space near the system tray and adjusts for new icons
+-   **Z-Order Management:** Stays above the taskbar, hides for fullscreen apps and system menus, reappears instantly
+-   **Tray Offset Control:** Fine-tune position relative to the system tray
+-   **Vertical Taskbar Support:** Automatically adapts layout for side-mounted taskbars
+-   **High-DPI Aware:** Proper scaling on 4K and multi-monitor setups
+
+### Localization
+
+-   Full support for **9 languages:** English, Korean, French, German, Russian, Spanish, Dutch, Polish, and Slovenian
+-   100% key parity across all locales — no missing translations
+
+### Security & Privacy
+
+-   **Digitally Signed** by [SignPath Foundation](https://signpath.org/) — no SmartScreen warnings
+-   **100% Open Source** — no ads, no tracking, no telemetry. [Privacy Policy](privacy.md)
+-   **Code Signing** provided by [SignPath.io](https://signpath.io/)
+
+---
 
 ## Usage & Screenshots
 
 #### The Widget
 
-The core of NetSpeedTray. It sits on your taskbar, showing your live network speeds.
+The core of NetSpeedTray. It sits on your taskbar showing live speeds and hardware stats.
 
--   **Right-click** to access Settings or Exit.
+-   **Right-click** to access Settings, Graph, App Activity, or Exit.
 -   **Double-click** to open the full history graph.
--   **Left-click and drag** to adjust its position along the taskbar.
+-   **Left-click and drag** to adjust position along the taskbar.
 
+<!-- TODO: Replace with v1.3.x screenshot showing side-by-side mode with CPU/GPU -->
 <div align="center">
   <img src="screenshots/main_new_1.1.2.png" alt="Main Interface" width="600"/><br/>
 </div>
 
 #### Modern Settings
 
-A clean, modern UI to control every aspect of the widget's appearance and behavior.
+A clean, 6-page settings UI with collapsible hardware sections, Windows 11 flat card styling, and full control over every aspect of the widget.
 
+<!-- TODO: Replace with v1.3.x screenshot showing hardware settings page -->
 <div align="center">
   <img src="screenshots/settings_1.2.5.png" alt="Settings Dialog" width="600"/><br/>
 </div>
 
-#### Detailed History Graph
+#### History Graph
 
-Double-click the widget to see a detailed, filterable graph of your network history.
+Double-click the widget to see detailed, filterable graphs of your network, CPU, and GPU history.
 
+<!-- TODO: Replace with v1.3.x screenshot showing Overview tab with CPU/GPU -->
 <div align="center">
   <img src="screenshots/main_graph_1.2.5.png" alt="Graph View" width="600"/><br/>
 </div>
 
+<!-- TODO: Add App Activity window screenshot -->
+
 ---
 
-## ☕ Support A Tool You Use Every Day
+## Support This Project
 
-Let’s be real: Windows should have had this feature built-in. NetSpeedTray is my answer: a lightweight, bloat-free solution that feels like it belongs, crafted with hundreds of hours of development and debugging.
+NetSpeedTray is a labor of love — hundreds of hours of development and debugging to build the feature Windows should have had built-in. It will **always be free, open-source, and ad-free.**
 
-This project is a labor of love, and it will **always be free, open-source, and ad-free.**
-
-If you get daily value from this little widget, please consider supporting its future. Your contribution is a powerful way to say "thank you" and directly funds the time spent on new features and long-term maintenance.
+If you get daily value from this widget, please consider supporting its development. Every contribution directly funds new features and long-term maintenance.
 
 <p align="center">
   <a href="https://github.com/sponsors/erez-c137">
@@ -130,7 +159,7 @@ If you get daily value from this little widget, please consider supporting its f
   </a>
 </p>
 
-Can't contribute financially? No problem! **Sharing & Starring the repo** on GitHub is a free and hugely appreciated way to show your support. ❤️
+Can't contribute financially? **Starring the repo** on GitHub is a free and hugely appreciated way to show your support.
 
 ---
 
@@ -143,7 +172,7 @@ Can't contribute financially? No problem! **Sharing & Starring the repo** on Git
 
 -   [Python 3.11+](https://www.python.org/downloads/)
 -   [Git](https://git-scm.com/downloads/)
--   (Optional but Recommended) [Inno Setup 6](https://jrsoftware.org/isinfo.php) for building the final Windows installer.
+-   (Optional) [Inno Setup 6](https://jrsoftware.org/isinfo.php) for building the Windows installer.
 
 ### Development & Build Instructions
 
@@ -169,7 +198,6 @@ Can't contribute financially? No problem! **Sharing & Starring the repo** on Git
     ```
 
 3.  **Install All Dependencies:**
-    This project uses `pip-tools` for specific version pinning. To set up your environment, simply run:
 
     ```bash
     pip install -r dev-requirements.txt
@@ -207,9 +235,7 @@ Can't contribute financially? No problem! **Sharing & Starring the repo** on Git
 
 Contributions, issues, and feature requests are welcome! Please feel free to open an issue or submit a pull request.
 
-> **A Note on System UI Integration:** To ensure a clean and predictable experience, NetSpeedTray is designed to integrate seamlessly with core Windows UI. Due to how Windows layers its system menus, elements like the Start Menu and Action Center will always appear on top.
->
-> Instead of being awkwardly covered, the widget will gracefully hide when these menus are active and **reappear instantly** the moment they are closed. This behavior is intentional and ensures the widget feels like a polished, non-intrusive part of the operating system.
+> **A Note on System UI Integration:** NetSpeedTray is designed to integrate seamlessly with core Windows UI. Elements like the Start Menu and Action Center will always appear on top. The widget gracefully hides when these menus are active and **reappears instantly** when they close. This is intentional — it ensures the widget feels like a polished, non-intrusive part of the operating system.
 
 ## License
 

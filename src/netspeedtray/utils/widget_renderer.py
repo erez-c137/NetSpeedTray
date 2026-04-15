@@ -298,12 +298,14 @@ class WidgetRenderer:
             total_height = (line_height * 2) + vertical_gap
             top_y = int((height - total_height) / 2 + ascent)
             
-            # Draw UP
-            self._draw_speed_line(painter, config.swap_upload_download, up_val, up_unit, arrow_x, number_x, unit_x, top_y, config, number_area_width)
-            
-            # Draw DW
+            # Draw top line (upload by default, download when swapped)
+            top_val, top_unit, top_is_upload = (dw_val, dw_unit, False) if config.swap_upload_download else (up_val, up_unit, True)
+            self._draw_speed_line(painter, top_is_upload, top_val, top_unit, arrow_x, number_x, unit_x, top_y, config, number_area_width)
+
+            # Draw bottom line (download by default, upload when swapped)
             dw_y = top_y + line_height + vertical_gap
-            self._draw_speed_line(painter, not config.swap_upload_download, dw_val, dw_unit, arrow_x, number_x, unit_x, dw_y, config, number_area_width)
+            bot_val, bot_unit, bot_is_upload = (up_val, up_unit, True) if config.swap_upload_download else (dw_val, dw_unit, False)
+            self._draw_speed_line(painter, bot_is_upload, bot_val, bot_unit, arrow_x, number_x, unit_x, dw_y, config, number_area_width)
 
             # Update bounding rect for context menu positioning
             max_unit_width = max(self.metrics.horizontalAdvance(up_unit), self.metrics.horizontalAdvance(dw_unit)) if not config.hide_unit_suffix else 0
@@ -455,8 +457,7 @@ class WidgetRenderer:
     def _draw_icon(self, painter: QPainter, icon_type: str, x: int, y_ascent: int, color: Optional[QColor] = None) -> None:
         """Draws a tiny symbolic icon for CPU or GPU."""
         painter.save()
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        
+
         # Icon box size
         size = 11
         rect = QRect(x, y_ascent - size + 1, size, size)
@@ -616,7 +617,6 @@ class WidgetRenderer:
 
             painter.save()
             painter.setOpacity(config.graph_opacity)
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
             painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Plus)
 
             from PyQt6.QtGui import QLinearGradient, QBrush, QPolygonF

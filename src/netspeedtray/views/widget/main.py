@@ -32,7 +32,7 @@ from netspeedtray.core.position_manager import PositionManager, WindowState
 from netspeedtray.core.input_handler import InputHandler
 from netspeedtray.utils.taskbar_utils import (
     get_taskbar_info, is_taskbar_obstructed, is_taskbar_visible,
-    is_small_taskbar, get_process_name_from_hwnd
+    get_process_name_from_hwnd
 )
 
 from netspeedtray.utils.widget_renderer import WidgetRenderer as CoreWidgetRenderer, RenderConfig
@@ -41,6 +41,7 @@ from netspeedtray.views.widget.layout import WidgetLayoutManager
 from netspeedtray.views.widget.theme import WidgetThemeManager
 from netspeedtray.core.startup_manager import StartupManager
 from netspeedtray.core.config_controller import ConfigController
+from netspeedtray.core.update_checker import UpdateChecker
 
 # --- Type Checking ---
 if TYPE_CHECKING:
@@ -96,8 +97,10 @@ class NetworkSpeedWidget(QWidget):
         self.theme_manager: WidgetThemeManager
         self.tray_manager: TrayIconManager
         self.monitor_thread: StatsMonitorThread
+        self._cached_layout_mode: str = 'vertical'  # Updated on taskbar changes
         self.graph_window: Optional[GraphWindow] = None
         self.app_activity_window: Optional[AppActivityWindow] = None
+        self.update_checker: Optional[UpdateChecker] = None
         self.app_icon: QIcon
         # Note: self.current_font and self.current_metrics are initialized earlier before _init_managers()
         
@@ -177,6 +180,12 @@ class NetworkSpeedWidget(QWidget):
         self._state_watcher_timer.timeout.connect(self._execute_refresh)
         self._state_watcher_timer.start()
         self.logger.debug(f"Safety net state watcher timer started ({constants.timeouts.STATE_WATCHER_INTERVAL_MS}ms).")
+
+        # Update Checker — delayed startup check
+        self.update_checker = UpdateChecker(self.config, self)
+        self.update_checker.update_available.connect(self._on_update_available)
+        if self.update_checker.should_check():
+            QTimer.singleShot(5000, self.update_checker.check_now)
 
         # Cycle Timer
         if self.config.get("widget_display_mode") == "cycle":
@@ -517,12 +526,16 @@ class NetworkSpeedWidget(QWidget):
             self.controller.cpu_usage_updated.connect(lambda val: self.update_display_hardware(cpu=val))
             self.controller.gpu_usage_updated.connect(lambda val: self.update_display_hardware(gpu=val))
             
+            # One-time LHM notice
+            self.monitor_thread.lhm_not_detected.connect(self._on_lhm_not_detected)
+
             # Start the monitoring thread
             self.monitor_thread.start()
 
             # 1. System Event Handler (replaces manual WinEventHooks)
             self.system_event_handler.foreground_app_changed.connect(self._execute_refresh)
             self.system_event_handler.taskbar_changed.connect(self.update_position)
+            self._refresh_cached_layout_mode()
             self.system_event_handler.theme_changed.connect(self._on_theme_changed)
             
             # For immediate hide, we just connect to a lambda that hides self
@@ -576,9 +589,7 @@ class NetworkSpeedWidget(QWidget):
                 self._draw_paint_error(painter, "Render Error")
                 return
             
-            # Detect layout mode
-            taskbar_info = get_taskbar_info()
-            layout_mode = 'horizontal' if is_small_taskbar(taskbar_info) else 'vertical'
+            layout_mode = self._cached_layout_mode
             
             # 3. Mini-Graph Layer
             if render_config.graph_enabled:
@@ -980,6 +991,88 @@ class NetworkSpeedWidget(QWidget):
             QMessageBox.critical(self, self.i18n.ERROR_TITLE, f"Could not open app activity window:\n\n{str(e)}")
 
 
+    def check_for_updates(self) -> None:
+        """Manually trigger an update check (from menu)."""
+        if self.update_checker:
+            self.update_checker.update_available.connect(self._on_update_available_manual, Qt.ConnectionType.SingleShotConnection)
+            self.update_checker.up_to_date.connect(self._on_up_to_date_manual, Qt.ConnectionType.SingleShotConnection)
+            self.update_checker.check_failed.connect(self._on_check_failed_manual, Qt.ConnectionType.SingleShotConnection)
+            self.update_checker.check_now()
+
+    def _on_update_available(self, latest_version: str, release_url: str) -> None:
+        """Handle update available from automatic startup check."""
+        self._show_update_dialog(latest_version, release_url)
+
+    def _on_update_available_manual(self, latest_version: str, release_url: str) -> None:
+        """Handle update available from manual menu check."""
+        self._show_update_dialog(latest_version, release_url)
+
+    def _on_up_to_date_manual(self) -> None:
+        """Show up-to-date message for manual check."""
+        QMessageBox.information(
+            None, self.i18n.UPDATE_UP_TO_DATE_TITLE,
+            self.i18n.UPDATE_UP_TO_DATE_TEXT.format(current=constants.app.VERSION)
+        )
+
+    def _on_check_failed_manual(self, error: str) -> None:
+        """Show error message for manual check."""
+        QMessageBox.warning(self, "Update Check", self.i18n.UPDATE_CHECK_FAILED_TEXT)
+
+    def _show_update_dialog(self, latest_version: str, release_url: str) -> None:
+        """Show update available dialog with Download / Skip / Not Now."""
+        msg = QMessageBox(self)
+        msg.setWindowTitle(self.i18n.UPDATE_AVAILABLE_TITLE)
+        msg.setText(self.i18n.UPDATE_AVAILABLE_TEXT.format(
+            current=constants.app.VERSION, latest=latest_version.lstrip("vV")
+        ))
+        msg.setIcon(QMessageBox.Icon.Information)
+
+        download_btn = msg.addButton(self.i18n.UPDATE_DOWNLOAD_BUTTON, QMessageBox.ButtonRole.AcceptRole)
+        skip_btn = msg.addButton(self.i18n.UPDATE_SKIP_BUTTON, QMessageBox.ButtonRole.DestructiveRole)
+        msg.addButton(self.i18n.UPDATE_DISMISS_BUTTON, QMessageBox.ButtonRole.RejectRole)
+
+        msg.exec()
+
+        if msg.clickedButton() == download_btn:
+            import webbrowser
+            webbrowser.open(release_url)
+        elif msg.clickedButton() == skip_btn:
+            self.config["skipped_version"] = latest_version.lstrip("vV")
+            self.update_config({"skipped_version": self.config["skipped_version"]})
+
+    def show_support_dialog(self) -> None:
+        """Show the support/donate dialog."""
+        import webbrowser
+        msg = QMessageBox(self)
+        msg.setWindowTitle(self.i18n.SUPPORT_DIALOG_TITLE)
+        msg.setText(self.i18n.SUPPORT_DIALOG_TEXT)
+        msg.setIcon(QMessageBox.Icon.Information)
+
+        github_btn = msg.addButton(self.i18n.SUPPORT_GITHUB_SPONSORS, QMessageBox.ButtonRole.ActionRole)
+        kofi_btn = msg.addButton(self.i18n.SUPPORT_KOFI, QMessageBox.ButtonRole.ActionRole)
+        bmc_btn = msg.addButton(self.i18n.SUPPORT_BMC, QMessageBox.ButtonRole.ActionRole)
+        star_btn = msg.addButton(self.i18n.SUPPORT_STAR_GITHUB, QMessageBox.ButtonRole.ActionRole)
+        msg.addButton(QMessageBox.StandardButton.Close)
+
+        msg.exec()
+
+        if msg.clickedButton() == github_btn:
+            webbrowser.open("https://github.com/sponsors/erez-c137")
+        elif msg.clickedButton() == kofi_btn:
+            webbrowser.open("https://ko-fi.com/erezc137")
+        elif msg.clickedButton() == bmc_btn:
+            webbrowser.open("https://buymeacoffee.com/erez.c137")
+        elif msg.clickedButton() == star_btn:
+            webbrowser.open("https://github.com/erez-c137/NetSpeedTray")
+
+    def _on_lhm_not_detected(self) -> None:
+        """Show a one-time notice when temperature/power readings require LibreHardwareMonitor."""
+        QMessageBox.information(
+            self,
+            self.i18n.LHM_NOT_DETECTED_TITLE,
+            self.i18n.LHM_NOT_DETECTED_TEXT
+        )
+
     def _on_graph_window_closed(self) -> None:
         """
         Handles the destruction of the graph window.
@@ -1026,12 +1119,24 @@ class NetworkSpeedWidget(QWidget):
         The single, authoritative method to reposition the widget based on its current state.
         """
         self.logger.debug("Authoritative request to update widget position.")
+        self._refresh_cached_layout_mode()
         if self.position_manager:
             try:
                 self.position_manager.update_position()
             except Exception as e:
                 self.logger.error(f"Error during position update: {e}", exc_info=True)
 
+
+    def _refresh_cached_layout_mode(self) -> None:
+        """Update cached layout mode from current taskbar edge position."""
+        try:
+            taskbar_info = get_taskbar_info()
+            edge = taskbar_info.get_edge_position()
+            self._cached_layout_mode = 'horizontal' if edge in (
+                constants.TaskbarEdge.LEFT, constants.TaskbarEdge.RIGHT
+            ) else 'vertical'
+        except Exception:
+            pass  # Keep previous cached value
 
     def is_startup_enabled(self, force_check: bool = False) -> bool:
         """Checks if startup is enabled via StartupManager."""

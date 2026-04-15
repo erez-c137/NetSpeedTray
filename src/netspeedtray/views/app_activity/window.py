@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
 
 from netspeedtray import constants
 from netspeedtray.utils import helpers
+from netspeedtray.utils.rdp_utils import is_rdp_session
 from netspeedtray.views.app_activity.worker import AppActivityWorker
 
 
@@ -153,6 +154,19 @@ class AppActivityWindow(QWidget):
         self.move(x, y)
 
     def _init_worker_thread(self) -> None:
+        if is_rdp_session():
+            self.logger.info("RDP session detected — App Activity worker will not be started.")
+            self.summary_label.setText(
+                self._tr(
+                    "APP_ACTIVITY_RDP_UNAVAILABLE_MESSAGE",
+                    "App Activity is unavailable in Remote Desktop sessions. "
+                    "psutil performance data is unreliable in virtualized environments.",
+                )
+            )
+            self.worker_thread = None
+            self.worker = None
+            return
+
         self.worker_thread = QThread(self)
         self.worker = AppActivityWorker()
         self.worker.moveToThread(self.worker_thread)
@@ -171,7 +185,7 @@ class AppActivityWindow(QWidget):
         self._is_closing = True
         if self._refresh_timer.isActive():
             self._refresh_timer.stop()
-        if hasattr(self, "worker_thread"):
+        if hasattr(self, "worker_thread") and self.worker_thread is not None:
             self.worker_thread.quit()
             self.worker_thread.wait(800)
         self.window_closed.emit()

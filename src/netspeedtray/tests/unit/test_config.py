@@ -61,8 +61,29 @@ def test_validate_config_handles_threshold_swap(config_manager):
     swapped_config = { "low_speed_threshold": 100.0, "high_speed_threshold": 50.0 }
     with patch.object(config_manager.logger, 'warning'):
         validated_config = config_manager._validate_config(swapped_config)
-        assert validated_config["low_speed_threshold"] == 50.0
-        assert validated_config["high_speed_threshold"] == 50.0
+        assert validated_config["low_speed_threshold"] == constants.config.defaults.DEFAULT_LOW_SPEED_THRESHOLD
+        assert validated_config["high_speed_threshold"] == constants.config.defaults.DEFAULT_HIGH_SPEED_THRESHOLD
+
+def test_validate_config_handles_equal_thresholds(config_manager):
+    equal_config = { "low_speed_threshold": 10.0, "high_speed_threshold": 10.0 }
+    with patch.object(config_manager.logger, 'warning'):
+        validated_config = config_manager._validate_config(equal_config)
+        assert validated_config["low_speed_threshold"] == constants.config.defaults.DEFAULT_LOW_SPEED_THRESHOLD
+        assert validated_config["high_speed_threshold"] == constants.config.defaults.DEFAULT_HIGH_SPEED_THRESHOLD
+
+def test_validate_config_preserves_high_thresholds_when_valid(config_manager):
+    """High threshold values are preserved as long as low < high invariant holds."""
+    inflated_config = { "low_speed_threshold": 1.0, "high_speed_threshold": 10000.0 }
+    validated_config = config_manager._validate_config(inflated_config)
+    assert validated_config["low_speed_threshold"] == 1.0
+    assert validated_config["high_speed_threshold"] == 10000.0
+
+def test_validate_config_accepts_high_speed_thresholds(config_manager):
+    """Valid thresholds on a multi-gigabit link are preserved without resetting."""
+    high_speed_config = { "low_speed_threshold": 100.0, "high_speed_threshold": 2500.0 }
+    validated_config = config_manager._validate_config(high_speed_config)
+    assert validated_config["low_speed_threshold"] == 100.0
+    assert validated_config["high_speed_threshold"] == 2500.0
 
 
 # ============================================================================

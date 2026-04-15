@@ -23,7 +23,6 @@ class ConfigMessages:
     INVALID_COLOR: Final[str] = "Invalid color '{value}' for {key}, resetting to default '{default}'"
     INVALID_CHOICE: Final[str] = "Invalid {key} '{value}', resetting to default '{default}'. Valid choices: {choices}"
     INVALID_INTERFACES: Final[str] = "Invalid selected_interfaces value '{value}', resetting to default []"
-    THRESHOLD_SWAP: Final[str] = "low_speed_threshold > high_speed_threshold, setting low to high's value"
     INVALID_POSITION: Final[str] = "Invalid {key} '{value}', resetting to None"
 
 
@@ -168,6 +167,9 @@ class ConfigConstants:
         "cpu_load_low_threshold": DEFAULT_CPU_LOAD_LOW_THRESHOLD,
         "gpu_load_high_threshold": DEFAULT_GPU_LOAD_HIGH_THRESHOLD,
         "gpu_load_low_threshold": DEFAULT_GPU_LOAD_LOW_THRESHOLD,
+        "check_for_updates": True,
+        "skipped_version": None,
+        "last_update_check": None,
     }
     
     # --- Schema Definition for Modern Config Validation ---
@@ -239,6 +241,9 @@ class ConfigConstants:
         "cpu_load_low_threshold": {"type": (int, float), "default": DEFAULT_CPU_LOAD_LOW_THRESHOLD, "min": 0, "max": 100},
         "gpu_load_high_threshold": {"type": (int, float), "default": DEFAULT_GPU_LOAD_HIGH_THRESHOLD, "min": 0, "max": 100},
         "gpu_load_low_threshold": {"type": (int, float), "default": DEFAULT_GPU_LOAD_LOW_THRESHOLD, "min": 0, "max": 100},
+        "check_for_updates": {"type": bool, "default": True},
+        "skipped_version": {"type": (str, type(None)), "default": None},
+        "last_update_check": {"type": (str, type(None)), "default": None},
     }
 
 

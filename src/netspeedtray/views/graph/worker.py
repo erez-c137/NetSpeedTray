@@ -105,7 +105,7 @@ class GraphDataWorker(QObject):
                         "gpu": [(d.timestamp.timestamp(), d.value, 0.0) for d in gpu_data if start_ts <= d.timestamp.timestamp() <= end_ts]
                     }
                 else:
-                    net_data = self.widget_state.get_speed_history(request.start_time, request.end_time, request.interface_name)
+                    net_data = self.widget_state.get_speed_history(request.start_time, request.end_time, request.interface_name, return_raw=True)
                     cpu_data = self.widget_state.get_hardware_history("cpu", request.start_time, request.end_time)
                     gpu_data = self.widget_state.get_hardware_history("gpu", request.start_time, request.end_time)
 
@@ -172,14 +172,12 @@ class GraphDataWorker(QObject):
             else:
                 # For all other timelines, get data from the database.
                 history_data = self.widget_state.get_speed_history(
-                    start_time=request.start_time, 
-                    end_time=request.end_time, 
-                    interface_name=request.interface_name
+                    start_time=request.start_time,
+                    end_time=request.end_time,
+                    interface_name=request.interface_name,
+                    return_raw=True
                 )
-                
-                # Convert list of (datetime, up, down) to list of (float_timestamp, up, down)
-                history_data = [(dt.timestamp(), up, down) for dt, up, down in history_data]
-                
+
                 # Fetch totals from DB as well (DURING the worker thread to avoid UI freeze)
                 total_up, total_down = self.widget_state.get_total_bandwidth_for_period(
                     start_time=request.start_time,
