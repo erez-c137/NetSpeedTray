@@ -58,9 +58,15 @@ class WidgetThemeManager:
             self.logger.warning(f"Could not perform theme-aware color sync: {e}")
 
     def on_theme_changed(self) -> None:
-        """Handles Windows theme change (Light/Dark mode)."""
-        self.logger.debug("Theme change detected. Refreshing styles.")
-        self.apply_theme_aware_defaults()
+        """Handles a runtime Windows theme change (Light <-> Dark).
+
+        Uses the in-memory update path (`update_color_for_live_theme`) so
+        flipping themes doesn't churn the config file on disk. The disk-
+        persisting `apply_theme_aware_defaults` is reserved for startup,
+        where syncing the saved color to the actual OS theme is desirable.
+        """
+        self.logger.info("Theme change detected; updating live colors.")
+        self.update_color_for_live_theme()
         self.widget.update()
 
     def update_color_for_live_theme(self) -> None:

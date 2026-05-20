@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [Unreleased]
+
+### Changed
+- **Live Theme Detection (#62):** The widget now updates its text color the moment Windows switches between Light and Dark mode, instead of waiting for the next app restart. Uses Qt 6.5+'s `colorSchemeChanged` signal in place of the previous WM_SETTINGCHANGE native event filter, which fired on every system setting change (mouse, language, accessibility). Runtime theme changes are applied in-memory only — flipping themes no longer churns the config file on disk. Only affects users with "Automatic" text color enabled (the default).
+
+---
+
 ## [1.3.1] - April 15, 2026
 
 ### Added
