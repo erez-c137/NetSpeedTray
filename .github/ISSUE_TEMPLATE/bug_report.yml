@@ -1,0 +1,117 @@
+name: Bug Report
+description: Report a bug in NetSpeedTray
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report. Filling in every field below dramatically reduces the back-and-forth needed to diagnose the issue.
+
+        > **Privacy note:** The Support Bundle (Settings → Troubleshooting → Export Support Bundle) automatically redacts usernames, file paths, IP/MAC addresses, hostnames, and interface GUIDs from the log before bundling. It's safe to attach.
+
+  - type: input
+    id: nst-version
+    attributes:
+      label: NetSpeedTray version
+      description: "Find this in Settings → About or right-click → About. Example: 1.3.1"
+      placeholder: "1.3.x"
+    validations:
+      required: true
+
+  - type: input
+    id: windows-version
+    attributes:
+      label: Windows version
+      description: "Run `winver` (Win+R → type `winver`). Copy the version string."
+      placeholder: "Windows 11 Pro 25H2 (Build 26200.xxxx)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install-type
+    attributes:
+      label: Install method
+      options:
+        - Installer (signed)
+        - Portable ZIP
+        - WinGet
+        - Built from source
+        - Other (describe below)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: monitor-setup
+    attributes:
+      label: Monitor setup
+      description: How many monitors are you using?
+      options:
+        - Single monitor
+        - Two monitors
+        - Three or more monitors
+    validations:
+      required: true
+
+  - type: textarea
+    id: monitor-layout
+    attributes:
+      label: Monitor layout details
+      description: "Only needed for multi-monitor. Briefly describe: which monitor is primary, resolutions, and arrangement. Example: 'Monitor 1 (primary, 1920x1080) center; Monitor 2 (2560x1440) to the left.'"
+      placeholder: |
+        Monitor 1 (primary, 1920x1080) center
+        Monitor 2 (2560x1440) to the left
+    validations:
+      required: false
+
+  - type: textarea
+    id: repro-steps
+    attributes:
+      label: Steps to reproduce
+      description: "What did you do? List specific clicks/settings."
+      placeholder: |
+        1. Open Settings
+        2. Toggle "Free Move" on
+        3. Drag widget to monitor 2
+        4. Restart NetSpeedTray
+        5. Widget appears on monitor 1 instead of monitor 2
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      placeholder: "Widget should reappear on monitor 2 where I left it."
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      placeholder: "Widget reappears on monitor 1 every time."
+    validations:
+      required: true
+
+  - type: textarea
+    id: attachments
+    attributes:
+      label: Support Bundle (REQUIRED for non-trivial bugs)
+      description: |
+        **Easiest way:** Right-click widget → Settings → Troubleshooting → **Export Support Bundle**. Drag the resulting `.zip` into this text box.
+
+        It bundles your log, your config (sanitized), and system info — with PII redacted automatically.
+
+        If you can't run the app at all, attach `%APPDATA%\NetSpeedTray\NetSpeedTray.log` and `%APPDATA%\NetSpeedTray\config.json` manually.
+      placeholder: "Drag the .zip here, or 'will attach in comment'."
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: "Third-party taskbar tools (StartAllBack, Winhawk, Start11), antivirus software, recent Windows updates, screenshots, etc."
+    validations:
+      required: false

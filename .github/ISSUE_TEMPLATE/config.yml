@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or general discussion
+    url: https://github.com/erez-c137/NetSpeedTray/discussions
+    about: Have a question or want to discuss usage? Open a discussion instead — issues are reserved for bugs and feature requests.

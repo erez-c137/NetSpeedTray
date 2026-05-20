@@ -1,0 +1,46 @@
+name: Feature Request
+description: Suggest a new feature or improvement
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion. A clear use case helps us decide what makes the cut for a release.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: "What are you trying to do that NetSpeedTray makes hard or impossible today?"
+      placeholder: "On a multi-monitor setup, I want the widget to always appear on monitor 2, but there's no way to specify that."
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: "What would the feature look like? UI sketch, settings location, behavior."
+      placeholder: "A 'Preferred Monitor' dropdown in Settings → General, listing all detected monitors."
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: "Other ways you've thought about solving this, or workarounds you're using today."
+    validations:
+      required: false
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: How blocking is this for you?
+      options:
+        - "Nice to have"
+        - "Would significantly improve my use"
+        - "Blocking — I can't use NetSpeedTray effectively without it"
+    validations:
+      required: true
