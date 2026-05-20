@@ -66,12 +66,41 @@ def test_taskbar_restarted_signal(system_handler, mock_hooks):
     MockHook, mock_instance = mock_hooks
     mock_slot = MagicMock()
     system_handler.taskbar_restarted.connect(mock_slot)
-    
+
     # Create the hook mock with a fake HWND
     mock_instance.hwnd_to_watch = 12345
     system_handler.movesize_hook = mock_instance
-    
+
     with patch('win32gui.IsWindow', return_value=False): # Force invalid window check
         system_handler._check_taskbar_validity()
-        
+
         mock_slot.assert_called_once()
+
+
+def test_color_scheme_change_emits_theme_changed_signal(system_handler):
+    """Regression for #62: Qt's colorSchemeChanged must re-emit theme_changed.
+
+    Bypasses the actual Qt signal wiring (which requires a running OS theme
+    change) and calls the handler directly to confirm the re-emit path works.
+    """
+    mock_slot = MagicMock()
+    system_handler.theme_changed.connect(mock_slot)
+
+    # Simulate Qt firing the colorSchemeChanged signal
+    from PyQt6.QtCore import Qt
+    system_handler._on_color_scheme_changed(Qt.ColorScheme.Dark)
+
+    mock_slot.assert_called_once()
+
+
+def test_color_scheme_change_suppressed_when_paused(system_handler):
+    """When events are paused (e.g. settings dialog open), theme changes
+    should not fire — same contract as other system events."""
+    mock_slot = MagicMock()
+    system_handler.theme_changed.connect(mock_slot)
+    system_handler._is_paused = True
+
+    from PyQt6.QtCore import Qt
+    system_handler._on_color_scheme_changed(Qt.ColorScheme.Light)
+
+    mock_slot.assert_not_called()

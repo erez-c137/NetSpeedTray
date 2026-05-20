@@ -11,10 +11,9 @@ import time
 import win32api
 import win32gui
 from typing import Optional
-import ctypes # Needed for MSG structure
 
-from PyQt6.QtCore import QObject, QTimer, pyqtSignal, QAbstractNativeEventFilter
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtCore import QObject, QTimer, pyqtSignal
+from PyQt6.QtGui import QGuiApplication
 
 from netspeedtray.constants import timeouts
 from netspeedtray.utils.taskbar_utils import (
@@ -25,24 +24,6 @@ from netspeedtray.utils.win_event_hook import (
     EVENT_SYSTEM_MOVESIZEEND,
     WinEventHook
 )
-
-class ThemeChangeFilter(QAbstractNativeEventFilter):
-    """
-    Native event filter to capture WM_SETTINGCHANGE messages.
-    """
-    WM_SETTINGCHANGE = 0x001A
-
-    def __init__(self, handler):
-        super().__init__()
-        self.handler = handler
-
-    def nativeEventFilter(self, eventType, message):
-        if eventType == "windows_generic_MSG":
-            msg = ctypes.wintypes.MSG.from_address(int(message))
-            if msg.message == self.WM_SETTINGCHANGE:
-                # Emit signal directly from the filter
-                self.handler.theme_changed.emit()
-        return False, 0
 
 class SystemEventHandler(QObject):
     """
@@ -77,16 +58,14 @@ class SystemEventHandler(QObject):
         # State
         self._last_immediate_hide_time: float = 0.0
         self._is_paused = False
-        
-        # Native Filter
-        self.theme_filter: Optional[ThemeChangeFilter] = None
+        self._theme_signal_connected = False
 
     def start(self) -> None:
         """Starts all hooks and monitoring timers."""
         self.logger.debug("Starting SystemEventHandler...")
         self._setup_hooks()
         self._setup_timers()
-        self._install_native_filter()
+        self._connect_color_scheme_signal()
         self.logger.debug("SystemEventHandler started.")
 
     def stop(self) -> None:
@@ -97,7 +76,7 @@ class SystemEventHandler(QObject):
         if self.movesize_hook:
             self.movesize_hook.stop()
         self._taskbar_validity_timer.stop()
-        self._remove_native_filter()
+        self._disconnect_color_scheme_signal()
 
     def _setup_hooks(self) -> None:
         """Initializes and starts WinEventHooks."""
@@ -193,20 +172,42 @@ class SystemEventHandler(QObject):
         self._is_paused = False
         self.events_paused.emit(False)
 
-    def _install_native_filter(self) -> None:
-        """Installs the native event filter on the QApplication."""
-        if not self.theme_filter:
-            self.theme_filter = ThemeChangeFilter(self)
-            app = QApplication.instance()
-            if app:
-                app.installNativeEventFilter(self.theme_filter)
-                self.logger.debug("Native event filter installed for theme changes.")
+    def _connect_color_scheme_signal(self) -> None:
+        """Connect to Qt's native colorSchemeChanged signal.
 
-    def _remove_native_filter(self) -> None:
-        """Removes the native event filter."""
-        if self.theme_filter:
-            app = QApplication.instance()
-            if app:
-                app.removeNativeEventFilter(self.theme_filter)
-            self.theme_filter = None
-            self.logger.debug("Native event filter removed.")
+        Qt 6.5+ exposes a debounced, OS-agnostic signal for color-scheme
+        changes. Using it here replaces the previous WM_SETTINGCHANGE
+        native event filter, which fired on every system setting change
+        (mouse, language, accessibility, etc.) — not just theme.
+        """
+        if self._theme_signal_connected:
+            return
+        app = QGuiApplication.instance()
+        if app is None:
+            self.logger.warning("No QGuiApplication instance — cannot connect theme signal.")
+            return
+        try:
+            app.styleHints().colorSchemeChanged.connect(self._on_color_scheme_changed)
+            self._theme_signal_connected = True
+            self.logger.debug("Connected to QStyleHints.colorSchemeChanged.")
+        except Exception as e:
+            self.logger.warning("Failed to connect colorSchemeChanged: %s", e)
+
+    def _disconnect_color_scheme_signal(self) -> None:
+        if not self._theme_signal_connected:
+            return
+        app = QGuiApplication.instance()
+        if app is None:
+            return
+        try:
+            app.styleHints().colorSchemeChanged.disconnect(self._on_color_scheme_changed)
+        except (TypeError, RuntimeError):
+            pass
+        self._theme_signal_connected = False
+
+    def _on_color_scheme_changed(self, _scheme) -> None:
+        """Re-emit Qt's signal as our existing theme_changed signal."""
+        if self._is_paused:
+            return
+        self.logger.info("Color scheme changed; emitting theme_changed.")
+        self.theme_changed.emit()
