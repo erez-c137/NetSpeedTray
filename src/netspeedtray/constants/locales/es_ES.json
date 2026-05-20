@@ -314,6 +314,8 @@
     "SHOW_APP_ACTIVITY_MENU_ITEM": "Show &App Activity",
     "CHECK_FOR_UPDATES_MENU_ITEM": "Buscar &actualizaciones",
     "CHECK_FOR_UPDATES_LABEL": "Buscar actualizaciones al iniciar",
+    "PREFERRED_MONITOR_LABEL": "Preferred Monitor",
+    "PREFERRED_MONITOR_PRIMARY": "Primary (auto)",
     "UPDATE_AVAILABLE_TITLE": "Actualización disponible",
     "UPDATE_AVAILABLE_TEXT": "¡Una nueva versión de NetSpeedTray está disponible!\n\nActual: v{current}\nÚltima: v{latest}",
     "UPDATE_DOWNLOAD_BUTTON": "Descargar",

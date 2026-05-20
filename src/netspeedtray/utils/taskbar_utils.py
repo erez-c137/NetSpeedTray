@@ -543,24 +543,48 @@ def get_all_taskbar_info() -> List[TaskbarInfo]:
     return taskbars
 
 
-def get_taskbar_info() -> TaskbarInfo:
+def get_taskbar_info(preferred_screen_name: Optional[str] = None) -> TaskbarInfo:
     """
-    Retrieves information about the primary taskbar.
+    Retrieves the taskbar to attach the widget to.
 
-    Selects the taskbar marked as primary from the list returned by
-    `get_all_taskbar_info()`. If no primary is explicitly found, it defaults
-    to the first taskbar in the list (which includes fallback handling).
+    By default returns the primary taskbar. If `preferred_screen_name` is
+    given and a secondary taskbar exists on that screen, returns *that*
+    taskbar instead — this is the implementation hook for the user-facing
+    "Preferred Monitor" setting (#72).
+
+    If the preferred screen is no longer present (monitor disconnected,
+    settings imported from a different machine, etc.), gracefully falls
+    back to the primary taskbar and logs the fallback at INFO so users
+    can see why their preference wasn't honored.
+
+    Args:
+        preferred_screen_name: Optional QScreen.name() (e.g. "\\\\.\\DISPLAY2").
 
     Returns:
-        TaskbarInfo: Details of the primary taskbar (or fallback).
+        TaskbarInfo for the preferred screen if found, else primary, else fallback.
     """
     try:
         all_taskbars = get_all_taskbar_info()
+
+        if preferred_screen_name:
+            for tb in all_taskbars:
+                screen = tb.get_screen()
+                if screen is not None and screen.name() == preferred_screen_name:
+                    logger.debug(
+                        "Preferred taskbar selected for screen '%s': HWND=%s",
+                        preferred_screen_name, tb.hwnd,
+                    )
+                    return tb
+            logger.info(
+                "Preferred monitor '%s' not found among %d taskbars; falling back to primary.",
+                preferred_screen_name, len(all_taskbars),
+            )
+
         primary_taskbar = next((tb for tb in all_taskbars if tb.is_primary), all_taskbars[0])
         logger.debug("Primary taskbar selected: HWND=%s (Is fallback: %s)", primary_taskbar.hwnd, primary_taskbar.hwnd == 0)
         return primary_taskbar
     except Exception as e:
-        logger.error("Error selecting primary taskbar info: %s. Returning fallback.", e, exc_info=True)
+        logger.error("Error selecting taskbar info: %s. Returning fallback.", e, exc_info=True)
         try:
             return TaskbarInfo.create_primary_fallback_taskbar_info()
         except RuntimeError:

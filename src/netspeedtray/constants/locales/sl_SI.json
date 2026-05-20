@@ -314,6 +314,8 @@
     "SHOW_APP_ACTIVITY_MENU_ITEM": "Show &App Activity",
     "CHECK_FOR_UPDATES_MENU_ITEM": "Preveri &posodobitve",
     "CHECK_FOR_UPDATES_LABEL": "Ob zagonu preveri posodobitve",
+    "PREFERRED_MONITOR_LABEL": "Preferred Monitor",
+    "PREFERRED_MONITOR_PRIMARY": "Primary (auto)",
     "UPDATE_AVAILABLE_TITLE": "Posodobitev na voljo",
     "UPDATE_AVAILABLE_TEXT": "Na voljo je nova različica NetSpeedTray!\n\nTrenutna: v{current}\nNajnovejša: v{latest}",
     "UPDATE_DOWNLOAD_BUTTON": "Prenesi",

@@ -437,13 +437,15 @@ class PositionManager(QObject):
     def update_position(self, fresh_taskbar_info: Optional[TaskbarInfo] = None) -> None:
         """
         Main entry point to update the widget's position.
-        Uses fresh taskbar info if provided, otherwise fetches it.
+        Uses fresh taskbar info if provided, otherwise fetches it — honoring
+        the `preferred_monitor` setting (#72) when present.
         """
         try:
             if fresh_taskbar_info:
                 self._state.taskbar_info = fresh_taskbar_info
             else:
-                self._state.taskbar_info = get_taskbar_info()
+                preferred = self._state.config.get('preferred_monitor')
+                self._state.taskbar_info = get_taskbar_info(preferred_screen_name=preferred)
 
             if self._apply_saved_position():
                 return
@@ -555,8 +557,9 @@ class PositionManager(QObject):
             return
 
         try:
-            # We re-fetch info here to be accurate
-            tb_info = get_taskbar_info()
+            # We re-fetch info here to be accurate, honoring preferred monitor.
+            preferred = self._state.config.get('preferred_monitor')
+            tb_info = get_taskbar_info(preferred_screen_name=preferred)
             if not tb_info:
                 return
 
@@ -579,7 +582,8 @@ class PositionManager(QObject):
         Helper for InputHandler to constrain dragging.
         """
         if not self._state.taskbar_info:
-             self._state.taskbar_info = get_taskbar_info()
+             preferred = self._state.config.get('preferred_monitor')
+             self._state.taskbar_info = get_taskbar_info(preferred_screen_name=preferred)
 
         # FIX for #87: specific check for Free Move
         if self._state.config.get("free_move", False):

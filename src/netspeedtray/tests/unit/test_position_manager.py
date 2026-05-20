@@ -217,6 +217,30 @@ class TestPositionManager(unittest.TestCase):
             # Should NOT have been moved to the disconnected coords.
             self.mock_widget.move.assert_called_with(1500, 1040)
 
+    @patch('netspeedtray.core.position_manager.get_taskbar_info')
+    def test_update_position_passes_preferred_monitor(self, mock_get_info):
+        """#72: update_position must forward `preferred_monitor` to get_taskbar_info."""
+        mock_get_info.return_value = self.mock_taskbar
+        self.config['preferred_monitor'] = '\\\\.\\DISPLAY2'
+
+        with patch.object(self.manager._calculator, 'calculate_position',
+                          return_value=ScreenPosition(0, 0)):
+            self.manager.update_position()
+
+        mock_get_info.assert_called_with(preferred_screen_name='\\\\.\\DISPLAY2')
+
+    @patch('netspeedtray.core.position_manager.get_taskbar_info')
+    def test_update_position_no_preferred_monitor_passes_none(self, mock_get_info):
+        """When the user hasn't set a preference, pass None — preserves legacy primary behavior."""
+        mock_get_info.return_value = self.mock_taskbar
+        # self.config has no 'preferred_monitor' key
+
+        with patch.object(self.manager._calculator, 'calculate_position',
+                          return_value=ScreenPosition(0, 0)):
+            self.manager.update_position()
+
+        mock_get_info.assert_called_with(preferred_screen_name=None)
+
     @patch('PyQt6.QtWidgets.QApplication.screenAt')
     @patch('netspeedtray.core.position_manager.get_taskbar_info')
     def test_free_move_clamps_off_edge_position(self, mock_get_info, mock_screen_at):

@@ -6,6 +6,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Preferred Monitor (#72):** A new dropdown in Settings → General lets users pin the widget to a specific monitor in multi-monitor setups instead of always landing on the primary taskbar. The setting stores the screen's stable Windows identifier (`\\.\DISPLAY1`), and gracefully falls back to primary if the saved monitor is no longer connected.
+
 ### Fixed
 - **Free-Move Widget Reverts to Primary Screen After Reboot (#133):** The saved free-move position is now validated against the screen it actually belongs to (via `QApplication.screenAt()`) instead of the primary screen's taskbar. Previously, dragging the widget to a secondary monitor and restarting would snap it back to the primary screen because the saved coordinates were rejected as "off-screen" by the primary-screen validator. If the original monitor has since been disconnected, the widget now falls back to its calculated position near the tray instead of remaining off-screen. Position-restore decisions are now logged at INFO level for easier field diagnosis.
 

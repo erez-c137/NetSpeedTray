@@ -1,9 +1,10 @@
 """
 General Settings Page.
 """
-from typing import Dict, Any, Callable
+from typing import Dict, Any, Callable, Optional
 
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QGroupBox, QComboBox, QLabel, QGridLayout
 
 from netspeedtray import constants
@@ -94,11 +95,40 @@ class GeneralPage(QWidget):
         behavior_layout.addWidget(cfu_label, 4, 0, Qt.AlignmentFlag.AlignVCenter)
         behavior_layout.addWidget(self.check_for_updates, 4, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
+        # Preferred Monitor (#72) — lets users pin the widget to a specific
+        # display in multi-monitor setups. Default (no selection) uses primary.
+        behavior_layout.addWidget(QLabel(self.i18n.PREFERRED_MONITOR_LABEL), 5, 0, Qt.AlignmentFlag.AlignVCenter)
+        self.preferred_monitor_combo = QComboBox()
+        self._populate_monitor_combo()
+        self.preferred_monitor_combo.currentIndexChanged.connect(self.on_change)
+        behavior_layout.addWidget(self.preferred_monitor_combo, 5, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
         behavior_layout.setColumnStretch(0, 0)
         behavior_layout.setColumnStretch(1, 1)
         layout.addWidget(behavior_group)
-        
+
         layout.addStretch()
+
+    def _populate_monitor_combo(self) -> None:
+        """Fill the preferred-monitor dropdown with detected screens.
+
+        First entry is always "Primary (auto)" mapped to None. Subsequent
+        entries are real QScreens labeled with their resolution. We store
+        the screen's name() as userData so reselection survives reboots,
+        while showing a friendlier label.
+        """
+        self.preferred_monitor_combo.clear()
+        self.preferred_monitor_combo.addItem(self.i18n.PREFERRED_MONITOR_PRIMARY, userData=None)
+
+        app = QGuiApplication.instance()
+        if app is None:
+            return
+        primary = app.primaryScreen()
+        for i, screen in enumerate(app.screens(), start=1):
+            geom = screen.geometry()
+            tag = " (primary)" if screen is primary else ""
+            label = f"Monitor {i}: {geom.width()}x{geom.height()}{tag}"
+            self.preferred_monitor_combo.addItem(label, userData=screen.name())
 
     def load_settings(self, config: Dict[str, Any], is_startup_enabled: bool):
         # Language
@@ -124,6 +154,14 @@ class GeneralPage(QWidget):
         # Tray Offset
         self.tray_offset.setValue(config.get("tray_offset_x", 0))
 
+        # Preferred monitor (#72) — match by stored screen name.
+        # If the saved monitor name doesn't match any detected screen (e.g.,
+        # monitor was disconnected since last save), the combo just stays at
+        # "Primary (auto)" and the runtime fallback in position_manager kicks in.
+        preferred_name = config.get("preferred_monitor")
+        idx = self.preferred_monitor_combo.findData(preferred_name)
+        self.preferred_monitor_combo.setCurrentIndex(idx if idx >= 0 else 0)
+
     def get_settings(self) -> Dict[str, Any]:
         # Get slider position and convert to update_rate value
         slider_position = self.update_rate.value()
@@ -136,7 +174,8 @@ class GeneralPage(QWidget):
             "keep_visible_fullscreen": self.keep_visible_fullscreen.isChecked(),
             "start_with_windows": self.start_with_windows.isChecked(),
             "tray_offset_x": self.tray_offset.value(),
-            "check_for_updates": self.check_for_updates.isChecked()
+            "check_for_updates": self.check_for_updates.isChecked(),
+            "preferred_monitor": self.preferred_monitor_combo.currentData(),
         }
 
     def _on_update_rate_changed(self, value: int) -> None:
