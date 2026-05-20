@@ -7,6 +7,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- **Preferred Monitor (#72):** A new dropdown in Settings → General lets users pin the widget to a specific monitor in multi-monitor setups instead of always landing on the primary taskbar. The setting stores the screen's stable Windows identifier (`\\.\DISPLAY1`), and gracefully falls back to primary if the saved monitor is no longer connected.
 - **Export Support Bundle:** Replaces the "Export Error Log" button in Settings → Troubleshooting. Bundles all log files (current + rotated backups), the user's `config.json`, and a `system_info.txt` (NetSpeedTray version, Windows version, Python, monitor count + resolutions — no display names, no hostname) into a single timestamped zip ready to drag into a GitHub issue. Log content is run through the obfuscator one extra time before zipping as belt-and-suspenders against any future logging-setup mistakes. App Activity per-process / per-connection data is never included.
 
 ### Fixed

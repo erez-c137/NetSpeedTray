@@ -170,6 +170,7 @@ class ConfigConstants:
         "check_for_updates": True,
         "skipped_version": None,
         "last_update_check": None,
+        "preferred_monitor": None,
     }
     
     # --- Schema Definition for Modern Config Validation ---
@@ -244,6 +245,9 @@ class ConfigConstants:
         "check_for_updates": {"type": bool, "default": True},
         "skipped_version": {"type": (str, type(None)), "default": None},
         "last_update_check": {"type": (str, type(None)), "default": None},
+        # QScreen.name() identifier (e.g. "\\.\DISPLAY1"). None = use primary.
+        # If the saved screen isn't found at runtime, fall back to primary.
+        "preferred_monitor": {"type": (str, type(None)), "default": None},
     }
 
 

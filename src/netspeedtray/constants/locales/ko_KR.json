@@ -319,6 +319,8 @@
     "SHOW_APP_ACTIVITY_MENU_ITEM": "앱 활동 표시(&A)",
     "CHECK_FOR_UPDATES_MENU_ITEM": "업데이트 확인(&U)",
     "CHECK_FOR_UPDATES_LABEL": "시작 시 업데이트 확인",
+    "PREFERRED_MONITOR_LABEL": "Preferred Monitor",
+    "PREFERRED_MONITOR_PRIMARY": "Primary (auto)",
     "UPDATE_AVAILABLE_TITLE": "업데이트 가능",
     "UPDATE_AVAILABLE_TEXT": "NetSpeedTray의 새 버전을 사용할 수 있습니다!\n\n현재: v{current}\n최신: v{latest}",
     "UPDATE_DOWNLOAD_BUTTON": "다운로드",
