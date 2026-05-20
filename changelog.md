@@ -9,6 +9,9 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - **Free-Move Widget Reverts to Primary Screen After Reboot (#133):** The saved free-move position is now validated against the screen it actually belongs to (via `QApplication.screenAt()`) instead of the primary screen's taskbar. Previously, dragging the widget to a secondary monitor and restarting would snap it back to the primary screen because the saved coordinates were rejected as "off-screen" by the primary-screen validator. If the original monitor has since been disconnected, the widget now falls back to its calculated position near the tray instead of remaining off-screen. Position-restore decisions are now logged at INFO level for easier field diagnosis.
 
+### Changed
+- **Log levels for field diagnosis:** Bumped four state-transition logs from DEBUG to INFO so bug-report logs include the breadcrumbs we need without users having to enable verbose logging. Affects `StatsMonitorThread` (init + polling interval changes + hardware monitor connection + run loop start) and `StatsController` (init mode + primary interface changes). Production logs will be marginally larger; the additions fire once or only when state actually changes, so volume stays low.
+
 ---
 
 ## [1.3.1] - April 15, 2026

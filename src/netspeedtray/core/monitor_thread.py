@@ -96,12 +96,14 @@ class StatsMonitorThread(QThread):
         self._power_pkg_counter: Optional[int] = None   # CPU package power (PKG)
         self._power_pp1_counter: Optional[int] = None    # Intel iGPU power (PP1)
 
-        self.logger.debug("StatsMonitorThread initialized with interval %.2fs", self.interval)
+        self.logger.info("StatsMonitorThread initialized with interval %.2fs", self.interval)
 
     def set_interval(self, interval: float) -> None:
         """Dynamically updates the polling interval."""
+        previous = self.interval
         self.interval = max(0.1, interval)
-        self.logger.debug("Monitoring interval updated to %.2fs", self.interval)
+        if previous != self.interval:
+            self.logger.info("Monitoring interval changed: %.2fs -> %.2fs", previous, self.interval)
 
     def update_config(self, config: Dict[str, Any]) -> None:
         """Updates internal config copy and resets hardware queries if needed."""
@@ -504,7 +506,7 @@ class StatsMonitorThread(QThread):
                         )
                     continue
                 self._wmi_ohm = obj
-                self.logger.debug("Hardware monitor: connected to %s (%d temp sensors)", ns, count)
+                self.logger.info("Hardware monitor: connected to %s (%d temp sensors).", ns, count)
                 return
             except Exception as e:
                 self.logger.debug("Hardware monitor: %s probe failed: %s", ns, e)
@@ -617,7 +619,7 @@ class StatsMonitorThread(QThread):
 
     def run(self) -> None:
         """Main monitoring loop."""
-        self.logger.debug("StatsMonitorThread starting loop...")
+        self.logger.info("StatsMonitorThread starting loop.")
 
         # Check once at thread startup, not per-iteration — is_rdp_session() is a
         # syscall and the session type does not change while the thread is running.

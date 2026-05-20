@@ -58,7 +58,8 @@ class StatsController(QObject):
         from collections import deque
         self.recent_speeds: Dict[str, deque] = {}
 
-        self.logger.debug("StatsController initialized.")
+        mode = self.config.get("interface_mode", "auto")
+        self.logger.info("StatsController initialized (interface_mode=%s).", mode)
 
 
     def set_view(self, view: 'NetworkSpeedWidget') -> None:
@@ -278,11 +279,16 @@ class StatsController(QObject):
 
 
     def _update_primary_interface_name(self) -> None:
-        """Updates primary interface."""
+        """Updates primary interface, logging changes for field diagnosis."""
+        previous = self.primary_interface
         try:
             self.primary_interface = get_primary_interface_name()
         except Exception:
             self.primary_interface = None
+        if previous != self.primary_interface:
+            self.logger.info(
+                "Primary network interface changed: %r -> %r", previous, self.primary_interface
+            )
 
 
     def get_available_interfaces(self) -> List[str]:
