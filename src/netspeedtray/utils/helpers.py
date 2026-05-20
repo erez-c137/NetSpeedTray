@@ -8,17 +8,12 @@ and data formatting used across the application.
 import os
 import sys
 import logging
-import threading
-from logging.handlers import RotatingFileHandler
 from typing import Optional, Tuple, List
 from pathlib import Path
 from datetime import datetime
 import numpy as np
 
 from netspeedtray import constants
-
-# Thread lock for logging setup
-_logging_lock: threading.Lock = threading.Lock()
 
 
 def get_app_asset_path(asset_name: str) -> Path:
@@ -67,63 +62,6 @@ def get_app_data_path() -> Path:
     except OSError as e:
         logger.error("Failed to create or verify app data directory %s: %s", path, e)
         raise OSError(f"Error with app data directory: {path}. Check disk space or path validity.") from e
-
-
-def setup_logging() -> logging.Logger:
-    """
-    Configure logging with both a rotating file handler and a console handler in a thread-safe manner.
-    """
-    logger: logging.Logger = logging.getLogger(constants.app.APP_NAME) # Use app name consistently for logger
-    with _logging_lock:
-        if not logger.handlers: # Check if handlers are already configured
-            # Assuming you have an ENV_VAR_PROD_MODE in constants.app
-            is_production = os.environ.get(getattr(constants.app, 'ENV_VAR_PROD_MODE', 'NETSPEEDTRAY_PROD'), "").lower() == "true"
-            
-            # Determine root log level
-            root_log_level = constants.logs.PRODUCTION_LOG_LEVEL if is_production else logging.DEBUG
-            logger.setLevel(root_log_level)
-            
-            log_formatter = logging.Formatter(
-                fmt=constants.logs.LOG_FORMAT, datefmt=constants.logs.LOG_DATE_FORMAT
-            )
-
-            # File Handler
-            try:
-                # Assuming ERROR_LOG_FILENAME is defined in constants.logs
-                log_filename = getattr(constants.logs, 'ERROR_LOG_FILENAME', constants.logs.LOG_FILENAME)
-                log_file_path: Path = get_app_data_path() / log_filename
-                file_handler: RotatingFileHandler = RotatingFileHandler(
-                    log_file_path,
-                    maxBytes=constants.logs.MAX_LOG_SIZE,
-                    backupCount=constants.logs.LOG_BACKUP_COUNT,
-                    encoding='utf-8',
-                    delay=True # Delays opening the file until the first log message
-                )
-                file_handler.setFormatter(log_formatter)
-                file_log_level = constants.logs.PRODUCTION_LOG_LEVEL if is_production else constants.logs.FILE_LOG_LEVEL
-                file_handler.setLevel(file_log_level)
-                logger.addHandler(file_handler)
-    
-            except (PermissionError, OSError, FileNotFoundError) as e:
-                log_filename = getattr(constants.logs, 'ERROR_LOG_FILENAME', constants.logs.LOG_FILENAME)
-                print(f"CRITICAL: Failed to set up file logging at {get_app_data_path() / log_filename}: {e}. File logging will be disabled.", file=sys.stderr)
-
-            # Console Handler
-            console_handler: logging.StreamHandler = logging.StreamHandler(sys.stderr)
-            console_handler.setFormatter(log_formatter)
-            console_log_level = constants.logs.PRODUCTION_LOG_LEVEL if is_production else constants.logs.CONSOLE_LOG_LEVEL
-            console_handler.setLevel(console_log_level)
-            logger.addHandler(console_handler)
-            
-            if any(isinstance(h, RotatingFileHandler) for h in logger.handlers):
-                 log_filename = getattr(constants.logs, 'ERROR_LOG_FILENAME', constants.logs.LOG_FILENAME)
-                 logger.info("File logging target: %s, Level: %s", get_app_data_path() / log_filename, logging.getLevelName(file_log_level))
-            else:
-                 logger.warning("File logging is NOT active due to previous errors.")
-            logger.info("Console logging active. Level: %s", logging.getLevelName(console_handler.level))
-            logger.info("Application logging initialized. Production mode: %s. Root Log Level: %s.", is_production, logging.getLevelName(root_log_level))
-
-    return logger
 
 
 def get_unit_labels_for_type(i18n, unit_type: str, short_labels: bool = False) -> List[str]:

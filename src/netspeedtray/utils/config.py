@@ -23,16 +23,55 @@ from netspeedtray import constants
 
 class ObfuscatingFormatter(logging.Formatter):
     """
-    A custom logging formatter that automatically redacts sensitive information
-    like user paths and IP addresses from all log records, including tracebacks.
-    This version uses pre-compiled regexes for performance and robust normalization.
+    Logging formatter that redacts sensitive information from log records.
+
+    Redacted patterns:
+    - User paths (Windows backslash and forward-slash forms, case-insensitive)
+    - IPv4 addresses
+    - IPv6 addresses (full, compressed, link-local with zone IDs, IPv4-mapped)
+    - Hostname / computer name
+    - MAC addresses (colon and dash separated)
+    - Windows network interface GUIDs
+
+    All regexes are pre-compiled at construction time.
     """
-    IP_REGEX = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b|\b(?:[A-F0-9]{1,4}:){7}[A-F0-9]{1,4}\b", re.IGNORECASE)
+    IPV4_REGEX = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+
+    # IPv6 covering full, compressed (::), and link-local with zone IDs (%5).
+    # Boundaries use negative lookarounds for hex chars and colons to avoid
+    # partial matches in larger hex strings.
+    IPV6_REGEX = re.compile(
+        r"(?<![0-9A-Fa-f:])"
+        r"(?:"
+        r"(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}"                 # full form
+        r"|"
+        r"(?:[0-9A-Fa-f]{1,4}:){1,7}:"                              # trailing ::
+        r"|"
+        r":(?::[0-9A-Fa-f]{1,4}){1,7}"                              # leading ::
+        r"|"
+        r"(?:[0-9A-Fa-f]{1,4}:){1,6}(?::[0-9A-Fa-f]{1,4}){1,6}"     # middle ::
+        r"|"
+        r"::"                                                       # bare ::
+        r")"
+        r"(?:%[0-9A-Za-z_-]+)?"                                     # optional zone id
+        r"(?![0-9A-Fa-f:])"
+    )
+
+    # MAC addresses: 6 groups of 2 hex chars separated by : or -.
+    # Anchored by either end so we don't snip the middle of longer hex runs.
+    MAC_REGEX = re.compile(r"\b[0-9A-Fa-f]{2}([:-])(?:[0-9A-Fa-f]{2}\1){4}[0-9A-Fa-f]{2}\b")
+
+    # Windows network interface GUIDs: {12345678-1234-1234-1234-123456789012}
+    GUID_REGEX = re.compile(
+        r"\{[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\}"
+    )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._path_regexes: List[re.Pattern] = []
+        self._hostname_regex: Optional[re.Pattern] = None
         self._setup_paths()
+        self._setup_hostname()
 
     def _setup_paths(self):
         import sys
@@ -55,16 +94,41 @@ class ObfuscatingFormatter(logging.Formatter):
             if not path_str or len(path_str) <= 3: continue
             normalized_path = os.path.normcase(os.path.normpath(path_str))
             paths_to_obfuscate.add(normalized_path)
+            # Also register the forward-slash form: pathlib.Path.__repr__
+            # and many third-party error messages use C:/Users/... on Windows.
+            paths_to_obfuscate.add(normalized_path.replace("\\", "/"))
+        # Sort longest-first so AppData paths get matched before the user home prefix.
         sorted_paths = sorted(list(paths_to_obfuscate), key=len, reverse=True)
         self._path_regexes = [re.compile(re.escape(p), re.IGNORECASE) for p in sorted_paths]
         print(f"ObfuscatingFormatter initialized with {len(self._path_regexes)} path redaction patterns.", file=sys.stderr)
 
+    def _setup_hostname(self):
+        try:
+            import socket
+            hostname = socket.gethostname()
+            if hostname and len(hostname) > 3:
+                # Bound by non-word chars so we don't snip a substring of an
+                # unrelated identifier.
+                self._hostname_regex = re.compile(
+                    r"\b" + re.escape(hostname) + r"\b", re.IGNORECASE
+                )
+        except Exception:
+            self._hostname_regex = None
+
     def format(self, record: logging.LogRecord) -> str:
         formatted_message = super().format(record)
         sanitized_message = formatted_message
+        # Order matters: paths first (most specific), then narrower patterns.
         for pattern in self._path_regexes:
             sanitized_message = pattern.sub("<REDACTED_PATH>", sanitized_message)
-        sanitized_message = self.IP_REGEX.sub("<REDACTED_IP>", sanitized_message)
+        # MAC and GUID before IPv6 — they contain hex/colons that could be
+        # partially matched by the IPv6 regex if processed in the wrong order.
+        sanitized_message = self.MAC_REGEX.sub("<REDACTED_MAC>", sanitized_message)
+        sanitized_message = self.GUID_REGEX.sub("<REDACTED_GUID>", sanitized_message)
+        sanitized_message = self.IPV4_REGEX.sub("<REDACTED_IP>", sanitized_message)
+        sanitized_message = self.IPV6_REGEX.sub("<REDACTED_IP>", sanitized_message)
+        if self._hostname_regex is not None:
+            sanitized_message = self._hostname_regex.sub("<REDACTED_HOST>", sanitized_message)
         return sanitized_message
 
 
@@ -263,10 +327,12 @@ class ConfigManager:
             file_handler.setFormatter(file_formatter)
             logger.addHandler(file_handler)
 
-            # Create and configure the console handler
+            # Create and configure the console handler. Uses ObfuscatingFormatter
+            # too so dev-mode console output never leaks paths/IPs accidentally
+            # pasted into bug reports or screenshots.
             console_handler = logging.StreamHandler()
             console_handler.setLevel(constants.logs.CONSOLE_LOG_LEVEL)
-            console_formatter = logging.Formatter('%(name)s - %(levelname)s - %(message)s')
+            console_formatter = ObfuscatingFormatter('%(name)s - %(levelname)s - %(message)s')
             console_handler.setFormatter(console_formatter)
             logger.addHandler(console_handler)
 
