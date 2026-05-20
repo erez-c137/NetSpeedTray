@@ -116,19 +116,50 @@ class GeneralPage(QWidget):
         entries are real QScreens labeled with their resolution. We store
         the screen's name() as userData so reselection survives reboots,
         while showing a friendlier label.
+
+        Called on construction AND on every showEvent so users who plug in
+        a monitor after the app started still see it in the dropdown.
         """
+        # Remember the current selection so we can preserve it across refresh.
+        previous_selection = self.preferred_monitor_combo.currentData() if self.preferred_monitor_combo.count() else None
+
+        # Temporarily disconnect to avoid firing on_change during the rebuild.
+        try:
+            self.preferred_monitor_combo.currentIndexChanged.disconnect(self.on_change)
+        except (TypeError, RuntimeError):
+            pass
+
         self.preferred_monitor_combo.clear()
         self.preferred_monitor_combo.addItem(self.i18n.PREFERRED_MONITOR_PRIMARY, userData=None)
 
         app = QGuiApplication.instance()
-        if app is None:
-            return
-        primary = app.primaryScreen()
-        for i, screen in enumerate(app.screens(), start=1):
-            geom = screen.geometry()
-            tag = " (primary)" if screen is primary else ""
-            label = f"Monitor {i}: {geom.width()}x{geom.height()}{tag}"
-            self.preferred_monitor_combo.addItem(label, userData=screen.name())
+        if app is not None:
+            primary = app.primaryScreen()
+            for i, screen in enumerate(app.screens(), start=1):
+                geom = screen.geometry()
+                tag = " (primary)" if screen is primary else ""
+                label = f"Monitor {i}: {geom.width()}x{geom.height()}{tag}"
+                self.preferred_monitor_combo.addItem(label, userData=screen.name())
+
+        # Restore previous selection if it still exists; otherwise fall back to "Primary (auto)".
+        if previous_selection is not None:
+            idx = self.preferred_monitor_combo.findData(previous_selection)
+            if idx >= 0:
+                self.preferred_monitor_combo.setCurrentIndex(idx)
+
+        # Reconnect the change signal.
+        self.preferred_monitor_combo.currentIndexChanged.connect(self.on_change)
+
+    def showEvent(self, event):  # type: ignore[override]
+        """Refresh the monitor dropdown whenever the page becomes visible.
+
+        Catches the case where a user plugs/unplugs a monitor while the app
+        is running, then opens Settings — the dropdown should reflect the
+        current monitor topology, not the topology at app launch.
+        """
+        super().showEvent(event)
+        if hasattr(self, "preferred_monitor_combo"):
+            self._populate_monitor_combo()
 
     def load_settings(self, config: Dict[str, Any], is_startup_enabled: bool):
         # Language
