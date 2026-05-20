@@ -456,7 +456,14 @@ class PositionManager(QObject):
             logger.error("Error updating position: %s", e, exc_info=True)
 
     def _apply_saved_position(self) -> bool:
-        """Applies saved position if 'free_move' is enabled."""
+        """Applies saved position if 'free_move' is enabled.
+
+        Multi-monitor aware: the saved coordinates are looked up against the
+        screen they actually belong to via QApplication.screenAt(), not the
+        primary screen's taskbar. If the saved monitor has been disconnected,
+        falls through to the calculated position so the widget appears near
+        the tray instead of off-screen. Fixes #133.
+        """
         if not self._state.config.get('free_move', False):
             return False
 
@@ -466,17 +473,38 @@ class PositionManager(QObject):
         if not isinstance(saved_x, int) or not isinstance(saved_y, int):
             return False
 
-        # Validate against current screen
-        screen = self._state.taskbar_info.get_screen() if self._state.taskbar_info else QApplication.primaryScreen()
-        if not screen:
+        widget_width = self._state.widget.width()
+        widget_height = self._state.widget.height()
+        widget_size = (widget_width, widget_height)
+
+        # Use the widget's center to identify which monitor the saved position
+        # belongs to. This handles the case where the user drags the widget to
+        # a secondary screen — the primary-screen taskbar in self._state would
+        # otherwise reject coordinates that are perfectly valid on monitor 2.
+        center = QPoint(saved_x + widget_width // 2, saved_y + widget_height // 2)
+        screen = QApplication.screenAt(center)
+
+        if screen is None:
+            logger.info(
+                "Saved free-move position (%s,%s) is on a disconnected monitor; "
+                "falling back to calculated position.",
+                saved_x, saved_y,
+            )
             return False
 
-        widget_size = (self._state.widget.width(), self._state.widget.height())
-        if ScreenUtils.is_position_valid(saved_x, saved_y, widget_size, screen):
-            self._apply_geometry(saved_x, saved_y)
-            return True
-        
-        return False
+        clamped = ScreenUtils.validate_position(saved_x, saved_y, widget_size, screen)
+        if (clamped.x, clamped.y) != (saved_x, saved_y):
+            logger.info(
+                "Clamped saved free-move position (%s,%s) onto screen '%s' -> (%s,%s).",
+                saved_x, saved_y, screen.name(), clamped.x, clamped.y,
+            )
+        else:
+            logger.info(
+                "Restored saved free-move position (%s,%s) on screen '%s'.",
+                saved_x, saved_y, screen.name(),
+            )
+        self._apply_geometry(clamped.x, clamped.y)
+        return True
 
     def _apply_calculated_position(self) -> bool:
         """Calculates and applies position based on taskbar rules."""

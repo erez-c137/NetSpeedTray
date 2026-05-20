@@ -159,21 +159,86 @@ class TestPositionManager(unittest.TestCase):
             
             self.mock_widget.move.assert_called_with(100, 200)
 
+    @patch('PyQt6.QtWidgets.QApplication.screenAt')
     @patch('netspeedtray.core.position_manager.get_taskbar_info')
-    def test_update_position_free_move(self, mock_get_info):
+    def test_update_position_free_move(self, mock_get_info, mock_screen_at):
+        """Saved free-move position on the primary screen is restored verbatim."""
         mock_get_info.return_value = self.mock_taskbar
-        
+
+        # Primary screen at (0,0)-1920x1080
+        primary = MagicMock()
+        primary.geometry.return_value = QRect(0, 0, 1920, 1080)
+        primary.name.return_value = "DISPLAY1"
+        mock_screen_at.return_value = primary
+
         self.config['free_move'] = True
         self.config['position_x'] = 888
         self.config['position_y'] = 999
-        
-        # Should use saved position if valid
-        # We need ScreenUtils validation to pass. Mock validation?
-        # Or just assume screens are big enough test environment.
-        # 888, 999 is inside 1920x1080.
-        
+
         self.manager.update_position()
         self.mock_widget.move.assert_called_with(888, 999)
+
+    @patch('PyQt6.QtWidgets.QApplication.screenAt')
+    @patch('netspeedtray.core.position_manager.get_taskbar_info')
+    def test_free_move_restores_on_secondary_screen(self, mock_get_info, mock_screen_at):
+        """Regression for #133: saved coords on a secondary monitor must be restored,
+        even though get_taskbar_info() returns only the primary taskbar."""
+        mock_get_info.return_value = self.mock_taskbar  # primary taskbar
+
+        # Secondary screen to the left at (-1920, 0)-1920x1080
+        secondary = MagicMock()
+        secondary.geometry.return_value = QRect(-1920, 0, 1920, 1080)
+        secondary.name.return_value = "DISPLAY2"
+        mock_screen_at.return_value = secondary
+
+        self.config['free_move'] = True
+        self.config['position_x'] = -1000  # clearly on the secondary screen
+        self.config['position_y'] = 500
+
+        self.manager.update_position()
+        # Must restore exactly, not snap back to primary calculated pos.
+        self.mock_widget.move.assert_called_with(-1000, 500)
+
+    @patch('PyQt6.QtWidgets.QApplication.screenAt')
+    @patch('netspeedtray.core.position_manager.get_taskbar_info')
+    def test_free_move_disconnected_monitor_falls_through(self, mock_get_info, mock_screen_at):
+        """Saved coords on a now-disconnected monitor must fall through to calculated
+        position rather than placing the widget off-screen."""
+        mock_get_info.return_value = self.mock_taskbar
+        mock_screen_at.return_value = None  # No monitor at that point
+
+        self.config['free_move'] = True
+        self.config['position_x'] = -1000
+        self.config['position_y'] = 500
+
+        with patch.object(self.manager._calculator, 'calculate_position',
+                          return_value=ScreenPosition(1500, 1040)):
+            self.manager.update_position()
+            # Should NOT have been moved to the disconnected coords.
+            self.mock_widget.move.assert_called_with(1500, 1040)
+
+    @patch('PyQt6.QtWidgets.QApplication.screenAt')
+    @patch('netspeedtray.core.position_manager.get_taskbar_info')
+    def test_free_move_clamps_off_edge_position(self, mock_get_info, mock_screen_at):
+        """Saved coords slightly off the edge of an existing screen are clamped, not rejected."""
+        mock_get_info.return_value = self.mock_taskbar
+
+        primary = MagicMock()
+        primary.geometry.return_value = QRect(0, 0, 1920, 1080)
+        primary.name.return_value = "DISPLAY1"
+        mock_screen_at.return_value = primary
+
+        self.config['free_move'] = True
+        self.config['position_x'] = 1900  # widget width 100 -> right edge at 2000, off-screen
+        self.config['position_y'] = 1070  # widget height 40 -> bottom at 1110, off-screen
+
+        self.manager.update_position()
+        # Must be clamped onto the screen, not rejected.
+        args, _ = self.mock_widget.move.call_args
+        x, y = args
+        self.assertTrue(0 <= x <= 1920 - 100, f"x={x} not clamped to screen")
+        self.assertTrue(0 <= y <= 1080 - 40, f"y={y} not clamped to screen")
+
 
 if __name__ == '__main__':
     unittest.main()
