@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [Unreleased]
+
+### Added
+- **Export Support Bundle:** Replaces the "Export Error Log" button in Settings → Troubleshooting. Bundles the log files (all rotated backups), a sanitized copy of `config.json` (window position memory stripped), and a `system_info.txt` (NetSpeedTray version, Windows version, Python, monitor count + resolutions — no display names, no hostname) into a single timestamped zip ready to drag into a GitHub issue. Log content is run through the obfuscator one extra time before zipping as belt-and-suspenders against any future logging-setup mistakes. App Activity data is never included.
+
+---
+
 ## [1.3.1] - April 15, 2026
 
 ### Added
