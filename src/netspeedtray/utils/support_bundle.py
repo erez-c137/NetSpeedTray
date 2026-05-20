@@ -1,18 +1,20 @@
 """
 Support Bundle generator.
 
-Bundles the user's log files + sanitized config + system info into a single
-zip that they can attach to a GitHub issue. Designed to make bug reports
-self-contained so triage doesn't stall waiting for log/config follow-ups.
+Bundles the user's log files + config + system info into a single zip that
+they can attach to a GitHub issue. Designed to make bug reports self-
+contained so triage doesn't stall waiting for log/config follow-ups.
 
 Privacy:
 - Log files are passed through ObfuscatingFormatter one final time before
   zipping (belt-and-suspenders -- the file handler already obfuscates as it
   writes, but a second pass catches any future logging-setup mistakes).
-- Config has its window position memory stripped (settings_window_pos)
-  since position coordinates are mildly fingerprinting.
-- App Activity data is NEVER included (per v1.3.2 PII audit) -- it's the
-  highest-PII data the app touches.
+- Config is bundled as-is. It contains only user preferences -- no PII.
+  Window-position coordinates (`position_x`, `position_y`, etc.) ARE
+  included; they're exactly the diagnostic data we need for multi-monitor
+  bug reports (#133, #138).
+- App Activity data is NEVER included -- it's the highest-PII data the
+  app touches (per-process names + remote IPs/ports).
 - System info contains versions and monitor sizes only -- no display names,
   no hostname, no GPU model.
 """
@@ -37,23 +39,29 @@ from netspeedtray.utils.helpers import get_app_data_path
 logger = logging.getLogger("NetSpeedTray.SupportBundle")
 
 
-# Config keys that get stripped during sanitization. These are not strictly
-# PII but they reveal coordinate-level placement of the user's windows on
-# their monitors, which has weak fingerprinting value and zero diagnostic
-# value for most bug reports.
-# Mildly-fingerprinting coordinate keys. Stripped from the bundled config
-# because they reveal exactly where the user placed each window on their
-# monitor — interesting for a fingerprinter, zero diagnostic value for us.
-_CONFIG_KEYS_TO_STRIP: tuple = (
-    "settings_window_pos",
-    "graph_window_pos",
-    "position_x",
-    "position_y",
-)
+# Config keys to strip from the bundled config.
+#
+# Currently empty. We deliberately do NOT strip window-position coordinates
+# (`position_x`, `position_y`, `graph_window_pos`, `settings_window_pos`):
+# they are exactly the diagnostic signal we need for multi-monitor / placement
+# bugs (e.g. #133, #138 — `position_x = -1920` literally means "user wants
+# widget on the monitor to the left of primary"). Window coordinates are not
+# PII; they don't identify a user.
+#
+# Actual PII (paths, IPs, hostnames, MACs) lives in logs, not config — and
+# that's handled by ObfuscatingFormatter in the logs/ section of the bundle.
+#
+# Add keys here only if a future config field genuinely contains identifying
+# data (e.g. an authentication token, a username, a remote URL).
+_CONFIG_KEYS_TO_STRIP: tuple = ()
 
 
 def _sanitize_config(config: Dict[str, Any]) -> Dict[str, Any]:
-    """Returns a copy of the config with mildly-sensitive keys removed."""
+    """Returns a copy of the config with any sensitive keys removed.
+
+    Today this is a no-op since the config contains only preferences, not PII.
+    The function exists as a hook for future keys that genuinely need stripping.
+    """
     sanitized = dict(config)
     for key in _CONFIG_KEYS_TO_STRIP:
         sanitized.pop(key, None)
@@ -198,7 +206,7 @@ def build_support_bundle(
             "\n"
             "Contents:\n"
             "  system_info.txt   - App version, OS, monitor layout (no display names)\n"
-            "  config.json       - Your settings, with window position memory stripped\n"
+            "  config.json       - Your settings (preferences only, no PII)\n"
             "  logs/             - Log files, scrubbed for paths/IPs/MACs/GUIDs/hostnames\n"
             "\n"
             "NOT included:\n"

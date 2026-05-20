@@ -78,19 +78,26 @@ class TestStructure:
 
 
 class TestConfigSanitization:
-    def test_all_coordinate_keys_are_stripped(self, q_app, tmp_path, fake_config, fake_log_dir):
-        """All window-position / widget-coord keys must be removed from the bundle.
+    def test_coordinate_keys_are_preserved_for_diagnostics(self, q_app, tmp_path, fake_config, fake_log_dir):
+        """Window-position coordinates MUST survive into the bundle.
 
-        Coordinates fingerprint where the user places windows on their monitors.
-        They have weak identifying value but zero diagnostic value, so we strip them.
+        position_x / position_y are exactly the diagnostic signal we need for
+        multi-monitor placement bugs (#133, #138). A value of `position_x = -1920`
+        literally tells us "user wants widget on the monitor to the left of
+        primary". Stripping them throws away debugging data without any privacy
+        benefit — coordinates are not PII.
         """
         dest = tmp_path / "bundle.zip"
         support_bundle.build_support_bundle(dest, fake_config)
         bundled_config = json.loads(_open_zip_entry(dest, "config.json"))
-        for stripped_key in ("settings_window_pos", "graph_window_pos", "position_x", "position_y"):
-            assert stripped_key not in bundled_config, (
-                f"{stripped_key!r} leaked into the support bundle"
+        # All four coordinate keys must round-trip through the bundle unchanged.
+        for diagnostic_key in ("settings_window_pos", "graph_window_pos", "position_x", "position_y"):
+            assert diagnostic_key in bundled_config, (
+                f"{diagnostic_key!r} is missing from the bundle — was it accidentally "
+                f"added back to _CONFIG_KEYS_TO_STRIP? These keys are diagnostic, not PII."
             )
+        assert bundled_config["position_x"] == 1500
+        assert bundled_config["position_y"] == 40
 
     def test_other_config_keys_preserved(self, q_app, tmp_path, fake_config, fake_log_dir):
         dest = tmp_path / "bundle.zip"
@@ -99,7 +106,6 @@ class TestConfigSanitization:
         assert bundled_config["interface_mode"] == "auto"
         assert bundled_config["language"] == "en_US"
         assert bundled_config["selected_interfaces"] == ["Ethernet", "Wi-Fi"]
-        # free_move and language should survive — they're diagnostic, not PII.
         assert bundled_config["free_move"] is True
 
 
