@@ -239,6 +239,33 @@ class TestPositionManager(unittest.TestCase):
         self.assertTrue(0 <= x <= 1920 - 100, f"x={x} not clamped to screen")
         self.assertTrue(0 <= y <= 1080 - 40, f"y={y} not clamped to screen")
 
+    @patch('netspeedtray.core.position_manager.get_taskbar_info')
+    def test_free_move_defers_when_widget_size_is_zero(self, mock_get_info):
+        """Defensive: if widget.width()/height() return 0 (widget not laid out
+        yet at startup), saved-position restore must defer rather than guess
+        the wrong screen via screenAt() with a corrupted center point.
+
+        get_calculated_position() also returns None for zero-sized widgets,
+        so the whole update is a no-op. A follow-up update_position() after
+        layout completes will succeed.
+        """
+        mock_get_info.return_value = self.mock_taskbar
+        # Force zero-size widget
+        self.mock_widget.width.return_value = 0
+        self.mock_widget.height.return_value = 0
+
+        self.config['free_move'] = True
+        # These saved coords are on a hypothetical secondary screen at x=-1920.
+        # Without the guard, screenAt(QPoint(-1000 + 0//2, 500 + 0//2)) would
+        # be tested against the WRONG point and probably land on a different
+        # screen than the widget actually belongs to.
+        self.config['position_x'] = -1000
+        self.config['position_y'] = 500
+
+        self.manager.update_position()
+        # No move called: zero-sized widget can't be positioned safely yet.
+        self.mock_widget.move.assert_not_called()
+
 
 if __name__ == '__main__':
     unittest.main()

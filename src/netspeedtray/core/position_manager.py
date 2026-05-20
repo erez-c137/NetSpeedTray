@@ -477,6 +477,19 @@ class PositionManager(QObject):
         widget_height = self._state.widget.height()
         widget_size = (widget_width, widget_height)
 
+        # Defensive: if the widget hasn't been laid out yet, its width/height
+        # report 0. A zero-size widget centered at (saved_x, saved_y) would land
+        # in screenAt() lookup at the top-left corner, which could be on a
+        # *different* screen than the actual widget will eventually occupy.
+        # Fall through to the calculated position; a follow-up update_position()
+        # after layout completes will retry with valid dimensions.
+        if widget_width <= 0 or widget_height <= 0:
+            logger.debug(
+                "Widget size not yet known (w=%s, h=%s); deferring saved-position restore.",
+                widget_width, widget_height,
+            )
+            return False
+
         # Use the widget's center to identify which monitor the saved position
         # belongs to. This handles the case where the user drags the widget to
         # a secondary screen — the primary-screen taskbar in self._state would
