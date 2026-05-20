@@ -41,7 +41,15 @@ logger = logging.getLogger("NetSpeedTray.SupportBundle")
 # PII but they reveal coordinate-level placement of the user's windows on
 # their monitors, which has weak fingerprinting value and zero diagnostic
 # value for most bug reports.
-_CONFIG_KEYS_TO_STRIP: tuple = ("settings_window_pos",)
+# Mildly-fingerprinting coordinate keys. Stripped from the bundled config
+# because they reveal exactly where the user placed each window on their
+# monitor — interesting for a fingerprinter, zero diagnostic value for us.
+_CONFIG_KEYS_TO_STRIP: tuple = (
+    "settings_window_pos",
+    "graph_window_pos",
+    "position_x",
+    "position_y",
+)
 
 
 def _sanitize_config(config: Dict[str, Any]) -> Dict[str, Any]:
@@ -132,8 +140,8 @@ def _list_log_files() -> List[Path]:
     files: List[Path] = []
     if main.exists():
         files.append(main)
-    # RotatingFileHandler creates .1, .2, ... up to LOG_BACKUP_COUNT
-    for i in range(1, constants.logs.LOG_BACKUP_COUNT + 2):
+    # RotatingFileHandler creates exactly .1 .. .LOG_BACKUP_COUNT backups.
+    for i in range(1, constants.logs.LOG_BACKUP_COUNT + 1):
         rotated = base / f"{constants.logs.LOG_FILENAME}.{i}"
         if rotated.exists():
             files.append(rotated)

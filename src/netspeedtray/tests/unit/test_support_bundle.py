@@ -23,11 +23,14 @@ def fake_config():
         "language": "en_US",
         "update_rate": 1.0,
         "interface_mode": "auto",
-        "free_move": False,
+        "free_move": True,
         "selected_interfaces": ["Ethernet", "Wi-Fi"],
         "default_color": "#FFFFFF",
-        # Mildly-sensitive: should be stripped from bundled config
+        # Mildly-sensitive coordinate keys — all should be stripped from bundle.
         "settings_window_pos": {"x": 100, "y": 200},
+        "graph_window_pos": {"x": 300, "y": 400},
+        "position_x": 1500,
+        "position_y": 40,
     }
 
 
@@ -75,11 +78,19 @@ class TestStructure:
 
 
 class TestConfigSanitization:
-    def test_settings_window_pos_is_stripped(self, q_app, tmp_path, fake_config, fake_log_dir):
+    def test_all_coordinate_keys_are_stripped(self, q_app, tmp_path, fake_config, fake_log_dir):
+        """All window-position / widget-coord keys must be removed from the bundle.
+
+        Coordinates fingerprint where the user places windows on their monitors.
+        They have weak identifying value but zero diagnostic value, so we strip them.
+        """
         dest = tmp_path / "bundle.zip"
         support_bundle.build_support_bundle(dest, fake_config)
         bundled_config = json.loads(_open_zip_entry(dest, "config.json"))
-        assert "settings_window_pos" not in bundled_config
+        for stripped_key in ("settings_window_pos", "graph_window_pos", "position_x", "position_y"):
+            assert stripped_key not in bundled_config, (
+                f"{stripped_key!r} leaked into the support bundle"
+            )
 
     def test_other_config_keys_preserved(self, q_app, tmp_path, fake_config, fake_log_dir):
         dest = tmp_path / "bundle.zip"
@@ -88,6 +99,8 @@ class TestConfigSanitization:
         assert bundled_config["interface_mode"] == "auto"
         assert bundled_config["language"] == "en_US"
         assert bundled_config["selected_interfaces"] == ["Ethernet", "Wi-Fi"]
+        # free_move and language should survive — they're diagnostic, not PII.
+        assert bundled_config["free_move"] is True
 
 
 class TestLogScrubbing:
