@@ -31,6 +31,7 @@ from netspeedtray import constants
 from netspeedtray.utils import styles as style_utils
 from netspeedtray.utils.helpers import get_app_data_path, get_app_asset_path
 from netspeedtray.utils.styles import is_dark_mode
+from netspeedtray.utils.support_bundle import build_support_bundle
 
 # --- Settings Pages ---
 from netspeedtray.views.settings.pages.units import UnitsPage
@@ -201,12 +202,12 @@ class SettingsDialog(QDialog):
             ]:
                 self.stack.addWidget(self._wrap_in_scroll(page))
 
-            # --- Bottom Buttons (Export Log / Cancel / Save) ---
+            # --- Bottom Buttons (Support Bundle / Cancel / Save) ---
             button_layout = QHBoxLayout()
-            self.export_log_button = QPushButton(self.i18n.EXPORT_ERROR_LOG_BUTTON)
+            self.export_log_button = QPushButton(self.i18n.EXPORT_SUPPORT_BUNDLE_BUTTON)
             self.export_log_button.setStyleSheet(style_utils.button_style())
-            self.export_log_button.setToolTip(self.i18n.EXPORT_ERROR_LOG_TOOLTIP)
-            self.export_log_button.clicked.connect(self.export_error_log)
+            self.export_log_button.setToolTip(self.i18n.EXPORT_SUPPORT_BUNDLE_TOOLTIP)
+            self.export_log_button.clicked.connect(self.export_support_bundle)
             button_layout.addWidget(self.export_log_button)
             button_layout.addStretch()
             self.cancel_button = QPushButton(self.i18n.CANCEL_BUTTON)
@@ -395,28 +396,45 @@ class SettingsDialog(QDialog):
                 self._user_chose_default_color = True
             self._schedule_settings_update()
 
-    def export_error_log(self) -> None:
-        """Exports the application log file to a user-selected location."""
-        self.logger.info("Export error log requested.")
+    def export_support_bundle(self) -> None:
+        """Exports a sanitized bundle (logs + config + system info) for bug reports."""
+        self.logger.info("Support bundle export requested.")
         try:
-            log_filename = getattr(constants.logs, 'ERROR_LOG_FILENAME', constants.logs.LOG_FILENAME)
-            source_path = get_app_data_path() / log_filename
-
-            if not source_path.exists():
-                QMessageBox.warning(self, self.i18n.ERROR_TITLE, "Log file not found.")
-                return
+            default_name = (
+                f"NetSpeedTray_Support_"
+                f"{__import__('datetime').datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+            )
+            from pathlib import Path
+            default_dir = Path.home() / "Desktop"
+            default_path = str(default_dir / default_name) if default_dir.exists() else default_name
 
             dest_path, _ = QFileDialog.getSaveFileName(
-                self, self.i18n.EXPORT_ERROR_LOG_TITLE, log_filename, "Log Files (*.log);;All Files (*)"
+                self,
+                self.i18n.EXPORT_SUPPORT_BUNDLE_TITLE,
+                default_path,
+                "Zip files (*.zip);;All Files (*)",
             )
 
-            if dest_path:
-                shutil.copy2(source_path, dest_path)
-                QMessageBox.information(self, self.i18n.SUCCESS_TITLE, f"Log exported to {dest_path}")
-                self.logger.info(f"Log exported to {dest_path}")
+            if not dest_path:
+                return
+
+            written = build_support_bundle(
+                destination_zip=Path(dest_path),
+                config=self.config,
+            )
+            self.logger.info("Support bundle written to %s", written)
+            QMessageBox.information(
+                self,
+                self.i18n.SUCCESS_TITLE,
+                self.i18n.SUPPORT_BUNDLE_SUCCESS_MESSAGE.format(file_path=str(written)),
+            )
         except Exception as e:
-            self.logger.error(f"Failed to export log: {e}", exc_info=True)
-            QMessageBox.critical(self, self.i18n.ERROR_TITLE, f"Failed to export log: {str(e)}")
+            self.logger.error("Failed to export support bundle: %s", e, exc_info=True)
+            QMessageBox.critical(
+                self,
+                self.i18n.ERROR_TITLE,
+                self.i18n.SUPPORT_BUNDLE_ERROR_MESSAGE.format(error=str(e)),
+            )
 
     def update_interface_list(self, new_interfaces: List[str]) -> None:
         """Updates the list of available network interfaces."""

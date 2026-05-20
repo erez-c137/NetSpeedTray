@@ -6,6 +6,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Export Support Bundle:** Replaces the "Export Error Log" button in Settings → Troubleshooting. Bundles all log files (current + rotated backups), the user's `config.json`, and a `system_info.txt` (NetSpeedTray version, Windows version, Python, monitor count + resolutions — no display names, no hostname) into a single timestamped zip ready to drag into a GitHub issue. Log content is run through the obfuscator one extra time before zipping as belt-and-suspenders against any future logging-setup mistakes. App Activity per-process / per-connection data is never included.
+
 ### Fixed
 - **Free-Move Widget Reverts to Primary Screen After Reboot (#133):** The saved free-move position is now validated against the screen it actually belongs to (via `QApplication.screenAt()`) instead of the primary screen's taskbar. Previously, dragging the widget to a secondary monitor and restarting would snap it back to the primary screen because the saved coordinates were rejected as "off-screen" by the primary-screen validator. If the original monitor has since been disconnected, the widget now falls back to its calculated position near the tray instead of remaining off-screen. Position-restore decisions are now logged at INFO level for easier field diagnosis.
 
