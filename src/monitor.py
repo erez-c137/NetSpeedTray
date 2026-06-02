@@ -2,13 +2,14 @@
 Application entry point and lifecycle management for NetSpeedTray.
 """
 
-# CRITICAL: Configure matplotlib BEFORE any matplotlib imports anywhere in the app
-# This MUST be at the very top of the entry point to prevent popup windows
-import matplotlib
-matplotlib.use('QtAgg')  # Use Qt backend for embedding
-matplotlib.interactive(False)  # Disable interactive mode to prevent popups
+# matplotlib's Qt backend setup lives at the top of `views/graph/window.py`
+# (the only module that imports matplotlib). Loading it here would cost
+# ~30-50 MB of RAM at startup even for users who never open the graph
+# window — and most launches never do.
 
 import warnings
+# These filters are pattern-only and don't load matplotlib themselves —
+# safe to register early so they're in place whenever matplotlib first runs.
 warnings.filterwarnings("ignore", "Tight layout not applied")
 warnings.filterwarnings("ignore", "constrained_layout not applied")
 

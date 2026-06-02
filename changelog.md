@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ---
 
-## [Unreleased]
+## [1.3.2] - 2026-06-02
 
 ### Added
 - **Preferred Monitor (#72):** A new dropdown in Settings → General lets users pin the widget to a specific monitor in multi-monitor setups instead of always landing on the primary taskbar. The setting stores the screen's stable Windows identifier (`\\.\DISPLAY1`), and gracefully falls back to primary if the saved monitor is no longer connected.
@@ -17,6 +17,7 @@ All notable changes to this project will be documented in this file.
 ### Changed
 - **Live Theme Detection (#62):** The widget now updates its text color the moment Windows switches between Light and Dark mode, instead of waiting for the next app restart. Uses Qt 6.5+'s `colorSchemeChanged` signal in place of the previous WM_SETTINGCHANGE native event filter, which fired on every system setting change (mouse, language, accessibility). Runtime theme changes are applied in-memory only — flipping themes no longer churns the config file on disk. Only affects users with "Automatic" text color enabled (the default).
 - **Log levels for field diagnosis:** Bumped four state-transition logs from DEBUG to INFO so bug-report logs include the breadcrumbs we need without users having to enable verbose logging. Affects `StatsMonitorThread` (init + polling interval changes + hardware monitor connection + run loop start) and `StatsController` (init mode + primary interface changes). Production logs will be marginally larger; the additions fire once or only when state actually changes, so volume stays low.
+- **Lower RAM at idle:** Moved matplotlib's `use('QtAgg')` setup out of `monitor.py` into `views/graph/window.py` and made the `from .views.graph import GraphWindow` lazy via `__getattr__` in `views/__init__.py`. Also deferred numpy import inside the one helper function that uses it (mini-graph curve interpolation). Result: matplotlib + numpy + PIL no longer load at startup. Users who never open the graph window save ~30-50 MB RSS; users with mini-graph disabled save another ~20 MB.
 
 ### Build
 - **Smaller installer (66 → 49 MB, -27%) (#143):** Trimmed the PyInstaller bundle by excluding Qt subsystems we don't import (QtNetwork, QtPdf, Quick/QML, Multimedia, WebEngine, Sql, Designer, Charts, Test, etc.), Pythonwin's MFC runtime (`mfc140u.dll` ~5 MB), and unused PIL image-format codecs (AVIF, HEIF, etc.). Added UPX compression — auto-downloaded into `build/tools/` by the build script if not present.

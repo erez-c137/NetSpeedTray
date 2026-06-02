@@ -11,7 +11,10 @@ import logging
 from typing import Optional, Tuple, List
 from pathlib import Path
 from datetime import datetime
-import numpy as np
+
+# numpy is imported lazily inside calculate_monotone_cubic_interpolation —
+# loading it here adds ~20 MB RSS to every NST process, even when the
+# widget's mini-graph (the only consumer of curve interpolation) is off.
 
 from netspeedtray import constants
 
@@ -261,15 +264,19 @@ def format_data_size(data_bytes: int | float, i18n, precision: int = 2) -> Tuple
 def calculate_monotone_cubic_interpolation(x_coords: List[float], y_coords: List[float], density: int = 10) -> Tuple[List[float], List[float]]:
     """
     Computes a Monotone Cubic Spline for smooth, non-overshooting interpolation.
-    
+
     Args:
         x_coords: List of X values (must be strictly increasing).
         y_coords: List of Y values.
         density: Number of interpolated points to generate *between* each pair of original points.
-        
+
     Returns:
         tuple(interp_x, interp_y): Dense arrays of smoothed points.
     """
+    # Lazy import: avoids loading numpy at startup (~20 MB RSS) for users
+    # who never enable the mini-graph in the widget.
+    import numpy as np
+
     x = np.array(x_coords, dtype=float)
     y = np.array(y_coords, dtype=float)
     n = len(x)

@@ -7,6 +7,15 @@ from typing import Tuple, Optional, Any, List, Dict
 warnings.filterwarnings("ignore", "AutoDateLocator was unable to pick an appropriate interval")
 warnings.filterwarnings("ignore", "Tight layout not applied")
 
+# Configure matplotlib's backend BEFORE any matplotlib submodule import below.
+# Used to live in monitor.py but was moved here so matplotlib only loads the
+# first time the user opens the graph window — saves ~30-50 MB RSS at idle
+# for users who never open the graph. Order matters: matplotlib.use() must
+# precede the `from matplotlib.backends...` line that follows.
+import matplotlib
+matplotlib.use('QtAgg')
+matplotlib.interactive(False)
+
 # --- Third-Party Imports ---
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 import matplotlib.dates as mdates
