@@ -76,7 +76,15 @@ echo Generating version info for v%VERSION%...
 if errorlevel 1 (echo ERROR: Failed to generate version info & exit /b 1)
 :: --------------------------------------------------
 
-pyinstaller --noconfirm --distpath "%DIST_DIR%" NetSpeedTray.spec >> "%LOG_FILE%" 2>&1
+:: --- Ensure UPX is available for compression (auto-download if missing) ---
+echo Ensuring UPX is available for compression...
+"%ROOT_DIR%\.venv\Scripts\python.exe" fetch_upx.py >> "%LOG_FILE%" 2>&1
+
+:: PyInstaller needs --upx-dir explicitly; the .spec's upx=True alone isn't enough.
+set "UPX_DIR_ARG="
+if exist "%BUILD_DIR%tools\upx-5.0.2-win64\upx.exe" set "UPX_DIR_ARG=--upx-dir %BUILD_DIR%tools\upx-5.0.2-win64"
+
+pyinstaller --noconfirm --distpath "%DIST_DIR%" %UPX_DIR_ARG% NetSpeedTray.spec >> "%LOG_FILE%" 2>&1
 
 :: Stage 4: Generate Installer
 echo.
