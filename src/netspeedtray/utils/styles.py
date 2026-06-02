@@ -55,7 +55,7 @@ def dialog_style() -> str:
     # Radio Button Dot Color (White in dark mode, Black/White in light mode? Usually White on Accent is safe)
     dot_color = "white"
 
-    label_style_str = f"color: {text_color}; font-size: 13px; font-family: 'Segoe UI Variable';"
+    label_style_str = f"color: {text_color}; font-size: 13px; font-family: 'Segoe UI Variable', 'Segoe UI', sans-serif;"
     
     # Unchecked border
     radio_border_dull = "#999999" if dark_mode_active else "#666666"
@@ -64,7 +64,7 @@ def dialog_style() -> str:
         QDialog {{
             background-color: {sidebar_bg};
             border-radius: 8px;
-            font-family: "Segoe UI Variable";
+            font-family: "Segoe UI Variable", "Segoe UI", sans-serif;
         }}
         QWidget#contentWidget {{
             background-color: {content_bg}; 
@@ -75,7 +75,7 @@ def dialog_style() -> str:
         }}
         QRadioButton, QCheckBox {{
             color: {text_color};
-            font-family: "Segoe UI Variable";
+            font-family: "Segoe UI Variable", "Segoe UI", sans-serif;
             font-size: 13px;
             background-color: transparent;
             outline: none;
@@ -103,12 +103,15 @@ def dialog_style() -> str:
         QGroupBox {{
             font-size: 14px;
             font-weight: 600;
-            margin-top: 12px;
+            /* margin-top must exceed the title's ascent + padding, otherwise
+             * the top of the bold title gets clipped (#149). 14px font ~
+             * 18-19px box height with bold weight; use 22px to be safe. */
+            margin-top: 22px;
             color: {text_color};
             background-color: {section_bg};
             border: none;
             border-radius: 8px; /* Native Win11 radius */
-            padding: 12px; 
+            padding: 12px;
             padding-top: 24px; /* Space for title */
         }}
         QGroupBox::title {{
@@ -142,7 +145,7 @@ def collapsible_section_style() -> str:
         }}
         QWidget#collapsibleHeader QLabel {{
             color: {text_color};
-            font-family: "Segoe UI Variable";
+            font-family: "Segoe UI Variable", "Segoe UI", sans-serif;
             background-color: transparent;
         }}
         QWidget#collapsibleHeader QLabel#sectionTitle {{
@@ -170,7 +173,7 @@ def sidebar_style() -> str:
         QListWidget {{
             background-color: {sidebar_bg};
             border: none;
-            font-family: "Segoe UI Variable";
+            font-family: "Segoe UI Variable", "Segoe UI", sans-serif;
             font-size: 13px;
             padding: 8px 0;
             margin: 0px;
@@ -227,7 +230,7 @@ def graph_settings_panel_style() -> str:
             font-size: 13px;
         }}
         #settingsPanel QLabel#settingsTitleLabel {{
-            font-family: 'Segoe UI Variable';
+            font-family: 'Segoe UI Variable', 'Segoe UI', sans-serif;
             font-size: 14px;
             font-weight: 600;
             color: {style_constants.DARK_MODE_TEXT_COLOR};
@@ -277,7 +280,7 @@ def zoom_hint_style() -> str:
             border-radius: 12px;
             padding: 4px 12px;
             font-size: 11px;
-            font-family: 'Segoe UI Variable', sans-serif;
+            font-family: 'Segoe UI Variable', 'Segoe UI', sans-serif;
             font-weight: 500;
         }
     """
@@ -293,7 +296,7 @@ def graph_overlay_style() -> str:
             color: white;
             padding: 2px;
             font-size: 13px;
-            font-family: 'Segoe UI Variable';
+            font-family: 'Segoe UI Variable', 'Segoe UI', sans-serif;
             border-radius: 4px;
             border: none;
         }
@@ -571,7 +574,7 @@ def button_style(accent: bool = False) -> str:
             color: {text_color};
             border: 1px solid {border_color};
             padding: 5px 15px; border-radius: 4px;
-            font-family: "Segoe UI Variable"; font-size: 13px;
+            font-family: "Segoe UI Variable", "Segoe UI", sans-serif; font-size: 13px;
             min-height: 22px; 
         }}
         QPushButton:hover {{

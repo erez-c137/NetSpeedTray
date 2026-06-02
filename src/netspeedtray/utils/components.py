@@ -68,7 +68,11 @@ class Win11Toggle(QWidget):
 
     def _create_label_widget(self, text: str) -> QLabel:
         label = QLabel(text, self)
-        font = QFont("Segoe UI Variable", 10)
+        # Segoe UI Variable is Windows 11 only; fall back to Segoe UI on Win10
+        # to avoid Qt picking an unintended serif fallback (#149).
+        font = QFont()
+        font.setFamilies(["Segoe UI Variable", "Segoe UI"])
+        font.setPointSize(10)
         label.setFont(font)
         label.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         # Ensure internal labels also have no border/outline
@@ -295,7 +299,10 @@ class Win11Slider(QWidget):
 
         layout.addWidget(self.slider)
 
-        label_font = QFont("Segoe UI Variable", 10)
+        # Win11 family with Win10 fallback (#149).
+        label_font = QFont()
+        label_font.setFamilies(["Segoe UI Variable", "Segoe UI"])
+        label_font.setPointSize(10)
         
         if self._editable:
             self._value_input = QLineEdit(self) 

@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [Unreleased]
+
+### Fixed
+- **Settings dialog rendering on Windows 10 (#149):** Group-box titles ("Font Settings", "Arrow Styling", etc.) were getting clipped at the top, and labels appeared washed-out on dark mode. Root cause: the stylesheet referenced `Segoe UI Variable` (a Windows 11-exclusive font) without a fallback, so on Windows 10 Qt picked an unrelated default font with different metrics. Added the standard fallback chain `'Segoe UI Variable', 'Segoe UI', sans-serif` across all 11 stylesheet usages and the two `QFont()` constructors that hardcoded the family. Also bumped QGroupBox `margin-top` from 12px to 22px so the bold 14px title has room to render without clipping, even with the slightly taller Segoe UI Variable metrics on Windows 11.
+
+---
+
 ## [1.3.1] - April 15, 2026
 
 ### Added
