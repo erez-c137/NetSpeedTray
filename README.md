@@ -93,6 +93,7 @@ Download the latest files directly from the [**Releases Page**](https://github.c
 
 -   Full support for **9 languages:** English, Korean, French, German, Russian, Spanish, Dutch, Polish, and Slovenian
 -   100% key parity across all locales — no missing translations
+-   Most translations contributed by the community — see [Translators](#translators) below
 
 ### Security & Privacy
 
@@ -236,6 +237,23 @@ Can't contribute financially? **Starring the repo** on GitHub is a free and huge
 Contributions, issues, and feature requests are welcome! Please feel free to open an issue or submit a pull request.
 
 > **A Note on System UI Integration:** NetSpeedTray is designed to integrate seamlessly with core Windows UI. Elements like the Start Menu and Action Center will always appear on top. The widget gracefully hides when these menus are active and **reappears instantly** when they close. This is intentional — it ensures the widget feels like a polished, non-intrusive part of the operating system.
+
+## Translators
+
+NetSpeedTray's UI lives in 9 languages thanks to the contributors below. Each translation represents real time and care — if you're using NetSpeedTray in your language, please give them a star and a thank-you.
+
+| Language       | Locale  | Translator |
+|----------------|---------|------------|
+| 🇰🇷 Korean      | `ko_KR` | [@VenusGirl](https://github.com/VenusGirl) ❤ |
+| 🇳🇱 Dutch       | `nl_NL` | [@CMTriX](https://github.com/CMTriX) |
+| 🇷🇺 Russian     | `ru_RU` | [@ZeoNish](https://github.com/ZeoNish) |
+| 🇸🇮 Slovenian   | `sl_SI` | [@anderlli0053](https://github.com/anderlli0053) (Andrew Poženel) |
+| 🇵🇱 Polish      | `pl_PL` | [@FadeMind](https://github.com/FadeMind) |
+| 🇫🇷 French      | `fr_FR` | [@logounet](https://github.com/logounet) |
+| 🇩🇪 German      | `de_DE` | Maintainer — **native-speaker review welcome** |
+| 🇪🇸 Spanish     | `es_ES` | Maintainer — **native-speaker review welcome** |
+
+See [TRANSLATORS.md](TRANSLATORS.md) for details on how translation works in NetSpeedTray and how to contribute fixes or new languages. Even one-line phrasing corrections are valuable.
 
 ## License
 
