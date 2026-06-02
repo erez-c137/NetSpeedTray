@@ -68,7 +68,7 @@ So I built NetSpeedTray: live up/down speeds, CPU and GPU utilization, temperatu
 
 🔬 **App Activity.** A separate window showing estimated per-app network usage with connection details — useful for figuring out *which* program is hammering your connection. Works in non-admin mode with reduced accuracy.
 
-🔒 **Built to Be Trusted.** Open source under GPLv3. Digitally signed installer (no SmartScreen warnings). Zero ads. Zero tracking. Zero telemetry. Logs are obfuscated for paths, IPs, MACs, hostnames, and interface GUIDs before they ever leave your machine.
+🔒 **Built to Be Trusted.** Open source under GPLv3. Digitally signed installer — no SmartScreen warnings — courtesy of free code signing from [**SignPath.io**](https://signpath.io/) with a certificate from the [**SignPath Foundation**](https://signpath.org/). Zero ads. Zero tracking. Zero telemetry. Logs are obfuscated for paths, IPs, MACs, hostnames, and interface GUIDs before they ever leave your machine.
 
 ---
 
@@ -307,9 +307,26 @@ Issues and pull requests welcome. Use the [bug report template](https://github.c
 
 ---
 
+## Sponsors
+
+Free code signing on Windows for open-source projects provided by [**SignPath.io**](https://signpath.io/), certificate by the [**SignPath Foundation**](https://signpath.org/).
+
+<p align="center">
+  <a href="https://signpath.io/">
+    <img src="https://img.shields.io/badge/Code%20Signing-SignPath.io-4D4DFF?style=for-the-badge&logo=letsencrypt&logoColor=white" alt="Code signing by SignPath.io" />
+  </a>
+   
+  <a href="https://signpath.org/">
+    <img src="https://img.shields.io/badge/Certificate-SignPath%20Foundation-009688?style=for-the-badge&logo=shield&logoColor=white" alt="Certificate by SignPath Foundation" />
+  </a>
+</p>
+
+This means every release of NetSpeedTray you download from this repository is digitally signed end-to-end — no SmartScreen warnings, no "unknown publisher," and a verifiable chain of trust that the binary hasn't been tampered with since it left CI. SignPath donates this service for free to qualifying open-source projects, and NetSpeedTray wouldn't be able to ship signed builds without them.
+
+---
+
 ## Thanks
 
--   **Code signing** provided free of charge by [SignPath.io](https://signpath.io/), certificate by the [SignPath Foundation](https://signpath.org/).
 -   **Translations** by the community — see [Translators](#translators) above.
 -   **Built on** [PyQt6](https://www.riverbankcomputing.com/software/pyqt/), [matplotlib](https://matplotlib.org/), [psutil](https://github.com/giampaolo/psutil), [numpy](https://numpy.org/), [pywin32](https://github.com/mhammond/pywin32), [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) (when available), and [Inno Setup](https://jrsoftware.org/isinfo.php).
 
