@@ -12,10 +12,14 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - **Free-Move Widget Reverts to Primary Screen After Reboot (#133):** The saved free-move position is now validated against the screen it actually belongs to (via `QApplication.screenAt()`) instead of the primary screen's taskbar. Previously, dragging the widget to a secondary monitor and restarting would snap it back to the primary screen because the saved coordinates were rejected as "off-screen" by the primary-screen validator. If the original monitor has since been disconnected, the widget now falls back to its calculated position near the tray instead of remaining off-screen. Position-restore decisions are now logged at INFO level for easier field diagnosis.
+- **Settings dialog rendering on Windows 10 (#149):** Group-box titles ("Font Settings", "Arrow Styling", etc.) were getting clipped at the top, and labels appeared washed-out on dark mode. Root cause: the stylesheet referenced `Segoe UI Variable` (a Windows 11-exclusive font) without a fallback, so on Windows 10 Qt picked an unrelated default font with different metrics. Added the standard fallback chain `'Segoe UI Variable', 'Segoe UI', sans-serif` across all 11 stylesheet usages and the two `QFont()` constructors that hardcoded the family. Also bumped QGroupBox `margin-top` from 12px to 22px so the bold 14px title has room to render without clipping, even with the slightly taller Segoe UI Variable metrics on Windows 11.
 
 ### Changed
 - **Live Theme Detection (#62):** The widget now updates its text color the moment Windows switches between Light and Dark mode, instead of waiting for the next app restart. Uses Qt 6.5+'s `colorSchemeChanged` signal in place of the previous WM_SETTINGCHANGE native event filter, which fired on every system setting change (mouse, language, accessibility). Runtime theme changes are applied in-memory only — flipping themes no longer churns the config file on disk. Only affects users with "Automatic" text color enabled (the default).
 - **Log levels for field diagnosis:** Bumped four state-transition logs from DEBUG to INFO so bug-report logs include the breadcrumbs we need without users having to enable verbose logging. Affects `StatsMonitorThread` (init + polling interval changes + hardware monitor connection + run loop start) and `StatsController` (init mode + primary interface changes). Production logs will be marginally larger; the additions fire once or only when state actually changes, so volume stays low.
+
+### Build
+- **Smaller installer (66 → 49 MB, -27%) (#143):** Trimmed the PyInstaller bundle by excluding Qt subsystems we don't import (QtNetwork, QtPdf, Quick/QML, Multimedia, WebEngine, Sql, Designer, Charts, Test, etc.), Pythonwin's MFC runtime (`mfc140u.dll` ~5 MB), and unused PIL image-format codecs (AVIF, HEIF, etc.). Added UPX compression — auto-downloaded into `build/tools/` by the build script if not present.
 
 ---
 
