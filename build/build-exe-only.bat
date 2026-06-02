@@ -71,12 +71,21 @@ if errorlevel 1 (echo ERROR: Failed to generate version info & exit /b 1)
 set "end_time=%TIME%"
 call :log_elapsed "Generating version info" "%start_time%" "%end_time%"
 
+:: Stage 3b: Ensure UPX is available (auto-download if missing). Non-fatal.
+echo Ensuring UPX is available for compression...
+"%ROOT_DIR%\.venv\Scripts\python.exe" fetch_upx.py >> "%LOG_FILE%" 2>&1
+
 :: Stage 4: Compile Executable with PyInstaller
 echo.
 echo Compiling executable...
 echo Compiling executable... >> "%LOG_FILE%"
 set "start_time=%TIME%"
-"%ROOT_DIR%\.venv\Scripts\python.exe" -m PyInstaller --noconfirm --distpath "%DIST_DIR%" netspeedtray.spec >> "%LOG_FILE%" 2>&1
+
+:: PyInstaller needs --upx-dir explicitly; the .spec's upx=True alone isn't enough.
+set "UPX_DIR_ARG="
+if exist "%BUILD_DIR%tools\upx-5.0.2-win64\upx.exe" set "UPX_DIR_ARG=--upx-dir %BUILD_DIR%tools\upx-5.0.2-win64"
+
+"%ROOT_DIR%\.venv\Scripts\python.exe" -m PyInstaller --noconfirm --distpath "%DIST_DIR%" %UPX_DIR_ARG% netspeedtray.spec >> "%LOG_FILE%" 2>&1
 if errorlevel 1 (echo ERROR: PyInstaller compilation failed. Check %LOG_FILE% for details & exit /b 1)
 if not exist "%DIST_DIR%\NetSpeedTray\NetSpeedTray.exe" (echo ERROR: Executable not found after compilation & exit /b 1)
 set "end_time=%TIME%"
