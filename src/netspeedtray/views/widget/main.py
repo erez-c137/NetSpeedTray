@@ -189,7 +189,7 @@ class NetworkSpeedWidget(QWidget):
 
         # Cycle Timer
         if self.config.get("widget_display_mode") == "cycle":
-            self._cycle_timer.start(constants.renderer.renderer.CYCLE_INTERVAL_MS)
+            self._cycle_timer.start(constants.renderer.CYCLE_INTERVAL_MS)
             self.logger.debug("Cycle timer started.")
 
 
@@ -538,8 +538,13 @@ class NetworkSpeedWidget(QWidget):
             self._refresh_cached_layout_mode()
             self.system_event_handler.theme_changed.connect(self._on_theme_changed)
             
-            # For immediate hide, we just connect to a lambda that hides self
-            self.system_event_handler.immediate_hide_requested.connect(lambda: self.setVisible(False))
+            # Emergency-hide on unambiguous fullscreen — but honor the user's
+            # "keep visible over fullscreen" choice (issue #107). Without this guard
+            # the immediate-hide path bypassed keep_visible_fullscreen, which
+            # _execute_refresh() already respects, so the widget vanished anyway.
+            self.system_event_handler.immediate_hide_requested.connect(
+                lambda: None if self.config.get("keep_visible_fullscreen", False) else self.setVisible(False)
+            )
             
             # Handle taskbar restarts
             self.system_event_handler.taskbar_restarted.connect(lambda: [QTimer.singleShot(i * constants.timeouts.TASKBAR_RESTART_RECOVERY_DELAY_MS, self._execute_refresh) for i in range(constants.timeouts.TASKBAR_RESTART_RETRIES)])

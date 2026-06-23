@@ -328,11 +328,14 @@ class WidgetRenderer:
                 else:
                     clean_val = val.replace(',', '').replace(' ', '').strip()
                 f_val = float(clean_val)
-                if f_val >= config.high_speed_threshold: 
+                if f_val >= config.high_speed_threshold:
                     painter.setPen(self._cached_pens['high'])
-                elif f_val <= config.low_speed_threshold: 
+                elif f_val >= config.low_speed_threshold:
                     painter.setPen(self._cached_pens['low'])
-                else: 
+                else:
+                    # Below the low threshold (incl. idle/0) uses the Default Color so
+                    # the widget matches the tray default at rest. Bands are ascending:
+                    # default (< low) -> low (low..high) -> high (>= high). (issue #153)
                     painter.setPen(self._cached_pens['default'])
             except:
                 painter.setPen(self._cached_pens['default'])
@@ -674,18 +677,13 @@ class WidgetRenderer:
         """Updates rendering configuration."""
         try:
             self.config = RenderConfig.from_dict(config_dict)
-            self.default_color = QColor(self.config.default_color)
-            self.high_color = QColor(self.config.high_speed_color)
-            self.low_color = QColor(self.config.low_speed_color)
-            self.font = QFont(self.config.font_family, self.config.font_size, self.config.font_weight)
-            self.metrics = QFontMetrics(self.font)
-            
-            # Update Arrow Font
-            if self.config.use_separate_arrow_font:
-                self.arrow_font = QFont(self.config.arrow_font_family, self.config.arrow_font_size, int(self.config.arrow_font_weight))
-            else:
-                self.arrow_font = self.font
-            self.arrow_metrics = QFontMetrics(self.arrow_font)
+            # Rebuild colors, fonts, metrics AND the pen cache from the new config.
+            # update_config previously re-derived colors/fonts inline but never
+            # rebuilt self._cached_pens — which is what the paint loop actually uses —
+            # so saved color/threshold edits did nothing until the next restart
+            # (issue #153). Delegating to _refresh_resource_cache() is the single
+            # source of truth and makes edits apply live.
+            self._refresh_resource_cache()
 
             self._cached_upload_points = []
             self._cached_download_points = []

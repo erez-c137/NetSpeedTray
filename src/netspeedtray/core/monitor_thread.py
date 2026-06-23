@@ -572,17 +572,29 @@ class StatsMonitorThread(QThread):
                     val = float(s.Value)
                     if 0.0 < val < 150.0:
                         return val
-                # Some boards label it differently — return hottest CPU-named sensor
+                # Some boards label it differently (AMD Ryzen exposes "Core (Tctl/Tdie)",
+                # not "CPU Package"). Match on the LHM Identifier (/amdcpu/ or /intelcpu/),
+                # which reliably scopes to the CPU regardless of the display name, and
+                # broaden the name keywords to cover Ryzen's Tctl/Tdie/Tccd labels. (#148)
                 sensors = self._wmi_ohm.ExecQuery(
-                    "SELECT Value FROM Sensor WHERE SensorType='Temperature'"
+                    "SELECT Value, Name, Identifier FROM Sensor WHERE SensorType='Temperature'"
                 )
                 readings = []
                 for s in sensors:
-                    name = str(s.Name).upper()
-                    if "CPU" in name or "CORE" in name or "PACKAGE" in name:
+                    name = str(getattr(s, 'Name', '')).upper()
+                    ident = str(getattr(s, 'Identifier', '')).lower()
+                    is_cpu = (
+                        "/amdcpu/" in ident or "/intelcpu/" in ident
+                        or any(k in name for k in ("CPU", "CORE", "PACKAGE", "TCTL", "TDIE", "TCCD"))
+                    )
+                    if not is_cpu:
+                        continue
+                    try:
                         val = float(s.Value)
-                        if 0.0 < val < 150.0:
-                            readings.append(val)
+                    except (TypeError, ValueError):
+                        continue
+                    if 0.0 < val < 150.0:
+                        readings.append(val)
                 if readings:
                     return max(readings)
             except Exception as e:

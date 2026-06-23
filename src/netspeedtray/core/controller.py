@@ -189,15 +189,12 @@ class StatsController(QObject):
                 
                 max_speed_bps = constants.network.interface.MAX_REASONABLE_SPEED_BPS
                 
-                try:
-                    if_stats = psutil.net_if_stats()
-                    if name in if_stats:
-                        link_speed_mbps = if_stats[name].speed
-                        if link_speed_mbps > 0:
-                            max_speed_bps = int((link_speed_mbps * 1_000_000 / 8) * 1.05)
-                except Exception:
-                    pass
-
+                # NOTE: rely ONLY on this absolute ceiling; do not cap by
+                # psutil.net_if_stats()[name].speed. On Windows that per-interface
+                # link speed is unreliable for multi-gigabit / 10GbE adapters (often a
+                # wrong or half rate), which silently dropped every real sample above it
+                # and displayed a constant 0 (issue #154). Real counter glitches are
+                # still caught here and by the rolling-average spike filter below.
                 if up_speed_bps > max_speed_bps or down_speed_bps > max_speed_bps:
                     continue
 

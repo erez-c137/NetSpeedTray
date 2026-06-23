@@ -52,6 +52,17 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
+[InstallDelete]
+; Wipe the previous PyInstaller payload BEFORE copying the new build. Inno's
+; 'ignoreversion' copy below overwrites files present in the new build but leaves
+; behind anything the new build no longer ships. v1.3.2 dropped many Qt DLLs and
+; (accidentally) OpenSSL, so v1.3.1 -> v1.3.2 upgraders kept stale, mismatched
+; DLLs in _internal — the cause of the broken SSL updater and a prime suspect for
+; "DLL load failed" / "no Qt platform plugin" crashes. Clearing _internal first
+; guarantees a consistent payload. User data ({userappdata}\NetSpeedTray) is NOT
+; touched by this.
+Type: filesandordirs; Name: "{app}\_internal"
+
 [Files]
 Source: "..\dist\NetSpeedTray\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 

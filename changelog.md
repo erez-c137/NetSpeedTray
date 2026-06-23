@@ -4,6 +4,30 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [1.3.3] - June 23, 2026
+
+A stabilization release for v1.3.2. The headline fix restores HTTPS to the packaged app — v1.3.2 accidentally shipped without OpenSSL, which broke the in-app update checker for everyone. Because that also means v1.3.2's updater cannot notify you about this release, **v1.3.2 users must update manually** from the [GitHub Releases](https://github.com/erez-c137/NetSpeedTray/releases) page or via WinGet.
+
+### Fixed
+- **Update checker broken in v1.3.2 — "Could not check for updates" (critical):** The v1.3.2 PyInstaller build stripped Python's OpenSSL DLLs (`libcrypto-3.dll` / `libssl-3.dll`) from the bundle. The Qt-trimming filter in `netspeedtray.spec` dropped them by basename on the false premise that "urllib uses Windows SChannel" — but on Windows Python's `ssl` module is backed by OpenSSL, so `_ssl.pyd` could no longer load and **every HTTPS request failed**, most visibly the update checker. Restored the OpenSSL DLLs, excluded them (plus `_ssl`/`_hashlib`) from UPX, and added a build-time guard that fails the build if these libraries ever go missing again.
+- **Crash on startup after enabling Auto-Cycling (#131):** A `constants.renderer.renderer.CYCLE_INTERVAL_MS` typo (one `renderer` too many) raised `AttributeError` while starting the cycle timer. Once "cycle" display mode was saved to config, the app crashed on every launch. Corrected to `constants.renderer.CYCLE_INTERVAL_MS`.
+- **No speed shown above ~5 Gbit/s on 10GbE NICs (#154):** The per-interface speed was capped at the link speed reported by `psutil.net_if_stats()`, which is unreliable on Windows for multi-gigabit adapters (often a wrong or half value). Any real sample above that bogus cap was silently dropped, so high-speed NICs displayed a constant 0. Removed the per-NIC cap; sanity-checking now relies on the absolute 100 Gbps ceiling plus the existing rolling-average spike filter.
+- **Color coding showed the Low Color at idle and only applied after a restart (#153):** Two fixes. (1) Color and threshold edits now apply live — `update_config()` rebuilds the cached pens instead of leaving them stale until the next restart. (2) The bands are now ascending: below the Low threshold (including idle) uses the Default Color, between Low and High uses the Low Color, and above High uses the High Color — so the widget matches the tray's default color at rest. Threshold tooltips were updated to match in all 9 languages.
+- **Widget vanished over fullscreen apps even with "keep visible" enabled (#107):** The emergency immediate-hide path that triggers on unambiguous fullscreen windows ignored the `keep_visible_fullscreen` setting that the normal visibility refresh already respected. It now honors the setting.
+- **AMD Ryzen CPU temperature not detected (#148):** LibreHardwareMonitor exposes the Ryzen CPU temperature as `Core (Tctl/Tdie)` rather than `CPU Package`. CPU-temperature matching now also keys off the sensor's LHM identifier (`/amdcpu/`, `/intelcpu/`) and recognizes the `Tctl` / `Tdie` / `Tccd` labels.
+
+### Changed
+- **Installer performs a clean upgrade:** The Inno Setup installer now wipes `{app}\_internal` before copying the new build. Previously it overwrote files in place but left behind anything a newer build no longer shipped, so v1.3.1 → v1.3.2 upgraders kept stale, mismatched DLLs — which is why the OpenSSL breakage surfaced as a version mismatch on upgrade rather than an outright missing file. User data in `%APPDATA%\NetSpeedTray` is never touched.
+- **Hardened numpy packaging:** numpy's compiled core (`_multiarray_umath`) and its bundled OpenBLAS are now excluded from UPX compression — a known cause of "DLL load failed while importing _multiarray_umath" (#136).
+
+### Localization
+- Updated the High/Low Speed threshold tooltips to describe the new ascending-band behavior across all 9 supported languages (English, German, Spanish, French, Korean, Dutch, Polish, Russian, Slovenian). 100% locale key parity preserved.
+
+### Tests
+- Added `test_v1_3_3_regressions.py` pinning the #131 startup crash, the #154 high-speed-drop bug, and the #153 live-apply fix. Suite now at **196 passing tests**.
+
+---
+
 ## [1.3.2] - June 2, 2026
 
 ### Added

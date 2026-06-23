@@ -182,9 +182,15 @@ def _drop_unused_qt_artifacts(items):
         'qt6multimedia.dll', 'qt6multimediawidgets.dll', 'qt6multimediaquick.dll',
         'qt6spatialaudio.dll', 'avcodec-61.dll', 'avformat-61.dll', 'avutil-59.dll',
         'swresample-5.dll', 'swscale-8.dll',
-        # Network / OpenSSL (urllib uses Windows SChannel, not OpenSSL)
-        'qt6network.dll', 'libcrypto-3.dll', 'libcrypto-3-x64.dll',
-        'libssl-3.dll', 'libssl-3-x64.dll',
+        # Qt's networking stack. We exclude the PyQt6.QtNetwork *module*, so
+        # qt6network.dll is dead weight and safe to drop.
+        #
+        # DO NOT add libcrypto-3.dll / libssl-3.dll here. Those are OpenSSL, and
+        # on Windows Python's own `ssl` module (urllib -> _ssl.pyd / _hashlib.pyd)
+        # is backed by OpenSSL, NOT SChannel. This filter matches by *basename*,
+        # so listing them strips Python's copy too — which is exactly what broke
+        # all HTTPS in v1.3.2 ("Could not check for updates"). Keep them bundled.
+        'qt6network.dll',
         # Designer
         'qt6designer.dll', 'qt6designercomponents.dll', 'qt6uitools.dll',
         # SQL
@@ -276,6 +282,20 @@ a = Analysis(
 a.binaries = _drop_unused_qt_artifacts(a.binaries)
 a.datas = _drop_unused_qt_artifacts(a.datas)
 
+# Regression guard: v1.3.2 silently shipped without OpenSSL and broke every
+# HTTPS call in the frozen app (the update checker, most visibly). Fail the
+# build loudly rather than ship a bundle whose `ssl` module can't load.
+_required_runtime_libs = ('libcrypto-3', 'libssl-3', '_ssl', '_hashlib')
+_bundled_basenames = {os.path.basename(b[0]).lower() for b in a.binaries}
+for _need in _required_runtime_libs:
+    if not any(_need in name for name in _bundled_basenames):
+        raise SystemExit(
+            f"[netspeedtray.spec] FATAL: '{_need}' is missing from the bundle. "
+            f"Python's ssl module will fail at runtime (HTTPS + update checker "
+            f"broken). Check _drop_unused_qt_artifacts() and `my_excludes`."
+        )
+print('[netspeedtray.spec] SSL runtime libs present: OpenSSL + _ssl/_hashlib OK.')
+
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 # UPX compression: roughly halves DLL sizes. Skip the items below — they
@@ -287,7 +307,18 @@ upx_exclude = [
     'python311.dll',          # Already heavily optimized; packing causes startup overhead.
     'qt6webenginecore.dll',   # Excluded above but defensive.
     'opengl32sw.dll',         # Mesa-derived, breaks if UPX-packed.
+    # OpenSSL + Python's bindings. UPX-packing these is a known cause of SSL
+    # load/handshake failures; keep them uncompressed so HTTPS keeps working.
+    'libcrypto-3.dll', 'libssl-3.dll', '_ssl.pyd', '_hashlib.pyd',
+    # numpy compiled core + its bundled OpenBLAS. UPX-packing these is a known
+    # cause of "DLL load failed while importing _multiarray_umath" (#136).
+    # upx_exclude entries are matched with pathlib.PurePath.match(), so globs
+    # work — important because the OpenBLAS DLL name carries a version hash.
+    '_multiarray_umath*.pyd', '_multiarray_tests*.pyd',
+    'libscipy_openblas*.dll', 'libopenblas*.dll',
 ]
+# Note: PyInstaller already auto-disables UPX for Qt plugins (e.g. qwindows.dll)
+# and CFG-enabled binaries, so those need no manual entry here.
 
 exe = EXE(
     pyz,
