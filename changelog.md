@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ---
 
-## [1.3.4] - Unreleased
+## [1.3.4] - June 26, 2026
 
 A stabilization and foundation release. No new user-facing features — instead a broad sweep of bug fixes (several surfaced by an internal design pass and a multi-agent adversarial code review), correctness and robustness hardening, the project's first CI pipeline, and a large jump in test coverage. This de-risks the larger v1.4 work.
 

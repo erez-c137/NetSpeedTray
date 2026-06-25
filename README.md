@@ -11,7 +11,7 @@ Open source, signed, no ads, no telemetry. The feature Windows forgot.
 
 </div>
 
-> 🎉 **v1.3.3 is here** — Fixes the broken in-app update checker, a startup crash with Auto-Cycling, no-speed-shown on 10GbE NICs, and color-coding/fullscreen quirks, plus completes the UI translations for all 9 languages. **On v1.3.2? Please update manually — its in-app updater couldn't reach GitHub.** [Read the release notes →](https://github.com/erez-c137/NetSpeedTray/releases/tag/v1.3.3)
+> 🎉 **v1.3.4 is here** — Fixes silently-broken file logging (Support Bundles were coming up empty since v1.3.2), color coding in Kbps/Gbps/byte units, window position memory across monitors, taskbar text truncation at multi-gig speeds, and a graph-tab crash. Adds **Japanese** (our 10th language) and a much larger automated test suite. [Read the release notes →](https://github.com/erez-c137/NetSpeedTray/releases/tag/v1.3.4)
 
 ---
 
