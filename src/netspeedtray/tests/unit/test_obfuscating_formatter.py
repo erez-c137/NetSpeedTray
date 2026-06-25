@@ -243,6 +243,22 @@ class TestFormatterRobustness:
 class TestLoggingSetupIntegrity:
     """Guards against regressions in how logging gets wired up."""
 
+    def test_config_imports_logging_handlers_explicitly(self):
+        """config.py uses logging.handlers.RotatingFileHandler, but `import logging`
+        does NOT import that submodule — it only resolves if something else imported
+        logging.handlers first. Without the explicit import, file logging fails at
+        startup ("module 'logging' has no attribute 'handlers'") and silently falls
+        back to console with NO log file. Regression guard (source inspection, since
+        the bug is import-order dependent and the test process already has it loaded).
+        """
+        import inspect
+        from netspeedtray.utils import config
+        src = inspect.getsource(config)
+        assert "import logging.handlers" in src, (
+            "config.py must `import logging.handlers` explicitly; relying on a "
+            "transitive import breaks file logging when the import graph changes."
+        )
+
     def test_helpers_setup_logging_remains_deleted(self):
         """helpers.setup_logging was deleted in v1.3.2 to prevent accidental
         un-obfuscated logging. If a future contributor re-adds it, ConfigManager.
