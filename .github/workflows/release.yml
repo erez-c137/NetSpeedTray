@@ -32,6 +32,11 @@ jobs:
           pip install -r dev-requirements.txt
 
       - name: Run unit tests
+        env:
+          # GUI tests run headless + deterministic (conftest.py also sets this, but
+          # the tag build that gates a public release should be explicit).
+          QT_QPA_PLATFORM: offscreen
+          QT_SCALE_FACTOR: "1"
         run: |
           .\.venv\Scripts\Activate.ps1
           python -m pytest
