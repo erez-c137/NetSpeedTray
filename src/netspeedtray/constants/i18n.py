@@ -48,6 +48,7 @@ class I18nStrings:
         "ru_RU": "Русский (Россия)",
         "ko_KR": "한국어 (대한민국)",
         "sl_SI": "Slovenščina (Slovenija)",
+ 　　　　"ja_JP": "日本語 (日本)",
     }
 
     def __init__(self, language_code: Optional[str] = None) -> None:
