@@ -23,6 +23,7 @@ A stabilization release for v1.3.2. The headline fix restores HTTPS to the packa
 
 ### Localization
 - Updated the High/Low Speed threshold tooltips to describe the new ascending-band behavior across all 9 supported languages (English, German, Spanish, French, Korean, Dutch, Polish, Russian, Slovenian). 100% locale key parity preserved.
+- Filled in the UI strings that were still showing in English for German, Spanish, French, Dutch, Polish, Russian, and Slovenian — mainly the App Activity window, the Support Bundle export, and the Preferred Monitor setting. These are AI-assisted translations pending native-speaker review (clearly noted as such in `TRANSLATORS.md`, and **not** attributed to the human translators); placeholder/format safety was validated automatically.
 
 ### Tests
 - Added `test_v1_3_3_regressions.py` pinning the #131 startup crash, the #154 high-speed-drop bug, and the #153 live-apply fix. Suite now at **196 passing tests**.

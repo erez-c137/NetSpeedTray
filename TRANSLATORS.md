@@ -17,9 +17,11 @@ If you'd like to contribute a translation or improve an existing one, see the lo
 
 Other locales (English, German, Spanish) are currently maintained by the project owner. Native-speaker reviews are very welcome — even one-line corrections to phrasing or terminology are valuable.
 
+> ℹ️ **About AI-assisted strings:** Strings added for features released *after* a translator's most recent contribution (e.g. the App Activity window, Support Bundle, and Preferred Monitor) have been filled in with **machine / AI-assisted translation** so every language stays complete and usable. These AI-assisted strings are **not** the work of the human translators credited above, and they have **not** yet been reviewed by a native speaker. If you spot an awkward or incorrect one, a one-line correction PR is hugely appreciated — and you'll be credited for it.
+
 ## How translation works in NetSpeedTray
 
 - Each locale lives in a single JSON file under [`src/netspeedtray/constants/locales/`](src/netspeedtray/constants/locales/)
 - Keys must match `en_US.json` exactly (the parity test fails the build otherwise)
 - Values can use Python format-string placeholders like `{file_path}` or `{error}` — preserve these verbatim
-- For new keys added by a feature PR, the maintainer typically fills the non-English values with an English placeholder so the parity test passes; translators can then submit a follow-up PR to localize them properly
+- For new keys added by a feature PR, non-English values are first filled with a machine / AI-assisted translation (or, failing that, an English placeholder) so the parity test passes and users get an as-localized-as-possible UI right away. As noted above, these AI-assisted strings are **not** attributed to the credited human translators and are pending native-speaker review — follow-up correction PRs are very welcome
