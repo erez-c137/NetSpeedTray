@@ -36,7 +36,7 @@ Or grab the latest [**Setup.exe** or **Portable.zip**](https://github.com/erez-c
       <sub><b>The Widget</b><br/>Lives on your taskbar</sub>
     </td>
     <td align="center" width="33%">
-      <img src="screenshots/settings_1.2.5.png" alt="Settings dialog" /><br/>
+      <img src="screenshots/settings_1.3.3.png" alt="Settings dialog" /><br/>
       <sub><b>Modern Settings</b><br/>Windows 11 styled</sub>
     </td>
     <td align="center" width="33%">
