@@ -59,6 +59,11 @@ Desktop.ini
 logs/
 build_log.txt
 
+# Build/test artifacts
+build/exe/
+.coverage
+.coverage.*
+
 # Environment Variables
 .env
 .env.local
