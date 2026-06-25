@@ -552,15 +552,6 @@ class NetworkSpeedWidget(QWidget):
             raise RuntimeError("Failed to establish critical signal connections") from e
 
         
-    def _validate_lazy_imports(self) -> None:
-        """Validates lazy imports to catch potential issues early."""
-        self.logger.debug("Validating lazy imports...")
-        try:
-            from netspeedtray.views.settings import SettingsDialog
-            from netspeedtray.views.graph import GraphWindow
-            self.logger.debug("Lazy imports validated successfully.")
-        except ImportError as e:
-            self.logger.error("Lazy import validation failed: %s", e, exc_info=True)
 
 
 

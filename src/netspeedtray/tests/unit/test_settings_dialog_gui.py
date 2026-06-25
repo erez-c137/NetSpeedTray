@@ -79,6 +79,17 @@ def test_clicking_cancel_reverts_with_save_to_disk_false(qtbot, dialog, fake_mai
     assert _save_to_disk_flag(fake_main_widget.handle_settings_changed.call_args) is False
 
 
+def test_main_widget_satisfies_the_dialog_contract():
+    """The dialog calls parent_widget.handle_settings_changed / toggle_startup behind
+    `hasattr` guards. The GUI tests use a MagicMock parent (which always passes hasattr),
+    so pin the real contract here: if NetworkSpeedWidget ever renames these, production
+    would silently skip them while the mocked GUI tests stayed green. Class-level hasattr,
+    so no widget construction / QApplication needed."""
+    from netspeedtray.views.widget.main import NetworkSpeedWidget
+    for attr in ("handle_settings_changed", "toggle_startup"):
+        assert hasattr(NetworkSpeedWidget, attr), f"NetworkSpeedWidget is missing {attr!r}"
+
+
 def test_changed_toggle_propagates_to_parent_on_save(qtbot, dialog, fake_main_widget):
     """A real widget change (the Free Move toggle) round-trips to the parent on Save —
     not just that Save fired, but that the changed value is in the applied settings."""

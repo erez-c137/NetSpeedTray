@@ -38,7 +38,7 @@ A stabilization and foundation release. No new user-facing features — instead 
 - **Dead-code removal:** Deleted an unused legacy `VisibilityManager` module (superseded by `SystemEventHandler`) plus several orphaned methods and imports.
 
 ### Tests
-- Test count grew from **196 to 325** (+129), plus 2 documented `xfail`s. New coverage: `format_speed` (units, binary/decimal, locale separator, edges), window-position save/restore (incl. multi-monitor), the layout reference-width logic behind the #106 fix, the update checker's version comparison, a dead-translation-key scanner, `ConfigManager` save/load round-tripping, the hardware temp/power clear-to-N/A behavior, and a guard that `config.py` imports `logging.handlers`.
+- Test count grew from **196 to 326** (+130), plus 2 documented `xfail`s. New coverage: `format_speed` (units, binary/decimal, locale separator, edges), window-position save/restore (incl. multi-monitor), the layout reference-width logic behind the #106 fix, the update checker's version comparison, a dead-translation-key scanner, `ConfigManager` save/load round-tripping, the hardware temp/power clear-to-N/A behavior, and a guard that `config.py` imports `logging.handlers`.
 
 ---
 
