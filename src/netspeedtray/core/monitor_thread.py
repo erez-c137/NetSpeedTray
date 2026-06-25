@@ -516,9 +516,10 @@ class StatsMonitorThread(QThread):
                 # shows whether LHM/OHM was simply not running (issue #130); quieter after.
                 if ns not in self._ohm_probe_failed_logged:
                     self._ohm_probe_failed_logged.add(ns)
+                    tool = ns.rsplit("\\", 1)[-1]  # LibreHardwareMonitor / OpenHardwareMonitor
                     self.logger.info(
-                        "Hardware monitor: %s not available (%s). Run LibreHardwareMonitor "
-                        "as Administrator to expose CPU/GPU temps and power.", ns, e
+                        "Hardware monitor: %s not available (%s). Run %s as Administrator "
+                        "to expose CPU/GPU temps and power.", ns, e, tool
                     )
                 else:
                     self.logger.debug("Hardware monitor: %s probe failed: %s", ns, e)

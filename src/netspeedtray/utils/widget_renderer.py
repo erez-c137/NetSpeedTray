@@ -584,18 +584,15 @@ class WidgetRenderer:
             current_hash = hash((history[0], history[-1], len(history), is_hardware))
 
             if self._last_widget_size != (width, height) or self._last_history_hash != current_hash:
-                num_points = len(history)
-                
                 if is_hardware:
-                    from netspeedtray.core.widget_state import HardwareStatSnapshot
                     # Hardware is 0-100%
                     max_y = 100.0
                 else:
-                    # Speed history
+                    # Speed history (history is non-empty here: len >= MIN_GRAPH_POINTS)
                     max_speed_val = max(
                         max(d.upload for d in history),
                         max(d.download for d in history)
-                    ) if history else 0
+                    )
                     
                     if len(history) > 10:
                         all_speeds = [d.upload for d in history] + [d.download for d in history]

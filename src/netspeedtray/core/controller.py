@@ -306,14 +306,22 @@ class StatsController(QObject):
 
 
     def cleanup(self) -> None:
-        """Cleanup resources."""
+        """Cleanup resources: disconnect every signal wired in set_view()."""
         if self.view:
             try:
                 self.display_speed_updated.disconnect(self.view.update_display_speeds)
-                if hasattr(self.view, 'update_cpu_usage'):
-                    self.cpu_usage_updated.disconnect(self.view.update_cpu_usage)
-                if hasattr(self.view, 'update_gpu_usage'):
-                    self.gpu_usage_updated.disconnect(self.view.update_gpu_usage)
+                for sig, slot in (
+                    (self.cpu_usage_updated, 'update_cpu_usage'),
+                    (self.gpu_usage_updated, 'update_gpu_usage'),
+                    (self.cpu_temp_updated, 'update_cpu_temp'),
+                    (self.gpu_temp_updated, 'update_gpu_temp'),
+                    (self.cpu_power_updated, 'update_cpu_power'),
+                    (self.gpu_power_updated, 'update_gpu_power'),
+                    (self.ram_info_updated, 'update_ram_info'),
+                    (self.vram_info_updated, 'update_vram_info'),
+                ):
+                    if hasattr(self.view, slot):
+                        sig.disconnect(getattr(self.view, slot))
             except (TypeError, RuntimeError):
                 pass
             self.view = None

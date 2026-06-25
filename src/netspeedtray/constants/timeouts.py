@@ -39,7 +39,7 @@ class TimeoutConstants:
     def validate(self) -> None:
         """Validate that all timeouts are positive."""
         for attr_name in dir(self):
-            if attr_name.endswith("_MS") or attr_name.endswith("_SLEEP"):
+            if attr_name.endswith(("_MS", "_SLEEP", "_SEC")):
                 value = getattr(self, attr_name)
                 if not isinstance(value, (int, float)) or value < 0:
                     raise ValueError(f"{attr_name} must be a non-negative number.")
