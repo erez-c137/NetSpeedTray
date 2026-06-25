@@ -39,6 +39,11 @@ jobs:
           pip install -r dev-requirements.txt
 
       - name: Run unit tests
+        env:
+          # Run the PyQt6 GUI tests headless + deterministically (conftest.py also
+          # sets this via setdefault; this makes the CI environment explicit).
+          QT_QPA_PLATFORM: offscreen
+          QT_SCALE_FACTOR: "1"
         run: |
           .\.venv\Scripts\Activate.ps1
           python -m pytest -v
