@@ -12,9 +12,14 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, Optional
 
+from PyQt6.QtCore import QEvent, QObject, QTimer
 from PyQt6.QtWidgets import QApplication, QWidget
 
 logger = logging.getLogger(__name__)
+
+# Debounce delay before a move is persisted, so dragging a window doesn't write
+# the config file on every pixel of movement.
+_MOVE_SAVE_DEBOUNCE_MS = 500
 
 
 def restore_window_position(window: QWidget, config: Dict[str, Any], key: str) -> bool:
@@ -44,6 +49,45 @@ def restore_window_position(window: QWidget, config: Dict[str, Any], key: str) -
     except Exception as e:  # never let a restore failure block opening a window
         logger.debug("restore_window_position(%s) failed: %s", key, e)
         return False
+
+
+class _PositionMemory(QObject):
+    """Event filter that debounce-saves a window's position whenever it moves.
+
+    Installed via :func:`attach_position_memory`. Parented to the window, so it is
+    torn down with it. The debounce means a drag persists once it settles, not on
+    every intermediate move event.
+    """
+
+    def __init__(self, window: QWidget, main_widget: Optional[QWidget], key: str) -> None:
+        super().__init__(window)
+        self._window = window
+        self._main_widget = main_widget
+        self._key = key
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.setInterval(_MOVE_SAVE_DEBOUNCE_MS)
+        self._timer.timeout.connect(self._flush)
+        window.installEventFilter(self)
+
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:
+        # Only persist user-driven moves once the window is actually on screen;
+        # this skips the programmatic move() done while restoring/centering on open.
+        if event.type() == QEvent.Type.Move and self._window.isVisible():
+            self._timer.start()
+        return False
+
+    def _flush(self) -> None:
+        save_window_position(self._window, self._main_widget, self._key)
+
+
+def attach_position_memory(window: QWidget, main_widget: Optional[QWidget], key: str) -> _PositionMemory:
+    """Auto-save ``window``'s position to ``config[key]`` whenever the user moves it
+    (debounced). Pair with :func:`restore_window_position` on open for full memory.
+
+    Returns the filter (parented to ``window``); callers can ignore the return value.
+    """
+    return _PositionMemory(window, main_widget, key)
 
 
 def save_window_position(window: QWidget, main_widget: Optional[QWidget], key: str) -> None:

@@ -29,7 +29,7 @@ from PyQt6.QtWidgets import (
 # --- Custom Application Imports ---
 from netspeedtray import constants
 from netspeedtray.utils import styles as style_utils
-from netspeedtray.utils.window_state import restore_window_position, save_window_position
+from netspeedtray.utils.window_state import attach_position_memory, restore_window_position, save_window_position
 from netspeedtray.utils.helpers import get_app_data_path, get_app_asset_path
 from netspeedtray.utils.styles import is_dark_mode
 from netspeedtray.utils.support_bundle import build_support_bundle
@@ -148,6 +148,10 @@ class SettingsDialog(QDialog):
                 )
         else:
             self.resize(max(640, desired_w), 700)
+
+        # Auto-save the dialog's position whenever the user moves it (debounced),
+        # so the location is remembered no matter how the dialog is closed.
+        attach_position_memory(self, self.parent_widget, "settings_window_pos")
 
         self.logger.debug("SettingsDialog initialization completed.")
 
@@ -506,6 +510,9 @@ class SettingsDialog(QDialog):
                     self.i18n.LANGUAGE_RESTART_MESSAGE
                 )
                 
+            # Persist the position after the settings save so it can't be clobbered
+            # by the saved config snapshot.
+            save_window_position(self, self.parent_widget, "settings_window_pos")
             self.hide()
             self.logger.info("Settings saved and dialog hidden.")
         except Exception as e:
@@ -516,12 +523,13 @@ class SettingsDialog(QDialog):
             )
 
     def _cancel_and_close(self) -> None:
-        """Reverts and closes."""
-        # Persist the window position even on Cancel / X (covers all close paths;
-        # the Save path persists it via get_settings()).
-        save_window_position(self, self.parent_widget, "settings_window_pos")
+        """Reverts settings, then persists the window position, then closes."""
         if hasattr(self.parent_widget, 'handle_settings_changed'):
             self.parent_widget.handle_settings_changed(self.original_config, save_to_disk=False)
+        # Save the position AFTER the revert: handle_settings_changed merges
+        # original_config back into the live config, which would otherwise clobber
+        # settings_window_pos with the value from when the dialog opened.
+        save_window_position(self, self.parent_widget, "settings_window_pos")
         self.hide()
 
     def closeEvent(self, event: QCloseEvent) -> None:

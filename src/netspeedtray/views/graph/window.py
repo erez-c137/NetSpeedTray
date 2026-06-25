@@ -31,7 +31,7 @@ from PyQt6.QtWidgets import (
 from netspeedtray import constants
 from netspeedtray.utils import helpers, styles as style_utils
 from netspeedtray.core.position_manager import ScreenUtils
-from netspeedtray.utils.window_state import save_window_position
+from netspeedtray.utils.window_state import attach_position_memory, save_window_position
 
 # Modular Graph Components
 from netspeedtray.views.graph.interaction import GraphInteractionHandler
@@ -206,6 +206,8 @@ class GraphWindow(QWidget):
         return GraphLogic.get_time_range(self._history_period_value, self.session_start_time, boot_time, earliest_db)
 
     def _position_window(self):
+        # Auto-save position on move (debounced); closeEvent also flushes it.
+        attach_position_memory(self, self._main_widget, "graph_window_pos")
         try:
             screen = QApplication.primaryScreen()
             if not screen: return self.move(100, 100)
