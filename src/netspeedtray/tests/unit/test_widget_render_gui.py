@@ -83,6 +83,24 @@ def test_default_band_paints_default_color(renderer):
     assert _dominant(counts) == DEFAULT, f"expected blue-dominant; top: {counts.most_common(3)}"
 
 
+def test_exactly_at_high_threshold_is_high(renderer):
+    # The bands are inclusive at the top (>=), so exactly 10 Mbps is 'high'.
+    counts = _solid_rgb_counts(renderer, 10 * MBPS_IN_BYTES, 10 * MBPS_IN_BYTES)
+    assert _dominant(counts) == HIGH, f"expected red at the threshold; top: {counts.most_common(3)}"
+
+
+def test_color_coding_off_uses_default_color(q_app):
+    # With color coding disabled, even a fast speed paints in the default color, not high.
+    cfg = dict(constants.config.defaults.DEFAULT_CONFIG)
+    cfg.update({
+        "color_coding": False,
+        "high_speed_color": "#FF0000", "low_speed_color": "#00FF00", "default_color": "#0000FF",
+    })
+    r = WidgetRenderer(cfg, I18nStrings("en_US"))
+    counts = _solid_rgb_counts(r, 50 * MBPS_IN_BYTES, 50 * MBPS_IN_BYTES)
+    assert _dominant(counts) == DEFAULT, f"expected default (blue) with coding off; top: {counts.most_common(3)}"
+
+
 def test_something_actually_rendered(renderer):
     # Guard against "nothing drew" / blank-widget regressions.
     counts = _solid_rgb_counts(renderer, 50 * MBPS_IN_BYTES, 50 * MBPS_IN_BYTES)
