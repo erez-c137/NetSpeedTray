@@ -32,7 +32,11 @@ def graph_window(qtbot, tmp_path):
     win = GraphWindow(main_widget=main, i18n=I18nStrings("en_US"),
                       session_start_time=datetime(2026, 1, 1, 12, 0, 0))
     qtbot.addWidget(win)
-    return win
+    yield win
+    # Deterministically flush the worker QThread (closeEvent quits + waits on it) so the
+    # interpreter never tears down with a running thread ("QThread: Destroyed while thread
+    # is still running" aborts in CI).
+    win.close()
 
 
 def test_graph_window_constructs(graph_window):

@@ -57,3 +57,29 @@ def test_render_rows_empty_clears_table(app_activity):
     assert app_activity.table.rowCount() == 1
     app_activity._render_rows([])
     assert app_activity.table.rowCount() == 0
+
+
+def test_on_data_ready_populates_summary_and_selects_first_row(app_activity):
+    """The real worker-data slot fills the table, the summary line, and selects row 0."""
+    payload = {
+        "rows": [
+            {"process_name": "chrome.exe", "pid": 1234, "download_bps": 125000,
+             "upload_bps": 62500, "connection_count": 3, "endpoints": ["1.2.3.4:443"]},
+            {"process_name": "spotify.exe", "pid": 5678, "download_bps": 25000,
+             "upload_bps": 1000, "connection_count": 1, "endpoints": []},
+        ],
+        "total_down_bps": 150000.0, "total_up_bps": 63500.0, "updated_at": "12:34:56",
+        "access_limited": False,
+    }
+    app_activity._on_data_ready(payload)
+
+    assert app_activity.table.rowCount() == 2
+    assert "2" in app_activity.summary_label.text()         # app_count in the summary
+    assert app_activity.table.selectionModel().selectedRows()  # first row auto-selected
+
+
+def test_on_data_ready_empty_shows_message(app_activity):
+    """An empty payload clears the table and shows a non-empty status message."""
+    app_activity._on_data_ready({"rows": [], "access_limited": False})
+    assert app_activity.table.rowCount() == 0
+    assert app_activity.summary_label.text()  # some "no data" message, not blank
