@@ -29,6 +29,10 @@ class TimeoutConstants:
     MONITOR_THREAD_STOP_WAIT_MS: Final[int] = 1000
     DB_INITIALIZATION_RETRY_DELAY_SEC: Final[float] = 2.0
 
+    # Hardware monitoring subprocess timeouts (seconds). 0.5s was too tight —
+    # a cold nvidia-smi can exceed it, intermittently dropping temp/power.
+    NVIDIA_SMI_TIMEOUT_SEC: Final[float] = 1.5
+
     def __init__(self) -> None:
         self.validate()
 

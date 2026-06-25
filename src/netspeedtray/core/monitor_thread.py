@@ -77,6 +77,7 @@ class StatsMonitorThread(QThread):
         # None = not yet tried, False = tried and unavailable, object = connected.
         self._wmi_ohm: Any = None
         self._ohm_empty_ns_logged: set = set()  # Namespaces already warned about (log once)
+        self._ohm_probe_failed_logged: set = set()  # Namespaces whose probe-failure was already logged
         self._lhm_notice_emitted: bool = False  # One-time notification flag
         self._lhm_check_polls: int = 0  # Count polls before emitting notice
         self._nvidia_smi_path: Optional[str] = self._get_cached_path("nvidia-smi")
@@ -266,7 +267,7 @@ class StatsMonitorThread(QThread):
                 query_fields = "temperature.gpu,memory.total,power.draw"
                 output = subprocess.check_output(
                     [self._nvidia_smi_path, f"--query-gpu={query_fields}", "--format=csv,noheader,nounits"],
-                    encoding='utf-8', timeout=0.5,
+                    encoding='utf-8', timeout=constants.timeouts.NVIDIA_SMI_TIMEOUT_SEC,
                     creationflags=subprocess.CREATE_NO_WINDOW
                 )
                 parts = output.strip().split('\n')[0].split(',')
@@ -282,7 +283,8 @@ class StatsMonitorThread(QThread):
                         if 0.0 < pw < 1000.0:
                             power_w = pw
                     except: pass
-            except: pass
+            except Exception as e:
+                self.logger.debug("nvidia-smi temp/power query failed: %s", e)
 
         # 5. RAPL PP1 fallback for Intel iGPU power (if no LHM/nvidia-smi power)
         if include_power and power_w is None and self._power_pp1_counter is not None:
@@ -493,9 +495,10 @@ class StatsMonitorThread(QThread):
                 import pythoncom
                 pythoncom.CoInitialize()
                 obj = win32com.client.GetObject(f"winmgmts:{ns}")
-                results = obj.ExecQuery("SELECT Name FROM Sensor WHERE SensorType='Temperature'")
-                # Verify the namespace actually has sensor data.
-                # LHM running without admin rights registers the namespace but exposes 0 sensors.
+                # Validate the namespace exposes ANY sensor, not just Temperature:
+                # a Power/Load-only source must not be rejected (issue #130). LHM
+                # running without admin rights registers the namespace but exposes 0 sensors.
+                results = obj.ExecQuery("SELECT SensorType FROM Sensor")
                 count = sum(1 for _ in results)
                 if count == 0:
                     if ns not in self._ohm_empty_ns_logged:
@@ -506,10 +509,19 @@ class StatsMonitorThread(QThread):
                         )
                     continue
                 self._wmi_ohm = obj
-                self.logger.info("Hardware monitor: connected to %s (%d temp sensors).", ns, count)
+                self.logger.info("Hardware monitor: connected to %s (%d sensors).", ns, count)
                 return
             except Exception as e:
-                self.logger.debug("Hardware monitor: %s probe failed: %s", ns, e)
+                # Surface the first failure per namespace at INFO so a support bundle
+                # shows whether LHM/OHM was simply not running (issue #130); quieter after.
+                if ns not in self._ohm_probe_failed_logged:
+                    self._ohm_probe_failed_logged.add(ns)
+                    self.logger.info(
+                        "Hardware monitor: %s not available (%s). Run LibreHardwareMonitor "
+                        "as Administrator to expose CPU/GPU temps and power.", ns, e
+                    )
+                else:
+                    self.logger.debug("Hardware monitor: %s probe failed: %s", ns, e)
         # Leave _wmi_ohm as None so we retry next poll (LHM may not be running yet)
 
     def _poll_cpu_temperature(self) -> Optional[float]:
