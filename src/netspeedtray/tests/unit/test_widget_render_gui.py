@@ -105,3 +105,22 @@ def test_something_actually_rendered(renderer):
     # Guard against "nothing drew" / blank-widget regressions.
     counts = _solid_rgb_counts(renderer, 50 * MBPS_IN_BYTES, 50 * MBPS_IN_BYTES)
     assert sum(counts.values()) > 50, "almost no glyph pixels were painted"
+
+
+# --- hardware suffix: the display side of the stale-temp/power fix ------------
+
+def test_hw_suffix_na_when_sensor_missing(renderer):
+    # temp/power None while enabled -> "(N/A)" (so a dropped sensor clears the stale
+    # reading instead of freezing the last value).
+    na = f"({renderer.i18n.DEFAULT_TEXT})"
+    assert renderer._build_hw_suffix(None, None, show_temps=True, show_power=True) == na
+    assert renderer._build_hw_suffix(None, None, show_temps=True, show_power=False) == na
+
+
+def test_hw_suffix_shows_values_when_present(renderer):
+    assert renderer._build_hw_suffix(43.0, None, show_temps=True, show_power=False) == "(43°C)"
+    assert renderer._build_hw_suffix(43.0, 7.8, show_temps=True, show_power=True) == "(43°C, 7.8W)"
+
+
+def test_hw_suffix_empty_when_disabled(renderer):
+    assert renderer._build_hw_suffix(43.0, 7.8, show_temps=False, show_power=False) == ""
