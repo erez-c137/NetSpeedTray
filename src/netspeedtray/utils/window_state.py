@@ -21,6 +21,12 @@ logger = logging.getLogger(__name__)
 # the config file on every pixel of movement.
 _MOVE_SAVE_DEBOUNCE_MS = 500
 
+# Grace period after a window is shown before move-saving arms. Some window
+# managers / DPI setups emit a frame-adjustment Move right after show() that is
+# not user-driven; ignoring moves during this window avoids saving a drifted
+# position the user never chose.
+_MOVE_SAVE_ARM_MS = 400
+
 
 def restore_window_position(window: QWidget, config: Dict[str, Any], key: str) -> bool:
     """Move ``window`` to the saved ``{x, y}`` at ``config[key]``, clamped to its
@@ -69,6 +75,7 @@ class _PositionMemory(QObject):
         self._window = window
         self._main_widget = main_widget
         self._key = key
+        self._armed = False  # moves are ignored until shortly after the window is shown
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.setInterval(_MOVE_SAVE_DEBOUNCE_MS)
@@ -76,11 +83,20 @@ class _PositionMemory(QObject):
         window.installEventFilter(self)
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:
-        # Only persist user-driven moves once the window is actually on screen;
-        # this skips the programmatic move() done while restoring/centering on open.
-        if event.type() == QEvent.Type.Move and self._window.isVisible():
+        et = event.type()
+        if et == QEvent.Type.Show:
+            # Re-arm a moment after each show so the WM's initial frame-adjustment
+            # Move isn't saved as the user's chosen position.
+            self._armed = False
+            QTimer.singleShot(_MOVE_SAVE_ARM_MS, self._arm)
+        elif et == QEvent.Type.Move and self._armed and self._window.isVisible():
+            # Only persist user-driven moves once the window is on screen and armed;
+            # this also skips the programmatic move() done while restoring on open.
             self._timer.start()
         return False
+
+    def _arm(self) -> None:
+        self._armed = True
 
     def _flush(self) -> None:
         save_window_position(self._window, self._main_widget, self._key)
