@@ -11,7 +11,7 @@ Open source, signed, no ads, no telemetry. The feature Windows forgot.
 
 </div>
 
-> 🎉 **v1.3.2 is here** — Smaller installer (-24%), idle RAM cut roughly in half, Preferred Monitor for multi-display setups, and a one-click Support Bundle. [Read the release notes →](https://github.com/erez-c137/NetSpeedTray/releases/tag/v1.3.2)
+> 🎉 **v1.3.3 is here** — Fixes the broken in-app update checker, a startup crash with Auto-Cycling, no-speed-shown on 10GbE NICs, and color-coding/fullscreen quirks, plus completes the UI translations for all 9 languages. **On v1.3.2? Please update manually — its in-app updater couldn't reach GitHub.** [Read the release notes →](https://github.com/erez-c137/NetSpeedTray/releases/tag/v1.3.3)
 
 ---
 
