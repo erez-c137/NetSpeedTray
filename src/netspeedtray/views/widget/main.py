@@ -454,13 +454,6 @@ class NetworkSpeedWidget(QWidget):
             self.layout_manager.resize_widget_for_font()
             self.update()
 
-    def update_display_hardware(self, cpu: Optional[float] = None, gpu: Optional[float] = None) -> None:
-        # Legacy method kept for safety but we prefer the individual ones above
-        if cpu is not None: self.cpu_usage = cpu
-        if gpu is not None: self.gpu_usage = gpu
-        self.update()
-
-
     def _rotate_cycle(self) -> None:
         """Rotates the displayed metric when in 'cycle' mode."""
         modes = ["network_only"]
@@ -520,11 +513,12 @@ class NetworkSpeedWidget(QWidget):
         try:
             # Connect core component signals
             self.monitor_thread.stats_ready.connect(self.controller.handle_stats)
-            self.controller.display_speed_updated.connect(self.update_display_speeds)
             
-            # New Hardware signals
-            self.controller.cpu_usage_updated.connect(lambda val: self.update_display_hardware(cpu=val))
-            self.controller.gpu_usage_updated.connect(lambda val: self.update_display_hardware(gpu=val))
+            # NOTE: the display/cpu/gpu/temp/power/ram/vram slots are wired exactly
+            # once in StatsController.set_view() (called at construction). Wiring any
+            # of them again here ran the slot twice per tick, and the legacy
+            # update_display_hardware lambda also repainted unconditionally even in
+            # network_only mode. Do not re-add them.
             
             # One-time LHM notice
             self.monitor_thread.lhm_not_detected.connect(self._on_lhm_not_detected)
