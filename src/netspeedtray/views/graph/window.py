@@ -91,7 +91,7 @@ class GraphWindow(QWidget):
         # Styling & Position
         self.renderer.apply_theme(self._is_dark_mode)
         self.config_handler.init_db_size_monitoring()
-        self.setWindowTitle(constants.graph.WINDOW_TITLE)
+        self.setWindowTitle(f"{constants.app.APP_NAME} - {self.i18n.GRAPH_WINDOW_TITLE}")
         self._apply_icon()
         self._position_window()
         self._on_tab_changed(0) # Force layout initialization for the default tab (Overview)
@@ -534,17 +534,17 @@ class GraphWindow(QWidget):
 
                         stats = GraphLogic.calculate_stats(net_hist)
                         if hasattr(self.ui, 'card_net_down_val'):
-                            self.ui.card_net_down_val.setText(f"\u2193 {dw_mbps:.1f} Mbps")
+                            self.ui.card_net_down_val.setText(f"\u2193 {dw_mbps:.1f} {self.i18n.MBITS_LABEL}")
                         if hasattr(self.ui, 'card_net_down_sub'):
                             self.ui.card_net_down_sub.setText(f"{self.i18n.GRAPH_AVG_SHORT} {stats['avg_down']:.1f} | {self.i18n.GRAPH_PEAK_SHORT} {stats['max_down']:.1f}")
                         if hasattr(self.ui, 'card_net_up_val'):
-                            self.ui.card_net_up_val.setText(f"\u2191 {up_mbps:.1f} Mbps")
+                            self.ui.card_net_up_val.setText(f"\u2191 {up_mbps:.1f} {self.i18n.MBITS_LABEL}")
                         if hasattr(self.ui, 'card_net_up_sub'):
                             self.ui.card_net_up_sub.setText(f"{self.i18n.GRAPH_AVG_SHORT} {stats['avg_up']:.1f} | {self.i18n.GRAPH_PEAK_SHORT} {stats['max_up']:.1f}")
 
                         # Header stats (keep Overview consistent with Network tab)
-                        self.ui.max_stat_val.setText(f"\u2193 {stats['max_down']:.1f}  \u2191 {stats['max_up']:.1f} Mbps")
-                        self.ui.avg_stat_val.setText(f"\u2193 {stats['avg_down']:.1f}  \u2191 {stats['avg_up']:.1f} Mbps")
+                        self.ui.max_stat_val.setText(f"\u2193 {stats['max_down']:.1f}  \u2191 {stats['max_up']:.1f} {self.i18n.MBITS_LABEL}")
+                        self.ui.avg_stat_val.setText(f"\u2193 {stats['avg_down']:.1f}  \u2191 {stats['avg_up']:.1f} {self.i18n.MBITS_LABEL}")
 
                         t_up_v, t_up_u = helpers.format_data_size(total_up, self.i18n)
                         t_dw_v, t_dw_u = helpers.format_data_size(total_down, self.i18n)
@@ -592,8 +592,8 @@ class GraphWindow(QWidget):
                     self.ui.total_stat_val.setText(self.i18n.COLLECTING_DATA_MESSAGE)
             elif tab_index == 1: # Network
                 stats = GraphLogic.calculate_stats(history_data)
-                self.ui.max_stat_val.setText(f"↓ {stats['max_down']:.1f}  ↑ {stats['max_up']:.1f} Mbps")
-                self.ui.avg_stat_val.setText(f"↓ {stats['avg_down']:.1f}  ↑ {stats['avg_up']:.1f} Mbps")
+                self.ui.max_stat_val.setText(f"↓ {stats['max_down']:.1f}  ↑ {stats['max_up']:.1f} {self.i18n.MBITS_LABEL}")
+                self.ui.avg_stat_val.setText(f"↓ {stats['avg_down']:.1f}  ↑ {stats['avg_up']:.1f} {self.i18n.MBITS_LABEL}")
                 t_up_v, t_up_u = helpers.format_data_size(total_up, self.i18n)
                 t_dw_v, t_dw_u = helpers.format_data_size(total_down, self.i18n)
                 self.ui.total_stat_val.setText(f"↓ {t_dw_v}{t_dw_u}  ↑ {t_up_v}{t_up_u}")

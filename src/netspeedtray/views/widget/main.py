@@ -920,7 +920,7 @@ class NetworkSpeedWidget(QWidget):
         self.logger.debug("Request to show graph window.")
         if not self.i18n or not self.config or not self.widget_state:
             self.logger.error("Cannot show graph: Required components missing.")
-            QMessageBox.critical(self, "Error", "Internal error: Required components not available.")
+            QMessageBox.critical(self, self.i18n.ERROR_TITLE, "Internal error: Required components not available.")
             return
 
         try:
@@ -958,14 +958,14 @@ class NetworkSpeedWidget(QWidget):
                 self.graph_window.activateWindow()
         except Exception as e:
             self.logger.error(f"Error showing graph window: {e}", exc_info=True)
-            QMessageBox.critical(self, "Error", f"Could not open the graph window:\n\n{str(e)}")
+            QMessageBox.critical(self, self.i18n.ERROR_TITLE, f"Could not open the graph window:\n\n{str(e)}")
 
     def open_app_activity_window(self) -> None:
         """Creates and displays the per-application network activity window."""
         self.logger.debug("Request to show app activity window.")
         if not self.i18n:
             self.logger.error("Cannot show app activity view: i18n not initialized.")
-            QMessageBox.critical(self, "Error", "Internal error: Required components not available.")
+            QMessageBox.critical(self, self.i18n.ERROR_TITLE, "Internal error: Required components not available.")
             return
 
         try:
@@ -1015,7 +1015,7 @@ class NetworkSpeedWidget(QWidget):
 
     def _on_check_failed_manual(self, error: str) -> None:
         """Show error message for manual check."""
-        QMessageBox.warning(self, "Update Check", self.i18n.UPDATE_CHECK_FAILED_TEXT)
+        QMessageBox.warning(self, self.i18n.UPDATE_CHECK_TITLE, self.i18n.UPDATE_CHECK_FAILED_TEXT)
 
     def _show_update_dialog(self, latest_version: str, release_url: str) -> None:
         """Show update available dialog with Download / Skip / Not Now."""
