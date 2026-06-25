@@ -1,6 +1,6 @@
 # Translators
 
-NetSpeedTray's UI is available in 9 languages thanks to the community contributors below. Each name represents real time and care invested in making the app feel native to its users — thank you.
+NetSpeedTray's UI is available in 10 languages thanks to the community contributors below. Each name represents real time and care invested in making the app feel native to its users — thank you.
 
 If you'd like to contribute a translation or improve an existing one, see the locale files in [`src/netspeedtray/constants/locales/`](src/netspeedtray/constants/locales/) and open a pull request. The `en_US.json` file is the source of truth — all other locales must keep key parity with it (enforced by [`test_locales_parity.py`](src/netspeedtray/tests/unit/test_locales_parity.py)).
 
@@ -14,6 +14,7 @@ If you'd like to contribute a translation or improve an existing one, see the lo
 | Slovenian | `sl_SI` | [@anderlli0053](https://github.com/anderlli0053) (Andrew Poženel) | [#79](https://github.com/erez-c137/NetSpeedTray/pull/79) |
 | Polish | `pl_PL` | [@FadeMind](https://github.com/FadeMind) | [#39](https://github.com/erez-c137/NetSpeedTray/pull/39) |
 | French | `fr_FR` | [@logounet](https://github.com/logounet) | #94 |
+| Japanese | `ja_JP` | [@coolvitto](https://github.com/coolvitto) | [#155](https://github.com/erez-c137/NetSpeedTray/pull/155) |
 
 Other locales (English, German, Spanish) are currently maintained by the project owner. Native-speaker reviews are very welcome — even one-line corrections to phrasing or terminology are valuable.
 

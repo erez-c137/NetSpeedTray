@@ -170,7 +170,7 @@ You probably downloaded an unsigned dev build, or grabbed a release before signi
 
 ### Localization
 
--   Full support for **9 languages:** English, Korean, French, German, Russian, Spanish, Dutch, Polish, and Slovenian
+-   Full support for **10 languages:** English, Korean, French, German, Russian, Spanish, Dutch, Polish, Slovenian, and Japanese
 -   100% key parity across all locales — no missing translations
 -   Most translations contributed by the community — see [Translators](#translators) below
 
@@ -215,7 +215,7 @@ If NetSpeedTray earns a permanent spot on your taskbar, a one-time tip helps me 
 
 ## Translators
 
-NetSpeedTray's UI lives in 9 languages thanks to the contributors below. Each translation represents real time and care — if you're using NetSpeedTray in your language, please give them a star and a thank-you.
+NetSpeedTray's UI lives in 10 languages thanks to the contributors below. Each translation represents real time and care — if you're using NetSpeedTray in your language, please give them a star and a thank-you.
 
 | Language       | Locale  | Translator |
 |----------------|---------|------------|
@@ -225,6 +225,7 @@ NetSpeedTray's UI lives in 9 languages thanks to the contributors below. Each tr
 | 🇸🇮 Slovenian   | `sl_SI` | [@anderlli0053](https://github.com/anderlli0053) (Andrew Poženel) |
 | 🇵🇱 Polish      | `pl_PL` | [@FadeMind](https://github.com/FadeMind) |
 | 🇫🇷 French      | `fr_FR` | [@logounet](https://github.com/logounet) |
+| 🇯🇵 Japanese    | `ja_JP` | [@coolvitto](https://github.com/coolvitto) |
 | 🇩🇪 German      | `de_DE` | Maintainer — **native-speaker review welcome** |
 | 🇪🇸 Spanish     | `es_ES` | Maintainer — **native-speaker review welcome** |
 
