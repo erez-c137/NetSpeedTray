@@ -1,6 +1,38 @@
 import pytest
 from unittest.mock import MagicMock
 from netspeedtray.views.graph.renderer import GraphRenderer
+from netspeedtray.utils.widget_renderer import WidgetRenderer
+
+# 1 Mbps expressed in bytes/sec (1_000_000 bits / 8 bits-per-byte).
+MBPS_IN_BYTES = 125_000
+
+
+def test_speed_band_uses_canonical_mbps():
+    """
+    Color banding must compare the canonical speed (Mbps) against the thresholds,
+    never the on-screen number. Regression guard for the unit-mismatch bug where a
+    sub-Mbps speed shown in Kbps (e.g. "500 Kbps") was banded as 'high' because the
+    displayed number 500 was compared directly to the 10 (Mbps) high threshold.
+    """
+    band = WidgetRenderer._speed_band  # static method; no Qt needed
+    high, low = 10.0, 1.0  # Mbps
+
+    # Idle and below-low speeds -> default band.
+    assert band(0, high, low) == "default"
+    assert band(0.5 * MBPS_IN_BYTES, high, low) == "default"  # 0.5 Mbps; old code => 'high'
+
+    # Low band is inclusive at the low threshold, up to (not incl.) high.
+    assert band(1 * MBPS_IN_BYTES, high, low) == "low"
+    assert band(5 * MBPS_IN_BYTES, high, low) == "low"
+
+    # High band is inclusive at the high threshold and above.
+    assert band(10 * MBPS_IN_BYTES, high, low) == "high"
+    assert band(100 * MBPS_IN_BYTES, high, low) == "high"
+
+
+def test_speed_band_handles_bad_input():
+    """Non-numeric input must fall back to the default band, never raise."""
+    assert WidgetRenderer._speed_band(None, 10.0, 1.0) == "default"
 
 def test_peak_label_placement_logic():
     # Mock dependencies for GraphRenderer
