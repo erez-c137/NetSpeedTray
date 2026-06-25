@@ -5,7 +5,7 @@ from typing import Dict, Any, Callable, Optional
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QGuiApplication
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QGroupBox, QComboBox, QLabel, QGridLayout
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QGroupBox, QComboBox, QLabel, QGridLayout, QSizePolicy
 
 from netspeedtray import constants
 from netspeedtray.constants.update_mode import UpdateMode
@@ -26,7 +26,11 @@ class GeneralPage(QWidget):
         language_group = QGroupBox(self.i18n.LANGUAGE_LABEL)
         language_layout = QVBoxLayout(language_group)
         self.language_combo = QComboBox()
-        
+        # Don't let a long item dictate the combo's minimum width (which would
+        # push the page past the scroll viewport and add a horizontal scrollbar).
+        # The layout stretches the combo to fill the available width regardless.
+        self.language_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+
         for code, name in self.i18n.LANGUAGE_MAP.items():
             self.language_combo.addItem(name, userData=code)
         
@@ -99,9 +103,15 @@ class GeneralPage(QWidget):
         # display in multi-monitor setups. Default (no selection) uses primary.
         behavior_layout.addWidget(QLabel(self.i18n.PREFERRED_MONITOR_LABEL), 5, 0, Qt.AlignmentFlag.AlignVCenter)
         self.preferred_monitor_combo = QComboBox()
+        # Keep a long monitor label (e.g. "Monitor 1: 3413x1440 (primary)") from
+        # inflating the combo's *minimum* width (which would force a horizontal
+        # scrollbar), but let it expand to fill the column instead of collapsing
+        # to a tiny stub — so drop the AlignLeft and give it an Expanding policy.
+        self.preferred_monitor_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.preferred_monitor_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._populate_monitor_combo()
         self.preferred_monitor_combo.currentIndexChanged.connect(self.on_change)
-        behavior_layout.addWidget(self.preferred_monitor_combo, 5, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        behavior_layout.addWidget(self.preferred_monitor_combo, 5, 1, Qt.AlignmentFlag.AlignVCenter)
 
         behavior_layout.setColumnStretch(0, 0)
         behavior_layout.setColumnStretch(1, 1)

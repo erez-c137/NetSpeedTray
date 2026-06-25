@@ -108,20 +108,44 @@ class SettingsDialog(QDialog):
         self._init_ui_state()
         self._connect_signals()
 
-        # Fixed dialog size — pages scroll if taller than available space
-        self.setMinimumSize(550, 400)
+        # Auto-size the dialog to the widest page's content so settings never
+        # need a horizontal scrollbar. We measure each page's sizeHint with the
+        # real on-machine fonts/DPI (which differ from any hardcoded width), then
+        # add the sidebar, content margins, and room for a vertical scrollbar.
+        margin = constants.layout.MAIN_MARGIN
+        content_w = 450
+        try:
+            # minimumSizeHint is the floor below which the page can't shrink
+            # without forcing a horizontal scrollbar; size to the widest page's
+            # floor so no page ever scrolls sideways.
+            page_widths = [
+                self.stack.widget(i).widget().minimumSizeHint().width()
+                for i in range(self.stack.count())
+                if self.stack.widget(i).widget() is not None
+            ]
+            if page_widths:
+                content_w = max(page_widths)
+        except Exception:
+            pass
+        # +40 leaves room for the vertical scrollbar plus a little slack so the
+        # horizontal scrollbar stays hidden even with slightly wider translations.
+        # The final width is bounded by the screen below, so this can't run away.
+        desired_w = constants.layout.SIDEBAR_WIDTH + (2 * margin) + content_w + 40
+
+        self.setMinimumSize(min(640, desired_w), 400)
         screen = self.screen() or QApplication.primaryScreen()
         if screen:
             avail = screen.availableGeometry()
-            initial_h = min(600, avail.height() - 80)
-            self.resize(650, max(450, initial_h))
+            width = min(desired_w, avail.width() - 80)
+            height = min(700, avail.height() - 80)
+            self.resize(max(640, width), max(450, height))
             # Center on available geometry (excludes taskbar)
             self.move(
                 avail.center().x() - self.width() // 2,
                 avail.center().y() - self.height() // 2
             )
         else:
-            self.resize(650, 560)
+            self.resize(max(640, desired_w), 700)
 
         self.logger.debug("SettingsDialog initialization completed.")
 
