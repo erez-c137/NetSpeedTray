@@ -124,3 +124,25 @@ def test_hw_suffix_shows_values_when_present(renderer):
 
 def test_hw_suffix_empty_when_disabled(renderer):
     assert renderer._build_hw_suffix(43.0, 7.8, show_temps=False, show_power=False) == ""
+
+
+def test_hardware_stats_render_smoke(q_app):
+    """draw_hardware_stats renders CPU + GPU rows headless without error (non-blank).
+    Covers the hardware display path at the render level (text label style avoids
+    icon-asset dependence)."""
+    cfg = dict(constants.config.defaults.DEFAULT_CONFIG)
+    cfg.update({"hardware_label_style": "text", "monitor_cpu_enabled": True,
+                "monitor_gpu_enabled": True, "show_hardware_temps": True})
+    r = WidgetRenderer(cfg, I18nStrings("en_US"))
+
+    img = QImage(300, 56, QImage.Format.Format_ARGB32)
+    img.fill(QColor(0, 0, 0, 0))
+    p = QPainter(img)
+    r.draw_hardware_stats(p, 50.0, 70.0, 300, 56, r.config, cpu_temp=45.0, gpu_temp=60.0)
+    p.end()
+
+    img = img.convertToFormat(QImage.Format.Format_RGBA8888)
+    ptr = img.constBits()
+    ptr.setsize(img.height() * img.width() * 4)
+    arr = np.frombuffer(ptr, dtype=np.uint8).reshape((img.height(), img.width(), 4))
+    assert int((arr[:, :, 3] >= 250).sum()) > 30, "hardware stats drew almost nothing"

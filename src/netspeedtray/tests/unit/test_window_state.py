@@ -104,3 +104,37 @@ def test_save_skipped_when_config_missing():
 def test_save_is_noop_when_main_widget_none():
     window = MagicMock()
     save_window_position(window, None, "k")  # must not raise
+
+
+# --- attach_position_memory (the debounced move-saver, end-to-end) ------------
+
+def test_position_memory_persists_a_user_move(qtbot, monkeypatch):
+    """End-to-end: a real move after the arm grace period debounce-saves; a move
+    during the arm window (WM frame-adjustment) is ignored. Drives the real
+    _PositionMemory event filter + QTimers via qtbot."""
+    from PyQt6.QtWidgets import QWidget
+    from netspeedtray.utils import window_state
+
+    saved = []
+    monkeypatch.setattr(window_state, "save_window_position",
+                        lambda window, main, key: saved.append(key))
+
+    main = MagicMock()
+    main.config = {}
+    main.config_manager = MagicMock()
+
+    w = QWidget()
+    qtbot.addWidget(w)
+    window_state.attach_position_memory(w, main, "test_window_pos")
+    w.show()
+    qtbot.waitExposed(w)
+
+    # A move during the arm grace period must NOT be saved (frame-adjustment guard).
+    w.move(120, 120)
+    qtbot.wait(window_state._MOVE_SAVE_ARM_MS + 60)
+    assert saved == [], "a move before arming should not be persisted"
+
+    # A move after arming should debounce-save exactly once.
+    w.move(300, 220)
+    qtbot.wait(window_state._MOVE_SAVE_DEBOUNCE_MS + 150)
+    assert saved == ["test_window_pos"], f"expected one debounced save, got {saved}"
