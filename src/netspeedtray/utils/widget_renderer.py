@@ -577,8 +577,11 @@ class WidgetRenderer:
             graph_rect = QRect(side_margin, top_margin, width - (side_margin * 2), height - (top_margin + bottom_margin))
             if graph_rect.width() <= 0 or graph_rect.height() <= 0: return
 
-            # Hash check for caching
-            current_hash = hash((tuple(history), is_hardware))
+            # Cache key for the (expensive) polyline recompute below. The history is an
+            # append-only, time-ordered sliding window, so (first, last, length) uniquely
+            # identifies its contents — an O(1) key instead of hashing all ~N points every
+            # paint. (len >= MIN_GRAPH_POINTS here, so [0]/[-1] are safe.)
+            current_hash = hash((history[0], history[-1], len(history), is_hardware))
 
             if self._last_widget_size != (width, height) or self._last_history_hash != current_hash:
                 num_points = len(history)
