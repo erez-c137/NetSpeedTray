@@ -77,3 +77,16 @@ def test_clicking_cancel_reverts_with_save_to_disk_false(qtbot, dialog, fake_mai
 
     fake_main_widget.handle_settings_changed.assert_called()
     assert _save_to_disk_flag(fake_main_widget.handle_settings_changed.call_args) is False
+
+
+def test_changed_toggle_propagates_to_parent_on_save(qtbot, dialog, fake_main_widget):
+    """A real widget change (the Free Move toggle) round-trips to the parent on Save —
+    not just that Save fired, but that the changed value is in the applied settings."""
+    toggle = dialog.general_page.free_move
+    new_value = not toggle.isChecked()
+    toggle.setChecked(new_value)
+
+    qtbot.mouseClick(dialog.save_button, Qt.MouseButton.LeftButton)
+
+    applied = fake_main_widget.handle_settings_changed.call_args[0][0]
+    assert applied["free_move"] is new_value
