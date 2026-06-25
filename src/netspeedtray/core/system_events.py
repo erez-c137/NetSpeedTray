@@ -7,7 +7,6 @@ It abstracts the raw win32 API calls and exposes clean Qt signals to the applica
 """
 
 import logging
-import time
 import win32api
 import win32gui
 from typing import Optional
@@ -56,7 +55,6 @@ class SystemEventHandler(QObject):
         self._taskbar_validity_timer = QTimer(self)
         
         # State
-        self._last_immediate_hide_time: float = 0.0
         self._is_paused = False
         self._theme_signal_connected = False
 
@@ -145,7 +143,6 @@ class SystemEventHandler(QObject):
                 if window_rect == monitor_rect:
                     self.logger.debug("Immediate check: Fullscreen detected (HWND: %s). Requesting hide.", hwnd)
                     self.immediate_hide_requested.emit()
-                    self._last_immediate_hide_time = time.monotonic()
 
         except (win32gui.error, AttributeError):
             pass 

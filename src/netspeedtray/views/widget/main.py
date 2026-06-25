@@ -128,7 +128,6 @@ class NetworkSpeedWidget(QWidget):
         self._drag_offset: QPoint = QPoint()
         self.startup_manager: StartupManager
         self.is_paused: bool = False
-        self._last_immediate_hide_time: float = 0.0 # For the race condition fix
         self._is_context_menu_visible: bool = False
         self.last_tray_rect: Optional[Tuple[int, int, int, int]] = None
         self._taskbar_lost_count: int = 0
@@ -297,7 +296,6 @@ class NetworkSpeedWidget(QWidget):
         try:
             taskbar_info = get_taskbar_info()
 
-            # Implement the "coasting" logic for taskbar detection failures.
             # Implement the "coasting" logic for taskbar detection failures.
             if taskbar_info.hwnd == 0: # hwnd=0 signifies a fallback object from get_taskbar_info
                 self._taskbar_lost_count += 1
