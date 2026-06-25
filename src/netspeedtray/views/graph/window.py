@@ -30,8 +30,7 @@ from PyQt6.QtWidgets import (
 
 from netspeedtray import constants
 from netspeedtray.utils import helpers, styles as style_utils
-from netspeedtray.core.position_manager import ScreenUtils
-from netspeedtray.utils.window_state import attach_position_memory, save_window_position
+from netspeedtray.utils.window_state import attach_position_memory, restore_window_position, save_window_position
 
 # Modular Graph Components
 from netspeedtray.views.graph.interaction import GraphInteractionHandler
@@ -209,16 +208,14 @@ class GraphWindow(QWidget):
         # Auto-save position on move (debounced); closeEvent also flushes it.
         attach_position_memory(self, self._main_widget, "graph_window_pos")
         try:
+            # Restore to the saved monitor via the shared helper (multi-monitor safe,
+            # consistent with Settings/App Activity); else center on the primary screen.
+            if restore_window_position(self, self.config, "graph_window_pos"):
+                return
             screen = QApplication.primaryScreen()
             if not screen: return self.move(100, 100)
-            
-            saved_pos = self.config.get("graph_window_pos", {})
-            if saved_pos and "x" in saved_pos and "y" in saved_pos:
-                validated = ScreenUtils.validate_position(saved_pos["x"], saved_pos["y"], (self.width(), self.height()), screen)
-                self.move(validated.x, validated.y)
-            else:
-                geom = screen.geometry()
-                self.move((geom.width()-self.width())//2 + geom.x(), (geom.height()-self.height())//2 + geom.y())
+            geom = screen.geometry()
+            self.move((geom.width()-self.width())//2 + geom.x(), (geom.height()-self.height())//2 + geom.y())
         except Exception as e: self.logger.error(f"Position error: {e}")
 
     def _on_tab_changed(self, index: int):

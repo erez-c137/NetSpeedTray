@@ -288,18 +288,13 @@ class SettingsDialog(QDialog):
             self.units_page.load_settings(self.config)
             self.interfaces_page.load_settings(self.config)
             
-            # Restore window position if saved (validate against available geometry)
-            saved_pos = self.config.get("settings_window_pos")
-            if saved_pos and isinstance(saved_pos, dict):
-                 x, y = saved_pos.get("x"), saved_pos.get("y")
-                 if x is not None and y is not None:
-                     screen = self.screen() or QApplication.primaryScreen()
-                     if screen:
-                         avail = screen.availableGeometry()
-                         x = max(avail.left(), min(x, avail.right() - self.width()))
-                         y = max(avail.top(), min(y, avail.bottom() - self.height()))
-                     self.move(x, y)
-                     self.logger.debug(f"Restored Settings Dialog position to ({x}, {y})")
+            # Restore window position via the shared helper so reopen is multi-monitor
+            # safe and consistent with the first-open path. This runs on every reopen
+            # (reset_with_config -> _init_ui_state), where the __init__ auto-size restore
+            # does not. The old hand-rolled clamp used self.screen(), which reports the
+            # primary screen for a not-yet-shown window and yanked secondary-monitor
+            # positions back to primary.
+            restore_window_position(self, self.config, "settings_window_pos")
 
         except Exception as e:
              self.logger.error(f"Error initializing UI state: {e}", exc_info=True)
