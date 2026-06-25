@@ -412,27 +412,27 @@ class NetworkSpeedWidget(QWidget):
             self.layout_manager.resize_widget_for_font()
             self.update()
 
-    def update_cpu_temp(self, temp: float) -> None:
+    def update_cpu_temp(self, temp: Optional[float]) -> None:
         """Update CPU temperature and trigger repaint."""
         self.cpu_temp = temp
         if self.config.get("widget_display_mode") in ["cpu_only", "combined", "side_by_side", "cycle"]:
             self.layout_manager.resize_widget_for_font()
             self.update()
 
-    def update_gpu_temp(self, temp: float) -> None:
+    def update_gpu_temp(self, temp: Optional[float]) -> None:
         """Update GPU temperature and trigger repaint."""
         self.gpu_temp = temp
         if self.config.get("widget_display_mode") in ["gpu_only", "combined", "side_by_side", "cycle"]:
             self.layout_manager.resize_widget_for_font()
             self.update()
 
-    def update_cpu_power(self, power: float) -> None:
+    def update_cpu_power(self, power: Optional[float]) -> None:
         """Update CPU power draw and trigger repaint."""
         self.cpu_power = power
         if self.config.get("widget_display_mode") in ["cpu_only", "combined", "side_by_side", "cycle"]:
             self.update()
 
-    def update_gpu_power(self, power: float) -> None:
+    def update_gpu_power(self, power: Optional[float]) -> None:
         """Update GPU power draw and trigger repaint."""
         self.gpu_power = power
         if self.config.get("widget_display_mode") in ["gpu_only", "combined", "side_by_side", "cycle"]:

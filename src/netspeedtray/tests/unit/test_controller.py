@@ -180,3 +180,35 @@ def test_update_speeds_handles_short_lag_spike(controller_instance, mock_widget_
     mock_view.update_display_speeds.assert_called_once_with(0.0, 0.0)
     # The baseline time should be updated to the new time
     assert controller.last_check_time == time_before_lag + 12.0
+
+
+def test_temp_power_none_is_forwarded_to_clear_stale(controller_instance):
+    """
+    A dropped sensor (key present in stats, value None) must be forwarded to the
+    view so a stale reading can be cleared to "(N/A)", instead of being swallowed
+    and leaving the last good value frozen on screen.
+    """
+    controller = controller_instance
+    mock_view = MagicMock()
+    controller.set_view(mock_view)
+
+    controller.handle_stats(
+        {"cpu": 50.0, "cpu_temp": 45.0, "gpu": 30.0, "gpu_power": None}
+    )
+
+    mock_view.update_cpu_temp.assert_called_once_with(45.0)
+    mock_view.update_gpu_power.assert_called_once_with(None)  # None forwarded, not dropped
+
+
+def test_absent_temp_power_key_emits_nothing(controller_instance):
+    """When a metric's key is absent (feature disabled), no signal is emitted for it."""
+    controller = controller_instance
+    mock_view = MagicMock()
+    controller.set_view(mock_view)
+
+    controller.handle_stats({"cpu": 50.0})  # no temp/power keys at all
+
+    mock_view.update_cpu_temp.assert_not_called()
+    mock_view.update_cpu_power.assert_not_called()
+    mock_view.update_gpu_temp.assert_not_called()
+    mock_view.update_gpu_power.assert_not_called()
