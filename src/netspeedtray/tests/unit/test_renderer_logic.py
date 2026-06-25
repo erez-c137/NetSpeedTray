@@ -29,6 +29,10 @@ def test_speed_band_uses_canonical_mbps():
     assert band(10 * MBPS_IN_BYTES, high, low) == "high"
     assert band(100 * MBPS_IN_BYTES, high, low) == "high"
 
+    # Boundary edges (the >= bands are where an off-by-one would hide).
+    assert band(0.99 * MBPS_IN_BYTES, high, low) == "default"  # just below low
+    assert band(9.99 * MBPS_IN_BYTES, high, low) == "low"      # just below high
+
 
 def test_speed_band_handles_bad_input():
     """Non-numeric input must fall back to the default band, never raise."""

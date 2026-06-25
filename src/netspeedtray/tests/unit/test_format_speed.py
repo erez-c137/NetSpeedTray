@@ -13,7 +13,7 @@ the tests track the locale data rather than a particular English label.
 import pytest
 
 from netspeedtray.constants.i18n import I18nStrings
-from netspeedtray.utils.helpers import format_speed
+from netspeedtray.utils.helpers import format_speed, get_reference_value_string
 
 # 1 Mbit/s == 1_000_000 bits/s == 125_000 bytes/s.
 MBIT_IN_BYTES = 125_000
@@ -91,8 +91,24 @@ def test_split_unit_false_joins_value_and_unit(en):
 
 def test_fixed_width_right_justifies_value(en):
     val, _ = format_speed(MBIT_IN_BYTES, en, fixed_width=True, split_unit=True)
+    ref = get_reference_value_string(False, 1, "bits_decimal")  # "888.8"
     assert val.strip() == "1.0"
-    assert len(val) >= len("1.0")  # padded to the reference width
+    assert len(val) == len(ref)  # right-justified to the reference width, not just >=
+
+
+def test_bytes_binary_uses_mebi_divisor(en):
+    # 1 MiB/s == 1_048_576 bytes/s (MEBI divisor)
+    assert format_speed(1_048_576, en, unit_type="bytes_binary", split_unit=True) == ("1.0", en.MIBPS_LABEL)
+
+
+def test_bytes_decimal_giga_scale(en):
+    # 2 GB/s == 2_000_000_000 bytes/s (decimal GIGA)
+    assert format_speed(2_000_000_000, en, unit_type="bytes_decimal", split_unit=True) == ("2.0", en.GBPS_LABEL)
+
+
+def test_force_mega_unit_with_zero(en):
+    # force_mega keeps the mega unit and decimal formatting even at zero speed.
+    assert format_speed(0, en, force_mega_unit=True, split_unit=True) == ("0.0", en.MBITS_LABEL)
 
 
 # --- locale decimal separator ------------------------------------------------

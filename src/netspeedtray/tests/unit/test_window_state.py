@@ -91,11 +91,14 @@ def test_save_writes_position_and_persists():
     main.config_manager.save.assert_called_once_with(main.config)
 
 
-def test_save_is_noop_without_config_manager():
+def test_save_skipped_when_config_missing():
+    # config is None -> the guard must return WITHOUT calling config_manager.save
+    # (asserting the skip, not merely that it doesn't raise).
     window = MagicMock()
-    main = MagicMock(spec=[])  # no `config` / `config_manager` attributes
-    # Must not raise; safe to call from a closeEvent.
+    main = MagicMock()
+    main.config = None
     save_window_position(window, main, "k")
+    main.config_manager.save.assert_not_called()
 
 
 def test_save_is_noop_when_main_widget_none():
