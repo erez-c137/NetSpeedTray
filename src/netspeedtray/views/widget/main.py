@@ -920,7 +920,7 @@ class NetworkSpeedWidget(QWidget):
         self.logger.debug("Request to show graph window.")
         if not self.i18n or not self.config or not self.widget_state:
             self.logger.error("Cannot show graph: Required components missing.")
-            QMessageBox.critical(self, self.i18n.ERROR_TITLE, "Internal error: Required components not available.")
+            QMessageBox.critical(self, "Error", "Internal error: Required components not available.")
             return
 
         try:
@@ -965,7 +965,7 @@ class NetworkSpeedWidget(QWidget):
         self.logger.debug("Request to show app activity window.")
         if not self.i18n:
             self.logger.error("Cannot show app activity view: i18n not initialized.")
-            QMessageBox.critical(self, self.i18n.ERROR_TITLE, "Internal error: Required components not available.")
+            QMessageBox.critical(self, "Error", "Internal error: Required components not available.")
             return
 
         try:

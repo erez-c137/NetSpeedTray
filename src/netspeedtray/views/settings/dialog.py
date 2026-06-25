@@ -29,7 +29,7 @@ from PyQt6.QtWidgets import (
 # --- Custom Application Imports ---
 from netspeedtray import constants
 from netspeedtray.utils import styles as style_utils
-from netspeedtray.utils.window_state import attach_position_memory, restore_window_position, save_window_position
+from netspeedtray.utils.window_state import restore_window_position, save_window_position
 from netspeedtray.utils.helpers import get_app_data_path, get_app_asset_path
 from netspeedtray.utils.styles import is_dark_mode
 from netspeedtray.utils.support_bundle import build_support_bundle
@@ -149,9 +149,12 @@ class SettingsDialog(QDialog):
         else:
             self.resize(max(640, desired_w), 700)
 
-        # Auto-save the dialog's position whenever the user moves it (debounced),
-        # so the location is remembered no matter how the dialog is closed.
-        attach_position_memory(self, self.parent_widget, "settings_window_pos")
+        # NOTE: unlike the Graph / App Activity windows, the Settings dialog does NOT
+        # auto-save its position on move. During a live preview it mutates the live
+        # config in memory (handle_settings_changed save_to_disk=False), so a debounced
+        # move-save would flush those un-applied edits to disk — which Cancel wouldn't
+        # undo. The dialog is always closed via Save/Cancel/X, whose handlers persist
+        # the position AFTER the apply/revert, so the close-path save is leak-free.
 
         self.logger.debug("SettingsDialog initialization completed.")
 
