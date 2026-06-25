@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
 # --- Custom Application Imports ---
 from netspeedtray import constants
 from netspeedtray.utils import styles as style_utils
+from netspeedtray.utils.window_state import restore_window_position, save_window_position
 from netspeedtray.utils.helpers import get_app_data_path, get_app_asset_path
 from netspeedtray.utils.styles import is_dark_mode
 from netspeedtray.utils.support_bundle import build_support_bundle
@@ -139,11 +140,12 @@ class SettingsDialog(QDialog):
             width = min(desired_w, avail.width() - 80)
             height = min(700, avail.height() - 80)
             self.resize(max(640, width), max(450, height))
-            # Center on available geometry (excludes taskbar)
-            self.move(
-                avail.center().x() - self.width() // 2,
-                avail.center().y() - self.height() // 2
-            )
+            # Restore the last-used position (clamped to this screen); else center.
+            if not restore_window_position(self, self.config, "settings_window_pos"):
+                self.move(
+                    avail.center().x() - self.width() // 2,
+                    avail.center().y() - self.height() // 2
+                )
         else:
             self.resize(max(640, desired_w), 700)
 
@@ -515,6 +517,9 @@ class SettingsDialog(QDialog):
 
     def _cancel_and_close(self) -> None:
         """Reverts and closes."""
+        # Persist the window position even on Cancel / X (covers all close paths;
+        # the Save path persists it via get_settings()).
+        save_window_position(self, self.parent_widget, "settings_window_pos")
         if hasattr(self.parent_widget, 'handle_settings_changed'):
             self.parent_widget.handle_settings_changed(self.original_config, save_to_disk=False)
         self.hide()

@@ -147,6 +147,7 @@ class ConfigConstants:
         "tray_offset_y": DEFAULT_TRAY_OFFSET_Y,
         "graph_window_pos": None,
         "settings_window_pos": None,
+        "app_activity_window_pos": None,
         "history_period_slider_value": 0,  # UI-specific state
         "show_legend": DEFAULT_SHOW_LEGEND,
         "use_separate_arrow_font": DEFAULT_USE_SEPARATE_ARROW_FONT,
@@ -226,6 +227,7 @@ class ConfigConstants:
         "tray_offset_y": {"type": int, "default": DEFAULT_TRAY_OFFSET_Y, "min": 0, "max": 500},
         "graph_window_pos": {"type": (dict, type(None)), "default": None},
         "settings_window_pos": {"type": (dict, type(None)), "default": None},
+        "app_activity_window_pos": {"type": (dict, type(None)), "default": None},
         "history_period_slider_value": {"type": int, "default": 0, "min": 0, "max": len(data.history_period.PERIOD_MAP) - 1},
         "show_legend": {"type": bool, "default": DEFAULT_SHOW_LEGEND},
         "monitor_cpu_enabled": {"type": bool, "default": DEFAULT_MONITOR_CPU_ENABLED},

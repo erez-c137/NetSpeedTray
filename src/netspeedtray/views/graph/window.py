@@ -31,6 +31,7 @@ from PyQt6.QtWidgets import (
 from netspeedtray import constants
 from netspeedtray.utils import helpers, styles as style_utils
 from netspeedtray.core.position_manager import ScreenUtils
+from netspeedtray.utils.window_state import save_window_position
 
 # Modular Graph Components
 from netspeedtray.views.graph.interaction import GraphInteractionHandler
@@ -437,6 +438,7 @@ class GraphWindow(QWidget):
 
     def closeEvent(self, event):
         self._is_closing = True
+        save_window_position(self, self._main_widget, "graph_window_pos")
         self.coordinator.stop_realtime()
         if hasattr(self, 'worker_thread'):
             self.worker_thread.quit()
