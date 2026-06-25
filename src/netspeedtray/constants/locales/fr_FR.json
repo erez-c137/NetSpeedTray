@@ -340,7 +340,7 @@
     "LHM_NOT_DETECTED_TEXT": "Les relevés de température et de puissance nécessitent LibreHardwareMonitor (ou OpenHardwareMonitor) exécuté en tant qu'Administrateur.\n\nTéléchargement gratuit :\nhttps://github.com/LibreHardwareMonitor/LibreHardwareMonitor\n\nLa température GPU NVIDIA fonctionne aussi nativement via nvidia-smi.\n\nVous pouvez désactiver ces relevés dans Paramètres > Matériel.",
     "APP_ACTIVITY_WINDOW_TITLE": "Activité Réseau des Applications",
     "APP_ACTIVITY_LOADING_MESSAGE": "Chargement de l'activité des applications...",
-    "APP_ACTIVITY_HINT_TEXT": "La vitesse par application est estimée à partir des variations d'E/S des processus lorsque les connexions sont actives.",
+    "APP_ACTIVITY_HINT_TEXT": "Les valeurs par application sont estimées à partir des E/S totales de chaque processus (disque et réseau combinés) tant que des connexions sont actives. Windows ne peut pas isoler les octets réseau par application sans droits d'administrateur ; considérez-les donc comme une approximation et non comme la vitesse réseau exacte.",
     "APP_ACTIVITY_PROCESS_HEADER": "Processus",
     "APP_ACTIVITY_PID_HEADER": "PID",
     "APP_ACTIVITY_CONNECTIONS_HEADER": "Connexions",

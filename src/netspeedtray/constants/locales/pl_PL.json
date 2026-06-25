@@ -340,7 +340,7 @@
     "LHM_NOT_DETECTED_TEXT": "Odczyty temperatury i poboru mocy wymagają LibreHardwareMonitor (lub OpenHardwareMonitor) uruchomionego jako Administrator.\n\nDarmowe pobieranie:\nhttps://github.com/LibreHardwareMonitor/LibreHardwareMonitor\n\nTemperatura GPU NVIDIA działa również natywnie przez nvidia-smi.\n\nMożesz wyłączyć te odczyty w Ustawienia > Sprzęt.",
     "APP_ACTIVITY_WINDOW_TITLE": "Aktywność sieciowa aplikacji",
     "APP_ACTIVITY_LOADING_MESSAGE": "Ładowanie aktywności aplikacji...",
-    "APP_ACTIVITY_HINT_TEXT": "Prędkość poszczególnych aplikacji jest szacowana na podstawie zmian operacji we/wy procesu w czasie aktywnych połączeń.",
+    "APP_ACTIVITY_HINT_TEXT": "Wartości dla poszczególnych aplikacji są szacowane na podstawie całkowitego we/wy każdego procesu (dysk i sieć łącznie) w czasie aktywnych połączeń. System Windows nie potrafi przypisać bajtów sieciowych do pojedynczych aplikacji bez uprawnień administratora, więc traktuj je jako przybliżenie, a nie dokładną prędkość sieci.",
     "APP_ACTIVITY_PROCESS_HEADER": "Proces",
     "APP_ACTIVITY_PID_HEADER": "PID",
     "APP_ACTIVITY_CONNECTIONS_HEADER": "Połączenia",

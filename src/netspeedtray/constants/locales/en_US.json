@@ -340,7 +340,7 @@
     "LHM_NOT_DETECTED_TEXT": "Temperature and power readings require LibreHardwareMonitor (or OpenHardwareMonitor) running as Administrator.\n\nDownload it free from:\nhttps://github.com/LibreHardwareMonitor/LibreHardwareMonitor\n\nNVIDIA GPU temperature also works natively via nvidia-smi.\n\nYou can disable these readouts in Settings > Hardware.",
     "APP_ACTIVITY_WINDOW_TITLE": "App Network Activity",
     "APP_ACTIVITY_LOADING_MESSAGE": "Loading application activity...",
-    "APP_ACTIVITY_HINT_TEXT": "Per-app speed is estimated from process I/O deltas while connections are active.",
+    "APP_ACTIVITY_HINT_TEXT": "The per-app figures are estimated from each process's total I/O (disk and network combined) while it has active connections. Windows can't isolate per-app network bytes without admin rights, so treat them as an approximate proxy, not an exact network speed.",
     "APP_ACTIVITY_PROCESS_HEADER": "Process",
     "APP_ACTIVITY_PID_HEADER": "PID",
     "APP_ACTIVITY_CONNECTIONS_HEADER": "Connections",

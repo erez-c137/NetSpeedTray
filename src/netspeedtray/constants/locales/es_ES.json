@@ -340,7 +340,7 @@
     "LHM_NOT_DETECTED_TEXT": "Las lecturas de temperatura y consumo requieren LibreHardwareMonitor (u OpenHardwareMonitor) ejecutándose como Administrador.\n\nDescarga gratuita:\nhttps://github.com/LibreHardwareMonitor/LibreHardwareMonitor\n\nLa temperatura de GPU NVIDIA también funciona nativamente con nvidia-smi.\n\nPuede desactivar estas lecturas en Configuración > Hardware.",
     "APP_ACTIVITY_WINDOW_TITLE": "Actividad de red por aplicación",
     "APP_ACTIVITY_LOADING_MESSAGE": "Cargando actividad de aplicaciones...",
-    "APP_ACTIVITY_HINT_TEXT": "La velocidad por aplicación se estima a partir de las variaciones de E/S del proceso mientras las conexiones están activas.",
+    "APP_ACTIVITY_HINT_TEXT": "Las cifras por aplicación se estiman a partir de la E/S total de cada proceso (disco y red combinados) mientras tiene conexiones activas. Windows no puede aislar los bytes de red por aplicación sin permisos de administrador, así que considéralas una aproximación y no la velocidad de red exacta.",
     "APP_ACTIVITY_PROCESS_HEADER": "Proceso",
     "APP_ACTIVITY_PID_HEADER": "PID",
     "APP_ACTIVITY_CONNECTIONS_HEADER": "Conexiones",
