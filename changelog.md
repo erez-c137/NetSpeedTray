@@ -4,6 +4,44 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [1.3.4] - June 26, 2026
+
+A stabilization and foundation release. No new user-facing features — instead a broad sweep of bug fixes (several surfaced by an internal design pass and a multi-agent adversarial code review), correctness and robustness hardening, the project's first CI pipeline, and a large jump in test coverage. This de-risks the larger v1.4 work.
+
+### Fixed
+- **Color coding used the on-screen number instead of the real speed:** The High/Low color thresholds are defined in Mbps, but the widget compared them against whatever value was displayed — so in Kbps, Gbps, or bytes display modes the bands triggered at the wrong speeds (e.g. a 0.5 Mbps stream shown as "500 Kbps" was treated as fast, and a fast stream shown in MB/s could be treated as slow). Banding is now computed from the canonical Mbps speed regardless of the display unit.
+- **File logging could silently fail and write no log file:** `ConfigManager.setup_logging` uses `logging.handlers.RotatingFileHandler`, but `config.py` only imported `logging` — not the `logging.handlers` submodule, which Python does not import automatically. Depending on import order this raised "module 'logging' has no attribute 'handlers'", fell back to a console-only handler, and produced **no log file at all** (also leaving Support Bundles without logs). Now imports the submodule explicitly.
+- **Windows didn't reliably remember their position (incl. multi-monitor):** The Settings, Graph, and App Activity windows now save their location whenever you move them and restore it on open — including restoring onto the correct monitor in multi-monitor setups. Previously, closing Settings with **Cancel** or the **X** button discarded the move (only **Save** kept it), and a window saved on a secondary monitor was pulled back onto the primary one on reopen.
+- **Hardware temperature/power froze at the last reading:** When a sensor stopped reporting (a slow `nvidia-smi`, LibreHardwareMonitor dropping out, etc.), the widget kept painting the last good value indefinitely instead of showing "(N/A)". Sensor dropouts now clear correctly.
+- **Taskbar text truncated at very high speeds (#106):** In "always Mbps" mode combined with a bytes or binary unit, the widget reserved width for only three digits and clipped the text past ~1000 MB/s (~8 Gbit/s). It now reserves four digits for every unit type in that mode.
+- **"Cycle" display mode clipped CPU/GPU text:** The widget was sized only for the network phase, so when it cycled to a wider CPU/GPU readout the text was cut off. It now sizes for the widest enabled phase.
+- **Graph window could crash building a tab title:** One graph tab title referenced a translation key (`SPEED_GRAPH_TITLE`) that exists in no language file; constructing that list raised `AttributeError`. Switched to the existing `SPEED_GRAPH_TAB_LABEL`. (Caught by a new test that scans the code for references to nonexistent translation keys.)
+- **Hardware-monitor detection was too strict (#130):** A LibreHardwareMonitor / OpenHardwareMonitor source exposing only power or load sensors (no temperature) was rejected outright, because the namespace check counted only temperature sensors. It now accepts any sensor type. The "not detected" guidance also names the correct tool (LHM vs OHM), and `nvidia-smi`'s timeout was widened (0.5s → 1.5s) with failures now logged instead of silently swallowed.
+- **Support Bundle reported the wrong monitor resolution on high-DPI displays (#152):** It printed Qt's logical pixels (e.g. 3413×1440) as the resolution next to the DPI scale, which was misleading. It now shows native and logical together (e.g. "5120×2160 native (3413×1440 logical) @ DPI scale 1.50").
+- **Stray system-wide hook at startup:** If Explorer was mid-restart when the app launched (the taskbar handle momentarily reported as 0), the app installed a *system-wide* taskbar move/size hook and permanently disabled its own Explorer-restart recovery. It now defers the hook until a real taskbar handle is available and retries.
+
+### Changed
+- **Honest App Activity labels:** The per-app Download/Upload figures in the App Activity window come from each process's *total* I/O (disk and network combined) — Windows can't split network bytes per-app without admin rights. The hint text now says so plainly: these are an approximate proxy, not exact network speed.
+
+### Performance
+- **Removed duplicate signal wiring:** The display/CPU/GPU update slots were connected twice, so each ran two times per tick, and a legacy path repainted the widget on every hardware tick even in network-only mode. The redundant wiring was removed.
+- **Cheaper mini-graph repaints:** The widget mini-graph hashed its entire history (up to ~5000 points) on every paint just to check its cache. Replaced with an O(1) cache key.
+
+### Localization
+- **Japanese — 10th language (#155):** Added Japanese, contributed by [@coolvitto](https://github.com/coolvitto), at 100% locale-key parity.
+- **Korean corrections (#156):** Typo and terminology fixes from [@VenusGirl](https://github.com/VenusGirl).
+- **More strings localized:** The history-graph window title and its "Mbps" stat labels, several error/dialog titles, and the App Activity Remote-Desktop message now go through translation instead of hardcoded English. Two new keys were added across all 10 languages (AI-assisted for the non-English values, pending native review, per `TRANSLATORS.md`).
+
+### Developer / Internal
+- **Continuous Integration:** A CI workflow now runs the full test suite on every push and on pull requests to `main`. Previously tests ran only on release tags, so a regression could land on `main` unnoticed.
+- **Adversarial self-review:** The release was run through a multi-agent adversarial review that caught a real regression (the multi-monitor restore) before it shipped; the remaining non-blocking findings are tracked for future releases.
+- **Dead-code removal:** Deleted an unused legacy `VisibilityManager` module (superseded by `SystemEventHandler`) plus several orphaned methods and imports.
+
+### Tests
+- Test count grew from **196 to 326** (+130), plus 2 documented `xfail`s. New coverage: `format_speed` (units, binary/decimal, locale separator, edges), window-position save/restore (incl. multi-monitor), the layout reference-width logic behind the #106 fix, the update checker's version comparison, a dead-translation-key scanner, `ConfigManager` save/load round-tripping, the hardware temp/power clear-to-N/A behavior, and a guard that `config.py` imports `logging.handlers`.
+
+---
+
 ## [1.3.3] - June 25, 2026
 
 A stabilization release for v1.3.2. The headline fix restores HTTPS to the packaged app — v1.3.2 accidentally shipped without OpenSSL, which broke the in-app update checker for everyone. Because that also means v1.3.2's updater cannot notify you about this release, **v1.3.2 users must update manually** from the [GitHub Releases](https://github.com/erez-c137/NetSpeedTray/releases) page or via WinGet.

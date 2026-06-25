@@ -87,14 +87,38 @@ class SystemEventHandler(QObject):
             self.foreground_hook.event_triggered_debounced.connect(self.foreground_app_changed)
             self.foreground_hook.start()
             
-            # 2. Taskbar move/size hook
-            taskbar_info = get_taskbar_info()
-            self.movesize_hook = WinEventHook(EVENT_SYSTEM_MOVESIZEEND, hwnd_to_watch=taskbar_info.hwnd)
-            self.movesize_hook.event_triggered.connect(self._on_taskbar_moved_or_sized)
-            self.movesize_hook.start()
-            
+            # 2. Taskbar move/size hook — only when a real taskbar handle exists
+            # (see _attach_movesize_hook for why a 0 handle must be skipped).
+            self._attach_movesize_hook()
+
         except Exception as e:
             self.logger.error("Error setting up hooks: %s", e, exc_info=True)
+
+    def _attach_movesize_hook(self) -> bool:
+        """(Re)attach the MOVESIZEEND hook to the current taskbar handle.
+
+        Skips attaching when the taskbar handle is 0 (e.g. explorer mid-restart at
+        startup). A hwnd_to_watch of 0 installs a SYSTEM-WIDE move/size hook that
+        fires for every window on the desktop, and it permanently disables the
+        explorer-restart self-heal in _check_taskbar_validity (which is gated on
+        hwnd_to_watch != 0). The validity timer retries until a real handle appears.
+        Returns True if a hook was attached.
+        """
+        hwnd = get_taskbar_info().hwnd
+        if not hwnd:
+            self.logger.debug("Taskbar handle unavailable (0); deferring move/size hook.")
+            return False
+        # Replace any prior (possibly stale or system-wide) hook before re-attaching.
+        if self.movesize_hook is not None:
+            try:
+                self.movesize_hook.stop()
+            except Exception:
+                pass
+        self.movesize_hook = WinEventHook(EVENT_SYSTEM_MOVESIZEEND, hwnd_to_watch=hwnd)
+        self.movesize_hook.event_triggered.connect(self._on_taskbar_moved_or_sized)
+        self.movesize_hook.start()
+        self.logger.debug("Move/size hook attached to taskbar HWND %s.", hwnd)
+        return True
 
     def _setup_timers(self) -> None:
         """Sets up the taskbar validity timer."""
@@ -151,8 +175,12 @@ class SystemEventHandler(QObject):
                      self.logger.warning("Watched taskbar handle invalid. Explorer likely restarted.")
                      self.taskbar_restarted.emit()
                      # Restart hooks to attach to the new taskbar
-                     self.stop() 
+                     self.stop()
                      self.start()
+            else:
+                # No move/size hook attached yet — we started while the taskbar handle
+                # was 0 (explorer mid-restart). Keep trying until a real handle appears.
+                self._attach_movesize_hook()
 
         except Exception as e:
             self.logger.error("Error checking taskbar validity: %s", e, exc_info=True)

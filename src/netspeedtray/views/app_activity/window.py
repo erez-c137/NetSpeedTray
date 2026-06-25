@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
 from netspeedtray import constants
 from netspeedtray.utils import helpers
 from netspeedtray.utils.rdp_utils import is_rdp_session
+from netspeedtray.utils.window_state import attach_position_memory, restore_window_position, save_window_position
 from netspeedtray.views.app_activity.worker import AppActivityWorker
 
 
@@ -140,6 +141,12 @@ class AppActivityWindow(QWidget):
             self.logger.debug("Could not apply app icon: %s", exc)
 
     def _position_window(self) -> None:
+        # Auto-save position on move (debounced); closeEvent also flushes it.
+        attach_position_memory(self, self._main_widget, "app_activity_window_pos")
+        # Restore the last-used position if we have one; otherwise center.
+        config = getattr(self._main_widget, "config", {}) if self._main_widget is not None else {}
+        if restore_window_position(self, config, "app_activity_window_pos"):
+            return
         screen = None
         if self._main_widget is not None and hasattr(self._main_widget, "screen"):
             screen = self._main_widget.screen()
@@ -183,6 +190,7 @@ class AppActivityWindow(QWidget):
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self._is_closing = True
+        save_window_position(self, self._main_widget, "app_activity_window_pos")
         if self._refresh_timer.isActive():
             self._refresh_timer.stop()
         if hasattr(self, "worker_thread") and self.worker_thread is not None:

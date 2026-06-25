@@ -181,6 +181,12 @@ class WidgetLayoutManager:
                 display_mode = self.widget.config.get("widget_display_mode", "network_only")
                 monitor_ram = self.widget.config.get("monitor_ram_enabled", False)
                 monitor_vram = self.widget.config.get("monitor_vram_enabled", False)
+                # Hoisted so every display-mode branch below has it defined. Previously
+                # only the side_by_side block assigned it, so the cpu_only/gpu_only/
+                # combined branch referenced an undefined local (latent UnboundLocalError;
+                # the #131 crash class).
+                _hw_label_style = self.widget.config.get('hardware_label_style', 'icons_colored')
+                label_offset = self.metrics.horizontalAdvance("CPU ") if _hw_label_style == "text" else 14
                 if display_mode == "side_by_side":
                     active_segments = 0
                     monitor_cpu = self.widget.config.get("monitor_cpu_enabled", False)
@@ -203,9 +209,7 @@ class WidgetLayoutManager:
                     if "network" in display_order:
                         calculated_width_accum += calculated_width
                         
-                    # Calculate Sub-Widths
-                    style = self.widget.config.get('hardware_label_style', 'icons_colored')
-                    label_offset = self.metrics.horizontalAdvance("CPU ") if style == "text" else 14
+                    # Calculate Sub-Widths (label_offset hoisted above the branches)
                     show_temps = bool(self.widget.config.get("show_hardware_temps", False))
                     show_power = bool(self.widget.config.get("show_hardware_power", False))
                     # Compute suffix width based on which extras are enabled
@@ -289,6 +293,32 @@ class WidgetLayoutManager:
                         gpu_width = label_offset + self.metrics.horizontalAdvance(" 100%")
                         if hw_suffix_w:
                             gpu_width += hw_suffix_w
+                        if monitor_vram and getattr(self.widget, 'vram_used', None) is not None:
+                            gpu_width += self.metrics.horizontalAdvance(" | 16.0/16.0G")
+                        calculated_width = max(calculated_width, gpu_width)
+                elif display_mode == "cycle":
+                    # Cycle shows one metric at a time (network, then each enabled HW
+                    # metric), so the widget must be as wide as the WIDEST phase or the
+                    # hardware phases clip. calculated_width starts as the network width.
+                    monitor_cpu = self.widget.config.get("monitor_cpu_enabled", False)
+                    monitor_gpu = self.widget.config.get("monitor_gpu_enabled", False)
+                    show_temps = bool(self.widget.config.get("show_hardware_temps", False))
+                    show_power = bool(self.widget.config.get("show_hardware_power", False))
+                    if show_temps and show_power:
+                        hw_suffix_w = self.metrics.horizontalAdvance(" (99°C, 250.0W)")
+                    elif show_power:
+                        hw_suffix_w = self.metrics.horizontalAdvance(" (250.0W)")
+                    elif show_temps:
+                        hw_suffix_w = self.metrics.horizontalAdvance(" (99°C)")
+                    else:
+                        hw_suffix_w = 0
+                    if monitor_cpu:
+                        cpu_width = label_offset + self.metrics.horizontalAdvance(" 100%") + hw_suffix_w
+                        if monitor_ram and getattr(self.widget, 'ram_used', None) is not None:
+                            cpu_width += self.metrics.horizontalAdvance(" | 16.0/16.0G")
+                        calculated_width = max(calculated_width, cpu_width)
+                    if monitor_gpu:
+                        gpu_width = label_offset + self.metrics.horizontalAdvance(" 100%") + hw_suffix_w
                         if monitor_vram and getattr(self.widget, 'vram_used', None) is not None:
                             gpu_width += self.metrics.horizontalAdvance(" | 16.0/16.0G")
                         calculated_width = max(calculated_width, gpu_width)

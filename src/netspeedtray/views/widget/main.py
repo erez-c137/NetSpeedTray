@@ -412,27 +412,27 @@ class NetworkSpeedWidget(QWidget):
             self.layout_manager.resize_widget_for_font()
             self.update()
 
-    def update_cpu_temp(self, temp: float) -> None:
+    def update_cpu_temp(self, temp: Optional[float]) -> None:
         """Update CPU temperature and trigger repaint."""
         self.cpu_temp = temp
         if self.config.get("widget_display_mode") in ["cpu_only", "combined", "side_by_side", "cycle"]:
             self.layout_manager.resize_widget_for_font()
             self.update()
 
-    def update_gpu_temp(self, temp: float) -> None:
+    def update_gpu_temp(self, temp: Optional[float]) -> None:
         """Update GPU temperature and trigger repaint."""
         self.gpu_temp = temp
         if self.config.get("widget_display_mode") in ["gpu_only", "combined", "side_by_side", "cycle"]:
             self.layout_manager.resize_widget_for_font()
             self.update()
 
-    def update_cpu_power(self, power: float) -> None:
+    def update_cpu_power(self, power: Optional[float]) -> None:
         """Update CPU power draw and trigger repaint."""
         self.cpu_power = power
         if self.config.get("widget_display_mode") in ["cpu_only", "combined", "side_by_side", "cycle"]:
             self.update()
 
-    def update_gpu_power(self, power: float) -> None:
+    def update_gpu_power(self, power: Optional[float]) -> None:
         """Update GPU power draw and trigger repaint."""
         self.gpu_power = power
         if self.config.get("widget_display_mode") in ["gpu_only", "combined", "side_by_side", "cycle"]:
@@ -453,13 +453,6 @@ class NetworkSpeedWidget(QWidget):
         if self.config.get("widget_display_mode") in ["gpu_only", "combined", "side_by_side", "cycle"]:
             self.layout_manager.resize_widget_for_font()
             self.update()
-
-    def update_display_hardware(self, cpu: Optional[float] = None, gpu: Optional[float] = None) -> None:
-        # Legacy method kept for safety but we prefer the individual ones above
-        if cpu is not None: self.cpu_usage = cpu
-        if gpu is not None: self.gpu_usage = gpu
-        self.update()
-
 
     def _rotate_cycle(self) -> None:
         """Rotates the displayed metric when in 'cycle' mode."""
@@ -520,11 +513,12 @@ class NetworkSpeedWidget(QWidget):
         try:
             # Connect core component signals
             self.monitor_thread.stats_ready.connect(self.controller.handle_stats)
-            self.controller.display_speed_updated.connect(self.update_display_speeds)
             
-            # New Hardware signals
-            self.controller.cpu_usage_updated.connect(lambda val: self.update_display_hardware(cpu=val))
-            self.controller.gpu_usage_updated.connect(lambda val: self.update_display_hardware(gpu=val))
+            # NOTE: the display/cpu/gpu/temp/power/ram/vram slots are wired exactly
+            # once in StatsController.set_view() (called at construction). Wiring any
+            # of them again here ran the slot twice per tick, and the legacy
+            # update_display_hardware lambda also repainted unconditionally even in
+            # network_only mode. Do not re-add them.
             
             # One-time LHM notice
             self.monitor_thread.lhm_not_detected.connect(self._on_lhm_not_detected)
@@ -558,15 +552,6 @@ class NetworkSpeedWidget(QWidget):
             raise RuntimeError("Failed to establish critical signal connections") from e
 
         
-    def _validate_lazy_imports(self) -> None:
-        """Validates lazy imports to catch potential issues early."""
-        self.logger.debug("Validating lazy imports...")
-        try:
-            from netspeedtray.views.settings import SettingsDialog
-            from netspeedtray.views.graph import GraphWindow
-            self.logger.debug("Lazy imports validated successfully.")
-        except ImportError as e:
-            self.logger.error("Lazy import validation failed: %s", e, exc_info=True)
 
 
 
@@ -964,7 +949,7 @@ class NetworkSpeedWidget(QWidget):
                 self.graph_window.activateWindow()
         except Exception as e:
             self.logger.error(f"Error showing graph window: {e}", exc_info=True)
-            QMessageBox.critical(self, "Error", f"Could not open the graph window:\n\n{str(e)}")
+            QMessageBox.critical(self, self.i18n.ERROR_TITLE, f"Could not open the graph window:\n\n{str(e)}")
 
     def open_app_activity_window(self) -> None:
         """Creates and displays the per-application network activity window."""
@@ -1021,7 +1006,7 @@ class NetworkSpeedWidget(QWidget):
 
     def _on_check_failed_manual(self, error: str) -> None:
         """Show error message for manual check."""
-        QMessageBox.warning(self, "Update Check", self.i18n.UPDATE_CHECK_FAILED_TEXT)
+        QMessageBox.warning(self, self.i18n.UPDATE_CHECK_TITLE, self.i18n.UPDATE_CHECK_FAILED_TEXT)
 
     def _show_update_dialog(self, latest_version: str, release_url: str) -> None:
         """Show update available dialog with Download / Skip / Not Now."""

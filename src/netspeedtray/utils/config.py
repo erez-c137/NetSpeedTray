@@ -10,6 +10,7 @@ affecting the application.
 import os
 import json
 import logging
+import logging.handlers  # RotatingFileHandler — `logging` alone doesn't import this submodule
 import re
 import shutil
 import tempfile

@@ -1,0 +1,49 @@
+name: CI
+
+# Runs the unit-test suite on every branch push and on pull requests targeting
+# main. Mirrors the test step in release.yml so a green CI here means the tag
+# build's tests will pass too. Pushing the locale/contributor PRs (which come
+# from forks) is covered by the pull_request trigger.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+
+# Cancel an in-progress run for the same ref when new commits are pushed.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m venv .venv
+          .\.venv\Scripts\Activate.ps1
+          pip install -r requirements.txt
+          pip install -r dev-requirements.txt
+
+      - name: Run unit tests
+        env:
+          # Run the PyQt6 GUI tests headless + deterministically (conftest.py also
+          # sets this via setdefault; this makes the CI environment explicit).
+          QT_QPA_PLATFORM: offscreen
+          QT_SCALE_FACTOR: "1"
+        run: |
+          .\.venv\Scripts\Activate.ps1
+          python -m pytest -v

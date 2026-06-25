@@ -30,7 +30,7 @@ from PyQt6.QtWidgets import (
 
 from netspeedtray import constants
 from netspeedtray.utils import helpers, styles as style_utils
-from netspeedtray.core.position_manager import ScreenUtils
+from netspeedtray.utils.window_state import attach_position_memory, restore_window_position, save_window_position
 
 # Modular Graph Components
 from netspeedtray.views.graph.interaction import GraphInteractionHandler
@@ -90,7 +90,7 @@ class GraphWindow(QWidget):
         # Styling & Position
         self.renderer.apply_theme(self._is_dark_mode)
         self.config_handler.init_db_size_monitoring()
-        self.setWindowTitle(constants.graph.WINDOW_TITLE)
+        self.setWindowTitle(f"{constants.app.APP_NAME} - {self.i18n.GRAPH_WINDOW_TITLE}")
         self._apply_icon()
         self._position_window()
         self._on_tab_changed(0) # Force layout initialization for the default tab (Overview)
@@ -205,17 +205,17 @@ class GraphWindow(QWidget):
         return GraphLogic.get_time_range(self._history_period_value, self.session_start_time, boot_time, earliest_db)
 
     def _position_window(self):
+        # Auto-save position on move (debounced); closeEvent also flushes it.
+        attach_position_memory(self, self._main_widget, "graph_window_pos")
         try:
+            # Restore to the saved monitor via the shared helper (multi-monitor safe,
+            # consistent with Settings/App Activity); else center on the primary screen.
+            if restore_window_position(self, self.config, "graph_window_pos"):
+                return
             screen = QApplication.primaryScreen()
             if not screen: return self.move(100, 100)
-            
-            saved_pos = self.config.get("graph_window_pos", {})
-            if saved_pos and "x" in saved_pos and "y" in saved_pos:
-                validated = ScreenUtils.validate_position(saved_pos["x"], saved_pos["y"], (self.width(), self.height()), screen)
-                self.move(validated.x, validated.y)
-            else:
-                geom = screen.geometry()
-                self.move((geom.width()-self.width())//2 + geom.x(), (geom.height()-self.height())//2 + geom.y())
+            geom = screen.geometry()
+            self.move((geom.width()-self.width())//2 + geom.x(), (geom.height()-self.height())//2 + geom.y())
         except Exception as e: self.logger.error(f"Position error: {e}")
 
     def _on_tab_changed(self, index: int):
@@ -253,7 +253,7 @@ class GraphWindow(QWidget):
 
         # Update absolute string headers
         if hasattr(self.ui, 'title_label'):
-            titles = [self.i18n.OVERVIEW_TAB_LABEL, self.i18n.SPEED_GRAPH_TITLE, self.i18n.ORDER_TYPE_CPU, self.i18n.ORDER_TYPE_GPU]
+            titles = [self.i18n.OVERVIEW_TAB_LABEL, self.i18n.SPEED_GRAPH_TAB_LABEL, self.i18n.ORDER_TYPE_CPU, self.i18n.ORDER_TYPE_GPU]
             if 0 <= index < len(titles):
                 self.ui.title_label.setText(titles[index])
                 
@@ -437,6 +437,7 @@ class GraphWindow(QWidget):
 
     def closeEvent(self, event):
         self._is_closing = True
+        save_window_position(self, self._main_widget, "graph_window_pos")
         self.coordinator.stop_realtime()
         if hasattr(self, 'worker_thread'):
             self.worker_thread.quit()
@@ -532,17 +533,17 @@ class GraphWindow(QWidget):
 
                         stats = GraphLogic.calculate_stats(net_hist)
                         if hasattr(self.ui, 'card_net_down_val'):
-                            self.ui.card_net_down_val.setText(f"\u2193 {dw_mbps:.1f} Mbps")
+                            self.ui.card_net_down_val.setText(f"\u2193 {dw_mbps:.1f} {self.i18n.MBITS_LABEL}")
                         if hasattr(self.ui, 'card_net_down_sub'):
                             self.ui.card_net_down_sub.setText(f"{self.i18n.GRAPH_AVG_SHORT} {stats['avg_down']:.1f} | {self.i18n.GRAPH_PEAK_SHORT} {stats['max_down']:.1f}")
                         if hasattr(self.ui, 'card_net_up_val'):
-                            self.ui.card_net_up_val.setText(f"\u2191 {up_mbps:.1f} Mbps")
+                            self.ui.card_net_up_val.setText(f"\u2191 {up_mbps:.1f} {self.i18n.MBITS_LABEL}")
                         if hasattr(self.ui, 'card_net_up_sub'):
                             self.ui.card_net_up_sub.setText(f"{self.i18n.GRAPH_AVG_SHORT} {stats['avg_up']:.1f} | {self.i18n.GRAPH_PEAK_SHORT} {stats['max_up']:.1f}")
 
                         # Header stats (keep Overview consistent with Network tab)
-                        self.ui.max_stat_val.setText(f"\u2193 {stats['max_down']:.1f}  \u2191 {stats['max_up']:.1f} Mbps")
-                        self.ui.avg_stat_val.setText(f"\u2193 {stats['avg_down']:.1f}  \u2191 {stats['avg_up']:.1f} Mbps")
+                        self.ui.max_stat_val.setText(f"\u2193 {stats['max_down']:.1f}  \u2191 {stats['max_up']:.1f} {self.i18n.MBITS_LABEL}")
+                        self.ui.avg_stat_val.setText(f"\u2193 {stats['avg_down']:.1f}  \u2191 {stats['avg_up']:.1f} {self.i18n.MBITS_LABEL}")
 
                         t_up_v, t_up_u = helpers.format_data_size(total_up, self.i18n)
                         t_dw_v, t_dw_u = helpers.format_data_size(total_down, self.i18n)
@@ -590,8 +591,8 @@ class GraphWindow(QWidget):
                     self.ui.total_stat_val.setText(self.i18n.COLLECTING_DATA_MESSAGE)
             elif tab_index == 1: # Network
                 stats = GraphLogic.calculate_stats(history_data)
-                self.ui.max_stat_val.setText(f"↓ {stats['max_down']:.1f}  ↑ {stats['max_up']:.1f} Mbps")
-                self.ui.avg_stat_val.setText(f"↓ {stats['avg_down']:.1f}  ↑ {stats['avg_up']:.1f} Mbps")
+                self.ui.max_stat_val.setText(f"↓ {stats['max_down']:.1f}  ↑ {stats['max_up']:.1f} {self.i18n.MBITS_LABEL}")
+                self.ui.avg_stat_val.setText(f"↓ {stats['avg_down']:.1f}  ↑ {stats['avg_up']:.1f} {self.i18n.MBITS_LABEL}")
                 t_up_v, t_up_u = helpers.format_data_size(total_up, self.i18n)
                 t_dw_v, t_dw_u = helpers.format_data_size(total_down, self.i18n)
                 self.ui.total_stat_val.setText(f"↓ {t_dw_v}{t_dw_u}  ↑ {t_up_v}{t_up_u}")

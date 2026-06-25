@@ -298,14 +298,18 @@ class WidgetRenderer:
             total_height = (line_height * 2) + vertical_gap
             top_y = int((height - total_height) / 2 + ascent)
             
-            # Draw top line (upload by default, download when swapped)
+            # Draw top line (upload by default, download when swapped).
+            # Pass the canonical bytes/sec value (not the formatted string) so color
+            # banding can compare against the Mbps thresholds regardless of display unit.
             top_val, top_unit, top_is_upload = (dw_val, dw_unit, False) if config.swap_upload_download else (up_val, up_unit, True)
-            self._draw_speed_line(painter, top_is_upload, top_val, top_unit, arrow_x, number_x, unit_x, top_y, config, number_area_width)
+            top_raw = upload if top_is_upload else download
+            self._draw_speed_line(painter, top_is_upload, top_val, top_unit, top_raw, arrow_x, number_x, unit_x, top_y, config, number_area_width)
 
             # Draw bottom line (download by default, upload when swapped)
             dw_y = top_y + line_height + vertical_gap
             bot_val, bot_unit, bot_is_upload = (up_val, up_unit, True) if config.swap_upload_download else (dw_val, dw_unit, False)
-            self._draw_speed_line(painter, bot_is_upload, bot_val, bot_unit, arrow_x, number_x, unit_x, dw_y, config, number_area_width)
+            bot_raw = upload if bot_is_upload else download
+            self._draw_speed_line(painter, bot_is_upload, bot_val, bot_unit, bot_raw, arrow_x, number_x, unit_x, dw_y, config, number_area_width)
 
             # Update bounding rect for context menu positioning
             max_unit_width = max(self.metrics.horizontalAdvance(up_unit), self.metrics.horizontalAdvance(dw_unit)) if not config.hide_unit_suffix else 0
@@ -315,30 +319,36 @@ class WidgetRenderer:
         except Exception as e:
             self.logger.error("Failed to draw network speeds: %s", e)
 
-    def _draw_speed_line(self, painter: QPainter, is_upload: bool, val: str, unit: str, arrow_x: int, number_x: int, unit_x: int, y: int, config: RenderConfig, number_area_width: int) -> None:
+    @staticmethod
+    def _speed_band(raw_bytes: float, high_threshold_mbps: float, low_threshold_mbps: float) -> str:
+        """
+        Return the color band ('high' | 'low' | 'default') for a speed.
+
+        `raw_bytes` is the canonical speed in bytes/sec; it is converted to Mbps —
+        the unit the high/low thresholds are defined in — before comparison. This is
+        deliberately independent of the on-screen display unit: parsing the displayed
+        number (which may be in Kbps, MB/s, ...) banded incorrectly whenever that unit
+        wasn't Mbps. Bands ascend: default (< low) -> low (low..high) -> high (>= high).
+        """
+        try:
+            mbps = (raw_bytes * constants.network.units.BITS_PER_BYTE) / constants.network.units.MEGA_DIVISOR
+            if mbps >= high_threshold_mbps:
+                return 'high'
+            if mbps >= low_threshold_mbps:
+                return 'low'
+        except (TypeError, ValueError):
+            return 'default'
+        # Below the low threshold (incl. idle/0) uses the Default Color so the widget
+        # matches the tray default at rest. (issue #153)
+        return 'default'
+
+    def _draw_speed_line(self, painter: QPainter, is_upload: bool, val: str, unit: str, raw_bytes: float, arrow_x: int, number_x: int, unit_x: int, y: int, config: RenderConfig, number_area_width: int) -> None:
         """Unified helper to draw a single speed line (Arrow + Value + Unit) with stable alignment."""
-        # Color coding
+        # Color coding — band by the canonical speed (see _speed_band), never the
+        # on-screen number, so banding is correct in every display unit.
         if config.color_coding:
-            try:
-                # Parse back to float, respecting the locale decimal separator.
-                # e.g. German "99,9" must become "99.9", not "999".
-                decimal_sep = getattr(self.i18n, 'DECIMAL_SEPARATOR', '.')
-                if decimal_sep == ',':
-                    clean_val = val.replace(' ', '').replace(',', '.').strip()
-                else:
-                    clean_val = val.replace(',', '').replace(' ', '').strip()
-                f_val = float(clean_val)
-                if f_val >= config.high_speed_threshold:
-                    painter.setPen(self._cached_pens['high'])
-                elif f_val >= config.low_speed_threshold:
-                    painter.setPen(self._cached_pens['low'])
-                else:
-                    # Below the low threshold (incl. idle/0) uses the Default Color so
-                    # the widget matches the tray default at rest. Bands are ascending:
-                    # default (< low) -> low (low..high) -> high (>= high). (issue #153)
-                    painter.setPen(self._cached_pens['default'])
-            except:
-                painter.setPen(self._cached_pens['default'])
+            band = self._speed_band(raw_bytes, config.high_speed_threshold, config.low_speed_threshold)
+            painter.setPen(self._cached_pens[band])
         else:
             painter.setPen(self._cached_pens['default'])
 
@@ -567,22 +577,22 @@ class WidgetRenderer:
             graph_rect = QRect(side_margin, top_margin, width - (side_margin * 2), height - (top_margin + bottom_margin))
             if graph_rect.width() <= 0 or graph_rect.height() <= 0: return
 
-            # Hash check for caching
-            current_hash = hash((tuple(history), is_hardware))
+            # Cache key for the (expensive) polyline recompute below. The history is an
+            # append-only, time-ordered sliding window, so (first, last, length) uniquely
+            # identifies its contents — an O(1) key instead of hashing all ~N points every
+            # paint. (len >= MIN_GRAPH_POINTS here, so [0]/[-1] are safe.)
+            current_hash = hash((history[0], history[-1], len(history), is_hardware))
 
             if self._last_widget_size != (width, height) or self._last_history_hash != current_hash:
-                num_points = len(history)
-                
                 if is_hardware:
-                    from netspeedtray.core.widget_state import HardwareStatSnapshot
                     # Hardware is 0-100%
                     max_y = 100.0
                 else:
-                    # Speed history
+                    # Speed history (history is non-empty here: len >= MIN_GRAPH_POINTS)
                     max_speed_val = max(
                         max(d.upload for d in history),
                         max(d.download for d in history)
-                    ) if history else 0
+                    )
                     
                     if len(history) > 10:
                         all_speeds = [d.upload for d in history] + [d.download for d in history]

@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
 # --- Custom Application Imports ---
 from netspeedtray import constants
 from netspeedtray.utils import styles as style_utils
+from netspeedtray.utils.window_state import restore_window_position, save_window_position
 from netspeedtray.utils.helpers import get_app_data_path, get_app_asset_path
 from netspeedtray.utils.styles import is_dark_mode
 from netspeedtray.utils.support_bundle import build_support_bundle
@@ -139,13 +140,21 @@ class SettingsDialog(QDialog):
             width = min(desired_w, avail.width() - 80)
             height = min(700, avail.height() - 80)
             self.resize(max(640, width), max(450, height))
-            # Center on available geometry (excludes taskbar)
-            self.move(
-                avail.center().x() - self.width() // 2,
-                avail.center().y() - self.height() // 2
-            )
+            # Restore the last-used position (clamped to this screen); else center.
+            if not restore_window_position(self, self.config, "settings_window_pos"):
+                self.move(
+                    avail.center().x() - self.width() // 2,
+                    avail.center().y() - self.height() // 2
+                )
         else:
             self.resize(max(640, desired_w), 700)
+
+        # NOTE: unlike the Graph / App Activity windows, the Settings dialog does NOT
+        # auto-save its position on move. During a live preview it mutates the live
+        # config in memory (handle_settings_changed save_to_disk=False), so a debounced
+        # move-save would flush those un-applied edits to disk — which Cancel wouldn't
+        # undo. The dialog is always closed via Save/Cancel/X, whose handlers persist
+        # the position AFTER the apply/revert, so the close-path save is leak-free.
 
         self.logger.debug("SettingsDialog initialization completed.")
 
@@ -282,18 +291,13 @@ class SettingsDialog(QDialog):
             self.units_page.load_settings(self.config)
             self.interfaces_page.load_settings(self.config)
             
-            # Restore window position if saved (validate against available geometry)
-            saved_pos = self.config.get("settings_window_pos")
-            if saved_pos and isinstance(saved_pos, dict):
-                 x, y = saved_pos.get("x"), saved_pos.get("y")
-                 if x is not None and y is not None:
-                     screen = self.screen() or QApplication.primaryScreen()
-                     if screen:
-                         avail = screen.availableGeometry()
-                         x = max(avail.left(), min(x, avail.right() - self.width()))
-                         y = max(avail.top(), min(y, avail.bottom() - self.height()))
-                     self.move(x, y)
-                     self.logger.debug(f"Restored Settings Dialog position to ({x}, {y})")
+            # Restore window position via the shared helper so reopen is multi-monitor
+            # safe and consistent with the first-open path. This runs on every reopen
+            # (reset_with_config -> _init_ui_state), where the __init__ auto-size restore
+            # does not. The old hand-rolled clamp used self.screen(), which reports the
+            # primary screen for a not-yet-shown window and yanked secondary-monitor
+            # positions back to primary.
+            restore_window_position(self, self.config, "settings_window_pos")
 
         except Exception as e:
              self.logger.error(f"Error initializing UI state: {e}", exc_info=True)
@@ -504,6 +508,9 @@ class SettingsDialog(QDialog):
                     self.i18n.LANGUAGE_RESTART_MESSAGE
                 )
                 
+            # Persist the position after the settings save so it can't be clobbered
+            # by the saved config snapshot.
+            save_window_position(self, self.parent_widget, "settings_window_pos")
             self.hide()
             self.logger.info("Settings saved and dialog hidden.")
         except Exception as e:
@@ -514,9 +521,13 @@ class SettingsDialog(QDialog):
             )
 
     def _cancel_and_close(self) -> None:
-        """Reverts and closes."""
+        """Reverts settings, then persists the window position, then closes."""
         if hasattr(self.parent_widget, 'handle_settings_changed'):
             self.parent_widget.handle_settings_changed(self.original_config, save_to_disk=False)
+        # Save the position AFTER the revert: handle_settings_changed merges
+        # original_config back into the live config, which would otherwise clobber
+        # settings_window_pos with the value from when the dialog opened.
+        save_window_position(self, self.parent_widget, "settings_window_pos")
         self.hide()
 
     def closeEvent(self, event: QCloseEvent) -> None:

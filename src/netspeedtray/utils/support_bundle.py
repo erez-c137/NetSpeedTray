@@ -98,11 +98,16 @@ def _collect_system_info(config: Dict[str, Any]) -> str:
         for i, screen in enumerate(screens, start=1):
             geom = screen.geometry()
             avail = screen.availableGeometry()
+            dpr = screen.devicePixelRatio()
             primary_tag = " (primary)" if screen == app.primaryScreen() else ""
+            # geometry() is in Qt LOGICAL pixels; scale by the DPI ratio for the native
+            # panel resolution so a high-DPI display isn't mislabeled (issue #152).
+            native_w, native_h = round(geom.width() * dpr), round(geom.height() * dpr)
             lines.append(
                 f"  Monitor {i}{primary_tag}: "
-                f"{geom.width()}x{geom.height()} @ DPI scale {screen.devicePixelRatio():.2f}, "
-                f"available {avail.width()}x{avail.height()}"
+                f"{native_w}x{native_h} native ({geom.width()}x{geom.height()} logical) "
+                f"@ DPI scale {dpr:.2f}, "
+                f"available {avail.width()}x{avail.height()} logical"
             )
     else:
         lines.append("Monitors detected:    <Qt application not running>")

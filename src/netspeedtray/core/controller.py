@@ -32,10 +32,12 @@ class StatsController(QObject):
     # New signals for hardware utilization (%)
     cpu_usage_updated = pyqtSignal(float)
     gpu_usage_updated = pyqtSignal(float)
-    cpu_temp_updated = pyqtSignal(float)
-    gpu_temp_updated = pyqtSignal(float)
-    cpu_power_updated = pyqtSignal(float)
-    gpu_power_updated = pyqtSignal(float)
+    # object (not float) so None can be forwarded when a sensor drops, letting the
+    # widget clear a stale reading to "(N/A)" instead of freezing the last value.
+    cpu_temp_updated = pyqtSignal(object)
+    gpu_temp_updated = pyqtSignal(object)
+    cpu_power_updated = pyqtSignal(object)
+    gpu_power_updated = pyqtSignal(object)
     ram_info_updated = pyqtSignal(float, float) # (used, total) in GB
     vram_info_updated = pyqtSignal(float, float) # (used, total) in GB
 
@@ -100,10 +102,6 @@ class StatsController(QObject):
         if 'cpu' in stats or 'gpu' in stats:
             cpu = stats.get('cpu')
             gpu = stats.get('gpu')
-            cpu_temp = stats.get('cpu_temp')
-            gpu_temp = stats.get('gpu_temp')
-            cpu_power = stats.get('cpu_power')
-            gpu_power = stats.get('gpu_power')
             ram_used = stats.get('ram_used')
             ram_total = stats.get('ram_total')
             vram_used = stats.get('vram_used')
@@ -118,14 +116,18 @@ class StatsController(QObject):
                 self.gpu_usage_updated.emit(gpu)
                 if self.widget_state:
                     self.widget_state.add_hardware_stat('gpu', gpu)
-            if cpu_temp is not None:
-                self.cpu_temp_updated.emit(cpu_temp)
-            if gpu_temp is not None:
-                self.gpu_temp_updated.emit(gpu_temp)
-            if cpu_power is not None:
-                self.cpu_power_updated.emit(cpu_power)
-            if gpu_power is not None:
-                self.gpu_power_updated.emit(gpu_power)
+            # Forward temp/power whenever the thread reported the key, even if the
+            # value is None (sensor unavailable this poll). Emitting None lets the
+            # widget clear a stale reading to "(N/A)" rather than freezing the last
+            # good value forever. An absent key (feature disabled) emits nothing.
+            if 'cpu_temp' in stats:
+                self.cpu_temp_updated.emit(stats['cpu_temp'])
+            if 'gpu_temp' in stats:
+                self.gpu_temp_updated.emit(stats['gpu_temp'])
+            if 'cpu_power' in stats:
+                self.cpu_power_updated.emit(stats['cpu_power'])
+            if 'gpu_power' in stats:
+                self.gpu_power_updated.emit(stats['gpu_power'])
                 
             # 4. Handle RAM / VRAM Info
             if stats.get('ram_used') is not None and stats.get('ram_total') is not None:
@@ -304,14 +306,22 @@ class StatsController(QObject):
 
 
     def cleanup(self) -> None:
-        """Cleanup resources."""
+        """Cleanup resources: disconnect every signal wired in set_view()."""
         if self.view:
             try:
                 self.display_speed_updated.disconnect(self.view.update_display_speeds)
-                if hasattr(self.view, 'update_cpu_usage'):
-                    self.cpu_usage_updated.disconnect(self.view.update_cpu_usage)
-                if hasattr(self.view, 'update_gpu_usage'):
-                    self.gpu_usage_updated.disconnect(self.view.update_gpu_usage)
+                for sig, slot in (
+                    (self.cpu_usage_updated, 'update_cpu_usage'),
+                    (self.gpu_usage_updated, 'update_gpu_usage'),
+                    (self.cpu_temp_updated, 'update_cpu_temp'),
+                    (self.gpu_temp_updated, 'update_gpu_temp'),
+                    (self.cpu_power_updated, 'update_cpu_power'),
+                    (self.gpu_power_updated, 'update_gpu_power'),
+                    (self.ram_info_updated, 'update_ram_info'),
+                    (self.vram_info_updated, 'update_vram_info'),
+                ):
+                    if hasattr(self.view, slot):
+                        sig.disconnect(getattr(self.view, slot))
             except (TypeError, RuntimeError):
                 pass
             self.view = None

@@ -115,14 +115,15 @@ def get_reference_value_string(force_mega_unit: bool, decimal_places: int, unit_
     Returns a reference number string (e.g., '888.8' or '8888.88') used to 
     calculate the maximum width needed for speed values in the UI.
     """
-    # Logic driven by 'unit used' as per user request.
-    is_bytes = unit_type.startswith("bytes")
-    
     # Base integer part depends on min_digits requested
     integer_part = "8" * min_digits
-    
-    # Overrides for specific display modes if min_digits wasn't forced higher
-    if min_digits < 4 and force_mega_unit and not is_bytes:
+
+    # In always_mbps mode the value is shown in the mega unit, which reaches four
+    # integer digits at multi-gig speeds (e.g. 1250 MB/s or ~1192 MiB/s at 10GbE,
+    # 10000 Mbps). Reserve 4 digits for BOTH bits and bytes so the widget is sized
+    # wide enough and the renderer doesn't clip the text (issue #106). `is_bytes` is
+    # intentionally not excluded here — that exclusion was the truncation bug.
+    if min_digits < 4 and force_mega_unit:
         integer_part = "8888"
 
     if decimal_places > 0:
