@@ -6,9 +6,12 @@ restore falls back cleanly when there's no valid saved position, clamps an
 off-screen position back onto the available geometry, and save persists
 {x, y} via the main widget's ConfigManager.
 """
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from netspeedtray.utils.window_state import restore_window_position, save_window_position
+
+# Where QApplication is imported in the module under test (for patching screenAt).
+_SCREEN_AT = "netspeedtray.utils.window_state.QApplication.screenAt"
 
 
 def _mock_screen(left=0, top=0, right=1920, bottom=1080):
@@ -41,17 +44,33 @@ def test_restore_returns_false_without_valid_saved_position():
 
 
 def test_restore_moves_to_saved_in_bounds_position():
+    # screenAt -> None: the saved point isn't resolvable to a connected screen, so
+    # it falls back to window.screen() (the single mocked primary).
     window = _mock_window()
-    assert restore_window_position(window, {"k": {"x": 100, "y": 200}}, "k") is True
+    with patch(_SCREEN_AT, return_value=None):
+        assert restore_window_position(window, {"k": {"x": 100, "y": 200}}, "k") is True
     window.move.assert_called_once_with(100, 200)
 
 
 def test_restore_clamps_offscreen_position_onto_available_geometry():
     # Window 400x300 on a 1920x1080 work area; saved far off the bottom-right.
     window = _mock_window(width=400, height=300, screen=_mock_screen())
-    assert restore_window_position(window, {"k": {"x": 5000, "y": 2000}}, "k") is True
+    with patch(_SCREEN_AT, return_value=None):
+        assert restore_window_position(window, {"k": {"x": 5000, "y": 2000}}, "k") is True
     # Clamped to (right - width, bottom - height) == (1520, 780).
     window.move.assert_called_once_with(1520, 780)
+
+
+def test_restore_resolves_screen_from_saved_point_multimonitor():
+    # Regression: an unshown top-level window reports the PRIMARY screen, so clamping
+    # to window.screen() would yank a secondary-monitor position back to primary.
+    # The saved point (3000,200) is on a secondary monitor at x:1920..3840 — restore
+    # must resolve and clamp to THAT screen, not the primary.
+    secondary = _mock_screen(left=1920, top=0, right=3840, bottom=1080)
+    window = _mock_window(width=400, height=300, screen=_mock_screen())  # window.screen() == primary
+    with patch(_SCREEN_AT, return_value=secondary):
+        assert restore_window_position(window, {"k": {"x": 3000, "y": 200}}, "k") is True
+    window.move.assert_called_once_with(3000, 200)  # stays on the secondary monitor
 
 
 # --- save -------------------------------------------------------------------

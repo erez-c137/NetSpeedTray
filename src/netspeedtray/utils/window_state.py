@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, Optional
 
-from PyQt6.QtCore import QEvent, QObject, QTimer
+from PyQt6.QtCore import QEvent, QObject, QPoint, QTimer
 from PyQt6.QtWidgets import QApplication, QWidget
 
 logger = logging.getLogger(__name__)
@@ -37,11 +37,16 @@ def restore_window_position(window: QWidget, config: Dict[str, Any], key: str) -
         if x is None or y is None:
             return False
         x, y = int(x), int(y)
-        screen = window.screen() or QApplication.primaryScreen()
+        # Resolve the target screen from the SAVED point, not window.screen(): an
+        # unshown top-level widget reports the PRIMARY screen, so clamping to that
+        # would yank a position saved on a secondary monitor back onto the primary
+        # one. Fall back to the window's screen / primary only when the saved point
+        # is on no currently-connected monitor (e.g. that display was unplugged).
+        screen = QApplication.screenAt(QPoint(x, y)) or window.screen() or QApplication.primaryScreen()
         if screen is not None:
             avail = screen.availableGeometry()
-            # Keep the whole window on-screen even if it was saved off the edge
-            # or on a monitor that is no longer connected.
+            # Keep the whole window on the resolved screen even if it was saved off
+            # the edge or on a monitor that is no longer connected.
             x = max(avail.left(), min(x, avail.right() - window.width()))
             y = max(avail.top(), min(y, avail.bottom() - window.height()))
         window.move(x, y)
