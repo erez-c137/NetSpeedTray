@@ -256,7 +256,7 @@ class GraphWindow(QWidget):
 
         # Update absolute string headers
         if hasattr(self.ui, 'title_label'):
-            titles = [self.i18n.OVERVIEW_TAB_LABEL, self.i18n.SPEED_GRAPH_TITLE, self.i18n.ORDER_TYPE_CPU, self.i18n.ORDER_TYPE_GPU]
+            titles = [self.i18n.OVERVIEW_TAB_LABEL, self.i18n.SPEED_GRAPH_TAB_LABEL, self.i18n.ORDER_TYPE_CPU, self.i18n.ORDER_TYPE_GPU]
             if 0 <= index < len(titles):
                 self.ui.title_label.setText(titles[index])
                 
