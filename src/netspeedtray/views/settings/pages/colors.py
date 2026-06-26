@@ -42,7 +42,7 @@ class ColorsPage(QWidget):
             cc_v_layout.addWidget(QLabel(label))
             spin = QDoubleSpinBox()
             spin.setRange(0, 10000)
-            spin.setSuffix(" Mbps")
+            spin.setSuffix(f" {self.i18n.MBITS_UNIT}")
             spin.setToolTip(getattr(self.i18n, f"{key.upper()}_THRESHOLD_TOOLTIP", ""))
             spin.valueChanged.connect(self.on_change)
             setattr(self, f"{key}_threshold", spin)

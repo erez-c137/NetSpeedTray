@@ -412,7 +412,7 @@ class SettingsDialog(QDialog):
             
         initial_hex = current_settings.get(key_name, "#FFFFFF")
         
-        color = QColorDialog.getColor(QColor(initial_hex), self, "Select Color")
+        color = QColorDialog.getColor(QColor(initial_hex), self, self.i18n.SELECT_COLOR_TITLE)
         if color.isValid():
             new_hex = color.name().upper()
             if key_name in ["high_speed_color", "low_speed_color"]:

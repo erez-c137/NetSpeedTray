@@ -46,6 +46,7 @@ def mock_i18n():
     i18n.HIGH_SPEED_COLOR_TOOLTIP = "Select High Color"
     i18n.LOW_SPEED_COLOR_LABEL = "Low Color"
     i18n.LOW_SPEED_COLOR_TOOLTIP = "Select Low Color"
+    i18n.MBITS_UNIT = "Mbps"  # threshold spin-box suffix
     i18n.MINI_GRAPH_SETTINGS_GROUP = "Graph"
     i18n.ENABLE_GRAPH_LABEL = "Enable"
     i18n.GRAPH_NOTE_TEXT = "Note"
