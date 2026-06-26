@@ -213,10 +213,18 @@ class WidgetState(QObject):
 
         reset_day = self.config.get("data_cap_reset_day", 1)
         pk = self._compute_period_key(reset_day)
-        if pk != u["period_key"]:
+        # Re-anchor ONLY on a genuine forward rollover. ISO date strings sort lexically,
+        # so '>' (not '!=') means a backward clock/DST shift can't wipe the running total,
+        # and the empty initial key is still "less" than any real date (first anchor set).
+        # Persist the re-anchor immediately so a crash in the throttle window can't
+        # mis-report a fresh period as a full one.
+        if pk > u["period_key"]:
             u["anchor_up"] = u["cumulative_up"]
             u["anchor_down"] = u["cumulative_down"]
             u["period_key"] = pk
+            self._persist_usage_now()
+            self._usage_last_persist = time.time()
+            return
 
         now = time.time()
         if now - self._usage_last_persist >= 30:
@@ -651,6 +659,9 @@ class WidgetState(QObject):
         self.batch_persist_timer.stop()
         self.maintenance_timer.stop()
         self.flush_batch()
+        # Persist the final odometer tail so the ~30s throttle window isn't lost on exit
+        # (no-op if the counter was never loaded). The worker drains this before stopping.
+        self._persist_usage_now()
 
         # Close persistent read connections
         with self._read_conns_lock:

@@ -235,7 +235,9 @@ class StatsController(QObject):
                 self.widget_state.add_speed_data(self.current_speed_data, aggregated_up=agg_upload, aggregated_down=agg_download)
                 # Feed the odometer the exact aggregated bytes transferred this poll
                 # (same interface selection as the display, but raw deltas not rates).
-                agg_up_bytes, agg_down_bytes = self._aggregate_for_display(byte_deltas)
+                # resolve_primary=False reuses the primary already resolved above, so we
+                # don't run the blocking routing lookup twice per poll.
+                agg_up_bytes, agg_down_bytes = self._aggregate_for_display(byte_deltas, resolve_primary=False)
                 self.widget_state.add_usage_bytes(agg_up_bytes, agg_down_bytes)
 
         upload_mbps = (agg_upload * 8) / 1_000_000
@@ -254,8 +256,11 @@ class StatsController(QObject):
         return [name for name, (up_speed, down_speed) in self.current_speed_data.items() if up_speed > 1.0 or down_speed > 1.0]
 
 
-    def _aggregate_for_display(self, per_interface_speeds: Dict[str, Tuple[float, float]]) -> Tuple[float, float]:
-        """Aggregates speeds based on mode."""
+    def _aggregate_for_display(self, per_interface_speeds: Dict[str, Tuple[float, float]],
+                               resolve_primary: bool = True) -> Tuple[float, float]:
+        """Aggregates speeds based on mode. `resolve_primary=False` reuses the already-
+        resolved primary interface (auto mode) without re-running the blocking routing
+        lookup — used for the second (byte-delta) aggregation in the same poll."""
         mode = self.config.get("interface_mode", "auto")
 
         if mode == "selected":
@@ -265,7 +270,8 @@ class StatsController(QObject):
             return total_up, total_down
 
         elif mode == "auto":
-            self._update_primary_interface_name()
+            if resolve_primary:
+                self._update_primary_interface_name()
             return per_interface_speeds.get(self.primary_interface, (0.0, 0.0)) if self.primary_interface else (0.0, 0.0)
 
         elif mode == "all_physical":

@@ -265,7 +265,7 @@ class ConfigConstants:
         "data_cap_enabled": {"type": bool, "default": False},
         "data_cap_gb": {"type": (int, float), "default": 0.0, "min": 0.0, "max": 1_000_000.0},
         "data_cap_reset_day": {"type": int, "default": 1, "min": 1, "max": 28},
-        "data_cap_count": {"type": str, "default": "total", "allowed": ["total", "download", "upload"]},
+        "data_cap_count": {"type": str, "default": "total", "choices": ["total", "download", "upload"]},
         "data_cap_alert_enabled": {"type": bool, "default": True},
         "usage_alert_state": {"type": str, "default": ""},
     }

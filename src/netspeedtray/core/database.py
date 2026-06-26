@@ -67,7 +67,9 @@ class DatabaseWorker(QThread):
             return
 
         self.logger.debug("Database worker thread started successfully.")
-        while not self._stop_event.is_set():
+        # Drain the queue fully before exiting: the queue is checked BEFORE the stop flag,
+        # so final flush/persist tasks (incl. the odometer tail) are never dropped at exit.
+        while True:
             if self._queue:
                 task, data = self._queue.popleft()
                 try:
@@ -76,6 +78,8 @@ class DatabaseWorker(QThread):
                     self.logger.error("Database error during task execution: %s", e)
                     if "closed" in str(e).lower() or "database is locked" in str(e).lower():
                         self._reconnect()
+            elif self._stop_event.is_set():
+                break
             else:
                 self.msleep(100)
 

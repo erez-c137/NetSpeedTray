@@ -84,6 +84,19 @@ def test_new_period_reanchors_and_resets_this_period():
     assert s._usage["period_key"] == "2026-06-01"
 
 
+def test_backward_period_does_not_reanchor():
+    # A backward clock/DST shift yields an earlier period key — it must NOT wipe the
+    # running total (only a strictly-newer period re-anchors).
+    s = _fake_state(period_key="2026-06-01")
+    s._compute_period_key = lambda *a, **k: "2026-06-01"  # same period
+    WidgetState.add_usage_bytes(s, 1000.0, 1000.0)  # establish some usage in the period
+    s._compute_period_key = lambda *a, **k: "2026-05-01"  # clock jumps backward
+    WidgetState.add_usage_bytes(s, 500.0, 500.0)
+    assert s._usage["period_key"] == "2026-06-01"   # unchanged
+    up, down = WidgetState.get_usage_this_period(s)
+    assert up == 1500.0 and down == 1500.0          # nothing wiped
+
+
 def test_persist_enqueues_when_due():
     s = _fake_state()
     s._compute_period_key = lambda *a, **k: "2026-06-01"
