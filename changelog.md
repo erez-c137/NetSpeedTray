@@ -4,9 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ---
 
-## [1.3.4] - June 26, 2026
+## [2.0.0] - June 26, 2026
 
-A stabilization and foundation release. No new user-facing features — instead a broad sweep of bug fixes (several surfaced by an internal design pass and a multi-agent adversarial code review), correctness and robustness hardening, the project's first CI pipeline, and a large jump in test coverage. This de-risks the larger v1.4 work.
+**The widget is now a true part of the taskbar.** Since v1.0 the speed readout has lived in a separate always-on-top window perched over the taskbar — which meant it could fall behind the taskbar, flicker when you clicked around the shell, and disappear (sometimes until you clicked into another window) the moment you opened the Start menu or a system flyout. This release re-architects how the widget sits in the desktop: it's now Z-order–docked to the taskbar so the Windows shell can no longer cover it. After years of chasing this, the widget finally behaves like it belongs there — significant enough to the widget's identity to warrant the major version bump.
+
+This release also folds in the entire (previously unreleased) v1.3.4 stabilization work: a broad sweep of bug fixes — including a **critical** logging fix — correctness and robustness hardening, the project's first CI pipeline, and a large jump in test coverage.
+
+### Taskbar Integration
+
+- **The widget no longer disappears behind the taskbar.** It used to be a separate top-level window competing with the taskbar for the same pixels, so any time the shell raised the taskbar — opening the **Start menu**, the **Wi-Fi/Sound (Quick Settings)** flyout, the **tray overflow**, or simply clicking the taskbar — the taskbar would land on top and the widget would vanish, often staying hidden until another window took focus. The widget is now an **owned window of the taskbar**, so Windows keeps it above the taskbar at all times. It stays put through every shell interaction, and recovers automatically after an Explorer restart.
+- **No more taskbar-click flicker.** Clicking the taskbar, switching foreground windows, or opening the tray overflow no longer makes the widget blink. Two separate causes were fixed: a lost "re-assert position the instant the taskbar takes focus" step (accidentally dropped in an earlier refactor), and a redundant Z-order "re-promotion" that briefly dropped the translucent widget out of the top layer for a frame — now unnecessary thanks to the taskbar docking.
+- **Fullscreen hide/show is now near-instant, in both directions.** When an app goes fullscreen the widget hides with the taskbar, and reappears the moment you exit — every time, including the first, and including apps that go fullscreen *without* changing focus (e.g. double-clicking a video). Previously the transition could lag up to a second.
 
 ### Fixed
 - **Color coding used the on-screen number instead of the real speed:** The High/Low color thresholds are defined in Mbps, but the widget compared them against whatever value was displayed — so in Kbps, Gbps, or bytes display modes the bands triggered at the wrong speeds (e.g. a 0.5 Mbps stream shown as "500 Kbps" was treated as fast, and a fast stream shown in MB/s could be treated as slow). Banding is now computed from the canonical Mbps speed regardless of the display unit.
@@ -38,7 +46,7 @@ A stabilization and foundation release. No new user-facing features — instead 
 - **Dead-code removal:** Deleted an unused legacy `VisibilityManager` module (superseded by `SystemEventHandler`) plus several orphaned methods and imports.
 
 ### Tests
-- Test count grew from **196 to 328** (+132), plus 2 documented `xfail`s. New coverage: `format_speed` (units, binary/decimal, locale separator, edges), window-position save/restore (incl. multi-monitor) and the debounced move-saver, the layout reference-width logic behind the #106 fix, the update checker's version comparison + interval/skip logic, a dead-translation-key scanner, `ConfigManager` save/load round-tripping, the hardware temp/power clear-to-N/A behavior, and a guard that `config.py` imports `logging.handlers`. Plus the first **headless GUI tests** (pytest-qt): the Settings dialog driven by real Save/Cancel clicks with a round-trip assertion, App Activity and Graph window smoke, and **render-pixel verification** of the color-coding bands and hardware stats.
+- Test count grew from **196 to 335** (+139), plus 2 documented `xfail`s. New coverage: `format_speed` (units, binary/decimal, locale separator, edges), window-position save/restore (incl. multi-monitor) and the debounced move-saver, the layout reference-width logic behind the #106 fix, the update checker's version comparison + interval/skip logic, a dead-translation-key scanner, `ConfigManager` save/load round-tripping, the hardware temp/power clear-to-N/A behavior, and a guard that `config.py` imports `logging.handlers`. The taskbar-integration work added tests for the immediate taskbar-focus re-assert and the edge-triggered fullscreen hide/show poll (enter/exit, multi-monitor-safe, quiet at steady state). Plus the first **headless GUI tests** (pytest-qt): the Settings dialog driven by real Save/Cancel clicks with a round-trip assertion, App Activity and Graph window smoke, and **render-pixel verification** of the color-coding bands and hardware stats.
 
 ---
 
