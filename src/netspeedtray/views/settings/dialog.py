@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from netspeedtray.views.widget import NetworkSpeedWidget
 
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
-from PyQt6.QtGui import QColor, QFont, QIcon, QCloseEvent
+from PyQt6.QtGui import QColor, QFont, QIcon, QCloseEvent, QShowEvent
 from PyQt6.QtWidgets import (
     QApplication, QColorDialog, QDialog, QFileDialog, QFontDialog,
     QHBoxLayout, QListWidget, QMessageBox, QPushButton, QScrollArea,
@@ -33,6 +33,7 @@ from netspeedtray.utils.window_state import restore_window_position, save_window
 from netspeedtray.utils.helpers import get_app_data_path, get_app_asset_path
 from netspeedtray.utils.styles import is_dark_mode
 from netspeedtray.utils.support_bundle import build_support_bundle
+from netspeedtray.utils.dwm import apply_win11_chrome
 
 # --- Settings Pages ---
 from netspeedtray.views.settings.pages.units import UnitsPage
@@ -529,6 +530,17 @@ class SettingsDialog(QDialog):
         # settings_window_pos with the value from when the dialog opened.
         save_window_position(self, self.parent_widget, "settings_window_pos")
         self.hide()
+
+    def showEvent(self, event: QShowEvent) -> None:
+        super().showEvent(event)
+        # Native Win11 chrome (dark title bar + rounded corners), applied at
+        # show-time so the native handle exists. Fail-safe: a silent no-op on
+        # Windows 10 / older builds. Mica stays off until the dialog surface is
+        # reworked translucent (see utils/dwm.py).
+        try:
+            apply_win11_chrome(int(self.winId()), dark=is_dark_mode())
+        except Exception as e:
+            self.logger.debug(f"Win11 chrome not applied: {e}")
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self._cancel_and_close()

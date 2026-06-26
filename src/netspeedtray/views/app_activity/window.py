@@ -29,6 +29,8 @@ from netspeedtray import constants
 from netspeedtray.utils import helpers
 from netspeedtray.utils.rdp_utils import is_rdp_session
 from netspeedtray.utils.window_state import attach_position_memory, restore_window_position, save_window_position
+from netspeedtray.utils.dwm import apply_win11_chrome
+from netspeedtray.utils.styles import is_dark_mode
 from netspeedtray.views.app_activity.worker import AppActivityWorker
 
 
@@ -184,6 +186,12 @@ class AppActivityWindow(QWidget):
 
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
+        # Native Win11 chrome (dark title bar + rounded corners), applied at
+        # show-time so the native handle exists.
+        try:
+            apply_win11_chrome(int(self.winId()), dark=is_dark_mode())
+        except Exception:
+            pass
         if not self._refresh_timer.isActive():
             self._refresh_timer.start()
         QTimer.singleShot(0, self.request_sample.emit)

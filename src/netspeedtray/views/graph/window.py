@@ -31,6 +31,7 @@ from PyQt6.QtWidgets import (
 from netspeedtray import constants
 from netspeedtray.utils import helpers, styles as style_utils
 from netspeedtray.utils.window_state import attach_position_memory, restore_window_position, save_window_position
+from netspeedtray.utils.dwm import apply_win11_chrome
 
 # Modular Graph Components
 from netspeedtray.views.graph.interaction import GraphInteractionHandler
@@ -426,6 +427,12 @@ class GraphWindow(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
+        # Native Win11 chrome (dark title bar follows the graph's own theme +
+        # rounded corners), applied at show-time so the native handle exists.
+        try:
+            apply_win11_chrome(int(self.winId()), dark=self._is_dark_mode)
+        except Exception:
+            pass
         self.coordinator.start_realtime()
         if not self._initial_load_done:
             self._initial_load_done = True
