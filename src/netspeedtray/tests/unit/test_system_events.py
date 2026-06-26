@@ -47,19 +47,126 @@ def test_immediate_hide_signal_emitted(system_handler):
     # Connect a mock slot to the signal
     mock_slot = MagicMock()
     system_handler.immediate_hide_requested.connect(mock_slot)
-    
-    # Mock the necessary taskbar/window utils
+
+    # Mock the necessary taskbar/window utils. GetClassName must return a NON-shell
+    # class so the early taskbar-focus path is skipped and the fullscreen check runs.
     with patch('netspeedtray.core.system_events.get_taskbar_info') as mock_get_tb, \
          patch('netspeedtray.core.system_events.is_taskbar_obstructed', return_value=True), \
+         patch('win32gui.GetClassName', return_value='SomeFullscreenApp'), \
          patch('win32gui.GetWindowRect', return_value=(0, 0, 1920, 1080)), \
          patch('win32api.GetMonitorInfo', return_value={'Monitor': (0, 0, 1920, 1080)}), \
          patch('win32gui.IsWindow', return_value=True):
-         
+
         # Simulate the event
         system_handler._on_foreground_change_immediate(hwnd=999)
-        
+
         # Verify signal emission
         mock_slot.assert_called_once()
+
+
+def test_taskbar_focus_emits_topmost_signal_not_hide(system_handler):
+    """When the taskbar/shell itself gains focus, taskbar_focused must fire immediately
+    (so the widget re-asserts topmost) and the fullscreen-hide path must NOT run."""
+    focus_slot = MagicMock()
+    hide_slot = MagicMock()
+    system_handler.taskbar_focused.connect(focus_slot)
+    system_handler.immediate_hide_requested.connect(hide_slot)
+
+    with patch('win32gui.IsWindow', return_value=True), \
+         patch('win32gui.GetClassName', return_value='Shell_TrayWnd'), \
+         patch('netspeedtray.core.system_events.is_taskbar_obstructed') as mock_obstructed:
+
+        system_handler._on_foreground_change_immediate(hwnd=777)
+
+        focus_slot.assert_called_once()
+        hide_slot.assert_not_called()
+        # Early return before any obstruction work.
+        mock_obstructed.assert_not_called()
+
+def test_fullscreen_poll_hides_when_foreground_is_fullscreen(system_handler):
+    """The fast poll must emit immediate_hide when the foreground window is a true
+    fullscreen window obstructing the taskbar (the case that fires no foreground event)."""
+    hide_slot = MagicMock()
+    system_handler.immediate_hide_requested.connect(hide_slot)
+
+    with patch('win32gui.GetForegroundWindow', return_value=555), \
+         patch('win32gui.IsWindow', return_value=True), \
+         patch('win32gui.GetWindowRect', return_value=(0, 0, 1920, 1080)), \
+         patch('win32api.GetMonitorInfo', return_value={'Monitor': (0, 0, 1920, 1080)}), \
+         patch('win32api.MonitorFromWindow', return_value=1), \
+         patch('netspeedtray.core.system_events.get_taskbar_info'), \
+         patch('netspeedtray.core.system_events.is_taskbar_obstructed', return_value=True):
+        system_handler._poll_fullscreen()
+
+    hide_slot.assert_called_once()
+
+
+def test_fullscreen_poll_is_noop_and_cheap_when_not_fullscreen(system_handler):
+    """When the foreground window is NOT fullscreen, the poll must NOT hide and must
+    short-circuit BEFORE any taskbar query (the cheap common path)."""
+    hide_slot = MagicMock()
+    system_handler.immediate_hide_requested.connect(hide_slot)
+
+    with patch('win32gui.GetForegroundWindow', return_value=555), \
+         patch('win32gui.IsWindow', return_value=True), \
+         patch('win32gui.GetWindowRect', return_value=(100, 100, 800, 600)), \
+         patch('win32api.GetMonitorInfo', return_value={'Monitor': (0, 0, 1920, 1080)}), \
+         patch('win32api.MonitorFromWindow', return_value=1), \
+         patch('netspeedtray.core.system_events.is_taskbar_obstructed') as mock_obstructed:
+        system_handler._poll_fullscreen()
+
+    hide_slot.assert_not_called()
+    mock_obstructed.assert_not_called()  # short-circuited before the taskbar query
+
+
+def test_fullscreen_poll_shows_on_exit_edge(system_handler):
+    """When fullscreen ends (edge True->False), the poll re-evaluates visibility via
+    foreground_app_changed so the widget returns without waiting for the 1s tick."""
+    refresh_slot = MagicMock()
+    system_handler.foreground_app_changed.connect(refresh_slot)
+    system_handler._was_fullscreen = True  # pretend we were fullscreen
+
+    with patch('win32gui.GetForegroundWindow', return_value=42), \
+         patch('win32gui.IsWindow', return_value=True), \
+         patch('win32gui.GetWindowRect', return_value=(100, 100, 800, 600)), \
+         patch('win32api.GetMonitorInfo', return_value={'Monitor': (0, 0, 1920, 1080)}), \
+         patch('win32api.MonitorFromWindow', return_value=1):
+        system_handler._poll_fullscreen()
+
+    refresh_slot.assert_called_once_with(42)
+    assert system_handler._was_fullscreen is False
+
+
+def test_fullscreen_poll_quiet_when_state_unchanged(system_handler):
+    """No edge -> no signals at all (quiet during steady state)."""
+    hide_slot, refresh_slot = MagicMock(), MagicMock()
+    system_handler.immediate_hide_requested.connect(hide_slot)
+    system_handler.foreground_app_changed.connect(refresh_slot)
+    system_handler._was_fullscreen = False
+
+    with patch('win32gui.GetForegroundWindow', return_value=42), \
+         patch('win32gui.IsWindow', return_value=True), \
+         patch('win32gui.GetWindowRect', return_value=(100, 100, 800, 600)), \
+         patch('win32api.GetMonitorInfo', return_value={'Monitor': (0, 0, 1920, 1080)}), \
+         patch('win32api.MonitorFromWindow', return_value=1):
+        system_handler._poll_fullscreen()
+
+    hide_slot.assert_not_called()
+    refresh_slot.assert_not_called()
+
+
+def test_fullscreen_poll_swallows_exceptions(system_handler):
+    """A win32 failure inside the poll must NOT escape the timer slot (it would log a
+    traceback every 250ms / break the poll's reliability). Regression for the dropped
+    try/except in the edge-trigger refactor."""
+    hide_slot = MagicMock()
+    system_handler.immediate_hide_requested.connect(hide_slot)
+
+    with patch('win32gui.GetForegroundWindow', side_effect=RuntimeError("boom")):
+        system_handler._poll_fullscreen()  # must not raise
+
+    hide_slot.assert_not_called()
+
 
 def test_taskbar_restarted_signal(system_handler, mock_hooks):
     """Tests that taskbar_restarted is emitted when the handle becomes invalid."""

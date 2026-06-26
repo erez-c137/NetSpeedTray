@@ -33,6 +33,27 @@ if TYPE_CHECKING:
 logger = logging.getLogger("NetSpeedTray.Core.PositionManager")
 
 
+# --- Owner-window (taskbar Z-order dock) ------------------------------------
+# Making the widget an OWNED window of the taskbar (GWLP_HWNDPARENT) lets the
+# window manager keep it ABOVE the taskbar in Z-order permanently, so shell
+# activity (Start menu, quick-settings flyout, taskbar clicks) can never raise
+# the taskbar over the widget -- the occlusion that made the widget appear to
+# "vanish". Use the pointer-width (…Ptr) API with explicit 64-bit-safe types so
+# the HWND value is not truncated on 64-bit Python.
+_GWLP_HWNDPARENT = -8
+_user32 = ctypes.WinDLL("user32", use_last_error=True)
+try:
+    _SetWindowLongPtr = _user32.SetWindowLongPtrW
+    _GetWindowLongPtr = _user32.GetWindowLongPtrW
+except AttributeError:  # 32-bit Python has no …Ptr variant
+    _SetWindowLongPtr = _user32.SetWindowLongW
+    _GetWindowLongPtr = _user32.GetWindowLongW
+_SetWindowLongPtr.restype = ctypes.c_void_p
+_SetWindowLongPtr.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_void_p]
+_GetWindowLongPtr.restype = ctypes.c_void_p
+_GetWindowLongPtr.argtypes = [wintypes.HWND, ctypes.c_int]
+
+
 # Protocols
 @runtime_checkable
 class PositionAwareProtocol(Protocol):
@@ -633,23 +654,49 @@ class PositionManager(QObject):
         self.update_position()
         self.ensure_topmost()
 
+    def _ensure_taskbar_owner(self, hwnd: int) -> None:
+        """
+        Dock the widget to the taskbar by making it an OWNED window of the taskbar
+        (GWLP_HWNDPARENT). The window manager then keeps the widget above its owner
+        at all times, so shell activity (Start menu, quick-settings, taskbar clicks)
+        can no longer raise the taskbar over the widget and occlude it.
+
+        Re-applied on the topmost cadence because Qt can reset the owner across
+        show/flag changes, and the taskbar HWND changes on an explorer restart
+        (we re-own to the fresh handle automatically via _state.taskbar_info).
+        """
+        try:
+            tb_info = self._state.taskbar_info or get_taskbar_info()
+            tb_hwnd = int(tb_info.hwnd) if tb_info and tb_info.hwnd else 0
+            if not tb_hwnd or not win32gui.IsWindow(tb_hwnd):
+                return
+            if (_GetWindowLongPtr(hwnd, _GWLP_HWNDPARENT) or 0) != tb_hwnd:
+                _SetWindowLongPtr(hwnd, _GWLP_HWNDPARENT, tb_hwnd)
+                logger.debug("Widget docked to taskbar HWND %s (owner Z-order).", tb_hwnd)
+        except Exception as e:
+            logger.error("Failed to set taskbar owner: %s", e)
+
     def ensure_topmost(self) -> None:
         """
-        Uses the Windows API to forcefully re-assert the widget's topmost status.
-        Uses the 're-promotion' technique (NOTOPMOST -> TOPMOST) to fix 'stuck' Z-order.
+        Re-assert the widget's Z-order.
+
+        Now that the widget is an OWNED window of the taskbar (_ensure_taskbar_owner),
+        the taskbar can never occlude it, so the old NOTOPMOST -> TOPMOST 're-promotion'
+        bounce is unnecessary. Its one-frame drop out of the topmost band was the
+        residual flicker seen on foreground changes. We keep only a single, flicker-free
+        HWND_TOPMOST assert as a light safety net above other (non-taskbar) topmost
+        windows -- re-asserting HWND_TOPMOST on an already-topmost window does not remove
+        it from the band, so there is no drop.
         """
         try:
             hwnd = int(self._state.widget.winId())
             if not win32gui.IsWindow(hwnd):
                 return
 
-            # 1. Temporarily drop topmost (but keep position)
-            win32gui.SetWindowPos(
-                hwnd, win32con.HWND_NOTOPMOST, 0, 0, 0, 0,
-                win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE
-            )
+            # Dock the widget to the taskbar (owned window): keeps it above the taskbar.
+            self._ensure_taskbar_owner(hwnd)
 
-            # 2. Re-assert topmost
+            # Single, flicker-free topmost assert (no NOTOPMOST drop).
             win32gui.SetWindowPos(
                 hwnd, win32con.HWND_TOPMOST, 0, 0, 0, 0,
                 win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE

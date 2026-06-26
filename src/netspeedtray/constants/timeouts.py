@@ -17,6 +17,11 @@ class TimeoutConstants:
     # System Event related intervals (milliseconds)
     TASKBAR_VALIDITY_CHECK_INTERVAL_MS: Final[int] = 3000
     STATE_WATCHER_INTERVAL_MS: Final[int] = 1000
+    # Fast poll purely for the fullscreen-HIDE case: an app fullscreening while
+    # already focused fires no foreground event, so without this the hide waits
+    # for the 1s state-watcher tick (a visible ~1s lag). Cheap: short-circuits
+    # before any taskbar query unless the foreground window is actually fullscreen.
+    FULLSCREEN_POLL_INTERVAL_MS: Final[int] = 250
     TASKBAR_RESTART_RECOVERY_DELAY_MS: Final[int] = 1000
     TASKBAR_RESTART_RETRIES: Final[int] = 5
 

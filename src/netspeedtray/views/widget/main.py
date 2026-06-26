@@ -537,7 +537,12 @@ class NetworkSpeedWidget(QWidget):
             self.system_event_handler.immediate_hide_requested.connect(
                 lambda: None if self.config.get("keep_visible_fullscreen", False) else self.setVisible(False)
             )
-            
+
+            # Immediately re-assert topmost when the taskbar gains focus, so the widget
+            # never lingers behind the activating taskbar (the debounced refresh is too
+            # slow and shows as a "hide and return"). Restores a410aae's _handle_taskbar_focus.
+            self.system_event_handler.taskbar_focused.connect(self._ensure_win32_topmost)
+
             # Handle taskbar restarts
             self.system_event_handler.taskbar_restarted.connect(lambda: [QTimer.singleShot(i * constants.timeouts.TASKBAR_RESTART_RECOVERY_DELAY_MS, self._execute_refresh) for i in range(constants.timeouts.TASKBAR_RESTART_RETRIES)])
             
@@ -809,7 +814,9 @@ class NetworkSpeedWidget(QWidget):
         return self.position_manager
 
     def _ensure_win32_topmost(self) -> None:
-        """Delegates to PositionManager."""
+        """Delegates to PositionManager. No-op while hidden (e.g. over a fullscreen app)."""
+        if not self.isVisible():
+            return
         self.position_manager.ensure_topmost()
 
     def _enforce_topmost_status(self) -> None:
@@ -1069,15 +1076,12 @@ class NetworkSpeedWidget(QWidget):
         """
         self.logger.debug("Graph window destroyed. Restoring main widget state.")
         self.graph_window = None
-        
-        # Explicitly force visibility first to prevent "disappeared" state
-        # The subsequent refresh will handle obstruction logic, but we assume
-        # the user wants to see the widget after closing the graph.
-        self.show()
-        self.raise_()
-        self.activateWindow()
 
-        # Use singleShot with a slightly longer delay to allow Windows focus settling
+        # Restore visibility/Z-order via the authoritative refresh, which RESPECTS
+        # fullscreen obstruction — so we don't flash the widget over an active fullscreen
+        # app (the old code force-showed it unconditionally). A second deferred pass lets
+        # the Windows focus transition settle.
+        self._execute_refresh()
         QTimer.singleShot(constants.timeouts.GRAPH_CLOSE_REFRESH_DELAY_MS, self._execute_refresh)
 
     def _on_app_activity_window_closed(self) -> None:

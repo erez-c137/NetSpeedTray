@@ -31,13 +31,17 @@ class SystemEventHandler(QObject):
     Signals:
         foreground_app_changed (int): Emitted when the foreground window changes (debounced).
         immediate_hide_requested (void): Emitted when a fullscreen app is detected (immediate).
+        taskbar_focused (void): Emitted immediately (non-debounced) when the taskbar/shell
+            gains focus, so the widget can re-assert topmost before the activating taskbar
+            visibly occludes it.
         taskbar_changed (void): Emitted when the taskbar moves or resizes.
         taskbar_restarted (void): Emitted when explorer.exe restart is detected.
         events_paused (bool): Emitted when event monitoring is paused/resumed.
     """
-    
+
     foreground_app_changed = pyqtSignal(int)
     immediate_hide_requested = pyqtSignal()
+    taskbar_focused = pyqtSignal()
     taskbar_changed = pyqtSignal()
     taskbar_restarted = pyqtSignal()
     events_paused = pyqtSignal(bool)
@@ -53,10 +57,12 @@ class SystemEventHandler(QObject):
         
         # Timers
         self._taskbar_validity_timer = QTimer(self)
-        
+        self._fullscreen_poll_timer = QTimer(self)
+
         # State
         self._is_paused = False
         self._theme_signal_connected = False
+        self._was_fullscreen = False  # last polled fullscreen state (edge detection)
 
     def start(self) -> None:
         """Starts all hooks and monitoring timers."""
@@ -74,6 +80,7 @@ class SystemEventHandler(QObject):
         if self.movesize_hook:
             self.movesize_hook.stop()
         self._taskbar_validity_timer.stop()
+        self._fullscreen_poll_timer.stop()
         self._disconnect_color_scheme_signal()
 
     def _setup_hooks(self) -> None:
@@ -119,13 +126,89 @@ class SystemEventHandler(QObject):
         return True
 
     def _setup_timers(self) -> None:
-        """Sets up the taskbar validity timer."""
+        """Sets up the taskbar validity + fast fullscreen-hide timers."""
         self._taskbar_validity_timer.timeout.connect(self._check_taskbar_validity)
         self._taskbar_validity_timer.start(timeouts.TASKBAR_VALIDITY_CHECK_INTERVAL_MS)
 
+        # Catch an app fullscreening while already focused (no foreground event fires),
+        # so the widget hides promptly instead of waiting for the 1s state-watcher.
+        self._fullscreen_poll_timer.timeout.connect(self._poll_fullscreen)
+        self._fullscreen_poll_timer.start(timeouts.FULLSCREEN_POLL_INTERVAL_MS)
+
+    def _poll_fullscreen(self) -> None:
+        """
+        Fast detection of fullscreen ENTER (hide) and EXIT (show) for the case where an
+        app toggles fullscreen while already focused -- which fires no foreground event,
+        so without this the transition waits for the 1s state-watcher tick. Acts only on
+        a state CHANGE (edge), so it is quiet during steady state.
+        """
+        if self._is_paused:
+            return
+        try:
+            hwnd = win32gui.GetForegroundWindow()
+            is_fs = self._is_fullscreen_obstruction(hwnd)
+            if is_fs == self._was_fullscreen:
+                return
+            self._was_fullscreen = is_fs
+            if is_fs:
+                self.immediate_hide_requested.emit()
+            else:
+                # Fullscreen ended with no foreground event: re-evaluate visibility now so
+                # the widget returns promptly instead of waiting for the 1s state-watcher.
+                self.foreground_app_changed.emit(hwnd)
+        except Exception as e:
+            self.logger.error(f"Error in fullscreen poll: {e}", exc_info=True)
+
+    def _preferred_monitor(self) -> Optional[str]:
+        """
+        The user's preferred_monitor (a QScreen.name()) read live from the parent
+        widget's config, so fullscreen-obstruction checks the widget's OWN taskbar on
+        multi-monitor setups instead of always the primary. None when unset / no parent.
+        """
+        cfg = getattr(self.parent(), "config", None)
+        if cfg is not None and hasattr(cfg, "get"):
+            return cfg.get("preferred_monitor")
+        return None
+
+    def _is_fullscreen_obstruction(self, hwnd: int) -> bool:
+        """
+        True if `hwnd` is a true-fullscreen window that obstructs our taskbar. Shared by
+        the foreground hook and the fast poll.
+
+        Cheap by design: the window_rect == monitor_rect test short-circuits before any
+        taskbar query, so the common (non-fullscreen) case costs only a couple of
+        GetWindowRect/MonitorFromWindow calls.
+        """
+        try:
+            if not hwnd or not win32gui.IsWindow(hwnd):
+                return False
+            window_rect = win32gui.GetWindowRect(hwnd)
+            monitor_info = win32api.GetMonitorInfo(win32api.MonitorFromWindow(hwnd))
+            if window_rect != monitor_info.get('Monitor'):
+                return False  # not fullscreen on its monitor — no taskbar query needed
+            # Check obstruction against the widget's OWN taskbar (preferred monitor), not
+            # always the primary — otherwise a fullscreen app on another monitor would
+            # wrongly hide the widget.
+            taskbar_info = get_taskbar_info(preferred_screen_name=self._preferred_monitor())
+            return bool(is_taskbar_obstructed(taskbar_info, hwnd))
+        except (win32gui.error, AttributeError):
+            return False
+        except Exception as e:
+            self.logger.error(f"Error in fullscreen check: {e}", exc_info=True)
+            return False
+
     def _on_foreground_change_immediate(self, hwnd: int) -> None:
         """
-        Handles the raw event for an "emergency hide" on unambiguous fullscreen windows.
+        Handles the raw (non-debounced) foreground event:
+
+        - When the taskbar/shell itself gains focus (e.g. the user clicks the
+          taskbar), immediately re-assert the widget's topmost status. The widget
+          is a separate top-level window sitting over the taskbar; when the taskbar
+          activates it can land above the widget in Z-order, and the ~250ms-debounced
+          _execute_refresh recovers it only after a visible gap (the "hide and
+          return"). Re-asserting here, in the same event, closes that gap. This
+          restores a410aae's _handle_taskbar_focus, dropped in a later refactor.
+        - When an unambiguous fullscreen window appears, request an emergency hide.
         """
         if self._is_paused:
             return
@@ -134,18 +217,15 @@ class SystemEventHandler(QObject):
             if not hwnd or not win32gui.IsWindow(hwnd):
                 return
 
-            taskbar_info = get_taskbar_info()
-            if is_taskbar_obstructed(taskbar_info, hwnd):
-                window_rect = win32gui.GetWindowRect(hwnd)
-                monitor_info = win32api.GetMonitorInfo(win32api.MonitorFromWindow(hwnd))
-                monitor_rect = monitor_info.get('Monitor')
-                
-                if window_rect == monitor_rect:
-                    self.logger.debug("Immediate check: Fullscreen detected (HWND: %s). Requesting hide.", hwnd)
-                    self.immediate_hide_requested.emit()
+            if win32gui.GetClassName(hwnd) in ("Shell_TrayWnd", "Shell_SecondaryTrayWnd"):
+                self.taskbar_focused.emit()
+                return
+
+            if self._is_fullscreen_obstruction(hwnd):
+                self.immediate_hide_requested.emit()
 
         except (win32gui.error, AttributeError):
-            pass 
+            pass
         except Exception as e:
             self.logger.error(f"Error in immediate foreground handler: {e}", exc_info=True)
 
