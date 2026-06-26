@@ -20,7 +20,10 @@ Other locales (English, German, Spanish) are currently maintained by the project
 
 > ℹ️ **About AI-assisted strings:** Strings added for features released *after* a translator's most recent contribution (e.g. the App Activity window, Support Bundle, and Preferred Monitor) have been filled in with **machine / AI-assisted translation** so every language stays complete and usable. These AI-assisted strings are **not** the work of the human translators credited above, and they have **not** yet been reviewed by a native speaker. If you spot an awkward or incorrect one, a one-line correction PR is hugely appreciated — and you'll be credited for it.
 
-> 🆕 **Pending native review for 2.0:** the tray "data used" glance added two keys — `USAGE_TODAY_LABEL` ("Today") and `USAGE_THIS_MONTH_LABEL` ("This Month"). Non-English values are AI-assisted; a one-line check from a native speaker before the 2.0 tag is very welcome.
+> 🆕 **Pending native review for 2.0** (non-English values AI-assisted; a one-line native check before the 2.0 tag is very welcome — see issue #157):
+> - Tray "data used" glance: `USAGE_TODAY_LABEL`, `USAGE_THIS_MONTH_LABEL`
+> - Update dialog: `UPDATE_RELEASE_NOTES_LABEL`
+> - First-run welcome: `WELCOME_2_0_TITLE`, `WELCOME_2_0_BODY`, `WELCOME_2_0_WHATS_NEW_BUTTON`, `WELCOME_2_0_GOT_IT_BUTTON` (the **body** is the longest/most nuanced — most worth a look)
 
 ## How translation works in NetSpeedTray
 

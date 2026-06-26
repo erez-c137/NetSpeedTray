@@ -171,6 +171,7 @@ class ConfigConstants:
         "check_for_updates": True,
         "skipped_version": None,
         "last_update_check": None,
+        "first_run_v2_seen": False,
         "preferred_monitor": None,
     }
     
@@ -247,6 +248,7 @@ class ConfigConstants:
         "check_for_updates": {"type": bool, "default": True},
         "skipped_version": {"type": (str, type(None)), "default": None},
         "last_update_check": {"type": (str, type(None)), "default": None},
+        "first_run_v2_seen": {"type": bool, "default": False},
         # QScreen.name() identifier (e.g. "\\.\DISPLAY1"). None = use primary.
         # If the saved screen isn't found at runtime, fall back to primary.
         "preferred_monitor": {"type": (str, type(None)), "default": None},

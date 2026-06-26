@@ -350,6 +350,27 @@ class NetworkSpeedWidget(QWidget):
             self.logger.error(f"Error in delayed initial show: {e}", exc_info=True)
             # Ensure widget is hidden if an error occurs during the initial check.
             self.setVisible(False)
+        # One-time 2.0 welcome, once the widget has settled.
+        QTimer.singleShot(1200, self._maybe_show_welcome)
+
+    def _maybe_show_welcome(self) -> None:
+        """Show the one-time 2.0 welcome (first launch after upgrade), then persist the flag."""
+        if self.config.get("first_run_v2_seen", False):
+            return
+        try:
+            from netspeedtray.views.welcome_dialog import WelcomeDialog
+            dlg = WelcomeDialog(self.i18n, parent=self)
+            dlg.exec()
+            if dlg.action == WelcomeDialog.ACTION_WHATS_NEW:
+                import webbrowser
+                webbrowser.open(
+                    f"https://github.com/{constants.app.GITHUB_OWNER}/{constants.app.GITHUB_REPO}/releases/latest"
+                )
+        except Exception as e:
+            self.logger.error(f"Error showing welcome dialog: {e}", exc_info=True)
+        # Mark seen (even if the dialog errored) so it appears at most once.
+        self.config["first_run_v2_seen"] = True
+        self.update_config({"first_run_v2_seen": True})
 
 
     def pause(self) -> None:
