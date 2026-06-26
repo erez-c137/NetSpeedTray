@@ -12,11 +12,16 @@ import re
 from typing import Optional, Final
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QCheckBox, QLabel, QSlider,
-    QSizePolicy, QStyleOption, QLineEdit
+    QSizePolicy, QStyleOption, QLineEdit, QFrame, QToolButton, QButtonGroup,
+    QPushButton, QColorDialog
 )
 from PyQt6.QtCore import Qt, QSize, pyqtSignal, QPropertyAnimation, QEasingCurve, QPoint
-from PyQt6.QtGui import QFont, QPaintEvent, QPainter 
-from netspeedtray.utils.styles import toggle_style, slider_style
+from PyQt6.QtGui import QFont, QPaintEvent, QPainter, QColor
+from netspeedtray.utils.styles import (
+    toggle_style, slider_style, font as token_font, semantic_colors, get_accent_color,
+    timeline_pills_style,
+)
+from netspeedtray.constants.styles import styles as tokens
 from netspeedtray import constants
 
 
@@ -537,3 +542,313 @@ class CollapsibleSection(QWidget):
     def contentLayout(self) -> QVBoxLayout:
         """Returns the layout to add child widgets to."""
         return self._content_layout
+
+
+# =============================================================================
+# Design-system primitives (Fluent settings vocabulary). These consume the
+# tokens in constants/styles.py via utils/styles.font()/semantic_colors() so the
+# Settings dialog and the future Monitor window share one visual language.
+# =============================================================================
+
+class SettingCard(QFrame):
+    """
+    A Fluent "setting card" row: a title with an optional muted description on the
+    left, an optional leading glyph, and a control docked to the right. The single
+    reusable atom the new Settings pages are built from.
+    """
+
+    def __init__(self, title: str, description: str = "", control: Optional[QWidget] = None,
+                 icon: Optional[str] = None, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("settingCard")
+        self._control = control
+        c = semantic_colors()
+        self.setStyleSheet(
+            f"QFrame#settingCard {{ background-color: {c['card_bg']}; "
+            f"border: 1px solid {c['card_stroke']}; border-radius: {tokens.RADIUS_CARD}px; }}"
+        )
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(tokens.SPACE_M, tokens.SPACE_S, tokens.SPACE_M, tokens.SPACE_S)
+        layout.setSpacing(tokens.SPACE_M)
+
+        if icon:
+            glyph = QLabel(icon)
+            glyph.setFixedWidth(22)
+            glyph.setStyleSheet(f"color: {c['text_primary']}; background: transparent;")
+            layout.addWidget(glyph, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        text_col = QVBoxLayout()
+        text_col.setContentsMargins(0, 0, 0, 0)
+        text_col.setSpacing(1)
+        self._title_label = QLabel(title)
+        self._title_label.setFont(token_font(tokens.TYPE_BODY_STRONG))
+        self._title_label.setStyleSheet(f"color: {c['text_primary']}; background: transparent;")
+        text_col.addWidget(self._title_label)
+        if description:
+            self._desc_label = QLabel(description)
+            self._desc_label.setFont(token_font(tokens.TYPE_CAPTION))
+            self._desc_label.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
+            self._desc_label.setWordWrap(True)
+            text_col.addWidget(self._desc_label)
+        layout.addLayout(text_col, 1)
+
+        if control is not None:
+            layout.addWidget(control, 0, Qt.AlignmentFlag.AlignVCenter)
+
+    def control(self) -> Optional[QWidget]:
+        return self._control
+
+
+class SettingExpander(QWidget):
+    """
+    A Fluent settings expander: a header row (title + optional muted description +
+    optional master toggle) over a collapsible content area of child cards. With
+    ``header_toggle=True`` a Win11Toggle in the header both controls the feature and
+    drives the body's visibility — the native Win11 Settings disclosure idiom.
+    """
+    toggled = pyqtSignal(bool)          # master-toggle state (only when header_toggle)
+    expandedChanged = pyqtSignal(bool)
+
+    def __init__(self, title: str, description: str = "", header_toggle: bool = False,
+                 initial_on: bool = False, expanded: bool = False,
+                 parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("settingExpander")
+        self._has_toggle = header_toggle
+        c = semantic_colors()
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(tokens.SPACE_XS)
+
+        self._header = QFrame()
+        self._header.setObjectName("expanderHeader")
+        self._header.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._header.setStyleSheet(
+            f"QFrame#expanderHeader {{ background-color: {c['card_bg']}; "
+            f"border: 1px solid {c['card_stroke']}; border-radius: {tokens.RADIUS_CARD}px; }}"
+        )
+        hl = QHBoxLayout(self._header)
+        hl.setContentsMargins(tokens.SPACE_M, tokens.SPACE_S, tokens.SPACE_M, tokens.SPACE_S)
+        hl.setSpacing(tokens.SPACE_M)
+
+        text_col = QVBoxLayout()
+        text_col.setContentsMargins(0, 0, 0, 0)
+        text_col.setSpacing(1)
+        title_label = QLabel(title)
+        title_label.setFont(token_font(tokens.TYPE_BODY_STRONG))
+        title_label.setStyleSheet(f"color: {c['text_primary']}; background: transparent;")
+        text_col.addWidget(title_label)
+        if description:
+            d = QLabel(description)
+            d.setFont(token_font(tokens.TYPE_CAPTION))
+            d.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
+            d.setWordWrap(True)
+            text_col.addWidget(d)
+        hl.addLayout(text_col, 1)
+
+        self._toggle: Optional["Win11Toggle"] = None
+        if header_toggle:
+            self._toggle = Win11Toggle(initial_state=initial_on)
+            self._toggle.toggled.connect(self._on_toggle)
+            hl.addWidget(self._toggle, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        self._chevron = QLabel()
+        self._chevron.setFixedWidth(16)
+        self._chevron.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
+        hl.addWidget(self._chevron, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        self._header.mousePressEvent = self._on_header_clicked
+        outer.addWidget(self._header)
+
+        self._content = QWidget()
+        self._content_layout = QVBoxLayout(self._content)
+        self._content_layout.setContentsMargins(tokens.SPACE_L, tokens.SPACE_XS, tokens.SPACE_XS, tokens.SPACE_XS)
+        self._content_layout.setSpacing(tokens.SPACE_XS)
+        outer.addWidget(self._content)
+
+        self._expanded = initial_on if header_toggle else expanded
+        self._sync()
+
+    def _on_toggle(self, on: bool) -> None:
+        self.toggled.emit(on)
+        self.setExpanded(on)
+
+    def _on_header_clicked(self, event) -> None:
+        if self._has_toggle and self._toggle is not None:
+            self._toggle.setChecked(not self._toggle.isChecked())  # fires _on_toggle
+        else:
+            self.setExpanded(not self._expanded)
+
+    def _sync(self) -> None:
+        self._content.setVisible(self._expanded)
+        self._chevron.setText("▾" if self._expanded else "▸")
+
+    def setExpanded(self, on: bool) -> None:
+        if self._expanded != on:
+            self._expanded = on
+            self._sync()
+            self.expandedChanged.emit(on)
+
+    def isExpanded(self) -> bool:
+        return self._expanded
+
+    def isChecked(self) -> bool:
+        return self._toggle.isChecked() if self._toggle else self._expanded
+
+    def setChecked(self, on: bool) -> None:
+        if self._toggle is not None:
+            self._toggle.setChecked(on)
+            self.setExpanded(on)
+        else:
+            self.setExpanded(on)
+
+    def contentLayout(self) -> QVBoxLayout:
+        return self._content_layout
+
+
+class Win11Segmented(QWidget):
+    """
+    A Win11 segmented control: an exclusive row of joined pill buttons (the native
+    idiom for a small mutually-exclusive choice — decimals 0/1/2, alignment L/C/R,
+    update-rate Smart/1s/2s/…). Emits ``valueChanged(value)`` with the option's value.
+    """
+    valueChanged = pyqtSignal(object)
+
+    def __init__(self, options, parent: Optional[QWidget] = None) -> None:
+        """options: an iterable of (label, value) pairs."""
+        super().__init__(parent)
+        self._value = None
+        self._buttons = {}
+        options = list(options)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        self._group = QButtonGroup(self)
+        self._group.setExclusive(True)
+
+        for i, (label, value) in enumerate(options):
+            btn = QToolButton()
+            btn.setText(str(label))
+            btn.setCheckable(True)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            if i == 0:
+                btn.setObjectName("segFirst")
+            elif i == len(options) - 1:
+                btn.setObjectName("segLast")
+            else:
+                btn.setObjectName("segMid")
+            btn.clicked.connect(lambda _checked=False, v=value: self.setValue(v))
+            self._group.addButton(btn)
+            layout.addWidget(btn)
+            self._buttons[repr(value)] = btn
+        layout.addStretch(0)
+
+        accent = get_accent_color().name()
+        c = semantic_colors()
+        r = tokens.RADIUS_CONTROL
+        self.setStyleSheet(f"""
+            QToolButton {{
+                background-color: {c['card_bg']};
+                color: {c['text_primary']};
+                border: 1px solid {c['card_stroke']};
+                border-radius: 0px;
+                padding: 4px 12px;
+                font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif;
+            }}
+            QToolButton:hover {{ background-color: {c['subtle_fill']}; }}
+            QToolButton:checked {{ background-color: {accent}; color: white; border-color: {accent}; }}
+            QToolButton#segFirst {{ border-top-left-radius: {r}px; border-bottom-left-radius: {r}px; }}
+            QToolButton#segLast  {{ border-top-right-radius: {r}px; border-bottom-right-radius: {r}px; }}
+        """)
+
+    def setValue(self, value) -> None:
+        changed = value != self._value
+        self._value = value
+        btn = self._buttons.get(repr(value))
+        if btn is not None and not btn.isChecked():
+            btn.setChecked(True)
+        if changed:
+            self.valueChanged.emit(value)
+
+    def value(self):
+        return self._value
+
+
+class ColorField(QWidget):
+    """
+    A color input: a swatch button (opens QColorDialog) plus a validated #RRGGBB
+    field. Consolidates the four hand-rolled swatch+lineedit copies. Emits
+    ``colorChanged(hex)`` only on a real change.
+    """
+    colorChanged = pyqtSignal(str)
+
+    _HEX_RE = re.compile(r"^#?[0-9A-Fa-f]{6}$")
+
+    def __init__(self, initial_hex: str = "#FFFFFF", parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._hex = self._normalize(initial_hex) or "#FFFFFF"
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(tokens.SPACE_S)
+
+        self._swatch = QPushButton()
+        self._swatch.setFixedSize(30, 24)
+        self._swatch.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._swatch.clicked.connect(self._pick)
+
+        self._edit = QLineEdit(self._hex)
+        self._edit.setMaxLength(7)
+        self._edit.setFixedWidth(84)
+        self._edit.editingFinished.connect(self._on_edit_finished)
+
+        layout.addWidget(self._swatch)
+        layout.addWidget(self._edit)
+        layout.addStretch(0)
+        self._apply_swatch()
+
+    def _normalize(self, h: Optional[str]) -> Optional[str]:
+        if not h:
+            return None
+        h = h.strip()
+        if self._HEX_RE.match(h):
+            return ("#" + h.lstrip("#")).upper()
+        return None
+
+    def _apply_swatch(self) -> None:
+        c = semantic_colors()
+        self._swatch.setStyleSheet(
+            f"QPushButton {{ background-color: {self._hex}; border: 1px solid {c['card_stroke']}; "
+            f"border-radius: {tokens.RADIUS_CONTROL}px; }}"
+        )
+
+    def _pick(self) -> None:
+        col = QColorDialog.getColor(QColor(self._hex), self)
+        if col.isValid():
+            self.setColor(col.name())
+
+    def _on_edit_finished(self) -> None:
+        n = self._normalize(self._edit.text())
+        if n:
+            self.setColor(n)
+        else:
+            self._edit.setText(self._hex)  # revert invalid input
+
+    def setColor(self, hex_str: str) -> None:
+        n = self._normalize(hex_str)
+        if n is None:
+            return
+        changed = n != self._hex
+        self._hex = n
+        self._edit.blockSignals(True)
+        self._edit.setText(self._hex)
+        self._edit.blockSignals(False)
+        self._apply_swatch()
+        if changed:
+            self.colorChanged.emit(self._hex)
+
+    def color(self) -> str:
+        return self._hex
