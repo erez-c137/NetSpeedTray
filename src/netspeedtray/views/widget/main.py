@@ -16,7 +16,7 @@ from win32con import MONITOR_DEFAULTTONEAREST
 from PyQt6.QtCore import QEvent, QObject, QPoint, QRect, QSize, QTimer, Qt
 from PyQt6.QtGui import (
     QCloseEvent, QColor, QContextMenuEvent, QFont, QFontMetrics, QHideEvent,
-    QIcon, QMouseEvent, QPaintEvent, QPainter, QShowEvent
+    QIcon, QMouseEvent, QPaintEvent, QPainter, QShowEvent, QWheelEvent
 )
 from PyQt6.QtWidgets import QApplication, QMenu, QMessageBox, QWidget
 
@@ -474,14 +474,22 @@ class NetworkSpeedWidget(QWidget):
             self.update()
 
     def _rotate_cycle(self) -> None:
-        """Rotates the displayed metric when in 'cycle' mode."""
+        """Rotates the displayed metric forward when in 'cycle' mode (auto-timer)."""
+        self._step_cycle(1)
+
+    def _step_cycle(self, step: int) -> None:
+        """
+        Steps the cycle index by `step` (wrapping) and repaints with the new metric.
+        `step` is +1 for the auto-timer / scroll-down, -1 for scroll-up. A no-op when
+        only one metric is available (nothing to cycle through).
+        """
         modes = ["network_only"]
         if self.config.get("monitor_cpu_enabled", False): modes.append("cpu_only")
         if self.config.get("monitor_gpu_enabled", False): modes.append("gpu_only")
-        
+
         if not modes: return
-        
-        self._cycle_index = (self._cycle_index + 1) % len(modes)
+
+        self._cycle_index = (self._cycle_index + step) % len(modes)
         self._current_cycle_mode = modes[self._cycle_index]
         self.update() # Trigger repaint with new mode
 
@@ -765,6 +773,27 @@ class NetworkSpeedWidget(QWidget):
         """Delegates double-click events to the InputHandler."""
         if self.input_handler:
             self.input_handler.handle_double_click(event)
+
+
+    def wheelEvent(self, event: QWheelEvent) -> None:
+        """
+        In 'cycle' display mode, scrolling over the widget flips through the metrics
+        (network -> CPU -> GPU) instead of waiting for the auto-rotation. The auto
+        timer is restarted so the metric the user lands on stays put for a full
+        interval. In every other display mode the scroll is passed through untouched.
+        """
+        if self.config.get("widget_display_mode") != "cycle":
+            super().wheelEvent(event)
+            return
+        delta = event.angleDelta().y()
+        if delta == 0:
+            event.ignore()
+            return
+        # Scroll up -> previous metric, scroll down -> next metric.
+        self._step_cycle(1 if delta < 0 else -1)
+        if self._cycle_timer.isActive():
+            self._cycle_timer.start(constants.renderer.CYCLE_INTERVAL_MS)
+        event.accept()
 
 
     def contextMenuEvent(self, event: QContextMenuEvent) -> None:
