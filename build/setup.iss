@@ -4,7 +4,7 @@
 #define MyAppPublisher "Erez C137"
 #define MyAppURL "https://github.com/erez-c137/NetSpeedTray"
 #define MyAppExeName "NetSpeedTray.exe"
-#define MyAppMutex "Global\NetSpeedTray_Single_Instance_Mutex"
+#define MyAppMutex "Global\NetSpeedTray_SingleInstanceMutex"
 #define MyAppId "{{D3A32B89-C533-4F2C-9F87-23B2395B5B89}}"
 
 ; --- DYNAMIC VERSIONING ---
@@ -45,6 +45,8 @@ UninstallDisplayName={#MyAppName}
 RestartIfNeededByRun=no
 CloseApplications=force
 CloseApplicationsFilter=*.exe,*.dll
+; Must match constants.app.MUTEX_NAME so Inno reliably detects the running app on (auto-)upgrade.
+AppMutex={#MyAppMutex}
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
