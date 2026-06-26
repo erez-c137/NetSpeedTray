@@ -49,6 +49,11 @@ def dialog_style() -> str:
     text_color = style_constants.DARK_MODE_TEXT_COLOR if dark_mode_active else style_constants.LIGHT_MODE_TEXT_COLOR
     border_color = "#404040" if dark_mode_active else "#D0D0D0"
 
+    # Input/combobox fill and the thin overlay-scrollbar handle, theme-aware.
+    input_bg = "#383838" if dark_mode_active else "#FFFFFF"
+    scroll_handle = "rgba(255, 255, 255, 0.22)" if dark_mode_active else "rgba(0, 0, 0, 0.22)"
+    scroll_handle_hover = "rgba(255, 255, 255, 0.42)" if dark_mode_active else "rgba(0, 0, 0, 0.42)"
+
     accent_qcolor = get_accent_color()
     accent_rgb = f"rgb({accent_qcolor.red()}, {accent_qcolor.green()}, {accent_qcolor.blue()})"
     
@@ -121,8 +126,76 @@ def dialog_style() -> str:
             left: 10px;
             color: {text_color};
         }}
-        QWidget:focus, QStackedWidget:focus, QStackedWidget::widget:focus {{ 
-            outline: none; 
+        QWidget:focus, QStackedWidget:focus, QStackedWidget::widget:focus {{
+            outline: none;
+        }}
+
+        /* Comboboxes + spinboxes: native-looking inputs (were bare default Qt). */
+        QComboBox, QSpinBox, QDoubleSpinBox {{
+            background-color: {input_bg};
+            border: 1px solid {border_color};
+            border-radius: 4px;
+            padding: 4px 8px;
+            min-height: 22px;
+            color: {text_color};
+        }}
+        QComboBox:hover, QSpinBox:hover, QDoubleSpinBox:hover {{
+            border-color: {accent_rgb};
+        }}
+        /* The single focus-ring style: a 2px accent border replaces the bare
+           outline:none, restoring keyboard-nav visibility on the inputs. */
+        QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus {{
+            border: 2px solid {accent_rgb};
+            padding: 3px 7px; /* keep total size stable when the border thickens */
+        }}
+        QComboBox::drop-down {{
+            border: none;
+            width: 22px;
+        }}
+        QComboBox QAbstractItemView {{
+            background-color: {input_bg};
+            color: {text_color};
+            border: 1px solid {border_color};
+            border-radius: 4px;
+            selection-background-color: {accent_rgb};
+            selection-color: white;
+            outline: 0px;
+            padding: 2px;
+        }}
+
+        /* Thin, rounded, subtle overlay scrollbars (were fat default Qt bars). */
+        QScrollBar:vertical {{
+            background: transparent;
+            width: 10px;
+            margin: 0px;
+        }}
+        QScrollBar::handle:vertical {{
+            background: {scroll_handle};
+            border-radius: 5px;
+            min-height: 28px;
+        }}
+        QScrollBar::handle:vertical:hover {{
+            background: {scroll_handle_hover};
+        }}
+        QScrollBar:horizontal {{
+            background: transparent;
+            height: 10px;
+            margin: 0px;
+        }}
+        QScrollBar::handle:horizontal {{
+            background: {scroll_handle};
+            border-radius: 5px;
+            min-width: 28px;
+        }}
+        QScrollBar::handle:horizontal:hover {{
+            background: {scroll_handle_hover};
+        }}
+        QScrollBar::add-line, QScrollBar::sub-line {{
+            width: 0px;
+            height: 0px;
+        }}
+        QScrollBar::add-page, QScrollBar::sub-page {{
+            background: transparent;
         }}
     """
 
