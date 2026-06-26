@@ -324,6 +324,8 @@
     "PREFERRED_MONITOR_LABEL": "Предпочитаемый монитор",
     "PREFERRED_MONITOR_PRIMARY": "Основной (авто)",
     "UPDATE_AVAILABLE_TITLE": "Доступно обновление",
+    "UPDATE_DOWNLOADING_TITLE": "Загрузка обновления",
+    "UPDATE_FALLBACK_MESSAGE": "Не удалось выполнить обновление в приложении. Вместо этого откроется страница загрузки.",
     "UPDATE_AVAILABLE_TEXT": "Доступна новая версия NetSpeedTray!\n\nТекущая: v{current}\nПоследняя: v{latest}",
     "UPDATE_RELEASE_NOTES_LABEL": "Что нового в v{latest}",
     "WELCOME_2_0_TITLE": "Добро пожаловать в NetSpeedTray 2.0",

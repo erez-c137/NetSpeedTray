@@ -324,6 +324,8 @@
     "PREFERRED_MONITOR_LABEL": "Bevorzugter Monitor",
     "PREFERRED_MONITOR_PRIMARY": "Primär (auto)",
     "UPDATE_AVAILABLE_TITLE": "Update verfügbar",
+    "UPDATE_DOWNLOADING_TITLE": "Update wird heruntergeladen",
+    "UPDATE_FALLBACK_MESSAGE": "Das In-App-Update konnte nicht abgeschlossen werden. Die Download-Seite wird stattdessen geöffnet.",
     "UPDATE_AVAILABLE_TEXT": "Eine neue Version von NetSpeedTray ist verfügbar!\n\nAktuell: v{current}\nNeueste: v{latest}",
     "UPDATE_RELEASE_NOTES_LABEL": "Neu in v{latest}",
     "WELCOME_2_0_TITLE": "Willkommen bei NetSpeedTray 2.0",

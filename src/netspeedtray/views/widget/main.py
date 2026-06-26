@@ -1047,12 +1047,12 @@ class NetworkSpeedWidget(QWidget):
     def _on_update_available(self, latest_version: str, release_url: str, body: str = "",
                              installer_url: str = "", portable_url: str = "") -> None:
         """Handle update available from automatic startup check."""
-        self._show_update_dialog(latest_version, release_url, body)
+        self._show_update_dialog(latest_version, release_url, body, installer_url)
 
     def _on_update_available_manual(self, latest_version: str, release_url: str, body: str = "",
                                     installer_url: str = "", portable_url: str = "") -> None:
         """Handle update available from manual menu check."""
-        self._show_update_dialog(latest_version, release_url, body)
+        self._show_update_dialog(latest_version, release_url, body, installer_url)
 
     def _on_up_to_date_manual(self) -> None:
         """Show up-to-date message for manual check."""
@@ -1065,7 +1065,8 @@ class NetworkSpeedWidget(QWidget):
         """Show error message for manual check."""
         QMessageBox.warning(self, self.i18n.UPDATE_CHECK_TITLE, self.i18n.UPDATE_CHECK_FAILED_TEXT)
 
-    def _show_update_dialog(self, latest_version: str, release_url: str, body: str = "") -> None:
+    def _show_update_dialog(self, latest_version: str, release_url: str, body: str = "",
+                            installer_url: str = "") -> None:
         """Show the update-available dialog: version delta + inert release notes,
         with Download / Skip / Not Now."""
         from netspeedtray.views.update_dialog import UpdateDialog
@@ -1074,11 +1075,36 @@ class NetworkSpeedWidget(QWidget):
         dlg.exec()
 
         if dlg.action == UpdateDialog.ACTION_DOWNLOAD:
-            import webbrowser
-            webbrowser.open(release_url)
+            self._start_secure_update(installer_url, release_url)
         elif dlg.action == UpdateDialog.ACTION_SKIP:
             self.config["skipped_version"] = latest
             self.update_config({"skipped_version": latest})
+
+    def _start_secure_update(self, installer_url: str, release_url: str) -> None:
+        """
+        One-click update: download the signed installer, verify it (Authenticode +
+        SignPath pin), and run it. Any failure falls back to opening the release page
+        in the browser (the old behavior), so the worst case is never worse than before.
+        """
+        try:
+            from netspeedtray.core.update_installer import SecureUpdater
+            # Held on self so it isn't garbage-collected mid-download.
+            self._secure_updater = SecureUpdater(self, installer_url, release_url, self.i18n)
+            self._secure_updater.launching.connect(self._quit_for_update)
+            self._secure_updater.start()
+        except Exception as e:
+            self.logger.error(f"Secure update failed to start: {e}", exc_info=True)
+            try:
+                import webbrowser
+                webbrowser.open(release_url)
+            except Exception:
+                pass
+
+    def _quit_for_update(self) -> None:
+        """The verified installer was launched; quit so it can replace our files."""
+        self.logger.info("Verified installer launched; quitting for update.")
+        self._will_quit_app = True
+        QApplication.instance().quit()
 
     def show_support_dialog(self) -> None:
         """Show the support/donate dialog."""
