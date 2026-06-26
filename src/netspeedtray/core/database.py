@@ -31,7 +31,7 @@ class DatabaseWorker(QThread):
     error = pyqtSignal(str)
     database_updated = pyqtSignal()
 
-    _DB_VERSION = 6  # Covering indexes, metadata tracking, eager aggregation, sample_count, hardware stats, hardware hourly
+    _DB_VERSION = 7  # Covering indexes, metadata, eager aggregation, sample_count, hardware stats, hardware hourly, usage_counter (data-cap odometer)
 
     def __init__(self, db_path: Path, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
@@ -98,6 +98,7 @@ class DatabaseWorker(QThread):
         handlers = {
             "persist_speed": self._persist_speed_batch,
             "persist_hardware": self._persist_hardware_batch,
+            "persist_usage": self._persist_usage,
             "maintenance": self._run_maintenance,
         }
         handler = handlers.get(task)
@@ -198,6 +199,21 @@ class DatabaseWorker(QThread):
         except Exception:
             self.conn.rollback()
             raise 
+
+    def _migrate_v6_to_v7(self, cursor: sqlite3.Cursor) -> None:
+        """Migration v6 to v7: Add the usage_counter odometer table for the data-cap feature."""
+        self.logger.info("Executing v6->v7 migration: Adding usage_counter table.")
+        cursor.executescript(f"""
+            CREATE TABLE IF NOT EXISTS {constants.data.USAGE_COUNTER_TABLE} (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                cumulative_up REAL NOT NULL DEFAULT 0,
+                cumulative_down REAL NOT NULL DEFAULT 0,
+                anchor_up REAL NOT NULL DEFAULT 0,
+                anchor_down REAL NOT NULL DEFAULT 0,
+                period_key TEXT NOT NULL DEFAULT '',
+                updated_ts INTEGER NOT NULL DEFAULT 0
+            );
+        """)
 
     def _migrate_v5_to_v6(self, cursor: sqlite3.Cursor) -> None:
         """Migration v5 to v6: Add hardware_stats_hour table for long-term hardware history."""
@@ -332,7 +348,7 @@ class DatabaseWorker(QThread):
         for table in [constants.data.SPEED_TABLE_RAW, constants.data.SPEED_TABLE_MINUTE,
                       constants.data.SPEED_TABLE_HOUR, constants.data.BANDWIDTH_TABLE,
                       constants.data.HARDWARE_STATS_TABLE_RAW, constants.data.HARDWARE_STATS_TABLE_MINUTE,
-                      constants.data.HARDWARE_STATS_TABLE_HOUR]:
+                      constants.data.HARDWARE_STATS_TABLE_HOUR, constants.data.USAGE_COUNTER_TABLE]:
             cursor.execute(f"DROP TABLE IF EXISTS {table}")
         cursor.execute("DROP TABLE IF EXISTS metadata")
         cursor.execute("PRAGMA foreign_keys = ON;")
@@ -373,6 +389,16 @@ class DatabaseWorker(QThread):
                 interface_name TEXT PRIMARY KEY,
                 total_upload_bytes REAL NOT NULL DEFAULT 0,
                 total_download_bytes REAL NOT NULL DEFAULT 0
+            );
+
+            CREATE TABLE {constants.data.USAGE_COUNTER_TABLE} (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                cumulative_up REAL NOT NULL DEFAULT 0,
+                cumulative_down REAL NOT NULL DEFAULT 0,
+                anchor_up REAL NOT NULL DEFAULT 0,
+                anchor_down REAL NOT NULL DEFAULT 0,
+                period_key TEXT NOT NULL DEFAULT '',
+                updated_ts INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE TABLE {constants.data.HARDWARE_STATS_TABLE_RAW} (
@@ -435,6 +461,34 @@ class DatabaseWorker(QThread):
             self.logger.error("Failed to persist hardware batch: %s", e)
             self.conn.rollback()
 
+
+    def _persist_usage(self, data: Tuple[float, float, float, float, str, int]) -> None:
+        """
+        Upsert the single-row data-usage odometer. `data` is
+        (cumulative_up, cumulative_down, anchor_up, anchor_down, period_key, updated_ts).
+        """
+        if data is None or self.conn is None:
+            return
+        cumulative_up, cumulative_down, anchor_up, anchor_down, period_key, updated_ts = data
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute(
+                f"""INSERT INTO {constants.data.USAGE_COUNTER_TABLE}
+                    (id, cumulative_up, cumulative_down, anchor_up, anchor_down, period_key, updated_ts)
+                    VALUES (1, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        cumulative_up=excluded.cumulative_up,
+                        cumulative_down=excluded.cumulative_down,
+                        anchor_up=excluded.anchor_up,
+                        anchor_down=excluded.anchor_down,
+                        period_key=excluded.period_key,
+                        updated_ts=excluded.updated_ts""",
+                (cumulative_up, cumulative_down, anchor_up, anchor_down, period_key, updated_ts),
+            )
+            self.conn.commit()
+        except sqlite3.Error as e:
+            self.logger.error("Failed to persist usage counter: %s", e)
+            self.conn.rollback()
 
     def _run_maintenance(self, data: Dict[str, Any], now: Optional[datetime] = None) -> None:
         """Runs maintenance."""

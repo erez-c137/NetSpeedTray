@@ -25,7 +25,7 @@ import time
 import shutil
 from collections import deque
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional, Tuple, Literal, Union
 
@@ -106,6 +106,15 @@ class WidgetState(QObject):
         self._read_conns: Dict[int, sqlite3.Connection] = {}
         self._read_conns_lock = threading.Lock()
 
+        # Data-usage odometer (data-cap feature). Lazily loaded from the DB on first
+        # use (the worker thread may not have created the table yet at construction).
+        self._usage: Dict[str, Any] = {
+            "cumulative_up": 0.0, "cumulative_down": 0.0,
+            "anchor_up": 0.0, "anchor_down": 0.0, "period_key": "",
+        }
+        self._usage_loaded: bool = False
+        self._usage_last_persist: float = 0.0
+
         self.logger.debug("WidgetState initialized with threaded database worker.")
 
 
@@ -153,6 +162,82 @@ class WidgetState(QObject):
         # Add to database batch (clamped 0-100)
         self._hw_batch.append((int(_now.timestamp()), stat_type, max(0.0, min(100.0, value))))
 
+
+    # --- Data-usage odometer (data-cap feature) ------------------------------
+    @staticmethod
+    def _compute_period_key(reset_day: int, today: Optional[date] = None) -> str:
+        """The ISO start date of the billing period containing `today`, given a
+        reset day-of-month (clamped 1-28 so every month has a valid reset)."""
+        today = today or date.today()
+        reset_day = max(1, min(28, int(reset_day)))
+        if today.day >= reset_day:
+            start = date(today.year, today.month, reset_day)
+        else:
+            first_of_month = date(today.year, today.month, 1)
+            last_prev = first_of_month - timedelta(days=1)
+            start = date(last_prev.year, last_prev.month, reset_day)
+        return start.isoformat()
+
+    def _try_load_usage(self) -> bool:
+        """Load the persisted odometer once the worker has created the table.
+        Returns False (so the caller defers) if the table isn't ready yet — never
+        overwrites a real persisted counter with a fresh zero one."""
+        try:
+            conn = self._get_read_conn()
+            cur = conn.cursor()
+            cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                        (constants.data.USAGE_COUNTER_TABLE,))
+            if cur.fetchone() is None:
+                return False
+            cur.execute(
+                f"SELECT cumulative_up, cumulative_down, anchor_up, anchor_down, period_key "
+                f"FROM {constants.data.USAGE_COUNTER_TABLE} WHERE id = 1")
+            row = cur.fetchone()
+            if row:
+                self._usage = {"cumulative_up": row[0], "cumulative_down": row[1],
+                               "anchor_up": row[2], "anchor_down": row[3], "period_key": row[4]}
+            self._usage_loaded = True
+            return True
+        except Exception as e:
+            self.logger.debug("Usage counter not ready yet: %s", e)
+            return False
+
+    def add_usage_bytes(self, up_bytes: float, down_bytes: float) -> None:
+        """Accumulate exact transferred bytes into the odometer, re-anchoring on a new
+        billing period, and persist on a throttle. Called every poll; cheap."""
+        if not self._usage_loaded and not self._try_load_usage():
+            return  # defer until the table exists, so we don't clobber the saved total
+        u = self._usage
+        u["cumulative_up"] += max(0.0, up_bytes)
+        u["cumulative_down"] += max(0.0, down_bytes)
+
+        reset_day = self.config.get("data_cap_reset_day", 1)
+        pk = self._compute_period_key(reset_day)
+        if pk != u["period_key"]:
+            u["anchor_up"] = u["cumulative_up"]
+            u["anchor_down"] = u["cumulative_down"]
+            u["period_key"] = pk
+
+        now = time.time()
+        if now - self._usage_last_persist >= 30:
+            self._persist_usage_now()
+            self._usage_last_persist = now
+
+    def _persist_usage_now(self) -> None:
+        if not self._usage_loaded:
+            return
+        u = self._usage
+        self.db_worker.enqueue_task("persist_usage", (
+            u["cumulative_up"], u["cumulative_down"], u["anchor_up"], u["anchor_down"],
+            u["period_key"], int(time.time())))
+
+    def get_usage_this_period(self) -> Tuple[float, float]:
+        """(upload_bytes, download_bytes) used since the current period's reset day."""
+        if not self._usage_loaded and not self._try_load_usage():
+            return (0.0, 0.0)
+        u = self._usage
+        return (max(0.0, u["cumulative_up"] - u["anchor_up"]),
+                max(0.0, u["cumulative_down"] - u["anchor_down"]))
 
     def flush_batch(self) -> None:
         """Sends all batches to the database worker."""

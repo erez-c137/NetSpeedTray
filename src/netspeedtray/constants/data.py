@@ -159,6 +159,10 @@ class DataConstants:
     
     BANDWIDTH_TABLE: Final[str] = "bandwidth_history"
     APP_BANDWIDTH_TABLE: Final[str] = "app_bandwidth"
+    # Monotonic data-usage odometer (single row, id=1) for the data-cap feature.
+    # Accumulates exact byte deltas (gap-free, unlike the sampled speed history),
+    # with a per-period anchor so usage_this_period = cumulative - anchor.
+    USAGE_COUNTER_TABLE: Final[str] = "usage_counter"
     
     AGGREGATION_CUTOFF_DAYS: Final[int] = 2  # Days before data is aggregated
     

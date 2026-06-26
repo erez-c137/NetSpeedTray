@@ -175,6 +175,9 @@ class StatsController(QObject):
             return
 
         self.current_speed_data.clear()
+        # Exact per-interface byte deltas (pre-spike-filter) for the usage odometer —
+        # the spike filter caps bursts for *display*, but a data cap must count them.
+        byte_deltas: Dict[str, Tuple[float, float]] = {}
 
         for name, current in current_counters.items():
             last = self.last_interface_counters.get(name)
@@ -223,12 +226,17 @@ class StatsController(QObject):
 
                 self.current_speed_data[name] = (final_up_speed_bps, final_down_speed_bps)
                 self.recent_speeds[name].append((up_speed_bps, down_speed_bps))
+                byte_deltas[name] = (float(up_diff), float(down_diff))
 
         agg_upload, agg_download = self._aggregate_for_display(self.current_speed_data)
 
         if self.current_speed_data:
             if self.widget_state:
                 self.widget_state.add_speed_data(self.current_speed_data, aggregated_up=agg_upload, aggregated_down=agg_download)
+                # Feed the odometer the exact aggregated bytes transferred this poll
+                # (same interface selection as the display, but raw deltas not rates).
+                agg_up_bytes, agg_down_bytes = self._aggregate_for_display(byte_deltas)
+                self.widget_state.add_usage_bytes(agg_up_bytes, agg_down_bytes)
 
         upload_mbps = (agg_upload * 8) / 1_000_000
         download_mbps = (agg_download * 8) / 1_000_000
