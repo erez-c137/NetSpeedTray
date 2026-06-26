@@ -5,10 +5,11 @@ updater regression, previously untested at the instance level. These drive the
 methods directly (no network, no QThread); _on_result's outcome is checked via
 mock slots connected to its signals (direct connections fire synchronously).
 """
+import json
 from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
-from netspeedtray.core.update_checker import UpdateChecker
+from netspeedtray.core.update_checker import UpdateChecker, _CheckWorker
 
 
 def _iso_hours_ago(h: float) -> str:
@@ -69,3 +70,52 @@ def test_on_result_not_newer_is_up_to_date():
     uc._on_result("0.0.1", "http://example/release")  # older than the current version
     avail.assert_not_called()
     uptodate.assert_called_once()
+
+
+# --- _CheckWorker fetch (mocked HTTP) ---------------------------------------
+# The GitHub fetch was the v1.3.2 regression surface and was previously untested.
+# run() is called directly (not via start()), so direct-connected slots fire in-thread.
+
+_URLOPEN = "netspeedtray.core.update_checker.urllib.request.urlopen"
+
+
+def _fake_resp(payload: bytes):
+    """A context-manager stand-in for urlopen()'s return value."""
+    cm = MagicMock()
+    cm.__enter__.return_value.read.return_value = payload
+    cm.__exit__.return_value = False
+    return cm
+
+
+def test_worker_emits_finished_on_valid_response():
+    worker = _CheckWorker()
+    finished, failed = MagicMock(), MagicMock()
+    worker.finished.connect(finished)
+    worker.failed.connect(failed)
+    payload = json.dumps({"tag_name": "v2.0.0", "html_url": "http://example/rel"}).encode()
+    with patch(_URLOPEN, return_value=_fake_resp(payload)):
+        worker.run()
+    finished.assert_called_once_with("v2.0.0", "http://example/rel")
+    failed.assert_not_called()
+
+
+def test_worker_emits_failed_when_no_tag():
+    worker = _CheckWorker()
+    finished, failed = MagicMock(), MagicMock()
+    worker.finished.connect(finished)
+    worker.failed.connect(failed)
+    payload = json.dumps({"html_url": "x"}).encode()  # no tag_name
+    with patch(_URLOPEN, return_value=_fake_resp(payload)):
+        worker.run()
+    finished.assert_not_called()
+    failed.assert_called_once()
+
+
+def test_worker_emits_failed_on_network_error():
+    worker = _CheckWorker()
+    failed = MagicMock()
+    worker.failed.connect(failed)
+    with patch(_URLOPEN, side_effect=OSError("boom")):
+        worker.run()
+    failed.assert_called_once()
+    assert "boom" in failed.call_args[0][0]
