@@ -325,6 +325,7 @@
     "PREFERRED_MONITOR_PRIMARY": "Primair (automatisch)",
     "UPDATE_AVAILABLE_TITLE": "Update beschikbaar",
     "UPDATE_AVAILABLE_TEXT": "Een nieuwe versie van NetSpeedTray is beschikbaar!\n\nHuidig: v{current}\nNieuwste: v{latest}",
+    "UPDATE_RELEASE_NOTES_LABEL": "Nieuw in v{latest}",
     "UPDATE_DOWNLOAD_BUTTON": "Downloaden",
     "UPDATE_DISMISS_BUTTON": "Niet nu",
     "UPDATE_SKIP_BUTTON": "Deze versie overslaan",

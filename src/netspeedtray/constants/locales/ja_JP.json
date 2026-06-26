@@ -325,6 +325,7 @@
     "PREFERRED_MONITOR_PRIMARY": "プライマリ (自動)",
     "UPDATE_AVAILABLE_TITLE": "更新があります",
     "UPDATE_AVAILABLE_TEXT": "NetSpeedTray の新しいバージョンが利用可能です!\n\n現在 : v{current}\n最新 : v{latest}",
+    "UPDATE_RELEASE_NOTES_LABEL": "v{latest} の新機能",
     "UPDATE_DOWNLOAD_BUTTON": "ダウンロード",
     "UPDATE_DISMISS_BUTTON": "後で",
     "UPDATE_SKIP_BUTTON": "このバージョンをスキップ",

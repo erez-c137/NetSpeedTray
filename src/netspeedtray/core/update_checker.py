@@ -38,9 +38,27 @@ def is_newer(latest: str, current: str) -> bool:
     return _parse_version(latest) > _parse_version(current)
 
 
+def select_release_assets(assets) -> Tuple[str, str]:
+    """
+    From a GitHub release `assets` array, return (installer_url, portable_url):
+    the signed Inno installer (`*-x64-Setup.exe`) and the portable zip
+    (`*Portable*.zip`). Either may be "" if absent. Used by the one-click update.
+    """
+    installer_url, portable_url = "", ""
+    for asset in assets or []:
+        name = str(asset.get("name", ""))
+        url = str(asset.get("browser_download_url", ""))
+        if name.endswith("-x64-Setup.exe"):
+            installer_url = url
+        elif name.endswith(".zip") and "Portable" in name:
+            portable_url = url
+    return installer_url, portable_url
+
+
 class _CheckWorker(QThread):
     """Background thread that hits the GitHub API."""
-    finished = pyqtSignal(str, str)  # (latest_version, release_url)
+    # (latest_version, release_url, release_body, installer_url, portable_url)
+    finished = pyqtSignal(str, str, str, str, str)
     failed = pyqtSignal(str)         # error message
 
     def run(self) -> None:
@@ -55,8 +73,10 @@ class _CheckWorker(QThread):
 
             tag = data.get("tag_name", "")
             html_url = data.get("html_url", "")
+            body = data.get("body", "") or ""
+            installer_url, portable_url = select_release_assets(data.get("assets", []))
             if tag:
-                self.finished.emit(tag, html_url)
+                self.finished.emit(tag, html_url, body, installer_url, portable_url)
             else:
                 self.failed.emit("No tag_name in response")
         except Exception as e:
@@ -69,11 +89,12 @@ class UpdateChecker(QObject):
     that the UI layer can connect to.
 
     Signals:
-        update_available(latest_version: str, release_url: str)
+        update_available(latest_version, release_url, release_body, installer_url, portable_url)
         up_to_date()
         check_failed(error: str)
     """
-    update_available = pyqtSignal(str, str)  # (latest_version, release_url)
+    # (latest_version, release_url, release_body, installer_url, portable_url)
+    update_available = pyqtSignal(str, str, str, str, str)
     up_to_date = pyqtSignal()
     check_failed = pyqtSignal(str)
 
@@ -110,7 +131,8 @@ class UpdateChecker(QObject):
         self._worker.failed.connect(self._on_failed)
         self._worker.start()
 
-    def _on_result(self, latest_version: str, release_url: str) -> None:
+    def _on_result(self, latest_version: str, release_url: str, release_body: str = "",
+                   installer_url: str = "", portable_url: str = "") -> None:
         """Handle a successful API response."""
         self.config["last_update_check"] = datetime.now(timezone.utc).isoformat()
         current = constants.app.VERSION
@@ -123,7 +145,8 @@ class UpdateChecker(QObject):
                 self.up_to_date.emit()
             else:
                 logger.info("Update available: %s (current: %s)", latest_version, current)
-                self.update_available.emit(latest_version, release_url)
+                self.update_available.emit(latest_version, release_url, release_body,
+                                           installer_url, portable_url)
         else:
             logger.info("Up to date (current: %s, latest: %s).", current, latest_version)
             self.up_to_date.emit()

@@ -994,13 +994,15 @@ class NetworkSpeedWidget(QWidget):
             self.update_checker.check_failed.connect(self._on_check_failed_manual, Qt.ConnectionType.SingleShotConnection)
             self.update_checker.check_now()
 
-    def _on_update_available(self, latest_version: str, release_url: str) -> None:
+    def _on_update_available(self, latest_version: str, release_url: str, body: str = "",
+                             installer_url: str = "", portable_url: str = "") -> None:
         """Handle update available from automatic startup check."""
-        self._show_update_dialog(latest_version, release_url)
+        self._show_update_dialog(latest_version, release_url, body)
 
-    def _on_update_available_manual(self, latest_version: str, release_url: str) -> None:
+    def _on_update_available_manual(self, latest_version: str, release_url: str, body: str = "",
+                                    installer_url: str = "", portable_url: str = "") -> None:
         """Handle update available from manual menu check."""
-        self._show_update_dialog(latest_version, release_url)
+        self._show_update_dialog(latest_version, release_url, body)
 
     def _on_up_to_date_manual(self) -> None:
         """Show up-to-date message for manual check."""
@@ -1013,27 +1015,20 @@ class NetworkSpeedWidget(QWidget):
         """Show error message for manual check."""
         QMessageBox.warning(self, self.i18n.UPDATE_CHECK_TITLE, self.i18n.UPDATE_CHECK_FAILED_TEXT)
 
-    def _show_update_dialog(self, latest_version: str, release_url: str) -> None:
-        """Show update available dialog with Download / Skip / Not Now."""
-        msg = QMessageBox(self)
-        msg.setWindowTitle(self.i18n.UPDATE_AVAILABLE_TITLE)
-        msg.setText(self.i18n.UPDATE_AVAILABLE_TEXT.format(
-            current=constants.app.VERSION, latest=latest_version.lstrip("vV")
-        ))
-        msg.setIcon(QMessageBox.Icon.Information)
+    def _show_update_dialog(self, latest_version: str, release_url: str, body: str = "") -> None:
+        """Show the update-available dialog: version delta + inert release notes,
+        with Download / Skip / Not Now."""
+        from netspeedtray.views.update_dialog import UpdateDialog
+        latest = latest_version.lstrip("vV")
+        dlg = UpdateDialog(self.i18n, constants.app.VERSION, latest, body, parent=self)
+        dlg.exec()
 
-        download_btn = msg.addButton(self.i18n.UPDATE_DOWNLOAD_BUTTON, QMessageBox.ButtonRole.AcceptRole)
-        skip_btn = msg.addButton(self.i18n.UPDATE_SKIP_BUTTON, QMessageBox.ButtonRole.DestructiveRole)
-        msg.addButton(self.i18n.UPDATE_DISMISS_BUTTON, QMessageBox.ButtonRole.RejectRole)
-
-        msg.exec()
-
-        if msg.clickedButton() == download_btn:
+        if dlg.action == UpdateDialog.ACTION_DOWNLOAD:
             import webbrowser
             webbrowser.open(release_url)
-        elif msg.clickedButton() == skip_btn:
-            self.config["skipped_version"] = latest_version.lstrip("vV")
-            self.update_config({"skipped_version": self.config["skipped_version"]})
+        elif dlg.action == UpdateDialog.ACTION_SKIP:
+            self.config["skipped_version"] = latest
+            self.update_config({"skipped_version": latest})
 
     def show_support_dialog(self) -> None:
         """Show the support/donate dialog."""

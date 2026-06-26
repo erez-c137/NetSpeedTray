@@ -325,6 +325,7 @@
     "PREFERRED_MONITOR_PRIMARY": "Primarni (samodejno)",
     "UPDATE_AVAILABLE_TITLE": "Posodobitev na voljo",
     "UPDATE_AVAILABLE_TEXT": "Na voljo je nova različica NetSpeedTray!\n\nTrenutna: v{current}\nNajnovejša: v{latest}",
+    "UPDATE_RELEASE_NOTES_LABEL": "Novosti v {latest}",
     "UPDATE_DOWNLOAD_BUTTON": "Prenesi",
     "UPDATE_DISMISS_BUTTON": "Ne zdaj",
     "UPDATE_SKIP_BUTTON": "Preskoči to različico",

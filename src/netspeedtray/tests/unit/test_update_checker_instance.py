@@ -9,7 +9,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
-from netspeedtray.core.update_checker import UpdateChecker, _CheckWorker
+from netspeedtray.core.update_checker import UpdateChecker, _CheckWorker, select_release_assets
 
 
 def _iso_hours_ago(h: float) -> str:
@@ -87,16 +87,35 @@ def _fake_resp(payload: bytes):
     return cm
 
 
-def test_worker_emits_finished_on_valid_response():
+def test_worker_emits_finished_with_body_and_assets():
     worker = _CheckWorker()
     finished, failed = MagicMock(), MagicMock()
     worker.finished.connect(finished)
     worker.failed.connect(failed)
-    payload = json.dumps({"tag_name": "v2.0.0", "html_url": "http://example/rel"}).encode()
+    payload = json.dumps({
+        "tag_name": "v2.0.0", "html_url": "http://example/rel", "body": "## What's new\n- stuff",
+        "assets": [
+            {"name": "NetSpeedTray-2.0.0-x64-Setup.exe", "browser_download_url": "http://dl/setup.exe"},
+            {"name": "NetSpeedTray-Portable-2.0.0.zip", "browser_download_url": "http://dl/portable.zip"},
+        ],
+    }).encode()
     with patch(_URLOPEN, return_value=_fake_resp(payload)):
         worker.run()
-    finished.assert_called_once_with("v2.0.0", "http://example/rel")
+    finished.assert_called_once_with(
+        "v2.0.0", "http://example/rel", "## What's new\n- stuff",
+        "http://dl/setup.exe", "http://dl/portable.zip",
+    )
     failed.assert_not_called()
+
+
+def test_select_release_assets_picks_installer_and_portable():
+    assets = [
+        {"name": "NetSpeedTray-2.0.0-x64-Setup.exe", "browser_download_url": "u1"},
+        {"name": "NetSpeedTray-Portable-2.0.0.zip", "browser_download_url": "u2"},
+        {"name": "checksums.txt", "browser_download_url": "u3"},
+    ]
+    assert select_release_assets(assets) == ("u1", "u2")
+    assert select_release_assets([]) == ("", "")
 
 
 def test_worker_emits_failed_when_no_tag():
