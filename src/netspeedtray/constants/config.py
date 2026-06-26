@@ -172,7 +172,15 @@ class ConfigConstants:
         "skipped_version": None,
         "last_update_check": None,
         "first_run_v2_seen": False,
+        "first_run_ever": True,
         "preferred_monitor": None,
+        # --- Data-usage / data-cap ---
+        "data_cap_enabled": False,
+        "data_cap_gb": 0.0,                # the cap in GB (0 = unset)
+        "data_cap_reset_day": 1,           # billing reset day-of-month (1-28)
+        "data_cap_count": "total",         # total | download | upload
+        "data_cap_alert_enabled": True,    # opt-in toast at 80% / 100%
+        "usage_alert_state": "",           # internal: "<period_key>:<levels>" for restart-safe alerts
     }
     
     # --- Schema Definition for Modern Config Validation ---
@@ -249,9 +257,17 @@ class ConfigConstants:
         "skipped_version": {"type": (str, type(None)), "default": None},
         "last_update_check": {"type": (str, type(None)), "default": None},
         "first_run_v2_seen": {"type": bool, "default": False},
+        "first_run_ever": {"type": bool, "default": True},
         # QScreen.name() identifier (e.g. "\\.\DISPLAY1"). None = use primary.
         # If the saved screen isn't found at runtime, fall back to primary.
         "preferred_monitor": {"type": (str, type(None)), "default": None},
+        # --- Data-usage / data-cap ---
+        "data_cap_enabled": {"type": bool, "default": False},
+        "data_cap_gb": {"type": (int, float), "default": 0.0, "min": 0.0, "max": 1_000_000.0},
+        "data_cap_reset_day": {"type": int, "default": 1, "min": 1, "max": 28},
+        "data_cap_count": {"type": str, "default": "total", "allowed": ["total", "download", "upload"]},
+        "data_cap_alert_enabled": {"type": bool, "default": True},
+        "usage_alert_state": {"type": str, "default": ""},
     }
 
 
