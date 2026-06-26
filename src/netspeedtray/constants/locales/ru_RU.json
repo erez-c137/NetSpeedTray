@@ -356,5 +356,7 @@
     "APP_ACTIVITY_NO_CONNECTION_DETAILS": "Сведения о подключении недоступны.",
     "APP_ACTIVITY_SELECTED_APP_TEMPLATE": "{process_name} (PID {pid})",
     "APP_ACTIVITY_ENDPOINT_MORE_TEMPLATE": "(+ещё {count})",
-    "DECIMAL_SEPARATOR": ","
+    "DECIMAL_SEPARATOR": ",",
+    "USAGE_TODAY_LABEL": "За сегодня",
+    "USAGE_THIS_MONTH_LABEL": "За месяц"
 }
