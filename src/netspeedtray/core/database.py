@@ -142,6 +142,26 @@ class DatabaseWorker(QThread):
         except: return 0
 
 
+    def _has_existing_data(self) -> bool:
+        """
+        True if any speed-history table exists and holds at least one row. Used as a
+        final guard so the destructive fresh-build can never run over real user data.
+        On any error, conservatively returns True (if we can't be sure, don't wipe).
+        """
+        try:
+            cursor = self.conn.cursor()
+            for table in (constants.data.SPEED_TABLE_RAW, constants.data.SPEED_TABLE_MINUTE,
+                          constants.data.SPEED_TABLE_HOUR):
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,))
+                if cursor.fetchone() is None:
+                    continue
+                cursor.execute(f"SELECT 1 FROM {table} LIMIT 1")
+                if cursor.fetchone() is not None:
+                    return True
+            return False
+        except Exception:
+            return True
+
     def _backup_database(self) -> bool:
         """Backs up the current database file before critical operations."""
         try:
@@ -289,12 +309,24 @@ class DatabaseWorker(QThread):
                  self._migrate_schema(current_version)
                  return
              except Exception as e:
-                 self.logger.error("Migration failed: %s", e)
-        
+                 # CRITICAL data-loss guard: NEVER fall through to the DROP/fresh-build
+                 # path on an existing database — that would silently wipe the user's
+                 # history. A backup was made at migration start; keep the file as-is and
+                 # continue. The app degrades gracefully rather than destroying data.
+                 self.logger.error("Migration failed; preserving existing database (no rebuild). Error: %s", e, exc_info=True)
+                 return
+
+        # current_version == 0: a brand-new/empty database. Final safety net — never run
+        # the destructive build if real data is somehow present (e.g. a version-read glitch
+        # that returned 0 for a populated DB). Losing history is never acceptable.
+        if self._has_existing_data():
+            self.logger.error("Schema version read as new (0) but speed-history data exists; refusing to rebuild — preserving data.")
+            return
+
         # Build fresh
         cursor = self.conn.cursor()
         self.logger.info("Building fresh database schema (Version %d)...", self._DB_VERSION)
-        
+
         self.logger.info("Dropping old tables...")
         cursor.execute("PRAGMA foreign_keys = OFF;")
         for table in [constants.data.SPEED_TABLE_RAW, constants.data.SPEED_TABLE_MINUTE,
