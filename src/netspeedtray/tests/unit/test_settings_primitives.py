@@ -76,6 +76,25 @@ def test_segmented_no_signal_when_value_unchanged(qtbot):
     assert fired == []
 
 
+def test_segmented_unmatched_value_is_rejected(qtbot):
+    seg = Win11Segmented([("0", 0), ("1", 1), ("2", 2)])
+    qtbot.addWidget(seg)
+    seg.setValue(1)
+    fired = []
+    seg.valueChanged.connect(lambda v: fired.append(v))
+    # A value with no matching option must not desync state or emit a phantom signal.
+    seg.setValue(99)
+    assert seg.value() == 1
+    assert fired == []
+
+
+def test_segmented_single_option_constructs(qtbot):
+    seg = Win11Segmented([("Only", "only")])
+    qtbot.addWidget(seg)
+    seg.setValue("only")
+    assert seg.value() == "only"
+
+
 # --- ColorField --------------------------------------------------------------
 
 def test_color_field_normalizes_initial(qtbot):

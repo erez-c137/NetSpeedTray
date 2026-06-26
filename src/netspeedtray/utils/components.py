@@ -720,8 +720,9 @@ class Win11Segmented(QWidget):
         """options: an iterable of (label, value) pairs."""
         super().__init__(parent)
         self._value = None
-        self._buttons = {}
+        self._items = []  # (value, button) in order; matched by equality, not repr()
         options = list(options)
+        n = len(options)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -734,16 +735,18 @@ class Win11Segmented(QWidget):
             btn.setText(str(label))
             btn.setCheckable(True)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            if i == 0:
+            if n == 1:
+                btn.setObjectName("segOnly")
+            elif i == 0:
                 btn.setObjectName("segFirst")
-            elif i == len(options) - 1:
+            elif i == n - 1:
                 btn.setObjectName("segLast")
             else:
                 btn.setObjectName("segMid")
             btn.clicked.connect(lambda _checked=False, v=value: self.setValue(v))
             self._group.addButton(btn)
             layout.addWidget(btn)
-            self._buttons[repr(value)] = btn
+            self._items.append((value, btn))
         layout.addStretch(0)
 
         accent = get_accent_color().name()
@@ -762,13 +765,22 @@ class Win11Segmented(QWidget):
             QToolButton:checked {{ background-color: {accent}; color: white; border-color: {accent}; }}
             QToolButton#segFirst {{ border-top-left-radius: {r}px; border-bottom-left-radius: {r}px; }}
             QToolButton#segLast  {{ border-top-right-radius: {r}px; border-bottom-right-radius: {r}px; }}
+            QToolButton#segOnly  {{ border-radius: {r}px; }}
         """)
 
+    def _find(self, value):
+        for v, btn in self._items:
+            if v == value:
+                return btn
+        return None
+
     def setValue(self, value) -> None:
+        btn = self._find(value)
+        if btn is None:
+            return  # reject values with no matching option: no desync, no phantom emit
         changed = value != self._value
         self._value = value
-        btn = self._buttons.get(repr(value))
-        if btn is not None and not btn.isChecked():
+        if not btn.isChecked():
             btn.setChecked(True)
         if changed:
             self.valueChanged.emit(value)

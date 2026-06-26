@@ -2,14 +2,15 @@
 Secure one-click update: download the signed installer, verify it, run it.
 
 Flow (any failure falls back to opening the GitHub release page in the browser, i.e.
-the old P1 behavior — so the worst case is never worse than before):
+the old behavior — so the worst case is never worse than before):
 
     download installer_url -> %TEMP%  (HTTPS, with a progress dialog)
       -> signature_verifier.verify_file()  (WinVerifyTrust + SignPath pin, fail-closed)
         -> launch the installer + quit the app   (Inno's AppMutex lets it replace us)
 
-The download host doesn't have to be trusted: the Authenticode + publisher-pin gate
-is what authorizes execution, so a redirected/tampered download is caught there.
+Both the download AND the (potentially network-blocking) signature verification run on
+the worker thread, so the UI never freezes. The download host doesn't have to be
+trusted: the Authenticode + publisher-pin gate is what authorizes execution.
 """
 from __future__ import annotations
 
@@ -20,7 +21,7 @@ import tempfile
 import urllib.request
 from typing import Callable, Optional
 
-from PyQt6.QtCore import QObject, QThread, pyqtSignal
+from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import QMessageBox, QProgressDialog, QWidget
 
 from netspeedtray.utils.signature_verifier import verify_file
@@ -29,6 +30,9 @@ logger = logging.getLogger("NetSpeedTray.UpdateInstaller")
 
 _USER_AGENT = "NetSpeedTray-Updater"
 _CHUNK = 64 * 1024
+# Hard ceiling so a redirected/hostile download can't fill the disk before the
+# signature gate runs (the real installer is well under this).
+_MAX_BYTES = 250 * 1024 * 1024
 
 
 def download_to(url: str, dest: str,
@@ -37,7 +41,7 @@ def download_to(url: str, dest: str,
     """
     Download `url` to `dest` over HTTPS, streaming in chunks. Calls progress_cb(pct)
     (0-100, or -1 when the size is unknown) and aborts if is_cancelled() turns True.
-    Raises on any network/IO error or on cancellation.
+    Raises on any network/IO error, on cancellation, or if the size exceeds _MAX_BYTES.
     """
     req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
     with urllib.request.urlopen(req, timeout=30) as resp, open(dest, "wb") as out:
@@ -51,6 +55,8 @@ def download_to(url: str, dest: str,
                 break
             out.write(chunk)
             read += len(chunk)
+            if read > _MAX_BYTES:
+                raise RuntimeError("download exceeded maximum allowed size")
             if progress_cb is not None:
                 progress_cb(int(read * 100 / total) if total > 0 else -1)
 
@@ -62,9 +68,9 @@ def launch_installer(path: str) -> None:
 
 
 class _DownloadWorker(QObject):
-    """Runs download_to on a QThread."""
+    """Downloads, THEN verifies — both on the worker thread so the UI never blocks."""
     progress = pyqtSignal(int)
-    finished = pyqtSignal(str)
+    verified = pyqtSignal(str, bool, str)  # path, trusted, reason
     failed = pyqtSignal(str)
 
     def __init__(self, url: str, dest: str) -> None:
@@ -81,18 +87,23 @@ class _DownloadWorker(QObject):
             download_to(self._url, self._dest,
                         progress_cb=lambda p: self.progress.emit(p),
                         is_cancelled=lambda: self._cancelled)
-            self.finished.emit(self._dest)
-        except Exception as e:  # noqa: BLE001 - report everything to the orchestrator
+        except Exception as e:  # noqa: BLE001
             self.failed.emit(str(e))
+            return
+        if self._cancelled:
+            self.failed.emit("cancelled")
+            return
+        # Verify on THIS (worker) thread — WinVerifyTrust can block on revocation I/O.
+        result = verify_file(self._dest)
+        self.verified.emit(self._dest, result.trusted, result.reason)
 
 
 class SecureUpdater(QObject):
     """
-    Orchestrates the download -> verify -> launch flow with a progress dialog and a
-    browser fallback. Keep a reference alive while it runs (the parent widget holds it).
+    Orchestrates download -> verify -> launch with a progress dialog and a browser
+    fallback. Parented to the widget; self-destructs (deleteLater) when it finishes.
 
-    Emits ``launching`` right before the verified installer is started, so the caller
-    can quit the app.
+    Emits ``launching`` right before the verified installer starts, so the caller quits.
     """
     launching = pyqtSignal()
 
@@ -106,8 +117,15 @@ class SecureUpdater(QObject):
         self._worker: Optional[_DownloadWorker] = None
         self._dest: Optional[str] = None
         self._progress: Optional[QProgressDialog] = None
+        self._active = False
+        self._user_cancelled = False
+
+    def is_running(self) -> bool:
+        return self._active
 
     def start(self) -> None:
+        if self._active:  # in-flight guard: no concurrent downloads
+            return
         if not self._installer_url:
             self._fallback("no installer asset in the release")
             return
@@ -118,9 +136,11 @@ class SecureUpdater(QObject):
             self._fallback(f"could not create a temp file: {e}")
             return
 
+        self._active = True
         title = getattr(self.i18n, "UPDATE_DOWNLOADING_TITLE", "Downloading update")
         cancel = getattr(self.i18n, "CANCEL_BUTTON", "Cancel")
         self._progress = QProgressDialog(title, cancel, 0, 100, self._parent)
+        self._progress.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self._progress.setWindowTitle(title)
         self._progress.setMinimumWidth(360)
         self._progress.setAutoClose(False)
@@ -132,7 +152,7 @@ class SecureUpdater(QObject):
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
         self._worker.progress.connect(self._on_progress)
-        self._worker.finished.connect(self._on_downloaded)
+        self._worker.verified.connect(self._on_verified)
         self._worker.failed.connect(self._on_failed)
         self._thread.start()
         self._progress.show()
@@ -147,22 +167,26 @@ class SecureUpdater(QObject):
             self._progress.setValue(pct)
 
     def _on_cancel(self) -> None:
+        self._user_cancelled = True
         if self._worker is not None:
             self._worker.cancel()
 
-    def _on_downloaded(self, path: str) -> None:
+    def _on_verified(self, path: str, trusted: bool, reason: str) -> None:
         self._teardown_thread()
-        result = verify_file(path)
-        if not result.trusted:
-            logger.warning("Downloaded update failed verification: %s", result.reason)
+        self._close_progress()
+        if self._user_cancelled:
             self._cleanup_file()
-            self._fallback(f"signature check failed: {result.reason}")
+            self._finish()
             return
-        if self._progress is not None:
-            self._progress.close()
+        if not trusted:
+            logger.warning("Downloaded update failed verification: %s", reason)
+            self._cleanup_file()
+            self._fallback(f"signature check failed: {reason}")
+            return
         try:
             launch_installer(path)
             self.launching.emit()
+            self._finish()
         except Exception as e:  # noqa: BLE001
             logger.error("Could not launch installer: %s", e, exc_info=True)
             self._cleanup_file()
@@ -170,11 +194,11 @@ class SecureUpdater(QObject):
 
     def _on_failed(self, reason: str) -> None:
         self._teardown_thread()
+        self._close_progress()
         self._cleanup_file()
-        if self._progress is not None:
-            self._progress.close()
         if reason == "cancelled":
-            return  # user cancelled; do nothing
+            self._finish()
+            return
         self._fallback(reason)
 
     # --- helpers -------------------------------------------------------------
@@ -185,6 +209,11 @@ class SecureUpdater(QObject):
             self._thread = None
         self._worker = None
 
+    def _close_progress(self) -> None:
+        if self._progress is not None:
+            self._progress.close()  # WA_DeleteOnClose -> destroyed
+            self._progress = None
+
     def _cleanup_file(self) -> None:
         if self._dest and os.path.isfile(self._dest):
             try:
@@ -192,9 +221,15 @@ class SecureUpdater(QObject):
             except OSError:
                 pass
 
+    def _finish(self) -> None:
+        """Terminal cleanup: mark idle and release this one-shot updater."""
+        self._active = False
+        self.deleteLater()
+
     def _fallback(self, reason: str) -> None:
         """Open the release page in the browser and tell the user why (non-fatal)."""
         logger.info("Falling back to the browser for update: %s", reason)
+        self._close_progress()
         try:
             msg = getattr(self.i18n, "UPDATE_FALLBACK_MESSAGE",
                           "Couldn't complete the in-app update. Opening the download page instead.")
@@ -206,3 +241,4 @@ class SecureUpdater(QObject):
             webbrowser.open(self._release_url)
         except Exception:
             pass
+        self._finish()

@@ -5,31 +5,42 @@ This module reads raw style constants from `constants.styles` and uses them
 to build dynamic stylesheets for different application components.
 """
 
-from PyQt6.QtGui import QColor, QFont
+from PyQt6.QtGui import QColor, QFont, QFontDatabase
 import winreg
 
 # Import the design tokens (raw values) and other UI constants
 from netspeedtray.constants import styles as style_constants
 from netspeedtray.constants import ui, color as color_constants
 
+_variable_present = None  # lazy cache: is "Segoe UI Variable" installed?
+
 
 def font(token: tuple) -> QFont:
     """
-    Build a QFont for a Fluent type token — a ``(family, pixel_size, weight)`` tuple
-    from ``constants.styles`` (e.g. ``style_constants.styles.TYPE_BODY_STRONG``).
+    Build a QFont for a Fluent type token — a ``(style_name, pixel_size, weight)`` tuple
+    from ``constants.styles`` (e.g. ``TYPE_BODY_STRONG``).
 
-    The family name selects the Segoe UI Variable optical cut; ``setPixelSize`` keeps
-    sizing consistent with the px units used across the QSS. If the optical-cut family
-    isn't installed (pre-Win11), falls back to plain Segoe UI at the same size/weight.
+    On Windows 11 the optical cut + weight is selected via ``setStyleName`` on the single
+    "Segoe UI Variable" family (the cuts are STYLES, not family names). On Windows 10,
+    where that family isn't installed, falls back to plain Segoe UI at the same px/weight.
     """
-    family, px, weight = token
-    f = QFont(family)
+    global _variable_present
+    style_name, px, weight = token
+    if _variable_present is None:
+        try:
+            _variable_present = style_constants.FONT_FAMILY_VARIABLE in QFontDatabase.families()
+        except Exception:
+            _variable_present = False
+
+    if _variable_present:
+        f = QFont(style_constants.FONT_FAMILY_VARIABLE)
+        f.setStyleName(style_name)       # selects the optical cut + weight variant
+        f.setPixelSize(px)
+        f.setWeight(weight)              # keep the weight request consistent
+        return f
+    f = QFont(style_constants.FONT_FALLBACK)
     f.setPixelSize(px)
     f.setWeight(weight)
-    if not f.exactMatch():
-        f = QFont(style_constants.FONT_FALLBACK)
-        f.setPixelSize(px)
-        f.setWeight(weight)
     return f
 
 

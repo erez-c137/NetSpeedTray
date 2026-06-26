@@ -44,21 +44,20 @@ class UIStyleConstants:
     SUBTLE_TEXT_COLOR_DARK: Final[str] = "#808080"
 
     # --- Design system: Fluent type ramp ------------------------------------
-    # The Segoe UI Variable optical axis only engages when the family name selects
-    # the cut ("...Display"/"Text"/"Small"); a generic "Segoe UI Variable" falls
-    # back to flat Text metrics. utils/styles.font() builds a QFont per tier from
-    # these (family, pixel_size, weight) tuples and falls back to plain Segoe UI
-    # when the optical cut isn't installed (pre-Win11).
-    FONT_FAMILY_DISPLAY: Final[str] = "Segoe UI Variable Display"
-    FONT_FAMILY_TEXT: Final[str] = "Segoe UI Variable Text"
-    FONT_FAMILY_SMALL: Final[str] = "Segoe UI Variable Small"
+    # "Segoe UI Variable" is ONE family; the optical cuts (Small/Text/Display) and
+    # weights are STYLES of it, selected via QFont.setStyleName — NOT family names.
+    # (QFont("Segoe UI Variable Text") does not match and silently downgrades to a
+    # fallback face.) utils/styles.font() applies the style name on Win11 and falls
+    # back to plain Segoe UI at the px/weight on Win10.
+    FONT_FAMILY_VARIABLE: Final[str] = "Segoe UI Variable"
     FONT_FALLBACK: Final[str] = "Segoe UI"
 
-    TYPE_CAPTION: Final[tuple] = (FONT_FAMILY_SMALL, 12, 400)      # hints, notes
-    TYPE_BODY: Final[tuple] = (FONT_FAMILY_TEXT, 14, 400)         # control text
-    TYPE_BODY_STRONG: Final[tuple] = (FONT_FAMILY_TEXT, 14, 600)  # card titles
-    TYPE_SUBTITLE: Final[tuple] = (FONT_FAMILY_DISPLAY, 16, 600)  # section headers
-    TYPE_TITLE: Final[tuple] = (FONT_FAMILY_DISPLAY, 20, 600)     # page / preview title
+    # (style_name, pixel_size, weight)
+    TYPE_CAPTION: Final[tuple] = ("Small", 12, 400)               # hints, notes
+    TYPE_BODY: Final[tuple] = ("Text", 14, 400)                   # control text
+    TYPE_BODY_STRONG: Final[tuple] = ("Text Semibold", 14, 600)   # card titles
+    TYPE_SUBTITLE: Final[tuple] = ("Display Semibold", 16, 600)   # section headers
+    TYPE_TITLE: Final[tuple] = ("Display Semibold", 20, 600)      # page / preview title
 
     # --- Design system: semantic surface tokens (Fluent cards) --------------
     CARD_BG_LIGHT: Final[str] = "#FBFBFB"

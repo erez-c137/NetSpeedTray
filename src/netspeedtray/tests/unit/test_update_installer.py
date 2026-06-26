@@ -48,3 +48,13 @@ def test_download_to_raises_on_cancel(tmp_path, monkeypatch):
     monkeypatch.setattr(ui.urllib.request, "urlopen", lambda req, timeout=30: _FakeResp(data, len(data)))
     with pytest.raises(RuntimeError):
         ui.download_to("https://e/x", str(dest), is_cancelled=lambda: True)
+
+
+def test_download_to_enforces_size_cap(tmp_path, monkeypatch):
+    # Pretend the stream is bigger than the ceiling: it must abort, not fill the disk.
+    monkeypatch.setattr(ui, "_MAX_BYTES", 100 * 1024)
+    data = b"q" * (300 * 1024)
+    dest = tmp_path / "out.bin"
+    monkeypatch.setattr(ui.urllib.request, "urlopen", lambda req, timeout=30: _FakeResp(data, len(data)))
+    with pytest.raises(RuntimeError):
+        ui.download_to("https://e/x", str(dest))

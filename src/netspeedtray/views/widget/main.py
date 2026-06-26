@@ -1088,7 +1088,11 @@ class NetworkSpeedWidget(QWidget):
         """
         try:
             from netspeedtray.core.update_installer import SecureUpdater
-            # Held on self so it isn't garbage-collected mid-download.
+            # In-flight guard: don't start a second download over a running one.
+            existing = getattr(self, "_secure_updater", None)
+            if existing is not None and existing.is_running():
+                return
+            # Parented to self (not GC'd); it self-destructs via deleteLater when done.
             self._secure_updater = SecureUpdater(self, installer_url, release_url, self.i18n)
             self._secure_updater.launching.connect(self._quit_for_update)
             self._secure_updater.start()
