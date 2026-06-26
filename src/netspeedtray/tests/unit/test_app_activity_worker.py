@@ -142,3 +142,116 @@ def test_sample_falls_back_when_global_connections_are_denied():
     assert payload["access_limited"] is True
     assert len(payload["rows"]) == 1
     assert payload["rows"][0]["pid"] == 777
+
+
+# --- pure formatters ---------------------------------------------------------
+
+def test_get_protocol_name():
+    assert AppActivityWorker._get_protocol_name(socket.SOCK_STREAM) == "TCP"
+    assert AppActivityWorker._get_protocol_name(socket.SOCK_DGRAM) == "UDP"
+    assert AppActivityWorker._get_protocol_name(0) == "IP"  # unknown -> generic IP
+
+
+def test_format_address_variants():
+    f = AppActivityWorker._format_address
+    assert f(SimpleNamespace(ip="1.2.3.4", port=443)) == "1.2.3.4:443"  # addr object
+    assert f(("1.2.3.4", 443)) == "1.2.3.4:443"                         # tuple form
+    assert f(SimpleNamespace(ip="1.2.3.4", port=None)) == "1.2.3.4"     # host only
+    assert f(None) == "-"                                               # missing
+    assert f(()) == "-"                                                 # empty
+
+
+def test_format_connection_includes_status_but_omits_none():
+    w = AppActivityWorker()
+    est = _conn(1, "127.0.0.1", 5000, "1.1.1.1", 443, "ESTABLISHED")
+    assert w._format_connection(est) == "TCP 127.0.0.1:5000 -> 1.1.1.1:443 ESTABLISHED"
+    # A 'NONE'/blank status (common for UDP) is omitted, not printed literally.
+    none_status = _conn(1, "127.0.0.1", 5000, "1.1.1.1", 443, "NONE")
+    assert w._format_connection(none_status) == "TCP 127.0.0.1:5000 -> 1.1.1.1:443"
+
+
+# --- rate edge cases ---------------------------------------------------------
+
+def _single_pid_worker(io_sequence):
+    """A worker whose one process returns io_counters from io_sequence per sample."""
+    worker = AppActivityWorker()
+    payloads = []
+    worker.data_ready.connect(payloads.append)
+    idx = {"value": 0}
+
+    def fake_net_connections(kind):
+        idx["value"] += 1
+        return [_conn(1, "127.0.0.1", 5000, "1.1.1.1", 443, "ESTABLISHED")]
+
+    class FakeProcess:
+        def __init__(self, pid):
+            self.pid = pid
+
+        def name(self):
+            return "app.exe"
+
+        def io_counters(self):
+            step = max(0, idx["value"] - 1)
+            rb, wb = io_sequence[step]
+            return SimpleNamespace(read_bytes=rb, write_bytes=wb)
+
+    return worker, payloads, fake_net_connections, FakeProcess
+
+
+def test_first_sample_reports_zero_rates():
+    """The baseline sample has no previous counters, so every rate is 0 (not garbage)."""
+    worker, payloads, fake_nc, FakeProcess = _single_pid_worker([(9999, 8888)])
+    with (
+        patch("netspeedtray.views.app_activity.worker.psutil.net_connections", side_effect=fake_nc),
+        patch("netspeedtray.views.app_activity.worker.psutil.Process", side_effect=lambda pid: FakeProcess(pid)),
+        patch("netspeedtray.views.app_activity.worker.time.monotonic", return_value=100.0),
+    ):
+        worker.sample()
+    row = payloads[0]["rows"][0]
+    assert row["download_bps"] == 0.0
+    assert row["upload_bps"] == 0.0
+
+
+def test_counter_reset_clamps_rate_to_zero():
+    """If counters DROP between samples (process restart / counter wrap), the rate is
+    clamped to 0 rather than going negative."""
+    worker, payloads, fake_nc, FakeProcess = _single_pid_worker([(10000, 20000), (500, 600)])
+    with (
+        patch("netspeedtray.views.app_activity.worker.psutil.net_connections", side_effect=fake_nc),
+        patch("netspeedtray.views.app_activity.worker.psutil.Process", side_effect=lambda pid: FakeProcess(pid)),
+        patch("netspeedtray.views.app_activity.worker.time.monotonic", side_effect=[100.0, 101.0]),
+    ):
+        worker.sample()
+        worker.sample()
+    row = payloads[1]["rows"][0]
+    assert row["download_bps"] == 0.0  # clamped, never negative
+    assert row["upload_bps"] == 0.0
+
+
+def test_duplicate_endpoints_are_deduplicated():
+    """Two identical connections for one PID collapse to a single endpoint + count of 1."""
+    worker = AppActivityWorker()
+    payloads = []
+    worker.data_ready.connect(payloads.append)
+    c1 = _conn(1, "127.0.0.1", 5000, "1.1.1.1", 443, "ESTABLISHED")
+    c2 = _conn(1, "127.0.0.1", 5000, "1.1.1.1", 443, "ESTABLISHED")  # identical
+
+    class FakeProcess:
+        def __init__(self, pid):
+            self.pid = pid
+
+        def name(self):
+            return "app.exe"
+
+        def io_counters(self):
+            return SimpleNamespace(read_bytes=1, write_bytes=1)
+
+    with (
+        patch("netspeedtray.views.app_activity.worker.psutil.net_connections", return_value=[c1, c2]),
+        patch("netspeedtray.views.app_activity.worker.psutil.Process", side_effect=lambda pid: FakeProcess(pid)),
+        patch("netspeedtray.views.app_activity.worker.time.monotonic", return_value=100.0),
+    ):
+        worker.sample()
+    row = payloads[0]["rows"][0]
+    assert row["connection_count"] == 1
+    assert len(row["endpoints"]) == 1
