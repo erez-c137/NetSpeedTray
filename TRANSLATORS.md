@@ -22,7 +22,7 @@ Other locales (English, German, Spanish) are currently maintained by the project
 
 > 🆕 **Pending native review for 2.0** (non-English values AI-assisted; a one-line native check before the 2.0 tag is very welcome — see issue #157):
 > - Tray "data used" glance: `USAGE_TODAY_LABEL`, `USAGE_THIS_MONTH_LABEL`
-> - Update dialog: `UPDATE_RELEASE_NOTES_LABEL`
+> - Update dialog / one-click updater: `UPDATE_RELEASE_NOTES_LABEL`, `UPDATE_DOWNLOADING_TITLE`, `UPDATE_FALLBACK_MESSAGE`
 > - First-run welcome: `WELCOME_2_0_TITLE`, `WELCOME_2_0_BODY`, `WELCOME_2_0_WHATS_NEW_BUTTON`, `WELCOME_2_0_GOT_IT_BUTTON` (the **body** is the longest/most nuanced — most worth a look)
 
 ## How translation works in NetSpeedTray
