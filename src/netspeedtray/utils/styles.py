@@ -5,12 +5,50 @@ This module reads raw style constants from `constants.styles` and uses them
 to build dynamic stylesheets for different application components.
 """
 
-from PyQt6.QtGui import QColor
+from PyQt6.QtGui import QColor, QFont
 import winreg
 
 # Import the design tokens (raw values) and other UI constants
 from netspeedtray.constants import styles as style_constants
 from netspeedtray.constants import ui, color as color_constants
+
+
+def font(token: tuple) -> QFont:
+    """
+    Build a QFont for a Fluent type token — a ``(family, pixel_size, weight)`` tuple
+    from ``constants.styles`` (e.g. ``style_constants.styles.TYPE_BODY_STRONG``).
+
+    The family name selects the Segoe UI Variable optical cut; ``setPixelSize`` keeps
+    sizing consistent with the px units used across the QSS. If the optical-cut family
+    isn't installed (pre-Win11), falls back to plain Segoe UI at the same size/weight.
+    """
+    family, px, weight = token
+    f = QFont(family)
+    f.setPixelSize(px)
+    f.setWeight(weight)
+    if not f.exactMatch():
+        f = QFont(style_constants.FONT_FALLBACK)
+        f.setPixelSize(px)
+        f.setWeight(weight)
+    return f
+
+
+def semantic_colors() -> dict:
+    """
+    Theme-resolved semantic surface tokens for the *current* OS theme. One source of
+    truth for the design-system primitives (SettingCard/SettingExpander/etc.) so they
+    never hardcode hexes. Values are CSS-ready strings.
+    """
+    dark = is_dark_mode()
+    sc = style_constants
+    return {
+        "card_bg": sc.CARD_BG_DARK if dark else sc.CARD_BG_LIGHT,
+        "card_stroke": sc.CARD_STROKE_DARK if dark else sc.CARD_STROKE_LIGHT,
+        "subtle_fill": sc.SUBTLE_FILL_DARK if dark else sc.SUBTLE_FILL_LIGHT,
+        "text_primary": sc.DARK_MODE_TEXT_COLOR if dark else sc.LIGHT_MODE_TEXT_COLOR,
+        "text_secondary": sc.SUBTLE_TEXT_COLOR_DARK if dark else sc.SUBTLE_TEXT_COLOR_LIGHT,
+        "accent": get_accent_color().name(),
+    }
 
 
 def is_dark_mode() -> bool:
@@ -36,7 +74,7 @@ def get_accent_color() -> QColor:
         blue = argb & 0xFF
         return QColor(red, green, blue)
     except Exception:
-        return QColor(style_constants.styles.UI_ACCENT_FALLBACK)
+        return QColor(style_constants.UI_ACCENT_FALLBACK)
 
 
 def dialog_style() -> str:

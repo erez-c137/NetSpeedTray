@@ -43,6 +43,41 @@ class UIStyleConstants:
     SUBTLE_TEXT_COLOR_LIGHT: Final[str] = "#595959"
     SUBTLE_TEXT_COLOR_DARK: Final[str] = "#808080"
 
+    # --- Design system: Fluent type ramp ------------------------------------
+    # The Segoe UI Variable optical axis only engages when the family name selects
+    # the cut ("...Display"/"Text"/"Small"); a generic "Segoe UI Variable" falls
+    # back to flat Text metrics. utils/styles.font() builds a QFont per tier from
+    # these (family, pixel_size, weight) tuples and falls back to plain Segoe UI
+    # when the optical cut isn't installed (pre-Win11).
+    FONT_FAMILY_DISPLAY: Final[str] = "Segoe UI Variable Display"
+    FONT_FAMILY_TEXT: Final[str] = "Segoe UI Variable Text"
+    FONT_FAMILY_SMALL: Final[str] = "Segoe UI Variable Small"
+    FONT_FALLBACK: Final[str] = "Segoe UI"
+
+    TYPE_CAPTION: Final[tuple] = (FONT_FAMILY_SMALL, 12, 400)      # hints, notes
+    TYPE_BODY: Final[tuple] = (FONT_FAMILY_TEXT, 14, 400)         # control text
+    TYPE_BODY_STRONG: Final[tuple] = (FONT_FAMILY_TEXT, 14, 600)  # card titles
+    TYPE_SUBTITLE: Final[tuple] = (FONT_FAMILY_DISPLAY, 16, 600)  # section headers
+    TYPE_TITLE: Final[tuple] = (FONT_FAMILY_DISPLAY, 20, 600)     # page / preview title
+
+    # --- Design system: semantic surface tokens (Fluent cards) --------------
+    CARD_BG_LIGHT: Final[str] = "#FBFBFB"
+    CARD_BG_DARK: Final[str] = "#2D2D2D"
+    CARD_STROKE_LIGHT: Final[str] = "#E5E5E5"
+    CARD_STROKE_DARK: Final[str] = "#3A3A3A"
+    SUBTLE_FILL_LIGHT: Final[str] = "rgba(0, 0, 0, 0.04)"   # hover overlay
+    SUBTLE_FILL_DARK: Final[str] = "rgba(255, 255, 255, 0.06)"
+
+    # --- Design system: spacing scale (4px grid), radii, layout -------------
+    SPACE_XS: Final[int] = 4
+    SPACE_S: Final[int] = 8
+    SPACE_M: Final[int] = 12
+    SPACE_L: Final[int] = 20
+    SPACE_XL: Final[int] = 30
+    RADIUS_CARD: Final[int] = 8
+    RADIUS_CONTROL: Final[int] = 4
+    CONTENT_MAX_WIDTH: Final[int] = 640
+
     def __init__(self) -> None:
         """
         This class is intended for holding constants and should not be instantiated
