@@ -95,6 +95,10 @@ class TrayIconManager(QObject):
 
             self.context_menu.addSeparator()
 
+            # --- Pause / Resume (label toggles with state; refreshed on open) ---
+            self.pause_action = self.context_menu.addAction(self.i18n.PAUSE_MENU_ITEM)
+            self.pause_action.triggered.connect(self._toggle_pause)
+
             # --- Secondary Actions (less frequent) ---
             update_action = self.context_menu.addAction(self.i18n.CHECK_FOR_UPDATES_MENU_ITEM)
             if hasattr(self.widget, 'check_for_updates'):
@@ -119,6 +123,27 @@ class TrayIconManager(QObject):
         except Exception as e:
             self.logger.error("Error initializing context menu: %s", e, exc_info=True)
 
+    def _toggle_pause(self, _checked: bool = False) -> None:
+        """Toggle the widget's paused state from the tray menu."""
+        try:
+            if getattr(self.widget, "is_paused", False):
+                self.widget.resume()
+            else:
+                self.widget.pause()
+        except Exception as e:
+            self.logger.error("Error toggling pause: %s", e, exc_info=True)
+
+    def _refresh_dynamic_items(self) -> None:
+        """Update menu items whose text depends on live state, just before showing."""
+        try:
+            if self.pause_action is not None:
+                paused = getattr(self.widget, "is_paused", False)
+                self.pause_action.setText(
+                    self.i18n.RESUME_MENU_ITEM if paused else self.i18n.PAUSE_MENU_ITEM
+                )
+        except Exception as e:
+            self.logger.error("Error refreshing dynamic menu items: %s", e, exc_info=True)
+
     def show_context_menu(self) -> None:
         """
         Calculates position and shows the context menu.
@@ -127,6 +152,7 @@ class TrayIconManager(QObject):
             return
 
         try:
+            self._refresh_dynamic_items()
             menu_pos = self._calculate_menu_position()
             
             self.is_context_menu_visible = True

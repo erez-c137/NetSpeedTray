@@ -87,6 +87,41 @@ def test_show_context_menu_calls_exec(mock_widget, mock_i18n, q_app):
     # Ensure it refreshed the widget after closing
     mock_widget._execute_refresh.assert_called_once()
 
+def test_toggle_pause_routes_to_pause_then_resume(mock_widget, mock_i18n, q_app):
+    """The tray pause action calls widget.pause() when running and widget.resume() when paused."""
+    mock_widget.pause = MagicMock()
+    mock_widget.resume = MagicMock()
+    mock_widget.is_paused = False
+
+    manager = TrayIconManager(mock_widget, mock_i18n)
+    manager.initialize()
+
+    manager._toggle_pause()                 # running -> pause
+    mock_widget.pause.assert_called_once()
+    mock_widget.resume.assert_not_called()
+
+    mock_widget.is_paused = True
+    manager._toggle_pause()                 # paused -> resume
+    mock_widget.resume.assert_called_once()
+
+
+def test_refresh_dynamic_items_toggles_pause_label(mock_widget, mock_i18n, q_app):
+    """The pause action label flips between Pause/Resume with the widget's state on open."""
+    mock_i18n.PAUSE_MENU_ITEM = "Pause"
+    mock_i18n.RESUME_MENU_ITEM = "Resume"
+    mock_widget.is_paused = False
+
+    manager = TrayIconManager(mock_widget, mock_i18n)
+    manager.initialize()
+
+    manager._refresh_dynamic_items()
+    assert manager.pause_action.text() == "Pause"
+
+    mock_widget.is_paused = True
+    manager._refresh_dynamic_items()
+    assert manager.pause_action.text() == "Resume"
+
+
 def test_menu_position_calculation_fallback(mock_widget, mock_i18n, q_app):
     """Tests that menu position falls back gracefully if renderer is missing."""
     manager = TrayIconManager(mock_widget, mock_i18n)
