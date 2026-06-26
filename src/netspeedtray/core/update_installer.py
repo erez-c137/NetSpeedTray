@@ -116,6 +116,7 @@ class SecureUpdater(QObject):
         self._thread: Optional[QThread] = None
         self._worker: Optional[_DownloadWorker] = None
         self._dest: Optional[str] = None
+        self._tmpdir: Optional[str] = None
         self._progress: Optional[QProgressDialog] = None
         self._active = False
         self._user_cancelled = False
@@ -130,10 +131,14 @@ class SecureUpdater(QObject):
             self._fallback("no installer asset in the release")
             return
         try:
-            fd, self._dest = tempfile.mkstemp(suffix="-NetSpeedTray-Setup.exe")
-            os.close(fd)
+            # Download into a private per-run directory. mkdtemp creates it 0700
+            # (owner-only) instead of the shared %TEMP% root, so the verified file
+            # can't be swapped out from under us between verification and launch
+            # (TOCTOU hardening — H5).
+            self._tmpdir = tempfile.mkdtemp(prefix="NetSpeedTray-update-")
+            self._dest = os.path.join(self._tmpdir, "NetSpeedTray-Setup.exe")
         except Exception as e:
-            self._fallback(f"could not create a temp file: {e}")
+            self._fallback(f"could not create a temp directory: {e}")
             return
 
         self._active = True
@@ -215,7 +220,11 @@ class SecureUpdater(QObject):
             self._progress = None
 
     def _cleanup_file(self) -> None:
-        if self._dest and os.path.isfile(self._dest):
+        # Remove the whole private download directory (and the installer in it).
+        if self._tmpdir and os.path.isdir(self._tmpdir):
+            import shutil
+            shutil.rmtree(self._tmpdir, ignore_errors=True)
+        elif self._dest and os.path.isfile(self._dest):
             try:
                 os.remove(self._dest)
             except OSError:
