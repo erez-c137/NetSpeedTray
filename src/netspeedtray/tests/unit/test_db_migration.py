@@ -28,11 +28,19 @@ class TestDatabaseMigration(unittest.TestCase):
         shutil.rmtree(self.temp_dir)
 
     def _create_v2_schema(self, conn):
-        """Creates the legacy v2 schema (before any v3 changes)."""
+        """Creates the legacy v2 schema (before any v3 changes).
+
+        A real v2 DB has all three speed tiers — the v2->v3 migration builds covering
+        indexes on the minute/hour tables, so they must exist for it to run. (Previously
+        only raw was created, so the migration failed and the old code silently
+        fresh-built over it — the exact data-loss bug now guarded against.)
+        """
         cursor = conn.cursor()
         cursor.execute("CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT)")
         cursor.execute("INSERT INTO metadata (key, value) VALUES ('db_version', '2')")
         cursor.execute("CREATE TABLE speed_history_raw (timestamp INTEGER, interface_name TEXT, upload_bytes_sec REAL, download_bytes_sec REAL)")
+        cursor.execute("CREATE TABLE speed_history_minute (timestamp INTEGER, interface_name TEXT, upload_avg REAL, download_avg REAL)")
+        cursor.execute("CREATE TABLE speed_history_hour (timestamp INTEGER, interface_name TEXT, upload_avg REAL, download_avg REAL)")
         conn.commit()
 
     def test_backup_database_success(self):
