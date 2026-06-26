@@ -211,6 +211,8 @@
     "STARTUP_MENU_ITEM": "スタートアップ時に実行(&U)",
     "PAUSE_MENU_ITEM": "一時停止(&P)",
     "RESUME_MENU_ITEM": "再開(&R)",
+    "USAGE_TODAY_LABEL": "今日",
+    "USAGE_THIS_MONTH_LABEL": "今月",
     "EXIT_MENU_ITEM": "終了(&X)",
     "SELECT_FONT_BUTTON": "選択",
     "EXPORT_ERROR_LOG_BUTTON": "エラーログをエクスポート",

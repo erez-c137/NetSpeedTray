@@ -8,8 +8,10 @@ and smart menu positioning.
 
 import os
 import sys
+import time
 import logging
-from typing import Optional, TYPE_CHECKING
+from datetime import datetime
+from typing import Optional, Tuple, TYPE_CHECKING
 
 from PyQt6.QtCore import QObject, QPoint, Qt, QRect
 from PyQt6.QtGui import QIcon, QAction
@@ -17,6 +19,7 @@ from PyQt6.QtWidgets import QMenu, QApplication, QWidget
 
 from netspeedtray import constants
 from netspeedtray.utils import styles as style_utils
+from netspeedtray.utils import helpers
 
 if TYPE_CHECKING:
     from netspeedtray.views.widget import NetworkSpeedWidget
@@ -41,6 +44,14 @@ class TrayIconManager(QObject):
 
         # Retrieve actions for external use if needed (e.g., toggling text)
         self.pause_action: Optional[QAction] = None
+
+        # Usage glance (data used today / this month); refreshed on open with a TTL
+        self.usage_today_action: Optional[QAction] = None
+        self.usage_month_action: Optional[QAction] = None
+        self._usage_today: Tuple[float, float] = (0.0, 0.0)  # (upload, download) bytes
+        self._usage_month: Tuple[float, float] = (0.0, 0.0)
+        self._usage_cache_ts: float = 0.0
+        self._usage_ttl_sec: float = 30.0
 
     def initialize(self) -> None:
         """Loads the icon and initializes the context menu."""
@@ -79,6 +90,13 @@ class TrayIconManager(QObject):
         self.logger.debug("Initializing context menu in manager...")
         try:
             self.context_menu = QMenu(self.widget)
+
+            # --- Usage glance (informational, disabled; text filled on open) ---
+            self.usage_today_action = self.context_menu.addAction("")
+            self.usage_today_action.setEnabled(False)
+            self.usage_month_action = self.context_menu.addAction("")
+            self.usage_month_action.setEnabled(False)
+            self.context_menu.addSeparator()
 
             # --- Primary Actions (windows the user opens frequently) ---
             settings_action = self.context_menu.addAction(self.i18n.SETTINGS_MENU_ITEM)
@@ -133,6 +151,32 @@ class TrayIconManager(QObject):
         except Exception as e:
             self.logger.error("Error toggling pause: %s", e, exc_info=True)
 
+    def _refresh_usage_totals(self) -> None:
+        """Recompute today/this-month bandwidth totals, cached with a short TTL so
+        opening the menu stays instant (no DB query on every click)."""
+        now = time.monotonic()
+        if self._usage_cache_ts and (now - self._usage_cache_ts) < self._usage_ttl_sec:
+            return
+        try:
+            state = getattr(self.widget, "widget_state", None)
+            if state is None:
+                return
+            now_dt = datetime.now()
+            midnight = now_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+            month_start = midnight.replace(day=1)
+            self._usage_today = state.get_total_bandwidth_for_period(midnight, now_dt)
+            self._usage_month = state.get_total_bandwidth_for_period(month_start, now_dt)
+            self._usage_cache_ts = now
+        except Exception as e:
+            self.logger.error("Error computing usage totals: %s", e, exc_info=True)
+
+    def _format_usage(self, label: str, totals: Tuple[float, float]) -> str:
+        """Format a (upload, download) byte pair as 'Label:  v <down>  ^ <up>'."""
+        up_bytes, down_bytes = totals
+        dn_v, dn_u = helpers.format_data_size(down_bytes, self.i18n)
+        up_v, up_u = helpers.format_data_size(up_bytes, self.i18n)
+        return f"{label}:   ↓ {dn_v:.1f} {dn_u}   ↑ {up_v:.1f} {up_u}"
+
     def _refresh_dynamic_items(self) -> None:
         """Update menu items whose text depends on live state, just before showing."""
         try:
@@ -140,6 +184,15 @@ class TrayIconManager(QObject):
                 paused = getattr(self.widget, "is_paused", False)
                 self.pause_action.setText(
                     self.i18n.RESUME_MENU_ITEM if paused else self.i18n.PAUSE_MENU_ITEM
+                )
+            self._refresh_usage_totals()
+            if self.usage_today_action is not None:
+                self.usage_today_action.setText(
+                    self._format_usage(self.i18n.USAGE_TODAY_LABEL, self._usage_today)
+                )
+            if self.usage_month_action is not None:
+                self.usage_month_action.setText(
+                    self._format_usage(self.i18n.USAGE_THIS_MONTH_LABEL, self._usage_month)
                 )
         except Exception as e:
             self.logger.error("Error refreshing dynamic menu items: %s", e, exc_info=True)

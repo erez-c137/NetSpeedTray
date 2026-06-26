@@ -211,6 +211,8 @@
     "STARTUP_MENU_ITEM": "Uitvoeren bij &opstarten",
     "PAUSE_MENU_ITEM": "&Pauzeren",
     "RESUME_MENU_ITEM": "&Hervatten",
+    "USAGE_TODAY_LABEL": "Vandaag",
+    "USAGE_THIS_MONTH_LABEL": "Deze maand",
     "EXIT_MENU_ITEM": "A&fsluiten",
     "SELECT_FONT_BUTTON": "Selecteren",
     "EXPORT_ERROR_LOG_BUTTON": "Foutenlogboek exporteren",

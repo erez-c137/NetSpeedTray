@@ -211,6 +211,8 @@
     "STARTUP_MENU_ITEM": "Run at Start&up",
     "PAUSE_MENU_ITEM": "&Pause",
     "RESUME_MENU_ITEM": "&Resume",
+    "USAGE_TODAY_LABEL": "Today",
+    "USAGE_THIS_MONTH_LABEL": "This Month",
     "EXIT_MENU_ITEM": "E&xit",
     "SELECT_FONT_BUTTON": "Select",
     "EXPORT_ERROR_LOG_BUTTON": "Export Error Log",

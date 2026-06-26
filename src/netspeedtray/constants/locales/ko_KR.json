@@ -211,6 +211,8 @@
     "STARTUP_MENU_ITEM": "시작 시 실행(&U)",
     "PAUSE_MENU_ITEM": "일시 중지(&P)",
     "RESUME_MENU_ITEM": "재개(&R)",
+    "USAGE_TODAY_LABEL": "오늘",
+    "USAGE_THIS_MONTH_LABEL": "이번 달",
     "EXIT_MENU_ITEM": "종료(&X)",
     "SELECT_FONT_BUTTON": "선택",
     "EXPORT_ERROR_LOG_BUTTON": "오류 로그 내보내기",

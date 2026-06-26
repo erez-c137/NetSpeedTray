@@ -211,6 +211,8 @@
     "STARTUP_MENU_ITEM": "Mit Windows &starten",
     "PAUSE_MENU_ITEM": "&Pause",
     "RESUME_MENU_ITEM": "&Fortsetzen",
+    "USAGE_TODAY_LABEL": "Heute",
+    "USAGE_THIS_MONTH_LABEL": "Diesen Monat",
     "EXIT_MENU_ITEM": "Be&enden",
     "SELECT_FONT_BUTTON": "Wählen",
     "EXPORT_ERROR_LOG_BUTTON": "Fehlerprotokoll exportieren",

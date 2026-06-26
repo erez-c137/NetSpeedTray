@@ -211,6 +211,8 @@
     "STARTUP_MENU_ITEM": "Ejecutar al &Iniciar",
     "PAUSE_MENU_ITEM": "&Pausar",
     "RESUME_MENU_ITEM": "&Reanudar",
+    "USAGE_TODAY_LABEL": "Hoy",
+    "USAGE_THIS_MONTH_LABEL": "Este mes",
     "EXIT_MENU_ITEM": "&Salir",
     "SELECT_FONT_BUTTON": "Seleccionar",
     "EXPORT_ERROR_LOG_BUTTON": "Exportar Registro de Errores",

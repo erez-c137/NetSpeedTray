@@ -37,7 +37,16 @@ def mock_i18n():
     i18n.SHOW_GRAPH_MENU_ITEM = "Show Graph"
     i18n.APP_USAGE_TAB_LABEL = "App Usage"
     i18n.SHOW_APP_ACTIVITY_MENU_ITEM = "Show App Usage"
+    i18n.PAUSE_MENU_ITEM = "Pause"
+    i18n.RESUME_MENU_ITEM = "Resume"
+    i18n.CHECK_FOR_UPDATES_MENU_ITEM = "Check for Updates"
+    i18n.SUPPORT_MENU_ITEM = "Support"
     i18n.EXIT_MENU_ITEM = "Exit"
+    i18n.USAGE_TODAY_LABEL = "Today"
+    i18n.USAGE_THIS_MONTH_LABEL = "This Month"
+    for k, v in {"BYTES_UNIT": "B", "KB_UNIT": "KB", "MB_UNIT": "MB",
+                 "GB_UNIT": "GB", "TB_UNIT": "TB", "PB_UNIT": "PB"}.items():
+        setattr(i18n, k, v)
     return i18n
 
 @pytest.fixture(scope="session")
@@ -58,10 +67,10 @@ def test_initialization_loads_icon_and_menu(mock_widget, mock_i18n, q_app):
         assert manager.context_menu is not None
         assert isinstance(manager.context_menu, QMenu)
         
-        # Check menu content
+        # Check menu content (order-independent: usage rows now precede Settings)
         actions = manager.context_menu.actions()
         assert len(actions) >= 2
-        assert actions[0].text() == "Settings"
+        assert any(a.text() == "Settings" for a in actions)
         
         # Verify settings connection
         # (Qt signals are hard to verify without triggering, but we can check the mock call logic involved)
@@ -120,6 +129,31 @@ def test_refresh_dynamic_items_toggles_pause_label(mock_widget, mock_i18n, q_app
     mock_widget.is_paused = True
     manager._refresh_dynamic_items()
     assert manager.pause_action.text() == "Resume"
+
+
+def test_usage_line_formats_and_caches(mock_widget, mock_i18n, q_app):
+    """The Today/This-Month usage rows show formatted totals and are cached (one DB
+    query pair per TTL window, not per menu-open)."""
+    for k, v in {"BYTES_UNIT": "B", "KB_UNIT": "KB", "MB_UNIT": "MB",
+                 "GB_UNIT": "GB", "TB_UNIT": "TB", "PB_UNIT": "PB"}.items():
+        setattr(mock_i18n, k, v)
+    mock_i18n.USAGE_TODAY_LABEL = "Today"
+    mock_i18n.USAGE_THIS_MONTH_LABEL = "This Month"
+
+    state = MagicMock()
+    state.get_total_bandwidth_for_period.return_value = (1024 * 1024, 2 * 1024 * 1024)  # 1 MB up, 2 MB down
+    mock_widget.widget_state = state
+
+    manager = TrayIconManager(mock_widget, mock_i18n)
+    manager.initialize()
+
+    manager._refresh_dynamic_items()
+    today_text = manager.usage_today_action.text()
+    assert "Today" in today_text and "MB" in today_text
+    assert state.get_total_bandwidth_for_period.call_count == 2  # today + month
+
+    manager._refresh_dynamic_items()  # within TTL -> served from cache
+    assert state.get_total_bandwidth_for_period.call_count == 2
 
 
 def test_menu_position_calculation_fallback(mock_widget, mock_i18n, q_app):
