@@ -655,7 +655,16 @@ class NetworkSpeedWidget(QWidget):
 
             # Handle taskbar restarts
             self.system_event_handler.taskbar_restarted.connect(lambda: [QTimer.singleShot(i * constants.timeouts.TASKBAR_RESTART_RECOVERY_DELAY_MS, self._execute_refresh) for i in range(constants.timeouts.TASKBAR_RESTART_RETRIES)])
-            
+
+            # React to monitor topology changes (add/remove/primary swap, KVM, dock/undock):
+            # re-validate the position + re-assert the widget. A set-and-forget app must follow
+            # its taskbar across these without the user nudging it.
+            app = QApplication.instance()
+            if app is not None:
+                app.screenAdded.connect(lambda _s: self._on_environment_changed("screenAdded"))
+                app.screenRemoved.connect(lambda _s: self._on_environment_changed("screenRemoved"))
+                app.primaryScreenChanged.connect(lambda _s: self._on_environment_changed("primaryScreenChanged"))
+
             self.system_event_handler.start()
 
             
@@ -907,6 +916,53 @@ class NetworkSpeedWidget(QWidget):
         if not self.isVisible():
             return
         self.position_manager.ensure_topmost()
+
+    def _on_environment_changed(self, reason: str = "") -> None:
+        """
+        The display/power environment changed (monitor add/remove, primary swap, wake from
+        sleep). Re-validate position and re-assert visibility/Z-order with a couple of
+        staggered passes, since Windows needs a moment to settle taskbar + monitor geometry.
+        """
+        self.logger.debug("Environment changed (%s) — re-asserting widget.", reason)
+        try:
+            self.update_position()
+            for i in range(1, constants.timeouts.TASKBAR_RESTART_RETRIES + 1):
+                QTimer.singleShot(i * constants.timeouts.TASKBAR_RESTART_RECOVERY_DELAY_MS,
+                                  self._execute_refresh)
+        except Exception as e:
+            self.logger.error("Error handling environment change (%s): %s", reason, e, exc_info=True)
+
+    def nativeEvent(self, eventType, message):
+        """
+        Catch WM_POWERBROADCAST so the widget re-asserts itself on wake from sleep/hibernate
+        (monitors and the taskbar are often re-arranged across a suspend cycle). Everything
+        else is passed through untouched.
+        """
+        try:
+            if eventType == b"windows_generic_MSG" and message is not None:
+                import ctypes
+                from ctypes import wintypes
+
+                class _MSG(ctypes.Structure):
+                    _fields_ = [
+                        ("hwnd", wintypes.HWND), ("message", wintypes.UINT),
+                        ("wParam", ctypes.c_size_t), ("lParam", ctypes.c_ssize_t),
+                        ("time", wintypes.DWORD), ("pt_x", wintypes.LONG), ("pt_y", wintypes.LONG),
+                    ]
+
+                msg = _MSG.from_address(int(message))
+                WM_POWERBROADCAST = 0x0218
+                PBT_APMRESUMESUSPEND = 0x0007
+                PBT_APMRESUMEAUTOMATIC = 0x0012
+                if msg.message == WM_POWERBROADCAST and msg.wParam in (
+                    PBT_APMRESUMESUSPEND, PBT_APMRESUMEAUTOMATIC
+                ):
+                    self.logger.info("Resume from sleep detected — re-asserting widget.")
+                    QTimer.singleShot(constants.timeouts.TASKBAR_RESTART_RECOVERY_DELAY_MS,
+                                      lambda: self._on_environment_changed("resume"))
+        except Exception as e:
+            self.logger.debug("nativeEvent power handling failed: %s", e)
+        return super().nativeEvent(eventType, message)
 
     def _enforce_topmost_status(self) -> None:
         """Delegates to PositionManager."""
