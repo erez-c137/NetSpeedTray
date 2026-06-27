@@ -138,13 +138,29 @@ class DatabaseWorker(QThread):
 
 
     def _get_current_db_version(self) -> int:
-        """Retrieves the current database version, returning 0 if not found/invalid."""
+        """
+        Returns the schema version: a positive int for an existing DB, 0 for a genuinely
+        new/empty DB (no metadata table, or no db_version row), or -1 (UNKNOWN) if the
+        version can't be read for an unexpected reason.
+
+        The 0-vs-(-1) distinction is the M7 data-loss guard: a bare ``return 0`` on any
+        error would let a transient read failure (lock, corruption) masquerade as a fresh
+        install and trigger the destructive DROP/rebuild path. Callers MUST treat a
+        negative result as "do not rebuild — preserve the file."
+        """
         try:
             cursor = self.conn.cursor()
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='metadata'")
+            if cursor.fetchone() is None:
+                return 0  # no metadata table → genuinely fresh DB
             cursor.execute("SELECT value FROM metadata WHERE key = 'db_version'")
             row = cursor.fetchone()
             return int(row[0]) if row else 0
-        except: return 0
+        except Exception as e:
+            # Unexpected read failure — fail closed. Returning -1 keeps the destructive
+            # fresh-build path from ever running on a DB whose version we couldn't read.
+            self.logger.error("Could not read DB version (treating as UNKNOWN, will not rebuild): %s", e)
+            return -1
 
 
     def _has_existing_data(self) -> bool:
@@ -321,6 +337,12 @@ class DatabaseWorker(QThread):
 
         if current_version == self._DB_VERSION:
             self.logger.debug("Database schema is up to date (Version %d).", self._DB_VERSION)
+            return
+
+        if current_version < 0:
+            # M7: version read failed unexpectedly. Never rebuild — preserve the file and
+            # degrade gracefully. A retry on next launch may succeed once the lock clears.
+            self.logger.error("DB version is UNKNOWN; refusing to migrate or rebuild — preserving the database as-is.")
             return
 
         if current_version > 0:
