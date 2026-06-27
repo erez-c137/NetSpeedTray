@@ -7,7 +7,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QComboBox, QLabel, QGridLayout
 
 from netspeedtray import constants
-from netspeedtray.utils.components import Win11Toggle, CollapsibleSection
+from netspeedtray.utils.components import Win11Toggle, CollapsibleSection, Win11Slider
 
 class HardwarePage(QWidget):
     layout_changed = pyqtSignal()
@@ -125,6 +125,34 @@ class HardwarePage(QWidget):
         order_section.contentLayout().addLayout(order_layout)
         layout.addWidget(order_section)
 
+        # --- Color-code by load (collapsed) — thresholds for tinting CPU/GPU % by utilization.
+        # English literals pending the single 2.0 i18n pass.
+        load_section = CollapsibleSection("Color-code by load", expanded=False)
+        load_section.toggled.connect(lambda: self.layout_changed.emit())
+        load_grid = QGridLayout()
+        load_grid.setVerticalSpacing(8)
+
+        def _make_load_slider() -> Win11Slider:
+            s = Win11Slider(editable=True, suffix="%")
+            s.setRange(0, 100)
+            s.valueChanged.connect(self.on_change)
+            return s
+
+        self.cpu_load_high = _make_load_slider()
+        self.cpu_load_low = _make_load_slider()
+        self.gpu_load_high = _make_load_slider()
+        self.gpu_load_low = _make_load_slider()
+        for row, (label, widget) in enumerate([
+            ("CPU high load", self.cpu_load_high),
+            ("CPU low load", self.cpu_load_low),
+            ("GPU high load", self.gpu_load_high),
+            ("GPU low load", self.gpu_load_low),
+        ]):
+            load_grid.addWidget(QLabel(label), row, 0, Qt.AlignmentFlag.AlignVCenter)
+            load_grid.addWidget(widget, row, 1)
+        load_section.contentLayout().addLayout(load_grid)
+        layout.addWidget(load_section)
+
         layout.addStretch()
 
     def load_settings(self, config: Dict[str, Any]):
@@ -170,6 +198,12 @@ class HardwarePage(QWidget):
             idx = combo.findData(val)
             if idx >= 0:
                 combo.setCurrentIndex(idx)
+
+        d = constants.config.defaults
+        self.cpu_load_high.setValue(int(config.get("cpu_load_high_threshold", d.DEFAULT_CPU_LOAD_HIGH_THRESHOLD)))
+        self.cpu_load_low.setValue(int(config.get("cpu_load_low_threshold", d.DEFAULT_CPU_LOAD_LOW_THRESHOLD)))
+        self.gpu_load_high.setValue(int(config.get("gpu_load_high_threshold", d.DEFAULT_GPU_LOAD_HIGH_THRESHOLD)))
+        self.gpu_load_low.setValue(int(config.get("gpu_load_low_threshold", d.DEFAULT_GPU_LOAD_LOW_THRESHOLD)))
 
     def _on_monitor_toggled(self, checked: bool):
         """Handle monitor toggling with auto-mode switching."""
@@ -218,5 +252,9 @@ class HardwarePage(QWidget):
             "hardware_label_style": self.label_style.currentData(),
             "stack_hardware_stats": mode == "side_by_stack",
             "widget_display_mode": "side_by_side" if mode == "side_by_stack" else mode,
-            "widget_display_order": order
+            "widget_display_order": order,
+            "cpu_load_high_threshold": float(self.cpu_load_high.value()),
+            "cpu_load_low_threshold": float(self.cpu_load_low.value()),
+            "gpu_load_high_threshold": float(self.gpu_load_high.value()),
+            "gpu_load_low_threshold": float(self.gpu_load_low.value()),
         }
