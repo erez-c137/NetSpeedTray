@@ -447,5 +447,7 @@
     "MONITOR_TAB_HARDWARE": "Hardware",
     "SHOW_MONITOR_MENU_ITEM": "Show Monitor",
     "MONITOR_TILE_RAM": "RAM",
-    "MONITOR_TILE_VRAM": "VRAM"
+    "MONITOR_TILE_VRAM": "VRAM",
+    "MEMORY_HEADER": "Memory",
+    "HARDWARE_SUMMARY_TEMPLATE": "{procs} processes · CPU {cpu:.0f}% · RAM {ram:.1f} {ram_unit} · Updated {updated_at}"
 }

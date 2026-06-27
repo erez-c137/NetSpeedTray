@@ -1,0 +1,145 @@
+r"""
+HardwareActivityWorker — per-process CPU / RAM / GPU sampler for the Monitor's Hardware tab.
+
+Honest, admin-free, and every number measured (not estimated):
+  * CPU%  — psutil per-process, summed across a program's PIDs, normalised to total-CPU (0-100%).
+  * RAM   — psutil RSS, summed across PIDs.
+  * GPU%  — Windows PDH "\GPU Engine(*)\Utilization Percentage", parsed pid_<PID>_..._engtype_ and
+            summed across that PID's engines (the proven spike path: no admin, no ETW). Absent
+            gracefully when the GPU Engine counter set isn't present (non-Windows / odd drivers).
+
+Runs in a dedicated QThread, only while the Hardware tab is visible. The first sample is a baseline
+(psutil cpu_percent needs two reads, PDH rate counters need two collects), so CPU/GPU read ~0 on the
+very first emit and settle on the next.
+"""
+from __future__ import annotations
+
+import logging
+import re
+from collections import defaultdict
+from datetime import datetime
+from typing import Any, Dict
+
+import psutil
+from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
+
+try:
+    import win32pdh
+except ImportError:  # pragma: no cover - non-Windows / missing pywin32
+    win32pdh = None
+
+_PID_RE = re.compile(r"pid_(\d+)_")
+_GPU_COUNTER_PATH = r"\GPU Engine(*)\Utilization Percentage"
+
+
+class HardwareActivityWorker(QObject):
+    """Collects per-application CPU%, RAM, and GPU% grouped by program identity."""
+
+    data_ready = pyqtSignal(object)
+    error = pyqtSignal(str)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.logger = logging.getLogger("NetSpeedTray.HardwareActivityWorker")
+        self._cpu_count = psutil.cpu_count(logical=True) or 1
+        self._gpu_query = None
+        self._gpu_counter = None
+
+    @pyqtSlot()
+    def sample(self) -> None:
+        try:
+            gpu_by_pid = self._sample_gpu_by_pid()
+            agg: Dict[str, Dict[str, Any]] = defaultdict(self._new_agg)
+
+            for proc in psutil.process_iter(["pid", "name"]):
+                try:
+                    pid = int(proc.info["pid"])
+                    name = proc.info["name"] or f"PID {pid}"
+                    # The System Idle Process (PID 0) reports IDLE time as "CPU" — Task Manager
+                    # excludes it; including it would peg the list and the total at ~system-idle%.
+                    if pid == 0 or name == "System Idle Process":
+                        continue
+                    cpu = proc.cpu_percent(None)          # delta on psutil's cached Process object
+                    rss = proc.memory_info().rss
+                except (psutil.NoSuchProcess, psutil.ZombieProcess, psutil.AccessDenied, OSError):
+                    continue
+                a = agg[name.casefold()]
+                a["display_name"] = name
+                a["pids"].add(pid)
+                a["cpu"] += float(cpu)
+                a["rss"] += int(rss)
+                a["gpu"] += float(gpu_by_pid.get(pid, 0.0))
+
+            rows = []
+            for key, a in agg.items():
+                rows.append({
+                    "identity_key": key,
+                    "display_name": a["display_name"],
+                    "pids": sorted(a["pids"]),
+                    # Normalise summed-across-cores CPU to a 0-100% share of the whole CPU.
+                    "cpu_pct": min(100.0, a["cpu"] / self._cpu_count),
+                    "rss_bytes": a["rss"],
+                    # A PID can exceed 100% across engines; clamp the displayed figure.
+                    "gpu_pct": min(100.0, a["gpu"]),
+                })
+            rows.sort(key=lambda r: (-r["cpu_pct"], -r["gpu_pct"], r["display_name"].casefold()))
+
+            total_cpu = min(100.0, sum(r["cpu_pct"] for r in rows))
+            self.data_ready.emit({
+                "updated_at": datetime.now().strftime("%H:%M:%S"),
+                "rows": rows,
+                "proc_count": len(rows),
+                "total_cpu_pct": total_cpu,
+                "total_rss_bytes": sum(r["rss_bytes"] for r in rows),
+                "gpu_available": bool(gpu_by_pid) or self._gpu_query is not None,
+            })
+        except Exception as exc:
+            self.logger.error("Failed to sample hardware activity: %s", exc, exc_info=True)
+            self.error.emit(str(exc))
+
+    @staticmethod
+    def _new_agg() -> Dict[str, Any]:
+        return {"display_name": "", "pids": set(), "cpu": 0.0, "rss": 0, "gpu": 0.0}
+
+    # --- GPU% via PDH (per the verified spike) ----------------------------------
+    def _ensure_gpu_query(self) -> None:
+        if self._gpu_query is not None or win32pdh is None:
+            return
+        try:
+            self._gpu_query = win32pdh.OpenQuery()
+            self._gpu_counter = win32pdh.AddCounter(self._gpu_query, _GPU_COUNTER_PATH)
+            win32pdh.CollectQueryData(self._gpu_query)   # prime (rate counters need two collects)
+        except Exception as exc:
+            self.logger.debug("Per-PID GPU PDH unavailable: %s", exc)
+            self._gpu_query = None
+            self._gpu_counter = None
+
+    def _sample_gpu_by_pid(self) -> Dict[int, float]:
+        if win32pdh is None:
+            return {}
+        self._ensure_gpu_query()
+        if self._gpu_query is None:
+            return {}
+        try:
+            win32pdh.CollectQueryData(self._gpu_query)
+            arr = win32pdh.GetFormattedCounterArray(self._gpu_counter, win32pdh.PDH_FMT_DOUBLE)
+        except Exception as exc:
+            self.logger.debug("Per-PID GPU PDH read failed: %s", exc)
+            return {}
+        per_pid: Dict[int, float] = defaultdict(float)
+        for inst, val in arr.items():
+            m = _PID_RE.search(inst)
+            if m and isinstance(val, (int, float)) and val > 0:
+                per_pid[int(m.group(1))] += float(val)   # sum a PID's engines (3D + Copy + Video*)
+        return per_pid
+
+    def close_gpu_query(self) -> None:
+        """Release the PDH query. Called on the worker thread before it stops (see HardwareFeed)."""
+        if win32pdh is None or self._gpu_query is None:
+            return
+        try:
+            win32pdh.CloseQuery(self._gpu_query)
+        except Exception:
+            pass
+        self._gpu_query = None
+        self._gpu_counter = None
