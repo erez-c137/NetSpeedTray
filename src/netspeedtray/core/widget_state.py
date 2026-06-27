@@ -377,7 +377,15 @@ class WidgetState(QObject):
                     total_up += (row[0] or 0.0)
                     total_down += (row[1] or 0.0)
 
-            return total_up, total_down
+            # The tier sums above are "sum of per-sample RATES" (raw: SUM(bytes_sec);
+            # minute/hour: SUM(avg*sample_count) == sum of the underlying rates). Bytes =
+            # rate-sum × seconds-per-sample. Multiplying by the poll interval makes the total
+            # correct for every update_rate — the old code implicitly assumed 1s and so the
+            # "data used" glance under-reported by the poll factor at 2s/5s/10s.
+            poll_interval = float(self.config.get("update_rate", 1.0) or 1.0)
+            if poll_interval <= 0:  # SMART (-1.0) / invalid → ~1s nominal
+                poll_interval = 1.0
+            return total_up * poll_interval, total_down * poll_interval
 
         except Exception as e:
             self.logger.error("Error calculating total bandwidth: %s", e, exc_info=True)
