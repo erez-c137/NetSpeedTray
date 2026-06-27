@@ -90,6 +90,15 @@ def test_main_widget_satisfies_the_dialog_contract():
         assert hasattr(NetworkSpeedWidget, attr), f"NetworkSpeedWidget is missing {attr!r}"
 
 
+def test_live_preview_strip_exists_and_reflects_config(qtbot, dialog):
+    """The settings dialog hosts a live PreviewWidget that mirrors the merged config."""
+    assert dialog.preview_widget is not None
+    dialog._update_preview({"widget_display_mode": "network_only"})
+    assert dialog.preview_widget.config["widget_display_mode"] == "network_only"
+    dialog._update_preview({"widget_display_mode": "combined"})
+    assert dialog.preview_widget.config["widget_display_mode"] == "combined"
+
+
 def test_changed_toggle_propagates_to_parent_on_save(qtbot, dialog, fake_main_widget):
     """A real widget change (the Free Move toggle) round-trips to the parent on Save —
     not just that Save fired, but that the changed value is in the applied settings."""

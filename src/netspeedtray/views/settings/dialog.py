@@ -43,6 +43,7 @@ from netspeedtray.views.settings.pages.general import GeneralPage
 from netspeedtray.views.settings.pages.appearance import AppearancePage
 from netspeedtray.views.settings.pages.colors import ColorsPage
 from netspeedtray.views.settings.pages.hardware import HardwarePage
+from netspeedtray.views.widget.preview import PreviewWidget
 from netspeedtray.constants.update_mode import UpdateMode
 
 
@@ -236,6 +237,26 @@ class SettingsDialog(QDialog):
             ]:
                 self.stack.addWidget(self._wrap_in_scroll(page))
 
+            # --- Live preview strip (C5) — a faithful, inert render of the widget that
+            # reflects the current settings as you change them, on a taskbar-like backdrop.
+            # Uses the shared PreviewWidget keystone, so it matches the real widget exactly.
+            try:
+                preview_strip = QWidget()
+                preview_strip.setObjectName("previewStrip")
+                ps_layout = QHBoxLayout(preview_strip)
+                ps_layout.setContentsMargins(12, 6, 12, 6)
+                ps_layout.addStretch(1)
+                self.preview_widget = PreviewWidget(self.config, self.i18n, width=300, height=40)
+                ps_layout.addWidget(self.preview_widget)
+                ps_layout.addStretch(1)
+                # A subtle taskbar-ish backdrop so the preview reads as "on the taskbar".
+                c = "#2b2b2b" if is_dark_mode() else "#e8e8e8"
+                preview_strip.setStyleSheet(f"#previewStrip {{ background: {c}; border-radius: 6px; }}")
+                content_layout.addWidget(preview_strip)
+            except Exception as e:
+                self.logger.error("Could not build settings live-preview: %s", e, exc_info=True)
+                self.preview_widget = None
+
             # --- Bottom Buttons (Support Bundle / Cancel / Save) ---
             button_layout = QHBoxLayout()
             self.export_log_button = QPushButton(self.i18n.EXPORT_SUPPORT_BUNDLE_BUTTON)
@@ -291,7 +312,10 @@ class SettingsDialog(QDialog):
             self.hardware_page.load_settings(self.config)
             self.units_page.load_settings(self.config)
             self.interfaces_page.load_settings(self.config)
-            
+
+            # Seed the live preview from the loaded config.
+            self._update_preview(self.config)
+
             # Restore window position via the shared helper so reopen is multi-monitor
             # safe and consistent with the first-open path. This runs on every reopen
             # (reset_with_config -> _init_ui_state), where the __init__ auto-size restore
@@ -360,7 +384,18 @@ class SettingsDialog(QDialog):
     def _emit_settings_changed_throttled(self) -> None:
         """Emits the settings_changed signal with the current configuration."""
         current_settings = self.get_settings()
+        self._update_preview(current_settings)
         self.settings_changed.emit(current_settings)
+
+    def _update_preview(self, settings: Dict[str, Any]) -> None:
+        """Refresh the live-preview strip to reflect the current (merged) settings."""
+        pv = getattr(self, "preview_widget", None)
+        if pv is None:
+            return
+        try:
+            pv.set_config({**self.config, **(settings or {})})
+        except Exception as e:
+            self.logger.debug("preview update failed: %s", e)
 
     def get_settings(self) -> Dict[str, Any]:
         """Collects settings from all pages."""
