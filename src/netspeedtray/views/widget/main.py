@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 # --- Standard Library Imports ---
+import ctypes
 import logging
 import math
 import os
 import sys
+from ctypes import wintypes
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
@@ -50,6 +52,21 @@ if TYPE_CHECKING:
     from netspeedtray.views.graph import GraphWindow
     from netspeedtray.views.settings import SettingsDialog
     from netspeedtray.views.app_activity import AppActivityWindow
+
+
+# Win32 MSG layout for reading native messages in nativeEvent(). Defined once at
+# module scope — nativeEvent is a hot path (fires for every native message), so we
+# must not rebuild this Structure on each call.
+class _NativeMSG(ctypes.Structure):
+    _fields_ = [
+        ("hwnd", wintypes.HWND), ("message", wintypes.UINT),
+        ("wParam", ctypes.c_size_t), ("lParam", ctypes.c_ssize_t),
+        ("time", wintypes.DWORD), ("pt_x", wintypes.LONG), ("pt_y", wintypes.LONG),
+    ]
+
+_WM_POWERBROADCAST = 0x0218
+_PBT_APMRESUMESUSPEND = 0x0007
+_PBT_APMRESUMEAUTOMATIC = 0x0012
 
 
 class NetworkSpeedWidget(QWidget):
@@ -926,35 +943,29 @@ class NetworkSpeedWidget(QWidget):
 
     def nativeEvent(self, eventType, message):
         """
-        Catch WM_POWERBROADCAST so the widget re-asserts itself on wake from sleep/hibernate
-        (monitors and the taskbar are often re-arranged across a suspend cycle). Everything
-        else is passed through untouched.
+        Observe WM_POWERBROADCAST so the widget re-asserts itself on wake from sleep/hibernate
+        (monitors and the taskbar are often re-arranged across a suspend cycle). We only watch
+        the message — we never consume it.
+
+        CRITICAL: do NOT call ``super().nativeEvent(eventType, message)`` here. Re-dispatching the
+        native message through the base implementation from a Python override access-violates
+        inside Qt during window creation — it crashed the widget on its very first show() (a hard
+        0xC0000005 in QtCore, no Python traceback). Since this handler only *observes*, returning
+        ``(False, 0)`` — "not handled, let Qt continue normal processing" — is the correct and
+        safe contract, and is equivalent to what a working base call would return for us.
         """
         try:
             if eventType == b"windows_generic_MSG" and message is not None:
-                import ctypes
-                from ctypes import wintypes
-
-                class _MSG(ctypes.Structure):
-                    _fields_ = [
-                        ("hwnd", wintypes.HWND), ("message", wintypes.UINT),
-                        ("wParam", ctypes.c_size_t), ("lParam", ctypes.c_ssize_t),
-                        ("time", wintypes.DWORD), ("pt_x", wintypes.LONG), ("pt_y", wintypes.LONG),
-                    ]
-
-                msg = _MSG.from_address(int(message))
-                WM_POWERBROADCAST = 0x0218
-                PBT_APMRESUMESUSPEND = 0x0007
-                PBT_APMRESUMEAUTOMATIC = 0x0012
-                if msg.message == WM_POWERBROADCAST and msg.wParam in (
-                    PBT_APMRESUMESUSPEND, PBT_APMRESUMEAUTOMATIC
+                msg = _NativeMSG.from_address(int(message))
+                if msg.message == _WM_POWERBROADCAST and msg.wParam in (
+                    _PBT_APMRESUMESUSPEND, _PBT_APMRESUMEAUTOMATIC
                 ):
                     self.logger.info("Resume from sleep detected — re-asserting widget.")
                     QTimer.singleShot(constants.timeouts.TASKBAR_RESTART_RECOVERY_DELAY_MS,
                                       lambda: self._on_environment_changed("resume"))
         except Exception as e:
             self.logger.debug("nativeEvent power handling failed: %s", e)
-        return super().nativeEvent(eventType, message)
+        return False, 0
 
     def _enforce_topmost_status(self) -> None:
         """Delegates to PositionManager."""
