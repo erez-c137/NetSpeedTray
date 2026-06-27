@@ -57,6 +57,11 @@ class SettingsDialog(QDialog):
     """
     settings_changed = pyqtSignal(dict) #: Signal emitted when settings are changed (throttled).
 
+    # Sidebar/stack page indices for deep-links (the tray "Hardware monitor" row jumps here).
+    # Must stay in sync with the sidebar order in _setup_ui; test_settings_pages guards it so a
+    # future page reshuffle trips a red test instead of silently opening the wrong page.
+    PAGE_HARDWARE: int = 3
+
     def __init__(
         self,
         main_widget: "NetworkSpeedWidget",

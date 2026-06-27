@@ -64,6 +64,14 @@ def test_reset_all_cancelled_keeps_values(qtbot, dialog, monkeypatch):
     assert dialog.get_settings()["reduce_motion"] is True  # unchanged
 
 
+def test_hardware_deeplink_points_at_hardware_page(dialog):
+    """The tray 'Hardware monitor' row deep-links via SettingsDialog.PAGE_HARDWARE; it must be the
+    Hardware sidebar row. A future page reshuffle that moves Hardware trips this test instead of
+    silently opening the wrong page."""
+    idx = SettingsDialog.PAGE_HARDWARE
+    assert dialog.sidebar.item(idx).text() == dialog.i18n.HARDWARE_MONITORING_GROUP
+
+
 def test_reset_advanced_page_only_resets_its_keys(qtbot, dialog):
     dialog._reset_advanced_page()
     settings = dialog.get_settings()

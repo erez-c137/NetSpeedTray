@@ -39,6 +39,23 @@ def test_paused_freezes_cpu_gpu_readout():
     assert f.cpu_usage == 0.0 and f.gpu_usage == 0.0  # frozen
 
 
+def test_paused_freezes_all_hardware_detail_slots():
+    """Every update_* slot must freeze — temp/power/RAM/VRAM included (the partial-freeze fix)."""
+    f = _fake()
+    f.cpu_temp = f.gpu_temp = f.cpu_power = f.gpu_power = None
+    f.ram_used = f.ram_total = f.vram_used = f.vram_total = 0.0
+    f.is_paused = True
+    NetworkSpeedWidget.update_cpu_temp(f, 70.0)
+    NetworkSpeedWidget.update_gpu_temp(f, 65.0)
+    NetworkSpeedWidget.update_cpu_power(f, 45.0)
+    NetworkSpeedWidget.update_gpu_power(f, 120.0)
+    NetworkSpeedWidget.update_ram_info(f, 8.0, 16.0)
+    NetworkSpeedWidget.update_vram_info(f, 4.0, 8.0)
+    assert f.cpu_temp is None and f.gpu_temp is None
+    assert f.cpu_power is None and f.gpu_power is None
+    assert f.ram_used == 0.0 and f.vram_used == 0.0  # all on their last values
+
+
 def test_resume_restores_updates():
     f = _fake()
     f.is_paused = True

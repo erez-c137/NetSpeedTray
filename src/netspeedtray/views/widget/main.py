@@ -487,8 +487,9 @@ class NetworkSpeedWidget(QWidget):
             self.logger.debug("Widget already paused")
             return
         self.logger.info("Pausing widget updates")
+        # is_paused is a transient live-view toggle only — deliberately NOT persisted, so the
+        # widget never reboots into a frozen state that looks like a hang.
         self.is_paused = True
-        self.update_config({'paused': True})
         self.update()
 
 
@@ -499,7 +500,6 @@ class NetworkSpeedWidget(QWidget):
             return
         self.logger.info("Resuming widget updates")
         self.is_paused = False
-        self.update_config({'paused': False})
         self.update()
 
 
@@ -533,30 +533,40 @@ class NetworkSpeedWidget(QWidget):
 
     def update_cpu_temp(self, temp: Optional[float]) -> None:
         """Update CPU temperature and trigger repaint."""
+        if self.is_paused:
+            return
         self.cpu_temp = temp
         if self.config.get("widget_display_mode") in ["cpu_only", "combined", "side_by_side", "cycle"]:
             self.update()
 
     def update_gpu_temp(self, temp: Optional[float]) -> None:
         """Update GPU temperature and trigger repaint."""
+        if self.is_paused:
+            return
         self.gpu_temp = temp
         if self.config.get("widget_display_mode") in ["gpu_only", "combined", "side_by_side", "cycle"]:
             self.update()
 
     def update_cpu_power(self, power: Optional[float]) -> None:
         """Update CPU power draw and trigger repaint."""
+        if self.is_paused:
+            return
         self.cpu_power = power
         if self.config.get("widget_display_mode") in ["cpu_only", "combined", "side_by_side", "cycle"]:
             self.update()
 
     def update_gpu_power(self, power: Optional[float]) -> None:
         """Update GPU power draw and trigger repaint."""
+        if self.is_paused:
+            return
         self.gpu_power = power
         if self.config.get("widget_display_mode") in ["gpu_only", "combined", "side_by_side", "cycle"]:
             self.update()
 
     def update_ram_info(self, used: float, total: float) -> None:
         """Update RAM info and trigger repaint."""
+        if self.is_paused:
+            return
         self.ram_used = used
         self.ram_total = total
         if self.config.get("widget_display_mode") in ["cpu_only", "combined", "side_by_side", "cycle"]:
@@ -564,6 +574,8 @@ class NetworkSpeedWidget(QWidget):
 
     def update_vram_info(self, used: float, total: float) -> None:
         """Update VRAM info and trigger repaint."""
+        if self.is_paused:
+            return
         self.vram_used = used
         self.vram_total = total if total >= 0 else None
         if self.config.get("widget_display_mode") in ["gpu_only", "combined", "side_by_side", "cycle"]:
@@ -1091,7 +1103,7 @@ class NetworkSpeedWidget(QWidget):
         try:
             self.show_settings()
             if self.settings_dialog is not None:
-                self.settings_dialog.navigate_to_page(3)  # 3 = Hardware (see SettingsDialog sidebar)
+                self.settings_dialog.navigate_to_page(self.settings_dialog.PAGE_HARDWARE)
         except Exception as e:
             self.logger.error("Error opening hardware settings: %s", e, exc_info=True)
 
