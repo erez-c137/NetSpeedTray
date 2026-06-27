@@ -47,6 +47,7 @@ class TrayIconManager(QObject):
 
         # Usage glance (data used today / this month); refreshed on open with a TTL
         self.usage_today_action: Optional[QAction] = None
+        self.data_cap_action: Optional[QAction] = None
         self.usage_month_action: Optional[QAction] = None
         self._usage_today: Tuple[float, float] = (0.0, 0.0)  # (upload, download) bytes
         self._usage_month: Tuple[float, float] = (0.0, 0.0)
@@ -97,9 +98,9 @@ class TrayIconManager(QObject):
             self.usage_month_action = self.context_menu.addAction("")
             self.usage_month_action.setEnabled(False)
             # i18n pending (single 2.0 pass)
-            data_cap_action = self.context_menu.addAction("Data cap…")
+            self.data_cap_action = self.context_menu.addAction("Data cap…")
             if hasattr(self.widget, "open_data_cap_dialog"):
-                data_cap_action.triggered.connect(self.widget.open_data_cap_dialog)
+                self.data_cap_action.triggered.connect(self.widget.open_data_cap_dialog)
             self.context_menu.addSeparator()
 
             # --- Primary Actions (windows the user opens frequently) ---
@@ -181,6 +182,23 @@ class TrayIconManager(QObject):
         up_v, up_u = helpers.format_data_size(up_bytes, self.i18n)
         return f"{label}:   ↓ {dn_v:.1f} {dn_u}   ↑ {up_v:.1f} {up_u}"
 
+    def _format_cap(self) -> str:
+        """The 'Data cap' menu line — live progress from the accurate odometer when the
+        cap is enabled, else a plain entry to set one. i18n pending (single 2.0 pass)."""
+        cfg = getattr(self.widget, "config", {})
+        cap = float(cfg.get("data_cap_gb", 0) or 0)
+        if not cfg.get("data_cap_enabled") or cap <= 0:
+            return "Data cap…"
+        try:
+            up, down = self.widget.widget_state.get_usage_this_period()
+            cnt = cfg.get("data_cap_count", "total")
+            used = down if cnt == "download" else up if cnt == "upload" else (up + down)
+            used_gb = used / (1000 ** 3)
+            pct = (used_gb / cap) * 100.0
+            return f"Data cap:   {used_gb:.1f} / {cap:g} GB   ({pct:.0f}%)"
+        except Exception:
+            return "Data cap…"
+
     def _refresh_dynamic_items(self) -> None:
         """Update menu items whose text depends on live state, just before showing."""
         try:
@@ -189,6 +207,8 @@ class TrayIconManager(QObject):
                 self.pause_action.setText(
                     self.i18n.RESUME_MENU_ITEM if paused else self.i18n.PAUSE_MENU_ITEM
                 )
+            if self.data_cap_action is not None:
+                self.data_cap_action.setText(self._format_cap())
             self._refresh_usage_totals()
             if self.usage_today_action is not None:
                 self.usage_today_action.setText(
