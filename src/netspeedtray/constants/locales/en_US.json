@@ -435,5 +435,7 @@
     "ADVANCED_SETTINGS_GROUP": "Advanced",
     "RESET_ALL_CONFIRM_TITLE": "Reset all settings?",
     "RESET_ALL_CONFIRM_TEXT": "This restores every setting to its default. Your saved history is kept. Continue?",
-    "DECIMAL_SEPARATOR": "."
+    "DECIMAL_SEPARATOR": ".",
+    "HOVER_USAGE_CARD_LABEL": "Show data usage when hovering the widget",
+    "PAUSE_IN_MENU_LABEL": "Add Pause/Resume to the right-click menu"
 }

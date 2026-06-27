@@ -53,6 +53,12 @@ class AdvancedPage(QWidget):
         self.reduce_motion = Win11Toggle(label_text=self.i18n.ADVANCED_REDUCE_MOTION_LABEL)
         self.reduce_motion.toggled.connect(self.on_change)
         bl.addWidget(self.reduce_motion)
+        self.show_usage_hover = Win11Toggle(label_text=self.i18n.HOVER_USAGE_CARD_LABEL)
+        self.show_usage_hover.toggled.connect(self.on_change)
+        bl.addWidget(self.show_usage_hover)
+        self.pause_in_menu = Win11Toggle(label_text=self.i18n.PAUSE_IN_MENU_LABEL)
+        self.pause_in_menu.toggled.connect(self.on_change)
+        bl.addWidget(self.pause_in_menu)
         layout.addWidget(beh_group)
 
         # --- Reset ---
@@ -90,9 +96,13 @@ class AdvancedPage(QWidget):
                       key=lambda i: abs(int(self.keep_data.itemData(i)) - days))
         self.keep_data.setCurrentIndex(idx)
         self.reduce_motion.setChecked(bool(config.get("reduce_motion", False)))
+        self.show_usage_hover.setChecked(bool(config.get("show_usage_on_hover", True)))
+        self.pause_in_menu.setChecked(bool(config.get("pause_in_menu", False)))
 
     def get_settings(self) -> Dict[str, Any]:
         return {
             "keep_data": int(self.keep_data.currentData()),
             "reduce_motion": self.reduce_motion.isChecked(),
+            "show_usage_on_hover": self.show_usage_hover.isChecked(),
+            "pause_in_menu": self.pause_in_menu.isChecked(),
         }

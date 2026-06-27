@@ -374,6 +374,15 @@ class SettingsDialog(QDialog):
         """Handles sidebar row changes to switch the stacked page."""
         self.stack.setCurrentIndex(row)
 
+    def navigate_to_page(self, index: int) -> None:
+        """Select a settings page by sidebar index (e.g. deep-link to Hardware). Selecting the
+        sidebar row drives the stacked page via _on_sidebar_selection_changed."""
+        try:
+            if self.sidebar is not None and 0 <= index < self.sidebar.count():
+                self.sidebar.setCurrentRow(index)
+        except Exception as e:
+            self.logger.debug("navigate_to_page(%s) failed: %s", index, e)
+
     def _adjust_size_and_reposition(self) -> None:
         """Ensures dialog stays within screen bounds after layout changes."""
         screen = self.screen()

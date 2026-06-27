@@ -153,12 +153,23 @@ def test_hardware_state_line_reflects_config(mock_widget, mock_i18n, q_app):
     assert "On" in manager.hardware_action.text()
 
 
-def test_show_me_around_entry_present(mock_widget, mock_i18n, q_app):
-    """The re-discovery entry exists so a returning user can re-open the tour."""
+def test_tour_removed_and_pause_is_opt_in(mock_widget, mock_i18n, q_app):
+    """The 'Show me around' tour is gone, and Pause/Resume is hidden unless the user opts in via
+    Settings (pause_in_menu) — refreshed on every menu open, no restart needed."""
+    mock_widget.config = {}  # pause_in_menu defaults off
     manager = TrayIconManager(mock_widget, mock_i18n)
     manager.initialize()
     texts = [a.text() for a in manager.context_menu.actions()]
-    assert any("Show me around" in t for t in texts)
+    assert not any("Show me around" in t for t in texts)
+
+    manager._refresh_dynamic_items()
+    assert manager.pause_action is not None and not manager.pause_action.isVisible()
+    assert not manager.pause_separator.isVisible()
+
+    mock_widget.config = {"pause_in_menu": True}
+    manager._refresh_dynamic_items()
+    assert manager.pause_action.isVisible()
+    assert manager.pause_separator.isVisible()
 
 
 def test_data_cap_and_usage_rows_removed_from_menu(mock_widget, mock_i18n, q_app):

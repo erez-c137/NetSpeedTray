@@ -435,5 +435,7 @@
     "ADVANCED_SETTINGS_GROUP": "詳細設定",
     "RESET_ALL_CONFIRM_TITLE": "すべての設定をリセットしますか？",
     "RESET_ALL_CONFIRM_TEXT": "すべての設定を初期値に戻します。保存された履歴は保持されます。続行しますか？",
-    "DECIMAL_SEPARATOR": "."
+    "DECIMAL_SEPARATOR": ".",
+    "HOVER_USAGE_CARD_LABEL": "ウィジェットにカーソルを合わせるとデータ使用量を表示",
+    "PAUSE_IN_MENU_LABEL": "右クリックメニューに一時停止/再開を追加"
 }

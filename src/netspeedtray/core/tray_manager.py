@@ -40,6 +40,7 @@ class TrayIconManager(QObject):
 
         # Retrieve actions for external use if needed (e.g., toggling text)
         self.pause_action: Optional[QAction] = None
+        self.pause_separator: Optional[QAction] = None
         self.hardware_action: Optional[QAction] = None
 
     def initialize(self) -> None:
@@ -98,23 +99,23 @@ class TrayIconManager(QObject):
             if hasattr(self.widget, 'open_app_activity_window'):
                 app_usage_action.triggered.connect(self.widget.open_app_activity_window)
 
-            # Self-describing hardware-monitor state — surfaces the entire CPU/GPU/temps half
-            # of the app that stays hidden until you go looking. Text set live on open.
+            # Self-describing hardware-monitor state — surfaces the entire CPU/GPU/temps half of
+            # the app that stays hidden until you go looking. Opens Settings → Hardware directly.
+            # Text set live on open.
             self.hardware_action = self.context_menu.addAction("")  # text set live on open
-            if hasattr(self.widget, 'show_settings'):
+            if hasattr(self.widget, 'open_hardware_settings'):
+                self.hardware_action.triggered.connect(self.widget.open_hardware_settings)
+            elif hasattr(self.widget, 'show_settings'):
                 self.hardware_action.triggered.connect(self.widget.show_settings)
 
             self.context_menu.addSeparator()
 
-            # --- Tier 3: Control + re-discovery ---
+            # --- Control (opt-in) — Pause/Resume plus its own divider, shown only when the user
+            # has turned it on in Settings (pause_in_menu). Default off keeps the menu calm; the
+            # pair's visibility is refreshed on every open in _refresh_dynamic_items. ---
             self.pause_action = self.context_menu.addAction(self.i18n.PAUSE_MENU_ITEM)
             self.pause_action.triggered.connect(self._toggle_pause)
-
-            show_around_action = self.context_menu.addAction(self.i18n.SHOW_ME_AROUND_LABEL)
-            if hasattr(self.widget, '_show_unfold_flyout'):
-                show_around_action.triggered.connect(self.widget._show_unfold_flyout)
-
-            self.context_menu.addSeparator()
+            self.pause_separator = self.context_menu.addSeparator()
 
             # --- Tier 4: App-level (least frequent) ---
             update_action = self.context_menu.addAction(self.i18n.CHECK_FOR_UPDATES_MENU_ITEM)
@@ -161,11 +162,16 @@ class TrayIconManager(QObject):
     def _refresh_dynamic_items(self) -> None:
         """Update menu items whose text depends on live state, just before showing."""
         try:
+            # Pause/Resume is opt-in: show the action + its divider only when enabled in Settings.
+            show_pause = bool(getattr(self.widget, "config", {}).get("pause_in_menu", False))
             if self.pause_action is not None:
+                self.pause_action.setVisible(show_pause)
                 paused = getattr(self.widget, "is_paused", False)
                 self.pause_action.setText(
                     self.i18n.RESUME_MENU_ITEM if paused else self.i18n.PAUSE_MENU_ITEM
                 )
+            if self.pause_separator is not None:
+                self.pause_separator.setVisible(show_pause)
             if self.hardware_action is not None:
                 self.hardware_action.setText(self._format_hardware_state())
         except Exception as e:

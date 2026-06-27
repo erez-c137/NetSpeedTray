@@ -435,5 +435,7 @@
     "ADVANCED_SETTINGS_GROUP": "Erweitert",
     "RESET_ALL_CONFIRM_TITLE": "Alle Einstellungen zurücksetzen?",
     "RESET_ALL_CONFIRM_TEXT": "Dadurch werden alle Einstellungen auf die Standardwerte zurückgesetzt. Dein gespeicherter Verlauf bleibt erhalten. Fortfahren?",
-    "DECIMAL_SEPARATOR": ","
+    "DECIMAL_SEPARATOR": ",",
+    "HOVER_USAGE_CARD_LABEL": "Datennutzung beim Überfahren des Widgets anzeigen",
+    "PAUSE_IN_MENU_LABEL": "Pause/Fortsetzen zum Rechtsklick-Menü hinzufügen"
 }

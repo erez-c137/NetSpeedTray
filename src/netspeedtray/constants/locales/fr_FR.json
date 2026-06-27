@@ -435,5 +435,7 @@
     "ADVANCED_SETTINGS_GROUP": "Avancé",
     "RESET_ALL_CONFIRM_TITLE": "Tout réinitialiser ?",
     "RESET_ALL_CONFIRM_TEXT": "Cette action rétablit tous les paramètres par défaut. Votre historique enregistré est conservé. Continuer ?",
-    "DECIMAL_SEPARATOR": ","
+    "DECIMAL_SEPARATOR": ",",
+    "HOVER_USAGE_CARD_LABEL": "Afficher l'utilisation des données au survol du widget",
+    "PAUSE_IN_MENU_LABEL": "Ajouter Pause/Reprendre au menu clic droit"
 }

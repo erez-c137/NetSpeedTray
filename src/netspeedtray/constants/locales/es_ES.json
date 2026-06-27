@@ -435,5 +435,7 @@
     "ADVANCED_SETTINGS_GROUP": "Avanzado",
     "RESET_ALL_CONFIRM_TITLE": "¿Restablecer todos los ajustes?",
     "RESET_ALL_CONFIRM_TEXT": "Esto restaura todos los ajustes a sus valores predeterminados. Tu historial guardado se conserva. ¿Continuar?",
-    "DECIMAL_SEPARATOR": ","
+    "DECIMAL_SEPARATOR": ",",
+    "HOVER_USAGE_CARD_LABEL": "Mostrar el uso de datos al pasar el cursor por el widget",
+    "PAUSE_IN_MENU_LABEL": "Añadir Pausar/Reanudar al menú contextual"
 }

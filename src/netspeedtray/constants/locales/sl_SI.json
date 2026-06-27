@@ -435,5 +435,7 @@
     "ADVANCED_SETTINGS_GROUP": "Napredno",
     "RESET_ALL_CONFIRM_TITLE": "Ponastavim vse nastavitve?",
     "RESET_ALL_CONFIRM_TEXT": "S tem se vse nastavitve obnovijo na privzete vrednosti. Shranjena zgodovina ostane. Nadaljujem?",
-    "DECIMAL_SEPARATOR": ","
+    "DECIMAL_SEPARATOR": ",",
+    "HOVER_USAGE_CARD_LABEL": "Pokaži porabo podatkov ob prehodu miške čez gradnik",
+    "PAUSE_IN_MENU_LABEL": "Dodaj Premor/Nadaljuj v desni klik meni"
 }

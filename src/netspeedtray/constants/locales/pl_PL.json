@@ -435,5 +435,7 @@
     "ADVANCED_SETTINGS_GROUP": "Zaawansowane",
     "RESET_ALL_CONFIRM_TITLE": "Zresetować wszystkie ustawienia?",
     "RESET_ALL_CONFIRM_TEXT": "Spowoduje to przywrócenie wszystkich ustawień do wartości domyślnych. Zapisana historia zostanie zachowana. Kontynuować?",
-    "DECIMAL_SEPARATOR": ","
+    "DECIMAL_SEPARATOR": ",",
+    "HOVER_USAGE_CARD_LABEL": "Pokaż zużycie danych po najechaniu na widżet",
+    "PAUSE_IN_MENU_LABEL": "Dodaj Wstrzymaj/Wznów do menu prawego przycisku"
 }

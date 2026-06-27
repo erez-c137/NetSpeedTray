@@ -435,5 +435,7 @@
     "ADVANCED_SETTINGS_GROUP": "Дополнительно",
     "RESET_ALL_CONFIRM_TITLE": "Сбросить все настройки?",
     "RESET_ALL_CONFIRM_TEXT": "Это восстановит все настройки по умолчанию. Сохранённая история останется. Продолжить?",
-    "DECIMAL_SEPARATOR": ","
+    "DECIMAL_SEPARATOR": ",",
+    "HOVER_USAGE_CARD_LABEL": "Показывать расход данных при наведении на виджет",
+    "PAUSE_IN_MENU_LABEL": "Добавить «Пауза/Возобновить» в контекстное меню"
 }

@@ -480,35 +480,25 @@ class NetworkSpeedWidget(QWidget):
 
 
     def pause(self) -> None:
-        """Pause widget updates (for future use, not active by default)."""
+        """Freeze the live readout. The monitor keeps recording history in the background; only
+        the on-widget numbers stop updating (see the `is_paused` gate in the update_* slots),
+        until resume(). Opt-in — surfaced in the tray menu only when `pause_in_menu` is set."""
         if self.is_paused:
             self.logger.debug("Widget already paused")
             return
         self.logger.info("Pausing widget updates")
         self.is_paused = True
-        if self.controller:
-            self.controller.pause()
-        if self.timer_manager:
-            self.timer_manager.stop_timer()
-        if self.renderer:
-            self.renderer.pause()
         self.update_config({'paused': True})
         self.update()
 
 
     def resume(self) -> None:
-        """Resume widget updates (for future use, not active by default)."""
+        """Resume the live readout after pause()."""
         if not self.is_paused:
             self.logger.debug("Widget already running")
             return
         self.logger.info("Resuming widget updates")
         self.is_paused = False
-        if self.controller:
-            self.controller.resume()
-        if self.timer_manager:
-            self.timer_manager.start_timer()
-        if self.renderer:
-            self.renderer.resume()
         self.update_config({'paused': False})
         self.update()
 
@@ -518,6 +508,8 @@ class NetworkSpeedWidget(QWidget):
         Slot for the controller's `display_speed_updated` signal.
         Receives aggregated speeds in Mbps and schedules a repaint of the widget.
         """
+        if self.is_paused:  # frozen by the user — keep the last numbers on screen
+            return
         self.upload_speed = upload_mbps
         self.download_speed = download_mbps
         self.update() # Trigger a repaint
@@ -525,12 +517,16 @@ class NetworkSpeedWidget(QWidget):
 
     def update_cpu_usage(self, usage: float) -> None:
         """Update CPU usage and trigger repaint."""
+        if self.is_paused:
+            return
         self.cpu_usage = usage
         if self.config.get("widget_display_mode") in ["cpu_only", "combined", "side_by_side", "cycle"]:
             self.update()
 
     def update_gpu_usage(self, usage: float) -> None:
         """Update GPU usage and trigger repaint."""
+        if self.is_paused:
+            return
         self.gpu_usage = usage
         if self.config.get("widget_display_mode") in ["gpu_only", "combined", "side_by_side", "cycle"]:
             self.update()
@@ -762,9 +758,11 @@ class NetworkSpeedWidget(QWidget):
     _HOVER_USAGE_TTL_SEC = 30.0
 
     def enterEvent(self, event) -> None:
-        """On hover, arm the usage card (shown after a short rest, positioned above the taskbar)."""
+        """On hover, arm the usage card (shown after a short rest, positioned above the taskbar).
+        Skipped entirely when the user has turned the hover card off in Settings."""
         try:
-            if self._hover_card is None and not self._hover_card_timer.isActive():
+            if (self.config.get("show_usage_on_hover", True)
+                    and self._hover_card is None and not self._hover_card_timer.isActive()):
                 self._hover_card_timer.start(self._HOVER_CARD_DELAY_MS)
         except Exception as e:
             self.logger.debug("hover card arm failed: %s", e)
@@ -1087,6 +1085,15 @@ class NetworkSpeedWidget(QWidget):
         """Delegates to ConfigController."""
         self.config_controller.handle_settings_changed(updated_config, save_to_disk)
 
+
+    def open_hardware_settings(self) -> None:
+        """Open Settings straight on the Hardware page (the tray 'Hardware monitor' row's door)."""
+        try:
+            self.show_settings()
+            if self.settings_dialog is not None:
+                self.settings_dialog.navigate_to_page(3)  # 3 = Hardware (see SettingsDialog sidebar)
+        except Exception as e:
+            self.logger.error("Error opening hardware settings: %s", e, exc_info=True)
 
     def show_settings(self) -> None:
         """Creates and displays the settings dialog as a normal, non-modal window."""

@@ -435,5 +435,7 @@
     "ADVANCED_SETTINGS_GROUP": "Geavanceerd",
     "RESET_ALL_CONFIRM_TITLE": "Alle instellingen herstellen?",
     "RESET_ALL_CONFIRM_TEXT": "Hiermee worden alle instellingen teruggezet naar hun standaardwaarde. Je opgeslagen geschiedenis blijft behouden. Doorgaan?",
-    "DECIMAL_SEPARATOR": ","
+    "DECIMAL_SEPARATOR": ",",
+    "HOVER_USAGE_CARD_LABEL": "Datagebruik tonen bij hoveren over de widget",
+    "PAUSE_IN_MENU_LABEL": "Pauzeren/Hervatten toevoegen aan het rechtsklikmenu"
 }
