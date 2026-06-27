@@ -1,24 +1,28 @@
 """
 NetworkTab — the Monitor's Network tab.
 
-The header band (machine-wide Download/Upload totals for the selected period + a timeline control)
-sits above the live history graph, which is hosted via the shared GraphHost — matplotlib loads on
-first show, never before. Imports nothing from views.graph at module scope (the header is a
-standalone, graph-free widget); the graph engine enters only when GraphHost.attach_to() runs on
-showEvent. 5.1c will add the per-app AppBarList below a splitter.
+Layout: a header band (machine-wide Download/Upload totals for the selected period + a timeline
+control) over a vertical splitter — the live history graph on top, a per-app connection list below.
+The graph is hosted via the shared GraphHost (matplotlib loads on first show, never before); the
+per-app list is fed by AppActivityFeed (a reused psutil connection sampler). Nothing here imports
+views.graph at module scope — the header, list, and feed are all standalone, graph-free widgets;
+the graph engine enters only when GraphHost.attach_to() runs on showEvent.
 """
 from __future__ import annotations
 
 from typing import Any, Dict
 
-from PyQt6.QtWidgets import QWidget, QVBoxLayout
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QSplitter
 
 from netspeedtray import constants
 from netspeedtray.views.monitor.network.header import NetworkHeader
+from netspeedtray.views.monitor.network.app_list import AppBarList
+from netspeedtray.views.monitor.network.app_feed import AppActivityFeed
 
 
 class NetworkTab(QWidget):
-    """Header band + the shared GraphHost canvas for the "network" stat. Activates on show, idles on hide."""
+    """Header + graph (shared GraphHost) + per-app connection list. Activates on show, idles on hide."""
 
     stat_type = "network"
 
@@ -40,10 +44,23 @@ class NetworkTab(QWidget):
         self._host.network_totals_ready.connect(self._on_totals)
         root.addWidget(self._header)
 
-        # The canvas mounts here when the tab becomes visible.
-        self._plot_slot = QWidget()
+        # Graph (top) + per-app list (bottom), user-resizable.
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        splitter.setChildrenCollapsible(False)
+        self._plot_slot = QWidget()           # the shared canvas mounts here on show
         QVBoxLayout(self._plot_slot).setContentsMargins(0, 0, 0, 0)
-        root.addWidget(self._plot_slot, 1)
+        splitter.addWidget(self._plot_slot)
+        self._app_list = AppBarList(i18n)
+        splitter.addWidget(self._app_list)
+        splitter.setStretchFactor(0, 3)        # graph gets the lion's share
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([420, 190])
+        root.addWidget(splitter, 1)
+
+        # Per-app connection feed (reused psutil sampler) — polls only while this tab is visible.
+        self._feed = AppActivityFeed(self)
+        self._feed.payload_ready.connect(self._app_list.set_payload)
+        self._feed.unavailable.connect(self._app_list.set_unavailable)
 
     def _on_totals(self, up_bytes: float, down_bytes: float, period_key: str) -> None:
         # Update the numbers (+ the window label) only. The pills are the period's source of truth —
@@ -55,25 +72,32 @@ class NetworkTab(QWidget):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
-        # Mount the shared canvas into our slot + start live updates (lazy-loads the graph engine).
         try:
             self._host.attach_to(self._plot_slot.layout(), self.stat_type)
             self._host.start_realtime()
         except Exception:
             pass
+        try:
+            self._feed.start()
+        except Exception:
+            pass
 
     def hideEvent(self, event) -> None:
-        # Pause live updates while another tab is showing (the host + canvas are reused, not torn down).
+        # Pause both feeds while another tab shows (host + canvas reused, not torn down).
         try:
             self._host.stop_realtime()
+        except Exception:
+            pass
+        try:
+            self._feed.stop()
         except Exception:
             pass
         super().hideEvent(event)
 
     def teardown(self) -> None:
-        # The GraphHost is owned + fully torn down by the MonitorWindow; here we just stop our loop
-        # and drop our cross-object signals so a late totals emit can't poke a deleted header and a
-        # stray pill click can't reach a closing host.
+        # The GraphHost is owned + torn down by the MonitorWindow; here we stop our loops, fully
+        # tear down the per-app feed thread, and drop cross-object signals so a late emit can't poke
+        # a deleted header and a stray pill click can't reach a closing host.
         try:
             self._host.network_totals_ready.disconnect(self._on_totals)
         except Exception:
@@ -84,5 +108,9 @@ class NetworkTab(QWidget):
             pass
         try:
             self._host.stop_realtime()
+        except Exception:
+            pass
+        try:
+            self._feed.teardown()
         except Exception:
             pass

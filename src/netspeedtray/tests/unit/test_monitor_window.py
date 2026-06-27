@@ -71,6 +71,8 @@ def test_import_firewall_no_matplotlib_at_module_scope():
         "import netspeedtray.views.monitor.graph_host\n"
         "import netspeedtray.views.monitor.network.tab\n"
         "import netspeedtray.views.monitor.network.header\n"
+        "import netspeedtray.views.monitor.network.app_list\n"
+        "import netspeedtray.views.monitor.network.app_feed\n"
         "import netspeedtray.views.monitor.overview.tab\n"
         "leaked = [m for m in sys.modules if m == 'matplotlib' or m.startswith('matplotlib.')]\n"
         "assert not leaked, 'matplotlib leaked into the Monitor modules: %r' % leaked\n"
