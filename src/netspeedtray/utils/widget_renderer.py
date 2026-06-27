@@ -52,6 +52,9 @@ class RenderConfig:
     arrow_font_family: str = constants.config.defaults.DEFAULT_FONT_FAMILY
     arrow_font_size: int = 9
     arrow_font_weight: int = constants.fonts.WEIGHT_DEMIBOLD
+    # Custom arrow glyphs; empty falls back to the native i18n arrow (the Windows default).
+    arrow_up_symbol: str = ""
+    arrow_down_symbol: str = ""
     
     # New: Hardware Monitoring Toggles
     monitor_cpu_enabled: bool = False
@@ -118,7 +121,9 @@ class RenderConfig:
                 arrow_font_family=str(config.get('arrow_font_family', constants.config.defaults.DEFAULT_FONT_FAMILY)),
                 arrow_font_size=int(config.get('arrow_font_size', constants.config.defaults.DEFAULT_FONT_SIZE)),
                 arrow_font_weight=int(config.get('arrow_font_weight', constants.fonts.WEIGHT_DEMIBOLD)),
-                
+                arrow_up_symbol=str(config.get('arrow_up_symbol', '') or ''),
+                arrow_down_symbol=str(config.get('arrow_down_symbol', '') or ''),
+
                 # New
                 monitor_cpu_enabled=bool(config.get('monitor_cpu_enabled', False)),
                 monitor_gpu_enabled=bool(config.get('monitor_gpu_enabled', False)),
@@ -273,9 +278,9 @@ class WidgetRenderer:
             # The area width follows the baseline, but expands if actual values are wider (4 digits)
             number_area_width = max(base_number_width, actual_max_width)
 
-            # 3. Arrow Width (use max of UP/DW arrows)
-            arrow_up = self.i18n.UPLOAD_ARROW
-            arrow_dw = self.i18n.DOWNLOAD_ARROW
+            # 3. Arrow Width (use max of UP/DW arrows). Custom glyph or the native default.
+            arrow_up = self.config.arrow_up_symbol or self.i18n.UPLOAD_ARROW
+            arrow_dw = self.config.arrow_down_symbol or self.i18n.DOWNLOAD_ARROW
             max_arrow_width = max(
                 self.arrow_metrics.horizontalAdvance(arrow_up),
                 self.arrow_metrics.horizontalAdvance(arrow_dw)
@@ -355,7 +360,10 @@ class WidgetRenderer:
         # 1. Draw Arrow
         if not config.hide_arrows:
             painter.setFont(self.arrow_font)
-            arrow = self.i18n.UPLOAD_ARROW if is_upload else self.i18n.DOWNLOAD_ARROW
+            if is_upload:
+                arrow = config.arrow_up_symbol or self.i18n.UPLOAD_ARROW
+            else:
+                arrow = config.arrow_down_symbol or self.i18n.DOWNLOAD_ARROW
             painter.drawText(arrow_x, y, arrow)
 
         # 2. Draw Value (Right-aligned within fixed/expanded number area)

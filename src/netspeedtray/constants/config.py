@@ -154,6 +154,9 @@ class ConfigConstants:
         "arrow_font_family": DEFAULT_ARROW_FONT_FAMILY,
         "arrow_font_size": DEFAULT_ARROW_FONT_SIZE,
         "arrow_font_weight": DEFAULT_ARROW_FONT_WEIGHT,
+        # Custom arrow glyphs (#129). Empty = the native i18n arrow (the Windows default).
+        "arrow_up_symbol": "",
+        "arrow_down_symbol": "",
         "monitor_cpu_enabled": DEFAULT_MONITOR_CPU_ENABLED,
         "monitor_gpu_enabled": DEFAULT_MONITOR_GPU_ENABLED,
         "monitor_ram_enabled": DEFAULT_MONITOR_RAM_ENABLED,
@@ -221,6 +224,8 @@ class ConfigConstants:
         "arrow_font_family": {"type": str, "default": DEFAULT_ARROW_FONT_FAMILY},
         "arrow_font_size": {"type": int, "default": DEFAULT_ARROW_FONT_SIZE, "min": fonts.FONT_SIZE_MIN, "max": fonts.FONT_SIZE_MAX},
         "arrow_font_weight": {"type": int, "default": DEFAULT_ARROW_FONT_WEIGHT, "min": 1, "max": 1000},
+        "arrow_up_symbol": {"type": str, "default": ""},
+        "arrow_down_symbol": {"type": str, "default": ""},
         "free_move": {"type": bool, "default": DEFAULT_FREE_MOVE},
         "hardware_label_style": {"type": str, "default": DEFAULT_HARDWARE_LABEL_STYLE, "choices": ["icons_colored", "icons_monochrome", "text"]},
         "keep_visible_fullscreen": {"type": bool, "default": DEFAULT_KEEP_VISIBLE_FULLSCREEN},

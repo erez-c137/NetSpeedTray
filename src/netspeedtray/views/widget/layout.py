@@ -147,8 +147,10 @@ class WidgetLayoutManager:
                             w += self.metrics.horizontalAdvance(" ") + self.metrics.horizontalAdvance(unit)
                         return w
 
-                    up_width = get_part_width(self.widget.i18n.UPLOAD_ARROW, ref_val_str, ref_unit)
-                    down_width = get_part_width(self.widget.i18n.DOWNLOAD_ARROW, ref_val_str, ref_unit)
+                    up_arrow = self.widget.config.get("arrow_up_symbol") or self.widget.i18n.UPLOAD_ARROW
+                    down_arrow = self.widget.config.get("arrow_down_symbol") or self.widget.i18n.DOWNLOAD_ARROW
+                    up_width = get_part_width(up_arrow, ref_val_str, ref_unit)
+                    down_width = get_part_width(down_arrow, ref_val_str, ref_unit)
                     sep_width = self.metrics.horizontalAdvance(constants.layout.HORIZONTAL_LAYOUT_SEPARATOR)
 
                     calculated_width = up_width + sep_width + down_width + (margin * 2)
@@ -166,7 +168,9 @@ class WidgetLayoutManager:
                     possible_units = get_all_possible_unit_labels(self.widget.i18n, short_labels=short_labels)
                     max_unit_width = max(self.metrics.horizontalAdvance(unit) for unit in possible_units) if not hide_units else 0
                     
-                    arrow_width = self.metrics.horizontalAdvance(self.widget.i18n.UPLOAD_ARROW) if not hide_arrows else 0
+                    _up_glyph = self.widget.config.get("arrow_up_symbol") or self.widget.i18n.UPLOAD_ARROW
+                    _down_glyph = self.widget.config.get("arrow_down_symbol") or self.widget.i18n.DOWNLOAD_ARROW
+                    arrow_width = max(self.metrics.horizontalAdvance(_up_glyph), self.metrics.horizontalAdvance(_down_glyph)) if not hide_arrows else 0
                     arrow_gap = constants.renderer.ARROW_NUMBER_GAP if not hide_arrows else 0
                     unit_gap = constants.renderer.VALUE_UNIT_GAP if not hide_units else 0
 
