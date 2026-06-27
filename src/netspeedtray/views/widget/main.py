@@ -119,6 +119,7 @@ class NetworkSpeedWidget(QWidget):
         self._cached_layout_mode: str = 'vertical'  # Updated on taskbar changes
         self.graph_window: Optional[GraphWindow] = None
         self.app_activity_window: Optional[AppActivityWindow] = None
+        self.monitor_window = None  # unified Monitor (Overview / Network / Hardware), lazy
         self.update_checker: Optional[UpdateChecker] = None
         self.app_icon: QIcon
         # Note: self.current_font and self.current_metrics are initialized earlier before _init_managers()
@@ -1251,6 +1252,24 @@ class NetworkSpeedWidget(QWidget):
         except Exception as e:
             self.logger.error(f"Error showing app activity window: {e}", exc_info=True)
             QMessageBox.critical(self, self.i18n.ERROR_TITLE, f"Could not open app activity window:\n\n{str(e)}")
+
+    def open_monitor_window(self) -> None:
+        """Open the unified Monitor window (Overview / Network / Hardware)."""
+        try:
+            from netspeedtray.views.monitor import MonitorWindow
+            if self.monitor_window is None:
+                self.monitor_window = MonitorWindow(self, self.config, self.i18n)
+                self.monitor_window.window_closed.connect(self._on_monitor_window_closed)
+                self.monitor_window.show()
+            else:
+                self.monitor_window.show()
+                self.monitor_window.raise_()
+                self.monitor_window.activateWindow()
+        except Exception as e:
+            self.logger.error(f"Error showing Monitor window: {e}", exc_info=True)
+
+    def _on_monitor_window_closed(self) -> None:
+        self.monitor_window = None
 
 
     def check_for_updates(self) -> None:

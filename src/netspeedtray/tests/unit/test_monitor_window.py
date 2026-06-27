@@ -59,13 +59,21 @@ def test_hardware_tab_visible_only_with_monitoring(q_app):
 def test_import_firewall_no_matplotlib_at_module_scope():
     """Importing the Monitor shell modules must NOT pull matplotlib (the lazy-loading contract)."""
     src = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))  # .../src
+    # Import the shell AND the at-risk modules (graph_host / network.tab / overview.tab). These sit
+    # behind lazy factories so the shell never pulls them — but a module-scope `from views.graph...`
+    # in any of them would load matplotlib (graph/__init__.py eagerly imports GraphWindow). Importing
+    # them here directly is what catches such a regression.
     code = (
         "import sys\n"
         "import netspeedtray.views.monitor.window\n"
         "import netspeedtray.views.monitor.tab_bar\n"
         "import netspeedtray.views.monitor.lazy\n"
+        "import netspeedtray.views.monitor.graph_host\n"
+        "import netspeedtray.views.monitor.network.tab\n"
+        "import netspeedtray.views.monitor.overview.tab\n"
         "leaked = [m for m in sys.modules if m == 'matplotlib' or m.startswith('matplotlib.')]\n"
-        "assert not leaked, 'matplotlib leaked into the Monitor shell: %r' % leaked\n"
+        "assert not leaked, 'matplotlib leaked into the Monitor modules: %r' % leaked\n"
+        "assert 'netspeedtray.views.graph.window' not in sys.modules, 'graph package imported at module scope'\n"
         "print('FIREWALL_OK')\n"
     )
     env = dict(os.environ, PYTHONPATH=src, QT_QPA_PLATFORM="offscreen")

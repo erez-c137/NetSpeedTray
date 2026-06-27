@@ -444,5 +444,6 @@
     "MONITOR_WINDOW_TITLE": "Monitor",
     "MONITOR_TAB_OVERVIEW": "Resumen",
     "MONITOR_TAB_NETWORK": "Red",
-    "MONITOR_TAB_HARDWARE": "Hardware"
+    "MONITOR_TAB_HARDWARE": "Hardware",
+    "SHOW_MONITOR_MENU_ITEM": "Mostrar Monitor"
 }

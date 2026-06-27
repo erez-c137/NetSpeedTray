@@ -444,5 +444,6 @@
     "MONITOR_WINDOW_TITLE": "モニター",
     "MONITOR_TAB_OVERVIEW": "概要",
     "MONITOR_TAB_NETWORK": "ネットワーク",
-    "MONITOR_TAB_HARDWARE": "ハードウェア"
+    "MONITOR_TAB_HARDWARE": "ハードウェア",
+    "SHOW_MONITOR_MENU_ITEM": "モニターを表示"
 }

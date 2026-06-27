@@ -444,5 +444,6 @@
     "MONITOR_WINDOW_TITLE": "Монитор",
     "MONITOR_TAB_OVERVIEW": "Обзор",
     "MONITOR_TAB_NETWORK": "Сеть",
-    "MONITOR_TAB_HARDWARE": "Оборудование"
+    "MONITOR_TAB_HARDWARE": "Оборудование",
+    "SHOW_MONITOR_MENU_ITEM": "Показать монитор"
 }

@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable, Dict, List, Optional
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QStackedWidget, QApplication, QLabel,
 )
@@ -34,6 +34,8 @@ _POS_KEY = "monitor_window_pos"
 class MonitorWindow(QWidget):
     """Top-level Monitor window. Created via the main widget; one per app (deleted on close)."""
 
+    window_closed = pyqtSignal()  #: emitted in closeEvent so the owner clears its ref synchronously
+
     def __init__(self, main_widget, config: Dict[str, Any], i18n, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
@@ -42,6 +44,7 @@ class MonitorWindow(QWidget):
         self.i18n = i18n
         self.logger = logging.getLogger("NetSpeedTray.MonitorWindow")
         self._is_closing = False
+        self._graph_host = None  # one shared graph engine, built on first chart-tab activation
 
         self.setWindowTitle(self._tr("MONITOR_WINDOW_TITLE", "Monitor"))
         self.resize(900, 620)
@@ -120,9 +123,18 @@ class MonitorWindow(QWidget):
         return OverviewTab(self.config, self.i18n, self)
 
     def _make_network(self) -> QWidget:
-        # GraphHost (the reused, lazily-imported graph canvas) drops in here next; literal text is
-        # intentionally not localized — it's transient scaffolding, replaced before 5.1 ships.
-        return self._coming_soon("Network history + per-app connections — wiring the graph next.")
+        from netspeedtray.views.monitor.network.tab import NetworkTab
+        return NetworkTab(self._ensure_graph_host(), self.config, self.i18n, self)
+
+    def _ensure_graph_host(self):
+        """The single shared graph engine, created lazily (matplotlib still doesn't load until a
+        chart tab is actually shown — GraphHost.__init__ imports no graph package)."""
+        if self._graph_host is None:
+            from netspeedtray.views.monitor.graph_host import GraphHost
+            self._graph_host = GraphHost(
+                self._main_widget, self.config, self.i18n,
+                session_start_time=getattr(self._main_widget, "session_start_time", None))
+        return self._graph_host
 
     def _make_hardware(self) -> QWidget:
         return self._coming_soon("CPU · GPU · RAM history + per-app load — coming after Network.")
@@ -166,6 +178,7 @@ class MonitorWindow(QWidget):
 
     def closeEvent(self, event) -> None:
         self._is_closing = True
+        self.window_closed.emit()  # let the owner drop its ref before WA_DeleteOnClose destroys us
         try:
             save_window_position(self, self._main_widget, _POS_KEY)
         except Exception:
@@ -176,4 +189,9 @@ class MonitorWindow(QWidget):
                     d.page.teardown()
                 except Exception:
                     pass
+        if self._graph_host is not None:
+            try:
+                self._graph_host.teardown()
+            except Exception:
+                pass
         event.accept()

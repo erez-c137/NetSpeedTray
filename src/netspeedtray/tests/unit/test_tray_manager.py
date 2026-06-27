@@ -37,6 +37,7 @@ def mock_i18n():
     i18n.SHOW_GRAPH_MENU_ITEM = "Show Graph"
     i18n.APP_USAGE_TAB_LABEL = "App Usage"
     i18n.SHOW_APP_ACTIVITY_MENU_ITEM = "Show App Usage"
+    i18n.SHOW_MONITOR_MENU_ITEM = "Show Monitor"
     i18n.PAUSE_MENU_ITEM = "Pause"
     i18n.RESUME_MENU_ITEM = "Resume"
     i18n.CHECK_FOR_UPDATES_MENU_ITEM = "Check for Updates"

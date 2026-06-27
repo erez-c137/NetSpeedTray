@@ -444,5 +444,6 @@
     "MONITOR_WINDOW_TITLE": "Moniteur",
     "MONITOR_TAB_OVERVIEW": "Vue d'ensemble",
     "MONITOR_TAB_NETWORK": "Réseau",
-    "MONITOR_TAB_HARDWARE": "Matériel"
+    "MONITOR_TAB_HARDWARE": "Matériel",
+    "SHOW_MONITOR_MENU_ITEM": "Afficher le moniteur"
 }

@@ -444,5 +444,6 @@
     "MONITOR_WINDOW_TITLE": "모니터",
     "MONITOR_TAB_OVERVIEW": "개요",
     "MONITOR_TAB_NETWORK": "네트워크",
-    "MONITOR_TAB_HARDWARE": "하드웨어"
+    "MONITOR_TAB_HARDWARE": "하드웨어",
+    "SHOW_MONITOR_MENU_ITEM": "모니터 표시"
 }

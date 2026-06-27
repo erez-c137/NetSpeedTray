@@ -99,6 +99,12 @@ class TrayIconManager(QObject):
             if hasattr(self.widget, 'open_app_activity_window'):
                 app_usage_action.triggered.connect(self.widget.open_app_activity_window)
 
+            # The unified Monitor (Overview / Network / Hardware). For now it lives alongside the two
+            # windows above; once it reaches parity (5.2) it replaces them + takes over double-click.
+            monitor_action = self.context_menu.addAction(self.i18n.SHOW_MONITOR_MENU_ITEM)
+            if hasattr(self.widget, 'open_monitor_window'):
+                monitor_action.triggered.connect(self.widget.open_monitor_window)
+
             # Self-describing hardware-monitor state — surfaces the entire CPU/GPU/temps half of
             # the app that stays hidden until you go looking. Opens Settings → Hardware directly.
             # Text set live on open.
