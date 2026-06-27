@@ -194,13 +194,47 @@ class WidgetState(QObject):
                 f"FROM {constants.data.USAGE_COUNTER_TABLE} WHERE id = 1")
             row = cur.fetchone()
             if row:
-                self._usage = {"cumulative_up": row[0], "cumulative_down": row[1],
-                               "anchor_up": row[2], "anchor_down": row[3], "period_key": row[4]}
+                # Validate the persisted row — a corrupt/negative/NaN value flowing into the cap
+                # math could trigger a false 100% alert. Coerce to a finite, non-negative float
+                # and never let the anchor exceed the cumulative (that would read as negative usage).
+                def _f(v: object) -> float:
+                    try:
+                        x = float(v)
+                    except (TypeError, ValueError):
+                        return 0.0
+                    if x != x or x in (float("inf"), float("-inf")):  # NaN / inf
+                        return 0.0
+                    return max(0.0, x)
+                cu, cd = _f(row[0]), _f(row[1])
+                au, ad = min(_f(row[2]), cu), min(_f(row[3]), cd)
+                self._usage = {"cumulative_up": cu, "cumulative_down": cd,
+                               "anchor_up": au, "anchor_down": ad, "period_key": str(row[4] or "")}
             self._usage_loaded = True
             return True
         except Exception as e:
             self.logger.debug("Usage counter not ready yet: %s", e)
             return False
+
+    def _maybe_reanchor(self) -> bool:
+        """
+        Advance the period anchor on a genuine FORWARD rollover (returns True if it did).
+
+        Anchors at the cumulative-so-far, so a boundary poll's bytes (added right after this in
+        add_usage_bytes) land in the NEW period instead of being lost to both. Runs on both the
+        write path AND the read path, so an idle-across-reset still rolls the period over even
+        with no traffic. ISO date keys sort lexically, so '>' (not '!=') makes a backward
+        clock/DST shift unable to wipe the running total, and the empty initial key first-anchors.
+        """
+        u = self._usage
+        pk = self._compute_period_key(self.config.get("data_cap_reset_day", 1))
+        if pk > u["period_key"]:
+            u["anchor_up"] = u["cumulative_up"]
+            u["anchor_down"] = u["cumulative_down"]
+            u["period_key"] = pk
+            self._persist_usage_now()
+            self._usage_last_persist = time.time()
+            return True
+        return False
 
     def add_usage_bytes(self, up_bytes: float, down_bytes: float) -> None:
         """Accumulate exact transferred bytes into the odometer, re-anchoring on a new
@@ -208,21 +242,13 @@ class WidgetState(QObject):
         if not self._usage_loaded and not self._try_load_usage():
             return  # defer until the table exists, so we don't clobber the saved total
         u = self._usage
+        # Roll the period over BEFORE adding this poll, so a boundary-crossing poll's bytes
+        # count toward the NEW period rather than being stranded at the anchor (audit #15).
+        rolled = self._maybe_reanchor()
         u["cumulative_up"] += max(0.0, up_bytes)
         u["cumulative_down"] += max(0.0, down_bytes)
-
-        reset_day = self.config.get("data_cap_reset_day", 1)
-        pk = self._compute_period_key(reset_day)
-        # Re-anchor ONLY on a genuine forward rollover. ISO date strings sort lexically,
-        # so '>' (not '!=') means a backward clock/DST shift can't wipe the running total,
-        # and the empty initial key is still "less" than any real date (first anchor set).
-        # Persist the re-anchor immediately so a crash in the throttle window can't
-        # mis-report a fresh period as a full one.
-        if pk > u["period_key"]:
-            u["anchor_up"] = u["cumulative_up"]
-            u["anchor_down"] = u["cumulative_down"]
-            u["period_key"] = pk
-            self._persist_usage_now()
+        if rolled:
+            self._persist_usage_now()  # capture this poll's bytes into the fresh period now
             self._usage_last_persist = time.time()
             return
 
@@ -243,6 +269,9 @@ class WidgetState(QObject):
         """(upload_bytes, download_bytes) used since the current period's reset day."""
         if not self._usage_loaded and not self._try_load_usage():
             return (0.0, 0.0)
+        # Roll over on read too: if the reset day passed with no traffic, the anchor would
+        # otherwise stay stale and report last period's usage as this period's (audit #5).
+        self._maybe_reanchor()
         u = self._usage
         return (max(0.0, u["cumulative_up"] - u["anchor_up"]),
                 max(0.0, u["cumulative_down"] - u["anchor_down"]))

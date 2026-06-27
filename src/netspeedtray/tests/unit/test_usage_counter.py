@@ -51,6 +51,7 @@ def _fake_state(reset_day=1, period_key="2026-06-01"):
     s._usage_loaded = True
     s._usage_last_persist = 1e18  # far future -> no persist during the test
     s._persist_usage_now = WidgetState._persist_usage_now.__get__(s)
+    s._maybe_reanchor = WidgetState._maybe_reanchor.__get__(s)
     return s
 
 
@@ -74,13 +75,28 @@ def test_negative_deltas_are_clamped():
     assert down == 100.0
 
 
-def test_new_period_reanchors_and_resets_this_period():
+def test_new_period_reanchors_and_boundary_poll_counts_to_new_period():
     s = _fake_state(period_key="2026-05-01")  # state thinks it's last period
     s._compute_period_key = lambda *a, **k: "2026-06-01"  # ...but now it's a new one
     WidgetState.add_usage_bytes(s, 1000.0, 1000.0)
-    # On the new period the anchor jumps to the cumulative, so this-period reads ~0.
+    # The rollover anchors BEFORE adding this poll, so the boundary poll's bytes land in the
+    # NEW period (audit #15 — previously they were stranded at the anchor and read as 0).
     up, down = WidgetState.get_usage_this_period(s)
-    assert up == 0.0 and down == 0.0
+    assert up == 1000.0 and down == 1000.0
+    assert s._usage["period_key"] == "2026-06-01"
+
+
+def test_idle_across_reset_rolls_over_on_read():
+    # No traffic this period, but the reset day passed — reading must roll the period over
+    # (audit #5) instead of reporting last period's usage as this period's.
+    s = _fake_state(period_key="2026-05-01")
+    s._usage = {"cumulative_up": 5000.0, "cumulative_down": 9000.0,
+                "anchor_up": 0.0, "anchor_down": 0.0, "period_key": "2026-05-01"}
+    s._maybe_reanchor = WidgetState._maybe_reanchor.__get__(s)
+    s._persist_usage_now = WidgetState._persist_usage_now.__get__(s)
+    s._compute_period_key = lambda *a, **k: "2026-06-01"  # new period, zero traffic
+    up, down = WidgetState.get_usage_this_period(s)
+    assert up == 0.0 and down == 0.0                 # fresh period, not last period's 5000/9000
     assert s._usage["period_key"] == "2026-06-01"
 
 
