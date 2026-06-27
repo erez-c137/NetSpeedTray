@@ -125,6 +125,9 @@ class WidgetState(QObject):
             if thread_id not in self._read_conns:
                 conn = sqlite3.connect(self._db_path, check_same_thread=False)
                 conn.row_factory = sqlite3.Row
+                # Wait (up to 5s) for a lock instead of erroring out immediately — otherwise a
+                # read concurrent with the maintenance VACUUM can fail with "database is locked".
+                conn.execute("PRAGMA busy_timeout = 5000;")
                 self._read_conns[thread_id] = conn
             return self._read_conns[thread_id]
 
