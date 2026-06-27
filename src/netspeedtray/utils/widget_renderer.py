@@ -336,10 +336,15 @@ class WidgetRenderer:
         wasn't Mbps. Bands ascend: default (< low) -> low (low..high) -> high (>= high).
         """
         try:
+            # Be order-robust: clamp so banding stays monotonic even if a caller passes
+            # low > high (config validation normally enforces low < high, but this static
+            # helper shouldn't silently invert if it ever doesn't).
+            hi = max(high_threshold_mbps, low_threshold_mbps)
+            lo = min(high_threshold_mbps, low_threshold_mbps)
             mbps = (raw_bytes * constants.network.units.BITS_PER_BYTE) / constants.network.units.MEGA_DIVISOR
-            if mbps >= high_threshold_mbps:
+            if mbps >= hi:
                 return 'high'
-            if mbps >= low_threshold_mbps:
+            if mbps >= lo:
                 return 'low'
         except (TypeError, ValueError):
             return 'default'

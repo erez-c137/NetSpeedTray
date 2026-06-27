@@ -96,10 +96,10 @@ def test_update_stats_bar_correctly_computes_values(graph_window_instance):
     assert "↓ 40.0" in max_text
     assert "↑ 20.0" in max_text
     
-    # Total: 10,000,000 / 1024 / 1024 = 9.537
-    # 5,000,000 / 1024 / 1024 = 4.768
-    assert "↓ 9.5" in total_text
-    assert "↑ 4.7" in total_text
+    # Total uses DECIMAL data-size now (1000, matching the decimal-GB data cap + labels):
+    # 10,000,000 / 1000 / 1000 = 10.0 MB ; 5,000,000 / 1000 / 1000 = 5.0 MB
+    assert "↓ 10.0" in total_text
+    assert "↑ 5.0" in total_text
 
 
 def test_update_stats_bar_handles_empty_data(graph_window_instance):

@@ -243,7 +243,10 @@ def format_data_size(data_bytes: int | float, i18n, precision: int = 2) -> Tuple
     if data_bytes == 0:
         return 0.0, UNITS_DATA_SIZE[0] # Return "B" or its translation
 
-    BASE_DATA_SIZE = 1024.0
+    # DECIMAL base (1000), not binary (1024): the labels are KB/MB/GB (decimal), and this must
+    # match the data-cap accounting which is in decimal GB (1000**3, the ISP convention). Using
+    # 1024 here made the "data used" glance read ~7%/tier off from the cap it's compared against.
+    BASE_DATA_SIZE = 1000.0
 
     unit_index = 0
     value = float(data_bytes)
