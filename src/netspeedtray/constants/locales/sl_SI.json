@@ -440,5 +440,9 @@
     "PAUSE_IN_MENU_LABEL": "Dodaj Premor/Nadaljuj v desni klik meni",
     "SETTINGS_PREVIEW_LABEL": "Predogled",
     "HOVER_TIPS_LABEL": "Pokaži namige za desni / dvojni klik",
-    "ARROW_PRESET_OUTLINE_COMPACT": "Obris kompakten"
+    "ARROW_PRESET_OUTLINE_COMPACT": "Obris kompakten",
+    "MONITOR_WINDOW_TITLE": "Monitor",
+    "MONITOR_TAB_OVERVIEW": "Pregled",
+    "MONITOR_TAB_NETWORK": "Omrežje",
+    "MONITOR_TAB_HARDWARE": "Strojna oprema"
 }

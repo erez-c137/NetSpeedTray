@@ -440,5 +440,9 @@
     "PAUSE_IN_MENU_LABEL": "Añadir Pausar/Reanudar al menú contextual",
     "SETTINGS_PREVIEW_LABEL": "Vista previa",
     "HOVER_TIPS_LABEL": "Mostrar consejos de clic derecho / doble clic",
-    "ARROW_PRESET_OUTLINE_COMPACT": "Contorno compacto"
+    "ARROW_PRESET_OUTLINE_COMPACT": "Contorno compacto",
+    "MONITOR_WINDOW_TITLE": "Monitor",
+    "MONITOR_TAB_OVERVIEW": "Resumen",
+    "MONITOR_TAB_NETWORK": "Red",
+    "MONITOR_TAB_HARDWARE": "Hardware"
 }

@@ -440,5 +440,9 @@
     "PAUSE_IN_MENU_LABEL": "Pause/Fortsetzen zum Rechtsklick-Menü hinzufügen",
     "SETTINGS_PREVIEW_LABEL": "Vorschau",
     "HOVER_TIPS_LABEL": "Tipps für Rechts-/Doppelklick anzeigen",
-    "ARROW_PRESET_OUTLINE_COMPACT": "Umriss kompakt"
+    "ARROW_PRESET_OUTLINE_COMPACT": "Umriss kompakt",
+    "MONITOR_WINDOW_TITLE": "Monitor",
+    "MONITOR_TAB_OVERVIEW": "Übersicht",
+    "MONITOR_TAB_NETWORK": "Netzwerk",
+    "MONITOR_TAB_HARDWARE": "Hardware"
 }

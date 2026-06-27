@@ -440,5 +440,9 @@
     "PAUSE_IN_MENU_LABEL": "Pauzeren/Hervatten toevoegen aan het rechtsklikmenu",
     "SETTINGS_PREVIEW_LABEL": "Voorbeeld",
     "HOVER_TIPS_LABEL": "Tips voor rechtsklik / dubbelklik tonen",
-    "ARROW_PRESET_OUTLINE_COMPACT": "Compact omtrek"
+    "ARROW_PRESET_OUTLINE_COMPACT": "Compact omtrek",
+    "MONITOR_WINDOW_TITLE": "Monitor",
+    "MONITOR_TAB_OVERVIEW": "Overzicht",
+    "MONITOR_TAB_NETWORK": "Netwerk",
+    "MONITOR_TAB_HARDWARE": "Hardware"
 }

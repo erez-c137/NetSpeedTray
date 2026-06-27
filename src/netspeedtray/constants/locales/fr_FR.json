@@ -440,5 +440,9 @@
     "PAUSE_IN_MENU_LABEL": "Ajouter Pause/Reprendre au menu clic droit",
     "SETTINGS_PREVIEW_LABEL": "Aperçu",
     "HOVER_TIPS_LABEL": "Afficher les astuces clic droit / double-clic",
-    "ARROW_PRESET_OUTLINE_COMPACT": "Contour compact"
+    "ARROW_PRESET_OUTLINE_COMPACT": "Contour compact",
+    "MONITOR_WINDOW_TITLE": "Moniteur",
+    "MONITOR_TAB_OVERVIEW": "Vue d'ensemble",
+    "MONITOR_TAB_NETWORK": "Réseau",
+    "MONITOR_TAB_HARDWARE": "Matériel"
 }

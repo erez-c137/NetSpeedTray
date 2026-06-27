@@ -440,5 +440,9 @@
     "PAUSE_IN_MENU_LABEL": "Add Pause/Resume to the right-click menu",
     "SETTINGS_PREVIEW_LABEL": "Preview",
     "HOVER_TIPS_LABEL": "Show right-click / double-click tips",
-    "ARROW_PRESET_OUTLINE_COMPACT": "Outline Compact"
+    "ARROW_PRESET_OUTLINE_COMPACT": "Outline Compact",
+    "MONITOR_WINDOW_TITLE": "Monitor",
+    "MONITOR_TAB_OVERVIEW": "Overview",
+    "MONITOR_TAB_NETWORK": "Network",
+    "MONITOR_TAB_HARDWARE": "Hardware"
 }

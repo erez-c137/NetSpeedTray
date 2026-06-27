@@ -440,5 +440,9 @@
     "PAUSE_IN_MENU_LABEL": "Добавить «Пауза/Возобновить» в контекстное меню",
     "SETTINGS_PREVIEW_LABEL": "Предпросмотр",
     "HOVER_TIPS_LABEL": "Показывать подсказки по правому / двойному клику",
-    "ARROW_PRESET_OUTLINE_COMPACT": "Контурные компактные"
+    "ARROW_PRESET_OUTLINE_COMPACT": "Контурные компактные",
+    "MONITOR_WINDOW_TITLE": "Монитор",
+    "MONITOR_TAB_OVERVIEW": "Обзор",
+    "MONITOR_TAB_NETWORK": "Сеть",
+    "MONITOR_TAB_HARDWARE": "Оборудование"
 }

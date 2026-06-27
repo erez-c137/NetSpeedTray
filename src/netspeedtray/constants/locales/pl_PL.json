@@ -440,5 +440,9 @@
     "PAUSE_IN_MENU_LABEL": "Dodaj Wstrzymaj/Wznów do menu prawego przycisku",
     "SETTINGS_PREVIEW_LABEL": "Podgląd",
     "HOVER_TIPS_LABEL": "Pokaż wskazówki prawego / podwójnego kliknięcia",
-    "ARROW_PRESET_OUTLINE_COMPACT": "Kontur kompaktowy"
+    "ARROW_PRESET_OUTLINE_COMPACT": "Kontur kompaktowy",
+    "MONITOR_WINDOW_TITLE": "Monitor",
+    "MONITOR_TAB_OVERVIEW": "Przegląd",
+    "MONITOR_TAB_NETWORK": "Sieć",
+    "MONITOR_TAB_HARDWARE": "Sprzęt"
 }

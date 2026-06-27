@@ -440,5 +440,9 @@
     "PAUSE_IN_MENU_LABEL": "마우스 오른쪽 메뉴에 일시정지/재개 추가",
     "SETTINGS_PREVIEW_LABEL": "미리 보기",
     "HOVER_TIPS_LABEL": "마우스 오른쪽 / 더블 클릭 팁 표시",
-    "ARROW_PRESET_OUTLINE_COMPACT": "윤곽선 작게"
+    "ARROW_PRESET_OUTLINE_COMPACT": "윤곽선 작게",
+    "MONITOR_WINDOW_TITLE": "모니터",
+    "MONITOR_TAB_OVERVIEW": "개요",
+    "MONITOR_TAB_NETWORK": "네트워크",
+    "MONITOR_TAB_HARDWARE": "하드웨어"
 }
