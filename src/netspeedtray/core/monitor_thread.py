@@ -198,7 +198,7 @@ class StatsMonitorThread(QThread):
             return GpuPollResult()
 
         util_pct = 0.0
-        vram_used = 0.0
+        vram_used = None   # None = no VRAM counter available -> N/A (not a misleading "0.0 GB used")
         vram_total = None
         temp_c = None
         power_w = None
@@ -214,13 +214,19 @@ class StatsMonitorThread(QThread):
                         util_pct = max(util_pct, val)
                 except: continue
 
-            # 2. Universal VRAM (Dedicated Usage in bytes, convert to MiB)
+            # 2. Universal VRAM (Dedicated Usage in bytes, convert to MiB). Only report a real
+            # number if at least one counter contributed — otherwise leave None (N/A).
+            _vram_acc = 0.0
+            _had_vram = False
             for handle in self._gpu_vram_counters:
                 try:
                     _, val = win32pdh.GetFormattedCounterValue(handle, win32pdh.PDH_FMT_DOUBLE)
                     if val is not None:
-                        vram_used += (val / (1024.0 * 1024.0))
+                        _vram_acc += (val / (1024.0 * 1024.0))
+                        _had_vram = True
                 except: continue
+            if _had_vram:
+                vram_used = _vram_acc
 
         except Exception as e:
             self.logger.debug("GPU PDH polling error: %s", e)

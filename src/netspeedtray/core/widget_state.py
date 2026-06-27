@@ -277,7 +277,16 @@ class WidgetState(QObject):
                 max(0.0, u["cumulative_down"] - u["anchor_down"]))
 
     def get_usage_period_key(self) -> str:
-        """The current billing-period key (for the alert controller's restart-safe state)."""
+        """
+        The current billing-period key (for the alert controller's restart-safe state).
+        Returns the odometer's MONOTONIC period key (advanced forward-only) so a backward
+        clock/DST shift can't change it and spuriously re-fire a threshold alert — and so the
+        alert period and the odometer period are one source of truth.
+        """
+        if self._usage_loaded or self._try_load_usage():
+            self._maybe_reanchor()
+            return self._usage["period_key"] or self._compute_period_key(
+                self.config.get("data_cap_reset_day", 1))
         return self._compute_period_key(self.config.get("data_cap_reset_day", 1))
 
     def flush_batch(self) -> None:
