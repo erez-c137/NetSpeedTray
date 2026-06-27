@@ -12,6 +12,7 @@ from netspeedtray import constants
 from netspeedtray.utils.components import Win11Toggle
 from netspeedtray.constants import styles as style_constants
 from netspeedtray.utils import styles as style_utils
+from netspeedtray.views.settings.pages.datacap_section import DataCapSettings
 
 class InterfacesPage(QWidget):
     layout_changed = pyqtSignal()
@@ -80,6 +81,11 @@ class InterfacesPage(QWidget):
 
         interfaces_layout.addWidget(self.interface_scroll)
         layout.addWidget(interfaces_group)
+
+        # Data-usage / data-cap section (the feature's in-settings home, 2.0 IA).
+        self.datacap = DataCapSettings(self.on_change)
+        layout.addWidget(self.datacap)
+
         layout.addStretch()
 
     def _on_mode_toggled(self, checked: bool):
@@ -142,15 +148,19 @@ class InterfacesPage(QWidget):
             else:
                 checkbox.setChecked(False)
 
+        self.datacap.load_settings(config)
+
     def get_settings(self) -> Dict[str, Any]:
         mode = "auto"
         if self.all_physical_interfaces_radio.isChecked(): mode = "all_physical"
         elif self.all_virtual_interfaces_radio.isChecked(): mode = "all_virtual"
         elif self.selected_interfaces_radio.isChecked(): mode = "selected"
-        
+
         selected = [iface for iface, cb in self.interface_checkboxes.items() if cb.isChecked()]
-        
-        return {
+
+        settings = {
             "interface_mode": mode,
-            "selected_interfaces": selected
+            "selected_interfaces": selected,
         }
+        settings.update(self.datacap.get_settings())
+        return settings
