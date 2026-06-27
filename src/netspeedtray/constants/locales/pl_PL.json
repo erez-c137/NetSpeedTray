@@ -437,5 +437,8 @@
     "RESET_ALL_CONFIRM_TEXT": "Spowoduje to przywrócenie wszystkich ustawień do wartości domyślnych. Zapisana historia zostanie zachowana. Kontynuować?",
     "DECIMAL_SEPARATOR": ",",
     "HOVER_USAGE_CARD_LABEL": "Pokaż zużycie danych po najechaniu na widżet",
-    "PAUSE_IN_MENU_LABEL": "Dodaj Wstrzymaj/Wznów do menu prawego przycisku"
+    "PAUSE_IN_MENU_LABEL": "Dodaj Wstrzymaj/Wznów do menu prawego przycisku",
+    "SETTINGS_PREVIEW_LABEL": "Podgląd",
+    "HOVER_TIPS_LABEL": "Pokaż wskazówki prawego / podwójnego kliknięcia",
+    "ARROW_PRESET_OUTLINE_COMPACT": "Kontur kompaktowy"
 }

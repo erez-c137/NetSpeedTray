@@ -39,7 +39,7 @@ CapInfo = Tuple[float, float, float]
 class UsageFlyout(QWidget):
     """A hover-triggered, non-focusing usage card. Build it, then call ``show_for()``."""
 
-    def __init__(self, i18n, today: Totals, month: Totals,
+    def __init__(self, i18n, today: Optional[Totals] = None, month: Optional[Totals] = None,
                  hint: Optional[str] = None, cap: Optional[CapInfo] = None,
                  parent: Optional[QWidget] = None) -> None:
         super().__init__(
@@ -73,28 +73,37 @@ class UsageFlyout(QWidget):
         body.setSpacing(tokens.SPACE_S)
         outer.addWidget(card)
 
-        # --- Gesture hint (only while it is still graduating) ---
+        # The card carries any subset of {gesture hint, usage rows, cap progress}, driven by the
+        # two independent Settings toggles. Sections are divided only when more than one is shown.
+        sections = 0
+
+        # --- Gesture hint (right-click / double-click) ---
         if hint:
             hint_lbl = self._label(hint, tokens.TYPE_BODY, self._c["text_secondary"])
             hint_lbl.setWordWrap(True)
             hint_lbl.setMaximumWidth(300)
             body.addWidget(hint_lbl)
-            body.addWidget(self._separator())
+            sections += 1
 
         # --- Today / This-month usage (aligned columns) ---
-        grid = QGridLayout()
-        grid.setContentsMargins(0, 0, 0, 0)
-        grid.setHorizontalSpacing(16)
-        grid.setVerticalSpacing(tokens.SPACE_S)
-        grid.setColumnStretch(0, 1)  # the label column flexes; values hug the right
-        self._usage_row(grid, 0, self._tr("USAGE_TODAY_LABEL", "Today"), today)
-        self._usage_row(grid, 1, self._tr("USAGE_THIS_MONTH_LABEL", "This month"), month)
-        body.addLayout(grid)
+        if today is not None and month is not None:
+            if sections:
+                body.addWidget(self._separator())
+            grid = QGridLayout()
+            grid.setContentsMargins(0, 0, 0, 0)
+            grid.setHorizontalSpacing(16)
+            grid.setVerticalSpacing(tokens.SPACE_S)
+            grid.setColumnStretch(0, 1)  # the label column flexes; values hug the right
+            self._usage_row(grid, 0, self._tr("USAGE_TODAY_LABEL", "Today"), today)
+            self._usage_row(grid, 1, self._tr("USAGE_THIS_MONTH_LABEL", "This month"), month)
+            body.addLayout(grid)
+            sections += 1
 
         # --- Data-cap progress (only when a cap is actually set) ---
         if cap is not None:
             used_gb, cap_gb, pct = cap
-            body.addWidget(self._separator())
+            if sections:
+                body.addWidget(self._separator())
             over = pct >= 100.0
             cap_row = QHBoxLayout()
             cap_row.setContentsMargins(0, 0, 0, 0)

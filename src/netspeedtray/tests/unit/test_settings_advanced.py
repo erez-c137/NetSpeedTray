@@ -28,9 +28,10 @@ def test_keep_data_snaps_to_closest_valid_retention(page):
 
 
 def test_advanced_round_trips_hover_and_pause_toggles(page):
-    page.load_settings({"show_usage_on_hover": False, "pause_in_menu": True})
+    page.load_settings({"show_usage_on_hover": False, "show_hover_tips": False, "pause_in_menu": True})
     out = page.get_settings()
     assert out["show_usage_on_hover"] is False
+    assert out["show_hover_tips"] is False
     assert out["pause_in_menu"] is True
 
 

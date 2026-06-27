@@ -895,7 +895,8 @@ class ArrowStylePicker(QWidget):
         for value, btn in self._seg._items:
             if value != self._CUSTOM:
                 name = next((n for (n, _u, _d) in self._presets if n == value), value)
-                btn.setToolTip(self._tr(f"ARROW_PRESET_{str(name).upper()}", name))
+                key = "ARROW_PRESET_" + str(name).upper().replace(" ", "_")
+                btn.setToolTip(self._tr(key, name))
         root.addWidget(self._seg)
 
         self._custom_row = QWidget()

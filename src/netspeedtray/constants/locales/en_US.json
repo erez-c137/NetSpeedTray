@@ -437,5 +437,8 @@
     "RESET_ALL_CONFIRM_TEXT": "This restores every setting to its default. Your saved history is kept. Continue?",
     "DECIMAL_SEPARATOR": ".",
     "HOVER_USAGE_CARD_LABEL": "Show data usage when hovering the widget",
-    "PAUSE_IN_MENU_LABEL": "Add Pause/Resume to the right-click menu"
+    "PAUSE_IN_MENU_LABEL": "Add Pause/Resume to the right-click menu",
+    "SETTINGS_PREVIEW_LABEL": "Preview",
+    "HOVER_TIPS_LABEL": "Show right-click / double-click tips",
+    "ARROW_PRESET_OUTLINE_COMPACT": "Outline Compact"
 }

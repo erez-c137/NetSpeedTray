@@ -49,6 +49,22 @@ def test_hint_line_present_only_when_given(q_app):
     assert not any("Right-click" in t for t in _texts(without))
 
 
+def test_card_can_be_hint_only(q_app):
+    """Tips toggle on, data toggle off -> a card with only the gesture hint, no usage rows."""
+    card = UsageFlyout(_i18n(), hint="Right-click for graphs")
+    texts = _texts(card)
+    assert any("Right-click" in t for t in texts)
+    assert "Today" not in texts and "This month" not in texts
+
+
+def test_card_can_be_data_only(q_app):
+    """Data toggle on, tips toggle off -> usage rows with no hint."""
+    card = UsageFlyout(_i18n(), today=(1e6, 1e6), month=(1e6, 1e6))
+    texts = _texts(card)
+    assert "Today" in texts and "This month" in texts
+    assert not any("Right-click" in t for t in texts)
+
+
 def test_cap_line_only_when_cap_set(q_app):
     no_cap = UsageFlyout(_i18n(), (0, 0), (0, 0))
     assert not any("Data cap" in t for t in _texts(no_cap))

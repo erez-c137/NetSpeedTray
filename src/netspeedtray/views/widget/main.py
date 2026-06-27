@@ -773,8 +773,9 @@ class NetworkSpeedWidget(QWidget):
         """On hover, arm the usage card (shown after a short rest, positioned above the taskbar).
         Skipped entirely when the user has turned the hover card off in Settings."""
         try:
-            if (self.config.get("show_usage_on_hover", True)
-                    and self._hover_card is None and not self._hover_card_timer.isActive()):
+            hover_enabled = (self.config.get("show_usage_on_hover", True)
+                             or self.config.get("show_hover_tips", True))
+            if hover_enabled and self._hover_card is None and not self._hover_card_timer.isActive():
                 self._hover_card_timer.start(self._HOVER_CARD_DELAY_MS)
         except Exception as e:
             self.logger.debug("hover card arm failed: %s", e)
@@ -800,12 +801,15 @@ class NetworkSpeedWidget(QWidget):
             return
         try:
             from netspeedtray.views.usage_flyout import UsageFlyout
-            today, month = self._hover_usage_totals()
+            show_data = bool(self.config.get("show_usage_on_hover", True))
+            show_tips = bool(self.config.get("show_hover_tips", True))
+            hint = self._hover_hint_text() if show_tips else None
+            today, month = self._hover_usage_totals() if show_data else (None, None)
+            cap = self._hover_cap_info() if show_data else None
+            if hint is None and today is None:
+                return  # nothing to show (both toggles off, or tips graduated while data is off)
             self._hide_usage_hover_card()  # never stack two cards
-            self._hover_card = UsageFlyout(
-                self.i18n, today, month,
-                hint=self._hover_hint_text(), cap=self._hover_cap_info(),
-            )
+            self._hover_card = UsageFlyout(self.i18n, today, month, hint=hint, cap=cap)
             screen = self.screen() or QApplication.primaryScreen()
             avail = screen.availableGeometry() if screen else self.frameGeometry()
             self._hover_card.show_for(self.frameGeometry(), avail)

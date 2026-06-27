@@ -22,7 +22,7 @@ from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from PyQt6.QtGui import QColor, QFont, QIcon, QCloseEvent, QShowEvent
 from PyQt6.QtWidgets import (
     QApplication, QColorDialog, QDialog, QFileDialog, QFontDialog,
-    QHBoxLayout, QListWidget, QMessageBox, QPushButton, QScrollArea,
+    QHBoxLayout, QLabel, QListWidget, QMessageBox, QPushButton, QScrollArea,
     QStackedWidget, QVBoxLayout, QWidget
 )
 
@@ -259,6 +259,11 @@ class SettingsDialog(QDialog):
                 preview_strip.setObjectName("previewStrip")
                 ps_layout = QHBoxLayout(preview_strip)
                 ps_layout.setContentsMargins(12, 6, 12, 6)
+                # Label the strip so it reads as a live preview of the taskbar widget, not a status bar.
+                ps_label = QLabel(self.i18n.SETTINGS_PREVIEW_LABEL)
+                ps_label.setStyleSheet(
+                    f"color: {style_utils.semantic_colors()['text_secondary']}; background: transparent;")
+                ps_layout.addWidget(ps_label)
                 ps_layout.addStretch(1)
                 self.preview_widget = PreviewWidget(self.config, self.i18n, width=300, height=40)
                 ps_layout.addWidget(self.preview_widget)

@@ -12,9 +12,10 @@ from typing import Final, List, Tuple
 
 # (display name, up glyph, down glyph)
 ARROW_PRESETS: Final[List[Tuple[str, str, str]]] = [
-    ("Classic", "↑", "↓"),   # ↑ ↓  — clean and simple (the default)
-    ("Solid",   "▲", "▼"),   # ▲ ▼  — bold filled triangles, high visibility
-    ("Compact", "▴", "▾"),   # ▴ ▾  — small triangles, subtle on a busy taskbar
-    ("Outline", "△", "▽"),   # △ ▽  — light hollow triangles
-    ("Double",  "⇑", "⇓"),   # ⇑ ⇓  — double-line arrows, distinctive
+    ("Classic",         "↑", "↓"),   # ↑ ↓  — clean and simple (the default)
+    ("Solid",           "▲", "▼"),   # ▲ ▼  — bold filled triangles, high visibility
+    ("Compact",         "▴", "▾"),   # ▴ ▾  — small filled triangles, subtle on a busy taskbar
+    ("Outline",         "△", "▽"),   # △ ▽  — light hollow triangles
+    ("Outline Compact", "▵", "▿"),   # ▵ ▿  — small hollow triangles, the lightest option
+    ("Double",          "⇑", "⇓"),   # ⇑ ⇓  — double-line arrows, distinctive
 ]

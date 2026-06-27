@@ -437,5 +437,8 @@
     "RESET_ALL_CONFIRM_TEXT": "모든 설정을 기본값으로 되돌립니다. 저장된 기록은 유지됩니다. 계속할까요?",
     "DECIMAL_SEPARATOR": ".",
     "HOVER_USAGE_CARD_LABEL": "위젯에 마우스를 올리면 데이터 사용량 표시",
-    "PAUSE_IN_MENU_LABEL": "마우스 오른쪽 메뉴에 일시정지/재개 추가"
+    "PAUSE_IN_MENU_LABEL": "마우스 오른쪽 메뉴에 일시정지/재개 추가",
+    "SETTINGS_PREVIEW_LABEL": "미리 보기",
+    "HOVER_TIPS_LABEL": "마우스 오른쪽 / 더블 클릭 팁 표시",
+    "ARROW_PRESET_OUTLINE_COMPACT": "윤곽선 작게"
 }
