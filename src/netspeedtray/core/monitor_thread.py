@@ -87,6 +87,14 @@ class StatsMonitorThread(QThread):
         self._lhm_notice_emitted: bool = False  # One-time notification flag
         self._lhm_check_polls: int = 0  # Count polls before emitting notice
         self._nvidia_smi_path: Optional[str] = self._get_cached_path("nvidia-smi")
+        # nvidia-smi is a synchronous subprocess (up to NVIDIA_SMI_TIMEOUT_SEC). Temps/power
+        # change slowly, so poll it on a slow sub-cadence and cache between calls — keeps the
+        # per-second network readout off the subprocess critical path.
+        self._NVIDIA_POLL_INTERVAL_SEC = 5.0
+        self._nvidia_last_poll: float = 0.0
+        self._nvidia_cache_temp: Optional[float] = None
+        self._nvidia_cache_power: Optional[float] = None
+        self._nvidia_cache_vram_total: Optional[float] = None
 
         # PDH Queries for GPU
         self._gpu_query: Optional[int] = None
@@ -267,30 +275,45 @@ class StatsMonitorThread(QThread):
                     except Exception as e:
                         self.logger.debug("LHM/OHM GPU power error: %s", e)
 
-        # 4. nvidia-smi fallback for temp/power (vram_total comes as bonus)
+        # 4. nvidia-smi fallback for temp/power (vram_total comes as bonus). The subprocess
+        #    runs on a slow sub-cadence; values are cached and reused on intervening polls so
+        #    a synchronous (up to 1.5s) nvidia-smi call never stalls the network readout.
         if self._nvidia_smi_path and (need_smi_temp or need_smi_power):
-            try:
-                query_fields = "temperature.gpu,memory.total,power.draw"
-                output = subprocess.check_output(
-                    [self._nvidia_smi_path, f"--query-gpu={query_fields}", "--format=csv,noheader,nounits"],
-                    encoding='utf-8', timeout=constants.timeouts.NVIDIA_SMI_TIMEOUT_SEC,
-                    creationflags=subprocess.CREATE_NO_WINDOW
-                )
-                parts = output.strip().split('\n')[0].split(',')
-                if need_smi_temp and len(parts) > 0:
-                    try: temp_c = float(parts[0].strip())
-                    except: pass
-                if len(parts) > 1:
-                    try: vram_total = float(parts[1].strip())  # MiB
-                    except: pass
-                if need_smi_power and len(parts) > 2:
-                    try:
-                        pw = float(parts[2].strip())
-                        if 0.0 < pw < 1000.0:
-                            power_w = pw
-                    except: pass
-            except Exception as e:
-                self.logger.debug("nvidia-smi temp/power query failed: %s", e)
+            now_mono = time.monotonic()
+            if (now_mono - self._nvidia_last_poll) >= self._NVIDIA_POLL_INTERVAL_SEC:
+                # Stamp first: a hung/failed call then waits the full interval before retry,
+                # instead of re-running (and re-stalling) every poll.
+                self._nvidia_last_poll = now_mono
+                try:
+                    query_fields = "temperature.gpu,memory.total,power.draw"
+                    output = subprocess.check_output(
+                        [self._nvidia_smi_path, f"--query-gpu={query_fields}", "--format=csv,noheader,nounits"],
+                        encoding='utf-8', timeout=constants.timeouts.NVIDIA_SMI_TIMEOUT_SEC,
+                        creationflags=subprocess.CREATE_NO_WINDOW
+                    )
+                    parts = output.strip().split('\n')[0].split(',')
+                    if len(parts) > 0:
+                        try: self._nvidia_cache_temp = float(parts[0].strip())
+                        except: pass
+                    if len(parts) > 1:
+                        try: self._nvidia_cache_vram_total = float(parts[1].strip())  # MiB
+                        except: pass
+                    if len(parts) > 2:
+                        try:
+                            pw = float(parts[2].strip())
+                            if 0.0 < pw < 1000.0:
+                                self._nvidia_cache_power = pw
+                        except: pass
+                except Exception as e:
+                    self.logger.debug("nvidia-smi temp/power query failed: %s", e)
+
+            # Apply the (possibly just-refreshed) cached values to whatever still needs a source.
+            if need_smi_temp and temp_c is None and self._nvidia_cache_temp is not None:
+                temp_c = self._nvidia_cache_temp
+            if need_smi_power and power_w is None and self._nvidia_cache_power is not None:
+                power_w = self._nvidia_cache_power
+            if vram_total is None and self._nvidia_cache_vram_total is not None:
+                vram_total = self._nvidia_cache_vram_total
 
         # 5. RAPL PP1 fallback for Intel iGPU power (if no LHM/nvidia-smi power)
         if include_power and power_w is None and self._power_pp1_counter is not None:
