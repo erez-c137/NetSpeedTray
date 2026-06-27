@@ -180,6 +180,23 @@ class NetworkSpeedWidget(QWidget):
         self._state_watcher_timer.start()
         self.logger.debug(f"Safety net state watcher timer started ({constants.timeouts.STATE_WATCHER_INTERVAL_MS}ms).")
 
+        # Data-cap usage alerts: check usage-vs-cap on a slow cadence (cheap; no-op unless
+        # the cap + alerts are enabled). Notifies via the flyout (no system-tray icon).
+        try:
+            from netspeedtray.core.usage_alerts import UsageAlertController
+            self._usage_alert = UsageAlertController(
+                usage_getter=self.widget_state.get_usage_this_period,
+                config_getter=lambda: self.config,
+                period_getter=self.widget_state.get_usage_period_key,
+                notify=self._show_usage_alert,
+                save_state=lambda s: self.update_config({"usage_alert_state": s}),
+            )
+            self._usage_alert_timer = QTimer(self)
+            self._usage_alert_timer.timeout.connect(self._usage_alert.check)
+            self._usage_alert_timer.start(60 * 1000)  # every 60s
+        except Exception as e:
+            self.logger.error(f"Could not start usage-alert controller: {e}", exc_info=True)
+
         # Update Checker — delayed startup check
         self.update_checker = UpdateChecker(self.config, self)
         self.update_checker.update_available.connect(self._on_update_available)
@@ -398,6 +415,16 @@ class NetworkSpeedWidget(QWidget):
             self._unfold_flyout.show_at(QPoint(geo.left(), geo.top()))
         except Exception as e:
             self.logger.error(f"Error showing unfold flyout: {e}", exc_info=True)
+
+    def _show_usage_alert(self, title: str, message: str) -> None:
+        """Show a data-cap usage alert via the flyout (no system-tray icon needed)."""
+        try:
+            from netspeedtray.views.flyout import Flyout
+            self._usage_alert_flyout = Flyout(title, message, auto_dismiss_ms=15000)
+            geo = self.frameGeometry()
+            self._usage_alert_flyout.show_at(QPoint(geo.left(), geo.top()))
+        except Exception as e:
+            self.logger.error(f"Error showing usage alert: {e}", exc_info=True)
 
 
     def pause(self) -> None:

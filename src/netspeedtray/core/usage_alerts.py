@@ -42,12 +42,19 @@ class UsageAlertController:
         self._save_state = save_state     # (encoded_state) -> persist to config
 
     @staticmethod
-    def _parse_state(raw: str, period: str) -> Set[int]:
-        """Levels already fired this period (empty if the stored state is a prior period)."""
-        if not raw or ":" not in raw:
+    def _state_id(period: str, cap_gb: float, count: str) -> str:
+        """Identity of the current alert context. Includes the cap + count mode so that
+        changing either mid-period clears the fired levels and re-evaluates (a lowered
+        cap can warn again; a raised cap won't suppress a genuinely-new crossing)."""
+        return f"{period}|{cap_gb:g}|{count}"
+
+    @staticmethod
+    def _parse_state(raw: str, state_id: str) -> Set[int]:
+        """Levels already fired for this exact (period, cap, mode); empty if any differ."""
+        if not raw or "::" not in raw:
             return set()
-        stored_period, _, levels = raw.partition(":")
-        if stored_period != period:
+        stored_id, _, levels = raw.partition("::")
+        if stored_id != state_id:
             return set()
         out: Set[int] = set()
         for tok in levels.split(","):
@@ -57,8 +64,8 @@ class UsageAlertController:
         return out
 
     @staticmethod
-    def _encode_state(period: str, fired: Set[int]) -> str:
-        return f"{period}:{','.join(str(x) for x in sorted(fired))}"
+    def _encode_state(state_id: str, fired: Set[int]) -> str:
+        return f"{state_id}::{','.join(str(x) for x in sorted(fired))}"
 
     def check(self) -> None:
         """Evaluate usage vs cap and fire any newly-crossed threshold. Cheap; call on a
@@ -75,7 +82,8 @@ class UsageAlertController:
         pct = (used_gb / cap_gb) * 100.0
 
         period = self._period()
-        fired = self._parse_state(cfg.get("usage_alert_state", ""), period)
+        state_id = self._state_id(period, cap_gb, cfg.get("data_cap_count", "total"))
+        fired = self._parse_state(cfg.get("usage_alert_state", ""), state_id)
 
         newly = False
         for level in _LEVELS:
@@ -86,7 +94,7 @@ class UsageAlertController:
 
         if newly:
             try:
-                self._save_state(self._encode_state(period, fired))
+                self._save_state(self._encode_state(state_id, fired))
             except Exception as e:  # never let alert bookkeeping break the poll
                 logger.error("Could not persist usage_alert_state: %s", e)
 

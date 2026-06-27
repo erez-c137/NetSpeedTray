@@ -247,6 +247,10 @@ class WidgetState(QObject):
         return (max(0.0, u["cumulative_up"] - u["anchor_up"]),
                 max(0.0, u["cumulative_down"] - u["anchor_down"]))
 
+    def get_usage_period_key(self) -> str:
+        """The current billing-period key (for the alert controller's restart-safe state)."""
+        return self._compute_period_key(self.config.get("data_cap_reset_day", 1))
+
     def flush_batch(self) -> None:
         """Sends all batches to the database worker."""
         if self._db_batch:

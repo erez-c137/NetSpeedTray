@@ -54,9 +54,18 @@ def test_fires_both_80_and_100_when_over_cap():
 
 def test_new_period_clears_fired_state():
     # State says 80 already fired, but for a DIFFERENT period -> should fire again.
-    ctrl, _, fired, _ = _make(used_down_gb=85, period="2026-07-01", state="2026-06-01:80,100")
+    ctrl, _, fired, _ = _make(used_down_gb=85, period="2026-07-01",
+                              state="2026-06-01|100|total::80,100")
     ctrl.check()
     assert len(fired) == 1
+
+
+def test_changing_cap_clears_fired_state():
+    # 80 already fired at a 100GB cap; user changes the cap -> re-evaluate at the new cap.
+    ctrl, _, fired, _ = _make(used_down_gb=85, data_cap_gb=80.0,
+                              state="2026-06-01|100|total::80,100")
+    ctrl.check()
+    assert len(fired) >= 1  # not suppressed by the stale 100GB-cap state
 
 
 def test_disabled_cap_is_noop():
