@@ -5,7 +5,9 @@ Honest, admin-free, and every number measured (not estimated):
   * CPU%  — psutil per-process, summed across a program's PIDs, normalised to total-CPU (0-100%).
   * RAM   — psutil RSS, summed across PIDs.
   * GPU%  — Windows PDH "\GPU Engine(*)\Utilization Percentage", parsed pid_<PID>_..._engtype_ and
-            summed across that PID's engines (the proven spike path: no admin, no ETW). Absent
+            reduced with MAX across that PID's engines — the per-engine busy fractions overlap in the
+            same wall-clock interval (a frame uses 3D + Copy + Video at once) so they are NOT
+            additive; max mirrors the app's system-wide _poll_gpu_hybrid. No admin, no ETW. Absent
             gracefully when the GPU Engine counter set isn't present (non-Windows / odd drivers).
 
 Runs in a dedicated QThread, only while the Hardware tab is visible. The first sample is a baseline
@@ -31,6 +33,13 @@ except ImportError:  # pragma: no cover - non-Windows / missing pywin32
 _PID_RE = re.compile(r"pid_(\d+)_")
 _GPU_COUNTER_PATH = r"\GPU Engine(*)\Utilization Percentage"
 
+# Pseudo-processes Task Manager keeps out of the normal per-app list: the Idle process reports idle
+# time as "CPU"; System (PID 4) is kernel DPC/ISR time; Memory Compression / Registry / Secure System
+# are rolled into System. Including any of them distorts the list order and the CPU/RAM totals.
+_SKIP_PIDS = {0, 4}
+_SKIP_NAMES = {"system idle process", "system", "secure system", "registry",
+               "memcompression", "memory compression"}
+
 
 class HardwareActivityWorker(QObject):
     """Collects per-application CPU%, RAM, and GPU% grouped by program identity."""
@@ -55,9 +64,7 @@ class HardwareActivityWorker(QObject):
                 try:
                     pid = int(proc.info["pid"])
                     name = proc.info["name"] or f"PID {pid}"
-                    # The System Idle Process (PID 0) reports IDLE time as "CPU" — Task Manager
-                    # excludes it; including it would peg the list and the total at ~system-idle%.
-                    if pid == 0 or name == "System Idle Process":
+                    if pid in _SKIP_PIDS or name.casefold() in _SKIP_NAMES:
                         continue
                     cpu = proc.cpu_percent(None)          # delta on psutil's cached Process object
                     rss = proc.memory_info().rss
@@ -79,8 +86,7 @@ class HardwareActivityWorker(QObject):
                     # Normalise summed-across-cores CPU to a 0-100% share of the whole CPU.
                     "cpu_pct": min(100.0, a["cpu"] / self._cpu_count),
                     "rss_bytes": a["rss"],
-                    # A PID can exceed 100% across engines; clamp the displayed figure.
-                    "gpu_pct": min(100.0, a["gpu"]),
+                    "gpu_pct": min(100.0, a["gpu"]),   # max-of-engines is already 0-100; clamp is belt-and-braces
                 })
             rows.sort(key=lambda r: (-r["cpu_pct"], -r["gpu_pct"], r["display_name"].casefold()))
 
@@ -130,7 +136,8 @@ class HardwareActivityWorker(QObject):
         for inst, val in arr.items():
             m = _PID_RE.search(inst)
             if m and isinstance(val, (int, float)) and val > 0:
-                per_pid[int(m.group(1))] += float(val)   # sum a PID's engines (3D + Copy + Video*)
+                pid = int(m.group(1))
+                per_pid[pid] = max(per_pid[pid], float(val))   # engines overlap in time -> MAX, not sum
         return per_pid
 
     def close_gpu_query(self) -> None:

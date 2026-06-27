@@ -449,5 +449,7 @@
     "MONITOR_TILE_RAM": "RAM",
     "MONITOR_TILE_VRAM": "VRAM",
     "MEMORY_HEADER": "Memory",
-    "HARDWARE_SUMMARY_TEMPLATE": "{procs} processes · CPU {cpu:.0f}% · RAM {ram:.1f} {ram_unit} · Updated {updated_at}"
+    "HARDWARE_SUMMARY_TEMPLATE": "{procs} processes · CPU {cpu:.0f}% · RAM {ram:.1f} {ram_unit} · Updated {updated_at}",
+    "HARDWARE_LOADING_MESSAGE": "Reading processes…",
+    "HARDWARE_NO_DATA_MESSAGE": "No process data."
 }

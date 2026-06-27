@@ -23,9 +23,13 @@ from netspeedtray.views.monitor.network.app_list import _ActivityBar
 
 _NAME_W = 168
 _CPU_W = 50
-_RAM_W = 82
+_RAM_W = 88
 _GPU_W = 52
-_ACTIVE_CPU = 1.0   # %, below this a process is treated as idle (dimmed)
+_ACTIVE_CPU = 1.0      # %, below this a process is treated as idle (dimmed)
+# Floor the CPU-bar denominator so a quiet desktop (busiest ~9%) doesn't draw that 9% as a FULL bar.
+# Below this the bar scales against the floor (honest "barely busy"); above it, relative-to-busiest.
+_BAR_FLOOR_PCT = 30.0
+_GPU_SHOW_MIN = 0.5    # render "—" below this so the one GPU-using process isn't lost in a wall of 0%
 
 
 def _is_busy(row: Dict[str, Any]) -> bool:
@@ -75,20 +79,24 @@ class HardwareRow(QFrame):
         busy = _is_busy(row)
 
         c = su.semantic_colors()
+        text = c["text_primary"] if busy else c["text_secondary"]
         fm = QFontMetrics(self._name.font())
         self._name.setText(fm.elidedText(name, Qt.TextElideMode.ElideRight, _NAME_W))
-        self._name.setStyleSheet(
-            f"color: {c['text_primary'] if busy else c['text_secondary']}; background: transparent;")
+        # Emphasise/recede the WHOLE row together (name + numbers), not just the name, so a busy row
+        # doesn't read as half-disabled. Re-resolved each tick -> picks up a theme switch.
+        for lbl in (self._name, self._cpu, self._ram, self._gpu):
+            lbl.setStyleSheet(f"color: {text}; background: transparent;")
 
-        # CPU bar is RELATIVE to the busiest process (linear — for CPU the heavy hitter SHOULD lead),
-        # while the number column carries the absolute value.
-        self._bar.set_value((cpu / max_cpu) if max_cpu > 0 else 0.0, busy)
+        # CPU bar is RELATIVE to the busiest process (the heavy hitter should lead) but the
+        # denominator is floored so an idle desktop's small leader isn't drawn as a full bar; the
+        # number column carries the absolute value.
+        self._bar.set_value((cpu / max(max_cpu, _BAR_FLOOR_PCT)) if max_cpu > 0 else 0.0, busy)
         self._cpu.setText(f"{cpu:.0f}%")
-        rv, ru = format_data_size(rss, self._i18n, precision=0)
-        self._ram.setText(f"{rv:.0f} {ru}")
-        self._gpu.setText(f"{gpu:.0f}%" if gpu_available else "—")
+        rv, ru = format_data_size(rss, self._i18n, precision=1)
+        self._ram.setText(f"{rv:.1f} {ru}")
+        self._gpu.setText(f"{gpu:.0f}%" if (gpu_available and gpu >= _GPU_SHOW_MIN) else "—")
 
-        self.setToolTip(f"{name} — CPU {cpu:.0f}% · RAM {rv:.0f} {ru} · GPU {gpu:.0f}%")
+        self.setToolTip(f"{name} — CPU {cpu:.0f}% · RAM {rv:.1f} {ru} · GPU {gpu:.0f}%")
 
 
 class HardwareBarList(QWidget):
@@ -104,6 +112,8 @@ class HardwareBarList(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(4)
 
+        # The three caps mirror the row's fixed-width number trio (widths _CPU_W/_RAM_W/_GPU_W +
+        # spacing 10 + margins 8) so they line up over the columns; keep them in sync if either moves.
         head = QHBoxLayout()
         head.setContentsMargins(8, 0, 8, 0)
         head.setSpacing(10)
@@ -115,7 +125,7 @@ class HardwareBarList(QWidget):
         head.addWidget(self._cap_w(self._tr("ORDER_TYPE_GPU", "GPU"), _GPU_W, c))
         root.addLayout(head)
 
-        self._summary = QLabel(self._tr("APP_ACTIVITY_LOADING_MESSAGE", "Loading…"))
+        self._summary = QLabel(self._tr("HARDWARE_LOADING_MESSAGE", "Reading processes…"))
         self._summary.setFont(su.font(tokens.TYPE_CAPTION))
         self._summary.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
         self._summary.setContentsMargins(8, 0, 8, 0)
@@ -136,10 +146,22 @@ class HardwareBarList(QWidget):
     def set_payload(self, payload: Dict[str, Any]) -> None:
         rows: List[Dict[str, Any]] = payload.get("rows", []) if isinstance(payload, dict) else []
         if not rows:
-            self._summary.setText(self._tr("NO_APP_DATA_MESSAGE", "No process data."))
+            self._summary.setText(self._tr("HARDWARE_NO_DATA_MESSAGE", "No process data."))
             return
         gpu_available = bool(payload.get("gpu_available", False))
         max_cpu = max((float(r.get("cpu_pct", 0.0)) for r in rows), default=0.0)
+
+        # Freeze the row ORDER while the pointer is over the list — CPU% is volatile, and a busiest-
+        # first re-sort every 2s would slide the row you're reading out from under the cursor. Values
+        # still update live in place; membership/order resettle on the next tick after the mouse leaves.
+        if self._scroll.viewport().underMouse():
+            for r in rows:
+                w = self._rows.get(str(r.get("identity_key", r.get("display_name", ""))))
+                if w is not None:
+                    w.update_row(r, max_cpu, gpu_available)
+            self._summary.setText(self._summary_text(payload))
+            return
+
         seen = set()
         ordered: List[HardwareRow] = []
         for r in rows:
@@ -166,7 +188,7 @@ class HardwareBarList(QWidget):
                 "APP_ACTIVITY_RDP_UNAVAILABLE_MESSAGE",
                 "Per-process monitoring is unavailable in Remote Desktop sessions."))
         else:
-            self._summary.setText(self._tr("NO_APP_DATA_MESSAGE", "No process data."))
+            self._summary.setText(self._tr("HARDWARE_NO_DATA_MESSAGE", "No process data."))
 
     def _summary_text(self, payload: Dict[str, Any]) -> str:
         rv, ru = format_data_size(int(payload.get("total_rss_bytes", 0)), self._i18n, precision=1)

@@ -69,7 +69,8 @@ def test_worker_excludes_idle_and_normalises_cpu(monkeypatch, q_app):
     assert got[-1]["gpu_available"] is False
 
 
-def test_worker_sums_gpu_per_pid_from_pdh(monkeypatch, q_app):
+def test_worker_max_gpu_per_pid_from_pdh(monkeypatch, q_app):
+    """GPU% is the MAX across a PID's engines (they overlap in time), matching the system sampler."""
     import psutil
 
     class _PDH:
@@ -80,7 +81,7 @@ def test_worker_sums_gpu_per_pid_from_pdh(monkeypatch, q_app):
         def GetFormattedCounterArray(self, c, fmt):
             return {
                 "pid_10_luid_x_eng_0_engtype_3D": 30.0,
-                "pid_10_luid_x_eng_1_engtype_Copy": 10.0,   # same PID, summed -> 40
+                "pid_10_luid_x_eng_1_engtype_Copy": 10.0,   # same PID -> MAX(30,10) = 30, not 40
                 "pid_20_luid_x_eng_0_engtype_3D": 5.0,
                 "pid_0_luid_x_engtype_3D": 99.0,            # idle pid, no proc -> ignored
             }
@@ -94,9 +95,29 @@ def test_worker_sums_gpu_per_pid_from_pdh(monkeypatch, q_app):
     w.data_ready.connect(got.append)
     w.sample()
     rows = {r["display_name"]: r for r in got[-1]["rows"]}
-    assert abs(rows["a.exe"]["gpu_pct"] - 40.0) < 0.1       # 30 + 10 across engines
+    assert abs(rows["a.exe"]["gpu_pct"] - 30.0) < 0.1       # max(30, 10) across engines
     assert abs(rows["b.exe"]["gpu_pct"] - 5.0) < 0.1
     assert got[-1]["gpu_available"] is True
+
+
+def test_worker_excludes_system_and_pseudo_processes(monkeypatch, q_app):
+    """PID 4 System and the Memory Compression / Registry pseudo-processes are excluded too."""
+    import psutil
+    monkeypatch.setattr(W, "win32pdh", None)
+    procs = [
+        _FakeProc(4, "System", 60, 0),
+        _FakeProc(100, "MemCompression", 0, 900 * 1024 * 1024),
+        _FakeProc(101, "Registry", 0, 59 * 1024 * 1024),
+        _FakeProc(200, "real.exe", 8, 10 * 1024 * 1024),
+    ]
+    monkeypatch.setattr(psutil, "process_iter", lambda attrs=None: iter(procs))
+    w = W.HardwareActivityWorker()
+    w._cpu_count = 4
+    got = []
+    w.data_ready.connect(got.append)
+    w.sample()
+    names = {r["display_name"] for r in got[-1]["rows"]}
+    assert names == {"real.exe"}   # System / MemCompression / Registry all excluded
 
 
 # --- bar list ------------------------------------------------------------------
@@ -127,7 +148,7 @@ def test_list_inplace_update_and_prune(q_app):
 def test_list_empty_and_rdp(q_app):
     lst = HardwareBarList(I18nStrings("en_US"))
     lst.set_payload(_hpayload([]))
-    assert lst._summary.text() == getattr(I18nStrings("en_US"), "NO_APP_DATA_MESSAGE", "No process data.")
+    assert lst._summary.text() == getattr(I18nStrings("en_US"), "HARDWARE_NO_DATA_MESSAGE", "No process data.")
     lst.set_unavailable("rdp")
     assert "Remote Desktop" in lst._summary.text() or "RDP" in lst._summary.text()
 

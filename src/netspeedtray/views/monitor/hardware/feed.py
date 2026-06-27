@@ -79,8 +79,12 @@ class HardwareFeed(QObject):
         try:
             if self._thread is not None:
                 self._thread.quit()
-                if not self._thread.wait(800):
-                    self._thread.wait()
+                if not self._thread.wait(1500):
+                    # Don't hang the GUI on an in-flight psutil.process_iter sweep — finished ->
+                    # close_gpu_query/deleteLater still run when the sample completes (safe on a
+                    # finished loop). The orphaned thread/worker self-release shortly after.
+                    self.logger.debug("hardware feed thread slow to quit; releasing without blocking")
+                    return
         except Exception:
             pass
         try:

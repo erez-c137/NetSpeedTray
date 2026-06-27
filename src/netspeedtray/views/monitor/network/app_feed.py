@@ -82,8 +82,11 @@ class AppActivityFeed(QObject):
             if self._thread is not None:
                 # quit() lets the loop process the finished->worker.deleteLater above before it stops.
                 self._thread.quit()
-                if not self._thread.wait(800):
-                    self._thread.wait()
+                if not self._thread.wait(1500):
+                    # Don't hang the GUI if a net_connections sweep is mid-flight; finished ->
+                    # deleteLater still runs when it completes (safe on a finished loop).
+                    self.logger.debug("app feed thread slow to quit; releasing without blocking")
+                    return
         except Exception:
             pass
         try:
