@@ -8,18 +8,14 @@ and smart menu positioning.
 
 import os
 import sys
-import time
 import logging
-from datetime import datetime
-from typing import Optional, Tuple, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING
 
 from PyQt6.QtCore import QObject, QPoint, Qt, QRect
 from PyQt6.QtGui import QIcon, QAction
 from PyQt6.QtWidgets import QMenu, QApplication, QWidget
 
 from netspeedtray import constants
-from netspeedtray.utils import styles as style_utils
-from netspeedtray.utils import helpers
 
 if TYPE_CHECKING:
     from netspeedtray.views.widget import NetworkSpeedWidget
@@ -44,16 +40,7 @@ class TrayIconManager(QObject):
 
         # Retrieve actions for external use if needed (e.g., toggling text)
         self.pause_action: Optional[QAction] = None
-
-        # Usage glance (data used today / this month); refreshed on open with a TTL
-        self.usage_today_action: Optional[QAction] = None
-        self.data_cap_action: Optional[QAction] = None
-        self.usage_month_action: Optional[QAction] = None
         self.hardware_action: Optional[QAction] = None
-        self._usage_today: Tuple[float, float] = (0.0, 0.0)  # (upload, download) bytes
-        self._usage_month: Tuple[float, float] = (0.0, 0.0)
-        self._usage_cache_ts: float = 0.0
-        self._usage_ttl_sec: float = 30.0
 
     def initialize(self) -> None:
         """Loads the icon and initializes the context menu."""
@@ -93,20 +80,12 @@ class TrayIconManager(QObject):
         try:
             self.context_menu = QMenu(self.widget)
 
-            # The menu is a MAP, not a flat list — four tiers, separated, so a new user can
-            # read what the app does straight from the right-click.
+            # The menu is a MAP, not a flat list — tiers, separated, so a new user can read
+            # what the app does straight from the right-click. Live data usage (today / this
+            # month / data-cap progress) now lives in the hover card over the widget, and the
+            # cap is configured in Settings → Network — so the menu stays calm.
 
-            # --- Tier 1: Glance — live usage; a row is a door into the history graph ---
-            self.usage_today_action = self.context_menu.addAction("")
-            self.usage_today_action.triggered.connect(self._open_graph)
-            self.usage_month_action = self.context_menu.addAction("")
-            self.usage_month_action.triggered.connect(self._open_graph)
-            self.data_cap_action = self.context_menu.addAction(self.i18n.TRAY_DATA_CAP_MENU_ITEM)
-            if hasattr(self.widget, "open_data_cap_dialog"):
-                self.data_cap_action.triggered.connect(self.widget.open_data_cap_dialog)
-            self.context_menu.addSeparator()
-
-            # --- Tier 2: The app's surfaces (the windows most users never find) ---
+            # --- Tier 1: The app's surfaces (the windows most users never find) ---
             settings_action = self.context_menu.addAction(self.i18n.SETTINGS_MENU_ITEM)
             if hasattr(self.widget, 'show_settings'):
                 settings_action.triggered.connect(self.widget.show_settings)
@@ -161,14 +140,6 @@ class TrayIconManager(QObject):
         except Exception as e:
             self.logger.error("Error initializing context menu: %s", e, exc_info=True)
 
-    def _open_graph(self, _checked: bool = False) -> None:
-        """Open the history graph (a usage glance row is a door into the trend)."""
-        try:
-            if hasattr(self.widget, "open_graph_window"):
-                self.widget.open_graph_window()
-        except Exception as e:
-            self.logger.error("Error opening graph from usage row: %s", e, exc_info=True)
-
     def _format_hardware_state(self) -> str:
         """'Hardware monitor: On/Off ▸' — self-describing, points at Settings."""
         cfg = getattr(self.widget, "config", {})
@@ -187,50 +158,6 @@ class TrayIconManager(QObject):
         except Exception as e:
             self.logger.error("Error toggling pause: %s", e, exc_info=True)
 
-    def _refresh_usage_totals(self) -> None:
-        """Recompute today/this-month bandwidth totals, cached with a short TTL so
-        opening the menu stays instant (no DB query on every click)."""
-        now = time.monotonic()
-        if self._usage_cache_ts and (now - self._usage_cache_ts) < self._usage_ttl_sec:
-            return
-        try:
-            state = getattr(self.widget, "widget_state", None)
-            if state is None:
-                return
-            now_dt = datetime.now()
-            midnight = now_dt.replace(hour=0, minute=0, second=0, microsecond=0)
-            month_start = midnight.replace(day=1)
-            self._usage_today = state.get_total_bandwidth_for_period(midnight, now_dt)
-            self._usage_month = state.get_total_bandwidth_for_period(month_start, now_dt)
-            self._usage_cache_ts = now
-        except Exception as e:
-            self.logger.error("Error computing usage totals: %s", e, exc_info=True)
-
-    def _format_usage(self, label: str, totals: Tuple[float, float]) -> str:
-        """Format a (upload, download) byte pair as 'Label:  v <down>  ^ <up>'."""
-        up_bytes, down_bytes = totals
-        dn_v, dn_u = helpers.format_data_size(down_bytes, self.i18n)
-        up_v, up_u = helpers.format_data_size(up_bytes, self.i18n)
-        return self.i18n.TRAY_USAGE_GLANCE_TEMPLATE.format(
-            label=label, down_v=dn_v, down_u=dn_u, up_v=up_v, up_u=up_u)
-
-    def _format_cap(self) -> str:
-        """The 'Data cap' menu line — live progress from the accurate odometer when the
-        cap is enabled, else a plain entry to set one."""
-        cfg = getattr(self.widget, "config", {})
-        cap = float(cfg.get("data_cap_gb", 0) or 0)
-        if not cfg.get("data_cap_enabled") or cap <= 0:
-            return self.i18n.TRAY_DATA_CAP_MENU_ITEM
-        try:
-            up, down = self.widget.widget_state.get_usage_this_period()
-            cnt = cfg.get("data_cap_count", "total")
-            used = down if cnt == "download" else up if cnt == "upload" else (up + down)
-            used_gb = used / (1000 ** 3)
-            pct = (used_gb / cap) * 100.0
-            return self.i18n.TRAY_DATA_CAP_PROGRESS_TEMPLATE.format(used=used_gb, cap=cap, pct=pct)
-        except Exception:
-            return self.i18n.TRAY_DATA_CAP_MENU_ITEM
-
     def _refresh_dynamic_items(self) -> None:
         """Update menu items whose text depends on live state, just before showing."""
         try:
@@ -239,19 +166,8 @@ class TrayIconManager(QObject):
                 self.pause_action.setText(
                     self.i18n.RESUME_MENU_ITEM if paused else self.i18n.PAUSE_MENU_ITEM
                 )
-            if self.data_cap_action is not None:
-                self.data_cap_action.setText(self._format_cap())
             if self.hardware_action is not None:
                 self.hardware_action.setText(self._format_hardware_state())
-            self._refresh_usage_totals()
-            if self.usage_today_action is not None:
-                self.usage_today_action.setText(
-                    self._format_usage(self.i18n.USAGE_TODAY_LABEL, self._usage_today)
-                )
-            if self.usage_month_action is not None:
-                self.usage_month_action.setText(
-                    self._format_usage(self.i18n.USAGE_THIS_MONTH_LABEL, self._usage_month)
-                )
         except Exception as e:
             self.logger.error("Error refreshing dynamic menu items: %s", e, exc_info=True)
 

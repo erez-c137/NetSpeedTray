@@ -398,15 +398,18 @@ def test_aggregation_minute_to_hour(managed_widget_state, mock_config):
 
     now = datetime.now()
     
-    # "Old" minute-level data from 31 days ago
-    old_timestamp_base = int((now - timedelta(days=31)).timestamp())
+    # "Old" minute-level data from 31 days ago. Anchor the base to an exact hour boundary so
+    # the two records (+60s, +120s) always land in the SAME hour bucket — otherwise, ~1.7% of
+    # wall-clock seconds put them either side of an hour boundary and the aggregation yields 2
+    # hour rows instead of 1 (a latent time-of-day flake).
+    old_timestamp_base = (int((now - timedelta(days=31)).timestamp()) // 3600) * 3600
     old_data_minute = [
         (old_timestamp_base + 60, "Wi-Fi", 100.0, 200.0, 150.0, 250.0, 60),
         (old_timestamp_base + 120, "Wi-Fi", 300.0, 400.0, 350.0, 450.0, 60),
     ]
 
-    # "Recent" minute-level data from 10 days ago
-    recent_timestamp_base = int((now - timedelta(days=10)).timestamp())
+    # "Recent" minute-level data from 10 days ago (also hour-anchored, for the same reason)
+    recent_timestamp_base = (int((now - timedelta(days=10)).timestamp()) // 3600) * 3600
     recent_data_minute = [ (recent_timestamp_base + 60, "Wi-Fi", 1000.0, 2000.0, 1500.0, 2500.0, 60) ]
     
     cursor.executemany("INSERT INTO speed_history_minute VALUES (?, ?, ?, ?, ?, ?, ?)", old_data_minute + recent_data_minute)

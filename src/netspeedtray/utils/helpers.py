@@ -228,7 +228,9 @@ def format_data_size(data_bytes: int | float, i18n, precision: int = 2) -> Tuple
     """
     Formats a byte count into a human-readable string with units (B, KB, MB, GB, etc.).
 
-    Uses base 1024 for units (KiB, MiB, etc. conceptually, though labels are KB, MB).
+    Uses base 1000 (decimal KB/MB/GB) — NOT 1024 — to match the data-cap accounting, which is
+    decimal GB (1000**3, the ISP convention). The usage card and the cap must agree, so both go
+    through this function. (See the BASE_DATA_SIZE comment below.)
     """
     logger_instance: logging.Logger = logging.getLogger(__name__)
 

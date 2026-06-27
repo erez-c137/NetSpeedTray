@@ -277,6 +277,12 @@ class SystemEventHandler(QObject):
         self._is_paused = False
         self.events_paused.emit(False)
 
+    def is_fullscreen_active(self) -> bool:
+        """True when the most recent poll saw a fullscreen obstruction. Lets the widget suppress
+        hover affordances (the usage card) over a game/video even when the user opted to keep the
+        widget itself visible (keep_visible_fullscreen)."""
+        return self._was_fullscreen
+
     def _connect_color_scheme_signal(self) -> None:
         """Connect to Qt's native colorSchemeChanged signal.
 

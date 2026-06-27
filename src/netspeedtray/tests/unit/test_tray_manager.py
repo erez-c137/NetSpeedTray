@@ -139,31 +139,6 @@ def test_refresh_dynamic_items_toggles_pause_label(mock_widget, mock_i18n, q_app
     assert manager.pause_action.text() == "Resume"
 
 
-def test_usage_line_formats_and_caches(mock_widget, mock_i18n, q_app):
-    """The Today/This-Month usage rows show formatted totals and are cached (one DB
-    query pair per TTL window, not per menu-open)."""
-    for k, v in {"BYTES_UNIT": "B", "KB_UNIT": "KB", "MB_UNIT": "MB",
-                 "GB_UNIT": "GB", "TB_UNIT": "TB", "PB_UNIT": "PB"}.items():
-        setattr(mock_i18n, k, v)
-    mock_i18n.USAGE_TODAY_LABEL = "Today"
-    mock_i18n.USAGE_THIS_MONTH_LABEL = "This Month"
-
-    state = MagicMock()
-    state.get_total_bandwidth_for_period.return_value = (1024 * 1024, 2 * 1024 * 1024)  # 1 MB up, 2 MB down
-    mock_widget.widget_state = state
-
-    manager = TrayIconManager(mock_widget, mock_i18n)
-    manager.initialize()
-
-    manager._refresh_dynamic_items()
-    today_text = manager.usage_today_action.text()
-    assert "Today" in today_text and "MB" in today_text
-    assert state.get_total_bandwidth_for_period.call_count == 2  # today + month
-
-    manager._refresh_dynamic_items()  # within TTL -> served from cache
-    assert state.get_total_bandwidth_for_period.call_count == 2
-
-
 def test_hardware_state_line_reflects_config(mock_widget, mock_i18n, q_app):
     """The self-describing hardware row reads On/Off from the widget config on open."""
     mock_widget.config = {"monitor_cpu_enabled": False, "monitor_gpu_enabled": False}
@@ -186,14 +161,18 @@ def test_show_me_around_entry_present(mock_widget, mock_i18n, q_app):
     assert any("Show me around" in t for t in texts)
 
 
-def test_usage_rows_are_clickable_doors(mock_widget, mock_i18n, q_app):
-    """The usage glance rows are enabled and open the graph when clicked (unfold-the-knife)."""
-    mock_widget.open_graph_window = MagicMock()
+def test_data_cap_and_usage_rows_removed_from_menu(mock_widget, mock_i18n, q_app):
+    """The live-usage rows and the 'Data cap…' item moved out of the tray (to the hover card
+    and Settings → Network); the menu must no longer create them."""
     manager = TrayIconManager(mock_widget, mock_i18n)
     manager.initialize()
-    assert manager.usage_today_action.isEnabled()
-    manager._open_graph()
-    mock_widget.open_graph_window.assert_called_once()
+    texts = [a.text() for a in manager.context_menu.actions()]
+    assert not any("Data cap" in t for t in texts)
+    assert not hasattr(manager, "usage_today_action") or manager.usage_today_action is None
+    assert not hasattr(manager, "data_cap_action") or manager.data_cap_action is None
+    # The real surfaces are still there.
+    assert any(t == "Settings" for t in texts)
+    assert any("Graph" in t for t in texts)
 
 
 def test_menu_position_calculation_fallback(mock_widget, mock_i18n, q_app):

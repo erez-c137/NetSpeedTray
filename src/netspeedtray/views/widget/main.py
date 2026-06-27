@@ -6,6 +6,7 @@ import logging
 import math
 import os
 import sys
+import time
 from ctypes import wintypes
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
@@ -158,7 +159,16 @@ class NetworkSpeedWidget(QWidget):
         # Timers for periodic checks
         # self._tray_watcher_timer moved to PositionManager
         self._state_watcher_timer = QTimer(self) # The "Safety Net" timer
-        
+
+        # Hover usage card — a Win11 flyout we position ourselves (above the taskbar) so it is
+        # never clipped, unlike Qt's built-in tooltip. Shown after a short rest on the widget.
+        self._hover_card = None
+        self._hover_card_timer = QTimer(self)
+        self._hover_card_timer.setSingleShot(True)
+        self._hover_card_timer.timeout.connect(self._show_usage_hover_card)
+        self._hover_usage_cache: Optional[Tuple[Tuple[float, float], Tuple[float, float]]] = None
+        self._hover_usage_cache_ts: float = 0.0
+
         self.setVisible(False)
         self.logger.debug("Widget initially hidden to stabilize position and size.")
 
@@ -744,32 +754,112 @@ class NetworkSpeedWidget(QWidget):
             gpu_history=list(self.widget_state.gpu_history),
         )
 
-    # Number of app runs the gesture-hint tooltip is shown before it fades for good.
+    # Number of app runs the gesture hint rides along in the hover card before it fades for good.
     _TOOLTIP_HINT_MAX_SHOWS = 8
+    # How long the pointer must rest on the widget before the usage card appears.
+    _HOVER_CARD_DELAY_MS = 350
+    # Cache window for the (today, this-month) DB totals so rapid hovers don't hammer the DB.
+    _HOVER_USAGE_TTL_SEC = 30.0
 
     def enterEvent(self, event) -> None:
-        """On hover, surface a fading gesture-hint tooltip that teaches the hidden surfaces."""
+        """On hover, arm the usage card (shown after a short rest, positioned above the taskbar)."""
         try:
-            self._refresh_hover_tooltip()
+            if self._hover_card is None and not self._hover_card_timer.isActive():
+                self._hover_card_timer.start(self._HOVER_CARD_DELAY_MS)
         except Exception as e:
-            self.logger.debug("hover tooltip refresh failed: %s", e)
+            self.logger.debug("hover card arm failed: %s", e)
         super().enterEvent(event)
 
-    def _refresh_hover_tooltip(self) -> None:
-        """
-        The widget hides ~80% of its value behind right-click/double-click. A hover hint
-        teaches those gestures, then fades after a few sessions so it never nags. Counted at
-        most once per app run (not per hover), persisted without a repaint.
-        """
-        count = int(self.config.get("tooltip_hint_shown_count", 0))
-        if count < self._TOOLTIP_HINT_MAX_SHOWS:
-            self.setToolTip(self.i18n.WIDGET_HOVER_TOOLTIP)
+    def leaveEvent(self, event) -> None:
+        """When the pointer leaves the widget, cancel/hide the usage card."""
+        try:
+            self._hover_card_timer.stop()
+            self._hide_usage_hover_card()
+        except Exception as e:
+            self.logger.debug("hover card hide failed: %s", e)
+        super().leaveEvent(event)
+
+    def _show_usage_hover_card(self) -> None:
+        """Build and show the usage card just above the widget (never under the taskbar)."""
+        if self._is_context_menu_visible or self._dragging or not self.isVisible():
+            return
+        # Don't pop an always-on-top card over a fullscreen app, even when the widget itself is
+        # kept visible there (keep_visible_fullscreen).
+        handler = getattr(self, "system_event_handler", None)
+        if handler is not None and handler.is_fullscreen_active():
+            return
+        try:
+            from netspeedtray.views.usage_flyout import UsageFlyout
+            today, month = self._hover_usage_totals()
+            self._hide_usage_hover_card()  # never stack two cards
+            self._hover_card = UsageFlyout(
+                self.i18n, today, month,
+                hint=self._hover_hint_text(), cap=self._hover_cap_info(),
+            )
+            screen = self.screen() or QApplication.primaryScreen()
+            avail = screen.availableGeometry() if screen else self.frameGeometry()
+            self._hover_card.show_for(self.frameGeometry(), avail)
+        except Exception as e:
+            self.logger.error("Error showing usage hover card: %s", e, exc_info=True)
+
+    def _hide_usage_hover_card(self) -> None:
+        """Tear down the usage card if one is up."""
+        card, self._hover_card = self._hover_card, None
+        if card is not None:
+            try:
+                card.hide()
+                card.deleteLater()
+            except Exception:
+                pass
+
+    def _hover_usage_totals(self) -> Tuple[Tuple[float, float], Tuple[float, float]]:
+        """(today, this-month) bandwidth as (up, down) byte pairs, cached with a short TTL."""
+        now = time.monotonic()
+        if self._hover_usage_cache is not None and (now - self._hover_usage_cache_ts) < self._HOVER_USAGE_TTL_SEC:
+            return self._hover_usage_cache
+        today: Tuple[float, float] = (0.0, 0.0)
+        month: Tuple[float, float] = (0.0, 0.0)
+        try:
+            now_dt = datetime.now()
+            midnight = now_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+            month_start = midnight.replace(day=1)
+            today = self.widget_state.get_total_bandwidth_for_period(midnight, now_dt)
+            month = self.widget_state.get_total_bandwidth_for_period(month_start, now_dt)
+        except Exception as e:
+            self.logger.debug("hover usage fetch failed: %s", e)
+        self._hover_usage_cache = (today, month)
+        self._hover_usage_cache_ts = now
+        return self._hover_usage_cache
+
+    def _hover_hint_text(self) -> Optional[str]:
+        """The fading gesture hint — shown for the first few app runs, then retired. Counted at
+        most once per run so it teaches without nagging."""
+        try:
+            count = int(self.config.get("tooltip_hint_shown_count", 0))
+            if count >= self._TOOLTIP_HINT_MAX_SHOWS:
+                return None
             if not getattr(self, "_tooltip_counted_this_session", False):
                 self._tooltip_counted_this_session = True
                 self.config_controller.update_config(
                     {"tooltip_hint_shown_count": count + 1}, apply_and_repaint=False)
-        else:
-            self.setToolTip("")  # graduated — quiet from here on
+            return self.i18n.WIDGET_HOVER_TOOLTIP
+        except Exception:
+            return None
+
+    def _hover_cap_info(self) -> Optional[Tuple[float, float, float]]:
+        """(used_gb, cap_gb, pct) when a data cap is set — preserves the live cap glance that
+        used to live in the tray menu — else None (the card stays clean when no cap is set)."""
+        try:
+            cap = float(self.config.get("data_cap_gb", 0) or 0)
+            if not self.config.get("data_cap_enabled") or cap <= 0:
+                return None
+            up, down = self.widget_state.get_usage_this_period()
+            cnt = self.config.get("data_cap_count", "total")
+            used = down if cnt == "download" else up if cnt == "upload" else (up + down)
+            used_gb = used / (1000 ** 3)
+            return used_gb, cap, (used_gb / cap) * 100.0
+        except Exception:
+            return None
 
     def _draw_paint_error(self, painter: Optional[QPainter], text: str) -> None:
         """Draws a visual error indicator on the widget background."""
@@ -874,6 +964,12 @@ class NetworkSpeedWidget(QWidget):
 
     def hideEvent(self, event: QHideEvent) -> None:
         self.logger.debug("Widget hideEvent triggered.")
+        # Don't leave a usage card floating if the widget hides (e.g. a fullscreen app).
+        try:
+            self._hover_card_timer.stop()
+            self._hide_usage_hover_card()
+        except Exception:
+            pass
         super().hideEvent(event)
 
 
@@ -1407,6 +1503,13 @@ class NetworkSpeedWidget(QWidget):
         """Performs necessary cleanup and a single, final save of the configuration."""
         self.logger.debug("Performing widget cleanup...")
         try:
+            # Tear down the hover usage card + its armed timer first, before the data layer
+            # (widget_state / monitor thread) goes away — otherwise a pending 350ms singleShot
+            # could fire _show_usage_hover_card into half-torn-down state, or leave an orphan
+            # card window during shutdown.
+            self._hover_card_timer.stop()
+            self._hide_usage_hover_card()
+
             # --- Stop all external event listeners and timers ---
             # self.foreground_hook and movesize_hook are likely legacy, but keeping check is harmless
             if hasattr(self, 'system_event_handler') and self.system_event_handler:
