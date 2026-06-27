@@ -354,7 +354,17 @@ class NetworkSpeedWidget(QWidget):
         QTimer.singleShot(1200, self._maybe_show_welcome)
 
     def _maybe_show_welcome(self) -> None:
-        """Show the one-time 2.0 welcome (first launch after upgrade), then persist the flag."""
+        """First-run onboarding. A brand-new install gets the calm 'unfold' flyout that
+        points at the features most users never find; an upgrader gets the one-time 2.0
+        welcome dialog. The two gates are mutually exclusive — they never both fire."""
+        # Brand-new install: the unfold flyout, not the "what changed" dialog.
+        if self.config.get("first_run_ever", True):
+            self._show_unfold_flyout()
+            self.config["first_run_ever"] = False
+            self.config["first_run_v2_seen"] = True  # a new 2.0 user has no "before"
+            self.update_config({"first_run_ever": False, "first_run_v2_seen": True})
+            return
+
         if self.config.get("first_run_v2_seen", False):
             return
         try:
@@ -371,6 +381,23 @@ class NetworkSpeedWidget(QWidget):
         # Mark seen (even if the dialog errored) so it appears at most once.
         self.config["first_run_v2_seen"] = True
         self.update_config({"first_run_v2_seen": True})
+
+    def _show_unfold_flyout(self) -> None:
+        """A one-time calm callout near the widget pointing at the hidden features."""
+        try:
+            from netspeedtray.views.flyout import Flyout
+            # NOTE: strings are English literals pending the single 2.0 i18n pass.
+            self._unfold_flyout = Flyout(
+                "Get more from NetSpeedTray",
+                "Right-click the speed readout for graphs, per-app activity, and CPU/GPU/"
+                "temperatures. Double-click it to open the dashboard.",
+                action_text="Show me around",
+            )
+            self._unfold_flyout.action_clicked.connect(self.open_graph_window)
+            geo = self.frameGeometry()
+            self._unfold_flyout.show_at(QPoint(geo.left(), geo.top()))
+        except Exception as e:
+            self.logger.error(f"Error showing unfold flyout: {e}", exc_info=True)
 
 
     def pause(self) -> None:
