@@ -120,7 +120,7 @@ class MonitorWindow(QWidget):
 
     def _make_overview(self) -> QWidget:
         from netspeedtray.views.monitor.overview.tab import OverviewTab
-        return OverviewTab(self.config, self.i18n, self)
+        return OverviewTab(self._main_widget, self.config, self.i18n, self)
 
     def _make_network(self) -> QWidget:
         from netspeedtray.views.monitor.network.tab import NetworkTab
