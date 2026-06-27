@@ -445,5 +445,7 @@
     "MONITOR_TAB_OVERVIEW": "Обзор",
     "MONITOR_TAB_NETWORK": "Сеть",
     "MONITOR_TAB_HARDWARE": "Оборудование",
-    "SHOW_MONITOR_MENU_ITEM": "Показать монитор"
+    "SHOW_MONITOR_MENU_ITEM": "Показать монитор",
+    "MONITOR_TILE_RAM": "RAM",
+    "MONITOR_TILE_VRAM": "VRAM"
 }

@@ -445,5 +445,7 @@
     "MONITOR_TAB_OVERVIEW": "Overview",
     "MONITOR_TAB_NETWORK": "Network",
     "MONITOR_TAB_HARDWARE": "Hardware",
-    "SHOW_MONITOR_MENU_ITEM": "Show Monitor"
+    "SHOW_MONITOR_MENU_ITEM": "Show Monitor",
+    "MONITOR_TILE_RAM": "RAM",
+    "MONITOR_TILE_VRAM": "VRAM"
 }

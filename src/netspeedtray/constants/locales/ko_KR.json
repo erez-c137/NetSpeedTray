@@ -445,5 +445,7 @@
     "MONITOR_TAB_OVERVIEW": "개요",
     "MONITOR_TAB_NETWORK": "네트워크",
     "MONITOR_TAB_HARDWARE": "하드웨어",
-    "SHOW_MONITOR_MENU_ITEM": "모니터 표시"
+    "SHOW_MONITOR_MENU_ITEM": "모니터 표시",
+    "MONITOR_TILE_RAM": "RAM",
+    "MONITOR_TILE_VRAM": "VRAM"
 }

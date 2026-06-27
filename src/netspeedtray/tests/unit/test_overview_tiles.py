@@ -124,3 +124,44 @@ def test_usage_tile_hides_cap_when_unset(q_app):
     u.set((1.0e6, 2.0e6), (3.0e6, 4.0e6), cap=None)
     assert not u._cap_bar.isVisible()
     assert not u._cap_text.isVisible()
+
+
+def test_cap_bar_warns_by_threshold(q_app):
+    """The cap bar stays calm under 80%, goes amber 80-99%, red at/over 100% (and clamps to 100)."""
+    u = UsageTile(I18nStrings("en_US"))
+    u.set((1e6, 2e6), (3e6, 4e6), cap=(4.0, 10.0, 40.0))
+    ss = u._cap_bar.styleSheet()
+    assert "#FFB900" not in ss and "#E81123" not in ss      # accent
+    u.set((1e6, 2e6), (3e6, 4e6), cap=(8.5, 10.0, 85.0))
+    assert "#FFB900" in u._cap_bar.styleSheet()             # amber
+    u.set((1e6, 2e6), (3e6, 4e6), cap=(11.0, 10.0, 110.0))
+    assert "#E81123" in u._cap_bar.styleSheet()             # red
+    assert u._cap_bar.value() == 100                        # clamped
+
+
+def test_preview_fed_live_metrics(q_app):
+    """The hero preview gets the main widget's live metrics snapshot, not a frozen demo render."""
+    from netspeedtray.utils.widget_paint import demo_metrics
+
+    class _MWLive(_MW):
+        def __init__(self):
+            self._sentinel = demo_metrics()
+
+        def _build_metrics(self):
+            return self._sentinel
+
+    mw = _MWLive()
+    ov = OverviewTab(mw, _cfg(), I18nStrings("en_US"))
+    ov.show()
+    q_app.processEvents()
+    assert ov._preview._metrics is mw._sentinel
+    ov.hide()
+
+
+def test_sparkline_paints_baseline_when_sparse(q_app):
+    """With <2 points the sparkline draws a faint baseline (keeps tile weight) instead of returning."""
+    s = Sparkline("#4CAF50")
+    s.resize(80, 36)
+    s.set_series([])     # zero points -> baseline path, must not raise
+    s.set_series([42.0], vmax=100.0)  # one point -> flat line at height, must not raise
+    s.repaint()

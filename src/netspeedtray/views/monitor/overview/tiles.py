@@ -50,18 +50,36 @@ class Sparkline(QWidget):
 
     def paintEvent(self, event) -> None:  # noqa: N802 (Qt override)
         n = len(self._series)
-        if n < 2:
-            return
         pad = 2.0
         gw = self.width() - pad * 2
         gh = self.height() - pad * 2
         if gw <= 0 or gh <= 0:
             return
+        base_y = pad + gh
+
+        # Fewer than two points: draw a faint baseline rule so the tile keeps its visual weight
+        # and reads as "collecting data" rather than half-drawn. RAM/VRAM accrue one sample per
+        # tick, so this is what's on screen for the first second(s) after the tab opens.
+        if n < 2:
+            p = QPainter(self)
+            try:
+                p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+                ghost = QColor(self._color); ghost.setAlpha(28)
+                pen = QPen(ghost); pen.setWidthF(1.4); pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+                p.setPen(pen)
+                y = base_y
+                if n == 1:
+                    vmax = self._vmax if (self._vmax and self._vmax > 0) else max(self._series[0], 1.0)
+                    y = base_y - (min(max(self._series[0], 0.0), vmax) / vmax) * gh
+                p.drawLine(QPointF(pad, y), QPointF(pad + gw, y))
+            finally:
+                p.end()
+            return
+
         vmax = self._vmax if (self._vmax and self._vmax > 0) else max(self._series)
         if vmax <= 0:
             vmax = 1.0
         step = gw / (n - 1)
-        base_y = pad + gh
         pts = [
             QPointF(pad + i * step, base_y - (min(max(v, 0.0), vmax) / vmax) * gh)
             for i, v in enumerate(self._series)
@@ -168,9 +186,9 @@ class UsageTile(QFrame):
         self._cap_bar.setTextVisible(False)
         self._cap_bar.setFixedHeight(6)
         self._cap_bar.setRange(0, 100)
-        self._cap_bar.setStyleSheet(
-            f"QProgressBar {{ background: {c['card_stroke']}; border: none; border-radius: 3px; }}"
-            f"QProgressBar::chunk {{ background: {c['accent']}; border-radius: 3px; }}")
+        self._cap_accent = c["accent"]
+        self._cap_track = c["card_stroke"]
+        self._apply_cap_color(0.0)
         self._cap_text = QLabel("")
         self._cap_text.setFont(su.font(tokens.TYPE_CAPTION))
         self._cap_text.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
@@ -195,12 +213,32 @@ class UsageTile(QFrame):
         row.addWidget(value)
         return row, value
 
+    def _fmt_num(self, value: float) -> str:
+        """One-decimal, honouring the locale's decimal separator (so the usage rows match the
+        Network tile's localized speed text in the same window — e.g. ``1,2`` on de_DE)."""
+        s = f"{value:.1f}"
+        sep = getattr(self._i18n, "DECIMAL_SEPARATOR", ".")
+        return s.replace(".", sep) if sep and sep != "." else s
+
     def _fmt_pair(self, pair: Tuple[float, float]) -> str:
-        """``(up_bytes, down_bytes)`` -> ``↓ 1.2 GB   ↑ 0.3 GB``."""
+        """``(up_bytes, down_bytes)`` -> ``↓ 1.2 GB   ↑ 0.3 GB`` (locale-aware decimals)."""
         up, down = pair
-        dv, du = format_data_size(down, self._i18n)
-        uv, uu = format_data_size(up, self._i18n)
-        return f"↓ {dv:.1f} {du}   ↑ {uv:.1f} {uu}"
+        dv, du = format_data_size(down, self._i18n, precision=1)
+        uv, uu = format_data_size(up, self._i18n, precision=1)
+        return f"↓ {self._fmt_num(dv)} {du}   ↑ {self._fmt_num(uv)} {uu}"
+
+    def _apply_cap_color(self, pct: float) -> None:
+        """Calm accent under 80%, amber 80–99%, red at/over the cap — so the bar warns at the one
+        moment it exists to (mirrors the Windows Settings data-usage bar)."""
+        if pct >= 100.0:
+            chunk = "#E81123"   # Win red
+        elif pct >= 80.0:
+            chunk = "#FFB900"   # Win amber
+        else:
+            chunk = self._cap_accent
+        self._cap_bar.setStyleSheet(
+            f"QProgressBar {{ background: {self._cap_track}; border: none; border-radius: 3px; }}"
+            f"QProgressBar::chunk {{ background: {chunk}; border-radius: 3px; }}")
 
     def set(self, today: Tuple[float, float], month: Tuple[float, float],
             cap: Optional[Tuple[float, float, float]]) -> None:
@@ -211,6 +249,7 @@ class UsageTile(QFrame):
             self._cap_text.setVisible(False)
             return
         used_gb, cap_gb, pct = cap
+        self._apply_cap_color(pct)
         self._cap_bar.setValue(int(max(0.0, min(100.0, pct))))
         tmpl = self._tr("TRAY_DATA_CAP_PROGRESS_TEMPLATE",
                         "Data cap:   {used:.1f} / {cap:g} GB   ({pct:.0f}%)")

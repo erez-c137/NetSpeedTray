@@ -445,5 +445,7 @@
     "MONITOR_TAB_OVERVIEW": "Overzicht",
     "MONITOR_TAB_NETWORK": "Netwerk",
     "MONITOR_TAB_HARDWARE": "Hardware",
-    "SHOW_MONITOR_MENU_ITEM": "Monitor tonen"
+    "SHOW_MONITOR_MENU_ITEM": "Monitor tonen",
+    "MONITOR_TILE_RAM": "RAM",
+    "MONITOR_TILE_VRAM": "VRAM"
 }

@@ -5,7 +5,7 @@ graph and per-app activity into Overview / Network / Hardware tabs.
 Import firewall: nothing in this package may import matplotlib/numpy at module scope. The graph
 package is imported lazily inside the chart tabs' factories (and GraphHost) only, so a glance at
 Overview never pays the matplotlib cost (preserving the idle-RAM win). Enforced by
-test_monitor_import_firewall.
+test_monitor_window.py::test_import_firewall_no_matplotlib_at_module_scope.
 """
 from netspeedtray.views.monitor.window import MonitorWindow
 
