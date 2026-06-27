@@ -417,6 +417,21 @@ class NetworkSpeedWidget(QWidget):
         except Exception as e:
             self.logger.error(f"Error showing unfold flyout: {e}", exc_info=True)
 
+    def _on_monitor_error(self, message: str) -> None:
+        """
+        The monitor thread crossed its error threshold (now recoverable — it keeps retrying
+        with backoff). Surface a calm one-time flyout so a degraded readout isn't silent.
+        English literal pending the single 2.0 i18n pass.
+        """
+        try:
+            self._show_usage_alert(
+                "Monitoring paused briefly",
+                "NetSpeedTray hit a snag reading stats and is retrying automatically. "
+                "If it persists, a restart usually clears it.",
+            )
+        except Exception as e:
+            self.logger.error("Error showing monitor-error notice: %s", e, exc_info=True)
+
     def _show_usage_alert(self, title: str, message: str) -> None:
         """Show a data-cap usage alert via the flyout (no system-tray icon needed)."""
         try:
@@ -611,6 +626,10 @@ class NetworkSpeedWidget(QWidget):
             
             # One-time LHM notice
             self.monitor_thread.lhm_not_detected.connect(self._on_lhm_not_detected)
+
+            # Degraded-monitor notice (recoverable circuit breaker fired). Previously wired to
+            # nothing, so a stalled monitor died silently; now it surfaces a calm flyout.
+            self.monitor_thread.error_occurred.connect(self._on_monitor_error)
 
             # Start the monitoring thread
             self.monitor_thread.start()

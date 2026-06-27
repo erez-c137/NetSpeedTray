@@ -69,6 +69,12 @@ class StatsMonitorThread(QThread):
             
         self._is_running = True
         self.consecutive_errors = 0
+        # Recoverable circuit breaker: after N consecutive errors we notify ONCE and back off
+        # exponentially (capped) instead of permanently killing the thread, so a transient
+        # fault (driver reload, sleep/resume, WMI hiccup) self-heals when it clears.
+        self._error_notified = False
+        self._ERROR_NOTIFY_THRESHOLD = 10
+        self._MAX_BACKOFF_SEC = 30.0
         self.logger = logger
         
         # WMI for CPU temperatures (ACPI fallback)
@@ -716,22 +722,35 @@ class StatsMonitorThread(QThread):
                                 self._lhm_notice_emitted = True
                                 self.lhm_not_detected.emit()
 
-                # Success - reset circuit breaker
+                # Success - reset the circuit breaker (and announce recovery if we'd notified)
                 if self.consecutive_errors > 0:
+                    if self._error_notified:
+                        self.logger.info("Monitor recovered after %d consecutive errors.", self.consecutive_errors)
                     self.consecutive_errors = 0
-                    
+                    self._error_notified = False
+
             except Exception as e:
                 self.consecutive_errors += 1
-                self.logger.error("Error fetching stats (Attempt %d/10): %s", self.consecutive_errors, e)
-                
-                if self.consecutive_errors > 10:
-                    self.logger.critical("Circuit breaker tripped. Stopping monitor thread.")
-                    self.error_occurred.emit(f"Critical Hardware Monitor Failure: {e}")
-                    self._is_running = False
-                    break
-            
-            # Responsive sleep
-            sleep_remaining = self.interval
+                self.logger.error("Error fetching stats (consecutive=%d): %s", self.consecutive_errors, e)
+
+                # Notify ONCE when we cross the threshold — but keep running. The thread is
+                # never permanently bricked; it backs off and retries so it can self-heal.
+                if self.consecutive_errors == self._ERROR_NOTIFY_THRESHOLD and not self._error_notified:
+                    self._error_notified = True
+                    self.logger.warning("Monitor degraded (>= %d errors); backing off and retrying.",
+                                        self._ERROR_NOTIFY_THRESHOLD)
+                    self.error_occurred.emit(f"Hardware monitor is having trouble: {e}")
+
+            # Responsive sleep, with exponential backoff while in an error streak so a failing
+            # source isn't hammered every second (capped at _MAX_BACKOFF_SEC; recovers on success).
+            if self.consecutive_errors == 0:
+                effective_interval = self.interval
+            else:
+                effective_interval = min(
+                    self._MAX_BACKOFF_SEC,
+                    self.interval * (2 ** min(self.consecutive_errors, 5)),
+                )
+            sleep_remaining = effective_interval
             while sleep_remaining > 0 and self._is_running:
                 sleep_slice = min(0.1, sleep_remaining)
                 time.sleep(sleep_slice)

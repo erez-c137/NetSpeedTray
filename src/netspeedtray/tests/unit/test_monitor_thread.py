@@ -55,25 +55,33 @@ class TestNetworkMonitorThread:
             assert monitor_thread.consecutive_errors > 0
             assert monitor_thread.consecutive_errors <= 10 # Should not have tripped yet if sleep is short enough
 
-    def test_circuit_breaker_trips(self, q_app):
-        """Test that >10 errors stops the thread."""
+    def test_circuit_breaker_is_recoverable_not_fatal(self, q_app):
+        """
+        Crossing the error threshold NOTIFIES once and backs off, but the thread is NEVER
+        permanently bricked (the old behavior). It keeps running so a transient fault heals.
+        """
         with patch('netspeedtray.core.monitor_thread.constants.timers.MINIMUM_INTERVAL_MS', 10):
-            monitor_thread = StatsMonitorThread(interval=0.01)
-            
-            with patch('netspeedtray.core.monitor_thread.psutil.net_io_counters', side_effect=OSError("Persistent Error")):
-                 # We need to ensure it runs enough times to trip.
-                 # Interval is 0.01. 10 times is 0.1s. Let's wait 0.3s.
-                 
-                 # Mock the stop method to verify it's called (or verify is_running becomes false)
-                 with patch.object(monitor_thread, 'stop', wraps=monitor_thread.stop) as mock_stop:
-                     monitor_thread.start()
-                     time.sleep(0.4) # Wait enough time for >10 iterations
-                     
-                     # Check if thread stopped itself
-                     if monitor_thread.isRunning():
-                         monitor_thread.stop()
-                         
-                     # Assertions
-                     # The counter might be 11 (the one that tripped it)
-                     assert monitor_thread.consecutive_errors >= 10
-                     assert not monitor_thread._is_running
+            mt = StatsMonitorThread(interval=0.01)
+            mt._ERROR_NOTIFY_THRESHOLD = 3  # reach the notice fast under test
+            emitted = []
+            mt.error_occurred.connect(lambda msg: emitted.append(msg))
+
+            with patch('netspeedtray.core.monitor_thread.psutil.net_io_counters',
+                       side_effect=OSError("Persistent Error")):
+                mt.start()
+                deadline = time.time() + 3.0
+                while mt.consecutive_errors < 3 and time.time() < deadline:
+                    q_app.processEvents()
+                    time.sleep(0.02)
+                # let the queued cross-thread signal deliver
+                for _ in range(30):
+                    q_app.processEvents()
+                    time.sleep(0.01)
+
+                assert mt.consecutive_errors >= 3
+                assert mt._is_running is True          # NOT bricked — recoverable
+                assert mt._error_notified is True       # crossed the threshold
+                assert len(emitted) == 1                # notified exactly once, not per error
+
+                mt.stop()
+                mt.wait(1000)
