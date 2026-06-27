@@ -120,9 +120,8 @@ class AppearancePage(QWidget):
 
         # Arrow STYLE picker (#129) — curated glyph presets + Custom. The default "Classic"
         # tracks the native locale arrow; the others set arrow_up/down_symbol overrides.
-        # NOTE: English literal pending the single i18n pass (Stage 9) → ARROW_STYLE_LABEL.
-        arrow_layout.addWidget(QLabel("Arrow style"))
-        self.arrow_style_picker = ArrowStylePicker()
+        arrow_layout.addWidget(QLabel(self.i18n.ARROW_STYLE_LABEL))
+        self.arrow_style_picker = ArrowStylePicker(self.i18n)
         self.arrow_style_picker.changed.connect(self.on_change)
         arrow_layout.addWidget(self.arrow_style_picker)
 

@@ -76,13 +76,15 @@ class AppActivityWindow(QWidget):
         self.summary_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         root.addWidget(self.summary_label)
 
-        # Honest framing: this shows live connections (exact), not estimated per-app speed.
-        # English LITERAL (not _tr) — the existing APP_ACTIVITY_HINT_TEXT key still holds the
-        # old dishonest "estimated from I/O" copy; the i18n pass will replace it with this.
+        # Honest framing: live connections (exact), not estimated per-app speed. The
+        # APP_ACTIVITY_HINT_TEXT key was overwritten with this honest copy in the i18n pass.
         self.hint_label = QLabel(
-            "Shows the live network connections each app holds — exact counts and the hosts "
-            "they're reaching. Windows can't attribute network bytes to an app without admin "
-            "rights, so this reports connections, not speed.",
+            self._tr(
+                "APP_ACTIVITY_HINT_TEXT",
+                "Shows the live network connections each app holds — exact counts and the hosts "
+                "they're reaching. Windows can't attribute network bytes to an app without admin "
+                "rights, so this reports connections, not speed.",
+            ),
             self,
         )
         self.hint_label.setWordWrap(True)
@@ -91,13 +93,12 @@ class AppActivityWindow(QWidget):
 
         self.table = QTableWidget(self)
         self.table.setColumnCount(5)
-        # "Active" and "Talking to" are new headers (English literals pending the i18n pass).
         self.table.setHorizontalHeaderLabels(
             [
                 self._tr("APP_ACTIVITY_PROCESS_HEADER", "Process"),
                 self._tr("APP_ACTIVITY_CONNECTIONS_HEADER", "Connections"),
-                "Active",
-                "Talking to",
+                self._tr("APP_ACTIVITY_ACTIVE_HEADER", "Active"),
+                self._tr("APP_ACTIVITY_TALKING_TO_HEADER", "Talking to"),
                 self._tr("APP_ACTIVITY_ENDPOINTS_HEADER", "Endpoints"),
             ]
         )
@@ -219,12 +220,15 @@ class AppActivityWindow(QWidget):
 
         if rows:
             updated_at = payload.get("updated_at", "--:--:--")
-            # Honest summary — English literal pending the single 2.0 i18n pass (the old
-            # SUMMARY_TEMPLATE key carried download/upload placeholders that no longer exist).
+            # Honest summary — APP_ACTIVITY_SUMMARY_TEMPLATE was overwritten with the new
+            # connections-based placeholders ({app_count}{active}{total_conn}{updated_at}).
             app_count = int(payload.get("app_count", len(rows)))
             active = int(payload.get("active_app_count", 0))
             total_conn = int(payload.get("total_conn_count", 0))
-            summary = f"{app_count} apps · {active} active · {total_conn} connections · Updated {updated_at}"
+            summary = self._tr(
+                "APP_ACTIVITY_SUMMARY_TEMPLATE",
+                "{app_count} apps · {active} active · {total_conn} connections · Updated {updated_at}",
+            ).format(app_count=app_count, active=active, total_conn=total_conn, updated_at=updated_at)
             if access_limited:
                 summary = f"{summary} {self._tr('APP_ACTIVITY_SUMMARY_LIMITED_SUFFIX', '(limited access without admin rights)')}"
             self.summary_label.setText(summary)
@@ -280,13 +284,16 @@ class AppActivityWindow(QWidget):
         endpoints = row.get("endpoints", [])
 
         pid_text = ", ".join(str(p) for p in pids) if pids else "-"
-        header = f"{name}   (PID {pid_text})" if pids else name
+        header = (self._tr("APP_ACTIVITY_DETAILS_HEADER_TEMPLATE", "{name}   (PID {pids})")
+                  .format(name=name, pids=pid_text)) if pids else name
 
         sections = []
         if hosts:
-            sections.append("Talking to:\n" + "\n".join(f"  {h}" for h in hosts))
+            sections.append(self._tr("APP_ACTIVITY_TALKING_TO_SECTION", "Talking to:")
+                            + "\n" + "\n".join(f"  {h}" for h in hosts))
         if endpoints:
-            sections.append("Connections:\n" + "\n".join(f"  {e}" for e in endpoints))
+            sections.append(self._tr("APP_ACTIVITY_CONNECTIONS_SECTION", "Connections:")
+                            + "\n" + "\n".join(f"  {e}" for e in endpoints))
         if not sections:
             sections.append(self._tr("APP_ACTIVITY_NO_CONNECTION_DETAILS", "No connection details available."))
 

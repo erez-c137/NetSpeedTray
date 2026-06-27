@@ -41,43 +41,31 @@ class TempOnboardingDialog(QDialog):
         self.i18n = i18n
         self.action = self.ACTION_DISMISS  # default if closed via X / Esc
 
-        # NOTE: English literals pending the single 2.0 i18n pass.
-        self.setWindowTitle("Turn on temperatures")
+        self.setWindowTitle(i18n.TEMP_ONBOARDING_WINDOW_TITLE)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 18, 20, 14)
         layout.setSpacing(12)
 
-        title = QLabel("CPU/GPU temperatures need a sensor source", self)
+        title = QLabel(i18n.TEMP_ONBOARDING_TITLE, self)
         font = title.font()
         font.setPointSize(font.pointSize() + 3)
         font.setBold(True)
         title.setFont(font)
         layout.addWidget(title)
 
-        body = QLabel(
-            "Reading temperatures requires a small kernel-level sensor driver that Windows "
-            "doesn't expose to normal apps. The free, open-source <b>LibreHardwareMonitor</b> "
-            "(LHM) provides one and publishes the readings — NetSpeedTray reads them from there."
-            "<br><br>"
-            "• <b>NetSpeedTray itself never runs as admin</b> and never ships a driver of its own.<br>"
-            "• NVIDIA GPU temperatures already work natively via <i>nvidia-smi</i> — no LHM needed.<br>"
-            "• Once LHM is running, temperatures appear automatically."
-            "<br><br>"
-            "You can also just turn temperatures back off in Settings → Hardware.",
-            self,
-        )
+        body = QLabel(i18n.TEMP_ONBOARDING_BODY, self)
         body.setTextFormat(Qt.TextFormat.RichText)
         body.setWordWrap(True)
         body.setMinimumWidth(440)
         layout.addWidget(body)
 
-        self.dont_remind = QCheckBox("Don't remind me again", self)
+        self.dont_remind = QCheckBox(i18n.TEMP_ONBOARDING_DONT_REMIND, self)
         layout.addWidget(self.dont_remind)
 
         buttons = QHBoxLayout()
-        get_lhm_btn = QPushButton("Get LibreHardwareMonitor", self)
+        get_lhm_btn = QPushButton(i18n.TEMP_ONBOARDING_GET_LHM_BUTTON, self)
         get_lhm_btn.setDefault(True)
-        not_now_btn = QPushButton("Not now", self)
+        not_now_btn = QPushButton(i18n.TEMP_ONBOARDING_NOT_NOW_BUTTON, self)
         get_lhm_btn.clicked.connect(lambda: self._choose(self.ACTION_GET_LHM))
         not_now_btn.clicked.connect(lambda: self._choose(self.ACTION_DISMISS))
         buttons.addStretch(1)

@@ -126,8 +126,7 @@ class HardwarePage(QWidget):
         layout.addWidget(order_section)
 
         # --- Color-code by load (collapsed) — thresholds for tinting CPU/GPU % by utilization.
-        # English literals pending the single 2.0 i18n pass.
-        load_section = CollapsibleSection("Color-code by load", expanded=False)
+        load_section = CollapsibleSection(self.i18n.HARDWARE_LOAD_COLOR_SECTION, expanded=False)
         load_section.toggled.connect(lambda: self.layout_changed.emit())
         load_grid = QGridLayout()
         load_grid.setVerticalSpacing(8)
@@ -143,10 +142,10 @@ class HardwarePage(QWidget):
         self.gpu_load_high = _make_load_slider()
         self.gpu_load_low = _make_load_slider()
         for row, (label, widget) in enumerate([
-            ("CPU high load", self.cpu_load_high),
-            ("CPU low load", self.cpu_load_low),
-            ("GPU high load", self.gpu_load_high),
-            ("GPU low load", self.gpu_load_low),
+            (self.i18n.HARDWARE_CPU_HIGH_LOAD_LABEL, self.cpu_load_high),
+            (self.i18n.HARDWARE_CPU_LOW_LOAD_LABEL, self.cpu_load_low),
+            (self.i18n.HARDWARE_GPU_HIGH_LOAD_LABEL, self.gpu_load_high),
+            (self.i18n.HARDWARE_GPU_LOW_LOAD_LABEL, self.gpu_load_low),
         ]):
             load_grid.addWidget(QLabel(label), row, 0, Qt.AlignmentFlag.AlignVCenter)
             load_grid.addWidget(widget, row, 1)

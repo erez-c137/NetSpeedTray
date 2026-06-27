@@ -94,15 +94,14 @@ class TrayIconManager(QObject):
             self.context_menu = QMenu(self.widget)
 
             # The menu is a MAP, not a flat list — four tiers, separated, so a new user can
-            # read what the app does straight from the right-click. (Strings marked "i18n
-            # pending" are English literals folded into the single 2.0 i18n pass.)
+            # read what the app does straight from the right-click.
 
             # --- Tier 1: Glance — live usage; a row is a door into the history graph ---
             self.usage_today_action = self.context_menu.addAction("")
             self.usage_today_action.triggered.connect(self._open_graph)
             self.usage_month_action = self.context_menu.addAction("")
             self.usage_month_action.triggered.connect(self._open_graph)
-            self.data_cap_action = self.context_menu.addAction("Data cap…")  # i18n pending
+            self.data_cap_action = self.context_menu.addAction(self.i18n.TRAY_DATA_CAP_MENU_ITEM)
             if hasattr(self.widget, "open_data_cap_dialog"):
                 self.data_cap_action.triggered.connect(self.widget.open_data_cap_dialog)
             self.context_menu.addSeparator()
@@ -122,7 +121,7 @@ class TrayIconManager(QObject):
 
             # Self-describing hardware-monitor state — surfaces the entire CPU/GPU/temps half
             # of the app that stays hidden until you go looking. Text set live on open.
-            self.hardware_action = self.context_menu.addAction("")  # i18n pending
+            self.hardware_action = self.context_menu.addAction("")  # text set live on open
             if hasattr(self.widget, 'show_settings'):
                 self.hardware_action.triggered.connect(self.widget.show_settings)
 
@@ -132,7 +131,7 @@ class TrayIconManager(QObject):
             self.pause_action = self.context_menu.addAction(self.i18n.PAUSE_MENU_ITEM)
             self.pause_action.triggered.connect(self._toggle_pause)
 
-            show_around_action = self.context_menu.addAction("Show me around")  # i18n pending
+            show_around_action = self.context_menu.addAction(self.i18n.SHOW_ME_AROUND_LABEL)
             if hasattr(self.widget, '_show_unfold_flyout'):
                 show_around_action.triggered.connect(self.widget._show_unfold_flyout)
 
@@ -171,11 +170,12 @@ class TrayIconManager(QObject):
             self.logger.error("Error opening graph from usage row: %s", e, exc_info=True)
 
     def _format_hardware_state(self) -> str:
-        """'Hardware monitor: On/Off ▸' — self-describing, points at Settings. i18n pending."""
+        """'Hardware monitor: On/Off ▸' — self-describing, points at Settings."""
         cfg = getattr(self.widget, "config", {})
         on = bool(cfg.get("monitor_cpu_enabled") or cfg.get("monitor_gpu_enabled")
                   or cfg.get("monitor_ram_enabled") or cfg.get("monitor_vram_enabled"))
-        return f"Hardware monitor: {'On' if on else 'Off'}  ▸"
+        state = self.i18n.TRAY_HARDWARE_STATE_ON if on else self.i18n.TRAY_HARDWARE_STATE_OFF
+        return self.i18n.TRAY_HARDWARE_MONITOR_TEMPLATE.format(state=state)
 
     def _toggle_pause(self, _checked: bool = False) -> None:
         """Toggle the widget's paused state from the tray menu."""
@@ -211,24 +211,25 @@ class TrayIconManager(QObject):
         up_bytes, down_bytes = totals
         dn_v, dn_u = helpers.format_data_size(down_bytes, self.i18n)
         up_v, up_u = helpers.format_data_size(up_bytes, self.i18n)
-        return f"{label}:   ↓ {dn_v:.1f} {dn_u}   ↑ {up_v:.1f} {up_u}"
+        return self.i18n.TRAY_USAGE_GLANCE_TEMPLATE.format(
+            label=label, down_v=dn_v, down_u=dn_u, up_v=up_v, up_u=up_u)
 
     def _format_cap(self) -> str:
         """The 'Data cap' menu line — live progress from the accurate odometer when the
-        cap is enabled, else a plain entry to set one. i18n pending (single 2.0 pass)."""
+        cap is enabled, else a plain entry to set one."""
         cfg = getattr(self.widget, "config", {})
         cap = float(cfg.get("data_cap_gb", 0) or 0)
         if not cfg.get("data_cap_enabled") or cap <= 0:
-            return "Data cap…"
+            return self.i18n.TRAY_DATA_CAP_MENU_ITEM
         try:
             up, down = self.widget.widget_state.get_usage_this_period()
             cnt = cfg.get("data_cap_count", "total")
             used = down if cnt == "download" else up if cnt == "upload" else (up + down)
             used_gb = used / (1000 ** 3)
             pct = (used_gb / cap) * 100.0
-            return f"Data cap:   {used_gb:.1f} / {cap:g} GB   ({pct:.0f}%)"
+            return self.i18n.TRAY_DATA_CAP_PROGRESS_TEMPLATE.format(used=used_gb, cap=cap, pct=pct)
         except Exception:
-            return "Data cap…"
+            return self.i18n.TRAY_DATA_CAP_MENU_ITEM
 
     def _refresh_dynamic_items(self) -> None:
         """Update menu items whose text depends on live state, just before showing."""

@@ -44,6 +44,14 @@ def mock_i18n():
     i18n.EXIT_MENU_ITEM = "Exit"
     i18n.USAGE_TODAY_LABEL = "Today"
     i18n.USAGE_THIS_MONTH_LABEL = "This Month"
+    # 2.0 i18n keys used by the tray (real strings so templates format correctly)
+    i18n.TRAY_DATA_CAP_MENU_ITEM = "Data cap…"
+    i18n.SHOW_ME_AROUND_LABEL = "Show me around"
+    i18n.TRAY_HARDWARE_MONITOR_TEMPLATE = "Hardware monitor: {state}  ▸"
+    i18n.TRAY_HARDWARE_STATE_ON = "On"
+    i18n.TRAY_HARDWARE_STATE_OFF = "Off"
+    i18n.TRAY_USAGE_GLANCE_TEMPLATE = "{label}:   ↓ {down_v:.1f} {down_u}   ↑ {up_v:.1f} {up_u}"
+    i18n.TRAY_DATA_CAP_PROGRESS_TEMPLATE = "Data cap:   {used:.1f} / {cap:g} GB   ({pct:.0f}%)"
     for k, v in {"BYTES_UNIT": "B", "KB_UNIT": "KB", "MB_UNIT": "MB",
                  "GB_UNIT": "GB", "TB_UNIT": "TB", "PB_UNIT": "PB"}.items():
         setattr(i18n, k, v)

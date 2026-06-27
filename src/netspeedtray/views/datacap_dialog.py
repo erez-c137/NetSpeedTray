@@ -27,9 +27,10 @@ def _bytes_to_gb(b: float) -> float:
 
 class DataCapDialog(QDialog):
     def __init__(self, config: Dict[str, Any], used_bytes: float = 0.0,
-                 parent: Optional[QWidget] = None) -> None:
+                 parent: Optional[QWidget] = None, i18n=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Data cap")
+        self._i18n = i18n
+        self.setWindowTitle(self._tr("DATA_CAP_DIALOG_TITLE", "Data cap"))
         self.setStyleSheet(su.dialog_style())
         c = su.semantic_colors()
 
@@ -37,47 +38,54 @@ class DataCapDialog(QDialog):
         root.setContentsMargins(tokens.SPACE_L, tokens.SPACE_L, tokens.SPACE_L, tokens.SPACE_M)
         root.setSpacing(tokens.SPACE_XS)
 
-        title = QLabel("Data cap")
+        title = QLabel(self._tr("DATA_CAP_DIALOG_TITLE", "Data cap"))
         title.setFont(su.font(tokens.TYPE_TITLE))
         title.setStyleSheet(f"color: {c['text_primary']}; background: transparent;")
         root.addWidget(title)
 
-        used = QLabel(f"Used this period: {_bytes_to_gb(used_bytes):.1f} GB")
+        used = QLabel(self._tr("DATA_CAP_USED_TEMPLATE", "Used this period: {used:.1f} GB")
+                      .format(used=_bytes_to_gb(used_bytes)))
         used.setFont(su.font(tokens.TYPE_CAPTION))
         used.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
         root.addWidget(used)
         root.addSpacing(tokens.SPACE_S)
 
         self._enable = Win11Toggle(initial_state=bool(config.get("data_cap_enabled", False)))
-        root.addWidget(SettingCard("Enable data cap", "Warn me as I approach a monthly limit",
+        root.addWidget(SettingCard(self._tr("DATA_CAP_ENABLE_LABEL", "Enable data cap"),
+                                   self._tr("DATA_CAP_SECTION_SUBTITLE", "Warn me as I approach a monthly limit"),
                                    control=self._enable))
 
         self._cap = QSpinBox()
         self._cap.setRange(0, 1_000_000)
         self._cap.setSuffix(" GB")
         self._cap.setValue(int(config.get("data_cap_gb", 0) or 0))
-        root.addWidget(SettingCard("Monthly cap", control=self._cap))
+        root.addWidget(SettingCard(self._tr("DATA_CAP_MONTHLY_CAP_LABEL", "Monthly cap"), control=self._cap))
 
         self._reset = QSpinBox()
         self._reset.setRange(1, 28)
         self._reset.setValue(int(config.get("data_cap_reset_day", 1)))
-        root.addWidget(SettingCard("Reset day of month", "Your billing cycle's reset day (1-28)",
+        root.addWidget(SettingCard(self._tr("DATA_CAP_RESET_DAY_LABEL", "Reset day of month"),
+                                   self._tr("DATA_CAP_RESET_DAY_SUBTITLE", "Your billing cycle's reset day (1-28)"),
                                    control=self._reset))
 
-        self._count = Win11Segmented([("Total", "total"), ("Down", "download"), ("Up", "upload")])
+        self._count = Win11Segmented([
+            (self._tr("DATA_CAP_COUNT_TOTAL", "Total"), "total"),
+            (self._tr("DATA_CAP_COUNT_DOWN", "Down"), "download"),
+            (self._tr("DATA_CAP_COUNT_UP", "Up"), "upload"),
+        ])
         self._count.setValue(config.get("data_cap_count", "total"))
-        root.addWidget(SettingCard("Count", control=self._count))
+        root.addWidget(SettingCard(self._tr("DATA_CAP_COUNT_LABEL", "Count"), control=self._count))
 
         self._alerts = Win11Toggle(initial_state=bool(config.get("data_cap_alert_enabled", True)))
-        root.addWidget(SettingCard("Alert at 80% and 100%", control=self._alerts))
+        root.addWidget(SettingCard(self._tr("DATA_CAP_ALERT_LABEL", "Alert at 80% and 100%"), control=self._alerts))
 
         root.addSpacing(tokens.SPACE_S)
         btns = QHBoxLayout()
         btns.addStretch(1)
-        cancel = QPushButton("Cancel")
+        cancel = QPushButton(self._tr("DATA_CAP_CANCEL_BUTTON", "Cancel"))
         cancel.setStyleSheet(su.button_style())
         cancel.clicked.connect(self.reject)
-        save = QPushButton("Save")
+        save = QPushButton(self._tr("DATA_CAP_SAVE_BUTTON", "Save"))
         save.setStyleSheet(su.button_style(accent=True))
         save.setDefault(True)
         save.clicked.connect(self.accept)
@@ -86,6 +94,9 @@ class DataCapDialog(QDialog):
         root.addLayout(btns)
 
         self.setMinimumWidth(380)
+
+    def _tr(self, key: str, default: str) -> str:
+        return str(getattr(self._i18n, key, default)) if self._i18n is not None else default
 
     def showEvent(self, event) -> None:
         super().showEvent(event)

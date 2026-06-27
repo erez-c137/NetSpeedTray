@@ -83,7 +83,7 @@ class InterfacesPage(QWidget):
         layout.addWidget(interfaces_group)
 
         # Data-usage / data-cap section (the feature's in-settings home, 2.0 IA).
-        self.datacap = DataCapSettings(self.on_change)
+        self.datacap = DataCapSettings(self.on_change, self.i18n)
         layout.addWidget(self.datacap)
 
         layout.addStretch()

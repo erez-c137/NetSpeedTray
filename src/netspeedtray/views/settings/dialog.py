@@ -186,7 +186,7 @@ class SettingsDialog(QDialog):
                 self.i18n.HARDWARE_MONITORING_GROUP,
                 self.i18n.UNITS_GROUP,
                 self.i18n.NETWORK_INTERFACES_GROUP,
-                "Advanced",  # i18n pending (single 2.0 pass)
+                self.i18n.ADVANCED_SETTINGS_GROUP,
             ])
             self.sidebar.setCurrentRow(0)
             sidebar_layout.addWidget(self.sidebar)
@@ -540,8 +540,8 @@ class SettingsDialog(QDialog):
     def _reset_all_to_defaults(self) -> None:
         """Reset every setting to factory defaults (after confirmation); history is kept (C6)."""
         resp = QMessageBox.question(
-            self, "Reset all settings?",
-            "This restores every setting to its default. Your saved history is kept. Continue?",
+            self, self.i18n.RESET_ALL_CONFIRM_TITLE,
+            self.i18n.RESET_ALL_CONFIRM_TEXT,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )

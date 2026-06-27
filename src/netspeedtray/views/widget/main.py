@@ -404,12 +404,10 @@ class NetworkSpeedWidget(QWidget):
         """A one-time calm callout near the widget pointing at the hidden features."""
         try:
             from netspeedtray.views.flyout import Flyout
-            # NOTE: strings are English literals pending the single 2.0 i18n pass.
             self._unfold_flyout = Flyout(
-                "Get more from NetSpeedTray",
-                "Right-click the speed readout for graphs, per-app activity, and CPU/GPU/"
-                "temperatures. Double-click it to open the dashboard.",
-                action_text="Show me around",
+                self.i18n.UNFOLD_FLYOUT_TITLE,
+                self.i18n.UNFOLD_FLYOUT_BODY,
+                action_text=self.i18n.SHOW_ME_AROUND_LABEL,
             )
             self._unfold_flyout.action_clicked.connect(self.open_graph_window)
             geo = self.frameGeometry()
@@ -421,13 +419,11 @@ class NetworkSpeedWidget(QWidget):
         """
         The monitor thread crossed its error threshold (now recoverable — it keeps retrying
         with backoff). Surface a calm one-time flyout so a degraded readout isn't silent.
-        English literal pending the single 2.0 i18n pass.
         """
         try:
             self._show_usage_alert(
-                "Monitoring paused briefly",
-                "NetSpeedTray hit a snag reading stats and is retrying automatically. "
-                "If it persists, a restart usually clears it.",
+                self.i18n.MONITOR_ERROR_FLYOUT_TITLE,
+                self.i18n.MONITOR_ERROR_FLYOUT_BODY,
             )
         except Exception as e:
             self.logger.error("Error showing monitor-error notice: %s", e, exc_info=True)
@@ -449,7 +445,7 @@ class NetworkSpeedWidget(QWidget):
             up, down = self.widget_state.get_usage_this_period()
             cnt = self.config.get("data_cap_count", "total")
             used = down if cnt == "download" else up if cnt == "upload" else (up + down)
-            dlg = DataCapDialog(self.config, used_bytes=used, parent=self)
+            dlg = DataCapDialog(self.config, used_bytes=used, parent=self, i18n=self.i18n)
             if dlg.exec():
                 self.update_config(dlg.get_values())
         except Exception as e:
@@ -750,11 +746,7 @@ class NetworkSpeedWidget(QWidget):
         """
         count = int(self.config.get("tooltip_hint_shown_count", 0))
         if count < self._TOOLTIP_HINT_MAX_SHOWS:
-            # English literal pending the single 2.0 i18n pass.
-            self.setToolTip(
-                "Right-click for graphs, app activity, and CPU/GPU stats\n"
-                "Double-click to open the history dashboard"
-            )
+            self.setToolTip(self.i18n.WIDGET_HOVER_TOOLTIP)
             if not getattr(self, "_tooltip_counted_this_session", False):
                 self._tooltip_counted_this_session = True
                 self.config_controller.update_config(

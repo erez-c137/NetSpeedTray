@@ -878,8 +878,9 @@ class ArrowStylePicker(QWidget):
     changed = pyqtSignal()
     _CUSTOM = "__custom__"
 
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, i18n=None, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
+        self._i18n = i18n
         from netspeedtray.constants.arrows import ARROW_PRESETS
         self._presets = list(ARROW_PRESETS)  # [(name, up, down)]
 
@@ -888,13 +889,13 @@ class ArrowStylePicker(QWidget):
         root.setSpacing(tokens.SPACE_S)
 
         options = [(f"{up} {down}", name) for (name, up, down) in self._presets]
-        options.append(("Custom", self._CUSTOM))
+        options.append((self._tr("ARROW_STYLE_CUSTOM", "Custom"), self._CUSTOM))
         self._seg = Win11Segmented(options)
         self._seg.valueChanged.connect(self._on_segment)
         for value, btn in self._seg._items:
             if value != self._CUSTOM:
                 name = next((n for (n, _u, _d) in self._presets if n == value), value)
-                btn.setToolTip(name)
+                btn.setToolTip(self._tr(f"ARROW_PRESET_{str(name).upper()}", name))
         root.addWidget(self._seg)
 
         self._custom_row = QWidget()
@@ -911,13 +912,17 @@ class ArrowStylePicker(QWidget):
         self._down_edit.setPlaceholderText("↓")
         self._up_edit.textChanged.connect(lambda _t: self.changed.emit())
         self._down_edit.textChanged.connect(lambda _t: self.changed.emit())
-        crow.addWidget(QLabel("Up"))
+        crow.addWidget(QLabel(self._tr("ARROW_CUSTOM_UP_LABEL", "Up")))
         crow.addWidget(self._up_edit)
         crow.addSpacing(tokens.SPACE_M)
-        crow.addWidget(QLabel("Down"))
+        crow.addWidget(QLabel(self._tr("ARROW_CUSTOM_DOWN_LABEL", "Down")))
         crow.addWidget(self._down_edit)
         crow.addStretch(0)
         self._custom_row.setVisible(False)
+
+    def _tr(self, key: str, default: str) -> str:
+        """Graceful i18n lookup: the picker may be constructed without an i18n object."""
+        return str(getattr(self._i18n, key, default)) if self._i18n is not None else default
         root.addWidget(self._custom_row)
 
     def _on_segment(self, value) -> None:

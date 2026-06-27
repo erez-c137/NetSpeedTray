@@ -3,7 +3,7 @@ Advanced Settings Page (2.0 IA) — data history, app-behavior flags, and a fres
 
 The progressive-disclosure valve for genuinely low-frequency / destructive items:
 data retention, the app-wide reduce-motion flag (also read by the Monitor window's
-hold-still logic), and reset affordances. English literals pending the single i18n pass.
+hold-still logic), and reset affordances.
 """
 from typing import Dict, Any, Callable, Optional
 
@@ -35,9 +35,9 @@ class AdvancedPage(QWidget):
         layout.setSpacing(constants.layout.GROUP_BOX_SPACING)
 
         # --- Data ---
-        data_group = QGroupBox("Data")
+        data_group = QGroupBox(self.i18n.ADVANCED_DATA_GROUP)
         dl = QVBoxLayout(data_group)
-        dl.addWidget(QLabel("Keep history for"))
+        dl.addWidget(QLabel(self.i18n.ADVANCED_KEEP_HISTORY_LABEL))
         self.keep_data = QComboBox()
         for idx in sorted(self._days_map):
             days = self._days_map[idx]
@@ -47,22 +47,22 @@ class AdvancedPage(QWidget):
         layout.addWidget(data_group)
 
         # --- Behavior ---
-        beh_group = QGroupBox("Behavior")
+        beh_group = QGroupBox(self.i18n.BEHAVIOR_GROUP_TITLE)
         bl = QVBoxLayout(beh_group)
-        self.reduce_motion = Win11Toggle(label_text="Reduce motion (fewer animations)")
+        self.reduce_motion = Win11Toggle(label_text=self.i18n.ADVANCED_REDUCE_MOTION_LABEL)
         self.reduce_motion.toggled.connect(self.on_change)
         bl.addWidget(self.reduce_motion)
         layout.addWidget(beh_group)
 
         # --- Reset ---
-        reset_group = QGroupBox("Reset")
+        reset_group = QGroupBox(self.i18n.ADVANCED_RESET_GROUP)
         rl = QVBoxLayout(reset_group)
-        note = QLabel("Restore settings to their defaults. This can't be undone.")
+        note = QLabel(self.i18n.ADVANCED_RESET_NOTE)
         note.setWordWrap(True)
         rl.addWidget(note)
         btn_row = QHBoxLayout()
-        self.reset_page_btn = QPushButton("Reset this page")
-        self.reset_all_btn = QPushButton("Reset all to defaults")
+        self.reset_page_btn = QPushButton(self.i18n.ADVANCED_RESET_PAGE_BUTTON)
+        self.reset_all_btn = QPushButton(self.i18n.ADVANCED_RESET_ALL_BUTTON)
         self.reset_page_btn.setStyleSheet(style_utils.button_style())
         self.reset_all_btn.setStyleSheet(style_utils.button_style())
         if self._reset_page_cb:
@@ -77,18 +77,19 @@ class AdvancedPage(QWidget):
 
         layout.addStretch()
 
-    @staticmethod
-    def _retention_label(days: int) -> str:
+    def _retention_label(self, days: int) -> str:
+        i18n = self.i18n
+        plural = getattr(i18n, "PLURAL_SUFFIX", "s")
         if days >= 365:
             years = days // 365
-            return "1 year" if years == 1 else f"{years} years"
+            return i18n.RETENTION_YEAR_SINGULAR if years == 1 else i18n.RETENTION_YEARS_TEMPLATE.format(years=years)
         if days >= 30 and days % 30 == 0:
             months = days // 30
-            return f"{months} month" + ("s" if months > 1 else "")
+            return i18n.RETENTION_MONTHS_TEMPLATE.format(months=months, plural=(plural if months > 1 else ""))
         if days >= 7 and days % 7 == 0:
             weeks = days // 7
-            return f"{weeks} week" + ("s" if weeks > 1 else "")
-        return f"{days} day" + ("s" if days > 1 else "")
+            return i18n.RETENTION_WEEKS_TEMPLATE.format(weeks=weeks, plural=(plural if weeks > 1 else ""))
+        return i18n.RETENTION_DAYS_TEMPLATE.format(days=days, plural=(plural if days > 1 else ""))
 
     def load_settings(self, config: Dict[str, Any]) -> None:
         days = int(config.get("keep_data", constants.config.defaults.DEFAULT_KEEP_DATA_DAYS))
