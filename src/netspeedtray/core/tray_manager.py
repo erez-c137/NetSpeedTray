@@ -96,6 +96,10 @@ class TrayIconManager(QObject):
             self.usage_today_action.setEnabled(False)
             self.usage_month_action = self.context_menu.addAction("")
             self.usage_month_action.setEnabled(False)
+            # i18n pending (single 2.0 pass)
+            data_cap_action = self.context_menu.addAction("Data cap…")
+            if hasattr(self.widget, "open_data_cap_dialog"):
+                data_cap_action.triggered.connect(self.widget.open_data_cap_dialog)
             self.context_menu.addSeparator()
 
             # --- Primary Actions (windows the user opens frequently) ---

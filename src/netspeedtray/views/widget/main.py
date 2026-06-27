@@ -426,6 +426,19 @@ class NetworkSpeedWidget(QWidget):
         except Exception as e:
             self.logger.error(f"Error showing usage alert: {e}", exc_info=True)
 
+    def open_data_cap_dialog(self) -> None:
+        """Open the data-cap settings dialog and apply any changes."""
+        try:
+            from netspeedtray.views.datacap_dialog import DataCapDialog
+            up, down = self.widget_state.get_usage_this_period()
+            cnt = self.config.get("data_cap_count", "total")
+            used = down if cnt == "download" else up if cnt == "upload" else (up + down)
+            dlg = DataCapDialog(self.config, used_bytes=used, parent=self)
+            if dlg.exec():
+                self.update_config(dlg.get_values())
+        except Exception as e:
+            self.logger.error(f"Error opening data cap dialog: {e}", exc_info=True)
+
 
     def pause(self) -> None:
         """Pause widget updates (for future use, not active by default)."""
