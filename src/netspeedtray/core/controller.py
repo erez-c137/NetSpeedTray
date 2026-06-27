@@ -291,8 +291,18 @@ class StatsController(QObject):
         return total_up, total_down
 
 
+    _PRIMARY_REFRESH_SEC: float = 15.0  # how often the routing lookup may actually run
+
     def _update_primary_interface_name(self) -> None:
-        """Updates primary interface, logging changes for field diagnosis."""
+        """Resolve the primary (routing) interface, CACHED so the blocking lookup
+        (`get_primary_interface_name()` does a UDP connect + `net_if_addrs`) runs at most
+        every _PRIMARY_REFRESH_SEC instead of every poll — keeping the GUI thread
+        responsive in the default 'auto' mode (H1). A NIC change is picked up within the
+        refresh window (the speed briefly attributes to the old primary)."""
+        now = time.monotonic()
+        if self.primary_interface is not None and (now - self.last_primary_check_time) < self._PRIMARY_REFRESH_SEC:
+            return
+        self.last_primary_check_time = now
         previous = self.primary_interface
         try:
             self.primary_interface = get_primary_interface_name()
