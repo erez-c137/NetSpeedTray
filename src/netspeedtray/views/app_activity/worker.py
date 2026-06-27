@@ -1,8 +1,13 @@
 """
-Background worker for per-application network activity sampling.
+Background worker for per-application network activity sampling (v2 — honest model).
 
-The worker runs in a dedicated QThread and only samples while the App Activity
-window is open, keeping the main taskbar widget fast and unaffected.
+Windows can't attribute network *bytes* to a process without admin/ETW, so this worker no
+longer dresses up disk-I/O deltas as "download/upload speed" (the old lie). Instead it reports
+only what it can measure exactly and for free: the live network *connections* each app holds —
+their count, how many are established, the distinct remote hosts, and TCP/UDP split — rolled up
+by application identity (one row per program, not per PID). Every number here is exact.
+
+Runs in a dedicated QThread, only while the App Activity window is open.
 """
 
 from __future__ import annotations
@@ -13,17 +18,14 @@ import threading
 import time
 from collections import defaultdict
 from datetime import datetime
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import psutil
 from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
 
 
 class AppActivityWorker(QObject):
-    """
-    Collects active network connections grouped by process and estimates
-    per-process upload/download rates using process I/O deltas.
-    """
+    """Collects live network connections grouped by application identity. No byte estimates."""
 
     data_ready = pyqtSignal(object)
     error = pyqtSignal(str)
@@ -31,71 +33,101 @@ class AppActivityWorker(QObject):
     def __init__(self) -> None:
         super().__init__()
         self.logger = logging.getLogger("NetSpeedTray.AppActivityWorker")
-        self._last_sample_time: float | None = None
-        self._last_io_counters: Dict[int, Tuple[float, float]] = {}
-        self._process_name_cache: Dict[int, str] = {}
+        self._name_cache: Dict[int, str] = {}
 
     @pyqtSlot()
     def sample(self) -> None:
-        """Capture one snapshot and emit normalized payload for the UI."""
+        """Capture one snapshot of live connections and emit an honest, identity-grouped payload."""
         try:
-            pid_connections, access_limited = self._collect_connections_by_pid()
+            pid_conns, access_limited = self._collect_connections_by_pid()
 
-            now = time.monotonic()
-            elapsed = 0.0 if self._last_sample_time is None else max(0.001, now - self._last_sample_time)
+            # Aggregate connections by application identity (roll up all PIDs of one program).
+            agg: Dict[str, Dict[str, Any]] = defaultdict(self._new_agg)
+            for pid, conns in pid_conns.items():
+                name = self._process_name(pid)
+                key = name.casefold()
+                a = agg[key]
+                a["display_name"] = name
+                a["pids"].add(pid)
+                for conn in conns:
+                    a["conn_count"] += 1
+                    proto = self._get_protocol_name(getattr(conn, "type", 0))
+                    if proto == "TCP":
+                        a["tcp_count"] += 1
+                    elif proto == "UDP":
+                        a["udp_count"] += 1
+                    status = str(getattr(conn, "status", "") or "").upper()
+                    if status == "ESTABLISHED":
+                        a["established_count"] += 1
+                    host = self._remote_host(conn)
+                    if host:
+                        a["hosts"].add(host)
+                    a["endpoints"].append(self._format_connection(conn))
 
             rows: List[Dict[str, Any]] = []
-            next_io_counters: Dict[int, Tuple[float, float]] = {}
+            for key, a in agg.items():
+                hosts = sorted(a["hosts"])
+                rows.append({
+                    "identity_key": key,
+                    "display_name": a["display_name"],
+                    "pids": sorted(a["pids"]),
+                    "conn_count": a["conn_count"],
+                    "tcp_count": a["tcp_count"],
+                    "udp_count": a["udp_count"],
+                    "established_count": a["established_count"],
+                    "distinct_hosts": hosts,
+                    "host_count": len(hosts),
+                    "endpoints": a["endpoints"],
+                    "is_idle": a["established_count"] == 0,
+                })
 
-            for pid, endpoints in pid_connections.items():
-                process_name, download_bps, upload_bps, io_snapshot = self._collect_process_snapshot(
-                    pid=pid,
-                    elapsed=elapsed,
-                )
-                if io_snapshot is not None:
-                    next_io_counters[pid] = io_snapshot
+            rows.sort(key=self._sort_key)
 
-                unique_endpoints = list(dict.fromkeys(endpoints))
-
-                rows.append(
-                    {
-                        "process_name": process_name,
-                        "pid": pid,
-                        "download_bps": download_bps,
-                        "upload_bps": upload_bps,
-                        "connection_count": len(unique_endpoints),
-                        "endpoints": unique_endpoints,
-                    }
-                )
-
-            rows.sort(
-                key=lambda row: (
-                    float(row.get("download_bps", 0.0)) + float(row.get("upload_bps", 0.0)),
-                    int(row.get("connection_count", 0)),
-                ),
-                reverse=True,
-            )
-
-            self._last_sample_time = now
-            self._last_io_counters = next_io_counters
-
-            total_down_bps = sum(float(row["download_bps"]) for row in rows)
-            total_up_bps = sum(float(row["upload_bps"]) for row in rows)
-
-            self.data_ready.emit(
-                {
-                    "updated_at": datetime.now().strftime("%H:%M:%S"),
-                    "rows": rows,
-                    "total_down_bps": total_down_bps,
-                    "total_up_bps": total_up_bps,
-                    "access_limited": access_limited,
-                }
-            )
+            self.data_ready.emit({
+                "updated_at": datetime.now().strftime("%H:%M:%S"),
+                "rows": rows,
+                "app_count": len(rows),
+                "active_app_count": sum(1 for r in rows if r["established_count"] > 0),
+                "total_conn_count": sum(r["conn_count"] for r in rows),
+                "access_limited": access_limited,
+            })
         except Exception as exc:
             self.logger.error("Failed to sample app activity: %s", exc, exc_info=True)
             self.error.emit(str(exc))
 
-    def _collect_connections_by_pid(self) -> Tuple[Dict[int, List[str]], bool]:
+    @staticmethod
+    def _new_agg() -> Dict[str, Any]:
+        return {
+            "display_name": "", "pids": set(), "conn_count": 0, "tcp_count": 0,
+            "udp_count": 0, "established_count": 0, "hosts": set(), "endpoints": [],
+        }
+
+    @staticmethod
+    def _sort_key(row: Dict[str, Any]) -> Tuple[int, int, int, str]:
+        # Active apps first, then by live connections, distinct hosts, then name (stable).
+        return (
+            0 if row["established_count"] > 0 else 1,
+            -row["conn_count"],
+            -row["host_count"],
+            row["display_name"].casefold(),
+        )
+
+    def _process_name(self, pid: int) -> str:
+        cached = self._name_cache.get(pid)
+        if cached:
+            return cached
+        try:
+            name = psutil.Process(pid).name() or f"PID {pid}"
+        except (psutil.NoSuchProcess, psutil.ZombieProcess):
+            self._name_cache.pop(pid, None)
+            return f"PID {pid}"
+        except (psutil.AccessDenied, OSError):
+            name = f"PID {pid}"
+        self._name_cache[pid] = name
+        return name
+
+    def _collect_connections_by_pid(self) -> Tuple[Dict[int, List[Any]], bool]:
+        """Group raw psutil connection objects by PID (with a 2s guard against a hung syscall)."""
         result: List = []
 
         def _fetch() -> None:
@@ -109,95 +141,39 @@ class AppActivityWorker(QObject):
         t.join(timeout=2.0)
 
         if t.is_alive():
-            self.logger.warning(
-                "psutil.net_connections() timed out after 2s - skipping this collection cycle"
-            )
+            self.logger.warning("psutil.net_connections() timed out after 2s - skipping this cycle")
             return defaultdict(list), False
-
         if not result:
             self.logger.error("net_connections thread exited without a result - skipping cycle")
             return defaultdict(list), False
 
         status, value = result[0]
         if status == "ok":
-            grouped: Dict[int, List[str]] = defaultdict(list)
+            grouped: Dict[int, List[Any]] = defaultdict(list)
             for conn in value:
                 pid = getattr(conn, "pid", None)
                 if pid is None:
                     continue
-                endpoint = self._format_connection(conn)
-                if endpoint:
-                    grouped[int(pid)].append(endpoint)
+                grouped[int(pid)].append(conn)
             return grouped, False
-        else:
-            self.logger.info(
-                "Global net_connections access denied/unavailable. Falling back to best-effort per-process sampling: %s",
-                value,
-            )
-            return self._collect_connections_by_pid_best_effort(), True
+        self.logger.info(
+            "Global net_connections access denied/unavailable. Falling back to best-effort: %s", value
+        )
+        return self._collect_connections_by_pid_best_effort(), True
 
-    def _collect_connections_by_pid_best_effort(self) -> Dict[int, List[str]]:
-        """
-        Best-effort fallback for non-admin sessions:
-        sample only processes and connections currently accessible.
-        """
-        grouped: Dict[int, List[str]] = defaultdict(list)
+    def _collect_connections_by_pid_best_effort(self) -> Dict[int, List[Any]]:
+        """Non-admin fallback: only the processes/connections this session can read."""
+        grouped: Dict[int, List[Any]] = defaultdict(list)
         for proc in psutil.process_iter(["pid"]):
             try:
                 pid = int(proc.pid)
                 for conn in proc.net_connections(kind="inet"):
-                    endpoint = self._format_connection(conn)
-                    if endpoint:
-                        grouped[pid].append(endpoint)
+                    grouped[pid].append(conn)
             except (psutil.NoSuchProcess, psutil.ZombieProcess):
                 continue
             except (psutil.AccessDenied, OSError):
                 continue
         return grouped
-
-    def _collect_process_snapshot(
-        self,
-        pid: int,
-        elapsed: float,
-    ) -> Tuple[str, float, float, Tuple[float, float] | None]:
-        """
-        Returns process name, download/upload estimates, and latest io snapshot.
-        """
-        process_name = self._process_name_cache.get(pid, f"PID {pid}")
-        download_bps = 0.0
-        upload_bps = 0.0
-
-        process: psutil.Process | None = None
-        try:
-            process = psutil.Process(pid)
-            process_name = process.name() or process_name
-            self._process_name_cache[pid] = process_name
-        except (psutil.NoSuchProcess, psutil.ZombieProcess):
-            self._process_name_cache.pop(pid, None)
-            return process_name, download_bps, upload_bps, None
-        except (psutil.AccessDenied, OSError):
-            pass
-
-        if process is None:
-            return process_name, download_bps, upload_bps, None
-
-        try:
-            io = process.io_counters()
-            read_bytes = float(getattr(io, "read_bytes", 0.0) or 0.0)
-            write_bytes = float(getattr(io, "write_bytes", 0.0) or 0.0)
-            io_snapshot = (read_bytes, write_bytes)
-
-            previous = self._last_io_counters.get(pid)
-            if previous is not None and elapsed > 0:
-                download_bps = max(0.0, (read_bytes - previous[0]) / elapsed)
-                upload_bps = max(0.0, (write_bytes - previous[1]) / elapsed)
-            return process_name, download_bps, upload_bps, io_snapshot
-        except (psutil.NoSuchProcess, psutil.ZombieProcess):
-            self._process_name_cache.pop(pid, None)
-            return process_name, download_bps, upload_bps, None
-        except (psutil.AccessDenied, OSError):
-            # Keep row visible but with zeroed speed if process counters are inaccessible.
-            return process_name, download_bps, upload_bps, None
 
     def _format_connection(self, conn: Any) -> str:
         protocol = self._get_protocol_name(getattr(conn, "type", 0))
@@ -206,6 +182,23 @@ class AppActivityWorker(QObject):
         status = str(getattr(conn, "status", "") or "").strip()
         suffix = f" {status}" if status and status.upper() != "NONE" else ""
         return f"{protocol} {local_addr} -> {remote_addr}{suffix}"
+
+    @staticmethod
+    def _remote_host(conn: Any) -> Optional[str]:
+        """The remote IP (no port), or None for loopback/link-local/unspecified (not a real remote)."""
+        raddr = getattr(conn, "raddr", None)
+        if not raddr:
+            return None
+        host = getattr(raddr, "ip", None)
+        if host is None and isinstance(raddr, (tuple, list)) and raddr:
+            host = raddr[0]
+        if not host:
+            return None
+        host = str(host)
+        if (host.startswith("127.") or host.startswith("169.254.")
+                or host in ("0.0.0.0", "::1", "::") or host.startswith("fe80:")):
+            return None
+        return host
 
     @staticmethod
     def _get_protocol_name(sock_type: int) -> str:
@@ -219,13 +212,11 @@ class AppActivityWorker(QObject):
     def _format_address(address: Any) -> str:
         if not address:
             return "-"
-
         host = getattr(address, "ip", None)
         port = getattr(address, "port", None)
         if host is None and isinstance(address, (tuple, list)):
             host = address[0] if len(address) > 0 else None
             port = address[1] if len(address) > 1 else None
-
         if host is None:
             return "-"
         if port is None:

@@ -76,11 +76,13 @@ class AppActivityWindow(QWidget):
         self.summary_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         root.addWidget(self.summary_label)
 
+        # Honest framing: this shows live connections (exact), not estimated per-app speed.
+        # English LITERAL (not _tr) — the existing APP_ACTIVITY_HINT_TEXT key still holds the
+        # old dishonest "estimated from I/O" copy; the i18n pass will replace it with this.
         self.hint_label = QLabel(
-            self._tr(
-                "APP_ACTIVITY_HINT_TEXT",
-                "Per-app speed is estimated from process I/O deltas while connections are active.",
-            ),
+            "Shows the live network connections each app holds — exact counts and the hosts "
+            "they're reaching. Windows can't attribute network bytes to an app without admin "
+            "rights, so this reports connections, not speed.",
             self,
         )
         self.hint_label.setWordWrap(True)
@@ -88,14 +90,14 @@ class AppActivityWindow(QWidget):
         root.addWidget(self.hint_label)
 
         self.table = QTableWidget(self)
-        self.table.setColumnCount(6)
+        self.table.setColumnCount(5)
+        # "Active" and "Talking to" are new headers (English literals pending the i18n pass).
         self.table.setHorizontalHeaderLabels(
             [
                 self._tr("APP_ACTIVITY_PROCESS_HEADER", "Process"),
-                self._tr("APP_ACTIVITY_PID_HEADER", "PID"),
-                getattr(self.i18n, "DOWNLOAD_LABEL", "Download"),
-                getattr(self.i18n, "UPLOAD_LABEL", "Upload"),
                 self._tr("APP_ACTIVITY_CONNECTIONS_HEADER", "Connections"),
+                "Active",
+                "Talking to",
                 self._tr("APP_ACTIVITY_ENDPOINTS_HEADER", "Endpoints"),
             ]
         )
@@ -111,8 +113,7 @@ class AppActivityWindow(QWidget):
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
         root.addWidget(self.table, 1)
 
         details_title = QLabel(self._tr("APP_ACTIVITY_DETAILS_TITLE", "Connection Details"), self)
@@ -217,18 +218,13 @@ class AppActivityWindow(QWidget):
         self._render_rows(rows)
 
         if rows:
-            download_text = self._format_speed(float(payload.get("total_down_bps", 0.0)))
-            upload_text = self._format_speed(float(payload.get("total_up_bps", 0.0)))
             updated_at = payload.get("updated_at", "--:--:--")
-            summary = self._tr(
-                "APP_ACTIVITY_SUMMARY_TEMPLATE",
-                "Live now: {app_count} apps | Download {download} | Upload {upload} | Updated {updated_at}",
-            ).format(
-                app_count=len(rows),
-                download=download_text,
-                upload=upload_text,
-                updated_at=updated_at,
-            )
+            # Honest summary — English literal pending the single 2.0 i18n pass (the old
+            # SUMMARY_TEMPLATE key carried download/upload placeholders that no longer exist).
+            app_count = int(payload.get("app_count", len(rows)))
+            active = int(payload.get("active_app_count", 0))
+            total_conn = int(payload.get("total_conn_count", 0))
+            summary = f"{app_count} apps · {active} active · {total_conn} connections · Updated {updated_at}"
             if access_limited:
                 summary = f"{summary} {self._tr('APP_ACTIVITY_SUMMARY_LIMITED_SUFFIX', '(limited access without admin rights)')}"
             self.summary_label.setText(summary)
@@ -254,17 +250,17 @@ class AppActivityWindow(QWidget):
     def _render_rows(self, rows: List[Dict[str, Any]]) -> None:
         self.table.setRowCount(len(rows))
         for row_index, row in enumerate(rows):
-            process_name = str(row.get("process_name", self._tr("APP_ACTIVITY_UNKNOWN_PROCESS", "Unknown")))
-            pid = int(row.get("pid", 0))
-            download_text = self._format_speed(float(row.get("download_bps", 0.0)))
-            upload_text = self._format_speed(float(row.get("upload_bps", 0.0)))
-            connections = str(int(row.get("connection_count", 0)))
-            preview = self._build_endpoint_preview(row.get("endpoints", []))
+            name = str(row.get("display_name", self._tr("APP_ACTIVITY_UNKNOWN_PROCESS", "Unknown")))
+            conn_count = str(int(row.get("conn_count", 0)))
+            active = str(int(row.get("established_count", 0)))
+            hosts = row.get("distinct_hosts", [])
+            talking_to = self._build_endpoint_preview(hosts)
+            endpoints_preview = self._build_endpoint_preview(row.get("endpoints", []))
 
-            row_values = [process_name, str(pid), download_text, upload_text, connections, preview]
+            row_values = [name, conn_count, active, talking_to, endpoints_preview]
             for col, value in enumerate(row_values):
                 item = QTableWidgetItem(value)
-                if col in (1, 2, 3, 4):
+                if col in (1, 2):
                     item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 self.table.setItem(row_index, col, item)
 
@@ -278,18 +274,23 @@ class AppActivityWindow(QWidget):
             return
 
         row = self._rows[row_index]
-        process_name = str(row.get("process_name", "Unknown"))
-        pid = int(row.get("pid", 0))
+        name = str(row.get("display_name", "Unknown"))
+        pids = row.get("pids", [])
+        hosts = row.get("distinct_hosts", [])
         endpoints = row.get("endpoints", [])
-        if endpoints:
-            detail_lines = [f"{idx + 1}. {endpoint}" for idx, endpoint in enumerate(endpoints)]
-            details = "\n".join(detail_lines)
-        else:
-            details = self._tr("APP_ACTIVITY_NO_CONNECTION_DETAILS", "No connection details available.")
 
-        selected_template = self._tr("APP_ACTIVITY_SELECTED_APP_TEMPLATE", "{process_name} (PID {pid})")
-        app_header = selected_template.format(process_name=process_name, pid=pid)
-        self.details_box.setPlainText(f"{app_header}\n\n{details}")
+        pid_text = ", ".join(str(p) for p in pids) if pids else "-"
+        header = f"{name}   (PID {pid_text})" if pids else name
+
+        sections = []
+        if hosts:
+            sections.append("Talking to:\n" + "\n".join(f"  {h}" for h in hosts))
+        if endpoints:
+            sections.append("Connections:\n" + "\n".join(f"  {e}" for e in endpoints))
+        if not sections:
+            sections.append(self._tr("APP_ACTIVITY_NO_CONNECTION_DETAILS", "No connection details available."))
+
+        self.details_box.setPlainText(header + "\n\n" + "\n\n".join(sections))
 
     def _build_endpoint_preview(self, endpoints: List[Any]) -> str:
         normalized = [str(endpoint) for endpoint in endpoints if endpoint]
@@ -303,26 +304,6 @@ class AppActivityWindow(QWidget):
             suffix = self._tr("APP_ACTIVITY_ENDPOINT_MORE_TEMPLATE", "(+{count} more)").format(count=remaining)
             preview = f"{preview}; {suffix}"
         return preview
-
-    def _format_speed(self, speed_bps: float) -> str:
-        if self.i18n is None:
-            return f"{speed_bps:.0f} B/s"
-
-        config = getattr(self._main_widget, "config", {}) if self._main_widget is not None else {}
-        force_mega = str(config.get("speed_display_mode", "auto")) == "always_mbps"
-        unit_type = str(config.get("unit_type", constants.config.defaults.DEFAULT_UNIT_TYPE))
-        short_labels = bool(config.get("short_unit_labels", constants.config.defaults.DEFAULT_SHORT_UNIT_LABELS))
-        decimal_places = int(config.get("decimal_places", constants.config.defaults.DEFAULT_DECIMAL_PLACES))
-        decimal_places = max(0, min(2, decimal_places))
-
-        return helpers.format_speed(
-            speed_bps,
-            self.i18n,
-            force_mega_unit=force_mega,
-            decimal_places=decimal_places,
-            unit_type=unit_type,
-            short_labels=short_labels,
-        )
 
     def _tr(self, key: str, default: str) -> str:
         if self.i18n is None:
