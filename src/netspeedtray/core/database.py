@@ -55,6 +55,7 @@ class DatabaseWorker(QThread):
             try:
                 self._initialize_connection()
                 self._check_and_create_schema()
+                self._ensure_indexes()  # idempotent; runs regardless of schema version
                 initialized = True
                 break
             except sqlite3.Error as e:
@@ -146,7 +147,35 @@ class DatabaseWorker(QThread):
         self.conn.execute("PRAGMA journal_mode = WAL;")
         self.conn.execute("PRAGMA foreign_keys = ON;")
         self.conn.execute("PRAGMA busy_timeout = 5000;")
+        # WAL alone leaves synchronous=FULL (an fsync per commit). NORMAL is the documented,
+        # crash-safe pairing for WAL and is much cheaper for our once-a-second writes. A larger
+        # negative cache_size = ~8 MB page cache keeps the hot tiers in memory.
+        self.conn.execute("PRAGMA synchronous = NORMAL;")
+        self.conn.execute("PRAGMA cache_size = -8000;")
 
+
+    def _ensure_indexes(self) -> None:
+        """
+        Create performance indexes idempotently on every startup — covers DBs that predate
+        them WITHOUT a schema-version bump (CREATE INDEX IF NOT EXISTS is a no-op when present).
+
+        Hardware-history queries are `WHERE stat_type = ? AND timestamp BETWEEN ? AND ? ORDER BY
+        timestamp`, but the tables' PK is (timestamp, stat_type) and the only extra index is
+        timestamp-only — so every read scans the time range and filters stat_type row-by-row.
+        A (stat_type, timestamp) index turns that into a selective seek + ordered range.
+        (Speed tables already have covering indexes for the common all-interface aggregate.)
+        """
+        if not self.conn:
+            return
+        try:
+            for table in (constants.data.HARDWARE_STATS_TABLE_RAW,
+                          constants.data.HARDWARE_STATS_TABLE_MINUTE,
+                          constants.data.HARDWARE_STATS_TABLE_HOUR):
+                self.conn.execute(
+                    f"CREATE INDEX IF NOT EXISTS idx_{table}_type_ts ON {table} (stat_type, timestamp);")
+            self.conn.commit()
+        except sqlite3.Error as e:
+            self.logger.warning("Could not ensure performance indexes: %s", e)
 
     def _close_connection(self) -> None:
         """Commits any final changes and closes the database connection."""
@@ -560,19 +589,29 @@ class DatabaseWorker(QThread):
             self.logger.info("Database maintenance tasks committed successfully.")
             
             if pruned:
-                # VACUUM is a full-DB rewrite under a write lock. On a long-running install
-                # the rolling 24h/30d/1yr windows mean `pruned` is ~always truthy, so this
-                # ran every maintenance cycle (hourly). Gate it to at most once per day (M2).
-                row = cursor.execute("SELECT value FROM metadata WHERE key='last_vacuum_at'").fetchone()
-                last_vac = int(row[0]) if (row and str(row[0]).isdigit()) else 0
-                if int(_now.timestamp()) - last_vac >= 86400:
-                    self.logger.info("Running VACUUM (>= 1 day since last)...")
-                    self.conn.execute("VACUUM;")
-                    self.conn.execute(
-                        "INSERT OR REPLACE INTO metadata (key, value) VALUES ('last_vacuum_at', ?)",
-                        (str(int(_now.timestamp())),))
-                    self.conn.commit()
-                    self.logger.info("VACUUM complete.")
+                # VACUUM is a full-DB rewrite under a write lock. On a long-running install the
+                # rolling 24h/30d/1yr windows mean `pruned` is ~always truthy, so this ran every
+                # maintenance cycle (hourly). Gate it to at most once/day AND only when there's
+                # real fragmentation to reclaim (M2 + audit #25). Its own try: a VACUUM failure
+                # must not roll back the pruning that already committed above.
+                try:
+                    row = cursor.execute("SELECT value FROM metadata WHERE key='last_vacuum_at'").fetchone()
+                    last_vac = int(row[0]) if (row and str(row[0]).isdigit()) else 0
+                    if int(_now.timestamp()) - last_vac >= 86400:
+                        free_row = cursor.execute("PRAGMA freelist_count").fetchone()
+                        free_pages = int(free_row[0]) if free_row else 0
+                        if free_pages >= 1000:  # ~4 MB of slack — below that it's not worth it
+                            self.logger.info("Running VACUUM (%d free pages, >= 1 day since last)...", free_pages)
+                            self.conn.execute("VACUUM;")
+                            self.conn.execute(
+                                "INSERT OR REPLACE INTO metadata (key, value) VALUES ('last_vacuum_at', ?)",
+                                (str(int(_now.timestamp())),))
+                            self.conn.commit()
+                            self.logger.info("VACUUM complete.")
+                        else:
+                            self.logger.debug("Skipping VACUUM — only %d free pages.", free_pages)
+                except sqlite3.Error as e:
+                    self.logger.warning("VACUUM skipped (maintenance already committed): %s", e)
 
             self.database_updated.emit()
         except sqlite3.Error as e:
