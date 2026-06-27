@@ -488,28 +488,24 @@ class NetworkSpeedWidget(QWidget):
         """Update CPU usage and trigger repaint."""
         self.cpu_usage = usage
         if self.config.get("widget_display_mode") in ["cpu_only", "combined", "side_by_side", "cycle"]:
-            self.layout_manager.resize_widget_for_font()
             self.update()
 
     def update_gpu_usage(self, usage: float) -> None:
         """Update GPU usage and trigger repaint."""
         self.gpu_usage = usage
         if self.config.get("widget_display_mode") in ["gpu_only", "combined", "side_by_side", "cycle"]:
-            self.layout_manager.resize_widget_for_font()
             self.update()
 
     def update_cpu_temp(self, temp: Optional[float]) -> None:
         """Update CPU temperature and trigger repaint."""
         self.cpu_temp = temp
         if self.config.get("widget_display_mode") in ["cpu_only", "combined", "side_by_side", "cycle"]:
-            self.layout_manager.resize_widget_for_font()
             self.update()
 
     def update_gpu_temp(self, temp: Optional[float]) -> None:
         """Update GPU temperature and trigger repaint."""
         self.gpu_temp = temp
         if self.config.get("widget_display_mode") in ["gpu_only", "combined", "side_by_side", "cycle"]:
-            self.layout_manager.resize_widget_for_font()
             self.update()
 
     def update_cpu_power(self, power: Optional[float]) -> None:
@@ -529,7 +525,6 @@ class NetworkSpeedWidget(QWidget):
         self.ram_used = used
         self.ram_total = total
         if self.config.get("widget_display_mode") in ["cpu_only", "combined", "side_by_side", "cycle"]:
-            self.layout_manager.resize_widget_for_font()
             self.update()
 
     def update_vram_info(self, used: float, total: float) -> None:
@@ -537,7 +532,6 @@ class NetworkSpeedWidget(QWidget):
         self.vram_used = used
         self.vram_total = total if total >= 0 else None
         if self.config.get("widget_display_mode") in ["gpu_only", "combined", "side_by_side", "cycle"]:
-            self.layout_manager.resize_widget_for_font()
             self.update()
 
     def _rotate_cycle(self) -> None:
