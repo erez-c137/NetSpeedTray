@@ -175,8 +175,15 @@ class GraphHost(QObject):
         through coordinator.handle_timeline_change, which persists config, debounces rapid clicks,
         resets the renderer's sticky y-limits, and clears stale visuals — so switching periods on
         the shared canvas behaves exactly like the standalone graph window."""
+        if self._is_closing:
+            return
         self.ensure_loaded()
         self._history_period_value = int(period_value)
+        # Raise the dedup floor SYNCHRONOUSLY: handle_timeline_change only debounces (it doesn't issue
+        # a request now), so an already-in-flight previous-period reply is still the newest sequence_id
+        # and would otherwise pass the guards in _on_data_ready and paint/emit stale totals under the
+        # new period. Anything requested before this change is now dropped.
+        self._accept_from_seq = self._current_request_id + 1
         from netspeedtray.views.graph.logic import GraphLogic
         period_key = GraphLogic.get_period_key(self._history_period_value)
         try:
@@ -248,8 +255,9 @@ class GraphHost(QObject):
                 return
             self.renderer.render(data, start, end, period_key,
                                  boot_time=self._cached_boot_time, stat_type=self._current_stat)
-            # Surface the worker's machine-wide period totals to the Network header (they're already
-            # computed for the request's interface filter — None == all interfaces == machine-wide).
+            # Surface the worker's period totals to the Network header. For ranged periods these are
+            # machine-wide (interface filter None sums every NIC); for SESSION they reflect the active
+            # interface mode (auto/selected/...), mirroring the standalone graph's session aggregation.
             if self._current_stat == "network":
                 self.network_totals_ready.emit(float(total_up or 0.0), float(total_down or 0.0), period_key)
         except Exception as e:

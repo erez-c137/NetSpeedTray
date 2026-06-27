@@ -61,7 +61,7 @@ class PeriodSegmentedControl(QWidget):
             btn.clicked.connect(self._on_clicked)
             lay.addWidget(btn, 1)
             self._buttons[key] = btn
-        self.setStyleSheet(su.timeline_pills_style())
+        self.setStyleSheet(su.segmented_pills_style(su.is_dark_mode()))
         self.set_period_key(initial_key, emit=False)
 
     def _on_clicked(self) -> None:
@@ -92,31 +92,52 @@ class NetworkHeader(QWidget):
         self._i18n = i18n
         c = su.semantic_colors()
 
-        root = QHBoxLayout(self)
+        root = QVBoxLayout(self)
         root.setContentsMargins(4, 0, 4, 0)
-        root.setSpacing(24)
-        self._down = self._stat_block(self._tr("DOWNLOAD_LABEL", "Download"), c)
-        self._up = self._stat_block(self._tr("UPLOAD_LABEL", "Upload"), c)
-        root.addLayout(self._down[0])
-        root.addLayout(self._up[0])
-        root.addStretch(1)
+        root.setSpacing(6)
+
+        # Top row: the time-window label (so the totals self-describe) + the period pills.
+        top = QHBoxLayout()
+        top.setContentsMargins(0, 0, 0, 0)
+        self._period_caption = QLabel(self._period_label(initial_key))
+        self._period_caption.setFont(su.font(tokens.TYPE_CAPTION))
+        self._period_caption.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
+        top.addWidget(self._period_caption, 0, Qt.AlignmentFlag.AlignVCenter)
+        top.addStretch(1)
         self._pills = PeriodSegmentedControl(initial_key)
         self._pills.period_changed.connect(self.period_changed)
-        root.addWidget(self._pills, 0, Qt.AlignmentFlag.AlignVCenter)
+        top.addWidget(self._pills, 0, Qt.AlignmentFlag.AlignVCenter)
+        root.addLayout(top)
 
-    def _stat_block(self, label: str, c: dict) -> Tuple[QVBoxLayout, QLabel]:
+        # Bottom row: the Download/Upload totals for that window.
+        bottom = QHBoxLayout()
+        bottom.setContentsMargins(0, 0, 0, 0)
+        bottom.setSpacing(28)
+        self._down = self._stat_block(self._tr("DOWNLOAD_LABEL", "Download"), "↓", c)
+        self._up = self._stat_block(self._tr("UPLOAD_LABEL", "Upload"), "↑", c)
+        bottom.addLayout(self._down[0])
+        bottom.addLayout(self._up[0])
+        bottom.addStretch(1)
+        root.addLayout(bottom)
+
+    def _stat_block(self, label: str, glyph: str, c: dict) -> Tuple[QVBoxLayout, QLabel]:
         col = QVBoxLayout()
         col.setSpacing(0)
         col.setContentsMargins(0, 0, 0, 0)
         name = QLabel(label)
         name.setFont(su.font(tokens.TYPE_CAPTION))
         name.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
-        value = QLabel("—")
+        value = QLabel(f"{glyph} —")     # seed the populated shape so the first emit only swaps the number
         value.setFont(su.font(tokens.TYPE_SUBTITLE))
         value.setStyleSheet(f"color: {c['text_primary']}; background: transparent;")
         col.addWidget(name)
         col.addWidget(value)
         return col, value
+
+    def _period_label(self, period_key: str) -> str:
+        """Localized window name for the totals — reuses the existing TIMELINE_* i18n values
+        (e.g. '24 Hours'), so no new translator keys."""
+        return self._tr(period_key, period_key.replace("TIMELINE_", "").replace("_", " ").title())
 
     # --- inputs -----------------------------------------------------------------
     def set_totals(self, up_bytes: float, down_bytes: float, period_key: Optional[str] = None) -> None:
@@ -124,9 +145,12 @@ class NetworkHeader(QWidget):
         uv, uu = format_data_size(up_bytes, self._i18n, precision=1)
         self._down[1].setText(f"↓ {self._fmt(dv)} {du}")
         self._up[1].setText(f"↑ {self._fmt(uv)} {uu}")
+        if period_key:
+            self._period_caption.setText(self._period_label(period_key))
 
     def set_period_key(self, period_key: str) -> None:
         self._pills.set_period_key(period_key, emit=False)
+        self._period_caption.setText(self._period_label(period_key))
 
     def _fmt(self, value: float) -> str:
         s = f"{value:.1f}"

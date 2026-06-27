@@ -46,9 +46,10 @@ class NetworkTab(QWidget):
         root.addWidget(self._plot_slot, 1)
 
     def _on_totals(self, up_bytes: float, down_bytes: float, period_key: str) -> None:
+        # Update the numbers (+ the window label) only. The pills are the period's source of truth —
+        # syncing them from a totals emit would let a late reply flip the user's selection.
         try:
             self._header.set_totals(up_bytes, down_bytes, period_key)
-            self._header.set_period_key(period_key)  # keep pills in sync if the period changed elsewhere
         except Exception:
             pass
 
@@ -71,9 +72,14 @@ class NetworkTab(QWidget):
 
     def teardown(self) -> None:
         # The GraphHost is owned + fully torn down by the MonitorWindow; here we just stop our loop
-        # and drop our cross-object signal so a late totals emit can't poke a deleted header.
+        # and drop our cross-object signals so a late totals emit can't poke a deleted header and a
+        # stray pill click can't reach a closing host.
         try:
             self._host.network_totals_ready.disconnect(self._on_totals)
+        except Exception:
+            pass
+        try:
+            self._header.period_changed.disconnect(self._host.set_period)
         except Exception:
             pass
         try:

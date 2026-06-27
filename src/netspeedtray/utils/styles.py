@@ -530,6 +530,63 @@ def timeline_pills_style() -> str:
     """
 
 
+def segmented_pills_style(dark: bool) -> str:
+    """Theme-aware variant of timeline_pills_style() for the Monitor's period control.
+
+    timeline_pills_style() is hardcoded for the graph window's dark canvas (light-grey glyphs on a
+    translucent-white fill); on the Monitor's theme-aware surface that's invisible in light mode. This
+    keeps the exact geometry + accent checked-state but flips the unchecked fill/text/border by theme.
+    """
+    accent_qcolor = get_accent_color()
+    accent_rgb = f"rgb({accent_qcolor.red()}, {accent_qcolor.green()}, {accent_qcolor.blue()})"
+
+    if dark:
+        text, fill, border, hover_fill, hover_text = "#ccc", "rgba(255,255,255,0.05)", \
+            "rgba(255,255,255,0.10)", "rgba(255,255,255,0.15)", "white"
+    else:
+        text, fill, border, hover_fill, hover_text = "#444", "rgba(0,0,0,0.04)", \
+            "rgba(0,0,0,0.12)", "rgba(0,0,0,0.08)", "#111"
+
+    return f"""
+        QWidget#timelinePills {{
+            background: transparent;
+        }}
+        QWidget#timelinePills QPushButton {{
+            background: {fill};
+            color: {text};
+            border: 1px solid {border};
+            border-right: none;
+            margin: 0px;
+            padding: 4px 2px;
+            font-size: 10px;
+            font-weight: 600;
+            font-family: 'Segoe UI Variable', 'Segoe UI', sans-serif;
+        }}
+        QPushButton#pillFirst {{
+            border-top-left-radius: 6px;
+            border-bottom-left-radius: 6px;
+        }}
+        QPushButton#pillLast {{
+            border-top-right-radius: 6px;
+            border-bottom-right-radius: 6px;
+            border-right: 1px solid {border};
+        }}
+        QPushButton:hover:!checked {{
+            background: {hover_fill};
+            color: {hover_text};
+        }}
+        QWidget#timelinePills QPushButton:checked {{
+            background-color: {accent_rgb} !important;
+            color: white !important;
+            border: 1px solid {accent_rgb} !important;
+            font-weight: bold;
+        }}
+        QWidget#timelinePills QPushButton#pillLast:checked {{
+            border-right: 1px solid {accent_rgb} !important;
+        }}
+    """
+
+
 
 def toggle_style(total_track_width: int, total_track_height: int) -> str:
     """

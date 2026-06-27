@@ -61,6 +61,47 @@ def test_header_totals_format(q_app):
     assert "↑" in h._up[1].text() and "GB" in h._up[1].text()
 
 
+def test_period_caption_labels_the_window(q_app):
+    """The totals self-describe their time window via the localized TIMELINE_* value (no new keys)."""
+    i18n = I18nStrings("en_US")
+    h = NetworkHeader(i18n, "TIMELINE_24_HOURS")
+    h.set_totals(1e9, 2e9, period_key="TIMELINE_24_HOURS")
+    assert h._period_caption.text() == getattr(i18n, "TIMELINE_24_HOURS")   # "24 Hours"
+    h.set_totals(1e9, 2e9, period_key="TIMELINE_MONTH")
+    assert h._period_caption.text() == getattr(i18n, "TIMELINE_MONTH")
+
+
+def test_initial_value_placeholders_seeded(q_app):
+    """Value blocks seed to the populated shape ('↓ —' / '↑ —') so the first emit only swaps digits."""
+    h = NetworkHeader(I18nStrings("en_US"), "TIMELINE_24_HOURS")
+    assert h._down[1].text() == "↓ —"
+    assert h._up[1].text() == "↑ —"
+
+
+def test_pills_style_is_theme_aware(q_app):
+    """The Monitor pills must restyle by theme (the dark-only graph style is invisible in light mode)."""
+    from netspeedtray.utils import styles as su
+    assert su.segmented_pills_style(True) != su.segmented_pills_style(False)
+    assert "rgba(0,0,0" in su.segmented_pills_style(False)      # light uses dark-on-light fills
+    assert "rgba(255,255,255" in su.segmented_pills_style(True)  # dark uses light-on-dark fills
+
+
+def test_set_period_raises_dedup_floor_and_routes(q_app):
+    """set_period must drop any in-flight previous-period reply (stale-totals race) and route the
+    period change through the coordinator (debounce + ylim reset), not a direct refresh."""
+    from unittest.mock import MagicMock
+    from netspeedtray.views.monitor.graph_host import GraphHost
+    mw = MagicMock(); mw.config = {}
+    host = GraphHost(mw, {}, I18nStrings("en_US"))
+    host._loaded = True                      # bypass ensure_loaded (no matplotlib/thread in the test)
+    host.coordinator = MagicMock()
+    host._current_request_id = 7
+    host.set_period(3)                       # user picks Week
+    assert host._accept_from_seq == 8        # floor raised past every in-flight request
+    host.coordinator.handle_timeline_change.assert_called_once_with("TIMELINE_WEEK")
+    assert host._history_period_value == 3
+
+
 def test_header_totals_localized_separator(q_app):
     """On a comma-decimal locale the totals must use ',' (so they match the graph's localized text)."""
     h = NetworkHeader(I18nStrings("de_DE"), "TIMELINE_24_HOURS")
