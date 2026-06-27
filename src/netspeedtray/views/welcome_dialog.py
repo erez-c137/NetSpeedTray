@@ -11,12 +11,22 @@ from PyQt6.QtWidgets import (
     QDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget,
 )
 
+from netspeedtray.utils import styles as su
+from netspeedtray.utils.dwm import apply_win11_chrome
+
 
 class WelcomeDialog(QDialog):
     """A calm one-screen welcome for the 2.0 taskbar-embed."""
 
     ACTION_GOT_IT = "got_it"
     ACTION_WHATS_NEW = "whats_new"
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        try:
+            apply_win11_chrome(int(self.winId()), dark=su.is_dark_mode())
+        except Exception:
+            pass
 
     def __init__(self, i18n, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)

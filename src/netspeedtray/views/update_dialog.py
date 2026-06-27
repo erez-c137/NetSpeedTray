@@ -15,6 +15,9 @@ from PyQt6.QtWidgets import (
     QDialog, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget,
 )
 
+from netspeedtray.utils import styles as su
+from netspeedtray.utils.dwm import apply_win11_chrome
+
 
 class UpdateDialog(QDialog):
     """Update-available dialog with inert release notes and three actions."""
@@ -22,6 +25,13 @@ class UpdateDialog(QDialog):
     ACTION_DISMISS = "dismiss"
     ACTION_DOWNLOAD = "download"
     ACTION_SKIP = "skip"
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        try:
+            apply_win11_chrome(int(self.winId()), dark=su.is_dark_mode())
+        except Exception:
+            pass
 
     def __init__(self, i18n, current: str, latest: str, body: str,
                  parent: Optional[QWidget] = None) -> None:
