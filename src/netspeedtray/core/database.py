@@ -519,9 +519,19 @@ class DatabaseWorker(QThread):
             self.logger.info("Database maintenance tasks committed successfully.")
             
             if pruned:
-                self.logger.info("Significant data pruned, running VACUUM...")
-                self.conn.execute("VACUUM;")
-                self.logger.info("VACUUM complete.")
+                # VACUUM is a full-DB rewrite under a write lock. On a long-running install
+                # the rolling 24h/30d/1yr windows mean `pruned` is ~always truthy, so this
+                # ran every maintenance cycle (hourly). Gate it to at most once per day (M2).
+                row = cursor.execute("SELECT value FROM metadata WHERE key='last_vacuum_at'").fetchone()
+                last_vac = int(row[0]) if (row and str(row[0]).isdigit()) else 0
+                if int(_now.timestamp()) - last_vac >= 86400:
+                    self.logger.info("Running VACUUM (>= 1 day since last)...")
+                    self.conn.execute("VACUUM;")
+                    self.conn.execute(
+                        "INSERT OR REPLACE INTO metadata (key, value) VALUES ('last_vacuum_at', ?)",
+                        (str(int(_now.timestamp())),))
+                    self.conn.commit()
+                    self.logger.info("VACUUM complete.")
 
             self.database_updated.emit()
         except sqlite3.Error as e:

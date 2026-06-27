@@ -492,8 +492,6 @@ class StatsMonitorThread(QThread):
             return
         for ns in ("root\\LibreHardwareMonitor", "root\\OpenHardwareMonitor"):
             try:
-                import pythoncom
-                pythoncom.CoInitialize()
                 obj = win32com.client.GetObject(f"winmgmts:{ns}")
                 # Validate the namespace exposes ANY sensor, not just Temperature:
                 # a Power/Load-only source must not be rejected (issue #130). LHM
@@ -619,8 +617,6 @@ class StatsMonitorThread(QThread):
             return None
         try:
             if not self._wmi:
-                import pythoncom
-                pythoncom.CoInitialize()
                 try:
                     self._wmi = win32com.client.GetObject("winmgmts:\\\\.\\root\\wmi")
                 except Exception:
@@ -653,6 +649,10 @@ class StatsMonitorThread(QThread):
         _in_rdp = is_rdp_session()
         if _in_rdp:
             self.logger.info("RDP session detected — GPU monitoring will be skipped.")
+
+        # Initialise the COM apartment ONCE for this thread (H4). Was done per-poll inside
+        # the WMI helpers, leaking a COM ref every poll while no LHM source was connected.
+        self._init_com()
 
         while self._is_running:
             try:
@@ -751,6 +751,14 @@ class StatsMonitorThread(QThread):
             except Exception:
                 pass
         self._wmi_ohm = None
+
+    def _init_com(self) -> None:
+        """Initialise the COM apartment ONCE for this thread (WMI/LHM access)."""
+        try:
+            import pythoncom
+            pythoncom.CoInitialize()
+        except Exception:
+            pass
 
     def _cleanup_com(self) -> None:
         """Releases COM apartment initialised for WMI access."""
