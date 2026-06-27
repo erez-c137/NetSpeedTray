@@ -43,6 +43,7 @@ from netspeedtray.views.settings.pages.general import GeneralPage
 from netspeedtray.views.settings.pages.appearance import AppearancePage
 from netspeedtray.views.settings.pages.colors import ColorsPage
 from netspeedtray.views.settings.pages.hardware import HardwarePage
+from netspeedtray.views.settings.pages.advanced import AdvancedPage
 from netspeedtray.views.widget.preview import PreviewWidget
 from netspeedtray.constants.update_mode import UpdateMode
 
@@ -185,6 +186,7 @@ class SettingsDialog(QDialog):
                 self.i18n.HARDWARE_MONITORING_GROUP,
                 self.i18n.UNITS_GROUP,
                 self.i18n.NETWORK_INTERFACES_GROUP,
+                "Advanced",  # i18n pending (single 2.0 pass)
             ])
             self.sidebar.setCurrentRow(0)
             sidebar_layout.addWidget(self.sidebar)
@@ -225,6 +227,12 @@ class SettingsDialog(QDialog):
                 self.available_interfaces,
                 self._schedule_settings_update
             )
+            self.advanced_page = AdvancedPage(
+                self.i18n,
+                self._schedule_settings_update,
+                reset_page_callback=self._reset_advanced_page,
+                reset_all_callback=self._reset_all_to_defaults,
+            )
 
             # Add pages wrapped in scroll areas (order matches sidebar)
             for page in [
@@ -234,6 +242,7 @@ class SettingsDialog(QDialog):
                 self.hardware_page,      # 3 - Hardware
                 self.units_page,         # 4 - Display
                 self.interfaces_page,    # 5 - Interfaces
+                self.advanced_page,      # 6 - Advanced
             ]:
                 self.stack.addWidget(self._wrap_in_scroll(page))
 
@@ -312,6 +321,7 @@ class SettingsDialog(QDialog):
             self.hardware_page.load_settings(self.config)
             self.units_page.load_settings(self.config)
             self.interfaces_page.load_settings(self.config)
+            self.advanced_page.load_settings(self.config)
 
             # Seed the live preview from the loaded config.
             self._update_preview(self.config)
@@ -407,7 +417,8 @@ class SettingsDialog(QDialog):
             settings.update(self.hardware_page.get_settings())
             settings.update(self.units_page.get_settings())
             settings.update(self.interfaces_page.get_settings())
-            
+            settings.update(self.advanced_page.get_settings())
+
             # Save current window position
             settings["settings_window_pos"] = {"x": self.pos().x(), "y": self.pos().y()}
             
@@ -515,6 +526,37 @@ class SettingsDialog(QDialog):
         self.startup_enabled_initial_state = is_startup_enabled
         self._user_chose_default_color = False
         self._init_ui_state()
+
+    def _reset_advanced_page(self) -> None:
+        """Reset only the Advanced page's settings to their defaults (C6)."""
+        defaults = constants.config.defaults.DEFAULT_CONFIG
+        cfg = self.config.copy()
+        for k in self.advanced_page.get_settings():
+            if k in defaults:
+                cfg[k] = defaults[k]
+        self.advanced_page.load_settings(cfg)
+        self._schedule_settings_update()
+
+    def _reset_all_to_defaults(self) -> None:
+        """Reset every setting to factory defaults (after confirmation); history is kept (C6)."""
+        resp = QMessageBox.question(
+            self, "Reset all settings?",
+            "This restores every setting to its default. Your saved history is kept. Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if resp != QMessageBox.StandardButton.Yes:
+            return
+        defaults = dict(constants.config.defaults.DEFAULT_CONFIG)
+        # Preserve non-settings state a reset shouldn't wipe (window positions, onboarding flags).
+        for k in ("position_x", "position_y", "settings_window_pos", "graph_window_pos",
+                  "app_activity_window_pos", "monitor_window_pos", "first_run_ever",
+                  "first_run_v2_seen", "tooltip_hint_shown_count", "temp_onboarding_dismissed",
+                  "usage_alert_state", "skipped_version"):
+            if k in self.config:
+                defaults[k] = self.config[k]
+        self.reset_with_config(defaults, self.startup_enabled_initial_state)
+        self._schedule_settings_update()
 
     def _save_and_close(self) -> None:
         """Saves settings and closes."""

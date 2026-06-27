@@ -122,6 +122,7 @@ class ConfigConstants:
         "selected_interfaces": [],
         "excluded_interfaces": network.interface.DEFAULT_EXCLUSIONS,
         "keep_data": DEFAULT_KEEP_DATA_DAYS,
+        "reduce_motion": False,            # app-wide: disable preview/hold-still animations
         "dark_mode": DEFAULT_DARK_MODE,
         "history_period": data.history_period.DEFAULT_PERIOD,
         "legend_position": DEFAULT_LEGEND_POSITION,
@@ -212,6 +213,7 @@ class ConfigConstants:
         "selected_interfaces": {"type": list, "default": [], "item_type": str},
         "excluded_interfaces": {"type": list, "default": network.interface.DEFAULT_EXCLUSIONS, "item_type": str},
         "keep_data": {"type": int, "default": DEFAULT_KEEP_DATA_DAYS, "choices": list(data.retention.DAYS_MAP.values()), "min": min(data.retention.DAYS_MAP.values()), "max": max(data.retention.DAYS_MAP.values())},
+        "reduce_motion": {"type": bool, "default": False},
         "dark_mode": {"type": bool, "default": DEFAULT_DARK_MODE},
         "history_period": {"type": str, "default": data.history_period.DEFAULT_PERIOD, "choices": list(data.history_period.PERIOD_MAP.values())},
         "legend_position": {"type": str, "default": DEFAULT_LEGEND_POSITION, "choices": data.legend_position.UI_OPTIONS},
