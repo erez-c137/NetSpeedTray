@@ -182,13 +182,21 @@ class StatsController(QObject):
         for name, current in current_counters.items():
             last = self.last_interface_counters.get(name)
             if last:
-                if current.bytes_sent < last.bytes_sent or current.bytes_recv < last.bytes_recv:
-                    continue
-
+                # Per-direction counter-reset/wrap guard: a reset in ONE direction must not
+                # discard the OTHER direction's real bytes — they're independent counters.
                 up_diff = current.bytes_sent - last.bytes_sent
                 down_diff = current.bytes_recv - last.bytes_recv
-                safe_time_diff = max(time_diff, constants.network.speed.MIN_TIME_DIFF)
+                if up_diff < 0:
+                    up_diff = 0
+                if down_diff < 0:
+                    down_diff = 0
 
+                # The data-cap odometer counts REAL bytes transferred (post reset-clamp). The
+                # rate ceiling + spike filter below are DISPLAY-only and must not drop them: a
+                # small time_diff can inflate the *rate* past the ceiling while the bytes are real.
+                byte_deltas[name] = (float(up_diff), float(down_diff))
+
+                safe_time_diff = max(time_diff, constants.network.speed.MIN_TIME_DIFF)
                 up_speed_bps = int(up_diff / safe_time_diff)
                 down_speed_bps = int(down_diff / safe_time_diff)
                 
@@ -226,7 +234,6 @@ class StatsController(QObject):
 
                 self.current_speed_data[name] = (final_up_speed_bps, final_down_speed_bps)
                 self.recent_speeds[name].append((up_speed_bps, down_speed_bps))
-                byte_deltas[name] = (float(up_diff), float(down_diff))
 
         agg_upload, agg_download = self._aggregate_for_display(self.current_speed_data)
 
@@ -280,7 +287,13 @@ class StatsController(QObject):
             total_down = sum(down for name, (up, down) in per_interface_speeds.items() if not any(kw in name.lower() for kw in exclusions))
             return total_up, total_down
 
-        else: # virtual or unknown
+        elif mode in ("all_virtual", "virtual"):
+            # Sum every interface (physical + virtual). Both names are accepted: the settings
+            # page persists "all_virtual"; "virtual" is the legacy/docs alias.
+            return self._sum_all(per_interface_speeds)
+
+        else:
+            self.logger.warning("Unknown interface_mode %r; summing all interfaces as a fallback.", mode)
             return self._sum_all(per_interface_speeds)
 
 

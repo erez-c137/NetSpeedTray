@@ -293,7 +293,10 @@ class StatsMonitorThread(QThread):
                     )
                     parts = output.strip().split('\n')[0].split(',')
                     if len(parts) > 0:
-                        try: self._nvidia_cache_temp = float(parts[0].strip())
+                        try:
+                            _t = float(parts[0].strip())
+                            if 0.0 < _t < 150.0:  # sanity-range like every other temp path
+                                self._nvidia_cache_temp = _t
                         except: pass
                     if len(parts) > 1:
                         try: self._nvidia_cache_vram_total = float(parts[1].strip())  # MiB
@@ -306,6 +309,11 @@ class StatsMonitorThread(QThread):
                         except: pass
                 except Exception as e:
                     self.logger.debug("nvidia-smi temp/power query failed: %s", e)
+                    # Sensor likely dropped out — invalidate the cache so readings fall back to
+                    # N/A instead of freezing the last good value forever (the N/A design intent).
+                    self._nvidia_cache_temp = None
+                    self._nvidia_cache_power = None
+                    self._nvidia_cache_vram_total = None
 
             # Apply the (possibly just-refreshed) cached values to whatever still needs a source.
             if need_smi_temp and temp_c is None and self._nvidia_cache_temp is not None:
@@ -315,17 +323,22 @@ class StatsMonitorThread(QThread):
             if vram_total is None and self._nvidia_cache_vram_total is not None:
                 vram_total = self._nvidia_cache_vram_total
 
-        # 5. RAPL PP1 fallback for Intel iGPU power (if no LHM/nvidia-smi power)
-        if include_power and power_w is None and self._power_pp1_counter is not None:
+        # 5. RAPL PP1 fallback for Intel iGPU power (if no LHM/nvidia-smi power).
+        # Init the PDH query FIRST (it's idempotent and sets _power_pp1_counter on first call) —
+        # the old guard checked the counter before anything could ever set it, so this whole
+        # fallback was dead code.
+        if include_power and power_w is None:
             try:
                 self._init_power_query()
-                if self._power_query:
+                if self._power_query and self._power_pp1_counter is not None:
                     win32pdh.CollectQueryData(self._power_query)
                     _, val = win32pdh.GetFormattedCounterValue(self._power_pp1_counter, win32pdh.PDH_FMT_DOUBLE)
                     if val is not None and val > 0:
                         power_w = val / 1000.0  # mW to W
             except: pass
 
+        # Clamp utilization to [0, 100] — PDH GPU-Engine counters can momentarily read >100%.
+        util_pct = max(0.0, min(100.0, util_pct))
         return GpuPollResult(util_pct, vram_used, vram_total, temp_c, power_w)
 
     @lru_cache(maxsize=4)
@@ -682,6 +695,13 @@ class StatsMonitorThread(QThread):
         # Initialise the COM apartment ONCE for this thread (H4). Was done per-poll inside
         # the WMI helpers, leaking a COM ref every poll while no LHM source was connected.
         self._init_com()
+
+        # Prime psutil.cpu_percent so the FIRST real reading is a true delta, not the 0.0 it
+        # returns on its first-ever call (which otherwise showed/recorded a bogus 0% CPU).
+        try:
+            psutil.cpu_percent(interval=None)
+        except Exception:
+            pass
 
         while self._is_running:
             try:
