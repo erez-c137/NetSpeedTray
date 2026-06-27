@@ -864,3 +864,97 @@ class ColorField(QWidget):
 
     def color(self) -> str:
         return self._hex
+
+
+class ArrowStylePicker(QWidget):
+    """
+    Picks the up/down arrow glyph style from the curated presets (Classic/Solid/Compact/
+    Outline/Double; see ``constants.arrows.ARROW_PRESETS``) plus a Custom option for any glyph.
+
+    Each segment's label *is* the glyph pair, so the choice is visual. "Classic" maps to the
+    empty config value (``arrow_*_symbol == ""``) so the renderer falls back to the native,
+    locale-aware default arrow — i.e. Classic always follows the OS language. Emits ``changed``.
+    """
+    changed = pyqtSignal()
+    _CUSTOM = "__custom__"
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        from netspeedtray.constants.arrows import ARROW_PRESETS
+        self._presets = list(ARROW_PRESETS)  # [(name, up, down)]
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(tokens.SPACE_S)
+
+        options = [(f"{up} {down}", name) for (name, up, down) in self._presets]
+        options.append(("Custom", self._CUSTOM))
+        self._seg = Win11Segmented(options)
+        self._seg.valueChanged.connect(self._on_segment)
+        for value, btn in self._seg._items:
+            if value != self._CUSTOM:
+                name = next((n for (n, _u, _d) in self._presets if n == value), value)
+                btn.setToolTip(name)
+        root.addWidget(self._seg)
+
+        self._custom_row = QWidget()
+        crow = QHBoxLayout(self._custom_row)
+        crow.setContentsMargins(0, 0, 0, 0)
+        crow.setSpacing(tokens.SPACE_S)
+        self._up_edit = QLineEdit()
+        self._up_edit.setMaxLength(4)
+        self._up_edit.setFixedWidth(56)
+        self._up_edit.setPlaceholderText("↑")
+        self._down_edit = QLineEdit()
+        self._down_edit.setMaxLength(4)
+        self._down_edit.setFixedWidth(56)
+        self._down_edit.setPlaceholderText("↓")
+        self._up_edit.textChanged.connect(lambda _t: self.changed.emit())
+        self._down_edit.textChanged.connect(lambda _t: self.changed.emit())
+        crow.addWidget(QLabel("Up"))
+        crow.addWidget(self._up_edit)
+        crow.addSpacing(tokens.SPACE_M)
+        crow.addWidget(QLabel("Down"))
+        crow.addWidget(self._down_edit)
+        crow.addStretch(0)
+        self._custom_row.setVisible(False)
+        root.addWidget(self._custom_row)
+
+    def _on_segment(self, value) -> None:
+        self._custom_row.setVisible(value == self._CUSTOM)
+        self.changed.emit()
+
+    def set_values(self, up: str, down: str) -> None:
+        """Select the preset matching (up, down), or Custom (filling the fields)."""
+        up = up or ""
+        down = down or ""
+        if not up and not down:
+            self._seg.setValue("Classic")
+            self._custom_row.setVisible(False)
+            return
+        for (name, pu, pd) in self._presets:
+            if up == pu and down == pd:
+                self._seg.setValue(name)
+                self._custom_row.setVisible(False)
+                return
+        self._up_edit.blockSignals(True)
+        self._down_edit.blockSignals(True)
+        self._up_edit.setText(up)
+        self._down_edit.setText(down)
+        self._up_edit.blockSignals(False)
+        self._down_edit.blockSignals(False)
+        self._seg.setValue(self._CUSTOM)
+        self._custom_row.setVisible(True)
+
+    def get_values(self) -> dict:
+        """Returns {'arrow_up_symbol', 'arrow_down_symbol'} for the current selection."""
+        val = self._seg.value()
+        if val == self._CUSTOM:
+            return {"arrow_up_symbol": self._up_edit.text(), "arrow_down_symbol": self._down_edit.text()}
+        for (name, up, down) in self._presets:
+            if name == val:
+                # Classic == native default → store empty so it tracks the OS language.
+                if name == "Classic":
+                    return {"arrow_up_symbol": "", "arrow_down_symbol": ""}
+                return {"arrow_up_symbol": up, "arrow_down_symbol": down}
+        return {"arrow_up_symbol": "", "arrow_down_symbol": ""}

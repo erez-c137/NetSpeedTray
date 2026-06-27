@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
 from netspeedtray import constants
 from netspeedtray.constants import styles as style_constants
 from netspeedtray.utils import styles as style_utils
-from netspeedtray.utils.components import Win11Slider, Win11Toggle
+from netspeedtray.utils.components import Win11Slider, Win11Toggle, ArrowStylePicker
 
 class AppearancePage(QWidget):
     layout_changed = pyqtSignal()
@@ -117,7 +117,15 @@ class AppearancePage(QWidget):
         arrow_group = QGroupBox(self.i18n.ARROW_STYLING_GROUP)
         arrow_layout = QVBoxLayout(arrow_group)
         arrow_layout.setSpacing(12)
-        
+
+        # Arrow STYLE picker (#129) — curated glyph presets + Custom. The default "Classic"
+        # tracks the native locale arrow; the others set arrow_up/down_symbol overrides.
+        # NOTE: English literal pending the single i18n pass (Stage 9) → ARROW_STYLE_LABEL.
+        arrow_layout.addWidget(QLabel("Arrow style"))
+        self.arrow_style_picker = ArrowStylePicker()
+        self.arrow_style_picker.changed.connect(self.on_change)
+        arrow_layout.addWidget(self.arrow_style_picker)
+
         self.use_separate_arrow_font = Win11Toggle(label_text=self.i18n.USE_CUSTOM_ARROW_FONT)
         self.use_separate_arrow_font.toggled.connect(self._on_arrow_font_toggle)
         arrow_layout.addWidget(self.use_separate_arrow_font)
@@ -229,6 +237,10 @@ class AppearancePage(QWidget):
         
         self.bg_opacity.setValue(int(config.get("background_opacity", 0)))
         
+        # Arrow style (glyph presets / custom)
+        self.arrow_style_picker.set_values(
+            config.get("arrow_up_symbol", ""), config.get("arrow_down_symbol", ""))
+
         # Arrow Fonts
         self.use_separate_arrow_font.setChecked(bool(config.get("use_separate_arrow_font", False)))
         a_fam = config.get("arrow_font_family", fam) # Fallback to main
@@ -260,6 +272,8 @@ class AppearancePage(QWidget):
             "arrow_font_family": self.arrow_font_family_label.text(),
             "arrow_font_size": int(self.arrow_font_size.value()),
             "arrow_font_weight": constants.fonts.WEIGHT_DEMIBOLD, # Fixed default due to glyph fallback issues
+            # Arrow style glyphs (#129) — empty == native locale default (Classic)
+            **self.arrow_style_picker.get_values(),
             # Mini Graph
             "graph_enabled": self.enable_graph.isChecked(),
             "history_minutes": self.history_duration.value(),
