@@ -153,6 +153,10 @@ def format_speed(
     if not isinstance(speed, (int, float)):
         raise TypeError(f"Speed must be a number (int or float), got {type(speed)}")
 
+    # Self-clamp decimal_places: production config already constrains it, but this is a public
+    # helper and a negative value would make the f-string ".{-1}f" raise ValueError.
+    decimal_places = max(0, min(2, int(decimal_places)))
+
     current_speed = max(0.0, float(speed))
     val: float
     unit: str

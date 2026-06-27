@@ -512,8 +512,11 @@ class GraphInteractionHandler(QObject):
             # Speed display (right value): follows user-selected unit settings.
             down_bw_value, down_bw_unit = format_data_size(download_bytes_sec, self.window.i18n, precision=bw_precision)
             up_bw_value, up_bw_unit = format_data_size(upload_bytes_sec, self.window.i18n, precision=bw_precision)
-            down_bw_str = f"{down_bw_value:.{bw_precision}f} {down_bw_unit}" if bw_precision > 0 else f"{int(down_bw_value)} {down_bw_unit}"
-            up_bw_str = f"{up_bw_value:.{bw_precision}f} {up_bw_unit}" if bw_precision > 0 else f"{int(up_bw_value)} {up_bw_unit}"
+            # These are per-second RATES, so the byte-family unit must carry "/s" (MB/s, not MB).
+            down_bw_str = (f"{down_bw_value:.{bw_precision}f} {down_bw_unit}/s" if bw_precision > 0
+                           else f"{int(down_bw_value)} {down_bw_unit}/s")
+            up_bw_str = (f"{up_bw_value:.{bw_precision}f} {up_bw_unit}/s" if bw_precision > 0
+                         else f"{int(up_bw_value)} {up_bw_unit}/s")
 
             up_speed_str = format_speed(
                 upload_bytes_sec,
