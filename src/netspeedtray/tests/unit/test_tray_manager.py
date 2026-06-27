@@ -156,6 +156,38 @@ def test_usage_line_formats_and_caches(mock_widget, mock_i18n, q_app):
     assert state.get_total_bandwidth_for_period.call_count == 2
 
 
+def test_hardware_state_line_reflects_config(mock_widget, mock_i18n, q_app):
+    """The self-describing hardware row reads On/Off from the widget config on open."""
+    mock_widget.config = {"monitor_cpu_enabled": False, "monitor_gpu_enabled": False}
+    manager = TrayIconManager(mock_widget, mock_i18n)
+    manager.initialize()
+
+    manager._refresh_dynamic_items()
+    assert "Off" in manager.hardware_action.text()
+
+    mock_widget.config = {"monitor_gpu_enabled": True}
+    manager._refresh_dynamic_items()
+    assert "On" in manager.hardware_action.text()
+
+
+def test_show_me_around_entry_present(mock_widget, mock_i18n, q_app):
+    """The re-discovery entry exists so a returning user can re-open the tour."""
+    manager = TrayIconManager(mock_widget, mock_i18n)
+    manager.initialize()
+    texts = [a.text() for a in manager.context_menu.actions()]
+    assert any("Show me around" in t for t in texts)
+
+
+def test_usage_rows_are_clickable_doors(mock_widget, mock_i18n, q_app):
+    """The usage glance rows are enabled and open the graph when clicked (unfold-the-knife)."""
+    mock_widget.open_graph_window = MagicMock()
+    manager = TrayIconManager(mock_widget, mock_i18n)
+    manager.initialize()
+    assert manager.usage_today_action.isEnabled()
+    manager._open_graph()
+    mock_widget.open_graph_window.assert_called_once()
+
+
 def test_menu_position_calculation_fallback(mock_widget, mock_i18n, q_app):
     """Tests that menu position falls back gracefully if renderer is missing."""
     manager = TrayIconManager(mock_widget, mock_i18n)

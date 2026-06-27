@@ -703,6 +703,37 @@ class NetworkSpeedWidget(QWidget):
             gpu_history=list(self.widget_state.gpu_history),
         )
 
+    # Number of app runs the gesture-hint tooltip is shown before it fades for good.
+    _TOOLTIP_HINT_MAX_SHOWS = 8
+
+    def enterEvent(self, event) -> None:
+        """On hover, surface a fading gesture-hint tooltip that teaches the hidden surfaces."""
+        try:
+            self._refresh_hover_tooltip()
+        except Exception as e:
+            self.logger.debug("hover tooltip refresh failed: %s", e)
+        super().enterEvent(event)
+
+    def _refresh_hover_tooltip(self) -> None:
+        """
+        The widget hides ~80% of its value behind right-click/double-click. A hover hint
+        teaches those gestures, then fades after a few sessions so it never nags. Counted at
+        most once per app run (not per hover), persisted without a repaint.
+        """
+        count = int(self.config.get("tooltip_hint_shown_count", 0))
+        if count < self._TOOLTIP_HINT_MAX_SHOWS:
+            # English literal pending the single 2.0 i18n pass.
+            self.setToolTip(
+                "Right-click for graphs, app activity, and CPU/GPU stats\n"
+                "Double-click to open the history dashboard"
+            )
+            if not getattr(self, "_tooltip_counted_this_session", False):
+                self._tooltip_counted_this_session = True
+                self.config_controller.update_config(
+                    {"tooltip_hint_shown_count": count + 1}, apply_and_repaint=False)
+        else:
+            self.setToolTip("")  # graduated — quiet from here on
+
     def _draw_paint_error(self, painter: Optional[QPainter], text: str) -> None:
         """Draws a visual error indicator on the widget background."""
         try:
@@ -1125,12 +1156,26 @@ class NetworkSpeedWidget(QWidget):
             webbrowser.open("https://github.com/erez-c137/NetSpeedTray")
 
     def _on_lhm_not_detected(self) -> None:
-        """Show a one-time notice when temperature/power readings require LibreHardwareMonitor."""
-        QMessageBox.information(
-            self,
-            self.i18n.LHM_NOT_DETECTED_TITLE,
-            self.i18n.LHM_NOT_DETECTED_TEXT
-        )
+        """
+        Temps/power are enabled but no sensor source was found. Show the actionable
+        onboarding explainer (one click to LHM, clear that the app never runs as admin),
+        unless the user has permanently dismissed it.
+        """
+        try:
+            if self.config.get("temp_onboarding_dismissed", False):
+                return
+            from netspeedtray.views.temp_onboarding_dialog import (
+                TempOnboardingDialog, LHM_RELEASES_URL,
+            )
+            dlg = TempOnboardingDialog(self.i18n, self)
+            dlg.exec()
+            if dlg.dismissed_forever():
+                self.update_config({"temp_onboarding_dismissed": True})
+            if dlg.action == TempOnboardingDialog.ACTION_GET_LHM:
+                import webbrowser
+                webbrowser.open(LHM_RELEASES_URL)
+        except Exception as e:
+            self.logger.error("Error showing temperature onboarding: %s", e, exc_info=True)
 
     def _on_graph_window_closed(self) -> None:
         """

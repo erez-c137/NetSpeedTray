@@ -49,6 +49,7 @@ class TrayIconManager(QObject):
         self.usage_today_action: Optional[QAction] = None
         self.data_cap_action: Optional[QAction] = None
         self.usage_month_action: Optional[QAction] = None
+        self.hardware_action: Optional[QAction] = None
         self._usage_today: Tuple[float, float] = (0.0, 0.0)  # (upload, download) bytes
         self._usage_month: Tuple[float, float] = (0.0, 0.0)
         self._usage_cache_ts: float = 0.0
@@ -92,18 +93,21 @@ class TrayIconManager(QObject):
         try:
             self.context_menu = QMenu(self.widget)
 
-            # --- Usage glance (informational, disabled; text filled on open) ---
+            # The menu is a MAP, not a flat list — four tiers, separated, so a new user can
+            # read what the app does straight from the right-click. (Strings marked "i18n
+            # pending" are English literals folded into the single 2.0 i18n pass.)
+
+            # --- Tier 1: Glance — live usage; a row is a door into the history graph ---
             self.usage_today_action = self.context_menu.addAction("")
-            self.usage_today_action.setEnabled(False)
+            self.usage_today_action.triggered.connect(self._open_graph)
             self.usage_month_action = self.context_menu.addAction("")
-            self.usage_month_action.setEnabled(False)
-            # i18n pending (single 2.0 pass)
-            self.data_cap_action = self.context_menu.addAction("Data cap…")
+            self.usage_month_action.triggered.connect(self._open_graph)
+            self.data_cap_action = self.context_menu.addAction("Data cap…")  # i18n pending
             if hasattr(self.widget, "open_data_cap_dialog"):
                 self.data_cap_action.triggered.connect(self.widget.open_data_cap_dialog)
             self.context_menu.addSeparator()
 
-            # --- Primary Actions (windows the user opens frequently) ---
+            # --- Tier 2: The app's surfaces (the windows most users never find) ---
             settings_action = self.context_menu.addAction(self.i18n.SETTINGS_MENU_ITEM)
             if hasattr(self.widget, 'show_settings'):
                 settings_action.triggered.connect(self.widget.show_settings)
@@ -116,13 +120,25 @@ class TrayIconManager(QObject):
             if hasattr(self.widget, 'open_app_activity_window'):
                 app_usage_action.triggered.connect(self.widget.open_app_activity_window)
 
+            # Self-describing hardware-monitor state — surfaces the entire CPU/GPU/temps half
+            # of the app that stays hidden until you go looking. Text set live on open.
+            self.hardware_action = self.context_menu.addAction("")  # i18n pending
+            if hasattr(self.widget, 'show_settings'):
+                self.hardware_action.triggered.connect(self.widget.show_settings)
+
             self.context_menu.addSeparator()
 
-            # --- Pause / Resume (label toggles with state; refreshed on open) ---
+            # --- Tier 3: Control + re-discovery ---
             self.pause_action = self.context_menu.addAction(self.i18n.PAUSE_MENU_ITEM)
             self.pause_action.triggered.connect(self._toggle_pause)
 
-            # --- Secondary Actions (less frequent) ---
+            show_around_action = self.context_menu.addAction("Show me around")  # i18n pending
+            if hasattr(self.widget, '_show_unfold_flyout'):
+                show_around_action.triggered.connect(self.widget._show_unfold_flyout)
+
+            self.context_menu.addSeparator()
+
+            # --- Tier 4: App-level (least frequent) ---
             update_action = self.context_menu.addAction(self.i18n.CHECK_FOR_UPDATES_MENU_ITEM)
             if hasattr(self.widget, 'check_for_updates'):
                 update_action.triggered.connect(self.widget.check_for_updates)
@@ -145,6 +161,21 @@ class TrayIconManager(QObject):
             self.logger.debug("Context menu initialized successfully.")
         except Exception as e:
             self.logger.error("Error initializing context menu: %s", e, exc_info=True)
+
+    def _open_graph(self, _checked: bool = False) -> None:
+        """Open the history graph (a usage glance row is a door into the trend)."""
+        try:
+            if hasattr(self.widget, "open_graph_window"):
+                self.widget.open_graph_window()
+        except Exception as e:
+            self.logger.error("Error opening graph from usage row: %s", e, exc_info=True)
+
+    def _format_hardware_state(self) -> str:
+        """'Hardware monitor: On/Off ▸' — self-describing, points at Settings. i18n pending."""
+        cfg = getattr(self.widget, "config", {})
+        on = bool(cfg.get("monitor_cpu_enabled") or cfg.get("monitor_gpu_enabled")
+                  or cfg.get("monitor_ram_enabled") or cfg.get("monitor_vram_enabled"))
+        return f"Hardware monitor: {'On' if on else 'Off'}  ▸"
 
     def _toggle_pause(self, _checked: bool = False) -> None:
         """Toggle the widget's paused state from the tray menu."""
@@ -209,6 +240,8 @@ class TrayIconManager(QObject):
                 )
             if self.data_cap_action is not None:
                 self.data_cap_action.setText(self._format_cap())
+            if self.hardware_action is not None:
+                self.hardware_action.setText(self._format_hardware_state())
             self._refresh_usage_totals()
             if self.usage_today_action is not None:
                 self.usage_today_action.setText(
