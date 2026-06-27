@@ -6,14 +6,14 @@ asynchronous SQLite operations, ensuring the main UI thread remains responsive.
 """
 
 import logging
+import queue
 import sqlite3
 import threading
 import shutil
 import time
-from collections import deque
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Deque, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
@@ -37,7 +37,9 @@ class DatabaseWorker(QThread):
         super().__init__(parent)
         self.db_path = db_path
         self.conn: Optional[sqlite3.Connection] = None
-        self._queue: Deque[Tuple[str, Any]] = deque()
+        # A thread-safe blocking queue (H2): the worker sleeps in get() until a task arrives —
+        # no 100ms busy-poll, lower latency, near-zero idle CPU. None is a wake-up sentinel.
+        self._queue: "queue.Queue[Optional[Tuple[str, Any]]]" = queue.Queue()
         self._stop_event = threading.Event()
         self.logger = logging.getLogger(f"NetSpeedTray.{self.__class__.__name__}")
 
@@ -67,38 +69,55 @@ class DatabaseWorker(QThread):
             return
 
         self.logger.debug("Database worker thread started successfully.")
-        # Drain the queue fully before exiting: the queue is checked BEFORE the stop flag,
-        # so final flush/persist tasks (incl. the odometer tail) are never dropped at exit.
+        # Drain fully before exiting: tasks already enqueued (incl. the final flush/odometer
+        # tail) are processed before we honor the stop flag — we only break when the queue is
+        # empty AND stop is set. The blocking get() replaces the old 100ms busy-poll.
         while True:
-            if self._queue:
-                task, data = self._queue.popleft()
-                try:
-                    self._execute_task(task, data)
-                except sqlite3.Error as e:
-                    self.logger.error("Database error during task execution: %s", e)
-                    if "closed" in str(e).lower() or "database is locked" in str(e).lower():
-                        self._reconnect()
-            elif self._stop_event.is_set():
-                break
-            else:
-                self.msleep(100)
+            try:
+                item = self._queue.get(timeout=0.5)
+            except queue.Empty:
+                if self._stop_event.is_set():
+                    break
+                continue
+            if item is None:
+                continue  # wake-up sentinel from stop(); re-check the loop condition
+            task, data = item
+            try:
+                self._execute_task(task, data)
+            except sqlite3.Error as e:
+                self.logger.error("Database error during task execution: %s", e)
+                if "closed" in str(e).lower() or "database is locked" in str(e).lower():
+                    self._reconnect()
 
         self._close_connection()
 
 
     def stop(self) -> None:
-        """Signals the worker thread to stop and waits for it to finish."""
+        """Signals the worker thread to stop (drains pending tasks first) and wakes it."""
         self.logger.debug("Stopping database worker thread...")
         self._stop_event.set()
+        try:
+            self._queue.put_nowait(None)  # wake the blocking get() so shutdown is prompt
+        except Exception:
+            pass
 
 
     def enqueue_task(self, task: str, data: Any = None) -> None:
         """Adds a task to the worker's queue for asynchronous execution."""
-        self._queue.append((task, data))
+        self._queue.put((task, data))
 
 
     def _execute_task(self, task: str, data: Any) -> None:
         """Dispatches a task to the appropriate handler method."""
+        if task == "__signal__":
+            # H3: a flush barrier. Because the queue is FIFO, every persist enqueued before
+            # this signal is already done — so setting the event tells a waiting reader the
+            # freshly-flushed rows are now in the DB (no gap at the graph's right edge).
+            try:
+                data.set()
+            except Exception:
+                pass
+            return
         handlers = {
             "persist_speed": self._persist_speed_batch,
             "persist_hardware": self._persist_hardware_batch,

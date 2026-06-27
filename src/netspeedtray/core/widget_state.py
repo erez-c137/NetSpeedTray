@@ -256,10 +256,31 @@ class WidgetState(QObject):
         if self._db_batch:
             self.db_worker.enqueue_task("persist_speed", self._db_batch.copy())
             self._db_batch.clear()
-            
+
         if self._hw_batch:
             self.db_worker.enqueue_task("persist_hardware", self._hw_batch.copy())
             self._hw_batch.clear()
+
+    def flush_and_wait(self, timeout: float = 2.0) -> None:
+        """
+        Flush pending batches and BLOCK until the write thread has persisted everything
+        enqueued so far (H3). Because the worker queue is FIFO, an Event sentinel placed
+        after the flush only fires once the flush is on disk — so a read immediately after
+        sees the freshly-flushed samples instead of a gap at the graph's right edge.
+        Bounded by ``timeout`` so a stalled worker can never hang the reader.
+        """
+        try:
+            self.flush_batch()
+            # If the worker thread isn't running (tests, or mid-shutdown) the signal would
+            # never fire — don't burn the timeout; the flush has nothing to persist anyway.
+            if not self.db_worker.isRunning():
+                return
+            done = threading.Event()
+            self.db_worker.enqueue_task("__signal__", done)
+            if not done.wait(timeout):
+                self.logger.warning("flush_and_wait timed out after %.1fs; reading possibly-stale history.", timeout)
+        except Exception as e:
+            self.logger.error("flush_and_wait failed: %s", e, exc_info=True)
 
 
     def get_cpu_history(self) -> List[HardwareStatSnapshot]:
@@ -414,7 +435,12 @@ class WidgetState(QObject):
         Retrieves speed history by querying ALL relevant database tiers (raw, minute, hour)
         and unifying them into a single timeline.
         """
-        self.flush_batch()
+        # Flush AND wait for persistence so the read includes the just-buffered samples (H3):
+        # the previous fire-and-forget flush could miss them, leaving a gap at the graph edge.
+        # Only on the top-level call — the resolution recursion (which sets _visited_resolutions)
+        # must not re-barrier on every tier.
+        if _visited_resolutions is None:
+            self.flush_and_wait()
 
         # 1. Timeline Setup
         _now_ts = int(datetime.now().timestamp())
