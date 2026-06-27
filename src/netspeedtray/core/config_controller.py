@@ -35,28 +35,39 @@ class ConfigController:
         config["taskbar_height"] = taskbar_height
         return config
 
-    def update_config(self, updates: Dict[str, Any], save_to_disk: bool = True) -> None:
-        """Updates the internal configuration and optionally saves it to disk."""
+    def update_config(self, updates: Dict[str, Any], save_to_disk: bool = True,
+                      apply_and_repaint: bool = True) -> None:
+        """
+        Updates the internal configuration and optionally saves it to disk.
+
+        ``apply_and_repaint`` (C0 apply-split): single-setting callers (tray pause, data-cap
+        dialog, flags) leave it True to get an immediate renderer rebuild + repaint. The
+        settings *commit* path passes False because ``apply_all_settings`` runs right after
+        and does the full visual apply once — avoiding a redundant double renderer rebuild
+        and double repaint on every Apply.
+        """
         self.logger.debug(f"Updating configuration with {len(updates)} items... (Save: {save_to_disk})")
-        
+
         if not self.widget.config:
              # Should practically never happen if initialized correctly
              raise RuntimeError("Configuration not initialized in widget.")
 
         try:
             self.widget.config.update(updates)
-            
-            # Forward updates to renderer immediately if it exists
-            if hasattr(self.widget, 'renderer') and self.widget.renderer:
-                self.widget.renderer.update_config(self.widget.config)
-            
+
+            if apply_and_repaint:
+                # Forward updates to renderer immediately if it exists
+                if hasattr(self.widget, 'renderer') and self.widget.renderer:
+                    self.widget.renderer.update_config(self.widget.config)
+
             if save_to_disk:
                 self.config_manager.save(self.widget.config)
                 self.logger.debug("Configuration updated and saved successfully.")
-            
-            # Trigger a repaint to reflect changes (e.g. if 'paused' changed, or immediate values)
-            self.widget.update()
-            
+
+            if apply_and_repaint:
+                # Trigger a repaint to reflect changes (e.g. if 'paused' changed, or immediate values)
+                self.widget.update()
+
         except Exception as e:
             self.logger.error(f"Error updating/saving configuration: {e}", exc_info=True)
             raise RuntimeError(f"Failed to save configuration: {e}") from e
@@ -94,11 +105,12 @@ class ConfigController:
                 updated_config['widget_display_mode'] = "network_only"
 
             if save_to_disk:
-                self.update_config(updated_config)
+                # Persist only — apply_all_settings() below does the single visual apply (C0).
+                self.update_config(updated_config, apply_and_repaint=False)
             else:
                 # Direct memory update if not saving (e.g. preview)
                 self.widget.config.update(updated_config)
-            
+
             # Apply the changes to the system
             self.apply_all_settings()
 

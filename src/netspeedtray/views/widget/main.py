@@ -36,6 +36,7 @@ from netspeedtray.utils.taskbar_utils import (
 )
 
 from netspeedtray.utils.widget_renderer import WidgetRenderer as CoreWidgetRenderer, RenderConfig
+from netspeedtray.utils.widget_paint import WidgetMetrics, render_widget
 from netspeedtray.core.system_events import SystemEventHandler
 from netspeedtray.views.widget.layout import WidgetLayoutManager
 from netspeedtray.views.widget.theme import WidgetThemeManager
@@ -649,131 +650,58 @@ class NetworkSpeedWidget(QWidget):
 
 
     def paintEvent(self, event: QPaintEvent) -> None:
-        """Handles all painting for the widget by delegating to the renderer."""
+        """
+        Handles all painting for the widget via the shared `render_widget` path so the
+        live widget and every preview draw identically (refactor C1).
+        """
         if not self.isVisible():
             return
-        
+
         painter = QPainter(self)
         try:
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            
-            # 1. Base Hit-Test Layer (nearly transparent)
+
+            # Base hit-test layer (nearly transparent) — widget-only, so the frameless
+            # window still receives mouse events across its full rect.
             painter.fillRect(self.rect(), QColor(0, 0, 0, 1))
-
-            render_config = self.renderer.config
-            display_mode = render_config.widget_display_mode
-            if display_mode == "cycle":
-                display_mode = self._current_cycle_mode
-
-            # 2. Visual Background
-            self.renderer.draw_background(painter, self.rect(), render_config)
 
             if not self.renderer or not self.current_metrics:
                 self._draw_paint_error(painter, "Render Error")
                 return
-            
-            layout_mode = self._cached_layout_mode
-            
-            # 3. Mini-Graph Layer
-            if render_config.graph_enabled:
-                self._draw_widget_graph(painter, render_config, display_mode, layout_mode)
 
-            # 4. Foreground Content (Text/Stats)
-            painter.setFont(self.current_font)
-            self._draw_widget_foreground(painter, render_config, display_mode, layout_mode)
-            
+            render_widget(
+                painter, self.rect(), self.renderer, self.renderer.config,
+                self._build_metrics(),
+                layout_mode=self._cached_layout_mode,
+                cycle_mode=self._current_cycle_mode,
+                network_width=getattr(self.layout_manager, "_network_width", None),
+                font=self.current_font,
+            )
         except Exception as e:
             self.logger.error(f"Error in paintEvent: {e}", exc_info=True)
         finally:
             if painter.isActive():
                 painter.end()
 
-    def _draw_widget_graph(self, painter: QPainter, config: RenderConfig, mode: str, layout: str) -> None:
-        """Draws the mini-graph background layer based on current mode."""
-        if mode == "side_by_side":
-            return  # Handled inside the segment renderer loop for accurate width scoping
-        elif mode == "cpu_only":
-            history = list(self.widget_state.cpu_history)
-            self.renderer.draw_mini_graph(painter, self.width(), self.height(), config, history, layout, is_hardware=True, hardware_color=constants.graph.CPU_LINE_COLOR)
-        elif mode == "gpu_only":
-            history = list(self.widget_state.gpu_history)
-            self.renderer.draw_mini_graph(painter, self.width(), self.height(), config, history, layout, is_hardware=True, hardware_color=constants.graph.GPU_LINE_COLOR)
-        else:
-            history = self.widget_state.get_aggregated_speed_history()
-            self.renderer.draw_mini_graph(painter, self.width(), self.height(), config, history, layout)
-
-    def _draw_widget_foreground(self, painter: QPainter, config: RenderConfig, mode: str, layout: str) -> None:
-        """Draws the text and stats foreground layer based on current mode."""
-        if mode == "side_by_side":
-            self._draw_side_by_side_layout(painter, config, layout)
-        elif mode == "network_only":
-            up_bytes = (self.upload_speed * constants.network.units.MEGA_DIVISOR) / constants.network.units.BITS_PER_BYTE
-            dw_bytes = (self.download_speed * constants.network.units.MEGA_DIVISOR) / constants.network.units.BITS_PER_BYTE
-            self.renderer.draw_network_speeds(painter, up_bytes, dw_bytes, self.width(), self.height(), config, layout)
-        elif mode == "cpu_only":
-            ram = (self.ram_used, self.ram_total) if config.monitor_ram_enabled else None
-            self.renderer.draw_hardware_stats(painter, self.cpu_usage, None, self.width(), self.height(), config, self.cpu_temp, None, ram, None, layout, cpu_power=self.cpu_power)
-        elif mode == "gpu_only":
-            vram = (self.vram_used, self.vram_total) if config.monitor_vram_enabled else None
-            self.renderer.draw_hardware_stats(painter, None, self.gpu_usage, self.width(), self.height(), config, None, self.gpu_temp, None, vram, layout, gpu_power=self.gpu_power)
-        elif mode == "combined":
-            ram = (self.ram_used, self.ram_total) if config.monitor_ram_enabled else None
-            vram = (self.vram_used, self.vram_total) if config.monitor_vram_enabled else None
-            self.renderer.draw_hardware_stats(painter, self.cpu_usage, self.gpu_usage, self.width(), self.height(), config, self.cpu_temp, self.gpu_temp, ram, vram, layout, cpu_power=self.cpu_power, gpu_power=self.gpu_power)
-
-    def _draw_side_by_side_layout(self, painter: QPainter, config: RenderConfig, layout: str) -> None:
-        """Helper for multi-segment side-by-side painting."""
-        active_keys = []
-        stack_hw = getattr(config, 'stack_hardware_stats', False)
-        
-        for k in config.widget_display_order:
-            if k == "network":
-                active_keys.append(k)
-            elif k == "cpu" and config.monitor_cpu_enabled:
-                if stack_hw and config.monitor_gpu_enabled:
-                    if "hardware" not in active_keys:
-                        active_keys.append("hardware")
-                else:
-                    active_keys.append("cpu")
-            elif k == "gpu" and config.monitor_gpu_enabled:
-                if stack_hw and config.monitor_cpu_enabled:
-                    if "hardware" not in active_keys:
-                        active_keys.append("hardware")
-                else:
-                    active_keys.append("gpu")
-        if not active_keys: active_keys = ["network"]
-        
-        current_x = 0
-        
-        for key in active_keys:
-            if key == "network":
-                if config.graph_enabled:
-                    painter.save()
-                    # Offset the canvas to draw graph only behind the network segment
-                    painter.translate(current_x, 0)
-                    history = self.widget_state.get_aggregated_speed_history()
-                    net_width = getattr(self.layout_manager, '_network_width', self.width())
-                    self.renderer.draw_mini_graph(painter, net_width, self.height(), config, history, layout)
-                    painter.restore()
-                    
-                up_bytes = (self.upload_speed * constants.network.units.MEGA_DIVISOR) / constants.network.units.BITS_PER_BYTE
-                dw_bytes = (self.download_speed * constants.network.units.MEGA_DIVISOR) / constants.network.units.BITS_PER_BYTE
-                self.renderer.draw_network_speeds(painter, up_bytes, dw_bytes, self.width(), self.height(), config, layout, x_offset=current_x)
-            elif key == "cpu" and config.monitor_cpu_enabled:
-                ram = (self.ram_used, self.ram_total) if config.monitor_ram_enabled else None
-                self.renderer.draw_hardware_stats(painter, self.cpu_usage, None, self.width(), self.height(), config, self.cpu_temp, None, ram, None, layout, x_offset=current_x, cpu_power=self.cpu_power)
-            elif key == "gpu" and config.monitor_gpu_enabled:
-                vram = (self.vram_used, self.vram_total) if config.monitor_vram_enabled else None
-                self.renderer.draw_hardware_stats(painter, None, self.gpu_usage, self.width(), self.height(), config, None, self.gpu_temp, None, vram, layout, x_offset=current_x, gpu_power=self.gpu_power)
-            elif key == "hardware":
-                ram = (self.ram_used, self.ram_total) if config.monitor_ram_enabled else None
-                vram = (self.vram_used, self.vram_total) if config.monitor_vram_enabled else None
-                self.renderer.draw_hardware_stats(painter, self.cpu_usage, self.gpu_usage, self.width(), self.height(), config, self.cpu_temp, self.gpu_temp, ram, vram, layout, x_offset=current_x, cpu_power=self.cpu_power, gpu_power=self.gpu_power)
-            
-            if key == "network":
-                current_x += getattr(self.layout_manager, '_network_width', self.renderer.get_last_text_rect().width()) + constants.layout.WIDGET_SEGMENT_GAP_AFTER_NETWORK_PX
-            else:
-                current_x += self.renderer.get_last_text_rect().width() + constants.layout.WIDGET_SEGMENT_GAP_BETWEEN_HARDWARE_PX
+    def _build_metrics(self) -> WidgetMetrics:
+        """Snapshot the current live state into the shared paint path's metrics object."""
+        return WidgetMetrics(
+            upload_mbps=self.upload_speed,
+            download_mbps=self.download_speed,
+            cpu_usage=self.cpu_usage,
+            gpu_usage=self.gpu_usage,
+            cpu_temp=self.cpu_temp,
+            gpu_temp=self.gpu_temp,
+            cpu_power=self.cpu_power,
+            gpu_power=self.gpu_power,
+            ram_used=self.ram_used,
+            ram_total=self.ram_total,
+            vram_used=self.vram_used,
+            vram_total=self.vram_total,
+            net_history=self.widget_state.get_aggregated_speed_history(),
+            cpu_history=list(self.widget_state.cpu_history),
+            gpu_history=list(self.widget_state.gpu_history),
+        )
 
     def _draw_paint_error(self, painter: Optional[QPainter], text: str) -> None:
         """Draws a visual error indicator on the widget background."""
