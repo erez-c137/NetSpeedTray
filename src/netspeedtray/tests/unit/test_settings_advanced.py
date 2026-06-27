@@ -16,15 +16,15 @@ def page(q_app):
 
 
 def test_advanced_round_trips_retention_and_reduce_motion(page):
-    page.load_settings({"keep_data": 30, "reduce_motion": True})
+    page.load_settings({"keep_data": 90, "reduce_motion": True})  # 3 months — a valid ladder value
     out = page.get_settings()
-    assert out["keep_data"] == 30
+    assert out["keep_data"] == 90
     assert out["reduce_motion"] is True
 
 
 def test_keep_data_snaps_to_closest_valid_retention(page):
-    page.load_settings({"keep_data": 33})  # not in DAYS_MAP -> closest is 30
-    assert page.get_settings()["keep_data"] == 30
+    page.load_settings({"keep_data": 33})  # not in DAYS_MAP -> closest is 31 (1 month floor)
+    assert page.get_settings()["keep_data"] == 31
 
 
 @pytest.fixture

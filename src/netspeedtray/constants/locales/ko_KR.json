@@ -393,6 +393,7 @@
     "RETENTION_MONTHS_TEMPLATE": "{months}개월",
     "RETENTION_WEEKS_TEMPLATE": "{weeks}주",
     "RETENTION_DAYS_TEMPLATE": "{days}일",
+    "RETENTION_KEEP_EVERYTHING": "모두 보관",
     "DATA_CAP_SECTION_TITLE": "데이터 사용량",
     "DATA_CAP_SECTION_SUBTITLE": "월간 한도에 가까워지면 알림",
     "DATA_CAP_ENABLE_LABEL": "데이터 한도 사용",

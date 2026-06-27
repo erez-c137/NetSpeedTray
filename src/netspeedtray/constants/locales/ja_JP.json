@@ -393,6 +393,7 @@
     "RETENTION_MONTHS_TEMPLATE": "{months}か月{plural}",
     "RETENTION_WEEKS_TEMPLATE": "{weeks}週間{plural}",
     "RETENTION_DAYS_TEMPLATE": "{days}日{plural}",
+    "RETENTION_KEEP_EVERYTHING": "すべて保持",
     "DATA_CAP_SECTION_TITLE": "データ使用量",
     "DATA_CAP_SECTION_SUBTITLE": "月間上限に近づいたら警告する",
     "DATA_CAP_ENABLE_LABEL": "データ上限を有効にする",

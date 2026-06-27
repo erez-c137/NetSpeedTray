@@ -393,6 +393,7 @@
     "RETENTION_MONTHS_TEMPLATE": "{months} мес.",
     "RETENTION_WEEKS_TEMPLATE": "{weeks} нед.",
     "RETENTION_DAYS_TEMPLATE": "{days} дн.",
+    "RETENTION_KEEP_EVERYTHING": "Хранить всё",
     "DATA_CAP_SECTION_TITLE": "Использование трафика",
     "DATA_CAP_SECTION_SUBTITLE": "Предупреждать при приближении к месячному лимиту",
     "DATA_CAP_ENABLE_LABEL": "Включить лимит трафика",

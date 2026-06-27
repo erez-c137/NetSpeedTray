@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
 from netspeedtray import constants
 from netspeedtray.utils.components import Win11Toggle
 from netspeedtray.utils import styles as style_utils
+from netspeedtray.utils import helpers
 
 
 class AdvancedPage(QWidget):
@@ -78,18 +79,7 @@ class AdvancedPage(QWidget):
         layout.addStretch()
 
     def _retention_label(self, days: int) -> str:
-        i18n = self.i18n
-        plural = getattr(i18n, "PLURAL_SUFFIX", "s")
-        if days >= 365:
-            years = days // 365
-            return i18n.RETENTION_YEAR_SINGULAR if years == 1 else i18n.RETENTION_YEARS_TEMPLATE.format(years=years)
-        if days >= 30 and days % 30 == 0:
-            months = days // 30
-            return i18n.RETENTION_MONTHS_TEMPLATE.format(months=months, plural=(plural if months > 1 else ""))
-        if days >= 7 and days % 7 == 0:
-            weeks = days // 7
-            return i18n.RETENTION_WEEKS_TEMPLATE.format(weeks=weeks, plural=(plural if weeks > 1 else ""))
-        return i18n.RETENTION_DAYS_TEMPLATE.format(days=days, plural=(plural if days > 1 else ""))
+        return helpers.format_retention_label(days, self.i18n)
 
     def load_settings(self, config: Dict[str, Any]) -> None:
         days = int(config.get("keep_data", constants.config.defaults.DEFAULT_KEEP_DATA_DAYS))

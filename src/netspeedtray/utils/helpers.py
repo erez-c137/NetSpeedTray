@@ -269,6 +269,25 @@ def format_data_size(data_bytes: int | float, i18n, precision: int = 2) -> Tuple
         
     return formatted_value, UNITS_DATA_SIZE[unit_index]
 
+
+def format_retention_label(days: int, i18n) -> str:
+    """
+    Human label for a data-retention value, shared by the Settings page and the graph slider so
+    the two can never drift. Renders the curated ladder: '1 month', '3 months', '6 months',
+    '1 year', '2 years', '5 years', and 'Keep everything' for the unlimited sentinel.
+    """
+    from netspeedtray import constants
+    if days >= constants.data.retention.UNLIMITED_DAYS:
+        return i18n.RETENTION_KEEP_EVERYTHING
+    plural = getattr(i18n, "PLURAL_SUFFIX", "s")
+    if days >= 365:
+        years = max(1, round(days / 365))
+        return (i18n.RETENTION_YEAR_SINGULAR if years == 1
+                else i18n.RETENTION_YEARS_TEMPLATE.format(years=years))
+    months = max(1, round(days / 30))
+    return i18n.RETENTION_MONTHS_TEMPLATE.format(months=months, plural=(plural if months > 1 else ""))
+
+
 # --- Data Processing Utilities ---
 
 def calculate_monotone_cubic_interpolation(x_coords: List[float], y_coords: List[float], density: int = 10) -> Tuple[List[float], List[float]]:

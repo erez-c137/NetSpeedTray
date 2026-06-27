@@ -393,6 +393,7 @@
     "RETENTION_MONTHS_TEMPLATE": "{months} maand{plural}",
     "RETENTION_WEEKS_TEMPLATE": "{weeks} week{plural}",
     "RETENTION_DAYS_TEMPLATE": "{days} dag{plural}",
+    "RETENTION_KEEP_EVERYTHING": "Alles bewaren",
     "DATA_CAP_SECTION_TITLE": "Datagebruik",
     "DATA_CAP_SECTION_SUBTITLE": "Waarschuw me als ik een maandlimiet nader",
     "DATA_CAP_ENABLE_LABEL": "Datalimiet inschakelen",

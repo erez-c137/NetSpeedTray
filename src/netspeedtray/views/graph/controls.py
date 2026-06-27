@@ -7,6 +7,7 @@ from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 
 from netspeedtray import constants
 from netspeedtray.utils import styles
+from netspeedtray.utils import helpers
 from netspeedtray.utils.components import Win11Slider, Win11Toggle
 
 
@@ -224,8 +225,8 @@ class GraphSettingsPanel(QWidget):
 
     def update_retention_text(self, days, db_size_mb=None):
         """Updates the retention value in the slider's integrated label."""
-        text = self.i18n.DAYS_TEMPLATE.format(days=days)
-        # Only show DB size when 365 days (ALL) is selected as requested
+        text = helpers.format_retention_label(days, self.i18n)
+        # Show DB size for the long-retention end (1 year and up, incl. Keep everything).
         if days >= 365 and db_size_mb is not None:
              # Rounded to nearest MB
              rounded_mb = int(round(db_size_mb))

@@ -61,7 +61,7 @@ class ConfigConstants:
     DEFAULT_HISTORY_MINUTES: Final[int] = 3
     DEFAULT_GRAPH_OPACITY: Final[int] = 66
     DEFAULT_INTERFACE_MODE: Final[str] = network.interface.DEFAULT_MODE
-    DEFAULT_KEEP_DATA_DAYS: Final[int] = data.retention.DAYS_MAP[6] # 365 days (1 Year) default
+    DEFAULT_KEEP_DATA_DAYS: Final[int] = data.retention.DEFAULT_DAYS # 365 days (1 Year) default
     DEFAULT_DARK_MODE: Final[bool] = True
     DEFAULT_DYNAMIC_UPDATE_ENABLED: Final[bool] = True
     DEFAULT_SPEED_DISPLAY_MODE: Final[str] = "always_mbps"  # Prevents constant B/KB/MB jumping

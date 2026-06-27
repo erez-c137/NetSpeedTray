@@ -393,6 +393,7 @@
     "RETENTION_MONTHS_TEMPLATE": "{months} Monat{plural}",
     "RETENTION_WEEKS_TEMPLATE": "{weeks} Woche{plural}",
     "RETENTION_DAYS_TEMPLATE": "{days} Tag{plural}",
+    "RETENTION_KEEP_EVERYTHING": "Alles behalten",
     "DATA_CAP_SECTION_TITLE": "Datennutzung",
     "DATA_CAP_SECTION_SUBTITLE": "Warnen, wenn ich mich einem monatlichen Limit nähere",
     "DATA_CAP_ENABLE_LABEL": "Datenlimit aktivieren",
