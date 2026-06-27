@@ -72,6 +72,10 @@ class GraphHost(QObject):
     # break the lazy firewall. Every graph import in this module is method-scoped for the same reason.
     request_data_processing = pyqtSignal(object)
 
+    #: machine-wide totals for the active period, emitted after a network render: (up_bytes,
+    #: down_bytes, period_key). The Network header band subscribes to show period totals.
+    network_totals_ready = pyqtSignal(float, float, str)
+
     def __init__(self, main_widget, config: Dict[str, Any], i18n,
                  session_start_time: Optional[datetime] = None, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
@@ -167,13 +171,21 @@ class GraphHost(QObject):
             pass
 
     def set_period(self, period_value: int) -> None:
-        """Change the timeline window. No caller yet — the period control is the 5.1 Network header.
-        When wired, prefer routing through self.coordinator.handle_timeline_change(period_key): it
-        already persists config, debounces rapid clicks, and resets the renderer's sticky y-limits.
-        This direct path is fine for a single programmatic change but skips that debounce/reset."""
+        """Change the timeline window (driven by the Network header's period control). Routes
+        through coordinator.handle_timeline_change, which persists config, debounces rapid clicks,
+        resets the renderer's sticky y-limits, and clears stale visuals — so switching periods on
+        the shared canvas behaves exactly like the standalone graph window."""
+        self.ensure_loaded()
         self._history_period_value = int(period_value)
-        self.config_handler.queue_config_update({"history_period_slider_value": self._history_period_value})
-        self.update_graph(show_loading=False)
+        from netspeedtray.views.graph.logic import GraphLogic
+        period_key = GraphLogic.get_period_key(self._history_period_value)
+        try:
+            self.coordinator.handle_timeline_change(period_key)
+        except Exception as e:
+            self.logger.debug("set_period via coordinator failed (%s); direct refresh", e)
+            self.config_handler.queue_config_update(
+                {"history_period_slider_value": self._history_period_value})
+            self.update_graph(show_loading=False)
 
     # ------------------------------------------------------------------ host surface: refresh
 
@@ -236,6 +248,10 @@ class GraphHost(QObject):
                 return
             self.renderer.render(data, start, end, period_key,
                                  boot_time=self._cached_boot_time, stat_type=self._current_stat)
+            # Surface the worker's machine-wide period totals to the Network header (they're already
+            # computed for the request's interface filter — None == all interfaces == machine-wide).
+            if self._current_stat == "network":
+                self.network_totals_ready.emit(float(total_up or 0.0), float(total_down or 0.0), period_key)
         except Exception as e:
             self.logger.error("GraphHost render error: %s", e, exc_info=True)
 
