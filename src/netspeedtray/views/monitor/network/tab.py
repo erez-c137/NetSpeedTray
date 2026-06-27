@@ -54,7 +54,7 @@ class NetworkTab(QWidget):
         splitter.addWidget(self._app_list)
         splitter.setStretchFactor(0, 3)        # graph gets the lion's share
         splitter.setStretchFactor(1, 1)
-        splitter.setSizes([420, 190])
+        splitter.setSizes([400, 280])          # ~6-7 rows so the user's apps aren't below the fold
         root.addWidget(splitter, 1)
 
         # Per-app connection feed (reused psutil sampler) — polls only while this tab is visible.

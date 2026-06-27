@@ -52,6 +52,10 @@ class AppActivityFeed(QObject):
         self._worker.data_ready.connect(self.payload_ready)
         self._worker.error.connect(lambda m: self.logger.debug("app feed worker error: %s", m))
         self._request_sample.connect(self._worker.sample)
+        # Delete the worker on ITS OWN loop while the thread is still draining its event queue during
+        # quit() — a deleteLater() posted after the loop has stopped would never be processed (the
+        # worker, and its psutil name cache, would leak on every Monitor open/close).
+        self._thread.finished.connect(self._worker.deleteLater)
         self._thread.start()
 
     def start(self) -> None:
@@ -76,16 +80,15 @@ class AppActivityFeed(QObject):
             pass
         try:
             if self._thread is not None:
+                # quit() lets the loop process the finished->worker.deleteLater above before it stops.
                 self._thread.quit()
                 if not self._thread.wait(800):
                     self._thread.wait()
         except Exception:
             pass
         try:
-            if self._worker is not None:
-                self._worker.deleteLater()
             if self._thread is not None:
-                self._thread.deleteLater()
+                self._thread.deleteLater()   # the worker was deleted on its own loop via finished
         except Exception:
             pass
         self._worker = None

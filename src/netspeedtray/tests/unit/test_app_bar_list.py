@@ -55,6 +55,39 @@ def test_empty_and_rdp_states(q_app):
     assert "Remote Desktop" in lst._summary.text() or "RDP" in lst._summary.text()
 
 
+def test_stable_active_first_then_name_sort(q_app):
+    """Order is active-first then by name (stable), so rows don't jump as conn counts jitter."""
+    lst = AppBarList(I18nStrings("en_US"))
+    lst.set_payload(_payload([
+        _row("zeta.exe", 50, est=0, hosts=0),    # idle (no established, no host)
+        _row("alpha.exe", 2, est=1),             # active (TCP established)
+        _row("mid.exe", 30, est=0, hosts=2),     # active via UDP/host, despite 0 established
+    ]))
+    L = lst._list_layout
+    assert L.itemAt(0).widget() is lst._rows["alpha.exe"]
+    assert L.itemAt(1).widget() is lst._rows["mid.exe"]
+    assert L.itemAt(2).widget() is lst._rows["zeta.exe"]
+    assert "2 active" in lst._summary.text()     # UDP/host app counts as active
+
+
+def test_bar_uses_log_scale_not_linear(q_app):
+    """A dominant process must not squash small apps to nothing — log scale keeps them visible."""
+    lst = AppBarList(I18nStrings("en_US"))
+    lst.set_payload(_payload([_row("big", 100, est=1), _row("small", 1, est=1)]))
+    big = lst._rows["big"]._bar._frac
+    small = lst._rows["small"]._bar._frac
+    assert big == 1.0 and small < big
+    assert small > 0.1               # linear would be 0.01 (a stub); log keeps it legible
+
+
+def test_no_spacer_or_widget_leak_across_ticks(q_app):
+    """Repeated refreshes keep exactly len(rows)+1 layout items (rows + the single stretch)."""
+    lst = AppBarList(I18nStrings("en_US"))
+    for _ in range(5):
+        lst.set_payload(_payload([_row("a", 3, est=1), _row("b", 2, est=1)]))
+    assert lst._list_layout.count() == 3   # 2 rows + 1 trailing stretch, not growing
+
+
 def test_activity_bar_paints(q_app):
     bar = _ActivityBar()
     bar.resize(120, 8)
