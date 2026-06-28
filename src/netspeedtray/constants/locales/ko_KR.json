@@ -450,7 +450,7 @@
     "MONITOR_TILE_RAM": "RAM",
     "MONITOR_TILE_VRAM": "VRAM",
     "MEMORY_HEADER": "메모리",
-    "HARDWARE_SUMMARY_TEMPLATE": "{procs}개 프로세스 · CPU {cpu:.0f}% · RAM {ram:.1f} {ram_unit} · 업데이트 {updated_at}",
+    "HARDWARE_SUMMARY_TEMPLATE": "{procs}개 프로세스 · CPU {cpu:.0f}% · RAM {ram} {ram_unit} · 업데이트 {updated_at}",
     "HARDWARE_LOADING_MESSAGE": "프로세스 읽는 중…",
     "HARDWARE_NO_DATA_MESSAGE": "프로세스 데이터가 없습니다.",
     "MONITOR_SETTINGS_GRAPH": "그래프",

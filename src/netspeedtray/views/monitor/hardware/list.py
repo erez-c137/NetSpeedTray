@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
 
 from netspeedtray.utils import styles as su
 from netspeedtray.constants.styles import styles as tokens
-from netspeedtray.utils.helpers import format_data_size
+from netspeedtray.utils.helpers import format_data_size, format_decimal
 from netspeedtray.views.monitor.network.app_list import _ActivityBar
 
 _NAME_W = 168
@@ -93,10 +93,11 @@ class HardwareRow(QFrame):
         self._bar.set_value((cpu / max(max_cpu, _BAR_FLOOR_PCT)) if max_cpu > 0 else 0.0, busy)
         self._cpu.setText(f"{cpu:.0f}%")
         rv, ru = format_data_size(rss, self._i18n, precision=1)
-        self._ram.setText(f"{rv:.1f} {ru}")
+        rv_s = format_decimal(rv, self._i18n, 1)   # locale separator (matches the Overview/UsageTile)
+        self._ram.setText(f"{rv_s} {ru}")
         self._gpu.setText(f"{gpu:.0f}%" if (gpu_available and gpu >= _GPU_SHOW_MIN) else "—")
 
-        summary = f"{name} — CPU {cpu:.0f}% · RAM {rv:.1f} {ru} · GPU {gpu:.0f}%"
+        summary = f"{name} — CPU {cpu:.0f}% · RAM {rv_s} {ru} · GPU {gpu:.0f}%"
         self.setToolTip(summary)
         self.setAccessibleName(summary)   # tooltips aren't exposed to screen readers; accessible name is
 
@@ -195,12 +196,12 @@ class HardwareBarList(QWidget):
     def _summary_text(self, payload: Dict[str, Any]) -> str:
         rv, ru = format_data_size(int(payload.get("total_rss_bytes", 0)), self._i18n, precision=1)
         tmpl = self._tr("HARDWARE_SUMMARY_TEMPLATE",
-                        "{procs} processes · CPU {cpu:.0f}% · RAM {ram:.1f} {ram_unit} · Updated {updated_at}")
+                        "{procs} processes · CPU {cpu:.0f}% · RAM {ram} {ram_unit} · Updated {updated_at}")
         try:
             return tmpl.format(
                 procs=int(payload.get("proc_count", 0)),
                 cpu=float(payload.get("total_cpu_pct", 0.0)),
-                ram=rv, ram_unit=ru,
+                ram=format_decimal(rv, self._i18n, 1), ram_unit=ru,   # locale decimal separator
                 updated_at=payload.get("updated_at", "--:--:--"))
         except Exception:
             return ""

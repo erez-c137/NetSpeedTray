@@ -450,7 +450,7 @@
     "MONITOR_TILE_RAM": "RAM",
     "MONITOR_TILE_VRAM": "VRAM",
     "MEMORY_HEADER": "Memoria",
-    "HARDWARE_SUMMARY_TEMPLATE": "{procs} procesos · CPU {cpu:.0f}% · RAM {ram:.1f} {ram_unit} · Actualizado {updated_at}",
+    "HARDWARE_SUMMARY_TEMPLATE": "{procs} procesos · CPU {cpu:.0f}% · RAM {ram} {ram_unit} · Actualizado {updated_at}",
     "HARDWARE_LOADING_MESSAGE": "Leyendo procesos…",
     "HARDWARE_NO_DATA_MESSAGE": "No hay datos de procesos.",
     "MONITOR_SETTINGS_GRAPH": "Gráfico",

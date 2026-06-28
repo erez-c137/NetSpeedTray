@@ -116,9 +116,11 @@ class TelemetryStrip(QWidget):
     def _mem_text(self, used: Optional[float], total: Optional[float]) -> str:
         if used is None:
             return "—"
+        from netspeedtray.utils.helpers import format_decimal
+        u = format_decimal(float(used), self._i18n, 1)   # locale decimal separator (de/ru use ',')
         if total:
-            return f"{float(used):.1f} / {float(total):.1f} GB"
-        return f"{float(used):.1f} GB"
+            return f"{u} / {format_decimal(float(total), self._i18n, 1)} GB"
+        return f"{u} GB"
 
     def _tr(self, key: str, default: str) -> str:
         return str(getattr(self._i18n, key, default)) if self._i18n is not None else default

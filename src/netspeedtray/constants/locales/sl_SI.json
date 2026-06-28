@@ -450,7 +450,7 @@
     "MONITOR_TILE_RAM": "RAM",
     "MONITOR_TILE_VRAM": "VRAM",
     "MEMORY_HEADER": "Pomnilnik",
-    "HARDWARE_SUMMARY_TEMPLATE": "{procs} procesov · CPU {cpu:.0f}% · RAM {ram:.1f} {ram_unit} · Posodobljeno {updated_at}",
+    "HARDWARE_SUMMARY_TEMPLATE": "{procs} procesov · CPU {cpu:.0f}% · RAM {ram} {ram_unit} · Posodobljeno {updated_at}",
     "HARDWARE_LOADING_MESSAGE": "Branje procesov…",
     "HARDWARE_NO_DATA_MESSAGE": "Ni podatkov o procesih.",
     "MONITOR_SETTINGS_GRAPH": "Graf",

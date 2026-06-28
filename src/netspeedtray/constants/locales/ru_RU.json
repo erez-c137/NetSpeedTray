@@ -450,7 +450,7 @@
     "MONITOR_TILE_RAM": "RAM",
     "MONITOR_TILE_VRAM": "VRAM",
     "MEMORY_HEADER": "Память",
-    "HARDWARE_SUMMARY_TEMPLATE": "{procs} процессов · ЦП {cpu:.0f}% · RAM {ram:.1f} {ram_unit} · Обновлено {updated_at}",
+    "HARDWARE_SUMMARY_TEMPLATE": "{procs} процессов · ЦП {cpu:.0f}% · RAM {ram} {ram_unit} · Обновлено {updated_at}",
     "HARDWARE_LOADING_MESSAGE": "Чтение процессов…",
     "HARDWARE_NO_DATA_MESSAGE": "Нет данных о процессах.",
     "MONITOR_SETTINGS_GRAPH": "График",

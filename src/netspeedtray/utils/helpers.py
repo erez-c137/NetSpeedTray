@@ -247,6 +247,16 @@ def format_speed(
     return f"{formatted_val} {unit}"
 
 
+def format_decimal(value: float, i18n, places: int = 1) -> str:
+    """Format a number with the locale's decimal separator (de/fr/ru/… use ',' not '.').
+
+    Use this for any decimal shown next to format_speed/format_data_size output so a single window never
+    mixes separators (e.g. the Hardware list / telemetry RAM was '12.0 GB' beside the Overview's '12,0')."""
+    s = f"{value:.{places}f}"
+    sep = getattr(i18n, "DECIMAL_SEPARATOR", ".")
+    return s.replace(".", sep) if sep and sep != "." else s
+
+
 def format_data_size(data_bytes: int | float, i18n, precision: int = 2) -> Tuple[float, str]:
     """
     Formats a byte count into a human-readable string with units (B, KB, MB, GB, etc.).
