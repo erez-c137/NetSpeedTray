@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QLabel
 
 from netspeedtray import constants
@@ -23,7 +23,10 @@ from netspeedtray.constants.styles import styles as tokens
 from netspeedtray.utils.components import Win11Segmented
 from netspeedtray.views.monitor.hardware.list import HardwareBarList
 from netspeedtray.views.monitor.hardware.feed import HardwareFeed
+from netspeedtray.views.monitor.hardware.telemetry import TelemetryStrip
 from netspeedtray.views.monitor.network.header import PeriodSegmentedControl
+
+_TELEMETRY_MS = 1000
 
 
 class HardwareTab(QWidget):
@@ -43,6 +46,16 @@ class HardwareTab(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(8)
+
+        # Live telemetry band (temps/power/RAM/VRAM) — already collected, just never surfaced before.
+        # Polls the main widget's live attributes on a timer while this tab is visible. Skipped
+        # entirely when no CPU/GPU source is on (nothing to show, and the timer would be pointless).
+        self._telemetry = TelemetryStrip(config, i18n)
+        self._tele_timer = QTimer(self)
+        self._tele_timer.setInterval(_TELEMETRY_MS)
+        self._tele_timer.timeout.connect(self._update_telemetry)
+        if not self._telemetry.is_empty():
+            root.addWidget(self._telemetry)
 
         # Period control — the graph's timeline (shared with Network: the Monitor has one window).
         # Without this the combined graph silently inherited Network's period with no affordance.
@@ -132,6 +145,12 @@ class HardwareTab(QWidget):
         colours, legend, smoothing, axis). Re-resolve the mode + re-render."""
         self._apply_graph()
 
+    def _update_telemetry(self) -> None:
+        try:
+            self._telemetry.update_from(self._main_widget)
+        except Exception:
+            pass
+
     def showEvent(self, event) -> None:
         super().showEvent(event)
         # The period is shared with Network — re-sync our pills + caption to the host's current value
@@ -146,12 +165,16 @@ class HardwareTab(QWidget):
         except Exception:
             pass
         self._apply_graph(first_mount=True)
+        if not self._telemetry.is_empty():
+            self._update_telemetry()   # paint once immediately, then tick
+            self._tele_timer.start()
         try:
             self._feed.start()
         except Exception:
             pass
 
     def hideEvent(self, event) -> None:
+        self._tele_timer.stop()
         try:
             self._host.stop_realtime()
         except Exception:
@@ -164,6 +187,7 @@ class HardwareTab(QWidget):
 
     def teardown(self) -> None:
         # GraphHost is owned + torn down by the MonitorWindow; we stop our loops + tear down the feed.
+        self._tele_timer.stop()
         try:
             self._host.stop_realtime()
         except Exception:
