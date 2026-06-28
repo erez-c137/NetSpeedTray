@@ -371,32 +371,32 @@ class WidgetState(QObject):
             start_ts = int(_start.timestamp())
             end_ts = int(_end.timestamp())
             
-            # Pick the right tier: raw (<6h), minute (<30d), hour (>30d)
+            # Target resolution by window length: raw (≤6h), minute (≤30d), hour (>30d).
             duration = end_ts - start_ts
-            if duration <= 6 * 3600:
-                table = constants.data.HARDWARE_STATS_TABLE_RAW
-                val_col = "value"
-            elif duration <= 30 * 86400:
-                table = constants.data.HARDWARE_STATS_TABLE_MINUTE
-                val_col = "avg_value"
-            else:
-                table = constants.data.HARDWARE_STATS_TABLE_HOUR
-                val_col = "avg_value"
+            interval = 1 if duration <= 6 * 3600 else (60 if duration <= 30 * 86400 else 3600)
 
-            query = f"SELECT timestamp, {val_col} FROM {table} WHERE stat_type = ? AND timestamp BETWEEN ? AND ? ORDER BY timestamp ASC"
-            cursor.execute(query, (stat_type, start_ts, end_ts))
+            # Union ALL tiers (non-overlapping — data is moved, not copied) and bin to the target
+            # interval, mirroring get_speed_history. A recent-but-long window (e.g. 48h or a week) has
+            # its most-recent <24h only in the RAW tier and the older portion in minute/hour; reading a
+            # single tier silently dropped the recent half (and the old fallback only fired when the tier
+            # was TOTALLY empty). Binning keeps the point count bounded by window/interval regardless.
+            HRAW = constants.data.HARDWARE_STATS_TABLE_RAW
+            HMIN = constants.data.HARDWARE_STATS_TABLE_MINUTE
+            HHOUR = constants.data.HARDWARE_STATS_TABLE_HOUR
+            bin_ts = f"CAST(timestamp / {interval} AS INTEGER) * {interval}"
+            cursor.execute(f"""
+                SELECT b, AVG(v) FROM (
+                    SELECT {bin_ts} AS b, value AS v FROM {HRAW}
+                        WHERE stat_type = ? AND timestamp BETWEEN ? AND ?
+                    UNION ALL
+                    SELECT {bin_ts} AS b, avg_value AS v FROM {HMIN}
+                        WHERE stat_type = ? AND timestamp BETWEEN ? AND ?
+                    UNION ALL
+                    SELECT {bin_ts} AS b, avg_value AS v FROM {HHOUR}
+                        WHERE stat_type = ? AND timestamp BETWEEN ? AND ?
+                ) GROUP BY b ORDER BY b ASC
+            """, (stat_type, start_ts, end_ts) * 3)
             rows = cursor.fetchall()
-
-            # Tier fallback: the minute/hour tiers only fill from the hourly aggregation of rows OLDER
-            # than 24h, so a recent-but-long window (e.g. the last 24h or 48h) lives entirely in the
-            # raw table. Without this, those periods read an empty minute/hour tier and show "no data"
-            # even though raw has it — the root of the Monitor's "Collecting data" on non-session views.
-            if not rows and table != constants.data.HARDWARE_STATS_TABLE_RAW:
-                cursor.execute(
-                    f"SELECT timestamp, value FROM {constants.data.HARDWARE_STATS_TABLE_RAW} "
-                    f"WHERE stat_type = ? AND timestamp BETWEEN ? AND ? ORDER BY timestamp ASC",
-                    (stat_type, start_ts, end_ts))
-                rows = cursor.fetchall()
 
             return [(datetime.fromtimestamp(row[0]), row[1]) for row in rows]
         except Exception as e:
@@ -421,19 +421,26 @@ class WidgetState(QObject):
                             f"WHERE stat_type=? AND timestamp BETWEEN ? AND ?", (stat_type, st, et))
                 vals = [r[0] for r in cur.fetchall()]
                 return S.summarize_raw(vals, S.coverage_pct(len(vals), win, poll_interval))
-            table = (constants.data.HARDWARE_STATS_TABLE_MINUTE if win <= 30 * 86400
-                     else constants.data.HARDWARE_STATS_TABLE_HOUR)
-            tier = "minute" if win <= 30 * 86400 else "hour"
-            cur.execute(f"SELECT avg_value, max_value, sample_count FROM {table} "
-                        f"WHERE stat_type=? AND timestamp BETWEEN ? AND ?", (stat_type, st, et))
-            rows = cur.fetchall()
-            if not rows:   # rollup empty for a recent window — fall back to raw (still exact)
-                cur.execute(f"SELECT value FROM {constants.data.HARDWARE_STATS_TABLE_RAW} "
+            # Beyond the raw horizon the window spans tiers: the recent <24h is still in RAW, older data
+            # in minute/hour. Union all three (non-overlapping — data is moved, not copied — exactly like
+            # get_speed_history) so the summary covers the WHOLE window instead of only the rolled-up
+            # older half, which silently dropped the most recent ~24h and disagreed with the graph.
+            avgs, maxes, counts = [], [], []
+            for table in (constants.data.HARDWARE_STATS_TABLE_MINUTE, constants.data.HARDWARE_STATS_TABLE_HOUR):
+                cur.execute(f"SELECT avg_value, max_value, sample_count FROM {table} "
                             f"WHERE stat_type=? AND timestamp BETWEEN ? AND ?", (stat_type, st, et))
-                vals = [r[0] for r in cur.fetchall()]
-                return S.summarize_raw(vals, S.coverage_pct(len(vals), win, poll_interval))
-            counts = [r[2] for r in rows]
-            return S.summarize_rollup([r[0] for r in rows], [r[1] for r in rows], counts, tier,
+                for r in cur.fetchall():
+                    if r[0] is None:
+                        continue
+                    avgs.append(r[0]); maxes.append(r[1]); counts.append(r[2] or 1)
+            cur.execute(f"SELECT value FROM {constants.data.HARDWARE_STATS_TABLE_RAW} "
+                        f"WHERE stat_type=? AND timestamp BETWEEN ? AND ?", (stat_type, st, et))
+            raw_vals = [r[0] for r in cur.fetchall() if r[0] is not None]
+            if not avgs:   # the whole window still fits the raw tier (e.g. a <24h-old install) -> exact
+                return S.summarize_raw(raw_vals, S.coverage_pct(len(raw_vals), win, poll_interval))
+            avgs += raw_vals; maxes += raw_vals; counts += [1] * len(raw_vals)   # raw samples = count-1 buckets
+            tier = "minute" if win <= 30 * 86400 else "hour"
+            return S.summarize_rollup(avgs, maxes, counts, tier,
                                       S.coverage_pct(sum(counts), win, poll_interval))
         except Exception as e:
             self.logger.error("summarize_hardware failed: %s", e, exc_info=True)
@@ -454,32 +461,40 @@ class WidgetState(QObject):
         params_tail = () if iface is None else (iface,)
         try:
             cur = self._get_read_conn().cursor()
-            if win <= self._RAW_SUMMARY_SECONDS:
+
+            def _raw_vals():
                 # Sum per-timestamp across interfaces when aggregating, so an "all" summary matches the
                 # widget's aggregate rather than mixing per-NIC samples.
                 cur.execute(
                     f"SELECT SUM({col}_bytes_sec) FROM {constants.data.SPEED_TABLE_RAW} "
-                    f"WHERE timestamp BETWEEN ? AND ?{wh} GROUP BY timestamp",
-                    (st, et) + params_tail)
-                vals = [r[0] for r in cur.fetchall() if r[0] is not None]
-                return S.summarize_raw(vals, S.coverage_pct(len(vals), win, poll_interval))
-            table = (constants.data.SPEED_TABLE_MINUTE if win <= 30 * 86400
-                     else constants.data.SPEED_TABLE_HOUR)
-            tier = "minute" if win <= 30 * 86400 else "hour"
-            cur.execute(
-                f"SELECT SUM({col}_avg), MAX(t.mx), SUM(sample_count) FROM "
-                f"(SELECT timestamp, {col}_avg, {col}_max AS mx, sample_count FROM {table} "
-                f" WHERE timestamp BETWEEN ? AND ?{wh}) t GROUP BY t.timestamp",
-                (st, et) + params_tail)
-            rows = cur.fetchall()
-            if not rows:
-                cur.execute(
-                    f"SELECT SUM({col}_bytes_sec) FROM {constants.data.SPEED_TABLE_RAW} "
                     f"WHERE timestamp BETWEEN ? AND ?{wh} GROUP BY timestamp", (st, et) + params_tail)
-                vals = [r[0] for r in cur.fetchall() if r[0] is not None]
+                return [r[0] for r in cur.fetchall() if r[0] is not None]
+
+            if win <= self._RAW_SUMMARY_SECONDS:
+                vals = _raw_vals()
                 return S.summarize_raw(vals, S.coverage_pct(len(vals), win, poll_interval))
-            counts = [r[2] or 1 for r in rows]
-            return S.summarize_rollup([r[0] for r in rows], [r[1] for r in rows], counts, tier,
+
+            # Beyond the raw horizon the window spans tiers: the recent <24h is still in RAW, older data
+            # in minute/hour. Union all three (non-overlapping, like get_speed_history) so the summary
+            # covers the WHOLE window instead of only the rolled-up older half (which dropped the most
+            # recent ~24h and disagreed with the graph for the same window).
+            avgs, maxes, counts = [], [], []
+            for table in (constants.data.SPEED_TABLE_MINUTE, constants.data.SPEED_TABLE_HOUR):
+                cur.execute(
+                    f"SELECT SUM({col}_avg), MAX(t.mx), SUM(sample_count) FROM "
+                    f"(SELECT timestamp, {col}_avg, {col}_max AS mx, sample_count FROM {table} "
+                    f" WHERE timestamp BETWEEN ? AND ?{wh}) t GROUP BY t.timestamp",
+                    (st, et) + params_tail)
+                for r in cur.fetchall():
+                    if r[0] is None:
+                        continue
+                    avgs.append(r[0]); maxes.append(r[1]); counts.append(r[2] or 1)
+            raw_vals = _raw_vals()
+            if not avgs:   # the whole window still fits the raw tier -> exact percentiles
+                return S.summarize_raw(raw_vals, S.coverage_pct(len(raw_vals), win, poll_interval))
+            avgs += raw_vals; maxes += raw_vals; counts += [1] * len(raw_vals)   # raw samples = count-1 buckets
+            tier = "minute" if win <= 30 * 86400 else "hour"
+            return S.summarize_rollup(avgs, maxes, counts, tier,
                                       S.coverage_pct(sum(counts), win, poll_interval))
         except Exception as e:
             self.logger.error("summarize_network failed: %s", e, exc_info=True)
