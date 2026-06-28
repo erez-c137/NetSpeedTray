@@ -158,14 +158,18 @@ class WidgetLayoutManager:
                     # Large Horizontal Layout Width Calculation (Vertical Mode)
                     always_mbps = self.widget.config.get("speed_display_mode", constants.config.defaults.DEFAULT_SPEED_DISPLAY_MODE) == "always_mbps"
                     
-                    from netspeedtray.utils.helpers import get_all_possible_unit_labels, get_reference_value_string
+                    from netspeedtray.utils.helpers import get_unit_labels_for_type, get_reference_value_string
 
                     unit_type = self.widget.config.get("unit_type", constants.config.defaults.DEFAULT_UNIT_TYPE)
                     # Use stable reference string instead of live values (which start at 0.0 and change every tick)
                     ref_str = get_reference_value_string(always_mbps, precision, unit_type)
                     max_number_width = self.metrics.horizontalAdvance(ref_str)
 
-                    possible_units = get_all_possible_unit_labels(self.widget.i18n, short_labels=short_labels)
+                    # Reserve only for the units the SELECTED unit_type can actually display, not the
+                    # widest label across every unit system (which over-reserved for e.g. "Mibps" on a
+                    # bits_decimal user, leaving dead space to the right of the widget). Matches the
+                    # small-taskbar branch above.
+                    possible_units = get_unit_labels_for_type(self.widget.i18n, unit_type, short_labels)
                     max_unit_width = max(self.metrics.horizontalAdvance(unit) for unit in possible_units) if not hide_units else 0
                     
                     _up_glyph = self.widget.config.get("arrow_up_symbol") or self.widget.i18n.UPLOAD_ARROW
