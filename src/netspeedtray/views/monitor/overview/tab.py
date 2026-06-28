@@ -20,15 +20,17 @@ from typing import Any, Deque, Dict, Optional
 from datetime import datetime, timedelta
 
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QToolButton
 
 from netspeedtray import constants
 from netspeedtray.utils import styles as su
 from netspeedtray.constants.styles import styles as tokens
 from netspeedtray.utils.helpers import format_speed, format_data_size
+from netspeedtray.utils import summaries as S
 from netspeedtray.views.monitor.overview.tiles import StatTile, UsageTile, NetworkHero
+from netspeedtray.views.monitor.overview.busiest_apps import BusiestAppsCard
 from netspeedtray.views.monitor.timeline_selector import TimelineSelector
-from netspeedtray.views.monitor.stats_detail import StatsDetailSheet
+from netspeedtray.views.monitor.stats_detail import StatsDetailSheet, run_interactive_export
 
 # Per-resource accent as (dark, light) pairs. Network up/down get a distinct, harmonious pair; CPU/GPU
 # echo the graph's line hues; RAM/VRAM get their own calm colours. The light variant keeps the thin
@@ -80,10 +82,23 @@ class OverviewTab(QWidget):
         root.setContentsMargins(16, 16, 16, 16)
         root.setSpacing(12)
 
-        # --- Header: the timeline dropdown (right) — the period it shows is the only label needed ---
+        # --- Header: a discoverable Export action (left) + the timeline dropdown (right). The Export
+        # button makes "pull the numbers" a first-class action instead of a hidden click-the-hero gesture.
         c = su.semantic_colors()
         head = QHBoxLayout()
         head.setContentsMargins(2, 0, 2, 0)
+        self._export_btn = QToolButton()
+        self._export_btn.setText(f"⤓  {self._tr('OVERVIEW_EXPORT', 'Export…')}")
+        self._export_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._export_btn.setToolTip(self._tr("OVERVIEW_EXPORT_TIP",
+                                              "Export this period's stats (summary + raw CSV)"))
+        r = tokens.RADIUS_CONTROL
+        self._export_btn.setStyleSheet(
+            f"QToolButton {{ background: transparent; color: {c['text_secondary']};"
+            f" border: 1px solid {c['card_stroke']}; border-radius: {r}px; padding: 4px 12px; }}"
+            f" QToolButton:hover {{ color: {c['text_primary']}; border-color: {c['accent']}; }}")
+        self._export_btn.clicked.connect(self._export_window)
+        head.addWidget(self._export_btn, 0, Qt.AlignmentFlag.AlignVCenter)
         head.addStretch(1)
         self._timeline = TimelineSelector(i18n, current_index=self._period_index)
         self._timeline.period_changed.connect(self._on_period_changed)
@@ -95,19 +110,24 @@ class OverviewTab(QWidget):
         self._hero.clicked.connect(lambda: self._open_detail("network"))
         root.addWidget(self._hero)
 
-        # --- Thin context strip: session uptime + session totals (left), CPU+GPU power (right) ---
+        # --- Thin context strip: session uptime + totals (left), and on the right the one thing you
+        # can't read off the cards — true System power when the platform exposes it, otherwise the
+        # connection-health summary (drops/loss over the window) so a latency blip you missed live is
+        # still visible. (CPU/GPU power already live on the cards, so repeating it here was noise.) ---
         strip = QHBoxLayout()
         strip.setContentsMargins(4, 0, 4, 0)
         self._session_lbl = QLabel("")
         self._session_lbl.setFont(su.font(tokens.TYPE_CAPTION))
         self._session_lbl.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
-        self._syspower_lbl = QLabel("")
-        self._syspower_lbl.setFont(su.font(tokens.TYPE_CAPTION))
-        self._syspower_lbl.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
+        self._context_r_lbl = QLabel("")
+        self._context_r_lbl.setFont(su.font(tokens.TYPE_CAPTION))
+        self._context_r_lbl.setTextFormat(Qt.TextFormat.RichText)
+        self._context_r_lbl.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
         strip.addWidget(self._session_lbl, 0, Qt.AlignmentFlag.AlignVCenter)
         strip.addStretch(1)
-        strip.addWidget(self._syspower_lbl, 0, Qt.AlignmentFlag.AlignVCenter)
+        strip.addWidget(self._context_r_lbl, 0, Qt.AlignmentFlag.AlignVCenter)
         root.addLayout(strip)
+        self._latency_events: Dict[str, Any] = {}   # outage_summary for the active window
 
         # --- Hardware tiles: CPU / GPU / RAM / VRAM. Always built (the Monitor forces collection);
         # VRAM hides itself when there's no dedicated-VRAM reading (integrated GPUs, etc). ---
@@ -124,9 +144,16 @@ class OverviewTab(QWidget):
             hw.addWidget(t, 1)
         root.addLayout(hw)
 
-        # --- Usage / data-cap card ---
+        # --- Bottom row: Data-usage card (left) + Top-talkers card (right), side by side ---
+        bottom = QHBoxLayout()
+        bottom.setContentsMargins(0, 0, 0, 0)
+        bottom.setSpacing(12)
         self._usage = UsageTile(i18n)
-        root.addWidget(self._usage)
+        self._busiest = BusiestAppsCard(i18n)
+        self._busiest.go_to_network.connect(self._goto_network)
+        bottom.addWidget(self._usage, 1)
+        bottom.addWidget(self._busiest, 1)
+        root.addLayout(bottom)
         root.addStretch(1)
 
         self._timer = QTimer(self)
@@ -177,10 +204,12 @@ class OverviewTab(QWidget):
         self._reload_window()   # load the window's DB series + summaries, then paint immediately
         self._timer.start()
         self._hist_timer.start()
+        self._busiest.start()   # start the per-app connection sampler (idles again on hide)
 
     def hideEvent(self, event) -> None:  # noqa: N802 (Qt override)
         self._timer.stop()
         self._hist_timer.stop()
+        self._busiest.stop()
         super().hideEvent(event)
 
     def teardown(self) -> None:
@@ -190,6 +219,10 @@ class OverviewTab(QWidget):
                 t.stop()
             except Exception:
                 pass
+        try:
+            self._busiest.teardown()
+        except Exception:
+            pass
 
     # ----------------------------------------------------------------- refresh
 
@@ -229,6 +262,13 @@ class OverviewTab(QWidget):
                 "gpu": ws.summarize_hardware("gpu", start, end, poll),
                 "ram": ws.summarize_hardware("ram", start, end, poll),
             }
+            # Connection-drop events over the window (from the persisted gateway-timeout series), so a
+            # latency blip you missed live is still counted. Cheap; off the 1 Hz path.
+            if self._config.get("latency_enabled", True):
+                self._latency_events = S.outage_summary(
+                    ws.get_hardware_history("latency_gw_timeout", start, end))
+            else:
+                self._latency_events = {}
         except Exception as e:
             self.logger.debug("Overview window reload skipped: %s", e)
         self._render()
@@ -310,7 +350,7 @@ class OverviewTab(QWidget):
             self._usage.set(today, month, cap)
 
             self._session_lbl.setText(self._session_text(mw))
-            self._syspower_lbl.setText(self._syspower_text(mw))
+            self._context_r_lbl.setText(self._context_right_text(mw))
         except Exception as e:
             self.logger.debug("Overview render skipped: %s", e)
 
@@ -331,23 +371,60 @@ class OverviewTab(QWidget):
                 pass
         return "    ·    ".join(parts)
 
-    def _syspower_text(self, mw) -> str:
-        """Power: the CPU/GPU breakdown (honest — that's what we can read), plus a TRUE "System N W"
-        only when the platform exposes one (RAPL PSYS / battery discharge), never CPU+GPU relabelled."""
-        cp = float(getattr(mw, "cpu_power", None) or 0.0)
-        gp = float(getattr(mw, "gpu_power", None) or 0.0)
+    def _context_right_text(self, mw) -> str:
+        """The strip's right slot shows the one thing the cards DON'T already say: true System power
+        when the platform exposes it (RAPL PSYS / battery discharge), otherwise the window's connection
+        health — drop count + last drop, so a latency blip you missed live is still on screen. (CPU/GPU
+        power is on the cards; repeating it here was redundant.)"""
         sysp = getattr(mw, "system_power", None)
-        parts = []
         if sysp is not None and float(sysp) >= 0.5:
-            parts.append(f"{self._tr('STAT_SYS_POWER_TRUE', 'System')} {float(sysp):.0f} W")
-        comp = []
-        if cp >= 0.5:
-            comp.append(f"{self._tr('ORDER_TYPE_CPU', 'CPU')} {cp:.0f} W")
-        if gp >= 0.5:
-            comp.append(f"{self._tr('ORDER_TYPE_GPU', 'GPU')} {gp:.0f} W")
-        if comp:
-            parts.append("  ·  ".join(comp))
-        return "      ·      ".join(parts)
+            return f"{self._tr('STAT_SYS_POWER_TRUE', 'System')} {float(sysp):.0f} W"
+        return self._connection_health_html(mw)
+
+    def _connection_health_html(self, mw) -> str:
+        """Window connection-health: drop count + last-drop time (green when clean, amber/red when not).
+        Empty when latency monitoring is off or no probe has run yet."""
+        if not self._config.get("latency_enabled", True):
+            return ""
+        ev = self._latency_events or {}
+        count = int(ev.get("count", 0) or 0)
+        # Only claim "no drops" once we actually have latency history; otherwise stay quiet.
+        gw = getattr(mw, "latency_gw", None)
+        anchor = getattr(mw, "latency_anchor", None)
+        if count == 0 and gw is None and anchor is None:
+            return ""
+        label = self._tr("CONN_HEALTH_LABEL", "Connection")
+        if count == 0:
+            return (f"<span style='color:#3FB950;'>{label}: "
+                    f"{self._tr('CONN_HEALTH_STEADY', 'steady')}</span>")
+        color = "#E81123" if count >= 3 else "#FFB900"
+        last = ev.get("last_start")
+        lt = last.strftime("%H:%M") if hasattr(last, "strftime") else ""
+        drops = self._tr("CONN_HEALTH_DROPS", "drops")
+        out = f"<span style='color:{color};'>{label}: {count} {drops}</span>"
+        if lt:
+            sub = su.semantic_colors()["text_secondary"]
+            out += f"  <span style='color:{sub};'>· {self._tr('STATS_DETAIL_LAST', 'last')} {lt}</span>"
+        return out
+
+    def _export_window(self) -> None:
+        """The header Export action — write the two-file stats export for the active timeline window."""
+        ws = getattr(self._main_widget, "widget_state", None)
+        if ws is None:
+            return
+        from netspeedtray import __version__
+        start, end, _is_session = self._window()
+        label = self._timeline.current_label() if hasattr(self._timeline, "current_label") \
+            else self._period_key()
+        run_interactive_export(self.window(), ws, start, end, label, self._config, self._i18n, __version__)
+
+    def _goto_network(self) -> None:
+        win = self.window()
+        if win is not None and hasattr(win, "select_tab"):
+            try:
+                win.select_tab("network")
+            except Exception:
+                pass
 
     @staticmethod
     def _fmt_dur(secs: float) -> str:

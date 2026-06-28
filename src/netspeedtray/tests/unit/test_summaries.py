@@ -47,6 +47,26 @@ def test_peak_offpeak_split():
     assert S.peak_offpeak([]) is None
 
 
+def test_outage_summary_counts_drop_events():
+    from datetime import datetime
+    # timeout series (0 = ok, 1 = lost ping): two separate outage runs.
+    t = lambda m: datetime(2026, 6, 28, 14, m, 0)
+    pairs = [(t(0), 0), (t(1), 1), (t(2), 1), (t(3), 0),      # outage #1: 14:01-14:02
+             (t(4), 0), (t(5), 1), (t(6), 0)]                  # outage #2: 14:05
+    o = S.outage_summary(pairs)
+    assert o["count"] == 2
+    assert o["last_start"] == t(5)
+    assert o["total_down_seconds"] == 60   # run1 (14:01->14:02) = 60s; run2 (single sample) = 0s
+
+
+def test_event_runs_handles_trailing_bad():
+    from datetime import datetime
+    t = lambda m: datetime(2026, 6, 28, 14, m, 0)
+    runs = S.event_runs([(t(0), 0), (t(1), 1), (t(2), 1)], lambda v: v >= 0.5)
+    assert len(runs) == 1 and runs[0][0] == t(1) and runs[0][1] == t(2)
+    assert S.outage_summary([(t(0), 0), (t(1), 0)])["count"] == 0   # clean window -> no events
+
+
 def test_hourly_profile_accepts_unix_seconds():
     # 72000s = 20:00 UTC-anchored hour-of-day arithmetic (20h); robust to plain unix timestamps.
     prof = S.hourly_profile([(72000.0, 50.0), (72000.0, 70.0)])

@@ -107,17 +107,30 @@ def test_latency_pill_classification(q_app):
     assert L(None, None, 0.0) == ""                                           # no data -> empty
 
 
-def test_syspower_breakdown_and_true_system(q_app):
+def test_context_right_prefers_true_system_power(q_app):
     from types import SimpleNamespace
     ov = OverviewTab(_MW(), _cfg(), I18nStrings("en_US"))
-    # CPU+GPU breakdown when no true system source (honest — not relabelled as "system").
-    assert ov._syspower_text(SimpleNamespace(cpu_power=42.0, gpu_power=65.0, system_power=None)) \
-        == "CPU 42 W  ·  GPU 65 W"
-    # A real PSYS/battery reading shows a distinct "System N W" first, then the breakdown.
-    txt = ov._syspower_text(SimpleNamespace(cpu_power=42.0, gpu_power=65.0, system_power=95.0))
-    assert txt.startswith("System 95 W") and "CPU 42 W" in txt and "GPU 65 W" in txt
-    # No power counters at all -> empty (no "0 W").
-    assert ov._syspower_text(SimpleNamespace(cpu_power=None, gpu_power=None, system_power=None)) == ""
+    # The strip's right slot shows TRUE system power (PSYS/battery) when the platform exposes it —
+    # CPU/GPU power is on the cards now, so it's no longer repeated here.
+    mw = SimpleNamespace(system_power=95.0, latency_gw=10.0, latency_anchor=None)
+    assert ov._context_right_text(mw) == "System 95 W"
+
+
+def test_context_right_connection_health_when_no_syspower(q_app):
+    from datetime import datetime
+    from types import SimpleNamespace
+    mw = SimpleNamespace(system_power=None, latency_gw=12.0, latency_anchor=None)
+    ov = OverviewTab(_MW(), _cfg(), I18nStrings("en_US"))
+    # A clean window (with latency data present) reads "steady" in green.
+    ov._latency_events = {"count": 0, "last_start": None}
+    assert "steady" in ov._context_right_text(mw)
+    # Drops over the window surface the count + last drop time, so a missed-live blip is still visible.
+    ov._latency_events = {"count": 2, "last_start": datetime(2026, 6, 28, 8, 40)}
+    txt = ov._context_right_text(mw)
+    assert "2 drops" in txt and "08:40" in txt
+    # Latency monitoring off -> the slot stays empty.
+    ov_off = OverviewTab(_MW(), _cfg(latency_enabled=False), I18nStrings("en_US"))
+    assert ov_off._context_right_text(mw) == ""
 
 
 def test_hw_sub_omits_power_that_rounds_to_zero(q_app):
@@ -152,6 +165,7 @@ def test_gpu_tile_hides_on_no_gpu(q_app):
     q_app.processEvents()
     assert not ov._tiles["gpu"].isVisibleTo(ov)
     ov.hide()
+    ov.teardown()   # showing starts the top-talkers feed thread; tear it down so it can't leak
 
 
 def test_tiles_show_live_values(q_app):
@@ -169,6 +183,7 @@ def test_tiles_show_live_values(q_app):
     assert ov._usage._cap_bar.isVisible()
     assert ov._usage._cap_bar.value() == 50
     ov.hide()
+    ov.teardown()
 
 
 def test_timer_idles_when_hidden(q_app):
@@ -193,6 +208,7 @@ def test_missing_data_source_degrades(q_app):
     q_app.processEvents()
     ov._tick()  # must not raise
     ov.hide()
+    ov.teardown()
 
 
 def test_sparkline_handles_short_series(q_app):

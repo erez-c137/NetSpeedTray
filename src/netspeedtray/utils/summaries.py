@@ -126,6 +126,43 @@ def hourly_profile(pairs: Sequence) -> Dict[int, float]:
     return {h: sums[h] / counts[h] for h in sums if counts[h]}
 
 
+def event_runs(pairs: Sequence, is_bad) -> List[tuple]:
+    """Contiguous runs where ``is_bad(value)`` holds, as (start_ts, end_ts) pairs — the basis for
+    "internet went bad then good" events you'd otherwise only catch live. ``pairs`` is (timestamp,
+    value) in time order; ``is_bad`` is a predicate on the value."""
+    runs: List[tuple] = []
+    start = None
+    prev_ts = None
+    for ts, v in pairs:
+        bad = bool(is_bad(v))
+        if bad and start is None:
+            start = ts
+        elif not bad and start is not None:
+            runs.append((start, prev_ts if prev_ts is not None else ts))
+            start = None
+        prev_ts = ts
+    if start is not None:
+        runs.append((start, prev_ts if prev_ts is not None else start))
+    return runs
+
+
+def outage_summary(timeout_pairs: Sequence) -> Dict[str, object]:
+    """Connection-drop events from the gateway-timeout series (value >= 0.5 == a lost ping). Returns
+    {count, last_start, total_down_seconds, runs} — an honest outage log, not a fabricated SLA."""
+    runs = event_runs(timeout_pairs, lambda v: v is not None and float(v) >= 0.5)
+    total = 0.0
+    for s, e in runs:
+        try:
+            if hasattr(s, "timestamp") and hasattr(e, "timestamp"):
+                total += max(0.0, e.timestamp() - s.timestamp())
+            else:
+                total += max(0.0, float(e) - float(s))
+        except (TypeError, ValueError):
+            pass
+    return {"count": len(runs), "last_start": runs[-1][0] if runs else None,
+            "total_down_seconds": total, "runs": runs}
+
+
 def peak_offpeak(pairs: Sequence) -> Optional[Dict[str, float]]:
     """Busiest vs quietest clock-hour by mean value. Returns {peak_hour, peak_avg, offpeak_hour,
     offpeak_avg} or None if fewer than two distinct hours have data (a split would be meaningless)."""

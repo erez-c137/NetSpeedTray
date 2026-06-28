@@ -34,6 +34,49 @@ from netspeedtray.utils import summaries as S
 from netspeedtray.utils import stats_exporter
 
 
+def _tr(i18n, key: str, default: str) -> str:
+    return str(getattr(i18n, key, default)) if i18n is not None else default
+
+
+def run_interactive_export(parent, widget_state, start: datetime, end: datetime, window_label: str,
+                           config: Dict[str, Any], i18n, app_version: str = "") -> None:
+    """Pick a folder, write the two-file + JSON export for [start,end], and confirm with an
+    open-folder option. Shared by the Stats-detail sheet's Export button AND the Overview header's
+    Export action, so "export the numbers" works identically from either entry point."""
+    logger = logging.getLogger("NetSpeedTray.Export")
+    out_dir = QFileDialog.getExistingDirectory(
+        parent, _tr(i18n, "STATS_DETAIL_EXPORT_DIR", "Choose a folder for the export"))
+    if not out_dir:
+        return
+    machine = get_machine_id()[:8]
+    period = re.sub(r"[^A-Za-z0-9]+", "-", window_label).strip("-").lower() or "window"
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    basename = f"nst_export_{machine}_{period}_{ts}"
+    poll = float(config.get("update_rate", 1.0) or 1.0)
+    try:
+        paths = stats_exporter.export_window(
+            widget_state, start, end, window_label, out_dir, basename,
+            machine_id=machine, app_version=app_version, poll_interval=poll)
+    except Exception as e:
+        logger.error("Export failed: %s", e, exc_info=True)
+        QMessageBox.warning(parent, _tr(i18n, "STATS_DETAIL_EXPORT", "Export"),
+                            _tr(i18n, "STATS_DETAIL_EXPORT_FAIL", "Could not write the export:") + f"\n{e}")
+        return
+    names = "\n".join(os.path.basename(p) for p in paths.values())
+    box = QMessageBox(parent)
+    box.setWindowTitle(_tr(i18n, "STATS_DETAIL_EXPORT", "Export"))
+    box.setText(_tr(i18n, "STATS_DETAIL_EXPORT_OK", "Exported:") + f"\n{names}")
+    open_btn = box.addButton(_tr(i18n, "STATS_DETAIL_OPEN_FOLDER", "Open folder"),
+                             QMessageBox.ButtonRole.AcceptRole)
+    box.addButton(QMessageBox.StandardButton.Close)
+    box.exec()
+    if box.clickedButton() is open_btn:
+        try:
+            subprocess.Popen(["explorer", os.path.normpath(out_dir)])
+        except Exception:
+            pass
+
+
 class StatsDetailSheet(QDialog):
     """A modal sheet of honest distribution stats for one or more metrics over the selected window."""
 
@@ -186,8 +229,25 @@ class StatsDetailSheet(QDialog):
                 if secs > 0:
                     text = (f"{self._tr('STATS_DETAIL_ABOVE', 'Above')} {thr:.0f}°C "
                             f"{self._tr('STATS_DETAIL_FOR', 'for')} {self._dur(secs)}")
-        elif key == "latency_gw" and loss is not None and loss > 0:
-            text = f"{loss:.1f}% {self._tr('STATS_DETAIL_LOSS', 'packet loss')}"
+        elif key == "latency_gw":
+            bits = []
+            if loss is not None and loss > 0:
+                bits.append(f"{loss:.1f}% {self._tr('STATS_DETAIL_LOSS', 'packet loss')}")
+            try:
+                o = S.outage_summary(self._ws.get_hardware_history("latency_gw_timeout",
+                                                                   self._start, self._end))
+                if o["count"]:
+                    last = o["last_start"]
+                    lt = last.strftime("%H:%M") if hasattr(last, "strftime") else ""
+                    drops = (f"{o['count']} {self._tr('STATS_DETAIL_DROPS', 'connection drops')}")
+                    if lt:
+                        drops += f" · {self._tr('STATS_DETAIL_LAST', 'last')} {lt}"
+                    if o["total_down_seconds"] >= 1:
+                        drops += f" · {self._dur(o['total_down_seconds'])} {self._tr('STATS_DETAIL_DOWN', 'down')}"
+                    bits.append(drops)
+            except Exception:
+                pass
+            text = "   ·   ".join(bits)
 
         # Network: % of time below the advertised plan, when configured.
         if kind in ("net_down", "net_up") and pairs:
@@ -231,36 +291,8 @@ class StatsDetailSheet(QDialog):
         QApplication.clipboard().setText("\n".join(self._copy_text_parts))
 
     def _export(self) -> None:
-        out_dir = QFileDialog.getExistingDirectory(
-            self, self._tr("STATS_DETAIL_EXPORT_DIR", "Choose a folder for the export"))
-        if not out_dir:
-            return
-        machine = get_machine_id()[:8]
-        period = re.sub(r"[^A-Za-z0-9]+", "-", self._win_label).strip("-").lower() or "window"
-        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-        basename = f"nst_export_{machine}_{period}_{ts}"
-        try:
-            paths = stats_exporter.export_window(
-                self._ws, self._start, self._end, self._win_label, out_dir, basename,
-                machine_id=machine, app_version=self._app_version, poll_interval=self._poll)
-        except Exception as e:
-            self.logger.error("Export failed: %s", e, exc_info=True)
-            QMessageBox.warning(self, self._tr("STATS_DETAIL_EXPORT", "Export"),
-                                self._tr("STATS_DETAIL_EXPORT_FAIL", "Could not write the export:") + f"\n{e}")
-            return
-        names = "\n".join(os.path.basename(p) for p in paths.values())
-        box = QMessageBox(self)
-        box.setWindowTitle(self._tr("STATS_DETAIL_EXPORT", "Export"))
-        box.setText(self._tr("STATS_DETAIL_EXPORT_OK", "Exported:") + f"\n{names}")
-        open_btn = box.addButton(self._tr("STATS_DETAIL_OPEN_FOLDER", "Open folder"),
-                                 QMessageBox.ButtonRole.AcceptRole)
-        box.addButton(QMessageBox.StandardButton.Close)
-        box.exec()
-        if box.clickedButton() is open_btn:
-            try:
-                subprocess.Popen(["explorer", os.path.normpath(out_dir)])
-            except Exception:
-                pass
+        run_interactive_export(self, self._ws, self._start, self._end, self._win_label,
+                               self._config, self._i18n, self._app_version)
 
     # ------------------------------------------------------------------ data
     def _summarize(self, key: str, kind: str):
