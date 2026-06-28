@@ -20,7 +20,9 @@ from typing import Any, Deque, Dict, Optional
 from datetime import datetime, timedelta
 
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QToolButton
+from PyQt6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QToolButton, QScrollArea, QFrame,
+)
 
 from netspeedtray import constants
 from netspeedtray.utils import styles as su
@@ -48,6 +50,7 @@ _ACCENTS = {
 
 _REFRESH_MS = 1000        # live current-value tick
 _HISTORY_MS = 6000        # DB window reload (sparklines + avg/peak) — cheap, off the 1 Hz path
+_NARROW_BP = 760          # below this content width: reflow to the compact layout (2×2 tiles, stacked cards)
 
 
 class OverviewTab(QWidget):
@@ -78,13 +81,31 @@ class OverviewTab(QWidget):
         self._series: Dict[str, Any] = {}     # latest per-metric sparkline series for the active window
         self._win_summ: Dict[str, Any] = {}   # latest per-metric WindowSummary for the active window
 
-        root = QVBoxLayout(self)
+        # The tab itself holds ONLY a scroll area; all cards live in an inner content widget. When the
+        # window is shorter than the content needs, it scrolls instead of squeezing widgets past their
+        # minimums (which is what made the hero's avg/peak line ride up over the sparkline). Horizontal
+        # scrolling is off — width is handled by the responsive reflow (resizeEvent) instead.
+        self._narrow = True   # provisional; resolved by the first resizeEvent
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        self._scroll = QScrollArea(self)
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        content = QWidget()
+        content.setStyleSheet("background: transparent;")
+        outer.addWidget(self._scroll)
+
+        c = su.semantic_colors()
+        root = QVBoxLayout(content)
         root.setContentsMargins(16, 16, 16, 16)
         root.setSpacing(12)
 
         # --- Header: a discoverable Export action (left) + the timeline dropdown (right). The Export
         # button makes "pull the numbers" a first-class action instead of a hidden click-the-hero gesture.
-        c = su.semantic_colors()
         head = QHBoxLayout()
         head.setContentsMargins(2, 0, 2, 0)
         self._export_btn = QToolButton()
@@ -130,10 +151,13 @@ class OverviewTab(QWidget):
         self._latency_events: Dict[str, Any] = {}   # outage_summary for the active window
 
         # --- Hardware tiles: CPU / GPU / RAM / VRAM. Always built (the Monitor forces collection);
-        # VRAM hides itself when there's no dedicated-VRAM reading (integrated GPUs, etc). ---
-        hw = QHBoxLayout()
-        hw.setContentsMargins(0, 0, 0, 0)
-        hw.setSpacing(12)
+        # VRAM hides itself when there's no dedicated-VRAM reading (integrated GPUs, etc). Laid out in a
+        # GRID so they can reflow 1×4 (wide) → 2×2 (narrow) without ever crushing or overlapping. ---
+        self._hw_grid = QGridLayout()
+        self._hw_grid.setContentsMargins(0, 0, 0, 0)
+        self._hw_grid.setHorizontalSpacing(12)
+        self._hw_grid.setVerticalSpacing(12)
+        self._tile_order = ["cpu", "gpu", "ram", "vram"]
         for key, label in (("cpu", self._tr("ORDER_TYPE_CPU", "CPU")),
                            ("gpu", self._tr("ORDER_TYPE_GPU", "GPU")),
                            ("ram", self._tr("MONITOR_TILE_RAM", "RAM")),
@@ -141,20 +165,24 @@ class OverviewTab(QWidget):
             t = StatTile(label, accent(key))
             t.clicked.connect(lambda k=key: self._open_detail(k))   # a click opens the stat sheet
             self._tiles[key] = t
-            hw.addWidget(t, 1)
-        root.addLayout(hw)
+        root.addLayout(self._hw_grid)
 
-        # --- Bottom row: Data-usage card (left) + Top-talkers card (right), side by side ---
-        bottom = QHBoxLayout()
-        bottom.setContentsMargins(0, 0, 0, 0)
-        bottom.setSpacing(12)
+        # --- Bottom row: Data-usage card + Top-talkers card. Grid so it reflows side-by-side (wide) →
+        # stacked (narrow). ---
+        self._bottom_grid = QGridLayout()
+        self._bottom_grid.setContentsMargins(0, 0, 0, 0)
+        self._bottom_grid.setHorizontalSpacing(12)
+        self._bottom_grid.setVerticalSpacing(12)
         self._usage = UsageTile(i18n)
         self._busiest = BusiestAppsCard(i18n)
         self._busiest.go_to_network.connect(self._goto_network)
-        bottom.addWidget(self._usage, 1)
-        bottom.addWidget(self._busiest, 1)
-        root.addLayout(bottom)
+        root.addLayout(self._bottom_grid)
         root.addStretch(1)
+
+        # Seed the compact layout; the first resizeEvent switches to wide if there's room.
+        self._place_hw_tiles(2)
+        self._place_bottom(stacked=True)
+        self._scroll.setWidget(content)
 
         self._timer = QTimer(self)
         self._timer.setInterval(_REFRESH_MS)
@@ -164,6 +192,36 @@ class OverviewTab(QWidget):
         self._hist_timer = QTimer(self)
         self._hist_timer.setInterval(_HISTORY_MS)
         self._hist_timer.timeout.connect(self._reload_window)
+
+    # --------------------------------------------------------------- responsive layout
+    def _place_hw_tiles(self, cols: int) -> None:
+        """Arrange the 4 hardware tiles in `cols` columns (4 = one row; 2 = a 2×2 block)."""
+        for i, key in enumerate(self._tile_order):
+            self._hw_grid.addWidget(self._tiles[key], i // cols, i % cols)
+        for col in range(4):
+            self._hw_grid.setColumnStretch(col, 1 if col < cols else 0)
+
+    def _place_bottom(self, stacked: bool) -> None:
+        """Data-usage + Top-talkers cards side by side (wide) or stacked (narrow)."""
+        self._bottom_grid.addWidget(self._usage, 0, 0)
+        if stacked:
+            self._bottom_grid.addWidget(self._busiest, 1, 0)
+            self._bottom_grid.setColumnStretch(0, 1)
+            self._bottom_grid.setColumnStretch(1, 0)
+        else:
+            self._bottom_grid.addWidget(self._busiest, 0, 1)
+            self._bottom_grid.setColumnStretch(0, 1)
+            self._bottom_grid.setColumnStretch(1, 1)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        super().resizeEvent(event)
+        # Reflow only when crossing the breakpoint (cheap; never every pixel). Use the tab's own width —
+        # it's already updated when resizeEvent fires, whereas the scroll viewport lags a layout pass.
+        narrow = self.width() < _NARROW_BP
+        if narrow != self._narrow:
+            self._narrow = narrow
+            self._place_hw_tiles(2 if narrow else 4)
+            self._place_bottom(stacked=narrow)
 
     # --------------------------------------------------------------- timeline / window
     def _on_period_changed(self, index: int) -> None:

@@ -186,6 +186,44 @@ def test_tiles_show_live_values(q_app):
     ov.teardown()
 
 
+def test_responsive_reflow_grid_positions(q_app):
+    """The hardware tiles + bottom cards reflow between a wide (1×4 / side-by-side) and a compact
+    (2×2 / stacked) arrangement — never overlapping, so a narrow window stays usable."""
+    ov = OverviewTab(_MW(), _cfg(), I18nStrings("en_US"))
+    # Compact: 2 columns -> RAM drops to the second row; bottom cards stack.
+    ov._place_hw_tiles(2)
+    ov._place_bottom(stacked=True)
+    r, c, _, _ = ov._hw_grid.getItemPosition(ov._hw_grid.indexOf(ov._tiles["ram"]))
+    assert (r, c) == (1, 0)
+    bb = ov._bottom_grid.getItemPosition(ov._bottom_grid.indexOf(ov._busiest))
+    assert (bb[0], bb[1]) == (1, 0)        # busiest stacked under usage
+    # Wide: one row of 4; bottom side by side.
+    ov._place_hw_tiles(4)
+    ov._place_bottom(stacked=False)
+    r, c, _, _ = ov._hw_grid.getItemPosition(ov._hw_grid.indexOf(ov._tiles["vram"]))
+    assert (r, c) == (0, 3)
+    bb = ov._bottom_grid.getItemPosition(ov._bottom_grid.indexOf(ov._busiest))
+    assert (bb[0], bb[1]) == (0, 1)        # busiest beside usage
+    ov.teardown()
+
+
+def test_resize_crosses_breakpoint(q_app):
+    """Resizing across the breakpoint flips the layout (and the content lives in a scroll area, so a
+    short window scrolls instead of overlapping)."""
+    from PyQt6.QtWidgets import QScrollArea
+    ov = OverviewTab(_MW(), _cfg(), I18nStrings("en_US"))
+    assert isinstance(ov._scroll, QScrollArea)
+    ov.resize(900, 600)
+    ov.show()
+    q_app.processEvents()
+    assert ov._narrow is False              # wide -> 1×4
+    ov.resize(680, 600)
+    q_app.processEvents()
+    assert ov._narrow is True               # narrow -> 2×2
+    ov.hide()
+    ov.teardown()
+
+
 def test_timer_idles_when_hidden(q_app):
     ov = OverviewTab(_MW(), _cfg(), I18nStrings("en_US"))
     ov.show()

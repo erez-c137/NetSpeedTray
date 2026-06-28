@@ -48,8 +48,10 @@ class MonitorWindow(QWidget):
         self._settings_flyout = None  # one reusable display-settings popup (not rebuilt per click)
 
         self.setWindowTitle(self._tr("MONITOR_WINDOW_TITLE", "Monitor"))
-        self.resize(900, 620)
-        self.setMinimumSize(680, 440)
+        # Default sized so the wide Overview (1×4 tiles + side-by-side cards) fits without scrolling;
+        # the min is deliberately small — every tab scrolls/reflows, so the window is safe at any size.
+        self.resize(940, 680)
+        self.setMinimumSize(660, 420)
         self.setObjectName("monitorWindow")
         c = su.semantic_colors()
         self.setStyleSheet(f"#monitorWindow {{ background: {c['card_bg']}; }}")
