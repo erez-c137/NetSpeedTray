@@ -46,3 +46,55 @@ def test_timeout_is_loss(monkeypatch):
     p = LP.LatencyProbe({})
     gw = LP.icmp_ping_ms(p._gateway_ip())
     assert gw is None   # a timed-out probe -> loss
+
+
+# --- lessons learned: exercise run()/_run_loop THROUGH the real code, not a re-implementation --------
+
+def test_run_initializes_and_uninitializes_com(monkeypatch):
+    """run() MUST CoInitialize on its own thread or wmi.WMI() (gateway detection) raises and the gateway
+    probe — the privacy-preserving default — silently never works. Regression for the missing COM init."""
+    import pythoncom
+    calls = []
+    monkeypatch.setattr(pythoncom, "CoInitialize", lambda: calls.append("init"))
+    monkeypatch.setattr(pythoncom, "CoUninitialize", lambda: calls.append("uninit"))
+    p = LP.LatencyProbe({})
+    p._running = False                       # _run_loop returns immediately; the COM bracket still runs
+    p.run()
+    assert calls == ["init", "uninit"]
+
+
+def test_run_loop_emits_once_via_the_real_path(monkeypatch):
+    """Drive the ACTUAL _run_loop (not a hand-rolled iteration) for one pass."""
+    monkeypatch.setattr(LP, "default_gateway_ip", lambda: "192.168.1.1")
+    monkeypatch.setattr(LP, "icmp_ping_ms", lambda ip, t=1000: 3.0 if ip == "192.168.1.1" else None)
+    monkeypatch.setattr(LP.time, "sleep", lambda s: None)   # don't wait out the cadence
+    p = LP.LatencyProbe({"latency_public_enabled": False})
+    got = []
+
+    def on_ready(gw, an, to):
+        got.append((gw, an, to))
+        p._running = False                   # stop after the first real iteration
+
+    p.latency_ready.connect(on_ready)
+    p._running = True
+    p._run_loop()
+    assert got == [(3.0, None, False)]
+
+
+def test_icmp_ping_resolves_a_hostname(monkeypatch):
+    """A public anchor of 'cloudflare.com' must resolve via DNS, not silently fail at inet_aton."""
+    import socket
+    import struct
+    seen = {}
+
+    class _FakeLib:
+        def IcmpCreateFile(self): return 1
+        def IcmpCloseHandle(self, h): return None
+        def IcmpSendEcho(self, h, dest, *a):
+            seen["dest"] = dest
+            return 0   # report timeout; we only care that the hostname was resolved into `dest`
+
+    monkeypatch.setattr(LP, "_iphlpapi", lambda: _FakeLib())
+    monkeypatch.setattr(LP.socket, "gethostbyname", lambda name: "1.2.3.4")
+    LP.icmp_ping_ms("cloudflare.com")
+    assert seen["dest"] == struct.unpack("<I", socket.inet_aton("1.2.3.4"))[0]

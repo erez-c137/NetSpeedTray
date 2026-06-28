@@ -60,7 +60,11 @@ def icmp_ping_ms(ip: str, timeout_ms: int = 1000) -> Optional[float]:
         if not handle or handle == wintypes.HANDLE(-1).value:
             return None
         try:
-            dest = struct.unpack("<I", socket.inet_aton(ip))[0]
+            try:
+                packed = socket.inet_aton(ip)                          # a dotted IPv4 literal
+            except OSError:
+                packed = socket.inet_aton(socket.gethostbyname(ip))    # resolve a hostname (e.g. cloudflare.com)
+            dest = struct.unpack("<I", packed)[0]
             data = b"netspeedtray"
             reply_size = ctypes.sizeof(_ICMP_ECHO_REPLY) + len(data) + 8
             reply_buf = ctypes.create_string_buffer(reply_size)
@@ -119,6 +123,25 @@ class LatencyProbe(QThread):
         return self._gateway
 
     def run(self) -> None:
+        # This thread calls wmi.WMI() (via default_gateway_ip) which needs COM initialized PER THREAD —
+        # without it, wmi raises "CoInitialize has not been called", default_gateway_ip swallows it, and
+        # the gateway probe (the privacy-preserving default) silently never produces a reading. Mirror
+        # StatsMonitorThread, which inits COM on its own thread for the same reason.
+        try:
+            import pythoncom
+            pythoncom.CoInitialize()
+        except Exception:
+            pythoncom = None
+        try:
+            self._run_loop()
+        finally:
+            try:
+                if pythoncom is not None:
+                    pythoncom.CoUninitialize()
+            except Exception:
+                pass
+
+    def _run_loop(self) -> None:
         while self._running:
             try:
                 gw_ip = self._gateway_ip()
