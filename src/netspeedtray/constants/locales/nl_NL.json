@@ -525,5 +525,15 @@
     "//": "--- Monitor: Data usage card ---",
     "USAGE_AVG_DAY_LABEL": "Gem. / dag",
     "USAGE_PROJECTED_LABEL": "Verwacht",
-    "USAGE_SET_LIMIT_HINT": "Stel een maandlimiet in"
+    "USAGE_SET_LIMIT_HINT": "Stel een maandlimiet in",
+    "//": "--- Settings: Connection (latency + plan) / Hardware throttle ---",
+    "CONN_LATENCY_TITLE": "Internetlatentie",
+    "CONN_LATENCY_SUB": "Ping + pakketverlies naar je router, en verbindingsonderbrekingen na verloop van tijd",
+    "CONN_PUBLIC_LABEL": "Ook de echte internetlatentie meten",
+    "CONN_PUBLIC_SUB": "Pingt een openbare server — hierbij verlaat het verkeer je lokale netwerk, dus dit staat standaard uit.",
+    "CONN_HOST_LABEL": "Internettestserver",
+    "CONN_PLAN_TITLE": "Geadverteerde abonnementssnelheid",
+    "CONN_PLAN_SUB": "Markeert in het venster Statistieken de tijd onder je abonnement (0 = uit).",
+    "CONN_PLAN_OFF": "Uit",
+    "HW_THROTTLE_LABEL": "Throttle-temp (stats)"
 }

@@ -525,5 +525,15 @@
     "//": "--- Monitor: Data usage card ---",
     "USAGE_AVG_DAY_LABEL": "일 평균",
     "USAGE_PROJECTED_LABEL": "예상",
-    "USAGE_SET_LIMIT_HINT": "월간 한도 설정"
+    "USAGE_SET_LIMIT_HINT": "월간 한도 설정",
+    "//": "--- Settings: Connection (latency + plan) / Hardware throttle ---",
+    "CONN_LATENCY_TITLE": "인터넷 지연 시간",
+    "CONN_LATENCY_SUB": "라우터까지의 Ping 및 패킷 손실, 시간 경과에 따른 연결 끊김",
+    "CONN_PUBLIC_LABEL": "실제 인터넷 지연 시간도 측정",
+    "CONN_PUBLIC_SUB": "공용 서버에 Ping을 보냅니다. 로컬 네트워크를 벗어나므로 기본값은 꺼짐입니다.",
+    "CONN_HOST_LABEL": "인터넷 테스트 서버",
+    "CONN_PLAN_TITLE": "가입 요금제 속도",
+    "CONN_PLAN_SUB": "요금제 속도 미만으로 보낸 시간을 통계 시트에 표시합니다 (0 = 끄기).",
+    "CONN_PLAN_OFF": "끄기",
+    "HW_THROTTLE_LABEL": "스로틀링 온도 (통계)"
 }

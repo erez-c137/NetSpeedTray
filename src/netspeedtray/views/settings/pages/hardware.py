@@ -81,6 +81,15 @@ class HardwarePage(QWidget):
         hw_layout.addWidget(style_label, 7, 0, Qt.AlignmentFlag.AlignVCenter)
         hw_layout.addWidget(self.label_style, 7, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
+        # Throttle temperature (Statistics): flags time spent at/above this temp in the Stats-detail
+        # sheet so thermal throttling is provable (0 = off). Only meaningful when temps are collected.
+        throttle_label = QLabel(str(getattr(self.i18n, "HW_THROTTLE_LABEL", "Throttle temp (stats)")))
+        self.throttle_temp = Win11Slider(editable=True, suffix="°C")
+        self.throttle_temp.setRange(0, 130)
+        self.throttle_temp.valueChanged.connect(self.on_change)
+        hw_layout.addWidget(throttle_label, 8, 0, Qt.AlignmentFlag.AlignVCenter)
+        hw_layout.addWidget(self.throttle_temp, 8, 1)
+
         hw_section.contentLayout().addLayout(hw_layout)
         layout.addWidget(hw_section)
 
@@ -176,6 +185,8 @@ class HardwarePage(QWidget):
         if style_idx >= 0:
             self.label_style.setCurrentIndex(style_idx)
 
+        self.throttle_temp.setValue(int(config.get("throttle_temp_c", 0) or 0))
+
         self.monitor_cpu.blockSignals(False)
         self.monitor_gpu.blockSignals(False)
         self.monitor_ram.blockSignals(False)
@@ -256,4 +267,5 @@ class HardwarePage(QWidget):
             "cpu_load_low_threshold": float(self.cpu_load_low.value()),
             "gpu_load_high_threshold": float(self.gpu_load_high.value()),
             "gpu_load_low_threshold": float(self.gpu_load_low.value()),
+            "throttle_temp_c": int(self.throttle_temp.value()),
         }

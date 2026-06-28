@@ -13,6 +13,7 @@ from netspeedtray.utils.components import Win11Toggle
 from netspeedtray.constants import styles as style_constants
 from netspeedtray.utils import styles as style_utils
 from netspeedtray.views.settings.pages.datacap_section import DataCapSettings
+from netspeedtray.views.settings.pages.connection_section import ConnectionSettings
 
 class InterfacesPage(QWidget):
     layout_changed = pyqtSignal()
@@ -82,6 +83,10 @@ class InterfacesPage(QWidget):
         interfaces_layout.addWidget(self.interface_scroll)
         layout.addWidget(interfaces_group)
 
+        # Connection section — latency monitoring (gateway + opt-in public anchor) + advertised plan.
+        self.connection = ConnectionSettings(self.on_change, self.i18n)
+        layout.addWidget(self.connection)
+
         # Data-usage / data-cap section (the feature's in-settings home, 2.0 IA).
         self.datacap = DataCapSettings(self.on_change, self.i18n)
         layout.addWidget(self.datacap)
@@ -148,6 +153,7 @@ class InterfacesPage(QWidget):
             else:
                 checkbox.setChecked(False)
 
+        self.connection.load_settings(config)
         self.datacap.load_settings(config)
 
     def get_settings(self) -> Dict[str, Any]:
@@ -162,5 +168,6 @@ class InterfacesPage(QWidget):
             "interface_mode": mode,
             "selected_interfaces": selected,
         }
+        settings.update(self.connection.get_settings())
         settings.update(self.datacap.get_settings())
         return settings

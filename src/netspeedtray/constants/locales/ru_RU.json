@@ -525,5 +525,15 @@
     "//": "--- Monitor: Data usage card ---",
     "USAGE_AVG_DAY_LABEL": "Ср. / день",
     "USAGE_PROJECTED_LABEL": "Прогноз",
-    "USAGE_SET_LIMIT_HINT": "Задать месячный лимит"
+    "USAGE_SET_LIMIT_HINT": "Задать месячный лимит",
+    "//": "--- Settings: Connection (latency + plan) / Hardware throttle ---",
+    "CONN_LATENCY_TITLE": "Задержка интернета",
+    "CONN_LATENCY_SUB": "Ping и потеря пакетов до роутера, а также обрывы соединения со временем",
+    "CONN_PUBLIC_LABEL": "Также измерять реальную задержку интернета",
+    "CONN_PUBLIC_SUB": "Отправляет ping на публичный сервер — это выходит за пределы вашей локальной сети, поэтому по умолчанию выключено.",
+    "CONN_HOST_LABEL": "Сервер для проверки интернета",
+    "CONN_PLAN_TITLE": "Скорость по тарифу",
+    "CONN_PLAN_SUB": "Отмечает время ниже тарифа в окне «Статистика» (0 = выкл.).",
+    "CONN_PLAN_OFF": "Выкл.",
+    "HW_THROTTLE_LABEL": "Температура троттлинга (стат.)"
 }

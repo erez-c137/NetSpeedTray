@@ -525,5 +525,15 @@
     "//": "--- Monitor: Data usage card ---",
     "USAGE_AVG_DAY_LABEL": "1日あたり平均",
     "USAGE_PROJECTED_LABEL": "予測",
-    "USAGE_SET_LIMIT_HINT": "月間上限を設定"
+    "USAGE_SET_LIMIT_HINT": "月間上限を設定",
+    "//": "--- Settings: Connection (latency + plan) / Hardware throttle ---",
+    "CONN_LATENCY_TITLE": "インターネットの遅延",
+    "CONN_LATENCY_SUB": "ルーターへの Ping とパケットロス、および時間経過に伴う接続切断を計測します",
+    "CONN_PUBLIC_LABEL": "真のインターネット遅延も計測する",
+    "CONN_PUBLIC_SUB": "パブリックサーバーに Ping を送信します。ローカルネットワークの外部に出るため、初期状態ではオフです。",
+    "CONN_HOST_LABEL": "インターネットテストサーバー",
+    "CONN_PLAN_TITLE": "契約プランの速度",
+    "CONN_PLAN_SUB": "プランを下回った時間を統計シートに表示します（0 = オフ）。",
+    "CONN_PLAN_OFF": "オフ",
+    "HW_THROTTLE_LABEL": "サーマルスロットリング温度（統計）"
 }

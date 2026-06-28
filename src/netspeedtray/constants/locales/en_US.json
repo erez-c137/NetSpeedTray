@@ -525,5 +525,15 @@
     "//": "--- Monitor: Data usage card ---",
     "USAGE_AVG_DAY_LABEL": "Avg / day",
     "USAGE_PROJECTED_LABEL": "Projected",
-    "USAGE_SET_LIMIT_HINT": "Set a monthly limit"
+    "USAGE_SET_LIMIT_HINT": "Set a monthly limit",
+    "//": "--- Settings: Connection (latency + plan) / Hardware throttle ---",
+    "CONN_LATENCY_TITLE": "Internet latency",
+    "CONN_LATENCY_SUB": "Ping + packet loss to your router, and connection drops over time",
+    "CONN_PUBLIC_LABEL": "Also measure true internet latency",
+    "CONN_PUBLIC_SUB": "Pings a public server — this leaves your local network, so it's off by default.",
+    "CONN_HOST_LABEL": "Internet test server",
+    "CONN_PLAN_TITLE": "Advertised plan speed",
+    "CONN_PLAN_SUB": "Flags time spent below your plan in the Statistics sheet (0 = off).",
+    "CONN_PLAN_OFF": "Off",
+    "HW_THROTTLE_LABEL": "Throttle temp (stats)"
 }

@@ -525,5 +525,15 @@
     "//": "--- Monitor: Data usage card ---",
     "USAGE_AVG_DAY_LABEL": "Povp. / dan",
     "USAGE_PROJECTED_LABEL": "Napovedano",
-    "USAGE_SET_LIMIT_HINT": "Nastavi mesečno omejitev"
+    "USAGE_SET_LIMIT_HINT": "Nastavi mesečno omejitev",
+    "//": "--- Settings: Connection (latency + plan) / Hardware throttle ---",
+    "CONN_LATENCY_TITLE": "Zakasnitev interneta",
+    "CONN_LATENCY_SUB": "Ping in izguba paketov do usmerjevalnika ter prekinitve povezave skozi čas",
+    "CONN_PUBLIC_LABEL": "Izmeri tudi dejansko zakasnitev interneta",
+    "CONN_PUBLIC_SUB": "Pinga javni strežnik — to zapusti vaše lokalno omrežje, zato je privzeto izklopljeno.",
+    "CONN_HOST_LABEL": "Internetni testni strežnik",
+    "CONN_PLAN_TITLE": "Oglaševana hitrost naročnine",
+    "CONN_PLAN_SUB": "V Statistiki označi čas pod hitrostjo vaše naročnine (0 = izklopljeno).",
+    "CONN_PLAN_OFF": "Izklopljeno",
+    "HW_THROTTLE_LABEL": "Temperatura omejevanja (statistika)"
 }

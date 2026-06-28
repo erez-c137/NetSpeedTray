@@ -525,5 +525,15 @@
     "//": "--- Monitor: Data usage card ---",
     "USAGE_AVG_DAY_LABEL": "Prom. / día",
     "USAGE_PROJECTED_LABEL": "Proyectado",
-    "USAGE_SET_LIMIT_HINT": "Establecer un límite mensual"
+    "USAGE_SET_LIMIT_HINT": "Establecer un límite mensual",
+    "//": "--- Settings: Connection (latency + plan) / Hardware throttle ---",
+    "CONN_LATENCY_TITLE": "Latencia de Internet",
+    "CONN_LATENCY_SUB": "Ping y pérdida de paquetes hacia tu router, y cortes de conexión a lo largo del tiempo",
+    "CONN_PUBLIC_LABEL": "Medir también la latencia real a Internet",
+    "CONN_PUBLIC_SUB": "Hace ping a un servidor público; esto sale de tu red local, por lo que está desactivado de forma predeterminada.",
+    "CONN_HOST_LABEL": "Servidor de prueba de Internet",
+    "CONN_PLAN_TITLE": "Velocidad del plan contratado",
+    "CONN_PLAN_SUB": "Marca el tiempo por debajo de tu plan en la hoja de Estadísticas (0 = desactivado).",
+    "CONN_PLAN_OFF": "Desactivado",
+    "HW_THROTTLE_LABEL": "Temp. de throttling (estadísticas)"
 }
