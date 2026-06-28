@@ -114,28 +114,34 @@ class NetworkHeader(QWidget):
         self._iface.setMinimumWidth(190)
         self._iface.setFixedHeight(30)
         self._iface.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._iface.setAccessibleName(self._tr("ALL_INTERFACES_AGGREGATED_LABEL", "All Interfaces"))
         self._iface.addItem(self._tr("ALL_INTERFACES_AGGREGATED_LABEL", "All Interfaces"), "all")
+        # Styling a QComboBox suppresses its native drop-down arrow, so draw one explicitly as a small
+        # CSS triangle (no image asset) — otherwise the control doesn't read as a dropdown (owner report).
         self._iface.setStyleSheet(
             f"QComboBox {{ background: {c['subtle_fill']}; color: {c['text_primary']};"
             f" border: 1px solid {c['card_stroke']}; border-radius: {tokens.RADIUS_CONTROL}px;"
             f" padding: 4px 12px; }}"
             f"QComboBox:hover {{ border-color: {c['accent']}; }}"
-            f"QComboBox::drop-down {{ border: none; width: 20px; }}"
+            f"QComboBox::drop-down {{ border: none; width: 22px; }}"
+            f"QComboBox::down-arrow {{ image: none; width: 0; height: 0;"
+            f" border-left: 4px solid transparent; border-right: 4px solid transparent;"
+            f" border-top: 5px solid {c['text_secondary']}; margin-right: 8px; }}"
             f"QComboBox QAbstractItemView {{ background: {c['card_bg']}; color: {c['text_primary']};"
             f" selection-background-color: {c['accent']}; selection-color: white; outline: none; }}")
         self._iface.currentIndexChanged.connect(self._on_iface_changed)
         root.addWidget(self._iface, 0, Qt.AlignmentFlag.AlignVCenter)
 
-        # Live/Pause pill — freezes the shared graph so a moment can be read without it sliding away.
-        # Bound to the host's canonical state, so the Hardware tab's pill mirrors it (and vice-versa).
+        self._timeline = TimelineSelector(i18n, current_index=_period_value(initial_key))
+        self._timeline.period_changed.connect(self.period_changed)
+        root.addWidget(self._timeline, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        # Live/Pause pill — RIGHTMOST (owner preference), after the timeline. Bound to the shared host's
+        # canonical state so the Hardware tab's pill mirrors it (and vice-versa).
         if graph_host is not None:
             from netspeedtray.views.monitor.live_toggle import LiveToggle
             self._live = LiveToggle(graph_host, i18n)
             root.addWidget(self._live, 0, Qt.AlignmentFlag.AlignVCenter)
-
-        self._timeline = TimelineSelector(i18n, current_index=_period_value(initial_key))
-        self._timeline.period_changed.connect(self.period_changed)
-        root.addWidget(self._timeline, 0, Qt.AlignmentFlag.AlignVCenter)
 
     def _stat_block(self, label: str, glyph: str, c: dict) -> Tuple[QVBoxLayout, QLabel]:
         col = QVBoxLayout()
