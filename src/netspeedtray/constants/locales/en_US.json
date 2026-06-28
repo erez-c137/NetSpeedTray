@@ -456,7 +456,7 @@
     "MONITOR_SETTINGS_GRAPH": "Graph",
     "MONITOR_LINE": "line",
     "MONITOR_COLOR_AUTO": "Auto",
-    "MONITOR_COLOR_AUTO_TIP": "Reset to the auto-detected vendor colour",
+    "MONITOR_COLOR_AUTO_TIP": "Reset to the auto-detected vendor color",
     "MONITOR_SETTINGS_TIP": "Monitor display settings",
     "MONITOR_SHOW_LEGEND": "Show legend",
     "MONITOR_SETTINGS_SCOPE": "Applies to the Hardware graph",

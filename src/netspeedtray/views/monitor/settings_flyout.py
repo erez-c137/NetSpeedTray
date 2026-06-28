@@ -156,7 +156,7 @@ class MonitorSettingsFlyout(QFrame):
     def _auto_btn(self, fn, c: dict) -> QPushButton:
         b = QPushButton(self._tr("MONITOR_COLOR_AUTO", "Auto"))
         b.setCursor(Qt.CursorShape.PointingHandCursor)
-        b.setToolTip(self._tr("MONITOR_COLOR_AUTO_TIP", "Reset to the auto-detected vendor colour"))
+        b.setToolTip(self._tr("MONITOR_COLOR_AUTO_TIP", "Reset to the auto-detected vendor color"))
         # Legible at rest (text_primary), accent on hover — not "disabled-until-hovered".
         b.setStyleSheet(
             f"QPushButton {{ background: {c['subtle_fill']}; color: {c['text_primary']};"

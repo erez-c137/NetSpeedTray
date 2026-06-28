@@ -89,7 +89,7 @@ class GraphHoverTooltip(QObject):
                 return
             xmin, xmax = ax.get_xlim()
             span = (xmax - xmin) or 1.0
-            rows: List[Tuple[str, float, str]] = []   # (label, y, colour)
+            rows: List[Tuple[str, float, str]] = []   # (label, y, color)
             nearest_x = None
             best_dx = None
             for line in ax.get_lines():
@@ -122,9 +122,9 @@ class GraphHoverTooltip(QObject):
         when = mdates.num2date(x_num).strftime("%H:%M:%S")
         is_net = self._host._current_stat == "network"
         parts = [f"<span style='color:{su.semantic_colors()['text_secondary']};'>{when}</span>"]
-        for lbl, y, colour in rows:
+        for lbl, y, color in rows:
             val = self._fmt_speed(y) if is_net else f"{y:.0f}%"
-            parts.append(f"<span style='color:{colour};'>{lbl}</span> {val}")
+            parts.append(f"<span style='color:{color};'>{lbl}</span> {val}")
         return "<br>".join(parts)
 
     def _fmt_speed(self, bps: float) -> str:
