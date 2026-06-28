@@ -37,7 +37,7 @@ def _host(live=True):
 
 # --- GraphHost contract ---------------------------------------------------------
 
-def test_pause_persists_emits_and_never_loads_matplotlib(q_app):
+def test_pause_is_transient_emits_and_never_loads_matplotlib(q_app):
     h, cfg = _host(live=True)
     assert h.is_live is True
     seen = []
@@ -45,7 +45,7 @@ def test_pause_persists_emits_and_never_loads_matplotlib(q_app):
 
     h.set_live(False)
     assert h.is_live is False
-    assert cfg["live_update"] is False        # persisted through the config handler
+    assert cfg["live_update"] is True          # NOT persisted — pause is per-session (reopens live)
     assert seen == [False]
     assert h._loaded is False                  # the cheap path: pausing imports nothing
 
@@ -54,7 +54,8 @@ def test_pause_persists_emits_and_never_loads_matplotlib(q_app):
 
 
 def test_resume_starts_realtime_and_catches_up(q_app):
-    h, cfg = _host(live=False)
+    h, cfg = _host()
+    h.set_live(False)                          # every host opens live now, so pause first
     calls = []
     h.start_realtime = lambda: calls.append("start")          # stub out the matplotlib-loading path
     h.update_graph = lambda show_loading=True: calls.append(("update", show_loading))
@@ -63,10 +64,15 @@ def test_resume_starts_realtime_and_catches_up(q_app):
 
     h.set_live(True)
     assert h.is_live is True
-    assert cfg["live_update"] is True
     assert "start" in calls
     assert ("update", False) in calls          # jump to "now" instead of waiting a tick
     assert seen == [True]
+
+
+def test_host_always_opens_live_even_if_config_says_paused(q_app):
+    # A stale config from before pause became transient must not reopen the Monitor frozen.
+    h, _c = _host(live=False)
+    assert h.is_live is True
 
 
 # --- LiveToggle view binding ----------------------------------------------------

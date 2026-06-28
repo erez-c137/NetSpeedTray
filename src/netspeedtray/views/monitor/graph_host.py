@@ -94,7 +94,7 @@ class GraphHost(QObject):
         self._is_closing = False
 
         # --- the exact state surface GraphCoordinator reads/writes on its host ---
-        self._is_live_update_enabled = bool(config.get("live_update", True))
+        self._is_live_update_enabled = True   # pause is transient view state — always open live (M11)
         self._history_period_value = int(config.get("history_period_slider_value", 2))
         self._current_request_id = 0
         self._last_processed_id = -1
@@ -206,18 +206,17 @@ class GraphHost(QObject):
         return bool(self._is_live_update_enabled)
 
     def set_live(self, enabled: bool) -> None:
-        """Freeze (False) or resume (True) realtime updates. Persists the choice, starts/stops the
-        coordinator's timer accordingly, and — on resume — refreshes once so the frozen view catches
-        up immediately. No-op (and silent) if already in the requested state. Emits ``live_changed``
-        so every Live/Pause pill across the tabs reflects the new state."""
+        """Freeze (False) or resume (True) realtime updates. Starts/stops the coordinator's timer and —
+        on resume — refreshes once so the frozen view catches up immediately. No-op (and silent) if
+        already in the requested state. Emits ``live_changed`` so every Live/Pause pill across the tabs
+        reflects the new state.
+
+        Pause is TRANSIENT per-session view state (NOT persisted): a "pause to inspect, then close" must
+        not reopen the Monitor frozen on a stale graph next session — every open starts live."""
         enabled = bool(enabled)
         if enabled == self._is_live_update_enabled or self._is_closing:
             return
         self._is_live_update_enabled = enabled
-        try:
-            self.config_handler.queue_config_update({"live_update": enabled})
-        except Exception:
-            pass
         if enabled:
             self.start_realtime()
             self.update_graph(show_loading=False)   # jump to "now" instead of waiting a tick
