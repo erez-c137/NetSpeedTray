@@ -213,10 +213,13 @@ class ClickableCard(QFrame):
 
     @staticmethod
     def focus_qss(obj_name: str, c: dict) -> str:
-        """The reserved transparent border + accent ``:focus`` ring for ``#obj_name`` (no layout shift:
-        the border width is reserved at rest)."""
-        return (f" #{obj_name} {{ border: 2px solid transparent; }}"
-                f" #{obj_name}:focus {{ border: 2px solid {c['accent']}; }}")
+        """The Fluent card recipe for ``#obj_name``: a 1px ``card_stroke`` at rest (so the card reads as a
+        seated card on the dark surface, not a flat tonal block) that brightens to the accent on hover and
+        keyboard focus. All 1px, so there's no layout shift between states, and hover/focus double as the
+        'this opens a detail' affordance for the clickable Overview cards."""
+        return (f" #{obj_name} {{ border: 1px solid {c['card_stroke']}; }}"
+                f" #{obj_name}:hover {{ border-color: {c['accent']}; }}"
+                f" #{obj_name}:focus {{ border-color: {c['accent']}; }}")
 
     def mousePressEvent(self, event) -> None:  # noqa: N802 (Qt override)
         if event.button() == Qt.MouseButton.LeftButton:
@@ -243,7 +246,6 @@ class StatTile(ClickableCard):
         self.setAccessibleName(label)
         self.setStyleSheet(
             f"#statTile {{ background: {c['subtle_fill']}; border-radius: {tokens.RADIUS_CARD}px; }}"
-            f" #statTile:hover {{ background: {c['card_stroke']}; }}"
             + self.focus_qss("statTile", c))
 
         lay = QVBoxLayout(self)
@@ -299,7 +301,6 @@ class NetworkHero(ClickableCard):
         self.setAccessibleName(self._tr("MONITOR_TAB_NETWORK", "Network"))
         self.setStyleSheet(
             f"#netHero {{ background: {c['subtle_fill']}; border-radius: {tokens.RADIUS_CARD}px; }}"
-            f" #netHero:hover {{ background: {c['card_stroke']}; }}"
             + self.focus_qss("netHero", c))
 
         lay = QVBoxLayout(self)
@@ -386,7 +387,8 @@ class UsageTile(QFrame):
         c = su.semantic_colors()
         self.setObjectName("usageTile")
         self.setStyleSheet(
-            f"#usageTile {{ background: {c['subtle_fill']}; border-radius: {tokens.RADIUS_CARD}px; }}")
+            f"#usageTile {{ background: {c['subtle_fill']}; border: 1px solid {c['card_stroke']};"
+            f" border-radius: {tokens.RADIUS_CARD}px; }}")
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(16, 14, 16, 14)

@@ -28,8 +28,11 @@ class _TeleTile(QFrame):
         super().__init__(parent)
         self.setObjectName("teleTile")
         c = su.semantic_colors()
+        # One card recipe everywhere: 8px RADIUS_CARD + a 1px card_stroke (was 4px control-radius with no
+        # stroke, so the same metrics read as two different containers across tabs).
         self.setStyleSheet(
-            f"#teleTile {{ background: {c['subtle_fill']}; border-radius: {tokens.RADIUS_CONTROL}px; }}")
+            f"#teleTile {{ background: {c['subtle_fill']}; border: 1px solid {c['card_stroke']};"
+            f" border-radius: {tokens.RADIUS_CARD}px; }}")
         lay = QVBoxLayout(self)
         lay.setContentsMargins(12, 6, 12, 6)
         lay.setSpacing(1)

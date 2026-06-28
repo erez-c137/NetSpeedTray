@@ -39,10 +39,10 @@ class BusiestAppsCard(QFrame):
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)   # keyboard-reachable (was mouse-only)
         self.setAccessibleName(self._tr("MONITOR_TOP_TALKERS", "Top talkers"))
         self.setStyleSheet(
-            f"#busiestCard {{ background: {c['subtle_fill']}; border-radius: {tokens.RADIUS_CARD}px;"
-            f" border: 2px solid transparent; }}"
-            f" #busiestCard:hover {{ background: {c['card_stroke']}; }}"
-            f" #busiestCard:focus {{ border: 2px solid {c['accent']}; }}")
+            f"#busiestCard {{ background: {c['subtle_fill']}; border: 1px solid {c['card_stroke']};"
+            f" border-radius: {tokens.RADIUS_CARD}px; }}"
+            f" #busiestCard:hover {{ border-color: {c['accent']}; }}"
+            f" #busiestCard:focus {{ border-color: {c['accent']}; }}")
 
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 14, 16, 14)
