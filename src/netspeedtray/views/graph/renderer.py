@@ -801,7 +801,12 @@ class GraphRenderer(QObject):
         if all_ts:
             self._configure_hardware_axes(start_time, end_time, period_key, np.concatenate(all_ts), None)
 
-        if handles:
+        if not handles:
+            # No CPU/GPU history yet (the common fresh-session state) — say so, don't show a blank grid.
+            ax.text(0.5, 0.5, getattr(self.i18n, "COLLECTING_DATA_MESSAGE", "Collecting data…"),
+                    transform=ax.transAxes, ha="center", va="center",
+                    color=self._current_text_color, alpha=0.55, fontsize=10)
+        elif (hw_styles or {}).get("legend", True):
             # upper-RIGHT: the lines peg high (near 100%) under load, so the upper-left is the busy
             # zone; a near-opaque themed chip keeps the legend readable over pegged traces.
             legend = ax.legend(handles=handles, loc="upper right", fontsize=8, framealpha=0.9, ncols=2)
@@ -811,11 +816,6 @@ class GraphRenderer(QObject):
             frame.set_edgecolor(self._current_grid_color)
             for text in legend.get_texts():
                 text.set_color(self._current_text_color)
-        else:
-            # No CPU/GPU history yet (the common fresh-session state) — say so, don't show a blank grid.
-            ax.text(0.5, 0.5, getattr(self.i18n, "COLLECTING_DATA_MESSAGE", "Collecting data…"),
-                    transform=ax.transAxes, ha="center", va="center",
-                    color=self._current_text_color, alpha=0.55, fontsize=10)
 
     def _configure_hardware_axes(self, start_time, end_time, period_key, timestamps, values):
         """Sets limits and formatters for hardware stats."""

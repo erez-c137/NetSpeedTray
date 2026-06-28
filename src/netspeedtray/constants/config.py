@@ -157,6 +157,7 @@ class ConfigConstants:
         "monitor_hw_graph_mode": "combined",   # combined | separate | toggle
         "monitor_cpu_graph_color": None,
         "monitor_gpu_graph_color": None,
+        "monitor_graph_legend": True,          # show the CPU/GPU legend on the combined graph
         "history_period_slider_value": 0,  # UI-specific state
         "show_legend": DEFAULT_SHOW_LEGEND,
         "use_separate_arrow_font": DEFAULT_USE_SEPARATE_ARROW_FONT,
@@ -261,6 +262,7 @@ class ConfigConstants:
         "monitor_hw_graph_mode": {"type": str, "default": "combined", "choices": ["combined", "separate", "toggle"]},
         "monitor_cpu_graph_color": {"type": (str, type(None)), "default": None},
         "monitor_gpu_graph_color": {"type": (str, type(None)), "default": None},
+        "monitor_graph_legend": {"type": bool, "default": True},
         "history_period_slider_value": {"type": int, "default": 0, "min": 0, "max": len(data.history_period.PERIOD_MAP) - 1},
         "show_legend": {"type": bool, "default": DEFAULT_SHOW_LEGEND},
         "monitor_cpu_enabled": {"type": bool, "default": DEFAULT_MONITOR_CPU_ENABLED},

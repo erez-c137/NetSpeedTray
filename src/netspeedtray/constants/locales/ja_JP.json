@@ -452,5 +452,10 @@
     "MEMORY_HEADER": "メモリ",
     "HARDWARE_SUMMARY_TEMPLATE": "{procs}個のプロセス · CPU {cpu:.0f}% · RAM {ram:.1f} {ram_unit} · 更新 {updated_at}",
     "HARDWARE_LOADING_MESSAGE": "プロセスを読み取り中…",
-    "HARDWARE_NO_DATA_MESSAGE": "プロセスデータがありません。"
+    "HARDWARE_NO_DATA_MESSAGE": "プロセスデータがありません。",
+    "MONITOR_SETTINGS_GRAPH": "Graph",
+    "MONITOR_LINE": "line",
+    "MONITOR_COLOR_AUTO": "Auto",
+    "MONITOR_COLOR_AUTO_TIP": "Reset to the auto-detected vendor colour",
+    "MONITOR_SETTINGS_TIP": "Monitor display settings"
 }

@@ -452,5 +452,10 @@
     "MEMORY_HEADER": "Память",
     "HARDWARE_SUMMARY_TEMPLATE": "{procs} процессов · ЦП {cpu:.0f}% · RAM {ram:.1f} {ram_unit} · Обновлено {updated_at}",
     "HARDWARE_LOADING_MESSAGE": "Чтение процессов…",
-    "HARDWARE_NO_DATA_MESSAGE": "Нет данных о процессах."
+    "HARDWARE_NO_DATA_MESSAGE": "Нет данных о процессах.",
+    "MONITOR_SETTINGS_GRAPH": "Graph",
+    "MONITOR_LINE": "line",
+    "MONITOR_COLOR_AUTO": "Auto",
+    "MONITOR_COLOR_AUTO_TIP": "Reset to the auto-detected vendor colour",
+    "MONITOR_SETTINGS_TIP": "Monitor display settings"
 }

@@ -452,5 +452,10 @@
     "MEMORY_HEADER": "메모리",
     "HARDWARE_SUMMARY_TEMPLATE": "{procs}개 프로세스 · CPU {cpu:.0f}% · RAM {ram:.1f} {ram_unit} · 업데이트 {updated_at}",
     "HARDWARE_LOADING_MESSAGE": "프로세스 읽는 중…",
-    "HARDWARE_NO_DATA_MESSAGE": "프로세스 데이터가 없습니다."
+    "HARDWARE_NO_DATA_MESSAGE": "프로세스 데이터가 없습니다.",
+    "MONITOR_SETTINGS_GRAPH": "Graph",
+    "MONITOR_LINE": "line",
+    "MONITOR_COLOR_AUTO": "Auto",
+    "MONITOR_COLOR_AUTO_TIP": "Reset to the auto-detected vendor colour",
+    "MONITOR_SETTINGS_TIP": "Monitor display settings"
 }

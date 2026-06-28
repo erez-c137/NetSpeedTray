@@ -16,7 +16,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QStackedWidget, QApplication, QLabel,
+    QWidget, QVBoxLayout, QHBoxLayout, QStackedWidget, QApplication, QLabel, QToolButton,
 )
 
 from netspeedtray.utils import styles as su
@@ -59,9 +59,24 @@ class MonitorWindow(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
+        # Header row: the pivot tab bar (left) + a gear that opens the live display-settings flyout.
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 8, 0)
+        header.setSpacing(0)
         self._tab_bar = FlatTabBar([(d.tab_id, d.label) for d in self._descriptors])
         self._tab_bar.tab_selected.connect(self._on_tab_changed)
-        root.addWidget(self._tab_bar)
+        header.addWidget(self._tab_bar)
+        header.addStretch(1)
+        self._gear = QToolButton()
+        self._gear.setText("⚙")   # gear
+        self._gear.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._gear.setToolTip(self._tr("MONITOR_SETTINGS_TIP", "Monitor display settings"))
+        self._gear.setStyleSheet(
+            f"QToolButton {{ background: transparent; color: {c['text_secondary']}; border: none;"
+            f" font-size: 16px; padding: 4px 6px; }} QToolButton:hover {{ color: {c['text_primary']}; }}")
+        self._gear.clicked.connect(self._open_settings_flyout)
+        header.addWidget(self._gear, 0, Qt.AlignmentFlag.AlignVCenter)
+        root.addLayout(header)
 
         self._stack = QStackedWidget()
         root.addWidget(self._stack, 1)
@@ -139,6 +154,27 @@ class MonitorWindow(QWidget):
     def _make_hardware(self) -> QWidget:
         from netspeedtray.views.monitor.hardware.tab import HardwareTab
         return HardwareTab(self._ensure_graph_host(), self._main_widget, self.config, self.i18n, self)
+
+    # ----------------------------------------------------------------- settings flyout
+
+    def _open_settings_flyout(self) -> None:
+        """Open the live display-settings popup anchored under the gear."""
+        from netspeedtray.views.monitor.settings_flyout import MonitorSettingsFlyout
+        fly = MonitorSettingsFlyout(self._main_widget, self.config, self.i18n, self)
+        fly.changed.connect(self._on_settings_changed)
+        fly.adjustSize()
+        anchor = self._gear.mapToGlobal(self._gear.rect().bottomRight())
+        fly.move(anchor.x() - fly.width(), anchor.y() + 4)
+        fly.show()
+
+    def _on_settings_changed(self) -> None:
+        # Live-apply: re-render the active graph so a colour/legend change is immediate (the host
+        # reads the new values from config). No-op until a chart tab has built the shared host.
+        if self._graph_host is not None:
+            try:
+                self._graph_host.update_graph(show_loading=False)
+            except Exception:
+                pass
 
     # ----------------------------------------------------------------- helpers
 

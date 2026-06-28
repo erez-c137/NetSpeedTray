@@ -237,7 +237,8 @@ class GraphHost(QObject):
         gpu_c = self.config.get("monitor_gpu_graph_color") or None
         is_dark = bool(self.config.get("dark_mode", True))   # GPU shade is theme-aware (light-bg contrast)
         return {"cpu": hv.graph_line_style("cpu", cpu_c, is_dark),
-                "gpu": hv.graph_line_style("gpu", gpu_c, is_dark)}
+                "gpu": hv.graph_line_style("gpu", gpu_c, is_dark),
+                "legend": bool(self.config.get("monitor_graph_legend", True))}
 
     def _time_range(self):
         from netspeedtray.views.graph.logic import GraphLogic

@@ -452,5 +452,10 @@
     "MEMORY_HEADER": "Geheugen",
     "HARDWARE_SUMMARY_TEMPLATE": "{procs} processen · CPU {cpu:.0f}% · RAM {ram:.1f} {ram_unit} · Bijgewerkt {updated_at}",
     "HARDWARE_LOADING_MESSAGE": "Processen lezen…",
-    "HARDWARE_NO_DATA_MESSAGE": "Geen procesgegevens."
+    "HARDWARE_NO_DATA_MESSAGE": "Geen procesgegevens.",
+    "MONITOR_SETTINGS_GRAPH": "Graph",
+    "MONITOR_LINE": "line",
+    "MONITOR_COLOR_AUTO": "Auto",
+    "MONITOR_COLOR_AUTO_TIP": "Reset to the auto-detected vendor colour",
+    "MONITOR_SETTINGS_TIP": "Monitor display settings"
 }

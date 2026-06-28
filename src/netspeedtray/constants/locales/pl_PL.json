@@ -452,5 +452,10 @@
     "MEMORY_HEADER": "Pamięć",
     "HARDWARE_SUMMARY_TEMPLATE": "{procs} procesów · CPU {cpu:.0f}% · RAM {ram:.1f} {ram_unit} · Zaktualizowano {updated_at}",
     "HARDWARE_LOADING_MESSAGE": "Odczytywanie procesów…",
-    "HARDWARE_NO_DATA_MESSAGE": "Brak danych o procesach."
+    "HARDWARE_NO_DATA_MESSAGE": "Brak danych o procesach.",
+    "MONITOR_SETTINGS_GRAPH": "Graph",
+    "MONITOR_LINE": "line",
+    "MONITOR_COLOR_AUTO": "Auto",
+    "MONITOR_COLOR_AUTO_TIP": "Reset to the auto-detected vendor colour",
+    "MONITOR_SETTINGS_TIP": "Monitor display settings"
 }
