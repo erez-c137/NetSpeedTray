@@ -261,6 +261,7 @@ class OverviewTab(QWidget):
                        f"  ↑ {self._fmt_speed(su_.max or 0)}")
             self._hero.set(self._fmt_speed(down), self._fmt_speed(up), down_series, up_series, sub,
                            scale_label=self._fmt_speed(peak_v))
+            self._hero.set_latency(self._latency_html(mw))
 
             # A discrete GPU has dedicated VRAM; an integrated one shares system RAM -> "iGPU".
             vu, vt = getattr(mw, "vram_used", None), getattr(mw, "vram_total", None)
@@ -355,6 +356,33 @@ class OverviewTab(QWidget):
         s = f"{value:.1f}"
         sep = getattr(self._i18n, "DECIMAL_SEPARATOR", ".")
         return s.replace(".", sep) if sep and sep != "." else s
+
+    def _latency_html(self, mw) -> str:
+        """Latency pill: a colour-coded plain word (Good/OK/Slow — the panel insisted avg-ms is a bad
+        headline) with the ms + loss% as quiet subtext. Internet (public anchor) latency wins over the
+        gateway when the user opted into the public probe."""
+        gw = getattr(mw, "latency_gw", None)
+        anchor = getattr(mw, "latency_anchor", None)
+        loss = float(getattr(mw, "latency_loss", 0.0) or 0.0)
+        ms = anchor if anchor is not None else gw
+        if ms is None and loss <= 0:
+            return ""   # no probe data yet
+        if ms is None or loss >= 5 or (ms is not None and ms >= 150):
+            word, color = self._tr("LATENCY_SLOW", "Slow"), "#E81123"
+        elif (ms is not None and ms >= 50) or loss >= 1:
+            word, color = self._tr("LATENCY_OK", "OK"), "#FFB900"
+        else:
+            word, color = self._tr("LATENCY_GOOD", "Good"), "#3FB950"
+        sub = su.semantic_colors()["text_secondary"]
+        out = f"<span style='color:{color};'>{self._tr('LATENCY_LABEL', 'Internet')}: {word}</span>"
+        detail = []
+        if ms is not None:
+            detail.append(f"{ms:.0f} ms")
+        if loss > 0:
+            detail.append(f"{loss:.0f}% loss")
+        if detail:
+            out += f"  <span style='color:{sub};'>· {' · '.join(detail)}</span>"
+        return out
 
     def _goto_hardware(self) -> None:
         """A hardware tile was clicked — drill into the Hardware tab for the full graph + per-process

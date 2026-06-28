@@ -476,5 +476,9 @@
     "STAT_AVG_SHORT": "avg",
     "STAT_SESSION_LABEL": "Session",
     "STAT_SYS_POWER": "CPU+GPU power",
-    "STAT_SYS_POWER_TRUE": "System"
+    "STAT_SYS_POWER_TRUE": "System",
+    "LATENCY_LABEL": "Internet",
+    "LATENCY_GOOD": "Good",
+    "LATENCY_OK": "OK",
+    "LATENCY_SLOW": "Slow"
 }

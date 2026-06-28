@@ -237,10 +237,20 @@ class NetworkHero(QFrame):
         lay.setContentsMargins(18, 16, 18, 16)
         lay.setSpacing(10)
 
+        title_row = QHBoxLayout()
+        title_row.setContentsMargins(0, 0, 0, 0)
         title = QLabel(self._tr("MONITOR_TAB_NETWORK", "Network"))
         title.setFont(su.font(tokens.TYPE_BODY_STRONG))
         title.setStyleSheet(f"color: {c['text_primary']}; background: transparent;")
-        lay.addWidget(title)
+        title_row.addWidget(title)
+        title_row.addStretch(1)
+        # Latency pill (top-right) — plain word first (Good/OK/Slow), the ms as quiet subtext.
+        self._latency = QLabel("")
+        self._latency.setFont(su.font(tokens.TYPE_CAPTION))
+        self._latency.setStyleSheet("background: transparent;")
+        self._latency.setTextFormat(Qt.TextFormat.RichText)
+        title_row.addWidget(self._latency, 0, Qt.AlignmentFlag.AlignVCenter)
+        lay.addLayout(title_row)
 
         metrics = QHBoxLayout()
         metrics.setContentsMargins(0, 0, 0, 0)
@@ -285,6 +295,11 @@ class NetworkHero(QFrame):
         self._spark.set_dual(down_series, up_series, self._up_color, vmax=None, scale_label=scale_label)
         self._sub.setText(sub_text)
         self._sub.setVisible(bool(sub_text))
+
+    def set_latency(self, html: str) -> None:
+        """Set the top-right latency pill (rich text: a colour-coded word + quiet ms/loss subtext)."""
+        self._latency.setText(html)
+        self._latency.setVisible(bool(html))
 
     def _tr(self, key: str, default: str) -> str:
         return str(getattr(self._i18n, key, default)) if self._i18n is not None else default

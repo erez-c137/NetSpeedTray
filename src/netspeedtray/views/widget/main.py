@@ -9,7 +9,8 @@ import sys
 import time
 from ctypes import wintypes
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
+from collections import deque
+from typing import Any, Deque, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 # --- Third-Party Imports ---
 import win32api
@@ -137,6 +138,10 @@ class NetworkSpeedWidget(QWidget):
         self.cpu_power: Optional[float] = None
         self.gpu_power: Optional[float] = None
         self.system_power: Optional[float] = None   # true whole-system W (RAPL PSYS / battery), if available
+        self.latency_gw: Optional[float] = None      # gateway RTT ms (LAN latency); None = timeout
+        self.latency_anchor: Optional[float] = None  # public-anchor RTT ms (internet latency); opt-in
+        self.latency_loss: float = 0.0               # rolling gateway loss% over recent probes
+        self._latency_window: Deque[bool] = deque(maxlen=40)   # recent timed-out flags for live loss%
         self.ram_used: Optional[float] = None
         self.ram_total: Optional[float] = None
         self.vram_used: Optional[float] = None
@@ -448,6 +453,26 @@ class NetworkSpeedWidget(QWidget):
         except Exception as e:
             self.logger.error(f"Error showing unfold flyout: {e}", exc_info=True)
 
+    def _on_latency(self, gw_ms, anchor_ms, gw_timed_out: bool) -> None:
+        """A latency sample arrived (main thread, queued from the probe thread). Update the live
+        attributes + rolling loss%, and persist gateway/anchor RTT + the timeout flag so the Monitor's
+        window loss% (the ISP-dispute figure) is honest."""
+        self.latency_gw = gw_ms
+        self.latency_anchor = anchor_ms
+        self._latency_window.append(bool(gw_timed_out))
+        if self._latency_window:
+            self.latency_loss = round(sum(self._latency_window) / len(self._latency_window) * 100.0, 1)
+        ws = getattr(self, "widget_state", None)
+        if ws is not None:
+            try:
+                if gw_ms is not None:
+                    ws.add_hardware_stat("latency_gw", float(gw_ms))
+                if anchor_ms is not None:
+                    ws.add_hardware_stat("latency_anchor", float(anchor_ms))
+                ws.add_hardware_stat("latency_gw_timeout", 1.0 if gw_timed_out else 0.0)
+            except Exception:
+                pass
+
     def _on_monitor_error(self, message: str) -> None:
         """
         The monitor thread crossed its error threshold (now recoverable — it keeps retrying
@@ -670,6 +695,18 @@ class NetworkSpeedWidget(QWidget):
 
             # Start the monitoring thread
             self.monitor_thread.start()
+
+            # Latency probe on its own thread (gateway by default; public anchor opt-in). A 1 s ICMP
+            # timeout must never sit on the stats poll, so it's a separate QThread.
+            self.latency_probe = None
+            if self.config.get("latency_enabled", True):
+                try:
+                    from netspeedtray.core.latency_probe import LatencyProbe
+                    self.latency_probe = LatencyProbe(self.config)
+                    self.latency_probe.latency_ready.connect(self._on_latency)
+                    self.latency_probe.start()
+                except Exception as e:
+                    self.logger.debug("LatencyProbe not started: %s", e)
 
             # 1. System Event Handler (replaces manual WinEventHooks)
             self.system_event_handler.foreground_app_changed.connect(self._execute_refresh)
@@ -1574,6 +1611,14 @@ class NetworkSpeedWidget(QWidget):
             if hasattr(self, 'monitor_thread') and self.monitor_thread:
                 self.logger.debug("Stopping StatsMonitorThread...")
                 self.monitor_thread.stop()
+
+            # --- Stop the latency probe thread ---
+            if getattr(self, 'latency_probe', None):
+                try:
+                    self.latency_probe.stop()
+                    self.latency_probe.wait(1500)
+                except Exception:
+                    pass
 
             # --- Clean up core components ---
             if self.timer_manager: self.timer_manager.cleanup()

@@ -95,6 +95,18 @@ def test_hardware_tiles_always_built(q_app):
     assert set(ov._tiles.keys()) == {"cpu", "gpu", "ram", "vram"}
 
 
+def test_latency_pill_classification(q_app):
+    from types import SimpleNamespace
+    ov = OverviewTab(_MW(), _cfg(), I18nStrings("en_US"))
+    L = lambda gw, an, ls: ov._latency_html(SimpleNamespace(latency_gw=gw, latency_anchor=an, latency_loss=ls))
+    assert "Good" in L(12.0, None, 0.0) and "12 ms" in L(12.0, None, 0.0)
+    assert "OK" in L(80.0, None, 0.0)
+    assert "Slow" in L(None, None, 10.0) and "loss" in L(None, None, 10.0)   # all timeouts
+    assert "Slow" in L(220.0, None, 0.0)
+    assert "45 ms" in L(2.0, 45.0, 0.0)                                        # internet anchor wins
+    assert L(None, None, 0.0) == ""                                           # no data -> empty
+
+
 def test_syspower_breakdown_and_true_system(q_app):
     from types import SimpleNamespace
     ov = OverviewTab(_MW(), _cfg(), I18nStrings("en_US"))
