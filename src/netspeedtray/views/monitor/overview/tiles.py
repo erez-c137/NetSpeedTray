@@ -31,6 +31,29 @@ from netspeedtray.utils.helpers import format_data_size
 _SPARK_POINTS = 120  #: cap the series so an all-day session can't grow the polyline unbounded
 
 
+def dynamic_range(series: List[float], min_span: float = 15.0,
+                  hard_min: Optional[float] = 0.0, hard_max: Optional[float] = 100.0,
+                  headroom: float = 0.08) -> Tuple[float, float]:
+    """A (vmin, vmax) window fitted to the data so low-but-varying activity reads in detail instead of
+    as a flat line against 0–100. Enforces a minimum span (so a genuinely steady metric isn't blown up
+    into dramatic noise), adds a little top headroom, and clamps to any hard bounds (0–100 for a %)."""
+    vals = [float(v) for v in series if v is not None and float(v) == float(v)]
+    if not vals:
+        return (hard_min or 0.0, (hard_min or 0.0) + min_span)
+    lo, hi = min(vals), max(vals)
+    if hi - lo < min_span:                      # too flat to fill — widen to the minimum span
+        pad = (min_span - (hi - lo)) / 2.0
+        lo, hi = lo - pad, hi + pad
+    hi += (hi - lo) * headroom                  # a little air above the peak
+    if hard_min is not None:
+        lo = max(hard_min, lo)
+    if hard_max is not None:
+        hi = min(hard_max, hi)
+    if hi - lo < 1e-6:
+        hi = lo + min_span
+    return (lo, hi)
+
+
 class Sparkline(QWidget):
     """A tiny trend line with a soft gradient fill, in a single accent colour."""
 
@@ -41,15 +64,19 @@ class Sparkline(QWidget):
         self._series2: List[float] = []          # optional second trace (e.g. upload over download)
         self._color2: Optional[QColor] = None
         self._vmax: Optional[float] = None
+        self._vmin: float = 0.0                  # bottom of the scale (non-zero = "zoom" to the data band)
         self._scale_label: str = ""              # optional top-of-scale readout (e.g. "16.9 Mbps")
         self.setMinimumHeight(36)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
-    def set_series(self, series: List[float], vmax: Optional[float] = None) -> None:
-        """Replace the data. ``vmax`` fixes the top of the scale (e.g. 100 for %); None auto-scales."""
+    def set_series(self, series: List[float], vmax: Optional[float] = None, vmin: float = 0.0) -> None:
+        """Replace the data. ``vmax`` fixes the top of the scale (None auto-scales to the data max);
+        ``vmin`` is the bottom — pass a non-zero value to "zoom" the trend into its active band so a
+        low-but-varying metric shows detail instead of a flat line near the floor."""
         self._series = list(series)[-_SPARK_POINTS:]
         self._series2 = []
         self._vmax = vmax
+        self._vmin = float(vmin or 0.0)
         self.update()
 
     def set_dual(self, primary: List[float], secondary: List[float], color2: str,
@@ -61,6 +88,7 @@ class Sparkline(QWidget):
         self._series2 = list(secondary)[-_SPARK_POINTS:]
         self._color2 = QColor(color2)
         self._vmax = vmax
+        self._vmin = 0.0          # network reads from a true zero floor (a 0-baseline burst is meaningful)
         self._scale_label = scale_label
         self.update()
 
@@ -85,21 +113,26 @@ class Sparkline(QWidget):
                 p.setPen(pen)
                 y = base_y
                 if n == 1:
-                    vmax = self._vmax if (self._vmax and self._vmax > 0) else max(self._series[0], 1.0)
-                    y = base_y - (min(max(self._series[0], 0.0), vmax) / vmax) * gh
+                    vmin = self._vmin
+                    vmax = self._vmax if (self._vmax and self._vmax > vmin) else max(self._series[0], vmin + 1.0)
+                    denom = (vmax - vmin) or 1.0
+                    y = base_y - ((min(max(self._series[0], vmin), vmax) - vmin) / denom) * gh
                 p.drawLine(QPointF(pad, y), QPointF(pad + gw, y))
             finally:
                 p.end()
             return
 
-        # Both traces share one scale so up/down read at true relative magnitude.
+        # Both traces share one scale so up/down read at true relative magnitude. vmin lets a tile
+        # "zoom" into a low band (e.g. CPU 5–20%) so the trend isn't a flat squiggle against 0–100.
         data_max = max(max(self._series, default=0.0), max(self._series2, default=0.0))
-        vmax = self._vmax if (self._vmax and self._vmax > 0) else data_max
-        if vmax <= 0:
-            vmax = 1.0
+        vmin = self._vmin
+        vmax = self._vmax if (self._vmax and self._vmax > vmin) else data_max
+        if vmax <= vmin:
+            vmax = vmin + 1.0
+        denom = vmax - vmin
         step = gw / (n - 1)
         pts = [
-            QPointF(pad + i * step, base_y - (min(max(v, 0.0), vmax) / vmax) * gh)
+            QPointF(pad + i * step, base_y - ((min(max(v, vmin), vmax) - vmin) / denom) * gh)
             for i, v in enumerate(self._series)
         ]
 
@@ -134,7 +167,7 @@ class Sparkline(QWidget):
                 n2 = len(self._series2)
                 step2 = gw / (n2 - 1)
                 pts2 = [
-                    QPointF(pad + i * step2, base_y - (min(max(v, 0.0), vmax) / vmax) * gh)
+                    QPointF(pad + i * step2, base_y - ((min(max(v, vmin), vmax) - vmin) / denom) * gh)
                     for i, v in enumerate(self._series2)
                 ]
                 pen2 = QPen(self._color2)
@@ -205,10 +238,10 @@ class StatTile(QFrame):
         lay.addWidget(self._spark, 1)
 
     def set(self, value_text: str, series: List[float],
-            vmax: Optional[float] = None, sub_text: str = "") -> None:
+            vmax: Optional[float] = None, sub_text: str = "", vmin: float = 0.0) -> None:
         self._value.setText(value_text)
         self._sub.setText(sub_text or " ")   # keep a blank line so the tile height never changes
-        self._spark.set_series(series, vmax)
+        self._spark.set_series(series, vmax, vmin)
 
     def set_label(self, text: str) -> None:
         self._label.setText(text)

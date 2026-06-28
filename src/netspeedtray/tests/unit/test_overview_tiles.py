@@ -265,6 +265,34 @@ def test_missing_data_source_degrades(q_app):
     ov.teardown()
 
 
+def test_dynamic_range_zooms_to_active_band(q_app):
+    """The sparkline scale fits the data's band so low-but-varying activity reads in detail, with a
+    minimum span so a steady metric isn't blown up into dramatic noise."""
+    from netspeedtray.views.monitor.overview.tiles import dynamic_range
+    # CPU mostly 5–20%: zoom near the data, NOT 0–100, but at least the minimum span wide.
+    lo, hi = dynamic_range([5, 8, 12, 20, 15, 10])
+    assert 0 <= lo and hi <= 100
+    assert hi - lo >= 15 - 1e-6        # minimum span enforced
+    assert hi <= 35                    # zoomed near the band, not pinned at 100
+    # A near-steady metric still gets the minimum span (not a hair-thin amplified band).
+    lo2, hi2 = dynamic_range([46.0, 46.5, 45.8, 46.2])
+    assert hi2 - lo2 >= 15 - 1e-6
+    # Clamps to 0..100 for percentages, and empty input is safe.
+    lo3, hi3 = dynamic_range([2, 1, 3])
+    assert lo3 >= 0
+    lo4, hi4 = dynamic_range([])
+    assert hi4 > lo4
+
+
+def test_sparkline_respects_vmin(q_app):
+    """A non-zero vmin 'zooms' the trace: a value at vmin sits on the floor, at vmax on the ceiling."""
+    s = Sparkline("#00BCD4")
+    s.resize(80, 40)
+    s.set_series([10.0, 20.0, 30.0], vmax=30.0, vmin=10.0)
+    assert s._vmin == 10.0 and s._vmax == 30.0
+    s.repaint()   # must not raise; 10 maps to baseline, 30 to top
+
+
 def test_sparkline_handles_short_series(q_app):
     s = Sparkline("#00BCD4")
     s.set_series([])          # empty

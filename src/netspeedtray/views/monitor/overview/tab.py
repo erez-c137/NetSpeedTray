@@ -29,7 +29,7 @@ from netspeedtray.utils import styles as su
 from netspeedtray.constants.styles import styles as tokens
 from netspeedtray.utils.helpers import format_speed, format_data_size
 from netspeedtray.utils import summaries as S
-from netspeedtray.views.monitor.overview.tiles import StatTile, UsageTile, NetworkHero
+from netspeedtray.views.monitor.overview.tiles import StatTile, UsageTile, NetworkHero, dynamic_range
 from netspeedtray.views.monitor.overview.busiest_apps import BusiestAppsCard
 from netspeedtray.views.monitor.timeline_selector import TimelineSelector
 from netspeedtray.views.monitor.stats_detail import StatsDetailSheet, run_interactive_export
@@ -392,8 +392,13 @@ class OverviewTab(QWidget):
             vu, vt = getattr(mw, "vram_used", None), getattr(mw, "vram_total", None)
             integrated = vu is None and vt is None
 
+            # Each utilisation sparkline auto-zooms to its own active band (dynamic_range), so a
+            # low-but-varying metric (e.g. CPU mostly 5–20%) reads in detail instead of as a flat
+            # squiggle against a fixed 0–100% — with a minimum span so a steady metric isn't blown up.
+            cpu_series = ser.get("cpu", [])
+            cpu_lo, cpu_hi = dynamic_range(cpu_series)
             self._tiles["cpu"].set(f"{float(getattr(mw, 'cpu_usage', 0.0) or 0.0):.0f}%",
-                                   ser.get("cpu", []), vmax=100.0,
+                                   cpu_series, vmax=cpu_hi, vmin=cpu_lo,
                                    sub_text=self._hw_sub(getattr(mw, "cpu_temp", None),
                                                          getattr(mw, "cpu_power", None)))
 
@@ -401,13 +406,17 @@ class OverviewTab(QWidget):
             if gpu_present:
                 gpu_word = self._tr("ORDER_TYPE_GPU", "GPU")
                 self._tiles["gpu"].set_label(("i" + gpu_word) if integrated else gpu_word)
+                gpu_series = ser.get("gpu", [])
+                gpu_lo, gpu_hi = dynamic_range(gpu_series)
                 self._tiles["gpu"].set(f"{float(getattr(mw, 'gpu_usage', 0.0) or 0.0):.0f}%",
-                                       ser.get("gpu", []), vmax=100.0,
+                                       gpu_series, vmax=gpu_hi, vmin=gpu_lo,
                                        sub_text=self._hw_sub(getattr(mw, "gpu_temp", None),
                                                              getattr(mw, "gpu_power", None)))
 
             ru, rt = getattr(mw, "ram_used", None), getattr(mw, "ram_total", None)
-            self._tiles["ram"].set(f"{self._pct(ru, rt):.0f}%", ser.get("ram", []), vmax=100.0,
+            ram_series = ser.get("ram", [])
+            ram_lo, ram_hi = dynamic_range(ram_series)
+            self._tiles["ram"].set(f"{self._pct(ru, rt):.0f}%", ram_series, vmax=ram_hi, vmin=ram_lo,
                                    sub_text=self._mem_sub(ru, rt))
 
             # VRAM is session-only for now (not persisted) — keeps its own rolling buffer. There's no
@@ -416,9 +425,13 @@ class OverviewTab(QWidget):
             if vram_reading:
                 vpct = self._pct(vu, vt)
                 self._vram_series.append(vpct)
-                self._tiles["vram"].set(f"{vpct:.0f}%" if vt else f"{float(vu):.1f} GB",
-                                        list(self._vram_series) if vt else [float(vu)],
-                                        vmax=100.0 if vt else None, sub_text=self._mem_sub(vu, vt))
+                if vt:
+                    vlo, vhi = dynamic_range(list(self._vram_series))
+                    self._tiles["vram"].set(f"{vpct:.0f}%", list(self._vram_series),
+                                            vmax=vhi, vmin=vlo, sub_text=self._mem_sub(vu, vt))
+                else:
+                    self._tiles["vram"].set(f"{float(vu):.1f} GB", [float(vu)],
+                                            vmax=None, sub_text=self._mem_sub(vu, vt))
 
             # Show only the tiles that actually have data, reflowed to fill the width (no empty hole
             # where a missing GPU/VRAM tile would sit). Order preserved: CPU · GPU · RAM · VRAM.
