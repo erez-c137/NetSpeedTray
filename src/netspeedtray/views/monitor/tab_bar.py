@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional, Tuple
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, QSize, pyqtSignal
 from PyQt6.QtWidgets import QWidget, QHBoxLayout, QToolButton, QButtonGroup
 
 from netspeedtray.utils import styles as su
@@ -23,11 +23,15 @@ class FlatTabBar(QWidget):
 
     tab_selected = pyqtSignal(int)
 
-    def __init__(self, tabs: List[Tuple[str, str]], parent: Optional[QWidget] = None) -> None:
-        """tabs: ordered ``(tab_id, label)`` pairs; a tab's index is its position in this list."""
+    def __init__(self, tabs: List[Tuple[str, str]], parent: Optional[QWidget] = None,
+                 icons: Optional[Dict[str, int]] = None) -> None:
+        """tabs: ordered ``(tab_id, label)`` pairs; a tab's index is its position in this list.
+        icons: optional ``{tab_id: Segoe-Fluent-codepoint}`` — a glyph is shown beside each label and
+        tinted text_secondary→accent as selection moves (the native Win11 pivot pairs glyph + label)."""
         super().__init__(parent)
         self._buttons: Dict[str, QToolButton] = {}
         self._order: List[str] = [tab_id for tab_id, _ in tabs]
+        self._icons: Dict[str, int] = dict(icons or {})
 
         row = QHBoxLayout(self)
         row.setContentsMargins(8, 0, 8, 0)
@@ -40,6 +44,9 @@ class FlatTabBar(QWidget):
             btn.setText(str(label))
             btn.setCheckable(True)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            if tab_id in self._icons:
+                btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+                btn.setIconSize(QSize(16, 16))
             # Reachable by Tab with a visible focus cue; activation stays manual (Space/Enter) so
             # tabbing THROUGH the strip never builds a heavy lazy page — only deliberate activation does.
             btn.setFocusPolicy(Qt.FocusPolicy.TabFocus)
@@ -54,6 +61,21 @@ class FlatTabBar(QWidget):
             self._buttons[self._order[0]].setChecked(True)
 
         self._apply_style()
+        # A QIcon pixmap can't be tinted by QSS, so re-render each tab's glyph in the right colour
+        # whenever selection moves (secondary at rest, accent when checked).
+        self._group.buttonToggled.connect(lambda *_: self._update_icons())
+        self._update_icons()
+
+    def _update_icons(self) -> None:
+        if not self._icons:
+            return
+        c = su.semantic_colors()
+        accent = su.get_accent_color().name()
+        for tab_id, btn in self._buttons.items():
+            cp = self._icons.get(tab_id)
+            if cp is None:
+                continue
+            btn.setIcon(su.fluent_icon(cp, 16, accent if btn.isChecked() else c["text_secondary"]))
 
     def _apply_style(self) -> None:
         c = su.semantic_colors()

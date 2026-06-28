@@ -5,7 +5,8 @@ This module reads raw style constants from `constants.styles` and uses them
 to build dynamic stylesheets for different application components.
 """
 
-from PyQt6.QtGui import QColor, QFont, QFontDatabase
+from PyQt6.QtGui import QColor, QFont, QFontDatabase, QIcon, QPixmap, QPainter
+from PyQt6.QtCore import Qt
 import winreg
 
 # Import the design tokens (raw values) and other UI constants
@@ -13,6 +14,29 @@ from netspeedtray.constants import styles as style_constants
 from netspeedtray.constants import ui, color as color_constants
 
 _variable_present = None  # lazy cache: is "Segoe UI Variable" installed?
+
+
+def fluent_icon(codepoint: int, size: int = 16, color: str = "#FFFFFF") -> QIcon:
+    """Render a Segoe Fluent Icons glyph to a tintable QIcon — the native Win11 iconography.
+
+    Win11 ships 'Segoe Fluent Icons'; Win10 ships 'Segoe MDL2 Assets'. Listing both lets Win11 win and
+    Win10 degrade. The glyph is drawn to a transparent pixmap in ``color`` so it can be tinted per state
+    (e.g. text_secondary at rest → accent when a tab/nav row is selected). Uses setPixelSize for a
+    DPI-crisp icon optically matched to the label's px font. NEVER pass an emoji — only Fluent codepoints.
+    """
+    pm = QPixmap(size, size)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    try:
+        f = QFont()
+        f.setFamilies(["Segoe Fluent Icons", "Segoe MDL2 Assets"])
+        f.setPixelSize(size)
+        p.setFont(f)
+        p.setPen(QColor(color))
+        p.drawText(pm.rect(), Qt.AlignmentFlag.AlignCenter, chr(codepoint))
+    finally:
+        p.end()
+    return QIcon(pm)
 
 
 def font(token: tuple) -> QFont:
@@ -303,7 +327,9 @@ def sidebar_style() -> str:
     
     sidebar_bg = style_constants.DIALOG_SIDEBAR_BG_DARK if dark_mode_active else style_constants.DIALOG_SIDEBAR_BG_LIGHT
     text_color = style_constants.DARK_MODE_TEXT_COLOR if dark_mode_active else style_constants.LIGHT_MODE_TEXT_COLOR
-    hover_bg = "#4A4A4A" if dark_mode_active else "#E0E0E0"
+    # Win11 NavigationView selection: a subtle fill + a short accent indicator bar, NOT a saturated
+    # full-bleed accent block; hover is the same subtle fill (not an opaque grey).
+    subtle_fill = style_constants.SUBTLE_FILL_DARK if dark_mode_active else style_constants.SUBTLE_FILL_LIGHT
 
     accent_qcolor = get_accent_color()
     accent_rgb = f"rgb({accent_qcolor.red()}, {accent_qcolor.green()}, {accent_qcolor.blue()})"
@@ -322,18 +348,20 @@ def sidebar_style() -> str:
             padding: 8px 12px;
             color: {text_color};
             border: none;
+            border-left: 3px solid transparent;   /* reserve the indicator width — no shift on select */
             border-radius: 4px;
             margin: 2px 6px;
             outline: none;
         }}
         QListWidget::item:selected {{
-            background-color: {accent_rgb};
-            color: {color_constants.WHITE};
-            border-radius: 4px; 
+            background-color: {subtle_fill};
+            color: {text_color};
+            border-left: 3px solid {accent_rgb};
+            border-radius: 4px;
             outline: none;
         }}
         QListWidget::item:hover:!selected {{
-            background-color: {hover_bg};
+            background-color: {subtle_fill};
             border-radius: 4px;
         }}
         QListWidget:focus, QListWidget::item:focus {{ 

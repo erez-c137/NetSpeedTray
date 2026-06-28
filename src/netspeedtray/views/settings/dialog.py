@@ -18,11 +18,11 @@ from typing import Any, Dict, List, Optional, TYPE_CHECKING
 if TYPE_CHECKING:
     from netspeedtray.views.widget import NetworkSpeedWidget
 
-from PyQt6.QtCore import Qt, pyqtSignal, QTimer
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QSize
 from PyQt6.QtGui import QColor, QFont, QIcon, QCloseEvent, QShowEvent
 from PyQt6.QtWidgets import (
     QApplication, QColorDialog, QDialog, QFileDialog, QFontDialog,
-    QHBoxLayout, QLabel, QListWidget, QMessageBox, QPushButton, QScrollArea,
+    QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMessageBox, QPushButton, QScrollArea,
     QStackedWidget, QVBoxLayout, QWidget
 )
 
@@ -185,16 +185,19 @@ class SettingsDialog(QDialog):
             self.sidebar.setMinimumWidth(180)
             self.sidebar.setStyleSheet(style_utils.sidebar_style())
             self.sidebar.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            self.sidebar.addItems([
-                self.i18n.GENERAL_SETTINGS_GROUP,
-                self.i18n.APPEARANCE_SETTINGS_GROUP,
-                self.i18n.COLOR_CODING_GROUP,
-                self.i18n.HARDWARE_MONITORING_GROUP,
-                self.i18n.UNITS_GROUP,
-                self.i18n.NETWORK_INTERFACES_GROUP,
-                self.i18n.ADVANCED_SETTINGS_GROUP,
-            ])
+            self.sidebar.setIconSize(QSize(16, 16))
+            # (label, Segoe Fluent codepoint) — Win10-safe MDL2 glyphs; Hardware/Network match the
+            # Monitor tabs for cross-window consistency. Settings/Personalize/Color/DeveloperTools/
+            # FontSize/Ethernet/Repair.
+            self._sidebar_icons = [0xE713, 0xE771, 0xE790, 0xEC7A, 0xE8E9, 0xE839, 0xE90F]
+            for label in (self.i18n.GENERAL_SETTINGS_GROUP, self.i18n.APPEARANCE_SETTINGS_GROUP,
+                          self.i18n.COLOR_CODING_GROUP, self.i18n.HARDWARE_MONITORING_GROUP,
+                          self.i18n.UNITS_GROUP, self.i18n.NETWORK_INTERFACES_GROUP,
+                          self.i18n.ADVANCED_SETTINGS_GROUP):
+                self.sidebar.addItem(QListWidgetItem(label))
+            self.sidebar.currentRowChanged.connect(lambda *_: self._tint_sidebar_icons())
             self.sidebar.setCurrentRow(0)
+            self._tint_sidebar_icons()
             sidebar_layout.addWidget(self.sidebar)
             main_layout.addWidget(sidebar_container)
 
@@ -384,6 +387,20 @@ class SettingsDialog(QDialog):
     def _on_sidebar_selection_changed(self, row: int) -> None:
         """Handles sidebar row changes to switch the stacked page."""
         self.stack.setCurrentIndex(row)
+
+    def _tint_sidebar_icons(self) -> None:
+        """Re-render each sidebar glyph in the right colour (a QIcon pixmap can't be tinted by QSS):
+        accent on the selected row to match the accent indicator bar, text_secondary on the rest."""
+        try:
+            c = style_utils.semantic_colors()
+            accent = style_utils.get_accent_color().name()
+            current = self.sidebar.currentRow()
+            for i, cp in enumerate(getattr(self, "_sidebar_icons", [])):
+                item = self.sidebar.item(i)
+                if item is not None:
+                    item.setIcon(style_utils.fluent_icon(cp, 16, accent if i == current else c["text_secondary"]))
+        except Exception as e:
+            self.logger.debug("sidebar icon tint failed: %s", e)
 
     def navigate_to_page(self, index: int) -> None:
         """Select a settings page by sidebar index (e.g. deep-link to Hardware). Selecting the

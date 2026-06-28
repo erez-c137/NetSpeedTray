@@ -73,7 +73,9 @@ class MonitorWindow(QWidget):
         header = QHBoxLayout()
         header.setContentsMargins(0, 0, 8, 0)
         header.setSpacing(0)
-        self._tab_bar = FlatTabBar([(d.tab_id, d.label) for d in self._descriptors])
+        # Segoe Fluent Icons per tab (Win10-safe MDL2 codepoints): Home / NetworkTower / DeveloperTools.
+        self._tab_bar = FlatTabBar([(d.tab_id, d.label) for d in self._descriptors],
+                                   icons={"overview": 0xE80F, "network": 0xEC05, "hardware": 0xEC7A})
         self._tab_bar.tab_selected.connect(self._on_tab_changed)
         header.addWidget(self._tab_bar)
         header.addStretch(1)
