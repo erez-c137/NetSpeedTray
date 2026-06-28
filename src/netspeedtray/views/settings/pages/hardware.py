@@ -3,11 +3,13 @@ Hardware Monitoring Settings Page.
 """
 from typing import Dict, Any, Callable
 
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QComboBox, QLabel, QGridLayout
+from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtWidgets import QWidget, QComboBox, QLabel
 
 from netspeedtray import constants
-from netspeedtray.utils.components import Win11Toggle, CollapsibleSection, Win11Slider
+from netspeedtray.utils import styles as su
+from netspeedtray.utils.components import Win11Toggle, Win11Slider, SettingCard, SettingExpander
+from netspeedtray.views.settings.pages._fluent import section_header, page_layout
 
 class HardwarePage(QWidget):
     layout_changed = pyqtSignal()
@@ -19,84 +21,64 @@ class HardwarePage(QWidget):
         self._setup_ui()
 
     def _setup_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setSpacing(constants.layout.GROUP_BOX_SPACING)
+        # 2.0 IA: the primary monitoring toggles are Win11 Settings cards under a plain section caption;
+        # the lower-frequency groups (display mode / order / load colours) stay behind Fluent expanders.
+        # All control objects + the load/get wiring are unchanged.
+        layout = page_layout(self)
 
-        # --- Hardware Monitoring Section (expanded by default) ---
-        hw_section = CollapsibleSection(self.i18n.HARDWARE_MONITORING_GROUP, expanded=True)
-        hw_section.toggled.connect(lambda: self.layout_changed.emit())
-        hw_layout = QGridLayout()
-        hw_layout.setVerticalSpacing(10)
-        hw_layout.setHorizontalSpacing(8)
+        # --- Hardware monitoring (primary — always visible) ---
+        layout.addWidget(section_header(self.i18n.HARDWARE_MONITORING_GROUP))
 
-        cpu_label = QLabel(self.i18n.MONITOR_CPU_LABEL)
         self.monitor_cpu = Win11Toggle(label_text="")
         self.monitor_cpu.toggled.connect(self._on_monitor_toggled)
+        layout.addWidget(SettingCard(self.i18n.MONITOR_CPU_LABEL, control=self.monitor_cpu))
 
-        gpu_label = QLabel(self.i18n.MONITOR_GPU_LABEL)
-        self.monitor_gpu = Win11Toggle(label_text="")
-        self.monitor_gpu.toggled.connect(self._on_monitor_toggled)
-
-        ram_label = QLabel(self.i18n.MONITOR_RAM_LABEL)
         self.monitor_ram = Win11Toggle(label_text="")
         self.monitor_ram.toggled.connect(self.on_change)
+        layout.addWidget(SettingCard(self.i18n.MONITOR_RAM_LABEL, control=self.monitor_ram))
 
-        vram_label = QLabel(self.i18n.MONITOR_VRAM_LABEL)
+        self.monitor_gpu = Win11Toggle(label_text="")
+        self.monitor_gpu.toggled.connect(self._on_monitor_toggled)
+        layout.addWidget(SettingCard(self.i18n.MONITOR_GPU_LABEL, control=self.monitor_gpu))
+
         self.monitor_vram = Win11Toggle(label_text="")
         self.monitor_vram.toggled.connect(self.on_change)
+        layout.addWidget(SettingCard(self.i18n.MONITOR_VRAM_LABEL, control=self.monitor_vram))
 
-        temps_label = QLabel(self.i18n.SHOW_HARDWARE_TEMPS_LABEL)
         self.show_temps = Win11Toggle(label_text="")
         self.show_temps.toggled.connect(self.on_change)
+        layout.addWidget(SettingCard(self.i18n.SHOW_HARDWARE_TEMPS_LABEL, control=self.show_temps))
 
-        power_label = QLabel(self.i18n.SHOW_HARDWARE_POWER_LABEL)
         self.show_power = Win11Toggle(label_text="")
         self.show_power.toggled.connect(self.on_change)
+        layout.addWidget(SettingCard(self.i18n.SHOW_HARDWARE_POWER_LABEL, control=self.show_power))
 
         temps_note = QLabel(self.i18n.HARDWARE_TEMPS_LIMITATION_NOTE)
         temps_note.setWordWrap(True)
-        temps_note.setStyleSheet("color: gray; font-size: 10px;")
+        temps_note.setStyleSheet(
+            f"color: {su.semantic_colors()['text_secondary']}; background: transparent; padding: 0 2px;")
+        layout.addWidget(temps_note)
 
-        hw_layout.addWidget(cpu_label, 0, 0, Qt.AlignmentFlag.AlignVCenter)
-        hw_layout.addWidget(self.monitor_cpu, 0, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        hw_layout.addWidget(ram_label, 1, 0, Qt.AlignmentFlag.AlignVCenter)
-        hw_layout.addWidget(self.monitor_ram, 1, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        hw_layout.addWidget(gpu_label, 2, 0, Qt.AlignmentFlag.AlignVCenter)
-        hw_layout.addWidget(self.monitor_gpu, 2, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        hw_layout.addWidget(vram_label, 3, 0, Qt.AlignmentFlag.AlignVCenter)
-        hw_layout.addWidget(self.monitor_vram, 3, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        hw_layout.addWidget(temps_label, 4, 0, Qt.AlignmentFlag.AlignVCenter)
-        hw_layout.addWidget(self.show_temps, 4, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        hw_layout.addWidget(power_label, 5, 0, Qt.AlignmentFlag.AlignVCenter)
-        hw_layout.addWidget(self.show_power, 5, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        hw_layout.addWidget(temps_note, 6, 0, 1, 2)
-
-        style_label = QLabel(self.i18n.HARDWARE_INDICATOR_STYLE_LABEL)
         self.label_style = QComboBox()
         self.label_style.addItem(self.i18n.HARDWARE_LABEL_STYLE_COLORED_ICONS, userData="icons_colored")
         self.label_style.addItem(self.i18n.HARDWARE_LABEL_STYLE_MONOCHROME_ICONS, userData="icons_monochrome")
         self.label_style.addItem(self.i18n.HARDWARE_LABEL_STYLE_TEXT_LABELS, userData="text")
+        self.label_style.setMinimumWidth(200)
         self.label_style.currentIndexChanged.connect(self.on_change)
-
-        hw_layout.addWidget(style_label, 7, 0, Qt.AlignmentFlag.AlignVCenter)
-        hw_layout.addWidget(self.label_style, 7, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        layout.addWidget(SettingCard(self.i18n.HARDWARE_INDICATOR_STYLE_LABEL, control=self.label_style))
 
         # Throttle temperature (Statistics): flags time spent at/above this temp in the Stats-detail
         # sheet so thermal throttling is provable (0 = off). Only meaningful when temps are collected.
-        throttle_label = QLabel(str(getattr(self.i18n, "HW_THROTTLE_LABEL", "Throttle temp (stats)")))
         self.throttle_temp = Win11Slider(editable=True, suffix="°C")
         self.throttle_temp.setRange(0, 130)
+        self.throttle_temp.setMinimumWidth(260)
         self.throttle_temp.valueChanged.connect(self.on_change)
-        hw_layout.addWidget(throttle_label, 8, 0, Qt.AlignmentFlag.AlignVCenter)
-        hw_layout.addWidget(self.throttle_temp, 8, 1)
+        layout.addWidget(SettingCard(str(getattr(self.i18n, "HW_THROTTLE_LABEL", "Throttle temp (stats)")),
+                                     control=self.throttle_temp))
 
-        hw_section.contentLayout().addLayout(hw_layout)
-        layout.addWidget(hw_section)
-
-        # --- Widget Display Mode Section (collapsed by default) ---
-        display_section = CollapsibleSection(self.i18n.WIDGET_DISPLAY_MODE_LABEL, expanded=False)
-        display_section.toggled.connect(lambda: self.layout_changed.emit())
-
+        # --- Widget Display Mode (advanced — collapsible) ---
+        display_section = SettingExpander(self.i18n.WIDGET_DISPLAY_MODE_LABEL, expanded=False)
+        display_section.expandedChanged.connect(lambda _on: self.layout_changed.emit())
         self.display_mode_combo = QComboBox()
         self.display_mode_combo.addItem(self.i18n.DISPLAY_MODE_NETWORK, userData="network_only")
         self.display_mode_combo.addItem(self.i18n.DISPLAY_MODE_COMBINED, userData="side_by_side")
@@ -104,45 +86,38 @@ class HardwarePage(QWidget):
         self.display_mode_combo.addItem(self.i18n.DISPLAY_MODE_CYCLE, userData="cycle")
         self.display_mode_combo.currentIndexChanged.connect(self.on_change)
         display_section.contentLayout().addWidget(self.display_mode_combo)
-
         note_label = QLabel(self.i18n.HARDWARE_GRAPH_NOTE)
         note_label.setWordWrap(True)
-        note_label.setStyleSheet("color: gray; font-size: 10px;")
+        note_label.setStyleSheet(
+            f"color: {su.semantic_colors()['text_secondary']}; background: transparent; padding: 0 2px;")
         display_section.contentLayout().addWidget(note_label)
-
         layout.addWidget(display_section)
 
-        # --- Display Order Section (collapsed by default) ---
-        order_section = CollapsibleSection(self.i18n.WIDGET_DISPLAY_ORDER_LABEL, expanded=False)
-        order_section.toggled.connect(lambda: self.layout_changed.emit())
-        order_layout = QGridLayout()
-
+        # --- Display Order (advanced — collapsible) ---
+        order_section = SettingExpander(self.i18n.WIDGET_DISPLAY_ORDER_LABEL, expanded=False)
+        order_section.expandedChanged.connect(lambda _on: self.layout_changed.emit())
         self.pos_combos = []
         for i in range(3):
-            label = QLabel(getattr(self.i18n, f"ORDER_POSITION_{i+1}"))
             combo = QComboBox()
             combo.addItem(self.i18n.ORDER_TYPE_NETWORK, userData="network")
             combo.addItem(self.i18n.ORDER_TYPE_CPU, userData="cpu")
             combo.addItem(self.i18n.ORDER_TYPE_GPU, userData="gpu")
             combo.addItem(self.i18n.ORDER_TYPE_NONE, userData="none")
-
+            combo.setMinimumWidth(160)
             combo.currentIndexChanged.connect(lambda _, idx=i: self._on_pos_changed(idx))
-            order_layout.addWidget(label, i, 0)
-            order_layout.addWidget(combo, i, 1)
+            order_section.contentLayout().addWidget(
+                SettingCard(getattr(self.i18n, f"ORDER_POSITION_{i+1}"), control=combo))
             self.pos_combos.append(combo)
-
-        order_section.contentLayout().addLayout(order_layout)
         layout.addWidget(order_section)
 
-        # --- Color-code by load (collapsed) — thresholds for tinting CPU/GPU % by utilization.
-        load_section = CollapsibleSection(self.i18n.HARDWARE_LOAD_COLOR_SECTION, expanded=False)
-        load_section.toggled.connect(lambda: self.layout_changed.emit())
-        load_grid = QGridLayout()
-        load_grid.setVerticalSpacing(8)
+        # --- Color-code by load (advanced — collapsible): thresholds for tinting CPU/GPU % by load.
+        load_section = SettingExpander(self.i18n.HARDWARE_LOAD_COLOR_SECTION, expanded=False)
+        load_section.expandedChanged.connect(lambda _on: self.layout_changed.emit())
 
         def _make_load_slider() -> Win11Slider:
             s = Win11Slider(editable=True, suffix="%")
             s.setRange(0, 100)
+            s.setMinimumWidth(240)
             s.valueChanged.connect(self.on_change)
             return s
 
@@ -150,15 +125,13 @@ class HardwarePage(QWidget):
         self.cpu_load_low = _make_load_slider()
         self.gpu_load_high = _make_load_slider()
         self.gpu_load_low = _make_load_slider()
-        for row, (label, widget) in enumerate([
+        for label, widget in [
             (self.i18n.HARDWARE_CPU_HIGH_LOAD_LABEL, self.cpu_load_high),
             (self.i18n.HARDWARE_CPU_LOW_LOAD_LABEL, self.cpu_load_low),
             (self.i18n.HARDWARE_GPU_HIGH_LOAD_LABEL, self.gpu_load_high),
             (self.i18n.HARDWARE_GPU_LOW_LOAD_LABEL, self.gpu_load_low),
-        ]):
-            load_grid.addWidget(QLabel(label), row, 0, Qt.AlignmentFlag.AlignVCenter)
-            load_grid.addWidget(widget, row, 1)
-        load_section.contentLayout().addLayout(load_grid)
+        ]:
+            load_section.contentLayout().addWidget(SettingCard(label, control=widget))
         layout.addWidget(load_section)
 
         layout.addStretch()

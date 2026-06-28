@@ -7,14 +7,13 @@ hold-still logic), and reset affordances.
 """
 from typing import Dict, Any, Callable, Optional
 
-from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QComboBox, QLabel, QPushButton,
-)
+from PyQt6.QtWidgets import QWidget, QHBoxLayout, QComboBox, QLabel, QPushButton
 
 from netspeedtray import constants
-from netspeedtray.utils.components import Win11Toggle
+from netspeedtray.utils.components import Win11Toggle, SettingCard
 from netspeedtray.utils import styles as style_utils
 from netspeedtray.utils import helpers
+from netspeedtray.views.settings.pages._fluent import section_header, page_layout
 
 
 class AdvancedPage(QWidget):
@@ -32,44 +31,46 @@ class AdvancedPage(QWidget):
         self._setup_ui()
 
     def _setup_ui(self) -> None:
-        layout = QVBoxLayout(self)
-        layout.setSpacing(constants.layout.GROUP_BOX_SPACING)
+        # 2.0 IA: Win11 Settings cards under light section captions (was QGroupBox frames). Control
+        # objects + load/get wiring are unchanged.
+        layout = page_layout(self)
 
         # --- Data ---
-        data_group = QGroupBox(self.i18n.ADVANCED_DATA_GROUP)
-        dl = QVBoxLayout(data_group)
-        dl.addWidget(QLabel(self.i18n.ADVANCED_KEEP_HISTORY_LABEL))
+        layout.addWidget(section_header(self.i18n.ADVANCED_DATA_GROUP))
         self.keep_data = QComboBox()
         for idx in sorted(self._days_map):
             days = self._days_map[idx]
             self.keep_data.addItem(self._retention_label(days), userData=days)
+        self.keep_data.setMinimumWidth(180)
         self.keep_data.currentIndexChanged.connect(self.on_change)
-        dl.addWidget(self.keep_data)
-        layout.addWidget(data_group)
+        layout.addWidget(SettingCard(self.i18n.ADVANCED_KEEP_HISTORY_LABEL, control=self.keep_data))
 
         # --- Behavior ---
-        beh_group = QGroupBox(self.i18n.BEHAVIOR_GROUP_TITLE)
-        bl = QVBoxLayout(beh_group)
-        self.reduce_motion = Win11Toggle(label_text=self.i18n.ADVANCED_REDUCE_MOTION_LABEL)
+        layout.addWidget(section_header(self.i18n.BEHAVIOR_GROUP_TITLE))
+        self.reduce_motion = Win11Toggle(label_text="")
         self.reduce_motion.toggled.connect(self.on_change)
-        bl.addWidget(self.reduce_motion)
-        self.show_usage_hover = Win11Toggle(label_text=self.i18n.HOVER_USAGE_CARD_LABEL)
+        layout.addWidget(SettingCard(self.i18n.ADVANCED_REDUCE_MOTION_LABEL, control=self.reduce_motion))
+
+        self.show_usage_hover = Win11Toggle(label_text="")
         self.show_usage_hover.toggled.connect(self.on_change)
-        bl.addWidget(self.show_usage_hover)
-        self.show_hover_tips = Win11Toggle(label_text=self.i18n.HOVER_TIPS_LABEL)
+        layout.addWidget(SettingCard(self.i18n.HOVER_USAGE_CARD_LABEL, control=self.show_usage_hover))
+
+        self.show_hover_tips = Win11Toggle(label_text="")
         self.show_hover_tips.toggled.connect(self.on_change)
-        bl.addWidget(self.show_hover_tips)
-        self.pause_in_menu = Win11Toggle(label_text=self.i18n.PAUSE_IN_MENU_LABEL)
+        layout.addWidget(SettingCard(self.i18n.HOVER_TIPS_LABEL, control=self.show_hover_tips))
+
+        self.pause_in_menu = Win11Toggle(label_text="")
         self.pause_in_menu.toggled.connect(self.on_change)
-        bl.addWidget(self.pause_in_menu)
-        layout.addWidget(beh_group)
+        layout.addWidget(SettingCard(self.i18n.PAUSE_IN_MENU_LABEL, control=self.pause_in_menu))
 
         # --- Reset ---
-        reset_group = QGroupBox(self.i18n.ADVANCED_RESET_GROUP)
-        rl = QVBoxLayout(reset_group)
+        layout.addWidget(section_header(self.i18n.ADVANCED_RESET_GROUP))
         note = QLabel(self.i18n.ADVANCED_RESET_NOTE)
         note.setWordWrap(True)
-        rl.addWidget(note)
+        note.setStyleSheet(
+            f"color: {style_utils.semantic_colors()['text_secondary']};"
+            f" background: transparent; padding: 0 2px;")
+        layout.addWidget(note)
         btn_row = QHBoxLayout()
         self.reset_page_btn = QPushButton(self.i18n.ADVANCED_RESET_PAGE_BUTTON)
         self.reset_all_btn = QPushButton(self.i18n.ADVANCED_RESET_ALL_BUTTON)
@@ -82,8 +83,7 @@ class AdvancedPage(QWidget):
         btn_row.addWidget(self.reset_page_btn)
         btn_row.addWidget(self.reset_all_btn)
         btn_row.addStretch()
-        rl.addLayout(btn_row)
-        layout.addWidget(reset_group)
+        layout.addLayout(btn_row)
 
         layout.addStretch()
 

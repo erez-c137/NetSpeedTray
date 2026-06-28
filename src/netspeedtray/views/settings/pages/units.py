@@ -3,11 +3,11 @@ Units and Interface Layout Page.
 """
 from typing import Dict, Any, Callable
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QGroupBox, QLabel, QGridLayout, QComboBox
+from PyQt6.QtWidgets import QWidget, QComboBox
 
 from netspeedtray import constants
-from netspeedtray.utils.components import Win11Toggle, Win11Segmented
+from netspeedtray.utils.components import Win11Toggle, Win11Segmented, SettingCard
+from netspeedtray.views.settings.pages._fluent import section_header, page_layout
 
 class UnitsPage(QWidget):
     def __init__(self, i18n, on_change: Callable[[], None]):
@@ -20,95 +20,63 @@ class UnitsPage(QWidget):
         return str(getattr(self.i18n, key, default)) if self.i18n is not None else default
 
     def _setup_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setSpacing(constants.layout.GROUP_BOX_SPACING)
+        # 2.0 IA: one Win11 Settings card per setting under light section captions (was QGroupBox grids).
+        # Control objects + load/get wiring are unchanged.
+        layout = page_layout(self)
 
-        # --- Group 1: Data Format ---
-        format_group = QGroupBox(getattr(self.i18n, 'DISPLAY_FORMAT_GROUP', "Data Format"))
-        format_layout = QGridLayout(format_group)
-        format_layout.setVerticalSpacing(10)
-        format_layout.setHorizontalSpacing(15)
-        format_row = 0
+        # --- Data Format ---
+        layout.addWidget(section_header(self._tr("DISPLAY_FORMAT_GROUP", "Data Format")))
 
-        # Unit Type
-        format_layout.addWidget(QLabel(self.i18n.UNIT_TYPE_LABEL), format_row, 0, Qt.AlignmentFlag.AlignVCenter)
         self.unit_type = QComboBox()
         self.unit_type.addItem(self.i18n.UNIT_TYPE_BITS_DECIMAL, "bits_decimal")
         self.unit_type.addItem(self.i18n.UNIT_TYPE_BITS_BINARY, "bits_binary")
         self.unit_type.addItem(self.i18n.UNIT_TYPE_BYTES_DECIMAL, "bytes_decimal")
         self.unit_type.addItem(self.i18n.UNIT_TYPE_BYTES_BINARY, "bytes_binary")
-        self.unit_type.setMinimumWidth(120)
+        self.unit_type.setMinimumWidth(180)
         self.unit_type.currentIndexChanged.connect(self.on_change)
-        
-        format_layout.addWidget(self.unit_type, format_row, 1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        format_row += 1
+        layout.addWidget(SettingCard(self.i18n.UNIT_TYPE_LABEL, control=self.unit_type))
 
-        # Force MB Display (toggle)
-        format_layout.addWidget(QLabel(getattr(self.i18n, 'FORCE_MB_LABEL', "Force MB Display")), format_row, 0, Qt.AlignmentFlag.AlignVCenter)
+        # Force MB Display — when on, the renderer forces MB output regardless of unit type.
         self.speed_display_mode = Win11Toggle(label_text="")
-        # When toggled ON we force the unit type to MB (bytes_decimal) and disable manual selection.
         self.speed_display_mode.toggled.connect(self._on_force_mb_toggled)
-        format_layout.addWidget(self.speed_display_mode, format_row, 1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        format_row += 1
+        layout.addWidget(SettingCard(self._tr("FORCE_MB_LABEL", "Force MB Display"),
+                                     control=self.speed_display_mode))
 
         # Decimals — a 3-value enum {0,1,2}: a segmented control is the native Win11 idiom, NOT a
         # continuous slider (which implied a magnitude and showed a meaningless "1").
-        format_layout.addWidget(QLabel(self.i18n.DECIMAL_PLACES_LABEL), format_row, 0, Qt.AlignmentFlag.AlignVCenter)
         self.decimal_places = Win11Segmented([("0", 0), ("1", 1), ("2", 2)])
         self.decimal_places.valueChanged.connect(self.on_change)
-        format_layout.addWidget(self.decimal_places, format_row, 1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        
-        format_layout.setColumnStretch(0, 1)
-        format_layout.setColumnStretch(1, 0)
-        layout.addWidget(format_group)
+        layout.addWidget(SettingCard(self.i18n.DECIMAL_PLACES_LABEL, control=self.decimal_places))
 
-        # --- Group 2: Interface Layout ---
-        layout_group = QGroupBox(getattr(self.i18n, 'INTERFACE_LAYOUT_GROUP', "Interface Layout"))
-        layout_gl = QGridLayout(layout_group)
-        layout_gl.setVerticalSpacing(10)
-        layout_gl.setHorizontalSpacing(15)
-        l_row = 0
+        # --- Interface Layout ---
+        layout.addWidget(section_header(self._tr("INTERFACE_LAYOUT_GROUP", "Interface Layout")))
 
         # Text Alignment — a 3-value enum (left/center/right): segmented control with the canonical
         # string values directly (no more int<->string mapping), again the native idiom over a slider.
-        layout_gl.addWidget(QLabel(self.i18n.TEXT_ALIGNMENT_LABEL), l_row, 0, Qt.AlignmentFlag.AlignVCenter)
         self.text_alignment = Win11Segmented([
             (self._tr("TEXT_ALIGN_LEFT", "Left"), "left"),
             (self._tr("TEXT_ALIGN_CENTER", "Center"), "center"),
             (self._tr("TEXT_ALIGN_RIGHT", "Right"), "right"),
         ])
         self.text_alignment.valueChanged.connect(self.on_change)
-        layout_gl.addWidget(self.text_alignment, l_row, 1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        l_row += 1
+        layout.addWidget(SettingCard(self.i18n.TEXT_ALIGNMENT_LABEL, control=self.text_alignment))
 
-        # Toggles Helper
-        def add_toggle_row(label_text, toggle_widget, row_idx):
-            layout_gl.addWidget(QLabel(label_text), row_idx, 0, Qt.AlignmentFlag.AlignVCenter)
-            layout_gl.addWidget(toggle_widget, row_idx, 1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            toggle_widget.toggled.connect(self.on_change)
-
-        # Swap Order
         self.swap_upload_download = Win11Toggle(label_text="")
-        add_toggle_row(self.i18n.SWAP_UPLOAD_DOWNLOAD_LABEL, self.swap_upload_download, l_row)
-        l_row += 1
+        self.swap_upload_download.toggled.connect(self.on_change)
+        layout.addWidget(SettingCard(self.i18n.SWAP_UPLOAD_DOWNLOAD_LABEL,
+                                     control=self.swap_upload_download))
 
-        # Hide Arrows
         self.hide_arrows = Win11Toggle(label_text="")
-        add_toggle_row(self.i18n.HIDE_ARROWS_LABEL, self.hide_arrows, l_row)
-        l_row += 1
+        self.hide_arrows.toggled.connect(self.on_change)
+        layout.addWidget(SettingCard(self.i18n.HIDE_ARROWS_LABEL, control=self.hide_arrows))
 
-        # Hide Units
         self.hide_unit_suffix = Win11Toggle(label_text="")
-        add_toggle_row(self.i18n.HIDE_UNIT_SUFFIX_LABEL, self.hide_unit_suffix, l_row)
-        l_row += 1
+        self.hide_unit_suffix.toggled.connect(self.on_change)
+        layout.addWidget(SettingCard(self.i18n.HIDE_UNIT_SUFFIX_LABEL, control=self.hide_unit_suffix))
 
-        # Short Unit Labels
         self.short_unit_labels = Win11Toggle(label_text="")
-        add_toggle_row(self.i18n.SHORT_UNIT_LABELS_LABEL, self.short_unit_labels, l_row)
-
-        layout_gl.setColumnStretch(0, 1)
-        layout_gl.setColumnStretch(1, 0)
-        layout.addWidget(layout_group)
+        self.short_unit_labels.toggled.connect(self.on_change)
+        layout.addWidget(SettingCard(self.i18n.SHORT_UNIT_LABELS_LABEL, control=self.short_unit_labels))
 
         layout.addStretch()
 

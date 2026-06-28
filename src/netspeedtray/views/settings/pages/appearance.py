@@ -3,17 +3,14 @@ Appearance Settings Page.
 Handles fonts and background settings.
 """
 from typing import Dict, Any, Callable, List
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtGui import QFont, QFontDatabase
-from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel, 
-    QPushButton, QLineEdit
-)
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit
 
 from netspeedtray import constants
-from netspeedtray.constants import styles as style_constants
 from netspeedtray.utils import styles as style_utils
-from netspeedtray.utils.components import Win11Slider, Win11Toggle, ArrowStylePicker
+from netspeedtray.utils.components import Win11Slider, Win11Toggle, ArrowStylePicker, SettingCard
+from netspeedtray.views.settings.pages._fluent import section_header, page_layout
 
 class AppearancePage(QWidget):
     layout_changed = pyqtSignal()
@@ -36,188 +33,137 @@ class AppearancePage(QWidget):
         self._setup_ui()
 
     def _setup_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setSpacing(constants.layout.GROUP_BOX_SPACING)
+        # 2.0 IA: Win11 Settings cards under section captions (was QGroupBox frames). Compound controls
+        # (font picker button + label, colour swatch + hex) are packed into a small composite docked on
+        # the right of each card via _row(). All control objects + the load/get wiring are unchanged.
+        layout = page_layout(self)
 
-        # --- Main Font Settings Group ---
-        font_group = QGroupBox(self.i18n.FONT_SETTINGS_GROUP_TITLE)
-        font_layout = QVBoxLayout(font_group)
-        font_layout.setSpacing(8)
+        # --- Font ---
+        layout.addWidget(section_header(self.i18n.FONT_SETTINGS_GROUP_TITLE))
 
-        # ... (Main font setup omitted, it is unchanged) ...
-        # I need to preserve the main font setup lines I am replacing or ensure context match.
-        # This replace block is getting large. Let's do it in chunks or careful replacement.
-        # The user instruction `replace_file_content` requires the replacement to be a drop-in.
-        # I will replace the whole file content from start of class to end to be safe? 
-        # No, that's unstable.
-        
-        # Let's replace `__init__` through `_setup_ui`.
-        
-        font_family_color_layout = QHBoxLayout()
-        font_family_widget = QWidget()
-        font_family_v_layout = QVBoxLayout(font_family_widget)
-        font_family_v_layout.setContentsMargins(0,0,0,0)
-        font_family_v_layout.setSpacing(4)
-        font_family_v_layout.addWidget(QLabel(self.i18n.FONT_FAMILY_LABEL))
-        
+        # Font family — the button opens the picker; the label shows (and stores) the current family.
         self.font_family_button = QPushButton(self.i18n.SELECT_FONT_BUTTON)
         self.font_family_button.clicked.connect(lambda: self.open_font_dialog(self.current_font, "main"))
-        
         self.font_family_label = QLabel()
-        self.font_family_label.setWordWrap(True)
-        
-        font_family_button_label_layout = QHBoxLayout()
-        font_family_button_label_layout.addWidget(self.font_family_button)
-        font_family_button_label_layout.addWidget(self.font_family_label, stretch=1)
-        font_family_v_layout.addLayout(font_family_button_label_layout)
-        font_family_color_layout.addWidget(font_family_widget, stretch=1)
-        font_family_color_layout.addSpacing(20)
+        self.font_family_label.setMaximumWidth(180)
+        layout.addWidget(SettingCard(self.i18n.FONT_FAMILY_LABEL,
+                                     control=self._row(self.font_family_label, self.font_family_button)))
 
-        # Font Color (Default)
-        font_color_widget = QWidget()
-        font_color_v_layout = QVBoxLayout(font_color_widget)
-        font_color_v_layout.setContentsMargins(0,0,0,0)
-        font_color_v_layout.setSpacing(4)
-        font_color_v_layout.addWidget(QLabel(self.i18n.DEFAULT_COLOR_LABEL))
-        
-        default_color_h_layout = QHBoxLayout()
+        # Default text colour (swatch + hex).
         self.default_color_button = QPushButton()
         self.default_color_button.setObjectName("default_color")
+        self.default_color_button.setFixedSize(30, 24)
         self.default_color_button.setToolTip(self.i18n.DEFAULT_COLOR_TOOLTIP)
         self.default_color_button.clicked.connect(lambda: self.open_color_dialog("default_color"))
-        default_color_h_layout.addWidget(self.default_color_button)
-        
         self.default_color_input = QLineEdit()
         self.default_color_input.setPlaceholderText("#FFFFFF")
         self.default_color_input.setMaxLength(7)
-        self.default_color_input.setFixedWidth(80)
+        self.default_color_input.setFixedWidth(90)
         self.default_color_input.textChanged.connect(lambda: self.on_change())
-        default_color_h_layout.addWidget(self.default_color_input)
-        
-        font_color_v_layout.addLayout(default_color_h_layout)
-        font_family_color_layout.addWidget(font_color_widget)
-        font_layout.addLayout(font_family_color_layout)
+        layout.addWidget(SettingCard(self.i18n.DEFAULT_COLOR_LABEL,
+                                     control=self._row(self.default_color_button, self.default_color_input)))
 
-        # Font Size
-        font_layout.addWidget(QLabel(self.i18n.FONT_SIZE_LABEL))
+        # Font size.
         self.font_size = Win11Slider(editable=False)
         self.font_size.setRange(constants.fonts.FONT_SIZE_MIN, constants.fonts.FONT_SIZE_MAX)
+        self.font_size.setMinimumWidth(260)
         self.font_size.valueChanged.connect(self.on_change)
-        font_layout.addWidget(self.font_size)
+        layout.addWidget(SettingCard(self.i18n.FONT_SIZE_LABEL, control=self.font_size))
 
-        # Font Weight
-        font_layout.addWidget(QLabel(self.i18n.FONT_WEIGHT_LABEL))
+        # Font weight.
         self.font_weight = Win11Slider(editable=False, has_ticks=True)
+        self.font_weight.setMinimumWidth(260)
         self.font_weight.valueChanged.connect(self._on_font_weight_changed)
-        font_layout.addWidget(self.font_weight)
-        
-        layout.addWidget(font_group)
-        
-        # --- Arrow Styling Group (Merged from ArrowsPage) ---
-        arrow_group = QGroupBox(self.i18n.ARROW_STYLING_GROUP)
-        arrow_layout = QVBoxLayout(arrow_group)
-        arrow_layout.setSpacing(12)
+        layout.addWidget(SettingCard(self.i18n.FONT_WEIGHT_LABEL, control=self.font_weight))
 
-        # Arrow STYLE picker (#129) — curated glyph presets + Custom. The default "Classic"
-        # tracks the native locale arrow; the others set arrow_up/down_symbol overrides.
-        arrow_layout.addWidget(QLabel(self.i18n.ARROW_STYLE_LABEL))
+        # --- Arrow styling (merged from the old Arrows page) ---
+        layout.addWidget(section_header(self.i18n.ARROW_STYLING_GROUP))
+        # Arrow STYLE picker (#129) — curated glyph presets + Custom (full-width control). The default
+        # "Classic" tracks the native locale arrow; the others set arrow_up/down_symbol overrides.
         self.arrow_style_picker = ArrowStylePicker(self.i18n)
         self.arrow_style_picker.changed.connect(self.on_change)
-        arrow_layout.addWidget(self.arrow_style_picker)
+        layout.addWidget(self.arrow_style_picker)
 
-        self.use_separate_arrow_font = Win11Toggle(label_text=self.i18n.USE_CUSTOM_ARROW_FONT)
+        self.use_separate_arrow_font = Win11Toggle(label_text="")
         self.use_separate_arrow_font.toggled.connect(self._on_arrow_font_toggle)
-        arrow_layout.addWidget(self.use_separate_arrow_font)
+        layout.addWidget(SettingCard(self.i18n.USE_CUSTOM_ARROW_FONT, control=self.use_separate_arrow_font))
 
+        # The custom-arrow-font controls live in a container shown only when the toggle is on.
         self.arrow_font_container = QWidget()
         arrow_v_layout = QVBoxLayout(self.arrow_font_container)
-        arrow_v_layout.setContentsMargins(0,0,0,0)
-        arrow_v_layout.setSpacing(8)
-
-        # Arrow Family
-        arrow_v_layout.addWidget(QLabel(self.i18n.FONT_FAMILY_LABEL))
-        arrow_family_h_layout = QHBoxLayout()
+        arrow_v_layout.setContentsMargins(0, 0, 0, 0)
+        arrow_v_layout.setSpacing(6)
         self.arrow_font_family_button = QPushButton(self.i18n.SELECT_FONT_BUTTON)
         self.arrow_font_family_button.clicked.connect(lambda: self.open_font_dialog(self.current_arrow_font, "arrow"))
         self.arrow_font_family_label = QLabel()
-        arrow_family_h_layout.addWidget(self.arrow_font_family_button)
-        arrow_family_h_layout.addWidget(self.arrow_font_family_label, stretch=1)
-        arrow_v_layout.addLayout(arrow_family_h_layout)
-
-        # Arrow Size
-        arrow_v_layout.addWidget(QLabel(self.i18n.FONT_SIZE_LABEL))
+        self.arrow_font_family_label.setMaximumWidth(180)
+        arrow_v_layout.addWidget(SettingCard(
+            self.i18n.FONT_FAMILY_LABEL,
+            control=self._row(self.arrow_font_family_label, self.arrow_font_family_button)))
         self.arrow_font_size = Win11Slider(editable=False)
         self.arrow_font_size.setRange(constants.fonts.FONT_SIZE_MIN, constants.fonts.FONT_SIZE_MAX)
+        self.arrow_font_size.setMinimumWidth(260)
         self.arrow_font_size.valueChanged.connect(self.on_change)
-        arrow_v_layout.addWidget(self.arrow_font_size)
-
+        arrow_v_layout.addWidget(SettingCard(self.i18n.FONT_SIZE_LABEL, control=self.arrow_font_size))
         # Arrow Weight - REMOVED per user request (font support issues)
-        # self.arrow_font_weight = ...
+        layout.addWidget(self.arrow_font_container)
 
-        arrow_layout.addWidget(self.arrow_font_container)
-        layout.addWidget(arrow_group)
-
-        # --- Background Settings ---
-        bg_group = QGroupBox(self.i18n.BACKGROUND_SETTINGS_GROUP_TITLE)
-        bg_main_layout = QVBoxLayout(bg_group)
-        
-        bg_color_h = QHBoxLayout()
-        bg_color_h.addWidget(QLabel(self.i18n.BACKGROUND_COLOR_LABEL))
+        # --- Background ---
+        layout.addWidget(section_header(self.i18n.BACKGROUND_SETTINGS_GROUP_TITLE))
         self.background_color_button = QPushButton()
         self.background_color_button.setObjectName("background_color")
+        self.background_color_button.setFixedSize(30, 24)
         self.background_color_button.clicked.connect(lambda: self.open_color_dialog("background_color"))
         self.background_color_input = QLineEdit()
         self.background_color_input.setMaxLength(7)
-        self.background_color_input.setFixedWidth(80)
+        self.background_color_input.setFixedWidth(90)
         self.background_color_input.textChanged.connect(lambda: self.on_change())
-        bg_color_h.addWidget(self.background_color_button)
-        bg_color_h.addWidget(self.background_color_input)
-        bg_color_h.addStretch()
-        bg_main_layout.addLayout(bg_color_h)
+        layout.addWidget(SettingCard(
+            self.i18n.BACKGROUND_COLOR_LABEL,
+            control=self._row(self.background_color_button, self.background_color_input)))
 
-        bg_main_layout.addWidget(QLabel(self.i18n.BACKGROUND_OPACITY_LABEL))
         self.bg_opacity = Win11Slider(editable=True, suffix="%")
         self.bg_opacity.setRange(0, 100)
+        self.bg_opacity.setMinimumWidth(260)
         self.bg_opacity.valueChanged.connect(self.on_change)
-        bg_main_layout.addWidget(self.bg_opacity)
+        layout.addWidget(SettingCard(self.i18n.BACKGROUND_OPACITY_LABEL, control=self.bg_opacity))
 
-        layout.addWidget(bg_group)
-
-        # --- Mini Graph Settings (absorbed from Graph page) ---
-        graph_group = QGroupBox(self.i18n.MINI_GRAPH_SECTION_TITLE)
-        graph_layout = QVBoxLayout(graph_group)
-        graph_layout.setSpacing(8)
-
-        enable_row = QHBoxLayout()
-        enable_row.addWidget(QLabel(self.i18n.ENABLE_GRAPH_LABEL))
+        # --- Mini graph (absorbed from the old Graph page) ---
+        layout.addWidget(section_header(self.i18n.MINI_GRAPH_SECTION_TITLE))
         self.enable_graph = Win11Toggle(label_text="")
         self.enable_graph.toggled.connect(self.on_change)
-        enable_row.addWidget(self.enable_graph)
-        enable_row.addStretch()
-        graph_layout.addLayout(enable_row)
+        layout.addWidget(SettingCard(self.i18n.ENABLE_GRAPH_LABEL, control=self.enable_graph))
 
         note = QLabel(self.i18n.GRAPH_NOTE_TEXT)
         note.setWordWrap(True)
-        is_dark = style_utils.is_dark_mode()
-        subtle_color = style_constants.SUBTLE_TEXT_COLOR_DARK if is_dark else style_constants.SUBTLE_TEXT_COLOR_LIGHT
-        note.setStyleSheet(f"font-size: {constants.fonts.NOTE_FONT_SIZE}pt; color: {subtle_color};")
-        graph_layout.addWidget(note)
+        note.setStyleSheet(
+            f"color: {style_utils.semantic_colors()['text_secondary']}; background: transparent; padding: 0 2px;")
+        layout.addWidget(note)
 
-        graph_layout.addWidget(QLabel(self.i18n.HISTORY_DURATION_LABEL))
         self.history_duration = Win11Slider(editable=False)
         hist_min, hist_max = constants.ui.history.HISTORY_MINUTES_RANGE
         self.history_duration.setRange(hist_min, hist_max)
+        self.history_duration.setMinimumWidth(260)
         self.history_duration.valueChanged.connect(self.on_change)
-        graph_layout.addWidget(self.history_duration)
+        layout.addWidget(SettingCard(self.i18n.HISTORY_DURATION_LABEL, control=self.history_duration))
 
-        graph_layout.addWidget(QLabel(self.i18n.GRAPH_OPACITY_LABEL))
         self.graph_opacity = Win11Slider(editable=False)
         self.graph_opacity.setRange(constants.ui.sliders.OPACITY_MIN, constants.ui.sliders.OPACITY_MAX)
+        self.graph_opacity.setMinimumWidth(260)
         self.graph_opacity.valueChanged.connect(self.on_change)
-        graph_layout.addWidget(self.graph_opacity)
+        layout.addWidget(SettingCard(self.i18n.GRAPH_OPACITY_LABEL, control=self.graph_opacity))
 
-        layout.addWidget(graph_group)
         layout.addStretch()
+
+    def _row(self, *widgets) -> QWidget:
+        """Pack widgets into a compact horizontal composite for a SettingCard's right-docked control."""
+        w = QWidget()
+        h = QHBoxLayout(w)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(8)
+        for x in widgets:
+            h.addWidget(x)
+        return w
 
     def load_settings(self, config: Dict[str, Any]):
         # Main Font

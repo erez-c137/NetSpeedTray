@@ -3,13 +3,13 @@ General Settings Page.
 """
 from typing import Dict, Any, Callable, Optional
 
-from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QGuiApplication
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QGroupBox, QComboBox, QLabel, QGridLayout, QSizePolicy
+from PyQt6.QtWidgets import QWidget, QComboBox
 
 from netspeedtray import constants
 from netspeedtray.constants.update_mode import UpdateMode
-from netspeedtray.utils.components import Win11Slider, Win11Toggle
+from netspeedtray.utils.components import Win11Slider, Win11Toggle, SettingCard
+from netspeedtray.views.settings.pages._fluent import section_header, page_layout
 
 class GeneralPage(QWidget):
     def __init__(self, i18n, on_change: Callable[[], None]):
@@ -19,103 +19,63 @@ class GeneralPage(QWidget):
         self._setup_ui()
 
     def _setup_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setSpacing(constants.layout.GROUP_BOX_SPACING)
+        # 2.0 IA: one Win11 Settings card per setting (title left, control right), grouped under light
+        # section captions — replaces the old QGroupBox frames. All control objects + the load/get
+        # wiring below are unchanged; only the containers became cards.
+        layout = page_layout(self)
 
-        # --- Language Group ---
-        language_group = QGroupBox(self.i18n.LANGUAGE_LABEL)
-        language_layout = QVBoxLayout(language_group)
+        # --- Language ---
         self.language_combo = QComboBox()
-        # Don't let a long item dictate the combo's minimum width (which would
-        # push the page past the scroll viewport and add a horizontal scrollbar).
-        # The layout stretches the combo to fill the available width regardless.
         self.language_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-
+        self.language_combo.setMinimumWidth(220)
         for code, name in self.i18n.LANGUAGE_MAP.items():
             self.language_combo.addItem(name, userData=code)
-        
-        # Connect change signal
         self.language_combo.currentIndexChanged.connect(self.on_change)
-        
-        language_layout.addWidget(self.language_combo)
-        layout.addWidget(language_group)
+        layout.addWidget(SettingCard(self.i18n.LANGUAGE_LABEL, control=self.language_combo))
 
-        # --- Update Rate Group ---
-        update_group = QGroupBox(self.i18n.UPDATE_RATE_GROUP_TITLE)
-        update_group_layout = QVBoxLayout(update_group)
-        update_group_layout.setSpacing(8)
+        # --- Update Rate ---
+        layout.addWidget(section_header(self.i18n.UPDATE_RATE_GROUP_TITLE))
+        # Slider range 0-4 = 5 discrete presets (0=SMART,1=FAST,2=BALANCED,3=EFFICIENT,4=POWER_SAVER).
         self.update_rate = Win11Slider(editable=False)
-        
-        # Slider range: 0-4 = 5 discrete presets mapped to update modes
-        # 0=SMART, 1=FAST, 2=BALANCED, 3=EFFICIENT, 4=POWER_SAVER
         self.update_rate.setRange(0, 4)
         self.update_rate.setSingleStep(1)
-        
-        # Connect change signal: update textual label while dragging and propagate change
+        self.update_rate.setMinimumWidth(260)
         self.update_rate.valueChanged.connect(self._on_update_rate_changed)
+        layout.addWidget(SettingCard(self.i18n.UPDATE_INTERVAL_LABEL, control=self.update_rate))
 
-        update_group_layout.addWidget(QLabel(self.i18n.UPDATE_INTERVAL_LABEL))
-        update_group_layout.addWidget(self.update_rate)
-        layout.addWidget(update_group)
-
-        # --- Behavior Group (Toggles + Tray Offset) ---
-        behavior_group = QGroupBox(self.i18n.BEHAVIOR_GROUP_TITLE)
-        behavior_layout = QGridLayout(behavior_group)
-        behavior_layout.setVerticalSpacing(10)
-        behavior_layout.setHorizontalSpacing(8)
-
-        sww_label = QLabel(self.i18n.START_WITH_WINDOWS_LABEL)
+        # --- Behavior ---
+        layout.addWidget(section_header(self.i18n.BEHAVIOR_GROUP_TITLE))
         self.start_with_windows = Win11Toggle(label_text="")
         self.start_with_windows.toggled.connect(self.on_change)
+        layout.addWidget(SettingCard(self.i18n.START_WITH_WINDOWS_LABEL, control=self.start_with_windows))
 
-        behavior_layout.addWidget(sww_label, 0, 0, Qt.AlignmentFlag.AlignVCenter)
-        behavior_layout.addWidget(self.start_with_windows, 0, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-
-        fm_label = QLabel(self.i18n.FREE_MOVE_LABEL)
         self.free_move = Win11Toggle(label_text="")
         self.free_move.toggled.connect(self.on_change)
+        layout.addWidget(SettingCard(self.i18n.FREE_MOVE_LABEL, control=self.free_move))
 
-        behavior_layout.addWidget(fm_label, 1, 0, Qt.AlignmentFlag.AlignVCenter)
-        behavior_layout.addWidget(self.free_move, 1, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-
-        kvf_label = QLabel(self.i18n.KEEP_VISIBLE_FULLSCREEN_LABEL)
         self.keep_visible_fullscreen = Win11Toggle(label_text="")
         self.keep_visible_fullscreen.toggled.connect(self.on_change)
+        layout.addWidget(SettingCard(self.i18n.KEEP_VISIBLE_FULLSCREEN_LABEL,
+                                     control=self.keep_visible_fullscreen))
 
-        behavior_layout.addWidget(kvf_label, 2, 0, Qt.AlignmentFlag.AlignVCenter)
-        behavior_layout.addWidget(self.keep_visible_fullscreen, 2, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-
-        # Tray Offset (absorbed from Display page)
-        behavior_layout.addWidget(QLabel(self.i18n.TRAY_OFFSET_LABEL), 3, 0, Qt.AlignmentFlag.AlignVCenter)
+        # Tray Offset (absorbed from the old Display page).
         self.tray_offset = Win11Slider()
         self.tray_offset.setRange(0, 50)
+        self.tray_offset.setMinimumWidth(260)
         self.tray_offset.valueChanged.connect(self.on_change)
-        behavior_layout.addWidget(self.tray_offset, 3, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        layout.addWidget(SettingCard(self.i18n.TRAY_OFFSET_LABEL, control=self.tray_offset))
 
-        cfu_label = QLabel(self.i18n.CHECK_FOR_UPDATES_LABEL)
         self.check_for_updates = Win11Toggle(label_text="")
         self.check_for_updates.toggled.connect(self.on_change)
+        layout.addWidget(SettingCard(self.i18n.CHECK_FOR_UPDATES_LABEL, control=self.check_for_updates))
 
-        behavior_layout.addWidget(cfu_label, 4, 0, Qt.AlignmentFlag.AlignVCenter)
-        behavior_layout.addWidget(self.check_for_updates, 4, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-
-        # Preferred Monitor (#72) — lets users pin the widget to a specific
-        # display in multi-monitor setups. Default (no selection) uses primary.
-        behavior_layout.addWidget(QLabel(self.i18n.PREFERRED_MONITOR_LABEL), 5, 0, Qt.AlignmentFlag.AlignVCenter)
+        # Preferred Monitor (#72) — pin the widget to a specific display (default = primary).
         self.preferred_monitor_combo = QComboBox()
-        # Keep a long monitor label (e.g. "Monitor 1: 3413x1440 (primary)") from
-        # inflating the combo's *minimum* width (which would force a horizontal
-        # scrollbar), but let it expand to fill the column instead of collapsing
-        # to a tiny stub — so drop the AlignLeft and give it an Expanding policy.
         self.preferred_monitor_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-        self.preferred_monitor_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.preferred_monitor_combo.setMinimumWidth(220)
         self._populate_monitor_combo()
         self.preferred_monitor_combo.currentIndexChanged.connect(self.on_change)
-        behavior_layout.addWidget(self.preferred_monitor_combo, 5, 1, Qt.AlignmentFlag.AlignVCenter)
-
-        behavior_layout.setColumnStretch(0, 0)
-        behavior_layout.setColumnStretch(1, 1)
-        layout.addWidget(behavior_group)
+        layout.addWidget(SettingCard(self.i18n.PREFERRED_MONITOR_LABEL, control=self.preferred_monitor_combo))
 
         layout.addStretch()
 
