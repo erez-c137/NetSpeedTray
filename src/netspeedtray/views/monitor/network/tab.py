@@ -19,6 +19,7 @@ from netspeedtray import constants
 from netspeedtray.views.monitor.network.header import NetworkHeader
 from netspeedtray.views.monitor.network.app_list import AppBarList
 from netspeedtray.views.monitor.network.app_feed import AppActivityFeed
+from netspeedtray.views.monitor.network.detail import ConnectionDetailPanel
 
 
 class NetworkTab(QWidget):
@@ -57,8 +58,20 @@ class NetworkTab(QWidget):
         self._plot_slot = QWidget()           # the shared canvas mounts here on show
         QVBoxLayout(self._plot_slot).setContentsMargins(0, 0, 0, 0)
         splitter.addWidget(self._plot_slot)
+
+        # Bottom = the app list beside an on-demand detail panel (hidden until a row is clicked).
+        self._bottom = QSplitter(Qt.Orientation.Horizontal)
+        self._bottom.setChildrenCollapsible(False)
         self._app_list = AppBarList(i18n)
-        splitter.addWidget(self._app_list)
+        self._app_list.setMinimumWidth(300)    # 180 name + 64 count + spacing/margins + the bar
+        self._bottom.addWidget(self._app_list)
+        self._detail = ConnectionDetailPanel(i18n)
+        self._detail.setMinimumWidth(240)
+        self._detail.hide()                    # appears only when an app is selected
+        self._bottom.addWidget(self._detail)
+        self._app_list.row_selected.connect(self._on_row_selected)
+        self._detail.closed.connect(self._on_detail_closed)
+        splitter.addWidget(self._bottom)
         splitter.setStretchFactor(0, 3)        # graph gets the lion's share
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([400, 280])          # ~6-7 rows so the user's apps aren't below the fold
@@ -66,8 +79,33 @@ class NetworkTab(QWidget):
 
         # Per-app connection feed (reused psutil sampler) — polls only while this tab is visible.
         self._feed = AppActivityFeed(self)
-        self._feed.payload_ready.connect(self._app_list.set_payload)
+        self._feed.payload_ready.connect(self._on_payload)
         self._feed.unavailable.connect(self._app_list.set_unavailable)
+
+    # --- per-app detail-on-demand ----------------------------------------------
+    def _on_payload(self, payload: Dict[str, Any]) -> None:
+        # Feed the list, then keep the open detail panel live: re-read the selected app from the fresh
+        # payload (its connections change every tick) or, if it dropped off, show it as inactive.
+        self._app_list.set_payload(payload)
+        key = self._app_list.selected_key()
+        # isHidden() (not isVisible()) tracks the panel's own open/closed state independent of whether
+        # the Monitor window happens to be shown — so the live refresh is correct + unit-testable.
+        if key and not self._detail.isHidden():
+            row = self._app_list.get_row(key)
+            self._detail.set_row(row) if row else self._detail.mark_inactive()
+
+    def _on_row_selected(self, key: str) -> None:
+        row = self._app_list.get_row(key)
+        if row is None:
+            return
+        self._detail.set_row(row)
+        if self._detail.isHidden():
+            self._detail.show()
+            self._bottom.setSizes([320, 300])   # reveal the detail beside the list (~half each)
+
+    def _on_detail_closed(self) -> None:
+        self._detail.hide()
+        self._app_list.clear_selection()
 
     def _on_totals(self, up_bytes: float, down_bytes: float, period_key: str) -> None:
         # Update the numbers (+ the window label) only. The pills are the period's source of truth —
