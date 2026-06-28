@@ -35,6 +35,24 @@ _PERIOD_TOKENS = {
 }
 
 
+def _emit(stream, text: str, *, level: int = logging.INFO) -> None:
+    """Write to a std stream when one exists, else log the line.
+
+    The shipped exe is built ``console=False`` (PyInstaller), so ``sys.stdout``/``sys.stderr`` are
+    ``None`` — a bare ``sys.stdout.write(...)`` would raise ``AttributeError`` and turn a *successful*
+    headless export into exit code 1 for every Task-Scheduler/RMM caller. Guard every write through here:
+    the paths/errors still surface in the log file, and the exit code stays truthful.
+    """
+    try:
+        if stream is not None:
+            stream.write(text)
+            stream.flush()
+            return
+    except Exception:
+        pass
+    logging.getLogger("NetSpeedTray.ExportCLI").log(level, text.rstrip())
+
+
 def _parse(argv: List[str]) -> Optional[argparse.Namespace]:
     if "--export-csv" not in argv:
         return None
@@ -60,7 +78,8 @@ def run_export_cli(argv: Optional[List[str]] = None) -> Optional[int]:
     token = str(ns.period).lower().strip()
     period_key = _PERIOD_TOKENS.get(token)
     if period_key is None:
-        sys.stderr.write(f"Unknown --period '{ns.period}'. Valid: {', '.join(sorted(_PERIOD_TOKENS))}\n")
+        _emit(sys.stderr, f"Unknown --period '{ns.period}'. Valid: {', '.join(sorted(_PERIOD_TOKENS))}\n",
+              level=logging.ERROR)
         return 2
 
     # Imports kept inside the function so the GUI path never pays for them.
@@ -73,7 +92,7 @@ def run_export_cli(argv: Optional[List[str]] = None) -> Optional[int]:
     try:
         config = ConfigManager().load()
     except Exception as e:
-        sys.stderr.write(f"Could not load config: {e}\n")
+        _emit(sys.stderr, f"Could not load config: {e}\n", level=logging.ERROR)
         return 1
 
     # WidgetState is a QObject with (unstarted) QTimers + a QThread worker; a QCoreApplication must
@@ -110,7 +129,7 @@ def run_export_cli(argv: Optional[List[str]] = None) -> Optional[int]:
             machine_id=machine, app_version=__version__, interface=ns.interface, poll_interval=poll)
     except Exception as e:
         logger.error("Headless export failed: %s", e, exc_info=True)
-        sys.stderr.write(f"Export failed: {e}\n")
+        _emit(sys.stderr, f"Export failed: {e}\n", level=logging.ERROR)
         return 1
     finally:
         try:
@@ -119,5 +138,5 @@ def run_export_cli(argv: Optional[List[str]] = None) -> Optional[int]:
             pass
 
     for p in paths.values():
-        sys.stdout.write(p + "\n")
+        _emit(sys.stdout, p + "\n")
     return 0
