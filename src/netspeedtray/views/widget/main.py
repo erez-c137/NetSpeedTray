@@ -128,7 +128,10 @@ class NetworkSpeedWidget(QWidget):
         self.download_speed: float = 0.0
         self.cpu_usage: float = 0.0
         self.gpu_usage: float = 0.0
-        self.gpu_present: bool = True   # flipped False by a confirmed no-GPU poll (Monitor hides GPU tiles)
+        self.gpu_present: bool = False  # LATCHES True once any poll detects GPU counters (never flips
+        #                                 back — a GPU doesn't vanish), so the Monitor's GPU tile shows
+        #                                 stably for a real/integrated GPU and stays hidden only on a
+        #                                 genuinely GPU-less box. Default False => hidden until proven.
         self.cpu_temp: Optional[float] = None
         self.gpu_temp: Optional[float] = None
         self.cpu_power: Optional[float] = None

@@ -117,11 +117,12 @@ class StatsController(QObject):
                 if self.widget_state:
                     self.widget_state.add_hardware_stat('gpu', gpu)
             # GPU presence (no-GPU boxes enumerate zero Engine counters): let the Monitor's at-a-glance
-            # tiles hide the GPU rather than show a permanent 0%. Default stays True so a momentarily
-            # idle GPU is never hidden — only a confirmed no-GPU poll flips it False.
-            if 'gpu_present' in stats and self.view is not None:
+            # tiles hide the GPU rather than show a permanent 0%. LATCH it — only ever set True, never
+            # back to False — so a transient empty-counter poll (re-init, driver hiccup) can't flicker
+            # the tile on/off. A genuinely GPU-less box never sets it, so it stays hidden (default False).
+            if stats.get('gpu_present') and self.view is not None:
                 try:
-                    self.view.gpu_present = bool(stats['gpu_present'])
+                    self.view.gpu_present = True
                 except Exception:
                     pass
             # Forward temp/power whenever the thread reported the key, even if the
