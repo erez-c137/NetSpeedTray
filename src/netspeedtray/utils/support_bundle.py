@@ -55,16 +55,35 @@ logger = logging.getLogger("NetSpeedTray.SupportBundle")
 # data (e.g. an authentication token, a username, a remote URL).
 _CONFIG_KEYS_TO_STRIP: tuple = ()
 
+# Keys whose VALUES can carry a user's own labels and so MUST NOT ship verbatim:
+#   - selected_interfaces / excluded_interfaces hold Windows NIC *friendly names*, which users freely
+#     rename ("Office VPN", a site/company label, a hostname-bearing virtual adapter). The bundle's
+#     MANIFEST explicitly promises "network interface friendly names" are NOT included.
+#   - latency_public_host is a user-chosen ping target (a public hostname/IP) — reveals network choices.
+# We keep the diagnostic SHAPE (how many interfaces, that a host was set) but never the literal name.
+# IMPORTANT: any NEW config field that can hold a name/path/host/ID must be added here.
+_CONFIG_LIST_KEYS_TO_REDACT: tuple = ("selected_interfaces", "excluded_interfaces")
+_CONFIG_VALUE_KEYS_TO_REDACT: tuple = ("latency_public_host",)
+
 
 def _sanitize_config(config: Dict[str, Any]) -> Dict[str, Any]:
-    """Returns a copy of the config with any sensitive keys removed.
+    """Returns a copy of the config safe to attach to a public issue.
 
-    Today this is a no-op since the config contains only preferences, not PII.
-    The function exists as a hook for future keys that genuinely need stripping.
+    Drops `_CONFIG_KEYS_TO_STRIP` outright and redacts the user-label-bearing keys
+    (`_CONFIG_LIST_KEYS_TO_REDACT` / `_CONFIG_VALUE_KEYS_TO_REDACT`) to placeholders — honoring the
+    MANIFEST's promise that NIC friendly names never leave the machine, while preserving the count/shape
+    that's actually useful for diagnosing interface-mode and latency bugs.
     """
     sanitized = dict(config)
     for key in _CONFIG_KEYS_TO_STRIP:
         sanitized.pop(key, None)
+    for key in _CONFIG_LIST_KEYS_TO_REDACT:
+        value = sanitized.get(key)
+        if isinstance(value, list) and value:
+            sanitized[key] = [f"<redacted-{i + 1}>" for i in range(len(value))]
+    for key in _CONFIG_VALUE_KEYS_TO_REDACT:
+        if sanitized.get(key):
+            sanitized[key] = "<redacted>"
     return sanitized
 
 

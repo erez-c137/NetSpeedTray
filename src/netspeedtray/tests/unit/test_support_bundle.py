@@ -105,8 +105,28 @@ class TestConfigSanitization:
         bundled_config = json.loads(_open_zip_entry(dest, "config.json"))
         assert bundled_config["interface_mode"] == "auto"
         assert bundled_config["language"] == "en_US"
-        assert bundled_config["selected_interfaces"] == ["Ethernet", "Wi-Fi"]
         assert bundled_config["free_move"] is True
+
+    def test_interface_friendly_names_are_redacted(self, q_app, tmp_path, fake_log_dir):
+        """The MANIFEST promises NIC friendly names are NOT included and the bundle is 'safe to attach',
+        but users rename adapters to personal/company labels. The raw config must never ship those names —
+        only the redacted shape (how many) survives. Regression for the empty-denylist PII leak."""
+        cfg = {
+            "language": "en_US", "interface_mode": "selected",
+            "selected_interfaces": ["Office VPN", "ACME-Site-Ethernet"],
+            "excluded_interfaces": ["MyCompany Secret Adapter"],
+            "latency_public_host": "ping.my-isp.example.com",
+        }
+        dest = tmp_path / "bundle.zip"
+        support_bundle.build_support_bundle(dest, cfg)
+        raw = _open_zip_entry(dest, "config.json")
+        for leak in ("Office VPN", "ACME-Site-Ethernet", "MyCompany Secret Adapter", "ping.my-isp.example.com"):
+            assert leak not in raw, f"PII '{leak}' leaked into the support bundle config"
+        bundled = json.loads(raw)
+        assert bundled["selected_interfaces"] == ["<redacted-1>", "<redacted-2>"]   # count preserved
+        assert bundled["excluded_interfaces"] == ["<redacted-1>"]
+        assert bundled["latency_public_host"] == "<redacted>"
+        assert bundled["interface_mode"] == "selected"                              # mode (not a name) kept
 
 
 class TestLogScrubbing:
