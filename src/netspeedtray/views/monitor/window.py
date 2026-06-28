@@ -87,7 +87,8 @@ class MonitorWindow(QWidget):
         self._gear.setStyleSheet(
             f"QToolButton {{ background: transparent; color: {c['text_primary']};"
             f" font-family: 'Segoe Fluent Icons','Segoe MDL2 Assets'; font-size: 15px;"
-            f" border: none; padding: 4px 6px; }} QToolButton:hover {{ color: {c['accent']}; }}")
+            f" border: none; padding: 4px 6px; }} QToolButton:hover {{ color: {c['accent']}; }}"
+            f" QToolButton:disabled {{ color: {c['text_secondary']}; }}")
         self._gear.clicked.connect(self._open_settings_flyout)
         header.addWidget(self._gear, 0, Qt.AlignmentFlag.AlignVCenter)
         root.addLayout(header)
@@ -156,10 +157,11 @@ class MonitorWindow(QWidget):
             self._stack.removeWidget(old)
             old.deleteLater()
         self._stack.setCurrentIndex(index)
-        # The display-settings gear only affects the Hardware graph in 6.2a — hide it elsewhere so it
-        # isn't a dead control, and dismiss any open flyout when leaving Hardware.
-        self._gear.setVisible(d.tab_id == "hardware")
-        if d.tab_id != "hardware" and self._settings_flyout is not None:
+        # The display-settings gear opens the Hardware-graph options. Keep it PERSISTENT (never hide —
+        # hiding made it flicker in/out on pivot); just enable it on Hardware and dim it elsewhere.
+        is_hw = (d.tab_id == "hardware")
+        self._gear.setEnabled(is_hw)
+        if not is_hw and self._settings_flyout is not None:
             self._settings_flyout.hide()
         # Remember the active tab so the Monitor reopens where the user left it.
         try:

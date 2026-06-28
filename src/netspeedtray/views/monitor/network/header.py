@@ -100,8 +100,12 @@ class NetworkHeader(QWidget):
         # controls — interface filter + the SAME timeline dropdown the Overview uses — given proper room
         # on the right. (Replaces the cramped six-pill strip; the dropdown also unlocks the finer ranges
         # 30m/1h/4h/8h/12h/48h the pills never had, and keeps all three tabs consistent.)
+        # Fixed height + the shared side inset so the controls sit at the SAME vertical centre + right
+        # edge as the Overview/Hardware bands — switching tabs no longer makes the dropdown jump.
+        self.setFixedHeight(constants.layout.MONITOR_HEADER_BAND_HEIGHT)
         root = QHBoxLayout(self)
-        root.setContentsMargins(12, 8, 12, 10)
+        _m = constants.layout.MONITOR_BODY_MARGIN
+        root.setContentsMargins(_m, 0, _m, 0)
         root.setSpacing(32)
 
         self._down = self._stat_block(self._tr("DOWNLOAD_LABEL", "Download"), "↓", c)

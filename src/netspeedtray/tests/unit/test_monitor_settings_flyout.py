@@ -76,12 +76,16 @@ def test_settings_changed_rerenders_active_graph(q_app):
     win._on_settings_changed()                                   # no-op (no crash) when no host yet
 
 
-def test_gear_only_on_hardware_tab(q_app):
+def test_gear_persistent_enabled_only_on_hardware(q_app):
     win = _window()
-    win._on_tab_changed(1)                       # Network — the gear has no effect here in 6.2a
-    assert win._gear.isHidden()
+    # The gear is PERSISTENT (always visible — hiding it made it flicker on every pivot); it's only
+    # *enabled* on Hardware, where it has an effect, and dimmed/disabled elsewhere.
+    win._on_tab_changed(1)                       # Network — gear has no effect here
+    assert not win._gear.isHidden()
+    assert not win._gear.isEnabled()
     win._on_tab_changed(2)                       # Hardware — gear is relevant
     assert not win._gear.isHidden()
+    assert win._gear.isEnabled()
 
 
 def test_flyout_reused_not_rebuilt(q_app):

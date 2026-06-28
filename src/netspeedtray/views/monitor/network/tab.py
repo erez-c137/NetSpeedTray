@@ -34,9 +34,13 @@ class NetworkTab(QWidget):
         self._config = config
         self._i18n = i18n
 
+        # The header band owns the top of the tab (origin + fixed height shared with the other tabs);
+        # all body content lives under it with the common side inset. Keeping the band flush at the top
+        # of the stack cell is what aligns it with Overview/Hardware.
+        _m = constants.layout.MONITOR_BODY_MARGIN
         root = QVBoxLayout(self)
-        root.setContentsMargins(12, 12, 12, 12)
-        root.setSpacing(8)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
         # Header band — period totals + the timeline control that drives the shared graph.
         initial_key = constants.data.history_period.PERIOD_MAP.get(
@@ -51,6 +55,10 @@ class NetworkTab(QWidget):
         except Exception:
             pass
         root.addWidget(self._header)
+
+        body = QVBoxLayout()
+        body.setContentsMargins(_m, 4, _m, _m)
+        body.setSpacing(8)
 
         # Graph (top) + per-app list (bottom), user-resizable.
         splitter = QSplitter(Qt.Orientation.Vertical)
@@ -75,7 +83,8 @@ class NetworkTab(QWidget):
         splitter.setStretchFactor(0, 3)        # graph gets the lion's share
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([400, 280])          # ~6-7 rows so the user's apps aren't below the fold
-        root.addWidget(splitter, 1)
+        body.addWidget(splitter, 1)
+        root.addLayout(body, 1)
 
         # Per-app connection feed (reused psutil sampler) — polls only while this tab is visible.
         self._feed = AppActivityFeed(self)

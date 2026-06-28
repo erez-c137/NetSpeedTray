@@ -101,17 +101,17 @@ class OverviewTab(QWidget):
         self._scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
         content = QWidget()
         content.setStyleSheet("background: transparent;")
-        outer.addWidget(self._scroll)
 
         c = su.semantic_colors()
-        root = QVBoxLayout(content)
-        root.setContentsMargins(16, 16, 16, 16)
-        root.setSpacing(12)
+        _m = constants.layout.MONITOR_BODY_MARGIN
 
-        # --- Header: a discoverable Export action (left) + the timeline dropdown (right). The Export
-        # button makes "pull the numbers" a first-class action instead of a hidden click-the-hero gesture.
-        head = QHBoxLayout()
-        head.setContentsMargins(2, 0, 2, 0)
+        # --- Header band: a discoverable Export action (left) + the timeline dropdown (right). It lives
+        # OUTSIDE the scroll area as a fixed-height command band — same height + right edge as the
+        # Network/Hardware bands — so it never scrolls away and the timeline lines up across every tab.
+        band = QWidget()
+        band.setFixedHeight(constants.layout.MONITOR_HEADER_BAND_HEIGHT)
+        head = QHBoxLayout(band)
+        head.setContentsMargins(_m, 0, _m, 0)
         self._export_btn = QToolButton()
         self._export_btn.setText(f"⤓  {self._tr('OVERVIEW_EXPORT', 'Export…')}")
         self._export_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -128,7 +128,12 @@ class OverviewTab(QWidget):
         self._timeline = TimelineSelector(i18n, current_index=self._period_index)
         self._timeline.period_changed.connect(self._on_period_changed)
         head.addWidget(self._timeline, 0, Qt.AlignmentFlag.AlignVCenter)
-        root.addLayout(head)
+        outer.addWidget(band)
+        outer.addWidget(self._scroll)
+
+        root = QVBoxLayout(content)
+        root.setContentsMargins(_m, 4, _m, _m)
+        root.setSpacing(12)
 
         # --- Network hero (the headline) ---
         self._hero = NetworkHero(i18n, accent("down"), accent("up"))

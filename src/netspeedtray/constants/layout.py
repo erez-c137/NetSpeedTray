@@ -26,6 +26,14 @@ class LayoutConstants:
     COLLAPSIBLE_HEADER_HEIGHT: Final[int] = 36
     COLLAPSIBLE_SECTION_SPACING: Final[int] = 8
 
+    # --- Monitor Window ---
+    # One fixed-height command band sits at the very top of every Monitor tab (directly under the
+    # pivot strip). Identical height + top origin on all tabs is what stops the timeline/NIC controls
+    # from jumping vertically when the user switches tabs. Tab body content gets this side inset so it
+    # lines up under the band's controls.
+    MONITOR_HEADER_BAND_HEIGHT: Final[int] = 56
+    MONITOR_BODY_MARGIN: Final[int] = 16
+
     # --- Main Widget Specific ---
     WIDGET_DEFAULT_RIGHT_PADDING_PX: Final[int] = 10
     SMALL_TASKBAR_HEIGHT_THRESHOLD: Final[int] = 34

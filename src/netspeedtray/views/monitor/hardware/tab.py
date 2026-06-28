@@ -44,26 +44,23 @@ class HardwareTab(QWidget):
         # Which single stat the "toggle" mode shows (sticky for the window's lifetime).
         self._toggle_role = "cpu"
 
+        _m = constants.layout.MONITOR_BODY_MARGIN
         root = QVBoxLayout(self)
-        root.setContentsMargins(12, 12, 12, 12)
-        root.setSpacing(8)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
-        # Live telemetry band (temps/power/RAM/VRAM). The Monitor forces hardware collection while
-        # open, so this always has data; polls the main widget's live attributes on a 1 s timer while
-        # the tab is visible.
-        self._telemetry = TelemetryStrip(config, i18n)
-        root.addWidget(self._telemetry)
-        self._tele_timer = QTimer(self)
-        self._tele_timer.setInterval(_TELEMETRY_MS)
-        self._tele_timer.timeout.connect(self._update_telemetry)
-
-        # Period control — the graph's timeline (shared with Network: the Monitor has one window).
-        # Without this the combined graph silently inherited Network's period with no affordance.
+        # Header band (control row) — FIRST, at the very top of the tab so its timeline/Live sit at the
+        # exact same height + right edge as the Overview/Network bands (no jump on tab switch). The band
+        # is a fixed-height shell with the shared side inset; controls are right-docked + vertically
+        # centred. It used to sit *below* the telemetry strip, which pushed it far lower than the other
+        # tabs' controls — the visible inconsistency the owner flagged.
         self._period_key = constants.data.history_period.PERIOD_MAP.get(
             int(config.get("history_period_slider_value", 2)), "TIMELINE_24_HOURS")
         c = su.semantic_colors()
-        top = QHBoxLayout()
-        top.setContentsMargins(4, 0, 4, 0)
+        band = QWidget()
+        band.setFixedHeight(constants.layout.MONITOR_HEADER_BAND_HEIGHT)
+        top = QHBoxLayout(band)
+        top.setContentsMargins(_m, 0, _m, 0)
         top.setSpacing(12)
         top.addStretch(1)
         # CPU|GPU switch — only meaningful (and only shown) in "toggle" mode.
@@ -86,7 +83,21 @@ class HardwareTab(QWidget):
         from netspeedtray.views.monitor.live_toggle import LiveToggle
         self._live = LiveToggle(self._host, i18n)
         top.addWidget(self._live, 0, Qt.AlignmentFlag.AlignVCenter)
-        root.addLayout(top)
+        root.addWidget(band)
+
+        # Body — the telemetry strip then the graph/list splitter, with the shared side inset.
+        body = QVBoxLayout()
+        body.setContentsMargins(_m, 4, _m, _m)
+        body.setSpacing(8)
+
+        # Live telemetry band (temps/power/RAM/VRAM). The Monitor forces hardware collection while
+        # open, so this always has data; polls the main widget's live attributes on a 1 s timer while
+        # the tab is visible.
+        self._telemetry = TelemetryStrip(config, i18n)
+        body.addWidget(self._telemetry)
+        self._tele_timer = QTimer(self)
+        self._tele_timer.setInterval(_TELEMETRY_MS)
+        self._tele_timer.timeout.connect(self._update_telemetry)
 
         splitter = QSplitter(Qt.Orientation.Vertical)
         splitter.setChildrenCollapsible(False)
@@ -98,7 +109,8 @@ class HardwareTab(QWidget):
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 2)
         splitter.setSizes([360, 235])         # graph-favoured, fits the default 620px window
-        root.addWidget(splitter, 1)
+        body.addWidget(splitter, 1)
+        root.addLayout(body, 1)
 
         self._feed = HardwareFeed(self)
         self._feed.payload_ready.connect(self._list.set_payload)
