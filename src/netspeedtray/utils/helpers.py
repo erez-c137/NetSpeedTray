@@ -67,6 +67,29 @@ def get_app_data_path() -> Path:
         raise OSError(f"Error with app data directory: {path}. Check disk space or path validity.") from e
 
 
+def get_machine_id() -> str:
+    """
+    A stable per-install identifier for exported stats (so an MSP can tell two machines' CSVs apart).
+    A random UUID generated once and cached at %APPDATA%/NetSpeedTray/machine_id — NOT a hardware
+    fingerprint (no MAC/serial), so it identifies the install, not the person. Falls back to a
+    volatile UUID if the file can't be written (export still works, just not stable across runs).
+    """
+    import uuid
+    logger = logging.getLogger(__name__)
+    try:
+        path = get_app_data_path() / "machine_id"
+        if path.exists():
+            mid = path.read_text(encoding="utf-8").strip()
+            if mid:
+                return mid
+        mid = uuid.uuid4().hex
+        path.write_text(mid, encoding="utf-8")
+        return mid
+    except (OSError, PermissionError) as e:
+        logger.warning("Could not persist machine_id (%s); using a volatile id this run.", e)
+        return uuid.uuid4().hex
+
+
 def get_unit_labels_for_type(i18n, unit_type: str, short_labels: bool = False) -> List[str]:
     """
     Returns a list of translated unit labels [base, kilo, mega, giga] for the given unit type.
