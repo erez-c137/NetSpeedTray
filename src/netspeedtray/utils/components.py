@@ -922,11 +922,12 @@ class ArrowStylePicker(QWidget):
         crow.addWidget(self._down_edit)
         crow.addStretch(0)
         self._custom_row.setVisible(False)
+        root.addWidget(self._custom_row)   # was orphaned after `return` in _tr (dead code) — the custom
+        #                                    arrow row never entered the layout, so "Custom" did nothing.
 
     def _tr(self, key: str, default: str) -> str:
         """Graceful i18n lookup: the picker may be constructed without an i18n object."""
         return str(getattr(self._i18n, key, default)) if self._i18n is not None else default
-        root.addWidget(self._custom_row)
 
     def _on_segment(self, value) -> None:
         self._custom_row.setVisible(value == self._CUSTOM)

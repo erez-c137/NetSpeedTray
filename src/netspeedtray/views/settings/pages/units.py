@@ -7,7 +7,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QGroupBox, QLabel, QGridLayout, QComboBox
 
 from netspeedtray import constants
-from netspeedtray.utils.components import Win11Slider, Win11Toggle
+from netspeedtray.utils.components import Win11Toggle, Win11Segmented
 
 class UnitsPage(QWidget):
     def __init__(self, i18n, on_change: Callable[[], None]):
@@ -15,6 +15,9 @@ class UnitsPage(QWidget):
         self.i18n = i18n
         self.on_change = on_change
         self._setup_ui()
+
+    def _tr(self, key: str, default: str) -> str:
+        return str(getattr(self.i18n, key, default)) if self.i18n is not None else default
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -48,10 +51,10 @@ class UnitsPage(QWidget):
         format_layout.addWidget(self.speed_display_mode, format_row, 1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         format_row += 1
 
-        # Decimals
+        # Decimals — a 3-value enum {0,1,2}: a segmented control is the native Win11 idiom, NOT a
+        # continuous slider (which implied a magnitude and showed a meaningless "1").
         format_layout.addWidget(QLabel(self.i18n.DECIMAL_PLACES_LABEL), format_row, 0, Qt.AlignmentFlag.AlignVCenter)
-        self.decimal_places = Win11Slider(editable=False)
-        self.decimal_places.setRange(0, 2)
+        self.decimal_places = Win11Segmented([("0", 0), ("1", 1), ("2", 2)])
         self.decimal_places.valueChanged.connect(self.on_change)
         format_layout.addWidget(self.decimal_places, format_row, 1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         
@@ -66,10 +69,14 @@ class UnitsPage(QWidget):
         layout_gl.setHorizontalSpacing(15)
         l_row = 0
 
-        # Text Alignment
+        # Text Alignment — a 3-value enum (left/center/right): segmented control with the canonical
+        # string values directly (no more int<->string mapping), again the native idiom over a slider.
         layout_gl.addWidget(QLabel(self.i18n.TEXT_ALIGNMENT_LABEL), l_row, 0, Qt.AlignmentFlag.AlignVCenter)
-        self.text_alignment = Win11Slider(editable=False)
-        self.text_alignment.setRange(0, 2)
+        self.text_alignment = Win11Segmented([
+            (self._tr("TEXT_ALIGN_LEFT", "Left"), "left"),
+            (self._tr("TEXT_ALIGN_CENTER", "Center"), "center"),
+            (self._tr("TEXT_ALIGN_RIGHT", "Right"), "right"),
+        ])
         self.text_alignment.valueChanged.connect(self.on_change)
         layout_gl.addWidget(self.text_alignment, l_row, 1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         l_row += 1
@@ -120,10 +127,8 @@ class UnitsPage(QWidget):
         # Others
         self.decimal_places.setValue(config.get("decimal_places", constants.config.defaults.DEFAULT_DECIMAL_PLACES))
         
-        # Alignment
-        align = config.get("text_alignment", "left")
-        align_map = {"left": 0, "center": 1, "right": 2}
-        self.text_alignment.setValue(align_map.get(align, 0))
+        # Alignment — the segmented control holds the canonical string value directly.
+        self.text_alignment.setValue(config.get("text_alignment", "left"))
         
         # Toggles
         self.swap_upload_download.setChecked(config.get("swap_upload_download", constants.config.defaults.DEFAULT_SWAP_UPLOAD_DOWNLOAD))
@@ -133,10 +138,8 @@ class UnitsPage(QWidget):
         
 
     def get_settings(self) -> Dict[str, Any]:
-        # Inverse mapping
         speed_mode = "always_mbps" if self.speed_display_mode.isChecked() else "auto"
-        align_map_inv = {0: "left", 1: "center", 2: "right"}
-        align = align_map_inv.get(self.text_alignment.value(), "left")
+        align = self.text_alignment.value() or "left"   # segmented holds the string value directly
         unit_type = self.unit_type.currentData()
 
         return {

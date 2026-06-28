@@ -260,3 +260,19 @@ def test_interfaces_page(q_app, mock_i18n, mock_callback):
     assert settings["interface_mode"] == "selected"
     assert "Ethernet" in settings["selected_interfaces"]
     assert "Wi-Fi" not in settings["selected_interfaces"]
+
+
+def test_display_enums_are_segmented_and_round_trip(q_app, mock_i18n, mock_callback):
+    """Decimal Places + Text Alignment are 3-value enums — segmented controls, not sliders — and must
+    round-trip their canonical values (int 0/1/2 and 'left'/'center'/'right')."""
+    from netspeedtray.views.settings.pages.units import UnitsPage
+    from netspeedtray.utils.components import Win11Segmented
+    p = UnitsPage(mock_i18n, mock_callback)
+    assert isinstance(p.decimal_places, Win11Segmented)
+    assert isinstance(p.text_alignment, Win11Segmented)
+    p.load_settings({"decimal_places": 2, "text_alignment": "right"})
+    got = p.get_settings()
+    assert got["decimal_places"] == 2 and got["text_alignment"] == "right"
+    p.load_settings({"decimal_places": 0, "text_alignment": "center"})
+    got = p.get_settings()
+    assert got["decimal_places"] == 0 and got["text_alignment"] == "center"

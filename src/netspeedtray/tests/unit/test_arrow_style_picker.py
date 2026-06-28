@@ -41,3 +41,12 @@ def test_changed_signal_fires_on_segment_change(picker, qtbot=None):
     picker.changed.connect(lambda: fired.append(1))
     picker._seg.setValue("Solid")
     assert fired, "changing the segment should emit changed"
+
+
+def test_custom_row_is_actually_in_the_layout(picker):
+    """Regression: `root.addWidget(self._custom_row)` was orphaned after a `return` (dead code), so the
+    custom up/down fields were never parented and the 'Custom' segment did nothing."""
+    assert picker._custom_row.parent() is not None        # added to the layout (has a parent)
+    # selecting Custom reveals the (now-parented) row
+    picker._on_segment(picker._CUSTOM)
+    assert picker._custom_row.isVisibleTo(picker)
