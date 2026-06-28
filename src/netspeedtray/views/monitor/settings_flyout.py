@@ -35,10 +35,10 @@ class MonitorSettingsFlyout(QFrame):
         self._mw = main_widget
         self._config = config
         self._i18n = i18n
-        # Vendor-hue lookup MUST track the graph's own theme (config['dark_mode']), the same bool
-        # GraphHost._hw_styles uses — NOT the OS theme — or the "Auto" swatch would advertise one
-        # shade while the graph draws its sibling.
-        self._dark = bool(config.get("dark_mode", True))
+        # Vendor-hue lookup MUST track the graph's own theme — the same source GraphHost.apply_theme /
+        # _hw_styles use, which is now su.is_dark_mode() (the OS apps theme) — or the "Auto" swatch would
+        # advertise one shade while the graph draws its sibling.
+        self._dark = su.is_dark_mode()
         c = su.semantic_colors()
 
         self.setObjectName("monSettings")
@@ -124,7 +124,7 @@ class MonitorSettingsFlyout(QFrame):
         """Re-read the current config + theme into every control (the cached flyout may have been built
         under a now-changed theme, or another surface — the Settings → Monitor page in 6.2c — may have
         changed a value). Signals are blocked so re-syncing doesn't echo back as a write."""
-        self._dark = bool(self._config.get("dark_mode", True))
+        self._dark = su.is_dark_mode()
         for field, key, role in ((self._cpu, "monitor_cpu_graph_color", "cpu"),
                                   (self._gpu, "monitor_gpu_graph_color", "gpu")):
             field.blockSignals(True)

@@ -25,6 +25,8 @@ from typing import Any, Dict, Optional
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 from PyQt6.QtWidgets import QWidget, QVBoxLayout
 
+from netspeedtray.utils import styles as su   # matplotlib-free; OK at module scope under the firewall
+
 
 # --- Minimal stand-ins for the host surface GraphCoordinator pokes at -------------------------
 # The Monitor surfaces status/stats in its own tab header and disables graph zoom, so these are
@@ -131,7 +133,10 @@ class GraphHost(QObject):
         _cl = QVBoxLayout(self._canvas_container)
         _cl.setContentsMargins(0, 0, 0, 0)
         self.renderer = GraphRenderer(self._canvas_container, self.i18n, self.logger)
-        self.renderer.apply_theme(bool(self.config.get("dark_mode", True)))
+        # Theme from the OS apps theme (su.is_dark_mode), NOT config['dark_mode'] — every other Monitor
+        # surface themes that way, and config['dark_mode'] is never synced to the OS (it stays at its
+        # default), so reading it rendered a dark graph inside a light Monitor on a light-mode PC.
+        self.renderer.apply_theme(su.is_dark_mode())
 
         # Worker on its own QThread.
         self._thread = QThread()
@@ -285,7 +290,7 @@ class GraphHost(QObject):
         from netspeedtray.utils import hardware_vendors as hv
         cpu_c = self.config.get("monitor_cpu_graph_color") or None
         gpu_c = self.config.get("monitor_gpu_graph_color") or None
-        is_dark = bool(self.config.get("dark_mode", True))   # GPU shade is theme-aware (light-bg contrast)
+        is_dark = su.is_dark_mode()   # OS apps theme (matches apply_theme + the rest of the Monitor)
         ram_c = self.config.get("monitor_ram_graph_color") or ("#4CAF50" if is_dark else "#388E3C")
         return {"cpu": hv.graph_line_style("cpu", cpu_c, is_dark),
                 "gpu": hv.graph_line_style("gpu", gpu_c, is_dark),
