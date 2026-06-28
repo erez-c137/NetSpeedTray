@@ -57,11 +57,12 @@ class Flyout(QWidget):
         title_lbl.setFont(su.font(tokens.TYPE_BODY_STRONG))
         title_lbl.setStyleSheet(f"color: {c['text_primary']}; background: transparent;")
         header.addWidget(title_lbl, 1)
-        close_btn = QPushButton("✕")
+        close_btn = QPushButton(chr(0xE8BB))   # Segoe Fluent "ChromeClose"
         close_btn.setFixedSize(20, 20)
         close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         close_btn.setStyleSheet(
-            f"QPushButton {{ color: {c['text_secondary']}; background: transparent; border: none; }}"
+            f"QPushButton {{ color: {c['text_secondary']}; background: transparent; border: none;"
+            f" font-family: 'Segoe Fluent Icons','Segoe MDL2 Assets'; font-size: 11px; }}"
             f"QPushButton:hover {{ color: {c['text_primary']}; }}"
         )
         close_btn.clicked.connect(self._dismiss)

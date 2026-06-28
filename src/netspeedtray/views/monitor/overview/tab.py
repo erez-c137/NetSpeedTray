@@ -113,7 +113,9 @@ class OverviewTab(QWidget):
         head = QHBoxLayout(band)
         head.setContentsMargins(_m, 0, _m, 0)
         self._export_btn = QToolButton()
-        self._export_btn.setText(f"⤓  {self._tr('OVERVIEW_EXPORT', 'Export…')}")
+        self._export_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self._export_btn.setIcon(su.fluent_icon(0xE896, 16, c['text_secondary']))   # Fluent "Download"
+        self._export_btn.setText(self._tr('OVERVIEW_EXPORT', 'Export…'))
         self._export_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._export_btn.setToolTip(self._tr("OVERVIEW_EXPORT_TIP",
                                               "Export this period's stats (summary + raw CSV)"))

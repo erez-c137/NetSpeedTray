@@ -48,12 +48,13 @@ class ConnectionDetailPanel(QWidget):
         self._title.setWordWrap(True)
         header.addWidget(self._title, 1)
         self._close = QToolButton()
-        self._close.setText("✕")   # ✕ — renders in any font (no Fluent-glyph dependency)
+        self._close.setText(chr(0xE8BB))   # Segoe Fluent "ChromeClose"
         self._close.setCursor(Qt.CursorShape.PointingHandCursor)
         self._close.setToolTip(self._tr("APP_ACTIVITY_CLOSE_BUTTON", "Close"))
         self._close.setStyleSheet(
             f"QToolButton {{ background: transparent; color: {c['text_secondary']};"
-            f" border: none; padding: 2px 6px; font-size: 13px; }}"
+            f" font-family: 'Segoe Fluent Icons','Segoe MDL2 Assets';"
+            f" border: none; padding: 2px 6px; font-size: 12px; }}"
             f" QToolButton:hover {{ color: {c['text_primary']}; }}")
         self._close.clicked.connect(self.closed.emit)
         header.addWidget(self._close, 0, Qt.AlignmentFlag.AlignTop)

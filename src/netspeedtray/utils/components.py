@@ -658,7 +658,10 @@ class SettingExpander(QWidget):
 
         self._chevron = QLabel()
         self._chevron.setFixedWidth(16)
-        self._chevron.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
+        # Native Win11 disclosure chevron (Segoe Fluent Icons), not a Unicode triangle.
+        self._chevron.setStyleSheet(
+            f"color: {c['text_secondary']}; background: transparent;"
+            f" font-family: 'Segoe Fluent Icons','Segoe MDL2 Assets'; font-size: 12px;")
         hl.addWidget(self._chevron, 0, Qt.AlignmentFlag.AlignVCenter)
 
         self._header.mousePressEvent = self._on_header_clicked
@@ -685,7 +688,8 @@ class SettingExpander(QWidget):
 
     def _sync(self) -> None:
         self._content.setVisible(self._expanded)
-        self._chevron.setText("▾" if self._expanded else "▸")
+        # E70D ChevronDown (open) / E76C ChevronRight (closed).
+        self._chevron.setText(chr(0xE70D) if self._expanded else chr(0xE76C))
 
     def setExpanded(self, on: bool) -> None:
         if self._expanded != on:
