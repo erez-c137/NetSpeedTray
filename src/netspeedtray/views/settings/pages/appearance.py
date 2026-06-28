@@ -11,6 +11,8 @@ from netspeedtray import constants
 from netspeedtray.utils import styles as style_utils
 from netspeedtray.utils.components import Win11Slider, Win11Toggle, ArrowStylePicker, SettingCard
 from netspeedtray.views.settings.pages._fluent import section_header, page_layout
+from netspeedtray.views.settings.pages.units import UnitsPage
+from netspeedtray.views.settings.pages.colors import ColorsPage
 
 class AppearancePage(QWidget):
     layout_changed = pyqtSignal()
@@ -153,6 +155,14 @@ class AppearancePage(QWidget):
         self.graph_opacity.valueChanged.connect(self.on_change)
         layout.addWidget(SettingCard(self.i18n.GRAPH_OPACITY_LABEL, control=self.graph_opacity))
 
+        # --- Data format (absorbed from the old Display/Units page) + Colour coding (absorbed from the
+        # old Color Coding page), 2.0 IA. Reused as-is (their own tested control groups + load/get); the
+        # dialog keeps references to them for the Force-MB rule + the high/low colour-picker routing.
+        self.units_section = UnitsPage(self.i18n, self.on_change)
+        layout.addWidget(self.units_section)
+        self.colors_section = ColorsPage(self.i18n, self.on_change, self.open_color_dialog)
+        layout.addWidget(self.colors_section)
+
         layout.addStretch()
 
     def _row(self, *widgets) -> QWidget:
@@ -204,6 +214,10 @@ class AppearancePage(QWidget):
         self.history_duration.setValue(config.get("history_minutes", constants.config.defaults.DEFAULT_HISTORY_MINUTES))
         self.graph_opacity.setValue(config.get("graph_opacity", constants.config.defaults.DEFAULT_GRAPH_OPACITY))
 
+        # Absorbed sections (units / colour coding).
+        self.units_section.load_settings(config)
+        self.colors_section.load_settings(config)
+
     def get_settings(self) -> Dict[str, Any]:
         settings = {
             "font_family": self.font_family_label.text(),
@@ -224,6 +238,9 @@ class AppearancePage(QWidget):
             "history_minutes": self.history_duration.value(),
             "graph_opacity": self.graph_opacity.value()
         }
+        # Merge the absorbed sections' keys (units / colour coding).
+        settings.update(self.units_section.get_settings())
+        settings.update(self.colors_section.get_settings())
         return settings
 
     def set_font_family(self, font: QFont):

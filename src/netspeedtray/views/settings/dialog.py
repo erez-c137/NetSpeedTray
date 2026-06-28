@@ -35,15 +35,16 @@ from netspeedtray.utils.styles import is_dark_mode
 from netspeedtray.utils.support_bundle import build_support_bundle
 from netspeedtray.utils.dwm import apply_win11_chrome
 
-# --- Settings Pages ---
-from netspeedtray.views.settings.pages.units import UnitsPage
+# --- Settings Pages (2.0 IA: General · Widget · Appearance · Hardware · Network · Advanced) ---
 from netspeedtray.utils.config import ConfigManager
 from netspeedtray.views.settings.pages.interfaces import InterfacesPage
 from netspeedtray.views.settings.pages.general import GeneralPage
+from netspeedtray.views.settings.pages.widget import WidgetPage
 from netspeedtray.views.settings.pages.appearance import AppearancePage
-from netspeedtray.views.settings.pages.colors import ColorsPage
 from netspeedtray.views.settings.pages.hardware import HardwarePage
 from netspeedtray.views.settings.pages.advanced import AdvancedPage
+# units.py + colors.py are now embedded inside AppearancePage (the dialog reaches them via
+# appearance_page.units_section / .colors_section for the Force-MB rule + colour-picker routing).
 from netspeedtray.views.widget.preview import PreviewWidget
 from netspeedtray.constants.update_mode import UpdateMode
 
@@ -61,7 +62,7 @@ class SettingsDialog(QDialog):
     # Must stay in sync with the sidebar order in _setup_ui; test_settings_pages guards it so a
     # future page reshuffle trips a red test instead of silently opening the wrong page.
     PAGE_HARDWARE: int = 3
-    PAGE_NETWORK: int = 5   # Network Interfaces — hosts the "Data usage" / data-cap section
+    PAGE_NETWORK: int = 4   # Network Interfaces — hosts the "Data usage" / data-cap section
 
     def __init__(
         self,
@@ -189,11 +190,11 @@ class SettingsDialog(QDialog):
             # (label, Segoe Fluent codepoint) — Win10-safe MDL2 glyphs; Hardware/Network match the
             # Monitor tabs for cross-window consistency. Settings/Personalize/Color/DeveloperTools/
             # FontSize/Ethernet/Repair.
-            self._sidebar_icons = [0xE713, 0xE771, 0xE790, 0xEC7A, 0xE8E9, 0xE839, 0xE90F]
-            for label in (self.i18n.GENERAL_SETTINGS_GROUP, self.i18n.APPEARANCE_SETTINGS_GROUP,
-                          self.i18n.COLOR_CODING_GROUP, self.i18n.HARDWARE_MONITORING_GROUP,
-                          self.i18n.UNITS_GROUP, self.i18n.NETWORK_INTERFACES_GROUP,
-                          self.i18n.ADVANCED_SETTINGS_GROUP):
+            # 2.0 IA — 6 pages: Settings / View(Widget) / Personalize / DeveloperTools / Ethernet / Repair.
+            self._sidebar_icons = [0xE713, 0xE8A9, 0xE771, 0xEC7A, 0xE839, 0xE90F]
+            for label in (self.i18n.GENERAL_SETTINGS_GROUP, self.i18n.WIDGET_SETTINGS_GROUP,
+                          self.i18n.APPEARANCE_SETTINGS_GROUP, self.i18n.HARDWARE_MONITORING_GROUP,
+                          self.i18n.NETWORK_INTERFACES_GROUP, self.i18n.ADVANCED_SETTINGS_GROUP):
                 self.sidebar.addItem(QListWidgetItem(label))
             self.sidebar.currentRowChanged.connect(lambda *_: self._tint_sidebar_icons())
             self.sidebar.setCurrentRow(0)
@@ -214,23 +215,21 @@ class SettingsDialog(QDialog):
             self.stack = QStackedWidget()
             content_layout.addWidget(self.stack)
 
-            # Instantiate Pages
+            # Instantiate Pages (2.0 IA)
             self.general_page = GeneralPage(self.i18n, self._schedule_settings_update)
+            self.widget_page = WidgetPage(self.i18n, self._schedule_settings_update)
             self.appearance_page = AppearancePage(
                 self.i18n,
                 self._schedule_settings_update,
                 self._open_font_dialog,
                 self._open_color_dialog
             )
-
-            self.colors_page = ColorsPage(
-                self.i18n,
-                self._schedule_settings_update,
-                self._open_color_dialog
-            )
+            # The old Color Coding + Display(Units) pages are now sections INSIDE Appearance. Keep
+            # references so the existing colour-picker routing + Force-MB rule reach the same objects.
+            self.colors_page = self.appearance_page.colors_section
+            self.units_page = self.appearance_page.units_section
 
             self.hardware_page = HardwarePage(self.i18n, self._schedule_settings_update)
-            self.units_page = UnitsPage(self.i18n, self._schedule_settings_update)
             self.interfaces_page = InterfacesPage(
                 self.i18n,
                 self.available_interfaces,
@@ -246,12 +245,11 @@ class SettingsDialog(QDialog):
             # Add pages wrapped in scroll areas (order matches sidebar)
             for page in [
                 self.general_page,       # 0 - General
-                self.appearance_page,    # 1 - Appearance
-                self.colors_page,        # 2 - Color Coding
+                self.widget_page,        # 1 - Widget
+                self.appearance_page,    # 2 - Appearance (font/colour/units/colour-coding/graph)
                 self.hardware_page,      # 3 - Hardware
-                self.units_page,         # 4 - Display
-                self.interfaces_page,    # 5 - Interfaces
-                self.advanced_page,      # 6 - Advanced
+                self.interfaces_page,    # 4 - Network
+                self.advanced_page,      # 5 - Advanced
             ]:
                 self.stack.addWidget(self._wrap_in_scroll(page))
 
@@ -330,10 +328,9 @@ class SettingsDialog(QDialog):
         self.logger.debug("Initializing UI state from config...")
         try:
             self.general_page.load_settings(self.config, self.startup_enabled_initial_state)
-            self.appearance_page.load_settings(self.config)
-            self.colors_page.load_settings(self.config)
+            self.widget_page.load_settings(self.config)
+            self.appearance_page.load_settings(self.config)   # also loads the embedded units + colours
             self.hardware_page.load_settings(self.config)
-            self.units_page.load_settings(self.config)
             self.interfaces_page.load_settings(self.config)
             self.advanced_page.load_settings(self.config)
 
@@ -353,10 +350,17 @@ class SettingsDialog(QDialog):
 
     def _connect_signals(self) -> None:
         """Connects additional global signals."""
+        self.widget_page.layout_changed.connect(self._adjust_size_and_reposition)
         self.appearance_page.layout_changed.connect(self._adjust_size_and_reposition)
         self.interfaces_page.layout_changed.connect(self._adjust_size_and_reposition)
         self.hardware_page.layout_changed.connect(self._adjust_size_and_reposition)
-        # When Force MB toggle is changed, ensure SMART update_rate is not selected
+        # Enabling a hardware monitor nudges the Widget page out of network-only (display-mode lives
+        # there now), so the freshly-enabled stat is actually visible.
+        try:
+            self.hardware_page.hardware_enabled.connect(self.widget_page.ensure_hardware_visible)
+        except Exception:
+            pass
+        # When Force MB toggle is changed, ensure SMART update_rate is not selected.
         try:
             self.units_page.speed_display_mode.toggled.connect(self._on_force_mb_toggled)
         except Exception:
@@ -449,10 +453,9 @@ class SettingsDialog(QDialog):
         try:
             settings = self.config.copy()
             settings.update(self.general_page.get_settings())
-            settings.update(self.appearance_page.get_settings())
-            settings.update(self.colors_page.get_settings())
+            settings.update(self.widget_page.get_settings())
+            settings.update(self.appearance_page.get_settings())   # includes embedded units + colours
             settings.update(self.hardware_page.get_settings())
-            settings.update(self.units_page.get_settings())
             settings.update(self.interfaces_page.get_settings())
             settings.update(self.advanced_page.get_settings())
 

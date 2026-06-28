@@ -13,6 +13,10 @@ from netspeedtray.views.settings.pages._fluent import section_header, page_layou
 
 class HardwarePage(QWidget):
     layout_changed = pyqtSignal()
+    # Emitted when a hardware monitor is switched ON. The dialog forwards it to the Widget page (which
+    # now owns the display-mode control) so the widget switches out of network-only and the freshly
+    # enabled stat is actually visible — the convenience this page used to do itself.
+    hardware_enabled = pyqtSignal()
 
     def __init__(self, i18n, on_change: Callable[[], None]):
         super().__init__()
@@ -76,39 +80,9 @@ class HardwarePage(QWidget):
         layout.addWidget(SettingCard(str(getattr(self.i18n, "HW_THROTTLE_LABEL", "Throttle temp (stats)")),
                                      control=self.throttle_temp))
 
-        # --- Widget Display Mode (advanced — collapsible) ---
-        display_section = SettingExpander(self.i18n.WIDGET_DISPLAY_MODE_LABEL, expanded=False)
-        display_section.expandedChanged.connect(lambda _on: self.layout_changed.emit())
-        self.display_mode_combo = QComboBox()
-        self.display_mode_combo.addItem(self.i18n.DISPLAY_MODE_NETWORK, userData="network_only")
-        self.display_mode_combo.addItem(self.i18n.DISPLAY_MODE_COMBINED, userData="side_by_side")
-        self.display_mode_combo.addItem(self.i18n.DISPLAY_MODE_STACKED_COLUMN, userData="side_by_stack")
-        self.display_mode_combo.addItem(self.i18n.DISPLAY_MODE_CYCLE, userData="cycle")
-        self.display_mode_combo.currentIndexChanged.connect(self.on_change)
-        display_section.contentLayout().addWidget(self.display_mode_combo)
-        note_label = QLabel(self.i18n.HARDWARE_GRAPH_NOTE)
-        note_label.setWordWrap(True)
-        note_label.setStyleSheet(
-            f"color: {su.semantic_colors()['text_secondary']}; background: transparent; padding: 0 2px;")
-        display_section.contentLayout().addWidget(note_label)
-        layout.addWidget(display_section)
-
-        # --- Display Order (advanced — collapsible) ---
-        order_section = SettingExpander(self.i18n.WIDGET_DISPLAY_ORDER_LABEL, expanded=False)
-        order_section.expandedChanged.connect(lambda _on: self.layout_changed.emit())
-        self.pos_combos = []
-        for i in range(3):
-            combo = QComboBox()
-            combo.addItem(self.i18n.ORDER_TYPE_NETWORK, userData="network")
-            combo.addItem(self.i18n.ORDER_TYPE_CPU, userData="cpu")
-            combo.addItem(self.i18n.ORDER_TYPE_GPU, userData="gpu")
-            combo.addItem(self.i18n.ORDER_TYPE_NONE, userData="none")
-            combo.setMinimumWidth(160)
-            combo.currentIndexChanged.connect(lambda _, idx=i: self._on_pos_changed(idx))
-            order_section.contentLayout().addWidget(
-                SettingCard(getattr(self.i18n, f"ORDER_POSITION_{i+1}"), control=combo))
-            self.pos_combos.append(combo)
-        layout.addWidget(order_section)
+        # NOTE (2.0 IA): "Widget Display Mode" + "Display Order" moved to the new Widget page — they're
+        # about the widget's layout, not hardware monitoring. The monitor toggles here still nudge that
+        # layout via the hardware_enabled signal (see _on_monitor_toggled).
 
         # --- Color-code by load (advanced — collapsible): thresholds for tinting CPU/GPU % by load.
         load_section = SettingExpander(self.i18n.HARDWARE_LOAD_COLOR_SECTION, expanded=False)
@@ -166,21 +140,7 @@ class HardwarePage(QWidget):
         self.monitor_vram.blockSignals(False)
         self.show_temps.blockSignals(False)
         self.show_power.blockSignals(False)
-        
-        mode = config.get("widget_display_mode", "network_only")
-        if mode == "side_by_side" and config.get("stack_hardware_stats", False):
-            mode = "side_by_stack"
-            
-        index = self.display_mode_combo.findData(mode)
-        if index >= 0:
-            self.display_mode_combo.setCurrentIndex(index)
-            
-        order = config.get("widget_display_order", ["network", "cpu", "gpu"])
-        for i, combo in enumerate(self.pos_combos):
-            val = order[i] if i < len(order) else "none"
-            idx = combo.findData(val)
-            if idx >= 0:
-                combo.setCurrentIndex(idx)
+        # widget_display_mode / widget_display_order are loaded by the Widget page now.
 
         d = constants.config.defaults
         self.cpu_load_high.setValue(int(config.get("cpu_load_high_threshold", d.DEFAULT_CPU_LOAD_HIGH_THRESHOLD)))
@@ -189,42 +149,14 @@ class HardwarePage(QWidget):
         self.gpu_load_low.setValue(int(config.get("gpu_load_low_threshold", d.DEFAULT_GPU_LOAD_LOW_THRESHOLD)))
 
     def _on_monitor_toggled(self, checked: bool):
-        """Handle monitor toggling with auto-mode switching."""
+        """A monitor was toggled. When turned ON, ask the Widget page (via the dialog) to make sure the
+        widget isn't in network-only mode, so the new stat is actually visible. Display-mode itself now
+        lives on the Widget page, so this page only signals intent."""
         if checked:
-            current_mode = self.display_mode_combo.currentData()
-            if current_mode == "network_only":
-                idx = self.display_mode_combo.findData("side_by_side")
-                if idx >= 0:
-                    self.display_mode_combo.setCurrentIndex(idx)
-        
-        self.on_change()
-
-    def _on_pos_changed(self, combo_index: int):
-        """Prevents duplicate positional items by auto-swapping with the absent item."""
-        values = [c.currentData() for c in self.pos_combos]
-        new_val = values[combo_index]
-        if new_val == "none":
-            self.on_change()
-            return
-            
-        for i in range(3):
-            if i != combo_index and values[i] == new_val:
-                used = set(values)
-                missing = {"network", "cpu", "gpu"} - used
-                if missing:
-                    next_item = list(missing)[0]
-                    idx = self.pos_combos[i].findData(next_item)
-                    if idx >= 0:
-                        self.pos_combos[i].blockSignals(True)
-                        self.pos_combos[i].setCurrentIndex(idx)
-                        self.pos_combos[i].blockSignals(False)
-                break
+            self.hardware_enabled.emit()
         self.on_change()
 
     def get_settings(self) -> Dict[str, Any]:
-        order = [c.currentData() for c in self.pos_combos]
-        mode = self.display_mode_combo.currentData()
-        
         return {
             "monitor_cpu_enabled": self.monitor_cpu.isChecked(),
             "monitor_gpu_enabled": self.monitor_gpu.isChecked(),
@@ -233,9 +165,6 @@ class HardwarePage(QWidget):
             "show_hardware_temps": self.show_temps.isChecked(),
             "show_hardware_power": self.show_power.isChecked(),
             "hardware_label_style": self.label_style.currentData(),
-            "stack_hardware_stats": mode == "side_by_stack",
-            "widget_display_mode": "side_by_side" if mode == "side_by_stack" else mode,
-            "widget_display_order": order,
             "cpu_load_high_threshold": float(self.cpu_load_high.value()),
             "cpu_load_low_threshold": float(self.cpu_load_low.value()),
             "gpu_load_high_threshold": float(self.gpu_load_high.value()),

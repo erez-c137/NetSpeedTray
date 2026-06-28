@@ -44,26 +44,12 @@ class GeneralPage(QWidget):
         layout.addWidget(SettingCard(self.i18n.UPDATE_INTERVAL_LABEL, control=self.update_rate))
 
         # --- Behavior ---
+        # NOTE (2.0 IA): free-move, keep-visible-in-fullscreen and tray-offset moved to the new Widget
+        # page (they're about the on-taskbar widget, not the app). General keeps app-level behaviour.
         layout.addWidget(section_header(self.i18n.BEHAVIOR_GROUP_TITLE))
         self.start_with_windows = Win11Toggle(label_text="")
         self.start_with_windows.toggled.connect(self.on_change)
         layout.addWidget(SettingCard(self.i18n.START_WITH_WINDOWS_LABEL, control=self.start_with_windows))
-
-        self.free_move = Win11Toggle(label_text="")
-        self.free_move.toggled.connect(self.on_change)
-        layout.addWidget(SettingCard(self.i18n.FREE_MOVE_LABEL, control=self.free_move))
-
-        self.keep_visible_fullscreen = Win11Toggle(label_text="")
-        self.keep_visible_fullscreen.toggled.connect(self.on_change)
-        layout.addWidget(SettingCard(self.i18n.KEEP_VISIBLE_FULLSCREEN_LABEL,
-                                     control=self.keep_visible_fullscreen))
-
-        # Tray Offset (absorbed from the old Display page).
-        self.tray_offset = Win11Slider()
-        self.tray_offset.setRange(0, 50)
-        self.tray_offset.setMinimumWidth(260)
-        self.tray_offset.valueChanged.connect(self.on_change)
-        layout.addWidget(SettingCard(self.i18n.TRAY_OFFSET_LABEL, control=self.tray_offset))
 
         self.check_for_updates = Win11Toggle(label_text="")
         self.check_for_updates.toggled.connect(self.on_change)
@@ -148,12 +134,8 @@ class GeneralPage(QWidget):
         
         # Other toggles
         self.start_with_windows.setChecked(is_startup_enabled)
-        self.free_move.setChecked(config.get("free_move", False))
-        self.keep_visible_fullscreen.setChecked(config.get("keep_visible_fullscreen", constants.config.defaults.DEFAULT_KEEP_VISIBLE_FULLSCREEN))
         self.check_for_updates.setChecked(config.get("check_for_updates", True))
-
-        # Tray Offset
-        self.tray_offset.setValue(config.get("tray_offset_x", 0))
+        # free_move / keep_visible_fullscreen / tray_offset_x are loaded by the Widget page now.
 
         # Preferred monitor (#72) — match by stored screen name.
         # If the saved monitor name doesn't match any detected screen (e.g.,
@@ -171,12 +153,10 @@ class GeneralPage(QWidget):
         return {
             "language": self.language_combo.currentData(),
             "update_rate": update_rate_value,
-            "free_move": self.free_move.isChecked(),
-            "keep_visible_fullscreen": self.keep_visible_fullscreen.isChecked(),
             "start_with_windows": self.start_with_windows.isChecked(),
-            "tray_offset_x": self.tray_offset.value(),
             "check_for_updates": self.check_for_updates.isChecked(),
             "preferred_monitor": self.preferred_monitor_combo.currentData(),
+            # free_move / keep_visible_fullscreen / tray_offset_x now live on the Widget page (2.0 IA).
         }
 
     def _on_update_rate_changed(self, value: int) -> None:

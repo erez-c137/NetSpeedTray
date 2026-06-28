@@ -49,6 +49,7 @@
     "STATS_CALCULATION_ERROR": "Error al calcular estadísticas",
     "DEFAULT_TEXT": "N/D",
     "GENERAL_SETTINGS_GROUP": "General",
+    "WIDGET_SETTINGS_GROUP": "Widget",
     "APPEARANCE_SETTINGS_GROUP": "Apariencia",
     "BACKGROUND_SETTINGS_GROUP_TITLE": "Ajustes de fondo",
     "BACKGROUND_COLOR_LABEL": "Color:",

@@ -49,6 +49,7 @@
     "STATS_CALCULATION_ERROR": "Ошибка расчета статистики",
     "DEFAULT_TEXT": "Н/Д",
     "GENERAL_SETTINGS_GROUP": "Общие",
+    "WIDGET_SETTINGS_GROUP": "Widget",
     "APPEARANCE_SETTINGS_GROUP": "Внешний вид",
     "BACKGROUND_SETTINGS_GROUP_TITLE": "Настройки фона",
     "BACKGROUND_COLOR_LABEL": "Цвет:",

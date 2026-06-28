@@ -49,6 +49,7 @@
     "STATS_CALCULATION_ERROR": "Napaka pri izračunu statistike",
     "DEFAULT_TEXT": "N/A",
     "GENERAL_SETTINGS_GROUP": "Splošno",
+    "WIDGET_SETTINGS_GROUP": "Widget",
     "APPEARANCE_SETTINGS_GROUP": "Videz",
     "BACKGROUND_SETTINGS_GROUP_TITLE": "Nastavitve ozadja",
     "BACKGROUND_COLOR_LABEL": "Barva:",

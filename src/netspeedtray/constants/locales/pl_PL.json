@@ -49,6 +49,7 @@
     "STATS_CALCULATION_ERROR": "Błąd podczas obliczania statystyk",
     "DEFAULT_TEXT": "N/A",
     "GENERAL_SETTINGS_GROUP": "Ogólne",
+    "WIDGET_SETTINGS_GROUP": "Widget",
     "APPEARANCE_SETTINGS_GROUP": "Wygląd",
     "BACKGROUND_SETTINGS_GROUP_TITLE": "Ustawienia tła",
     "BACKGROUND_COLOR_LABEL": "Kolor:",

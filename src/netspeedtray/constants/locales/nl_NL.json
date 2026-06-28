@@ -49,6 +49,7 @@
     "STATS_CALCULATION_ERROR": "Fout bij berekenen statistieken",
     "DEFAULT_TEXT": "n/b",
     "GENERAL_SETTINGS_GROUP": "Algemeen",
+    "WIDGET_SETTINGS_GROUP": "Widget",
     "APPEARANCE_SETTINGS_GROUP": "Uiterlijk",
     "BACKGROUND_SETTINGS_GROUP_TITLE": "Achtergrondinstellingen",
     "BACKGROUND_COLOR_LABEL": "Kleur:",

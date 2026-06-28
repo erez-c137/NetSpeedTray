@@ -143,24 +143,21 @@ def test_general_page(q_app, mock_i18n, mock_callback):
     settings = page.get_settings()
     assert settings["language"] == "fr_FR"
     assert settings["update_rate"] == 2.0
-    assert settings["free_move"] is True
     assert settings["start_with_windows"] is True
-    assert settings["tray_offset_x"] == 15
+    # free_move / tray_offset_x moved to the Widget page in the 2.0 IA — General no longer returns them.
+    assert "free_move" not in settings
+    assert "tray_offset_x" not in settings
 
     # Test with Smart mode (update_rate = -1.0)
     config_smart = {
         "language": "en_US",
         "update_rate": -1.0,  # SMART sentinel
-        "free_move": False,
-        "tray_offset_x": 0
     }
 
     page.load_settings(config_smart, is_startup_enabled=False)
     settings_smart = page.get_settings()
     assert settings_smart["update_rate"] == -1.0  # Smart mode
     assert settings_smart["language"] == "en_US"
-    assert settings_smart["free_move"] is False
-    assert settings_smart["tray_offset_x"] == 0
 
 def test_appearance_page(q_app, mock_i18n, mock_callback):
     """Test AppearancePage."""
