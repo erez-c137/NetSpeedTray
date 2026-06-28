@@ -314,10 +314,14 @@ class NetworkHero(ClickableCard):
         title.setStyleSheet(f"color: {c['text_primary']}; background: transparent;")
         title_row.addWidget(title)
         title_row.addStretch(1)
-        # Latency pill (top-right) — plain word first (Good/OK/Slow), the ms as quiet subtext.
+        # Latency pill (top-right) — plain word first (Good/OK/Slow), the ms as quiet subtext. Wrapped
+        # in a subtle inset chip so it reads as a native Win11 status badge, not floating text (the
+        # status colour is carried by the inline text; the label hides itself when there's no reading).
         self._latency = QLabel("")
         self._latency.setFont(su.font(tokens.TYPE_CAPTION))
-        self._latency.setStyleSheet("background: transparent;")
+        self._latency.setStyleSheet(
+            f"background: {c['card_bg']}; border: 1px solid {c['card_stroke']};"
+            f" border-radius: 10px; padding: 2px 10px;")
         self._latency.setTextFormat(Qt.TextFormat.RichText)
         title_row.addWidget(self._latency, 0, Qt.AlignmentFlag.AlignVCenter)
         lay.addLayout(title_row)
