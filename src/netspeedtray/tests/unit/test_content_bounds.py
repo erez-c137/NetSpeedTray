@@ -95,3 +95,20 @@ def test_side_by_side_content_right_aligns(q_app):
 
     net = _render({"widget_display_mode": "network_only", "background_opacity": 0})
     assert net.left() <= 6                            # single-metric layout is NOT right-aligned
+
+
+def test_layout_mode_maps_horizontal_taskbar_so_right_align_fires(q_app):
+    """The right-align probe only fires for layout_mode='horizontal'. The live widget derives that from
+    the taskbar edge, and the value MUST match what PreviewWidget uses for the same scenario (a bottom
+    taskbar) or the live widget and the Settings/Overview preview diverge. Regression for the inverted
+    mapping that left the common TOP/BOTTOM taskbar at 'vertical' (probe skipped) — preview right-aligned
+    while the live widget kept the dead-space gap."""
+    from netspeedtray import constants
+    from netspeedtray.views.widget.main import NetworkSpeedWidget
+    m = NetworkSpeedWidget._layout_mode_for_edge
+    # A horizontal taskbar (the default) -> 'horizontal' -> probe runs -> content right-aligns.
+    assert m(constants.TaskbarEdge.BOTTOM) == "horizontal"
+    assert m(constants.TaskbarEdge.TOP) == "horizontal"
+    # A side taskbar is docked differently and is left as-is.
+    assert m(constants.TaskbarEdge.LEFT) == "vertical"
+    assert m(constants.TaskbarEdge.RIGHT) == "vertical"

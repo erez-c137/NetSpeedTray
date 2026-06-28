@@ -115,7 +115,7 @@ class NetworkSpeedWidget(QWidget):
         self.theme_manager: WidgetThemeManager
         self.tray_manager: TrayIconManager
         self.monitor_thread: StatsMonitorThread
-        self._cached_layout_mode: str = 'vertical'  # Updated on taskbar changes
+        self._cached_layout_mode: str = 'horizontal'  # taskbar-edge orientation; updated on taskbar changes
         self.monitor_window = None  # unified Monitor (Overview / Network / Hardware), lazy
         self.update_checker: Optional[UpdateChecker] = None
         self.app_icon: QIcon
@@ -1393,15 +1393,31 @@ class NetworkSpeedWidget(QWidget):
 
 
     def _refresh_cached_layout_mode(self) -> None:
-        """Update cached layout mode from current taskbar edge position."""
+        """Update the cached paint ``layout_mode`` from the current taskbar edge.
+
+        Naming follows the taskbar's *orientation*: a TOP/BOTTOM taskbar is 'horizontal', a LEFT/RIGHT
+        taskbar is 'vertical'. This is the value passed to ``render_widget(layout_mode=...)`` and must
+        match what ``PreviewWidget`` uses for the same scenario (it renders a horizontal taskbar strip,
+        so it passes 'horizontal') — otherwise the live widget and the Settings/Overview preview of the
+        same config diverge. In particular the side-by-side right-align probe only fires for 'horizontal'
+        (the over-reserved, right-anchored-to-the-tray case); a side taskbar is docked differently and is
+        left as-is. (The renderer's draw methods accept layout_mode but don't branch on it today, so this
+        only drives the right-align decision and the live/preview parity.)
+        """
         try:
             taskbar_info = get_taskbar_info()
-            edge = taskbar_info.get_edge_position()
-            self._cached_layout_mode = 'horizontal' if edge in (
-                constants.TaskbarEdge.LEFT, constants.TaskbarEdge.RIGHT
-            ) else 'vertical'
+            self._cached_layout_mode = self._layout_mode_for_edge(taskbar_info.get_edge_position())
         except Exception:
             pass  # Keep previous cached value
+
+    @staticmethod
+    def _layout_mode_for_edge(edge) -> str:
+        """Map a taskbar edge to the paint ``layout_mode`` — 'vertical' for a side (LEFT/RIGHT) taskbar,
+        'horizontal' for TOP/BOTTOM. See ``_refresh_cached_layout_mode`` for why this drives the
+        side-by-side right-align and live/preview parity."""
+        return 'vertical' if edge in (
+            constants.TaskbarEdge.LEFT, constants.TaskbarEdge.RIGHT
+        ) else 'horizontal'
 
     def is_startup_enabled(self, force_check: bool = False) -> bool:
         """Checks if startup is enabled via StartupManager."""
