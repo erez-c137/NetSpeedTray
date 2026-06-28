@@ -467,5 +467,10 @@
     "MONITOR_GRAPH_SMOOTH": "Smooth lines",
     "MONITOR_GRAPH_YAXIS": "Y-axis",
     "MONITOR_YAXIS_FIXED": "0–100%",
-    "MONITOR_YAXIS_AUTO": "Auto"
+    "MONITOR_YAXIS_AUTO": "Auto",
+    "TIMELINE_30_MIN": "30 Minutes",
+    "TIMELINE_1_HOUR": "1 Hour",
+    "TIMELINE_4_HOURS": "4 Hours",
+    "TIMELINE_8_HOURS": "8 Hours",
+    "TIMELINE_48_HOURS": "48 Hours"
 }

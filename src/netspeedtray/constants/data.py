@@ -73,12 +73,20 @@ class HistoryPeriodConstants:
     # Use i18n keys, not display strings
     # Optimized 6-pill design: SESS, BOOT, 24H, WEEK, MONTH, ALL
     PERIOD_MAP: Final[Dict[int, str]] = {
-        0: "TIMELINE_SESSION", 
-        1: "TIMELINE_SYSTEM_UPTIME", 
+        0: "TIMELINE_SESSION",
+        1: "TIMELINE_SYSTEM_UPTIME",
         2: "TIMELINE_24_HOURS",
-        3: "TIMELINE_WEEK", 
-        4: "TIMELINE_MONTH", 
+        3: "TIMELINE_WEEK",
+        4: "TIMELINE_MONTH",
         5: "TIMELINE_ALL",
+        # Granular ranges (appended as new indices so existing saved values 0-5 keep meaning), surfaced
+        # by the Monitor's TimelineSelector dropdown. Ordered for display by the selector, not by index.
+        6: "TIMELINE_30_MIN",
+        7: "TIMELINE_1_HOUR",
+        8: "TIMELINE_4_HOURS",
+        9: "TIMELINE_8_HOURS",
+        10: "TIMELINE_12_HOURS",
+        11: "TIMELINE_48_HOURS",
     }
     DEFAULT_PERIOD: Final[str] = PERIOD_MAP[2]  # "TIMELINE_24_HOURS" - most universally useful
 
@@ -97,10 +105,16 @@ class HistoryPeriodConstants:
     
     # Mapping of period keys to their duration in days for standard ranges
     CUTOFF_DAYS: Final[Dict[str, float]] = {
-        "TIMELINE_24_HOURS": 1, 
-        "TIMELINE_WEEK": 7, 
-        "TIMELINE_MONTH": 30, 
+        "TIMELINE_24_HOURS": 1,
+        "TIMELINE_WEEK": 7,
+        "TIMELINE_MONTH": 30,
         "TIMELINE_ALL": 365 * 10,
+        "TIMELINE_30_MIN": 1 / 48,    # 0.5h
+        "TIMELINE_1_HOUR": 1 / 24,
+        "TIMELINE_4_HOURS": 1 / 6,
+        "TIMELINE_8_HOURS": 1 / 3,
+        "TIMELINE_12_HOURS": 0.5,
+        "TIMELINE_48_HOURS": 2,
     }
 
     @staticmethod
