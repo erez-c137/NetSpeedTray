@@ -82,6 +82,29 @@ def test_hardware_summary_includes_recent_raw_tier_for_long_window(state):
     assert s.max == 99.0, "the recent raw CPU peak (99%) was dropped"
 
 
+def test_network_coverage_is_interface_count_independent(state):
+    """The evidence-admissibility coverage_pct must reflect distinct TIME buckets, not SUM(sample_count)
+    — which doubled (then clamped) for an 'all' aggregate with ≥2 NICs, masking real under-coverage."""
+    now = datetime.now()
+    st = int((now - timedelta(hours=48)).timestamp())
+    cur = state.db_worker.conn.cursor()
+    MIN = constants.data.SPEED_TABLE_MINUTE
+    rows = []
+    for i in range(100):                                 # 100 distinct minute buckets, on TWO NICs
+        ts = st + 60 * i
+        rows.append((ts, "eth0", 100.0, 200.0, 150, 250, 60))
+        rows.append((ts, "wlan0", 50.0, 100.0, 80, 150, 60))
+    cur.executemany(
+        f"INSERT INTO {MIN} (timestamp, interface_name, upload_avg, download_avg, upload_max, download_max, sample_count) "
+        f"VALUES (?,?,?,?,?,?,?)", rows)
+    state.db_worker.conn.commit()
+
+    s_all = state.summarize_network("download", now - timedelta(hours=48), now, "all", 1.0)
+    s_one = state.summarize_network("download", now - timedelta(hours=48), now, "eth0", 1.0)
+    assert s_all.coverage_pct == pytest.approx(s_one.coverage_pct, abs=0.2)   # NIC count doesn't matter
+    assert s_all.coverage_pct < 5.0    # 100×60s / 48h ≈ 3.5%, NOT doubled to ~7% by the 2 NICs
+
+
 def test_hardware_history_unions_tiers_for_long_window(state):
     now = datetime.now()
     st = int((now - timedelta(hours=48)).timestamp())

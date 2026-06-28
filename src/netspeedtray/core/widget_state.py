@@ -479,7 +479,11 @@ class WidgetState(QObject):
             # covers the WHOLE window instead of only the rolled-up older half (which dropped the most
             # recent ~24h and disagreed with the graph for the same window).
             avgs, maxes, counts = [], [], []
-            for table in (constants.data.SPEED_TABLE_MINUTE, constants.data.SPEED_TABLE_HOUR):
+            covered_seconds = 0.0   # for coverage: count distinct TIME buckets × their duration, NOT
+            #                         SUM(sample_count) — which, for an "all" aggregate, double-counts by
+            #                         NIC and inflates the evidence-admissibility figure past 100%.
+            for table, bucket_secs in ((constants.data.SPEED_TABLE_MINUTE, 60.0),
+                                       (constants.data.SPEED_TABLE_HOUR, 3600.0)):
                 cur.execute(
                     f"SELECT SUM({col}_avg), MAX(t.mx), SUM(sample_count) FROM "
                     f"(SELECT timestamp, {col}_avg, {col}_max AS mx, sample_count FROM {table} "
@@ -489,13 +493,15 @@ class WidgetState(QObject):
                     if r[0] is None:
                         continue
                     avgs.append(r[0]); maxes.append(r[1]); counts.append(r[2] or 1)
+                    covered_seconds += bucket_secs   # one distinct timestamp bucket of this tier
             raw_vals = _raw_vals()
             if not avgs:   # the whole window still fits the raw tier -> exact percentiles
                 return S.summarize_raw(raw_vals, S.coverage_pct(len(raw_vals), win, poll_interval))
             avgs += raw_vals; maxes += raw_vals; counts += [1] * len(raw_vals)   # raw samples = count-1 buckets
+            covered_seconds += len(raw_vals) * poll_interval
+            coverage = min(100.0, (covered_seconds / win * 100.0)) if win > 0 else 0.0
             tier = "minute" if win <= 30 * 86400 else "hour"
-            return S.summarize_rollup(avgs, maxes, counts, tier,
-                                      S.coverage_pct(sum(counts), win, poll_interval))
+            return S.summarize_rollup(avgs, maxes, counts, tier, coverage)
         except Exception as e:
             self.logger.error("summarize_network failed: %s", e, exc_info=True)
             return S.summarize_raw([])
@@ -522,39 +528,38 @@ class WidgetState(QObject):
             # Raw: last 2 days. Minute: last 32 days. Hour: all.
             now_ts = int(datetime.now().timestamp())
             
-            tiers = []
-            if start_ts <= now_ts: # Always check raw as it might have unaggregated data
-                tiers.append(("speed_history_raw", "upload_bytes_sec", "download_bytes_sec"))
-            
-            if start_ts < (now_ts - 24*3600): # Might have minute data
-                tiers.append(("speed_history_minute", "upload_avg * sample_count", "download_avg * sample_count"))
-                
-            if start_ts < (now_ts - 30*86400): # Might have hour data
-                tiers.append(("speed_history_hour", "upload_avg * sample_count", "download_avg * sample_count"))
-
-            for table, up_expr, down_expr in tiers:
-                query = f"SELECT SUM({up_expr}), SUM({down_expr}) FROM {table} WHERE timestamp BETWEEN ? AND ?"
-                params = [start_ts, end_ts]
-                
-                if interface_name and str(interface_name).lower() != "all":
-                    query += " AND interface_name = ?"
-                    params.append(interface_name)
-                
-                cursor.execute(query, params)
-                row = cursor.fetchone()
-                if row:
-                    total_up += (row[0] or 0.0)
-                    total_down += (row[1] or 0.0)
-
-            # The tier sums above are "sum of per-sample RATES" (raw: SUM(bytes_sec);
-            # minute/hour: SUM(avg*sample_count) == sum of the underlying rates). Bytes =
-            # rate-sum × seconds-per-sample. Multiplying by the poll interval makes the total
-            # correct for every update_rate — the old code implicitly assumed 1s and so the
-            # "data used" glance under-reported by the poll factor at 2s/5s/10s.
+            # Bytes per tier = (sum of per-sample RATES) × (the seconds that sum represents). For the
+            # MINUTE and HOUR rollups that span is the FIXED bucket duration (60 / 3600 s) — NOT
+            # sample_count × the LIVE poll interval, which silently rescales ALL historical data when the
+            # user changes the poll rate (1s→5s would 5×-over-report months of minute/hour history). When
+            # the poll rate is unchanged the two agree (sample_count × poll ≈ bucket duration); the fix
+            # only changes the rate-changed case. The raw tier has no stored capture interval, so it uses
+            # the current poll interval (it's ≤24h, where the rate rarely changes). Per the db_utils model.
             poll_interval = float(self.config.get("update_rate", 1.0) or 1.0)
             if poll_interval <= 0:  # SMART (-1.0) / invalid → ~1s nominal
                 poll_interval = 1.0
-            return total_up * poll_interval, total_down * poll_interval
+
+            tiers = []
+            if start_ts <= now_ts:                  # raw: SUM(bytes_sec) × poll_interval
+                tiers.append(("speed_history_raw", "upload_bytes_sec", "download_bytes_sec", poll_interval))
+            if start_ts < (now_ts - 24 * 3600):     # minute: SUM(avg) × 60
+                tiers.append(("speed_history_minute", "upload_avg", "download_avg", 60.0))
+            if start_ts < (now_ts - 30 * 86400):    # hour: SUM(avg) × 3600
+                tiers.append(("speed_history_hour", "upload_avg", "download_avg", 3600.0))
+
+            for table, up_expr, down_expr, secs in tiers:
+                query = f"SELECT SUM({up_expr}), SUM({down_expr}) FROM {table} WHERE timestamp BETWEEN ? AND ?"
+                params = [start_ts, end_ts]
+                if interface_name and str(interface_name).lower() != "all":
+                    query += " AND interface_name = ?"
+                    params.append(interface_name)
+                cursor.execute(query, params)
+                row = cursor.fetchone()
+                if row:
+                    total_up += (row[0] or 0.0) * secs
+                    total_down += (row[1] or 0.0) * secs
+
+            return total_up, total_down
 
         except Exception as e:
             self.logger.error("Error calculating total bandwidth: %s", e, exc_info=True)

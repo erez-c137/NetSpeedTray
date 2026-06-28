@@ -239,14 +239,22 @@ class DatabaseWorker(QThread):
             self.logger.info("Backing up database to: %s", backup_path)
             shutil.copy2(self.db_path, backup_path)
             return True
-        except: return False
+        except Exception as e:
+            # Don't swallow silently: the migration's data-loss guard assumes a backup was made, so a
+            # disk-full / permission / lock failure here must be visible in the log (and the bak's absence).
+            self.logger.error("Pre-migration database backup FAILED: %s", e)
+            return False
 
 
     def _migrate_schema(self, current_version: int) -> None:
         """Handles migration from current_version to _DB_VERSION."""
         self.logger.info("Migrating database from version %d to %d...", current_version, self._DB_VERSION)
-        
-        self._backup_database()
+
+        if not self._backup_database():
+            # The per-migration transaction below is still the primary rollback safety for an in-progress
+            # failure; surface loudly that the extra .bak net is missing this run (don't abort — a backup
+            # failure shouldn't brick the app on an otherwise-valid migration).
+            self.logger.warning("Schema migration proceeding WITHOUT a pre-migration backup copy.")
 
         try:
             for ver in range(current_version, self._DB_VERSION):

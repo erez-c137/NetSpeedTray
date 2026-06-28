@@ -64,3 +64,28 @@ def test_smart_mode_uses_nominal_one_second(state_with_db):
     up, down = _totals(state_with_db)
     assert up == pytest.approx(300.0)   # nominal 1s
     assert down == pytest.approx(600.0)
+
+
+def test_minute_tier_is_poll_rate_independent(state_with_db):
+    """A minute/hour rollup bucket represents a FIXED 60/3600s span. Changing the poll rate must NOT
+    rescale historical rollup data (the audit's rate-change over-report: 1s→5s 5×-ing months of data)."""
+    w = state_with_db.db_worker
+    cur = w.conn.cursor()
+    base = (int((datetime.now() - timedelta(hours=36)).timestamp()) // 60) * 60   # one minute bucket, 36h ago
+    cur.execute(
+        f"INSERT INTO {constants.data.SPEED_TABLE_MINUTE} "
+        "(timestamp, interface_name, upload_avg, download_avg, upload_max, download_max, sample_count) "
+        "VALUES (?,?,?,?,?,?,?)", (base, "eth0", 100.0, 200.0, 150.0, 250.0, 60))
+    w.conn.commit()
+    # Window isolates the minute tier (excludes the recent raw samples).
+    start = datetime.now() - timedelta(hours=48)
+    end = datetime.now() - timedelta(hours=25)
+
+    state_with_db.config["update_rate"] = 1.0
+    up1, down1 = state_with_db.get_total_bandwidth_for_period(start, end)
+    state_with_db.config["update_rate"] = 5.0
+    up5, down5 = state_with_db.get_total_bandwidth_for_period(start, end)
+
+    assert up1 == pytest.approx(up5) and down1 == pytest.approx(down5)   # rate change doesn't rescale
+    assert up1 == pytest.approx(100.0 * 60)     # avg × the FIXED 60s bucket duration
+    assert down1 == pytest.approx(200.0 * 60)
