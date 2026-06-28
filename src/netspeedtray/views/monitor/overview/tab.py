@@ -17,12 +17,17 @@ import logging
 from collections import deque
 from typing import Any, Deque, Dict, Optional
 
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout
+from datetime import datetime, timedelta
 
+from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel
+
+from netspeedtray import constants
 from netspeedtray.utils import styles as su
+from netspeedtray.constants.styles import styles as tokens
 from netspeedtray.utils.helpers import format_speed
 from netspeedtray.views.monitor.overview.tiles import StatTile, UsageTile, NetworkHero
+from netspeedtray.views.monitor.timeline_selector import TimelineSelector
 
 # Per-resource accent as (dark, light) pairs. Network up/down get a distinct, harmonious pair; CPU/GPU
 # echo the graph's line hues; RAM/VRAM get their own calm colours. The light variant keeps the thin
@@ -38,7 +43,8 @@ _ACCENTS = {
     "vram": ("#9C27B0", "#7B1FA2"),
 }
 
-_REFRESH_MS = 1000
+_REFRESH_MS = 1000        # live current-value tick
+_HISTORY_MS = 6000        # DB window reload (sparklines + avg/peak) — cheap, off the 1 Hz path
 
 
 class OverviewTab(QWidget):
@@ -63,9 +69,29 @@ class OverviewTab(QWidget):
             pair = _ACCENTS.get(key)
             return (pair[0] if dark else pair[1]) if pair else su.semantic_colors()["accent"]
 
+        # The global timeline scopes every card to real DB history; default to the saved period (24h
+        # if unset), so the control center opens on history, not "since the page opened".
+        self._period_index = int(config.get("history_period_slider_value", 2) or 2)
+        self._series: Dict[str, Any] = {}     # latest per-metric sparkline series for the active window
+        self._win_summ: Dict[str, Any] = {}   # latest per-metric WindowSummary for the active window
+
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 16, 16, 16)
         root.setSpacing(12)
+
+        # --- Header: period caption (left) + the timeline dropdown (right) ---
+        c = su.semantic_colors()
+        head = QHBoxLayout()
+        head.setContentsMargins(2, 0, 2, 0)
+        self._caption = QLabel("")
+        self._caption.setFont(su.font(tokens.TYPE_CAPTION))
+        self._caption.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
+        head.addWidget(self._caption, 0, Qt.AlignmentFlag.AlignVCenter)
+        head.addStretch(1)
+        self._timeline = TimelineSelector(i18n, current_index=self._period_index)
+        self._timeline.period_changed.connect(self._on_period_changed)
+        head.addWidget(self._timeline, 0, Qt.AlignmentFlag.AlignVCenter)
+        root.addLayout(head)
 
         # --- Network hero (the headline) ---
         self._hero = NetworkHero(i18n, accent("down"), accent("up"))
@@ -94,88 +120,169 @@ class OverviewTab(QWidget):
         self._timer = QTimer(self)
         self._timer.setInterval(_REFRESH_MS)
         self._timer.timeout.connect(self._tick)
+        # Separate, slower timer reloads the window's DB series + summaries (sparklines + avg/peak), so
+        # the 1 Hz current-value tick never touches the DB.
+        self._hist_timer = QTimer(self)
+        self._hist_timer.setInterval(_HISTORY_MS)
+        self._hist_timer.timeout.connect(self._reload_window)
+        self._update_caption()
+
+    # --------------------------------------------------------------- timeline / window
+    def _on_period_changed(self, index: int) -> None:
+        self._period_index = int(index)
+        self._update_caption()
+        # Persist the choice (shared with the graph's slider) without a repaint storm.
+        try:
+            self._main_widget.config_controller.update_config(
+                {"history_period_slider_value": self._period_index}, apply_and_repaint=False)
+        except Exception:
+            pass
+        self._reload_window()
+
+    def _period_key(self) -> str:
+        return constants.data.history_period.PERIOD_MAP.get(self._period_index, "TIMELINE_24_HOURS")
+
+    def _update_caption(self) -> None:
+        self._caption.setText(self._tr(self._period_key(), ""))
+
+    def _window(self):
+        """(start, end, is_session) for the active period."""
+        hp = constants.data.history_period
+        key = self._period_key()
+        now = datetime.now()
+        session_start = getattr(self._main_widget, "session_start_time", None)
+        ws = getattr(self._main_widget, "widget_state", None)
+        earliest = None
+        if key in ("TIMELINE_ALL", "TIMELINE_SYSTEM_UPTIME") and ws is not None:
+            try:
+                earliest = ws.get_earliest_data_timestamp()
+            except Exception:
+                earliest = None
+        start = hp.get_start_time(key, now, session_start, None, earliest)
+        if start is None:
+            start = now - timedelta(hours=24)
+        return start, now, (key == "TIMELINE_SESSION")
 
     # ----------------------------------------------------------------- lifecycle
 
     def showEvent(self, event) -> None:  # noqa: N802 (Qt override)
         super().showEvent(event)
-        self._tick()  # paint immediately so the tiles aren't blank for a second
+        self._reload_window()   # load the window's DB series + summaries, then paint immediately
         self._timer.start()
+        self._hist_timer.start()
 
     def hideEvent(self, event) -> None:  # noqa: N802 (Qt override)
         self._timer.stop()
+        self._hist_timer.stop()
         super().hideEvent(event)
 
     def teardown(self) -> None:
         """Called by MonitorWindow on close."""
-        try:
-            self._timer.stop()
-        except Exception:
-            pass
+        for t in (self._timer, self._hist_timer):
+            try:
+                t.stop()
+            except Exception:
+                pass
 
     # ----------------------------------------------------------------- refresh
 
+    def _reload_window(self) -> None:
+        """Load the selected window's series (sparklines) + honest summaries (avg/peak) from the DB —
+        or the live in-memory deques for the Session window — then repaint. Runs every few seconds and
+        on a period change, NOT on the 1 Hz tick, so the DB read never touches the current-value path."""
+        if not self.isVisible():
+            return
+        ws = getattr(self._main_widget, "widget_state", None)
+        if ws is None:
+            self._render()
+            return
+        start, end, is_session = self._window()
+        poll = float(self._config.get("update_rate", 1.0) or 1.0)
+        try:
+            if is_session:
+                agg = ws.get_aggregated_speed_history()
+                self._series = {
+                    "down": [a.download for a in agg], "up": [a.upload for a in agg],
+                    "cpu": [s.value for s in ws.get_cpu_history()],
+                    "gpu": [s.value for s in ws.get_gpu_history()],
+                    "ram": [s.value for s in ws.get_ram_history()],
+                }
+            else:
+                net = ws.get_speed_history(start, end, None, resolution='auto')
+                self._series = {
+                    "down": [r[2] for r in net], "up": [r[1] for r in net],
+                    "cpu": [v for _, v in ws.get_hardware_history("cpu", start, end)],
+                    "gpu": [v for _, v in ws.get_hardware_history("gpu", start, end)],
+                    "ram": [v for _, v in ws.get_hardware_history("ram", start, end)],
+                }
+            self._win_summ = {
+                "down": ws.summarize_network("download", start, end, None, poll),
+                "up": ws.summarize_network("upload", start, end, None, poll),
+                "cpu": ws.summarize_hardware("cpu", start, end, poll),
+                "gpu": ws.summarize_hardware("gpu", start, end, poll),
+                "ram": ws.summarize_hardware("ram", start, end, poll),
+            }
+        except Exception as e:
+            self.logger.debug("Overview window reload skipped: %s", e)
+        self._render()
+
     def _tick(self) -> None:
         # hideEvent stops the timer when we leave Overview or the window minimizes; this guard is
-        # belt-and-suspenders (a child's isVisible() stays True while the top-level is minimized,
-        # so check the window too).
+        # belt-and-suspenders (a child's isVisible() stays True while the top-level is minimized).
         if not self.isVisible():
             return
         win = self.window()
         if win is not None and win.isMinimized():
             return
+        self._render()
+
+    def _render(self) -> None:
+        """Paint the cards: live CURRENT values (1 Hz) over the cached window series + avg/peak."""
         mw = self._main_widget
-        ws = getattr(mw, "widget_state", None)
+        ser = self._series
+        summ = self._win_summ
         try:
-            # --- Network hero: co-equal down + up over one dual sparkline, with a peak context line.
-            agg = ws.get_aggregated_speed_history() if ws is not None else []
-            down = agg[-1].download if agg else 0.0
-            up = agg[-1].upload if agg else 0.0
-            down_series = [a.download for a in agg]
-            up_series = [a.upload for a in agg]
+            # --- Network hero: live current ↓/↑ over the window's dual sparkline; sub = window avg+peak.
+            down = float(getattr(mw, "download_speed", 0.0) or 0.0)
+            up = float(getattr(mw, "upload_speed", 0.0) or 0.0)
+            down_series, up_series = ser.get("down", []), ser.get("up", [])
             peak_v = max(max(down_series, default=0.0), max(up_series, default=0.0))
+            sd, su_ = summ.get("down"), summ.get("up")
             sub = ""
-            if down_series or up_series:
-                sub = (f"{self._tr('GRAPH_PEAK_SHORT', 'Peak')}   "
-                       f"↓ {self._fmt_speed(max(down_series, default=0.0))}   "
-                       f"↑ {self._fmt_speed(max(up_series, default=0.0))}")
+            if sd is not None and su_ is not None and sd.count:
+                sub = (f"{self._tr('STAT_AVG_SHORT', 'avg')}  ↓ {self._fmt_speed(sd.avg or 0)}"
+                       f"  ↑ {self._fmt_speed(su_.avg or 0)}      "
+                       f"{self._tr('GRAPH_PEAK_SHORT', 'Peak')}  ↓ {self._fmt_speed(sd.max or 0)}"
+                       f"  ↑ {self._fmt_speed(su_.max or 0)}")
             self._hero.set(self._fmt_speed(down), self._fmt_speed(up), down_series, up_series, sub,
                            scale_label=self._fmt_speed(peak_v))
 
-            # A discrete GPU has dedicated VRAM; an integrated one shares system RAM. Use that to label
-            # the tile "iGPU" vs "GPU" (read once, also used by the VRAM tile below).
+            # A discrete GPU has dedicated VRAM; an integrated one shares system RAM -> "iGPU".
             vu, vt = getattr(mw, "vram_used", None), getattr(mw, "vram_total", None)
             integrated = vu is None and vt is None
 
-            # --- CPU / GPU: utilisation %, temperature + power in the sub-line, sparkline from history.
-            cpu = float(getattr(mw, "cpu_usage", 0.0) or 0.0)
-            cpu_series = [s.value for s in ws.get_cpu_history()] if ws is not None else []
-            self._tiles["cpu"].set(f"{cpu:.0f}%", cpu_series, vmax=100.0,
+            self._tiles["cpu"].set(f"{float(getattr(mw, 'cpu_usage', 0.0) or 0.0):.0f}%",
+                                   ser.get("cpu", []), vmax=100.0,
                                    sub_text=self._hw_sub(getattr(mw, "cpu_temp", None),
                                                          getattr(mw, "cpu_power", None)))
 
-            # GPU tile hides on a confirmed no-GPU box (else a permanent 0% reads as a dead sensor).
             gpu_tile = self._tiles["gpu"]
             if not getattr(mw, "gpu_present", True):
                 gpu_tile.setVisible(False)
             else:
                 gpu_tile.setVisible(True)
                 gpu_word = self._tr("ORDER_TYPE_GPU", "GPU")
-                gpu_tile.set_label(("i" + gpu_word) if integrated else gpu_word)   # iGPU vs GPU
-                gpu = float(getattr(mw, "gpu_usage", 0.0) or 0.0)
-                gpu_series = [s.value for s in ws.get_gpu_history()] if ws is not None else []
-                gpu_tile.set(f"{gpu:.0f}%", gpu_series, vmax=100.0,
+                gpu_tile.set_label(("i" + gpu_word) if integrated else gpu_word)
+                gpu_tile.set(f"{float(getattr(mw, 'gpu_usage', 0.0) or 0.0):.0f}%",
+                             ser.get("gpu", []), vmax=100.0,
                              sub_text=self._hw_sub(getattr(mw, "gpu_temp", None),
                                                    getattr(mw, "gpu_power", None)))
 
-            # --- RAM: % of total, used/total in the sub-line.
             ru, rt = getattr(mw, "ram_used", None), getattr(mw, "ram_total", None)
-            rpct = self._pct(ru, rt)
-            self._ram_series.append(rpct)
-            self._tiles["ram"].set(f"{rpct:.0f}%", list(self._ram_series), vmax=100.0,
+            self._tiles["ram"].set(f"{self._pct(ru, rt):.0f}%", ser.get("ram", []), vmax=100.0,
                                    sub_text=self._mem_sub(ru, rt))
 
-            # --- VRAM: hidden when there's no dedicated-VRAM reading (integrated GPUs, etc).
+            # VRAM is session-only for now (not persisted) — keeps its own rolling buffer.
             vram_tile = self._tiles["vram"]
             if vu is None:
                 vram_tile.setVisible(False)
@@ -183,17 +290,16 @@ class OverviewTab(QWidget):
                 vram_tile.setVisible(True)
                 vpct = self._pct(vu, vt)
                 self._vram_series.append(vpct)
-                vmax = 100.0 if vt else None
-                vval = f"{vpct:.0f}%" if vt else f"{float(vu):.1f} GB"
-                vram_tile.set(vval, list(self._vram_series) if vt else [float(vu)], vmax=vmax,
-                              sub_text=self._mem_sub(vu, vt))
+                vram_tile.set(f"{vpct:.0f}%" if vt else f"{float(vu):.1f} GB",
+                              list(self._vram_series) if vt else [float(vu)],
+                              vmax=100.0 if vt else None, sub_text=self._mem_sub(vu, vt))
 
             today, month = (mw._hover_usage_totals() if hasattr(mw, "_hover_usage_totals")
                             else ((0.0, 0.0), (0.0, 0.0)))
             cap = mw._hover_cap_info() if hasattr(mw, "_hover_cap_info") else None
             self._usage.set(today, month, cap)
         except Exception as e:
-            self.logger.debug("Overview tick skipped: %s", e)
+            self.logger.debug("Overview render skipped: %s", e)
 
     def _goto_hardware(self) -> None:
         """A hardware tile was clicked — drill into the Hardware tab for the full graph + per-process

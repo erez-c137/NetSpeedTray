@@ -41,15 +41,36 @@ class _WS:
     def get_gpu_history(self):
         return []
 
+    def get_ram_history(self):
+        return [_Snap(50.0)]
+
+    def get_speed_history(self, start, end, iface, resolution='auto'):
+        return [(datetime.now(), 1.0e6, 2.0e6), (datetime.now(), 1.5e6, 3.0e6)]   # (ts, up, dn)
+
+    def get_hardware_history(self, stat, start, end):
+        return [(datetime.now(), 42.0)]
+
+    def summarize_network(self, direction, start, end, iface, poll):
+        from netspeedtray.utils.summaries import summarize_raw
+        return summarize_raw([2.0e6, 3.0e6] if direction == "download" else [1.0e6, 1.5e6])
+
+    def summarize_hardware(self, stat, start, end, poll):
+        from netspeedtray.utils.summaries import summarize_raw
+        return summarize_raw([10.0, 42.0])
+
 
 class _MW:
     """A minimal stand-in for the main widget."""
     cpu_usage = 42.0
     gpu_usage = 0.0
+    gpu_present = True
+    download_speed = 2.0e6
+    upload_speed = 1.0e6
     ram_used = 8.0e9
     ram_total = 16.0e9
     vram_used = None
     vram_total = None
+    session_start_time = None
     widget_state = _WS()
 
     def _hover_usage_totals(self):
