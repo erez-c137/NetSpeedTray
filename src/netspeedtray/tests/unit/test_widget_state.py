@@ -710,3 +710,22 @@ def test_get_speed_history_peak_is_consistent_across_resolutions(managed_widget_
     assert peaks["day"][1] == pytest.approx(400.0)
 
 
+
+
+def test_hardware_history_raw_fallback_for_recent_long_window(managed_widget_state):
+    """A 24h window selects the MINUTE tier, but the minute tier only fills from aggregating rows
+    older than 24h — recent data lives in raw. get_hardware_history must fall back to raw so the
+    Monitor's non-session views aren't empty (root of the #10 'Collecting data' bug). Also exercises
+    RAM as a first-class stat_type."""
+    import sqlite3
+    state, db_path = managed_widget_state
+    now = datetime.now()
+    rows = [(int((now - timedelta(minutes=m)).timestamp()), "ram", 50.0 + m) for m in range(1, 6)]
+    conn = sqlite3.connect(db_path)
+    conn.executemany(
+        "INSERT INTO hardware_stats_raw (timestamp, stat_type, value) VALUES (?, ?, ?)", rows)
+    conn.commit()
+    conn.close()
+    # 24h duration -> minute tier (empty) -> raw fallback returns the recent rows.
+    got = state.get_hardware_history("ram", now - timedelta(hours=24), now + timedelta(minutes=1))
+    assert len(got) == 5, "raw fallback should surface recent rows the empty minute tier lacks"

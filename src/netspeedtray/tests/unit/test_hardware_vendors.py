@@ -103,6 +103,7 @@ def test_worker_hwcombined_emits_cpu_gpu_dict(q_app):
     ws = MagicMock()
     ws.cpu_history = [_Snap(40.0, now), _Snap(55.0, now)]
     ws.gpu_history = [_Snap(20.0, now)]
+    ws.ram_history = [_Snap(60.0, now)]
     worker = GraphDataWorker(ws)
     got = []
     worker.data_ready.connect(lambda *a: got.append(a))
@@ -110,5 +111,5 @@ def test_worker_hwcombined_emits_cpu_gpu_dict(q_app):
                       interface_name=None, is_session_view=True, sequence_id=1, stat_type="hwcombined")
     worker.process_data(req)
     data = got[-1][0]
-    assert isinstance(data, dict) and set(data) == {"cpu", "gpu"}
-    assert len(data["cpu"]) == 2 and len(data["gpu"]) == 1
+    assert isinstance(data, dict) and set(data) == {"cpu", "gpu", "ram"}   # RAM now rides the combined graph
+    assert len(data["cpu"]) == 2 and len(data["gpu"]) == 1 and len(data["ram"]) == 1

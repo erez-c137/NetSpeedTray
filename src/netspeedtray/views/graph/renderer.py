@@ -795,7 +795,8 @@ class GraphRenderer(QObject):
         fixed = bool(styles.get("fixed_axis", True))
 
         roles = (("cpu", getattr(self.i18n, "ORDER_TYPE_CPU", "CPU")),
-                 ("gpu", getattr(self.i18n, "ORDER_TYPE_GPU", "GPU")))
+                 ("gpu", getattr(self.i18n, "ORDER_TYPE_GPU", "GPU")),
+                 ("ram", getattr(self.i18n, "MONITOR_TILE_RAM", "RAM")))
         all_ts, handles, data_max = [], [], 0.0
         for role, label in roles:
             series = data_dict.get(role) or []
@@ -824,7 +825,7 @@ class GraphRenderer(QObject):
         elif (hw_styles or {}).get("legend", True):
             # upper-RIGHT: the lines peg high (near 100%) under load, so the upper-left is the busy
             # zone; a near-opaque themed chip keeps the legend readable over pegged traces.
-            legend = ax.legend(handles=handles, loc="upper right", fontsize=8, framealpha=0.9, ncols=2)
+            legend = ax.legend(handles=handles, loc="upper right", fontsize=8, framealpha=0.9, ncols=3)
             frame = legend.get_frame()
             frame.set_facecolor(style_constants.GRAPH_BG_DARK if getattr(self, "_is_dark_mode", True)
                                 else style_constants.GRAPH_BG_LIGHT)

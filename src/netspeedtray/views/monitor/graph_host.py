@@ -247,8 +247,10 @@ class GraphHost(QObject):
         cpu_c = self.config.get("monitor_cpu_graph_color") or None
         gpu_c = self.config.get("monitor_gpu_graph_color") or None
         is_dark = bool(self.config.get("dark_mode", True))   # GPU shade is theme-aware (light-bg contrast)
+        ram_c = self.config.get("monitor_ram_graph_color") or ("#4CAF50" if is_dark else "#388E3C")
         return {"cpu": hv.graph_line_style("cpu", cpu_c, is_dark),
                 "gpu": hv.graph_line_style("gpu", gpu_c, is_dark),
+                "ram": (ram_c, "-"),   # RAM% as a green solid line (matches the Overview RAM tile)
                 "legend": bool(self.config.get("monitor_graph_legend", True)),
                 "smoothing": bool(self.config.get("monitor_graph_smoothing", False)),
                 "fixed_axis": bool(self.config.get("monitor_graph_fixed_axis", True))}

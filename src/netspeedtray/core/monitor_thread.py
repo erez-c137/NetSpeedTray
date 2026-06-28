@@ -727,9 +727,12 @@ class StatsMonitorThread(QThread):
                 
                 # Monitor-window override forces hardware collection even with the widget's flags off.
                 _force_hw = self._force_hardware_collection
+                # Always-on history recording: collect cheap CPU/GPU/RAM utilisation so the Monitor's
+                # graphs have real past data. Temps/power stay on their own (heavier) gates below.
+                _record = self.config.get('record_hardware_history', True)
 
                 # 2. CPU / RAM (Optional)
-                if self.config.get('monitor_cpu_enabled', False) or _force_hw:
+                if self.config.get('monitor_cpu_enabled', False) or _force_hw or _record:
                     # non-blocking (percpu=False)
                     stats['cpu'] = psutil.cpu_percent(interval=None)
                     if self.config.get('show_hardware_temps', False) or _force_hw:
@@ -743,7 +746,7 @@ class StatsMonitorThread(QThread):
                     stats['ram_total'] = mem.total / (1024**3) # GB
 
                 # 3. GPU / VRAM (Optional — skipped entirely in RDP sessions)
-                if (self.config.get('monitor_gpu_enabled', False) or _force_hw) and not _in_rdp:
+                if (self.config.get('monitor_gpu_enabled', False) or _force_hw or _record) and not _in_rdp:
                     try:
                         include_temp = bool(self.config.get('show_hardware_temps', False)) or _force_hw
                         include_power = bool(self.config.get('show_hardware_power', False)) or _force_hw

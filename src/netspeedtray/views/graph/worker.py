@@ -132,20 +132,18 @@ class GraphDataWorker(QObject):
                 if request.is_session_view:
                     start_ts = request.start_time.timestamp() if request.start_time else 0
                     end_ts = request.end_time.timestamp()
-                    cpu_data = self.widget_state.cpu_history
-                    gpu_data = self.widget_state.gpu_history
                     history_data = {
-                        "cpu": [(d.timestamp.timestamp(), d.value, 0.0) for d in cpu_data
-                                if start_ts <= d.timestamp.timestamp() <= end_ts],
-                        "gpu": [(d.timestamp.timestamp(), d.value, 0.0) for d in gpu_data
-                                if start_ts <= d.timestamp.timestamp() <= end_ts],
+                        role: [(d.timestamp.timestamp(), d.value, 0.0) for d in series
+                               if start_ts <= d.timestamp.timestamp() <= end_ts]
+                        for role, series in (("cpu", self.widget_state.cpu_history),
+                                             ("gpu", self.widget_state.gpu_history),
+                                             ("ram", self.widget_state.ram_history))
                     }
                 else:
-                    cpu_data = self.widget_state.get_hardware_history("cpu", request.start_time, request.end_time)
-                    gpu_data = self.widget_state.get_hardware_history("gpu", request.start_time, request.end_time)
                     history_data = {
-                        "cpu": [(dt, val, 0.0) for dt, val in cpu_data],
-                        "gpu": [(dt, val, 0.0) for dt, val in gpu_data],
+                        role: [(dt, val, 0.0) for dt, val in
+                               self.widget_state.get_hardware_history(role, request.start_time, request.end_time)]
+                        for role in ("cpu", "gpu", "ram")
                     }
                 self.data_ready.emit(history_data, 0.0, 0.0, request.sequence_id)
                 return

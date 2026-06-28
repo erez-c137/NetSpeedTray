@@ -140,6 +140,10 @@ class StatsController(QObject):
             # 4. Handle RAM / VRAM Info
             if stats.get('ram_used') is not None and stats.get('ram_total') is not None:
                 self.ram_info_updated.emit(stats['ram_used'], stats['ram_total'])
+                # Persist RAM% to the same 3-tier history as cpu/gpu (the pipeline is stat_type-generic)
+                # so the Monitor can graph RAM over time and the Overview RAM sparkline is DB-backed.
+                if self.widget_state and ram_total and ram_total > 0:
+                    self.widget_state.add_hardware_stat('ram', (ram_used / ram_total) * 100.0)
                 
             if stats.get('vram_used') is not None:
                 v_total = stats.get('vram_total')

@@ -175,6 +175,10 @@ class ConfigConstants:
         "monitor_vram_enabled": DEFAULT_MONITOR_VRAM_ENABLED,
         "show_hardware_temps": DEFAULT_SHOW_HARDWARE_TEMPS,
         "show_hardware_power": DEFAULT_SHOW_HARDWARE_POWER,
+        # Record cheap CPU/GPU/RAM utilisation to the DB always (not just while the widget displays it),
+        # so the Monitor's history graphs have real data to show for past periods. Cheap (psutil +
+        # one PDH read); temps/power are NOT recorded here (those stay gated/forced-only).
+        "record_hardware_history": True,
         "stack_hardware_stats": DEFAULT_STACK_HARDWARE_STATS,
         "widget_display_mode": DEFAULT_WIDGET_DISPLAY_MODE,
         "widget_display_order": DEFAULT_WIDGET_DISPLAY_ORDER,
@@ -274,6 +278,7 @@ class ConfigConstants:
         "monitor_ram_enabled": {"type": bool, "default": DEFAULT_MONITOR_RAM_ENABLED},
         "monitor_vram_enabled": {"type": bool, "default": DEFAULT_MONITOR_VRAM_ENABLED},
         "show_hardware_temps": {"type": bool, "default": DEFAULT_SHOW_HARDWARE_TEMPS},
+        "record_hardware_history": {"type": bool, "default": True},
         "show_hardware_power": {"type": bool, "default": DEFAULT_SHOW_HARDWARE_POWER},
         "stack_hardware_stats": {"type": bool, "default": DEFAULT_STACK_HARDWARE_STATS},
         "widget_display_mode": {"type": str, "default": DEFAULT_WIDGET_DISPLAY_MODE, "choices": ["network_only", "cycle", "side_by_side"]},

@@ -81,6 +81,7 @@ class WidgetState(QObject):
         # New: Hardware history for mini-graph tabs
         self.cpu_history: Deque[HardwareStatSnapshot] = deque(maxlen=self.max_history_points)
         self.gpu_history: Deque[HardwareStatSnapshot] = deque(maxlen=self.max_history_points)
+        self.ram_history: Deque[HardwareStatSnapshot] = deque(maxlen=self.max_history_points)
         
         # Batching lists for database writes
         self._db_batch: List[Tuple[int, str, float, float]] = []
@@ -161,6 +162,8 @@ class WidgetState(QObject):
             self.cpu_history.append(snapshot)
         elif stat_type == 'gpu':
             self.gpu_history.append(snapshot)
+        elif stat_type == 'ram':
+            self.ram_history.append(snapshot)
             
         # Add to database batch (clamped 0-100)
         self._hw_batch.append((int(_now.timestamp()), stat_type, max(0.0, min(100.0, value))))
@@ -334,6 +337,11 @@ class WidgetState(QObject):
         return list(self.gpu_history)
 
 
+    def get_ram_history(self) -> List[HardwareStatSnapshot]:
+        """Returns in-memory RAM%-utilization history."""
+        return list(self.ram_history)
+
+
     def get_hardware_history(self, stat_type: str, start_time: Optional[datetime] = None, end_time: Optional[datetime] = None) -> List[Tuple[datetime, float]]:
         """
         Retrieves historical hardware utilization data from the database.
@@ -366,8 +374,20 @@ class WidgetState(QObject):
 
             query = f"SELECT timestamp, {val_col} FROM {table} WHERE stat_type = ? AND timestamp BETWEEN ? AND ? ORDER BY timestamp ASC"
             cursor.execute(query, (stat_type, start_ts, end_ts))
-            
-            return [(datetime.fromtimestamp(row[0]), row[1]) for row in cursor.fetchall()]
+            rows = cursor.fetchall()
+
+            # Tier fallback: the minute/hour tiers only fill from the hourly aggregation of rows OLDER
+            # than 24h, so a recent-but-long window (e.g. the last 24h or 48h) lives entirely in the
+            # raw table. Without this, those periods read an empty minute/hour tier and show "no data"
+            # even though raw has it — the root of the Monitor's "Collecting data" on non-session views.
+            if not rows and table != constants.data.HARDWARE_STATS_TABLE_RAW:
+                cursor.execute(
+                    f"SELECT timestamp, value FROM {constants.data.HARDWARE_STATS_TABLE_RAW} "
+                    f"WHERE stat_type = ? AND timestamp BETWEEN ? AND ? ORDER BY timestamp ASC",
+                    (stat_type, start_ts, end_ts))
+                rows = cursor.fetchall()
+
+            return [(datetime.fromtimestamp(row[0]), row[1]) for row in rows]
         except Exception as e:
             self.logger.error("Error fetching hardware history: %s", e, exc_info=True)
             return []
