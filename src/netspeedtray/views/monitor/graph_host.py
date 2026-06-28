@@ -219,6 +219,14 @@ class GraphHost(QObject):
         # Zoom is disabled in the Monitor graph for now; a range request just refreshes the view.
         self.update_graph(show_loading=False)
 
+    def _hw_styles(self) -> Dict[str, Any]:
+        """Vendor-aware (color, linestyle) per role for the combined CPU+GPU graph; Monitor-settings
+        colour overrides (when set) win over the auto vendor default."""
+        from netspeedtray.utils import hardware_vendors as hv
+        cpu_c = self.config.get("monitor_cpu_graph_color") or None
+        gpu_c = self.config.get("monitor_gpu_graph_color") or None
+        return {"cpu": hv.graph_line_style("cpu", cpu_c), "gpu": hv.graph_line_style("gpu", gpu_c)}
+
     def _time_range(self):
         from netspeedtray.views.graph.logic import GraphLogic
         period_key = GraphLogic.get_period_key(self._history_period_value)
@@ -248,13 +256,16 @@ class GraphHost(QObject):
             from netspeedtray.views.graph.logic import GraphLogic
             start, end = self._time_range()
             period_key = GraphLogic.get_period_key(self._history_period_value)
-            # Race guard (same as GraphWindow): dict payload is overview-only; single-stat tabs want a list.
-            if self._current_stat == "overview" and not isinstance(data, dict):
+            # Race guard: dict payload is for the multi-series stats (overview + hwcombined);
+            # single-stat tabs (network/cpu/gpu) want a list.
+            dict_stats = ("overview", "hwcombined")
+            if self._current_stat in dict_stats and not isinstance(data, dict):
                 return
-            if self._current_stat != "overview" and isinstance(data, dict):
+            if self._current_stat not in dict_stats and isinstance(data, dict):
                 return
             self.renderer.render(data, start, end, period_key,
-                                 boot_time=self._cached_boot_time, stat_type=self._current_stat)
+                                 boot_time=self._cached_boot_time, stat_type=self._current_stat,
+                                 hw_styles=self._hw_styles())
             # Surface the worker's period totals to the Network header. For ranged periods these are
             # machine-wide (interface filter None sums every NIC); for SESSION they reflect the active
             # interface mode (auto/selected/...), mirroring the standalone graph's session aggregation.

@@ -96,7 +96,7 @@ class MonitorWindow(QWidget):
             LazyTabDescriptor("network", self._tr("MONITOR_TAB_NETWORK", "Network"),
                               factory=self._make_network, needs_graph=True),
             LazyTabDescriptor("hardware", self._tr("MONITOR_TAB_HARDWARE", "Hardware"),
-                              factory=self._make_hardware, needs_graph=False, is_visible=hw_visible),
+                              factory=self._make_hardware, needs_graph=True, is_visible=hw_visible),
         ]
 
     def _on_tab_changed(self, index: int) -> None:
@@ -138,7 +138,7 @@ class MonitorWindow(QWidget):
 
     def _make_hardware(self) -> QWidget:
         from netspeedtray.views.monitor.hardware.tab import HardwareTab
-        return HardwareTab(self._main_widget, self.config, self.i18n, self)
+        return HardwareTab(self._ensure_graph_host(), self._main_widget, self.config, self.i18n, self)
 
     # ----------------------------------------------------------------- helpers
 

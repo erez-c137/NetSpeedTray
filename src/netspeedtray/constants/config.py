@@ -153,6 +153,10 @@ class ConfigConstants:
         "settings_window_pos": None,
         "app_activity_window_pos": None,
         "monitor_window_pos": None,
+        # Monitor Hardware graph (6.x). Colors None == vendor-auto (AMD red / Intel blue / Nvidia green).
+        "monitor_hw_graph_mode": "combined",   # combined | separate | toggle
+        "monitor_cpu_graph_color": None,
+        "monitor_gpu_graph_color": None,
         "history_period_slider_value": 0,  # UI-specific state
         "show_legend": DEFAULT_SHOW_LEGEND,
         "use_separate_arrow_font": DEFAULT_USE_SEPARATE_ARROW_FONT,
@@ -254,6 +258,9 @@ class ConfigConstants:
         "settings_window_pos": {"type": (dict, type(None)), "default": None},
         "app_activity_window_pos": {"type": (dict, type(None)), "default": None},
         "monitor_window_pos": {"type": (dict, type(None)), "default": None},
+        "monitor_hw_graph_mode": {"type": str, "default": "combined", "choices": ["combined", "separate", "toggle"]},
+        "monitor_cpu_graph_color": {"type": (str, type(None)), "default": None},
+        "monitor_gpu_graph_color": {"type": (str, type(None)), "default": None},
         "history_period_slider_value": {"type": int, "default": 0, "min": 0, "max": len(data.history_period.PERIOD_MAP) - 1},
         "show_legend": {"type": bool, "default": DEFAULT_SHOW_LEGEND},
         "monitor_cpu_enabled": {"type": bool, "default": DEFAULT_MONITOR_CPU_ENABLED},

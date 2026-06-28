@@ -124,6 +124,7 @@
     "SHOW_LOADING_LABEL": "Показать статус",
     "GRAPH_CPU_UTIL_AXIS_LABEL": "Загрузка ЦП (%)",
     "GRAPH_GPU_UTIL_AXIS_LABEL": "Загрузка ГП (%)",
+    "GRAPH_HW_UTIL_AXIS_LABEL": "Utilization (%)",
     "GRAPH_STATUS_LIVE": "В РЕАЛЬНОМ",
     "GRAPH_STATUS_LOAD": "ЗАГРУЗКА",
     "GRAPH_STATUS_NO_DATA": "НЕТ ДАННЫХ",

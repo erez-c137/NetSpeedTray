@@ -126,6 +126,30 @@ class GraphDataWorker(QObject):
                 self.data_ready.emit(history_data, total_up, total_down, request.sequence_id)
                 return
 
+            if request.stat_type == "hwcombined":
+                # CPU + GPU on one axis (the Monitor's Hardware graph) — same fetch as Overview's
+                # cpu/gpu, minus network. Dict payload, like Overview.
+                if request.is_session_view:
+                    start_ts = request.start_time.timestamp() if request.start_time else 0
+                    end_ts = request.end_time.timestamp()
+                    cpu_data = self.widget_state.cpu_history
+                    gpu_data = self.widget_state.gpu_history
+                    history_data = {
+                        "cpu": [(d.timestamp.timestamp(), d.value, 0.0) for d in cpu_data
+                                if start_ts <= d.timestamp.timestamp() <= end_ts],
+                        "gpu": [(d.timestamp.timestamp(), d.value, 0.0) for d in gpu_data
+                                if start_ts <= d.timestamp.timestamp() <= end_ts],
+                    }
+                else:
+                    cpu_data = self.widget_state.get_hardware_history("cpu", request.start_time, request.end_time)
+                    gpu_data = self.widget_state.get_hardware_history("gpu", request.start_time, request.end_time)
+                    history_data = {
+                        "cpu": [(dt, val, 0.0) for dt, val in cpu_data],
+                        "gpu": [(dt, val, 0.0) for dt, val in gpu_data],
+                    }
+                self.data_ready.emit(history_data, 0.0, 0.0, request.sequence_id)
+                return
+
             total_up = 0.0
             total_down = 0.0
 

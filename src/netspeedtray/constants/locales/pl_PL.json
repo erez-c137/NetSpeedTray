@@ -124,6 +124,7 @@
     "SHOW_LOADING_LABEL": "Pokaż status",
     "GRAPH_CPU_UTIL_AXIS_LABEL": "Użycie CPU (%)",
     "GRAPH_GPU_UTIL_AXIS_LABEL": "Użycie GPU (%)",
+    "GRAPH_HW_UTIL_AXIS_LABEL": "Utilization (%)",
     "GRAPH_STATUS_LIVE": "NA ŻYWO",
     "GRAPH_STATUS_LOAD": "ŁAD",
     "GRAPH_STATUS_NO_DATA": "BRAK DANYCH",

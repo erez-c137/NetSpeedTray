@@ -124,6 +124,7 @@
     "SHOW_LOADING_LABEL": "ステータスを表示",
     "GRAPH_CPU_UTIL_AXIS_LABEL": "CPU 使用率 (%)",
     "GRAPH_GPU_UTIL_AXIS_LABEL": "GPU 使用率 (%)",
+    "GRAPH_HW_UTIL_AXIS_LABEL": "Utilization (%)",
     "GRAPH_STATUS_LIVE": "ライブ",
     "GRAPH_STATUS_LOAD": "読み込み中",
     "GRAPH_STATUS_NO_DATA": "データなし",

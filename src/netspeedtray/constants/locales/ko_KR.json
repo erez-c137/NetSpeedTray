@@ -124,6 +124,7 @@
     "SHOW_LOADING_LABEL": "상태 표시",
     "GRAPH_CPU_UTIL_AXIS_LABEL": "CPU 사용률 (%)",
     "GRAPH_GPU_UTIL_AXIS_LABEL": "GPU 사용률 (%)",
+    "GRAPH_HW_UTIL_AXIS_LABEL": "Utilization (%)",
     "GRAPH_STATUS_LIVE": "실시간",
     "GRAPH_STATUS_LOAD": "로딩",
     "GRAPH_STATUS_NO_DATA": "데이터 없음",

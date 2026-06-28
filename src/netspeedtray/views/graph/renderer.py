@@ -530,9 +530,12 @@ class GraphRenderer(QObject):
             self.logger.debug(f"Could not add/update event marker: {e}")
 
 
-    def render(self, history_data, start_time: datetime, end_time: datetime, period_key: str, boot_time: Optional[datetime] = None, force_rebuild: bool = False, stat_type: str = "network"):
+    def render(self, history_data, start_time: datetime, end_time: datetime, period_key: str, boot_time: Optional[datetime] = None, force_rebuild: bool = False, stat_type: str = "network", hw_styles: Optional[dict] = None):
         """
-        Renders the graph. 
+        Renders the graph.
+
+        ``hw_styles`` (Monitor only): {"cpu": (color, linestyle), "gpu": (color, linestyle)} for the
+        combined ``hwcombined`` mode; None falls back to the vendor-aware defaults.
         """
         # Initialize for return statement
         plotted_ts, plotted_up, plotted_down, plotted_vals = None, None, None, None
@@ -556,6 +559,11 @@ class GraphRenderer(QObject):
             elif stat_type == "network":
                 self._setup_standard_axes()
                 self._format_axes()
+            elif stat_type == "hwcombined":
+                self._setup_standard_axes()
+                self.ax_upload.set_visible(False)
+                self.figure.subplots_adjust(hspace=0, bottom=0.15)
+                self._format_hwcombined_axes()
             else:
                 self._setup_standard_axes()
                 self.ax_upload.set_visible(False)
@@ -570,16 +578,20 @@ class GraphRenderer(QObject):
                 self.apply_theme(self._is_dark_mode)
 
         if not history_data:
-            for ax in self.axes: 
+            for ax in self.axes:
                 ax.clear()
                 # Restore labels if cleared for single-axis stats (prevent empty axes look)
-                if stat_type != "overview" and stat_type != "network":
+                if stat_type == "hwcombined":
+                    self._format_hwcombined_axes()
+                elif stat_type != "overview" and stat_type != "network":
                     self._format_hardware_axes(stat_type)
             self.canvas.draw_idle()
             return None
 
         if stat_type == "overview":
             self._render_overview(history_data, start_time=start_time, end_time=end_time, period_key=period_key, boot_time=boot_time)
+        elif stat_type == "hwcombined":
+            self._render_hwcombined(history_data, start_time, end_time, period_key, hw_styles)
         elif stat_type == "network":
             safe_data = [
                 (ts.timestamp() if isinstance(ts, datetime) else float(ts), float(up), float(dn))
@@ -750,6 +762,48 @@ class GraphRenderer(QObject):
         
         # Make the top plot take up more space
         self.ax_download.set_position([0.12, 0.15, 0.86, 0.80])
+
+    def _format_hwcombined_axes(self):
+        """Single 0-100% axis for the combined CPU+GPU graph (Monitor Hardware tab)."""
+        label = getattr(self.i18n, "GRAPH_HW_UTIL_AXIS_LABEL", "Utilization (%)")
+        self.ax_download.set_ylabel(label, color=self._current_text_color)
+        self.ax_download.tick_params(labelbottom=True, colors=self._current_text_color, which='both')
+        self.ax_download.grid(True, linestyle=constants.graph.GRID_LINESTYLE,
+                              alpha=constants.graph.GRID_ALPHA, color=self._current_grid_color)
+        self.ax_download.set_position([0.10, 0.15, 0.88, 0.80])
+
+    def _render_hwcombined(self, data_dict, start_time, end_time, period_key, hw_styles=None):
+        """Plots CPU + GPU on one 0-100% axis: CPU solid, GPU dashed, vendor-coloured, with a legend.
+        Two lines, no fills — overlapping gradient fills would muddy a shared axis."""
+        from netspeedtray.utils import hardware_vendors as hv
+        ax = self.ax_download
+        ax.clear()
+        self._format_hwcombined_axes()
+        styles = hw_styles or {}
+
+        roles = (("cpu", getattr(self.i18n, "ORDER_TYPE_CPU", "CPU")),
+                 ("gpu", getattr(self.i18n, "ORDER_TYPE_GPU", "GPU")))
+        all_ts, handles = [], []
+        for role, label in roles:
+            series = data_dict.get(role) or []
+            if not series:
+                continue
+            arr = np.array([(float(item[0]), float(item[1])) for item in series], dtype=float)
+            ts = arr[:, 0]
+            dts = [datetime.fromtimestamp(t) for t in ts]
+            color, ls = styles.get(role) or hv.graph_line_style(role)
+            line, = ax.plot(dts, arr[:, 1], color=color, linestyle=ls, linewidth=1.6,
+                            zorder=10, label=label)
+            handles.append(line)
+            all_ts.append(ts)
+
+        ax.set_ylim(0, 100)
+        if all_ts:
+            self._configure_hardware_axes(start_time, end_time, period_key, np.concatenate(all_ts), None)
+        if handles:
+            legend = ax.legend(handles=handles, loc="upper left", fontsize=8, framealpha=0.25, ncols=2)
+            for text in legend.get_texts():
+                text.set_color(self._current_text_color)
 
     def _configure_hardware_axes(self, start_time, end_time, period_key, timestamps, values):
         """Sets limits and formatters for hardware stats."""

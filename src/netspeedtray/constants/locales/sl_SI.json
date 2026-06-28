@@ -124,6 +124,7 @@
     "SHOW_LOADING_LABEL": "Pokaži status",
     "GRAPH_CPU_UTIL_AXIS_LABEL": "Uporaba CPU (%)",
     "GRAPH_GPU_UTIL_AXIS_LABEL": "Uporaba GPE (%)",
+    "GRAPH_HW_UTIL_AXIS_LABEL": "Utilization (%)",
     "GRAPH_STATUS_LIVE": "V ŽIVO",
     "GRAPH_STATUS_LOAD": "NAGANJA",
     "GRAPH_STATUS_NO_DATA": "NI PODATKOV",

@@ -124,6 +124,7 @@
     "SHOW_LOADING_LABEL": "Status tonen",
     "GRAPH_CPU_UTIL_AXIS_LABEL": "CPU-gebruik (%)",
     "GRAPH_GPU_UTIL_AXIS_LABEL": "GPU-gebruik (%)",
+    "GRAPH_HW_UTIL_AXIS_LABEL": "Utilization (%)",
     "GRAPH_STATUS_LIVE": "LIVE",
     "GRAPH_STATUS_LOAD": "LADEN",
     "GRAPH_STATUS_NO_DATA": "GEEN GEGEVENS",
