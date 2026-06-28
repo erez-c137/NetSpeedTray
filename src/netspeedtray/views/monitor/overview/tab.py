@@ -25,7 +25,7 @@ from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel
 from netspeedtray import constants
 from netspeedtray.utils import styles as su
 from netspeedtray.constants.styles import styles as tokens
-from netspeedtray.utils.helpers import format_speed
+from netspeedtray.utils.helpers import format_speed, format_data_size
 from netspeedtray.views.monitor.overview.tiles import StatTile, UsageTile, NetworkHero
 from netspeedtray.views.monitor.timeline_selector import TimelineSelector
 
@@ -96,6 +96,20 @@ class OverviewTab(QWidget):
         # --- Network hero (the headline) ---
         self._hero = NetworkHero(i18n, accent("down"), accent("up"))
         root.addWidget(self._hero)
+
+        # --- Thin context strip: session uptime + session totals (left), CPU+GPU power (right) ---
+        strip = QHBoxLayout()
+        strip.setContentsMargins(4, 0, 4, 0)
+        self._session_lbl = QLabel("")
+        self._session_lbl.setFont(su.font(tokens.TYPE_CAPTION))
+        self._session_lbl.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
+        self._syspower_lbl = QLabel("")
+        self._syspower_lbl.setFont(su.font(tokens.TYPE_CAPTION))
+        self._syspower_lbl.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
+        strip.addWidget(self._session_lbl, 0, Qt.AlignmentFlag.AlignVCenter)
+        strip.addStretch(1)
+        strip.addWidget(self._syspower_lbl, 0, Qt.AlignmentFlag.AlignVCenter)
+        root.addLayout(strip)
 
         # --- Hardware tiles: CPU / GPU / RAM / VRAM. Always built (the Monitor forces collection);
         # VRAM hides itself when there's no dedicated-VRAM reading (integrated GPUs, etc). ---
@@ -298,8 +312,42 @@ class OverviewTab(QWidget):
                             else ((0.0, 0.0), (0.0, 0.0)))
             cap = mw._hover_cap_info() if hasattr(mw, "_hover_cap_info") else None
             self._usage.set(today, month, cap)
+
+            self._session_lbl.setText(self._session_text(mw))
+            self._syspower_lbl.setText(self._syspower_text(mw))
         except Exception as e:
             self.logger.debug("Overview render skipped: %s", e)
+
+    def _session_text(self, mw) -> str:
+        start = getattr(mw, "session_start_time", None)
+        if start is None:
+            return ""
+        secs = max(0.0, (datetime.now() - start).total_seconds())
+        parts = [f"{self._tr('STAT_SESSION_LABEL', 'Session')} {self._fmt_dur(secs)}"]
+        ws = getattr(mw, "widget_state", None)
+        if ws is not None:
+            try:
+                u, d = ws.get_total_bandwidth_for_period(start, datetime.now())
+                dv, du = format_data_size(d, self._i18n, precision=1)
+                uv, uu = format_data_size(u, self._i18n, precision=1)
+                parts.append(f"↓ {self._num(dv)} {du}  ↑ {self._num(uv)} {uu}")
+            except Exception:
+                pass
+        return "    ·    ".join(parts)
+
+    def _syspower_text(self, mw) -> str:
+        total = float(getattr(mw, "cpu_power", None) or 0.0) + float(getattr(mw, "gpu_power", None) or 0.0)
+        return f"{self._tr('STAT_SYS_POWER', 'CPU+GPU power')}  {total:.0f} W" if total >= 0.5 else ""
+
+    @staticmethod
+    def _fmt_dur(secs: float) -> str:
+        h, m = int(secs // 3600), int((secs % 3600) // 60)
+        return f"{h}h {m}m" if h else f"{m}m"
+
+    def _num(self, value: float) -> str:
+        s = f"{value:.1f}"
+        sep = getattr(self._i18n, "DECIMAL_SEPARATOR", ".")
+        return s.replace(".", sep) if sep and sep != "." else s
 
     def _goto_hardware(self) -> None:
         """A hardware tile was clicked — drill into the Hardware tab for the full graph + per-process
