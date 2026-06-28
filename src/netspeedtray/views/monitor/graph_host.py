@@ -412,3 +412,13 @@ class GraphHost(QObject):
             pass
         self.worker = None
         self._thread = None
+
+        # Drop the heavy references so the figure / Line2D arrays / canvas and the host↔coordinator
+        # reference cycle can be reclaimed promptly instead of lingering until a later GC pass — the
+        # "Monitor RAM grew and didn't drop on close" symptom. (matplotlib's MODULE stays imported for
+        # the session by design; an Overview-only session never loads it. This frees the per-window
+        # objects, not the module.)
+        self.renderer = None
+        self.coordinator = None
+        self._hover = None
+        self._canvas_container = None

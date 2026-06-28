@@ -41,6 +41,7 @@ class TimelineSelector(QWidget):
         self._btn = QToolButton()
         self._btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._btn.setFocusPolicy(Qt.FocusPolicy.StrongFocus)   # keyboard-reachable (was unreachable)
         self._btn.setFont(su.font(tokens.TYPE_BODY))
         r = tokens.RADIUS_CONTROL
         self._btn.setStyleSheet(
@@ -48,6 +49,7 @@ class TimelineSelector(QWidget):
             f" border: 1px solid {c['card_stroke']}; border-radius: {r}px; padding: 4px 12px;"
             f" text-align: left; }}"
             f" QToolButton:hover {{ border-color: {c['accent']}; }}"
+            f" QToolButton:focus {{ border-color: {c['accent']}; }}"
             f" QToolButton::menu-indicator {{ image: none; width: 0; }}")   # we draw our own ▾
 
         self._menu = QMenu(self._btn)
@@ -87,7 +89,9 @@ class TimelineSelector(QWidget):
             self.period_changed.emit(self._index)
 
     def _sync(self) -> None:
-        self._btn.setText(f"{self._label(self._period_key())}    {self._CHEVRON}")
+        label = self._label(self._period_key())
+        self._btn.setText(f"{label}    {self._CHEVRON}")
+        self._btn.setAccessibleName(label)   # screen readers announce the selected window
         act = self._actions.get(self._index)
         if act is not None:
             act.setChecked(True)

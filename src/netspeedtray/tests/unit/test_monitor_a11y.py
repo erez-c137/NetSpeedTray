@@ -97,6 +97,24 @@ def test_hardware_row_has_accessible_name(q_app):
     assert "python.exe" in row.accessibleName()
 
 
+def test_top_talkers_card_is_keyboard_activatable(q_app):
+    from netspeedtray.views.monitor.overview.busiest_apps import BusiestAppsCard
+    card = BusiestAppsCard(I18nStrings("en_US"))
+    assert card.focusPolicy() == Qt.FocusPolicy.StrongFocus
+    assert card.accessibleName()
+    got = []
+    card.go_to_network.connect(lambda: got.append(1))
+    _press(card, Qt.Key.Key_Return)
+    assert got == [1]
+
+
+def test_timeline_selector_is_focusable_and_named(q_app):
+    from netspeedtray.views.monitor.timeline_selector import TimelineSelector
+    ts = TimelineSelector(I18nStrings("en_US"), current_index=2)
+    assert ts._btn.focusPolicy() == Qt.FocusPolicy.StrongFocus
+    assert ts._btn.accessibleName()    # announces the selected window
+
+
 def test_subtle_dark_text_meets_wcag_aa_on_the_card(q_app):
     """The app-wide caption colour must clear WCAG AA (4.5:1) on the dark card — regression for #808080."""
     from netspeedtray.constants.styles import styles as S

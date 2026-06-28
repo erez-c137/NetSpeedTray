@@ -371,7 +371,13 @@ class OverviewTab(QWidget):
             else:
                 self._latency_events = {}
         except Exception as e:
-            self.logger.debug("Overview window reload skipped: %s", e)
+            # Log the FIRST failure loudly (with traceback) so a broken Overview leaves a diagnostic in
+            # the support bundle; rate-limit the rest to DEBUG so the few-second timer doesn't spam.
+            if not getattr(self, "_reload_err_logged", False):
+                self._reload_err_logged = True
+                self.logger.warning("Overview window reload failed (further at DEBUG): %s", e, exc_info=True)
+            else:
+                self.logger.debug("Overview window reload skipped: %s", e)
         self._render()
 
     def _tick(self) -> None:
@@ -472,7 +478,11 @@ class OverviewTab(QWidget):
             self._session_lbl.setText(self._session_text(mw))
             self._context_r_lbl.setText(self._context_right_text(mw))
         except Exception as e:
-            self.logger.debug("Overview render skipped: %s", e)
+            if not getattr(self, "_render_err_logged", False):
+                self._render_err_logged = True
+                self.logger.warning("Overview render failed (further at DEBUG): %s", e, exc_info=True)
+            else:
+                self.logger.debug("Overview render skipped: %s", e)
 
     def _session_text(self, mw) -> str:
         start = getattr(mw, "session_start_time", None)

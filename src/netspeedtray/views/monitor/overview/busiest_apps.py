@@ -36,9 +36,13 @@ class BusiestAppsCard(QFrame):
         c = su.semantic_colors()
         self.setObjectName("busiestCard")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)   # keyboard-reachable (was mouse-only)
+        self.setAccessibleName(self._tr("MONITOR_TOP_TALKERS", "Top talkers"))
         self.setStyleSheet(
-            f"#busiestCard {{ background: {c['subtle_fill']}; border-radius: {tokens.RADIUS_CARD}px; }}"
-            f" #busiestCard:hover {{ background: {c['card_stroke']}; }}")
+            f"#busiestCard {{ background: {c['subtle_fill']}; border-radius: {tokens.RADIUS_CARD}px;"
+            f" border: 2px solid transparent; }}"
+            f" #busiestCard:hover {{ background: {c['card_stroke']}; }}"
+            f" #busiestCard:focus {{ border: 2px solid {c['accent']}; }}")
 
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 14, 16, 14)
@@ -118,8 +122,16 @@ class BusiestAppsCard(QFrame):
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
         if event.button() == Qt.MouseButton.LeftButton:
+            self.setFocus(Qt.FocusReason.MouseFocusReason)
             self.go_to_network.emit()
         super().mousePressEvent(event)
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            self.go_to_network.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def _tr(self, key: str, default: str) -> str:
         return str(getattr(self._i18n, key, default)) if self._i18n is not None else default

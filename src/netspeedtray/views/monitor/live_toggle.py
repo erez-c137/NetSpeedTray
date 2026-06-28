@@ -63,7 +63,8 @@ class LiveToggle(QPushButton):
         self.setStyleSheet(
             f"QPushButton {{ background: {c['subtle_fill']}; color: {fg}; font-weight: {weight};"
             f" border: 1px solid {border}; border-radius: {tokens.RADIUS_CONTROL}px;"
-            f" padding: 4px 12px; }} QPushButton:hover {{ border-color: {c['accent']}; }}")
+            f" padding: 4px 12px; }} QPushButton:hover {{ border-color: {c['accent']}; }}"
+            f" QPushButton:focus {{ border-color: {c['accent']}; }}")   # visible keyboard focus (WCAG 2.4.7)
 
     def _tr(self, key: str, default: str) -> str:
         return str(getattr(self._i18n, key, default)) if self._i18n is not None else default
