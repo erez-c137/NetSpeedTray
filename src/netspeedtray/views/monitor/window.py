@@ -45,6 +45,7 @@ class MonitorWindow(QWidget):
         self.logger = logging.getLogger("NetSpeedTray.MonitorWindow")
         self._is_closing = False
         self._graph_host = None  # one shared graph engine, built on first chart-tab activation
+        self._settings_flyout = None  # one reusable display-settings popup (not rebuilt per click)
 
         self.setWindowTitle(self._tr("MONITOR_WINDOW_TITLE", "Monitor"))
         self.resize(900, 620)
@@ -68,12 +69,13 @@ class MonitorWindow(QWidget):
         header.addWidget(self._tab_bar)
         header.addStretch(1)
         self._gear = QToolButton()
-        self._gear.setText("⚙")   # gear
+        self._gear.setText(chr(0xE713))   # Segoe Fluent Icons "Settings" — monochrome, obeys QSS colour
         self._gear.setCursor(Qt.CursorShape.PointingHandCursor)
         self._gear.setToolTip(self._tr("MONITOR_SETTINGS_TIP", "Monitor display settings"))
         self._gear.setStyleSheet(
-            f"QToolButton {{ background: transparent; color: {c['text_secondary']}; border: none;"
-            f" font-size: 16px; padding: 4px 6px; }} QToolButton:hover {{ color: {c['text_primary']}; }}")
+            f"QToolButton {{ background: transparent; color: {c['text_primary']};"
+            f" font-family: 'Segoe Fluent Icons','Segoe MDL2 Assets'; font-size: 15px;"
+            f" border: none; padding: 4px 6px; }} QToolButton:hover {{ color: {c['accent']}; }}")
         self._gear.clicked.connect(self._open_settings_flyout)
         header.addWidget(self._gear, 0, Qt.AlignmentFlag.AlignVCenter)
         root.addLayout(header)
@@ -130,6 +132,11 @@ class MonitorWindow(QWidget):
             self._stack.removeWidget(old)
             old.deleteLater()
         self._stack.setCurrentIndex(index)
+        # The display-settings gear only affects the Hardware graph in 6.2a — hide it elsewhere so it
+        # isn't a dead control, and dismiss any open flyout when leaving Hardware.
+        self._gear.setVisible(d.tab_id == "hardware")
+        if d.tab_id != "hardware" and self._settings_flyout is not None:
+            self._settings_flyout.hide()
 
     # --- tab factories (real pages, built lazily on first activation) ---
 
@@ -158,13 +165,25 @@ class MonitorWindow(QWidget):
     # ----------------------------------------------------------------- settings flyout
 
     def _open_settings_flyout(self) -> None:
-        """Open the live display-settings popup anchored under the gear."""
+        """Open the live display-settings popup anchored under the gear (reused, not rebuilt per click)."""
+        from PyQt6.QtGui import QGuiApplication
         from netspeedtray.views.monitor.settings_flyout import MonitorSettingsFlyout
-        fly = MonitorSettingsFlyout(self._main_widget, self.config, self.i18n, self)
-        fly.changed.connect(self._on_settings_changed)
+        if self._settings_flyout is None:
+            self._settings_flyout = MonitorSettingsFlyout(self._main_widget, self.config, self.i18n, self)
+            self._settings_flyout.changed.connect(self._on_settings_changed)
+        fly = self._settings_flyout
+        fly.refresh()              # re-read the current config + theme into the controls
         fly.adjustSize()
         anchor = self._gear.mapToGlobal(self._gear.rect().bottomRight())
-        fly.move(anchor.x() - fly.width(), anchor.y() + 4)
+        x, y = anchor.x() - fly.width(), anchor.y() + 4
+        scr = QGuiApplication.screenAt(anchor) or self.screen()
+        if scr is not None:
+            g = scr.availableGeometry()
+            x = max(g.left(), min(x, g.right() - fly.width() + 1))
+            if y + fly.height() > g.bottom():   # flip above the gear if it would overflow the bottom
+                y = self._gear.mapToGlobal(self._gear.rect().topRight()).y() - fly.height() - 4
+            y = max(g.top(), y)
+        fly.move(x, y)
         fly.show()
 
     def _on_settings_changed(self) -> None:

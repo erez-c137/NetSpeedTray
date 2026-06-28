@@ -50,14 +50,46 @@ def test_legend_toggle_writes_bool(q_app):
     assert config["monitor_graph_legend"] is False
 
 
-def test_settings_changed_rerenders_active_graph(q_app):
+def test_refresh_rereads_config_into_swatches(q_app):
+    config = {"monitor_cpu_graph_color": "#111111", "dark_mode": True}
+    f, _ = _flyout(config)
+    assert f._cpu.color().upper() == "#111111"
+    config["monitor_cpu_graph_color"] = "#222222"   # changed elsewhere while the cached flyout lived
+    f.refresh()
+    assert f._cpu.color().upper() == "#222222"
+
+
+def _window():
     from netspeedtray import constants
     from netspeedtray.views.monitor.window import MonitorWindow
     mw = MagicMock(); mw.config = {}
-    win = MonitorWindow(mw, dict(constants.config.defaults.DEFAULT_CONFIG), I18nStrings("en_US"))
+    cfg = dict(constants.config.defaults.DEFAULT_CONFIG); cfg["monitor_cpu_enabled"] = True
+    return MonitorWindow(mw, cfg, I18nStrings("en_US"))
+
+
+def test_settings_changed_rerenders_active_graph(q_app):
+    win = _window()
     win._graph_host = MagicMock()
     win._on_settings_changed()
     win._graph_host.update_graph.assert_called_once()            # live re-render path
-    # and it's a no-op (no crash) when no chart tab has built the host yet
     win._graph_host = None
-    win._on_settings_changed()
+    win._on_settings_changed()                                   # no-op (no crash) when no host yet
+
+
+def test_gear_only_on_hardware_tab(q_app):
+    win = _window()
+    win._on_tab_changed(1)                       # Network — the gear has no effect here in 6.2a
+    assert win._gear.isHidden()
+    win._on_tab_changed(2)                       # Hardware — gear is relevant
+    assert not win._gear.isHidden()
+
+
+def test_flyout_reused_not_rebuilt(q_app):
+    win = _window()
+    win._open_settings_flyout()
+    first = win._settings_flyout
+    assert first is not None
+    first.hide()
+    win._open_settings_flyout()
+    assert win._settings_flyout is first         # one cached instance, not a per-click leak
+    win._settings_flyout.hide()
