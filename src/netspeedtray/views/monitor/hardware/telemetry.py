@@ -54,9 +54,9 @@ class TelemetryStrip(QWidget):
         self._config = config
         self._i18n = i18n
 
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(4, 0, 4, 0)
-        lay.setSpacing(8)
+        self._lay = QHBoxLayout(self)
+        self._lay.setContentsMargins(4, 0, 4, 0)
+        self._lay.setSpacing(8)
 
         # The Monitor forces hardware collection while it's open, so all four sources are available
         # regardless of the widget's config flags — create every tile. Each tile shows only what it
@@ -66,9 +66,12 @@ class TelemetryStrip(QWidget):
         self._gpu = _TeleTile(self._tr("ORDER_TYPE_GPU", "GPU"))
         self._ram = _TeleTile(self._tr("MONITOR_TILE_RAM", "RAM"))
         self._vram = _TeleTile(self._tr("MONITOR_TILE_VRAM", "VRAM"))
-        for tile in (self._cpu, self._gpu, self._ram, self._vram):
-            lay.addWidget(tile)
-        lay.addStretch(1)
+        # Equal-width tiles (stretch 1 each, no trailing stretch) so a tile NEVER resizes when its value
+        # grows — "18% · 69°C · 37 W" sits in the same box as "18%", and the cards don't shove each other
+        # around. A hidden tile's slot is reclaimed (stretch 0) so the visible ones fill the width.
+        self._ordered = [self._cpu, self._gpu, self._ram, self._vram]
+        for tile in self._ordered:
+            self._lay.addWidget(tile, 1)
 
     def update_from(self, w) -> None:
         """Pull the live readings off the main widget's attributes and refresh each tile. The CPU/GPU
@@ -80,17 +83,22 @@ class TelemetryStrip(QWidget):
                                             getattr(w, "cpu_temp", None), getattr(w, "cpu_power", None)))
         # Hide the GPU tile on a confirmed no-GPU box rather than show a permanent 0%.
         gpu_present = bool(getattr(w, "gpu_present", True))
-        self._gpu.setVisible(gpu_present)
+        self._set_tile_visible(self._gpu, gpu_present)
         if gpu_present:
             self._gpu.set_value(self._proc_text(getattr(w, "gpu_usage", 0.0),
                                                 getattr(w, "gpu_temp", None), getattr(w, "gpu_power", None)))
         self._update_mem(self._ram, getattr(w, "ram_used", None), getattr(w, "ram_total", None))
         self._update_mem(self._vram, getattr(w, "vram_used", None), getattr(w, "vram_total", None))
 
+    def _set_tile_visible(self, tile, visible: bool) -> None:
+        """Show/hide a tile AND reclaim its stretch so the remaining tiles fill the width (no gap)."""
+        tile.setVisible(visible)
+        self._lay.setStretch(self._ordered.index(tile), 1 if visible else 0)
+
     def _update_mem(self, tile, used, total) -> None:
         if tile is None:
             return
-        tile.setVisible(used is not None)   # hide rather than show a permanent "—"
+        self._set_tile_visible(tile, used is not None)   # hide rather than show a permanent "—"
         if used is not None:
             tile.set_value(self._mem_text(used, total))
 

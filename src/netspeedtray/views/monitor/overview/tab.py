@@ -174,6 +174,7 @@ class OverviewTab(QWidget):
         self._bottom_grid.setHorizontalSpacing(12)
         self._bottom_grid.setVerticalSpacing(12)
         self._usage = UsageTile(i18n)
+        self._usage.set_cap_requested.connect(self._open_settings)
         self._busiest = BusiestAppsCard(i18n)
         self._busiest.go_to_network.connect(self._goto_network)
         root.addLayout(self._bottom_grid)
@@ -522,6 +523,13 @@ class OverviewTab(QWidget):
                 win.select_tab("network")
             except Exception:
                 pass
+
+    def _open_settings(self) -> None:
+        """Open the app settings (the data-cap controls live on its Network page)."""
+        try:
+            self._main_widget.show_settings()
+        except Exception as e:
+            self.logger.debug("Could not open settings from usage card: %s", e)
 
     @staticmethod
     def _fmt_dur(secs: float) -> str:

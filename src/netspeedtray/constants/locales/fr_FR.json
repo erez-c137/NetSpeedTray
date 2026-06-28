@@ -521,5 +521,9 @@
     "MONITOR_VIEW_ALL_APPS": "All apps →",
     "STATS_DETAIL_DROPS": "connection drops",
     "STATS_DETAIL_LAST": "last",
-    "STATS_DETAIL_DOWN": "down"
+    "STATS_DETAIL_DOWN": "down",
+    "//": "--- Monitor: Data usage card ---",
+    "USAGE_AVG_DAY_LABEL": "Avg / day",
+    "USAGE_PROJECTED_LABEL": "Projected",
+    "USAGE_SET_LIMIT_HINT": "Set a monthly limit"
 }

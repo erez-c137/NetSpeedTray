@@ -14,6 +14,8 @@ By contract this module imports only Qt + app utils — never matplotlib (it bac
 """
 from __future__ import annotations
 
+import calendar
+from datetime import datetime
 from typing import List, Optional, Tuple
 
 from PyQt6.QtCore import Qt, QPointF, QRectF, pyqtSignal
@@ -349,7 +351,10 @@ class NetworkHero(QFrame):
 
 
 class UsageTile(QFrame):
-    """Today / This-month byte totals, plus a data-cap progress bar when a cap is set."""
+    """Today / This-month byte totals + an avg/day and projected-month estimate, plus a data-cap
+    progress bar when a cap is set (or a one-click "set a monthly limit" hint when it isn't)."""
+
+    set_cap_requested = pyqtSignal()   #: the "set a limit" hint was clicked (no cap configured yet)
 
     def __init__(self, i18n, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -370,8 +375,10 @@ class UsageTile(QFrame):
 
         self._today = self._make_row(self._tr("USAGE_TODAY_LABEL", "Today"), c)
         self._month = self._make_row(self._tr("USAGE_THIS_MONTH_LABEL", "This Month"), c)
-        lay.addLayout(self._today[0])
-        lay.addLayout(self._month[0])
+        self._avgday = self._make_row(self._tr("USAGE_AVG_DAY_LABEL", "Avg / day"), c)
+        self._proj = self._make_row(self._tr("USAGE_PROJECTED_LABEL", "Projected"), c)
+        for row in (self._today, self._month, self._avgday, self._proj):
+            lay.addLayout(row[0])
 
         # Cap progress (hidden unless a cap is configured).
         self._cap_bar = QProgressBar()
@@ -389,6 +396,16 @@ class UsageTile(QFrame):
         lay.addWidget(self._cap_bar)
         self._cap_bar.setVisible(False)
         self._cap_text.setVisible(False)
+
+        # When no cap is set, a discoverable one-click hint to configure one (Settings → Network).
+        hint = self._tr("USAGE_SET_LIMIT_HINT", "Set a monthly limit")
+        self._cap_hint = QLabel(f"<a href='#' style='color:{c['accent']}; text-decoration:none;'>{hint} →</a>")
+        self._cap_hint.setFont(su.font(tokens.TYPE_CAPTION))
+        self._cap_hint.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._cap_hint.setStyleSheet("background: transparent;")
+        self._cap_hint.linkActivated.connect(lambda _: self.set_cap_requested.emit())
+        lay.addWidget(self._cap_hint)
+        lay.addStretch(1)   # keep rows top-aligned; fill the rest of the (taller) card
 
     def _make_row(self, label: str, c: dict) -> Tuple[QHBoxLayout, QLabel]:
         row = QHBoxLayout()
@@ -436,10 +453,22 @@ class UsageTile(QFrame):
             cap: Optional[Tuple[float, float, float]]) -> None:
         self._today[1].setText(self._fmt_pair(today))
         self._month[1].setText(self._fmt_pair(month))
+        # Avg/day = this month's total ÷ days elapsed; projected = that rate × days in the month — a
+        # quick "am I on track" read (and what makes a limit meaningful).
+        now = datetime.now()
+        day = max(1, now.day)
+        days_in_month = calendar.monthrange(now.year, now.month)[1]
+        m_up, m_down = month
+        avg = (m_up / day, m_down / day)
+        self._avgday[1].setText(self._fmt_pair(avg))
+        self._proj[1].setText(self._fmt_pair((avg[0] * days_in_month, avg[1] * days_in_month)))
+
         if cap is None:
             self._cap_bar.setVisible(False)
             self._cap_text.setVisible(False)
+            self._cap_hint.setVisible(True)     # surface the (built-but-hidden) data-cap feature
             return
+        self._cap_hint.setVisible(False)
         used_gb, cap_gb, pct = cap
         self._apply_cap_color(pct)
         self._cap_bar.setValue(int(max(0.0, min(100.0, pct))))

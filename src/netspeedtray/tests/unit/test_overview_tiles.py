@@ -305,8 +305,37 @@ def test_sparkline_handles_short_series(q_app):
 def test_usage_tile_hides_cap_when_unset(q_app):
     u = UsageTile(I18nStrings("en_US"))
     u.set((1.0e6, 2.0e6), (3.0e6, 4.0e6), cap=None)
-    assert not u._cap_bar.isVisible()
-    assert not u._cap_text.isVisible()
+    assert not u._cap_bar.isVisibleTo(u)
+    assert not u._cap_text.isVisibleTo(u)
+    # With no cap, the discoverable "Set a monthly limit" hint shows instead.
+    assert u._cap_hint.isVisibleTo(u)
+
+
+def test_usage_tile_avg_and_projected(q_app):
+    """The card derives Avg/day + Projected from the month total, and the hint flips to the cap bar
+    once a cap is configured."""
+    from datetime import datetime
+    import calendar
+    u = UsageTile(I18nStrings("en_US"))
+    month = (3.0e9, 1.2e9)   # (up, down) bytes this month
+    u.set((1e8, 2e8), month, cap=None)
+    day = max(1, datetime.now().day)
+    dim = calendar.monthrange(datetime.now().year, datetime.now().month)[1]
+    # Avg/day text reflects month/day; projected reflects the month-end estimate (both non-empty).
+    assert u._avgday[1].text() not in ("", "—")
+    assert u._proj[1].text() not in ("", "—")
+    # A cap hides the hint and shows the bar.
+    u.set((1e8, 2e8), month, cap=(4.0, 10.0, 40.0))
+    assert not u._cap_hint.isVisibleTo(u)
+    assert u._cap_bar.isVisibleTo(u)
+
+
+def test_usage_tile_hint_requests_cap(q_app):
+    u = UsageTile(I18nStrings("en_US"))
+    fired = []
+    u.set_cap_requested.connect(lambda: fired.append(True))
+    u._cap_hint.linkActivated.emit("#")   # simulate clicking the link
+    assert fired == [True]
 
 
 def test_cap_bar_warns_by_threshold(q_app):
