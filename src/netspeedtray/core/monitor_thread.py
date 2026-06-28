@@ -734,7 +734,7 @@ class StatsMonitorThread(QThread):
                     stats['cpu'] = psutil.cpu_percent(interval=None)
                     if self.config.get('show_hardware_temps', False) or _force_hw:
                         stats['cpu_temp'] = self._poll_cpu_temperature()
-                    if self.config.get('show_hardware_power', False):
+                    if self.config.get('show_hardware_power', False) or _force_hw:
                         stats['cpu_power'] = self._poll_cpu_power()
 
                     # RAM is often grouped with CPU in simple monitors
@@ -746,7 +746,7 @@ class StatsMonitorThread(QThread):
                 if (self.config.get('monitor_gpu_enabled', False) or _force_hw) and not _in_rdp:
                     try:
                         include_temp = bool(self.config.get('show_hardware_temps', False)) or _force_hw
-                        include_power = bool(self.config.get('show_hardware_power', False))
+                        include_power = bool(self.config.get('show_hardware_power', False)) or _force_hw
                         gpu = self._poll_gpu_hybrid(include_temp=include_temp, include_power=include_power)
 
                         stats['gpu'] = gpu.util

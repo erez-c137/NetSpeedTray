@@ -137,11 +137,12 @@ class OverviewTab(QWidget):
                        f"↑ {self._fmt_speed(max(up_series, default=0.0))}")
             self._hero.set(self._fmt_speed(down), self._fmt_speed(up), down_series, up_series, sub)
 
-            # --- CPU / GPU: utilisation %, temperature in the sub-line, sparkline from history.
+            # --- CPU / GPU: utilisation %, temperature + power in the sub-line, sparkline from history.
             cpu = float(getattr(mw, "cpu_usage", 0.0) or 0.0)
             cpu_series = [s.value for s in ws.get_cpu_history()] if ws is not None else []
             self._tiles["cpu"].set(f"{cpu:.0f}%", cpu_series, vmax=100.0,
-                                   sub_text=self._temp_sub(getattr(mw, "cpu_temp", None)))
+                                   sub_text=self._hw_sub(getattr(mw, "cpu_temp", None),
+                                                         getattr(mw, "cpu_power", None)))
 
             # GPU tile hides on a confirmed no-GPU box (else a permanent 0% reads as a dead sensor).
             gpu_tile = self._tiles["gpu"]
@@ -152,7 +153,8 @@ class OverviewTab(QWidget):
                 gpu = float(getattr(mw, "gpu_usage", 0.0) or 0.0)
                 gpu_series = [s.value for s in ws.get_gpu_history()] if ws is not None else []
                 gpu_tile.set(f"{gpu:.0f}%", gpu_series, vmax=100.0,
-                             sub_text=self._temp_sub(getattr(mw, "gpu_temp", None)))
+                             sub_text=self._hw_sub(getattr(mw, "gpu_temp", None),
+                                                   getattr(mw, "gpu_power", None)))
 
             # --- RAM: % of total, used/total in the sub-line.
             ru, rt = getattr(mw, "ram_used", None), getattr(mw, "ram_total", None)
@@ -182,8 +184,14 @@ class OverviewTab(QWidget):
         except Exception as e:
             self.logger.debug("Overview tick skipped: %s", e)
 
-    def _temp_sub(self, temp: Optional[float]) -> str:
-        return f"{float(temp):.0f}°C" if temp is not None else ""
+    def _hw_sub(self, temp: Optional[float], power: Optional[float]) -> str:
+        """CPU/GPU sub-line: temperature and (when collected) power, e.g. "62°C  ·  35 W"."""
+        parts = []
+        if temp is not None:
+            parts.append(f"{float(temp):.0f}°C")
+        if power is not None:
+            parts.append(f"{float(power):.0f} W")
+        return "  ·  ".join(parts)
 
     def _mem_sub(self, used: Optional[float], total: Optional[float]) -> str:
         if used is None:
