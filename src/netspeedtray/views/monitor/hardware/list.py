@@ -96,7 +96,9 @@ class HardwareRow(QFrame):
         self._ram.setText(f"{rv:.1f} {ru}")
         self._gpu.setText(f"{gpu:.0f}%" if (gpu_available and gpu >= _GPU_SHOW_MIN) else "—")
 
-        self.setToolTip(f"{name} — CPU {cpu:.0f}% · RAM {rv:.1f} {ru} · GPU {gpu:.0f}%")
+        summary = f"{name} — CPU {cpu:.0f}% · RAM {rv:.1f} {ru} · GPU {gpu:.0f}%"
+        self.setToolTip(summary)
+        self.setAccessibleName(summary)   # tooltips aren't exposed to screen readers; accessible name is
 
 
 class HardwareBarList(QWidget):

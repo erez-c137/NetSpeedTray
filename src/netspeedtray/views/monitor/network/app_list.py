@@ -92,6 +92,7 @@ class AppRow(QFrame):
         self._active = False
         self.setObjectName("appRow")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)   # keyboard-reachable, not mouse-only
         c = su.semantic_colors()
         lay = QHBoxLayout(self)
         lay.setContentsMargins(8, 5, 8, 5)
@@ -117,8 +118,18 @@ class AppRow(QFrame):
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
         if event.button() == Qt.MouseButton.LeftButton and self._key:
+            self.setFocus(Qt.FocusReason.MouseFocusReason)
             self.clicked.emit(self._key)
         super().mousePressEvent(event)
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        # Enter/Space open this app's detail — the row is the Network tab's primary control, so it must
+        # be operable without a mouse (a screen-reader/keyboard user couldn't reach it before).
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space) and self._key:
+            self.clicked.emit(self._key)
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def set_selected(self, on: bool) -> None:
         if on != self._selected:
@@ -137,7 +148,8 @@ class AppRow(QFrame):
             self.setStyleSheet(
                 f"#appRow {{ background: transparent; border-radius: {tokens.RADIUS_CONTROL}px;"
                 f" border-left: 2px solid transparent; }}"
-                f" #appRow:hover {{ background: {c['subtle_fill']}; }}")
+                f" #appRow:hover {{ background: {c['subtle_fill']}; }}"
+                f" #appRow:focus {{ background: {c['subtle_fill']}; border-left: 2px solid {c['accent']}; }}")
 
     def update_row(self, row: Dict[str, Any], max_conn: int) -> None:
         self._key = str(row.get("identity_key", row.get("display_name", "")))
@@ -162,7 +174,11 @@ class AppRow(QFrame):
         name_color = c["text_primary"] if active else c["text_secondary"]
         self._name.setStyleSheet(f"color: {name_color}; background: transparent;")
         self._apply_row_style()   # keep selection/hover styling fresh across theme changes
-        self.setToolTip(f"{name} — {conn} connections, {est} active, {hosts} hosts")
+        # Qt does NOT expose a tooltip to screen readers, so also set the accessible name from the same
+        # content — otherwise an assistive reader announces a blank frame for the tab's primary control.
+        summary = f"{name} — {conn} connections, {est} active, {hosts} hosts"
+        self.setToolTip(summary)
+        self.setAccessibleName(summary)
 
 
 class AppBarList(QWidget):

@@ -41,7 +41,9 @@ class UIStyleConstants:
     SETTINGS_PANEL_TEXT_DARK: Final[str] = color.WHITE
     SETTINGS_PANEL_TEXT_LIGHT: Final[str] = "#1F1F1F"
     SUBTLE_TEXT_COLOR_LIGHT: Final[str] = "#595959"
-    SUBTLE_TEXT_COLOR_DARK: Final[str] = "#808080"
+    # Lifted from #808080 (≈3.48:1 on the dark card — fails WCAG AA for the 12/14px caption text used
+    # app-wide) to #A6A6A6 (≈5.7:1), per the 2.0 a11y audit. Still clearly "subtle" vs primary text.
+    SUBTLE_TEXT_COLOR_DARK: Final[str] = "#A6A6A6"
 
     # --- Design system: Fluent type ramp ------------------------------------
     # "Segoe UI Variable" is ONE family; the optical cuts (Small/Text/Display) and
