@@ -89,9 +89,12 @@ class GraphDataWorker(QObject):
                 total_down = 0.0
                 if request.is_session_view:
                     net_data = self.widget_state.get_aggregated_speed_history()
-                    cpu_data = self.widget_state.cpu_history
-                    gpu_data = self.widget_state.gpu_history
-                    
+                    # Copy getters, NOT the live deques: this runs on the worker thread while the GUI
+                    # thread appends via add_hardware_stat(); iterating a deque mid-append raises
+                    # "deque mutated during iteration" (the GIL doesn't protect a multi-bytecode loop).
+                    cpu_data = self.widget_state.get_cpu_history()
+                    gpu_data = self.widget_state.get_gpu_history()
+
                     start_ts = request.start_time.timestamp() if request.start_time else 0
                     end_ts = request.end_time.timestamp()
                     
@@ -135,9 +138,9 @@ class GraphDataWorker(QObject):
                     history_data = {
                         role: [(d.timestamp.timestamp(), d.value, 0.0) for d in series
                                if start_ts <= d.timestamp.timestamp() <= end_ts]
-                        for role, series in (("cpu", self.widget_state.cpu_history),
-                                             ("gpu", self.widget_state.gpu_history),
-                                             ("ram", self.widget_state.ram_history))
+                        for role, series in (("cpu", self.widget_state.get_cpu_history()),   # copies (worker thread)
+                                             ("gpu", self.widget_state.get_gpu_history()),
+                                             ("ram", self.widget_state.get_ram_history()))
                     }
                 else:
                     history_data = {
@@ -153,8 +156,9 @@ class GraphDataWorker(QObject):
 
             if request.stat_type in ("cpu", "gpu"):
                 if request.is_session_view:
-                    # In-memory session data
-                    aggregated_data = self.widget_state.cpu_history if request.stat_type == "cpu" else self.widget_state.gpu_history
+                    # In-memory session data — copy getter (worker thread vs GUI-thread appends).
+                    aggregated_data = (self.widget_state.get_cpu_history() if request.stat_type == "cpu"
+                                       else self.widget_state.get_gpu_history())
                     start_ts = request.start_time.timestamp() if request.start_time else 0
                     end_ts = request.end_time.timestamp()
                     

@@ -101,9 +101,15 @@ def test_worker_hwcombined_emits_cpu_gpu_dict(q_app):
 
     now = datetime.now()
     ws = MagicMock()
-    ws.cpu_history = [_Snap(40.0, now), _Snap(55.0, now)]
-    ws.gpu_history = [_Snap(20.0, now)]
-    ws.ram_history = [_Snap(60.0, now)]
+    cpu = [_Snap(40.0, now), _Snap(55.0, now)]
+    gpu = [_Snap(20.0, now)]
+    ram = [_Snap(60.0, now)]
+    ws.cpu_history, ws.gpu_history, ws.ram_history = cpu, gpu, ram
+    # The worker reads the session deques via the COPY GETTERS (thread-safe: it runs on its own thread
+    # while the GUI thread appends), not the live deques — so the fake must expose them too.
+    ws.get_cpu_history.return_value = cpu
+    ws.get_gpu_history.return_value = gpu
+    ws.get_ram_history.return_value = ram
     worker = GraphDataWorker(ws)
     got = []
     worker.data_ready.connect(lambda *a: got.append(a))
