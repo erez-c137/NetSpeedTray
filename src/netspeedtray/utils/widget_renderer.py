@@ -160,9 +160,13 @@ class WidgetRenderer:
             try:
                 self.paused = False
                 
-                # Bounding rect for coordinates
+                # Bounding rect for coordinates. _last_text_rect is the LAST segment drawn (the
+                # side-by-side layout advances by it); _content_bounds is the UNION of all segments
+                # this paint — what the context menu centers on, so it stays centered over the WHOLE
+                # widget when CPU/GPU stats sit beside the network text (not just the last segment).
                 self._last_text_rect = QRect()
-                
+                self._content_bounds = QRect()
+
                 # Mini graph state cache tracking
                 self._last_widget_size = (0, 0)
                 self._last_history_hash = 0
@@ -320,6 +324,7 @@ class WidgetRenderer:
             max_unit_width = max(self.metrics.horizontalAdvance(up_unit), self.metrics.horizontalAdvance(dw_unit)) if not config.hide_unit_suffix else 0
             total_width = (unit_x - arrow_x) + max_unit_width
             self._last_text_rect = QRect(arrow_x, top_y, total_width, total_height)
+            self._extend_content_bounds(self._last_text_rect)
 
         except Exception as e:
             self.logger.error("Failed to draw network speeds: %s", e)
@@ -475,6 +480,7 @@ class WidgetRenderer:
             # Update bounding rect for accurate spacing in side-by-side or grouped layout views
             max_text_width = max((14 if row['draw_icon'] else 0) + self.metrics.horizontalAdvance(row['text']) for row in render_rows)
             self._last_text_rect = QRect(x_offset, top_y, max_text_width + margin, total_height)
+            self._extend_content_bounds(self._last_text_rect)
 
         except Exception as e:
             self.logger.error("Failed to draw hardware stats: %s", e)
@@ -718,6 +724,26 @@ class WidgetRenderer:
 
     def get_last_text_rect(self) -> QRect:
         """Returns last text bounding rect."""
+        return self._last_text_rect
+
+    def reset_content_bounds(self) -> None:
+        """Clear the per-paint content union; render_widget calls this before drawing the segments."""
+        self._content_bounds = QRect()
+
+    def _extend_content_bounds(self, rect: QRect) -> None:
+        """Grow _content_bounds to include ``rect`` (each drawn segment)."""
+        if rect is None or not rect.isValid() or rect.isEmpty():
+            return
+        if self._content_bounds.isNull() or self._content_bounds.isEmpty():
+            self._content_bounds = QRect(rect)
+        else:
+            self._content_bounds = self._content_bounds.united(rect)
+
+    def get_content_bounds(self) -> QRect:
+        """Bounding rect of ALL segments drawn this paint (network + CPU/GPU), for centering the
+        context menu over the whole widget. Falls back to the last segment if nothing accumulated."""
+        if self._content_bounds.isValid() and not self._content_bounds.isEmpty():
+            return self._content_bounds
         return self._last_text_rect
 
 

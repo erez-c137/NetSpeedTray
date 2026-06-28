@@ -216,9 +216,11 @@ class TrayIconManager(QObject):
         Calculates the optimal global position for the context menu.
         """
         try:
-            # Access renderer from widget if available
+            # Access renderer from widget if available. Use the full content union (network + any
+            # CPU/GPU stats), not just the last-drawn segment, so the menu stays centered over the
+            # whole widget when hardware monitoring widens it.
             renderer = getattr(self.widget, 'renderer', None)
-            text_rect_local = renderer.get_last_text_rect() if renderer else QRect()
+            text_rect_local = renderer.get_content_bounds() if renderer else QRect()
 
             if not text_rect_local.isValid() or text_rect_local.isEmpty():
                 ref_global_pos = self.widget.mapToGlobal(self.widget.rect().center())

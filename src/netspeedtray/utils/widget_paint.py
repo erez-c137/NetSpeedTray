@@ -224,6 +224,7 @@ def render_widget(painter: QPainter, rect: QRect, renderer: WidgetRenderer, conf
     width, height = rect.width(), rect.height()
     mode = _resolve_mode(config, cycle_mode)
 
+    renderer.reset_content_bounds()   # accumulate this paint's segment union for menu centering
     renderer.draw_background(painter, rect, config)
 
     if config.graph_enabled:
