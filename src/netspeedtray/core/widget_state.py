@@ -153,20 +153,26 @@ class WidgetState(QObject):
                 self._db_batch.append((timestamp, interface, min(up_speed, max_speed), min(down_speed, max_speed)))
 
 
+    # Utilisation stats are 0-100% and clamped; physical stats (power W, temperature °C, latency ms)
+    # are NOT percentages and must be stored unclamped — a 200 ms ping or 180 W draw must not become 100.
+    _PCT_STATS = frozenset({'cpu', 'gpu', 'ram', 'vram'})
+
     def add_hardware_stat(self, stat_type: str, value: float, now: Optional[datetime] = None) -> None:
-        """Adds new CPU or GPU utilization data point."""
+        """Record a hardware sample (utilisation %, power W, temperature °C, or latency ms) to the
+        in-memory deque (for graphed util stats) + the DB batch (for all, via the 3-tier rollups)."""
         _now = now or datetime.now()
         snapshot = HardwareStatSnapshot(value=value, timestamp=_now)
-        
+
         if stat_type == 'cpu':
             self.cpu_history.append(snapshot)
         elif stat_type == 'gpu':
             self.gpu_history.append(snapshot)
         elif stat_type == 'ram':
             self.ram_history.append(snapshot)
-            
-        # Add to database batch (clamped 0-100)
-        self._hw_batch.append((int(_now.timestamp()), stat_type, max(0.0, min(100.0, value))))
+
+        # Clamp only the percentage stats; store physical stats unclamped (just floor at 0).
+        v = max(0.0, min(100.0, value)) if stat_type in self._PCT_STATS else max(0.0, float(value))
+        self._hw_batch.append((int(_now.timestamp()), stat_type, v))
 
 
     # --- Data-usage odometer (data-cap feature) ------------------------------

@@ -729,3 +729,17 @@ def test_hardware_history_raw_fallback_for_recent_long_window(managed_widget_sta
     # 24h duration -> minute tier (empty) -> raw fallback returns the recent rows.
     got = state.get_hardware_history("ram", now - timedelta(hours=24), now + timedelta(minutes=1))
     assert len(got) == 5, "raw fallback should surface recent rows the empty minute tier lacks"
+
+
+def test_add_hardware_stat_clamps_pct_not_physical(managed_widget_state):
+    """Utilisation stats clamp 0-100; physical stats (power W / temp °C / latency ms) store unclamped
+    so a 180 W draw or 200 ms ping isn't corrupted to 100."""
+    state, _ = managed_widget_state
+    state._hw_batch.clear()
+    state.add_hardware_stat('cpu', 150.0)        # util -> clamped
+    state.add_hardware_stat('cpu_power', 180.0)  # power -> unclamped
+    state.add_hardware_stat('gpu_temp', 105.0)   # temp -> unclamped
+    state.add_hardware_stat('latency_gw', 240.0) # latency -> unclamped
+    vals = {b[1]: b[2] for b in state._hw_batch}
+    assert vals['cpu'] == 100.0
+    assert vals['cpu_power'] == 180.0 and vals['gpu_temp'] == 105.0 and vals['latency_gw'] == 240.0

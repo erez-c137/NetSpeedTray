@@ -137,7 +137,19 @@ class StatsController(QObject):
                 self.cpu_power_updated.emit(stats['cpu_power'])
             if 'gpu_power' in stats:
                 self.gpu_power_updated.emit(stats['gpu_power'])
-                
+
+            # Persist temperature + power as their own (unclamped) hardware stat_types so the Monitor's
+            # pro-stats (avg/max/p95, the Stats-detail sheet, export, throttle-time) have real history.
+            # Total power = CPU + GPU watts (a "CPU+GPU power" figure, not whole-system draw).
+            if self.widget_state:
+                for key in ('cpu_temp', 'gpu_temp', 'cpu_power', 'gpu_power'):
+                    v = stats.get(key)
+                    if v is not None and v > 0:
+                        self.widget_state.add_hardware_stat(key, float(v))
+                cp, gp = stats.get('cpu_power'), stats.get('gpu_power')
+                if (cp is not None and cp > 0) or (gp is not None and gp > 0):
+                    self.widget_state.add_hardware_stat('total_power', float(cp or 0.0) + float(gp or 0.0))
+
             # 4. Handle RAM / VRAM Info
             if stats.get('ram_used') is not None and stats.get('ram_total') is not None:
                 self.ram_info_updated.emit(stats['ram_used'], stats['ram_total'])
