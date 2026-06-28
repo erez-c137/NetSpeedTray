@@ -16,11 +16,12 @@ from netspeedtray.constants.styles import styles as tokens
 
 
 def section_header(text: str) -> QLabel:
-    """A Win11 Settings section caption: semibold, primary-coloured, sitting just above its cards."""
+    """A Win11 Settings section caption: semibold, primary-coloured, with generous space above so it
+    reads as the start of a new group (not crowding the card before it) and a small gap to its cards."""
     c = su.semantic_colors()
     lbl = QLabel(text)
     lbl.setFont(su.font(tokens.TYPE_BODY_STRONG))
-    lbl.setStyleSheet(f"color: {c['text_primary']}; background: transparent; padding: 4px 2px 0 2px;")
+    lbl.setStyleSheet(f"color: {c['text_primary']}; background: transparent; padding: 12px 2px 2px 2px;")
     return lbl
 
 

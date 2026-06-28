@@ -569,6 +569,9 @@ class SettingCard(QFrame):
             f"QFrame#settingCard {{ background-color: {c['card_bg']}; "
             f"border: 1px solid {c['card_stroke']}; border-radius: {tokens.RADIUS_CARD}px; }}"
         )
+        # A consistent floor height so a bare-toggle row and a slider/combo row read as the same
+        # card size — the even vertical rhythm of the native Win11 Settings list.
+        self.setMinimumHeight(48)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(tokens.SPACE_M, tokens.SPACE_S, tokens.SPACE_M, tokens.SPACE_S)
