@@ -116,6 +116,13 @@ class MonitorWindow(QWidget):
                               factory=self._make_hardware, needs_graph=True),
         ]
 
+    def select_tab(self, tab_id: str) -> None:
+        """Programmatically switch tabs (e.g. an Overview hardware tile click drills into Hardware)."""
+        for i, d in enumerate(self._descriptors):
+            if d.tab_id == tab_id:
+                self._tab_bar.setCurrentIndex(i)
+                return
+
     def _on_tab_changed(self, index: int) -> None:
         if self._is_closing or not (0 <= index < len(self._descriptors)):
             return

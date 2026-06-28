@@ -28,8 +28,10 @@ from netspeedtray.views.monitor.overview.tiles import StatTile, UsageTile, Netwo
 # echo the graph's line hues; RAM/VRAM get their own calm colours. The light variant keeps the thin
 # trend line legible on the near-white light card.
 _ACCENTS = {
-    "down": ("#4DA3FF", "#0067C0"),
-    "up":   ("#F0883E", "#C75B12"),
+    # Download green / upload blue — the SAME codes as the standalone graph (color.DOWNLOAD/UPLOAD_LINE_COLOR)
+    # so the hero and the Network-tab graph read identically.
+    "down": ("#42B883", "#42B883"),
+    "up":   ("#4287F5", "#4287F5"),
     "cpu":  ("#00BCD4", "#0097A7"),
     "gpu":  ("#FF9800", "#F57C00"),
     "ram":  ("#4CAF50", "#388E3C"),
@@ -79,6 +81,7 @@ class OverviewTab(QWidget):
                            ("ram", self._tr("MONITOR_TILE_RAM", "RAM")),
                            ("vram", self._tr("MONITOR_TILE_VRAM", "VRAM"))):
             t = StatTile(label, accent(key))
+            t.clicked.connect(self._goto_hardware)   # a click drills into the Hardware tab
             self._tiles[key] = t
             hw.addWidget(t, 1)
         root.addLayout(hw)
@@ -130,12 +133,19 @@ class OverviewTab(QWidget):
             up = agg[-1].upload if agg else 0.0
             down_series = [a.download for a in agg]
             up_series = [a.upload for a in agg]
+            peak_v = max(max(down_series, default=0.0), max(up_series, default=0.0))
             sub = ""
             if down_series or up_series:
                 sub = (f"{self._tr('GRAPH_PEAK_SHORT', 'Peak')}   "
                        f"↓ {self._fmt_speed(max(down_series, default=0.0))}   "
                        f"↑ {self._fmt_speed(max(up_series, default=0.0))}")
-            self._hero.set(self._fmt_speed(down), self._fmt_speed(up), down_series, up_series, sub)
+            self._hero.set(self._fmt_speed(down), self._fmt_speed(up), down_series, up_series, sub,
+                           scale_label=self._fmt_speed(peak_v))
+
+            # A discrete GPU has dedicated VRAM; an integrated one shares system RAM. Use that to label
+            # the tile "iGPU" vs "GPU" (read once, also used by the VRAM tile below).
+            vu, vt = getattr(mw, "vram_used", None), getattr(mw, "vram_total", None)
+            integrated = vu is None and vt is None
 
             # --- CPU / GPU: utilisation %, temperature + power in the sub-line, sparkline from history.
             cpu = float(getattr(mw, "cpu_usage", 0.0) or 0.0)
@@ -150,6 +160,8 @@ class OverviewTab(QWidget):
                 gpu_tile.setVisible(False)
             else:
                 gpu_tile.setVisible(True)
+                gpu_word = self._tr("ORDER_TYPE_GPU", "GPU")
+                gpu_tile.set_label(("i" + gpu_word) if integrated else gpu_word)   # iGPU vs GPU
                 gpu = float(getattr(mw, "gpu_usage", 0.0) or 0.0)
                 gpu_series = [s.value for s in ws.get_gpu_history()] if ws is not None else []
                 gpu_tile.set(f"{gpu:.0f}%", gpu_series, vmax=100.0,
@@ -164,7 +176,6 @@ class OverviewTab(QWidget):
                                    sub_text=self._mem_sub(ru, rt))
 
             # --- VRAM: hidden when there's no dedicated-VRAM reading (integrated GPUs, etc).
-            vu, vt = getattr(mw, "vram_used", None), getattr(mw, "vram_total", None)
             vram_tile = self._tiles["vram"]
             if vu is None:
                 vram_tile.setVisible(False)
@@ -183,6 +194,16 @@ class OverviewTab(QWidget):
             self._usage.set(today, month, cap)
         except Exception as e:
             self.logger.debug("Overview tick skipped: %s", e)
+
+    def _goto_hardware(self) -> None:
+        """A hardware tile was clicked — drill into the Hardware tab for the full graph + per-process
+        breakdown (the Monitor's own "more details", better than punting to Task Manager)."""
+        win = self.window()
+        if win is not None and hasattr(win, "select_tab"):
+            try:
+                win.select_tab("hardware")
+            except Exception:
+                pass
 
     def _hw_sub(self, temp: Optional[float], power: Optional[float]) -> str:
         """CPU/GPU sub-line: temperature and (when collected) power, e.g. "62°C  ·  35 W"."""

@@ -16,9 +16,9 @@ from __future__ import annotations
 
 from typing import List, Optional, Tuple
 
-from PyQt6.QtCore import Qt, QPointF
+from PyQt6.QtCore import Qt, QPointF, QRectF, pyqtSignal
 from PyQt6.QtGui import (
-    QPainter, QColor, QPen, QPainterPath, QPolygonF, QLinearGradient,
+    QPainter, QColor, QPen, QPainterPath, QPolygonF, QLinearGradient, QFont,
 )
 from PyQt6.QtWidgets import (
     QWidget, QFrame, QVBoxLayout, QHBoxLayout, QLabel, QProgressBar, QSizePolicy,
@@ -41,6 +41,7 @@ class Sparkline(QWidget):
         self._series2: List[float] = []          # optional second trace (e.g. upload over download)
         self._color2: Optional[QColor] = None
         self._vmax: Optional[float] = None
+        self._scale_label: str = ""              # optional top-of-scale readout (e.g. "16.9 Mbps")
         self.setMinimumHeight(36)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
@@ -52,13 +53,15 @@ class Sparkline(QWidget):
         self.update()
 
     def set_dual(self, primary: List[float], secondary: List[float], color2: str,
-                 vmax: Optional[float] = None) -> None:
+                 vmax: Optional[float] = None, scale_label: str = "") -> None:
         """Two traces sharing one scale — the primary gets the fill + line, the secondary a thinner
-        line in ``color2``. Both auto-scale to their combined max unless ``vmax`` is fixed."""
+        line in ``color2``. Both auto-scale to their combined max unless ``vmax`` is fixed.
+        ``scale_label`` (e.g. "16.9 Mbps") is drawn at the top-of-scale so the trend has magnitude."""
         self._series = list(primary)[-_SPARK_POINTS:]
         self._series2 = list(secondary)[-_SPARK_POINTS:]
         self._color2 = QColor(color2)
         self._vmax = vmax
+        self._scale_label = scale_label
         self.update()
 
     def paintEvent(self, event) -> None:  # noqa: N802 (Qt override)
@@ -140,19 +143,39 @@ class Sparkline(QWidget):
                 pen2.setCapStyle(Qt.PenCapStyle.RoundCap)
                 p.setPen(pen2)
                 p.drawPolyline(QPolygonF(pts2))
+
+            # Scale readout: a faint top-of-scale rule + the max value at top-left, plus a "0" baseline
+            # — so the hero trend has magnitude at a glance instead of a scaleless squiggle.
+            if self._scale_label:
+                sc = su.semantic_colors()
+                gpen = QPen(QColor(sc["card_stroke"])); gpen.setWidthF(1.0)
+                p.setPen(gpen)
+                p.drawLine(QPointF(pad, pad + 0.5), QPointF(pad + gw, pad + 0.5))
+                f = QFont(); f.setPixelSize(9)
+                p.setFont(f)
+                p.setPen(QColor(sc["text_secondary"]))
+                p.drawText(QRectF(pad + 2, pad + 1.0, gw - 4, 12),
+                           int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop), self._scale_label)
+                p.drawText(QRectF(pad + 2, base_y - 13, gw - 4, 12),
+                           int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom), "0")
         finally:
             p.end()
 
 
 class StatTile(QFrame):
-    """A glanceable card: label, big current value, optional sub-line, and a sparkline."""
+    """A glanceable card: label, big current value, optional sub-line, and a sparkline. Clickable —
+    selecting it opens the matching detail (the Monitor routes the click to the Hardware tab)."""
+
+    clicked = pyqtSignal()   #: emitted on left-click (the Overview navigates to details)
 
     def __init__(self, label: str, accent: str, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         c = su.semantic_colors()
         self.setObjectName("statTile")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setStyleSheet(
-            f"#statTile {{ background: {c['subtle_fill']}; border-radius: {tokens.RADIUS_CARD}px; }}")
+            f"#statTile {{ background: {c['subtle_fill']}; border-radius: {tokens.RADIUS_CARD}px; }}"
+            f" #statTile:hover {{ background: {c['card_stroke']}; }}")
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(14, 12, 14, 12)
@@ -184,6 +207,14 @@ class StatTile(QFrame):
         self._sub.setText(sub_text)
         self._sub.setVisible(bool(sub_text))
         self._spark.set_series(series, vmax)
+
+    def set_label(self, text: str) -> None:
+        self._label.setText(text)
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
 
 
 class NetworkHero(QFrame):
@@ -246,10 +277,10 @@ class NetworkHero(QFrame):
         return val
 
     def set(self, down_text: str, up_text: str, down_series: List[float],
-            up_series: List[float], sub_text: str = "") -> None:
+            up_series: List[float], sub_text: str = "", scale_label: str = "") -> None:
         self._down_v.setText(down_text)
         self._up_v.setText(up_text)
-        self._spark.set_dual(down_series, up_series, self._up_color, vmax=None)
+        self._spark.set_dual(down_series, up_series, self._up_color, vmax=None, scale_label=scale_label)
         self._sub.setText(sub_text)
         self._sub.setVisible(bool(sub_text))
 
