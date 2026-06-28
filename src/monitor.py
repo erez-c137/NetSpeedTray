@@ -122,7 +122,18 @@ def main() -> int:
         logger.critical("Unhandled exception:", exc_info=(exc_type, exc_value, exc_tb))
     
     sys.excepthook = excepthook
-    
+
+    # Headless export path: `--export-csv --period 24h --out <dir>` writes the two-file stats export
+    # and exits, without ever creating the GUI QApplication (so it can run alongside the live app).
+    try:
+        from netspeedtray.utils.export_cli import run_export_cli
+        export_code = run_export_cli()
+        if export_code is not None:
+            return export_code
+    except Exception as e:
+        logger.error("Headless export errored: %s", e, exc_info=True)
+        return 1
+
     # The QApplication must be created before any UI elements.
     app = QApplication(sys.argv)
 

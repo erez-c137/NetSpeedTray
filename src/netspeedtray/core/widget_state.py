@@ -68,10 +68,14 @@ from netspeedtray.core.database import DatabaseWorker
 class WidgetState(QObject):
     """Manages all system statistics and bandwidth history for the Tray Widget."""
 
-    def __init__(self, config: Dict[str, Any]) -> None:
+    def __init__(self, config: Dict[str, Any], read_only: bool = False) -> None:
         super().__init__()
         self.logger = logger
         self.config = config.copy()
+        # read_only: a headless reader (the --export-csv CLI) that must NOT start a second write thread
+        # against the live app's DB, nor run maintenance/VACUUM. Reads go straight through
+        # _get_read_conn(); the worker is constructed but never started, so flush_and_wait short-circuits.
+        self._read_only = read_only
 
         # In-Memory Cache for real-time mini-graph
         self.max_history_points: int = self._get_max_history_points()
@@ -91,18 +95,19 @@ class WidgetState(QObject):
         self._db_path = Path(get_app_data_path()) / "speed_history.db"
         self.db_worker = DatabaseWorker(self._db_path)
         self.db_worker.error.connect(lambda msg: self.logger.error("DB Worker Error: %s", msg))
-        self.db_worker.start()
+        if not read_only:
+            self.db_worker.start()
 
-        # Timers for periodic operations
+        # Timers for periodic operations (constructed either way so cleanup() stays simple, but only
+        # started for a live instance — a read_only export never writes or runs maintenance).
         self.batch_persist_timer = QTimer(self)
         self.batch_persist_timer.timeout.connect(self.flush_batch)
-        self.batch_persist_timer.start(10 * 1000) # Persist every 10 seconds
-
         self.maintenance_timer = QTimer(self)
         self.maintenance_timer.timeout.connect(self.trigger_maintenance)
-        self.maintenance_timer.start(60 * 60 * 1000) # Run maintenance every hour
-        
-        self.trigger_maintenance()
+        if not read_only:
+            self.batch_persist_timer.start(10 * 1000) # Persist every 10 seconds
+            self.maintenance_timer.start(60 * 60 * 1000) # Run maintenance every hour
+            self.trigger_maintenance()
 
         self._read_conns: Dict[int, sqlite3.Connection] = {}
         self._read_conns_lock = threading.Lock()
