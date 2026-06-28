@@ -197,20 +197,54 @@ class Sparkline(QWidget):
             p.end()
 
 
-class StatTile(QFrame):
+class ClickableCard(QFrame):
+    """A focusable, keyboard-activatable card. Left-click, Enter, or Space emit ``clicked``, and an
+    accent focus ring (drawn via a ``:focus`` border the subclass reserves in its QSS) makes keyboard
+    focus visible — so the Overview's drill-in cards aren't mouse-only. Subclasses set their object
+    name, QSS (including the reserved transparent border + ``:focus`` rule via ``focus_qss``), and an
+    accessible name."""
+
+    clicked = pyqtSignal()   #: emitted on left-click / Enter / Space
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)   # reachable by Tab, not just the mouse
+
+    @staticmethod
+    def focus_qss(obj_name: str, c: dict) -> str:
+        """The reserved transparent border + accent ``:focus`` ring for ``#obj_name`` (no layout shift:
+        the border width is reserved at rest)."""
+        return (f" #{obj_name} {{ border: 2px solid transparent; }}"
+                f" #{obj_name}:focus {{ border: 2px solid {c['accent']}; }}")
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.setFocus(Qt.FocusReason.MouseFocusReason)
+            self.clicked.emit()
+        super().mousePressEvent(event)
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            self.clicked.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
+class StatTile(ClickableCard):
     """A glanceable card: label, big current value, optional sub-line, and a sparkline. Clickable —
     selecting it opens the matching detail (the Monitor routes the click to the Hardware tab)."""
-
-    clicked = pyqtSignal()   #: emitted on left-click (the Overview navigates to details)
 
     def __init__(self, label: str, accent: str, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         c = su.semantic_colors()
         self.setObjectName("statTile")
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setAccessibleName(label)
         self.setStyleSheet(
             f"#statTile {{ background: {c['subtle_fill']}; border-radius: {tokens.RADIUS_CARD}px; }}"
-            f" #statTile:hover {{ background: {c['card_stroke']}; }}")
+            f" #statTile:hover {{ background: {c['card_stroke']}; }}"
+            + self.focus_qss("statTile", c))
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(14, 12, 14, 12)
@@ -247,19 +281,13 @@ class StatTile(QFrame):
 
     def set_label(self, text: str) -> None:
         self._label.setText(text)
-
-    def mousePressEvent(self, event) -> None:  # noqa: N802 (Qt override)
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.clicked.emit()
-        super().mousePressEvent(event)
+        self.setAccessibleName(text)
 
 
-class NetworkHero(QFrame):
+class NetworkHero(ClickableCard):
     """The Overview's headline card: download AND upload as co-equal large readouts over a single
     dual-trace sparkline (download filled, upload a thinner line), plus a peak/session context line.
     Clickable — selecting it opens the network Stats-detail sheet (download/upload distributions)."""
-
-    clicked = pyqtSignal()   #: emitted on left-click (the Overview opens the network detail sheet)
 
     def __init__(self, i18n, down_color: str, up_color: str, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -268,10 +296,11 @@ class NetworkHero(QFrame):
         self._up_color = up_color
         c = su.semantic_colors()
         self.setObjectName("netHero")
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setAccessibleName(self._tr("MONITOR_TAB_NETWORK", "Network"))
         self.setStyleSheet(
             f"#netHero {{ background: {c['subtle_fill']}; border-radius: {tokens.RADIUS_CARD}px; }}"
-            f" #netHero:hover {{ background: {c['card_stroke']}; }}")
+            f" #netHero:hover {{ background: {c['card_stroke']}; }}"
+            + self.focus_qss("netHero", c))
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(18, 16, 18, 16)
@@ -341,11 +370,6 @@ class NetworkHero(QFrame):
         self._latency.setText(html)
         self._latency.setVisible(bool(html))
 
-    def mousePressEvent(self, event) -> None:  # noqa: N802 (Qt override)
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.clicked.emit()
-        super().mousePressEvent(event)
-
     def _tr(self, key: str, default: str) -> str:
         return str(getattr(self._i18n, key, default)) if self._i18n is not None else default
 
@@ -403,6 +427,10 @@ class UsageTile(QFrame):
         self._cap_hint.setFont(su.font(tokens.TYPE_CAPTION))
         self._cap_hint.setCursor(Qt.CursorShape.PointingHandCursor)
         self._cap_hint.setStyleSheet("background: transparent;")
+        # Reachable + activatable by keyboard (Tab to it, Enter to fire), not mouse-only.
+        self._cap_hint.setTextInteractionFlags(
+            Qt.TextInteractionFlag.LinksAccessibleByMouse | Qt.TextInteractionFlag.LinksAccessibleByKeyboard)
+        self._cap_hint.setAccessibleName(hint)
         self._cap_hint.linkActivated.connect(lambda _: self.set_cap_requested.emit())
         lay.addWidget(self._cap_hint)
         lay.addStretch(1)   # keep rows top-aligned; fill the rest of the (taller) card

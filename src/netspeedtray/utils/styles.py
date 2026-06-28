@@ -62,6 +62,23 @@ def semantic_colors() -> dict:
     }
 
 
+def prefers_reduced_motion() -> bool:
+    """True when the user has turned Windows animations OFF (Settings → Accessibility → Visual effects
+    → 'Animation effects', i.e. SPI_GETCLIENTAREAANIMATION = FALSE). Decorative slides/fades should
+    snap instead of animate when this is set. Defaults to False (animate) on any query failure."""
+    try:
+        import ctypes
+        SPI_GETCLIENTAREAANIMATION = 0x1042
+        enabled = ctypes.c_int(1)
+        ok = ctypes.windll.user32.SystemParametersInfoW(
+            SPI_GETCLIENTAREAANIMATION, 0, ctypes.byref(enabled), 0)
+        if ok:
+            return enabled.value == 0
+    except Exception:
+        pass
+    return False
+
+
 def is_dark_mode() -> bool:
     """Check if Windows is in dark mode."""
     try:

@@ -19,7 +19,7 @@ from PyQt6.QtCore import Qt, QSize, pyqtSignal, QPropertyAnimation, QEasingCurve
 from PyQt6.QtGui import QFont, QPaintEvent, QPainter, QColor
 from netspeedtray.utils.styles import (
     toggle_style, slider_style, font as token_font, semantic_colors, get_accent_color,
-    timeline_pills_style,
+    timeline_pills_style, prefers_reduced_motion,
 )
 from netspeedtray.constants.styles import styles as tokens
 from netspeedtray import constants
@@ -155,13 +155,15 @@ class Win11Toggle(QWidget):
 
     def _update_thumb_position(self, animate: bool = True) -> None:
         target_x = self._END_X_POS if self._is_checked else self._START_X_POS
-        target_y_pos = self._THUMB_TRAVEL_PADDING 
+        target_y_pos = self._THUMB_TRAVEL_PADDING
         end_pos = QPoint(target_x, target_y_pos)
         current_pos = self.thumb.pos()
 
         if current_pos == end_pos and not self.thumb_animation.state() == QPropertyAnimation.State.Running:
             return
-        self.thumb_animation.stop() 
+        self.thumb_animation.stop()
+        if animate and prefers_reduced_motion():
+            animate = False   # honour Windows "Animation effects" off — snap instead of slide
         if animate:
             self.thumb_animation.setStartValue(current_pos)
             self.thumb_animation.setEndValue(end_pos)

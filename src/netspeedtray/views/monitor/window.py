@@ -81,6 +81,7 @@ class MonitorWindow(QWidget):
         self._gear.setText(chr(0xE713))   # Segoe Fluent Icons "Settings" — monochrome, obeys QSS colour
         self._gear.setCursor(Qt.CursorShape.PointingHandCursor)
         self._gear.setToolTip(self._tr("MONITOR_SETTINGS_TIP", "Monitor display settings"))
+        self._gear.setAccessibleName(self._tr("MONITOR_SETTINGS_TIP", "Monitor display settings"))
         self._gear.setStyleSheet(
             f"QToolButton {{ background: transparent; color: {c['text_primary']};"
             f" font-family: 'Segoe Fluent Icons','Segoe MDL2 Assets'; font-size: 15px;"

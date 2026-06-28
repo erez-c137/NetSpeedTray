@@ -40,7 +40,10 @@ class FlatTabBar(QWidget):
             btn.setText(str(label))
             btn.setCheckable(True)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            # Reachable by Tab with a visible focus cue; activation stays manual (Space/Enter) so
+            # tabbing THROUGH the strip never builds a heavy lazy page — only deliberate activation does.
+            btn.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+            btn.setAccessibleName(str(label))
             btn.clicked.connect(lambda _checked=False, i=index: self.tab_selected.emit(i))
             self._group.addButton(btn)
             row.addWidget(btn)
@@ -66,6 +69,12 @@ class FlatTabBar(QWidget):
                 font-size: 14px;
             }}
             QToolButton:hover {{
+                color: {c['text_primary']};
+                background: {c['subtle_fill']};
+                border-top-left-radius: 4px;
+                border-top-right-radius: 4px;
+            }}
+            QToolButton:focus {{
                 color: {c['text_primary']};
                 background: {c['subtle_fill']};
                 border-top-left-radius: 4px;
