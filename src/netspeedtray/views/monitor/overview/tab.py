@@ -179,8 +179,10 @@ class OverviewTab(QWidget):
         root.addLayout(self._bottom_grid)
         root.addStretch(1)
 
-        # Seed the compact layout; the first resizeEvent switches to wide if there's room.
-        self._place_hw_tiles(2)
+        # Seed the compact layout (all tiles; _render narrows the set once it knows what has data).
+        self._visible_keys = list(self._tile_order)
+        self._tile_sig = None
+        self._set_visible_tiles(self._tile_order)
         self._place_bottom(stacked=True)
         self._scroll.setWidget(content)
 
@@ -194,12 +196,35 @@ class OverviewTab(QWidget):
         self._hist_timer.timeout.connect(self._reload_window)
 
     # --------------------------------------------------------------- responsive layout
-    def _place_hw_tiles(self, cols: int) -> None:
-        """Arrange the 4 hardware tiles in `cols` columns (4 = one row; 2 = a 2×2 block)."""
-        for i, key in enumerate(self._tile_order):
-            self._hw_grid.addWidget(self._tiles[key], i // cols, i % cols)
+    def _set_visible_tiles(self, visible_keys) -> None:
+        """Show exactly `visible_keys` (in order) and reflow them to FILL the row — so e.g. CPU/GPU/RAM
+        with no VRAM tile grow to thirds instead of leaving a hole where the 4th tile would be."""
+        for k in self._tile_order:
+            self._tiles[k].setVisible(k in visible_keys)
+        self._visible_keys = list(visible_keys)
+        sig = (tuple(visible_keys), self._narrow)
+        if sig != self._tile_sig:
+            self._tile_sig = sig
+            self._layout_tiles(visible_keys)
+
+    def _layout_tiles(self, visible_keys) -> None:
+        """Place the visible tiles in a grid: up to 4 columns when wide, 2 when narrow, but never more
+        than there are tiles — and the last tile spans any leftover columns so a row is always full."""
+        while self._hw_grid.count():
+            self._hw_grid.takeAt(0)          # detach (widgets stay parented); we re-add below
         for col in range(4):
-            self._hw_grid.setColumnStretch(col, 1 if col < cols else 0)
+            self._hw_grid.setColumnStretch(col, 0)
+        if not visible_keys:
+            return
+        max_cols = 2 if self._narrow else 4
+        cols = max(1, min(len(visible_keys), max_cols))
+        last = len(visible_keys) - 1
+        for i, key in enumerate(visible_keys):
+            r, c = divmod(i, cols)
+            span = (cols - c) if i == last else 1   # fill the rest of the final row
+            self._hw_grid.addWidget(self._tiles[key], r, c, 1, span)
+        for c in range(cols):
+            self._hw_grid.setColumnStretch(c, 1)
 
     def _place_bottom(self, stacked: bool) -> None:
         """Data-usage + Top-talkers cards side by side (wide) or stacked (narrow)."""
@@ -220,7 +245,7 @@ class OverviewTab(QWidget):
         narrow = self.width() < _NARROW_BP
         if narrow != self._narrow:
             self._narrow = narrow
-            self._place_hw_tiles(2 if narrow else 4)
+            self._set_visible_tiles(self._visible_keys)   # re-flow current tiles for the new width
             self._place_bottom(stacked=narrow)
 
     # --------------------------------------------------------------- timeline / window
@@ -372,35 +397,36 @@ class OverviewTab(QWidget):
                                    sub_text=self._hw_sub(getattr(mw, "cpu_temp", None),
                                                          getattr(mw, "cpu_power", None)))
 
-            gpu_tile = self._tiles["gpu"]
-            if not getattr(mw, "gpu_present", True):
-                gpu_tile.setVisible(False)
-            else:
-                gpu_tile.setVisible(True)
+            gpu_present = bool(getattr(mw, "gpu_present", True))
+            if gpu_present:
                 gpu_word = self._tr("ORDER_TYPE_GPU", "GPU")
-                gpu_tile.set_label(("i" + gpu_word) if integrated else gpu_word)
-                gpu_tile.set(f"{float(getattr(mw, 'gpu_usage', 0.0) or 0.0):.0f}%",
-                             ser.get("gpu", []), vmax=100.0,
-                             sub_text=self._hw_sub(getattr(mw, "gpu_temp", None),
-                                                   getattr(mw, "gpu_power", None)))
+                self._tiles["gpu"].set_label(("i" + gpu_word) if integrated else gpu_word)
+                self._tiles["gpu"].set(f"{float(getattr(mw, 'gpu_usage', 0.0) or 0.0):.0f}%",
+                                       ser.get("gpu", []), vmax=100.0,
+                                       sub_text=self._hw_sub(getattr(mw, "gpu_temp", None),
+                                                             getattr(mw, "gpu_power", None)))
 
             ru, rt = getattr(mw, "ram_used", None), getattr(mw, "ram_total", None)
             self._tiles["ram"].set(f"{self._pct(ru, rt):.0f}%", ser.get("ram", []), vmax=100.0,
                                    sub_text=self._mem_sub(ru, rt))
 
-            # VRAM is session-only for now (not persisted) — keeps its own rolling buffer. Hide it when
-            # there's no dedicated VRAM reading: None OR ~0 (an iGPU reports 0 dedicated VRAM, which
-            # should drop the tile rather than show a dead "0.0 GB").
-            vram_tile = self._tiles["vram"]
-            if vu is None or float(vu) < 0.05:
-                vram_tile.setVisible(False)
-            else:
-                vram_tile.setVisible(True)
+            # VRAM is session-only for now (not persisted) — keeps its own rolling buffer. There's no
+            # dedicated VRAM reading when it's None OR ~0 (an iGPU reports 0 dedicated VRAM).
+            vram_reading = vu is not None and float(vu) >= 0.05
+            if vram_reading:
                 vpct = self._pct(vu, vt)
                 self._vram_series.append(vpct)
-                vram_tile.set(f"{vpct:.0f}%" if vt else f"{float(vu):.1f} GB",
-                              list(self._vram_series) if vt else [float(vu)],
-                              vmax=100.0 if vt else None, sub_text=self._mem_sub(vu, vt))
+                self._tiles["vram"].set(f"{vpct:.0f}%" if vt else f"{float(vu):.1f} GB",
+                                        list(self._vram_series) if vt else [float(vu)],
+                                        vmax=100.0 if vt else None, sub_text=self._mem_sub(vu, vt))
+
+            # Show only the tiles that actually have data, reflowed to fill the width (no empty hole
+            # where a missing GPU/VRAM tile would sit). Order preserved: CPU · GPU · RAM · VRAM.
+            visible = [k for k in self._tile_order
+                       if k in ("cpu", "ram")
+                       or (k == "gpu" and gpu_present)
+                       or (k == "vram" and vram_reading)]
+            self._set_visible_tiles(visible)
 
             today, month = (mw._hover_usage_totals() if hasattr(mw, "_hover_usage_totals")
                             else ((0.0, 0.0), (0.0, 0.0)))

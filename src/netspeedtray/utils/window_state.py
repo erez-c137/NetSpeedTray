@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, Optional
 
-from PyQt6.QtCore import QEvent, QObject, QPoint, QTimer
+from PyQt6.QtCore import QEvent, QObject, QPoint, QTimer, Qt
 from PyQt6.QtWidgets import QApplication, QWidget
 
 logger = logging.getLogger(__name__)
@@ -109,6 +109,98 @@ def attach_position_memory(window: QWidget, main_widget: Optional[QWidget], key:
     Returns the filter (parented to ``window``); callers can ignore the return value.
     """
     return _PositionMemory(window, main_widget, key)
+
+
+def restore_window_geometry(window: QWidget, config: Dict[str, Any], key: str) -> bool:
+    """Like :func:`restore_window_position` but also restores SIZE and maximized/fullscreen state.
+    Reads ``config[key]`` as ``{x, y, w, h, maximized}`` (a superset of the position-only shape, so it
+    transparently upgrades an older position-only save). Applies size first, clamps the position onto a
+    live screen, then re-maximizes if that's how the window was left. Returns ``True`` if applied."""
+    try:
+        saved = config.get(key)
+        if not isinstance(saved, dict):
+            return False
+        x, y = saved.get("x"), saved.get("y")
+        if x is None or y is None:
+            return False
+        x, y = int(x), int(y)
+        w, h = saved.get("w"), saved.get("h")
+        if w and h:
+            window.resize(int(w), int(h))   # min size (setMinimumSize) still wins, so this stays safe
+        screen = QApplication.screenAt(QPoint(x, y)) or window.screen() or QApplication.primaryScreen()
+        if screen is not None:
+            avail = screen.availableGeometry()
+            x = max(avail.left(), min(x, avail.right() - window.width()))
+            y = max(avail.top(), min(y, avail.bottom() - window.height()))
+        window.move(x, y)
+        if saved.get("maximized"):
+            # Setting the state before show() makes the window open maximized; un-maximizing then
+            # returns to the (x, y, w, h) normal geometry restored above. A freshly-built window is in
+            # the Normal state, so setting Maximized directly is enough (no need to OR prior flags).
+            window.setWindowState(Qt.WindowState.WindowMaximized)
+        return True
+    except Exception as e:
+        logger.debug("restore_window_geometry(%s) failed: %s", key, e)
+        return False
+
+
+def save_window_geometry(window: QWidget, main_widget: Optional[QWidget], key: str) -> None:
+    """Persist ``window``'s position + size + maximized state to ``config[key]``. While maximized we
+    store the NORMAL (un-maximized) geometry so un-maximizing restores the right size, plus the
+    maximized flag so the next open re-maximizes. No-op on any failure (safe from closeEvent)."""
+    try:
+        if main_widget is None:
+            return
+        cfg = getattr(main_widget, "config", None)
+        mgr = getattr(main_widget, "config_manager", None)
+        if cfg is None or mgr is None:
+            return
+        maximized = bool(window.isMaximized() or window.isFullScreen())
+        g = window.normalGeometry() if maximized else window.geometry()
+        cfg[key] = {"x": g.x(), "y": g.y(), "w": g.width(), "h": g.height(), "maximized": maximized}
+        mgr.save(cfg)
+    except Exception as e:
+        logger.debug("save_window_geometry(%s) failed: %s", key, e)
+
+
+class _GeometryMemory(QObject):
+    """Like :class:`_PositionMemory` but debounce-saves full geometry (pos + size + maximized) on
+    move, resize, AND maximize/restore. Parented to the window; armed shortly after show so the WM's
+    initial frame adjustment isn't mistaken for the user's choice."""
+
+    def __init__(self, window: QWidget, main_widget: Optional[QWidget], key: str) -> None:
+        super().__init__(window)
+        self._window = window
+        self._main_widget = main_widget
+        self._key = key
+        self._armed = False
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.setInterval(_MOVE_SAVE_DEBOUNCE_MS)
+        self._timer.timeout.connect(self._flush)
+        window.installEventFilter(self)
+
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:
+        et = event.type()
+        if et == QEvent.Type.Show:
+            self._armed = False
+            QTimer.singleShot(_MOVE_SAVE_ARM_MS, self._arm)
+        elif (et in (QEvent.Type.Move, QEvent.Type.Resize, QEvent.Type.WindowStateChange)
+              and self._armed and self._window.isVisible()):
+            self._timer.start()
+        return False
+
+    def _arm(self) -> None:
+        self._armed = True
+
+    def _flush(self) -> None:
+        save_window_geometry(self._window, self._main_widget, self._key)
+
+
+def attach_geometry_memory(window: QWidget, main_widget: Optional[QWidget], key: str) -> _GeometryMemory:
+    """Auto-save ``window``'s geometry (pos + size + maximized) whenever the user moves, resizes, or
+    maximizes it (debounced). Pair with :func:`restore_window_geometry` on open for full memory."""
+    return _GeometryMemory(window, main_widget, key)
 
 
 def save_window_position(window: QWidget, main_widget: Optional[QWidget], key: str) -> None:

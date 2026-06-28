@@ -23,7 +23,7 @@ from netspeedtray.utils import styles as su
 from netspeedtray.constants.styles import styles as tokens
 from netspeedtray.utils.dwm import apply_win11_chrome
 from netspeedtray.utils.window_state import (
-    restore_window_position, attach_position_memory, save_window_position,
+    restore_window_geometry, attach_geometry_memory, save_window_geometry,
 )
 from netspeedtray.views.monitor.tab_bar import FlatTabBar
 from netspeedtray.views.monitor.lazy import LazyTabDescriptor
@@ -94,13 +94,18 @@ class MonitorWindow(QWidget):
         for d in self._descriptors:
             self._tab_bar.set_tab_visible(d.tab_id, d.is_visible(self.config))
 
-        # Remembered geometry (multi-monitor safe) + auto-save on move.
-        attach_position_memory(self, self._main_widget, _POS_KEY)
-        if not restore_window_position(self, self.config, _POS_KEY):
+        # Remembered geometry — position + SIZE + maximized state — multi-monitor safe, auto-saved on
+        # move/resize/maximize.
+        attach_geometry_memory(self, self._main_widget, _POS_KEY)
+        if not restore_window_geometry(self, self.config, _POS_KEY):
             self._center_on_primary()
 
-        # Open on the first visible tab (builds its page).
-        first = next((i for i, d in enumerate(self._descriptors) if d.is_visible(self.config)), 0)
+        # Open on the LAST tab the user left (if it's still visible), else the first visible one.
+        saved_tab = self.config.get("monitor_active_tab")
+        first = next((i for i, d in enumerate(self._descriptors)
+                      if d.tab_id == saved_tab and d.is_visible(self.config)), None)
+        if first is None:
+            first = next((i for i, d in enumerate(self._descriptors) if d.is_visible(self.config)), 0)
         self._tab_bar.setCurrentIndex(first)
 
     # ----------------------------------------------------------------- tabs
@@ -146,6 +151,14 @@ class MonitorWindow(QWidget):
         self._gear.setVisible(d.tab_id == "hardware")
         if d.tab_id != "hardware" and self._settings_flyout is not None:
             self._settings_flyout.hide()
+        # Remember the active tab so the Monitor reopens where the user left it.
+        try:
+            mgr = getattr(self._main_widget, "config_manager", None)
+            if mgr is not None and self.config.get("monitor_active_tab") != d.tab_id:
+                self.config["monitor_active_tab"] = d.tab_id
+                mgr.save(self.config)
+        except Exception:
+            pass
 
     # --- tab factories (real pages, built lazily on first activation) ---
 
@@ -265,7 +278,7 @@ class MonitorWindow(QWidget):
         self._set_force_hardware(False)
         self.window_closed.emit()  # let the owner drop its ref before WA_DeleteOnClose destroys us
         try:
-            save_window_position(self, self._main_widget, _POS_KEY)
+            save_window_geometry(self, self._main_widget, _POS_KEY)
         except Exception:
             pass
         for d in self._descriptors:

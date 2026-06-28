@@ -191,19 +191,35 @@ def test_responsive_reflow_grid_positions(q_app):
     (2×2 / stacked) arrangement — never overlapping, so a narrow window stays usable."""
     ov = OverviewTab(_MW(), _cfg(), I18nStrings("en_US"))
     # Compact: 2 columns -> RAM drops to the second row; bottom cards stack.
-    ov._place_hw_tiles(2)
+    ov._narrow = True
+    ov._set_visible_tiles(["cpu", "gpu", "ram", "vram"])
     ov._place_bottom(stacked=True)
     r, c, _, _ = ov._hw_grid.getItemPosition(ov._hw_grid.indexOf(ov._tiles["ram"]))
     assert (r, c) == (1, 0)
     bb = ov._bottom_grid.getItemPosition(ov._bottom_grid.indexOf(ov._busiest))
     assert (bb[0], bb[1]) == (1, 0)        # busiest stacked under usage
     # Wide: one row of 4; bottom side by side.
-    ov._place_hw_tiles(4)
+    ov._narrow = False
+    ov._set_visible_tiles(["cpu", "gpu", "ram", "vram"])
     ov._place_bottom(stacked=False)
     r, c, _, _ = ov._hw_grid.getItemPosition(ov._hw_grid.indexOf(ov._tiles["vram"]))
     assert (r, c) == (0, 3)
     bb = ov._bottom_grid.getItemPosition(ov._bottom_grid.indexOf(ov._busiest))
     assert (bb[0], bb[1]) == (0, 1)        # busiest beside usage
+    ov.teardown()
+
+
+def test_three_tiles_fill_the_width(q_app):
+    """With only 3 tiles (no dedicated VRAM on an iGPU) they reflow to 3 columns and FILL the width —
+    no empty hole where the 4th tile would be (regression for the owner's iGPU screenshot)."""
+    ov = OverviewTab(_MW(), _cfg(), I18nStrings("en_US"))
+    ov._narrow = False
+    ov._set_visible_tiles(["cpu", "gpu", "ram"])
+    # Exactly 3 stretched columns; the 4th has no stretch (no reserved hole).
+    assert [ov._hw_grid.columnStretch(i) for i in range(4)] == [1, 1, 1, 0]
+    r, c, _, _ = ov._hw_grid.getItemPosition(ov._hw_grid.indexOf(ov._tiles["ram"]))
+    assert (r, c) == (0, 2)                # RAM is the third (last) column, no gap after it
+    assert not ov._tiles["vram"].isVisibleTo(ov)   # the absent tile isn't placed or shown
     ov.teardown()
 
 

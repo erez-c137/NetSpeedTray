@@ -8,7 +8,10 @@ off-screen position back onto the available geometry, and save persists
 """
 from unittest.mock import MagicMock, patch
 
-from netspeedtray.utils.window_state import restore_window_position, save_window_position
+from netspeedtray.utils.window_state import (
+    restore_window_position, save_window_position,
+    restore_window_geometry, save_window_geometry,
+)
 
 # Where QApplication is imported in the module under test (for patching screenAt).
 _SCREEN_AT = "netspeedtray.utils.window_state.QApplication.screenAt"
@@ -104,6 +107,49 @@ def test_save_skipped_when_config_missing():
 def test_save_is_noop_when_main_widget_none():
     window = MagicMock()
     save_window_position(window, None, "k")  # must not raise
+
+
+# --- geometry (position + size + maximized) ---------------------------------
+
+def test_restore_geometry_applies_size_then_clamps_position():
+    window = _mock_window(width=400, height=300)
+    with patch(_SCREEN_AT, return_value=None):
+        ok = restore_window_geometry(window, {"k": {"x": 100, "y": 200, "w": 940, "h": 680}}, "k")
+    assert ok is True
+    window.resize.assert_called_once_with(940, 680)
+    window.move.assert_called_once_with(100, 200)
+
+
+def test_restore_geometry_remaximizes_when_flagged():
+    window = _mock_window()
+    window.windowState.return_value = 0
+    with patch(_SCREEN_AT, return_value=None):
+        restore_window_geometry(window, {"k": {"x": 10, "y": 10, "w": 800, "h": 600, "maximized": True}}, "k")
+    window.setWindowState.assert_called_once()        # re-maximized on open
+
+
+def test_restore_geometry_upgrades_old_position_only_save():
+    # A pre-existing position-only save {x,y} must still restore (no size to apply).
+    window = _mock_window()
+    with patch(_SCREEN_AT, return_value=None):
+        assert restore_window_geometry(window, {"k": {"x": 50, "y": 60}}, "k") is True
+    window.resize.assert_not_called()
+    window.move.assert_called_once_with(50, 60)
+
+
+def test_save_geometry_stores_normal_geometry_when_maximized():
+    window = MagicMock()
+    window.isMaximized.return_value = True
+    window.isFullScreen.return_value = False
+    normal = MagicMock()
+    normal.x.return_value = 30; normal.y.return_value = 40
+    normal.width.return_value = 900; normal.height.return_value = 650
+    window.normalGeometry.return_value = normal
+    main = MagicMock(); main.config = {}
+    save_window_geometry(window, main, "monitor_window_pos")
+    assert main.config["monitor_window_pos"] == {"x": 30, "y": 40, "w": 900, "h": 650, "maximized": True}
+    window.geometry.assert_not_called()               # used normalGeometry, not the maximized size
+    main.config_manager.save.assert_called_once()
 
 
 # --- attach_position_memory (the debounced move-saver, end-to-end) ------------

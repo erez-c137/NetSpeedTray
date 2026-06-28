@@ -153,6 +153,7 @@ class ConfigConstants:
         "settings_window_pos": None,
         "app_activity_window_pos": None,
         "monitor_window_pos": None,
+        "monitor_active_tab": None,    # last Monitor tab the user left (overview/network/hardware)
         # Monitor Hardware graph (6.x). Colors None == vendor-auto (AMD red / Intel blue / Nvidia green).
         "monitor_hw_graph_mode": "combined",   # combined | separate | toggle
         "monitor_cpu_graph_color": None,
@@ -277,6 +278,7 @@ class ConfigConstants:
         "settings_window_pos": {"type": (dict, type(None)), "default": None},
         "app_activity_window_pos": {"type": (dict, type(None)), "default": None},
         "monitor_window_pos": {"type": (dict, type(None)), "default": None},
+        "monitor_active_tab": {"type": (str, type(None)), "default": None},
         "monitor_hw_graph_mode": {"type": str, "default": "combined", "choices": ["combined", "separate", "toggle"]},
         "monitor_cpu_graph_color": {"type": (str, type(None)), "default": None},
         "monitor_gpu_graph_color": {"type": (str, type(None)), "default": None},
