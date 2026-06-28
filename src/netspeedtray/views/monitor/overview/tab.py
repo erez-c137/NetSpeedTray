@@ -79,14 +79,10 @@ class OverviewTab(QWidget):
         root.setContentsMargins(16, 16, 16, 16)
         root.setSpacing(12)
 
-        # --- Header: period caption (left) + the timeline dropdown (right) ---
+        # --- Header: the timeline dropdown (right) — the period it shows is the only label needed ---
         c = su.semantic_colors()
         head = QHBoxLayout()
         head.setContentsMargins(2, 0, 2, 0)
-        self._caption = QLabel("")
-        self._caption.setFont(su.font(tokens.TYPE_CAPTION))
-        self._caption.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
-        head.addWidget(self._caption, 0, Qt.AlignmentFlag.AlignVCenter)
         head.addStretch(1)
         self._timeline = TimelineSelector(i18n, current_index=self._period_index)
         self._timeline.period_changed.connect(self._on_period_changed)
@@ -139,12 +135,10 @@ class OverviewTab(QWidget):
         self._hist_timer = QTimer(self)
         self._hist_timer.setInterval(_HISTORY_MS)
         self._hist_timer.timeout.connect(self._reload_window)
-        self._update_caption()
 
     # --------------------------------------------------------------- timeline / window
     def _on_period_changed(self, index: int) -> None:
         self._period_index = int(index)
-        self._update_caption()
         # Persist the choice (shared with the graph's slider) without a repaint storm.
         try:
             self._main_widget.config_controller.update_config(
@@ -155,9 +149,6 @@ class OverviewTab(QWidget):
 
     def _period_key(self) -> str:
         return constants.data.history_period.PERIOD_MAP.get(self._period_index, "TIMELINE_24_HOURS")
-
-    def _update_caption(self) -> None:
-        self._caption.setText(self._tr(self._period_key(), ""))
 
     def _window(self):
         """(start, end, is_session) for the active period."""
@@ -296,9 +287,11 @@ class OverviewTab(QWidget):
             self._tiles["ram"].set(f"{self._pct(ru, rt):.0f}%", ser.get("ram", []), vmax=100.0,
                                    sub_text=self._mem_sub(ru, rt))
 
-            # VRAM is session-only for now (not persisted) — keeps its own rolling buffer.
+            # VRAM is session-only for now (not persisted) — keeps its own rolling buffer. Hide it when
+            # there's no dedicated VRAM reading: None OR ~0 (an iGPU reports 0 dedicated VRAM, which
+            # should drop the tile rather than show a dead "0.0 GB").
             vram_tile = self._tiles["vram"]
-            if vu is None:
+            if vu is None or float(vu) < 0.05:
                 vram_tile.setVisible(False)
             else:
                 vram_tile.setVisible(True)

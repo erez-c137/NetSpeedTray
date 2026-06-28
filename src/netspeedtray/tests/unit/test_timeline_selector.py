@@ -42,10 +42,15 @@ def test_timeline_selector_emits_period_index(q_app):
     from netspeedtray.views.monitor.timeline_selector import TimelineSelector
     sel = TimelineSelector(I18nStrings("en_US"), current_index=2)
     assert sel.current_index() == 2                       # 24h default
-    assert sel._combo.count() == 12                        # all periods (incl. session + boot)
+    assert len(sel._actions) == 12                         # all periods (incl. session + boot)
+    assert sel._CHEVRON in sel._btn.text()                 # reads as a pulldown
     seen = []
     sel.period_changed.connect(seen.append)
     sel.set_period_index(6, emit=False)                    # 30m, silent
     assert sel.current_index() == 6 and seen == []
     sel.set_period_index(11, emit=True)                    # 48h, emits
     assert seen == [11]
+    sel._select(3)                                         # choosing from the menu emits (and de-dups)
+    assert seen == [11, 3] and sel.current_index() == 3
+    sel._select(3)                                         # same value -> no duplicate emit
+    assert seen == [11, 3]
