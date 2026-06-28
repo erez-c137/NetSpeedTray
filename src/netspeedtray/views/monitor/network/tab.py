@@ -41,7 +41,7 @@ class NetworkTab(QWidget):
         # Header band — period totals + the timeline control that drives the shared graph.
         initial_key = constants.data.history_period.PERIOD_MAP.get(
             int(config.get("history_period_slider_value", 2)), "TIMELINE_24_HOURS")
-        self._header = NetworkHeader(i18n, initial_key)
+        self._header = NetworkHeader(i18n, initial_key, graph_host=self._host)
         self._header.period_changed.connect(self._host.set_period)
         self._header.interface_changed.connect(self._host.set_interface_filter)
         self._host.network_totals_ready.connect(self._on_totals)

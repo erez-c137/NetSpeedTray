@@ -76,6 +76,10 @@ class GraphHost(QObject):
     #: down_bytes, period_key). The Network header band subscribes to show period totals.
     network_totals_ready = pyqtSignal(float, float, str)
 
+    #: live updates were turned on/off. Both tab headers' Live/Pause pills bind to this so the shared
+    #: engine's one canonical state stays in sync no matter which tab toggled it.
+    live_changed = pyqtSignal(bool)
+
     def __init__(self, main_widget, config: Dict[str, Any], i18n,
                  session_start_time: Optional[datetime] = None, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
@@ -179,7 +183,7 @@ class GraphHost(QObject):
     def start_realtime(self) -> None:
         self.ensure_loaded()
         try:
-            self.coordinator.start_realtime()
+            self.coordinator.start_realtime()   # itself a no-op while _is_live_update_enabled is False
         except Exception as e:
             self.logger.debug("start_realtime failed: %s", e)
 
@@ -189,6 +193,32 @@ class GraphHost(QObject):
                 self.coordinator.stop_realtime()
         except Exception:
             pass
+
+    # ------------------------------------------------------------------ live/pause
+    @property
+    def is_live(self) -> bool:
+        """Whether the graph auto-refreshes as new samples land (the canonical, tab-shared state)."""
+        return bool(self._is_live_update_enabled)
+
+    def set_live(self, enabled: bool) -> None:
+        """Freeze (False) or resume (True) realtime updates. Persists the choice, starts/stops the
+        coordinator's timer accordingly, and — on resume — refreshes once so the frozen view catches
+        up immediately. No-op (and silent) if already in the requested state. Emits ``live_changed``
+        so every Live/Pause pill across the tabs reflects the new state."""
+        enabled = bool(enabled)
+        if enabled == self._is_live_update_enabled or self._is_closing:
+            return
+        self._is_live_update_enabled = enabled
+        try:
+            self.config_handler.queue_config_update({"live_update": enabled})
+        except Exception:
+            pass
+        if enabled:
+            self.start_realtime()
+            self.update_graph(show_loading=False)   # jump to "now" instead of waiting a tick
+        else:
+            self.stop_realtime()
+        self.live_changed.emit(enabled)
 
     def set_period(self, period_value: int) -> None:
         """Change the timeline window (driven by the Network header's period control). Routes

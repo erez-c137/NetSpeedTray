@@ -75,6 +75,10 @@ class HardwareTab(QWidget):
         self._cpu_gpu.valueChanged.connect(self._on_cpu_gpu_toggle)
         self._cpu_gpu.setVisible(False)
         top.addWidget(self._cpu_gpu, 0, Qt.AlignmentFlag.AlignVCenter)
+        # Live/Pause pill (shared state with the Network tab via the host) — freeze to read a point.
+        from netspeedtray.views.monitor.live_toggle import LiveToggle
+        self._live = LiveToggle(self._host, i18n)
+        top.addWidget(self._live, 0, Qt.AlignmentFlag.AlignVCenter)
         # The SAME timeline dropdown the Overview + Network use (one consistent window control; the
         # dropdown self-labels the period, so no separate caption is needed).
         self._timeline = TimelineSelector(self._i18n, current_index=_period_value(self._period_key))

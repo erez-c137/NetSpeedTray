@@ -89,7 +89,8 @@ class NetworkHeader(QWidget):
     period_changed = pyqtSignal(int)     #: re-emits the pills' PERIOD_MAP index
     interface_changed = pyqtSignal(str)  #: NIC name, or "all"
 
-    def __init__(self, i18n, initial_key: str = _DEFAULT_KEY, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, i18n, initial_key: str = _DEFAULT_KEY, parent: Optional[QWidget] = None,
+                 graph_host=None) -> None:
         super().__init__(parent)
         self._i18n = i18n
         c = su.semantic_colors()
@@ -124,6 +125,13 @@ class NetworkHeader(QWidget):
             f" selection-background-color: {c['accent']}; selection-color: white; outline: none; }}")
         self._iface.currentIndexChanged.connect(self._on_iface_changed)
         root.addWidget(self._iface, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        # Live/Pause pill — freezes the shared graph so a moment can be read without it sliding away.
+        # Bound to the host's canonical state, so the Hardware tab's pill mirrors it (and vice-versa).
+        if graph_host is not None:
+            from netspeedtray.views.monitor.live_toggle import LiveToggle
+            self._live = LiveToggle(graph_host, i18n)
+            root.addWidget(self._live, 0, Qt.AlignmentFlag.AlignVCenter)
 
         self._timeline = TimelineSelector(i18n, current_index=_period_value(initial_key))
         self._timeline.period_changed.connect(self.period_changed)
