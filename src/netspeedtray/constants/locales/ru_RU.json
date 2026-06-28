@@ -124,7 +124,7 @@
     "SHOW_LOADING_LABEL": "Показать статус",
     "GRAPH_CPU_UTIL_AXIS_LABEL": "Загрузка ЦП (%)",
     "GRAPH_GPU_UTIL_AXIS_LABEL": "Загрузка ГП (%)",
-    "GRAPH_HW_UTIL_AXIS_LABEL": "Utilization (%)",
+    "GRAPH_HW_UTIL_AXIS_LABEL": "Загрузка (%)",
     "GRAPH_STATUS_LIVE": "В РЕАЛЬНОМ",
     "GRAPH_STATUS_LOAD": "ЗАГРУЗКА",
     "GRAPH_STATUS_NO_DATA": "НЕТ ДАННЫХ",
@@ -449,8 +449,8 @@
     "SHOW_MONITOR_MENU_ITEM": "Показать монитор",
     "MONITOR_TILE_RAM": "RAM",
     "MONITOR_TILE_VRAM": "VRAM",
-    "MEMORY_HEADER": "Memory",
-    "HARDWARE_SUMMARY_TEMPLATE": "{procs} processes · CPU {cpu:.0f}% · RAM {ram:.1f} {ram_unit} · Updated {updated_at}",
-    "HARDWARE_LOADING_MESSAGE": "Reading processes…",
-    "HARDWARE_NO_DATA_MESSAGE": "No process data."
+    "MEMORY_HEADER": "Память",
+    "HARDWARE_SUMMARY_TEMPLATE": "{procs} процессов · ЦП {cpu:.0f}% · RAM {ram:.1f} {ram_unit} · Обновлено {updated_at}",
+    "HARDWARE_LOADING_MESSAGE": "Чтение процессов…",
+    "HARDWARE_NO_DATA_MESSAGE": "Нет данных о процессах."
 }

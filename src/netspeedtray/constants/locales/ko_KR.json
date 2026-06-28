@@ -124,7 +124,7 @@
     "SHOW_LOADING_LABEL": "상태 표시",
     "GRAPH_CPU_UTIL_AXIS_LABEL": "CPU 사용률 (%)",
     "GRAPH_GPU_UTIL_AXIS_LABEL": "GPU 사용률 (%)",
-    "GRAPH_HW_UTIL_AXIS_LABEL": "Utilization (%)",
+    "GRAPH_HW_UTIL_AXIS_LABEL": "사용률 (%)",
     "GRAPH_STATUS_LIVE": "실시간",
     "GRAPH_STATUS_LOAD": "로딩",
     "GRAPH_STATUS_NO_DATA": "데이터 없음",
@@ -449,8 +449,8 @@
     "SHOW_MONITOR_MENU_ITEM": "모니터 표시",
     "MONITOR_TILE_RAM": "RAM",
     "MONITOR_TILE_VRAM": "VRAM",
-    "MEMORY_HEADER": "Memory",
-    "HARDWARE_SUMMARY_TEMPLATE": "{procs} processes · CPU {cpu:.0f}% · RAM {ram:.1f} {ram_unit} · Updated {updated_at}",
-    "HARDWARE_LOADING_MESSAGE": "Reading processes…",
-    "HARDWARE_NO_DATA_MESSAGE": "No process data."
+    "MEMORY_HEADER": "메모리",
+    "HARDWARE_SUMMARY_TEMPLATE": "{procs}개 프로세스 · CPU {cpu:.0f}% · RAM {ram:.1f} {ram_unit} · 업데이트 {updated_at}",
+    "HARDWARE_LOADING_MESSAGE": "프로세스 읽는 중…",
+    "HARDWARE_NO_DATA_MESSAGE": "프로세스 데이터가 없습니다."
 }

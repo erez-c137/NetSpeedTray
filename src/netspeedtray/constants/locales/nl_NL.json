@@ -124,7 +124,7 @@
     "SHOW_LOADING_LABEL": "Status tonen",
     "GRAPH_CPU_UTIL_AXIS_LABEL": "CPU-gebruik (%)",
     "GRAPH_GPU_UTIL_AXIS_LABEL": "GPU-gebruik (%)",
-    "GRAPH_HW_UTIL_AXIS_LABEL": "Utilization (%)",
+    "GRAPH_HW_UTIL_AXIS_LABEL": "Gebruik (%)",
     "GRAPH_STATUS_LIVE": "LIVE",
     "GRAPH_STATUS_LOAD": "LADEN",
     "GRAPH_STATUS_NO_DATA": "GEEN GEGEVENS",
@@ -449,8 +449,8 @@
     "SHOW_MONITOR_MENU_ITEM": "Monitor tonen",
     "MONITOR_TILE_RAM": "RAM",
     "MONITOR_TILE_VRAM": "VRAM",
-    "MEMORY_HEADER": "Memory",
-    "HARDWARE_SUMMARY_TEMPLATE": "{procs} processes · CPU {cpu:.0f}% · RAM {ram:.1f} {ram_unit} · Updated {updated_at}",
-    "HARDWARE_LOADING_MESSAGE": "Reading processes…",
-    "HARDWARE_NO_DATA_MESSAGE": "No process data."
+    "MEMORY_HEADER": "Geheugen",
+    "HARDWARE_SUMMARY_TEMPLATE": "{procs} processen · CPU {cpu:.0f}% · RAM {ram:.1f} {ram_unit} · Bijgewerkt {updated_at}",
+    "HARDWARE_LOADING_MESSAGE": "Processen lezen…",
+    "HARDWARE_NO_DATA_MESSAGE": "Geen procesgegevens."
 }

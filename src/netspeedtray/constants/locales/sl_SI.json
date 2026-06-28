@@ -124,7 +124,7 @@
     "SHOW_LOADING_LABEL": "Pokaži status",
     "GRAPH_CPU_UTIL_AXIS_LABEL": "Uporaba CPU (%)",
     "GRAPH_GPU_UTIL_AXIS_LABEL": "Uporaba GPE (%)",
-    "GRAPH_HW_UTIL_AXIS_LABEL": "Utilization (%)",
+    "GRAPH_HW_UTIL_AXIS_LABEL": "Uporaba (%)",
     "GRAPH_STATUS_LIVE": "V ŽIVO",
     "GRAPH_STATUS_LOAD": "NAGANJA",
     "GRAPH_STATUS_NO_DATA": "NI PODATKOV",
@@ -449,8 +449,8 @@
     "SHOW_MONITOR_MENU_ITEM": "Pokaži Monitor",
     "MONITOR_TILE_RAM": "RAM",
     "MONITOR_TILE_VRAM": "VRAM",
-    "MEMORY_HEADER": "Memory",
-    "HARDWARE_SUMMARY_TEMPLATE": "{procs} processes · CPU {cpu:.0f}% · RAM {ram:.1f} {ram_unit} · Updated {updated_at}",
-    "HARDWARE_LOADING_MESSAGE": "Reading processes…",
-    "HARDWARE_NO_DATA_MESSAGE": "No process data."
+    "MEMORY_HEADER": "Pomnilnik",
+    "HARDWARE_SUMMARY_TEMPLATE": "{procs} procesov · CPU {cpu:.0f}% · RAM {ram:.1f} {ram_unit} · Posodobljeno {updated_at}",
+    "HARDWARE_LOADING_MESSAGE": "Branje procesov…",
+    "HARDWARE_NO_DATA_MESSAGE": "Ni podatkov o procesih."
 }

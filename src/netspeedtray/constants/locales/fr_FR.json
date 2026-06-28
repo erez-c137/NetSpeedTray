@@ -124,7 +124,7 @@
     "SHOW_LOADING_LABEL": "Afficher l'état",
     "GRAPH_CPU_UTIL_AXIS_LABEL": "Utilisation CPU (%)",
     "GRAPH_GPU_UTIL_AXIS_LABEL": "Utilisation GPU (%)",
-    "GRAPH_HW_UTIL_AXIS_LABEL": "Utilization (%)",
+    "GRAPH_HW_UTIL_AXIS_LABEL": "Utilisation (%)",
     "GRAPH_STATUS_LIVE": "EN DIRECT",
     "GRAPH_STATUS_LOAD": "CHARGE",
     "GRAPH_STATUS_NO_DATA": "AUCUNE DONNÉE",
@@ -449,8 +449,8 @@
     "SHOW_MONITOR_MENU_ITEM": "Afficher le moniteur",
     "MONITOR_TILE_RAM": "RAM",
     "MONITOR_TILE_VRAM": "VRAM",
-    "MEMORY_HEADER": "Memory",
-    "HARDWARE_SUMMARY_TEMPLATE": "{procs} processes · CPU {cpu:.0f}% · RAM {ram:.1f} {ram_unit} · Updated {updated_at}",
-    "HARDWARE_LOADING_MESSAGE": "Reading processes…",
-    "HARDWARE_NO_DATA_MESSAGE": "No process data."
+    "MEMORY_HEADER": "Mémoire",
+    "HARDWARE_SUMMARY_TEMPLATE": "{procs} processus · CPU {cpu:.0f}% · RAM {ram:.1f} {ram_unit} · Mis à jour {updated_at}",
+    "HARDWARE_LOADING_MESSAGE": "Lecture des processus…",
+    "HARDWARE_NO_DATA_MESSAGE": "Aucune donnée de processus."
 }
