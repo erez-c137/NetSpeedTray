@@ -108,6 +108,7 @@ class GraphHost(QObject):
         self.renderer = None
         self.worker = None
         self.coordinator = None
+        self._hover = None
         self._thread: Optional[QThread] = None
         self._canvas_container: Optional[QWidget] = None
 
@@ -139,6 +140,14 @@ class GraphHost(QObject):
 
         # Coordinator drives THIS object as its host (unchanged coordinator.py).
         self.coordinator = GraphCoordinator(self)
+
+        # Lightweight, stat-agnostic hover readout (the one real thing the old graph window had that the
+        # Monitor lacked). Reads the live plotted lines, so it works for both the network and hardware
+        # graphs and survives a re-render without managing any matplotlib artists.
+        from netspeedtray.views.monitor.graph_hover import GraphHoverTooltip
+        self._hover = GraphHoverTooltip(self)
+        self._hover.attach()
+
         self._loaded = True
 
     # ------------------------------------------------------------------ canvas hosting
@@ -311,6 +320,12 @@ class GraphHost(QObject):
         baseline.) Idempotent: safe if called more than once or before ensure_loaded()."""
         self._is_closing = True
         self.stop_realtime()
+
+        try:
+            if getattr(self, "_hover", None) is not None:
+                self._hover.detach()
+        except Exception:
+            pass
 
         # Stop the coordinator's debounce timer too (latent today — set_period bypasses it — but it
         # would otherwise fire a refresh into a dead thread once a period control is wired).
