@@ -38,6 +38,8 @@ class Sparkline(QWidget):
         super().__init__(parent)
         self._color = QColor(color)
         self._series: List[float] = []
+        self._series2: List[float] = []          # optional second trace (e.g. upload over download)
+        self._color2: Optional[QColor] = None
         self._vmax: Optional[float] = None
         self.setMinimumHeight(36)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -45,6 +47,17 @@ class Sparkline(QWidget):
     def set_series(self, series: List[float], vmax: Optional[float] = None) -> None:
         """Replace the data. ``vmax`` fixes the top of the scale (e.g. 100 for %); None auto-scales."""
         self._series = list(series)[-_SPARK_POINTS:]
+        self._series2 = []
+        self._vmax = vmax
+        self.update()
+
+    def set_dual(self, primary: List[float], secondary: List[float], color2: str,
+                 vmax: Optional[float] = None) -> None:
+        """Two traces sharing one scale — the primary gets the fill + line, the secondary a thinner
+        line in ``color2``. Both auto-scale to their combined max unless ``vmax`` is fixed."""
+        self._series = list(primary)[-_SPARK_POINTS:]
+        self._series2 = list(secondary)[-_SPARK_POINTS:]
+        self._color2 = QColor(color2)
         self._vmax = vmax
         self.update()
 
@@ -76,7 +89,9 @@ class Sparkline(QWidget):
                 p.end()
             return
 
-        vmax = self._vmax if (self._vmax and self._vmax > 0) else max(self._series)
+        # Both traces share one scale so up/down read at true relative magnitude.
+        data_max = max(max(self._series, default=0.0), max(self._series2, default=0.0))
+        vmax = self._vmax if (self._vmax and self._vmax > 0) else data_max
         if vmax <= 0:
             vmax = 1.0
         step = gw / (n - 1)
@@ -110,6 +125,21 @@ class Sparkline(QWidget):
             pen.setCapStyle(Qt.PenCapStyle.RoundCap)
             p.setPen(pen)
             p.drawPolyline(QPolygonF(pts))
+
+            # Optional second trace (upload), same scale, thinner line, no fill.
+            if self._series2 and self._color2 is not None and len(self._series2) >= 2:
+                n2 = len(self._series2)
+                step2 = gw / (n2 - 1)
+                pts2 = [
+                    QPointF(pad + i * step2, base_y - (min(max(v, 0.0), vmax) / vmax) * gh)
+                    for i, v in enumerate(self._series2)
+                ]
+                pen2 = QPen(self._color2)
+                pen2.setWidthF(1.4)
+                pen2.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+                pen2.setCapStyle(Qt.PenCapStyle.RoundCap)
+                p.setPen(pen2)
+                p.drawPolyline(QPolygonF(pts2))
         finally:
             p.end()
 
@@ -154,6 +184,77 @@ class StatTile(QFrame):
         self._sub.setText(sub_text)
         self._sub.setVisible(bool(sub_text))
         self._spark.set_series(series, vmax)
+
+
+class NetworkHero(QFrame):
+    """The Overview's headline card: download AND upload as co-equal large readouts over a single
+    dual-trace sparkline (download filled, upload a thinner line), plus a peak/session context line."""
+
+    def __init__(self, i18n, down_color: str, up_color: str, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._i18n = i18n
+        self._down_color = down_color
+        self._up_color = up_color
+        c = su.semantic_colors()
+        self.setObjectName("netHero")
+        self.setStyleSheet(
+            f"#netHero {{ background: {c['subtle_fill']}; border-radius: {tokens.RADIUS_CARD}px; }}")
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(18, 16, 18, 16)
+        lay.setSpacing(10)
+
+        title = QLabel(self._tr("MONITOR_TAB_NETWORK", "Network"))
+        title.setFont(su.font(tokens.TYPE_BODY_STRONG))
+        title.setStyleSheet(f"color: {c['text_primary']}; background: transparent;")
+        lay.addWidget(title)
+
+        metrics = QHBoxLayout()
+        metrics.setContentsMargins(0, 0, 0, 0)
+        metrics.setSpacing(36)
+        self._down_v = self._metric(metrics, self._tr("DOWNLOAD_ARROW", "↓"),
+                                    self._tr("DOWNLOAD_LABEL", "Download"), down_color, c)
+        self._up_v = self._metric(metrics, self._tr("UPLOAD_ARROW", "↑"),
+                                  self._tr("UPLOAD_LABEL", "Upload"), up_color, c)
+        metrics.addStretch(1)
+        lay.addLayout(metrics)
+
+        self._spark = Sparkline(down_color)
+        self._spark.setMinimumHeight(64)
+        lay.addWidget(self._spark, 1)
+
+        self._sub = QLabel("")
+        self._sub.setFont(su.font(tokens.TYPE_CAPTION))
+        self._sub.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
+        lay.addWidget(self._sub)
+
+    def _metric(self, parent: QHBoxLayout, arrow: str, word: str, color: str, c: dict) -> QLabel:
+        block = QVBoxLayout()
+        block.setContentsMargins(0, 0, 0, 0)
+        block.setSpacing(0)
+        cap = QLabel(f"<span style='color:{color};'>{arrow}</span> {word}")
+        cap.setFont(su.font(tokens.TYPE_CAPTION))
+        cap.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
+        val = QLabel("—")
+        hero_font = su.font(tokens.TYPE_TITLE)   # the headline values dominate the 20px tile values
+        hero_font.setPixelSize(28)
+        val.setFont(hero_font)
+        val.setStyleSheet(f"color: {c['text_primary']}; background: transparent;")
+        block.addWidget(cap)
+        block.addWidget(val)
+        parent.addLayout(block)
+        return val
+
+    def set(self, down_text: str, up_text: str, down_series: List[float],
+            up_series: List[float], sub_text: str = "") -> None:
+        self._down_v.setText(down_text)
+        self._up_v.setText(up_text)
+        self._spark.set_dual(down_series, up_series, self._up_color, vmax=None)
+        self._sub.setText(sub_text)
+        self._sub.setVisible(bool(sub_text))
+
+    def _tr(self, key: str, default: str) -> str:
+        return str(getattr(self._i18n, key, default)) if self._i18n is not None else default
 
 
 class UsageTile(QFrame):

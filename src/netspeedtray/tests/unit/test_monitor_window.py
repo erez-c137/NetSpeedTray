@@ -46,14 +46,24 @@ def test_constructs_and_lazily_builds_tabs(q_app):
     assert w._descriptors[1].page is not None
 
 
-def test_hardware_tab_visible_only_with_monitoring(q_app):
+def test_hardware_tab_always_visible(q_app):
+    # The Monitor forces hardware collection while open, so the Hardware tab is a dedicated
+    # monitoring screen that always appears — not gated on the widget's monitor_*_enabled flags.
     off = MonitorWindow(_main_widget(), _cfg(monitor_cpu_enabled=False, monitor_gpu_enabled=False,
                                              monitor_ram_enabled=False, monitor_vram_enabled=False),
                         I18nStrings("en_US"))
-    assert off._tab_bar._buttons["hardware"].isHidden()
+    assert not off._tab_bar._buttons["hardware"].isHidden()
 
-    on = MonitorWindow(_main_widget(), _cfg(monitor_gpu_enabled=True), I18nStrings("en_US"))
-    assert not on._tab_bar._buttons["hardware"].isHidden()
+
+def test_monitor_forces_hardware_collection_while_open(q_app):
+    # The Monitor flips the stats thread's override on while open (set in showEvent) and reverts it
+    # on close — so its Overview/Hardware screens show hardware even with the widget's flags off.
+    mw = _main_widget()
+    win = MonitorWindow(mw, _cfg(monitor_cpu_enabled=False), I18nStrings("en_US"))
+    win._set_force_hardware(True)
+    assert mw.monitor_thread._force_hardware_collection is True
+    win._set_force_hardware(False)
+    assert mw.monitor_thread._force_hardware_collection is False
 
 
 def test_import_firewall_no_matplotlib_at_module_scope():

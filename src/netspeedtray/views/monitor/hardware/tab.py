@@ -47,15 +47,14 @@ class HardwareTab(QWidget):
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(8)
 
-        # Live telemetry band (temps/power/RAM/VRAM) — already collected, just never surfaced before.
-        # Polls the main widget's live attributes on a timer while this tab is visible. Skipped
-        # entirely when no CPU/GPU source is on (nothing to show, and the timer would be pointless).
+        # Live telemetry band (temps/power/RAM/VRAM). The Monitor forces hardware collection while
+        # open, so this always has data; polls the main widget's live attributes on a 1 s timer while
+        # the tab is visible.
         self._telemetry = TelemetryStrip(config, i18n)
+        root.addWidget(self._telemetry)
         self._tele_timer = QTimer(self)
         self._tele_timer.setInterval(_TELEMETRY_MS)
         self._tele_timer.timeout.connect(self._update_telemetry)
-        if not self._telemetry.is_empty():
-            root.addWidget(self._telemetry)
 
         # Period control — the graph's timeline (shared with Network: the Monitor has one window).
         # Without this the combined graph silently inherited Network's period with no affordance.
@@ -165,9 +164,8 @@ class HardwareTab(QWidget):
         except Exception:
             pass
         self._apply_graph(first_mount=True)
-        if not self._telemetry.is_empty():
-            self._update_telemetry()   # paint once immediately, then tick
-            self._tele_timer.start()
+        self._update_telemetry()       # paint once immediately, then tick
+        self._tele_timer.start()
         try:
             self._feed.start()
         except Exception:

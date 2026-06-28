@@ -53,33 +53,22 @@ class TelemetryStrip(QWidget):
         super().__init__(parent)
         self._config = config
         self._i18n = i18n
-        self._temps = bool(config.get("show_hardware_temps", True))
-        self._power = bool(config.get("show_hardware_power", False))
-        cpu_on = bool(config.get("monitor_cpu_enabled"))
-        gpu_on = bool(config.get("monitor_gpu_enabled"))
 
         lay = QHBoxLayout(self)
         lay.setContentsMargins(4, 0, 4, 0)
         lay.setSpacing(8)
 
-        # A tile exists only when its DATA is actually collected. monitor_thread emits ram_used only
-        # under monitor_cpu_enabled and vram_used only under monitor_gpu_enabled (the *_ram_/_vram_
-        # flags drive the Overview sparklines, not these live attributes) — so RAM rides CPU, VRAM GPU.
-        self._cpu = _TeleTile(self._tr("ORDER_TYPE_CPU", "CPU")) if cpu_on else None
-        self._gpu = _TeleTile(self._tr("ORDER_TYPE_GPU", "GPU")) if gpu_on else None
-        self._ram = _TeleTile(self._tr("MONITOR_TILE_RAM", "RAM")) if cpu_on else None
-        self._vram = _TeleTile(self._tr("MONITOR_TILE_VRAM", "VRAM")) if gpu_on else None
+        # The Monitor forces hardware collection while it's open, so all four sources are available
+        # regardless of the widget's config flags — create every tile. Each tile shows only what it
+        # actually has: CPU/GPU always have a usage%; temp/power append when collected; the memory
+        # tiles hide themselves entirely when their reading is unavailable (no VRAM counter, etc).
+        self._cpu = _TeleTile(self._tr("ORDER_TYPE_CPU", "CPU"))
+        self._gpu = _TeleTile(self._tr("ORDER_TYPE_GPU", "GPU"))
+        self._ram = _TeleTile(self._tr("MONITOR_TILE_RAM", "RAM"))
+        self._vram = _TeleTile(self._tr("MONITOR_TILE_VRAM", "VRAM"))
         for tile in (self._cpu, self._gpu, self._ram, self._vram):
-            if tile is not None:
-                lay.addWidget(tile)
+            lay.addWidget(tile)
         lay.addStretch(1)
-        # If nothing is monitored (e.g. the Hardware tab opened in a RAM-only config, where the live
-        # ram/vram attributes aren't even populated), don't leave an empty band — collapse the strip.
-        if self.is_empty():
-            self.setVisible(False)
-
-    def is_empty(self) -> bool:
-        return all(t is None for t in (self._cpu, self._gpu, self._ram, self._vram))
 
     def update_from(self, w) -> None:
         """Pull the live readings off the main widget's attributes and refresh each tile. The CPU/GPU
@@ -87,10 +76,12 @@ class TelemetryStrip(QWidget):
         unavailable (e.g. VRAM with no PDH dedicated-usage counter) rather than showing a dead "—"."""
         if w is None:
             return
-        if self._cpu is not None:
-            self._cpu.set_value(self._proc_text(getattr(w, "cpu_usage", 0.0),
-                                                getattr(w, "cpu_temp", None), getattr(w, "cpu_power", None)))
-        if self._gpu is not None:
+        self._cpu.set_value(self._proc_text(getattr(w, "cpu_usage", 0.0),
+                                            getattr(w, "cpu_temp", None), getattr(w, "cpu_power", None)))
+        # Hide the GPU tile on a confirmed no-GPU box rather than show a permanent 0%.
+        gpu_present = bool(getattr(w, "gpu_present", True))
+        self._gpu.setVisible(gpu_present)
+        if gpu_present:
             self._gpu.set_value(self._proc_text(getattr(w, "gpu_usage", 0.0),
                                                 getattr(w, "gpu_temp", None), getattr(w, "gpu_power", None)))
         self._update_mem(self._ram, getattr(w, "ram_used", None), getattr(w, "ram_total", None))
@@ -105,10 +96,12 @@ class TelemetryStrip(QWidget):
 
     # --- formatting -------------------------------------------------------------
     def _proc_text(self, usage: float, temp: Optional[float], power: Optional[float]) -> str:
+        # Show whatever was collected: usage always; temp/power append only when present (temp flows
+        # by default under the Monitor's forced collection; power only when the user opted into it).
         parts: List[str] = [f"{float(usage):.0f}%"]
-        if self._temps and temp is not None:
+        if temp is not None:
             parts.append(f"{float(temp):.0f}°C")
-        if self._power and power is not None:
+        if power is not None:
             parts.append(f"{float(power):.0f} W")
         return "  ·  ".join(parts)
 

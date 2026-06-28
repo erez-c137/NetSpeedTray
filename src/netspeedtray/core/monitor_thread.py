@@ -45,6 +45,7 @@ class GpuPollResult(NamedTuple):
     vram_total: Optional[float] = None
     temp: Optional[float] = None
     power: Optional[float] = None
+    present: bool = False   # True only when GPU Engine util counters were actually found
 
 
 class StatsMonitorThread(QThread):
@@ -68,6 +69,11 @@ class StatsMonitorThread(QThread):
             self.interval = min_interval
             
         self._is_running = True
+        # Runtime override: the Monitor window flips this on while it's open so its Overview/Hardware
+        # screens show CPU/GPU/RAM/VRAM (+ temps) even when the TASKBAR WIDGET has hardware monitoring
+        # off. OR'd with the config flags in run(); reverts to the widget's config when the Monitor
+        # closes. config is shared by reference, so the Monitor sets this attribute directly.
+        self._force_hardware_collection = False
         self.consecutive_errors = 0
         # Recoverable circuit breaker: after N consecutive errors we notify ONCE and back off
         # exponentially (capped) instead of permanently killing the thread, so a transient
@@ -345,7 +351,8 @@ class StatsMonitorThread(QThread):
 
         # Clamp utilization to [0, 100] — PDH GPU-Engine counters can momentarily read >100%.
         util_pct = max(0.0, min(100.0, util_pct))
-        return GpuPollResult(util_pct, vram_used, vram_total, temp_c, power_w)
+        return GpuPollResult(util_pct, vram_used, vram_total, temp_c, power_w,
+                             present=bool(self._gpu_util_counters))
 
     @lru_cache(maxsize=4)
     def _get_cached_path(self, binary: str) -> Optional[str]:
@@ -718,11 +725,14 @@ class StatsMonitorThread(QThread):
                 if network_counters:
                     stats['network'] = network_counters
                 
+                # Monitor-window override forces hardware collection even with the widget's flags off.
+                _force_hw = self._force_hardware_collection
+
                 # 2. CPU / RAM (Optional)
-                if self.config.get('monitor_cpu_enabled', False):
+                if self.config.get('monitor_cpu_enabled', False) or _force_hw:
                     # non-blocking (percpu=False)
                     stats['cpu'] = psutil.cpu_percent(interval=None)
-                    if self.config.get('show_hardware_temps', False):
+                    if self.config.get('show_hardware_temps', False) or _force_hw:
                         stats['cpu_temp'] = self._poll_cpu_temperature()
                     if self.config.get('show_hardware_power', False):
                         stats['cpu_power'] = self._poll_cpu_power()
@@ -733,13 +743,14 @@ class StatsMonitorThread(QThread):
                     stats['ram_total'] = mem.total / (1024**3) # GB
 
                 # 3. GPU / VRAM (Optional — skipped entirely in RDP sessions)
-                if self.config.get('monitor_gpu_enabled', False) and not _in_rdp:
+                if (self.config.get('monitor_gpu_enabled', False) or _force_hw) and not _in_rdp:
                     try:
-                        include_temp = bool(self.config.get('show_hardware_temps', False))
+                        include_temp = bool(self.config.get('show_hardware_temps', False)) or _force_hw
                         include_power = bool(self.config.get('show_hardware_power', False))
                         gpu = self._poll_gpu_hybrid(include_temp=include_temp, include_power=include_power)
 
                         stats['gpu'] = gpu.util
+                        stats['gpu_present'] = gpu.present   # lets the Monitor hide GPU tiles on no-GPU boxes
                         if include_temp:
                             stats['gpu_temp'] = gpu.temp
                         if include_power:

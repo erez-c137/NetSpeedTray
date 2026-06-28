@@ -66,10 +66,23 @@ def _cfg(**over):
     return c
 
 
-def test_tiles_built_per_config(q_app):
+def test_hardware_tiles_always_built(q_app):
+    # The Monitor forces hardware collection while open, so the four hardware tiles always exist
+    # regardless of the widget's config flags. Network is now the hero, not a tile.
     ov = OverviewTab(_MW(), _cfg(monitor_gpu_enabled=False, monitor_ram_enabled=False),
                      I18nStrings("en_US"))
-    assert set(ov._tiles.keys()) == {"network", "cpu"}  # only what's enabled (+ network always)
+    assert set(ov._tiles.keys()) == {"cpu", "gpu", "ram", "vram"}
+
+
+def test_gpu_tile_hides_on_no_gpu(q_app):
+    # Review fix: a confirmed no-GPU box (gpu_present False) hides the GPU tile instead of 0%.
+    mw = _MW()
+    mw.gpu_present = False
+    ov = OverviewTab(mw, _cfg(), I18nStrings("en_US"))
+    ov.show()
+    q_app.processEvents()
+    assert not ov._tiles["gpu"].isVisibleTo(ov)
+    ov.hide()
 
 
 def test_tiles_show_live_values(q_app):
@@ -77,9 +90,12 @@ def test_tiles_show_live_values(q_app):
     ov.show()                       # showEvent ticks immediately
     q_app.processEvents()
     assert ov._tiles["cpu"]._value.text() == "42%"
-    assert ov._tiles["ram"]._value.text() == "50%"          # 8/16 GB
-    assert "Mbps" in ov._tiles["network"]._value.text()     # bits_decimal -> Mbps
-    assert ov._tiles["network"]._sub.isVisible()            # the ↑ sub-line
+    assert ov._tiles["ram"]._value.text() == "50%"          # 8/16
+    # network hero shows both directions in Mbps (bits_decimal)
+    assert "Mbps" in ov._hero._down_v.text()
+    assert "Mbps" in ov._hero._up_v.text()
+    # VRAM has no reading (vram_used None) -> its tile hides itself
+    assert not ov._tiles["vram"].isVisibleTo(ov)
     # usage tile: cap is set -> progress shows 50%
     assert ov._usage._cap_bar.isVisible()
     assert ov._usage._cap_bar.value() == 50
@@ -139,23 +155,16 @@ def test_cap_bar_warns_by_threshold(q_app):
     assert u._cap_bar.value() == 100                        # clamped
 
 
-def test_preview_fed_live_metrics(q_app):
-    """The hero preview gets the main widget's live metrics snapshot, not a frozen demo render."""
-    from netspeedtray.utils.widget_paint import demo_metrics
-
-    class _MWLive(_MW):
-        def __init__(self):
-            self._sentinel = demo_metrics()
-
-        def _build_metrics(self):
-            return self._sentinel
-
-    mw = _MWLive()
-    ov = OverviewTab(mw, _cfg(), I18nStrings("en_US"))
-    ov.show()
-    q_app.processEvents()
-    assert ov._preview._metrics is mw._sentinel
-    ov.hide()
+def test_network_hero_dual_sparkline(q_app):
+    """The hero feeds BOTH download and upload series into one dual-trace sparkline."""
+    from netspeedtray.views.monitor.overview.tiles import NetworkHero
+    h = NetworkHero(I18nStrings("en_US"), "#4DA3FF", "#F0883E")
+    h.set("12.4 Mbps", "0.5 Mbps", [1.0, 2.0, 3.0], [0.2, 0.5, 0.3], sub_text="Peak ↓ 3 ↑ 0.5")
+    assert h._down_v.text() == "12.4 Mbps"
+    assert h._up_v.text() == "0.5 Mbps"
+    assert h._spark._series == [1.0, 2.0, 3.0]
+    assert h._spark._series2 == [0.2, 0.5, 0.3]   # upload trace present
+    assert h._sub.text() == "Peak ↓ 3 ↑ 0.5"
 
 
 def test_sparkline_paints_baseline_when_sparse(q_app):

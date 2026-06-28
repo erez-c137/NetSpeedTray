@@ -104,16 +104,16 @@ class MonitorWindow(QWidget):
     # ----------------------------------------------------------------- tabs
 
     def _build_descriptors(self) -> List[LazyTabDescriptor]:
-        def hw_visible(cfg: Dict[str, Any]) -> bool:
-            return bool(cfg.get("monitor_cpu_enabled") or cfg.get("monitor_gpu_enabled")
-                        or cfg.get("monitor_ram_enabled") or cfg.get("monitor_vram_enabled"))
+        # The Monitor forces hardware collection while it's open (see _set_force_hardware), so the
+        # Hardware tab always has data to show — it's a dedicated monitoring screen, not gated on
+        # whether the taskbar widget happens to display hardware.
         return [
             LazyTabDescriptor("overview", self._tr("MONITOR_TAB_OVERVIEW", "Overview"),
                               factory=self._make_overview, needs_graph=False),
             LazyTabDescriptor("network", self._tr("MONITOR_TAB_NETWORK", "Network"),
                               factory=self._make_network, needs_graph=True),
             LazyTabDescriptor("hardware", self._tr("MONITOR_TAB_HARDWARE", "Hardware"),
-                              factory=self._make_hardware, needs_graph=True, is_visible=hw_visible),
+                              factory=self._make_hardware, needs_graph=True),
         ]
 
     def _on_tab_changed(self, index: int) -> None:
@@ -234,8 +234,18 @@ class MonitorWindow(QWidget):
 
     # ----------------------------------------------------------------- lifecycle
 
+    def _set_force_hardware(self, on: bool) -> None:
+        """While the Monitor is open, force the stats thread to collect CPU/GPU/RAM/VRAM (+ temps)
+        even when the taskbar widget has hardware monitoring off — this IS a dedicated monitoring
+        screen, so it shows everything. Reverts to the widget's config when the Monitor closes."""
+        try:
+            self._main_widget.monitor_thread._force_hardware_collection = bool(on)
+        except Exception:
+            pass
+
     def showEvent(self, event) -> None:
         super().showEvent(event)
+        self._set_force_hardware(True)
         try:
             apply_win11_chrome(int(self.winId()), dark=su.is_dark_mode())
         except Exception:
@@ -243,6 +253,7 @@ class MonitorWindow(QWidget):
 
     def closeEvent(self, event) -> None:
         self._is_closing = True
+        self._set_force_hardware(False)
         self.window_closed.emit()  # let the owner drop its ref before WA_DeleteOnClose destroys us
         try:
             save_window_position(self, self._main_widget, _POS_KEY)

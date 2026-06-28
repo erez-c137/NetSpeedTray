@@ -116,6 +116,14 @@ class StatsController(QObject):
                 self.gpu_usage_updated.emit(gpu)
                 if self.widget_state:
                     self.widget_state.add_hardware_stat('gpu', gpu)
+            # GPU presence (no-GPU boxes enumerate zero Engine counters): let the Monitor's at-a-glance
+            # tiles hide the GPU rather than show a permanent 0%. Default stays True so a momentarily
+            # idle GPU is never hidden — only a confirmed no-GPU poll flips it False.
+            if 'gpu_present' in stats and self.view is not None:
+                try:
+                    self.view.gpu_present = bool(stats['gpu_present'])
+                except Exception:
+                    pass
             # Forward temp/power whenever the thread reported the key, even if the
             # value is None (sensor unavailable this poll). Emitting None lets the
             # widget clear a stale reading to "(N/A)" rather than freezing the last

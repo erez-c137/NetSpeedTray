@@ -128,6 +128,7 @@ class NetworkSpeedWidget(QWidget):
         self.download_speed: float = 0.0
         self.cpu_usage: float = 0.0
         self.gpu_usage: float = 0.0
+        self.gpu_present: bool = True   # flipped False by a confirmed no-GPU poll (Monitor hides GPU tiles)
         self.cpu_temp: Optional[float] = None
         self.gpu_temp: Optional[float] = None
         self.cpu_power: Optional[float] = None
