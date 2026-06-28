@@ -187,8 +187,17 @@ class MonitorWindow(QWidget):
         fly.show()
 
     def _on_settings_changed(self) -> None:
-        # Live-apply: re-render the active graph so a colour/legend change is immediate (the host
-        # reads the new values from config). No-op until a chart tab has built the shared host.
+        # Live-apply. The active page may need more than a re-render — a graph-mode change re-resolves
+        # which stat is shown — so delegate to its on_settings_changed when it has one. Otherwise just
+        # re-render the active graph (colour/legend/smoothing/axis). No-op until a chart tab built the host.
+        idx = self._stack.currentIndex()
+        page = self._descriptors[idx].page if 0 <= idx < len(self._descriptors) else None
+        if page is not None and hasattr(page, "on_settings_changed"):
+            try:
+                page.on_settings_changed()
+                return
+            except Exception:
+                pass
         if self._graph_host is not None:
             try:
                 self._graph_host.update_graph(show_loading=False)

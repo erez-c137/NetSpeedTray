@@ -83,5 +83,95 @@ def test_peak_label_placement_logic():
 
     print("Peak label placement tests passed!")
 
+
+# --- 6.2b hardware-graph shaping (smoothing + fixed/auto axis) -------------------
+
+def test_smooth_series_preserves_length_and_range():
+    """The Hann moving-average must keep the sample count and stay within the data envelope (a
+    smoother can't introduce a spike above the max or below the min)."""
+    import numpy as np
+    ys = np.array([0, 100, 0, 100, 0, 100, 0, 100, 0, 100], dtype=float)
+    out = GraphRenderer._smooth_series(ys, 5)
+    assert len(out) == len(ys)
+    assert out.min() >= ys.min() - 1e-9 and out.max() <= ys.max() + 1e-9
+    # A real average pulls the alternating spikes toward the middle.
+    assert out.max() < ys.max()
+
+
+def test_smooth_series_noop_when_too_short():
+    """Below the window length there's nothing to smooth — return the series untouched."""
+    import numpy as np
+    ys = np.array([10.0, 20.0, 30.0])
+    out = GraphRenderer._smooth_series(ys, 5)
+    assert list(out) == [10.0, 20.0, 30.0]
+
+
+def test_apply_hw_ylim_fixed_vs_auto():
+    """Fixed pins 0-100; auto scales to the data with a 10% floor (so an idle line isn't a sliver)."""
+    from unittest.mock import MagicMock
+    ax = MagicMock()
+    GraphRenderer._apply_hw_ylim(None, ax, True, 12.0)
+    ax.set_ylim.assert_called_with(0, 100)
+
+    ax = MagicMock()
+    GraphRenderer._apply_hw_ylim(None, ax, False, 40.0)     # 40 * 1.2 = 48
+    ax.set_ylim.assert_called_with(0, 48.0)
+
+    ax = MagicMock()
+    GraphRenderer._apply_hw_ylim(None, ax, False, 2.0)      # below the floor -> 10
+    ax.set_ylim.assert_called_with(0, 10.0)
+
+
+# --- 6.2b review fix: toggle (single-stat) mode must honour hw_styles -------------
+# Regression guard for the adversarial-review finding: the Monitor's "toggle" layout renders one
+# CPU/GPU line via render(stat_type="cpu"/"gpu", hw_styles=...). That path must route through the
+# hw-aware _render_hwsingle (configured colour + Smooth + fixed/auto axis), while the standalone
+# GraphWindow (hw_styles=None) must keep the legacy _plot_high_res path. Mock-based to avoid a real
+# canvas.draw() (which hangs under pytest-qt); the visual integration is covered by the render smoke.
+
+def _mock_renderer():
+    from unittest.mock import MagicMock
+    GraphRenderer._init_matplotlib = MagicMock()
+    r = GraphRenderer(MagicMock(), MagicMock())
+    r.figure = MagicMock()
+    r.canvas = MagicMock()
+    r._current_text_color = "white"
+    r._current_grid_color = "#444"
+    r._render_hwsingle = MagicMock()
+    r._plot_high_res = MagicMock(return_value=(None, None, None))
+    r._configure_hardware_axes = MagicMock()
+    return r
+
+
+def _hw_list():
+    import time
+    now = time.time()
+    data = [(now - 60 + i, 10.0 + i, 0.0) for i in range(10)]
+    return data, now
+
+
+def test_toggle_mode_dispatches_to_hwsingle_with_styles():
+    from datetime import datetime
+    r = _mock_renderer()
+    data, now = _hw_list()
+    hw = {"cpu": ("#ff8800", "-"), "smoothing": True, "fixed_axis": False}
+    r.render(data, datetime.fromtimestamp(now - 60), datetime.fromtimestamp(now),
+             "TIMELINE_60_MINUTES", stat_type="cpu", hw_styles=hw, force_rebuild=True)
+    r._render_hwsingle.assert_called_once()
+    assert r._render_hwsingle.call_args[0][-1] is hw     # the colour/smooth/axis styles reach the renderer
+    r._plot_high_res.assert_not_called()                 # not the legacy path
+
+
+def test_standalone_single_stat_uses_legacy_path():
+    from datetime import datetime
+    r = _mock_renderer()
+    data, now = _hw_list()
+    # hw_styles=None => standalone GraphWindow: legacy _plot_high_res + unconditional 0-100 axis.
+    r.render(data, datetime.fromtimestamp(now - 60), datetime.fromtimestamp(now),
+             "TIMELINE_60_MINUTES", stat_type="cpu", hw_styles=None, force_rebuild=True)
+    r._render_hwsingle.assert_not_called()
+    r._plot_high_res.assert_called_once()
+
+
 if __name__ == "__main__":
     test_peak_label_placement_logic()

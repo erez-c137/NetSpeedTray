@@ -126,9 +126,9 @@ class GraphDataWorker(QObject):
                 self.data_ready.emit(history_data, total_up, total_down, request.sequence_id)
                 return
 
-            if request.stat_type == "hwcombined":
-                # CPU + GPU on one axis (the Monitor's Hardware graph) — same fetch as Overview's
-                # cpu/gpu, minus network. Dict payload, like Overview.
+            if request.stat_type in ("hwcombined", "hwseparate"):
+                # CPU + GPU for the Monitor's Hardware graph (one shared axis, or two stacked axes) —
+                # same fetch as Overview's cpu/gpu, minus network. Dict payload, like Overview.
                 if request.is_session_view:
                     start_ts = request.start_time.timestamp() if request.start_time else 0
                     end_ts = request.end_time.timestamp()

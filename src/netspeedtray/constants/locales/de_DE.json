@@ -459,5 +459,13 @@
     "MONITOR_COLOR_AUTO_TIP": "Reset to the auto-detected vendor colour",
     "MONITOR_SETTINGS_TIP": "Monitor display settings",
     "MONITOR_SHOW_LEGEND": "Show legend",
-    "MONITOR_SETTINGS_SCOPE": "Applies to the Hardware graph"
+    "MONITOR_SETTINGS_SCOPE": "Applies to the Hardware graph",
+    "MONITOR_GRAPH_LAYOUT": "Layout",
+    "MONITOR_LAYOUT_COMBINED": "Kombiniert",
+    "MONITOR_LAYOUT_SEPARATE": "Getrennt",
+    "MONITOR_LAYOUT_TOGGLE": "Umschalten",
+    "MONITOR_GRAPH_SMOOTH": "Linien glätten",
+    "MONITOR_GRAPH_YAXIS": "Y-Achse",
+    "MONITOR_YAXIS_FIXED": "0–100%",
+    "MONITOR_YAXIS_AUTO": "Auto"
 }

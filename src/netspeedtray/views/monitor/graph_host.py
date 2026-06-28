@@ -156,6 +156,17 @@ class GraphHost(QObject):
         # stat, so an old single-stat reply can't paint the newly-activated tab.
         self._accept_from_seq = self._current_request_id
 
+    def set_stat(self, stat_type: str) -> None:
+        """Switch the active stat on the already-mounted canvas (no reparent) — used by the Hardware
+        tab's graph-mode / CPU-GPU toggle. Race-safe: raises the dedup floor like set_period so an
+        in-flight reply for the previous stat can't paint the new one."""
+        if self._is_closing or stat_type == self._current_stat:
+            return
+        self.ensure_loaded()
+        self._current_stat = stat_type
+        self._accept_from_seq = self._current_request_id + 1
+        self.update_graph(show_loading=True)
+
     def start_realtime(self) -> None:
         self.ensure_loaded()
         try:
@@ -238,7 +249,9 @@ class GraphHost(QObject):
         is_dark = bool(self.config.get("dark_mode", True))   # GPU shade is theme-aware (light-bg contrast)
         return {"cpu": hv.graph_line_style("cpu", cpu_c, is_dark),
                 "gpu": hv.graph_line_style("gpu", gpu_c, is_dark),
-                "legend": bool(self.config.get("monitor_graph_legend", True))}
+                "legend": bool(self.config.get("monitor_graph_legend", True)),
+                "smoothing": bool(self.config.get("monitor_graph_smoothing", False)),
+                "fixed_axis": bool(self.config.get("monitor_graph_fixed_axis", True))}
 
     def _time_range(self):
         from netspeedtray.views.graph.logic import GraphLogic
@@ -271,7 +284,7 @@ class GraphHost(QObject):
             period_key = GraphLogic.get_period_key(self._history_period_value)
             # Race guard: dict payload is for the multi-series stats (overview + hwcombined);
             # single-stat tabs (network/cpu/gpu) want a list.
-            dict_stats = ("overview", "hwcombined")
+            dict_stats = ("overview", "hwcombined", "hwseparate")
             if self._current_stat in dict_stats and not isinstance(data, dict):
                 return
             if self._current_stat not in dict_stats and isinstance(data, dict):

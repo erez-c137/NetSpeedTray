@@ -93,3 +93,103 @@ def test_flyout_reused_not_rebuilt(q_app):
     win._open_settings_flyout()
     assert win._settings_flyout is first         # one cached instance, not a per-click leak
     win._settings_flyout.hide()
+
+
+# --- 6.2b: graph mode (combined/separate/toggle) + smoothing + axis ---------------
+
+def test_mode_segmented_writes_config_and_emits(q_app):
+    config = {}
+    f, mw = _flyout(config)
+    seen = []
+    f.changed.connect(lambda: seen.append(1))
+    f._mode.setValue("separate")
+    assert config["monitor_hw_graph_mode"] == "separate"
+    assert seen
+    f._mode.setValue("toggle")
+    assert config["monitor_hw_graph_mode"] == "toggle"
+
+
+def test_smoothing_and_axis_controls_write_config(q_app):
+    config = {}
+    f, _ = _flyout(config)
+    f._smooth.toggled.emit(True)
+    assert config["monitor_graph_smoothing"] is True
+    f._axis.setValue(False)                                  # Auto
+    assert config["monitor_graph_fixed_axis"] is False
+    f._axis.setValue(True)                                   # back to fixed 0-100%
+    assert config["monitor_graph_fixed_axis"] is True
+
+
+def test_refresh_resyncs_mode_smoothing_axis(q_app):
+    config = {"monitor_hw_graph_mode": "combined", "monitor_graph_smoothing": False,
+              "monitor_graph_fixed_axis": True}
+    f, _ = _flyout(config)
+    # Another surface (the 6.2c Settings page) changes the config behind the cached flyout.
+    config.update(monitor_hw_graph_mode="separate", monitor_graph_smoothing=True,
+                  monitor_graph_fixed_axis=False)
+    f.refresh()
+    assert f._mode.value() == "separate"
+    assert f._smooth.isChecked() is True
+    assert f._axis.value() is False
+    # Re-sync must not echo back as a write storm — values still match config (no flip-flop).
+    assert config["monitor_hw_graph_mode"] == "separate"
+
+
+def _hardware_tab(config):
+    from unittest.mock import MagicMock
+    from netspeedtray.views.monitor.hardware.tab import HardwareTab
+    host = MagicMock()
+    host._current_stat = None
+    return HardwareTab(host, MagicMock(), config, I18nStrings("en_US")), host
+
+
+def test_hardware_tab_resolves_stat_per_mode(q_app):
+    from netspeedtray import constants
+    base = dict(constants.config.defaults.DEFAULT_CONFIG)
+
+    tab, _ = _hardware_tab({**base, "monitor_hw_graph_mode": "combined"})
+    assert tab._resolve_stat() == "hwcombined"
+
+    tab, _ = _hardware_tab({**base, "monitor_hw_graph_mode": "separate"})
+    assert tab._resolve_stat() == "hwseparate"
+
+    tab, _ = _hardware_tab({**base, "monitor_hw_graph_mode": "toggle"})
+    assert tab._resolve_stat() == "cpu"            # default toggle role
+    tab._cpu_gpu.setValue("gpu")
+    assert tab._resolve_stat() == "gpu"
+
+
+def test_hardware_tab_toggle_switch_visibility_and_set_stat(q_app):
+    from netspeedtray import constants
+    base = dict(constants.config.defaults.DEFAULT_CONFIG)
+
+    # combined: the CPU|GPU switch is hidden; on settings-change we re-render in place (no set_stat).
+    tab, host = _hardware_tab({**base, "monitor_hw_graph_mode": "combined"})
+    host._current_stat = "hwcombined"
+    tab.on_settings_changed()
+    assert tab._cpu_gpu.isHidden()
+    host.set_stat.assert_not_called()
+    host.update_graph.assert_called()
+
+    # toggle: the switch is shown; switching to GPU drives set_stat("gpu").
+    tab, host = _hardware_tab({**base, "monitor_hw_graph_mode": "toggle"})
+    host._current_stat = "cpu"
+    tab.on_settings_changed()
+    assert not tab._cpu_gpu.isHidden()
+    tab._cpu_gpu.setValue("gpu")
+    host.set_stat.assert_called_with("gpu")
+
+
+def test_flyout_width_fits_segmented_labels_all_locales(q_app):
+    """Regression for the review finding: the Layout + Y-axis Win11Segmented controls hard-clip
+    (no elide), so the panel must be wide enough for the longest localized labels after adjustSize()
+    (what _open_settings_flyout does before showing). Guards against silent truncation in any locale."""
+    from netspeedtray import constants
+    base = dict(constants.config.defaults.DEFAULT_CONFIG)
+    margins = 16 + 16  # root contentsMargins L + R
+    for loc in ("en_US", "de_DE", "es_ES", "fr_FR", "nl_NL", "pl_PL", "ru_RU", "ko_KR", "sl_SI", "ja_JP"):
+        f = MonitorSettingsFlyout(MagicMock(), dict(base), I18nStrings(loc))
+        f.adjustSize()
+        content = f.width() - margins
+        assert content + 1 >= f._mode.sizeHint().width(), f"{loc}: Layout segmented clipped"
+        assert content + 1 >= f._axis.sizeHint().width(), f"{loc}: Y-axis segmented clipped"

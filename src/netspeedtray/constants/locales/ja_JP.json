@@ -459,5 +459,13 @@
     "MONITOR_COLOR_AUTO_TIP": "Reset to the auto-detected vendor colour",
     "MONITOR_SETTINGS_TIP": "Monitor display settings",
     "MONITOR_SHOW_LEGEND": "Show legend",
-    "MONITOR_SETTINGS_SCOPE": "Applies to the Hardware graph"
+    "MONITOR_SETTINGS_SCOPE": "Applies to the Hardware graph",
+    "MONITOR_GRAPH_LAYOUT": "レイアウト",
+    "MONITOR_LAYOUT_COMBINED": "結合",
+    "MONITOR_LAYOUT_SEPARATE": "分離",
+    "MONITOR_LAYOUT_TOGGLE": "切り替え",
+    "MONITOR_GRAPH_SMOOTH": "線を滑らかに",
+    "MONITOR_GRAPH_YAXIS": "Y軸",
+    "MONITOR_YAXIS_FIXED": "0–100%",
+    "MONITOR_YAXIS_AUTO": "自動"
 }

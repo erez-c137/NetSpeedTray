@@ -16,12 +16,12 @@ from typing import Any, Dict, Optional
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
-    QFrame, QWidget, QVBoxLayout, QGridLayout, QLabel, QPushButton,
+    QFrame, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
 )
 
 from netspeedtray.utils import styles as su
 from netspeedtray.constants.styles import styles as tokens
-from netspeedtray.utils.components import ColorField, Win11Toggle
+from netspeedtray.utils.components import ColorField, Win11Toggle, Win11Segmented
 from netspeedtray.utils import hardware_vendors as hv
 
 
@@ -55,7 +55,19 @@ class MonitorSettingsFlyout(QFrame):
         scope.setFont(su.font(tokens.TYPE_CAPTION))
         scope.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
         root.addWidget(scope)
-        root.addSpacing(6)
+        root.addSpacing(8)
+
+        # Layout: how the two stats share the panel (combined axis / stacked axes / one-at-a-time).
+        root.addWidget(self._label(self._tr("MONITOR_GRAPH_LAYOUT", "Layout"), c))
+        self._mode = Win11Segmented([
+            (self._tr("MONITOR_LAYOUT_COMBINED", "Combined"), "combined"),
+            (self._tr("MONITOR_LAYOUT_SEPARATE", "Separate"), "separate"),
+            (self._tr("MONITOR_LAYOUT_TOGGLE", "Toggle"), "toggle"),
+        ])
+        self._mode.setValue(str(config.get("monitor_hw_graph_mode", "combined")))
+        self._mode.valueChanged.connect(lambda v: self._set("monitor_hw_graph_mode", str(v)))
+        root.addWidget(self._mode)
+        root.addSpacing(10)
 
         grid = QGridLayout()
         grid.setVerticalSpacing(10)
@@ -74,25 +86,59 @@ class MonitorSettingsFlyout(QFrame):
         grid.addWidget(self._gpu, 1, 1)
         grid.addWidget(self._auto_btn(lambda: self._reset("monitor_gpu_graph_color", "gpu", self._gpu), c), 1, 2)
 
-        # Legend toggle shares the Auto buttons' right edge (col 2) for one Fluent alignment guide.
+        # Legend + smoothing toggles share the Auto buttons' right edge (col 2) for one alignment guide.
         grid.addWidget(self._label(self._tr("MONITOR_SHOW_LEGEND", "Show legend"), c), 2, 0)
         self._legend = Win11Toggle("", bool(config.get("monitor_graph_legend", True)))
         self._legend.toggled.connect(lambda on: self._set("monitor_graph_legend", bool(on)))
         grid.addWidget(self._legend, 2, 2, Qt.AlignmentFlag.AlignRight)
-        root.addLayout(grid)
 
-        self.setFixedWidth(272)
+        grid.addWidget(self._label(self._tr("MONITOR_GRAPH_SMOOTH", "Smooth lines"), c), 3, 0)
+        self._smooth = Win11Toggle("", bool(config.get("monitor_graph_smoothing", False)))
+        self._smooth.toggled.connect(lambda on: self._set("monitor_graph_smoothing", bool(on)))
+        grid.addWidget(self._smooth, 3, 2, Qt.AlignmentFlag.AlignRight)
+        root.addLayout(grid)
+        root.addSpacing(10)
+
+        # Y-axis: fixed 0-100% (comparable) vs auto-scale to the data (low-utilization detail).
+        yrow = QHBoxLayout()
+        yrow.setContentsMargins(0, 0, 0, 0)
+        yrow.addWidget(self._label(self._tr("MONITOR_GRAPH_YAXIS", "Y-axis"), c))
+        yrow.addStretch(1)
+        self._axis = Win11Segmented([
+            (self._tr("MONITOR_YAXIS_FIXED", "0–100%"), True),
+            (self._tr("MONITOR_YAXIS_AUTO", "Auto"), False),
+        ])
+        self._axis.setValue(bool(config.get("monitor_graph_fixed_axis", True)))
+        self._axis.valueChanged.connect(lambda v: self._set("monitor_graph_fixed_axis", bool(v)))
+        yrow.addWidget(self._axis)
+        root.addLayout(yrow)
+
+        # Don't HARD-pin the width: the 3-button Layout segmented (and longer localized labels like
+        # de "Kombiniert/Umschalten") need more than 300px and Win11Segmented buttons hard-clip (no
+        # elide). A min width keeps the colour rows from looking sparse; _open_settings_flyout's
+        # adjustSize() then grows the panel to the controls' sizeHint so no label is ever truncated.
+        self.setMinimumWidth(300)
 
     # --- live state ------------------------------------------------------------
     def refresh(self) -> None:
-        """Re-read the current config + theme into the colour swatches (the cached flyout may have
-        been built under a now-changed theme). The legend toggle is flyout-owned, so it can't stale."""
+        """Re-read the current config + theme into every control (the cached flyout may have been built
+        under a now-changed theme, or another surface — the Settings → Monitor page in 6.2c — may have
+        changed a value). Signals are blocked so re-syncing doesn't echo back as a write."""
         self._dark = bool(self._config.get("dark_mode", True))
         for field, key, role in ((self._cpu, "monitor_cpu_graph_color", "cpu"),
                                   (self._gpu, "monitor_gpu_graph_color", "gpu")):
             field.blockSignals(True)
             field.setColor(self._config.get(key) or hv.default_color(role, self._dark))
             field.blockSignals(False)
+        for ctl, value in (
+            (self._mode, str(self._config.get("monitor_hw_graph_mode", "combined"))),
+            (self._legend, bool(self._config.get("monitor_graph_legend", True))),
+            (self._smooth, bool(self._config.get("monitor_graph_smoothing", False))),
+            (self._axis, bool(self._config.get("monitor_graph_fixed_axis", True))),
+        ):
+            ctl.blockSignals(True)
+            ctl.setValue(value) if isinstance(ctl, Win11Segmented) else ctl.setChecked(value)
+            ctl.blockSignals(False)
 
     # --- helpers ---------------------------------------------------------------
     def _heading(self, text: str, c: dict) -> QLabel:

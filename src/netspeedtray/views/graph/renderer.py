@@ -564,6 +564,8 @@ class GraphRenderer(QObject):
                 self.ax_upload.set_visible(False)
                 self.figure.subplots_adjust(hspace=0, bottom=0.15)
                 self._format_hwcombined_axes()
+            elif stat_type == "hwseparate":
+                self._setup_hwseparate_axes()
             else:
                 self._setup_standard_axes()
                 self.ax_upload.set_visible(False)
@@ -583,6 +585,8 @@ class GraphRenderer(QObject):
                 # Restore labels if cleared for single-axis stats (prevent empty axes look)
                 if stat_type == "hwcombined":
                     self._format_hwcombined_axes()
+                elif stat_type == "hwseparate":
+                    self._format_hwseparate_axes()
                 elif stat_type != "overview" and stat_type != "network":
                     self._format_hardware_axes(stat_type)
             self.canvas.draw_idle()
@@ -592,6 +596,8 @@ class GraphRenderer(QObject):
             self._render_overview(history_data, start_time=start_time, end_time=end_time, period_key=period_key, boot_time=boot_time)
         elif stat_type == "hwcombined":
             self._render_hwcombined(history_data, start_time, end_time, period_key, hw_styles)
+        elif stat_type == "hwseparate":
+            self._render_hwseparate(history_data, start_time, end_time, period_key, hw_styles)
         elif stat_type == "network":
             safe_data = [
                 (ts.timestamp() if isinstance(ts, datetime) else float(ts), float(up), float(dn))
@@ -607,6 +613,11 @@ class GraphRenderer(QObject):
             
             plotted_ts, plotted_up, plotted_down = self._plot_high_res(plot_datetimes_array, upload_mbps, download_mbps, target_end_time=end_time)
             self._configure_axes(start_time, end_time, period_key, timestamps, plotted_up, plotted_down)
+        elif stat_type in ("cpu", "gpu") and hw_styles is not None:
+            # Monitor's "toggle" layout: a single CPU- or GPU-only line that must honour the same
+            # display settings as combined/separate (per-role colour, Smooth, fixed/auto y-axis). The
+            # standalone GraphWindow passes no hw_styles, so it keeps the legacy path below (+ tooltips).
+            self._render_hwsingle(history_data, start_time, end_time, period_key, stat_type, hw_styles)
         else:
             raw_data = np.array(history_data, dtype=float)
             timestamps = raw_data[:, 0]
@@ -780,10 +791,12 @@ class GraphRenderer(QObject):
         ax.clear()
         self._format_hwcombined_axes()
         styles = hw_styles or {}
+        smooth = bool(styles.get("smoothing"))
+        fixed = bool(styles.get("fixed_axis", True))
 
         roles = (("cpu", getattr(self.i18n, "ORDER_TYPE_CPU", "CPU")),
                  ("gpu", getattr(self.i18n, "ORDER_TYPE_GPU", "GPU")))
-        all_ts, handles = [], []
+        all_ts, handles, data_max = [], [], 0.0
         for role, label in roles:
             series = data_dict.get(role) or []
             if not series:
@@ -791,15 +804,17 @@ class GraphRenderer(QObject):
             arr = np.array([(float(item[0]), float(item[1])) for item in series], dtype=float)
             ts = arr[:, 0]
             dts = [datetime.fromtimestamp(t) for t in ts]
+            ys = self._smooth_series(arr[:, 1], styles.get("smooth_window", 5)) if smooth else arr[:, 1]
             color, ls = styles.get(role) or hv.graph_line_style(role)
-            line, = ax.plot(dts, arr[:, 1], color=color, linestyle=ls, linewidth=1.5,
+            line, = ax.plot(dts, ys, color=color, linestyle=ls, linewidth=1.5,
                             zorder=10, label=label)
             handles.append(line)
             all_ts.append(ts)
+            data_max = max(data_max, float(arr[:, 1].max()))
 
-        ax.set_ylim(0, 100)
         if all_ts:
             self._configure_hardware_axes(start_time, end_time, period_key, np.concatenate(all_ts), None)
+        self._apply_hw_ylim(ax, fixed, data_max)   # after _configure_hardware_axes, which forces 0-100
 
         if not handles:
             # No CPU/GPU history yet (the common fresh-session state) — say so, don't show a blank grid.
@@ -832,8 +847,121 @@ class GraphRenderer(QObject):
         # Hardware / hwcombined plot on ax_download (ax_upload hidden) — format the visible axis.
         self._configure_xaxis_format(period_key, axis=self.ax_download)
 
-        
+    # --- hardware graph shaping (shared by hwcombined + hwseparate) ----------------
 
+    @staticmethod
+    def _smooth_series(ys, window: int = 5):
+        """Light moving-average smoothing (Hann window) for the utilization lines. numpy-only — no
+        scipy dep — and a no-op when the series is too short to smooth."""
+        window = int(window)
+        n = len(ys)
+        if window < 3 or n < window:
+            return ys
+        w = np.hanning(window)
+        w = w / w.sum()
+        pad = window // 2
+        padded = np.pad(np.asarray(ys, dtype=float), pad, mode="edge")
+        return np.convolve(padded, w, mode="same")[pad:pad + n]
+
+    def _apply_hw_ylim(self, ax, fixed: bool, data_max: float) -> None:
+        """Fixed 0-100% (default, comparable across runs) or auto-scale to the data (a low-utilization
+        trace fills the panel). Auto keeps a 10% floor so a near-idle line isn't a degenerate sliver."""
+        if fixed:
+            ax.set_ylim(0, 100)
+        else:
+            ax.set_ylim(0, max(10.0, min(100.0, (data_max or 0.0) * 1.2)))
+        ax.yaxis.set_major_formatter(lambda x, pos: f"{int(x)}%")
+
+    def _setup_hwseparate_axes(self):
+        """Two stacked 0-100% axes for the separate CPU / GPU hardware view (CPU top, GPU bottom)."""
+        self.ax_cpu = self.figure.add_subplot(2, 1, 1)
+        self.ax_gpu = self.figure.add_subplot(2, 1, 2, sharex=self.ax_cpu)
+        self.axes = [self.ax_cpu, self.ax_gpu]
+        self.figure.subplots_adjust(left=0.10, right=0.97, top=0.97, bottom=0.13, hspace=0.32)
+        self._format_hwseparate_axes()
+
+    def _format_hwseparate_axes(self):
+        """Styling for the two stacked hardware axes. x tick-labels live only on the bottom (GPU) axis;
+        both share the same time window via sharex."""
+        text = getattr(self, "_current_text_color", "white")
+        grid = getattr(self, "_current_grid_color", "#444")
+        cpu_lbl = getattr(self.i18n, "ORDER_TYPE_CPU", "CPU")
+        gpu_lbl = getattr(self.i18n, "ORDER_TYPE_GPU", "GPU")
+        for ax, lbl in ((self.ax_cpu, cpu_lbl), (self.ax_gpu, gpu_lbl)):
+            ax.set_ylabel(lbl, color=text)
+            ax.grid(True, linestyle=constants.graph.GRID_LINESTYLE,
+                    alpha=constants.graph.GRID_ALPHA, color=grid)
+            ax.tick_params(colors=text, which="both")
+            ax.yaxis.set_major_formatter(lambda x, pos: f"{int(x)}%")
+        self.ax_cpu.tick_params(labelbottom=False)   # x labels only on the bottom axis
+        self.ax_gpu.tick_params(labelbottom=True)
+
+    def _render_hwseparate(self, data_dict, start_time, end_time, period_key, hw_styles=None):
+        """CPU on the top axis, GPU on the bottom — each its own axis, so no shared-axis collision and
+        thus both vendor-coloured SOLID (no dashed sibling needed)."""
+        from netspeedtray.utils import hardware_vendors as hv
+        styles = hw_styles or {}
+        smooth = bool(styles.get("smoothing"))
+        fixed = bool(styles.get("fixed_axis", True))
+        self.ax_cpu.clear()
+        self.ax_gpu.clear()
+        self._format_hwseparate_axes()
+
+        any_data, all_ts = False, []
+        for ax, role in ((self.ax_cpu, "cpu"), (self.ax_gpu, "gpu")):
+            series = data_dict.get(role) or []
+            if not series:
+                self._apply_hw_ylim(ax, fixed, 0.0)
+                continue
+            arr = np.array([(float(item[0]), float(item[1])) for item in series], dtype=float)
+            ts = arr[:, 0]
+            dts = [datetime.fromtimestamp(t) for t in ts]
+            ys = self._smooth_series(arr[:, 1], styles.get("smooth_window", 5)) if smooth else arr[:, 1]
+            color, _ls = styles.get(role) or hv.graph_line_style(role)
+            ax.plot(dts, ys, color=color, linewidth=1.5, zorder=10)
+            self._apply_hw_ylim(ax, fixed, float(arr[:, 1].max()))
+            any_data = True
+            all_ts.append(ts)
+
+        if not any_data:
+            self.ax_cpu.text(0.5, 0.5, getattr(self.i18n, "COLLECTING_DATA_MESSAGE", "Collecting data…"),
+                             transform=self.ax_cpu.transAxes, ha="center", va="center",
+                             color=self._current_text_color, alpha=0.55, fontsize=10)
+            return
+        merged = np.concatenate(all_ts)
+        xs = start_time or datetime.fromtimestamp(merged.min())
+        xe = end_time or datetime.fromtimestamp(merged.max())
+        self.ax_cpu.set_xlim(xs, xe)   # sharex propagates to ax_gpu
+        self._configure_xaxis_format(period_key, axis=self.ax_gpu)
+
+    def _render_hwsingle(self, history_data, start_time, end_time, period_key, stat_type, hw_styles=None):
+        """One CPU- OR GPU-only line for the Monitor's "toggle" layout. Honours the same display
+        settings as _render_hwcombined/_render_hwseparate — per-role colour (vendor default fallback),
+        the Smooth toggle, and the fixed-0-100 vs auto y-axis — which the legacy single-stat path
+        (still used by the standalone GraphWindow, hw_styles=None) does not."""
+        from netspeedtray.utils import hardware_vendors as hv
+        styles = hw_styles or {}
+        smooth = bool(styles.get("smoothing"))
+        fixed = bool(styles.get("fixed_axis", True))
+        ax = self.ax_download
+        ax.clear()
+        self._format_hardware_axes(stat_type)
+
+        raw = np.array(history_data, dtype=float)
+        timestamps = raw[:, 0]
+        dts = [datetime.fromtimestamp(t) for t in timestamps]
+        values = raw[:, 1]
+        ys = self._smooth_series(values, styles.get("smooth_window", 5)) if smooth else values
+        color, _ls = styles.get(stat_type) or hv.graph_line_style(stat_type)   # solid for a lone line
+        ax.plot(dts, ys, color=color, linewidth=1.5, zorder=10)
+
+        xs = start_time or datetime.fromtimestamp(timestamps.min())
+        xe = end_time or datetime.fromtimestamp(timestamps.max())
+        ax.set_xlim(xs, xe)
+        self._configure_xaxis_format(period_key, axis=ax)
+        # After _configure_xaxis_format (and unlike _configure_hardware_axes, this never forces 0-100),
+        # so this is the single authoritative y-limit — mirroring _render_hwcombined's override order.
+        self._apply_hw_ylim(ax, fixed, float(values.max()) if len(values) else 0.0)
 
     def _plot_aggregated(self, plot_datetimes, upload_mbps, download_mbps, mode="daily", target_end_time=None):
         """
