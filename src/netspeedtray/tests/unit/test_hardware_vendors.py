@@ -35,10 +35,36 @@ def test_classify_gpu():
     assert hv._classify_gpu("Microsoft Basic Display Adapter") == "unknown"
 
 
-def test_cpu_and_gpu_colors_always_distinct():
-    """The whole point of the collision rule: CPU and GPU defaults must differ even on a same-vendor
-    box (AMD red Ryzen + AMD red Radeon; Intel blue Core + Intel blue iGPU)."""
-    assert hv.default_color("cpu") != hv.default_color("gpu")
+def test_cpu_and_gpu_colors_always_distinct_full_palette():
+    """The collision rule must hold for EVERY CPU x GPU pairing in BOTH themes — not just this box's
+    one pairing (a future palette edit that collided a pair would otherwise pass on most machines)."""
+    for cpu_hex in hv._CPU_COLORS.values():
+        for table in (hv._GPU_COLORS_DARK, hv._GPU_COLORS_LIGHT):
+            for gpu_hex in table.values():
+                assert cpu_hex.lower() != gpu_hex.lower()
+
+
+def test_gpu_color_is_theme_aware_cpu_is_not():
+    """GPU shade flips by theme (dark hues fail contrast on the light graph bg); CPU stays put."""
+    assert hv.graph_line_style("gpu", is_dark=True)[0] != hv.graph_line_style("gpu", is_dark=False)[0]
+    assert hv.graph_line_style("cpu", is_dark=True)[0] == hv.graph_line_style("cpu", is_dark=False)[0]
+
+
+def test_hybrid_gpu_returns_neutral(monkeypatch):
+    """A discrete GPU + an Intel iGPU (hybrid laptop) must NOT assert the discrete brand — the graphed
+    util is max-across-adapters, so colour/legend stay neutral."""
+    try:
+        hv.gpu_vendor.cache_clear()
+        monkeypatch.setattr(hv, "_enumerate_gpu_adapters", lambda: ["intel", "nvidia"])
+        assert hv.gpu_vendor() == "unknown"
+        hv.gpu_vendor.cache_clear()
+        monkeypatch.setattr(hv, "_enumerate_gpu_adapters", lambda: ["nvidia"])
+        assert hv.gpu_vendor() == "nvidia"          # discrete only -> branded
+        hv.gpu_vendor.cache_clear()
+        monkeypatch.setattr(hv, "_enumerate_gpu_adapters", lambda: ["intel"])
+        assert hv.gpu_vendor() == "intel"           # iGPU only -> Intel
+    finally:
+        hv.gpu_vendor.cache_clear()                 # restore real detection for other tests
 
 
 @pytest.fixture(scope="session")

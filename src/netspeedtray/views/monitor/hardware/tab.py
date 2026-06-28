@@ -11,10 +11,14 @@ from __future__ import annotations
 from typing import Any, Dict
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QSplitter
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QLabel
 
+from netspeedtray import constants
+from netspeedtray.utils import styles as su
+from netspeedtray.constants.styles import styles as tokens
 from netspeedtray.views.monitor.hardware.list import HardwareBarList
 from netspeedtray.views.monitor.hardware.feed import HardwareFeed
+from netspeedtray.views.monitor.network.header import PeriodSegmentedControl
 
 
 class HardwareTab(QWidget):
@@ -33,6 +37,24 @@ class HardwareTab(QWidget):
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(8)
 
+        # Period control — the graph's timeline (shared with Network: the Monitor has one window).
+        # Without this the combined graph silently inherited Network's period with no affordance.
+        self._period_key = constants.data.history_period.PERIOD_MAP.get(
+            int(config.get("history_period_slider_value", 2)), "TIMELINE_24_HOURS")
+        c = su.semantic_colors()
+        top = QHBoxLayout()
+        top.setContentsMargins(4, 0, 4, 0)
+        self._caption = QLabel(self._period_label(self._period_key))
+        self._caption.setFont(su.font(tokens.TYPE_CAPTION))
+        self._caption.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
+        top.addWidget(self._caption, 0, Qt.AlignmentFlag.AlignVCenter)
+        top.addStretch(1)
+        self._pills = PeriodSegmentedControl(self._period_key)
+        self._pills.period_changed.connect(self._host.set_period)
+        self._pills.period_changed.connect(self._on_period)
+        top.addWidget(self._pills, 0, Qt.AlignmentFlag.AlignVCenter)
+        root.addLayout(top)
+
         splitter = QSplitter(Qt.Orientation.Vertical)
         splitter.setChildrenCollapsible(False)
         self._plot_slot = QWidget()           # the shared canvas mounts here on show
@@ -42,15 +64,34 @@ class HardwareTab(QWidget):
         splitter.addWidget(self._list)
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 2)
-        splitter.setSizes([300, 300])
+        splitter.setSizes([360, 235])         # graph-favoured, fits the default 620px window
         root.addWidget(splitter, 1)
 
         self._feed = HardwareFeed(self)
         self._feed.payload_ready.connect(self._list.set_payload)
         self._feed.unavailable.connect(self._list.set_unavailable)
 
+    def _period_label(self, period_key: str) -> str:
+        default = period_key.replace("TIMELINE_", "").replace("_", " ").title()
+        return str(getattr(self._i18n, period_key, default))
+
+    def _on_period(self, value: int) -> None:
+        self._period_key = constants.data.history_period.PERIOD_MAP.get(int(value), "TIMELINE_24_HOURS")
+        self._caption.setText(self._period_label(self._period_key))
+
     def showEvent(self, event) -> None:
         super().showEvent(event)
+        # The period is shared with Network — re-sync our pills + caption to the host's current value
+        # so a change made on the Network tab is reflected here.
+        try:
+            pv = getattr(self._host, "_history_period_value", None)
+            if pv is not None:
+                key = constants.data.history_period.PERIOD_MAP.get(int(pv), self._period_key)
+                self._period_key = key
+                self._pills.set_period_key(key, emit=False)
+                self._caption.setText(self._period_label(key))
+        except Exception:
+            pass
         try:
             self._host.attach_to(self._plot_slot.layout(), self.stat_type)
             self._host.start_realtime()

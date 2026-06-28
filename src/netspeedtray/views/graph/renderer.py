@@ -792,7 +792,7 @@ class GraphRenderer(QObject):
             ts = arr[:, 0]
             dts = [datetime.fromtimestamp(t) for t in ts]
             color, ls = styles.get(role) or hv.graph_line_style(role)
-            line, = ax.plot(dts, arr[:, 1], color=color, linestyle=ls, linewidth=1.6,
+            line, = ax.plot(dts, arr[:, 1], color=color, linestyle=ls, linewidth=1.5,
                             zorder=10, label=label)
             handles.append(line)
             all_ts.append(ts)
@@ -800,10 +800,22 @@ class GraphRenderer(QObject):
         ax.set_ylim(0, 100)
         if all_ts:
             self._configure_hardware_axes(start_time, end_time, period_key, np.concatenate(all_ts), None)
+
         if handles:
-            legend = ax.legend(handles=handles, loc="upper left", fontsize=8, framealpha=0.25, ncols=2)
+            # upper-RIGHT: the lines peg high (near 100%) under load, so the upper-left is the busy
+            # zone; a near-opaque themed chip keeps the legend readable over pegged traces.
+            legend = ax.legend(handles=handles, loc="upper right", fontsize=8, framealpha=0.9, ncols=2)
+            frame = legend.get_frame()
+            frame.set_facecolor(style_constants.GRAPH_BG_DARK if getattr(self, "_is_dark_mode", True)
+                                else style_constants.GRAPH_BG_LIGHT)
+            frame.set_edgecolor(self._current_grid_color)
             for text in legend.get_texts():
                 text.set_color(self._current_text_color)
+        else:
+            # No CPU/GPU history yet (the common fresh-session state) — say so, don't show a blank grid.
+            ax.text(0.5, 0.5, getattr(self.i18n, "COLLECTING_DATA_MESSAGE", "Collecting data…"),
+                    transform=ax.transAxes, ha="center", va="center",
+                    color=self._current_text_color, alpha=0.55, fontsize=10)
 
     def _configure_hardware_axes(self, start_time, end_time, period_key, timestamps, values):
         """Sets limits and formatters for hardware stats."""
@@ -816,8 +828,9 @@ class GraphRenderer(QObject):
             xlim_start = start_time or datetime.fromtimestamp(timestamps.min())
             xlim_end = end_time or datetime.fromtimestamp(timestamps.max())
             self.ax_download.set_xlim(xlim_start, xlim_end)
-        
-        self._configure_xaxis_format(period_key)
+
+        # Hardware / hwcombined plot on ax_download (ax_upload hidden) — format the visible axis.
+        self._configure_xaxis_format(period_key, axis=self.ax_download)
 
         
 
@@ -1227,11 +1240,16 @@ class GraphRenderer(QObject):
         # 3. Otherwise, stay sticky
         return current_top
 
-    def _configure_xaxis_format(self, period_key: str) -> None:
+    def _configure_xaxis_format(self, period_key: str, axis=None) -> None:
         """
         Intelligently configures the x-axis locator and formatter.
+
+        ``axis`` is the Axes that actually carries the bottom tick labels — ax_upload for the 2-row
+        network view, but ax_download for the single-axis hardware / hwcombined modes (where ax_upload
+        is hidden, so formatters set on it would never reach the visible labels).
         """
-        axis = self.ax_upload
+        if axis is None:
+            axis = self.ax_upload
         
         # Default for most views
         major_locator = mdates.AutoDateLocator(maxticks=8)
