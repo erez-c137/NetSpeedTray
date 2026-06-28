@@ -28,11 +28,14 @@ from netspeedtray import constants
 from netspeedtray.utils import styles as su
 from netspeedtray.constants.styles import styles as tokens
 from netspeedtray.utils.helpers import format_speed, format_data_size
-from netspeedtray.utils import summaries as S
+# NOTE: `summaries` imports numpy at module scope. To honour the Monitor's import firewall (a glance at
+# the default Overview must not eagerly pull the heavy compute deps), it is imported LAZILY inside
+# _reload_window — the one place it's used — NOT here. Keep it that way.
 from netspeedtray.views.monitor.overview.tiles import StatTile, UsageTile, NetworkHero, dynamic_range
 from netspeedtray.views.monitor.overview.busiest_apps import BusiestAppsCard
 from netspeedtray.views.monitor.timeline_selector import TimelineSelector
-from netspeedtray.views.monitor.stats_detail import StatsDetailSheet, run_interactive_export
+# stats_detail imports `summaries` (-> numpy). It's only needed when the user opens the detail sheet or
+# exports, so it is imported LAZILY in those handlers — keeping numpy off the Overview's import path.
 
 # Per-resource accent as (dark, light) pairs. Network up/down get a distinct, harmonious pair; CPU/GPU
 # echo the graph's line hues; RAM/VRAM get their own calm colours. The light variant keeps the thin
@@ -349,6 +352,7 @@ class OverviewTab(QWidget):
             # Connection-drop events over the window (from the persisted gateway-timeout series), so a
             # latency blip you missed live is still counted. Cheap; off the 1 Hz path.
             if self._config.get("latency_enabled", True):
+                from netspeedtray.utils import summaries as S   # lazy: keeps numpy off the import path
                 self._latency_events = S.outage_summary(
                     ws.get_hardware_history("latency_gw_timeout", start, end))
             else:
@@ -511,6 +515,7 @@ class OverviewTab(QWidget):
         if ws is None:
             return
         from netspeedtray import __version__
+        from netspeedtray.views.monitor.stats_detail import run_interactive_export   # lazy (numpy)
         start, end, _is_session = self._window()
         label = self._timeline.current_label() if hasattr(self._timeline, "current_label") \
             else self._period_key()
@@ -525,11 +530,12 @@ class OverviewTab(QWidget):
                 pass
 
     def _open_settings(self) -> None:
-        """Open the app settings (the data-cap controls live on its Network page)."""
+        """Open Settings on the Network page, where the data-cap controls live — NOT General (index 0),
+        which is where a bare show_settings() lands and where the headline data-cap feature looked broken."""
         try:
-            self._main_widget.show_settings()
+            self._main_widget.open_data_usage_settings()
         except Exception as e:
-            self.logger.debug("Could not open settings from usage card: %s", e)
+            self.logger.debug("Could not open data-usage settings from usage card: %s", e)
 
     @staticmethod
     def _fmt_dur(secs: float) -> str:
@@ -616,6 +622,7 @@ class OverviewTab(QWidget):
         if not subjects:
             return
         from netspeedtray import __version__
+        from netspeedtray.views.monitor.stats_detail import StatsDetailSheet   # lazy (numpy)
         start, end, _is_session = self._window()
         label = self._timeline.current_label() if hasattr(self._timeline, "current_label") \
             else self._period_key()

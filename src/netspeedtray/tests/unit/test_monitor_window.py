@@ -90,6 +90,9 @@ def test_import_firewall_no_matplotlib_at_module_scope():
         "import netspeedtray.views.monitor.overview.tab\n"
         "leaked = [m for m in sys.modules if m == 'matplotlib' or m.startswith('matplotlib.')]\n"
         "assert not leaked, 'matplotlib leaked into the Monitor modules: %r' % leaked\n"
+        # The firewall contract names numpy too (it's the heaviest dep after matplotlib). The Overview's
+        # summaries pull numpy, so they must be lazy — importing the modules must not load numpy.
+        "assert 'numpy' not in sys.modules, 'numpy leaked into the Monitor modules at import time'\n"
         "assert 'netspeedtray.views.graph.window' not in sys.modules, 'graph package imported at module scope'\n"
         "print('FIREWALL_OK')\n"
     )

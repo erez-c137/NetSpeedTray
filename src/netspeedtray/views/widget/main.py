@@ -1150,6 +1150,16 @@ class NetworkSpeedWidget(QWidget):
         except Exception as e:
             self.logger.error("Error opening hardware settings: %s", e, exc_info=True)
 
+    def open_data_usage_settings(self) -> None:
+        """Open Settings straight on the Network page, where the data-cap 'Data usage' section lives —
+        the Monitor's 'Set a monthly limit' hint's door (was dropping the user on General)."""
+        try:
+            self.show_settings()
+            if self.settings_dialog is not None:
+                self.settings_dialog.navigate_to_page(self.settings_dialog.PAGE_NETWORK)
+        except Exception as e:
+            self.logger.error("Error opening data-usage settings: %s", e, exc_info=True)
+
     def show_settings(self) -> None:
         """Creates and displays the settings dialog as a normal, non-modal window."""
         self.logger.debug("Showing settings dialog...")

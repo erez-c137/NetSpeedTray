@@ -61,6 +61,7 @@ class SettingsDialog(QDialog):
     # Must stay in sync with the sidebar order in _setup_ui; test_settings_pages guards it so a
     # future page reshuffle trips a red test instead of silently opening the wrong page.
     PAGE_HARDWARE: int = 3
+    PAGE_NETWORK: int = 5   # Network Interfaces — hosts the "Data usage" / data-cap section
 
     def __init__(
         self,

@@ -73,6 +73,14 @@ def test_hardware_deeplink_points_at_hardware_page(dialog):
     assert dialog.sidebar.item(idx).text() == dialog.i18n.HARDWARE_MONITORING_GROUP
 
 
+def test_data_usage_deeplink_points_at_network_page(dialog):
+    """The Monitor's 'Set a monthly limit' hint deep-links via PAGE_NETWORK; it must be the Network
+    Interfaces row (the data-cap 'Data usage' section lives there). Regression for the hint opening
+    General — the headline data-cap feature reading as broken."""
+    idx = SettingsDialog.PAGE_NETWORK
+    assert dialog.sidebar.item(idx).text() == dialog.i18n.NETWORK_INTERFACES_GROUP
+
+
 def test_reset_advanced_page_only_resets_its_keys(qtbot, dialog):
     dialog._reset_advanced_page()
     settings = dialog.get_settings()
