@@ -28,6 +28,7 @@ from netspeedtray import constants
 from netspeedtray.utils import styles as su
 from netspeedtray.constants.styles import styles as tokens
 from netspeedtray.utils.helpers import format_speed, format_data_size
+from netspeedtray.utils.widget_paint import WidgetMetrics   # reuse its Mbps→bytes/sec converter (DRY)
 # NOTE: `summaries` imports numpy at module scope. To honour the Monitor's import firewall (a glance at
 # the default Overview must not eagerly pull the heavy compute deps), it is imported LAZILY inside
 # _reload_window — the one place it's used — NOT here. Keep it that way.
@@ -288,6 +289,16 @@ class OverviewTab(QWidget):
 
     def showEvent(self, event) -> None:  # noqa: N802 (Qt override)
         super().showEvent(event)
+        # Re-sync the period from config: another tab (Network/Hardware) may have changed it while we
+        # were hidden. Without this the dropdown still showed the old window AND the sparklines/avg/peak
+        # computed for the stale range (mirrors HardwareTab.showEvent).
+        try:
+            idx = int(self._config.get("history_period_slider_value", self._period_index) or self._period_index)
+            if idx != self._period_index:
+                self._period_index = idx
+                self._timeline.set_period_index(idx, emit=False)
+        except Exception:
+            pass
         self._reload_window()   # load the window's DB series + summaries, then paint immediately
         self._timer.start()
         self._hist_timer.start()
@@ -335,7 +346,9 @@ class OverviewTab(QWidget):
                     "ram": [s.value for s in ws.get_ram_history()],
                 }
             else:
-                net = ws.get_speed_history(start, end, None, resolution='auto')
+                # wait_for_flush=False: this runs on the GUI thread on a periodic timer — never block the
+                # UI on the DB-worker drain for a last second that's invisible at multi-hour resolution.
+                net = ws.get_speed_history(start, end, None, resolution='auto', wait_for_flush=False)
                 self._series = {
                     "down": [r[2] for r in net], "up": [r[1] for r in net],
                     "cpu": [v for _, v in ws.get_hardware_history("cpu", start, end)],
@@ -378,8 +391,13 @@ class OverviewTab(QWidget):
         summ = self._win_summ
         try:
             # --- Network hero: live current ↓/↑ over the window's dual sparkline; sub = window avg+peak.
-            down = float(getattr(mw, "download_speed", 0.0) or 0.0)
-            up = float(getattr(mw, "upload_speed", 0.0) or 0.0)
+            # download_speed/upload_speed are in Mbps; _fmt_speed/format_speed (and the byte-rate series)
+            # are in bytes/sec. Reuse the widget's OWN Mbps→bytes/sec converter (WidgetMetrics.net_bytes)
+            # rather than re-deriving it — passing raw Mbps collapsed the headline number to ~0.0 (most
+            # visibly in "always Mbps" mode) while the sparkline, built from byte rates, looked fine.
+            up, down = WidgetMetrics(
+                upload_mbps=float(getattr(mw, "upload_speed", 0.0) or 0.0),
+                download_mbps=float(getattr(mw, "download_speed", 0.0) or 0.0)).net_bytes()
             down_series, up_series = ser.get("down", []), ser.get("up", [])
             peak_v = max(max(down_series, default=0.0), max(up_series, default=0.0))
             sd, su_ = summ.get("down"), summ.get("up")

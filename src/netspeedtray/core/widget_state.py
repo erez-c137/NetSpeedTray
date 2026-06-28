@@ -625,7 +625,7 @@ class WidgetState(QObject):
         self.trigger_maintenance()
 
 
-    def get_speed_history(self, start_time: Optional[datetime] = None, end_time: Optional[datetime] = None, interface_name: Optional[str] = None, return_raw: bool = False, resolution: Literal['auto', 'raw', 'minute', 'hour', 'day'] = 'auto', _visited_resolutions: set = None) -> List[Tuple[Union[datetime, float], float, float]]:
+    def get_speed_history(self, start_time: Optional[datetime] = None, end_time: Optional[datetime] = None, interface_name: Optional[str] = None, return_raw: bool = False, resolution: Literal['auto', 'raw', 'minute', 'hour', 'day'] = 'auto', _visited_resolutions: set = None, wait_for_flush: bool = True) -> List[Tuple[Union[datetime, float], float, float]]:
         """
         Retrieves speed history by querying ALL relevant database tiers (raw, minute, hour)
         and unifying them into a single timeline.
@@ -633,8 +633,10 @@ class WidgetState(QObject):
         # Flush AND wait for persistence so the read includes the just-buffered samples (H3):
         # the previous fire-and-forget flush could miss them, leaving a gap at the graph edge.
         # Only on the top-level call — the resolution recursion (which sets _visited_resolutions)
-        # must not re-barrier on every tier.
-        if _visited_resolutions is None:
+        # must not re-barrier on every tier. Callers that run on the GUI thread on a timer (the Overview
+        # reload, every few seconds) pass wait_for_flush=False so they never block the UI up to the 2s
+        # flush timeout for a missing last second that doesn't matter at multi-hour resolution.
+        if _visited_resolutions is None and wait_for_flush:
             self.flush_and_wait()
 
         # 1. Timeline Setup

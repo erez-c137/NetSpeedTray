@@ -64,8 +64,11 @@ class _MW:
     cpu_usage = 42.0
     gpu_usage = 0.0
     gpu_present = True
-    download_speed = 2.0e6
-    upload_speed = 1.0e6
+    # download_speed/upload_speed are in MBPS (the controller emits Mbps; main.py stores it verbatim).
+    # The old fixture used bytes/sec values here, which masked the Overview's missing Mbps→bytes/sec
+    # conversion (the "Overview shows 0.0" bug) — the raw-pass happened to format ~16 Mbps.
+    download_speed = 80.0   # Mbps
+    upload_speed = 40.0     # Mbps
     ram_used = 8.0e9
     ram_total = 16.0e9
     vram_used = None
@@ -174,9 +177,12 @@ def test_tiles_show_live_values(q_app):
     q_app.processEvents()
     assert ov._tiles["cpu"]._value.text() == "42%"
     assert ov._tiles["ram"]._value.text() == "50%"          # 8/16
-    # network hero shows both directions in Mbps (bits_decimal)
-    assert "Mbps" in ov._hero._down_v.text()
-    assert "Mbps" in ov._hero._up_v.text()
+    # Network hero shows the live speed in the right MAGNITUDE (the Mbps→bytes/sec conversion must be
+    # applied — passing raw Mbps to format_speed collapsed it to ~0.0). 80 Mbps must read ~80, not 0 or
+    # thousands of Gbps.
+    down_text = ov._hero._down_v.text()
+    assert "Mbps" in down_text and "Mbps" in ov._hero._up_v.text()
+    assert float(down_text.replace(",", ".").split()[0]) == pytest.approx(80.0, abs=0.5)
     # VRAM has no reading (vram_used None) -> its tile hides itself
     assert not ov._tiles["vram"].isVisibleTo(ov)
     # usage tile: cap is set -> progress shows 50%
