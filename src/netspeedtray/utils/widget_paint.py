@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 from PyQt6.QtCore import QRect
-from PyQt6.QtGui import QFont, QPainter
+from PyQt6.QtGui import QFont, QPainter, QImage
 
 from netspeedtray import constants
 from netspeedtray.utils.widget_renderer import RenderConfig, WidgetRenderer
@@ -232,4 +232,41 @@ def render_widget(painter: QPainter, rect: QRect, renderer: WidgetRenderer, conf
 
     if font is not None:
         painter.setFont(font)
-    _draw_foreground(painter, renderer, width, height, config, metrics, mode, layout_mode, network_width)
+
+    # Right-align the side-by-side content so the widget's worst-case width reservation (the anti-jiggle
+    # "888.8"/"100%" headroom, plus any hidden GPU/VRAM segment) shows up as space on the LEFT — toward
+    # the app icons, where it's invisible — instead of a gap between the content and the system tray.
+    # Only side_by_side over-reserves like this; single-metric modes fill their width (graph or one
+    # block) and vertical docking is sized to the taskbar. We have to MEASURE first because the renderer
+    # computes its segment rects from font metrics during the draw, not before — so we run one draw onto
+    # a throwaway surface (the mini-graph's point cache, keyed by data, is simply warmed by it).
+    align_dx = 0
+    if mode == "side_by_side" and layout_mode != "vertical" and width > 0:
+        try:
+            probe = QImage(max(1, width), max(1, height), QImage.Format.Format_ARGB32_Premultiplied)
+            mp = QPainter(probe)
+            if font is not None:
+                mp.setFont(font)
+            renderer.reset_content_bounds()
+            _draw_side_by_side(mp, renderer, width, height, config, metrics, layout_mode, network_width)
+            mp.end()
+            content_w = renderer.get_content_bounds().width()
+            if 0 < content_w < width:
+                align_dx = max(0, width - content_w - constants.renderer.TEXT_MARGIN)
+        except Exception:
+            align_dx = 0
+        finally:
+            renderer.reset_content_bounds()
+
+    if align_dx > 0:
+        painter.save()
+        painter.translate(align_dx, 0)
+        _draw_foreground(painter, renderer, width, height, config, metrics, mode, layout_mode, network_width)
+        painter.restore()
+        # The segment rects were measured at x_offset 0 (pre-translate); shift the accumulated bounds to
+        # the on-screen position so the context menu still centers under the visible content.
+        bounds = renderer.get_content_bounds()
+        if bounds is not None and not bounds.isNull():
+            bounds.translate(align_dx, 0)
+    else:
+        _draw_foreground(painter, renderer, width, height, config, metrics, mode, layout_mode, network_width)

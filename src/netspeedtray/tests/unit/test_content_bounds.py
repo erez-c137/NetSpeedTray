@@ -61,3 +61,37 @@ def test_extend_ignores_invalid_rects(q_app):
     r._extend_content_bounds(QRect(0, 0, 0, 20))      # empty width
     r._extend_content_bounds(QRect(5, 0, 40, 20))     # valid
     assert r.get_content_bounds() == QRect(5, 0, 40, 20)
+
+
+def test_side_by_side_content_right_aligns(q_app):
+    """The side-by-side widget right-aligns its content so the worst-case width reservation's surplus
+    sits on the LEFT (toward the app icons), not as dead space between the content and the system tray.
+    Rendered at a width deliberately wider than the content, the content's right edge hugs the widget
+    edge — and a single-metric (network-only) layout is left unchanged (it fills its width)."""
+    from PyQt6.QtGui import QPixmap, QPainter, QColor
+    from netspeedtray.utils.widget_paint import render_widget, WidgetMetrics, font_from_config
+
+    m = WidgetMetrics(upload_mbps=0.3, download_mbps=0.1, cpu_usage=14.0, gpu_usage=0.0,
+                      cpu_temp=65.0, ram_used=12.0, ram_total=15.7)
+    # Render onto a canvas deliberately MUCH wider than the content so the right-align engages
+    # regardless of the host's font metrics (CI ships no fonts, so absolute widths aren't portable —
+    # but "content narrower than a 600px canvas" holds for every font).
+    W, H = 600, 40
+
+    def _render(cfg):
+        r = WidgetRenderer(cfg, I18nStrings("en_US"))
+        pm = QPixmap(W, H); pm.fill(QColor(0, 0, 0))
+        p = QPainter(pm)
+        render_widget(p, QRect(0, 0, W, H), r, r.config, m, layout_mode="horizontal",
+                      network_width=None, font=font_from_config(cfg))
+        p.end()
+        return r.get_content_bounds()
+
+    sbs = _render({"widget_display_mode": "side_by_side", "monitor_cpu_enabled": True,
+                   "monitor_ram_enabled": True, "show_hardware_temps": True, "background_opacity": 0})
+    assert 0 < sbs.width() < W                       # content is narrower than the reserved width
+    assert sbs.right() >= W - 12                      # ...and right-aligned (hugs the tray-side edge)
+    assert sbs.left() > W // 4                         # the surplus (a wide gap) moved to the LEFT
+
+    net = _render({"widget_display_mode": "network_only", "background_opacity": 0})
+    assert net.left() <= 6                            # single-metric layout is NOT right-aligned
