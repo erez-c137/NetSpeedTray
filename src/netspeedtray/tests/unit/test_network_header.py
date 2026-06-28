@@ -106,20 +106,23 @@ def test_set_period_raises_dedup_floor_and_routes(q_app):
 def test_interface_dropdown_populates_and_emits(q_app):
     h = NetworkHeader(I18nStrings("en_US"), "TIMELINE_24_HOURS")
     h.set_interfaces(["Wi-Fi", "Ethernet"])
-    assert h._iface.count() == 3                 # "All" + 2 NICs
-    assert h._iface.itemData(0) == "all"
+    assert len(h._iface_menu.actions()) == 3      # "All Interfaces" + 2 NICs
     seen = []
     h.interface_changed.connect(seen.append)
-    h._iface.setCurrentIndex(h._iface.findData("Ethernet"))
-    assert seen and seen[-1] == "Ethernet"
+    h._select_iface("Ethernet", "Ethernet")       # as if the menu item were clicked
+    assert seen == ["Ethernet"]
+    assert h._iface_value == "Ethernet"
+    assert "Ethernet" in h._iface_btn.text()       # button reflects the selection
 
 
 def test_set_interfaces_preserves_selection(q_app):
     h = NetworkHeader(I18nStrings("en_US"), "TIMELINE_24_HOURS")
     h.set_interfaces(["Wi-Fi", "Ethernet"])
-    h._iface.setCurrentIndex(h._iface.findData("Wi-Fi"))
+    h._select_iface("Wi-Fi", "Wi-Fi")
     h.set_interfaces(["Wi-Fi", "Ethernet", "vEthernet"])   # repopulate (e.g. a NIC appeared)
-    assert h._iface.currentData() == "Wi-Fi"               # selection kept
+    assert h._iface_value == "Wi-Fi"                       # selection kept
+    h.set_interfaces(["Ethernet"])                         # Wi-Fi disappeared -> fall back to all
+    assert h._iface_value == "all"
 
 
 def test_set_interface_filter_raises_dedup_floor(q_app):

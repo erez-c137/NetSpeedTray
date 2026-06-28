@@ -11,7 +11,8 @@ from __future__ import annotations
 from typing import Dict, Optional, Tuple
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QComboBox
+from PyQt6.QtGui import QActionGroup
+from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QToolButton, QMenu
 
 from netspeedtray import constants
 from netspeedtray.utils import styles as su
@@ -109,28 +110,34 @@ class NetworkHeader(QWidget):
         root.addLayout(self._up[0])
         root.addStretch(1)
 
-        # Per-NIC filter — scopes both the graph and these totals to one interface (or all).
-        self._iface = QComboBox()
-        self._iface.setMinimumWidth(190)
-        self._iface.setFixedHeight(30)
-        self._iface.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._iface.setAccessibleName(self._tr("ALL_INTERFACES_AGGREGATED_LABEL", "All Interfaces"))
-        self._iface.addItem(self._tr("ALL_INTERFACES_AGGREGATED_LABEL", "All Interfaces"), "all")
-        # Styling a QComboBox suppresses its native drop-down arrow, so draw one explicitly as a small
-        # CSS triangle (no image asset) — otherwise the control doesn't read as a dropdown (owner report).
-        self._iface.setStyleSheet(
-            f"QComboBox {{ background: {c['subtle_fill']}; color: {c['text_primary']};"
-            f" border: 1px solid {c['card_stroke']}; border-radius: {tokens.RADIUS_CONTROL}px;"
-            f" padding: 4px 12px; }}"
-            f"QComboBox:hover {{ border-color: {c['accent']}; }}"
-            f"QComboBox::drop-down {{ border: none; width: 22px; }}"
-            f"QComboBox::down-arrow {{ image: none; width: 0; height: 0;"
-            f" border-left: 4px solid transparent; border-right: 4px solid transparent;"
-            f" border-top: 5px solid {c['text_secondary']}; margin-right: 8px; }}"
-            f"QComboBox QAbstractItemView {{ background: {c['card_bg']}; color: {c['text_primary']};"
-            f" selection-background-color: {c['accent']}; selection-color: white; outline: none; }}")
-        self._iface.currentIndexChanged.connect(self._on_iface_changed)
-        root.addWidget(self._iface, 0, Qt.AlignmentFlag.AlignVCenter)
+        # Per-NIC filter — scopes both the graph and these totals to one interface (or all). Built as a
+        # QToolButton + menu styled IDENTICALLY to the TimelineSelector (a QComboBox loses its native
+        # arrow when styled and renders as a bare box; this also keeps the two right-side controls the
+        # same height + look — the owner's consistency note).
+        self._iface_value = "all"
+        self._iface_btn = QToolButton()
+        self._iface_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._iface_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._iface_btn.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self._iface_btn.setFont(su.font(tokens.TYPE_BODY))
+        self._iface_btn.setMinimumWidth(190)
+        _r = tokens.RADIUS_CONTROL
+        self._iface_btn.setStyleSheet(
+            f"QToolButton {{ background: {c['subtle_fill']}; color: {c['text_primary']};"
+            f" border: 1px solid {c['card_stroke']}; border-radius: {_r}px; padding: 4px 12px;"
+            f" text-align: left; }}"
+            f" QToolButton:hover {{ border-color: {c['accent']}; }}"
+            f" QToolButton:focus {{ border-color: {c['accent']}; }}"
+            f" QToolButton::menu-indicator {{ image: none; width: 0; }}")
+        self._iface_menu = QMenu(self._iface_btn)
+        self._iface_menu.setStyleSheet(
+            f"QMenu {{ background: {c['card_bg']}; color: {c['text_primary']};"
+            f" border: 1px solid {c['card_stroke']}; border-radius: 6px; padding: 4px; }}"
+            f" QMenu::item {{ padding: 5px 28px 5px 12px; border-radius: 4px; }}"
+            f" QMenu::item:selected {{ background: {c['accent']}; color: white; }}")
+        self._iface_btn.setMenu(self._iface_menu)
+        self.set_interfaces([])   # build the menu (just "All Interfaces") + label the button
+        root.addWidget(self._iface_btn, 0, Qt.AlignmentFlag.AlignVCenter)
 
         self._timeline = TimelineSelector(i18n, current_index=_period_value(initial_key))
         self._timeline.period_changed.connect(self.period_changed)
@@ -174,21 +181,33 @@ class NetworkHeader(QWidget):
         self._timeline.set_period_index(_period_value(period_key), emit=False)
 
     def set_interfaces(self, names) -> None:
-        """Populate the NIC dropdown ('All Interfaces' + each name), preserving the selection."""
-        self._iface.blockSignals(True)
-        prev = self._iface.currentData()
-        self._iface.clear()
-        self._iface.addItem(self._tr("ALL_INTERFACES_AGGREGATED_LABEL", "All Interfaces"), "all")
-        for n in sorted(names or []):
-            self._iface.addItem(n, n)
-        idx = self._iface.findData(prev)
-        if idx != -1:
-            self._iface.setCurrentIndex(idx)
-        self._iface.blockSignals(False)
+        """Rebuild the NIC menu ('All Interfaces' + each name), preserving the current selection."""
+        names = sorted(names or [])
+        if self._iface_value != "all" and self._iface_value not in names:
+            self._iface_value = "all"   # the selected NIC disappeared -> fall back to all
+        self._iface_menu.clear()
+        group = QActionGroup(self._iface_menu)
+        group.setExclusive(True)
+        all_label = self._tr("ALL_INTERFACES_AGGREGATED_LABEL", "All Interfaces")
+        for label, data in [(all_label, "all")] + [(n, n) for n in names]:
+            act = self._iface_menu.addAction(label)
+            act.setCheckable(True)
+            act.setChecked(data == self._iface_value)
+            act.triggered.connect(lambda _checked=False, d=data, l=label: self._select_iface(d, l))
+            group.addAction(act)
+        self._sync_iface_text()
 
-    def _on_iface_changed(self, _idx: int) -> None:
-        data = self._iface.currentData()
-        self.interface_changed.emit(str(data) if data is not None else "all")
+    def _select_iface(self, data: str, label: str) -> None:
+        if data != self._iface_value:
+            self._iface_value = data
+            self._sync_iface_text()
+            self.interface_changed.emit(str(data))
+
+    def _sync_iface_text(self) -> None:
+        label = (self._tr("ALL_INTERFACES_AGGREGATED_LABEL", "All Interfaces")
+                 if self._iface_value == "all" else str(self._iface_value))
+        self._iface_btn.setText(f"{label}    ▾")   # same chevron-in-text idiom as TimelineSelector
+        self._iface_btn.setAccessibleName(label)
 
     def _fmt(self, value: float) -> str:
         s = f"{value:.1f}"

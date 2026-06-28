@@ -252,7 +252,9 @@ def render_widget(painter: QPainter, rect: QRect, renderer: WidgetRenderer, conf
             mp.end()
             content_w = renderer.get_content_bounds().width()
             if 0 < content_w < width:
-                align_dx = max(0, width - content_w - constants.renderer.TEXT_MARGIN)
+                # Keep deliberate breathing room from the tray-side edge (not just TEXT_MARGIN) so the
+                # right-anchored readout doesn't crowd the tray-overflow chevron.
+                align_dx = max(0, width - content_w - constants.renderer.RIGHT_ANCHOR_PADDING)
         except Exception:
             align_dx = 0
         finally:
