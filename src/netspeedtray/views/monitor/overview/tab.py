@@ -208,9 +208,11 @@ class OverviewTab(QWidget):
     def _hw_sub(self, temp: Optional[float], power: Optional[float]) -> str:
         """CPU/GPU sub-line: temperature and (when collected) power, e.g. "62°C  ·  35 W"."""
         parts = []
-        if temp is not None and float(temp) > 0:
+        if temp is not None and float(temp) >= 1:
             parts.append(f"{float(temp):.0f}°C")
-        if power is not None and float(power) > 0:   # 0 W means "no power counter", not a real reading
+        # >= 0.5 W, not > 0: a flaky iGPU power reading of 0.3 W rounds to "0 W" and then vanishes,
+        # which would make the sub-line flicker — only show power that actually displays as >= 1 W.
+        if power is not None and float(power) >= 0.5:
             parts.append(f"{float(power):.0f} W")
         return "  ·  ".join(parts)
 

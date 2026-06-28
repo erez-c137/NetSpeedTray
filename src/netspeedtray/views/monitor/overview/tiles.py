@@ -18,7 +18,7 @@ from typing import List, Optional, Tuple
 
 from PyQt6.QtCore import Qt, QPointF, QRectF, pyqtSignal
 from PyQt6.QtGui import (
-    QPainter, QColor, QPen, QPainterPath, QPolygonF, QLinearGradient, QFont,
+    QPainter, QColor, QPen, QPainterPath, QPolygonF, QLinearGradient, QFont, QFontMetrics,
 )
 from PyQt6.QtWidgets import (
     QWidget, QFrame, QVBoxLayout, QHBoxLayout, QLabel, QProgressBar, QSizePolicy,
@@ -189,10 +189,13 @@ class StatTile(QFrame):
         self._value.setFont(su.font(tokens.TYPE_TITLE))
         self._value.setStyleSheet(f"color: {c['text_primary']}; background: transparent;")
 
-        self._sub = QLabel("")
+        # The sub-line ALWAYS reserves its one caption line (even when empty) — toggling its visibility
+        # as a reading comes and goes (e.g. an iGPU's flaky power sub) would reflow the tile and shove
+        # the title + value up and down. Reserve the height; only the text changes.
+        self._sub = QLabel(" ")
         self._sub.setFont(su.font(tokens.TYPE_CAPTION))
         self._sub.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
-        self._sub.setVisible(False)
+        self._sub.setMinimumHeight(QFontMetrics(self._sub.font()).height())
 
         self._spark = Sparkline(accent)
 
@@ -204,8 +207,7 @@ class StatTile(QFrame):
     def set(self, value_text: str, series: List[float],
             vmax: Optional[float] = None, sub_text: str = "") -> None:
         self._value.setText(value_text)
-        self._sub.setText(sub_text)
-        self._sub.setVisible(bool(sub_text))
+        self._sub.setText(sub_text or " ")   # keep a blank line so the tile height never changes
         self._spark.set_series(series, vmax)
 
     def set_label(self, text: str) -> None:

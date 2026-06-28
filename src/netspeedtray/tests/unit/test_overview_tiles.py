@@ -74,6 +74,29 @@ def test_hardware_tiles_always_built(q_app):
     assert set(ov._tiles.keys()) == {"cpu", "gpu", "ram", "vram"}
 
 
+def test_hw_sub_omits_power_that_rounds_to_zero(q_app):
+    # Regression for the GPU-tile flicker: a flaky iGPU power of 0.3 W rounds to "0 W" and would make
+    # the sub-line appear/vanish; only show power that displays as >= 1 W. (temp >= 1 likewise.)
+    ov = OverviewTab(_MW(), _cfg(), I18nStrings("en_US"))
+    assert ov._hw_sub(None, 0.3) == ""
+    assert ov._hw_sub(None, 0.0) == ""
+    assert ov._hw_sub(0.0, None) == ""
+    assert ov._hw_sub(55.0, 65.0) == "55°C  ·  65 W"
+    assert ov._hw_sub(62.0, None) == "62°C"
+
+
+def test_stat_tile_reserves_sub_line(q_app):
+    # The sub-line keeps its height even when empty, so a coming-and-going reading never reflows the
+    # tile (the cause of the title/% jumping up and down).
+    from netspeedtray.views.monitor.overview.tiles import StatTile
+    t = StatTile("iGPU", "#FF9800")
+    assert t._sub.minimumHeight() > 0
+    t.set("23%", [1.0, 2.0], vmax=100.0, sub_text="")
+    assert t._sub.text() == " "                 # blank line reserved, not hidden
+    t.set("23%", [1.0, 2.0], vmax=100.0, sub_text="55°C")
+    assert t._sub.text() == "55°C"
+
+
 def test_gpu_tile_hides_on_no_gpu(q_app):
     # Review fix: a confirmed no-GPU box (gpu_present False) hides the GPU tile instead of 0%.
     mw = _MW()

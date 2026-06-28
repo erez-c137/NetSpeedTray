@@ -99,9 +99,9 @@ class TelemetryStrip(QWidget):
         # Show whatever was collected: usage always; temp/power append only when present (temp flows
         # by default under the Monitor's forced collection; power only when the user opted into it).
         parts: List[str] = [f"{float(usage):.0f}%"]
-        if temp is not None and float(temp) > 0:
+        if temp is not None and float(temp) >= 1:
             parts.append(f"{float(temp):.0f}°C")
-        if power is not None and float(power) > 0:   # 0 W means "no power counter", not a real reading
+        if power is not None and float(power) >= 0.5:   # >= 0.5 so a 0.3 W reading doesn't show "0 W"
             parts.append(f"{float(power):.0f} W")
         return "  ·  ".join(parts)
 
