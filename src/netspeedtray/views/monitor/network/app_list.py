@@ -176,9 +176,13 @@ class AppRow(QFrame):
         self._apply_row_style()   # keep selection/hover styling fresh across theme changes
         # Qt does NOT expose a tooltip to screen readers, so also set the accessible name from the same
         # content — otherwise an assistive reader announces a blank frame for the tab's primary control.
-        summary = f"{name} — {conn} connections, {est} active, {hosts} hosts"
+        summary = self._tr("APP_ROW_TOOLTIP", "{name} — {conn} connections, {active} active, {hosts} hosts") \
+            .format(name=name, conn=conn, active=est, hosts=hosts)
         self.setToolTip(summary)
         self.setAccessibleName(summary)
+
+    def _tr(self, key: str, default: str) -> str:
+        return str(getattr(self._i18n, key, default)) if self._i18n is not None else default
 
 
 class AppBarList(QWidget):

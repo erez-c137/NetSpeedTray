@@ -225,6 +225,7 @@ class NetworkSpeedWidget(QWidget):
                 period_getter=self.widget_state.get_usage_period_key,
                 notify=self._show_usage_alert,
                 save_state=lambda s: self.update_config({"usage_alert_state": s}),
+                i18n=self.i18n,
             )
             self._usage_alert_timer = QTimer(self)
             self._usage_alert_timer.timeout.connect(self._usage_alert.check)

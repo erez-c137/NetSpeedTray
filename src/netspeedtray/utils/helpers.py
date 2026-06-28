@@ -247,6 +247,21 @@ def format_speed(
     return f"{formatted_val} {unit}"
 
 
+def format_duration_short(secs: float, i18n) -> str:
+    """A compact, localized duration: '2h 30m', '45m', or '30s'. Units come from i18n (DURATION_*_SHORT)
+    so a locale can use 'min'/'std'/etc. Consolidates the duplicate _fmt_dur helpers in the Monitor."""
+    h_u = str(getattr(i18n, "DURATION_HOURS_SHORT", "h")) if i18n is not None else "h"
+    m_u = str(getattr(i18n, "DURATION_MINUTES_SHORT", "m")) if i18n is not None else "m"
+    s_u = str(getattr(i18n, "DURATION_SECONDS_SHORT", "s")) if i18n is not None else "s"
+    secs = max(0, int(secs))
+    h, m = secs // 3600, (secs % 3600) // 60
+    if h:
+        return f"{h}{h_u} {m}{m_u}"
+    if m:
+        return f"{m}{m_u}"
+    return f"{secs}{s_u}"
+
+
 def format_decimal(value: float, i18n, places: int = 1) -> str:
     """Format a number with the locale's decimal separator (de/fr/ru/… use ',' not '.').
 

@@ -27,7 +27,7 @@ from PyQt6.QtWidgets import (
 from netspeedtray import constants
 from netspeedtray.utils import styles as su
 from netspeedtray.constants.styles import styles as tokens
-from netspeedtray.utils.helpers import format_speed, format_data_size
+from netspeedtray.utils.helpers import format_speed, format_data_size, format_duration_short
 from netspeedtray.utils.widget_paint import WidgetMetrics   # reuse its Mbps→bytes/sec converter (DRY)
 # NOTE: `summaries` imports numpy at module scope. To honour the Monitor's import firewall (a glance at
 # the default Overview must not eagerly pull the heavy compute deps), it is imported LAZILY inside
@@ -489,7 +489,7 @@ class OverviewTab(QWidget):
         if start is None:
             return ""
         secs = max(0.0, (datetime.now() - start).total_seconds())
-        parts = [f"{self._tr('STAT_SESSION_LABEL', 'Session')} {self._fmt_dur(secs)}"]
+        parts = [f"{self._tr('STAT_SESSION_LABEL', 'Session')} {format_duration_short(secs, self._i18n)}"]
         ws = getattr(mw, "widget_state", None)
         if ws is not None:
             try:
@@ -565,11 +565,6 @@ class OverviewTab(QWidget):
         except Exception as e:
             self.logger.debug("Could not open data-usage settings from usage card: %s", e)
 
-    @staticmethod
-    def _fmt_dur(secs: float) -> str:
-        h, m = int(secs // 3600), int((secs % 3600) // 60)
-        return f"{h}h {m}m" if h else f"{m}m"
-
     def _num(self, value: float) -> str:
         s = f"{value:.1f}"
         sep = getattr(self._i18n, "DECIMAL_SEPARATOR", ".")
@@ -597,7 +592,7 @@ class OverviewTab(QWidget):
         if ms is not None:
             detail.append(f"{ms:.0f} ms")
         if loss > 0:
-            detail.append(f"{loss:.0f}% loss")
+            detail.append(self._tr("MONITOR_LATENCY_LOSS_FMT", "{pct}% loss").format(pct=f"{loss:.0f}"))
         if detail:
             out += f"  <span style='color:{sub};'>· {' · '.join(detail)}</span>"
         return out

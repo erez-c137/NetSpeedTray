@@ -29,7 +29,7 @@ from PyQt6.QtWidgets import (
 
 from netspeedtray.utils import styles as su
 from netspeedtray.constants.styles import styles as tokens
-from netspeedtray.utils.helpers import format_speed, get_machine_id
+from netspeedtray.utils.helpers import format_speed, get_machine_id, format_duration_short
 from netspeedtray.utils import summaries as S
 from netspeedtray.utils import stats_exporter
 
@@ -341,14 +341,8 @@ class StatsDetailSheet(QDialog):
     def _group_thousands(self, n: int) -> str:
         return f"{int(n):,}".replace(",", self._tr("THOUSANDS_SEPARATOR", ","))
 
-    @staticmethod
-    def _dur(secs: float) -> str:
-        h, m = int(secs // 3600), int((secs % 3600) // 60)
-        if h:
-            return f"{h}h {m}m"
-        if m:
-            return f"{m}m"
-        return f"{int(secs)}s"
+    def _dur(self, secs: float) -> str:
+        return format_duration_short(secs, self._i18n)   # shared, localized (consolidates the old helpers)
 
     def _fmt_speed(self, bps: float) -> str:
         cfg = self._config

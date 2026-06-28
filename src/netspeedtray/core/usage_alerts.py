@@ -34,12 +34,17 @@ class UsageAlertController:
                  config_getter: Callable[[], Dict],
                  period_getter: Callable[[], str],
                  notify: Callable[[str, str], None],
-                 save_state: Callable[[str], None]) -> None:
+                 save_state: Callable[[str], None],
+                 i18n=None) -> None:
         self._usage = usage_getter        # () -> (up_bytes, down_bytes) this period
         self._config = config_getter      # () -> config dict
         self._period = period_getter      # () -> current period_key
         self._notify = notify             # (title, message) -> tray toast
         self._save_state = save_state     # (encoded_state) -> persist to config
+        self._i18n = i18n                 # for localized toast title/message
+
+    def _tr(self, key: str, default: str) -> str:
+        return str(getattr(self._i18n, key, default)) if self._i18n is not None else default
 
     @staticmethod
     def _state_id(period: str, cap_gb: float, count: str) -> str:
@@ -100,12 +105,19 @@ class UsageAlertController:
 
     def _fire(self, level: int, used_gb: float, cap_gb: float) -> None:
         try:
+            from netspeedtray.utils.helpers import format_decimal
+            cap = f"{cap_gb:g}"
+            used = format_decimal(used_gb, self._i18n, 1)
             if level >= 100:
-                title = "Data cap reached"
-                msg = f"You've used your {cap_gb:g} GB data cap ({used_gb:.1f} GB this period)."
+                title = self._tr("USAGE_ALERT_REACHED_TITLE", "Data cap reached")
+                msg = self._tr("USAGE_ALERT_REACHED_MSG",
+                               "You've used your {cap} GB data cap ({used} GB this period).")
+                msg = msg.format(cap=cap, used=used)
             else:
-                title = "Data cap warning"
-                msg = f"You've used {level}% of your {cap_gb:g} GB data cap ({used_gb:.1f} GB this period)."
+                title = self._tr("USAGE_ALERT_WARNING_TITLE", "Data cap warning")
+                msg = self._tr("USAGE_ALERT_WARNING_MSG",
+                               "You've used {level}% of your {cap} GB data cap ({used} GB this period).")
+                msg = msg.format(level=level, cap=cap, used=used)
             self._notify(title, msg)
         except Exception as e:
             logger.error("Could not show usage alert toast: %s", e)
