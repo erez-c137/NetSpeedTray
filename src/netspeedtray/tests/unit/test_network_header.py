@@ -50,7 +50,9 @@ def test_header_forwards_period_change(q_app):
     seen = []
     h = NetworkHeader(I18nStrings("en_US"), "TIMELINE_24_HOURS")
     h.period_changed.connect(seen.append)
-    h._pills._buttons["TIMELINE_ALL"].click()
+    # The header now hosts the shared TimelineSelector dropdown (consistent with Overview/Hardware);
+    # a period pick on it is re-emitted as the PERIOD_MAP index.
+    h._timeline.set_period_index(5, emit=True)   # ALL
     assert seen == [5]
 
 
@@ -61,14 +63,13 @@ def test_header_totals_format(q_app):
     assert "↑" in h._up[1].text() and "GB" in h._up[1].text()
 
 
-def test_period_caption_labels_the_window(q_app):
-    """The totals self-describe their time window via the localized TIMELINE_* value (no new keys)."""
-    i18n = I18nStrings("en_US")
-    h = NetworkHeader(i18n, "TIMELINE_24_HOURS")
-    h.set_totals(1e9, 2e9, period_key="TIMELINE_24_HOURS")
-    assert h._period_caption.text() == getattr(i18n, "TIMELINE_24_HOURS")   # "24 Hours"
-    h.set_totals(1e9, 2e9, period_key="TIMELINE_MONTH")
-    assert h._period_caption.text() == getattr(i18n, "TIMELINE_MONTH")
+def test_set_period_key_updates_timeline(q_app):
+    """The timeline dropdown self-labels the active window, so set_period_key syncs it (no caption)."""
+    h = NetworkHeader(I18nStrings("en_US"), "TIMELINE_24_HOURS")
+    assert h._timeline.current_index() == _period_value("TIMELINE_24_HOURS")   # 2
+    h.set_period_key("TIMELINE_MONTH")
+    assert h._timeline.current_index() == _period_value("TIMELINE_MONTH")      # 4
+    assert "Month" in h._timeline.current_label()
 
 
 def test_initial_value_placeholders_seeded(q_app):

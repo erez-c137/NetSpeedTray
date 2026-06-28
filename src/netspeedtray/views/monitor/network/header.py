@@ -17,6 +17,7 @@ from netspeedtray import constants
 from netspeedtray.utils import styles as su
 from netspeedtray.constants.styles import styles as tokens
 from netspeedtray.utils.helpers import format_data_size
+from netspeedtray.views.monitor.timeline_selector import TimelineSelector
 
 # (short label, period key) — mirrors the graph window's pills so the two surfaces feel identical.
 _PILLS = [
@@ -93,45 +94,40 @@ class NetworkHeader(QWidget):
         self._i18n = i18n
         c = su.semantic_colors()
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(4, 0, 4, 0)
-        root.setSpacing(6)
+        # One calm, full-width band: the Download/Upload totals as the headline (left), and the two
+        # controls — interface filter + the SAME timeline dropdown the Overview uses — given proper room
+        # on the right. (Replaces the cramped six-pill strip; the dropdown also unlocks the finer ranges
+        # 30m/1h/4h/8h/12h/48h the pills never had, and keeps all three tabs consistent.)
+        root = QHBoxLayout(self)
+        root.setContentsMargins(12, 8, 12, 10)
+        root.setSpacing(32)
 
-        # Top row: the time-window label (so the totals self-describe) + the period pills.
-        top = QHBoxLayout()
-        top.setContentsMargins(0, 0, 0, 0)
-        self._period_caption = QLabel(self._period_label(initial_key))
-        self._period_caption.setFont(su.font(tokens.TYPE_CAPTION))
-        self._period_caption.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
-        top.addWidget(self._period_caption, 0, Qt.AlignmentFlag.AlignVCenter)
-        top.addStretch(1)
-        self._pills = PeriodSegmentedControl(initial_key)
-        self._pills.period_changed.connect(self.period_changed)
-        top.addWidget(self._pills, 0, Qt.AlignmentFlag.AlignVCenter)
-        root.addLayout(top)
-
-        # Bottom row: the Download/Upload totals for that window.
-        bottom = QHBoxLayout()
-        bottom.setContentsMargins(0, 0, 0, 0)
-        bottom.setSpacing(28)
         self._down = self._stat_block(self._tr("DOWNLOAD_LABEL", "Download"), "↓", c)
         self._up = self._stat_block(self._tr("UPLOAD_LABEL", "Upload"), "↑", c)
-        bottom.addLayout(self._down[0])
-        bottom.addLayout(self._up[0])
-        bottom.addStretch(1)
+        root.addLayout(self._down[0])
+        root.addLayout(self._up[0])
+        root.addStretch(1)
+
         # Per-NIC filter — scopes both the graph and these totals to one interface (or all).
         self._iface = QComboBox()
-        self._iface.setMinimumWidth(150)
+        self._iface.setMinimumWidth(190)
+        self._iface.setFixedHeight(30)
+        self._iface.setCursor(Qt.CursorShape.PointingHandCursor)
         self._iface.addItem(self._tr("ALL_INTERFACES_AGGREGATED_LABEL", "All Interfaces"), "all")
         self._iface.setStyleSheet(
             f"QComboBox {{ background: {c['subtle_fill']}; color: {c['text_primary']};"
-            f" border: 1px solid {c['card_stroke']}; border-radius: 4px; padding: 3px 8px; }}"
-            f"QComboBox::drop-down {{ border: none; width: 18px; }}"
+            f" border: 1px solid {c['card_stroke']}; border-radius: {tokens.RADIUS_CONTROL}px;"
+            f" padding: 4px 12px; }}"
+            f"QComboBox:hover {{ border-color: {c['accent']}; }}"
+            f"QComboBox::drop-down {{ border: none; width: 20px; }}"
             f"QComboBox QAbstractItemView {{ background: {c['card_bg']}; color: {c['text_primary']};"
             f" selection-background-color: {c['accent']}; selection-color: white; outline: none; }}")
         self._iface.currentIndexChanged.connect(self._on_iface_changed)
-        bottom.addWidget(self._iface, 0, Qt.AlignmentFlag.AlignVCenter)
-        root.addLayout(bottom)
+        root.addWidget(self._iface, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        self._timeline = TimelineSelector(i18n, current_index=_period_value(initial_key))
+        self._timeline.period_changed.connect(self.period_changed)
+        root.addWidget(self._timeline, 0, Qt.AlignmentFlag.AlignVCenter)
 
     def _stat_block(self, label: str, glyph: str, c: dict) -> Tuple[QVBoxLayout, QLabel]:
         col = QVBoxLayout()
@@ -158,12 +154,10 @@ class NetworkHeader(QWidget):
         uv, uu = format_data_size(up_bytes, self._i18n, precision=1)
         self._down[1].setText(f"↓ {self._fmt(dv)} {du}")
         self._up[1].setText(f"↑ {self._fmt(uv)} {uu}")
-        if period_key:
-            self._period_caption.setText(self._period_label(period_key))
+        # The timeline dropdown already names the window, so the totals no longer need a separate caption.
 
     def set_period_key(self, period_key: str) -> None:
-        self._pills.set_period_key(period_key, emit=False)
-        self._period_caption.setText(self._period_label(period_key))
+        self._timeline.set_period_index(_period_value(period_key), emit=False)
 
     def set_interfaces(self, names) -> None:
         """Populate the NIC dropdown ('All Interfaces' + each name), preserving the selection."""

@@ -24,7 +24,8 @@ from netspeedtray.utils.components import Win11Segmented
 from netspeedtray.views.monitor.hardware.list import HardwareBarList
 from netspeedtray.views.monitor.hardware.feed import HardwareFeed
 from netspeedtray.views.monitor.hardware.telemetry import TelemetryStrip
-from netspeedtray.views.monitor.network.header import PeriodSegmentedControl
+from netspeedtray.views.monitor.timeline_selector import TimelineSelector
+from netspeedtray.views.monitor.network.header import _period_value
 
 _TELEMETRY_MS = 1000
 
@@ -63,10 +64,7 @@ class HardwareTab(QWidget):
         c = su.semantic_colors()
         top = QHBoxLayout()
         top.setContentsMargins(4, 0, 4, 0)
-        self._caption = QLabel(self._period_label(self._period_key))
-        self._caption.setFont(su.font(tokens.TYPE_CAPTION))
-        self._caption.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
-        top.addWidget(self._caption, 0, Qt.AlignmentFlag.AlignVCenter)
+        top.setSpacing(12)
         top.addStretch(1)
         # CPU|GPU switch — only meaningful (and only shown) in "toggle" mode.
         self._cpu_gpu = Win11Segmented([
@@ -77,11 +75,12 @@ class HardwareTab(QWidget):
         self._cpu_gpu.valueChanged.connect(self._on_cpu_gpu_toggle)
         self._cpu_gpu.setVisible(False)
         top.addWidget(self._cpu_gpu, 0, Qt.AlignmentFlag.AlignVCenter)
-        top.addSpacing(8)
-        self._pills = PeriodSegmentedControl(self._period_key)
-        self._pills.period_changed.connect(self._host.set_period)
-        self._pills.period_changed.connect(self._on_period)
-        top.addWidget(self._pills, 0, Qt.AlignmentFlag.AlignVCenter)
+        # The SAME timeline dropdown the Overview + Network use (one consistent window control; the
+        # dropdown self-labels the period, so no separate caption is needed).
+        self._timeline = TimelineSelector(self._i18n, current_index=_period_value(self._period_key))
+        self._timeline.period_changed.connect(self._host.set_period)
+        self._timeline.period_changed.connect(self._on_period)
+        top.addWidget(self._timeline, 0, Qt.AlignmentFlag.AlignVCenter)
         root.addLayout(top)
 
         splitter = QSplitter(Qt.Orientation.Vertical)
@@ -106,7 +105,6 @@ class HardwareTab(QWidget):
 
     def _on_period(self, value: int) -> None:
         self._period_key = constants.data.history_period.PERIOD_MAP.get(int(value), "TIMELINE_24_HOURS")
-        self._caption.setText(self._period_label(self._period_key))
 
     # --- graph mode (combined / separate / toggle) ----------------------------
 
@@ -152,15 +150,14 @@ class HardwareTab(QWidget):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
-        # The period is shared with Network — re-sync our pills + caption to the host's current value
+        # The period is shared with Network — re-sync our timeline dropdown to the host's current value
         # so a change made on the Network tab is reflected here.
         try:
             pv = getattr(self._host, "_history_period_value", None)
             if pv is not None:
                 key = constants.data.history_period.PERIOD_MAP.get(int(pv), self._period_key)
                 self._period_key = key
-                self._pills.set_period_key(key, emit=False)
-                self._caption.setText(self._period_label(key))
+                self._timeline.set_period_index(_period_value(key), emit=False)
         except Exception:
             pass
         self._apply_graph(first_mount=True)
