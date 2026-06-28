@@ -655,10 +655,25 @@ class DatabaseWorker(QThread):
         cursor.execute(f"DELETE FROM {constants.data.HARDWARE_STATS_TABLE_MINUTE} WHERE timestamp < ?", (cutoff,))
         if cursor.rowcount > 0: self.logger.info("Pruned %d minute hardware records after aggregation.", cursor.rowcount)
 
+    @staticmethod
+    def _retention_cutoff(now: datetime, retention_days: float) -> int:
+        """Unix-seconds cutoff ``retention_days`` before ``now``, computed arithmetically and floored at
+        0. Computing it as ``now - timedelta(days=retention_days)`` then ``.timestamp()`` CRASHES on
+        Windows when retention is large (the 36500-day "keep forever" option lands in 1926, and
+        ``datetime.timestamp()`` raises OSError(22) for pre-1970 dates) — which was killing the DB
+        maintenance thread on startup and silently stopping ALL history writes. Arithmetic on the
+        already-valid ``now.timestamp()`` avoids ever building a pre-epoch datetime; a negative result
+        (retain longer than the epoch) floors to 0, so the DELETE simply removes nothing."""
+        try:
+            secs = float(now.timestamp()) - float(retention_days) * 86400.0
+        except (TypeError, ValueError, OverflowError, OSError):
+            return 0
+        return max(0, int(secs))
+
     def _prune_hardware_data(self, cursor: sqlite3.Cursor, config: Dict[str, Any], now: datetime) -> None:
         """Prunes hourly hardware stats using the same retention period as speed data."""
         retention_days = config.get("keep_data", 365)
-        cutoff = int((now - timedelta(days=retention_days)).timestamp())
+        cutoff = self._retention_cutoff(now, retention_days)
         cursor.execute(f"DELETE FROM {constants.data.HARDWARE_STATS_TABLE_HOUR} WHERE timestamp < ?", (cutoff,))
         if cursor.rowcount > 0: self.logger.info("Pruned %d hourly hardware records older than %d days.", cursor.rowcount, retention_days)
 
@@ -731,8 +746,8 @@ class DatabaseWorker(QThread):
             if row:
                 final_retention_days = int(row[0])
                 self.logger.info("Grace period expired. Pruning data older than %d days.", final_retention_days)
-                
-                cutoff = int((now - timedelta(days=final_retention_days)).timestamp())
+
+                cutoff = self._retention_cutoff(now, final_retention_days)
                 cursor.execute(f"DELETE FROM {constants.data.SPEED_TABLE_HOUR} WHERE timestamp < ?", (cutoff,))
                 pruned_count = cursor.rowcount
                 
@@ -757,7 +772,7 @@ class DatabaseWorker(QThread):
                 self.logger.info("Retention period increased. Pending data prune has been cancelled.")
             cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES ('current_retention_days', ?)", (str(new_retention_config),))
         
-        cutoff = int((now - timedelta(days=current_retention_db)).timestamp())
+        cutoff = self._retention_cutoff(now, current_retention_db)
         cursor.execute(f"DELETE FROM {constants.data.SPEED_TABLE_HOUR} WHERE timestamp < ?", (cutoff,))
         return cursor.rowcount > 0
 

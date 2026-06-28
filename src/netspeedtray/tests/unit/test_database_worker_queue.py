@@ -58,3 +58,43 @@ def test_flush_and_wait_short_circuits_when_worker_not_running(tmp_path):
     elapsed = time.monotonic() - start
     assert elapsed < 0.5, "must return immediately when the worker isn't running"
     ws.db_worker.enqueue_task.assert_not_called()
+
+
+def test_retention_cutoff_never_crashes_on_keep_forever():
+    """Regression: keep_data=36500 ('keep ~forever') made `now - timedelta(days=36500)` land in 1926,
+    whose .timestamp() raises OSError(22) on Windows — which crashed the maintenance thread on startup
+    and silently stopped ALL history writes. The arithmetic cutoff must floor at 0 without raising."""
+    from datetime import datetime
+    now = datetime.now()
+    # Normal retention -> a sane, recent cutoff.
+    assert DatabaseWorker._retention_cutoff(now, 365) > 0
+    # The pre-1970 cases (keep-forever / absurd values) must clamp to 0, never raise.
+    assert DatabaseWorker._retention_cutoff(now, 36500) == 0
+    assert DatabaseWorker._retention_cutoff(now, 99_999_999) == 0
+    # Cutoff is monotonic: a longer retention keeps more (smaller-or-equal cutoff).
+    assert DatabaseWorker._retention_cutoff(now, 730) <= DatabaseWorker._retention_cutoff(now, 365)
+
+
+def test_maintenance_survives_keep_forever_and_keeps_writing(tmp_path):
+    """End-to-end: with keep_data=36500 a full maintenance pass must complete WITHOUT killing the
+    worker, and a subsequent persist must still land on disk."""
+    import sqlite3, threading, time
+    from netspeedtray import constants
+    worker = DatabaseWorker(tmp_path / "keep.db")
+    worker.start()
+    try:
+        done = threading.Event()
+        worker.enqueue_task("__signal__", done)
+        assert done.wait(5.0), "worker failed to initialise"
+        worker.enqueue_task("maintenance", {"keep_data": 36500})    # would crash the thread pre-fix
+        worker.enqueue_task("persist_hardware", [(int(time.time()), "ram", 47.5)])
+        flushed = threading.Event()
+        worker.enqueue_task("__signal__", flushed)
+        assert flushed.wait(5.0), "worker died during maintenance (the OSError-22 crash)"
+    finally:
+        worker.stop()
+        worker.wait(3000)
+    con = sqlite3.connect(tmp_path / "keep.db")
+    n = con.execute(f"SELECT COUNT(*) FROM {constants.data.HARDWARE_STATS_TABLE_RAW} WHERE stat_type='ram'").fetchone()[0]
+    con.close()
+    assert n == 1, "the RAM sample must have persisted after maintenance"
