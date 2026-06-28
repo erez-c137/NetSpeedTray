@@ -398,6 +398,88 @@ class WidgetState(QObject):
             self.logger.error("Error fetching hardware history: %s", e, exc_info=True)
             return []
 
+    # --- pro-stats: tier-aware honest window summaries (exact ≤24h raw, avg+max beyond) ----------
+    _RAW_SUMMARY_SECONDS = 24 * 3600   # the raw tier retains ~24h; windows within it summarise exactly
+
+    def summarize_hardware(self, stat_type: str, start_time: datetime, end_time: datetime,
+                           poll_interval: float = 1.0):
+        """Honest WindowSummary for a hardware stat over [start,end] (see utils.summaries)."""
+        from netspeedtray.utils import summaries as S
+        if not getattr(self, 'db_worker', None):
+            return S.summarize_raw([])
+        win = max(0.0, (end_time - start_time).total_seconds())
+        st, et = int(start_time.timestamp()), int(end_time.timestamp())
+        try:
+            cur = self._get_read_conn().cursor()
+            if win <= self._RAW_SUMMARY_SECONDS:
+                cur.execute(f"SELECT value FROM {constants.data.HARDWARE_STATS_TABLE_RAW} "
+                            f"WHERE stat_type=? AND timestamp BETWEEN ? AND ?", (stat_type, st, et))
+                vals = [r[0] for r in cur.fetchall()]
+                return S.summarize_raw(vals, S.coverage_pct(len(vals), win, poll_interval))
+            table = (constants.data.HARDWARE_STATS_TABLE_MINUTE if win <= 30 * 86400
+                     else constants.data.HARDWARE_STATS_TABLE_HOUR)
+            tier = "minute" if win <= 30 * 86400 else "hour"
+            cur.execute(f"SELECT avg_value, max_value, sample_count FROM {table} "
+                        f"WHERE stat_type=? AND timestamp BETWEEN ? AND ?", (stat_type, st, et))
+            rows = cur.fetchall()
+            if not rows:   # rollup empty for a recent window — fall back to raw (still exact)
+                cur.execute(f"SELECT value FROM {constants.data.HARDWARE_STATS_TABLE_RAW} "
+                            f"WHERE stat_type=? AND timestamp BETWEEN ? AND ?", (stat_type, st, et))
+                vals = [r[0] for r in cur.fetchall()]
+                return S.summarize_raw(vals, S.coverage_pct(len(vals), win, poll_interval))
+            counts = [r[2] for r in rows]
+            return S.summarize_rollup([r[0] for r in rows], [r[1] for r in rows], counts, tier,
+                                      S.coverage_pct(sum(counts), win, poll_interval))
+        except Exception as e:
+            self.logger.error("summarize_hardware failed: %s", e, exc_info=True)
+            return S.summarize_raw([])
+
+    def summarize_network(self, direction: str, start_time: datetime, end_time: datetime,
+                          interface_name: Optional[str] = None, poll_interval: float = 1.0):
+        """Honest WindowSummary for 'download' or 'upload' bytes/sec over [start,end] (per interface,
+        or aggregated when interface_name is None/'all')."""
+        from netspeedtray.utils import summaries as S
+        if not getattr(self, 'db_worker', None):
+            return S.summarize_raw([])
+        col = "download" if direction == "download" else "upload"
+        win = max(0.0, (end_time - start_time).total_seconds())
+        st, et = int(start_time.timestamp()), int(end_time.timestamp())
+        iface = None if interface_name in (None, "all") else interface_name
+        wh = "" if iface is None else " AND interface_name=?"
+        params_tail = () if iface is None else (iface,)
+        try:
+            cur = self._get_read_conn().cursor()
+            if win <= self._RAW_SUMMARY_SECONDS:
+                # Sum per-timestamp across interfaces when aggregating, so an "all" summary matches the
+                # widget's aggregate rather than mixing per-NIC samples.
+                cur.execute(
+                    f"SELECT SUM({col}_bytes_sec) FROM {constants.data.SPEED_TABLE_RAW} "
+                    f"WHERE timestamp BETWEEN ? AND ?{wh} GROUP BY timestamp",
+                    (st, et) + params_tail)
+                vals = [r[0] for r in cur.fetchall() if r[0] is not None]
+                return S.summarize_raw(vals, S.coverage_pct(len(vals), win, poll_interval))
+            table = (constants.data.SPEED_TABLE_MINUTE if win <= 30 * 86400
+                     else constants.data.SPEED_TABLE_HOUR)
+            tier = "minute" if win <= 30 * 86400 else "hour"
+            cur.execute(
+                f"SELECT SUM({col}_avg), MAX(t.mx), SUM(sample_count) FROM "
+                f"(SELECT timestamp, {col}_avg, {col}_max AS mx, sample_count FROM {table} "
+                f" WHERE timestamp BETWEEN ? AND ?{wh}) t GROUP BY t.timestamp",
+                (st, et) + params_tail)
+            rows = cur.fetchall()
+            if not rows:
+                cur.execute(
+                    f"SELECT SUM({col}_bytes_sec) FROM {constants.data.SPEED_TABLE_RAW} "
+                    f"WHERE timestamp BETWEEN ? AND ?{wh} GROUP BY timestamp", (st, et) + params_tail)
+                vals = [r[0] for r in cur.fetchall() if r[0] is not None]
+                return S.summarize_raw(vals, S.coverage_pct(len(vals), win, poll_interval))
+            counts = [r[2] or 1 for r in rows]
+            return S.summarize_rollup([r[0] for r in rows], [r[1] for r in rows], counts, tier,
+                                      S.coverage_pct(sum(counts), win, poll_interval))
+        except Exception as e:
+            self.logger.error("summarize_network failed: %s", e, exc_info=True)
+            return S.summarize_raw([])
+
 
     def get_total_bandwidth_for_period(self, start_time: Optional[datetime], end_time: Optional[datetime], interface_name: Optional[str] = None) -> Tuple[float, float]:
         """

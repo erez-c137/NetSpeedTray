@@ -743,3 +743,35 @@ def test_add_hardware_stat_clamps_pct_not_physical(managed_widget_state):
     vals = {b[1]: b[2] for b in state._hw_batch}
     assert vals['cpu'] == 100.0
     assert vals['cpu_power'] == 180.0 and vals['gpu_temp'] == 105.0 and vals['latency_gw'] == 240.0
+
+
+def test_summarize_hardware_exact_unclamped(managed_widget_state):
+    """summarize_hardware reads the raw tier for a ≤24h window and computes exact stats, preserving
+    unclamped physical values (a 120 W sample is not capped to 100)."""
+    import sqlite3
+    state, db_path = managed_widget_state
+    now = datetime.now()
+    rows = [(int((now - timedelta(minutes=m)).timestamp()), 'cpu_power', float(v))
+            for m, v in zip(range(1, 6), [40, 60, 80, 100, 120])]
+    conn = sqlite3.connect(db_path)
+    conn.executemany("INSERT INTO hardware_stats_raw (timestamp, stat_type, value) VALUES (?,?,?)", rows)
+    conn.commit(); conn.close()
+    s = state.summarize_hardware('cpu_power', now - timedelta(hours=1), now + timedelta(minutes=1))
+    assert s.exact and s.count == 5
+    assert s.min == 40 and s.max == 120 and s.avg == 80
+    assert s.p50 == 80 and s.coverage_pct > 0
+
+
+def test_summarize_network_download(managed_widget_state):
+    import sqlite3
+    state, db_path = managed_widget_state
+    now = datetime.now()
+    rows = [(int((now - timedelta(minutes=m)).timestamp()), 'Wi-Fi', 1000.0, float(v) * 1e6)
+            for m, v in zip(range(1, 4), [10, 20, 30])]
+    conn = sqlite3.connect(db_path)
+    conn.executemany(
+        "INSERT INTO speed_history_raw (timestamp, interface_name, upload_bytes_sec, download_bytes_sec)"
+        " VALUES (?,?,?,?)", rows)
+    conn.commit(); conn.close()
+    s = state.summarize_network('download', now - timedelta(hours=1), now + timedelta(minutes=1))
+    assert s.exact and s.count == 3 and s.avg == 20e6 and s.max == 30e6
