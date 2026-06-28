@@ -125,9 +125,22 @@ class WidgetState(QObject):
 
 
     def _get_read_conn(self) -> sqlite3.Connection:
-        """Returns a thread-local read-only database connection."""
+        """Returns a thread-local read connection, pruning ones left behind by dead threads.
+
+        Each worker thread (notably the Monitor's GraphDataWorker, recreated on every Monitor open) opens
+        its own read connection here, removed otherwise only in cleanup() at exit. Without pruning, every
+        Monitor open/close leaked a connection (a file handle + a WAL reader slot) for the whole session,
+        and a recycled thread id could even hand a new worker a dead thread's stale connection. So evict
+        entries whose owning thread has exited (safe to close cross-thread: check_same_thread=False)."""
         thread_id = threading.get_ident()
         with self._read_conns_lock:
+            if self._read_conns:
+                live = {t.ident for t in threading.enumerate()}
+                for dead in [tid for tid in self._read_conns if tid not in live and tid != thread_id]:
+                    try:
+                        self._read_conns.pop(dead).close()
+                    except Exception:
+                        pass
             if thread_id not in self._read_conns:
                 conn = sqlite3.connect(self._db_path, check_same_thread=False)
                 conn.row_factory = sqlite3.Row

@@ -106,6 +106,9 @@ class StatsMonitorThread(QThread):
         self._gpu_query: Optional[int] = None
         self._gpu_util_counters: List[int] = []
         self._gpu_vram_counters: List[int] = []
+        # Set by update_config (GUI thread); the PDH handles are owned by run()'s thread, so the actual
+        # cleanup/re-init is deferred to the loop (see update_config / run).
+        self._hw_queries_dirty: bool = False
 
         # PDH Query for CPU thermal zones
         self._thermal_query: Optional[int] = None
@@ -133,13 +136,15 @@ class StatsMonitorThread(QThread):
             self.logger.info("Monitoring interval changed: %.2fs -> %.2fs", previous, self.interval)
 
     def update_config(self, config: Dict[str, Any]) -> None:
-        """Updates internal config copy and resets hardware queries if needed."""
+        """Update the config copy and FLAG the hardware queries for re-init on the worker thread.
+
+        Called from the GUI thread (ConfigController.apply_all_settings), but the PDH query handles are
+        created and CollectQueryData'd on this thread's run() loop. Closing them from the GUI thread
+        mid-poll could free a handle the loop is actively using → a swallowed PDH error and a spurious
+        circuit-breaker increment / "monitor degraded" notice. So just flag it; run() applies the
+        cleanup + LHM re-probe on its own thread at the top of the next tick."""
         self.config = config
-        # Reset queries so they re-initialize with the new config on next poll
-        self._cleanup_gpu_query()
-        self._cleanup_thermal_query()
-        self._cleanup_power_query()
-        self._wmi_ohm = None  # Re-probe OHM/LHM on next temp poll
+        self._hw_queries_dirty = True
 
     def _init_gpu_query(self) -> bool:
         """Initializes Windows PDH query for universal GPU utilization and VRAM."""
@@ -362,25 +367,37 @@ class StatsMonitorThread(QThread):
 
     @lru_cache(maxsize=4)
     def _get_cached_path(self, binary: str) -> Optional[str]:
-        """Caches the location of system binaries."""
-        path = shutil.which(binary)
-        if path:
-            return path
+        """Resolve a system binary from TRUSTED locations only — never the current directory.
 
-        # Common Windows install path for NVIDIA's NVSMI tooling when it's not on PATH.
-        if binary.lower() in ("nvidia-smi", "nvidia-smi.exe"):
-            try:
-                import os
-                for env in ("ProgramW6432", "ProgramFiles", "ProgramFiles(x86)"):
-                    root = os.environ.get(env)
-                    if not root:
-                        continue
+        Security: shutil.which() on Windows searches the CURRENT DIRECTORY first, and the app chdir's
+        into its own folder, which is user-writable for the portable ZIP (Downloads / USB). A planted
+        ``nvidia-smi.exe`` there would otherwise be launched hidden (CREATE_NO_WINDOW) on the GPU
+        sub-cadence — code execution. So check the known absolute install paths first, and the PATH
+        fallback drops the current directory / relative entries and accepts only an absolute result.
+        """
+        import os
+        # 1. Known absolute install locations (trusted), checked FIRST.
+        if "nvidia-smi" in binary.lower():
+            for env in ("ProgramW6432", "ProgramFiles", "ProgramFiles(x86)"):
+                root = os.environ.get(env)
+                if root:
                     candidate = os.path.join(root, "NVIDIA Corporation", "NVSMI", "nvidia-smi.exe")
                     if os.path.isfile(candidate):
                         return candidate
-            except Exception:
-                pass
+            sys32 = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "nvidia-smi.exe")
+            if os.path.isfile(sys32):
+                return sys32
 
+        # 2. Hardened PATH fallback — strip '.'/relative entries so the CWD is never searched.
+        try:
+            safe = os.pathsep.join(
+                d for d in os.environ.get("PATH", "").split(os.pathsep)
+                if d and d != "." and os.path.isabs(d))
+            resolved = shutil.which(binary, path=safe) if safe else None
+            if resolved and os.path.isabs(resolved):
+                return resolved
+        except Exception:
+            pass
         return None
 
     def _init_thermal_query(self) -> bool:
@@ -767,8 +784,17 @@ class StatsMonitorThread(QThread):
 
         while self._is_running:
             try:
+                # Apply any config-driven hardware-query reset HERE, on the owning thread (set by
+                # update_config from the GUI thread) — never close a PDH handle out from under this loop.
+                if self._hw_queries_dirty:
+                    self._hw_queries_dirty = False
+                    self._cleanup_gpu_query()
+                    self._cleanup_thermal_query()
+                    self._cleanup_power_query()
+                    self._wmi_ohm = None   # re-probe LHM/OHM on the next temp poll
+
                 stats = {}
-                
+
                 # 1. Network (Always enabled for core functionality)
                 network_counters = psutil.net_io_counters(pernic=True)
                 if network_counters:
