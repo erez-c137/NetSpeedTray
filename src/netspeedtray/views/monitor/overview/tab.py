@@ -336,8 +336,22 @@ class OverviewTab(QWidget):
         return "    ·    ".join(parts)
 
     def _syspower_text(self, mw) -> str:
-        total = float(getattr(mw, "cpu_power", None) or 0.0) + float(getattr(mw, "gpu_power", None) or 0.0)
-        return f"{self._tr('STAT_SYS_POWER', 'CPU+GPU power')}  {total:.0f} W" if total >= 0.5 else ""
+        """Power: the CPU/GPU breakdown (honest — that's what we can read), plus a TRUE "System N W"
+        only when the platform exposes one (RAPL PSYS / battery discharge), never CPU+GPU relabelled."""
+        cp = float(getattr(mw, "cpu_power", None) or 0.0)
+        gp = float(getattr(mw, "gpu_power", None) or 0.0)
+        sysp = getattr(mw, "system_power", None)
+        parts = []
+        if sysp is not None and float(sysp) >= 0.5:
+            parts.append(f"{self._tr('STAT_SYS_POWER_TRUE', 'System')} {float(sysp):.0f} W")
+        comp = []
+        if cp >= 0.5:
+            comp.append(f"{self._tr('ORDER_TYPE_CPU', 'CPU')} {cp:.0f} W")
+        if gp >= 0.5:
+            comp.append(f"{self._tr('ORDER_TYPE_GPU', 'GPU')} {gp:.0f} W")
+        if comp:
+            parts.append("  ·  ".join(comp))
+        return "      ·      ".join(parts)
 
     @staticmethod
     def _fmt_dur(secs: float) -> str:

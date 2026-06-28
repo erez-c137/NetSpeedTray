@@ -116,6 +116,12 @@ class StatsMonitorThread(QThread):
         self._power_query: Optional[int] = None
         self._power_pkg_counter: Optional[int] = None   # CPU package power (PKG)
         self._power_pp1_counter: Optional[int] = None    # Intel iGPU power (PP1)
+        self._power_psys_counter: Optional[int] = None   # Intel RAPL PSYS / platform power (some CPUs)
+        # True whole-system power only comes from the battery (laptops on battery) — DischargeRate via
+        # WMI root\wmi. None=untried, False=unavailable, object=connected. Cached on a slow sub-cadence.
+        self._wmi_battery: Any = None
+        self._battery_cache: tuple = (0.0, None)         # (monotonic_ts, watts_or_None)
+        self._battery_cadence_sec: float = 8.0
 
         self.logger.info("StatsMonitorThread initialized with interval %.2fs", self.interval)
 
@@ -458,11 +464,15 @@ class StatsMonitorThread(QThread):
                             self._power_pkg_counter = handle
                         elif 'pp1' in instance_lower and self._power_pp1_counter is None:
                             self._power_pp1_counter = handle
+                        elif ('psys' in instance_lower or 'platform' in instance_lower) \
+                                and self._power_psys_counter is None:
+                            self._power_psys_counter = handle   # broader platform power (when exposed)
                     except: continue
             except Exception as e:
                 self.logger.debug("Failed to enum Energy Meter counters: %s", e)
 
-            if self._power_pkg_counter is None and self._power_pp1_counter is None:
+            if self._power_pkg_counter is None and self._power_pp1_counter is None \
+                    and self._power_psys_counter is None:
                 self._cleanup_power_query()
                 return False
 
@@ -484,6 +494,45 @@ class StatsMonitorThread(QThread):
             self._power_query = None
             self._power_pkg_counter = None
             self._power_pp1_counter = None
+            self._power_psys_counter = None
+
+    def _poll_system_power(self) -> Optional[float]:
+        """True-ish whole-system power, when the platform exposes it: Intel RAPL PSYS/platform domain
+        (some CPUs) — broader than CPU+GPU; else the battery DischargeRate (the only real whole-system
+        draw, on a laptop running on battery). Returns watts, or None when neither is available."""
+        # 1. RAPL PSYS / platform (PDH Energy Meter, milliwatts).
+        if self._power_query is not None and self._power_psys_counter is not None:
+            try:
+                win32pdh.CollectQueryData(self._power_query)
+                _, val = win32pdh.GetFormattedCounterValue(self._power_psys_counter, win32pdh.PDH_FMT_DOUBLE)
+                if val and val > 0:
+                    return float(val) / 1000.0
+            except Exception:
+                pass
+        # 2. Battery discharge (laptops on battery) — cached on a slow sub-cadence (WMI is heavy).
+        return self._poll_battery_power()
+
+    def _poll_battery_power(self) -> Optional[float]:
+        now = time.monotonic()
+        last_ts, last_val = self._battery_cache
+        if (now - last_ts) < self._battery_cadence_sec:
+            return last_val
+        watts = None
+        try:
+            if self._wmi_battery is None:
+                import wmi  # already a dependency (LHM temps)
+                self._wmi_battery = wmi.WMI(namespace="root\\wmi")
+            if self._wmi_battery:
+                for b in self._wmi_battery.BatteryStatus():
+                    # DischargeRate (mW) is non-zero only while actually discharging on battery.
+                    rate = getattr(b, "DischargeRate", 0) or 0
+                    if getattr(b, "Discharging", False) and rate > 0:
+                        watts = float(rate) / 1000.0
+                        break
+        except Exception:
+            self._wmi_battery = False   # no battery / WMI class — stop retrying
+        self._battery_cache = (now, watts)
+        return watts
 
     def _poll_cpu_power(self) -> Optional[float]:
         """
@@ -765,7 +814,14 @@ class StatsMonitorThread(QThread):
                             stats['vram_total'] = gpu.vram_total / 1024.0  # MiB to GiB
                     except Exception as gpu_err:
                         self.logger.warning("GPU polling error (skipped, not counted against circuit breaker): %s", gpu_err)
-                
+
+                # Whole-system power, when the platform actually exposes it (RAPL PSYS / battery
+                # discharge) — distinct from the CPU+GPU sum; emitted only when a real source is found.
+                if self.config.get('show_hardware_power', False) or _force_hw:
+                    sysp = self._poll_system_power()
+                    if sysp is not None:
+                        stats['system_power'] = sysp
+
                 if stats:
                     self.stats_ready.emit(stats)
 

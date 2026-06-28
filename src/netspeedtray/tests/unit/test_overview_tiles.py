@@ -95,6 +95,19 @@ def test_hardware_tiles_always_built(q_app):
     assert set(ov._tiles.keys()) == {"cpu", "gpu", "ram", "vram"}
 
 
+def test_syspower_breakdown_and_true_system(q_app):
+    from types import SimpleNamespace
+    ov = OverviewTab(_MW(), _cfg(), I18nStrings("en_US"))
+    # CPU+GPU breakdown when no true system source (honest — not relabelled as "system").
+    assert ov._syspower_text(SimpleNamespace(cpu_power=42.0, gpu_power=65.0, system_power=None)) \
+        == "CPU 42 W  ·  GPU 65 W"
+    # A real PSYS/battery reading shows a distinct "System N W" first, then the breakdown.
+    txt = ov._syspower_text(SimpleNamespace(cpu_power=42.0, gpu_power=65.0, system_power=95.0))
+    assert txt.startswith("System 95 W") and "CPU 42 W" in txt and "GPU 65 W" in txt
+    # No power counters at all -> empty (no "0 W").
+    assert ov._syspower_text(SimpleNamespace(cpu_power=None, gpu_power=None, system_power=None)) == ""
+
+
 def test_hw_sub_omits_power_that_rounds_to_zero(q_app):
     # Regression for the GPU-tile flicker: a flaky iGPU power of 0.3 W rounds to "0 W" and would make
     # the sub-line appear/vanish; only show power that displays as >= 1 W. (temp >= 1 likewise.)

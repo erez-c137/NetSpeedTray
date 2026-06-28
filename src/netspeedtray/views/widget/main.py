@@ -136,6 +136,7 @@ class NetworkSpeedWidget(QWidget):
         self.gpu_temp: Optional[float] = None
         self.cpu_power: Optional[float] = None
         self.gpu_power: Optional[float] = None
+        self.system_power: Optional[float] = None   # true whole-system W (RAPL PSYS / battery), if available
         self.ram_used: Optional[float] = None
         self.ram_total: Optional[float] = None
         self.vram_used: Optional[float] = None

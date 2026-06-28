@@ -141,8 +141,15 @@ class StatsController(QObject):
             # Persist temperature + power as their own (unclamped) hardware stat_types so the Monitor's
             # pro-stats (avg/max/p95, the Stats-detail sheet, export, throttle-time) have real history.
             # Total power = CPU + GPU watts (a "CPU+GPU power" figure, not whole-system draw).
+            # Whole-system power (RAPL PSYS / battery) — a real source when present; stash it on the
+            # widget so the Monitor can show a true "System N W" distinct from the CPU+GPU sum.
+            if 'system_power' in stats and self.view is not None:
+                try:
+                    self.view.system_power = stats['system_power']
+                except Exception:
+                    pass
             if self.widget_state:
-                for key in ('cpu_temp', 'gpu_temp', 'cpu_power', 'gpu_power'):
+                for key in ('cpu_temp', 'gpu_temp', 'cpu_power', 'gpu_power', 'system_power'):
                     v = stats.get(key)
                     if v is not None and v > 0:
                         self.widget_state.add_hardware_stat(key, float(v))
