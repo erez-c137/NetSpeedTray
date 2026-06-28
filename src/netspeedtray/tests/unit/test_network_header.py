@@ -102,6 +102,38 @@ def test_set_period_raises_dedup_floor_and_routes(q_app):
     assert host._history_period_value == 3
 
 
+def test_interface_dropdown_populates_and_emits(q_app):
+    h = NetworkHeader(I18nStrings("en_US"), "TIMELINE_24_HOURS")
+    h.set_interfaces(["Wi-Fi", "Ethernet"])
+    assert h._iface.count() == 3                 # "All" + 2 NICs
+    assert h._iface.itemData(0) == "all"
+    seen = []
+    h.interface_changed.connect(seen.append)
+    h._iface.setCurrentIndex(h._iface.findData("Ethernet"))
+    assert seen and seen[-1] == "Ethernet"
+
+
+def test_set_interfaces_preserves_selection(q_app):
+    h = NetworkHeader(I18nStrings("en_US"), "TIMELINE_24_HOURS")
+    h.set_interfaces(["Wi-Fi", "Ethernet"])
+    h._iface.setCurrentIndex(h._iface.findData("Wi-Fi"))
+    h.set_interfaces(["Wi-Fi", "Ethernet", "vEthernet"])   # repopulate (e.g. a NIC appeared)
+    assert h._iface.currentData() == "Wi-Fi"               # selection kept
+
+
+def test_set_interface_filter_raises_dedup_floor(q_app):
+    from unittest.mock import MagicMock
+    from netspeedtray.views.monitor.graph_host import GraphHost
+    host = GraphHost(MagicMock(), {}, I18nStrings("en_US"))
+    host._loaded = True
+    host.update_graph = MagicMock()
+    host._current_request_id = 5
+    host.set_interface_filter("Ethernet")
+    assert host.interface_filter == "Ethernet" and host._accept_from_seq == 6
+    host.set_interface_filter("all")
+    assert host.interface_filter is None                   # "all" -> no filter
+
+
 def test_header_totals_localized_separator(q_app):
     """On a comma-decimal locale the totals must use ',' (so they match the graph's localized text)."""
     h = NetworkHeader(I18nStrings("de_DE"), "TIMELINE_24_HOURS")

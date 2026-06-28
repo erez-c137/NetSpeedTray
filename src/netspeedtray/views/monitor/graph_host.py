@@ -219,6 +219,16 @@ class GraphHost(QObject):
         # Zoom is disabled in the Monitor graph for now; a range request just refreshes the view.
         self.update_graph(show_loading=False)
 
+    def set_interface_filter(self, name: Optional[str]) -> None:
+        """Scope the network graph + its totals to one NIC ('all'/None = every interface). Raises the
+        dedup floor so an in-flight all-interface reply can't paint the newly-filtered view."""
+        if self._is_closing:
+            return
+        self.ensure_loaded()
+        self.interface_filter = None if name in (None, "all") else name
+        self._accept_from_seq = self._current_request_id + 1
+        self.update_graph(show_loading=False)
+
     def _hw_styles(self) -> Dict[str, Any]:
         """Vendor-aware (color, linestyle) per role for the combined CPU+GPU graph; Monitor-settings
         colour overrides (when set) win over the auto vendor default."""

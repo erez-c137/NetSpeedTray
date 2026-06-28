@@ -26,9 +26,10 @@ class NetworkTab(QWidget):
 
     stat_type = "network"
 
-    def __init__(self, graph_host, config: Dict[str, Any], i18n, parent: QWidget = None) -> None:
+    def __init__(self, graph_host, main_widget, config: Dict[str, Any], i18n, parent: QWidget = None) -> None:
         super().__init__(parent)
         self._host = graph_host
+        self._main_widget = main_widget
         self._config = config
         self._i18n = i18n
 
@@ -41,7 +42,13 @@ class NetworkTab(QWidget):
             int(config.get("history_period_slider_value", 2)), "TIMELINE_24_HOURS")
         self._header = NetworkHeader(i18n, initial_key)
         self._header.period_changed.connect(self._host.set_period)
+        self._header.interface_changed.connect(self._host.set_interface_filter)
         self._host.network_totals_ready.connect(self._on_totals)
+        # Populate the NIC dropdown from the unified (live + historical) interface list.
+        try:
+            self._header.set_interfaces(self._main_widget.get_unified_interface_list())
+        except Exception:
+            pass
         root.addWidget(self._header)
 
         # Graph (top) + per-app list (bottom), user-resizable.
@@ -104,6 +111,10 @@ class NetworkTab(QWidget):
             pass
         try:
             self._header.period_changed.disconnect(self._host.set_period)
+        except Exception:
+            pass
+        try:
+            self._header.interface_changed.disconnect(self._host.set_interface_filter)
         except Exception:
             pass
         try:

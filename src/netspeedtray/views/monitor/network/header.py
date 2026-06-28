@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Dict, Optional, Tuple
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton
+from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QComboBox
 
 from netspeedtray import constants
 from netspeedtray.utils import styles as su
@@ -85,7 +85,8 @@ class PeriodSegmentedControl(QWidget):
 class NetworkHeader(QWidget):
     """Machine-wide Download/Upload totals for the active period + the timeline control."""
 
-    period_changed = pyqtSignal(int)  #: re-emits the pills' PERIOD_MAP index
+    period_changed = pyqtSignal(int)     #: re-emits the pills' PERIOD_MAP index
+    interface_changed = pyqtSignal(str)  #: NIC name, or "all"
 
     def __init__(self, i18n, initial_key: str = _DEFAULT_KEY, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -118,6 +119,18 @@ class NetworkHeader(QWidget):
         bottom.addLayout(self._down[0])
         bottom.addLayout(self._up[0])
         bottom.addStretch(1)
+        # Per-NIC filter — scopes both the graph and these totals to one interface (or all).
+        self._iface = QComboBox()
+        self._iface.setMinimumWidth(150)
+        self._iface.addItem(self._tr("ALL_INTERFACES_AGGREGATED_LABEL", "All Interfaces"), "all")
+        self._iface.setStyleSheet(
+            f"QComboBox {{ background: {c['subtle_fill']}; color: {c['text_primary']};"
+            f" border: 1px solid {c['card_stroke']}; border-radius: 4px; padding: 3px 8px; }}"
+            f"QComboBox::drop-down {{ border: none; width: 18px; }}"
+            f"QComboBox QAbstractItemView {{ background: {c['card_bg']}; color: {c['text_primary']};"
+            f" selection-background-color: {c['accent']}; selection-color: white; outline: none; }}")
+        self._iface.currentIndexChanged.connect(self._on_iface_changed)
+        bottom.addWidget(self._iface, 0, Qt.AlignmentFlag.AlignVCenter)
         root.addLayout(bottom)
 
     def _stat_block(self, label: str, glyph: str, c: dict) -> Tuple[QVBoxLayout, QLabel]:
@@ -151,6 +164,23 @@ class NetworkHeader(QWidget):
     def set_period_key(self, period_key: str) -> None:
         self._pills.set_period_key(period_key, emit=False)
         self._period_caption.setText(self._period_label(period_key))
+
+    def set_interfaces(self, names) -> None:
+        """Populate the NIC dropdown ('All Interfaces' + each name), preserving the selection."""
+        self._iface.blockSignals(True)
+        prev = self._iface.currentData()
+        self._iface.clear()
+        self._iface.addItem(self._tr("ALL_INTERFACES_AGGREGATED_LABEL", "All Interfaces"), "all")
+        for n in sorted(names or []):
+            self._iface.addItem(n, n)
+        idx = self._iface.findData(prev)
+        if idx != -1:
+            self._iface.setCurrentIndex(idx)
+        self._iface.blockSignals(False)
+
+    def _on_iface_changed(self, _idx: int) -> None:
+        data = self._iface.currentData()
+        self.interface_changed.emit(str(data) if data is not None else "all")
 
     def _fmt(self, value: float) -> str:
         s = f"{value:.1f}"

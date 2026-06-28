@@ -124,7 +124,7 @@ class MonitorWindow(QWidget):
 
     def _make_network(self) -> QWidget:
         from netspeedtray.views.monitor.network.tab import NetworkTab
-        return NetworkTab(self._ensure_graph_host(), self.config, self.i18n, self)
+        return NetworkTab(self._ensure_graph_host(), self._main_widget, self.config, self.i18n, self)
 
     def _ensure_graph_host(self):
         """The single shared graph engine, created lazily (matplotlib still doesn't load until a
