@@ -51,9 +51,7 @@ from netspeedtray.core.update_checker import UpdateChecker
 # --- Type Checking ---
 if TYPE_CHECKING:
     from netspeedtray.constants.i18n import I18nStrings
-    from netspeedtray.views.graph import GraphWindow
     from netspeedtray.views.settings import SettingsDialog
-    from netspeedtray.views.app_activity import AppActivityWindow
 
 
 # Win32 MSG layout for reading native messages in nativeEvent(). Defined once at
@@ -118,8 +116,6 @@ class NetworkSpeedWidget(QWidget):
         self.tray_manager: TrayIconManager
         self.monitor_thread: StatsMonitorThread
         self._cached_layout_mode: str = 'vertical'  # Updated on taskbar changes
-        self.graph_window: Optional[GraphWindow] = None
-        self.app_activity_window: Optional[AppActivityWindow] = None
         self.monitor_window = None  # unified Monitor (Overview / Network / Hardware), lazy
         self.update_checker: Optional[UpdateChecker] = None
         self.app_icon: QIcon
@@ -447,7 +443,7 @@ class NetworkSpeedWidget(QWidget):
                 self.i18n.UNFOLD_FLYOUT_BODY,
                 action_text=self.i18n.SHOW_ME_AROUND_LABEL,
             )
-            self._unfold_flyout.action_clicked.connect(self.open_graph_window)
+            self._unfold_flyout.action_clicked.connect(self.open_monitor_window)
             geo = self.frameGeometry()
             self._unfold_flyout.show_at(QPoint(geo.left(), geo.top()))
         except Exception as e:
@@ -1221,80 +1217,6 @@ class NetworkSpeedWidget(QWidget):
 
 
 
-    def open_graph_window(self) -> None:
-        """Creates and displays the speed history graph window."""
-        self.logger.debug("Request to show graph window.")
-        if not self.i18n or not self.config or not self.widget_state:
-            self.logger.error("Cannot show graph: Required components missing.")
-            QMessageBox.critical(self, "Error", "Internal error: Required components not available.")
-            return
-
-        try:
-            # --- Optimization: Lazy import ---
-            # By placing the import here, matplotlib is only loaded when the user
-            # requests the graph, speeding up initial application startup.
-            from netspeedtray.views.graph import GraphWindow
-
-            if self.graph_window is None or not self.graph_window.isVisible():
-                self.logger.debug("Creating new GraphWindow instance.")
-                
-                self.graph_window = GraphWindow(
-                    main_widget=self, # Pass self as the main_widget reference
-                    parent=None,      # Set the Qt parent to None to decouple
-                    i18n=self.i18n,
-                    session_start_time=self.session_start_time
-                )
-                
-                # Connect the signal AFTER the instance exists.
-                self.widget_state.db_worker.database_updated.connect(
-                    self.graph_window._populate_interface_filter
-                )
-                
-                # CLEAN FIX: Listen for destruction to restore Z-order/Visibility
-                # This decouples the child from the parent's implementation details.
-                self.graph_window.window_closed.connect(self._on_graph_window_closed)
-
-                # Show the window.
-                self.graph_window.show()
-
-            else:
-                self.logger.debug("Graph window already exists. Activating.")
-                self.graph_window.show()
-                self.graph_window.raise_()
-                self.graph_window.activateWindow()
-        except Exception as e:
-            self.logger.error(f"Error showing graph window: {e}", exc_info=True)
-            QMessageBox.critical(self, self.i18n.ERROR_TITLE, f"Could not open the graph window:\n\n{str(e)}")
-
-    def open_app_activity_window(self) -> None:
-        """Creates and displays the per-application network activity window."""
-        self.logger.debug("Request to show app activity window.")
-        if not self.i18n:
-            self.logger.error("Cannot show app activity view: i18n not initialized.")
-            QMessageBox.critical(self, "Error", "Internal error: Required components not available.")
-            return
-
-        try:
-            from netspeedtray.views.app_activity import AppActivityWindow
-
-            if self.app_activity_window is None or not self.app_activity_window.isVisible():
-                self.logger.debug("Creating new AppActivityWindow instance.")
-                self.app_activity_window = AppActivityWindow(
-                    main_widget=self,
-                    parent=None,
-                    i18n=self.i18n,
-                )
-                self.app_activity_window.window_closed.connect(self._on_app_activity_window_closed)
-                self.app_activity_window.show()
-            else:
-                self.logger.debug("App activity window already exists. Activating.")
-                self.app_activity_window.show()
-                self.app_activity_window.raise_()
-                self.app_activity_window.activateWindow()
-        except Exception as e:
-            self.logger.error(f"Error showing app activity window: {e}", exc_info=True)
-            QMessageBox.critical(self, self.i18n.ERROR_TITLE, f"Could not open app activity window:\n\n{str(e)}")
-
     def open_monitor_window(self) -> None:
         """Open the unified Monitor window (Overview / Network / Hardware)."""
         try:
@@ -1311,7 +1233,12 @@ class NetworkSpeedWidget(QWidget):
             self.logger.error(f"Error showing Monitor window: {e}", exc_info=True)
 
     def _on_monitor_window_closed(self) -> None:
+        # Restore the widget's Z-order/visibility after the Monitor closes — via the authoritative
+        # refresh, which RESPECTS fullscreen obstruction (so it won't flash the widget over a
+        # fullscreen app). A second deferred pass lets the Windows focus transition settle.
         self.monitor_window = None
+        self._execute_refresh()
+        QTimer.singleShot(constants.timeouts.GRAPH_CLOSE_REFRESH_DELAY_MS, self._execute_refresh)
 
 
     def check_for_updates(self) -> None:
@@ -1434,27 +1361,6 @@ class NetworkSpeedWidget(QWidget):
                 webbrowser.open(LHM_RELEASES_URL)
         except Exception as e:
             self.logger.error("Error showing temperature onboarding: %s", e, exc_info=True)
-
-    def _on_graph_window_closed(self) -> None:
-        """
-        Handles the destruction of the graph window.
-        Triggers a delayed refresh to restore the main widget's Z-order and visibility
-        after the focus transition completes.
-        """
-        self.logger.debug("Graph window destroyed. Restoring main widget state.")
-        self.graph_window = None
-
-        # Restore visibility/Z-order via the authoritative refresh, which RESPECTS
-        # fullscreen obstruction — so we don't flash the widget over an active fullscreen
-        # app (the old code force-showed it unconditionally). A second deferred pass lets
-        # the Windows focus transition settle.
-        self._execute_refresh()
-        QTimer.singleShot(constants.timeouts.GRAPH_CLOSE_REFRESH_DELAY_MS, self._execute_refresh)
-
-    def _on_app_activity_window_closed(self) -> None:
-        """Handles app activity window destruction."""
-        self.logger.debug("App activity window destroyed.")
-        self.app_activity_window = None
 
 
     # update_config (redundant definition) removed
@@ -1625,21 +1531,13 @@ class NetworkSpeedWidget(QWidget):
             if self.controller: self.controller.cleanup()
             if self.widget_state: self.widget_state.cleanup()
 
-            # (The rest of the cleanup method for saving config remains the same)
-            if self.graph_window:
-                final_graph_settings = {
-                    "graph_window_pos": {"x": self.graph_window.pos().x(), "y": self.graph_window.pos().y()},
-                    "dark_mode": self.graph_window._is_dark_mode,
-                    "history_period_slider_value": self.graph_window._history_period_value,
-                }
-                self.update_config(final_graph_settings, save_to_disk=False)
-                self.graph_window._is_closing = True
-                self.graph_window.close()
-                self.graph_window = None
-
-            if self.app_activity_window:
-                self.app_activity_window.close()
-                self.app_activity_window = None
+            # Close the Monitor if it's open (it persists its own geometry + active tab on close).
+            if self.monitor_window:
+                try:
+                    self.monitor_window.close()
+                except Exception:
+                    pass
+                self.monitor_window = None
 
             if self.config.get("free_move", False):
                 pos = self.pos()

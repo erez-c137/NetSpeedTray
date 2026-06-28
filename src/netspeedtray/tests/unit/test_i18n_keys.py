@@ -194,9 +194,9 @@ def test_scanner_finds_known_reference_shapes(
     # Pin that each of the access shapes is exercised by the real codebase, so a
     # future refactor that breaks one regex is noticed.
     found_keys = {key for key, _, _ in references}
-    # `i18n.MBITS_LABEL` style attribute access (helpers/renderer).
-    assert "MBITS_LABEL" in found_keys
-    # `_tr("APP_ACTIVITY_...")` style (app_activity window).
+    # `i18n.ERROR_TITLE` style attribute access (used widely, e.g. error dialogs).
+    assert "ERROR_TITLE" in found_keys
+    # `_tr("APP_ACTIVITY_...")` style (the Monitor's per-app connection list).
     assert any(k.startswith("APP_ACTIVITY_") for k in found_keys)
     # `getattr(self.i18n, "DISPLAY_FORMAT_GROUP", ...)` style (settings pages).
     assert "DISPLAY_FORMAT_GROUP" in found_keys

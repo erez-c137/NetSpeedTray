@@ -83,11 +83,11 @@ class InputHandler(QObject):
             event.accept()
 
     def handle_double_click(self, event: QMouseEvent) -> None:
-        """Handles double-click (Open Graph)."""
+        """Handles double-click (open the unified Monitor)."""
         if event.button() == Qt.MouseButton.LeftButton:
-            self.logger.debug("Double-click detected. Opening Graph Window.")
-            if hasattr(self.widget, 'open_graph_window'):
-                self.widget.open_graph_window()
+            self.logger.debug("Double-click detected. Opening the Monitor.")
+            if hasattr(self.widget, 'open_monitor_window'):
+                self.widget.open_monitor_window()
             event.accept()
 
     def _save_dragged_position(self) -> None:

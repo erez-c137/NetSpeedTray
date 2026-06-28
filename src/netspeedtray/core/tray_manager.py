@@ -91,16 +91,9 @@ class TrayIconManager(QObject):
             if hasattr(self.widget, 'show_settings'):
                 settings_action.triggered.connect(self.widget.show_settings)
 
-            graph_action = self.context_menu.addAction(self.i18n.SHOW_GRAPH_MENU_ITEM)
-            if hasattr(self.widget, 'open_graph_window'):
-                graph_action.triggered.connect(self.widget.open_graph_window)
-
-            app_usage_action = self.context_menu.addAction(self.i18n.SHOW_APP_ACTIVITY_MENU_ITEM)
-            if hasattr(self.widget, 'open_app_activity_window'):
-                app_usage_action.triggered.connect(self.widget.open_app_activity_window)
-
-            # The unified Monitor (Overview / Network / Hardware). For now it lives alongside the two
-            # windows above; once it reaches parity (5.2) it replaces them + takes over double-click.
+            # The unified Monitor (Overview / Network / Hardware) now replaces the separate Graph + App
+            # Activity windows — its three tabs cover both — so the menu is one calm entry (and a
+            # double-click on the widget opens it too).
             monitor_action = self.context_menu.addAction(self.i18n.SHOW_MONITOR_MENU_ITEM)
             if hasattr(self.widget, 'open_monitor_window'):
                 monitor_action.triggered.connect(self.widget.open_monitor_window)

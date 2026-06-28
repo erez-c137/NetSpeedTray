@@ -182,9 +182,12 @@ def test_data_cap_and_usage_rows_removed_from_menu(mock_widget, mock_i18n, q_app
     assert not any("Data cap" in t for t in texts)
     assert not hasattr(manager, "usage_today_action") or manager.usage_today_action is None
     assert not hasattr(manager, "data_cap_action") or manager.data_cap_action is None
-    # The real surfaces are still there.
+    # The real surfaces are still there. The separate Graph + App Activity items were retired in 2.0
+    # (the unified Monitor replaced them), so the menu is one calm "Monitor" entry.
     assert any(t == "Settings" for t in texts)
-    assert any("Graph" in t for t in texts)
+    assert any("Monitor" in t for t in texts)
+    assert not any("Graph" in t for t in texts)
+    assert not any("App Activity" in t for t in texts)
 
 
 def test_menu_position_calculation_fallback(mock_widget, mock_i18n, q_app):
