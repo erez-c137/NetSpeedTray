@@ -621,7 +621,7 @@ class DatabaseWorker(QThread):
 
     def _aggregate_hardware_raw_to_minute(self, cursor: sqlite3.Cursor, now: datetime) -> None:
         """Aggregates hardware stats older than 24 hours."""
-        cutoff = int((now - timedelta(hours=24)).timestamp())
+        cutoff = self._bucket_floored_cutoff(now, timedelta(hours=24), 60)
         self.logger.debug("Aggregating raw hardware data older than %s...", datetime.fromtimestamp(cutoff))
         cursor.execute(f"""
             INSERT OR IGNORE INTO {constants.data.HARDWARE_STATS_TABLE_MINUTE} (timestamp, stat_type, avg_value, max_value, sample_count)
@@ -637,10 +637,13 @@ class DatabaseWorker(QThread):
 
     def _aggregate_hardware_minute_to_hour(self, cursor: sqlite3.Cursor, now: datetime) -> None:
         """Aggregates per-minute hardware stats older than 30 days into per-hour records."""
-        cutoff = int((now - timedelta(days=30)).timestamp())
+        cutoff = self._bucket_floored_cutoff(now, timedelta(days=30), 3600)
         self.logger.debug("Aggregating minute hardware data older than %s...", datetime.fromtimestamp(cutoff))
+        # OR IGNORE (not REPLACE): with a floored cutoff each hour bucket is rolled up exactly once when
+        # complete, so there is never a conflicting row to replace — and IGNORE can't overwrite a full
+        # bucket with a partial remainder if maintenance ever re-runs. Matches the speed-table path.
         cursor.execute(f"""
-            INSERT OR REPLACE INTO {constants.data.HARDWARE_STATS_TABLE_HOUR} (timestamp, stat_type, avg_value, max_value, sample_count)
+            INSERT OR IGNORE INTO {constants.data.HARDWARE_STATS_TABLE_HOUR} (timestamp, stat_type, avg_value, max_value, sample_count)
             SELECT
                 (timestamp / 3600) * 3600 AS hour_timestamp,
                 stat_type,
@@ -670,6 +673,21 @@ class DatabaseWorker(QThread):
             return 0
         return max(0, int(secs))
 
+    @staticmethod
+    def _bucket_floored_cutoff(now: datetime, delta: timedelta, bucket_seconds: int) -> int:
+        """Aggregation cutoff floored DOWN to a ``bucket_seconds`` boundary, so a GROUP BY bucket is only
+        ever rolled up once it is COMPLETE.
+
+        With a raw-second cutoff, a bucket straddling it gets aggregated from only its rows ``< cutoff``
+        and those raw rows are then DELETEd; the next maintenance pass re-rolls the bucket's remaining
+        rows into the same bucket key, which ``INSERT OR IGNORE`` silently drops (and ``OR REPLACE``
+        overwrites with only the remainder) — permanently under-counting one bucket per cycle, cascading
+        into the hour tier and corrupting the long-term totals the app exports. Flooring guarantees no
+        bucket straddles the cutoff (both bucket starts and the cutoff are multiples of ``bucket_seconds``),
+        so each bucket is aggregated exactly once, complete. The partially-elapsed boundary bucket simply
+        waits in the lower tier until the next cycle, when it too is wholly in the past."""
+        return (int((now - delta).timestamp()) // bucket_seconds) * bucket_seconds
+
     def _prune_hardware_data(self, cursor: sqlite3.Cursor, config: Dict[str, Any], now: datetime) -> None:
         """Prunes hourly hardware stats using the same retention period as speed data."""
         retention_days = config.get("keep_data", 365)
@@ -680,7 +698,7 @@ class DatabaseWorker(QThread):
 
     def _aggregate_raw_to_minute(self, cursor: sqlite3.Cursor, now: datetime) -> None:
         """Aggregates per-second data older than 24 hours into per-minute averages/maxes."""
-        cutoff = int((now - timedelta(hours=24)).timestamp())
+        cutoff = self._bucket_floored_cutoff(now, timedelta(hours=24), 60)
         self.logger.debug("Aggregating raw data older than %s...", datetime.fromtimestamp(cutoff))
         
         cursor.execute(f"""
@@ -705,7 +723,7 @@ class DatabaseWorker(QThread):
 
     def _aggregate_minute_to_hour(self, cursor: sqlite3.Cursor, now: datetime) -> None:
         """Aggregates per-minute data older than 30 days into per-hour averages/maxes."""
-        cutoff = int((now - timedelta(days=30)).timestamp())
+        cutoff = self._bucket_floored_cutoff(now, timedelta(days=30), 3600)
         self.logger.debug("Aggregating minute data older than %s...", datetime.fromtimestamp(cutoff))
 
         cursor.execute(f"""
