@@ -221,7 +221,10 @@ class StatTile(QFrame):
 
 class NetworkHero(QFrame):
     """The Overview's headline card: download AND upload as co-equal large readouts over a single
-    dual-trace sparkline (download filled, upload a thinner line), plus a peak/session context line."""
+    dual-trace sparkline (download filled, upload a thinner line), plus a peak/session context line.
+    Clickable — selecting it opens the network Stats-detail sheet (download/upload distributions)."""
+
+    clicked = pyqtSignal()   #: emitted on left-click (the Overview opens the network detail sheet)
 
     def __init__(self, i18n, down_color: str, up_color: str, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -230,8 +233,10 @@ class NetworkHero(QFrame):
         self._up_color = up_color
         c = su.semantic_colors()
         self.setObjectName("netHero")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setStyleSheet(
-            f"#netHero {{ background: {c['subtle_fill']}; border-radius: {tokens.RADIUS_CARD}px; }}")
+            f"#netHero {{ background: {c['subtle_fill']}; border-radius: {tokens.RADIUS_CARD}px; }}"
+            f" #netHero:hover {{ background: {c['card_stroke']}; }}")
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(18, 16, 18, 16)
@@ -300,6 +305,11 @@ class NetworkHero(QFrame):
         """Set the top-right latency pill (rich text: a colour-coded word + quiet ms/loss subtext)."""
         self._latency.setText(html)
         self._latency.setVisible(bool(html))
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
 
     def _tr(self, key: str, default: str) -> str:
         return str(getattr(self._i18n, key, default)) if self._i18n is not None else default

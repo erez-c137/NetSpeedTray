@@ -106,3 +106,33 @@ def time_above(values: Sequence[float], threshold: float, sample_interval_second
     arr = np.asarray([float(v) for v in values], dtype=float)
     arr = arr[np.isfinite(arr)]
     return float((arr >= threshold).sum() * max(0.0, sample_interval_seconds))
+
+
+def hourly_profile(pairs: Sequence) -> Dict[int, float]:
+    """Mean value per clock-hour (0..23) from (timestamp, value) pairs. The honest, data-driven basis
+    for "your busiest hour" — no assumed ISP peak band, just when this machine was actually busy."""
+    sums: Dict[int, float] = {}
+    counts: Dict[int, int] = {}
+    for ts, v in pairs:
+        try:
+            fv = float(v)
+            if not np.isfinite(fv):
+                continue
+            hour = ts.hour if hasattr(ts, "hour") else int((float(ts) // 3600) % 24)
+        except (TypeError, ValueError):
+            continue
+        sums[hour] = sums.get(hour, 0.0) + fv
+        counts[hour] = counts.get(hour, 0) + 1
+    return {h: sums[h] / counts[h] for h in sums if counts[h]}
+
+
+def peak_offpeak(pairs: Sequence) -> Optional[Dict[str, float]]:
+    """Busiest vs quietest clock-hour by mean value. Returns {peak_hour, peak_avg, offpeak_hour,
+    offpeak_avg} or None if fewer than two distinct hours have data (a split would be meaningless)."""
+    prof = hourly_profile(pairs)
+    if len(prof) < 2:
+        return None
+    peak_h = max(prof, key=prof.get)
+    off_h = min(prof, key=prof.get)
+    return {"peak_hour": float(peak_h), "peak_avg": prof[peak_h],
+            "offpeak_hour": float(off_h), "offpeak_avg": prof[off_h]}

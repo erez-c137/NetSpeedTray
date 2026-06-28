@@ -185,6 +185,12 @@ class ConfigConstants:
         "latency_enabled": True,
         "latency_public_enabled": False,
         "latency_public_host": "1.1.1.1",
+        # Pro-stats thresholds (0 = unset, so the related context line stays hidden). The advertised-plan
+        # speeds drive "% of time below plan" in the network Stats-detail sheet; the throttle temp drives
+        # "above N°C for X" so a thermal-throttling case is provable.
+        "plan_down_mbps": 0,
+        "plan_up_mbps": 0,
+        "throttle_temp_c": 0,
         "stack_hardware_stats": DEFAULT_STACK_HARDWARE_STATS,
         "widget_display_mode": DEFAULT_WIDGET_DISPLAY_MODE,
         "widget_display_order": DEFAULT_WIDGET_DISPLAY_ORDER,
@@ -288,6 +294,9 @@ class ConfigConstants:
         "latency_enabled": {"type": bool, "default": True},
         "latency_public_enabled": {"type": bool, "default": False},
         "latency_public_host": {"type": str, "default": "1.1.1.1"},
+        "plan_down_mbps": {"type": (int, float), "default": 0, "min": 0, "max": 100000},
+        "plan_up_mbps": {"type": (int, float), "default": 0, "min": 0, "max": 100000},
+        "throttle_temp_c": {"type": (int, float), "default": 0, "min": 0, "max": 130},
         "show_hardware_power": {"type": bool, "default": DEFAULT_SHOW_HARDWARE_POWER},
         "stack_hardware_stats": {"type": bool, "default": DEFAULT_STACK_HARDWARE_STATS},
         "widget_display_mode": {"type": str, "default": DEFAULT_WIDGET_DISPLAY_MODE, "choices": ["network_only", "cycle", "side_by_side"]},

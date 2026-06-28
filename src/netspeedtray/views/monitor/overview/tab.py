@@ -28,6 +28,7 @@ from netspeedtray.constants.styles import styles as tokens
 from netspeedtray.utils.helpers import format_speed, format_data_size
 from netspeedtray.views.monitor.overview.tiles import StatTile, UsageTile, NetworkHero
 from netspeedtray.views.monitor.timeline_selector import TimelineSelector
+from netspeedtray.views.monitor.stats_detail import StatsDetailSheet
 
 # Per-resource accent as (dark, light) pairs. Network up/down get a distinct, harmonious pair; CPU/GPU
 # echo the graph's line hues; RAM/VRAM get their own calm colours. The light variant keeps the thin
@@ -91,6 +92,7 @@ class OverviewTab(QWidget):
 
         # --- Network hero (the headline) ---
         self._hero = NetworkHero(i18n, accent("down"), accent("up"))
+        self._hero.clicked.connect(lambda: self._open_detail("network"))
         root.addWidget(self._hero)
 
         # --- Thin context strip: session uptime + session totals (left), CPU+GPU power (right) ---
@@ -117,7 +119,7 @@ class OverviewTab(QWidget):
                            ("ram", self._tr("MONITOR_TILE_RAM", "RAM")),
                            ("vram", self._tr("MONITOR_TILE_VRAM", "VRAM"))):
             t = StatTile(label, accent(key))
-            t.clicked.connect(self._goto_hardware)   # a click drills into the Hardware tab
+            t.clicked.connect(lambda k=key: self._open_detail(k))   # a click opens the stat sheet
             self._tiles[key] = t
             hw.addWidget(t, 1)
         root.addLayout(hw)
@@ -384,15 +386,63 @@ class OverviewTab(QWidget):
             out += f"  <span style='color:{sub};'>· {' · '.join(detail)}</span>"
         return out
 
-    def _goto_hardware(self) -> None:
-        """A hardware tile was clicked — drill into the Hardware tab for the full graph + per-process
-        breakdown (the Monitor's own "more details", better than punting to Task Manager)."""
-        win = self.window()
-        if win is not None and hasattr(win, "select_tab"):
-            try:
-                win.select_tab("hardware")
-            except Exception:
-                pass
+    def _detail_subjects(self, metric: str):
+        """The subject list a card opens its Stats-detail sheet with. Hardware cards lead with their
+        utilisation and add temperature/power when a sensor reported them; network leads with both
+        directions plus gateway latency. (Empty secondary blocks drop out inside the sheet.)"""
+        cpu = self._tr("ORDER_TYPE_CPU", "CPU")
+        gpu = self._tr("ORDER_TYPE_GPU", "GPU")
+        if metric == "network":
+            return [
+                {"key": "download", "label": self._tr("DOWNLOAD_LABEL", "Download"),
+                 "unit": "Mbps", "kind": "net_down", "primary": True},
+                {"key": "upload", "label": self._tr("UPLOAD_LABEL", "Upload"),
+                 "unit": "Mbps", "kind": "net_up", "primary": True},
+                {"key": "latency_gw", "label": self._tr("LATENCY_LABEL", "Internet"),
+                 "unit": "ms", "kind": "hw"},
+            ]
+        if metric == "cpu":
+            return [
+                {"key": "cpu", "label": cpu, "unit": "%", "kind": "hw", "primary": True},
+                {"key": "cpu_temp", "label": f"{cpu} {self._tr('STAT_TEMP', 'temperature')}",
+                 "unit": "°C", "kind": "hw"},
+                {"key": "cpu_power", "label": f"{cpu} {self._tr('STAT_POWER', 'power')}",
+                 "unit": "W", "kind": "hw"},
+            ]
+        if metric == "gpu":
+            return [
+                {"key": "gpu", "label": gpu, "unit": "%", "kind": "hw", "primary": True},
+                {"key": "gpu_temp", "label": f"{gpu} {self._tr('STAT_TEMP', 'temperature')}",
+                 "unit": "°C", "kind": "hw"},
+                {"key": "gpu_power", "label": f"{gpu} {self._tr('STAT_POWER', 'power')}",
+                 "unit": "W", "kind": "hw"},
+            ]
+        if metric == "ram":
+            return [{"key": "ram", "label": self._tr("MONITOR_TILE_RAM", "RAM"),
+                     "unit": "%", "kind": "hw", "primary": True}]
+        if metric == "vram":
+            return [{"key": "vram", "label": self._tr("MONITOR_TILE_VRAM", "VRAM"),
+                     "unit": "%", "kind": "hw", "primary": True}]
+        return []
+
+    def _open_detail(self, metric: str) -> None:
+        """Open the Stats-detail sheet for the clicked card, scoped to the active timeline window."""
+        ws = getattr(self._main_widget, "widget_state", None)
+        if ws is None:
+            return
+        subjects = self._detail_subjects(metric)
+        if not subjects:
+            return
+        from netspeedtray import __version__
+        start, end, _is_session = self._window()
+        label = self._timeline.current_label() if hasattr(self._timeline, "current_label") \
+            else self._period_key()
+        try:
+            sheet = StatsDetailSheet(ws, subjects, (start, end, label), self._config, self._i18n,
+                                     app_version=__version__, parent=self.window())
+            sheet.exec()
+        except Exception as e:
+            self.logger.error("Could not open stats detail: %s", e, exc_info=True)
 
     def _hw_sub(self, temp: Optional[float], power: Optional[float]) -> str:
         """CPU/GPU sub-line: temperature and (when collected) power, e.g. "62°C  ·  35 W"."""

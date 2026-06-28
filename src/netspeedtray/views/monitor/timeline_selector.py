@@ -100,3 +100,8 @@ class TimelineSelector(QWidget):
 
     def current_index(self) -> int:
         return self._index
+
+    def current_label(self) -> str:
+        """The human label for the active window (e.g. "Last 24 hours") — used by the Stats-detail
+        sheet title and the export filename."""
+        return self._label(self._period_key())

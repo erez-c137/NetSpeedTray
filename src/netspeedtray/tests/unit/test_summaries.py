@@ -33,3 +33,21 @@ def test_coverage_loss_pctbelow_timeabove():
     assert S.loss_pct(2, 100) == 2.0 and S.loss_pct(0, 0) is None
     assert S.pct_below([10, 20, 30, 40], 25) == 50.0
     assert S.time_above([85, 92, 95, 80], 90, 1.0) == 2.0
+
+
+def test_peak_offpeak_split():
+    from datetime import datetime
+    pairs = [(datetime(2026, 6, 28, 20, 0), 100.0), (datetime(2026, 6, 28, 20, 30), 80.0),  # 20h busy
+             (datetime(2026, 6, 28, 4, 0), 5.0), (datetime(2026, 6, 28, 4, 30), 15.0)]       # 4h quiet
+    po = S.peak_offpeak(pairs)
+    assert po["peak_hour"] == 20.0 and po["peak_avg"] == 90.0
+    assert po["offpeak_hour"] == 4.0 and po["offpeak_avg"] == 10.0
+    # Fewer than two distinct hours -> no split (would be meaningless).
+    assert S.peak_offpeak([(datetime(2026, 6, 28, 20, 0), 100.0)]) is None
+    assert S.peak_offpeak([]) is None
+
+
+def test_hourly_profile_accepts_unix_seconds():
+    # 72000s = 20:00 UTC-anchored hour-of-day arithmetic (20h); robust to plain unix timestamps.
+    prof = S.hourly_profile([(72000.0, 50.0), (72000.0, 70.0)])
+    assert prof[20] == 60.0
