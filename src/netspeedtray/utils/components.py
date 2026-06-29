@@ -569,12 +569,13 @@ class SettingCard(QFrame):
             f"QFrame#settingCard {{ background-color: {c['card_bg']}; "
             f"border: 1px solid {c['card_stroke']}; border-radius: {tokens.RADIUS_CARD}px; }}"
         )
-        # A consistent floor height so a bare-toggle row and a slider/combo row read as the same
-        # card size — the even vertical rhythm of the native Win11 Settings list.
-        self.setMinimumHeight(48)
+        # Win11 Settings card proportions: a ~58px floor height with roomy 16px side padding, so a
+        # bare-toggle row and a slider/combo row read as the same generously-sized card (the old 48px /
+        # 12-8 padding read cramped next to the native Settings app).
+        self.setMinimumHeight(58)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(tokens.SPACE_M, tokens.SPACE_S, tokens.SPACE_M, tokens.SPACE_S)
+        layout.setContentsMargins(16, tokens.SPACE_M, 16, tokens.SPACE_M)
         layout.setSpacing(tokens.SPACE_M)
 
         if icon:
@@ -634,8 +635,9 @@ class SettingExpander(QWidget):
             f"QFrame#expanderHeader {{ background-color: {c['card_bg']}; "
             f"border: 1px solid {c['card_stroke']}; border-radius: {tokens.RADIUS_CARD}px; }}"
         )
+        self._header.setMinimumHeight(58)   # match SettingCard's Win11 row height
         hl = QHBoxLayout(self._header)
-        hl.setContentsMargins(tokens.SPACE_M, tokens.SPACE_S, tokens.SPACE_M, tokens.SPACE_S)
+        hl.setContentsMargins(16, tokens.SPACE_M, 16, tokens.SPACE_M)
         hl.setSpacing(tokens.SPACE_M)
 
         text_col = QVBoxLayout()

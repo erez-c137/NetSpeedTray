@@ -6,7 +6,9 @@ to build dynamic stylesheets for different application components.
 """
 
 from PyQt6.QtGui import QColor, QFont, QFontDatabase, QIcon, QPixmap, QPainter
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QSize
+import os
+import hashlib
 import winreg
 
 # Import the design tokens (raw values) and other UI constants
@@ -37,6 +39,30 @@ def fluent_icon(codepoint: int, size: int = 16, color: str = "#FFFFFF") -> QIcon
     finally:
         p.end()
     return QIcon(pm)
+
+
+def combo_chevron_url(color_hex: str) -> str:
+    """Render the Fluent ChevronDown to a small cached PNG and return a QSS-friendly (forward-slash)
+    path for ``QComboBox::down-arrow {{ image: url(...) }}``.
+
+    Qt drops a combo's native arrow as soon as ``::drop-down`` is QSS-styled, which left every styled
+    dropdown looking like a bare box. Supplying our own themed glyph restores the affordance with the
+    native Win11 chevron. Rendered at 2× then scaled by QSS for crispness; cached per colour so it's
+    written once. Degrades to no-arrow (empty string) if the app-data dir can't be written.
+    """
+    try:
+        from netspeedtray.utils.helpers import get_app_data_path
+        key = hashlib.md5(color_hex.encode("utf-8")).hexdigest()[:8]
+        cache_dir = os.path.join(get_app_data_path(), "cache")
+        os.makedirs(cache_dir, exist_ok=True)
+        # Render at the on-screen size (QSS clips rather than scales a ::down-arrow image, so a larger
+        # source would show only a cropped fragment — the "little square" bug).
+        path = os.path.join(cache_dir, f"chevron_{key}_v2.png")
+        if not os.path.exists(path):
+            fluent_icon(0xE70D, 14, color_hex).pixmap(QSize(14, 14)).save(path, "PNG")
+        return path.replace("\\", "/")
+    except Exception:
+        return ""
 
 
 def font(token: tuple) -> QFont:
@@ -141,6 +167,8 @@ def dialog_style() -> str:
 
     # Input/combobox fill and the thin overlay-scrollbar handle, theme-aware.
     input_bg = "#383838" if dark_mode_active else "#FFFFFF"
+    # A themed dropdown chevron (Qt drops the native arrow once ::drop-down is styled).
+    chevron_url = combo_chevron_url("#C8C8C8" if dark_mode_active else "#505050")
     scroll_handle = "rgba(255, 255, 255, 0.22)" if dark_mode_active else "rgba(0, 0, 0, 0.22)"
     scroll_handle_hover = "rgba(255, 255, 255, 0.42)" if dark_mode_active else "rgba(0, 0, 0, 0.42)"
 
@@ -240,7 +268,12 @@ def dialog_style() -> str:
         }}
         QComboBox::drop-down {{
             border: none;
-            width: 22px;
+            width: 24px;
+            subcontrol-origin: padding;
+            subcontrol-position: center right;
+        }}
+        QComboBox::down-arrow {{
+            image: url("{chevron_url}");
         }}
         QComboBox QAbstractItemView {{
             background-color: {input_bg};
@@ -378,7 +411,8 @@ def graph_settings_panel_style() -> str:
     """
     accent_qcolor = get_accent_color()
     accent_rgb = f"rgb({accent_qcolor.red()}, {accent_qcolor.green()}, {accent_qcolor.blue()})"
-    
+    chevron_url = combo_chevron_url("#C8C8C8")   # this panel is always dark
+
     # Correctly access constants directly from the 'style_constants' instance
     return f"""
         QWidget#settingsPanel {{
@@ -413,6 +447,12 @@ def graph_settings_panel_style() -> str:
         }}
         #settingsPanel QComboBox::drop-down {{
             border: none;
+            width: 24px;
+            subcontrol-origin: padding;
+            subcontrol-position: center right;
+        }}
+        #settingsPanel QComboBox::down-arrow {{
+            image: url("{chevron_url}");
         }}
         #settingsPanel QComboBox QAbstractItemView {{
             color: {style_constants.DARK_MODE_TEXT_COLOR};

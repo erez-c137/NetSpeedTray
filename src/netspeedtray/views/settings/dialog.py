@@ -206,10 +206,10 @@ class SettingsDialog(QDialog):
             content_widget = QWidget()
             content_widget.setObjectName("contentWidget")
             content_layout = QVBoxLayout(content_widget)
-            content_layout.setContentsMargins(
-                constants.layout.MAIN_MARGIN, constants.layout.MAIN_MARGIN,
-                constants.layout.MAIN_MARGIN, constants.layout.MAIN_MARGIN
-            )
+            # Roomier horizontal inset around the card column (Win11 Settings gives its content generous
+            # side margins); keep the vertical margin tighter so the preview strip + buttons sit close.
+            content_layout.setContentsMargins(24, constants.layout.MAIN_MARGIN,
+                                              24, constants.layout.MAIN_MARGIN)
             content_layout.setSpacing(constants.layout.MAIN_SPACING)
 
             self.stack = QStackedWidget()

@@ -156,8 +156,19 @@ def save_window_geometry(window: QWidget, main_widget: Optional[QWidget], key: s
         if cfg is None or mgr is None:
             return
         maximized = bool(window.isMaximized() or window.isFullScreen())
-        g = window.normalGeometry() if maximized else window.geometry()
-        cfg[key] = {"x": g.x(), "y": g.y(), "w": g.width(), "h": g.height(), "maximized": maximized}
+        if maximized:
+            g = window.normalGeometry()
+            x, y, w, h = g.x(), g.y(), g.width(), g.height()
+        else:
+            # Save the FRAME top-left (pos()), NOT geometry()'s CLIENT top-left. restore_window_geometry
+            # repositions with move(), which sets the frame top-left — geometry().y() is the client top
+            # (frame + title-bar), so mixing the two drifts the window DOWN by the title-bar height on
+            # every reopen. pos() <-> move() is the consistent, drift-free round-trip. Size stays the
+            # client size (what resize() expects).
+            p = window.pos()
+            s = window.geometry()
+            x, y, w, h = p.x(), p.y(), s.width(), s.height()
+        cfg[key] = {"x": x, "y": y, "w": w, "h": h, "maximized": maximized}
         mgr.save(cfg)
     except Exception as e:
         logger.debug("save_window_geometry(%s) failed: %s", key, e)

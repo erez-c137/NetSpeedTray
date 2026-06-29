@@ -410,9 +410,11 @@ class NetworkSpeedWidget(QWidget):
         """First-run onboarding. A brand-new install gets the calm 'unfold' flyout that
         points at the features most users never find; an upgrader gets the one-time 2.0
         welcome dialog. The two gates are mutually exclusive — they never both fire."""
-        # Brand-new install: the unfold flyout, not the "what changed" dialog.
+        # Brand-new install: the unfold flyout is DISABLED for this release — its only action opens the
+        # Monitor, so there's no real guided tour to justify an interrupting pop-up yet (re-enable once
+        # there's an actual walkthrough; _show_unfold_flyout() is kept for that). We still advance the
+        # first-run flags so nothing pops later and the upgrade dialog stays correctly suppressed.
         if self.config.get("first_run_ever", True):
-            self._show_unfold_flyout()
             self.config["first_run_ever"] = False
             self.config["first_run_v2_seen"] = True  # a new 2.0 user has no "before"
             self.update_config({"first_run_ever": False, "first_run_v2_seen": True})

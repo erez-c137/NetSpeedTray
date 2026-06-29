@@ -55,9 +55,10 @@ class MonitorWindow(QWidget):
         # clamped to the screen so it never opens off-screen on a small display. The min is deliberately
         # small — every tab scrolls/reflows, so the window is safe at any size.
         self.setMinimumSize(660, 420)
-        # Open tall enough that the whole Overview clears without scrolling, with headroom for higher
-        # display-scaling (125/150%); still clamped below to fit a 1080p screen (≤ ~972 usable there).
-        default_w, default_h = 960, 900
+        # Snug to the Overview's natural height (content ≈680 + chrome ≈90 → ~770; +30 breathing room),
+        # so a fresh open shows the whole dashboard without scrolling AND without a big dead strip at the
+        # bottom. Clamped to fit a 1080p screen. (Returning users keep their remembered size instead.)
+        default_w, default_h = 960, 800
         scr = QApplication.primaryScreen()
         if scr is not None:
             avail = scr.availableGeometry()
