@@ -165,12 +165,10 @@ def dialog_style() -> str:
     text_color = style_constants.DARK_MODE_TEXT_COLOR if dark_mode_active else style_constants.LIGHT_MODE_TEXT_COLOR
     border_color = "#404040" if dark_mode_active else "#D0D0D0"
 
-    # Input/combobox fill and the thin overlay-scrollbar handle, theme-aware.
+    # Input/combobox fill, theme-aware.
     input_bg = "#383838" if dark_mode_active else "#FFFFFF"
     # A themed dropdown chevron (Qt drops the native arrow once ::drop-down is styled).
     chevron_url = combo_chevron_url("#C8C8C8" if dark_mode_active else "#505050")
-    scroll_handle = "rgba(255, 255, 255, 0.22)" if dark_mode_active else "rgba(0, 0, 0, 0.22)"
-    scroll_handle_hover = "rgba(255, 255, 255, 0.42)" if dark_mode_active else "rgba(0, 0, 0, 0.42)"
 
     accent_qcolor = get_accent_color()
     accent_rgb = f"rgb({accent_qcolor.red()}, {accent_qcolor.green()}, {accent_qcolor.blue()})"
@@ -286,43 +284,9 @@ def dialog_style() -> str:
             padding: 2px;
         }}
 
-        /* Thin Win11-style overlay scrollbars: a ~6px rounded handle in a narrow transparent track,
-           no arrow buttons (the fat Qt default with arrows read as "not native"). */
-        QScrollBar:vertical {{
-            background: transparent;
-            width: 8px;
-            margin: 0px;
-        }}
-        QScrollBar::handle:vertical {{
-            background: {scroll_handle};
-            border-radius: 3px;
-            min-height: 32px;
-            margin: 0px 1px;
-        }}
-        QScrollBar::handle:vertical:hover {{
-            background: {scroll_handle_hover};
-        }}
-        QScrollBar:horizontal {{
-            background: transparent;
-            height: 8px;
-            margin: 0px;
-        }}
-        QScrollBar::handle:horizontal {{
-            background: {scroll_handle};
-            border-radius: 3px;
-            min-width: 32px;
-            margin: 1px 0px;
-        }}
-        QScrollBar::handle:horizontal:hover {{
-            background: {scroll_handle_hover};
-        }}
-        QScrollBar::add-line, QScrollBar::sub-line {{
-            width: 0px;
-            height: 0px;
-        }}
-        QScrollBar::add-page, QScrollBar::sub-page {{
-            background: transparent;
-        }}
+        /* Scrollbars are intentionally NOT styled here — Settings inherits the native Windows
+           scrollbar, identical to the Monitor window (which never styled it). One native scrollbar
+           everywhere; a custom QSS bar read as "not native / too thick". */
     """
 
 

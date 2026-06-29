@@ -348,6 +348,11 @@ class SettingsDialog(QDialog):
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        # Let the dark content background show through the scroll region so cards FLOAT on it (the page
+        # otherwise renders an opaque mid-grey that the cards blend into — the "cards section is a
+        # different shade" bug). Mirrors how the Monitor's Overview scroll content is made transparent.
+        scroll.viewport().setAutoFillBackground(False)
+        page.setStyleSheet("background: transparent;")   # cards/inputs keep their own fill (more specific)
         scroll.setWidget(page)
         return scroll
 
