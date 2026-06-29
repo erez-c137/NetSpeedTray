@@ -350,8 +350,8 @@ class NetworkHero(ClickableCard):
         lay.addLayout(metrics)
 
         self._spark = Sparkline(down_color)
-        self._spark.setMinimumHeight(110)   # the hero is the headline — give the trend real vertical room
-        lay.addWidget(self._spark, 1)
+        self._spark.setMinimumHeight(90)   # the hero is the headline — give the trend real room, but
+        lay.addWidget(self._spark, 1)      # not so tall the Overview needs scrolling on a 1080p screen
 
         self._sub = QLabel("")
         self._sub.setFont(su.font(tokens.TYPE_CAPTION))
