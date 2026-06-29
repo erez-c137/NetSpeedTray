@@ -15,6 +15,51 @@ Open source, signed, no ads, no telemetry. The feature Windows forgot.
 
 ---
 
+## Ramix Fix Notes
+
+This fork keeps the original NetSpeedTray behavior, with a few practical fixes and small usability additions:
+
+1. **Fixed color threshold unit labeling.**  
+   The color threshold values are compared against the displayed speed number. When the display unit is set to `Bytes (KB/s, MB/s)`, the Color Coding page now labels the threshold as `MB/s` instead of incorrectly showing `Mbps`.
+
+   Code change: simple UI suffix fix in `src/netspeedtray/views/settings/pages/colors.py`. It now reads the selected `unit_type` and uses the matching mega-unit label.
+
+2. **Allowed negative tray X offset values.**  
+   `tray_offset_x` can now be negative, which is useful when the widget needs to move in the opposite horizontal direction from the tray edge. `tray_offset_y` is unchanged.
+
+   Code change: very small validation/UI change:
+   - `src/netspeedtray/constants/config.py`: `tray_offset_x` minimum changed from `0` to `-500`
+   - `src/netspeedtray/views/settings/pages/general.py`: tray offset slider range changed from `0..50` to `-50..50`
+
+3. **Added configurable double-click and middle-click actions.**  
+   In General settings, double-click and middle-click can now be assigned to:
+   - Show Graph
+   - Show App Activity
+   - Settings
+
+   Code change: moderate but straightforward. New config keys were added in `config.py`, dropdowns were added in `general.py`, and click handling was routed through `src/netspeedtray/core/input_handler.py`.
+
+4. **Added Hebrew language support.**  
+   Hebrew (`he_IL`) is now available in the language dropdown, with RTL layout applied to the Settings dialog.
+
+   Code change: general localization work:
+   - `src/netspeedtray/constants/i18n.py`: added `he_IL`
+   - `src/netspeedtray/constants/locales/he_IL.json`: added Hebrew locale file
+   - `src/netspeedtray/views/settings/dialog.py`: applies right-to-left layout for Hebrew
+
+### Ramix Screenshots
+
+<table>
+  <tr>
+    <td align="center" width="25%"><img src="screenshots/Ramix/Cap_0090.png" alt="Ramix screenshot 1" /></td>
+    <td align="center" width="25%"><img src="screenshots/Ramix/Cap_0091.png" alt="Ramix screenshot 2" /></td>
+    <td align="center" width="25%"><img src="screenshots/Ramix/Cap_0092.png" alt="Ramix screenshot 3" /></td>
+    <td align="center" width="25%"><img src="screenshots/Ramix/Cap_0094.png" alt="Ramix screenshot 4" /></td>
+  </tr>
+</table>
+
+---
+
 ## Install
 
 ```powershell
