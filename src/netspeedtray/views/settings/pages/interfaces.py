@@ -3,15 +3,17 @@ Interfaces Settings Page.
 """
 from typing import Dict, Any, Callable, List
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QGroupBox, QLabel, QRadioButton, QScrollArea
+    QWidget, QVBoxLayout, QFrame, QLabel, QRadioButton, QScrollArea
 )
 
 from netspeedtray import constants
 from netspeedtray.utils.components import Win11Toggle
 from netspeedtray.constants import styles as style_constants
+from netspeedtray.constants.styles import styles as tokens
 from netspeedtray.utils import styles as style_utils
+from netspeedtray.views.settings.pages._fluent import section_header, page_layout
 from netspeedtray.views.settings.pages.datacap_section import DataCapSettings
 from netspeedtray.views.settings.pages.connection_section import ConnectionSettings
 
@@ -27,61 +29,65 @@ class InterfacesPage(QWidget):
         self._setup_ui()
 
     def _setup_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setSpacing(constants.layout.GROUP_BOX_SPACING)
+        # 2.0 IA: the monitoring-mode radios live in one Fluent card (a grouped option list, the native
+        # Win11 idiom) instead of loose rows; the connection + data-cap sections are Fluent expanders.
+        layout = page_layout(self)
+        c = style_utils.semantic_colors()
 
-        interfaces_group = QGroupBox(self.i18n.NETWORK_INTERFACES_GROUP)
-        interfaces_layout = QVBoxLayout(interfaces_group)
-        interfaces_layout.setSpacing(constants.layout.HORIZONTAL_SPACING_MEDIUM)
+        # --- Monitoring mode (radio group in a card) ---
+        layout.addWidget(section_header(self.i18n.MONITORING_MODE_LABEL))
+        mode_card = QFrame()
+        mode_card.setObjectName("modeCard")
+        mode_card.setStyleSheet(
+            f"#modeCard {{ background: {c['card_bg']}; border: 1px solid {c['card_stroke']};"
+            f" border-radius: {tokens.RADIUS_CARD}px; }}")
+        ml = QVBoxLayout(mode_card)
+        ml.setContentsMargins(16, 12, 16, 12)
+        ml.setSpacing(2)
 
-        interfaces_layout.addWidget(QLabel(self.i18n.MONITORING_MODE_LABEL))
         self.auto_interface_radio = QRadioButton(self.i18n.MONITORING_MODE_AUTO)
         self.all_physical_interfaces_radio = QRadioButton(self.i18n.MONITORING_MODE_PHYSICAL)
         self.all_virtual_interfaces_radio = QRadioButton(self.i18n.MONITORING_MODE_VIRTUAL)
         self.selected_interfaces_radio = QRadioButton(self.i18n.MONITORING_MODE_SELECTED)
 
-        # Subtitle descriptions (visible below each radio, replaces tooltips)
-        is_dark = style_utils.is_dark_mode()
-        subtitle_color = style_constants.SUBTLE_TEXT_COLOR_DARK if is_dark else style_constants.SUBTLE_TEXT_COLOR_LIGHT
-        subtitle_style = f"color: {subtitle_color}; font-size: 10px; margin-left: 22px; margin-bottom: 4px;"
-
+        # Subtitle under each option (muted, indented to align under the radio label) — the Win11
+        # "option + helper text" pattern.
+        subtitle_style = (f"color: {c['text_secondary']}; font-size: 11px;"
+                          f" margin-left: 24px; margin-bottom: 6px; background: transparent;")
         radio_subtitle_pairs = [
             (self.auto_interface_radio, self.i18n.MONITORING_MODE_AUTO_SUBTITLE),
             (self.all_physical_interfaces_radio, self.i18n.MONITORING_MODE_PHYSICAL_SUBTITLE),
             (self.all_virtual_interfaces_radio, self.i18n.MONITORING_MODE_VIRTUAL_SUBTITLE),
             (self.selected_interfaces_radio, self.i18n.MONITORING_MODE_SELECTED_SUBTITLE),
         ]
-
         for radio, subtitle_text in radio_subtitle_pairs:
             radio.toggled.connect(self._on_mode_toggled)
-            interfaces_layout.addWidget(radio)
+            ml.addWidget(radio)
             subtitle = QLabel(subtitle_text)
             subtitle.setWordWrap(True)
             subtitle.setStyleSheet(subtitle_style)
-            interfaces_layout.addWidget(subtitle)
+            ml.addWidget(subtitle)
 
+        # The per-interface checkbox list (revealed only for "selected" mode), inside the same card.
         self.interface_scroll = QScrollArea()
         self.interface_scroll.setWidgetResizable(True)
-        # Ensure scroll area and its viewport are transparent
         self.interface_scroll.setStyleSheet("""
             QScrollArea { border: none; background: transparent; }
             QScrollArea > QWidget > QWidget { background: transparent; }
         """)
         self.interface_scroll.viewport().setAutoFillBackground(False)
-        self.interface_scroll.setVisible(False) # Default to hidden, shown only if mode is 'selected'
+        self.interface_scroll.setVisible(False)
 
         interfaces_container = QWidget()
         interfaces_container.setStyleSheet("background: transparent;")
         self.interfaces_container_layout = QVBoxLayout(interfaces_container)
         self.interfaces_container_layout.setSpacing(constants.layout.VERTICAL_SPACING)
-
         self._populate_interface_list()
-
         interfaces_container.setLayout(self.interfaces_container_layout)
         self.interface_scroll.setWidget(interfaces_container)
+        ml.addWidget(self.interface_scroll)
 
-        interfaces_layout.addWidget(self.interface_scroll)
-        layout.addWidget(interfaces_group)
+        layout.addWidget(mode_card)
 
         # Connection section — latency monitoring (gateway + opt-in public anchor) + advertised plan.
         self.connection = ConnectionSettings(self.on_change, self.i18n)

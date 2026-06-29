@@ -17,14 +17,15 @@ def test_layout_and_behaviour_round_trip(page):
         "widget_display_order": ["gpu", "cpu", "network"],
         "free_move": True,
         "keep_visible_fullscreen": True,
-        "tray_offset_x": 21,
     })
     out = page.get_settings()
     assert out["widget_display_mode"] == "cycle"
     assert out["widget_display_order"] == ["gpu", "cpu", "network"]
     assert out["free_move"] is True
     assert out["keep_visible_fullscreen"] is True
-    assert out["tray_offset_x"] == 21
+    # Tray offset is intentionally not a Widget-page control (Free Move handles repositioning).
+    assert "tray_offset_x" not in out
+    assert "tray_offset_y" not in out
 
 
 def test_stacked_mode_encoding_round_trips(page):

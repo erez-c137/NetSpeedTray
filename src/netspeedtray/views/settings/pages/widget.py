@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import QWidget, QComboBox, QLabel
 
 from netspeedtray import constants
 from netspeedtray.utils import styles as su
-from netspeedtray.utils.components import Win11Toggle, Win11Slider, SettingCard
+from netspeedtray.utils.components import Win11Toggle, SettingCard
 from netspeedtray.views.settings.pages._fluent import section_header, page_layout
 
 
@@ -63,7 +63,7 @@ class WidgetPage(QWidget):
             layout.addWidget(SettingCard(getattr(self.i18n, f"ORDER_POSITION_{i+1}"), control=combo))
             self.pos_combos.append(combo)
 
-        # --- Behaviour / position (was on the General page) ---
+        # --- Behaviour (was on the General page) ---
         layout.addWidget(section_header(self.i18n.BEHAVIOR_GROUP_TITLE))
         self.free_move = Win11Toggle(label_text="")
         self.free_move.toggled.connect(self.on_change)
@@ -74,11 +74,9 @@ class WidgetPage(QWidget):
         layout.addWidget(SettingCard(self.i18n.KEEP_VISIBLE_FULLSCREEN_LABEL,
                                      control=self.keep_visible_fullscreen))
 
-        self.tray_offset = Win11Slider()
-        self.tray_offset.setRange(0, 50)
-        self.tray_offset.setMinimumWidth(260)
-        self.tray_offset.valueChanged.connect(self.on_change)
-        layout.addWidget(SettingCard(self.i18n.TRAY_OFFSET_LABEL, control=self.tray_offset))
+        # NOTE: there is intentionally no tray-offset slider. Free Move (drag the widget anywhere) is the
+        # reposition escape hatch; the auto-position uses sensible default offsets. tray_offset_x/y remain
+        # in config for the position engine (position_manager) but aren't surfaced as fiddly px sliders.
 
         layout.addStretch()
 
@@ -134,7 +132,6 @@ class WidgetPage(QWidget):
         self.free_move.setChecked(config.get("free_move", False))
         self.keep_visible_fullscreen.setChecked(
             config.get("keep_visible_fullscreen", constants.config.defaults.DEFAULT_KEEP_VISIBLE_FULLSCREEN))
-        self.tray_offset.setValue(config.get("tray_offset_x", 0))
 
     def get_settings(self) -> Dict[str, Any]:
         mode = self.display_mode_combo.currentData()
@@ -145,5 +142,4 @@ class WidgetPage(QWidget):
             "widget_display_order": order,
             "free_move": self.free_move.isChecked(),
             "keep_visible_fullscreen": self.keep_visible_fullscreen.isChecked(),
-            "tray_offset_x": self.tray_offset.value(),
         }

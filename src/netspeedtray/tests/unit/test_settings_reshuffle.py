@@ -28,7 +28,7 @@ MANAGED_KEYS = {
     # General
     "language", "update_rate", "start_with_windows", "check_for_updates", "preferred_monitor",
     # Widget (layout + on-taskbar behaviour)
-    "free_move", "keep_visible_fullscreen", "tray_offset_x",
+    "free_move", "keep_visible_fullscreen",
     "widget_display_mode", "stack_hardware_stats", "widget_display_order",
     # Appearance — font / colour / arrows / background
     "font_family", "font_size", "font_weight", "default_color",
@@ -118,12 +118,14 @@ def test_highrisk_keys_round_trip(qtbot):
     assert not bad, f"keys did not round-trip (got, expected): {bad}"
 
 
-# Config keys that exist in DEFAULT_CONFIG but have no settings-page control yet (dormant / deferred
-# "build later" features — tray_offset_y, show_legend, force_decimals, dynamic_update_enabled). They
+# Config keys that exist in DEFAULT_CONFIG but have no settings-page control (dormant by design). They
 # must NOT be lost when settings are saved: get_settings() starts from a full config copy, so a page
 # that doesn't manage a key leaves it untouched at its loaded value. This guards against a future
 # refactor dropping the config.copy() and silently resetting these on the next save.
+# tray_offset_x/y are deliberately UI-less — Free Move (drag) is the reposition path; the position
+# engine still reads them from config at their defaults.
 UNMANAGED_PRESERVED = {
+    "tray_offset_x": 12,
     "tray_offset_y": 7,
     "show_legend": False,
     "force_decimals": True,
