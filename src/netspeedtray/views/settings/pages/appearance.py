@@ -54,7 +54,7 @@ class AppearancePage(QWidget):
         # Default text colour (swatch + hex).
         self.default_color_button = QPushButton()
         self.default_color_button.setObjectName("default_color")
-        self.default_color_button.setFixedSize(30, 24)
+        self.default_color_button.setFixedSize(36, 26)
         self.default_color_button.setToolTip(self.i18n.DEFAULT_COLOR_TOOLTIP)
         self.default_color_button.clicked.connect(lambda: self.open_color_dialog("default_color"))
         self.default_color_input = QLineEdit()
@@ -114,7 +114,7 @@ class AppearancePage(QWidget):
         layout.addWidget(section_header(self.i18n.BACKGROUND_SETTINGS_GROUP_TITLE))
         self.background_color_button = QPushButton()
         self.background_color_button.setObjectName("background_color")
-        self.background_color_button.setFixedSize(30, 24)
+        self.background_color_button.setFixedSize(36, 26)
         self.background_color_button.clicked.connect(lambda: self.open_color_dialog("background_color"))
         self.background_color_input = QLineEdit()
         self.background_color_input.setMaxLength(7)
@@ -187,7 +187,7 @@ class AppearancePage(QWidget):
         # Colors
         for key in ["default", "background"]:
             c = config.get(f"{key}_color", "#FFFFFF" if key == "default" else "#000000")
-            getattr(self, f"{key}_color_button").setStyleSheet(f"background-color: {c}; border: none;")
+            getattr(self, f"{key}_color_button").setStyleSheet(f"background-color: {c}; border: 1px solid #5A5A5A; border-radius: 4px;")
             getattr(self, f"{key}_color_input").setText(c)
         
         self.bg_opacity.setValue(int(config.get("background_opacity", 0)))
@@ -260,7 +260,7 @@ class AppearancePage(QWidget):
     def set_color_input(self, key: str, hex_code: str):
         if hasattr(self, f"{key}_color_input"):
             getattr(self, f"{key}_color_input").setText(hex_code)
-            getattr(self, f"{key}_color_button").setStyleSheet(f"background-color: {hex_code}; border: none;")
+            getattr(self, f"{key}_color_button").setStyleSheet(f"background-color: {hex_code}; border: 1px solid #5A5A5A; border-radius: 4px;")
             self.on_change()
 
     def _on_font_weight_changed(self, idx: int):

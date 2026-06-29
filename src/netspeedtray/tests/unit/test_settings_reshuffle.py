@@ -47,8 +47,14 @@ MANAGED_KEYS = {
     "show_hardware_temps", "show_hardware_power", "hardware_label_style",
     "cpu_load_high_threshold", "cpu_load_low_threshold",
     "gpu_load_high_threshold", "gpu_load_low_threshold", "throttle_temp_c",
-    # Network (interfaces + connection + data-cap)
+    # Network — interfaces
     "interface_mode", "selected_interfaces",
+    # Network — connection (latency + advertised plan)
+    "latency_enabled", "latency_public_enabled", "latency_public_host", "plan_down_mbps", "plan_up_mbps",
+    # Network — data cap
+    "data_cap_enabled", "data_cap_gb", "data_cap_reset_day", "data_cap_count", "data_cap_alert_enabled",
+    # Appearance — fixed arrow weight (constant, but must survive the load/get chain)
+    "arrow_font_weight",
     # Advanced
     "keep_data", "reduce_motion", "show_usage_on_hover", "show_hover_tips", "pause_in_menu",
 }
@@ -132,3 +138,56 @@ def test_unmanaged_keys_are_preserved_through_get_settings(qtbot):
     got = dlg.get_settings()
     bad = {k: (got.get(k), v) for k, v in UNMANAGED_PRESERVED.items() if got.get(k) != v}
     assert not bad, f"unmanaged keys not preserved (got, expected): {bad}"
+
+
+# --- integration tests for the cross-page wiring the UI/UX audit flagged as untested -----------------
+
+def test_color_picker_routes_to_the_right_embedded_section(qtbot, monkeypatch):
+    """Appearance embeds the old Colors page as colors_section. The dialog's colour picker must route
+    high/low-speed colours to that section and default/background to Appearance itself — a mis-wired
+    branch would silently paint the wrong swatch."""
+    from PyQt6.QtGui import QColor
+    from PyQt6.QtWidgets import QColorDialog
+    dlg = _dialog(qtbot, dict(constants.config.defaults.DEFAULT_CONFIG))
+
+    monkeypatch.setattr(QColorDialog, "getColor", lambda *a, **k: QColor("#123456"))
+    dlg._open_color_dialog("high_speed_color")
+    assert dlg.appearance_page.colors_section.high_speed_color_input.text().upper() == "#123456"
+
+    monkeypatch.setattr(QColorDialog, "getColor", lambda *a, **k: QColor("#ABCDEF"))
+    dlg._open_color_dialog("default_color")
+    assert dlg.appearance_page.default_color_input.text().upper() == "#ABCDEF"
+
+
+def test_force_mb_off_disallows_smart_update_rate(qtbot):
+    """UI rule: SMART (adaptive) update cadence isn't allowed when Force-MB is off (it causes unit
+    jitter). Loading SMART + auto must come back out of get_settings forced to >= AGGRESSIVE."""
+    cfg = dict(constants.config.defaults.DEFAULT_CONFIG)
+    cfg.update({"speed_display_mode": "auto", "update_rate": -1.0})  # -1 == SMART sentinel
+    dlg = _dialog(qtbot, cfg)
+    assert float(dlg.get_settings()["update_rate"]) >= 1.0
+
+
+def test_enabling_a_hardware_monitor_switches_widget_out_of_network_only(qtbot):
+    """The Hardware page's monitor toggles emit hardware_enabled, which the dialog forwards to the
+    Widget page so the widget leaves network-only and the new stat is actually visible. A broken
+    connection would leave a freshly-enabled CPU/GPU readout invisible."""
+    cfg = dict(constants.config.defaults.DEFAULT_CONFIG)
+    cfg.update({"widget_display_mode": "network_only", "stack_hardware_stats": False})
+    dlg = _dialog(qtbot, cfg)
+    assert dlg.get_settings()["widget_display_mode"] == "network_only"
+    dlg.hardware_page.hardware_enabled.emit()
+    assert dlg.get_settings()["widget_display_mode"] == "side_by_side"
+
+
+def test_color_is_automatic_flips_false_after_user_picks_default_colour(qtbot, monkeypatch):
+    """Picking an explicit default colour must clear the implicit color_is_automatic flag, so the text
+    colour stops auto-tracking the theme."""
+    from PyQt6.QtGui import QColor
+    from PyQt6.QtWidgets import QColorDialog
+    cfg = dict(constants.config.defaults.DEFAULT_CONFIG)
+    cfg["color_is_automatic"] = True
+    dlg = _dialog(qtbot, cfg)
+    monkeypatch.setattr(QColorDialog, "getColor", lambda *a, **k: QColor("#FF8800"))
+    dlg._open_color_dialog("default_color")
+    assert dlg.get_settings()["color_is_automatic"] is False

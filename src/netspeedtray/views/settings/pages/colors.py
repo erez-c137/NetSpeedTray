@@ -52,7 +52,7 @@ class ColorsPage(QWidget):
 
             btn = QPushButton()
             btn.setObjectName(f"{key}_color")
-            btn.setFixedSize(30, 24)
+            btn.setFixedSize(36, 26)
             btn.setToolTip(getattr(self.i18n, f"{key.upper()}_COLOR_TOOLTIP", ""))
             btn.clicked.connect(lambda checked, k=f"{key}_color": self.open_color_dialog(k))
             inp = QLineEdit()
@@ -78,7 +78,7 @@ class ColorsPage(QWidget):
         
         for key in ["high_speed", "low_speed"]:
             c = config.get(f"{key}_color", "#FFFFFF")
-            getattr(self, f"{key}_color_button").setStyleSheet(f"background-color: {c}; border: none;")
+            getattr(self, f"{key}_color_button").setStyleSheet(f"background-color: {c}; border: 1px solid #5A5A5A; border-radius: 4px;")
             getattr(self, f"{key}_color_input").setText(c)
             
             threshold = float(config.get(f"{key}_threshold", 5.0 if "high" in key else 1.0))
@@ -100,5 +100,5 @@ class ColorsPage(QWidget):
     def set_color_input(self, key: str, hex_code: str):
         if hasattr(self, f"{key}_color_input"):
             getattr(self, f"{key}_color_input").setText(hex_code)
-            getattr(self, f"{key}_color_button").setStyleSheet(f"background-color: {hex_code}; border: none;")
+            getattr(self, f"{key}_color_button").setStyleSheet(f"background-color: {hex_code}; border: 1px solid #5A5A5A; border-radius: 4px;")
             self.on_change()
