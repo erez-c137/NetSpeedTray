@@ -61,7 +61,7 @@ class HardwareTab(QWidget):
         band.setFixedHeight(constants.layout.MONITOR_HEADER_BAND_HEIGHT)
         top = QHBoxLayout(band)
         top.setContentsMargins(_m, 0, _m, 0)
-        top.setSpacing(12)
+        top.setSpacing(constants.layout.MONITOR_CONTROL_SPACING)   # shared with Network for a matching Live gap
         top.addStretch(1)
         # CPU|GPU switch — only meaningful (and only shown) in "toggle" mode.
         self._cpu_gpu = Win11Segmented([

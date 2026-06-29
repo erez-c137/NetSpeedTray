@@ -68,31 +68,46 @@ class Sparkline(QWidget):
         self._vmax: Optional[float] = None
         self._vmin: float = 0.0                  # bottom of the scale (non-zero = "zoom" to the data band)
         self._scale_label: str = ""              # optional top-of-scale readout (e.g. "16.9 Mbps")
+        self._curve: float = 1.0                 # 1.0 = linear; <1 (e.g. 0.5) warps the axis so a single
+                                                 # spike doesn't flatten the baseline (sqrt-style)
         self.setMinimumHeight(36)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
-    def set_series(self, series: List[float], vmax: Optional[float] = None, vmin: float = 0.0) -> None:
+    def set_series(self, series: List[float], vmax: Optional[float] = None, vmin: float = 0.0,
+                   curve: float = 1.0) -> None:
         """Replace the data. ``vmax`` fixes the top of the scale (None auto-scales to the data max);
         ``vmin`` is the bottom — pass a non-zero value to "zoom" the trend into its active band so a
-        low-but-varying metric shows detail instead of a flat line near the floor."""
+        low-but-varying metric shows detail instead of a flat line near the floor. ``curve`` < 1 bends
+        the height axis (0.5 = square-root) so brief spikes don't squash the everyday band flat."""
         self._series = list(series)[-_SPARK_POINTS:]
         self._series2 = []
         self._vmax = vmax
         self._vmin = float(vmin or 0.0)
+        self._curve = float(curve or 1.0)
         self.update()
 
     def set_dual(self, primary: List[float], secondary: List[float], color2: str,
-                 vmax: Optional[float] = None, scale_label: str = "") -> None:
+                 vmax: Optional[float] = None, scale_label: str = "", curve: float = 1.0) -> None:
         """Two traces sharing one scale — the primary gets the fill + line, the secondary a thinner
         line in ``color2``. Both auto-scale to their combined max unless ``vmax`` is fixed.
-        ``scale_label`` (e.g. "16.9 Mbps") is drawn at the top-of-scale so the trend has magnitude."""
+        ``scale_label`` (e.g. "16.9 Mbps") is drawn at the top-of-scale so the trend has magnitude.
+        ``curve`` < 1 bends the axis (0.5 = sqrt) so an occasional peak doesn't flatten normal traffic."""
         self._series = list(primary)[-_SPARK_POINTS:]
         self._series2 = list(secondary)[-_SPARK_POINTS:]
         self._color2 = QColor(color2)
         self._vmax = vmax
         self._vmin = 0.0          # network reads from a true zero floor (a 0-baseline burst is meaningful)
         self._scale_label = scale_label
+        self._curve = float(curve or 1.0)
         self.update()
+
+    def _height_for(self, v: float, vmin: float, vmax: float, gh: float) -> float:
+        """Map a value to a pixel height above the baseline, applying the (optional) axis curve."""
+        denom = (vmax - vmin) or 1.0
+        t = (min(max(v, vmin), vmax) - vmin) / denom
+        if self._curve != 1.0 and t > 0.0:
+            t = t ** self._curve
+        return t * gh
 
     def paintEvent(self, event) -> None:  # noqa: N802 (Qt override)
         n = len(self._series)
@@ -117,8 +132,7 @@ class Sparkline(QWidget):
                 if n == 1:
                     vmin = self._vmin
                     vmax = self._vmax if (self._vmax and self._vmax > vmin) else max(self._series[0], vmin + 1.0)
-                    denom = (vmax - vmin) or 1.0
-                    y = base_y - ((min(max(self._series[0], vmin), vmax) - vmin) / denom) * gh
+                    y = base_y - self._height_for(self._series[0], vmin, vmax, gh)
                 p.drawLine(QPointF(pad, y), QPointF(pad + gw, y))
             finally:
                 p.end()
@@ -131,10 +145,9 @@ class Sparkline(QWidget):
         vmax = self._vmax if (self._vmax and self._vmax > vmin) else data_max
         if vmax <= vmin:
             vmax = vmin + 1.0
-        denom = vmax - vmin
         step = gw / (n - 1)
         pts = [
-            QPointF(pad + i * step, base_y - ((min(max(v, vmin), vmax) - vmin) / denom) * gh)
+            QPointF(pad + i * step, base_y - self._height_for(v, vmin, vmax, gh))
             for i, v in enumerate(self._series)
         ]
 
@@ -169,7 +182,7 @@ class Sparkline(QWidget):
                 n2 = len(self._series2)
                 step2 = gw / (n2 - 1)
                 pts2 = [
-                    QPointF(pad + i * step2, base_y - ((min(max(v, vmin), vmax) - vmin) / denom) * gh)
+                    QPointF(pad + i * step2, base_y - self._height_for(v, vmin, vmax, gh))
                     for i, v in enumerate(self._series2)
                 ]
                 pen2 = QPen(self._color2)
@@ -337,7 +350,7 @@ class NetworkHero(ClickableCard):
         lay.addLayout(metrics)
 
         self._spark = Sparkline(down_color)
-        self._spark.setMinimumHeight(64)
+        self._spark.setMinimumHeight(110)   # the hero is the headline — give the trend real vertical room
         lay.addWidget(self._spark, 1)
 
         self._sub = QLabel("")
@@ -366,7 +379,10 @@ class NetworkHero(ClickableCard):
             up_series: List[float], sub_text: str = "", scale_label: str = "") -> None:
         self._down_v.setText(down_text)
         self._up_v.setText(up_text)
-        self._spark.set_dual(down_series, up_series, self._up_color, vmax=None, scale_label=scale_label)
+        # curve=0.5 (sqrt): a brief 50 Mbps spike no longer squashes everyday sub-Mbps traffic flat —
+        # the baseline keeps its detail while the peak still reaches the top of the scale.
+        self._spark.set_dual(down_series, up_series, self._up_color, vmax=None,
+                             scale_label=scale_label, curve=0.5)
         self._sub.setText(sub_text)
         self._sub.setVisible(bool(sub_text))
 

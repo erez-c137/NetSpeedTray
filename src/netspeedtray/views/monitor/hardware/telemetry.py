@@ -36,11 +36,15 @@ class _TeleTile(QFrame):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(12, 6, 12, 6)
         lay.setSpacing(1)
+        # Centre the caption + value: these are equal-width chips, so centred content reads as a tidy
+        # row of gauges rather than left-ragged text.
         self._caption = QLabel(caption)
         self._caption.setFont(su.font(tokens.TYPE_CAPTION))
+        self._caption.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._caption.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
         self._value = QLabel("—")
         self._value.setFont(su.font(tokens.TYPE_BODY_STRONG))
+        self._value.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._value.setStyleSheet(f"color: {c['text_primary']}; background: transparent;")
         lay.addWidget(self._caption)
         lay.addWidget(self._value)

@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QStackedWidget, QApplication, QLabel, QToolButton,
 )
 
+from netspeedtray import constants
 from netspeedtray.utils import styles as su
 from netspeedtray.constants.styles import styles as tokens
 from netspeedtray.utils.dwm import apply_win11_chrome
@@ -47,7 +48,9 @@ class MonitorWindow(QWidget):
         self._graph_host = None  # one shared graph engine, built on first chart-tab activation
         self._settings_flyout = None  # one reusable display-settings popup (not rebuilt per click)
 
-        self.setWindowTitle(self._tr("MONITOR_WINDOW_TITLE", "Monitor"))
+        # Prefix the app name so the taskbar/Alt-Tab entry reads "NetSpeedTray Monitor" — consistent
+        # with the Settings window ("NetSpeedTray Settings …").
+        self.setWindowTitle(f"{constants.app.APP_NAME} {self._tr('MONITOR_WINDOW_TITLE', 'Monitor')}")
         # Default sized so the WHOLE wide Overview fits without scrolling (content ≈700px + chrome),
         # clamped to the screen so it never opens off-screen on a small display. The min is deliberately
         # small — every tab scrolls/reflows, so the window is safe at any size.

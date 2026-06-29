@@ -33,6 +33,9 @@ class LayoutConstants:
     # lines up under the band's controls.
     MONITOR_HEADER_BAND_HEIGHT: Final[int] = 56
     MONITOR_BODY_MARGIN: Final[int] = 16
+    # Gap between the right-cluster command-band controls (NIC / timeline / Live). Shared by every tab
+    # so the spacing around the Live pill is identical on Network and Hardware.
+    MONITOR_CONTROL_SPACING: Final[int] = 10
 
     # --- Main Widget Specific ---
     WIDGET_DEFAULT_RIGHT_PADDING_PX: Final[int] = 10

@@ -114,6 +114,13 @@ class NetworkHeader(QWidget):
         root.addLayout(self._up[0])
         root.addStretch(1)
 
+        # Right-cluster controls live in their own sub-layout with the SHARED control spacing, so the
+        # gap around the Live pill matches the Hardware tab exactly (the totals keep the wider spacing).
+        controls = QHBoxLayout()
+        controls.setContentsMargins(0, 0, 0, 0)
+        controls.setSpacing(constants.layout.MONITOR_CONTROL_SPACING)
+        root.addLayout(controls)
+
         # Per-NIC filter — scopes both the graph and these totals to one interface (or all). Built as a
         # QToolButton + menu styled IDENTICALLY to the TimelineSelector (a QComboBox loses its native
         # arrow when styled and renders as a bare box; this also keeps the two right-side controls the
@@ -141,18 +148,18 @@ class NetworkHeader(QWidget):
             f" QMenu::item:selected {{ background: {c['accent']}; color: white; }}")
         self._iface_btn.setMenu(self._iface_menu)
         self.set_interfaces([])   # build the menu (just "All Interfaces") + label the button
-        root.addWidget(self._iface_btn, 0, Qt.AlignmentFlag.AlignVCenter)
+        controls.addWidget(self._iface_btn, 0, Qt.AlignmentFlag.AlignVCenter)
 
         self._timeline = TimelineSelector(i18n, current_index=_period_value(initial_key))
         self._timeline.period_changed.connect(self.period_changed)
-        root.addWidget(self._timeline, 0, Qt.AlignmentFlag.AlignVCenter)
+        controls.addWidget(self._timeline, 0, Qt.AlignmentFlag.AlignVCenter)
 
         # Live/Pause pill — RIGHTMOST (owner preference), after the timeline. Bound to the shared host's
         # canonical state so the Hardware tab's pill mirrors it (and vice-versa).
         if graph_host is not None:
             from netspeedtray.views.monitor.live_toggle import LiveToggle
             self._live = LiveToggle(graph_host, i18n)
-            root.addWidget(self._live, 0, Qt.AlignmentFlag.AlignVCenter)
+            controls.addWidget(self._live, 0, Qt.AlignmentFlag.AlignVCenter)
 
     def _stat_block(self, label: str, glyph: str, c: dict) -> Tuple[QVBoxLayout, QLabel]:
         col = QVBoxLayout()

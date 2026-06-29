@@ -41,12 +41,15 @@ class FlatTabBar(QWidget):
 
         for index, (tab_id, label) in enumerate(tabs):
             btn = QToolButton()
-            btn.setText(str(label))
             btn.setCheckable(True)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             if tab_id in self._icons:
                 btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
                 btn.setIconSize(QSize(16, 16))
+                # Qt's icon↔text gap is a tight ~4px; pad the label so the glyph isn't crammed against it.
+                btn.setText(f"  {label}")
+            else:
+                btn.setText(str(label))
             # Reachable by Tab with a visible focus cue; activation stays manual (Space/Enter) so
             # tabbing THROUGH the strip never builds a heavy lazy page — only deliberate activation does.
             btn.setFocusPolicy(Qt.FocusPolicy.TabFocus)
@@ -91,12 +94,6 @@ class FlatTabBar(QWidget):
                 font-size: 14px;
             }}
             QToolButton:hover {{
-                color: {c['text_primary']};
-                background: {c['subtle_fill']};
-                border-top-left-radius: 4px;
-                border-top-right-radius: 4px;
-            }}
-            QToolButton:focus {{
                 color: {c['text_primary']};
                 background: {c['subtle_fill']};
                 border-top-left-radius: 4px;
