@@ -88,20 +88,33 @@ class GeneralPage(QWidget):
         # Tray Offset (absorbed from Display page)
         behavior_layout.addWidget(QLabel(self.i18n.TRAY_OFFSET_LABEL), 3, 0, Qt.AlignmentFlag.AlignVCenter)
         self.tray_offset = Win11Slider()
-        self.tray_offset.setRange(0, 50)
+        self.tray_offset.setRange(-50, 50)
+        self.tray_offset.setInvertedAppearance(True)
         self.tray_offset.valueChanged.connect(self.on_change)
         behavior_layout.addWidget(self.tray_offset, 3, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
+        behavior_layout.addWidget(QLabel("Double Click"), 4, 0, Qt.AlignmentFlag.AlignVCenter)
+        self.double_click_action = QComboBox()
+        self._populate_click_action_combo(self.double_click_action)
+        self.double_click_action.currentIndexChanged.connect(self.on_change)
+        behavior_layout.addWidget(self.double_click_action, 4, 1, Qt.AlignmentFlag.AlignVCenter)
+
+        behavior_layout.addWidget(QLabel("Middle Click"), 5, 0, Qt.AlignmentFlag.AlignVCenter)
+        self.middle_click_action = QComboBox()
+        self._populate_click_action_combo(self.middle_click_action)
+        self.middle_click_action.currentIndexChanged.connect(self.on_change)
+        behavior_layout.addWidget(self.middle_click_action, 5, 1, Qt.AlignmentFlag.AlignVCenter)
 
         cfu_label = QLabel(self.i18n.CHECK_FOR_UPDATES_LABEL)
         self.check_for_updates = Win11Toggle(label_text="")
         self.check_for_updates.toggled.connect(self.on_change)
 
-        behavior_layout.addWidget(cfu_label, 4, 0, Qt.AlignmentFlag.AlignVCenter)
-        behavior_layout.addWidget(self.check_for_updates, 4, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        behavior_layout.addWidget(cfu_label, 6, 0, Qt.AlignmentFlag.AlignVCenter)
+        behavior_layout.addWidget(self.check_for_updates, 6, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
         # Preferred Monitor (#72) — lets users pin the widget to a specific
         # display in multi-monitor setups. Default (no selection) uses primary.
-        behavior_layout.addWidget(QLabel(self.i18n.PREFERRED_MONITOR_LABEL), 5, 0, Qt.AlignmentFlag.AlignVCenter)
+        behavior_layout.addWidget(QLabel(self.i18n.PREFERRED_MONITOR_LABEL), 7, 0, Qt.AlignmentFlag.AlignVCenter)
         self.preferred_monitor_combo = QComboBox()
         # Keep a long monitor label (e.g. "Monitor 1: 3413x1440 (primary)") from
         # inflating the combo's *minimum* width (which would force a horizontal
@@ -111,13 +124,18 @@ class GeneralPage(QWidget):
         self.preferred_monitor_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._populate_monitor_combo()
         self.preferred_monitor_combo.currentIndexChanged.connect(self.on_change)
-        behavior_layout.addWidget(self.preferred_monitor_combo, 5, 1, Qt.AlignmentFlag.AlignVCenter)
+        behavior_layout.addWidget(self.preferred_monitor_combo, 7, 1, Qt.AlignmentFlag.AlignVCenter)
 
         behavior_layout.setColumnStretch(0, 0)
         behavior_layout.setColumnStretch(1, 1)
         layout.addWidget(behavior_group)
 
         layout.addStretch()
+
+    def _populate_click_action_combo(self, combo: QComboBox) -> None:
+        combo.addItem("Show Graph", constants.config.defaults.CLICK_ACTION_SHOW_GRAPH)
+        combo.addItem("Show App Activity", constants.config.defaults.CLICK_ACTION_SHOW_APP_ACTIVITY)
+        combo.addItem("Settings", constants.config.defaults.CLICK_ACTION_SETTINGS)
 
     def _populate_monitor_combo(self) -> None:
         """Fill the preferred-monitor dropdown with detected screens.
@@ -195,6 +213,14 @@ class GeneralPage(QWidget):
         # Tray Offset
         self.tray_offset.setValue(config.get("tray_offset_x", 0))
 
+        double_click_action = config.get("double_click_action", constants.config.defaults.DEFAULT_DOUBLE_CLICK_ACTION)
+        idx = self.double_click_action.findData(double_click_action)
+        self.double_click_action.setCurrentIndex(idx if idx >= 0 else 0)
+
+        middle_click_action = config.get("middle_click_action", constants.config.defaults.DEFAULT_MIDDLE_CLICK_ACTION)
+        idx = self.middle_click_action.findData(middle_click_action)
+        self.middle_click_action.setCurrentIndex(idx if idx >= 0 else 2)
+
         # Preferred monitor (#72) — match by stored screen name.
         # If the saved monitor name doesn't match any detected screen (e.g.,
         # monitor was disconnected since last save), the combo just stays at
@@ -215,6 +241,8 @@ class GeneralPage(QWidget):
             "keep_visible_fullscreen": self.keep_visible_fullscreen.isChecked(),
             "start_with_windows": self.start_with_windows.isChecked(),
             "tray_offset_x": self.tray_offset.value(),
+            "double_click_action": self.double_click_action.currentData(),
+            "middle_click_action": self.middle_click_action.currentData(),
             "check_for_updates": self.check_for_updates.isChecked(),
             "preferred_monitor": self.preferred_monitor_combo.currentData(),
         }

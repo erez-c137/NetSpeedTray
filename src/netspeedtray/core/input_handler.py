@@ -81,14 +81,37 @@ class InputHandler(QObject):
             
             self._drag_start_pos = None
             event.accept()
+        elif event.button() == Qt.MouseButton.MiddleButton:
+            action = self.widget.config.get(
+                "middle_click_action",
+                constants.config.defaults.DEFAULT_MIDDLE_CLICK_ACTION,
+            )
+            self._execute_click_action(action)
+            event.accept()
 
     def handle_double_click(self, event: QMouseEvent) -> None:
         """Handles double-click (Open Graph)."""
         if event.button() == Qt.MouseButton.LeftButton:
-            self.logger.debug("Double-click detected. Opening Graph Window.")
-            if hasattr(self.widget, 'open_graph_window'):
-                self.widget.open_graph_window()
+            action = self.widget.config.get(
+                "double_click_action",
+                constants.config.defaults.DEFAULT_DOUBLE_CLICK_ACTION,
+            )
+            self.logger.debug("Double-click detected. Running action: %s", action)
+            self._execute_click_action(action)
             event.accept()
+
+    def _execute_click_action(self, action: str) -> None:
+        """Run a configured widget click action."""
+        action_map = {
+            constants.config.defaults.CLICK_ACTION_SHOW_GRAPH: "open_graph_window",
+            constants.config.defaults.CLICK_ACTION_SHOW_APP_ACTIVITY: "open_app_activity_window",
+            constants.config.defaults.CLICK_ACTION_SETTINGS: "show_settings",
+        }
+        fallback = constants.config.defaults.DEFAULT_DOUBLE_CLICK_ACTION
+        method_name = action_map.get(action, action_map[fallback])
+        method = getattr(self.widget, method_name, None)
+        if callable(method):
+            method()
 
     def _save_dragged_position(self) -> None:
         """

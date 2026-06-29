@@ -89,6 +89,8 @@ class SettingsDialog(QDialog):
         self._update_timer.timeout.connect(self._emit_settings_changed_throttled)
 
         self.setWindowTitle(f"{constants.app.APP_NAME} {self.i18n.SETTINGS_WINDOW_TITLE} v{self.version}")
+        if self.i18n.language == "he_IL":
+            self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         
         try:
             icon_filename = getattr(constants.app, 'ICON_FILENAME', 'NetSpeedTray.ico')

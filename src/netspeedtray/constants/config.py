@@ -78,6 +78,16 @@ class ConfigConstants:
     DEFAULT_START_WITH_WINDOWS: Final[bool] = False
     DEFAULT_TRAY_OFFSET_X: Final[int] = 0
     DEFAULT_TRAY_OFFSET_Y: Final[int] = 3
+    CLICK_ACTION_SHOW_GRAPH: Final[str] = "show_graph"
+    CLICK_ACTION_SHOW_APP_ACTIVITY: Final[str] = "show_app_activity"
+    CLICK_ACTION_SETTINGS: Final[str] = "settings"
+    CLICK_ACTION_CHOICES: Final[List[str]] = [
+        CLICK_ACTION_SHOW_GRAPH,
+        CLICK_ACTION_SHOW_APP_ACTIVITY,
+        CLICK_ACTION_SETTINGS,
+    ]
+    DEFAULT_DOUBLE_CLICK_ACTION: Final[str] = CLICK_ACTION_SHOW_GRAPH
+    DEFAULT_MIDDLE_CLICK_ACTION: Final[str] = CLICK_ACTION_SETTINGS
     DEFAULT_LEGEND_POSITION: Final[str] = data.legend_position.DEFAULT_LEGEND_POSITION
     DEFAULT_SHOW_LEGEND: Final[bool] = False
     
@@ -145,6 +155,8 @@ class ConfigConstants:
         "short_unit_labels": DEFAULT_SHORT_UNIT_LABELS,
         "tray_offset_x": DEFAULT_TRAY_OFFSET_X,
         "tray_offset_y": DEFAULT_TRAY_OFFSET_Y,
+        "double_click_action": DEFAULT_DOUBLE_CLICK_ACTION,
+        "middle_click_action": DEFAULT_MIDDLE_CLICK_ACTION,
         "graph_window_pos": None,
         "settings_window_pos": None,
         "history_period_slider_value": 0,  # UI-specific state
@@ -222,8 +234,10 @@ class ConfigConstants:
         "background_color": {"type": str, "default": DEFAULT_BACKGROUND_COLOR, "regex": r"#[0-9a-fA-F]{6}"},
         "background_opacity": {"type": int, "default": DEFAULT_BACKGROUND_OPACITY, "min": 0, "max": 100},
         "short_unit_labels": {"type": bool, "default": DEFAULT_SHORT_UNIT_LABELS},
-        "tray_offset_x": {"type": int, "default": DEFAULT_TRAY_OFFSET_X, "min": 0, "max": 500},
+        "tray_offset_x": {"type": int, "default": DEFAULT_TRAY_OFFSET_X, "min": -500, "max": 500},
         "tray_offset_y": {"type": int, "default": DEFAULT_TRAY_OFFSET_Y, "min": 0, "max": 500},
+        "double_click_action": {"type": str, "default": DEFAULT_DOUBLE_CLICK_ACTION, "choices": CLICK_ACTION_CHOICES},
+        "middle_click_action": {"type": str, "default": DEFAULT_MIDDLE_CLICK_ACTION, "choices": CLICK_ACTION_CHOICES},
         "graph_window_pos": {"type": (dict, type(None)), "default": None},
         "settings_window_pos": {"type": (dict, type(None)), "default": None},
         "history_period_slider_value": {"type": int, "default": 0, "min": 0, "max": len(data.history_period.PERIOD_MAP) - 1},

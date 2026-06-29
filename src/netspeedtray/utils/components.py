@@ -422,6 +422,9 @@ class Win11Slider(QWidget):
     def setTickPosition(self, position: QSlider.TickPosition) -> None: self.slider.setTickPosition(position)
 
 
+    def setInvertedAppearance(self, inverted: bool) -> None: self.slider.setInvertedAppearance(inverted)
+
+
     def value(self) -> int: return self.slider.value()
 
 

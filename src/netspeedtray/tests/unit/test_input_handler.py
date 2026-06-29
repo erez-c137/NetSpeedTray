@@ -7,6 +7,7 @@ from PyQt6.QtCore import Qt, QPoint, QPointF, QEvent
 from PyQt6.QtGui import QMouseEvent
 from PyQt6.QtWidgets import QApplication, QWidget
 
+from netspeedtray import constants
 from netspeedtray.core.input_handler import InputHandler
 
 class TestInputHandler(unittest.TestCase):
@@ -59,10 +60,18 @@ class TestInputHandler(unittest.TestCase):
             def open_graph_window(self):
                 pass
 
+            def open_app_activity_window(self):
+                pass
+
+            def show_settings(self):
+                pass
+
         self.mock_widget = MockWidget()
         self.mock_widget.move = MagicMock()
         self.mock_widget.update_config = MagicMock()
         self.mock_widget.open_graph_window = MagicMock()
+        self.mock_widget.open_app_activity_window = MagicMock()
+        self.mock_widget.show_settings = MagicMock()
         # Set geometry so pos() returns something
         self.mock_widget.setGeometry(100, 100, 200, 50)
         
@@ -156,6 +165,26 @@ class TestInputHandler(unittest.TestCase):
         self.handler.handle_double_click(event)
         
         self.mock_widget.open_graph_window.assert_called_once()
+
+    def test_double_click_runs_configured_action(self):
+        """Test Double Click can run a configured action."""
+        self.mock_widget.config["double_click_action"] = constants.config.defaults.CLICK_ACTION_SETTINGS
+        event = self._create_mouse_event(button=Qt.MouseButton.LeftButton)
+
+        self.handler.handle_double_click(event)
+
+        self.mock_widget.show_settings.assert_called_once()
+        self.mock_widget.open_graph_window.assert_not_called()
+
+    def test_middle_click_runs_configured_action(self):
+        """Test Middle Click can run a configured action."""
+        self.mock_widget.config["middle_click_action"] = constants.config.defaults.CLICK_ACTION_SHOW_APP_ACTIVITY
+        event = self._create_mouse_event(button=Qt.MouseButton.MiddleButton)
+
+        self.handler.handle_mouse_release(event)
+
+        self.mock_widget.open_app_activity_window.assert_called_once()
+        event.accept.assert_called_once()
 
 if __name__ == '__main__':
     unittest.main()

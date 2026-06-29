@@ -56,6 +56,21 @@ def mock_i18n():
     i18n.UNIT_TYPE_BITS_BINARY = "Bits (Bin)"
     i18n.UNIT_TYPE_BYTES_DECIMAL = "Bytes (Dec)"
     i18n.UNIT_TYPE_BYTES_BINARY = "Bytes (Bin)"
+    i18n.BPS_LABEL = "B/s"
+    i18n.KBPS_LABEL = "KB/s"
+    i18n.MBPS_LABEL = "MB/s"
+    i18n.GBPS_LABEL = "GB/s"
+    i18n.BITS_LABEL = "bps"
+    i18n.KBITS_LABEL = "Kbps"
+    i18n.MBITS_LABEL = "Mbps"
+    i18n.GBITS_LABEL = "Gbps"
+    i18n.BIBPS_LABEL = "B/s"
+    i18n.KIBPS_LABEL = "KiB/s"
+    i18n.MIBPS_LABEL = "MiB/s"
+    i18n.GIBPS_LABEL = "GiB/s"
+    i18n.KIBITS_LABEL = "Kibps"
+    i18n.MIBITS_LABEL = "Mibps"
+    i18n.GIBITS_LABEL = "Gibps"
     i18n.DECIMAL_PLACES_LABEL = "Decimals"
     i18n.TEXT_ALIGNMENT_LABEL = "Align"
     i18n.SWAP_UPLOAD_DOWNLOAD_LABEL = "Swap"
@@ -133,7 +148,9 @@ def test_general_page(q_app, mock_i18n, mock_callback):
         "update_rate": 2.0,
         "free_move": True,
         "start_with_windows": True,
-        "tray_offset_x": 15
+        "tray_offset_x": 15,
+        "double_click_action": constants.config.defaults.CLICK_ACTION_SETTINGS,
+        "middle_click_action": constants.config.defaults.CLICK_ACTION_SHOW_APP_ACTIVITY,
     }
 
     page.load_settings(config, is_startup_enabled=True)
@@ -144,6 +161,8 @@ def test_general_page(q_app, mock_i18n, mock_callback):
     assert settings["free_move"] is True
     assert settings["start_with_windows"] is True
     assert settings["tray_offset_x"] == 15
+    assert settings["double_click_action"] == constants.config.defaults.CLICK_ACTION_SETTINGS
+    assert settings["middle_click_action"] == constants.config.defaults.CLICK_ACTION_SHOW_APP_ACTIVITY
 
     # Test with Smart mode (update_rate = -1.0)
     config_smart = {
@@ -159,6 +178,8 @@ def test_general_page(q_app, mock_i18n, mock_callback):
     assert settings_smart["language"] == "en_US"
     assert settings_smart["free_move"] is False
     assert settings_smart["tray_offset_x"] == 0
+    assert settings_smart["double_click_action"] == constants.config.defaults.DEFAULT_DOUBLE_CLICK_ACTION
+    assert settings_smart["middle_click_action"] == constants.config.defaults.DEFAULT_MIDDLE_CLICK_ACTION
 
 def test_appearance_page(q_app, mock_i18n, mock_callback):
     """Test AppearancePage."""
@@ -199,6 +220,7 @@ def test_colors_page(q_app, mock_i18n, mock_callback):
     
     config = {
         "color_coding": True,
+        "unit_type": "bytes_decimal",
         "high_speed_threshold": 50,
         "low_speed_threshold": 10,
         "high_speed_color": "#00FF00",
@@ -213,6 +235,8 @@ def test_colors_page(q_app, mock_i18n, mock_callback):
     assert settings["low_speed_threshold"] == 10
     assert settings["high_speed_color"] == "#00FF00"
     assert settings["low_speed_color"] == "#FFFF00"
+    assert page.high_speed_threshold.suffix() == " MB/s"
+    assert page.low_speed_threshold.suffix() == " MB/s"
 
 def test_units_page(q_app, mock_i18n, mock_callback):
     """Test UnitsPage."""
