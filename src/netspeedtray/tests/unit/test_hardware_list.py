@@ -74,6 +74,43 @@ def test_worker_excludes_idle_and_normalises_cpu(monkeypatch, q_app):
     assert got[-1]["gpu_available"] is False
 
 
+def test_worker_new_multiproc_app_between_refreshes_uses_uss(monkeypatch, q_app):
+    """A multi-process program that appears AFTER the first (refresh) poll must still report summed USS,
+    not summed rss — which double-counts shared DLLs. Regression for the cache-miss fallback (USS is
+    only fully refreshed every Nth poll, so a newly launched app would otherwise read 2-3x high)."""
+    import psutil
+    monkeypatch.setattr(W, "win32pdh", None)
+    MB = 1024 * 1024
+
+    class _Proc:
+        def __init__(self, pid, name, rss, uss):
+            self.info = {"pid": pid, "name": name}
+            self._rss, self._uss = rss, uss
+        def cpu_percent(self, _): return 0.0
+        def memory_info(self): return types.SimpleNamespace(rss=self._rss)
+        def memory_full_info(self): return types.SimpleNamespace(rss=self._rss, uss=self._uss)
+
+    poll1 = [_Proc(10, "a.exe", 100 * MB, 60 * MB)]                       # cached on the refresh poll
+    poll2 = poll1 + [_Proc(20, "b.exe", 200 * MB, 80 * MB),               # NEW app, 2 procs sharing DLLs:
+                     _Proc(21, "b.exe", 200 * MB, 80 * MB)]               # summed rss 400MB vs summed USS 160MB
+    calls = {"n": 0}
+    def _iter(attrs=None):
+        seq = poll1 if calls["n"] == 0 else poll2
+        calls["n"] += 1
+        return iter(seq)
+    monkeypatch.setattr(psutil, "process_iter", _iter)
+
+    w = W.HardwareActivityWorker()
+    w._cpu_count = 4
+    got = []
+    w.data_ready.connect(got.append)
+    w.sample()   # poll 1: refresh -> a.exe USS cached
+    w.sample()   # poll 2: NON-refresh -> b.exe is new (cache miss) and must be measured via USS
+    rows = {r["display_name"]: r for r in got[-1]["rows"]}
+    assert rows["b.exe"]["rss_bytes"] == 160 * MB     # summed USS, NOT summed rss (400MB)
+    assert rows["a.exe"]["rss_bytes"] == 60 * MB      # still the value cached on poll 1
+
+
 def test_worker_max_gpu_per_pid_from_pdh(monkeypatch, q_app):
     """GPU% is the MAX across a PID's engines (they overlap in time), matching the system sampler."""
     import psutil

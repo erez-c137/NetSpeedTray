@@ -552,5 +552,7 @@
     "CONN_PLAN_TITLE": "Velocidad del plan contratado",
     "CONN_PLAN_SUB": "Marca el tiempo por debajo de tu plan en la hoja de Estadísticas (0 = desactivado).",
     "CONN_PLAN_OFF": "Desactivado",
-    "HW_THROTTLE_LABEL": "Temp. de throttling (estadísticas)"
+    "HW_THROTTLE_LABEL": "Temp. de throttling (estadísticas)",
+    "STATS_DETAIL_EXPORT_SAVE": "Save export",
+    "STATS_DETAIL_EXPORT_ZIP_LABEL": "Zip archive"
 }

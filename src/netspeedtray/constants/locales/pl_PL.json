@@ -552,5 +552,7 @@
     "CONN_PLAN_TITLE": "Prędkość z oferty operatora",
     "CONN_PLAN_SUB": "Oznacza czas poniżej Twojego planu w arkuszu Statystyki (0 = wył.).",
     "CONN_PLAN_OFF": "Wył.",
-    "HW_THROTTLE_LABEL": "Temp. throttlingu (statystyki)"
+    "HW_THROTTLE_LABEL": "Temp. throttlingu (statystyki)",
+    "STATS_DETAIL_EXPORT_SAVE": "Save export",
+    "STATS_DETAIL_EXPORT_ZIP_LABEL": "Zip archive"
 }

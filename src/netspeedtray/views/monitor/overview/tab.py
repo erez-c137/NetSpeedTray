@@ -545,7 +545,7 @@ class OverviewTab(QWidget):
         return out
 
     def _export_window(self) -> None:
-        """The header Export action — write the two-file stats export for the active timeline window."""
+        """The header Export action — write the stats export (a single .zip) for the active timeline window."""
         ws = getattr(self._main_widget, "widget_state", None)
         if ws is None:
             return

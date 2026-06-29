@@ -82,21 +82,25 @@ class HardwareActivityWorker(QObject):
                 try:
                     pid = int(proc.info["pid"])
                     name = proc.info["name"] or f"PID {pid}"
-                    if pid in _SKIP_PIDS or name.casefold() in _SKIP_NAMES:
+                    name_key = name.casefold()
+                    if pid in _SKIP_PIDS or name_key in _SKIP_NAMES:
                         continue
                     cpu = proc.cpu_percent(None)          # delta on psutil's cached Process object
+                    # Read USS on a full refresh, OR for a program we have no cached USS for yet (e.g.
+                    # one that just launched between refreshes) — otherwise a new multi-process app would
+                    # fall back to summed rss and read 2-3x high until the next refresh.
                     uss = None
-                    if refresh_uss:
+                    if refresh_uss or name_key not in self._uss_cache:
                         try:
                             fi = proc.memory_full_info()
                             rss, uss = fi.rss, fi.uss     # one call yields both; uss is the displayed value
                         except (psutil.AccessDenied, OSError):
                             rss = proc.memory_info().rss  # USS denied (protected proc) → fall back to rss
                     else:
-                        rss = proc.memory_info().rss      # cheap; only used if this name has no cached USS
+                        rss = proc.memory_info().rss      # cheap; this program already has a cached USS
                 except (psutil.NoSuchProcess, psutil.ZombieProcess, psutil.AccessDenied, OSError):
                     continue
-                a = agg[name.casefold()]
+                a = agg[name_key]
                 a["display_name"] = name
                 a["pids"].add(pid)
                 a["cpu"] += float(cpu)
@@ -106,11 +110,16 @@ class HardwareActivityWorker(QObject):
                     a["uss"] += uss
                     a["has_uss"] = True
 
-            # Rebuild the per-program USS cache from this sweep (drops names that have gone away, so it
-            # can't grow unbounded). Between refreshes the cached value is reused; it lags by ≤6s, which
-            # is invisible for slow-moving memory.
+            # On a full refresh, rebuild the cache from scratch (drops programs that have gone away, so it
+            # can't grow unbounded). Otherwise augment it with any programs measured this poll (the newly
+            # launched ones), keeping the existing cached values for the rest. The cached value lags by
+            # ≤6s between refreshes, which is invisible for slow-moving memory.
             if refresh_uss:
                 self._uss_cache = {k: a["uss"] for k, a in agg.items() if a.get("has_uss")}
+            else:
+                for k, a in agg.items():
+                    if a.get("has_uss"):
+                        self._uss_cache[k] = a["uss"]
 
             rows = []
             for key, a in agg.items():

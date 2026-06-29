@@ -552,5 +552,7 @@
     "CONN_PLAN_TITLE": "가입 요금제 속도",
     "CONN_PLAN_SUB": "요금제 속도 미만으로 보낸 시간을 통계 시트에 표시합니다 (0 = 끄기).",
     "CONN_PLAN_OFF": "끄기",
-    "HW_THROTTLE_LABEL": "스로틀링 온도 (통계)"
+    "HW_THROTTLE_LABEL": "스로틀링 온도 (통계)",
+    "STATS_DETAIL_EXPORT_SAVE": "Save export",
+    "STATS_DETAIL_EXPORT_ZIP_LABEL": "Zip archive"
 }

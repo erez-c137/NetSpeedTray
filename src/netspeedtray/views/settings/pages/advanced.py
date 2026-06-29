@@ -7,7 +7,7 @@ hold-still logic), and reset affordances.
 """
 from typing import Dict, Any, Callable, Optional
 
-from PyQt6.QtWidgets import QWidget, QHBoxLayout, QComboBox, QLabel, QPushButton
+from PyQt6.QtWidgets import QWidget, QHBoxLayout, QLabel, QPushButton
 
 from netspeedtray import constants
 from netspeedtray.utils.components import Win11Toggle, SettingCard, Win11ComboBox

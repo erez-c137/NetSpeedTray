@@ -552,5 +552,7 @@
     "CONN_PLAN_TITLE": "Advertised plan speed",
     "CONN_PLAN_SUB": "Flags time spent below your plan in the Statistics sheet (0 = off).",
     "CONN_PLAN_OFF": "Off",
-    "HW_THROTTLE_LABEL": "Throttle temp (stats)"
+    "HW_THROTTLE_LABEL": "Throttle temp (stats)",
+    "STATS_DETAIL_EXPORT_SAVE": "Save export",
+    "STATS_DETAIL_EXPORT_ZIP_LABEL": "Zip archive"
 }

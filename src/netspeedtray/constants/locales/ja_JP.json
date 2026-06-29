@@ -552,5 +552,7 @@
     "CONN_PLAN_TITLE": "契約プランの速度",
     "CONN_PLAN_SUB": "プランを下回った時間を統計シートに表示します（0 = オフ）。",
     "CONN_PLAN_OFF": "オフ",
-    "HW_THROTTLE_LABEL": "サーマルスロットリング温度（統計）"
+    "HW_THROTTLE_LABEL": "サーマルスロットリング温度（統計）",
+    "STATS_DETAIL_EXPORT_SAVE": "Save export",
+    "STATS_DETAIL_EXPORT_ZIP_LABEL": "Zip archive"
 }

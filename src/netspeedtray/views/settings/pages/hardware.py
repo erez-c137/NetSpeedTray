@@ -4,7 +4,7 @@ Hardware Monitoring Settings Page.
 from typing import Dict, Any, Callable
 
 from PyQt6.QtCore import pyqtSignal
-from PyQt6.QtWidgets import QWidget, QComboBox, QLabel, QGraphicsOpacityEffect
+from PyQt6.QtWidgets import QWidget, QLabel, QGraphicsOpacityEffect
 
 from netspeedtray import constants
 from netspeedtray.utils import styles as su

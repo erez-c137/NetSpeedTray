@@ -552,5 +552,7 @@
     "CONN_PLAN_TITLE": "Oglaševana hitrost naročnine",
     "CONN_PLAN_SUB": "V Statistiki označi čas pod hitrostjo vaše naročnine (0 = izklopljeno).",
     "CONN_PLAN_OFF": "Izklopljeno",
-    "HW_THROTTLE_LABEL": "Temperatura omejevanja (statistika)"
+    "HW_THROTTLE_LABEL": "Temperatura omejevanja (statistika)",
+    "STATS_DETAIL_EXPORT_SAVE": "Save export",
+    "STATS_DETAIL_EXPORT_ZIP_LABEL": "Zip archive"
 }

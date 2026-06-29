@@ -3,7 +3,7 @@ Units and Interface Layout Page.
 """
 from typing import Dict, Any, Callable
 
-from PyQt6.QtWidgets import QWidget, QComboBox
+from PyQt6.QtWidgets import QWidget
 
 from netspeedtray import constants
 from netspeedtray.utils.components import Win11Toggle, Win11Segmented, SettingCard, Win11ComboBox

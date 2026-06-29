@@ -5,7 +5,7 @@ Clicking a hardware tile or the network hero opens this sheet for that metric, s
 current timeline window. It is the honest, professional face of the pro-stats work: the full
 distribution (avg / median / 95th / 99th / peak / min / std dev), a peak-hour vs off-peak split, and —
 where a threshold is configured — throttle-time (temp) or packet-loss (latency). It is also the home of
-the two-file export and "copy these figures".
+the .zip export (summary + raw CSV + JSON sidecar) and "copy these figures".
 
 The honesty spine is enforced here too: percentiles render only when the WindowSummary is exact (raw
 tier, <=24h); beyond that the rollup cells show an em-dash and a one-line note saying exact percentiles
@@ -48,9 +48,10 @@ def run_interactive_export(parent, widget_state, start: datetime, end: datetime,
     period = re.sub(r"[^A-Za-z0-9]+", "-", window_label).strip("-").lower() or "window"
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     basename = f"nst_export_{machine}_{period}_{ts}"
+    zip_filter = f"{_tr(i18n, 'STATS_DETAIL_EXPORT_ZIP_LABEL', 'Zip archive')} (*.zip)"
     zip_path, _sel = QFileDialog.getSaveFileName(
         parent, _tr(i18n, "STATS_DETAIL_EXPORT_SAVE", "Save export"),
-        f"{basename}.zip", "Zip archive (*.zip)")
+        f"{basename}.zip", zip_filter)
     if not zip_path:
         return
     if not zip_path.lower().endswith(".zip"):

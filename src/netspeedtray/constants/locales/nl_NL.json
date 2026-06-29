@@ -552,5 +552,7 @@
     "CONN_PLAN_TITLE": "Geadverteerde abonnementssnelheid",
     "CONN_PLAN_SUB": "Markeert in het venster Statistieken de tijd onder je abonnement (0 = uit).",
     "CONN_PLAN_OFF": "Uit",
-    "HW_THROTTLE_LABEL": "Throttle-temp (stats)"
+    "HW_THROTTLE_LABEL": "Throttle-temp (stats)",
+    "STATS_DETAIL_EXPORT_SAVE": "Save export",
+    "STATS_DETAIL_EXPORT_ZIP_LABEL": "Zip archive"
 }

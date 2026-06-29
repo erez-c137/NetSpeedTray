@@ -11,7 +11,7 @@ Surfaces three already-built-but-dormant features:
 """
 from typing import Any, Callable, Dict
 
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QComboBox, QSpinBox
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QSpinBox
 
 from netspeedtray.utils.components import SettingCard, SettingExpander, Win11Toggle, Win11ComboBox
 

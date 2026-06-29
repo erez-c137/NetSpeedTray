@@ -552,5 +552,7 @@
     "CONN_PLAN_TITLE": "Скорость по тарифу",
     "CONN_PLAN_SUB": "Отмечает время ниже тарифа в окне «Статистика» (0 = выкл.).",
     "CONN_PLAN_OFF": "Выкл.",
-    "HW_THROTTLE_LABEL": "Температура троттлинга (стат.)"
+    "HW_THROTTLE_LABEL": "Температура троттлинга (стат.)",
+    "STATS_DETAIL_EXPORT_SAVE": "Save export",
+    "STATS_DETAIL_EXPORT_ZIP_LABEL": "Zip archive"
 }

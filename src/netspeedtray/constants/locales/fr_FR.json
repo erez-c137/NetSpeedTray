@@ -552,5 +552,7 @@
     "CONN_PLAN_TITLE": "Débit annoncé du forfait",
     "CONN_PLAN_SUB": "Signale le temps passé en dessous de votre forfait dans la feuille Statistiques (0 = désactivé).",
     "CONN_PLAN_OFF": "Désactivé",
-    "HW_THROTTLE_LABEL": "Température de bridage (stats)"
+    "HW_THROTTLE_LABEL": "Température de bridage (stats)",
+    "STATS_DETAIL_EXPORT_SAVE": "Save export",
+    "STATS_DETAIL_EXPORT_ZIP_LABEL": "Zip archive"
 }
