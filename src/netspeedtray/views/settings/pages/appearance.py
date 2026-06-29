@@ -8,6 +8,7 @@ from PyQt6.QtGui import QFont, QFontDatabase
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit
 
 from netspeedtray import constants
+from netspeedtray.constants.styles import styles as tokens
 from netspeedtray.utils import styles as style_utils
 from netspeedtray.utils.components import Win11Slider, Win11Toggle, ArrowStylePicker, SettingCard
 from netspeedtray.views.settings.pages._fluent import section_header, page_layout
@@ -94,7 +95,7 @@ class AppearancePage(QWidget):
         self.arrow_font_container = QWidget()
         arrow_v_layout = QVBoxLayout(self.arrow_font_container)
         arrow_v_layout.setContentsMargins(0, 0, 0, 0)
-        arrow_v_layout.setSpacing(6)
+        arrow_v_layout.setSpacing(tokens.SPACE_XS)   # match the page card gap so all card spacing is equal
         self.arrow_font_family_button = QPushButton(self.i18n.SELECT_FONT_BUTTON)
         self.arrow_font_family_button.clicked.connect(lambda: self.open_font_dialog(self.current_arrow_font, "arrow"))
         self.arrow_font_family_label = QLabel()

@@ -19,7 +19,9 @@ class UIStyleConstants:
     # --- Light Mode ---
     LIGHT_MODE_TEXT_COLOR: Final[str] = color.BLACK
     DIALOG_SIDEBAR_BG_LIGHT: Final[str] = "#f3f3f3"
-    DIALOG_CONTENT_BG_LIGHT: Final[str] = "#ffffff"
+    # Light-mode counterpart: a soft grey base so the near-white #FBFBFB cards float (was #ffffff, which
+    # made the cards read as slightly darker insets on white instead of floating panels).
+    DIALOG_CONTENT_BG_LIGHT: Final[str] = "#f3f3f3"
     DIALOG_SECTION_BG_LIGHT: Final[str] = "#F0F0F0"
     GRAPH_BG_LIGHT: Final[str] = color.WHITE
     GRID_COLOR_LIGHT: Final[str] = '#B0B0B0'  # Darkened for better visibility on white
@@ -29,7 +31,9 @@ class UIStyleConstants:
     # --- Dark Mode ---
     DARK_MODE_TEXT_COLOR: Final[str] = color.WHITE
     DIALOG_SIDEBAR_BG_DARK: Final[str] = '#202020'
-    DIALOG_CONTENT_BG_DARK: Final[str] = '#2d2d2d'
+    # The content area sits at the window base so the lighter #2D2D2D cards FLOAT on it (Win11 cards-on-
+    # Mica). Was #2d2d2d — identical to the card fill — so cards had no tonal pop, only their stroke.
+    DIALOG_CONTENT_BG_DARK: Final[str] = '#202020'
     DIALOG_SECTION_BG_DARK: Final[str] = '#202020'
     GRAPH_BG_DARK: Final[str] = "#1E1E1E"
     GRID_COLOR_DARK: Final[str] = '#444444'
