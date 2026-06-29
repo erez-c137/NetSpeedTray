@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import QWidget, QComboBox, QLabel
 from netspeedtray import constants
 from netspeedtray.utils import styles as su
 from netspeedtray.utils.components import Win11Toggle, Win11Slider, SettingCard, SettingExpander
-from netspeedtray.views.settings.pages._fluent import section_header, page_layout
+from netspeedtray.views.settings.pages._fluent import page_layout
 
 class HardwarePage(QWidget):
     layout_changed = pyqtSignal()
@@ -30,9 +30,8 @@ class HardwarePage(QWidget):
         # All control objects + the load/get wiring are unchanged.
         layout = page_layout(self)
 
-        # --- Hardware monitoring (primary — always visible) ---
-        layout.addWidget(section_header(self.i18n.HARDWARE_MONITORING_GROUP))
-
+        # --- Hardware monitoring (primary — sits directly under the page's "Hardware" H1 title, so no
+        # redundant section caption here). ---
         self.monitor_cpu = Win11Toggle(label_text="")
         self.monitor_cpu.toggled.connect(self._on_monitor_toggled)
         layout.addWidget(SettingCard(self.i18n.MONITOR_CPU_LABEL, control=self.monitor_cpu))

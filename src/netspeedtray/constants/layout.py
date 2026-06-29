@@ -17,6 +17,10 @@ class LayoutConstants:
     MAIN_SPACING: Final[int] = 12
     GROUP_BOX_SPACING: Final[int] = 12
     SIDEBAR_WIDTH: Final[int] = 200
+    # Horizontal breathing room around the Settings card column (Win11 Settings insets its content
+    # generously from the sidebar + window edge; the bare 16px read edge-to-edge). The window width
+    # formula and the content layout both use this so the cards keep their width as the inset grows.
+    SETTINGS_CONTENT_MARGIN: Final[int] = 32
 
     # --- Interface Page Specific ---
     INTERFACE_SCROLL_MAX_ITEMS: Final[int] = 7

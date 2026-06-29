@@ -769,7 +769,7 @@ class Win11Segmented(QWidget):
                 color: {c['text_primary']};
                 border: 1px solid {c['card_stroke']};
                 border-radius: 0px;
-                padding: 4px 12px;
+                padding: 7px 12px;
                 font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif;
             }}
             QToolButton:hover {{ background-color: {c['subtle_fill']}; }}

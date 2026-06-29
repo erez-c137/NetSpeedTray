@@ -123,8 +123,8 @@ class SettingsDialog(QDialog):
         # need a horizontal scrollbar. We measure each page's sizeHint with the
         # real on-machine fonts/DPI (which differ from any hardcoded width), then
         # add the sidebar, content margins, and room for a vertical scrollbar.
-        margin = constants.layout.MAIN_MARGIN
-        content_w = 450
+        margin = constants.layout.SETTINGS_CONTENT_MARGIN
+        content_w = 560   # comfortable floor so the window is roomy and cards aren't pinned to their min
         try:
             # minimumSizeHint is the floor below which the page can't shrink
             # without forcing a horizontal scrollbar; size to the widest page's
@@ -135,7 +135,7 @@ class SettingsDialog(QDialog):
                 if self.stack.widget(i).widget() is not None
             ]
             if page_widths:
-                content_w = max(page_widths)
+                content_w = max(max(page_widths), content_w)   # keep the comfortable floor
         except Exception:
             pass
         # +40 leaves room for the vertical scrollbar plus a little slack so the
@@ -206,11 +206,30 @@ class SettingsDialog(QDialog):
             content_widget = QWidget()
             content_widget.setObjectName("contentWidget")
             content_layout = QVBoxLayout(content_widget)
-            # Roomier horizontal inset around the card column (Win11 Settings gives its content generous
-            # side margins); keep the vertical margin tighter so the preview strip + buttons sit close.
-            content_layout.setContentsMargins(24, constants.layout.MAIN_MARGIN,
-                                              24, constants.layout.MAIN_MARGIN)
+            # Generous horizontal inset around the card column (Win11 insets its content well clear of the
+            # sidebar + window edge); matches the window-width budget so cards keep their width as the
+            # inset grows. Vertical margin stays tighter so the preview strip + buttons sit close.
+            _cm = constants.layout.SETTINGS_CONTENT_MARGIN
+            content_layout.setContentsMargins(_cm, constants.layout.MAIN_MARGIN,
+                                              _cm, constants.layout.MAIN_MARGIN)
             content_layout.setSpacing(constants.layout.MAIN_SPACING)
+
+            # Page-level H1 (the native Win11 Settings header) — fixed above the scrolling content, giving
+            # the page identity + the top breathing room WinUI opens with. Updated on sidebar selection.
+            self._page_title = QLabel()
+            _title_font = QFont()
+            _title_font.setFamilies(["Segoe UI Variable Display", "Segoe UI Variable", "Segoe UI"])
+            _title_font.setPixelSize(24)
+            _title_font.setWeight(QFont.Weight.DemiBold)
+            self._page_title.setFont(_title_font)
+            self._page_title.setStyleSheet(
+                f"color: {style_utils.semantic_colors()['text_primary']}; background: transparent;")
+            self._page_title.setContentsMargins(0, 4, 0, 6)
+            try:   # seed from the initially-selected sidebar row (set before this label existed)
+                self._page_title.setText(self.sidebar.item(max(0, self.sidebar.currentRow())).text())
+            except Exception:
+                pass
+            content_layout.addWidget(self._page_title)
 
             self.stack = QStackedWidget()
             content_layout.addWidget(self.stack)
@@ -252,6 +271,15 @@ class SettingsDialog(QDialog):
                 self.advanced_page,      # 5 - Advanced
             ]:
                 self.stack.addWidget(self._wrap_in_scroll(page))
+
+            # Hairline that anchors the fixed footer (preview + command buttons) below the scrolling
+            # content — the native Win11 command-bar separator.
+            footer_sep = QWidget()
+            footer_sep.setObjectName("footerSep")
+            footer_sep.setFixedHeight(1)
+            footer_sep.setStyleSheet(
+                f"#footerSep {{ background-color: {style_utils.semantic_colors()['card_stroke']}; }}")
+            content_layout.addWidget(footer_sep)
 
             # --- Live preview strip (C5) — a faithful, inert render of the widget that
             # reflects the current settings as you change them, on a taskbar-like backdrop.
@@ -389,8 +417,14 @@ class SettingsDialog(QDialog):
             pass
 
     def _on_sidebar_selection_changed(self, row: int) -> None:
-        """Handles sidebar row changes to switch the stacked page."""
+        """Handles sidebar row changes to switch the stacked page + retitle the page header."""
         self.stack.setCurrentIndex(row)
+        try:
+            item = self.sidebar.item(row)
+            if item is not None and hasattr(self, "_page_title"):
+                self._page_title.setText(item.text())
+        except Exception:
+            pass
 
     def _tint_sidebar_icons(self) -> None:
         """Re-render each sidebar glyph in the right colour (a QIcon pixmap can't be tinted by QSS):

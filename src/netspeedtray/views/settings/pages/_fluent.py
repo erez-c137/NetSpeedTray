@@ -16,19 +16,22 @@ from netspeedtray.constants.styles import styles as tokens
 
 
 def section_header(text: str) -> QLabel:
-    """A Win11 Settings section caption: semibold, primary-coloured, with generous space above so it
-    reads as the start of a new group (not crowding the card before it) and a small gap to its cards."""
+    """A Win11 Settings section caption: semibold, transparent (NO band), with generous space ABOVE so a
+    new group reads as airy/title-led, a tight gap BELOW tying it to its cards, and a left indent so its
+    text aligns with the card CONTENT (not the card stroke) — the native WinUI group-header rhythm.
+    (Net spacing also gets the page layout's inter-widget gap added on each side.)"""
     c = su.semantic_colors()
     lbl = QLabel(text)
     lbl.setFont(su.font(tokens.TYPE_BODY_STRONG))
-    lbl.setStyleSheet(f"color: {c['text_primary']}; background: transparent; padding: 12px 2px 2px 2px;")
+    lbl.setStyleSheet(f"color: {c['text_primary']}; background: transparent; padding: 20px 2px 4px 16px;")
     return lbl
 
 
 def page_layout(widget) -> QVBoxLayout:
     """A consistent vertical page layout: tight, even spacing between cards (the card strokes already
-    provide the visual separation, so the old group-box gaps are too loose)."""
+    provide the visual separation), plus a small bottom inset so the last card never abuts the fixed
+    footer / scroll edge on a scrolling page."""
     layout = QVBoxLayout(widget)
-    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setContentsMargins(0, 0, 0, 10)
     layout.setSpacing(tokens.SPACE_XS)
     return layout
