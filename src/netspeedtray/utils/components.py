@@ -13,19 +13,53 @@ from typing import Optional, Final
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QCheckBox, QLabel, QSlider,
     QSizePolicy, QStyleOption, QLineEdit, QFrame, QToolButton, QButtonGroup,
-    QPushButton, QColorDialog
+    QPushButton, QColorDialog, QComboBox
 )
-from PyQt6.QtCore import Qt, QSize, pyqtSignal, QPropertyAnimation, QEasingCurve, QPoint
+from PyQt6.QtCore import Qt, QSize, pyqtSignal, QPropertyAnimation, QEasingCurve, QPoint, QTimer
 from PyQt6.QtGui import QFont, QPaintEvent, QPainter, QColor
 from netspeedtray.utils.styles import (
     toggle_style, slider_style, font as token_font, semantic_colors, get_accent_color,
-    timeline_pills_style, prefers_reduced_motion,
+    timeline_pills_style, prefers_reduced_motion, is_dark_mode,
 )
 from netspeedtray.constants.styles import styles as tokens
 from netspeedtray import constants
 
 
 logger = logging.getLogger("NetSpeedTray.Components")
+
+
+class Win11ComboBox(QComboBox):
+    """A drop-in QComboBox whose pop-up list is guaranteed opaque.
+
+    Qt 6 gives every combo pop-up a *translucent* container window (``WA_TranslucentBackground``, used
+    for the native rounded drop-shadow). Under our dark theme the styled item-view didn't actually
+    cover that container on screen, so the open list rendered see-through over whatever it overlapped —
+    unreadable. We force both the container window and its viewport opaque each time the pop-up opens
+    (the container is created lazily on the first show and then reused). Colours still come from the
+    QSS (``QComboBox QAbstractItemView``); this only removes the transparency. Use everywhere a
+    settings combo is needed, exactly like a plain QComboBox."""
+
+    def showPopup(self) -> None:
+        super().showPopup()
+        # The container is only fully realised after this event-loop turn, so apply once now (handles a
+        # reused, already-realised container) and once deferred (handles the very first open).
+        self._force_opaque_popup()
+        QTimer.singleShot(0, self._force_opaque_popup)
+
+    def _force_opaque_popup(self) -> None:
+        try:
+            win = self.view().window()
+            win.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
+            win.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, False)
+            vp = self.view().viewport()
+            vp.setAutoFillBackground(True)
+            bg = tokens.COMBOBOX_BG_DARK if is_dark_mode() else tokens.COMBOBOX_BG_LIGHT
+            pal = vp.palette()
+            pal.setColor(vp.backgroundRole(), QColor(bg))
+            vp.setPalette(pal)
+            win.update()
+        except Exception:
+            pass  # styling only; never block the pop-up
 
 
 class Win11Toggle(QWidget):

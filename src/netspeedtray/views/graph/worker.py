@@ -83,11 +83,16 @@ class GraphDataWorker(QObject):
                 self.error.emit("Data source (WidgetState) not available.")
                 return
 
+            # The fast in-memory session path only has the ALL-interfaces aggregate, so it can't honour a
+            # per-NIC filter. When the user scopes the graph to one interface, fall through to the DB path
+            # (which is per-interface) even for the session range. "all"/None keeps the in-memory path.
+            net_use_memory = request.is_session_view and not request.interface_name
+
             if request.stat_type == "overview":
                 # Multi-dataset fetch for Overview tab
                 total_up = 0.0
                 total_down = 0.0
-                if request.is_session_view:
+                if net_use_memory:
                     net_data = self.widget_state.get_aggregated_speed_history()
                     # Copy getters, NOT the live deques: this runs on the worker thread while the GUI
                     # thread appends via add_hardware_stat(); iterating a deque mid-append raises
@@ -172,8 +177,9 @@ class GraphDataWorker(QObject):
                     raw_history = self.widget_state.get_hardware_history(request.stat_type, request.start_time, request.end_time)
                     history_data = [(dt, val, 0.0) for dt, val in raw_history]
 
-            elif request.is_session_view:
+            elif net_use_memory:
                 # OPTIMIZATION: Use the pre-calculated aggregated history from WidgetState.
+                # (Only when not scoped to a single NIC — see net_use_memory; per-NIC falls to the DB path.)
                 aggregated_data = self.widget_state.get_aggregated_speed_history()
                 
                 start_ts = request.start_time.timestamp() if request.start_time else 0

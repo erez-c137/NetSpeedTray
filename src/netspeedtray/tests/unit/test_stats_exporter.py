@@ -61,6 +61,18 @@ def test_writes_three_files(out):
         assert os.path.exists(paths[k])
 
 
+def test_zip_bundles_the_three_files(out):
+    """The interactive export ships ONE .zip containing the summary/raw/json (not three loose files)."""
+    import zipfile
+    zip_path = os.path.join(out, "nst_export.zip")
+    res = SE.export_window_zip(_WS(), datetime(2026, 6, 28, 11), datetime(2026, 6, 28, 12),
+                              "Last hour", zip_path, "nst_test", machine_id="M1", app_version="2.0.0")
+    assert res == zip_path and os.path.exists(zip_path)
+    with zipfile.ZipFile(zip_path) as zf:
+        names = zf.namelist()
+    assert {"nst_test.summary.csv", "nst_test.raw.csv", "nst_test.summary.json"} == set(names)
+
+
 def test_download_converted_to_mbps_and_exact(out):
     paths = SE.export_window(_WS(), datetime(2026, 6, 28, 11), datetime(2026, 6, 28, 12),
                              "Last hour", out, "nst", machine_id="M1", app_version="2.0.0")

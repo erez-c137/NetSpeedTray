@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import QWidget, QComboBox, QLabel, QGraphicsOpacityEffect
 
 from netspeedtray import constants
 from netspeedtray.utils import styles as su
-from netspeedtray.utils.components import Win11Toggle, Win11Slider, SettingCard, SettingExpander
+from netspeedtray.utils.components import Win11Toggle, Win11Slider, SettingCard, SettingExpander, Win11ComboBox
 from netspeedtray.views.settings.pages._fluent import page_layout
 
 class HardwarePage(QWidget):
@@ -64,7 +64,7 @@ class HardwarePage(QWidget):
             f"color: {su.semantic_colors()['text_secondary']}; background: transparent; padding: 0 2px;")
         layout.addWidget(temps_note)
 
-        self.label_style = QComboBox()
+        self.label_style = Win11ComboBox()
         self.label_style.addItem(self.i18n.HARDWARE_LABEL_STYLE_COLORED_ICONS, userData="icons_colored")
         self.label_style.addItem(self.i18n.HARDWARE_LABEL_STYLE_MONOCHROME_ICONS, userData="icons_monochrome")
         self.label_style.addItem(self.i18n.HARDWARE_LABEL_STYLE_TEXT_LABELS, userData="text")

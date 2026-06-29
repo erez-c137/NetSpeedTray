@@ -588,6 +588,13 @@ class WidgetRenderer:
         if not config.graph_enabled or len(history) < constants.renderer.MIN_GRAPH_POINTS:
             return
 
+        # Honour the configured graph timespan: the series buffers more than the visible window (so a
+        # longer timespan reveals already-recorded samples at once), so show only the last `max_samples`
+        # points (= history_minutes worth). Without this the graph plotted the whole buffer and 3 min
+        # looked identical to 20 min.
+        if config.max_samples and len(history) > config.max_samples:
+            history = history[-config.max_samples:]
+
         try:
             side_margin = constants.renderer.GRAPH_LEFT_PADDING
             top_margin = constants.renderer.GRAPH_MARGIN

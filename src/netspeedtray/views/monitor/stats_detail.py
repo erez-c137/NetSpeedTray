@@ -40,39 +40,41 @@ def _tr(i18n, key: str, default: str) -> str:
 
 def run_interactive_export(parent, widget_state, start: datetime, end: datetime, window_label: str,
                            config: Dict[str, Any], i18n, app_version: str = "") -> None:
-    """Pick a folder, write the two-file + JSON export for [start,end], and confirm with an
-    open-folder option. Shared by the Stats-detail sheet's Export button AND the Overview header's
-    Export action, so "export the numbers" works identically from either entry point."""
+    """Pick a save location, write the summary + raw + JSON export for [start,end] bundled into a single
+    .zip, and confirm with an open-folder option. Shared by the Stats-detail sheet's Export button AND
+    the Overview header's Export action, so "export the numbers" works identically from either point."""
     logger = logging.getLogger("NetSpeedTray.Export")
-    out_dir = QFileDialog.getExistingDirectory(
-        parent, _tr(i18n, "STATS_DETAIL_EXPORT_DIR", "Choose a folder for the export"))
-    if not out_dir:
-        return
     machine = get_machine_id()[:8]
     period = re.sub(r"[^A-Za-z0-9]+", "-", window_label).strip("-").lower() or "window"
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     basename = f"nst_export_{machine}_{period}_{ts}"
+    zip_path, _sel = QFileDialog.getSaveFileName(
+        parent, _tr(i18n, "STATS_DETAIL_EXPORT_SAVE", "Save export"),
+        f"{basename}.zip", "Zip archive (*.zip)")
+    if not zip_path:
+        return
+    if not zip_path.lower().endswith(".zip"):
+        zip_path += ".zip"
     poll = float(config.get("update_rate", 1.0) or 1.0)
     try:
-        paths = stats_exporter.export_window(
-            widget_state, start, end, window_label, out_dir, basename,
+        zip_path = stats_exporter.export_window_zip(
+            widget_state, start, end, window_label, zip_path, basename,
             machine_id=machine, app_version=app_version, poll_interval=poll)
     except Exception as e:
         logger.error("Export failed: %s", e, exc_info=True)
         QMessageBox.warning(parent, _tr(i18n, "STATS_DETAIL_EXPORT", "Export"),
                             _tr(i18n, "STATS_DETAIL_EXPORT_FAIL", "Could not write the export:") + f"\n{e}")
         return
-    names = "\n".join(os.path.basename(p) for p in paths.values())
     box = QMessageBox(parent)
     box.setWindowTitle(_tr(i18n, "STATS_DETAIL_EXPORT", "Export"))
-    box.setText(_tr(i18n, "STATS_DETAIL_EXPORT_OK", "Exported:") + f"\n{names}")
+    box.setText(_tr(i18n, "STATS_DETAIL_EXPORT_OK", "Exported:") + f"\n{os.path.basename(zip_path)}")
     open_btn = box.addButton(_tr(i18n, "STATS_DETAIL_OPEN_FOLDER", "Open folder"),
                              QMessageBox.ButtonRole.AcceptRole)
     box.addButton(QMessageBox.StandardButton.Close)
     box.exec()
     if box.clickedButton() is open_btn:
         try:
-            subprocess.Popen(["explorer", os.path.normpath(out_dir)])
+            subprocess.Popen(["explorer", "/select,", os.path.normpath(zip_path)])
         except Exception:
             pass
 

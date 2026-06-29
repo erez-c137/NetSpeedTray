@@ -221,7 +221,6 @@ def test_units_page(q_app, mock_i18n, mock_callback):
         "unit_type": "bits_binary",
         "speed_display_mode": "auto",
         "decimal_places": 2,
-        "text_alignment": "center",
         "swap_upload_download": False,
         "hide_arrows": True,
         "hide_unit_suffix": True,
@@ -234,7 +233,8 @@ def test_units_page(q_app, mock_i18n, mock_callback):
     assert settings["unit_type"] == "bits_binary"
     assert settings["speed_display_mode"] == "auto"
     assert settings["decimal_places"] == 2
-    assert settings["text_alignment"] == "center"
+    # text_alignment was removed in 2.0 (the control never affected rendering)
+    assert "text_alignment" not in settings
     assert settings["swap_upload_download"] is False
     assert settings["hide_arrows"] is True
     assert settings["hide_unit_suffix"] is True
@@ -260,16 +260,15 @@ def test_interfaces_page(q_app, mock_i18n, mock_callback):
 
 
 def test_display_enums_are_segmented_and_round_trip(q_app, mock_i18n, mock_callback):
-    """Decimal Places + Text Alignment are 3-value enums — segmented controls, not sliders — and must
-    round-trip their canonical values (int 0/1/2 and 'left'/'center'/'right')."""
+    """Decimal Places is a 3-value enum — a segmented control, not a slider — and must round-trip its
+    canonical int values (0/1/2). (Text Alignment was removed in 2.0; it never affected rendering.)"""
     from netspeedtray.views.settings.pages.units import UnitsPage
     from netspeedtray.utils.components import Win11Segmented
     p = UnitsPage(mock_i18n, mock_callback)
     assert isinstance(p.decimal_places, Win11Segmented)
-    assert isinstance(p.text_alignment, Win11Segmented)
-    p.load_settings({"decimal_places": 2, "text_alignment": "right"})
+    p.load_settings({"decimal_places": 2})
     got = p.get_settings()
-    assert got["decimal_places"] == 2 and got["text_alignment"] == "right"
-    p.load_settings({"decimal_places": 0, "text_alignment": "center"})
+    assert got["decimal_places"] == 2
+    p.load_settings({"decimal_places": 0})
     got = p.get_settings()
-    assert got["decimal_places"] == 0 and got["text_alignment"] == "center"
+    assert got["decimal_places"] == 0

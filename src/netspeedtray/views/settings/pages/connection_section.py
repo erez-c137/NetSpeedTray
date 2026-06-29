@@ -13,7 +13,7 @@ from typing import Any, Callable, Dict
 
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QComboBox, QSpinBox
 
-from netspeedtray.utils.components import SettingCard, SettingExpander, Win11Toggle
+from netspeedtray.utils.components import SettingCard, SettingExpander, Win11Toggle, Win11ComboBox
 
 
 class ConnectionSettings(QWidget):
@@ -43,7 +43,7 @@ class ConnectionSettings(QWidget):
                      "Pings a public server — this leaves your local network, so it's off by default."),
             control=self._public))
 
-        self._host = QComboBox()
+        self._host = Win11ComboBox()
         self._host.setEditable(True)
         self._host.addItems(["1.1.1.1", "8.8.8.8", "9.9.9.9"])
         self._host.setMinimumWidth(160)

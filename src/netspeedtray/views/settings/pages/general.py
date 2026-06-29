@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import QWidget, QComboBox
 
 from netspeedtray import constants
 from netspeedtray.constants.update_mode import UpdateMode
-from netspeedtray.utils.components import Win11Slider, Win11Toggle, SettingCard
+from netspeedtray.utils.components import Win11Slider, Win11Toggle, SettingCard, Win11ComboBox
 from netspeedtray.views.settings.pages._fluent import section_header, page_layout
 
 class GeneralPage(QWidget):
@@ -25,7 +25,7 @@ class GeneralPage(QWidget):
         layout = page_layout(self)
 
         # --- Language ---
-        self.language_combo = QComboBox()
+        self.language_combo = Win11ComboBox()
         self.language_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.language_combo.setMinimumWidth(220)
         for code, name in self.i18n.LANGUAGE_MAP.items():
@@ -56,7 +56,7 @@ class GeneralPage(QWidget):
         layout.addWidget(SettingCard(self.i18n.CHECK_FOR_UPDATES_LABEL, control=self.check_for_updates))
 
         # Preferred Monitor (#72) — pin the widget to a specific display (default = primary).
-        self.preferred_monitor_combo = QComboBox()
+        self.preferred_monitor_combo = Win11ComboBox()
         self.preferred_monitor_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.preferred_monitor_combo.setMinimumWidth(220)
         self._populate_monitor_combo()

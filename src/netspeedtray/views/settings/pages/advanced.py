@@ -10,7 +10,7 @@ from typing import Dict, Any, Callable, Optional
 from PyQt6.QtWidgets import QWidget, QHBoxLayout, QComboBox, QLabel, QPushButton
 
 from netspeedtray import constants
-from netspeedtray.utils.components import Win11Toggle, SettingCard
+from netspeedtray.utils.components import Win11Toggle, SettingCard, Win11ComboBox
 from netspeedtray.utils import styles as style_utils
 from netspeedtray.utils import helpers
 from netspeedtray.views.settings.pages._fluent import section_header, page_layout
@@ -37,7 +37,7 @@ class AdvancedPage(QWidget):
 
         # --- Data ---
         layout.addWidget(section_header(self.i18n.ADVANCED_DATA_GROUP))
-        self.keep_data = QComboBox()
+        self.keep_data = Win11ComboBox()
         for idx in sorted(self._days_map):
             days = self._days_map[idx]
             self.keep_data.addItem(self._retention_label(days), userData=days)

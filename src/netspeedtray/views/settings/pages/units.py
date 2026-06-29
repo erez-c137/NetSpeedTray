@@ -6,7 +6,7 @@ from typing import Dict, Any, Callable
 from PyQt6.QtWidgets import QWidget, QComboBox
 
 from netspeedtray import constants
-from netspeedtray.utils.components import Win11Toggle, Win11Segmented, SettingCard
+from netspeedtray.utils.components import Win11Toggle, Win11Segmented, SettingCard, Win11ComboBox
 from netspeedtray.views.settings.pages._fluent import section_header, page_layout
 
 class UnitsPage(QWidget):
@@ -27,7 +27,7 @@ class UnitsPage(QWidget):
         # --- Data Format ---
         layout.addWidget(section_header(self._tr("DISPLAY_FORMAT_GROUP", "Data Format")))
 
-        self.unit_type = QComboBox()
+        self.unit_type = Win11ComboBox()
         self.unit_type.addItem(self.i18n.UNIT_TYPE_BITS_DECIMAL, "bits_decimal")
         self.unit_type.addItem(self.i18n.UNIT_TYPE_BITS_BINARY, "bits_binary")
         self.unit_type.addItem(self.i18n.UNIT_TYPE_BYTES_DECIMAL, "bytes_decimal")
@@ -51,15 +51,10 @@ class UnitsPage(QWidget):
         # --- Interface Layout ---
         layout.addWidget(section_header(self._tr("INTERFACE_LAYOUT_GROUP", "Interface Layout")))
 
-        # Text Alignment — a 3-value enum (left/center/right): segmented control with the canonical
-        # string values directly (no more int<->string mapping), again the native idiom over a slider.
-        self.text_alignment = Win11Segmented([
-            (self._tr("TEXT_ALIGN_LEFT", "Left"), "left"),
-            (self._tr("TEXT_ALIGN_CENTER", "Center"), "center"),
-            (self._tr("TEXT_ALIGN_RIGHT", "Right"), "right"),
-        ])
-        self.text_alignment.valueChanged.connect(self.on_change)
-        layout.addWidget(SettingCard(self.i18n.TEXT_ALIGNMENT_LABEL, control=self.text_alignment))
+        # NOTE: the old "Text Alignment" (left/center/right) control was removed in 2.0 — it was wired
+        # into config but never consulted by any drawText call (the widget is right-anchored to the tray
+        # and left-aligns its content), so the three options did nothing. The orphan config key is left
+        # in the schema for back-compat; nothing reads it.
 
         self.swap_upload_download = Win11Toggle(label_text="")
         self.swap_upload_download.toggled.connect(self.on_change)
@@ -94,10 +89,7 @@ class UnitsPage(QWidget):
         
         # Others
         self.decimal_places.setValue(config.get("decimal_places", constants.config.defaults.DEFAULT_DECIMAL_PLACES))
-        
-        # Alignment — the segmented control holds the canonical string value directly.
-        self.text_alignment.setValue(config.get("text_alignment", "left"))
-        
+
         # Toggles
         self.swap_upload_download.setChecked(config.get("swap_upload_download", constants.config.defaults.DEFAULT_SWAP_UPLOAD_DOWNLOAD))
         self.hide_arrows.setChecked(config.get("hide_arrows", False))
@@ -107,14 +99,12 @@ class UnitsPage(QWidget):
 
     def get_settings(self) -> Dict[str, Any]:
         speed_mode = "always_mbps" if self.speed_display_mode.isChecked() else "auto"
-        align = self.text_alignment.value() or "left"   # segmented holds the string value directly
         unit_type = self.unit_type.currentData()
 
         return {
             "unit_type": unit_type,
             "speed_display_mode": speed_mode,
             "decimal_places": self.decimal_places.value(),
-            "text_alignment": align,
             "swap_upload_download": self.swap_upload_download.isChecked(),
             "hide_arrows": self.hide_arrows.isChecked(),
             "hide_unit_suffix": self.hide_unit_suffix.isChecked(),

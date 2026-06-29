@@ -77,15 +77,22 @@ class WidgetState(QObject):
         # _get_read_conn(); the worker is constructed but never started, so flush_and_wait short-circuits.
         self._read_only = read_only
 
-        # In-Memory Cache for real-time mini-graph
+        # In-Memory Cache for real-time mini-graph.
+        #   * in_memory_history holds per-tick raw snapshots (a dict per entry — heavy), so it stays
+        #     sized to the *current* window.
+        #   * the mini-graph series (aggregated speed + per-stat hardware %) are light (a few floats per
+        #     entry), so they buffer the *maximum* selectable window. That way GROWING the graph timespan
+        #     reveals already-recorded samples immediately instead of waiting minutes for them to
+        #     accumulate; the renderer slices each series down to the configured window.
         self.max_history_points: int = self._get_max_history_points()
+        self._graph_buffer_points: int = self._get_graph_buffer_points()
         self.in_memory_history: Deque[SpeedDataSnapshot] = deque(maxlen=self.max_history_points)
-        self.aggregated_history: Deque[AggregatedSpeedData] = deque(maxlen=self.max_history_points)
-        
+        self.aggregated_history: Deque[AggregatedSpeedData] = deque(maxlen=self._graph_buffer_points)
+
         # New: Hardware history for mini-graph tabs
-        self.cpu_history: Deque[HardwareStatSnapshot] = deque(maxlen=self.max_history_points)
-        self.gpu_history: Deque[HardwareStatSnapshot] = deque(maxlen=self.max_history_points)
-        self.ram_history: Deque[HardwareStatSnapshot] = deque(maxlen=self.max_history_points)
+        self.cpu_history: Deque[HardwareStatSnapshot] = deque(maxlen=self._graph_buffer_points)
+        self.gpu_history: Deque[HardwareStatSnapshot] = deque(maxlen=self._graph_buffer_points)
+        self.ram_history: Deque[HardwareStatSnapshot] = deque(maxlen=self._graph_buffer_points)
         
         # Batching lists for database writes
         self._db_batch: List[Tuple[int, str, float, float]] = []
@@ -911,7 +918,7 @@ class WidgetState(QObject):
             history_minutes = self.config.get("history_minutes", 30)
             update_rate_sec = self.config.get("update_rate", 1.0)
             if update_rate_sec <= 0: update_rate_sec = 1.0
-            
+
             points = int(round((history_minutes * 60) / update_rate_sec))
             return max(10, min(points, 5000))
 
@@ -919,15 +926,40 @@ class WidgetState(QObject):
             self.logger.error("Error calculating max history points: %s. Using default.", e)
             return 1800
 
+    def _get_graph_buffer_points(self) -> int:
+        """Capacity for the lightweight mini-graph series (aggregated speed + per-stat hardware %).
+        Sized to the MAXIMUM selectable graph window — not the current one — so that growing the graph
+        timespan reveals already-buffered samples instantly; the renderer slices this down to the
+        configured window. Bounded (≤5000 points) so each float series stays well under ~0.5 MB."""
+        try:
+            from netspeedtray import constants
+            _, max_minutes = constants.ui.history.HISTORY_MINUTES_RANGE
+            update_rate_sec = self.config.get("update_rate", 1.0)
+            if update_rate_sec <= 0: update_rate_sec = 1.0
+            points = int(round((max_minutes * 60) / update_rate_sec))
+            return max(10, min(points, 5000))
+        except Exception as e:
+            self.logger.error("Error calculating graph buffer points: %s. Using default.", e)
+            return 5000
+
           
     def apply_config(self, config: Dict[str, Any]) -> None:
         """Apply updated configuration and adjust state."""
         self.logger.debug("Applying new configuration to WidgetState...")
         self.config = config.copy()
         new_max_points = self._get_max_history_points()
-
         if new_max_points != self.max_history_points:
             self.max_history_points = new_max_points
             self.in_memory_history = deque(self.in_memory_history, maxlen=self.max_history_points)
-            self.aggregated_history = deque(self.aggregated_history, maxlen=self.max_history_points)
-            self.logger.debug("In-memory speed history capacity updated to %d points.", self.max_history_points)
+            self.logger.debug("In-memory raw history capacity updated to %d points.", self.max_history_points)
+
+        # The graph series buffer the *max* window, so they only resize when update_rate changes (not on
+        # a timespan change — the renderer just slices a different amount from the same buffer).
+        new_graph_points = self._get_graph_buffer_points()
+        if new_graph_points != self._graph_buffer_points:
+            self._graph_buffer_points = new_graph_points
+            self.aggregated_history = deque(self.aggregated_history, maxlen=new_graph_points)
+            self.cpu_history = deque(self.cpu_history, maxlen=new_graph_points)
+            self.gpu_history = deque(self.gpu_history, maxlen=new_graph_points)
+            self.ram_history = deque(self.ram_history, maxlen=new_graph_points)
+            self.logger.debug("Mini-graph buffer capacity updated to %d points.", new_graph_points)

@@ -17,6 +17,9 @@ from __future__ import annotations
 import csv
 import json
 import os
+import shutil
+import tempfile
+import zipfile
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -127,3 +130,25 @@ def export_window(widget_state, start: datetime, end: datetime, window_label: st
     paths["raw_csv"] = rp
 
     return paths
+
+
+def export_window_zip(widget_state, start: datetime, end: datetime, window_label: str,
+                      zip_path: str, basename: str, machine_id: str = "", app_version: str = "",
+                      interface: Optional[str] = None, poll_interval: float = 1.0) -> str:
+    """Write the same summary/raw/json export as :func:`export_window`, but bundle the three files into a
+    single ``.zip`` at ``zip_path`` (one tidy archive instead of three loose files in a folder). Returns
+    the zip path. The files are built in a temp dir and deflated in; the temp dir is always cleaned up."""
+    tmp = tempfile.mkdtemp(prefix="nst_export_")
+    try:
+        paths = export_window(widget_state, start, end, window_label, tmp, basename,
+                              machine_id=machine_id, app_version=app_version,
+                              interface=interface, poll_interval=poll_interval)
+        parent = os.path.dirname(zip_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for p in paths.values():
+                zf.write(p, arcname=os.path.basename(p))
+        return zip_path
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)

@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import QWidget, QComboBox, QLabel
 
 from netspeedtray import constants
 from netspeedtray.utils import styles as su
-from netspeedtray.utils.components import Win11Toggle, SettingCard
+from netspeedtray.utils.components import Win11Toggle, SettingCard, Win11ComboBox
 from netspeedtray.views.settings.pages._fluent import section_header, page_layout
 
 
@@ -36,7 +36,7 @@ class WidgetPage(QWidget):
 
         # --- Display mode ---
         layout.addWidget(section_header(self.i18n.WIDGET_DISPLAY_MODE_LABEL))
-        self.display_mode_combo = QComboBox()
+        self.display_mode_combo = Win11ComboBox()
         self.display_mode_combo.addItem(self.i18n.DISPLAY_MODE_NETWORK, userData="network_only")
         self.display_mode_combo.addItem(self.i18n.DISPLAY_MODE_COMBINED, userData="side_by_side")
         self.display_mode_combo.addItem(self.i18n.DISPLAY_MODE_STACKED_COLUMN, userData="side_by_stack")
@@ -53,7 +53,7 @@ class WidgetPage(QWidget):
         layout.addWidget(section_header(self.i18n.WIDGET_DISPLAY_ORDER_LABEL))
         self.pos_combos: List[QComboBox] = []
         for i in range(3):
-            combo = QComboBox()
+            combo = Win11ComboBox()
             combo.addItem(self.i18n.ORDER_TYPE_NETWORK, userData="network")
             combo.addItem(self.i18n.ORDER_TYPE_CPU, userData="cpu")
             combo.addItem(self.i18n.ORDER_TYPE_GPU, userData="gpu")
