@@ -3,7 +3,10 @@ HardwareActivityWorker — per-process CPU / RAM / GPU sampler for the Monitor's
 
 Honest, admin-free, and every number measured (not estimated):
   * CPU%  — psutil per-process, summed across a program's PIDs, normalised to total-CPU (0-100%).
-  * RAM   — psutil RSS, summed across PIDs.
+  * RAM   — psutil USS (Unique Set Size = private resident memory), summed across PIDs. This is what
+            Task Manager's "Memory" column shows; rss would double-count shared DLLs across a
+            multi-process app and read 2-3x high. USS is heavier to read, so it's refreshed every
+            ~6s (every 3rd poll) and cached, while CPU%/GPU% stay on the 2s cadence.
   * GPU%  — Windows PDH "\GPU Engine(*)\Utilization Percentage", parsed pid_<PID>_..._engtype_ and
             reduced with MAX across that PID's engines — the per-engine busy fractions overlap in the
             same wall-clock interval (a frame uses 3D + Copy + Video at once) so they are NOT
@@ -47,18 +50,33 @@ class HardwareActivityWorker(QObject):
     data_ready = pyqtSignal(object)
     error = pyqtSignal(str)
 
+    #: Reading USS (memory_full_info) for every process is ~2.5x the cost of a plain rss sweep, but
+    #: memory moves slowly — so refresh it only every Nth poll and cache it between (CPU%/GPU% still
+    #: update every poll). With the feed's 2s cadence that's a USS refresh roughly every 6s.
+    _USS_EVERY_N_POLLS: int = 3
+
     def __init__(self) -> None:
         super().__init__()
         self.logger = logging.getLogger("NetSpeedTray.HardwareActivityWorker")
         self._cpu_count = psutil.cpu_count(logical=True) or 1
         self._gpu_query = None
         self._gpu_counter = None
+        self._poll_count = 0
+        self._uss_cache: Dict[str, int] = {}   # identity_key -> summed USS, refreshed every Nth poll
 
     @pyqtSlot()
     def sample(self) -> None:
         try:
             gpu_by_pid = self._sample_gpu_by_pid()
             agg: Dict[str, Dict[str, Any]] = defaultdict(self._new_agg)
+
+            # USS (Unique Set Size) = a process's private *resident* memory — exactly what Task Manager's
+            # "Memory" column shows. rss (the full working set) includes shared DLLs, so summing it across
+            # a multi-process app's children (Code's 16 procs) double-counts the shared pages and reads
+            # 2-3x high. USS is ~2.5x heavier to read, so we only refresh it every Nth poll and cache it;
+            # the first poll always refreshes so memory is correct on the very first emit.
+            self._poll_count += 1
+            refresh_uss = (self._poll_count == 1) or (self._poll_count % self._USS_EVERY_N_POLLS == 0)
 
             for proc in psutil.process_iter(["pid", "name"]):
                 try:
@@ -67,12 +85,15 @@ class HardwareActivityWorker(QObject):
                     if pid in _SKIP_PIDS or name.casefold() in _SKIP_NAMES:
                         continue
                     cpu = proc.cpu_percent(None)          # delta on psutil's cached Process object
-                    # Private working set (like Task Manager's "Memory"), NOT rss: rss is the full
-                    # working set incl. shared DLLs, so summing it across a multi-process app's children
-                    # (e.g. Code's 14 procs) double-counts the shared pages and massively inflates the
-                    # total. `private` is fast (it's in memory_info) and excludes shared pages.
-                    mi = proc.memory_info()
-                    rss = getattr(mi, "private", None) or mi.rss
+                    uss = None
+                    if refresh_uss:
+                        try:
+                            fi = proc.memory_full_info()
+                            rss, uss = fi.rss, fi.uss     # one call yields both; uss is the displayed value
+                        except (psutil.AccessDenied, OSError):
+                            rss = proc.memory_info().rss  # USS denied (protected proc) → fall back to rss
+                    else:
+                        rss = proc.memory_info().rss      # cheap; only used if this name has no cached USS
                 except (psutil.NoSuchProcess, psutil.ZombieProcess, psutil.AccessDenied, OSError):
                     continue
                 a = agg[name.casefold()]
@@ -81,6 +102,15 @@ class HardwareActivityWorker(QObject):
                 a["cpu"] += float(cpu)
                 a["rss"] += int(rss)
                 a["gpu"] += float(gpu_by_pid.get(pid, 0.0))
+                if uss is not None:
+                    a["uss"] += uss
+                    a["has_uss"] = True
+
+            # Rebuild the per-program USS cache from this sweep (drops names that have gone away, so it
+            # can't grow unbounded). Between refreshes the cached value is reused; it lags by ≤6s, which
+            # is invisible for slow-moving memory.
+            if refresh_uss:
+                self._uss_cache = {k: a["uss"] for k, a in agg.items() if a.get("has_uss")}
 
             rows = []
             for key, a in agg.items():
@@ -90,7 +120,7 @@ class HardwareActivityWorker(QObject):
                     "pids": sorted(a["pids"]),
                     # Normalise summed-across-cores CPU to a 0-100% share of the whole CPU.
                     "cpu_pct": min(100.0, a["cpu"] / self._cpu_count),
-                    "rss_bytes": a["rss"],
+                    "rss_bytes": self._uss_cache.get(key, a["rss"]),  # accurate USS if cached, else rss
                     "gpu_pct": min(100.0, a["gpu"]),   # max-of-engines is already 0-100; clamp is belt-and-braces
                 })
             rows.sort(key=lambda r: (-r["cpu_pct"], -r["gpu_pct"], r["display_name"].casefold()))
@@ -110,7 +140,8 @@ class HardwareActivityWorker(QObject):
 
     @staticmethod
     def _new_agg() -> Dict[str, Any]:
-        return {"display_name": "", "pids": set(), "cpu": 0.0, "rss": 0, "gpu": 0.0}
+        return {"display_name": "", "pids": set(), "cpu": 0.0, "rss": 0, "gpu": 0.0,
+                "uss": 0, "has_uss": False}
 
     # --- GPU% via PDH (per the verified spike) ----------------------------------
     def _ensure_gpu_query(self) -> None:

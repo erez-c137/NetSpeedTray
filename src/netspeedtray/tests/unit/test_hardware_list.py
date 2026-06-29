@@ -30,6 +30,11 @@ class _FakeProc:
     def memory_info(self):
         return types.SimpleNamespace(rss=self._rss)
 
+    def memory_full_info(self):
+        # Real psutil exposes USS here; the worker prefers it (matches Task Manager). The mock's rss
+        # doubles as uss so the existing summed-memory assertions stay valid.
+        return types.SimpleNamespace(rss=self._rss, uss=self._rss)
+
 
 def _hrow(name, cpu, rss=0, gpu=0.0):
     return {"identity_key": name.casefold(), "display_name": name,
