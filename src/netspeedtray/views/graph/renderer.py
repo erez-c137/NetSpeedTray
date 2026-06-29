@@ -783,6 +783,16 @@ class GraphRenderer(QObject):
                               alpha=constants.graph.GRID_ALPHA, color=self._current_grid_color)
         self.ax_download.set_position([0.10, 0.15, 0.88, 0.80])
 
+    def _hw_xlim(self, period_key, start_time, end_time, ts_min, ts_max):
+        """X-limits for a hardware plot. For the SESSION view, tight-fit to the actual data so the
+        graph doesn't show an empty gap before hardware collection began — hardware history only exists
+        from when monitoring turned on, which is usually later than app-start (e.g. when the Monitor was
+        opened). Mirrors the network renderer's SESSION handling so both surfaces behave identically."""
+        if period_key == "TIMELINE_SESSION":
+            return datetime.fromtimestamp(ts_min), datetime.fromtimestamp(ts_max)
+        return ((start_time or datetime.fromtimestamp(ts_min)),
+                (end_time or datetime.fromtimestamp(ts_max)))
+
     def _render_hwcombined(self, data_dict, start_time, end_time, period_key, hw_styles=None):
         """Plots CPU + GPU on one 0-100% axis: CPU solid, GPU dashed, vendor-coloured, with a legend.
         Two lines, no fills — overlapping gradient fills would muddy a shared axis."""
@@ -841,8 +851,8 @@ class GraphRenderer(QObject):
         
         # X-Axis limits
         if len(timestamps) > 0:
-            xlim_start = start_time or datetime.fromtimestamp(timestamps.min())
-            xlim_end = end_time or datetime.fromtimestamp(timestamps.max())
+            xlim_start, xlim_end = self._hw_xlim(period_key, start_time, end_time,
+                                                 timestamps.min(), timestamps.max())
             self.ax_download.set_xlim(xlim_start, xlim_end)
 
         # Hardware / hwcombined plot on ax_download (ax_upload hidden) — format the visible axis.
@@ -930,8 +940,7 @@ class GraphRenderer(QObject):
                              color=self._current_text_color, alpha=0.55, fontsize=10)
             return
         merged = np.concatenate(all_ts)
-        xs = start_time or datetime.fromtimestamp(merged.min())
-        xe = end_time or datetime.fromtimestamp(merged.max())
+        xs, xe = self._hw_xlim(period_key, start_time, end_time, merged.min(), merged.max())
         self.ax_cpu.set_xlim(xs, xe)   # sharex propagates to ax_gpu
         self._configure_xaxis_format(period_key, axis=self.ax_gpu)
 
@@ -956,8 +965,7 @@ class GraphRenderer(QObject):
         color, _ls = styles.get(stat_type) or hv.graph_line_style(stat_type)   # solid for a lone line
         ax.plot(dts, ys, color=color, linewidth=1.5, zorder=10)
 
-        xs = start_time or datetime.fromtimestamp(timestamps.min())
-        xe = end_time or datetime.fromtimestamp(timestamps.max())
+        xs, xe = self._hw_xlim(period_key, start_time, end_time, timestamps.min(), timestamps.max())
         ax.set_xlim(xs, xe)
         self._configure_xaxis_format(period_key, axis=ax)
         # After _configure_xaxis_format (and unlike _configure_hardware_axes, this never forces 0-100),
