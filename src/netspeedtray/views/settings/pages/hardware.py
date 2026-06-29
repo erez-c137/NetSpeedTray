@@ -4,7 +4,7 @@ Hardware Monitoring Settings Page.
 from typing import Dict, Any, Callable
 
 from PyQt6.QtCore import pyqtSignal
-from PyQt6.QtWidgets import QWidget, QComboBox, QLabel
+from PyQt6.QtWidgets import QWidget, QComboBox, QLabel, QGraphicsOpacityEffect
 
 from netspeedtray import constants
 from netspeedtray.utils import styles as su
@@ -50,11 +50,13 @@ class HardwarePage(QWidget):
 
         self.show_temps = Win11Toggle(label_text="")
         self.show_temps.toggled.connect(self.on_change)
-        layout.addWidget(SettingCard(self.i18n.SHOW_HARDWARE_TEMPS_LABEL, control=self.show_temps))
+        self._temps_card = SettingCard(self.i18n.SHOW_HARDWARE_TEMPS_LABEL, control=self.show_temps)
+        layout.addWidget(self._temps_card)
 
         self.show_power = Win11Toggle(label_text="")
         self.show_power.toggled.connect(self.on_change)
-        layout.addWidget(SettingCard(self.i18n.SHOW_HARDWARE_POWER_LABEL, control=self.show_power))
+        self._power_card = SettingCard(self.i18n.SHOW_HARDWARE_POWER_LABEL, control=self.show_power)
+        layout.addWidget(self._power_card)
 
         temps_note = QLabel(self.i18n.HARDWARE_TEMPS_LIMITATION_NOTE)
         temps_note.setWordWrap(True)
@@ -139,6 +141,9 @@ class HardwarePage(QWidget):
         self.monitor_vram.blockSignals(False)
         self.show_temps.blockSignals(False)
         self.show_power.blockSignals(False)
+        # Signals were blocked above, so _on_monitor_toggled never fired — sync the dependent
+        # (temp/power) cards' enabled state to the just-loaded CPU/GPU monitor values directly.
+        self._sync_dependent_cards()
         # widget_display_mode / widget_display_order are loaded by the Widget page now.
 
         d = constants.config.defaults
@@ -153,7 +158,27 @@ class HardwarePage(QWidget):
         lives on the Widget page, so this page only signals intent."""
         if checked:
             self.hardware_enabled.emit()
+        self._sync_dependent_cards()
         self.on_change()
+
+    def _set_card_enabled(self, card: SettingCard, enabled: bool) -> None:
+        """Gray out a dependent card when its prerequisite is off. setEnabled alone won't visually dim
+        our fixed-colour custom toggle, so pair it with an opacity effect for the Win11 'unavailable'
+        look (and to make the card non-interactive)."""
+        card.setEnabled(enabled)
+        eff = card.graphicsEffect()
+        if not isinstance(eff, QGraphicsOpacityEffect):
+            eff = QGraphicsOpacityEffect(card)
+            card.setGraphicsEffect(eff)
+        eff.setOpacity(1.0 if enabled else 0.4)
+
+    def _sync_dependent_cards(self) -> None:
+        """Temperature & power are drawn appended to the CPU/GPU utilisation readout, so with BOTH of
+        those monitors off there is nowhere for them to render — gray them out so the toggles can't
+        promise something that never shows (Win11 dependent-control pattern)."""
+        has_util = self.monitor_cpu.isChecked() or self.monitor_gpu.isChecked()
+        self._set_card_enabled(self._temps_card, has_util)
+        self._set_card_enabled(self._power_card, has_util)
 
     def get_settings(self) -> Dict[str, Any]:
         return {

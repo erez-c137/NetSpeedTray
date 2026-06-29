@@ -148,7 +148,10 @@ class SettingsDialog(QDialog):
         if screen:
             avail = screen.availableGeometry()
             width = min(desired_w, avail.width() - 80)
-            height = min(700, avail.height() - 80)
+            # Open just tall enough for the short/moderate pages (General/Widget/Advanced ≈ 720px incl.
+            # chrome) without scrolling, while staying compact. The genuinely long pages (Network,
+            # Appearance) have too many options to ever fit a sane window, so they scroll by design.
+            height = min(740, avail.height() - 80)
             self.resize(max(640, width), max(450, height))
             # Restore the last-used position (clamped to this screen); else center.
             if not restore_window_position(self, self.config, "settings_window_pos"):

@@ -67,7 +67,12 @@ class HardwareActivityWorker(QObject):
                     if pid in _SKIP_PIDS or name.casefold() in _SKIP_NAMES:
                         continue
                     cpu = proc.cpu_percent(None)          # delta on psutil's cached Process object
-                    rss = proc.memory_info().rss
+                    # Private working set (like Task Manager's "Memory"), NOT rss: rss is the full
+                    # working set incl. shared DLLs, so summing it across a multi-process app's children
+                    # (e.g. Code's 14 procs) double-counts the shared pages and massively inflates the
+                    # total. `private` is fast (it's in memory_info) and excludes shared pages.
+                    mi = proc.memory_info()
+                    rss = getattr(mi, "private", None) or mi.rss
                 except (psutil.NoSuchProcess, psutil.ZombieProcess, psutil.AccessDenied, OSError):
                     continue
                 a = agg[name.casefold()]
