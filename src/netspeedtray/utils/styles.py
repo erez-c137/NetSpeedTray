@@ -286,29 +286,32 @@ def dialog_style() -> str:
             padding: 2px;
         }}
 
-        /* Thin, rounded, subtle overlay scrollbars (were fat default Qt bars). */
+        /* Thin Win11-style overlay scrollbars: a ~6px rounded handle in a narrow transparent track,
+           no arrow buttons (the fat Qt default with arrows read as "not native"). */
         QScrollBar:vertical {{
             background: transparent;
-            width: 10px;
+            width: 8px;
             margin: 0px;
         }}
         QScrollBar::handle:vertical {{
             background: {scroll_handle};
-            border-radius: 5px;
-            min-height: 28px;
+            border-radius: 3px;
+            min-height: 32px;
+            margin: 0px 1px;
         }}
         QScrollBar::handle:vertical:hover {{
             background: {scroll_handle_hover};
         }}
         QScrollBar:horizontal {{
             background: transparent;
-            height: 10px;
+            height: 8px;
             margin: 0px;
         }}
         QScrollBar::handle:horizontal {{
             background: {scroll_handle};
-            border-radius: 5px;
-            min-width: 28px;
+            border-radius: 3px;
+            min-width: 32px;
+            margin: 1px 0px;
         }}
         QScrollBar::handle:horizontal:hover {{
             background: {scroll_handle_hover};
@@ -363,6 +366,9 @@ def sidebar_style() -> str:
     # Win11 NavigationView selection: a subtle fill + a short accent indicator bar, NOT a saturated
     # full-bleed accent block; hover is the same subtle fill (not an opaque grey).
     subtle_fill = style_constants.SUBTLE_FILL_DARK if dark_mode_active else style_constants.SUBTLE_FILL_LIGHT
+    # The selected nav row uses the SAME fill as the cards so the whole UI reads as exactly two tones:
+    # a dark base (window + sidebar) and a lighter surface (cards + the selected row).
+    card_bg = style_constants.CARD_BG_DARK if dark_mode_active else style_constants.CARD_BG_LIGHT
 
     accent_qcolor = get_accent_color()
     accent_rgb = f"rgb({accent_qcolor.red()}, {accent_qcolor.green()}, {accent_qcolor.blue()})"
@@ -387,7 +393,7 @@ def sidebar_style() -> str:
             outline: none;
         }}
         QListWidget::item:selected {{
-            background-color: {subtle_fill};
+            background-color: {card_bg};
             color: {text_color};
             border-left: 3px solid {accent_rgb};
             border-radius: 4px;
