@@ -419,5 +419,12 @@
     "STATS_DETAIL_EXPORT_SAVE": "Сохранить экспорт",
     "STATS_DETAIL_EXPORT_ZIP_LABEL": "ZIP-архив",
     "LANGUAGE_AUTO_DETECT": "Автоопределение (система)",
-    "SETTINGS_SAVE_FAILED": "Не удалось сохранить настройки — одна из страниц настроек не предоставила свои значения, поэтому изменения не были применены. Подробности см. в журнале."
+    "SETTINGS_SAVE_FAILED": "Не удалось сохранить настройки — одна из страниц настроек не предоставила свои значения, поэтому изменения не были применены. Подробности см. в журнале.",
+    "INTERACTION_GROUP_TITLE": "Взаимодействие",
+    "DOUBLE_CLICK_ACTION_LABEL": "Действие двойного щелчка",
+    "MIDDLE_CLICK_ACTION_LABEL": "Действие средней кнопки",
+    "CLICK_ACTION_OPEN_MONITOR_LABEL": "Открыть Монитор",
+    "CLICK_ACTION_SETTINGS_LABEL": "Открыть Настройки",
+    "CLICK_ACTION_PAUSE_LABEL": "Пауза / Возобновить",
+    "CLICK_ACTION_NONE_LABEL": "Ничего"
 }

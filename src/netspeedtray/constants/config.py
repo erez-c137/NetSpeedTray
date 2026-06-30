@@ -80,7 +80,26 @@ class ConfigConstants:
     DEFAULT_TRAY_OFFSET_Y: Final[int] = 3
     DEFAULT_LEGEND_POSITION: Final[str] = data.legend_position.DEFAULT_LEGEND_POSITION
     DEFAULT_SHOW_LEGEND: Final[bool] = False
-    
+
+    # --- Configurable widget click actions (community PR #165, thanks @rami123) ---
+    # Rami's PR was authored against the pre-2.0 app, so its actions were "show_graph" /
+    # "show_app_activity". Those windows were folded into the unified Monitor for 2.0, so the
+    # action set is adapted here: Open Monitor / Open Settings / Pause-Resume / Nothing.
+    CLICK_ACTION_NONE: Final[str] = "none"
+    CLICK_ACTION_OPEN_MONITOR: Final[str] = "open_monitor"
+    CLICK_ACTION_SETTINGS: Final[str] = "settings"
+    CLICK_ACTION_PAUSE: Final[str] = "pause_resume"
+    CLICK_ACTION_CHOICES: Final[List[str]] = [
+        CLICK_ACTION_OPEN_MONITOR,
+        CLICK_ACTION_SETTINGS,
+        CLICK_ACTION_PAUSE,
+        CLICK_ACTION_NONE,
+    ]
+    # Defaults preserve existing behaviour: double-click already opened the Monitor; middle-click
+    # did nothing, so it stays "Nothing" until a user opts in.
+    DEFAULT_DOUBLE_CLICK_ACTION: Final[str] = CLICK_ACTION_OPEN_MONITOR
+    DEFAULT_MIDDLE_CLICK_ACTION: Final[str] = CLICK_ACTION_NONE
+
     # --- CPU/GPU Monitoring ---
     DEFAULT_MONITOR_CPU_ENABLED: Final[bool] = False
     DEFAULT_MONITOR_GPU_ENABLED: Final[bool] = False
@@ -137,6 +156,8 @@ class ConfigConstants:
         "decimal_places": DEFAULT_DECIMAL_PLACES,
         "text_alignment": DEFAULT_TEXT_ALIGNMENT,
         "free_move": DEFAULT_FREE_MOVE,
+        "double_click_action": DEFAULT_DOUBLE_CLICK_ACTION,
+        "middle_click_action": DEFAULT_MIDDLE_CLICK_ACTION,
         "hardware_label_style": DEFAULT_HARDWARE_LABEL_STYLE,
         "keep_visible_fullscreen": DEFAULT_KEEP_VISIBLE_FULLSCREEN,
         "force_decimals": DEFAULT_FORCE_DECIMALS,
@@ -262,6 +283,8 @@ class ConfigConstants:
         "arrow_up_symbol": {"type": str, "default": ""},
         "arrow_down_symbol": {"type": str, "default": ""},
         "free_move": {"type": bool, "default": DEFAULT_FREE_MOVE},
+        "double_click_action": {"type": str, "default": DEFAULT_DOUBLE_CLICK_ACTION, "choices": CLICK_ACTION_CHOICES},
+        "middle_click_action": {"type": str, "default": DEFAULT_MIDDLE_CLICK_ACTION, "choices": CLICK_ACTION_CHOICES},
         "hardware_label_style": {"type": str, "default": DEFAULT_HARDWARE_LABEL_STYLE, "choices": ["icons_colored", "icons_monochrome", "text"]},
         "keep_visible_fullscreen": {"type": bool, "default": DEFAULT_KEEP_VISIBLE_FULLSCREEN},
         "force_decimals": {"type": bool, "default": DEFAULT_FORCE_DECIMALS},
@@ -272,7 +295,9 @@ class ConfigConstants:
         "background_color": {"type": str, "default": DEFAULT_BACKGROUND_COLOR, "regex": r"#[0-9a-fA-F]{6}"},
         "background_opacity": {"type": int, "default": DEFAULT_BACKGROUND_OPACITY, "min": 0, "max": 100},
         "short_unit_labels": {"type": bool, "default": DEFAULT_SHORT_UNIT_LABELS},
-        "tray_offset_x": {"type": int, "default": DEFAULT_TRAY_OFFSET_X, "min": 0, "max": 500},
+        # min is negative (PR #165, @rami123): dragging the widget right of the tray boundary produces a
+        # negative offset; clamping it to 0 snapped the widget back left on the next reposition.
+        "tray_offset_x": {"type": int, "default": DEFAULT_TRAY_OFFSET_X, "min": -500, "max": 500},
         "tray_offset_y": {"type": int, "default": DEFAULT_TRAY_OFFSET_Y, "min": 0, "max": 500},
         "graph_window_pos": {"type": (dict, type(None)), "default": None},
         "settings_window_pos": {"type": (dict, type(None)), "default": None},

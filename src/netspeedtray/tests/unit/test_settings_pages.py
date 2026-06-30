@@ -46,7 +46,33 @@ def mock_i18n():
     i18n.HIGH_SPEED_COLOR_TOOLTIP = "Select High Color"
     i18n.LOW_SPEED_COLOR_LABEL = "Low Color"
     i18n.LOW_SPEED_COLOR_TOOLTIP = "Select Low Color"
-    i18n.MBITS_UNIT = "Mbps"  # threshold spin-box suffix
+    i18n.MBITS_UNIT = "Mbps"  # threshold spin-box suffix (legacy key)
+
+    # Unit labels for get_unit_labels_for_type — the Colors threshold suffix (PR #165) + Units page
+    # resolve these. The unit constants store their own key-name as value, so getattr(i18n, "MBITS_LABEL")
+    # is what the helper requests. Mega-position labels get realistic units so the suffix is assertable.
+    _units = constants.network.units
+    _unit_label_values = {
+        "BITS_LABEL": "bps", "KBITS_LABEL": "Kbps", "MBITS_LABEL": "Mbps", "GBITS_LABEL": "Gbps",
+        "KIBITS_LABEL": "Kibps", "MIBITS_LABEL": "Mibps", "GIBITS_LABEL": "Gibps",
+        "BPS_LABEL": "B/s", "KBPS_LABEL": "KB/s", "MBPS_LABEL": "MB/s", "GBPS_LABEL": "GB/s",
+        "BIBPS_LABEL": "B/s", "KIBPS_LABEL": "KiB/s", "MIBPS_LABEL": "MiB/s", "GIBPS_LABEL": "GiB/s",
+    }
+    for _attr in dir(_units):
+        if _attr.endswith("_LABEL"):
+            _key = getattr(_units, _attr)
+            if isinstance(_key, str):
+                setattr(i18n, _key, _unit_label_values.get(_key, _key))
+
+    # Click actions (PR #165) — General page reads these via getattr-with-default, so they're optional;
+    # set them so the rendered combos carry readable labels.
+    i18n.INTERACTION_GROUP_TITLE = "Interaction"
+    i18n.DOUBLE_CLICK_ACTION_LABEL = "Double-click action"
+    i18n.MIDDLE_CLICK_ACTION_LABEL = "Middle-click action"
+    i18n.CLICK_ACTION_OPEN_MONITOR_LABEL = "Open Monitor"
+    i18n.CLICK_ACTION_SETTINGS_LABEL = "Open Settings"
+    i18n.CLICK_ACTION_PAUSE_LABEL = "Pause / Resume"
+    i18n.CLICK_ACTION_NONE_LABEL = "Nothing"
     i18n.MINI_GRAPH_SETTINGS_GROUP = "Graph"
     i18n.ENABLE_GRAPH_LABEL = "Enable"
     i18n.GRAPH_NOTE_TEXT = "Note"
@@ -170,6 +196,45 @@ def test_language_none_round_trips_as_auto_detect(q_app, mock_i18n, mock_callbac
     # An explicit language still selects + returns its own code
     page.load_settings({"language": "fr_FR", "update_rate": 1.0}, is_startup_enabled=False)
     assert page.get_settings()["language"] == "fr_FR"
+
+def test_general_click_actions_round_trip(q_app, mock_i18n, mock_callback):
+    """#165: double/middle-click actions load + save through the General page."""
+    page = GeneralPage(mock_i18n, mock_callback)
+
+    # Defaults when the config omits them: double-click=open_monitor, middle-click=none.
+    page.load_settings({"language": None, "update_rate": 1.0}, is_startup_enabled=False)
+    s = page.get_settings()
+    assert s["double_click_action"] == constants.config.defaults.DEFAULT_DOUBLE_CLICK_ACTION
+    assert s["middle_click_action"] == constants.config.defaults.DEFAULT_MIDDLE_CLICK_ACTION
+
+    # Explicit values round-trip.
+    page.load_settings(
+        {"language": None, "update_rate": 1.0,
+         "double_click_action": "settings", "middle_click_action": "pause_resume"},
+        is_startup_enabled=False)
+    s = page.get_settings()
+    assert s["double_click_action"] == "settings"
+    assert s["middle_click_action"] == "pause_resume"
+
+
+def test_colors_threshold_suffix_follows_unit_type(q_app, mock_i18n, mock_callback):
+    """#165: the threshold spin-box suffix tracks the active unit type (was hardcoded ' Mbps')."""
+    color_cb = MagicMock()
+    page = ColorsPage(mock_i18n, mock_callback, color_cb)
+
+    base = {"color_coding": True, "high_speed_threshold": 50, "low_speed_threshold": 10,
+            "high_speed_color": "#00FF00", "low_speed_color": "#FFFF00"}
+
+    page.load_settings({**base, "unit_type": "bits_decimal"})
+    assert page.high_speed_threshold.suffix() == " Mbps"
+
+    page.load_settings({**base, "unit_type": "bytes_decimal"})
+    assert page.high_speed_threshold.suffix() == " MB/s"
+    assert page.low_speed_threshold.suffix() == " MB/s"
+
+    page.load_settings({**base, "unit_type": "bits_binary"})
+    assert page.high_speed_threshold.suffix() == " Mibps"
+
 
 def test_appearance_page(q_app, mock_i18n, mock_callback):
     """Test AppearancePage."""

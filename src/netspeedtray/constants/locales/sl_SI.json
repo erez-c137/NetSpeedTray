@@ -419,5 +419,12 @@
     "STATS_DETAIL_EXPORT_SAVE": "Shrani izvoz",
     "STATS_DETAIL_EXPORT_ZIP_LABEL": "Arhiv ZIP",
     "LANGUAGE_AUTO_DETECT": "Samodejno zaznaj (sistem)",
-    "SETTINGS_SAVE_FAILED": "Nastavitev ni bilo mogoče shraniti – stran z nastavitvami ni posredovala svojih vrednosti, zato spremembe niso bile uveljavljene. Za podrobnosti glejte dnevnik."
+    "SETTINGS_SAVE_FAILED": "Nastavitev ni bilo mogoče shraniti – stran z nastavitvami ni posredovala svojih vrednosti, zato spremembe niso bile uveljavljene. Za podrobnosti glejte dnevnik.",
+    "INTERACTION_GROUP_TITLE": "Interakcija",
+    "DOUBLE_CLICK_ACTION_LABEL": "Dejanje ob dvojnem kliku",
+    "MIDDLE_CLICK_ACTION_LABEL": "Dejanje ob srednjem kliku",
+    "CLICK_ACTION_OPEN_MONITOR_LABEL": "Odpri Monitor",
+    "CLICK_ACTION_SETTINGS_LABEL": "Odpri Nastavitve",
+    "CLICK_ACTION_PAUSE_LABEL": "Premor / Nadaljuj",
+    "CLICK_ACTION_NONE_LABEL": "Nič"
 }

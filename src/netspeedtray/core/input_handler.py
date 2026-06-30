@@ -40,10 +40,18 @@ class InputHandler(QObject):
         self._is_dragging: bool = False
 
     def handle_mouse_press(self, event: QMouseEvent) -> None:
-        """Handles mouse press start."""
+        """Handles mouse press start (left = drag; middle = configurable click action)."""
         if event.button() == Qt.MouseButton.LeftButton:
             self._drag_start_pos = event.globalPosition().toPoint() - self.widget.pos()
             self._is_dragging = False # Waiting for move to confirm drag
+            event.accept()
+        elif event.button() == Qt.MouseButton.MiddleButton:
+            # Configurable middle-click action (community PR #165, @rami123). Defaults to "Nothing",
+            # so middle-click stays a no-op unless the user opts in via Settings → General.
+            action = self.widget.config.get(
+                "middle_click_action", constants.config.defaults.DEFAULT_MIDDLE_CLICK_ACTION)
+            self.logger.debug("Middle-click detected. Running action: %s", action)
+            self._execute_click_action(action)
             event.accept()
 
     def handle_mouse_move(self, event: QMouseEvent) -> None:
@@ -83,12 +91,40 @@ class InputHandler(QObject):
             event.accept()
 
     def handle_double_click(self, event: QMouseEvent) -> None:
-        """Handles double-click (open the unified Monitor)."""
+        """Handles double-click via the configured action (default: open the unified Monitor)."""
         if event.button() == Qt.MouseButton.LeftButton:
-            self.logger.debug("Double-click detected. Opening the Monitor.")
-            if hasattr(self.widget, 'open_monitor_window'):
-                self.widget.open_monitor_window()
+            action = self.widget.config.get(
+                "double_click_action", constants.config.defaults.DEFAULT_DOUBLE_CLICK_ACTION)
+            self.logger.debug("Double-click detected. Running action: %s", action)
+            self._execute_click_action(action)
             event.accept()
+
+    def _execute_click_action(self, action: str) -> None:
+        """
+        Run a configured widget click action (community PR #165, @rami123 — adapted to the 2.0
+        action set). Unknown/empty actions and "none" are silent no-ops.
+        """
+        defaults = constants.config.defaults
+        try:
+            if not action or action == defaults.CLICK_ACTION_NONE:
+                return
+            if action == defaults.CLICK_ACTION_OPEN_MONITOR:
+                if hasattr(self.widget, "open_monitor_window"):
+                    self.widget.open_monitor_window()
+            elif action == defaults.CLICK_ACTION_SETTINGS:
+                if hasattr(self.widget, "show_settings"):
+                    self.widget.show_settings()
+            elif action == defaults.CLICK_ACTION_PAUSE:
+                # The widget exposes pause()/resume() + an is_paused flag (no single toggle method).
+                if getattr(self.widget, "is_paused", False):
+                    if hasattr(self.widget, "resume"):
+                        self.widget.resume()
+                elif hasattr(self.widget, "pause"):
+                    self.widget.pause()
+            else:
+                self.logger.debug("Unknown click action %r — ignoring.", action)
+        except Exception as e:
+            self.logger.error("Failed to run click action %r: %s", action, e, exc_info=True)
 
     def _save_dragged_position(self) -> None:
         """

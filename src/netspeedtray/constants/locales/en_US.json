@@ -419,5 +419,12 @@
     "STATS_DETAIL_EXPORT_SAVE": "Save export",
     "STATS_DETAIL_EXPORT_ZIP_LABEL": "Zip archive",
     "LANGUAGE_AUTO_DETECT": "Auto-detect (system)",
-    "SETTINGS_SAVE_FAILED": "Settings could not be saved — a settings page failed to provide its values, so your changes were not applied. See the log for details."
+    "SETTINGS_SAVE_FAILED": "Settings could not be saved — a settings page failed to provide its values, so your changes were not applied. See the log for details.",
+    "INTERACTION_GROUP_TITLE": "Interaction",
+    "DOUBLE_CLICK_ACTION_LABEL": "Double-click action",
+    "MIDDLE_CLICK_ACTION_LABEL": "Middle-click action",
+    "CLICK_ACTION_OPEN_MONITOR_LABEL": "Open Monitor",
+    "CLICK_ACTION_SETTINGS_LABEL": "Open Settings",
+    "CLICK_ACTION_PAUSE_LABEL": "Pause / Resume",
+    "CLICK_ACTION_NONE_LABEL": "Nothing"
 }

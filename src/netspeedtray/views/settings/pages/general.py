@@ -69,7 +69,42 @@ class GeneralPage(QWidget):
         self.preferred_monitor_combo.currentIndexChanged.connect(self.on_change)
         layout.addWidget(SettingCard(self.i18n.PREFERRED_MONITOR_LABEL, control=self.preferred_monitor_combo))
 
+        # --- Interaction (community PR #165, @rami123) ---
+        # What a double-click / middle-click on the taskbar widget does. Adapted to the 2.0 action
+        # set (the old Graph / App-Activity windows are now the unified Monitor).
+        layout.addWidget(section_header(getattr(self.i18n, "INTERACTION_GROUP_TITLE", "Interaction")))
+
+        self.double_click_action = Win11ComboBox()
+        self.double_click_action.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.double_click_action.setMinimumWidth(220)
+        self._populate_click_action_combo(self.double_click_action)
+        self.double_click_action.currentIndexChanged.connect(self.on_change)
+        layout.addWidget(SettingCard(
+            getattr(self.i18n, "DOUBLE_CLICK_ACTION_LABEL", "Double-click action"),
+            control=self.double_click_action))
+
+        self.middle_click_action = Win11ComboBox()
+        self.middle_click_action.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.middle_click_action.setMinimumWidth(220)
+        self._populate_click_action_combo(self.middle_click_action)
+        self.middle_click_action.currentIndexChanged.connect(self.on_change)
+        layout.addWidget(SettingCard(
+            getattr(self.i18n, "MIDDLE_CLICK_ACTION_LABEL", "Middle-click action"),
+            control=self.middle_click_action))
+
         layout.addStretch()
+
+    def _populate_click_action_combo(self, combo: Win11ComboBox) -> None:
+        """Fill a click-action dropdown with the 2.0 action set (value stored as userData)."""
+        defaults = constants.config.defaults
+        actions = [
+            (defaults.CLICK_ACTION_OPEN_MONITOR, getattr(self.i18n, "CLICK_ACTION_OPEN_MONITOR_LABEL", "Open Monitor")),
+            (defaults.CLICK_ACTION_SETTINGS, getattr(self.i18n, "CLICK_ACTION_SETTINGS_LABEL", "Open Settings")),
+            (defaults.CLICK_ACTION_PAUSE, getattr(self.i18n, "CLICK_ACTION_PAUSE_LABEL", "Pause / Resume")),
+            (defaults.CLICK_ACTION_NONE, getattr(self.i18n, "CLICK_ACTION_NONE_LABEL", "Nothing")),
+        ]
+        for value, label in actions:
+            combo.addItem(label, userData=value)
 
     def _populate_monitor_combo(self) -> None:
         """Fill the preferred-monitor dropdown with detected screens.
@@ -154,6 +189,17 @@ class GeneralPage(QWidget):
         idx = self.preferred_monitor_combo.findData(preferred_name)
         self.preferred_monitor_combo.setCurrentIndex(idx if idx >= 0 else 0)
 
+        # Click actions (#165) — select the saved action, falling back to the first row.
+        defaults = constants.config.defaults
+        self._select_click_action(
+            self.double_click_action, config.get("double_click_action", defaults.DEFAULT_DOUBLE_CLICK_ACTION))
+        self._select_click_action(
+            self.middle_click_action, config.get("middle_click_action", defaults.DEFAULT_MIDDLE_CLICK_ACTION))
+
+    def _select_click_action(self, combo: Win11ComboBox, value: str) -> None:
+        idx = combo.findData(value)
+        combo.setCurrentIndex(idx if idx >= 0 else 0)
+
     def get_settings(self) -> Dict[str, Any]:
         # Get slider position and convert to update_rate value
         slider_position = self.update_rate.value()
@@ -165,6 +211,8 @@ class GeneralPage(QWidget):
             "start_with_windows": self.start_with_windows.isChecked(),
             "check_for_updates": self.check_for_updates.isChecked(),
             "preferred_monitor": self.preferred_monitor_combo.currentData(),
+            "double_click_action": self.double_click_action.currentData(),
+            "middle_click_action": self.middle_click_action.currentData(),
             # free_move / keep_visible_fullscreen / tray_offset_x now live on the Widget page (2.0 IA).
         }
 

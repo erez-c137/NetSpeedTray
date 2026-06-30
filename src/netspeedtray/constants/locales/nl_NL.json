@@ -419,5 +419,12 @@
     "STATS_DETAIL_EXPORT_SAVE": "Export opslaan",
     "STATS_DETAIL_EXPORT_ZIP_LABEL": "Zip-archief",
     "LANGUAGE_AUTO_DETECT": "Automatisch detecteren (systeem)",
-    "SETTINGS_SAVE_FAILED": "Instellingen konden niet worden opgeslagen — een instellingenpagina kon zijn waarden niet leveren, dus je wijzigingen zijn niet toegepast. Zie het logboek voor meer details."
+    "SETTINGS_SAVE_FAILED": "Instellingen konden niet worden opgeslagen — een instellingenpagina kon zijn waarden niet leveren, dus je wijzigingen zijn niet toegepast. Zie het logboek voor meer details.",
+    "INTERACTION_GROUP_TITLE": "Interactie",
+    "DOUBLE_CLICK_ACTION_LABEL": "Actie bij dubbelklik",
+    "MIDDLE_CLICK_ACTION_LABEL": "Actie bij middelklik",
+    "CLICK_ACTION_OPEN_MONITOR_LABEL": "Monitor openen",
+    "CLICK_ACTION_SETTINGS_LABEL": "Instellingen openen",
+    "CLICK_ACTION_PAUSE_LABEL": "Pauzeren / Hervatten",
+    "CLICK_ACTION_NONE_LABEL": "Niets"
 }

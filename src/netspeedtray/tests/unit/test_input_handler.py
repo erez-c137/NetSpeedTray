@@ -49,20 +49,33 @@ class TestInputHandler(unittest.TestCase):
                 super().__init__()
                 self._dragging = False
                 self.config = {}
-                
+                self.is_paused = False
+
             def move(self, *args):
                 pass # Stub
-                
+
             def update_config(self, *args):
-                pass 
-                
+                pass
+
             def open_monitor_window(self):
+                pass
+
+            def show_settings(self):
+                pass
+
+            def pause(self):
+                pass
+
+            def resume(self):
                 pass
 
         self.mock_widget = MockWidget()
         self.mock_widget.move = MagicMock()
         self.mock_widget.update_config = MagicMock()
         self.mock_widget.open_monitor_window = MagicMock()
+        self.mock_widget.show_settings = MagicMock()
+        self.mock_widget.pause = MagicMock()
+        self.mock_widget.resume = MagicMock()
         # Set geometry so pos() returns something
         self.mock_widget.setGeometry(100, 100, 200, 50)
         
@@ -150,12 +163,71 @@ class TestInputHandler(unittest.TestCase):
         self.assertEqual(updates.get('position_x', 100), 100)
 
     def test_double_click_opens_monitor(self):
-        """Double-click opens the unified Monitor."""
+        """Double-click opens the unified Monitor (default action, empty config)."""
         event = self._create_mouse_event(button=Qt.MouseButton.LeftButton)
-        
+
         self.handler.handle_double_click(event)
-        
+
         self.mock_widget.open_monitor_window.assert_called_once()
+
+    # --- Configurable click actions (community PR #165, @rami123) ---
+
+    def test_double_click_respects_configured_action(self):
+        """A non-default double_click_action is honored (Settings instead of Monitor)."""
+        self.mock_widget.config = {"double_click_action": "settings"}
+        event = self._create_mouse_event(button=Qt.MouseButton.LeftButton)
+
+        self.handler.handle_double_click(event)
+
+        self.mock_widget.show_settings.assert_called_once()
+        self.mock_widget.open_monitor_window.assert_not_called()
+
+    def test_middle_click_runs_configured_action(self):
+        """Middle-click dispatches its configured action."""
+        self.mock_widget.config = {"middle_click_action": "open_monitor"}
+        event = self._create_mouse_event(button=Qt.MouseButton.MiddleButton)
+
+        self.handler.handle_mouse_press(event)
+
+        self.mock_widget.open_monitor_window.assert_called_once()
+        event.accept.assert_called_once()
+
+    def test_middle_click_default_is_noop(self):
+        """Middle-click defaults to 'Nothing' — nothing fires on an empty config."""
+        event = self._create_mouse_event(button=Qt.MouseButton.MiddleButton)
+
+        self.handler.handle_mouse_press(event)
+
+        self.mock_widget.open_monitor_window.assert_not_called()
+        self.mock_widget.show_settings.assert_not_called()
+        self.mock_widget.pause.assert_not_called()
+        event.accept.assert_called_once()
+
+    def test_pause_action_pauses_when_running(self):
+        """The pause_resume action calls pause() when the widget is running."""
+        self.mock_widget.is_paused = False
+        self.handler._execute_click_action("pause_resume")
+
+        self.mock_widget.pause.assert_called_once()
+        self.mock_widget.resume.assert_not_called()
+
+    def test_pause_action_resumes_when_paused(self):
+        """The pause_resume action calls resume() when the widget is already paused."""
+        self.mock_widget.is_paused = True
+        self.handler._execute_click_action("pause_resume")
+
+        self.mock_widget.resume.assert_called_once()
+        self.mock_widget.pause.assert_not_called()
+
+    def test_none_action_is_noop(self):
+        """The 'none' action does nothing and never raises."""
+        self.handler._execute_click_action("none")
+        self.handler._execute_click_action("")
+        self.handler._execute_click_action("bogus_unknown_action")
+
+        self.mock_widget.open_monitor_window.assert_not_called()
+        self.mock_widget.show_settings.assert_not_called()
+        self.mock_widget.pause.assert_not_called()
 
 if __name__ == '__main__':
     unittest.main()

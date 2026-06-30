@@ -7,8 +7,10 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit, QDoubleSpinBox,
 )
 
+from netspeedtray import constants
 from netspeedtray.constants.styles import styles as tokens
 from netspeedtray.utils.components import Win11Toggle, SettingCard
+from netspeedtray.utils.helpers import get_unit_labels_for_type
 from netspeedtray.views.settings.pages._fluent import section_header, page_layout
 
 class ColorsPage(QWidget):
@@ -43,7 +45,8 @@ class ColorsPage(QWidget):
         ]:
             spin = QDoubleSpinBox()
             spin.setRange(0, 10000)
-            spin.setSuffix(f" {self.i18n.MBITS_UNIT}")
+            # Suffix is set per the active unit type in load_settings (PR #165, @rami123): the old static
+            # " Mbps" was wrong whenever the widget was set to bytes or binary units (MB/s, Mibps, …).
             spin.setToolTip(getattr(self.i18n, f"{key.upper()}_THRESHOLD_TOOLTIP", ""))
             spin.setMinimumWidth(150)
             spin.valueChanged.connect(self.on_change)
@@ -75,14 +78,23 @@ class ColorsPage(QWidget):
     def load_settings(self, config: Dict[str, Any]):
         self.enable_colors.setChecked(bool(config.get("color_coding", False)))
         self.color_container.setVisible(self.enable_colors.isChecked())
-        
+
+        threshold_suffix = self._threshold_suffix(config)
         for key in ["high_speed", "low_speed"]:
             c = config.get(f"{key}_color", "#FFFFFF")
             getattr(self, f"{key}_color_button").setStyleSheet(f"background-color: {c}; border: 1px solid #5A5A5A; border-radius: 4px;")
             getattr(self, f"{key}_color_input").setText(c)
-            
+
             threshold = float(config.get(f"{key}_threshold", 5.0 if "high" in key else 1.0))
-            getattr(self, f"{key}_threshold").setValue(threshold)
+            threshold_spin = getattr(self, f"{key}_threshold")
+            threshold_spin.setSuffix(threshold_suffix)
+            threshold_spin.setValue(threshold)
+
+    def _threshold_suffix(self, config: Dict[str, Any]) -> str:
+        """The Mbps-position unit label for the active unit type (e.g. ' Mbps', ' MB/s', ' Mibps')."""
+        unit_type = str(config.get("unit_type", constants.config.defaults.DEFAULT_UNIT_TYPE))
+        labels = get_unit_labels_for_type(self.i18n, unit_type, short_labels=False)
+        return f" {labels[2]}"
 
     def get_settings(self) -> Dict[str, Any]:
         return {

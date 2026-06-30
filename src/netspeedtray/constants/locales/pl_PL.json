@@ -419,5 +419,12 @@
     "STATS_DETAIL_EXPORT_SAVE": "Zapisz eksport",
     "STATS_DETAIL_EXPORT_ZIP_LABEL": "Archiwum ZIP",
     "LANGUAGE_AUTO_DETECT": "Wykryj automatycznie (system)",
-    "SETTINGS_SAVE_FAILED": "Nie udało się zapisać ustawień — jedna ze stron ustawień nie dostarczyła swoich wartości, więc zmiany nie zostały zastosowane. Szczegóły znajdziesz w dzienniku."
+    "SETTINGS_SAVE_FAILED": "Nie udało się zapisać ustawień — jedna ze stron ustawień nie dostarczyła swoich wartości, więc zmiany nie zostały zastosowane. Szczegóły znajdziesz w dzienniku.",
+    "INTERACTION_GROUP_TITLE": "Interakcja",
+    "DOUBLE_CLICK_ACTION_LABEL": "Akcja podwójnego kliknięcia",
+    "MIDDLE_CLICK_ACTION_LABEL": "Akcja środkowego kliknięcia",
+    "CLICK_ACTION_OPEN_MONITOR_LABEL": "Otwórz Monitor",
+    "CLICK_ACTION_SETTINGS_LABEL": "Otwórz Ustawienia",
+    "CLICK_ACTION_PAUSE_LABEL": "Wstrzymaj / Wznów",
+    "CLICK_ACTION_NONE_LABEL": "Nic"
 }

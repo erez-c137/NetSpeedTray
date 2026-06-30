@@ -419,5 +419,12 @@
     "STATS_DETAIL_EXPORT_SAVE": "Export speichern",
     "STATS_DETAIL_EXPORT_ZIP_LABEL": "ZIP-Archiv",
     "LANGUAGE_AUTO_DETECT": "Automatisch (System)",
-    "SETTINGS_SAVE_FAILED": "Einstellungen konnten nicht gespeichert werden – eine Einstellungsseite konnte ihre Werte nicht bereitstellen, daher wurden Ihre Änderungen nicht übernommen. Weitere Informationen finden Sie im Protokoll."
+    "SETTINGS_SAVE_FAILED": "Einstellungen konnten nicht gespeichert werden – eine Einstellungsseite konnte ihre Werte nicht bereitstellen, daher wurden Ihre Änderungen nicht übernommen. Weitere Informationen finden Sie im Protokoll.",
+    "INTERACTION_GROUP_TITLE": "Interaktion",
+    "DOUBLE_CLICK_ACTION_LABEL": "Aktion bei Doppelklick",
+    "MIDDLE_CLICK_ACTION_LABEL": "Aktion bei mittlerer Maustaste",
+    "CLICK_ACTION_OPEN_MONITOR_LABEL": "Monitor öffnen",
+    "CLICK_ACTION_SETTINGS_LABEL": "Einstellungen öffnen",
+    "CLICK_ACTION_PAUSE_LABEL": "Pause / Fortsetzen",
+    "CLICK_ACTION_NONE_LABEL": "Nichts"
 }

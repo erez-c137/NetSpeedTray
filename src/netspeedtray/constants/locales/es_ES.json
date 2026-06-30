@@ -419,5 +419,12 @@
     "STATS_DETAIL_EXPORT_SAVE": "Guardar exportación",
     "STATS_DETAIL_EXPORT_ZIP_LABEL": "Archivo ZIP",
     "LANGUAGE_AUTO_DETECT": "Detección automática (sistema)",
-    "SETTINGS_SAVE_FAILED": "No se pudo guardar la configuración: una de las páginas no proporcionó sus valores, por lo que los cambios no se aplicaron. Consulta el registro para obtener más detalles."
+    "SETTINGS_SAVE_FAILED": "No se pudo guardar la configuración: una de las páginas no proporcionó sus valores, por lo que los cambios no se aplicaron. Consulta el registro para obtener más detalles.",
+    "INTERACTION_GROUP_TITLE": "Interacción",
+    "DOUBLE_CLICK_ACTION_LABEL": "Acción al hacer doble clic",
+    "MIDDLE_CLICK_ACTION_LABEL": "Acción del clic central",
+    "CLICK_ACTION_OPEN_MONITOR_LABEL": "Abrir Monitor",
+    "CLICK_ACTION_SETTINGS_LABEL": "Abrir Ajustes",
+    "CLICK_ACTION_PAUSE_LABEL": "Pausar / Reanudar",
+    "CLICK_ACTION_NONE_LABEL": "Nada"
 }
