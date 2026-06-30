@@ -1,7 +1,7 @@
 """
 Curated arrow-glyph presets for the speed readout (#129).
 
-Five styles that cover most tastes - all native, monochrome Unicode glyphs that render
+Six styles that cover most tastes - all native, monochrome Unicode glyphs that render
 reliably in Segoe UI (no emoji/color presentation), so they always feel like part of
 Windows. "Classic" is the default (empty config -> the i18n arrow, which is Classic).
 
