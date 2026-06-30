@@ -32,15 +32,20 @@ from netspeedtray.utils.config import ConfigManager, ConfigError
 from netspeedtray.utils.taskbar_utils import get_taskbar_height
 from netspeedtray.views.widget import NetworkSpeedWidget
 
+class AlreadyRunningError(RuntimeError):
+    """Raised when a second instance launches while one is already running. Distinct from a real
+    mutex failure so the caller can exit silently (no dialog) — a duplicate launch is a no-op."""
+
+
 class SingleInstanceChecker:
     """
     Ensures that only one instance of the application can run at a time using a system-wide mutex.
 
     This class is designed to be used as a context manager.
-    
+
     Raises:
-        RuntimeError: If another instance of the application is already running or if the
-                      mutex cannot be created.
+        AlreadyRunningError: If another instance is already running (caller exits silently).
+        RuntimeError: If the mutex itself cannot be created.
     """
     def __init__(self):
         self.mutex = None
@@ -48,8 +53,10 @@ class SingleInstanceChecker:
         try:
             self.mutex = win32event.CreateMutex(None, False, constants.app.MUTEX_NAME)
             if win32api.GetLastError() == winerror.ERROR_ALREADY_EXISTS:
-                self.logger.error("Another instance of NetSpeedTray is already running.")
-                raise RuntimeError("Application is already running.")
+                # Expected, not an error: a duplicate launch while the app is already running. Log it and
+                # let the caller exit quietly — no dialog (per design: re-launch is a silent no-op).
+                self.logger.info("NetSpeedTray is already running; this duplicate launch will exit quietly.")
+                raise AlreadyRunningError("Application is already running.")
         except win32api.error as e:
             self.logger.error("Failed to create mutex: %s", e)
             raise RuntimeError(f"Failed to create mutex: {e}") from e
@@ -204,6 +211,9 @@ def main() -> int:
             # 9. Start the application event loop.
             return app.exec()
 
+    except AlreadyRunningError:
+        # A second instance — exit silently with a clean code, no dialog (logged in the checker above).
+        return 0
     except Exception as e:
         # This is a global catch-all for any critical error during startup.
         logger.critical("A critical error occurred during startup: %s", e, exc_info=True)
