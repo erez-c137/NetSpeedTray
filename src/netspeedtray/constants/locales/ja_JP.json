@@ -416,8 +416,8 @@
     "CONN_PLAN_SUB": "プランを下回った時間を統計シートに表示します（0 = オフ）。",
     "CONN_PLAN_OFF": "オフ",
     "HW_THROTTLE_LABEL": "サーマルスロットリング温度（統計）",
-    "STATS_DETAIL_EXPORT_SAVE": "Save export",
-    "STATS_DETAIL_EXPORT_ZIP_LABEL": "Zip archive",
+    "STATS_DETAIL_EXPORT_SAVE": "エクスポートを保存",
+    "STATS_DETAIL_EXPORT_ZIP_LABEL": "ZIP アーカイブ",
     "LANGUAGE_AUTO_DETECT": "自動検出（システム）",
     "SETTINGS_SAVE_FAILED": "設定を保存できませんでした — 設定ページが値を取得できなかったため、変更は適用されませんでした。詳細はログを参照してください。"
 }

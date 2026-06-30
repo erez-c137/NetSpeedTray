@@ -416,8 +416,8 @@
     "CONN_PLAN_SUB": "Oznacza czas poniżej Twojego planu w arkuszu Statystyki (0 = wył.).",
     "CONN_PLAN_OFF": "Wył.",
     "HW_THROTTLE_LABEL": "Temp. throttlingu (statystyki)",
-    "STATS_DETAIL_EXPORT_SAVE": "Save export",
-    "STATS_DETAIL_EXPORT_ZIP_LABEL": "Zip archive",
+    "STATS_DETAIL_EXPORT_SAVE": "Zapisz eksport",
+    "STATS_DETAIL_EXPORT_ZIP_LABEL": "Archiwum ZIP",
     "LANGUAGE_AUTO_DETECT": "Wykryj automatycznie (system)",
     "SETTINGS_SAVE_FAILED": "Nie udało się zapisać ustawień — jedna ze stron ustawień nie dostarczyła swoich wartości, więc zmiany nie zostały zastosowane. Szczegóły znajdziesz w dzienniku."
 }

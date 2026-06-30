@@ -416,8 +416,8 @@
     "CONN_PLAN_SUB": "Отмечает время ниже тарифа в окне «Статистика» (0 = выкл.).",
     "CONN_PLAN_OFF": "Выкл.",
     "HW_THROTTLE_LABEL": "Температура троттлинга (стат.)",
-    "STATS_DETAIL_EXPORT_SAVE": "Save export",
-    "STATS_DETAIL_EXPORT_ZIP_LABEL": "Zip archive",
+    "STATS_DETAIL_EXPORT_SAVE": "Сохранить экспорт",
+    "STATS_DETAIL_EXPORT_ZIP_LABEL": "ZIP-архив",
     "LANGUAGE_AUTO_DETECT": "Автоопределение (система)",
     "SETTINGS_SAVE_FAILED": "Не удалось сохранить настройки — одна из страниц настроек не предоставила свои значения, поэтому изменения не были применены. Подробности см. в журнале."
 }

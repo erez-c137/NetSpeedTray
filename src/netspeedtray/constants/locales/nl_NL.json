@@ -416,8 +416,8 @@
     "CONN_PLAN_SUB": "Markeert in het venster Statistieken de tijd onder je abonnement (0 = uit).",
     "CONN_PLAN_OFF": "Uit",
     "HW_THROTTLE_LABEL": "Throttle-temp (stats)",
-    "STATS_DETAIL_EXPORT_SAVE": "Save export",
-    "STATS_DETAIL_EXPORT_ZIP_LABEL": "Zip archive",
+    "STATS_DETAIL_EXPORT_SAVE": "Export opslaan",
+    "STATS_DETAIL_EXPORT_ZIP_LABEL": "Zip-archief",
     "LANGUAGE_AUTO_DETECT": "Automatisch detecteren (systeem)",
     "SETTINGS_SAVE_FAILED": "Instellingen konden niet worden opgeslagen — een instellingenpagina kon zijn waarden niet leveren, dus je wijzigingen zijn niet toegepast. Zie het logboek voor meer details."
 }

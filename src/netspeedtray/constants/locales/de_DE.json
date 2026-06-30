@@ -416,8 +416,8 @@
     "CONN_PLAN_SUB": "Markiert in den Statistiken die Zeit unterhalb deines Tarifs (0 = aus).",
     "CONN_PLAN_OFF": "Aus",
     "HW_THROTTLE_LABEL": "Drosseltemperatur (Statistiken)",
-    "STATS_DETAIL_EXPORT_SAVE": "Save export",
-    "STATS_DETAIL_EXPORT_ZIP_LABEL": "Zip archive",
+    "STATS_DETAIL_EXPORT_SAVE": "Export speichern",
+    "STATS_DETAIL_EXPORT_ZIP_LABEL": "ZIP-Archiv",
     "LANGUAGE_AUTO_DETECT": "Automatisch (System)",
     "SETTINGS_SAVE_FAILED": "Einstellungen konnten nicht gespeichert werden – eine Einstellungsseite konnte ihre Werte nicht bereitstellen, daher wurden Ihre Änderungen nicht übernommen. Weitere Informationen finden Sie im Protokoll."
 }

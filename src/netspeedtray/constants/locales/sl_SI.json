@@ -416,8 +416,8 @@
     "CONN_PLAN_SUB": "V Statistiki označi čas pod hitrostjo vaše naročnine (0 = izklopljeno).",
     "CONN_PLAN_OFF": "Izklopljeno",
     "HW_THROTTLE_LABEL": "Temperatura omejevanja (statistika)",
-    "STATS_DETAIL_EXPORT_SAVE": "Save export",
-    "STATS_DETAIL_EXPORT_ZIP_LABEL": "Zip archive",
+    "STATS_DETAIL_EXPORT_SAVE": "Shrani izvoz",
+    "STATS_DETAIL_EXPORT_ZIP_LABEL": "Arhiv ZIP",
     "LANGUAGE_AUTO_DETECT": "Samodejno zaznaj (sistem)",
     "SETTINGS_SAVE_FAILED": "Nastavitev ni bilo mogoče shraniti – stran z nastavitvami ni posredovala svojih vrednosti, zato spremembe niso bile uveljavljene. Za podrobnosti glejte dnevnik."
 }
