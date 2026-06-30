@@ -418,6 +418,6 @@
     "HW_THROTTLE_LABEL": "サーマルスロットリング温度（統計）",
     "STATS_DETAIL_EXPORT_SAVE": "Save export",
     "STATS_DETAIL_EXPORT_ZIP_LABEL": "Zip archive",
-    "LANGUAGE_AUTO_DETECT": "Auto-detect (system)",
-    "SETTINGS_SAVE_FAILED": "Settings could not be saved — a settings page failed to provide its values, so your changes were not applied. See the log for details."
+    "LANGUAGE_AUTO_DETECT": "自動検出（システム）",
+    "SETTINGS_SAVE_FAILED": "設定を保存できませんでした — 設定ページが値を取得できなかったため、変更は適用されませんでした。詳細はログを参照してください。"
 }

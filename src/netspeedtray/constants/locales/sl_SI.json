@@ -418,6 +418,6 @@
     "HW_THROTTLE_LABEL": "Temperatura omejevanja (statistika)",
     "STATS_DETAIL_EXPORT_SAVE": "Save export",
     "STATS_DETAIL_EXPORT_ZIP_LABEL": "Zip archive",
-    "LANGUAGE_AUTO_DETECT": "Auto-detect (system)",
-    "SETTINGS_SAVE_FAILED": "Settings could not be saved — a settings page failed to provide its values, so your changes were not applied. See the log for details."
+    "LANGUAGE_AUTO_DETECT": "Samodejno zaznaj (sistem)",
+    "SETTINGS_SAVE_FAILED": "Nastavitev ni bilo mogoče shraniti – stran z nastavitvami ni posredovala svojih vrednosti, zato spremembe niso bile uveljavljene. Za podrobnosti glejte dnevnik."
 }

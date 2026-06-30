@@ -418,6 +418,6 @@
     "HW_THROTTLE_LABEL": "Drosseltemperatur (Statistiken)",
     "STATS_DETAIL_EXPORT_SAVE": "Save export",
     "STATS_DETAIL_EXPORT_ZIP_LABEL": "Zip archive",
-    "LANGUAGE_AUTO_DETECT": "Auto-detect (system)",
-    "SETTINGS_SAVE_FAILED": "Settings could not be saved — a settings page failed to provide its values, so your changes were not applied. See the log for details."
+    "LANGUAGE_AUTO_DETECT": "Automatisch (System)",
+    "SETTINGS_SAVE_FAILED": "Einstellungen konnten nicht gespeichert werden – eine Einstellungsseite konnte ihre Werte nicht bereitstellen, daher wurden Ihre Änderungen nicht übernommen. Weitere Informationen finden Sie im Protokoll."
 }

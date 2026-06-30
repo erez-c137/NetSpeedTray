@@ -418,6 +418,6 @@
     "HW_THROTTLE_LABEL": "Temp. de throttling (estadísticas)",
     "STATS_DETAIL_EXPORT_SAVE": "Save export",
     "STATS_DETAIL_EXPORT_ZIP_LABEL": "Zip archive",
-    "LANGUAGE_AUTO_DETECT": "Auto-detect (system)",
-    "SETTINGS_SAVE_FAILED": "Settings could not be saved — a settings page failed to provide its values, so your changes were not applied. See the log for details."
+    "LANGUAGE_AUTO_DETECT": "Detección automática (sistema)",
+    "SETTINGS_SAVE_FAILED": "No se pudo guardar la configuración: una de las páginas no proporcionó sus valores, por lo que los cambios no se aplicaron. Consulta el registro para obtener más detalles."
 }

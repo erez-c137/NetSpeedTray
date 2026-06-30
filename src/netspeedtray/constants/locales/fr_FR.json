@@ -418,6 +418,6 @@
     "HW_THROTTLE_LABEL": "Température de bridage (stats)",
     "STATS_DETAIL_EXPORT_SAVE": "Save export",
     "STATS_DETAIL_EXPORT_ZIP_LABEL": "Zip archive",
-    "LANGUAGE_AUTO_DETECT": "Auto-detect (system)",
-    "SETTINGS_SAVE_FAILED": "Settings could not be saved — a settings page failed to provide its values, so your changes were not applied. See the log for details."
+    "LANGUAGE_AUTO_DETECT": "Détection automatique (système)",
+    "SETTINGS_SAVE_FAILED": "Impossible d'enregistrer les paramètres : une page de paramètres n'a pas fourni ses valeurs, vos modifications n'ont donc pas été appliquées. Consultez le journal pour plus de détails."
 }
