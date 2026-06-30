@@ -9,7 +9,7 @@
 **Live network speeds, CPU/GPU stats, temperatures, and power draw - right on your Windows taskbar.**
 Open source, signed, no ads, no telemetry. The feature Windows forgot.
 
-[**Install**](#install) · [**Features**](#what-you-get) · [**The Monitor**](#the-monitor) · [**Hardware & temperatures**](#hardware-monitoring--do-i-need-librehardwaremonitor) · [**FAQ**](#faq) · [**Support 💛**](#support-netspeedtray)
+[**Install**](#install) · [**Features**](#what-you-get) · [**The Monitor**](#the-monitor) · [**Hardware & temperatures**](#hardware-monitoring---do-i-need-librehardwaremonitor) · [**FAQ**](#faq) · [**Support 💛**](#-support-netspeedtray)
 
 </div>
 
@@ -28,7 +28,7 @@ winget install --id erez-c137.NetSpeedTray
 
 Or grab the latest [**Setup.exe** or **Portable.zip**](https://github.com/erez-c137/NetSpeedTray/releases/latest) directly. Both are digitally signed - no SmartScreen warnings.
 
-**Requirements:** Windows 10 or 11 (64-bit). The widget needs no admin rights. CPU/GPU **temperatures** on some hardware need an optional helper - [see below](#hardware-monitoring--do-i-need-librehardwaremonitor).
+**Requirements:** Windows 10 or 11 (64-bit). The widget needs no admin rights. CPU/GPU **temperatures** on some hardware need an optional helper - [see below](#hardware-monitoring---do-i-need-librehardwaremonitor).
 
 ---
 
@@ -114,7 +114,7 @@ So I built NetSpeedTray: live up/down speeds, CPU and GPU utilization, temperatu
 
 🌐 **Network on your taskbar.** Live upload and download speeds with sub-second updates. Auto-detects your primary internet connection or lets you pick specific adapters. Color-code thresholds so heavy traffic stands out at a glance. In 2.0 the readout sits *inside* the taskbar's layer - it stays put through the Start menu, Quick Settings, and the tray overflow instead of disappearing.
 
-🖥️ **Hardware stats too.** CPU and GPU utilization beside your network speeds, with optional temperature, power (Watts), RAM, and VRAM. Vendor-agnostic GPU support - NVIDIA, AMD, and Intel. ([When do temps need a helper? →](#hardware-monitoring--do-i-need-librehardwaremonitor))
+🖥️ **Hardware stats too.** CPU and GPU utilization beside your network speeds, with optional temperature, power (Watts), RAM, and VRAM. Vendor-agnostic GPU support - NVIDIA, AMD, and Intel. ([When do temps need a helper? →](#hardware-monitoring---do-i-need-librehardwaremonitor))
 
 📊 **The Monitor.** One window, three tabs - **Overview, Network, Hardware** - with history charts, per-app connections, per-process resource use, and statistics you can export to CSV/JSON. Double-click the widget to open it.
 
@@ -184,7 +184,7 @@ Task Manager shows network speed too - but you have to *open* it, and it disappe
 Idle RAM is roughly **50-80 MB** (Python + Qt overhead) and CPU is near zero between polls. The Monitor's Overview tab is deliberately chart-free, so glancing at it stays light; opening the Network or Hardware **charts** loads the plotting library once for the session. The widget polls every ~1 second using the same Windows APIs Task Manager uses.
 
 **Do I need LibreHardwareMonitor?**
-Often no - see the [hardware table above](#hardware-monitoring--do-i-need-librehardwaremonitor). Usage stats and NVIDIA/Intel temps & power work natively; LHM (run as admin) is the universal fallback and the realistic way to get **AMD CPU** temperature and power. The widget never asks for admin itself.
+Often no - see the [hardware table above](#hardware-monitoring---do-i-need-librehardwaremonitor). Usage stats and NVIDIA/Intel temps & power work natively; LHM (run as admin) is the universal fallback and the realistic way to get **AMD CPU** temperature and power. The widget never asks for admin itself.
 
 **Can I set a data limit and get warned?**
 Yes - **Settings → Network → Data usage**, or the tray's **Data cap…**. Set a monthly cap, a billing reset day, and opt-in 80% / 100% alerts. The alert is a quiet flyout above the widget; the tray shows live progress.
@@ -231,7 +231,7 @@ You probably grabbed an unsigned dev build. The official releases ([Setup.exe / 
 ### Widget Layout & Customization
 - **Layout modes** - Side-by-Side, Stacked, or Auto-Cycle (rotates Network / CPU / GPU); per-segment ordering
 - **Mini-graph overlay** with adjustable opacity and gradient fill
-- **Arrow styles** - Classic ↑↓, Solid ▲▼, Compact ▴▾, Outline △▽, Double ⇑⇓, or Custom
+- **Arrow styles** - Classic ↑↓, Solid ▲▼, Compact ▴▾, Outline △▽, Outline Compact ▵▿, Double ⇑⇓, or Custom
 - **Live settings preview** - see the exact widget effect (font/color/arrows/layout/mode) before you commit
 - **Configurable click actions** - reassign double-click / middle-click on the widget (Open Monitor, Settings, Pause/Resume, or nothing)
 - **Auto-theme** for light/dark/mixed taskbars, **font & precision** control, **fixed-width** values to prevent jitter
