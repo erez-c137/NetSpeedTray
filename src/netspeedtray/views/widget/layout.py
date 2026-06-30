@@ -151,9 +151,11 @@ class WidgetLayoutManager:
                     down_arrow = self.widget.config.get("arrow_down_symbol") or self.widget.i18n.DOWNLOAD_ARROW
                     up_width = get_part_width(up_arrow, ref_val_str, ref_unit)
                     down_width = get_part_width(down_arrow, ref_val_str, ref_unit)
-                    sep_width = self.metrics.horizontalAdvance(constants.layout.HORIZONTAL_LAYOUT_SEPARATOR)
 
-                    calculated_width = up_width + sep_width + down_width + (margin * 2)
+                    # The renderer draws upload OVER download (two stacked rows), not side-by-side, so
+                    # reserve the single-column width (the wider line). Reserving up + separator + down
+                    # left dead space the render never fills (#8); HORIZONTAL_LAYOUT_SEPARATOR is unused.
+                    calculated_width = max(up_width, down_width) + (margin * 2)
                 else:
                     # Large Horizontal Layout Width Calculation (Vertical Mode)
                     always_mbps = self.widget.config.get("speed_display_mode", constants.config.defaults.DEFAULT_SPEED_DISPLAY_MODE) == "always_mbps"

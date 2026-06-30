@@ -59,6 +59,10 @@ class StatsController(QObject):
         
         from collections import deque
         self.recent_speeds: Dict[str, deque] = {}
+        # Per-interface [up, down] count of consecutive over-threshold polls. A SUSTAINED legitimate
+        # ramp is then capped at most once (the first poll) instead of being held at 2x baseline for
+        # many polls while the rolling average catches up (#5); a one-off counter glitch is still capped.
+        self._spike_streak: Dict[str, list] = {}
 
         mode = self.config.get("interface_mode", "auto")
         self.logger.info("StatsController initialized (interface_mode=%s).", mode)
@@ -258,11 +262,23 @@ class StatsController(QObject):
                     recent_up_avg = sum(sorted(recent_ups)[1:-1]) / max(1, len(recent_ups) - 2) if len(recent_ups) > 2 else sum(recent_ups) / len(recent_ups)
                     recent_down_avg = sum(sorted(recent_downs)[1:-1]) / max(1, len(recent_downs) - 2) if len(recent_downs) > 2 else sum(recent_downs) / len(recent_downs)
                     
+                    # Cap an ISOLATED over-threshold sample (a likely counter glitch), but let a
+                    # SUSTAINED jump through after one poll — a 2nd consecutive over-threshold sample is
+                    # a real ramp, not a glitch, and must not stay pinned at 2x baseline (#5).
+                    streak = self._spike_streak.setdefault(name, [0, 0])
                     if recent_up_avg > 1000 and final_up_speed_bps > recent_up_avg * 5.0:
-                        final_up_speed_bps = int(recent_up_avg * 2.0)
-                    
+                        if streak[0] == 0:
+                            final_up_speed_bps = int(recent_up_avg * 2.0)
+                        streak[0] += 1
+                    else:
+                        streak[0] = 0
+
                     if recent_down_avg > 1000 and final_down_speed_bps > recent_down_avg * 5.0:
-                        final_down_speed_bps = int(recent_down_avg * 2.0)
+                        if streak[1] == 0:
+                            final_down_speed_bps = int(recent_down_avg * 2.0)
+                        streak[1] += 1
+                    else:
+                        streak[1] = 0
 
                 self.current_speed_data[name] = (final_up_speed_bps, final_down_speed_bps)
                 self.recent_speeds[name].append((up_speed_bps, down_speed_bps))

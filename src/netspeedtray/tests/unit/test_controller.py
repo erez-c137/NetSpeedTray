@@ -141,6 +141,34 @@ def test_odometer_counts_bytes_even_when_all_rates_exceed_ceiling(controller_ins
     assert up_bytes == huge and down_bytes == 0
 
 
+def test_spike_filter_lets_sustained_ramp_through_after_one_poll(controller_instance):
+    """#5: a one-off counter glitch is still capped on its first over-threshold poll, but a SUSTAINED
+    jump passes through on the SECOND poll instead of being pinned at 2x baseline while the rolling
+    average slowly catches up."""
+    from collections import deque
+    controller = controller_instance
+    controller.config["interface_mode"] = "all_physical"
+    controller.primary_interface = None
+    view = MagicMock(); controller.set_view(view)
+    name = "Ethernet"
+    controller.recent_speeds[name] = deque([(2_000_000, 2_000_000)] * 10, maxlen=20)  # 2 MB/s baseline
+    t0 = time.monotonic()
+    controller.last_check_time = t0
+    controller.last_interface_counters = {name: MockNetIO(bytes_sent=0, bytes_recv=0)}
+
+    # Poll 1 of a sustained ramp to ~12 MB/s -> capped (first over-threshold poll looks like a glitch)
+    with patch('time.monotonic', return_value=t0 + 1.0):
+        controller._handle_network_counters({name: MockNetIO(bytes_sent=12_000_000, bytes_recv=12_000_000)})
+    up1 = view.update_display_speeds.call_args[0][0]   # Mbps
+    assert up1 < 50          # ~32 Mbps (2x baseline), NOT the real ~96 Mbps
+
+    # Poll 2 of the SAME ramp -> not capped, the real value passes through
+    with patch('time.monotonic', return_value=t0 + 2.0):
+        controller._handle_network_counters({name: MockNetIO(bytes_sent=24_000_000, bytes_recv=24_000_000)})
+    up2 = view.update_display_speeds.call_args[0][0]
+    assert up2 > 80          # real ~96 Mbps now passes through
+
+
 def test_aggregate_for_display_select_specific_mode(controller_instance):
     """
     Tests that the _aggregate_for_display method correctly sums only the
