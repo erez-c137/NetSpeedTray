@@ -158,6 +158,12 @@ class WidgetState(QObject):
                 # Wait (up to 5s) for a lock instead of erroring out immediately — otherwise a
                 # read concurrent with the maintenance VACUUM can fail with "database is locked".
                 conn.execute("PRAGMA busy_timeout = 5000;")
+                # The Monitor reloads ~a dozen multi-tier scans every few seconds on these read
+                # connections; give them the same cache + in-RAM temp B-trees + memory-mapped reads as
+                # the writer so the nested-GROUP-BY history queries don't run under-provisioned.
+                conn.execute("PRAGMA cache_size = -8000;")
+                conn.execute("PRAGMA temp_store = MEMORY;")
+                conn.execute("PRAGMA mmap_size = 268435456;")
                 self._read_conns[thread_id] = conn
             return self._read_conns[thread_id]
 

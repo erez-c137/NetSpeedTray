@@ -45,6 +45,7 @@ class GraphRenderer(QObject):
         self.ax_upload = None
         self.ax_cpu = None
         self.ax_gpu = None
+        self.ax_ram = None
         self.axes = []
         
         # State
@@ -884,42 +885,48 @@ class GraphRenderer(QObject):
         ax.yaxis.set_major_formatter(lambda x, pos: f"{int(x)}%")
 
     def _setup_hwseparate_axes(self):
-        """Two stacked 0-100% axes for the separate CPU / GPU hardware view (CPU top, GPU bottom)."""
-        self.ax_cpu = self.figure.add_subplot(2, 1, 1)
-        self.ax_gpu = self.figure.add_subplot(2, 1, 2, sharex=self.ax_cpu)
-        self.axes = [self.ax_cpu, self.ax_gpu]
-        self.figure.subplots_adjust(left=0.10, right=0.97, top=0.97, bottom=0.13, hspace=0.32)
+        """Three stacked 0-100% axes for the separate hardware view (CPU top, GPU middle, RAM bottom).
+        RAM matches the combined graph, which also plots cpu+gpu+ram — separate just gives each its
+        own axis so there's no shared-axis collision."""
+        self.ax_cpu = self.figure.add_subplot(3, 1, 1)
+        self.ax_gpu = self.figure.add_subplot(3, 1, 2, sharex=self.ax_cpu)
+        self.ax_ram = self.figure.add_subplot(3, 1, 3, sharex=self.ax_cpu)
+        self.axes = [self.ax_cpu, self.ax_gpu, self.ax_ram]
+        self.figure.subplots_adjust(left=0.10, right=0.97, top=0.97, bottom=0.11, hspace=0.42)
         self._format_hwseparate_axes()
 
     def _format_hwseparate_axes(self):
-        """Styling for the two stacked hardware axes. x tick-labels live only on the bottom (GPU) axis;
-        both share the same time window via sharex."""
+        """Styling for the three stacked hardware axes. x tick-labels live only on the bottom (RAM) axis;
+        all three share the same time window via sharex."""
         text = getattr(self, "_current_text_color", "white")
         grid = getattr(self, "_current_grid_color", "#444")
         cpu_lbl = getattr(self.i18n, "ORDER_TYPE_CPU", "CPU")
         gpu_lbl = getattr(self.i18n, "ORDER_TYPE_GPU", "GPU")
-        for ax, lbl in ((self.ax_cpu, cpu_lbl), (self.ax_gpu, gpu_lbl)):
+        ram_lbl = getattr(self.i18n, "MONITOR_TILE_RAM", "RAM")
+        for ax, lbl in ((self.ax_cpu, cpu_lbl), (self.ax_gpu, gpu_lbl), (self.ax_ram, ram_lbl)):
             ax.set_ylabel(lbl, color=text)
             ax.grid(True, linestyle=constants.graph.GRID_LINESTYLE,
                     alpha=constants.graph.GRID_ALPHA, color=grid)
             ax.tick_params(colors=text, which="both")
             ax.yaxis.set_major_formatter(lambda x, pos: f"{int(x)}%")
         self.ax_cpu.tick_params(labelbottom=False)   # x labels only on the bottom axis
-        self.ax_gpu.tick_params(labelbottom=True)
+        self.ax_gpu.tick_params(labelbottom=False)
+        self.ax_ram.tick_params(labelbottom=True)
 
     def _render_hwseparate(self, data_dict, start_time, end_time, period_key, hw_styles=None):
-        """CPU on the top axis, GPU on the bottom — each its own axis, so no shared-axis collision and
-        thus both vendor-coloured SOLID (no dashed sibling needed)."""
+        """CPU top, GPU middle, RAM bottom — each its own axis, so no shared-axis collision and thus
+        each vendor-coloured SOLID (no dashed sibling needed). Mirrors the combined graph's roles."""
         from netspeedtray.utils import hardware_vendors as hv
         styles = hw_styles or {}
         smooth = bool(styles.get("smoothing"))
         fixed = bool(styles.get("fixed_axis", True))
         self.ax_cpu.clear()
         self.ax_gpu.clear()
+        self.ax_ram.clear()
         self._format_hwseparate_axes()
 
         any_data, all_ts = False, []
-        for ax, role in ((self.ax_cpu, "cpu"), (self.ax_gpu, "gpu")):
+        for ax, role in ((self.ax_cpu, "cpu"), (self.ax_gpu, "gpu"), (self.ax_ram, "ram")):
             series = data_dict.get(role) or []
             if not series:
                 self._apply_hw_ylim(ax, fixed, 0.0)
@@ -941,8 +948,8 @@ class GraphRenderer(QObject):
             return
         merged = np.concatenate(all_ts)
         xs, xe = self._hw_xlim(period_key, start_time, end_time, merged.min(), merged.max())
-        self.ax_cpu.set_xlim(xs, xe)   # sharex propagates to ax_gpu
-        self._configure_xaxis_format(period_key, axis=self.ax_gpu)
+        self.ax_cpu.set_xlim(xs, xe)   # sharex propagates to ax_gpu + ax_ram
+        self._configure_xaxis_format(period_key, axis=self.ax_ram)
 
     def _render_hwsingle(self, history_data, start_time, end_time, period_key, stat_type, hw_styles=None):
         """One CPU- OR GPU-only line for the Monitor's "toggle" layout. Honours the same display

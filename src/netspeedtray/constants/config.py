@@ -75,7 +75,10 @@ class ConfigConstants:
     DEFAULT_FREE_MOVE: Final[bool] = False
     DEFAULT_KEEP_VISIBLE_FULLSCREEN: Final[bool] = False
     DEFAULT_FORCE_DECIMALS: Final[bool] = True
-    DEFAULT_START_WITH_WINDOWS: Final[bool] = False
+    # ON by default: a taskbar status widget people want always-present should come back after a reboot.
+    # First launch reconciles this with the actual HKCU Run key (main.py → StartupManager.synchronize_startup_task),
+    # so a fresh install auto-registers. Existing users keep their saved value (only fresh configs see this).
+    DEFAULT_START_WITH_WINDOWS: Final[bool] = True
     DEFAULT_TRAY_OFFSET_X: Final[int] = 0
     DEFAULT_TRAY_OFFSET_Y: Final[int] = 3
     DEFAULT_LEGEND_POSITION: Final[str] = data.legend_position.DEFAULT_LEGEND_POSITION

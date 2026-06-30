@@ -9,6 +9,7 @@ with a fallback to English (en_US).
 import logging
 import locale
 import json
+import os
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -65,10 +66,15 @@ class I18nStrings:
         self.language = ""
         self._determine_and_set_language(language_code)
 
-        try:
-            self.validate()
-        except ValueError as e:
-            logger.error(f"I18n validation failed on initialization: {e}")
+        # Locale-parity validation loads ALL 10 locale files purely to compare key sets — a dev/CI
+        # concern (enforced by test_locales_parity.py), not a runtime need: per-key lookups already
+        # fall back to en_US. Skipping it at runtime saves ~9 JSON parses on the UI thread every launch.
+        # Opt in with NST_VALIDATE_I18N=1 when editing locales from source.
+        if os.environ.get("NST_VALIDATE_I18N"):
+            try:
+                self.validate()
+            except ValueError as e:
+                logger.error(f"I18n validation failed on initialization: {e}")
 
     def _load_language(self, lang_code: str) -> Dict[str, str]:
         """Loads a language dictionary from its JSON file."""

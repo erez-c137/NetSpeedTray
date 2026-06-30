@@ -101,7 +101,6 @@ class ObfuscatingFormatter(logging.Formatter):
         # Sort longest-first so AppData paths get matched before the user home prefix.
         sorted_paths = sorted(list(paths_to_obfuscate), key=len, reverse=True)
         self._path_regexes = [re.compile(re.escape(p), re.IGNORECASE) for p in sorted_paths]
-        print(f"ObfuscatingFormatter initialized with {len(self._path_regexes)} path redaction patterns.", file=sys.stderr)
 
     def _setup_hostname(self):
         try:

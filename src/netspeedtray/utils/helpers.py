@@ -40,10 +40,18 @@ def get_app_asset_path(asset_name: str) -> Path:
 
     return base_path / "assets" / asset_name
 
+_app_data_path_cache: Optional[Path] = None
+
+
 def get_app_data_path() -> Path:
     """
-    Retrieve the application data directory path on Windows.
+    Retrieve the application data directory path on Windows. Memoized: APPDATA is stable for the life
+    of a process and this is called from many constructors, so the mkdir + write-and-delete writability
+    probe only runs once instead of on every call.
     """
+    global _app_data_path_cache
+    if _app_data_path_cache is not None:
+        return _app_data_path_cache
     logger: logging.Logger = logging.getLogger(__name__) # Use __name__ for module-specific logger
     appdata: Optional[str] = os.getenv("APPDATA")
     if not appdata:
@@ -59,6 +67,7 @@ def get_app_data_path() -> Path:
             f.write("test")
         test_file.unlink()
         logger.debug("App data path ensured and writable: %s", path)
+        _app_data_path_cache = path
         return path
     except PermissionError as e:
         logger.error("Permission denied creating/writing to app data directory %s: %s", path, e)

@@ -127,6 +127,15 @@ class MonitorWindow(QWidget):
             first = next((i for i, d in enumerate(self._descriptors) if d.is_visible(self.config)), 0)
         self._tab_bar.setCurrentIndex(first)
 
+        # Apply the Win11 dark title bar + rounded corners BEFORE the caller's show(), so the window
+        # never maps with the default light title bar and then flashes dark on the first frame. winId()
+        # here forces the native handle to be realized early (it does NOT show the window). The showEvent
+        # re-assert stays as an idempotent safety net (also covers an OS theme change between opens).
+        try:
+            apply_win11_chrome(int(self.winId()), dark=su.is_dark_mode())
+        except Exception:
+            pass
+
     # ----------------------------------------------------------------- tabs
 
     def _build_descriptors(self) -> List[LazyTabDescriptor]:

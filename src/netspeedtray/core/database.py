@@ -152,6 +152,11 @@ class DatabaseWorker(QThread):
         # negative cache_size = ~8 MB page cache keeps the hot tiers in memory.
         self.conn.execute("PRAGMA synchronous = NORMAL;")
         self.conn.execute("PRAGMA cache_size = -8000;")
+        # Keep GROUP BY / temp B-trees (rollup aggregation + the Monitor's nested-GROUP-BY history
+        # queries) in RAM instead of spilling to disk, and memory-map the (small) DB to cut read
+        # syscalls on the repeated Monitor scans. mmap_size is a ceiling, not an allocation.
+        self.conn.execute("PRAGMA temp_store = MEMORY;")
+        self.conn.execute("PRAGMA mmap_size = 268435456;")  # 256 MB; the DB is far smaller
 
 
     def _ensure_indexes(self) -> None:
@@ -173,6 +178,13 @@ class DatabaseWorker(QThread):
                           constants.data.HARDWARE_STATS_TABLE_HOUR):
                 self.conn.execute(
                     f"CREATE INDEX IF NOT EXISTS idx_{table}_type_ts ON {table} (stat_type, timestamp);")
+            # Per-interface raw-tier reads (single-NIC graph/summaries) are `WHERE timestamp BETWEEN ? AND ?
+            # AND interface_name = ?` against the largest table (~24h × 1 row/s/NIC). The only raw index is
+            # timestamp-only, so they range-scan then filter the NIC row-by-row. The minute/hour tiers already
+            # have (timestamp, interface_name) covering indexes; this closes the same gap on raw.
+            raw = constants.data.SPEED_TABLE_RAW
+            self.conn.execute(
+                f"CREATE INDEX IF NOT EXISTS idx_{raw}_iface_ts ON {raw} (interface_name, timestamp);")
             self.conn.commit()
         except sqlite3.Error as e:
             self.logger.warning("Could not ensure performance indexes: %s", e)
@@ -595,6 +607,15 @@ class DatabaseWorker(QThread):
             self.conn.commit()
             
             self.logger.info("Database maintenance tasks committed successfully.")
+
+            # Bound the WAL file: long-lived reader connections (the Monitor's graph worker) can hold
+            # back the automatic checkpoint, letting -wal grow across a long session. A TRUNCATE
+            # checkpoint each maintenance pass reclaims it. Own try-block — a busy checkpoint (a reader
+            # blocking it) is harmless and must not roll back the maintenance already committed above.
+            try:
+                self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+            except sqlite3.Error as e:
+                self.logger.debug("WAL checkpoint skipped: %s", e)
             
             if pruned:
                 # VACUUM is a full-DB rewrite under a write lock. On a long-running install the

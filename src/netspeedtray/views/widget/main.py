@@ -1237,7 +1237,13 @@ class NetworkSpeedWidget(QWidget):
             if self.monitor_window is None:
                 self.monitor_window = MonitorWindow(self, self.config, self.i18n)
                 self.monitor_window.window_closed.connect(self._on_monitor_window_closed)
-                self.monitor_window.show()
+                # If the user left it maximized, map straight to maximized — otherwise restore_window_geometry
+                # sets the WindowMaximized flag but the window still maps at the normal size for one frame,
+                # then expands (the "small window then grows" flash). showMaximized() skips that frame.
+                if self.monitor_window.windowState() & Qt.WindowState.WindowMaximized:
+                    self.monitor_window.showMaximized()
+                else:
+                    self.monitor_window.show()
             else:
                 self.monitor_window.show()
                 self.monitor_window.raise_()
