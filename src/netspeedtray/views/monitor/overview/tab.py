@@ -173,7 +173,12 @@ class OverviewTab(QWidget):
                            ("gpu", self._tr("ORDER_TYPE_GPU", "GPU")),
                            ("ram", self._tr("MONITOR_TILE_RAM", "RAM")),
                            ("vram", self._tr("MONITOR_TILE_VRAM", "VRAM"))):
-            t = StatTile(label, accent(key))
+            # Parent to `content` up front: the tiles are stored now but only added to the grid later
+            # in _layout_tiles, while _set_visible_tiles() calls setVisible(True) on them BEFORE that.
+            # Parentless, that setVisible would map each tile as its own top-level window for a frame
+            # (the "small window flashes before the Monitor" bug). As children of the still-hidden
+            # `content`, setVisible can't map them until the Monitor itself is shown.
+            t = StatTile(label, accent(key), content)
             t.clicked.connect(lambda k=key: self._open_detail(k))   # a click opens the stat sheet
             self._tiles[key] = t
         root.addLayout(self._hw_grid)
