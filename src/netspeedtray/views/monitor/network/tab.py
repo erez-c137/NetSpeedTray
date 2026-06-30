@@ -126,6 +126,17 @@ class NetworkTab(QWidget):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
+        # Re-sync the header's timeline dropdown to the SHARED period before showing — it may have been
+        # changed on the Overview/Hardware tab, in which case the graph + totals re-render for the new
+        # window but the dropdown label would otherwise stay stale (#1). Mirrors the Overview/Hardware
+        # showEvent re-sync. set_period_key uses emit=False, so it doesn't re-trigger the host.
+        try:
+            pv = getattr(self._host, "_history_period_value", None)
+            if pv is not None:
+                self._header.set_period_key(
+                    constants.data.history_period.PERIOD_MAP.get(int(pv), "TIMELINE_24_HOURS"))
+        except Exception:
+            pass
         try:
             self._host.attach_to(self._plot_slot.layout(), self.stat_type)
             self._host.start_realtime()

@@ -87,6 +87,20 @@ def _network_tab(q_app):
     return NetworkTab(MagicMock(), MagicMock(), cfg, _i18n())
 
 
+def test_network_tab_showevent_resyncs_timeline_to_shared_period(q_app):
+    """#1: returning to the Network tab after the period was changed on another tab must re-sync the
+    header's timeline dropdown to the shared host period (the graph + totals already follow it)."""
+    from netspeedtray import constants
+    from PyQt6.QtGui import QShowEvent
+    tab = _network_tab(q_app)
+    tab._feed = MagicMock()                             # don't start the real activity-feed QThread
+    week_val = next(k for k, v in constants.data.history_period.PERIOD_MAP.items() if v == "TIMELINE_WEEK")
+    tab._host._history_period_value = week_val          # shared period is now 'Week'
+    tab._header.set_period_key = MagicMock()            # spy
+    tab.showEvent(QShowEvent())
+    tab._header.set_period_key.assert_called_once_with("TIMELINE_WEEK")
+
+
 def test_network_tab_detail_flow_select_refresh_close(q_app):
     tab = _network_tab(q_app)
     tab._on_payload(_payload(updated="12:00:00"))
