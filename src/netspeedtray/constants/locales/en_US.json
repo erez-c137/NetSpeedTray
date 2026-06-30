@@ -46,7 +46,7 @@
     "MONITOR_VRAM_LABEL": "Show VRAM Usage",
     "SHOW_HARDWARE_TEMPS_LABEL": "Show CPU/GPU Temperature",
     "SHOW_HARDWARE_TEMPS_TOOLTIP": "Show temperature next to CPU/GPU usage. Requires LibreHardwareMonitor (run as Administrator) for most systems, or nvidia-smi for NVIDIA GPU temperature.",
-    "HARDWARE_TEMPS_LIMITATION_NOTE": "CPU & GPU temperatures require a kernel-level driver on most modern hardware (Intel/AMD). Install LibreHardwareMonitor and run it as Administrator — NetSpeedTray will detect it automatically. NVIDIA GPU temperature works natively via nvidia-smi.",
+    "HARDWARE_TEMPS_LIMITATION_NOTE": "Most CPU/GPU temperature and power sensors need LibreHardwareMonitor (run as Administrator) — NetSpeedTray detects it automatically and never needs admin itself. NVIDIA readings work natively via nvidia-smi.",
     "SHOW_HARDWARE_POWER_LABEL": "Show CPU/GPU Power (Watts)",
     "SHOW_HARDWARE_POWER_TOOLTIP": "Show power draw next to CPU/GPU usage. Uses Intel RAPL (non-admin) for CPU, nvidia-smi for NVIDIA GPU, and LibreHardwareMonitor for AMD/Intel GPU.",
     "HARDWARE_LABEL_STYLE_COLORED_ICONS": "Colored Icons",

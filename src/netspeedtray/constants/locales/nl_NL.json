@@ -46,7 +46,7 @@
     "MONITOR_VRAM_LABEL": "VRAM-gebruik tonen",
     "SHOW_HARDWARE_TEMPS_LABEL": "CPU/GPU-temperatuur tonen",
     "SHOW_HARDWARE_TEMPS_TOOLTIP": "Toont temperatuur naast CPU/GPU-gebruik indien beschikbaar.",
-    "HARDWARE_TEMPS_LIMITATION_NOTE": "Opmerking: AMD GPU-temperatuur is momenteel niet beschikbaar met de universele (PDH) methode.",
+    "HARDWARE_TEMPS_LIMITATION_NOTE": "De meeste CPU-/GPU-temperatuur- en vermogenssensoren vereisen LibreHardwareMonitor (als Administrator uitvoeren) — NetSpeedTray detecteert het automatisch en heeft zelf nooit beheerdersrechten nodig. NVIDIA-waarden werken native via nvidia-smi.",
     "SHOW_HARDWARE_POWER_LABEL": "CPU/GPU-vermogen tonen (Watt)",
     "SHOW_HARDWARE_POWER_TOOLTIP": "Toont het energieverbruik naast het CPU/GPU-gebruik. Gebruikt Intel RAPL (geen admin) voor CPU, nvidia-smi voor NVIDIA GPU en LibreHardwareMonitor voor AMD/Intel GPU.",
     "HARDWARE_LABEL_STYLE_COLORED_ICONS": "Gekleurde pictogrammen",

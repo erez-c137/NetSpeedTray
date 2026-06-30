@@ -46,7 +46,7 @@
     "MONITOR_VRAM_LABEL": "VRAM 사용량 표시",
     "SHOW_HARDWARE_TEMPS_LABEL": "CPU/GPU 온도 표시",
     "SHOW_HARDWARE_TEMPS_TOOLTIP": "가능한 경우 CPU/GPU 사용률 옆에 온도를 표시합니다.",
-    "HARDWARE_TEMPS_LIMITATION_NOTE": "참고: AMD GPU 온도는 현재 범용 (PDH) 방식으로 사용할 수 없습니다.",
+    "HARDWARE_TEMPS_LIMITATION_NOTE": "대부분의 CPU/GPU 온도 및 전력 센서는 LibreHardwareMonitor(관리자 권한으로 실행)가 필요합니다 — NetSpeedTray가 자동으로 감지하며, 자체적으로는 관리자 권한이 필요하지 않습니다. NVIDIA 값은 nvidia-smi를 통해 기본적으로 작동합니다.",
     "SHOW_HARDWARE_POWER_LABEL": "CPU/GPU 전력 표시 (와트)",
     "SHOW_HARDWARE_POWER_TOOLTIP": "CPU/GPU 사용량 옆에 전력 소비를 표시합니다. CPU에는 Intel RAPL (비관리자), NVIDIA GPU에는 nvidia-smi, AMD/Intel GPU에는 LibreHardwareMonitor를 사용합니다.",
     "HARDWARE_LABEL_STYLE_COLORED_ICONS": "색상 아이콘",

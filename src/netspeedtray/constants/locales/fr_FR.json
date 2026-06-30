@@ -46,7 +46,7 @@
     "MONITOR_VRAM_LABEL": "Afficher l'utilisation de la VRAM",
     "SHOW_HARDWARE_TEMPS_LABEL": "Afficher la temperature CPU/GPU",
     "SHOW_HARDWARE_TEMPS_TOOLTIP": "Affiche la temperature a cote de l'utilisation CPU/GPU lorsque disponible.",
-    "HARDWARE_TEMPS_LIMITATION_NOTE": "Note : la temperature GPU AMD n'est pas disponible actuellement avec la methode universelle (PDH).",
+    "HARDWARE_TEMPS_LIMITATION_NOTE": "La plupart des capteurs de température et de consommation CPU/GPU nécessitent LibreHardwareMonitor (exécuté en tant qu'administrateur) — NetSpeedTray le détecte automatiquement et n'a jamais besoin des droits d'administrateur. Les valeurs NVIDIA fonctionnent nativement via nvidia-smi.",
     "SHOW_HARDWARE_POWER_LABEL": "Afficher la puissance CPU/GPU (Watts)",
     "SHOW_HARDWARE_POWER_TOOLTIP": "Affiche la consommation d'énergie à côté de l'utilisation CPU/GPU. Utilise Intel RAPL (sans admin) pour le CPU, nvidia-smi pour le GPU NVIDIA et LibreHardwareMonitor pour les GPU AMD/Intel.",
     "HARDWARE_LABEL_STYLE_COLORED_ICONS": "Icones colorees",

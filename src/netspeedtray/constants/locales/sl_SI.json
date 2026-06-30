@@ -46,7 +46,7 @@
     "MONITOR_VRAM_LABEL": "Prikaži porabo VRAM-a",
     "SHOW_HARDWARE_TEMPS_LABEL": "Pokaži temperaturo CPU/GPU",
     "SHOW_HARDWARE_TEMPS_TOOLTIP": "Prikaže temperaturo poleg uporabe CPU/GPU, ko je na voljo.",
-    "HARDWARE_TEMPS_LIMITATION_NOTE": "Opomba: Temperatura GPU AMD trenutno ni na voljo z univerzalno (PDH) metodo.",
+    "HARDWARE_TEMPS_LIMITATION_NOTE": "Večina senzorjev temperature in porabe CPU/GPU potrebuje LibreHardwareMonitor (zagnan kot skrbnik) — NetSpeedTray ga zazna samodejno in sam nikoli ne potrebuje skrbniških pravic. Vrednosti NVIDIA delujejo izvorno prek nvidia-smi.",
     "SHOW_HARDWARE_POWER_LABEL": "Prikaži moč CPU/GPU (Watt)",
     "SHOW_HARDWARE_POWER_TOOLTIP": "Prikazuje porabo energije poleg uporabe CPU/GPU. Uporablja Intel RAPL (brez skrbnika) za CPU, nvidia-smi za NVIDIA GPU in LibreHardwareMonitor za AMD/Intel GPU.",
     "HARDWARE_LABEL_STYLE_COLORED_ICONS": "Barvne ikone",
