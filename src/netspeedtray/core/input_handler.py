@@ -101,7 +101,7 @@ class InputHandler(QObject):
 
     def _execute_click_action(self, action: str) -> None:
         """
-        Run a configured widget click action (community PR #165, @rami123 — adapted to the 2.0
+        Run a configured widget click action (community PR #165, @rami123 - adapted to the 2.0
         action set). Unknown/empty actions and "none" are silent no-ops.
         """
         defaults = constants.config.defaults
@@ -122,7 +122,7 @@ class InputHandler(QObject):
                 elif hasattr(self.widget, "pause"):
                     self.widget.pause()
             else:
-                self.logger.debug("Unknown click action %r — ignoring.", action)
+                self.logger.debug("Unknown click action %r - ignoring.", action)
         except Exception as e:
             self.logger.error("Failed to run click action %r: %s", action, e, exc_info=True)
 

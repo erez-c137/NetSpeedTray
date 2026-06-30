@@ -549,7 +549,7 @@ def get_taskbar_info(preferred_screen_name: Optional[str] = None) -> TaskbarInfo
 
     By default returns the primary taskbar. If `preferred_screen_name` is
     given and a secondary taskbar exists on that screen, returns *that*
-    taskbar instead — this is the implementation hook for the user-facing
+    taskbar instead - this is the implementation hook for the user-facing
     "Preferred Monitor" setting (#72).
 
     If the preferred screen is no longer present (monitor disconnected,

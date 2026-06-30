@@ -1,10 +1,10 @@
 """
-PreviewWidget — a standalone, non-interactive render of the taskbar widget (refactor C1).
+PreviewWidget - a standalone, non-interactive render of the taskbar widget (refactor C1).
 
 This is the keystone shared surface. It owns its own `WidgetRenderer` and draws through the
 exact same `render_widget` path the live taskbar widget uses, so a preview matches the real
 thing pixel-for-pixel for a given config + metrics. It has no taskbar coupling, no timers, no
-monitoring — you hand it a config and a `WidgetMetrics` snapshot and it draws.
+monitoring - you hand it a config and a `WidgetMetrics` snapshot and it draws.
 
 Consumers:
   - the Settings live-preview (shows the effect of a setting before Apply),
@@ -62,7 +62,7 @@ class PreviewWidget(QWidget):
         self.update()
 
     def set_layout_mode(self, mode: str) -> None:
-        """'horizontal' (TOP/BOTTOM taskbar) or 'vertical' (LEFT/RIGHT side taskbar) — informational;
+        """'horizontal' (TOP/BOTTOM taskbar) or 'vertical' (LEFT/RIGHT side taskbar) - informational;
         the shared paint path always draws the two-row stack today."""
         self._layout_mode = mode
         self.update()

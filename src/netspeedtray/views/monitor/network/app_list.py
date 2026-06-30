@@ -1,11 +1,11 @@
 """
-AppBarList — the per-app connection list for the Monitor's Network tab.
+AppBarList - the per-app connection list for the Monitor's Network tab.
 
 Renders the AppActivityWorker's honest payload (live connections per app, never estimated bytes) as
 a calm bar list: one row per app, an activity bar sized (log scale) to its share of live
 connections, active apps in the accent colour and idle apps muted. Rows are keyed by app identity
 and reused across ticks (no flicker); ordering is stable (selected-first, then active-first, then by
-name), so a row only moves when its active/idle state actually flips — never because its connection
+name), so a row only moves when its active/idle state actually flips - never because its connection
 count jittered. The selected row is pinned to the top so its highlight (and the detail panel reading
 it) never slides out from under the user when its active/idle state flips.
 
@@ -30,7 +30,7 @@ _COUNT_W = 64
 
 
 def _is_active(row: Dict[str, Any]) -> bool:
-    """An app is "active" if it holds an established TCP connection OR talks to any off-box host —
+    """An app is "active" if it holds an established TCP connection OR talks to any off-box host -
     so UDP-only traffic (QUIC/HTTP3, DNS, calls, games) isn't wrongly shown idle just because UDP
     never reports ESTABLISHED."""
     return int(row.get("established_count", 0)) > 0 or int(row.get("host_count", 0)) > 0
@@ -123,7 +123,7 @@ class AppRow(QFrame):
         super().mousePressEvent(event)
 
     def keyPressEvent(self, event) -> None:  # noqa: N802
-        # Enter/Space open this app's detail — the row is the Network tab's primary control, so it must
+        # Enter/Space open this app's detail - the row is the Network tab's primary control, so it must
         # be operable without a mouse (a screen-reader/keyboard user couldn't reach it before).
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space) and self._key:
             self.clicked.emit(self._key)
@@ -153,7 +153,7 @@ class AppRow(QFrame):
 
     def update_row(self, row: Dict[str, Any], max_conn: int) -> None:
         self._key = str(row.get("identity_key", row.get("display_name", "")))
-        name = str(row.get("display_name", "—"))
+        name = str(row.get("display_name", "-"))
         conn = int(row.get("conn_count", 0))
         est = int(row.get("established_count", 0))
         hosts = int(row.get("host_count", 0))
@@ -175,8 +175,8 @@ class AppRow(QFrame):
         self._name.setStyleSheet(f"color: {name_color}; background: transparent;")
         self._apply_row_style()   # keep selection/hover styling fresh across theme changes
         # Qt does NOT expose a tooltip to screen readers, so also set the accessible name from the same
-        # content — otherwise an assistive reader announces a blank frame for the tab's primary control.
-        summary = self._tr("APP_ROW_TOOLTIP", "{name} — {conn} connections, {active} active, {hosts} hosts") \
+        # content - otherwise an assistive reader announces a blank frame for the tab's primary control.
+        summary = self._tr("APP_ROW_TOOLTIP", "{name} - {conn} connections, {active} active, {hosts} hosts") \
             .format(name=name, conn=conn, active=est, hosts=hosts)
         self.setToolTip(summary)
         self.setAccessibleName(summary)
@@ -248,7 +248,7 @@ class AppBarList(QWidget):
         max_conn = max((int(r.get("conn_count", 0)) for r in rows), default=0)
         if rows:
             # STABLE order: selected-first (so the highlighted/detail row never slides), then
-            # active-first, then by name — NOT by the second-to-second-jittery conn_count.
+            # active-first, then by name - NOT by the second-to-second-jittery conn_count.
             rows = sorted(rows, key=lambda r: (0 if _row_key(r) == sel else 1,
                                                0 if _is_active(r) else 1,
                                                str(r.get("display_name", "")).casefold()))
@@ -266,7 +266,7 @@ class AppBarList(QWidget):
             w.set_selected(key == sel)
             ordered.append(w)
         # Relayout: detach only the row widgets (keep the single trailing stretch), prune gone rows
-        # (an EMPTY payload prunes them all — no stale last-seen apps linger), re-insert before the
+        # (an EMPTY payload prunes them all - no stale last-seen apps linger), re-insert before the
         # stretch so no QSpacerItem is leaked per tick.
         for i in reversed(range(self._list_layout.count())):
             if self._list_layout.itemAt(i).widget() is not None:

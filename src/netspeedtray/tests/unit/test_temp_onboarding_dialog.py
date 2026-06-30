@@ -1,4 +1,4 @@
-"""Temperature onboarding dialog — defaults, action capture, and the dismiss-forever opt-out."""
+"""Temperature onboarding dialog - defaults, action capture, and the dismiss-forever opt-out."""
 import pytest
 
 from netspeedtray.constants.i18n import I18nStrings

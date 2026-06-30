@@ -43,7 +43,7 @@ class TrayIconManager(QObject):
         # Retrieve actions for external use if needed (e.g., toggling text)
         self.pause_action: Optional[QAction] = None
         self.pause_separator: Optional[QAction] = None
-        # [(QAction, Segoe-Fluent-codepoint)] — icons are (re)tinted to the text colour on each open.
+        # [(QAction, Segoe-Fluent-codepoint)] - icons are (re)tinted to the text colour on each open.
         self._menu_icon_actions: list = []
 
     def initialize(self) -> None:
@@ -84,10 +84,10 @@ class TrayIconManager(QObject):
         try:
             self.context_menu = QMenu(self.widget)
 
-            # The menu is a MAP, not a flat list — tiers, separated, so a new user can read
+            # The menu is a MAP, not a flat list - tiers, separated, so a new user can read
             # what the app does straight from the right-click. Live data usage (today / this
             # month / data-cap progress) now lives in the hover card over the widget, and the
-            # cap is configured in Settings → Network — so the menu stays calm.
+            # cap is configured in Settings → Network - so the menu stays calm.
 
             # --- Tier 1: The app's surfaces (the windows most users never find) ---
             settings_action = self.context_menu.addAction(self.i18n.SETTINGS_MENU_ITEM)
@@ -95,7 +95,7 @@ class TrayIconManager(QObject):
                 settings_action.triggered.connect(self.widget.show_settings)
 
             # The unified Monitor (Overview / Network / Hardware) now replaces the separate Graph + App
-            # Activity windows — its three tabs cover both — so the menu is one calm entry (and a
+            # Activity windows - its three tabs cover both - so the menu is one calm entry (and a
             # double-click on the widget opens it too).
             monitor_action = self.context_menu.addAction(self.i18n.SHOW_MONITOR_MENU_ITEM)
             if hasattr(self.widget, 'open_monitor_window'):
@@ -103,7 +103,7 @@ class TrayIconManager(QObject):
 
             self.context_menu.addSeparator()
 
-            # --- Control (opt-in) — Pause/Resume plus its own divider, shown only when the user
+            # --- Control (opt-in) - Pause/Resume plus its own divider, shown only when the user
             # has turned it on in Settings (pause_in_menu). Default off keeps the menu calm; the
             # pair's visibility is refreshed on every open in _refresh_dynamic_items. ---
             self.pause_action = self.context_menu.addAction(self.i18n.PAUSE_MENU_ITEM)
@@ -159,7 +159,7 @@ class TrayIconManager(QObject):
     def _apply_menu_style(self) -> None:
         """Style the context menu to fit Windows 11: a dark, rounded card with generous padding,
         rounded-pill item highlights on a subtle NEUTRAL hover (the Win11 taskbar/jump-list look, not
-        a saturated accent block), and quiet separators. Theme- and accent-aware — re-applied on each
+        a saturated accent block), and quiet separators. Theme- and accent-aware - re-applied on each
         open so it tracks an OS light/dark switch. Native rounded window corners are added in
         show_context_menu via DWM; the QSS radius is the fallback on Win10 / if DWM no-ops."""
         if not self.context_menu:

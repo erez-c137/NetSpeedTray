@@ -1,9 +1,9 @@
 """
-MonitorWindow — the unified Monitor (Overview / Network / Hardware).
+MonitorWindow - the unified Monitor (Overview / Network / Hardware).
 
 The shell: native Win11 chrome, remembered geometry, a flat pivot tab-bar over a lazy
 QStackedWidget. Each resource tab starts as a cheap placeholder; the real page (and, for chart
-tabs, the matplotlib canvas via GraphHost) is built on first activation — so a glance at Overview
+tabs, the matplotlib canvas via GraphHost) is built on first activation - so a glance at Overview
 never imports matplotlib.
 
 Import firewall: this module imports only Qt + app utils at module scope. The graph package is
@@ -48,12 +48,12 @@ class MonitorWindow(QWidget):
         self._graph_host = None  # one shared graph engine, built on first chart-tab activation
         self._settings_flyout = None  # one reusable display-settings popup (not rebuilt per click)
 
-        # Prefix the app name so the taskbar/Alt-Tab entry reads "NetSpeedTray Monitor" — consistent
+        # Prefix the app name so the taskbar/Alt-Tab entry reads "NetSpeedTray Monitor" - consistent
         # with the Settings window ("NetSpeedTray Settings …").
         self.setWindowTitle(f"{constants.app.APP_NAME} {self._tr('MONITOR_WINDOW_TITLE', 'Monitor')}")
         # Default sized so the WHOLE wide Overview fits without scrolling (content ≈700px + chrome),
         # clamped to the screen so it never opens off-screen on a small display. The min is deliberately
-        # small — every tab scrolls/reflows, so the window is safe at any size.
+        # small - every tab scrolls/reflows, so the window is safe at any size.
         self.setMinimumSize(660, 420)
         # Snug to the Overview's natural height (content ≈680 + chrome ≈90 → ~770; +30 breathing room),
         # so a fresh open shows the whole dashboard without scrolling AND without a big dead strip at the
@@ -86,7 +86,7 @@ class MonitorWindow(QWidget):
         header.addWidget(self._tab_bar)
         header.addStretch(1)
         self._gear = QToolButton()
-        self._gear.setText(chr(0xE713))   # Segoe Fluent Icons "Settings" — monochrome, obeys QSS colour
+        self._gear.setText(chr(0xE713))   # Segoe Fluent Icons "Settings" - monochrome, obeys QSS colour
         self._gear.setCursor(Qt.CursorShape.PointingHandCursor)
         self._gear.setToolTip(self._tr("MONITOR_SETTINGS_TIP", "Monitor display settings"))
         self._gear.setAccessibleName(self._tr("MONITOR_SETTINGS_TIP", "Monitor display settings"))
@@ -107,13 +107,13 @@ class MonitorWindow(QWidget):
             d.stack_index = i
             self._stack.addWidget(self._placeholder())
 
-        # Apply per-tab visibility. NOTE: the Hardware tab is intentionally ALWAYS visible — its
+        # Apply per-tab visibility. NOTE: the Hardware tab is intentionally ALWAYS visible - its
         # descriptor uses the default is_visible (lambda cfg: True) because the Monitor force-enables
         # hardware collection while it's open (see _build_descriptors). No tab is config-gated today.
         for d in self._descriptors:
             self._tab_bar.set_tab_visible(d.tab_id, d.is_visible(self.config))
 
-        # Remembered geometry — position + SIZE + maximized state — multi-monitor safe, auto-saved on
+        # Remembered geometry - position + SIZE + maximized state - multi-monitor safe, auto-saved on
         # move/resize/maximize.
         attach_geometry_memory(self, self._main_widget, _POS_KEY)
         if not restore_window_geometry(self, self.config, _POS_KEY):
@@ -140,7 +140,7 @@ class MonitorWindow(QWidget):
 
     def _build_descriptors(self) -> List[LazyTabDescriptor]:
         # The Monitor forces hardware collection while it's open (see _set_force_hardware), so the
-        # Hardware tab always has data to show — it's a dedicated monitoring screen, not gated on
+        # Hardware tab always has data to show - it's a dedicated monitoring screen, not gated on
         # whether the taskbar widget happens to display hardware.
         return [
             LazyTabDescriptor("overview", self._tr("MONITOR_TAB_OVERVIEW", "Overview"),
@@ -174,7 +174,7 @@ class MonitorWindow(QWidget):
             self._stack.removeWidget(old)
             old.deleteLater()
         self._stack.setCurrentIndex(index)
-        # The display-settings gear opens the Hardware-graph options. Keep it PERSISTENT (never hide —
+        # The display-settings gear opens the Hardware-graph options. Keep it PERSISTENT (never hide -
         # hiding made it flicker in/out on pivot); just enable it on Hardware and dim it elsewhere.
         is_hw = (d.tab_id == "hardware")
         self._gear.setEnabled(is_hw)
@@ -201,7 +201,7 @@ class MonitorWindow(QWidget):
 
     def _ensure_graph_host(self):
         """The single shared graph engine, created lazily (matplotlib still doesn't load until a
-        chart tab is actually shown — GraphHost.__init__ imports no graph package)."""
+        chart tab is actually shown - GraphHost.__init__ imports no graph package)."""
         if self._graph_host is None:
             from netspeedtray.views.monitor.graph_host import GraphHost
             self._graph_host = GraphHost(
@@ -238,8 +238,8 @@ class MonitorWindow(QWidget):
         fly.show()
 
     def _on_settings_changed(self) -> None:
-        # Live-apply. The active page may need more than a re-render — a graph-mode change re-resolves
-        # which stat is shown — so delegate to its on_settings_changed when it has one. Otherwise just
+        # Live-apply. The active page may need more than a re-render - a graph-mode change re-resolves
+        # which stat is shown - so delegate to its on_settings_changed when it has one. Otherwise just
         # re-render the active graph (colour/legend/smoothing/axis). No-op until a chart tab built the host.
         idx = self._stack.currentIndex()
         page = self._descriptors[idx].page if 0 <= idx < len(self._descriptors) else None
@@ -287,7 +287,7 @@ class MonitorWindow(QWidget):
 
     def _set_force_hardware(self, on: bool) -> None:
         """While the Monitor is open, force the stats thread to collect CPU/GPU/RAM/VRAM (+ temps)
-        even when the taskbar widget has hardware monitoring off — this IS a dedicated monitoring
+        even when the taskbar widget has hardware monitoring off - this IS a dedicated monitoring
         screen, so it shows everything. Reverts to the widget's config when the Monitor closes."""
         try:
             self._main_widget.monitor_thread._force_hardware_collection = bool(on)

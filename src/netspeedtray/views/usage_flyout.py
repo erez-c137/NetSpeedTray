@@ -1,10 +1,10 @@
 """
-UsageFlyout — a small Win11-style hover card that shows data usage at a glance.
+UsageFlyout - a small Win11-style hover card that shows data usage at a glance.
 
 Shown when the pointer rests on the widget; it carries the gesture hint (while it's still
 graduating) and the Today / This-month usage, plus a data-cap progress line when a cap is
 set. It deliberately does NOT use Qt's built-in tooltip: that gets positioned by Qt near the
-cursor — which sits *on* the taskbar — so the always-on-top taskbar clips it. This card we
+cursor - which sits *on* the taskbar - so the always-on-top taskbar clips it. This card we
 place ourselves, clamped fully inside the screen's work area (``availableGeometry``, which
 excludes the taskbar), so it can never be clipped.
 

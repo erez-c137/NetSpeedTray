@@ -1,5 +1,5 @@
 """
-Tests for UsageFlyout — the Win11 hover card that replaced the clipped Qt tooltip and the
+Tests for UsageFlyout - the Win11 hover card that replaced the clipped Qt tooltip and the
 tray usage rows. Covers content (Today/This-month, conditional hint + cap) and the key fix:
 the card is clamped fully inside the screen work area so the taskbar can never clip it.
 """
@@ -76,7 +76,7 @@ def test_cap_line_only_when_cap_set(q_app):
 
 def test_show_for_clamps_fully_into_work_area(q_app):
     """The widget lives *in* the taskbar band; the card must land fully inside the work area
-    (which excludes the taskbar) — this is the fix for the clipped tooltip."""
+    (which excludes the taskbar) - this is the fix for the clipped tooltip."""
     avail = QRect(0, 0, 1920, 1040)           # screen 1920x1080 minus a 40px bottom taskbar
     widget_geo = QRect(1700, 1045, 120, 30)   # widget sits inside the taskbar band
     card = UsageFlyout(_i18n(), (1e6, 1e6), (1e6, 1e6))

@@ -1,5 +1,5 @@
 """
-GraphHoverTooltip — the Monitor graph's lightweight hover readout (ported feature: the one thing the
+GraphHoverTooltip - the Monitor graph's lightweight hover readout (ported feature: the one thing the
 old Graph window had that the Monitor lacked). The mouse-snap path needs a live matplotlib canvas, so
 that's covered by a standalone smoke script; here we cover the canvas-free formatting: the network graph
 formats values as speed, the hardware graphs as percent, and the timestamp + series name are shown.

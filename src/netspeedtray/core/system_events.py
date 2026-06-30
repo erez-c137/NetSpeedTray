@@ -55,7 +55,7 @@ class SystemEventHandler(QObject):
         self.foreground_hook: Optional[WinEventHook] = None
         self.movesize_hook: Optional[WinEventHook] = None
         
-        # Timers — connect the timeout slots ONCE here (not in _setup_timers), so the repeated
+        # Timers - connect the timeout slots ONCE here (not in _setup_timers), so the repeated
         # start()/stop() cycles on every Explorer restart can't accumulate duplicate connections that
         # multiply the per-tick work and the taskbar-restart fan-out (#11/#12).
         self._taskbar_validity_timer = QTimer(self)
@@ -96,7 +96,7 @@ class SystemEventHandler(QObject):
             self.foreground_hook.event_triggered_debounced.connect(self.foreground_app_changed)
             self.foreground_hook.start()
             
-            # 2. Taskbar move/size hook — only when a real taskbar handle exists
+            # 2. Taskbar move/size hook - only when a real taskbar handle exists
             # (see _attach_movesize_hook for why a 0 handle must be skipped).
             self._attach_movesize_hook()
 
@@ -131,7 +131,7 @@ class SystemEventHandler(QObject):
 
     def _setup_timers(self) -> None:
         """Start the taskbar-validity + fast fullscreen-hide timers. The timeout slots are connected
-        once in __init__, so this only (re)starts them — repeated start()/stop() can't accumulate
+        once in __init__, so this only (re)starts them - repeated start()/stop() can't accumulate
         duplicate connections (#11/#12). (Fullscreen poll catches an app going fullscreen while already
         focused, when no foreground event fires, so the widget hides promptly.)"""
         self._taskbar_validity_timer.start(timeouts.TASKBAR_VALIDITY_CHECK_INTERVAL_MS)
@@ -187,9 +187,9 @@ class SystemEventHandler(QObject):
             window_rect = win32gui.GetWindowRect(hwnd)
             monitor_info = win32api.GetMonitorInfo(win32api.MonitorFromWindow(hwnd))
             if window_rect != monitor_info.get('Monitor'):
-                return False  # not fullscreen on its monitor — no taskbar query needed
+                return False  # not fullscreen on its monitor - no taskbar query needed
             # Check obstruction against the widget's OWN taskbar (preferred monitor), not
-            # always the primary — otherwise a fullscreen app on another monitor would
+            # always the primary - otherwise a fullscreen app on another monitor would
             # wrongly hide the widget.
             taskbar_info = get_taskbar_info(preferred_screen_name=self._preferred_monitor())
             return bool(is_taskbar_obstructed(taskbar_info, hwnd))
@@ -257,7 +257,7 @@ class SystemEventHandler(QObject):
                      self.stop()
                      self.start()
             else:
-                # No move/size hook attached yet — we started while the taskbar handle
+                # No move/size hook attached yet - we started while the taskbar handle
                 # was 0 (explorer mid-restart). Keep trying until a real handle appears.
                 self._attach_movesize_hook()
 
@@ -291,13 +291,13 @@ class SystemEventHandler(QObject):
         Qt 6.5+ exposes a debounced, OS-agnostic signal for color-scheme
         changes. Using it here replaces the previous WM_SETTINGCHANGE
         native event filter, which fired on every system setting change
-        (mouse, language, accessibility, etc.) — not just theme.
+        (mouse, language, accessibility, etc.) - not just theme.
         """
         if self._theme_signal_connected:
             return
         app = QGuiApplication.instance()
         if app is None:
-            self.logger.warning("No QGuiApplication instance — cannot connect theme signal.")
+            self.logger.warning("No QGuiApplication instance - cannot connect theme signal.")
             return
         try:
             app.styleHints().colorSchemeChanged.connect(self._on_color_scheme_changed)

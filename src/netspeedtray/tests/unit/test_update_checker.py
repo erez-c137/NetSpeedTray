@@ -11,7 +11,7 @@ updates. These tests pin the REAL behavior of `_parse_version` and `is_newer`:
   - malformed / empty / partial version strings parse gracefully (no crash);
     `_parse_version` stops at the first non-integer component
 
-Only the pure comparison/parsing is exercised here — no network, no Qt threads,
+Only the pure comparison/parsing is exercised here - no network, no Qt threads,
 no UpdateChecker instance (that would need real HTTP + a QThread).
 
 Known quirks that are intentional and should NOT be "fixed" in a patch are
@@ -86,7 +86,7 @@ def test_is_newer_equal_is_not_newer():
 
 
 def test_is_newer_v_prefix_stripped_either_side():
-    # 'v' on latest, current, both, or neither — all equivalent.
+    # 'v' on latest, current, both, or neither - all equivalent.
     assert is_newer("v1.3.4", "1.3.3") is True
     assert is_newer("1.3.4", "v1.3.3") is True
     assert is_newer("v1.3.4", "v1.3.3") is True
@@ -110,11 +110,11 @@ def test_is_newer_malformed_does_not_crash():
     reason="Zero-padding asymmetry: tuple compare makes (1,3) < (1,3,0), so "
            "is_newer('1.3.0','1.3') is True but is_newer('1.3','1.3.0') is "
            "False. '1.3' and '1.3.0' are the same release; treating one as "
-           "newer is arguably wrong. Intentional/known — not a patch fix.",
+           "newer is arguably wrong. Intentional/known - not a patch fix.",
     strict=True,
 )
 def test_trailing_zero_components_treated_as_equal():
-    # If this ever starts passing, the normalization changed (good!) — update.
+    # If this ever starts passing, the normalization changed (good!) - update.
     assert is_newer("1.3.0", "1.3") is False
     assert is_newer("1.3", "1.3.0") is False
 

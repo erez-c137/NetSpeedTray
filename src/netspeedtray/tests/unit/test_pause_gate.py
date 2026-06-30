@@ -1,6 +1,6 @@
 """
 Pause actually freezes the live readout (the bug fix). The display is signal-driven from the
-monitor thread, so pausing has to gate the update_* slots on `is_paused` — otherwise the numbers
+monitor thread, so pausing has to gate the update_* slots on `is_paused` - otherwise the numbers
 keep moving. Exercised with a lightweight fake `self` (no live QWidget), the pattern used across
 the widget tests.
 """
@@ -40,7 +40,7 @@ def test_paused_freezes_cpu_gpu_readout():
 
 
 def test_paused_freezes_all_hardware_detail_slots():
-    """Every update_* slot must freeze — temp/power/RAM/VRAM included (the partial-freeze fix)."""
+    """Every update_* slot must freeze - temp/power/RAM/VRAM included (the partial-freeze fix)."""
     f = _fake()
     f.cpu_temp = f.gpu_temp = f.cpu_power = f.gpu_power = None
     f.ram_used = f.ram_total = f.vram_used = f.vram_total = 0.0

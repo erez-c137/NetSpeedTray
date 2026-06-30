@@ -1,4 +1,4 @@
-"""FlatTabBar — the Monitor window's Fluent pivot tab strip (no matplotlib, owns no pages)."""
+"""FlatTabBar - the Monitor window's Fluent pivot tab strip (no matplotlib, owns no pages)."""
 import pytest
 from PyQt6.QtWidgets import QApplication
 

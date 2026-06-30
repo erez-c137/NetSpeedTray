@@ -45,11 +45,11 @@ def test_pause_is_transient_emits_and_never_loads_matplotlib(q_app):
 
     h.set_live(False)
     assert h.is_live is False
-    assert cfg["live_update"] is True          # NOT persisted — pause is per-session (reopens live)
+    assert cfg["live_update"] is True          # NOT persisted - pause is per-session (reopens live)
     assert seen == [False]
     assert h._loaded is False                  # the cheap path: pausing imports nothing
 
-    h.set_live(False)                          # idempotent — no second emit
+    h.set_live(False)                          # idempotent - no second emit
     assert seen == [False]
 
 

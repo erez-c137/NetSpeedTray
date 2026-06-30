@@ -19,12 +19,12 @@ _variable_present = None  # lazy cache: is "Segoe UI Variable" installed?
 
 
 def fluent_icon(codepoint: int, size: int = 16, color: str = "#FFFFFF") -> QIcon:
-    """Render a Segoe Fluent Icons glyph to a tintable QIcon — the native Win11 iconography.
+    """Render a Segoe Fluent Icons glyph to a tintable QIcon - the native Win11 iconography.
 
     Win11 ships 'Segoe Fluent Icons'; Win10 ships 'Segoe MDL2 Assets'. Listing both lets Win11 win and
     Win10 degrade. The glyph is drawn to a transparent pixmap in ``color`` so it can be tinted per state
     (e.g. text_secondary at rest → accent when a tab/nav row is selected). Uses setPixelSize for a
-    DPI-crisp icon optically matched to the label's px font. NEVER pass an emoji — only Fluent codepoints.
+    DPI-crisp icon optically matched to the label's px font. NEVER pass an emoji - only Fluent codepoints.
     """
     pm = QPixmap(size, size)
     pm.fill(Qt.GlobalColor.transparent)
@@ -56,7 +56,7 @@ def combo_chevron_url(color_hex: str) -> str:
         cache_dir = os.path.join(get_app_data_path(), "cache")
         os.makedirs(cache_dir, exist_ok=True)
         # Render at the on-screen size (QSS clips rather than scales a ::down-arrow image, so a larger
-        # source would show only a cropped fragment — the "little square" bug).
+        # source would show only a cropped fragment - the "little square" bug).
         path = os.path.join(cache_dir, f"chevron_{key}_v2.png")
         if not os.path.exists(path):
             fluent_icon(0xE70D, 14, color_hex).pixmap(QSize(14, 14)).save(path, "PNG")
@@ -67,7 +67,7 @@ def combo_chevron_url(color_hex: str) -> str:
 
 def font(token: tuple) -> QFont:
     """
-    Build a QFont for a Fluent type token — a ``(style_name, pixel_size, weight)`` tuple
+    Build a QFont for a Fluent type token - a ``(style_name, pixel_size, weight)`` tuple
     from ``constants.styles`` (e.g. ``TYPE_BODY_STRONG``).
 
     On Windows 11 the optical cut + weight is selected via ``setStyleName`` on the single
@@ -284,7 +284,7 @@ def dialog_style() -> str:
             padding: 2px;
         }}
 
-        /* Scrollbars are intentionally NOT styled here — Settings inherits the native Windows
+        /* Scrollbars are intentionally NOT styled here - Settings inherits the native Windows
            scrollbar, identical to the Monitor window (which never styled it). One native scrollbar
            everywhere; a custom QSS bar read as "not native / too thick". */
     """
@@ -351,7 +351,7 @@ def sidebar_style() -> str:
             padding: 8px 12px;
             color: {text_color};
             border: none;
-            border-left: 3px solid transparent;   /* reserve the indicator width — no shift on select */
+            border-left: 3px solid transparent;   /* reserve the indicator width - no shift on select */
             border-radius: 4px;
             margin: 2px 6px;
             outline: none;

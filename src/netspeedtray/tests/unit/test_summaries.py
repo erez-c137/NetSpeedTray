@@ -1,5 +1,5 @@
 """
-WindowSummary — tier-aware summary stats. The honesty spine: exact percentiles only from the raw tier;
+WindowSummary - tier-aware summary stats. The honesty spine: exact percentiles only from the raw tier;
 rollup tiers give weighted-avg + max with percentiles marked UNAVAILABLE; every summary carries coverage.
 """
 from netspeedtray.utils import summaries as S

@@ -1,10 +1,10 @@
 """
-TimelineSelector — the Monitor's history-window dropdown.
+TimelineSelector - the Monitor's history-window dropdown.
 
 A Win11 dropdown BUTTON (QToolButton + menu, with a "▾" chevron so it unmistakably reads as a
 pulldown) for choosing the time window: Live/Session, 30m, 1h, 4h, 8h, 12h, 24h, 48h, Week, Month,
-All, Since boot. It emits ``period_changed(index)`` with the PERIOD_MAP index — the same value
-GraphHost.set_period expects — so it drops into the Overview and Network headers and drives the
+All, Since boot. It emits ``period_changed(index)`` with the PERIOD_MAP index - the same value
+GraphHost.set_period expects - so it drops into the Overview and Network headers and drives the
 existing DB read path. (Design panel: a dropdown beats pills once the range gets this granular.)
 """
 from __future__ import annotations
@@ -27,7 +27,7 @@ class TimelineSelector(QWidget):
 
     # Display order by how a person reads time (NOT PERIOD_MAP index order).
     _ORDER = [0, 6, 7, 8, 9, 10, 2, 11, 3, 4, 5, 1]
-    _CHEVRON = "▾"   # ▾ — a down triangle that renders in normal fonts (no asset, no font mixing)
+    _CHEVRON = "▾"   # ▾ - a down triangle that renders in normal fonts (no asset, no font mixing)
 
     def __init__(self, i18n, current_index: int = 2, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -106,6 +106,6 @@ class TimelineSelector(QWidget):
         return self._index
 
     def current_label(self) -> str:
-        """The human label for the active window (e.g. "Last 24 hours") — used by the Stats-detail
+        """The human label for the active window (e.g. "Last 24 hours") - used by the Stats-detail
         sheet title and the export filename."""
         return self._label(self._period_key())

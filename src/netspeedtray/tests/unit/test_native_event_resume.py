@@ -5,7 +5,7 @@ These lock in the contract that fixed the v2.0 crash-on-launch: the override mus
 *observe* native messages and return ``(False, 0)`` ("not handled, let Qt continue"),
 and must NEVER re-dispatch via ``super().nativeEvent(...)``. Calling super from a Python
 nativeEvent override access-violates inside Qt during the widget's first show() (a hard
-0xC0000005 in QtCore, no Python traceback) — see the method docstring.
+0xC0000005 in QtCore, no Python traceback) - see the method docstring.
 
 nativeEvent is exercised as a plain function with a lightweight fake ``self`` (the
 established pattern in test_widget_cycle.py), so no live QWidget is needed. A real MSG is
@@ -37,7 +37,7 @@ def _msg_addr(message: int, wparam: int = 0) -> int:
 
 
 def test_normal_message_returns_unhandled_tuple():
-    """A non-power message must return (False, 0) — the safe contract, not super()."""
+    """A non-power message must return (False, 0) - the safe contract, not super()."""
     fake = _fake_widget()
     _ref, addr = _msg_addr(0x0010)  # arbitrary non-power message
     result = NetworkSpeedWidget.nativeEvent(fake, b"windows_generic_MSG", addr)

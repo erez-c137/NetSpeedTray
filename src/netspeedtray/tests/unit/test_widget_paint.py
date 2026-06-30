@@ -1,11 +1,11 @@
 """
-Shared paint path (C1 keystone) — parity & smoke tests.
+Shared paint path (C1 keystone) - parity & smoke tests.
 
 `render_widget` is the single draw path for both the live taskbar widget and every preview.
 These tests drive it into an offscreen QImage and assert:
   - it paints *something* in every display mode (no silent blank),
-  - it is deterministic (same inputs → identical pixels — a preview must be stable), and
-  - it reflects config (a different arrow glyph yields different pixels — the preview is live).
+  - it is deterministic (same inputs → identical pixels - a preview must be stable), and
+  - it reflects config (a different arrow glyph yields different pixels - the preview is live).
 Plus a construction/smoke test for PreviewWidget itself.
 """
 from PyQt6.QtCore import QRect

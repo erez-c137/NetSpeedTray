@@ -1,5 +1,5 @@
 """
-get_total_bandwidth_for_period — period totals must scale with the poll interval (audit #2/#3).
+get_total_bandwidth_for_period - period totals must scale with the poll interval (audit #2/#3).
 
 The tier sums are "sum of per-sample rates"; bytes = that × seconds-per-sample (update_rate).
 The old code implicitly assumed 1s, so the "data used" glance under-reported at 2s/5s/10s.
@@ -55,7 +55,7 @@ def test_totals_at_1s_are_the_rate_sum(state_with_db):
 def test_totals_scale_with_poll_interval(state_with_db):
     state_with_db.config["update_rate"] = 2.0
     up, down = _totals(state_with_db)
-    assert up == pytest.approx(600.0)   # 3 × 100 × 2s  (was 300 before the fix — under-reported)
+    assert up == pytest.approx(600.0)   # 3 × 100 × 2s  (was 300 before the fix - under-reported)
     assert down == pytest.approx(1200.0)
 
 

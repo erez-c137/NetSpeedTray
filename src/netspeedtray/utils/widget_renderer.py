@@ -162,7 +162,7 @@ class WidgetRenderer:
                 
                 # Bounding rect for coordinates. _last_text_rect is the LAST segment drawn (the
                 # side-by-side layout advances by it); _content_bounds is the UNION of all segments
-                # this paint — what the context menu centers on, so it stays centered over the WHOLE
+                # this paint - what the context menu centers on, so it stays centered over the WHOLE
                 # widget when CPU/GPU stats sit beside the network text (not just the last segment).
                 self._last_text_rect = QRect()
                 self._content_bounds = QRect()
@@ -334,8 +334,8 @@ class WidgetRenderer:
         """
         Return the color band ('high' | 'low' | 'default') for a speed.
 
-        `raw_bytes` is the canonical speed in bytes/sec; it is converted to Mbps —
-        the unit the high/low thresholds are defined in — before comparison. This is
+        `raw_bytes` is the canonical speed in bytes/sec; it is converted to Mbps -
+        the unit the high/low thresholds are defined in - before comparison. This is
         deliberately independent of the on-screen display unit: parsing the displayed
         number (which may be in Kbps, MB/s, ...) banded incorrectly whenever that unit
         wasn't Mbps. Bands ascend: default (< low) -> low (low..high) -> high (>= high).
@@ -359,7 +359,7 @@ class WidgetRenderer:
 
     def _draw_speed_line(self, painter: QPainter, is_upload: bool, val: str, unit: str, raw_bytes: float, arrow_x: int, number_x: int, unit_x: int, y: int, config: RenderConfig, number_area_width: int) -> None:
         """Unified helper to draw a single speed line (Arrow + Value + Unit) with stable alignment."""
-        # Color coding — band by the canonical speed (see _speed_band), never the
+        # Color coding - band by the canonical speed (see _speed_band), never the
         # on-screen number, so banding is correct in every display unit.
         if config.color_coding:
             band = self._speed_band(raw_bytes, config.high_speed_threshold, config.low_speed_threshold)
@@ -561,7 +561,7 @@ class WidgetRenderer:
                 parts.append(f"{int(float(temp))}°C")
                 has_any_data = True
             else:
-                parts.append(None)  # placeholder — will be replaced with N/A if nothing else has data
+                parts.append(None)  # placeholder - will be replaced with N/A if nothing else has data
 
         if show_power:
             try:
@@ -577,7 +577,7 @@ class WidgetRenderer:
         if not has_any_data:
             return f"({self.i18n.DEFAULT_TEXT})"
 
-        # Filter out None placeholders (partial data is fine — just show what we have)
+        # Filter out None placeholders (partial data is fine - just show what we have)
         valid_parts = [p for p in parts if p is not None]
         return f"({', '.join(valid_parts)})"
 
@@ -605,7 +605,7 @@ class WidgetRenderer:
 
             # Cache key for the (expensive) polyline recompute below. The history is an
             # append-only, time-ordered sliding window, so (first, last, length) uniquely
-            # identifies its contents — an O(1) key instead of hashing all ~N points every
+            # identifies its contents - an O(1) key instead of hashing all ~N points every
             # paint. (len >= MIN_GRAPH_POINTS here, so [0]/[-1] are safe.)
             current_hash = hash((history[0], history[-1], len(history), is_hardware))
 
@@ -715,7 +715,7 @@ class WidgetRenderer:
             self.config = RenderConfig.from_dict(config_dict)
             # Rebuild colors, fonts, metrics AND the pen cache from the new config.
             # update_config previously re-derived colors/fonts inline but never
-            # rebuilt self._cached_pens — which is what the paint loop actually uses —
+            # rebuilt self._cached_pens - which is what the paint loop actually uses -
             # so saved color/threshold edits did nothing until the next restart
             # (issue #153). Delegating to _refresh_resource_cache() is the single
             # source of truth and makes edits apply live.

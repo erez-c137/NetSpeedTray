@@ -1,16 +1,16 @@
 """
-Overview tiles — the matplotlib-free at-a-glance cards.
+Overview tiles - the matplotlib-free at-a-glance cards.
 
 Three small, self-contained widgets used by OverviewTab:
 
-* ``Sparkline``  — a tiny, antialiased trend line + soft fill. Deliberately standalone: it does
+* ``Sparkline``  - a tiny, antialiased trend line + soft fill. Deliberately standalone: it does
   NOT reuse ``WidgetRenderer.draw_mini_graph`` (whose point cache is keyed to the single taskbar
   widget; sharing it across five tiles would thrash it). A sparkline is a handful of line
-  segments — cheaper and safer to paint directly than to bend the widget's cache.
-* ``StatTile``  — label + big current value (+ optional sub-line) over a sparkline.
-* ``UsageTile`` — Today / This-month byte totals and, when a data cap is set, a progress bar.
+  segments - cheaper and safer to paint directly than to bend the widget's cache.
+* ``StatTile``  - label + big current value (+ optional sub-line) over a sparkline.
+* ``UsageTile`` - Today / This-month byte totals and, when a data cap is set, a progress bar.
 
-By contract this module imports only Qt + app utils — never matplotlib (it backs the default tab).
+By contract this module imports only Qt + app utils - never matplotlib (it backs the default tab).
 """
 from __future__ import annotations
 
@@ -37,13 +37,13 @@ def dynamic_range(series: List[float], min_span: float = 15.0,
                   hard_min: Optional[float] = 0.0, hard_max: Optional[float] = 100.0,
                   headroom: float = 0.08) -> Tuple[float, float]:
     """A (vmin, vmax) window fitted to the data so low-but-varying activity reads in detail instead of
-    as a flat line against 0–100. Enforces a minimum span (so a genuinely steady metric isn't blown up
-    into dramatic noise), adds a little top headroom, and clamps to any hard bounds (0–100 for a %)."""
+    as a flat line against 0-100. Enforces a minimum span (so a genuinely steady metric isn't blown up
+    into dramatic noise), adds a little top headroom, and clamps to any hard bounds (0-100 for a %)."""
     vals = [float(v) for v in series if v is not None and float(v) == float(v)]
     if not vals:
         return (hard_min or 0.0, (hard_min or 0.0) + min_span)
     lo, hi = min(vals), max(vals)
-    if hi - lo < min_span:                      # too flat to fill — widen to the minimum span
+    if hi - lo < min_span:                      # too flat to fill - widen to the minimum span
         pad = (min_span - (hi - lo)) / 2.0
         lo, hi = lo - pad, hi + pad
     hi += (hi - lo) * headroom                  # a little air above the peak
@@ -76,7 +76,7 @@ class Sparkline(QWidget):
     def set_series(self, series: List[float], vmax: Optional[float] = None, vmin: float = 0.0,
                    curve: float = 1.0) -> None:
         """Replace the data. ``vmax`` fixes the top of the scale (None auto-scales to the data max);
-        ``vmin`` is the bottom — pass a non-zero value to "zoom" the trend into its active band so a
+        ``vmin`` is the bottom - pass a non-zero value to "zoom" the trend into its active band so a
         low-but-varying metric shows detail instead of a flat line near the floor. ``curve`` < 1 bends
         the height axis (0.5 = square-root) so brief spikes don't squash the everyday band flat."""
         self._series = list(series)[-_SPARK_POINTS:]
@@ -88,7 +88,7 @@ class Sparkline(QWidget):
 
     def set_dual(self, primary: List[float], secondary: List[float], color2: str,
                  vmax: Optional[float] = None, scale_label: str = "", curve: float = 1.0) -> None:
-        """Two traces sharing one scale — the primary gets the fill + line, the secondary a thinner
+        """Two traces sharing one scale - the primary gets the fill + line, the secondary a thinner
         line in ``color2``. Both auto-scale to their combined max unless ``vmax`` is fixed.
         ``scale_label`` (e.g. "16.9 Mbps") is drawn at the top-of-scale so the trend has magnitude.
         ``curve`` < 1 bends the axis (0.5 = sqrt) so an occasional peak doesn't flatten normal traffic."""
@@ -139,7 +139,7 @@ class Sparkline(QWidget):
             return
 
         # Both traces share one scale so up/down read at true relative magnitude. vmin lets a tile
-        # "zoom" into a low band (e.g. CPU 5–20%) so the trend isn't a flat squiggle against 0–100.
+        # "zoom" into a low band (e.g. CPU 5-20%) so the trend isn't a flat squiggle against 0-100.
         data_max = max(max(self._series, default=0.0), max(self._series2, default=0.0))
         vmin = self._vmin
         vmax = self._vmax if (self._vmax and self._vmax > vmin) else data_max
@@ -193,7 +193,7 @@ class Sparkline(QWidget):
                 p.drawPolyline(QPolygonF(pts2))
 
             # Scale readout: a faint top-of-scale rule + the max value at top-left, plus a "0" baseline
-            # — so the hero trend has magnitude at a glance instead of a scaleless squiggle.
+            # - so the hero trend has magnitude at a glance instead of a scaleless squiggle.
             if self._scale_label:
                 sc = su.semantic_colors()
                 gpen = QPen(QColor(sc["card_stroke"])); gpen.setWidthF(1.0)
@@ -213,7 +213,7 @@ class Sparkline(QWidget):
 class ClickableCard(QFrame):
     """A focusable, keyboard-activatable card. Left-click, Enter, or Space emit ``clicked``, and an
     accent focus ring (drawn via a ``:focus`` border the subclass reserves in its QSS) makes keyboard
-    focus visible — so the Overview's drill-in cards aren't mouse-only. Subclasses set their object
+    focus visible - so the Overview's drill-in cards aren't mouse-only. Subclasses set their object
     name, QSS (including the reserved transparent border + ``:focus`` rule via ``focus_qss``), and an
     accessible name."""
 
@@ -249,7 +249,7 @@ class ClickableCard(QFrame):
 
 
 class StatTile(ClickableCard):
-    """A glanceable card: label, big current value, optional sub-line, and a sparkline. Clickable —
+    """A glanceable card: label, big current value, optional sub-line, and a sparkline. Clickable -
     selecting it opens the matching detail (the Monitor routes the click to the Hardware tab)."""
 
     def __init__(self, label: str, accent: str, parent: Optional[QWidget] = None) -> None:
@@ -269,11 +269,11 @@ class StatTile(ClickableCard):
         self._label.setFont(su.font(tokens.TYPE_CAPTION))
         self._label.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
 
-        self._value = QLabel("—")
+        self._value = QLabel("-")
         self._value.setFont(su.font(tokens.TYPE_TITLE))
         self._value.setStyleSheet(f"color: {c['text_primary']}; background: transparent;")
 
-        # The sub-line ALWAYS reserves its one caption line (even when empty) — toggling its visibility
+        # The sub-line ALWAYS reserves its one caption line (even when empty) - toggling its visibility
         # as a reading comes and goes (e.g. an iGPU's flaky power sub) would reflow the tile and shove
         # the title + value up and down. Reserve the height; only the text changes.
         self._sub = QLabel(" ")
@@ -302,7 +302,7 @@ class StatTile(ClickableCard):
 class NetworkHero(ClickableCard):
     """The Overview's headline card: download AND upload as co-equal large readouts over a single
     dual-trace sparkline (download filled, upload a thinner line), plus a peak/session context line.
-    Clickable — selecting it opens the network Stats-detail sheet (download/upload distributions)."""
+    Clickable - selecting it opens the network Stats-detail sheet (download/upload distributions)."""
 
     def __init__(self, i18n, down_color: str, up_color: str, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -327,7 +327,7 @@ class NetworkHero(ClickableCard):
         title.setStyleSheet(f"color: {c['text_primary']}; background: transparent;")
         title_row.addWidget(title)
         title_row.addStretch(1)
-        # Latency pill (top-right) — plain word first (Good/OK/Slow), the ms as quiet subtext. Wrapped
+        # Latency pill (top-right) - plain word first (Good/OK/Slow), the ms as quiet subtext. Wrapped
         # in a subtle inset chip so it reads as a native Win11 status badge, not floating text (the
         # status colour is carried by the inline text; the label hides itself when there's no reading).
         self._latency = QLabel("")
@@ -350,7 +350,7 @@ class NetworkHero(ClickableCard):
         lay.addLayout(metrics)
 
         self._spark = Sparkline(down_color)
-        self._spark.setMinimumHeight(90)   # the hero is the headline — give the trend real room, but
+        self._spark.setMinimumHeight(90)   # the hero is the headline - give the trend real room, but
         lay.addWidget(self._spark, 1)      # not so tall the Overview needs scrolling on a 1080p screen
 
         self._sub = QLabel("")
@@ -365,7 +365,7 @@ class NetworkHero(ClickableCard):
         cap = QLabel(f"<span style='color:{color};'>{arrow}</span> {word}")
         cap.setFont(su.font(tokens.TYPE_CAPTION))
         cap.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
-        val = QLabel("—")
+        val = QLabel("-")
         hero_font = su.font(tokens.TYPE_TITLE)   # the headline values dominate the 20px tile values
         hero_font.setPixelSize(28)
         val.setFont(hero_font)
@@ -379,7 +379,7 @@ class NetworkHero(ClickableCard):
             up_series: List[float], sub_text: str = "", scale_label: str = "") -> None:
         self._down_v.setText(down_text)
         self._up_v.setText(up_text)
-        # curve=0.5 (sqrt): a brief 50 Mbps spike no longer squashes everyday sub-Mbps traffic flat —
+        # curve=0.5 (sqrt): a brief 50 Mbps spike no longer squashes everyday sub-Mbps traffic flat -
         # the baseline keeps its detail while the peak still reaches the top of the scale.
         self._spark.set_dual(down_series, up_series, self._up_color, vmax=None,
                              scale_label=scale_label, curve=0.5)
@@ -463,7 +463,7 @@ class UsageTile(QFrame):
         name = QLabel(label)
         name.setFont(su.font(tokens.TYPE_BODY))
         name.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
-        value = QLabel("—")
+        value = QLabel("-")
         value.setFont(su.font(tokens.TYPE_BODY))
         value.setStyleSheet(f"color: {c['text_primary']}; background: transparent;")
         value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -474,7 +474,7 @@ class UsageTile(QFrame):
 
     def _fmt_num(self, value: float) -> str:
         """One-decimal, honouring the locale's decimal separator (so the usage rows match the
-        Network tile's localized speed text in the same window — e.g. ``1,2`` on de_DE)."""
+        Network tile's localized speed text in the same window - e.g. ``1,2`` on de_DE)."""
         s = f"{value:.1f}"
         sep = getattr(self._i18n, "DECIMAL_SEPARATOR", ".")
         return s.replace(".", sep) if sep and sep != "." else s
@@ -487,7 +487,7 @@ class UsageTile(QFrame):
         return f"↓ {self._fmt_num(dv)} {du}   ↑ {self._fmt_num(uv)} {uu}"
 
     def _apply_cap_color(self, pct: float) -> None:
-        """Calm accent under 80%, amber 80–99%, red at/over the cap — so the bar warns at the one
+        """Calm accent under 80%, amber 80-99%, red at/over the cap - so the bar warns at the one
         moment it exists to (mirrors the Windows Settings data-usage bar)."""
         if pct >= 100.0:
             chunk = "#E81123"   # Win red
@@ -503,7 +503,7 @@ class UsageTile(QFrame):
             cap: Optional[Tuple[float, float, float]]) -> None:
         self._today[1].setText(self._fmt_pair(today))
         self._month[1].setText(self._fmt_pair(month))
-        # Avg/day = this month's total ÷ days elapsed; projected = that rate × days in the month — a
+        # Avg/day = this month's total ÷ days elapsed; projected = that rate × days in the month - a
         # quick "am I on track" read (and what makes a limit meaningful).
         now = datetime.now()
         day = max(1, now.day)

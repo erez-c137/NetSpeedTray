@@ -1,5 +1,5 @@
 """
-Temperature onboarding dialog — shown once when the user turns on CPU/GPU temperatures (or
+Temperature onboarding dialog - shown once when the user turns on CPU/GPU temperatures (or
 power) but no sensor source is detected. Instead of a silent blank readout, it explains why,
 points one click at LibreHardwareMonitor, and is explicit that NetSpeedTray itself never runs
 as admin and never ships a driver of its own.

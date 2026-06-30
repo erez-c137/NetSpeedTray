@@ -116,7 +116,7 @@ def test_timeline_selector_is_focusable_and_named(q_app):
 
 
 def test_subtle_dark_text_meets_wcag_aa_on_the_card(q_app):
-    """The app-wide caption colour must clear WCAG AA (4.5:1) on the dark card — regression for #808080."""
+    """The app-wide caption colour must clear WCAG AA (4.5:1) on the dark card - regression for #808080."""
     from netspeedtray.constants.styles import styles as S
 
     def _lin(c):

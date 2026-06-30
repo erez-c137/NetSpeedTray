@@ -2,7 +2,7 @@
 DatabaseWorker queue mechanics (H2) + flush barrier (H3).
 
 H2: the worker uses a blocking queue.Queue (no 100ms busy-poll) and drains pending tasks
-before honoring stop. H3: a "__signal__" task is a FIFO flush barrier — once it fires, every
+before honoring stop. H3: a "__signal__" task is a FIFO flush barrier - once it fires, every
 persist enqueued before it is on disk, so a reader sees freshly-flushed samples.
 """
 import threading
@@ -62,7 +62,7 @@ def test_flush_and_wait_short_circuits_when_worker_not_running(tmp_path):
 
 def test_retention_cutoff_never_crashes_on_keep_forever():
     """Regression: keep_data=36500 ('keep ~forever') made `now - timedelta(days=36500)` land in 1926,
-    whose .timestamp() raises OSError(22) on Windows — which crashed the maintenance thread on startup
+    whose .timestamp() raises OSError(22) on Windows - which crashed the maintenance thread on startup
     and silently stopped ALL history writes. The arithmetic cutoff must floor at 0 without raising."""
     from datetime import datetime
     now = datetime.now()

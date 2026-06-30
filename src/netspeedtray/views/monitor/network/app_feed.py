@@ -1,9 +1,9 @@
 """
-AppActivityFeed — owns the per-app connection sampler for the Monitor's Network tab.
+AppActivityFeed - owns the per-app connection sampler for the Monitor's Network tab.
 
 Reuses the App Activity window's AppActivityWorker BYTE-FOR-BYTE (a psutil connection sampler on its
 own QThread) and presents it as a simple start/stop feed: it polls only while the Network tab is
-visible and emits the worker's honest payload (live connections per app — Windows can't attribute
+visible and emits the worker's honest payload (live connections per app - Windows can't attribute
 bytes to a process without admin/ETW, so this is counts + hosts, never estimated speed).
 
 Graph-free + matplotlib-free: imports only Qt + the psutil worker, so it can't trip the Monitor's
@@ -53,7 +53,7 @@ class AppActivityFeed(QObject):
         self._worker.error.connect(lambda m: self.logger.debug("app feed worker error: %s", m))
         self._request_sample.connect(self._worker.sample)
         # Delete the worker on ITS OWN loop while the thread is still draining its event queue during
-        # quit() — a deleteLater() posted after the loop has stopped would never be processed (the
+        # quit() - a deleteLater() posted after the loop has stopped would never be processed (the
         # worker, and its psutil name cache, would leak on every Monitor open/close).
         self._thread.finished.connect(self._worker.deleteLater)
         self._thread.start()

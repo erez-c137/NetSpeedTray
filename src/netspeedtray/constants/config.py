@@ -206,7 +206,7 @@ class ConfigConstants:
         "record_hardware_history": True,
         # Latency: ping the default GATEWAY (LAN-only, never leaves the network) so the Monitor shows
         # connection latency + loss history. The public anchor (true internet latency) is STRICTLY
-        # opt-in — pinging an external host is the one thing that "phones home" for a privacy-first app.
+        # opt-in - pinging an external host is the one thing that "phones home" for a privacy-first app.
         "latency_enabled": True,
         "latency_public_enabled": False,
         "latency_public_host": "1.1.1.1",

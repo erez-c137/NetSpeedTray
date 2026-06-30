@@ -1,9 +1,9 @@
 """
-OverviewTab — the Monitor's control center: an at-a-glance "everything that's going on" screen.
+OverviewTab - the Monitor's control center: an at-a-glance "everything that's going on" screen.
 
 By contract this tab NEVER imports matplotlib (it's the default tab, so a glance-only session stays
 at the idle-RAM baseline). It leads with a NetworkHero (co-equal download + upload over a dual
-sparkline), then a row of hardware tiles (CPU / GPU / RAM / VRAM — utilisation, temperature, memory),
+sparkline), then a row of hardware tiles (CPU / GPU / RAM / VRAM - utilisation, temperature, memory),
 then a Today/This-month data-usage card. The Monitor forces hardware collection while it's open, so
 the hardware tiles show real data even when the taskbar widget has hardware monitoring off.
 
@@ -31,18 +31,18 @@ from netspeedtray.utils.helpers import format_speed, format_data_size, format_du
 from netspeedtray.utils.widget_paint import WidgetMetrics   # reuse its Mbps→bytes/sec converter (DRY)
 # NOTE: `summaries` imports numpy at module scope. To honour the Monitor's import firewall (a glance at
 # the default Overview must not eagerly pull the heavy compute deps), it is imported LAZILY inside
-# _reload_window — the one place it's used — NOT here. Keep it that way.
+# _reload_window - the one place it's used - NOT here. Keep it that way.
 from netspeedtray.views.monitor.overview.tiles import StatTile, UsageTile, NetworkHero, dynamic_range
 from netspeedtray.views.monitor.overview.busiest_apps import BusiestAppsCard
 from netspeedtray.views.monitor.timeline_selector import TimelineSelector
 # stats_detail imports `summaries` (-> numpy). It's only needed when the user opens the detail sheet or
-# exports, so it is imported LAZILY in those handlers — keeping numpy off the Overview's import path.
+# exports, so it is imported LAZILY in those handlers - keeping numpy off the Overview's import path.
 
 # Per-resource accent as (dark, light) pairs. Network up/down get a distinct, harmonious pair; CPU/GPU
 # echo the graph's line hues; RAM/VRAM get their own calm colours. The light variant keeps the thin
 # trend line legible on the near-white light card.
 _ACCENTS = {
-    # Download green / upload blue — the SAME codes as the standalone graph (color.DOWNLOAD/UPLOAD_LINE_COLOR)
+    # Download green / upload blue - the SAME codes as the standalone graph (color.DOWNLOAD/UPLOAD_LINE_COLOR)
     # so the hero and the Network-tab graph read identically.
     "down": ("#42B883", "#42B883"),
     "up":   ("#4287F5", "#4287F5"),
@@ -53,12 +53,12 @@ _ACCENTS = {
 }
 
 _REFRESH_MS = 1000        # live current-value tick
-_HISTORY_MS = 6000        # DB window reload (sparklines + avg/peak) — cheap, off the 1 Hz path
+_HISTORY_MS = 6000        # DB window reload (sparklines + avg/peak) - cheap, off the 1 Hz path
 _NARROW_BP = 760          # below this content width: reflow to the compact layout (2×2 tiles, stacked cards)
 
 
 class OverviewTab(QWidget):
-    """Overview tab content — the control center. Matplotlib-free by contract."""
+    """Overview tab content - the control center. Matplotlib-free by contract."""
 
     stat_type = "overview"
 
@@ -88,7 +88,7 @@ class OverviewTab(QWidget):
         # The tab itself holds ONLY a scroll area; all cards live in an inner content widget. When the
         # window is shorter than the content needs, it scrolls instead of squeezing widgets past their
         # minimums (which is what made the hero's avg/peak line ride up over the sparkline). Horizontal
-        # scrolling is off — width is handled by the responsive reflow (resizeEvent) instead.
+        # scrolling is off - width is handled by the responsive reflow (resizeEvent) instead.
         self._narrow = True   # provisional; resolved by the first resizeEvent
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -106,8 +106,8 @@ class OverviewTab(QWidget):
         _m = constants.layout.MONITOR_BODY_MARGIN
 
         # --- Header band: a discoverable Export action (left) + the timeline dropdown (right). It lives
-        # OUTSIDE the scroll area as a fixed-height command band — same height + right edge as the
-        # Network/Hardware bands — so it never scrolls away and the timeline lines up across every tab.
+        # OUTSIDE the scroll area as a fixed-height command band - same height + right edge as the
+        # Network/Hardware bands - so it never scrolls away and the timeline lines up across every tab.
         band = QWidget()
         band.setFixedHeight(constants.layout.MONITOR_HEADER_BAND_HEIGHT)
         head = QHBoxLayout(band)
@@ -143,7 +143,7 @@ class OverviewTab(QWidget):
         root.addWidget(self._hero)
 
         # --- Thin context strip: session uptime + totals (left), and on the right the one thing you
-        # can't read off the cards — true System power when the platform exposes it, otherwise the
+        # can't read off the cards - true System power when the platform exposes it, otherwise the
         # connection-health summary (drops/loss over the window) so a latency blip you missed live is
         # still visible. (CPU/GPU power already live on the cards, so repeating it here was noise.) ---
         strip = QHBoxLayout()
@@ -214,7 +214,7 @@ class OverviewTab(QWidget):
 
     # --------------------------------------------------------------- responsive layout
     def _set_visible_tiles(self, visible_keys) -> None:
-        """Show exactly `visible_keys` (in order) and reflow them to FILL the row — so e.g. CPU/GPU/RAM
+        """Show exactly `visible_keys` (in order) and reflow them to FILL the row - so e.g. CPU/GPU/RAM
         with no VRAM tile grow to thirds instead of leaving a hole where the 4th tile would be."""
         for k in self._tile_order:
             self._tiles[k].setVisible(k in visible_keys)
@@ -226,7 +226,7 @@ class OverviewTab(QWidget):
 
     def _layout_tiles(self, visible_keys) -> None:
         """Place the visible tiles in a grid: up to 4 columns when wide, 2 when narrow, but never more
-        than there are tiles — and the last tile spans any leftover columns so a row is always full."""
+        than there are tiles - and the last tile spans any leftover columns so a row is always full."""
         while self._hw_grid.count():
             self._hw_grid.takeAt(0)          # detach (widgets stay parented); we re-add below
         for col in range(4):
@@ -257,7 +257,7 @@ class OverviewTab(QWidget):
 
     def resizeEvent(self, event) -> None:  # noqa: N802 (Qt override)
         super().resizeEvent(event)
-        # Reflow only when crossing the breakpoint (cheap; never every pixel). Use the tab's own width —
+        # Reflow only when crossing the breakpoint (cheap; never every pixel). Use the tab's own width -
         # it's already updated when resizeEvent fires, whereas the scroll viewport lags a layout pass.
         narrow = self.width() < _NARROW_BP
         if narrow != self._narrow:
@@ -337,8 +337,8 @@ class OverviewTab(QWidget):
     # ----------------------------------------------------------------- refresh
 
     def _reload_window(self) -> None:
-        """Load the selected window's series (sparklines) + honest summaries (avg/peak) from the DB —
-        or the live in-memory deques for the Session window — then repaint. Runs every few seconds and
+        """Load the selected window's series (sparklines) + honest summaries (avg/peak) from the DB -
+        or the live in-memory deques for the Session window - then repaint. Runs every few seconds and
         on a period change, NOT on the 1 Hz tick, so the DB read never touches the current-value path."""
         if not self.isVisible():
             return
@@ -358,7 +358,7 @@ class OverviewTab(QWidget):
                     "ram": [s.value for s in ws.get_ram_history()],
                 }
             else:
-                # wait_for_flush=False: this runs on the GUI thread on a periodic timer — never block the
+                # wait_for_flush=False: this runs on the GUI thread on a periodic timer - never block the
                 # UI on the DB-worker drain for a last second that's invisible at multi-hour resolution.
                 net = ws.get_speed_history(start, end, None, resolution='auto', wait_for_flush=False)
                 self._series = {
@@ -411,7 +411,7 @@ class OverviewTab(QWidget):
             # --- Network hero: live current ↓/↑ over the window's dual sparkline; sub = window avg+peak.
             # download_speed/upload_speed are in Mbps; _fmt_speed/format_speed (and the byte-rate series)
             # are in bytes/sec. Reuse the widget's OWN Mbps→bytes/sec converter (WidgetMetrics.net_bytes)
-            # rather than re-deriving it — passing raw Mbps collapsed the headline number to ~0.0 (most
+            # rather than re-deriving it - passing raw Mbps collapsed the headline number to ~0.0 (most
             # visibly in "always Mbps" mode) while the sparkline, built from byte rates, looked fine.
             up, down = WidgetMetrics(
                 upload_mbps=float(getattr(mw, "upload_speed", 0.0) or 0.0),
@@ -434,8 +434,8 @@ class OverviewTab(QWidget):
             integrated = vu is None and vt is None
 
             # Each utilisation sparkline auto-zooms to its own active band (dynamic_range), so a
-            # low-but-varying metric (e.g. CPU mostly 5–20%) reads in detail instead of as a flat
-            # squiggle against a fixed 0–100% — with a minimum span so a steady metric isn't blown up.
+            # low-but-varying metric (e.g. CPU mostly 5-20%) reads in detail instead of as a flat
+            # squiggle against a fixed 0-100% - with a minimum span so a steady metric isn't blown up.
             cpu_series = ser.get("cpu", [])
             cpu_lo, cpu_hi = dynamic_range(cpu_series)
             self._tiles["cpu"].set(f"{float(getattr(mw, 'cpu_usage', 0.0) or 0.0):.0f}%",
@@ -460,7 +460,7 @@ class OverviewTab(QWidget):
             self._tiles["ram"].set(f"{self._pct(ru, rt):.0f}%", ram_series, vmax=ram_hi, vmin=ram_lo,
                                    sub_text=self._mem_sub(ru, rt))
 
-            # VRAM is session-only for now (not persisted) — keeps its own rolling buffer. There's no
+            # VRAM is session-only for now (not persisted) - keeps its own rolling buffer. There's no
             # dedicated VRAM reading when it's None OR ~0 (an iGPU reports 0 dedicated VRAM).
             vram_reading = vu is not None and float(vu) >= 0.05
             if vram_reading:
@@ -516,7 +516,7 @@ class OverviewTab(QWidget):
     def _context_right_text(self, mw) -> str:
         """The strip's right slot shows the one thing the cards DON'T already say: true System power
         when the platform exposes it (RAPL PSYS / battery discharge), otherwise the window's connection
-        health — drop count + last drop, so a latency blip you missed live is still on screen. (CPU/GPU
+        health - drop count + last drop, so a latency blip you missed live is still on screen. (CPU/GPU
         power is on the cards; repeating it here was redundant.)"""
         sysp = getattr(mw, "system_power", None)
         if sysp is not None and float(sysp) >= 0.5:
@@ -550,7 +550,7 @@ class OverviewTab(QWidget):
         return out
 
     def _export_window(self) -> None:
-        """The header Export action — write the stats export (a single .zip) for the active timeline window."""
+        """The header Export action - write the stats export (a single .zip) for the active timeline window."""
         ws = getattr(self._main_widget, "widget_state", None)
         if ws is None:
             return
@@ -570,7 +570,7 @@ class OverviewTab(QWidget):
                 pass
 
     def _open_settings(self) -> None:
-        """Open Settings on the Network page, where the data-cap controls live — NOT General (index 0),
+        """Open Settings on the Network page, where the data-cap controls live - NOT General (index 0),
         which is where a bare show_settings() lands and where the headline data-cap feature looked broken."""
         try:
             self._main_widget.open_data_usage_settings()
@@ -583,7 +583,7 @@ class OverviewTab(QWidget):
         return s.replace(".", sep) if sep and sep != "." else s
 
     def _latency_html(self, mw) -> str:
-        """Latency pill: a colour-coded plain word (Good/OK/Slow — the panel insisted avg-ms is a bad
+        """Latency pill: a colour-coded plain word (Good/OK/Slow - the panel insisted avg-ms is a bad
         headline) with the ms + loss% as quiet subtext. Internet (public anchor) latency wins over the
         gateway when the user opted into the public probe."""
         gw = getattr(mw, "latency_gw", None)
@@ -674,7 +674,7 @@ class OverviewTab(QWidget):
         if temp is not None and float(temp) >= 1:
             parts.append(f"{float(temp):.0f}°C")
         # >= 0.5 W, not > 0: a flaky iGPU power reading of 0.3 W rounds to "0 W" and then vanishes,
-        # which would make the sub-line flicker — only show power that actually displays as >= 1 W.
+        # which would make the sub-line flicker - only show power that actually displays as >= 1 W.
         if power is not None and float(power) >= 0.5:
             parts.append(f"{float(power):.0f} W")
         return "  ·  ".join(parts)

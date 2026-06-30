@@ -1,11 +1,11 @@
 """
-NetworkTab — the Monitor's Network tab.
+NetworkTab - the Monitor's Network tab.
 
 Layout: a header band (machine-wide Download/Upload totals for the selected period + a timeline
-control) over a vertical splitter — the live history graph on top, a per-app connection list below.
+control) over a vertical splitter - the live history graph on top, a per-app connection list below.
 The graph is hosted via the shared GraphHost (matplotlib loads on first show, never before); the
 per-app list is fed by AppActivityFeed (a reused psutil connection sampler). Nothing here imports
-views.graph at module scope — the header, list, and feed are all standalone, graph-free widgets;
+views.graph at module scope - the header, list, and feed are all standalone, graph-free widgets;
 the graph engine enters only when GraphHost.attach_to() runs on showEvent.
 """
 from __future__ import annotations
@@ -42,7 +42,7 @@ class NetworkTab(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # Header band — period totals + the timeline control that drives the shared graph.
+        # Header band - period totals + the timeline control that drives the shared graph.
         initial_key = constants.data.history_period.PERIOD_MAP.get(
             int(config.get("history_period_slider_value", 2)), "TIMELINE_24_HOURS")
         self._header = NetworkHeader(i18n, initial_key, graph_host=self._host)
@@ -86,7 +86,7 @@ class NetworkTab(QWidget):
         body.addWidget(splitter, 1)
         root.addLayout(body, 1)
 
-        # Per-app connection feed (reused psutil sampler) — polls only while this tab is visible.
+        # Per-app connection feed (reused psutil sampler) - polls only while this tab is visible.
         self._feed = AppActivityFeed(self)
         self._feed.payload_ready.connect(self._on_payload)
         self._feed.unavailable.connect(self._app_list.set_unavailable)
@@ -98,7 +98,7 @@ class NetworkTab(QWidget):
         self._app_list.set_payload(payload)
         key = self._app_list.selected_key()
         # isHidden() (not isVisible()) tracks the panel's own open/closed state independent of whether
-        # the Monitor window happens to be shown — so the live refresh is correct + unit-testable.
+        # the Monitor window happens to be shown - so the live refresh is correct + unit-testable.
         if key and not self._detail.isHidden():
             row = self._app_list.get_row(key)
             self._detail.set_row(row) if row else self._detail.mark_inactive()
@@ -117,7 +117,7 @@ class NetworkTab(QWidget):
         self._app_list.clear_selection()
 
     def _on_totals(self, up_bytes: float, down_bytes: float, period_key: str) -> None:
-        # Update the numbers (+ the window label) only. The pills are the period's source of truth —
+        # Update the numbers (+ the window label) only. The pills are the period's source of truth -
         # syncing them from a totals emit would let a late reply flip the user's selection.
         try:
             self._header.set_totals(up_bytes, down_bytes, period_key)
@@ -126,7 +126,7 @@ class NetworkTab(QWidget):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
-        # Re-sync the header's timeline dropdown to the SHARED period before showing — it may have been
+        # Re-sync the header's timeline dropdown to the SHARED period before showing - it may have been
         # changed on the Overview/Hardware tab, in which case the graph + totals re-render for the new
         # window but the dropdown label would otherwise stay stale (#1). Mirrors the Overview/Hardware
         # showEvent re-sync. set_period_key uses emit=False, so it doesn't re-trigger the host.

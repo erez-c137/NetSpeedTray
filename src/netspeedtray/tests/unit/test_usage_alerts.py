@@ -45,7 +45,7 @@ def test_fires_80_once():
 
 def test_over_cap_on_first_check_fires_only_reached_not_a_stacked_warning():
     """#9: when 80% and 100% cross in the SAME check (already over cap on a period's first check), fire
-    ONLY the highest ('reached') — not two flyouts stacked at the same position — yet record both levels
+    ONLY the highest ('reached') - not two flyouts stacked at the same position - yet record both levels
     so neither re-fires. (The normal gradual path still fires 80% then 100% on separate checks.)"""
     ctrl, _, fired, saved = _make(used_down_gb=120)  # 120%
     ctrl.check()

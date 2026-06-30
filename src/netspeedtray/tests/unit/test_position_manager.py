@@ -231,7 +231,7 @@ class TestPositionManager(unittest.TestCase):
 
     @patch('netspeedtray.core.position_manager.get_taskbar_info')
     def test_update_position_no_preferred_monitor_passes_none(self, mock_get_info):
-        """When the user hasn't set a preference, pass None — preserves legacy primary behavior."""
+        """When the user hasn't set a preference, pass None - preserves legacy primary behavior."""
         mock_get_info.return_value = self.mock_taskbar
         # self.config has no 'preferred_monitor' key
 

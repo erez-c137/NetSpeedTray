@@ -15,7 +15,7 @@ class HardwarePage(QWidget):
     layout_changed = pyqtSignal()
     # Emitted when a hardware monitor is switched ON. The dialog forwards it to the Widget page (which
     # now owns the display-mode control) so the widget switches out of network-only and the freshly
-    # enabled stat is actually visible — the convenience this page used to do itself.
+    # enabled stat is actually visible - the convenience this page used to do itself.
     hardware_enabled = pyqtSignal()
 
     def __init__(self, i18n, on_change: Callable[[], None]):
@@ -30,7 +30,7 @@ class HardwarePage(QWidget):
         # All control objects + the load/get wiring are unchanged.
         layout = page_layout(self)
 
-        # --- Hardware monitoring (primary — sits directly under the page's "Hardware" H1 title, so no
+        # --- Hardware monitoring (primary - sits directly under the page's "Hardware" H1 title, so no
         # redundant section caption here). ---
         self.monitor_cpu = Win11Toggle(label_text="")
         self.monitor_cpu.toggled.connect(self._on_monitor_toggled)
@@ -81,11 +81,11 @@ class HardwarePage(QWidget):
         layout.addWidget(SettingCard(str(getattr(self.i18n, "HW_THROTTLE_LABEL", "Throttle temp (stats)")),
                                      control=self.throttle_temp))
 
-        # NOTE (2.0 IA): "Widget Display Mode" + "Display Order" moved to the new Widget page — they're
+        # NOTE (2.0 IA): "Widget Display Mode" + "Display Order" moved to the new Widget page - they're
         # about the widget's layout, not hardware monitoring. The monitor toggles here still nudge that
         # layout via the hardware_enabled signal (see _on_monitor_toggled).
 
-        # --- Color-code by load (advanced — collapsible): thresholds for tinting CPU/GPU % by load.
+        # --- Color-code by load (advanced - collapsible): thresholds for tinting CPU/GPU % by load.
         load_section = SettingExpander(self.i18n.HARDWARE_LOAD_COLOR_SECTION, expanded=False)
         load_section.expandedChanged.connect(lambda _on: self.layout_changed.emit())
 
@@ -141,7 +141,7 @@ class HardwarePage(QWidget):
         self.monitor_vram.blockSignals(False)
         self.show_temps.blockSignals(False)
         self.show_power.blockSignals(False)
-        # Signals were blocked above, so _on_monitor_toggled never fired — sync the dependent
+        # Signals were blocked above, so _on_monitor_toggled never fired - sync the dependent
         # (temp/power) cards' enabled state to the just-loaded CPU/GPU monitor values directly.
         self._sync_dependent_cards()
         # widget_display_mode / widget_display_order are loaded by the Widget page now.
@@ -174,7 +174,7 @@ class HardwarePage(QWidget):
 
     def _sync_dependent_cards(self) -> None:
         """Temperature & power are drawn appended to the CPU/GPU utilisation readout, so with BOTH of
-        those monitors off there is nowhere for them to render — gray them out so the toggles can't
+        those monitors off there is nowhere for them to render - gray them out so the toggles can't
         promise something that never shows (Win11 dependent-control pattern)."""
         has_util = self.monitor_cpu.isChecked() or self.monitor_gpu.isChecked()
         self._set_card_enabled(self._temps_card, has_util)

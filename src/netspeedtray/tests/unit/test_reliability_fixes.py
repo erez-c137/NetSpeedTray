@@ -1,9 +1,9 @@
 """
 Reliability/security fixes from the 2.0 audit:
-- M1: update_config (GUI thread) must NOT close the monitor thread's PDH handles directly — it flags
+- M1: update_config (GUI thread) must NOT close the monitor thread's PDH handles directly - it flags
       them for the worker thread to re-init.
 - M2: _get_read_conn prunes connections left behind by dead threads (the per-Monitor-open leak).
-- M12: nvidia-smi is resolved from trusted locations only — never a planted binary in the CWD.
+- M12: nvidia-smi is resolved from trusted locations only - never a planted binary in the CWD.
 """
 import os
 import sqlite3
@@ -78,5 +78,5 @@ def test_nvidia_smi_not_resolved_from_current_directory(q_app, tmp_path: Path, m
     t = StatsMonitorThread(config=dict(constants.config.defaults.DEFAULT_CONFIG))
     t._get_cached_path.cache_clear() if hasattr(t._get_cached_path, "cache_clear") else None
     resolved = t._get_cached_path("nvidia-smi")
-    assert resolved != str(planted), "resolved the planted CWD binary — binary-planting hole"
+    assert resolved != str(planted), "resolved the planted CWD binary - binary-planting hole"
     assert resolved is None or os.path.isabs(resolved)

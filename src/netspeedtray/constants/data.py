@@ -39,15 +39,15 @@ class DataRetentionConstants:
 
     Retention drives ONLY the hour-tier prune (speed_history_hour + the hardware hour tier); the
     raw (24h) and minute (30d) tiers are always bounded. Old data is hourly-aggregated, so even
-    long retention is cheap (~8.8k rows/year/interface — tens of MB at a decade). "Keep
+    long retention is cheap (~8.8k rows/year/interface - tens of MB at a decade). "Keep
     everything" is a far-future sentinel so the existing 48h-grace prune logic needs no
     special-casing: its cutoff simply never fires.
     """
-    UNLIMITED_DAYS: Final[int] = 36500          # "Keep everything" — 100 years; prune never fires
+    UNLIMITED_DAYS: Final[int] = 36500          # "Keep everything" - 100 years; prune never fires
     MAX_RETENTION_DAYS: Final[int] = UNLIMITED_DAYS
     DEFAULT_DAYS: Final[int] = 365               # 1 year
     DAYS_MAP: Final[Dict[int, int]] = {
-        0: 31,             # 1 month — covers a full calendar month so "this month" is always whole
+        0: 31,             # 1 month - covers a full calendar month so "this month" is always whole
         1: 90,             # 3 months
         2: 180,            # 6 months
         3: DEFAULT_DAYS,   # 1 year (default)

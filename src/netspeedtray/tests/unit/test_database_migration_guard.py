@@ -2,7 +2,7 @@
 Regression tests for the schema migration data-loss guard (M3).
 
 A failed migration on an EXISTING database must NEVER fall through to the destructive
-fresh-build (DROP TABLE) path — that would wipe a user's history. These exercise
+fresh-build (DROP TABLE) path - that would wipe a user's history. These exercise
 _check_and_create_schema / _has_existing_data via the real (unbound) methods bound to a
 lightweight fake holding a real in-memory sqlite connection.
 """
@@ -45,7 +45,7 @@ def test_failed_migration_preserves_existing_data():
     # Migration blows up.
     fake._migrate_schema = MagicMock(side_effect=RuntimeError("boom"))
     DatabaseWorker._check_and_create_schema(fake)
-    # The row (and the metadata version) must survive — NO fresh build / DROP.
+    # The row (and the metadata version) must survive - NO fresh build / DROP.
     assert _row_count(conn) == 1
     assert conn.execute("SELECT value FROM metadata WHERE key='db_version'").fetchone()[0] == "3"
 

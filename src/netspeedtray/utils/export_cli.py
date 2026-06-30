@@ -1,8 +1,8 @@
 """
-Headless export CLI — `NetSpeedTray.exe --export-csv --period 24h --out C:\\reports`.
+Headless export CLI - `NetSpeedTray.exe --export-csv --period 24h --out C:\\reports`.
 
 The MSP / power-user path: pull the same honest two-file stats export the Monitor's Stats-detail sheet
-writes, without opening any window — schedulable from Task Scheduler / an RMM. It reads the existing
+writes, without opening any window - schedulable from Task Scheduler / an RMM. It reads the existing
 history DB in READ-ONLY mode (no second write thread against the live app, no maintenance/VACUUM), so it
 is safe to run while NetSpeedTray is already running.
 
@@ -39,7 +39,7 @@ def _emit(stream, text: str, *, level: int = logging.INFO) -> None:
     """Write to a std stream when one exists, else log the line.
 
     The shipped exe is built ``console=False`` (PyInstaller), so ``sys.stdout``/``sys.stderr`` are
-    ``None`` — a bare ``sys.stdout.write(...)`` would raise ``AttributeError`` and turn a *successful*
+    ``None`` - a bare ``sys.stdout.write(...)`` would raise ``AttributeError`` and turn a *successful*
     headless export into exit code 1 for every Task-Scheduler/RMM caller. Guard every write through here:
     the paths/errors still surface in the log file, and the exit code stays truthful.
     """

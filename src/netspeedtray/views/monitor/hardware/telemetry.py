@@ -1,8 +1,8 @@
 """
-TelemetryStrip — a compact band of live hardware telemetry tiles for the Monitor's Hardware tab.
+TelemetryStrip - a compact band of live hardware telemetry tiles for the Monitor's Hardware tab.
 
 Surfaces the readings the stats pipeline ALREADY collects (CPU/GPU utilisation + temperature + power,
-RAM and VRAM used/total) but that the Monitor didn't previously show — so the Hardware tab answers
+RAM and VRAM used/total) but that the Monitor didn't previously show - so the Hardware tab answers
 "how hot / how loaded / how much memory" at a glance, not just the utilisation graph. It reads the
 values straight off the main widget's live attributes (updated every poll by StatsController), so it
 needs no extra sampling; a tile gracefully omits a reading that's unavailable (no sensor, or the
@@ -42,7 +42,7 @@ class _TeleTile(QFrame):
         self._caption.setFont(su.font(tokens.TYPE_CAPTION))
         self._caption.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._caption.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
-        self._value = QLabel("—")
+        self._value = QLabel("-")
         self._value.setFont(su.font(tokens.TYPE_BODY_STRONG))
         self._value.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._value.setStyleSheet(f"color: {c['text_primary']}; background: transparent;")
@@ -50,7 +50,7 @@ class _TeleTile(QFrame):
         lay.addWidget(self._value)
 
     def set_value(self, text: str) -> None:
-        self._value.setText(text or "—")
+        self._value.setText(text or "-")
 
 
 class TelemetryStrip(QWidget):
@@ -66,7 +66,7 @@ class TelemetryStrip(QWidget):
         self._lay.setSpacing(8)
 
         # The Monitor forces hardware collection while it's open, so all four sources are available
-        # regardless of the widget's config flags — create every tile. Each tile shows only what it
+        # regardless of the widget's config flags - create every tile. Each tile shows only what it
         # actually has: CPU/GPU always have a usage%; temp/power append when collected; the memory
         # tiles hide themselves entirely when their reading is unavailable (no VRAM counter, etc).
         self._cpu = _TeleTile(self._tr("ORDER_TYPE_CPU", "CPU"))
@@ -74,7 +74,7 @@ class TelemetryStrip(QWidget):
         self._ram = _TeleTile(self._tr("MONITOR_TILE_RAM", "RAM"))
         self._vram = _TeleTile(self._tr("MONITOR_TILE_VRAM", "VRAM"))
         # Equal-width tiles (stretch 1 each, no trailing stretch) so a tile NEVER resizes when its value
-        # grows — "18% · 69°C · 37 W" sits in the same box as "18%", and the cards don't shove each other
+        # grows - "18% · 69°C · 37 W" sits in the same box as "18%", and the cards don't shove each other
         # around. A hidden tile's slot is reclaimed (stretch 0) so the visible ones fill the width.
         self._ordered = [self._cpu, self._gpu, self._ram, self._vram]
         for tile in self._ordered:
@@ -83,7 +83,7 @@ class TelemetryStrip(QWidget):
     def update_from(self, w) -> None:
         """Pull the live readings off the main widget's attributes and refresh each tile. The CPU/GPU
         tiles always have a usage% to show; the memory tiles hide themselves when their reading is
-        unavailable (e.g. VRAM with no PDH dedicated-usage counter) rather than showing a dead "—"."""
+        unavailable (e.g. VRAM with no PDH dedicated-usage counter) rather than showing a dead "-"."""
         if w is None:
             return
         self._cpu.set_value(self._proc_text(getattr(w, "cpu_usage", 0.0),
@@ -105,7 +105,7 @@ class TelemetryStrip(QWidget):
     def _update_mem(self, tile, used, total) -> None:
         if tile is None:
             return
-        self._set_tile_visible(tile, used is not None)   # hide rather than show a permanent "—"
+        self._set_tile_visible(tile, used is not None)   # hide rather than show a permanent "-"
         if used is not None:
             tile.set_value(self._mem_text(used, total))
 
@@ -122,7 +122,7 @@ class TelemetryStrip(QWidget):
 
     def _mem_text(self, used: Optional[float], total: Optional[float]) -> str:
         if used is None:
-            return "—"
+            return "-"
         from netspeedtray.utils.helpers import format_decimal
         u = format_decimal(float(used), self._i18n, 1)   # locale decimal separator (de/ru use ',')
         if total:

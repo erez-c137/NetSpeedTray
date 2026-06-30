@@ -66,7 +66,7 @@ class I18nStrings:
         self.language = ""
         self._determine_and_set_language(language_code)
 
-        # Locale-parity validation loads ALL 10 locale files purely to compare key sets — a dev/CI
+        # Locale-parity validation loads ALL 10 locale files purely to compare key sets - a dev/CI
         # concern (enforced by test_locales_parity.py), not a runtime need: per-key lookups already
         # fall back to en_US. Skipping it at runtime saves ~9 JSON parses on the UI thread every launch.
         # Opt in with NST_VALIDATE_I18N=1 when editing locales from source.

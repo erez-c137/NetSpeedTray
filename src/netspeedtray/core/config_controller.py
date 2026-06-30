@@ -43,7 +43,7 @@ class ConfigController:
         ``apply_and_repaint`` (C0 apply-split): single-setting callers (tray pause, data-cap
         dialog, flags) leave it True to get an immediate renderer rebuild + repaint. The
         settings *commit* path passes False because ``apply_all_settings`` runs right after
-        and does the full visual apply once — avoiding a redundant double renderer rebuild
+        and does the full visual apply once - avoiding a redundant double renderer rebuild
         and double repaint on every Apply.
         """
         self.logger.debug(f"Updating configuration with {len(updates)} items... (Save: {save_to_disk})")
@@ -105,7 +105,7 @@ class ConfigController:
                 updated_config['widget_display_mode'] = "network_only"
 
             if save_to_disk:
-                # Persist only — apply_all_settings() below does the single visual apply (C0).
+                # Persist only - apply_all_settings() below does the single visual apply (C0).
                 self.update_config(updated_config, apply_and_repaint=False)
             else:
                 # Direct memory update if not saving (e.g. preview)

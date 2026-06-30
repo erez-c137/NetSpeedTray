@@ -26,7 +26,7 @@ def fake_config():
         "free_move": True,
         "selected_interfaces": ["Ethernet", "Wi-Fi"],
         "default_color": "#FFFFFF",
-        # Mildly-sensitive coordinate keys — all should be stripped from bundle.
+        # Mildly-sensitive coordinate keys - all should be stripped from bundle.
         "settings_window_pos": {"x": 100, "y": 200},
         "graph_window_pos": {"x": 300, "y": 400},
         "position_x": 1500,
@@ -85,7 +85,7 @@ class TestConfigSanitization:
         multi-monitor placement bugs (#133, #138). A value of `position_x = -1920`
         literally tells us "user wants widget on the monitor to the left of
         primary". Stripping them throws away debugging data without any privacy
-        benefit — coordinates are not PII.
+        benefit - coordinates are not PII.
         """
         dest = tmp_path / "bundle.zip"
         support_bundle.build_support_bundle(dest, fake_config)
@@ -93,7 +93,7 @@ class TestConfigSanitization:
         # All four coordinate keys must round-trip through the bundle unchanged.
         for diagnostic_key in ("settings_window_pos", "graph_window_pos", "position_x", "position_y"):
             assert diagnostic_key in bundled_config, (
-                f"{diagnostic_key!r} is missing from the bundle — was it accidentally "
+                f"{diagnostic_key!r} is missing from the bundle - was it accidentally "
                 f"added back to _CONFIG_KEYS_TO_STRIP? These keys are diagnostic, not PII."
             )
         assert bundled_config["position_x"] == 1500
@@ -109,7 +109,7 @@ class TestConfigSanitization:
 
     def test_interface_friendly_names_are_redacted(self, q_app, tmp_path, fake_log_dir):
         """The MANIFEST promises NIC friendly names are NOT included and the bundle is 'safe to attach',
-        but users rename adapters to personal/company labels. The raw config must never ship those names —
+        but users rename adapters to personal/company labels. The raw config must never ship those names -
         only the redacted shape (how many) survives. Regression for the empty-denylist PII leak."""
         cfg = {
             "language": "en_US", "interface_mode": "selected",

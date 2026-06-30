@@ -1,5 +1,5 @@
 """
-GraphHost — reuse the existing graph engine (GraphRenderer / GraphDataWorker / GraphCoordinator)
+GraphHost - reuse the existing graph engine (GraphRenderer / GraphDataWorker / GraphCoordinator)
 behind ONE lazily-imported, reparented matplotlib canvas.
 
 The Monitor's chart tabs (Network now, Hardware later) share a single GraphHost: one renderer, one
@@ -10,7 +10,7 @@ matplotlib-free Overview tab never pays for it.
 GraphHost presents the exact host surface GraphCoordinator drives (renderer / ui / interaction /
 config_handler / _is_live_update_enabled / update_graph / update_graph_range), so coordinator.py,
 worker.py and renderer.py are reused **byte-for-byte**. The window-specific glue (overlay stat
-cards, zoom, tooltips) is intentionally NOT reused — the Monitor shows stats in its tab header, so
+cards, zoom, tooltips) is intentionally NOT reused - the Monitor shows stats in its tab header, so
 GraphHost writes its own clean, render-only data callback.
 
 IMPORT FIREWALL: this module imports nothing from netspeedtray.views.graph at module scope. Every
@@ -94,7 +94,7 @@ class GraphHost(QObject):
         self._is_closing = False
 
         # --- the exact state surface GraphCoordinator reads/writes on its host ---
-        self._is_live_update_enabled = True   # pause is transient view state — always open live (M11)
+        self._is_live_update_enabled = True   # pause is transient view state - always open live (M11)
         self._history_period_value = int(config.get("history_period_slider_value", 2))
         self._current_request_id = 0
         self._last_processed_id = -1
@@ -133,7 +133,7 @@ class GraphHost(QObject):
         _cl = QVBoxLayout(self._canvas_container)
         _cl.setContentsMargins(0, 0, 0, 0)
         self.renderer = GraphRenderer(self._canvas_container, self.i18n, self.logger)
-        # Theme from the OS apps theme (su.is_dark_mode), NOT config['dark_mode'] — every other Monitor
+        # Theme from the OS apps theme (su.is_dark_mode), NOT config['dark_mode'] - every other Monitor
         # surface themes that way, and config['dark_mode'] is never synced to the OS (it stays at its
         # default), so reading it rendered a dark graph inside a light Monitor on a light-mode PC.
         self.renderer.apply_theme(su.is_dark_mode())
@@ -175,7 +175,7 @@ class GraphHost(QObject):
         self._accept_from_seq = self._current_request_id
 
     def set_stat(self, stat_type: str) -> None:
-        """Switch the active stat on the already-mounted canvas (no reparent) — used by the Hardware
+        """Switch the active stat on the already-mounted canvas (no reparent) - used by the Hardware
         tab's graph-mode / CPU-GPU toggle. Race-safe: raises the dedup floor like set_period so an
         in-flight reply for the previous stat can't paint the new one."""
         if self._is_closing or stat_type == self._current_stat:
@@ -206,13 +206,13 @@ class GraphHost(QObject):
         return bool(self._is_live_update_enabled)
 
     def set_live(self, enabled: bool) -> None:
-        """Freeze (False) or resume (True) realtime updates. Starts/stops the coordinator's timer and —
-        on resume — refreshes once so the frozen view catches up immediately. No-op (and silent) if
+        """Freeze (False) or resume (True) realtime updates. Starts/stops the coordinator's timer and -
+        on resume - refreshes once so the frozen view catches up immediately. No-op (and silent) if
         already in the requested state. Emits ``live_changed`` so every Live/Pause pill across the tabs
         reflects the new state.
 
         Pause is TRANSIENT per-session view state (NOT persisted): a "pause to inspect, then close" must
-        not reopen the Monitor frozen on a stale graph next session — every open starts live."""
+        not reopen the Monitor frozen on a stale graph next session - every open starts live."""
         enabled = bool(enabled)
         if enabled == self._is_live_update_enabled or self._is_closing:
             return
@@ -227,7 +227,7 @@ class GraphHost(QObject):
     def set_period(self, period_value: int) -> None:
         """Change the timeline window (driven by the Network header's period control). Routes
         through coordinator.handle_timeline_change, which persists config, debounces rapid clicks,
-        resets the renderer's sticky y-limits, and clears stale visuals — so switching periods on
+        resets the renderer's sticky y-limits, and clears stale visuals - so switching periods on
         the shared canvas behaves exactly like the standalone graph window."""
         if self._is_closing:
             return
@@ -302,7 +302,7 @@ class GraphHost(QObject):
         from netspeedtray.views.graph.logic import GraphLogic
         period_key = GraphLogic.get_period_key(self._history_period_value)
         # Fetch boot/earliest ONCE for the uptime range. These are UI-thread DB calls and _time_range
-        # runs on every refresh + realtime tick — GraphWindow caches them the same way (and the cache
+        # runs on every refresh + realtime tick - GraphWindow caches them the same way (and the cache
         # is naturally fresh each session, since GraphHost is recreated per Monitor window).
         if period_key == "TIMELINE_SYSTEM_UPTIME" and self._cached_boot_time is None:
             try:
@@ -314,7 +314,7 @@ class GraphHost(QObject):
                                          self._cached_boot_time, self._cached_earliest_db)
 
     def _on_data_ready(self, data, total_up, total_down, sequence_id) -> None:
-        """Render-only callback (no overlay stat cards / tooltips — those live in the tab header)."""
+        """Render-only callback (no overlay stat cards / tooltips - those live in the tab header)."""
         # Drop closing, out-of-order, and pre-stat-switch results. _accept_from_seq is the key
         # cross-tab guard: the shared canvas is reparented across tabs, so a reply requested for a
         # previously-active single-stat tab (also a list payload) must not paint the new tab.
@@ -349,7 +349,7 @@ class GraphHost(QObject):
 
     def teardown(self) -> None:
         """Stop the realtime loop, fully stop the worker thread, then free the figure + canvas.
-        Honest caveat: matplotlib's module code stays resident once imported — this frees the heavy
+        Honest caveat: matplotlib's module code stays resident once imported - this frees the heavy
         objects, not the module. (Overview never imports it, so a glance-only session stays at
         baseline.) Idempotent: safe if called more than once or before ensure_loaded()."""
         self._is_closing = True
@@ -361,7 +361,7 @@ class GraphHost(QObject):
         except Exception:
             pass
 
-        # Stop the coordinator's debounce timer too (latent today — set_period bypasses it — but it
+        # Stop the coordinator's debounce timer too (latent today - set_period bypasses it - but it
         # would otherwise fire a refresh into a dead thread once a period control is wired).
         try:
             if self.coordinator is not None:
@@ -378,7 +378,7 @@ class GraphHost(QObject):
         except Exception:
             pass
 
-        # The thread MUST actually finish before we free the figure/canvas — a process_data() can be
+        # The thread MUST actually finish before we free the figure/canvas - a process_data() can be
         # mid-SQLite-query for longer than 700ms on a big DB. Never proceed on a still-running thread.
         try:
             if self._thread is not None:
@@ -414,7 +414,7 @@ class GraphHost(QObject):
         self._thread = None
 
         # Drop the heavy references so the figure / Line2D arrays / canvas and the host↔coordinator
-        # reference cycle can be reclaimed promptly instead of lingering until a later GC pass — the
+        # reference cycle can be reclaimed promptly instead of lingering until a later GC pass - the
         # "Monitor RAM grew and didn't drop on close" symptom. (matplotlib's MODULE stays imported for
         # the session by design; an Overview-only session never loads it. This frees the per-window
         # objects, not the module.)

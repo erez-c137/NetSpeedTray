@@ -1,9 +1,9 @@
 """
-MonitorSettingsFlyout — the in-window "gear" panel for the Monitor's display options.
+MonitorSettingsFlyout - the in-window "gear" panel for the Monitor's display options.
 
 A Fluent flyout (Qt.Popup: closes on click-outside) anchored under the gear. ONE instance is reused
 across opens (the window caches it); ``refresh()`` re-reads the current config/theme into the controls
-before each show. Changes apply LIVE — each control writes its config key (persisted via the widget's
+before each show. Changes apply LIVE - each control writes its config key (persisted via the widget's
 config_controller) and emits ``changed`` so the Monitor re-renders the active graph. Matplotlib-free.
 
 6.2a covers the combined-graph essentials (CPU/GPU line colours with a vendor "Auto" reset, and the
@@ -28,15 +28,15 @@ from netspeedtray.utils import hardware_vendors as hv
 class MonitorSettingsFlyout(QFrame):
     """Live display-options popup for the Monitor window (reused across opens)."""
 
-    changed = pyqtSignal()   #: a setting changed — the Monitor should re-render its active graph
+    changed = pyqtSignal()   #: a setting changed - the Monitor should re-render its active graph
 
     def __init__(self, main_widget, config: Dict[str, Any], i18n, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent, Qt.WindowType.Popup)
         self._mw = main_widget
         self._config = config
         self._i18n = i18n
-        # Vendor-hue lookup MUST track the graph's own theme — the same source GraphHost.apply_theme /
-        # _hw_styles use, which is now su.is_dark_mode() (the OS apps theme) — or the "Auto" swatch would
+        # Vendor-hue lookup MUST track the graph's own theme - the same source GraphHost.apply_theme /
+        # _hw_styles use, which is now su.is_dark_mode() (the OS apps theme) - or the "Auto" swatch would
         # advertise one shade while the graph draws its sibling.
         self._dark = su.is_dark_mode()
         c = su.semantic_colors()
@@ -105,7 +105,7 @@ class MonitorSettingsFlyout(QFrame):
         yrow.addWidget(self._label(self._tr("MONITOR_GRAPH_YAXIS", "Y-axis"), c))
         yrow.addStretch(1)
         self._axis = Win11Segmented([
-            (self._tr("MONITOR_YAXIS_FIXED", "0–100%"), True),
+            (self._tr("MONITOR_YAXIS_FIXED", "0-100%"), True),
             (self._tr("MONITOR_YAXIS_AUTO", "Auto"), False),
         ])
         self._axis.setValue(bool(config.get("monitor_graph_fixed_axis", True)))
@@ -122,7 +122,7 @@ class MonitorSettingsFlyout(QFrame):
     # --- live state ------------------------------------------------------------
     def refresh(self) -> None:
         """Re-read the current config + theme into every control (the cached flyout may have been built
-        under a now-changed theme, or another surface — the Settings → Monitor page in 6.2c — may have
+        under a now-changed theme, or another surface - the Settings → Monitor page in 6.2c - may have
         changed a value). Signals are blocked so re-syncing doesn't echo back as a write."""
         self._dark = su.is_dark_mode()
         for field, key, role in ((self._cpu, "monitor_cpu_graph_color", "cpu"),
@@ -157,7 +157,7 @@ class MonitorSettingsFlyout(QFrame):
         b = QPushButton(self._tr("MONITOR_COLOR_AUTO", "Auto"))
         b.setCursor(Qt.CursorShape.PointingHandCursor)
         b.setToolTip(self._tr("MONITOR_COLOR_AUTO_TIP", "Reset to the auto-detected vendor color"))
-        # Legible at rest (text_primary), accent on hover — not "disabled-until-hovered".
+        # Legible at rest (text_primary), accent on hover - not "disabled-until-hovered".
         b.setStyleSheet(
             f"QPushButton {{ background: {c['subtle_fill']}; color: {c['text_primary']};"
             f" border: 1px solid {c['card_stroke']}; border-radius: {tokens.RADIUS_CONTROL}px;"

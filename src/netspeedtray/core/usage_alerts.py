@@ -95,7 +95,7 @@ class UsageAlertController:
         if newly_levels:
             fired.update(newly_levels)
             # If more than one threshold is newly crossed in a single check (e.g. usage is already over
-            # cap on the first check of a period), fire ONLY the highest — otherwise the 80% and 100%
+            # cap on the first check of a period), fire ONLY the highest - otherwise the 80% and 100%
             # flyouts render on top of each other at the same position (#9). All crossed levels are still
             # marked fired so neither re-fires later in the period.
             self._fire(max(newly_levels), used_gb, cap_gb)

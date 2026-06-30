@@ -2,20 +2,20 @@
 Hardware vendor detection + the Monitor's vendor-aware graph palette.
 
 CPU vendor comes from the registry (CentralProcessor\\0\\VendorIdentifier), GPU vendor from the
-display-adapter DriverDesc — both no-admin, cached for the process. (CPU silicon never changes at
-runtime; GPU is cached too — a Thunderbolt eGPU hot-plug or a driver TDR/reinstall mid-session is
+display-adapter DriverDesc - both no-admin, cached for the process. (CPU silicon never changes at
+runtime; GPU is cached too - a Thunderbolt eGPU hot-plug or a driver TDR/reinstall mid-session is
 knowingly NOT re-detected until restart, which at worst means a slightly-off line colour.)
 
 The palette solves the brand-collision problem: AMD ships red for both Ryzen and Radeon, Intel ships
-blue for both Core and Arc/iGPU — so CPU and GPU would draw the same colour on a same-vendor box (the
+blue for both Core and Arc/iGPU - so CPU and GPU would draw the same colour on a same-vendor box (the
 Intel-CPU + Intel-iGPU case is very common). We separate them on TWO channels: the GPU always gets a
 distinct sibling SHADE *and* a dashed line. Hue + lightness + dash survives even red/green colour-
 blindness. The GPU shades are theme-aware (the dark hues fail WCAG contrast on the light graph
-background, so light mode gets darker siblings). Smart defaults only — Monitor settings expose colour
+background, so light mode gets darker siblings). Smart defaults only - Monitor settings expose colour
 pickers that override.
 
 On a HYBRID laptop (Intel iGPU + a discrete Nvidia/AMD) the graphed value is max-across-adapters
-(usually the idle-busy iGPU), so asserting the discrete brand would be a lie — we return 'unknown'
+(usually the idle-busy iGPU), so asserting the discrete brand would be a lie - we return 'unknown'
 (neutral) in that case so colour + legend never claim a GPU the data isn't about.
 """
 from __future__ import annotations
@@ -37,7 +37,7 @@ _CPU_COLORS = {"intel": "#0071C5", "amd": "#E2231A", "unknown": "#8A8D91"}
 _GPU_COLORS_DARK = {"nvidia": "#76B900", "amd": "#FF7A45", "intel": "#33C3D6", "unknown": "#B58BFF"}
 _GPU_COLORS_LIGHT = {"nvidia": "#5A8C00", "amd": "#E2571B", "intel": "#1597A8", "unknown": "#7A4FD6"}
 
-_GPU_DASH = (0, (5, 2))      # matplotlib (on, off) — reads at 1.5px
+_GPU_DASH = (0, (5, 2))      # matplotlib (on, off) - reads at 1.5px
 _CPU_SOLID = "solid"
 
 _DISPLAY_CLASS = r"SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}"
@@ -74,11 +74,11 @@ def gpu_vendor() -> str:
     discrete = sorted({v for v in adapters if v in ("nvidia", "amd")})
     has_intel = "intel" in adapters
     if discrete and has_intel:
-        _logger.debug("Hybrid GPU detected (%s + intel) — using neutral colour.", discrete)
+        _logger.debug("Hybrid GPU detected (%s + intel) - using neutral colour.", discrete)
         return "unknown"
     if discrete:
         if len(discrete) > 1:
-            _logger.debug("Multiple discrete GPUs %s — picking %s deterministically.", discrete, discrete[0])
+            _logger.debug("Multiple discrete GPUs %s - picking %s deterministically.", discrete, discrete[0])
         return discrete[0]
     if has_intel:
         return "intel"
@@ -110,7 +110,7 @@ def _enumerate_gpu_adapters() -> List[str]:
                             if mdid and not str(mdid).upper().startswith("PCI"):
                                 continue
                         except FileNotFoundError:
-                            pass  # no MatchingDeviceID — keep, best-effort
+                            pass  # no MatchingDeviceID - keep, best-effort
                         desc, _ = winreg.QueryValueEx(gk, "DriverDesc")
                     v = _classify_gpu(str(desc))
                     if v != "unknown":

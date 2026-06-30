@@ -1,10 +1,10 @@
 """
-StatsDetailSheet — the "drill into the numbers" dialog behind every Overview card.
+StatsDetailSheet - the "drill into the numbers" dialog behind every Overview card.
 
 Clicking a hardware tile or the network hero opens this sheet for that metric, scoped to the Monitor's
 current timeline window. It is the honest, professional face of the pro-stats work: the full
-distribution (avg / median / 95th / 99th / peak / min / std dev), a peak-hour vs off-peak split, and —
-where a threshold is configured — throttle-time (temp) or packet-loss (latency). It is also the home of
+distribution (avg / median / 95th / 99th / peak / min / std dev), a peak-hour vs off-peak split, and -
+where a threshold is configured - throttle-time (temp) or packet-loss (latency). It is also the home of
 the .zip export (summary + raw CSV + JSON sidecar) and "copy these figures".
 
 The honesty spine is enforced here too: percentiles render only when the WindowSummary is exact (raw
@@ -77,7 +77,7 @@ def run_interactive_export(parent, widget_state, start: datetime, end: datetime,
         try:
             # Launch explorer by ABSOLUTE path (it lives in the Windows dir, not System32). A bare
             # "explorer" lets CreateProcess search the current directory first, and the portable build
-            # chdir's into its own — user/attacker-writable — folder, so a planted explorer.exe could run.
+            # chdir's into its own - user/attacker-writable - folder, so a planted explorer.exe could run.
             # Same CWD-hijack hardening the codebase already applies to nvidia-smi (monitor_thread.py).
             explorer = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "explorer.exe")
             subprocess.Popen([explorer, "/select,", os.path.normpath(zip_path)])
@@ -132,7 +132,7 @@ class StatsDetailSheet(QDialog):
         summ, pairs, loss = self._summarize(key, kind)
 
         # A secondary subject (e.g. CPU temperature when there's no sensor) is dropped when it has no
-        # data, rather than showing an empty block — but the primary metric always renders.
+        # data, rather than showing an empty block - but the primary metric always renders.
         if summ.count == 0 and not subj.get("primary"):
             return None
 
@@ -170,10 +170,10 @@ class StatsDetailSheet(QDialog):
         cells = [
             (self._tr("STAT_CELL_AVG", "Average"), fmt(summ.avg)),
             (self._tr("STAT_CELL_PEAK", "Peak"), fmt(summ.max)),
-            (self._tr("STAT_CELL_MEDIAN", "Median"), fmt(summ.p50) if summ.exact else "—"),
-            (self._tr("STAT_CELL_P95", "95th pct"), fmt(summ.p95) if summ.exact else "—"),
-            (self._tr("STAT_CELL_P99", "99th pct"), fmt(summ.p99) if summ.exact else "—"),
-            (self._tr("STAT_CELL_MIN", "Min"), fmt(summ.min) if summ.exact else "—"),
+            (self._tr("STAT_CELL_MEDIAN", "Median"), fmt(summ.p50) if summ.exact else "-"),
+            (self._tr("STAT_CELL_P95", "95th pct"), fmt(summ.p95) if summ.exact else "-"),
+            (self._tr("STAT_CELL_P99", "99th pct"), fmt(summ.p99) if summ.exact else "-"),
+            (self._tr("STAT_CELL_MIN", "Min"), fmt(summ.min) if summ.exact else "-"),
         ]
         grid = QGridLayout()
         grid.setHorizontalSpacing(10)
@@ -184,7 +184,7 @@ class StatsDetailSheet(QDialog):
 
         # Plain-text copy buffer for this block.
         self._copy_text_parts.append(
-            f"{label} — {self._win_label}  [{self._coverage_text(summ)}]\n  " +
+            f"{label} - {self._win_label}  [{self._coverage_text(summ)}]\n  " +
             "  ".join(f"{cap}: {val}" for cap, val in cells))
 
         if not summ.exact:
@@ -328,16 +328,16 @@ class StatsDetailSheet(QDialog):
     # ------------------------------------------------------------------ formatting
     def _formatter(self, kind: str, unit: str):
         if kind in ("net_down", "net_up"):
-            return lambda v: "—" if v is None else self._fmt_speed(float(v))
+            return lambda v: "-" if v is None else self._fmt_speed(float(v))
         if unit == "%":
-            return lambda v: "—" if v is None else f"{float(v):.0f}%"
+            return lambda v: "-" if v is None else f"{float(v):.0f}%"
         if unit == "°C":
-            return lambda v: "—" if v is None else f"{float(v):.0f}°C"
+            return lambda v: "-" if v is None else f"{float(v):.0f}°C"
         if unit == "ms":
-            return lambda v: "—" if v is None else f"{float(v):.0f} ms"
+            return lambda v: "-" if v is None else f"{float(v):.0f} ms"
         if unit == "W":
-            return lambda v: "—" if v is None else f"{float(v):.0f} W"
-        return lambda v: "—" if v is None else f"{float(v):.1f} {unit}".strip()
+            return lambda v: "-" if v is None else f"{float(v):.0f} W"
+        return lambda v: "-" if v is None else f"{float(v):.1f} {unit}".strip()
 
     def _coverage_text(self, summ) -> str:
         tier_label = {"raw": self._tr("STATS_TIER_RAW", "per-second"),

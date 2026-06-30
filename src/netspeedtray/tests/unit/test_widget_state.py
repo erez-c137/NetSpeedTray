@@ -399,7 +399,7 @@ def test_aggregation_minute_to_hour(managed_widget_state, mock_config):
     now = datetime.now()
     
     # "Old" minute-level data from 31 days ago. Anchor the base to an exact hour boundary so
-    # the two records (+60s, +120s) always land in the SAME hour bucket — otherwise, ~1.7% of
+    # the two records (+60s, +120s) always land in the SAME hour bucket - otherwise, ~1.7% of
     # wall-clock seconds put them either side of an hour boundary and the aggregation yields 2
     # hour rows instead of 1 (a latent time-of-day flake).
     old_timestamp_base = (int((now - timedelta(days=31)).timestamp()) // 3600) * 3600
@@ -714,7 +714,7 @@ def test_get_speed_history_peak_is_consistent_across_resolutions(managed_widget_
 
 def test_hardware_history_raw_fallback_for_recent_long_window(managed_widget_state):
     """A 24h window selects the MINUTE tier, but the minute tier only fills from aggregating rows
-    older than 24h — recent data lives in raw. get_hardware_history must fall back to raw so the
+    older than 24h - recent data lives in raw. get_hardware_history must fall back to raw so the
     Monitor's non-session views aren't empty (root of the #10 'Collecting data' bug). Also exercises
     RAM as a first-class stat_type."""
     import sqlite3

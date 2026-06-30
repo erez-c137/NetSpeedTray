@@ -231,7 +231,7 @@ class TestHardwareMonitoring:
         with patch('win32com.client.GetObject', return_value=mock_obj), \
              patch('pythoncom.CoInitialize'):
             monitor_thread._init_ohm_wmi()
-            # Should NOT have cached the connection — still None for retry
+            # Should NOT have cached the connection - still None for retry
             assert monitor_thread._wmi_ohm is None
 
     # ------------------------------------------------------------------

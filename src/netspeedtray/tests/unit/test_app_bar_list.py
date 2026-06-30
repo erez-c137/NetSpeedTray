@@ -1,5 +1,5 @@
 """
-AppBarList + AppActivityFeed — the Monitor Network tab's per-app connection list. Verifies the bar
+AppBarList + AppActivityFeed - the Monitor Network tab's per-app connection list. Verifies the bar
 list builds/reuses/removes rows in place, summarises honestly, handles empty + RDP-unavailable
 states, and that the feed degrades to an 'unavailable' signal under RDP without spawning a thread.
 """
@@ -71,7 +71,7 @@ def test_stable_active_first_then_name_sort(q_app):
 
 
 def test_bar_uses_log_scale_not_linear(q_app):
-    """A dominant process must not squash small apps to nothing — log scale keeps them visible."""
+    """A dominant process must not squash small apps to nothing - log scale keeps them visible."""
     lst = AppBarList(I18nStrings("en_US"))
     lst.set_payload(_payload([_row("big", 100, est=1), _row("small", 1, est=1)]))
     big = lst._rows["big"]._bar._frac

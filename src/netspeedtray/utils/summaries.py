@@ -1,14 +1,14 @@
 """
-WindowSummary — honest, tier-aware summary statistics over a time window.
+WindowSummary - honest, tier-aware summary statistics over a time window.
 
 The Monitor's pro-stats (inline "avg X (peak Y)", the Stats-detail sheet, and the export) all compute
 min/avg/max/p50/p95/p99/stddev over the SELECTED timeline window. The honesty spine (from the
 professional design panel): **percentiles/min/stddev are exact only from the RAW tier** (per-second
 samples, kept ~24h). The per-minute / per-hour rollups store only avg + max (+ sample count), so beyond
-the raw window we return weighted-avg + max and mark percentiles UNAVAILABLE — never fabricate a p95
+the raw window we return weighted-avg + max and mark percentiles UNAVAILABLE - never fabricate a p95
 from minute-buckets, and always carry sample_count + coverage so a figure is admissible as evidence.
 
-Pure functions, no DB/Qt — the stats engine reads the right tier and hands the data here.
+Pure functions, no DB/Qt - the stats engine reads the right tier and hands the data here.
 """
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ def _empty(tier: str) -> WindowSummary:
 
 
 def coverage_pct(sample_count: int, window_seconds: float, sample_interval_seconds: float) -> float:
-    """What fraction of the window actually had samples — the evidence-admissibility figure."""
+    """What fraction of the window actually had samples - the evidence-admissibility figure."""
     if window_seconds <= 0 or sample_interval_seconds <= 0:
         return 0.0
     expected = window_seconds / sample_interval_seconds
@@ -86,7 +86,7 @@ def summarize_rollup(avgs: Sequence[float], maxes: Sequence[float],
 
 
 def loss_pct(timeouts: int, total_probes: int) -> Optional[float]:
-    """Latency probe loss% = timed-out probes / total — the packet-loss proxy for an ISP dispute."""
+    """Latency probe loss% = timed-out probes / total - the packet-loss proxy for an ISP dispute."""
     if total_probes <= 0:
         return None
     return round((timeouts / total_probes) * 100.0, 2)
@@ -110,7 +110,7 @@ def time_above(values: Sequence[float], threshold: float, sample_interval_second
 
 def hourly_profile(pairs: Sequence) -> Dict[int, float]:
     """Mean value per clock-hour (0..23) from (timestamp, value) pairs. The honest, data-driven basis
-    for "your busiest hour" — no assumed ISP peak band, just when this machine was actually busy."""
+    for "your busiest hour" - no assumed ISP peak band, just when this machine was actually busy."""
     sums: Dict[int, float] = {}
     counts: Dict[int, int] = {}
     for ts, v in pairs:
@@ -127,7 +127,7 @@ def hourly_profile(pairs: Sequence) -> Dict[int, float]:
 
 
 def event_runs(pairs: Sequence, is_bad) -> List[tuple]:
-    """Contiguous runs where ``is_bad(value)`` holds, as (start_ts, end_ts) pairs — the basis for
+    """Contiguous runs where ``is_bad(value)`` holds, as (start_ts, end_ts) pairs - the basis for
     "internet went bad then good" events you'd otherwise only catch live. ``pairs`` is (timestamp,
     value) in time order; ``is_bad`` is a predicate on the value."""
     runs: List[tuple] = []
@@ -148,7 +148,7 @@ def event_runs(pairs: Sequence, is_bad) -> List[tuple]:
 
 def outage_summary(timeout_pairs: Sequence) -> Dict[str, object]:
     """Connection-drop events from the gateway-timeout series (value >= 0.5 == a lost ping). Returns
-    {count, last_start, total_down_seconds, runs} — an honest outage log, not a fabricated SLA."""
+    {count, last_start, total_down_seconds, runs} - an honest outage log, not a fabricated SLA."""
     runs = event_runs(timeout_pairs, lambda v: v is not None and float(v) >= 0.5)
     total = 0.0
     for s, e in runs:

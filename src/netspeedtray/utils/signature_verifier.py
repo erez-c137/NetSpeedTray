@@ -3,15 +3,15 @@ Authenticode signature verification for the auto-updater.
 
 A downloaded installer must pass BOTH gates before it is ever executed:
 
-  1. WinVerifyTrust — the OS confirms the Authenticode signature is valid, the file
+  1. WinVerifyTrust - the OS confirms the Authenticode signature is valid, the file
      is not tampered, and the cert chains to a trusted root (revocation checked).
-  2. Publisher pin — the signing cert's Subject CN and Issuer CN match the pinned
+  2. Publisher pin - the signing cert's Subject CN and Issuer CN match the pinned
      SignPath Foundation / GlobalSign values.
 
 Fail-closed: ANY error, missing signature, or mismatch yields ``trusted=False``.
 
 Note on the pin: SignPath Foundation's free OSS program signs every project with one
-shared certificate, so the Subject is "SignPath Foundation" — NOT "NetSpeedTray". The
+shared certificate, so the Subject is "SignPath Foundation" - NOT "NetSpeedTray". The
 NetSpeedTray-specific binding therefore comes from downloading only over TLS from our
 own GitHub releases; this pin proves the binary went through SignPath's signing (an
 attacker who swapped a GitHub release could not re-sign it without SignPath).

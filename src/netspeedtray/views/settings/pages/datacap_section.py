@@ -1,5 +1,5 @@
 """
-"Data usage" settings section — the data-cap feature's in-settings home (Network page, 2.0 IA).
+"Data usage" settings section - the data-cap feature's in-settings home (Network page, 2.0 IA).
 
 A header-toggle SettingExpander (the master toggle == data_cap_enabled) over the cap / reset-day
 / count / alerts controls. Mirrors the interim tray DataCapDialog so both write the same keys.

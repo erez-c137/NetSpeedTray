@@ -1,8 +1,8 @@
 """
-FlatTabBar — the Monitor window's primary tab strip.
+FlatTabBar - the Monitor window's primary tab strip.
 
 A Fluent "pivot": a flat row of checkable buttons where the active tab is marked by the accent
-color + a 2px underline, not a heavy segmented pill — the premium Win11 idiom for top-level
+color + a 2px underline, not a heavy segmented pill - the premium Win11 idiom for top-level
 horizontal tabs (Settings sub-pages, Edge). Deliberately NOT a QTabWidget: the Monitor keeps each
 page lazy (a QStackedWidget swaps a cheap placeholder for the real, matplotlib-bearing page on
 first activation), so the idle-RAM win survives. The bar holds only (tab_id, label) and emits the
@@ -19,14 +19,14 @@ from netspeedtray.utils import styles as su
 
 
 class FlatTabBar(QWidget):
-    """A flat Fluent pivot tab strip. Emits ``tab_selected(index)`` — the stack index."""
+    """A flat Fluent pivot tab strip. Emits ``tab_selected(index)`` - the stack index."""
 
     tab_selected = pyqtSignal(int)
 
     def __init__(self, tabs: List[Tuple[str, str]], parent: Optional[QWidget] = None,
                  icons: Optional[Dict[str, int]] = None) -> None:
         """tabs: ordered ``(tab_id, label)`` pairs; a tab's index is its position in this list.
-        icons: optional ``{tab_id: Segoe-Fluent-codepoint}`` — a glyph is shown beside each label and
+        icons: optional ``{tab_id: Segoe-Fluent-codepoint}`` - a glyph is shown beside each label and
         tinted text_secondary→accent as selection moves (the native Win11 pivot pairs glyph + label)."""
         super().__init__(parent)
         self._buttons: Dict[str, QToolButton] = {}
@@ -51,7 +51,7 @@ class FlatTabBar(QWidget):
             else:
                 btn.setText(str(label))
             # Reachable by Tab with a visible focus cue; activation stays manual (Space/Enter) so
-            # tabbing THROUGH the strip never builds a heavy lazy page — only deliberate activation does.
+            # tabbing THROUGH the strip never builds a heavy lazy page - only deliberate activation does.
             btn.setFocusPolicy(Qt.FocusPolicy.TabFocus)
             btn.setAccessibleName(str(label))
             btn.clicked.connect(lambda _checked=False, i=index: self.tab_selected.emit(i))

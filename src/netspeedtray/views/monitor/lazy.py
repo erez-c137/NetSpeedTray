@@ -3,7 +3,7 @@ Lazy tab descriptor for the Monitor window.
 
 Each tab starts life as a cheap placeholder in the QStackedWidget; the real page (and, for chart
 tabs, the matplotlib canvas) is built only on first activation via ``factory()``. This is what
-preserves the idle-RAM win — a glance at Overview never constructs the graph tabs.
+preserves the idle-RAM win - a glance at Overview never constructs the graph tabs.
 """
 from __future__ import annotations
 

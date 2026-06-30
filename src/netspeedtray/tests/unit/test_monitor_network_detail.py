@@ -126,7 +126,7 @@ def test_network_tab_detail_flow_select_refresh_close(q_app):
 
 def test_selected_row_pinned_to_top(q_app):
     # Review fix: the selected row is pinned first so its highlight + detail don't slide when its
-    # active/idle state flips. svchost is idle (normally sorts below active Chrome) — once selected
+    # active/idle state flips. svchost is idle (normally sorts below active Chrome) - once selected
     # it must lead the list.
     lst = AppBarList(_i18n())
     lst.set_payload(_payload())

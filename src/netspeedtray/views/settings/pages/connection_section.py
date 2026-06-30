@@ -1,12 +1,12 @@
 """
-"Connection" settings section — latency monitoring + advertised-plan speeds (Network page, 2.0 IA).
+"Connection" settings section - latency monitoring + advertised-plan speeds (Network page, 2.0 IA).
 
 Surfaces three already-built-but-dormant features:
-  • latency_enabled — ping + loss to the default gateway, and connection-drop events over time (on by
+  • latency_enabled - ping + loss to the default gateway, and connection-drop events over time (on by
     default; LAN-only, never leaves the network).
-  • latency_public_enabled / latency_public_host — the OPT-IN public anchor that measures true internet
-    latency by pinging an external server (off by default — it's the one thing that leaves the LAN).
-  • plan_down_mbps / plan_up_mbps — your advertised plan speeds, which drive the Statistics sheet's
+  • latency_public_enabled / latency_public_host - the OPT-IN public anchor that measures true internet
+    latency by pinging an external server (off by default - it's the one thing that leaves the LAN).
+  • plan_down_mbps / plan_up_mbps - your advertised plan speeds, which drive the Statistics sheet's
     "% of time below the plan" figure (0 = off).
 """
 from typing import Any, Callable, Dict
@@ -40,7 +40,7 @@ class ConnectionSettings(QWidget):
         body.addWidget(SettingCard(
             self._tr("CONN_PUBLIC_LABEL", "Also measure true internet latency"),
             self._tr("CONN_PUBLIC_SUB",
-                     "Pings a public server — this leaves your local network, so it's off by default."),
+                     "Pings a public server - this leaves your local network, so it's off by default."),
             control=self._public))
 
         self._host = Win11ComboBox()

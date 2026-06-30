@@ -37,7 +37,7 @@ class DatabaseWorker(QThread):
         super().__init__(parent)
         self.db_path = db_path
         self.conn: Optional[sqlite3.Connection] = None
-        # A thread-safe blocking queue (H2): the worker sleeps in get() until a task arrives —
+        # A thread-safe blocking queue (H2): the worker sleeps in get() until a task arrives -
         # no 100ms busy-poll, lower latency, near-zero idle CPU. None is a wake-up sentinel.
         self._queue: "queue.Queue[Optional[Tuple[str, Any]]]" = queue.Queue()
         self._stop_event = threading.Event()
@@ -71,7 +71,7 @@ class DatabaseWorker(QThread):
 
         self.logger.debug("Database worker thread started successfully.")
         # Drain fully before exiting: tasks already enqueued (incl. the final flush/odometer
-        # tail) are processed before we honor the stop flag — we only break when the queue is
+        # tail) are processed before we honor the stop flag - we only break when the queue is
         # empty AND stop is set. The blocking get() replaces the old 100ms busy-poll.
         while True:
             try:
@@ -112,7 +112,7 @@ class DatabaseWorker(QThread):
         """Dispatches a task to the appropriate handler method."""
         if task == "__signal__":
             # H3: a flush barrier. Because the queue is FIFO, every persist enqueued before
-            # this signal is already done — so setting the event tells a waiting reader the
+            # this signal is already done - so setting the event tells a waiting reader the
             # freshly-flushed rows are now in the DB (no gap at the graph's right edge).
             try:
                 data.set()
@@ -161,12 +161,12 @@ class DatabaseWorker(QThread):
 
     def _ensure_indexes(self) -> None:
         """
-        Create performance indexes idempotently on every startup — covers DBs that predate
+        Create performance indexes idempotently on every startup - covers DBs that predate
         them WITHOUT a schema-version bump (CREATE INDEX IF NOT EXISTS is a no-op when present).
 
         Hardware-history queries are `WHERE stat_type = ? AND timestamp BETWEEN ? AND ? ORDER BY
         timestamp`, but the tables' PK is (timestamp, stat_type) and the only extra index is
-        timestamp-only — so every read scans the time range and filters stat_type row-by-row.
+        timestamp-only - so every read scans the time range and filters stat_type row-by-row.
         A (stat_type, timestamp) index turns that into a selective seek + ordered range.
         (Speed tables already have covering indexes for the common all-interface aggregate.)
         """
@@ -206,7 +206,7 @@ class DatabaseWorker(QThread):
         The 0-vs-(-1) distinction is the M7 data-loss guard: a bare ``return 0`` on any
         error would let a transient read failure (lock, corruption) masquerade as a fresh
         install and trigger the destructive DROP/rebuild path. Callers MUST treat a
-        negative result as "do not rebuild — preserve the file."
+        negative result as "do not rebuild - preserve the file."
         """
         try:
             cursor = self.conn.cursor()
@@ -217,7 +217,7 @@ class DatabaseWorker(QThread):
             row = cursor.fetchone()
             return int(row[0]) if row else 0
         except Exception as e:
-            # Unexpected read failure — fail closed. Returning -1 keeps the destructive
+            # Unexpected read failure - fail closed. Returning -1 keeps the destructive
             # fresh-build path from ever running on a DB whose version we couldn't read.
             self.logger.error("Could not read DB version (treating as UNKNOWN, will not rebuild): %s", e)
             return -1
@@ -264,7 +264,7 @@ class DatabaseWorker(QThread):
 
         if not self._backup_database():
             # The per-migration transaction below is still the primary rollback safety for an in-progress
-            # failure; surface loudly that the extra .bak net is missing this run (don't abort — a backup
+            # failure; surface loudly that the extra .bak net is missing this run (don't abort - a backup
             # failure shouldn't brick the app on an otherwise-valid migration).
             self.logger.warning("Schema migration proceeding WITHOUT a pre-migration backup copy.")
 
@@ -408,9 +408,9 @@ class DatabaseWorker(QThread):
             return
 
         if current_version < 0:
-            # M7: version read failed unexpectedly. Never rebuild — preserve the file and
+            # M7: version read failed unexpectedly. Never rebuild - preserve the file and
             # degrade gracefully. A retry on next launch may succeed once the lock clears.
-            self.logger.error("DB version is UNKNOWN; refusing to migrate or rebuild — preserving the database as-is.")
+            self.logger.error("DB version is UNKNOWN; refusing to migrate or rebuild - preserving the database as-is.")
             return
 
         if current_version > 0:
@@ -420,17 +420,17 @@ class DatabaseWorker(QThread):
                  return
              except Exception as e:
                  # CRITICAL data-loss guard: NEVER fall through to the DROP/fresh-build
-                 # path on an existing database — that would silently wipe the user's
+                 # path on an existing database - that would silently wipe the user's
                  # history. A backup was made at migration start; keep the file as-is and
                  # continue. The app degrades gracefully rather than destroying data.
                  self.logger.error("Migration failed; preserving existing database (no rebuild). Error: %s", e, exc_info=True)
                  return
 
-        # current_version == 0: a brand-new/empty database. Final safety net — never run
+        # current_version == 0: a brand-new/empty database. Final safety net - never run
         # the destructive build if real data is somehow present (e.g. a version-read glitch
         # that returned 0 for a populated DB). Losing history is never acceptable.
         if self._has_existing_data():
-            self.logger.error("Schema version read as new (0) but speed-history data exists; refusing to rebuild — preserving data.")
+            self.logger.error("Schema version read as new (0) but speed-history data exists; refusing to rebuild - preserving data.")
             return
 
         # Build fresh
@@ -610,7 +610,7 @@ class DatabaseWorker(QThread):
 
             # Bound the WAL file: long-lived reader connections (the Monitor's graph worker) can hold
             # back the automatic checkpoint, letting -wal grow across a long session. A TRUNCATE
-            # checkpoint each maintenance pass reclaims it. Own try-block — a busy checkpoint (a reader
+            # checkpoint each maintenance pass reclaims it. Own try-block - a busy checkpoint (a reader
             # blocking it) is harmless and must not roll back the maintenance already committed above.
             try:
                 self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
@@ -629,7 +629,7 @@ class DatabaseWorker(QThread):
                     if int(_now.timestamp()) - last_vac >= 86400:
                         free_row = cursor.execute("PRAGMA freelist_count").fetchone()
                         free_pages = int(free_row[0]) if free_row else 0
-                        if free_pages >= 1000:  # ~4 MB of slack — below that it's not worth it
+                        if free_pages >= 1000:  # ~4 MB of slack - below that it's not worth it
                             self.logger.info("Running VACUUM (%d free pages, >= 1 day since last)...", free_pages)
                             self.conn.execute("VACUUM;")
                             self.conn.execute(
@@ -638,7 +638,7 @@ class DatabaseWorker(QThread):
                             self.conn.commit()
                             self.logger.info("VACUUM complete.")
                         else:
-                            self.logger.debug("Skipping VACUUM — only %d free pages.", free_pages)
+                            self.logger.debug("Skipping VACUUM - only %d free pages.", free_pages)
                 except sqlite3.Error as e:
                     self.logger.warning("VACUUM skipped (maintenance already committed): %s", e)
 
@@ -669,7 +669,7 @@ class DatabaseWorker(QThread):
         cutoff = self._bucket_floored_cutoff(now, timedelta(days=30), 3600)
         self.logger.debug("Aggregating minute hardware data older than %s...", datetime.fromtimestamp(cutoff))
         # OR IGNORE (not REPLACE): with a floored cutoff each hour bucket is rolled up exactly once when
-        # complete, so there is never a conflicting row to replace — and IGNORE can't overwrite a full
+        # complete, so there is never a conflicting row to replace - and IGNORE can't overwrite a full
         # bucket with a partial remainder if maintenance ever re-runs. Matches the speed-table path.
         cursor.execute(f"""
             INSERT OR IGNORE INTO {constants.data.HARDWARE_STATS_TABLE_HOUR} (timestamp, stat_type, avg_value, max_value, sample_count)
@@ -692,7 +692,7 @@ class DatabaseWorker(QThread):
         """Unix-seconds cutoff ``retention_days`` before ``now``, computed arithmetically and floored at
         0. Computing it as ``now - timedelta(days=retention_days)`` then ``.timestamp()`` CRASHES on
         Windows when retention is large (the 36500-day "keep forever" option lands in 1926, and
-        ``datetime.timestamp()`` raises OSError(22) for pre-1970 dates) — which was killing the DB
+        ``datetime.timestamp()`` raises OSError(22) for pre-1970 dates) - which was killing the DB
         maintenance thread on startup and silently stopping ALL history writes. Arithmetic on the
         already-valid ``now.timestamp()`` avoids ever building a pre-epoch datetime; a negative result
         (retain longer than the epoch) floors to 0, so the DELETE simply removes nothing."""
@@ -710,7 +710,7 @@ class DatabaseWorker(QThread):
         With a raw-second cutoff, a bucket straddling it gets aggregated from only its rows ``< cutoff``
         and those raw rows are then DELETEd; the next maintenance pass re-rolls the bucket's remaining
         rows into the same bucket key, which ``INSERT OR IGNORE`` silently drops (and ``OR REPLACE``
-        overwrites with only the remainder) — permanently under-counting one bucket per cycle, cascading
+        overwrites with only the remainder) - permanently under-counting one bucket per cycle, cascading
         into the hour tier and corrupting the long-term totals the app exports. Flooring guarantees no
         bucket straddles the cutoff (both bucket starts and the cutoff are multiples of ``bucket_seconds``),
         so each bucket is aggregated exactly once, complete. The partially-elapsed boundary bucket simply

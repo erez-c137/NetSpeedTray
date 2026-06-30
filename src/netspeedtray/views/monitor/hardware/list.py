@@ -1,9 +1,9 @@
 """
-HardwareBarList — the per-process CPU / RAM / GPU list for the Monitor's Hardware tab.
+HardwareBarList - the per-process CPU / RAM / GPU list for the Monitor's Hardware tab.
 
 One row per program: name, a CPU bar (relative to the busiest process so the heaviest reads clearly),
 and precise CPU% / Memory / GPU% figures. Rows are keyed by program identity and updated in place;
-ordering is by CPU% (busiest first) — like Task Manager, where the busy process leading the list is
+ordering is by CPU% (busiest first) - like Task Manager, where the busy process leading the list is
 the point. Reuses the connection list's _ActivityBar; matplotlib-free.
 """
 from __future__ import annotations
@@ -29,7 +29,7 @@ _ACTIVE_CPU = 1.0      # %, below this a process is treated as idle (dimmed)
 # Floor the CPU-bar denominator so a quiet desktop (busiest ~9%) doesn't draw that 9% as a FULL bar.
 # Below this the bar scales against the floor (honest "barely busy"); above it, relative-to-busiest.
 _BAR_FLOOR_PCT = 30.0
-_GPU_SHOW_MIN = 0.5    # render "—" below this so the one GPU-using process isn't lost in a wall of 0%
+_GPU_SHOW_MIN = 0.5    # render "-" below this so the one GPU-using process isn't lost in a wall of 0%
 
 
 def _is_busy(row: Dict[str, Any]) -> bool:
@@ -64,7 +64,7 @@ class HardwareRow(QFrame):
         lay.addWidget(self._gpu)
 
     def _num(self, width: int, c: dict) -> QLabel:
-        lbl = QLabel("—")
+        lbl = QLabel("-")
         lbl.setFont(su.font(tokens.TYPE_BODY))
         lbl.setFixedWidth(width)
         lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -72,7 +72,7 @@ class HardwareRow(QFrame):
         return lbl
 
     def update_row(self, row: Dict[str, Any], max_cpu: float, gpu_available: bool) -> None:
-        name = str(row.get("display_name", "—"))
+        name = str(row.get("display_name", "-"))
         cpu = float(row.get("cpu_pct", 0.0))
         rss = int(row.get("rss_bytes", 0))
         gpu = float(row.get("gpu_pct", 0.0))
@@ -95,9 +95,9 @@ class HardwareRow(QFrame):
         rv, ru = format_data_size(rss, self._i18n, precision=1)
         rv_s = format_decimal(rv, self._i18n, 1)   # locale separator (matches the Overview/UsageTile)
         self._ram.setText(f"{rv_s} {ru}")
-        self._gpu.setText(f"{gpu:.0f}%" if (gpu_available and gpu >= _GPU_SHOW_MIN) else "—")
+        self._gpu.setText(f"{gpu:.0f}%" if (gpu_available and gpu >= _GPU_SHOW_MIN) else "-")
 
-        summary = f"{name} — CPU {cpu:.0f}% · RAM {rv_s} {ru} · GPU {gpu:.0f}%"
+        summary = f"{name} - CPU {cpu:.0f}% · RAM {rv_s} {ru} · GPU {gpu:.0f}%"
         self.setToolTip(summary)
         self.setAccessibleName(summary)   # tooltips aren't exposed to screen readers; accessible name is
 
@@ -154,7 +154,7 @@ class HardwareBarList(QWidget):
         gpu_available = bool(payload.get("gpu_available", False))
         max_cpu = max((float(r.get("cpu_pct", 0.0)) for r in rows), default=0.0)
 
-        # Freeze the row ORDER while the pointer is over the list — CPU% is volatile, and a busiest-
+        # Freeze the row ORDER while the pointer is over the list - CPU% is volatile, and a busiest-
         # first re-sort every 2s would slide the row you're reading out from under the cursor. Values
         # still update live in place; membership/order resettle on the next tick after the mouse leaves.
         if self._scroll.viewport().underMouse():

@@ -1,10 +1,10 @@
 """
-BusiestAppsCard — the Overview's "top talkers" tile.
+BusiestAppsCard - the Overview's "top talkers" tile.
 
 Reuses the Network tab's AppActivityFeed (the psutil connection sampler on its own QThread) and AppRow
 (the per-app bar row) to show the handful of apps with the most live connections, active-first. Honest
 by construction: Windows can't attribute bytes to a process without admin/ETW, so this ranks by live
-connection count + hosts — never an invented per-app speed. Clicking the card (or any row) jumps to the
+connection count + hosts - never an invented per-app speed. Clicking the card (or any row) jumps to the
 Network tab for the full per-app breakdown.
 
 The feed only polls while the Overview is visible (the tab drives start/stop/teardown), so the default
@@ -66,7 +66,7 @@ class BusiestAppsCard(QFrame):
         self._status.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
         root.addWidget(self._status)
 
-        # A fixed pool of reusable rows (shown/hidden as the top-N changes) — no per-tick widget churn.
+        # A fixed pool of reusable rows (shown/hidden as the top-N changes) - no per-tick widget churn.
         self._rows: List[AppRow] = []
         for _ in range(_MAX_ROWS):
             r = AppRow(self._i18n)

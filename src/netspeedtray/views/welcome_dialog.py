@@ -1,5 +1,5 @@
 """
-One-time 2.0 welcome dialog — shown once after upgrading, gated on the
+One-time 2.0 welcome dialog - shown once after upgrading, gated on the
 `first_run_v2_seen` config flag. Tells the user the widget is now embedded in the
 taskbar; "What's new" opens the release page, "Got it" dismisses.
 """

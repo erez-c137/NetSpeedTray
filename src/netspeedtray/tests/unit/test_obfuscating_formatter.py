@@ -53,7 +53,7 @@ class TestIPv4Redaction:
         assert "192.168.1.1" not in out
 
     def test_does_not_redact_version_numbers(self, formatter):
-        # 1.3.1 is a version, not an IP — only 3 octets, should not match.
+        # 1.3.1 is a version, not an IP - only 3 octets, should not match.
         out = _format(formatter, "NetSpeedTray version 1.3.1 started")
         assert "1.3.1" in out
 
@@ -86,7 +86,7 @@ class TestIPv6Redaction:
         assert "fe80::abcd:1234%5" not in out
 
     def test_redacts_ipv4_mapped_ipv6_partial(self, formatter):
-        # Surprise — the IPv4 portion of an IPv4-mapped IPv6 IS caught by the IPv4 regex.
+        # Surprise - the IPv4 portion of an IPv4-mapped IPv6 IS caught by the IPv4 regex.
         # The "::ffff:" prefix is NOT removed, but the leak of the actual IPv4 is prevented.
         out = _format(formatter, "Bound to ::ffff:192.168.1.1")
         assert "192.168.1.1" not in out
@@ -108,7 +108,7 @@ class TestPathRedaction:
 
     def test_redacts_user_home_case_insensitive(self, formatter):
         home = str(Path.home().resolve())
-        # Force uppercase drive letter — formatter uses normcase + IGNORECASE
+        # Force uppercase drive letter - formatter uses normcase + IGNORECASE
         upper = home[0].upper() + home[1:]
         out = _format(formatter, f"Found file at {upper}\\Documents\\file.txt")
         assert upper.lower() not in out.lower()
@@ -164,7 +164,7 @@ class TestMACAddress:
         assert "<REDACTED_MAC>" in out
 
     def test_does_not_redact_short_hex_groups(self, formatter):
-        # Five hex groups is not a MAC — should not match.
+        # Five hex groups is not a MAC - should not match.
         out = _format(formatter, "Status code: AB-CD-EF-12-34")
         assert "AB-CD-EF-12-34" in out
 
@@ -205,7 +205,7 @@ class TestFormatterRobustness:
         )
         second = formatter.format(record)
         assert first == second, (
-            "Formatter is not idempotent — redaction tokens are being re-matched"
+            "Formatter is not idempotent - redaction tokens are being re-matched"
         )
 
     def test_ipv6_with_double_colons_does_not_panic(self, formatter):
@@ -213,7 +213,7 @@ class TestFormatterRobustness:
         the formatter must not raise or hang on it (no catastrophic backtracking).
         """
         out = _format(formatter, "Bad IPv6 aaaa::bbbb::cccc continues here")
-        # Either redacted or passed through — both are acceptable for an invalid IP.
+        # Either redacted or passed through - both are acceptable for an invalid IP.
         # The important assertion: the formatter returned without raising.
         assert "continues here" in out
 
@@ -222,7 +222,7 @@ class TestFormatterRobustness:
         and the backreference in MAC_REGEX must reject it."""
         text = "Not a MAC: 00-1A:2B-3C-4D-5E"
         out = _format(formatter, text)
-        # The full mixed-separator string should survive — backreference protects us.
+        # The full mixed-separator string should survive - backreference protects us.
         # If this ever fails, the MAC regex got too loose.
         assert "00-1A:2B-3C-4D-5E" in out or "1A:2B" in out  # tolerate partial-match if it occurs
 
@@ -245,7 +245,7 @@ class TestLoggingSetupIntegrity:
 
     def test_config_imports_logging_handlers_explicitly(self):
         """config.py uses logging.handlers.RotatingFileHandler, but `import logging`
-        does NOT import that submodule — it only resolves if something else imported
+        does NOT import that submodule - it only resolves if something else imported
         logging.handlers first. Without the explicit import, file logging fails at
         startup ("module 'logging' has no attribute 'handlers'") and silently falls
         back to console with NO log file. Regression guard (source inspection, since
@@ -262,7 +262,7 @@ class TestLoggingSetupIntegrity:
     def test_helpers_setup_logging_remains_deleted(self):
         """helpers.setup_logging was deleted in v1.3.2 to prevent accidental
         un-obfuscated logging. If a future contributor re-adds it, ConfigManager.
-        setup_logging is no longer the unique entry point — flag immediately.
+        setup_logging is no longer the unique entry point - flag immediately.
         """
         from netspeedtray.utils import helpers
         assert not hasattr(helpers, "setup_logging"), (

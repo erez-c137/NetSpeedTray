@@ -79,7 +79,7 @@ class TestNetworkMonitorThread:
                     time.sleep(0.01)
 
                 assert mt.consecutive_errors >= 3
-                assert mt._is_running is True          # NOT bricked — recoverable
+                assert mt._is_running is True          # NOT bricked - recoverable
                 assert mt._error_notified is True       # crossed the threshold
                 assert len(emitted) == 1                # notified exactly once, not per error
 

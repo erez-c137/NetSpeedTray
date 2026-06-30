@@ -32,7 +32,7 @@ class UIStyleConstants:
     DARK_MODE_TEXT_COLOR: Final[str] = color.WHITE
     DIALOG_SIDEBAR_BG_DARK: Final[str] = '#202020'
     # The content area sits at the window base so the lighter #2D2D2D cards FLOAT on it (Win11 cards-on-
-    # Mica). Was #2d2d2d — identical to the card fill — so cards had no tonal pop, only their stroke.
+    # Mica). Was #2d2d2d - identical to the card fill - so cards had no tonal pop, only their stroke.
     DIALOG_CONTENT_BG_DARK: Final[str] = '#202020'
     DIALOG_SECTION_BG_DARK: Final[str] = '#202020'
     GRAPH_BG_DARK: Final[str] = "#1E1E1E"
@@ -45,13 +45,13 @@ class UIStyleConstants:
     SETTINGS_PANEL_TEXT_DARK: Final[str] = color.WHITE
     SETTINGS_PANEL_TEXT_LIGHT: Final[str] = "#1F1F1F"
     SUBTLE_TEXT_COLOR_LIGHT: Final[str] = "#595959"
-    # Lifted from #808080 (≈3.48:1 on the dark card — fails WCAG AA for the 12/14px caption text used
+    # Lifted from #808080 (≈3.48:1 on the dark card - fails WCAG AA for the 12/14px caption text used
     # app-wide) to #A6A6A6 (≈5.7:1), per the 2.0 a11y audit. Still clearly "subtle" vs primary text.
     SUBTLE_TEXT_COLOR_DARK: Final[str] = "#A6A6A6"
 
     # --- Design system: Fluent type ramp ------------------------------------
     # "Segoe UI Variable" is ONE family; the optical cuts (Small/Text/Display) and
-    # weights are STYLES of it, selected via QFont.setStyleName — NOT family names.
+    # weights are STYLES of it, selected via QFont.setStyleName - NOT family names.
     # (QFont("Segoe UI Variable Text") does not match and silently downgrades to a
     # fallback face.) utils/styles.font() applies the style name on Win11 and falls
     # back to plain Segoe UI at the px/weight on Win10.

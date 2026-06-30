@@ -1,5 +1,5 @@
 """
-Advanced Settings Page (2.0 IA) — data history, app-behavior flags, and a fresh start.
+Advanced Settings Page (2.0 IA) - data history, app-behavior flags, and a fresh start.
 
 The progressive-disclosure valve for genuinely low-frequency / destructive items:
 data retention, the app-wide reduce-motion flag (also read by the Monitor window's

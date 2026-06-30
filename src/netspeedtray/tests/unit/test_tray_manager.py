@@ -142,7 +142,7 @@ def test_refresh_dynamic_items_toggles_pause_label(mock_widget, mock_i18n, q_app
 
 def test_tour_removed_and_pause_is_opt_in(mock_widget, mock_i18n, q_app):
     """The 'Show me around' tour is gone, and Pause/Resume is hidden unless the user opts in via
-    Settings (pause_in_menu) — refreshed on every menu open, no restart needed."""
+    Settings (pause_in_menu) - refreshed on every menu open, no restart needed."""
     mock_widget.config = {}  # pause_in_menu defaults off
     manager = TrayIconManager(mock_widget, mock_i18n)
     manager.initialize()

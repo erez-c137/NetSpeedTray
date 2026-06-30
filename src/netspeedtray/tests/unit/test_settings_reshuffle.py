@@ -1,12 +1,12 @@
 """
 Settings IA-reshuffle safety net (C4).
 
-The 2.0 IA moves ~settings across pages (General/Widget/Appearance/Hardware/Network/Advanced) — a
+The 2.0 IA moves ~settings across pages (General/Widget/Appearance/Hardware/Network/Advanced) - a
 refactor where a control can silently lose its config key (dropped from get_settings) or a moved
 control can return the wrong value (corrupt mapping). This test pins both:
 
-  * COVERAGE — every mutable key the dialog manages today is still present in get_settings().
-  * ROUND-TRIP — loading a config with the high-risk keys (the moved ones + the segmented enums +
+  * COVERAGE - every mutable key the dialog manages today is still present in get_settings().
+  * ROUND-TRIP - loading a config with the high-risk keys (the moved ones + the segmented enums +
     the colours) and reading it straight back returns the same values.
 
 It is deliberately structure-agnostic: it drives the public SettingsDialog API only, so it holds
@@ -23,23 +23,23 @@ from netspeedtray.views.settings.dialog import SettingsDialog
 
 
 # Every mutable key the dialog is responsible for round-tripping (control-backed). Window positions,
-# onboarding flags, db-internal keys etc. are deliberately excluded — they aren't page-managed.
+# onboarding flags, db-internal keys etc. are deliberately excluded - they aren't page-managed.
 MANAGED_KEYS = {
     # General
     "language", "update_rate", "start_with_windows", "check_for_updates", "preferred_monitor",
     # Widget (layout + on-taskbar behaviour)
     "free_move", "keep_visible_fullscreen",
     "widget_display_mode", "stack_hardware_stats", "widget_display_order",
-    # Appearance — font / colour / arrows / background
+    # Appearance - font / colour / arrows / background
     "font_family", "font_size", "font_weight", "default_color",
     "background_color", "background_opacity",
     "use_separate_arrow_font", "arrow_font_family", "arrow_font_size",
     "arrow_up_symbol", "arrow_down_symbol",
     "graph_enabled", "history_minutes", "graph_opacity",
-    # Appearance — units / format (was the Display page)
+    # Appearance - units / format (was the Display page)
     "unit_type", "speed_display_mode", "decimal_places", "text_alignment",
     "swap_upload_download", "hide_arrows", "hide_unit_suffix", "short_unit_labels",
-    # Appearance — colour coding (was the Color Coding page)
+    # Appearance - colour coding (was the Color Coding page)
     "color_coding", "high_speed_threshold", "low_speed_threshold",
     "high_speed_color", "low_speed_color",
     # Hardware
@@ -47,13 +47,13 @@ MANAGED_KEYS = {
     "show_hardware_temps", "show_hardware_power", "hardware_label_style",
     "cpu_load_high_threshold", "cpu_load_low_threshold",
     "gpu_load_high_threshold", "gpu_load_low_threshold", "throttle_temp_c",
-    # Network — interfaces
+    # Network - interfaces
     "interface_mode", "selected_interfaces",
-    # Network — connection (latency + advertised plan)
+    # Network - connection (latency + advertised plan)
     "latency_enabled", "latency_public_enabled", "latency_public_host", "plan_down_mbps", "plan_up_mbps",
-    # Network — data cap
+    # Network - data cap
     "data_cap_enabled", "data_cap_gb", "data_cap_reset_day", "data_cap_count", "data_cap_alert_enabled",
-    # Appearance — fixed arrow weight (constant, but must survive the load/get chain)
+    # Appearance - fixed arrow weight (constant, but must survive the load/get chain)
     "arrow_font_weight",
     # Advanced
     "keep_data", "reduce_motion", "show_usage_on_hover", "show_hover_tips", "pause_in_menu",
@@ -99,7 +99,7 @@ def _dialog(qtbot, config):
 
 
 def test_no_managed_key_is_dropped(qtbot):
-    """Every page-managed key must survive into get_settings — a dropped key silently reverts a
+    """Every page-managed key must survive into get_settings - a dropped key silently reverts a
     user's setting to default on the next save."""
     dlg = _dialog(qtbot, dict(constants.config.defaults.DEFAULT_CONFIG))
     out = set(dlg.get_settings())
@@ -122,7 +122,7 @@ def test_highrisk_keys_round_trip(qtbot):
 # must NOT be lost when settings are saved: get_settings() starts from a full config copy, so a page
 # that doesn't manage a key leaves it untouched at its loaded value. This guards against a future
 # refactor dropping the config.copy() and silently resetting these on the next save.
-# tray_offset_x/y are deliberately UI-less — Free Move (drag) is the reposition path; the position
+# tray_offset_x/y are deliberately UI-less - Free Move (drag) is the reposition path; the position
 # engine still reads them from config at their defaults.
 UNMANAGED_PRESERVED = {
     "tray_offset_x": 12,
@@ -146,7 +146,7 @@ def test_unmanaged_keys_are_preserved_through_get_settings(qtbot):
 
 def test_color_picker_routes_to_the_right_embedded_section(qtbot, monkeypatch):
     """Appearance embeds the old Colors page as colors_section. The dialog's colour picker must route
-    high/low-speed colours to that section and default/background to Appearance itself — a mis-wired
+    high/low-speed colours to that section and default/background to Appearance itself - a mis-wired
     branch would silently paint the wrong swatch."""
     from PyQt6.QtGui import QColor
     from PyQt6.QtWidgets import QColorDialog

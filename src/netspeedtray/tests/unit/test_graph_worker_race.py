@@ -4,7 +4,7 @@ hardware deques while the GUI thread appends to them via add_hardware_stat().
 
 Regression for the audit High: the worker iterated cpu_history/gpu_history/ram_history *directly*, which
 raises "deque mutated during iteration" (the GIL doesn't protect a Python-level loop that yields between
-iterations) — swallowed and re-emitted as a generic worker error, so the session Hardware/Overview graph
+iterations) - swallowed and re-emitted as a generic worker error, so the session Hardware/Overview graph
 intermittently failed to render. The fix routes through the copy getters; list(deque) copies under one
 GIL-held C call, so it's safe. This test hammers the deques from another thread while the worker processes
 session requests and asserts it never errors.
@@ -27,7 +27,7 @@ def q_app():
 
 
 class _FakeWS:
-    """Just the surface the worker's session-hwcombined path reads — real deques + real copy getters."""
+    """Just the surface the worker's session-hwcombined path reads - real deques + real copy getters."""
     def __init__(self):
         self.cpu_history = deque(maxlen=5000)
         self.gpu_history = deque(maxlen=5000)
@@ -63,7 +63,7 @@ def test_worker_session_path_survives_concurrent_appends(q_app):
     stop = threading.Event()
 
     def hammer():
-        # Tight append loop on the GUI-equivalent thread — the mutation the worker used to trip over.
+        # Tight append loop on the GUI-equivalent thread - the mutation the worker used to trip over.
         while not stop.is_set():
             t = datetime.now()
             ws.cpu_history.append(HardwareStatSnapshot(50.0, t))

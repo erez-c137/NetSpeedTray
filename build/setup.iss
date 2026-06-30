@@ -59,7 +59,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 ; 'ignoreversion' copy below overwrites files present in the new build but leaves
 ; behind anything the new build no longer ships. v1.3.2 dropped many Qt DLLs and
 ; (accidentally) OpenSSL, so v1.3.1 -> v1.3.2 upgraders kept stale, mismatched
-; DLLs in _internal — the cause of the broken SSL updater and a prime suspect for
+; DLLs in _internal - the cause of the broken SSL updater and a prime suspect for
 ; "DLL load failed" / "no Qt platform plugin" crashes. Clearing _internal first
 ; guarantees a consistent payload. User data ({userappdata}\NetSpeedTray) is NOT
 ; touched by this.
@@ -75,7 +75,7 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 
 [Registry]
 ; The app self-registers its "start with Windows" entry at runtime (StartupManager writes the HKCU Run
-; key so the path always matches the actually-installed exe). The installer never creates it — but since
+; key so the path always matches the actually-installed exe). The installer never creates it - but since
 ; start-with-Windows is ON by default, we delete the value on UNINSTALL only, so removing the app never
 ; leaves a dead Run entry pointing at a deleted exe. (uninstalldeletevalue does nothing at install time.)
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "{#MyAppName}"; Flags: uninstalldeletevalue

@@ -27,7 +27,7 @@ def test_session_all_interfaces_uses_in_memory_aggregate(q_app):
 
 def test_session_specific_nic_reads_per_interface_from_db(q_app):
     """Session view scoped to ONE NIC must read that interface from the DB (the in-memory aggregate is
-    all-interfaces only), not silently show the aggregate — the 2.0 NIC-filter fix."""
+    all-interfaces only), not silently show the aggregate - the 2.0 NIC-filter fix."""
     ws = MagicMock()
     ws.get_speed_history.return_value = []
     ws.get_total_bandwidth_for_period.return_value = (0.0, 0.0)

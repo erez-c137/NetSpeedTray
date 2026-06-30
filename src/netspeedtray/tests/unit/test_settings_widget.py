@@ -1,4 +1,4 @@
-"""Widget settings page (2.0 IA) — the controls that moved here from General (behaviour) and Hardware
+"""Widget settings page (2.0 IA) - the controls that moved here from General (behaviour) and Hardware
 (layout) must round-trip, and the hardware auto-switch convenience must survive the move."""
 import pytest
 
@@ -29,7 +29,7 @@ def test_layout_and_behaviour_round_trip(page):
 
 
 def test_stacked_mode_encoding_round_trips(page):
-    """side_by_stack is stored as widget_display_mode=side_by_side + stack_hardware_stats=True — the
+    """side_by_stack is stored as widget_display_mode=side_by_side + stack_hardware_stats=True - the
     encoding must survive load->get unchanged (a corruption here silently changes the widget layout)."""
     page.load_settings({"widget_display_mode": "side_by_side", "stack_hardware_stats": True})
     out = page.get_settings()

@@ -135,7 +135,7 @@ class GraphDataWorker(QObject):
                 return
 
             if request.stat_type in ("hwcombined", "hwseparate"):
-                # CPU + GPU for the Monitor's Hardware graph (one shared axis, or two stacked axes) —
+                # CPU + GPU for the Monitor's Hardware graph (one shared axis, or two stacked axes) -
                 # same fetch as Overview's cpu/gpu, minus network. Dict payload, like Overview.
                 if request.is_session_view:
                     start_ts = request.start_time.timestamp() if request.start_time else 0
@@ -161,7 +161,7 @@ class GraphDataWorker(QObject):
 
             if request.stat_type in ("cpu", "gpu"):
                 if request.is_session_view:
-                    # In-memory session data — copy getter (worker thread vs GUI-thread appends).
+                    # In-memory session data - copy getter (worker thread vs GUI-thread appends).
                     aggregated_data = (self.widget_state.get_cpu_history() if request.stat_type == "cpu"
                                        else self.widget_state.get_gpu_history())
                     start_ts = request.start_time.timestamp() if request.start_time else 0
@@ -179,7 +179,7 @@ class GraphDataWorker(QObject):
 
             elif net_use_memory:
                 # OPTIMIZATION: Use the pre-calculated aggregated history from WidgetState.
-                # (Only when not scoped to a single NIC — see net_use_memory; per-NIC falls to the DB path.)
+                # (Only when not scoped to a single NIC - see net_use_memory; per-NIC falls to the DB path.)
                 aggregated_data = self.widget_state.get_aggregated_speed_history()
                 
                 start_ts = request.start_time.timestamp() if request.start_time else 0

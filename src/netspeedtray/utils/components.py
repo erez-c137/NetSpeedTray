@@ -33,7 +33,7 @@ class Win11ComboBox(QComboBox):
 
     Qt 6 gives every combo pop-up a *translucent* container window (``WA_TranslucentBackground``, used
     for the native rounded drop-shadow). Under our dark theme the styled item-view didn't actually
-    cover that container on screen, so the open list rendered see-through over whatever it overlapped —
+    cover that container on screen, so the open list rendered see-through over whatever it overlapped -
     unreadable. We force both the container window and its viewport opaque each time the pop-up opens
     (the container is created lazily on the first show and then reused). Colours still come from the
     QSS (``QComboBox QAbstractItemView``); this only removes the transparency. Use everywhere a
@@ -197,7 +197,7 @@ class Win11Toggle(QWidget):
             return
         self.thumb_animation.stop()
         if animate and prefers_reduced_motion():
-            animate = False   # honour Windows "Animation effects" off — snap instead of slide
+            animate = False   # honour Windows "Animation effects" off - snap instead of slide
         if animate:
             self.thumb_animation.setStartValue(current_pos)
             self.thumb_animation.setEndValue(end_pos)
@@ -645,7 +645,7 @@ class SettingExpander(QWidget):
     A Fluent settings expander: a header row (title + optional muted description +
     optional master toggle) over a collapsible content area of child cards. With
     ``header_toggle=True`` a Win11Toggle in the header both controls the feature and
-    drives the body's visibility — the native Win11 Settings disclosure idiom.
+    drives the body's visibility - the native Win11 Settings disclosure idiom.
     """
     toggled = pyqtSignal(bool)          # master-toggle state (only when header_toggle)
     expandedChanged = pyqtSignal(bool)
@@ -756,7 +756,7 @@ class SettingExpander(QWidget):
 class Win11Segmented(QWidget):
     """
     A Win11 segmented control: an exclusive row of joined pill buttons (the native
-    idiom for a small mutually-exclusive choice — decimals 0/1/2, alignment L/C/R,
+    idiom for a small mutually-exclusive choice - decimals 0/1/2, alignment L/C/R,
     update-rate Smart/1s/2s/…). Emits ``valueChanged(value)`` with the option's value.
     """
     valueChanged = pyqtSignal(object)
@@ -918,7 +918,7 @@ class ArrowStylePicker(QWidget):
 
     Each segment's label *is* the glyph pair, so the choice is visual. "Classic" maps to the
     empty config value (``arrow_*_symbol == ""``) so the renderer falls back to the native,
-    locale-aware default arrow — i.e. Classic always follows the OS language. Emits ``changed``.
+    locale-aware default arrow - i.e. Classic always follows the OS language. Emits ``changed``.
     """
     changed = pyqtSignal()
     _CUSTOM = "__custom__"
@@ -965,7 +965,7 @@ class ArrowStylePicker(QWidget):
         crow.addWidget(self._down_edit)
         crow.addStretch(0)
         self._custom_row.setVisible(False)
-        root.addWidget(self._custom_row)   # was orphaned after `return` in _tr (dead code) — the custom
+        root.addWidget(self._custom_row)   # was orphaned after `return` in _tr (dead code) - the custom
         #                                    arrow row never entered the layout, so "Custom" did nothing.
 
     def _tr(self, key: str, default: str) -> str:

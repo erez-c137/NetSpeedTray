@@ -3,8 +3,8 @@ DEFAULT_* reconciliation guard (master-plan P0).
 
 The settings live-preview shows what a value *would* look like, including when a key falls
 back to its default. That only stays honest if there is a SINGLE source of truth for every
-default. We keep two structures — ``DEFAULT_CONFIG`` (the seed config) and
-``VALIDATION_SCHEMA`` (per-key rules incl. ``default``) — and ``_validate_config`` fills any
+default. We keep two structures - ``DEFAULT_CONFIG`` (the seed config) and
+``VALIDATION_SCHEMA`` (per-key rules incl. ``default``) - and ``_validate_config`` fills any
 missing key from the schema default. If those two ever disagree, a freshly-seeded config and
 a validated-from-partial config would differ for the same key: a silent default-disagreement.
 
@@ -44,7 +44,7 @@ def test_every_schema_entry_declares_a_default():
 
 
 def test_validating_an_empty_config_reproduces_default_config():
-    """A partial (empty) config validated must equal DEFAULT_CONFIG — the reconciliation in action."""
+    """A partial (empty) config validated must equal DEFAULT_CONFIG - the reconciliation in action."""
     from netspeedtray.utils.config import ConfigManager
 
     validated = ConfigManager._validate_config(ConfigManager.__new__(ConfigManager), {})

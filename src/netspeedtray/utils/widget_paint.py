@@ -1,8 +1,8 @@
 """
-Shared widget paint path (refactor C1 — the keystone).
+Shared widget paint path (refactor C1 - the keystone).
 
 The live taskbar widget (`views/widget/main.py`) and every off-taskbar *preview* of it
-(the Settings live-preview, the Monitor Overview tile) must draw **identically** — same
+(the Settings live-preview, the Monitor Overview tile) must draw **identically** - same
 modes, same layouts, same arrows, same graph. Historically that logic lived inside
 `NetworkSpeedWidget.paintEvent` and read directly from `self.*`, so a preview could only
 be faked by spinning up a real widget.
@@ -12,7 +12,7 @@ This module lifts that logic into one pure function, `render_widget`, parameteri
 live state and calls it; `PreviewWidget` builds a synthetic snapshot and calls the same
 function. There is exactly one place the widget knows how to draw itself.
 
-Nothing here owns a QWidget or any live state — it takes a `QPainter`, a `WidgetRenderer`,
+Nothing here owns a QWidget or any live state - it takes a `QPainter`, a `WidgetRenderer`,
 a `RenderConfig`, and the snapshot, and draws. That keeps it trivially testable and reusable.
 """
 from __future__ import annotations
@@ -53,7 +53,7 @@ class WidgetMetrics:
     gpu_history: List[float] = field(default_factory=list)
 
     def net_bytes(self) -> Tuple[float, float]:
-        """(upload, download) in bytes/sec from the stored Mbps — the renderer's unit."""
+        """(upload, download) in bytes/sec from the stored Mbps - the renderer's unit."""
         up = (self.upload_mbps * constants.network.units.MEGA_DIVISOR) / constants.network.units.BITS_PER_BYTE
         dw = (self.download_mbps * constants.network.units.MEGA_DIVISOR) / constants.network.units.BITS_PER_BYTE
         return up, dw
@@ -61,7 +61,7 @@ class WidgetMetrics:
 
 def font_from_config(config: Dict[str, Any]) -> QFont:
     """
-    Build the main display QFont from a config dict — mirrors
+    Build the main display QFont from a config dict - mirrors
     ``WidgetLayoutManager.set_font`` so a preview's text metrics match the live widget.
     """
     family = config.get("font_family", constants.config.defaults.DEFAULT_FONT_FAMILY)
@@ -101,7 +101,7 @@ def _resolve_mode(config: RenderConfig, cycle_mode: str) -> str:
 
 def _draw_graph(painter: QPainter, renderer: WidgetRenderer, width: int, height: int,
                 config: RenderConfig, metrics: WidgetMetrics, mode: str, layout: str) -> None:
-    """Mini-graph background layer (skipped in side_by_side — scoped per-segment there)."""
+    """Mini-graph background layer (skipped in side_by_side - scoped per-segment there)."""
     if mode == "side_by_side":
         return
     if mode == "cpu_only":
@@ -218,7 +218,7 @@ def render_widget(painter: QPainter, rect: QRect, renderer: WidgetRenderer, conf
         metrics: the frame snapshot to draw.
         layout_mode: 'horizontal' for a TOP/BOTTOM taskbar, 'vertical' for a LEFT/RIGHT (side) taskbar
             (per NetworkSpeedWidget._layout_mode_for_edge). NOTE: the renderer does not currently branch
-            on this — it always draws the two-row stack — so the value is informational today.
+            on this - it always draws the two-row stack - so the value is informational today.
         cycle_mode: which single metric to show when `config.widget_display_mode == 'cycle'`.
         network_width: width of the network segment for side_by_side graph scoping.
         font: font to apply before drawing foreground text.
@@ -236,11 +236,11 @@ def render_widget(painter: QPainter, rect: QRect, renderer: WidgetRenderer, conf
         painter.setFont(font)
 
     # Right-align the side-by-side content so the widget's worst-case width reservation (the anti-jiggle
-    # "888.8"/"100%" headroom, plus any hidden GPU/VRAM segment) shows up as space on the LEFT — toward
-    # the app icons, where it's invisible — instead of a gap between the content and the system tray.
+    # "888.8"/"100%" headroom, plus any hidden GPU/VRAM segment) shows up as space on the LEFT - toward
+    # the app icons, where it's invisible - instead of a gap between the content and the system tray.
     # Only side_by_side over-reserves like this; single-metric modes fill their width (graph or one
     # block) and vertical docking is sized to the taskbar. We have to MEASURE first because the renderer
-    # computes its segment rects from font metrics during the draw, not before — so we run one draw onto
+    # computes its segment rects from font metrics during the draw, not before - so we run one draw onto
     # a throwaway surface (the mini-graph's point cache, keyed by data, is simply warmed by it).
     align_dx = 0
     if mode == "side_by_side" and layout_mode != "vertical" and width > 0:

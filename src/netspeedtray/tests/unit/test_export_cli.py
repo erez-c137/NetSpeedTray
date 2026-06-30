@@ -1,5 +1,5 @@
 """
-Headless export CLI — the `--export-csv` arg path. Covers the pure logic: the flag gates the whole
+Headless export CLI - the `--export-csv` arg path. Covers the pure logic: the flag gates the whole
 feature (absent -> None so the GUI proceeds), the friendly period tokens map onto real PERIOD_MAP
 keys, and an unknown period is rejected with a non-zero code rather than silently exporting nothing.
 """
@@ -38,7 +38,7 @@ def test_unknown_period_is_rejected(capsys):
 
 def test_emit_survives_none_stream(caplog):
     """The shipped exe is built console=False, so sys.stdout/sys.stderr are None. _emit must never raise
-    on a None stream (a bare .write would AttributeError) — it logs instead."""
+    on a None stream (a bare .write would AttributeError) - it logs instead."""
     with caplog.at_level(logging.INFO, logger="NetSpeedTray.ExportCLI"):
         CLI._emit(None, "the/output/path\n")            # would crash with bare .write
     assert any("the/output/path" in r.message for r in caplog.records)
@@ -54,8 +54,8 @@ def test_emit_survives_none_stream(caplog):
 
 def test_cli_does_not_crash_when_std_streams_are_none(monkeypatch):
     """Regression: the headless export's success AND error paths must not AttributeError when the
-    windowed exe has sys.stdout/sys.stderr == None — the bug that turned a successful export into exit 1."""
+    windowed exe has sys.stdout/sys.stderr == None - the bug that turned a successful export into exit 1."""
     monkeypatch.setattr("sys.stdout", None)
     monkeypatch.setattr("sys.stderr", None)
-    # The error path (unknown period) reaches the first guarded write — it must return 2, not crash.
+    # The error path (unknown period) reaches the first guarded write - it must return 2, not crash.
     assert CLI.run_export_cli(["--export-csv", "--period", "fortnight"]) == 2

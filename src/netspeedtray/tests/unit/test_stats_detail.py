@@ -1,5 +1,5 @@
 """
-StatsDetailSheet — the drill-down behind every Overview card. Verifies the honesty spine in the UI:
+StatsDetailSheet - the drill-down behind every Overview card. Verifies the honesty spine in the UI:
 raw-tier blocks show percentiles, rollup-tier blocks show em-dashes + a note, empty primary metrics
 say "not enough history", empty secondary metrics drop out, and the copy buffer is populated.
 """
@@ -63,7 +63,7 @@ def test_raw_block_shows_percentiles(q_app):
     text = "\n".join(sheet._copy_text_parts)
     assert "Download" in text and "per-second" in text
     assert "Median" in text and "95th" in text          # exact percentiles present
-    assert "Median: —" not in text and "95th pct: —" not in text   # no percentile dashed out (raw)
+    assert "Median: -" not in text and "95th pct: -" not in text   # no percentile dashed out (raw)
 
 
 def test_rollup_block_dashes_percentiles_with_note(q_app):
@@ -71,7 +71,7 @@ def test_rollup_block_dashes_percentiles_with_note(q_app):
     sheet = StatsDetailSheet(_WS(), subjects, _window(), _cfg(), I18nStrings("en_US"))
     text = "\n".join(sheet._copy_text_parts)
     assert "per-minute" in text
-    assert "Median: —" in text and "95th pct: —" in text   # honest: not fabricated
+    assert "Median: -" in text and "95th pct: -" in text   # honest: not fabricated
 
 
 def test_empty_primary_says_no_data(q_app):

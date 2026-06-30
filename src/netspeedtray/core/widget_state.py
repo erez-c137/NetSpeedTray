@@ -78,7 +78,7 @@ class WidgetState(QObject):
         self._read_only = read_only
 
         # In-Memory Cache for real-time mini-graph.
-        #   * in_memory_history holds per-tick raw snapshots (a dict per entry — heavy), so it stays
+        #   * in_memory_history holds per-tick raw snapshots (a dict per entry - heavy), so it stays
         #     sized to the *current* window.
         #   * the mini-graph series (aggregated speed + per-stat hardware %) are light (a few floats per
         #     entry), so they buffer the *maximum* selectable window. That way GROWING the graph timespan
@@ -110,7 +110,7 @@ class WidgetState(QObject):
             self.db_worker.start()
 
         # Timers for periodic operations (constructed either way so cleanup() stays simple, but only
-        # started for a live instance — a read_only export never writes or runs maintenance).
+        # started for a live instance - a read_only export never writes or runs maintenance).
         self.batch_persist_timer = QTimer(self)
         self.batch_persist_timer.timeout.connect(self.flush_batch)
         self.maintenance_timer = QTimer(self)
@@ -155,7 +155,7 @@ class WidgetState(QObject):
             if thread_id not in self._read_conns:
                 conn = sqlite3.connect(self._db_path, check_same_thread=False)
                 conn.row_factory = sqlite3.Row
-                # Wait (up to 5s) for a lock instead of erroring out immediately — otherwise a
+                # Wait (up to 5s) for a lock instead of erroring out immediately - otherwise a
                 # read concurrent with the maintenance VACUUM can fail with "database is locked".
                 conn.execute("PRAGMA busy_timeout = 5000;")
                 # The Monitor reloads ~a dozen multi-tier scans every few seconds on these read
@@ -190,7 +190,7 @@ class WidgetState(QObject):
 
 
     # Utilisation stats are 0-100% and clamped; physical stats (power W, temperature °C, latency ms)
-    # are NOT percentages and must be stored unclamped — a 200 ms ping or 180 W draw must not become 100.
+    # are NOT percentages and must be stored unclamped - a 200 ms ping or 180 W draw must not become 100.
     _PCT_STATS = frozenset({'cpu', 'gpu', 'ram', 'vram'})
 
     def add_hardware_stat(self, stat_type: str, value: float, now: Optional[datetime] = None) -> None:
@@ -229,7 +229,7 @@ class WidgetState(QObject):
 
     def _try_load_usage(self) -> bool:
         """Load the persisted odometer once the worker has created the table.
-        Returns False (so the caller defers) if the table isn't ready yet — never
+        Returns False (so the caller defers) if the table isn't ready yet - never
         overwrites a real persisted counter with a fresh zero one."""
         try:
             conn = self._get_read_conn()
@@ -243,7 +243,7 @@ class WidgetState(QObject):
                 f"FROM {constants.data.USAGE_COUNTER_TABLE} WHERE id = 1")
             row = cur.fetchone()
             if row:
-                # Validate the persisted row — a corrupt/negative/NaN value flowing into the cap
+                # Validate the persisted row - a corrupt/negative/NaN value flowing into the cap
                 # math could trigger a false 100% alert. Coerce to a finite, non-negative float
                 # and never let the anchor exceed the cumulative (that would read as negative usage).
                 def _f(v: object) -> float:
@@ -329,7 +329,7 @@ class WidgetState(QObject):
         """
         The current billing-period key (for the alert controller's restart-safe state).
         Returns the odometer's MONOTONIC period key (advanced forward-only) so a backward
-        clock/DST shift can't change it and spuriously re-fire a threshold alert — and so the
+        clock/DST shift can't change it and spuriously re-fire a threshold alert - and so the
         alert period and the odometer period are one source of truth.
         """
         if self._usage_loaded or self._try_load_usage():
@@ -355,14 +355,14 @@ class WidgetState(QObject):
         """
         Flush pending batches and BLOCK until the write thread has persisted everything
         enqueued so far (H3). Because the worker queue is FIFO, an Event sentinel placed
-        after the flush only fires once the flush is on disk — so a read immediately after
+        after the flush only fires once the flush is on disk - so a read immediately after
         sees the freshly-flushed samples instead of a gap at the graph's right edge.
         Bounded by ``timeout`` so a stalled worker can never hang the reader.
         """
         try:
             self.flush_batch()
             # If the worker thread isn't running (tests, or mid-shutdown) the signal would
-            # never fire — don't burn the timeout; the flush has nothing to persist anyway.
+            # never fire - don't burn the timeout; the flush has nothing to persist anyway.
             if not self.db_worker.isRunning():
                 return
             done = threading.Event()
@@ -375,7 +375,7 @@ class WidgetState(QObject):
                 if done.wait(0.05):
                     return
                 if not self.db_worker.isRunning():
-                    return   # worker exited; the barrier will never fire — don't burn the timeout
+                    return   # worker exited; the barrier will never fire - don't burn the timeout
                 waited += 0.05
             self.logger.warning("flush_and_wait timed out after %.1fs; reading possibly-stale history.", timeout)
         except Exception as e:
@@ -419,7 +419,7 @@ class WidgetState(QObject):
             duration = end_ts - start_ts
             interval = 1 if duration <= 6 * 3600 else (60 if duration <= 30 * 86400 else 3600)
 
-            # Union ALL tiers (non-overlapping — data is moved, not copied) and bin to the target
+            # Union ALL tiers (non-overlapping - data is moved, not copied) and bin to the target
             # interval, mirroring get_speed_history. A recent-but-long window (e.g. 48h or a week) has
             # its most-recent <24h only in the RAW tier and the older portion in minute/hour; reading a
             # single tier silently dropped the recent half (and the old fallback only fired when the tier
@@ -466,7 +466,7 @@ class WidgetState(QObject):
                 vals = [r[0] for r in cur.fetchall()]
                 return S.summarize_raw(vals, S.coverage_pct(len(vals), win, poll_interval))
             # Beyond the raw horizon the window spans tiers: the recent <24h is still in RAW, older data
-            # in minute/hour. Union all three (non-overlapping — data is moved, not copied — exactly like
+            # in minute/hour. Union all three (non-overlapping - data is moved, not copied - exactly like
             # get_speed_history) so the summary covers the WHOLE window instead of only the rolled-up
             # older half, which silently dropped the most recent ~24h and disagreed with the graph.
             avgs, maxes, counts = [], [], []
@@ -524,7 +524,7 @@ class WidgetState(QObject):
             # recent ~24h and disagreed with the graph for the same window).
             avgs, maxes, counts = [], [], []
             covered_seconds = 0.0   # for coverage: count distinct TIME buckets × their duration, NOT
-            #                         SUM(sample_count) — which, for an "all" aggregate, double-counts by
+            #                         SUM(sample_count) - which, for an "all" aggregate, double-counts by
             #                         NIC and inflates the evidence-admissibility figure past 100%.
             for table, bucket_secs in ((constants.data.SPEED_TABLE_MINUTE, 60.0),
                                        (constants.data.SPEED_TABLE_HOUR, 3600.0)):
@@ -573,7 +573,7 @@ class WidgetState(QObject):
             now_ts = int(datetime.now().timestamp())
             
             # Bytes per tier = (sum of per-sample RATES) × (the seconds that sum represents). For the
-            # MINUTE and HOUR rollups that span is the FIXED bucket duration (60 / 3600 s) — NOT
+            # MINUTE and HOUR rollups that span is the FIXED bucket duration (60 / 3600 s) - NOT
             # sample_count × the LIVE poll interval, which silently rescales ALL historical data when the
             # user changes the poll rate (1s→5s would 5×-over-report months of minute/hour history). When
             # the poll rate is unchanged the two agree (sample_count × poll ≈ bucket duration); the fix
@@ -663,7 +663,7 @@ class WidgetState(QObject):
         """
         # Flush AND wait for persistence so the read includes the just-buffered samples (H3):
         # the previous fire-and-forget flush could miss them, leaving a gap at the graph edge.
-        # Only on the top-level call — the resolution recursion (which sets _visited_resolutions)
+        # Only on the top-level call - the resolution recursion (which sets _visited_resolutions)
         # must not re-barrier on every tier. Callers that run on the GUI thread on a timer (the Overview
         # reload, every few seconds) pass wait_for_flush=False so they never block the UI up to the 2s
         # flush timeout for a missing last second that doesn't matter at multi-hour resolution.
@@ -952,7 +952,7 @@ class WidgetState(QObject):
 
     def _get_graph_buffer_points(self) -> int:
         """Capacity for the lightweight mini-graph series (aggregated speed + per-stat hardware %).
-        Sized to the MAXIMUM selectable graph window — not the current one — so that growing the graph
+        Sized to the MAXIMUM selectable graph window - not the current one - so that growing the graph
         timespan reveals already-buffered samples instantly; the renderer slices this down to the
         configured window. Bounded (≤5000 points) so each float series stays well under ~0.5 MB."""
         try:
@@ -978,7 +978,7 @@ class WidgetState(QObject):
             self.logger.debug("In-memory raw history capacity updated to %d points.", self.max_history_points)
 
         # The graph series buffer the *max* window, so they only resize when update_rate changes (not on
-        # a timespan change — the renderer just slices a different amount from the same buffer).
+        # a timespan change - the renderer just slices a different amount from the same buffer).
         new_graph_points = self._get_graph_buffer_points()
         if new_graph_points != self._graph_buffer_points:
             self._graph_buffer_points = new_graph_points

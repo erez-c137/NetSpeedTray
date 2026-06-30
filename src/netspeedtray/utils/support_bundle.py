@@ -44,11 +44,11 @@ logger = logging.getLogger("NetSpeedTray.SupportBundle")
 # Currently empty. We deliberately do NOT strip window-position coordinates
 # (`position_x`, `position_y`, `graph_window_pos`, `settings_window_pos`):
 # they are exactly the diagnostic signal we need for multi-monitor / placement
-# bugs (e.g. #133, #138 — `position_x = -1920` literally means "user wants
+# bugs (e.g. #133, #138 - `position_x = -1920` literally means "user wants
 # widget on the monitor to the left of primary"). Window coordinates are not
 # PII; they don't identify a user.
 #
-# Actual PII (paths, IPs, hostnames, MACs) lives in logs, not config — and
+# Actual PII (paths, IPs, hostnames, MACs) lives in logs, not config - and
 # that's handled by ObfuscatingFormatter in the logs/ section of the bundle.
 #
 # Add keys here only if a future config field genuinely contains identifying
@@ -59,7 +59,7 @@ _CONFIG_KEYS_TO_STRIP: tuple = ()
 #   - selected_interfaces / excluded_interfaces hold Windows NIC *friendly names*, which users freely
 #     rename ("Office VPN", a site/company label, a hostname-bearing virtual adapter). The bundle's
 #     MANIFEST explicitly promises "network interface friendly names" are NOT included.
-#   - latency_public_host is a user-chosen ping target (a public hostname/IP) — reveals network choices.
+#   - latency_public_host is a user-chosen ping target (a public hostname/IP) - reveals network choices.
 # We keep the diagnostic SHAPE (how many interfaces, that a host was set) but never the literal name.
 # IMPORTANT: any NEW config field that can hold a name/path/host/ID must be added here.
 _CONFIG_LIST_KEYS_TO_REDACT: tuple = ("selected_interfaces", "excluded_interfaces")
@@ -70,7 +70,7 @@ def _sanitize_config(config: Dict[str, Any]) -> Dict[str, Any]:
     """Returns a copy of the config safe to attach to a public issue.
 
     Drops `_CONFIG_KEYS_TO_STRIP` outright and redacts the user-label-bearing keys
-    (`_CONFIG_LIST_KEYS_TO_REDACT` / `_CONFIG_VALUE_KEYS_TO_REDACT`) to placeholders — honoring the
+    (`_CONFIG_LIST_KEYS_TO_REDACT` / `_CONFIG_VALUE_KEYS_TO_REDACT`) to placeholders - honoring the
     MANIFEST's promise that NIC friendly names never leave the machine, while preserving the count/shape
     that's actually useful for diagnosing interface-mode and latency bugs.
     """
@@ -109,7 +109,7 @@ def _collect_system_info(config: Dict[str, Any]) -> str:
     lines.append(f"Free move enabled:    {config.get('free_move', False)}")
     lines.append("")
 
-    # Monitor layout — count + resolution + DPI only, no display names.
+    # Monitor layout - count + resolution + DPI only, no display names.
     app = QGuiApplication.instance()
     if app is not None:
         screens = app.screens()
@@ -191,7 +191,7 @@ def build_support_bundle(
         destination_zip: Where to write the .zip file.
         config: The current in-memory config dict (will be sanitized).
         config_source_path: Optional path to the on-disk config file for the
-            bundled-config filename only. Not read directly — we use the
+            bundled-config filename only. Not read directly - we use the
             in-memory dict so we get the user's *current* settings, not what
             they last saved.
 

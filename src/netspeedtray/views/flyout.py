@@ -1,14 +1,14 @@
 """
 A small frameless callout ("flyout") anchored near a point on screen.
 
-Used for the first-run "unfold the knife" hint — a calm, non-modal card that points at
+Used for the first-run "unfold the knife" hint - a calm, non-modal card that points at
 the widget and names the features most users never find (graphs, per-app activity,
 CPU/GPU/temps). It does NOT use a system-tray icon (NetSpeedTray deliberately has none),
 and doubles as the no-dependency fallback notification surface for data-cap alerts when
 native Windows toasts aren't available.
 
 Frameless + translucent + always-on-top + shown without stealing focus. Auto-dismisses
-after a timeout (skipped when the OS / config asks to reduce motion is irrelevant here —
+after a timeout (skipped when the OS / config asks to reduce motion is irrelevant here -
 it's a timeout, not an animation). Built on the design tokens so it matches the app.
 """
 from __future__ import annotations

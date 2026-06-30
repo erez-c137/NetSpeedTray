@@ -94,7 +94,7 @@ class StatsMonitorThread(QThread):
         self._lhm_check_polls: int = 0  # Count polls before emitting notice
         self._nvidia_smi_path: Optional[str] = self._get_cached_path("nvidia-smi")
         # nvidia-smi is a synchronous subprocess (up to NVIDIA_SMI_TIMEOUT_SEC). Temps/power
-        # change slowly, so poll it on a slow sub-cadence and cache between calls — keeps the
+        # change slowly, so poll it on a slow sub-cadence and cache between calls - keeps the
         # per-second network readout off the subprocess critical path.
         self._NVIDIA_POLL_INTERVAL_SEC = 5.0
         self._nvidia_last_poll: float = 0.0
@@ -120,7 +120,7 @@ class StatsMonitorThread(QThread):
         self._power_pkg_counter: Optional[int] = None   # CPU package power (PKG)
         self._power_pp1_counter: Optional[int] = None    # Intel iGPU power (PP1)
         self._power_psys_counter: Optional[int] = None   # Intel RAPL PSYS / platform power (some CPUs)
-        # True whole-system power only comes from the battery (laptops on battery) — DischargeRate via
+        # True whole-system power only comes from the battery (laptops on battery) - DischargeRate via
         # WMI root\wmi. None=untried, False=unavailable, object=connected. Cached on a slow sub-cadence.
         self._wmi_battery: Any = None
         self._battery_cache: tuple = (0.0, None)         # (monotonic_ts, watts_or_None)
@@ -232,7 +232,7 @@ class StatsMonitorThread(QThread):
                 except: continue
 
             # 2. Universal VRAM (Dedicated Usage in bytes, convert to MiB). Only report a real
-            # number if at least one counter contributed — otherwise leave None (N/A).
+            # number if at least one counter contributed - otherwise leave None (N/A).
             _vram_acc = 0.0
             _had_vram = False
             for handle in self._gpu_vram_counters:
@@ -248,7 +248,7 @@ class StatsMonitorThread(QThread):
         except Exception as e:
             self.logger.debug("GPU PDH polling error: %s", e)
 
-        # 3. Temperature & Power — prefer LHM/OHM (all vendors) over nvidia-smi (NVIDIA only)
+        # 3. Temperature & Power - prefer LHM/OHM (all vendors) over nvidia-smi (NVIDIA only)
         need_smi_temp = include_temp
         need_smi_power = include_power
 
@@ -332,7 +332,7 @@ class StatsMonitorThread(QThread):
                         except: pass
                 except Exception as e:
                     self.logger.debug("nvidia-smi temp/power query failed: %s", e)
-                    # Sensor likely dropped out — invalidate the cache so readings fall back to
+                    # Sensor likely dropped out - invalidate the cache so readings fall back to
                     # N/A instead of freezing the last good value forever (the N/A design intent).
                     self._nvidia_cache_temp = None
                     self._nvidia_cache_power = None
@@ -347,7 +347,7 @@ class StatsMonitorThread(QThread):
                 vram_total = self._nvidia_cache_vram_total
 
         # 5. RAPL PP1 fallback for Intel iGPU power (if no LHM/nvidia-smi power).
-        # Init the PDH query FIRST (it's idempotent and sets _power_pp1_counter on first call) —
+        # Init the PDH query FIRST (it's idempotent and sets _power_pp1_counter on first call) -
         # the old guard checked the counter before anything could ever set it, so this whole
         # fallback was dead code.
         if include_power and power_w is None:
@@ -360,19 +360,19 @@ class StatsMonitorThread(QThread):
                         power_w = val / 1000.0  # mW to W
             except: pass
 
-        # Clamp utilization to [0, 100] — PDH GPU-Engine counters can momentarily read >100%.
+        # Clamp utilization to [0, 100] - PDH GPU-Engine counters can momentarily read >100%.
         util_pct = max(0.0, min(100.0, util_pct))
         return GpuPollResult(util_pct, vram_used, vram_total, temp_c, power_w,
                              present=bool(self._gpu_util_counters))
 
     @lru_cache(maxsize=4)
     def _get_cached_path(self, binary: str) -> Optional[str]:
-        """Resolve a system binary from TRUSTED locations only — never the current directory.
+        """Resolve a system binary from TRUSTED locations only - never the current directory.
 
         Security: shutil.which() on Windows searches the CURRENT DIRECTORY first, and the app chdir's
         into its own folder, which is user-writable for the portable ZIP (Downloads / USB). A planted
         ``nvidia-smi.exe`` there would otherwise be launched hidden (CREATE_NO_WINDOW) on the GPU
-        sub-cadence — code execution. So check the known absolute install paths first, and the PATH
+        sub-cadence - code execution. So check the known absolute install paths first, and the PATH
         fallback drops the current directory / relative entries and accepts only an absolute result.
         """
         import os
@@ -388,7 +388,7 @@ class StatsMonitorThread(QThread):
             if os.path.isfile(sys32):
                 return sys32
 
-        # 2. Hardened PATH fallback — strip '.'/relative entries so the CWD is never searched.
+        # 2. Hardened PATH fallback - strip '.'/relative entries so the CWD is never searched.
         try:
             safe = os.pathsep.join(
                 d for d in os.environ.get("PATH", "").split(os.pathsep)
@@ -420,7 +420,7 @@ class StatsMonitorThread(QThread):
             try:
                 _, instances = win32pdh.EnumObjectItems(None, None, "Thermal Zone Information", win32pdh.PERF_DETAIL_WIZARD)
                 for instance in instances:
-                    # High Precision Temperature (preferred — higher resolution)
+                    # High Precision Temperature (preferred - higher resolution)
                     try:
                         hp_path = f"\\Thermal Zone Information({instance})\\High Precision Temperature"
                         handle = win32pdh.AddCounter(self._thermal_query, hp_path)
@@ -515,7 +515,7 @@ class StatsMonitorThread(QThread):
 
     def _poll_system_power(self) -> Optional[float]:
         """True-ish whole-system power, when the platform exposes it: Intel RAPL PSYS/platform domain
-        (some CPUs) — broader than CPU+GPU; else the battery DischargeRate (the only real whole-system
+        (some CPUs) - broader than CPU+GPU; else the battery DischargeRate (the only real whole-system
         draw, on a laptop running on battery). Returns watts, or None when neither is available."""
         # 1. RAPL PSYS / platform (PDH Energy Meter, milliwatts).
         if self._power_query is not None and self._power_psys_counter is not None:
@@ -526,7 +526,7 @@ class StatsMonitorThread(QThread):
                     return float(val) / 1000.0
             except Exception:
                 pass
-        # 2. Battery discharge (laptops on battery) — cached on a slow sub-cadence (WMI is heavy).
+        # 2. Battery discharge (laptops on battery) - cached on a slow sub-cadence (WMI is heavy).
         return self._poll_battery_power()
 
     def _poll_battery_power(self) -> Optional[float]:
@@ -547,14 +547,14 @@ class StatsMonitorThread(QThread):
                         watts = float(rate) / 1000.0
                         break
         except Exception:
-            self._wmi_battery = False   # no battery / WMI class — stop retrying
+            self._wmi_battery = False   # no battery / WMI class - stop retrying
         self._battery_cache = (now, watts)
         return watts
 
     def _poll_cpu_power(self) -> Optional[float]:
         """
         Polls CPU power draw in watts, trying sources in order:
-          1. PDH RAPL PKG (Intel — milliwatts, non-admin)
+          1. PDH RAPL PKG (Intel - milliwatts, non-admin)
           2. LHM/OHM WMI (all vendors, requires admin)
         """
         # 1. PDH RAPL PKG
@@ -604,7 +604,7 @@ class StatsMonitorThread(QThread):
         """
         Probes for a running LibreHardwareMonitor or OpenHardwareMonitor instance
         and caches the WMI connection in self._wmi_ohm.
-        _wmi_ohm == None  → not yet probed (or previous probe failed — will retry)
+        _wmi_ohm == None  → not yet probed (or previous probe failed - will retry)
         _wmi_ohm == <obj> → connected and ready
         Failures are NOT permanently cached so the probe retries each poll cycle,
         allowing the app to pick up LHM/OHM if it starts after NetSpeedTray.
@@ -652,7 +652,7 @@ class StatsMonitorThread(QThread):
           3. WMI MSAcpi_ThermalZoneTemperature  (legacy ACPI fallback)
 
         Note: Modern Intel/AMD CPUs often require a kernel-driver tool
-        (LibreHardwareMonitor, HWiNFO64, etc.) — see the settings note.
+        (LibreHardwareMonitor, HWiNFO64, etc.) - see the settings note.
         """
         # 1. PDH Thermal Zone Information
         if win32pdh:
@@ -745,7 +745,7 @@ class StatsMonitorThread(QThread):
             temps = self._wmi.ExecQuery("SELECT CurrentTemperature FROM MSAcpi_ThermalZoneTemperature")
             for t in temps:
                 raw = t.CurrentTemperature
-                # Standard ACPI: tenths of Kelvin (valid range ~2932–3932 for 20–120°C)
+                # Standard ACPI: tenths of Kelvin (valid range ~2932-3932 for 20-120°C)
                 celsius = (raw / 10.0) - 273.15
                 if 0.0 < celsius < 150.0:
                     return celsius
@@ -763,13 +763,13 @@ class StatsMonitorThread(QThread):
         """Main monitoring loop."""
         self.logger.info("StatsMonitorThread starting loop.")
 
-        # Check once at thread startup, not per-iteration — is_rdp_session() is a
+        # Check once at thread startup, not per-iteration - is_rdp_session() is a
         # syscall and the session type does not change while the thread is running.
         # If the user connects via RDP after the app has started they must restart
         # the app for GPU monitoring to be suppressed.
         _in_rdp = is_rdp_session()
         if _in_rdp:
-            self.logger.info("RDP session detected — GPU monitoring will be skipped.")
+            self.logger.info("RDP session detected - GPU monitoring will be skipped.")
 
         # Initialise the COM apartment ONCE for this thread (H4). Was done per-poll inside
         # the WMI helpers, leaking a COM ref every poll while no LHM source was connected.
@@ -785,7 +785,7 @@ class StatsMonitorThread(QThread):
         while self._is_running:
             try:
                 # Apply any config-driven hardware-query reset HERE, on the owning thread (set by
-                # update_config from the GUI thread) — never close a PDH handle out from under this loop.
+                # update_config from the GUI thread) - never close a PDH handle out from under this loop.
                 if self._hw_queries_dirty:
                     self._hw_queries_dirty = False
                     self._cleanup_gpu_query()
@@ -820,7 +820,7 @@ class StatsMonitorThread(QThread):
                     stats['ram_used'] = mem.used / (1024**3) # GB
                     stats['ram_total'] = mem.total / (1024**3) # GB
 
-                # 3. GPU / VRAM (Optional — skipped entirely in RDP sessions)
+                # 3. GPU / VRAM (Optional - skipped entirely in RDP sessions)
                 if (self.config.get('monitor_gpu_enabled', False) or _force_hw or _record) and not _in_rdp:
                     try:
                         include_temp = bool(self.config.get('show_hardware_temps', False)) or _force_hw
@@ -842,7 +842,7 @@ class StatsMonitorThread(QThread):
                         self.logger.warning("GPU polling error (skipped, not counted against circuit breaker): %s", gpu_err)
 
                 # Whole-system power, when the platform actually exposes it (RAPL PSYS / battery
-                # discharge) — distinct from the CPU+GPU sum; emitted only when a real source is found.
+                # discharge) - distinct from the CPU+GPU sum; emitted only when a real source is found.
                 if self.config.get('show_hardware_power', False) or _force_hw:
                     sysp = self._poll_system_power()
                     if sysp is not None:
@@ -878,7 +878,7 @@ class StatsMonitorThread(QThread):
                 self.consecutive_errors += 1
                 self.logger.error("Error fetching stats (consecutive=%d): %s", self.consecutive_errors, e)
 
-                # Notify ONCE when we cross the threshold — but keep running. The thread is
+                # Notify ONCE when we cross the threshold - but keep running. The thread is
                 # never permanently bricked; it backs off and retries so it can self-heal.
                 if self.consecutive_errors == self._ERROR_NOTIFY_THRESHOLD and not self._error_notified:
                     self._error_notified = True

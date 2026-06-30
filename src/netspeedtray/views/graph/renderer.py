@@ -786,7 +786,7 @@ class GraphRenderer(QObject):
 
     def _hw_xlim(self, period_key, start_time, end_time, ts_min, ts_max):
         """X-limits for a hardware plot. For the SESSION view, tight-fit to the actual data so the
-        graph doesn't show an empty gap before hardware collection began — hardware history only exists
+        graph doesn't show an empty gap before hardware collection began - hardware history only exists
         from when monitoring turned on, which is usually later than app-start (e.g. when the Monitor was
         opened). Mirrors the network renderer's SESSION handling so both surfaces behave identically."""
         if period_key == "TIMELINE_SESSION":
@@ -796,7 +796,7 @@ class GraphRenderer(QObject):
 
     def _render_hwcombined(self, data_dict, start_time, end_time, period_key, hw_styles=None):
         """Plots CPU + GPU on one 0-100% axis: CPU solid, GPU dashed, vendor-coloured, with a legend.
-        Two lines, no fills — overlapping gradient fills would muddy a shared axis."""
+        Two lines, no fills - overlapping gradient fills would muddy a shared axis."""
         from netspeedtray.utils import hardware_vendors as hv
         ax = self.ax_download
         ax.clear()
@@ -829,7 +829,7 @@ class GraphRenderer(QObject):
         self._apply_hw_ylim(ax, fixed, data_max)   # after _configure_hardware_axes, which forces 0-100
 
         if not handles:
-            # No CPU/GPU history yet (the common fresh-session state) — say so, don't show a blank grid.
+            # No CPU/GPU history yet (the common fresh-session state) - say so, don't show a blank grid.
             ax.text(0.5, 0.5, getattr(self.i18n, "COLLECTING_DATA_MESSAGE", "Collecting data…"),
                     transform=ax.transAxes, ha="center", va="center",
                     color=self._current_text_color, alpha=0.55, fontsize=10)
@@ -856,15 +856,15 @@ class GraphRenderer(QObject):
                                                  timestamps.min(), timestamps.max())
             self.ax_download.set_xlim(xlim_start, xlim_end)
 
-        # Hardware / hwcombined plot on ax_download (ax_upload hidden) — format the visible axis.
+        # Hardware / hwcombined plot on ax_download (ax_upload hidden) - format the visible axis.
         self._configure_xaxis_format(period_key, axis=self.ax_download)
 
     # --- hardware graph shaping (shared by hwcombined + hwseparate) ----------------
 
     @staticmethod
     def _smooth_series(ys, window: int = 5):
-        """Light moving-average smoothing (Hann window) for the utilization lines. numpy-only — no
-        scipy dep — and a no-op when the series is too short to smooth."""
+        """Light moving-average smoothing (Hann window) for the utilization lines. numpy-only - no
+        scipy dep - and a no-op when the series is too short to smooth."""
         window = int(window)
         n = len(ys)
         if window < 3 or n < window:
@@ -886,7 +886,7 @@ class GraphRenderer(QObject):
 
     def _setup_hwseparate_axes(self):
         """Three stacked 0-100% axes for the separate hardware view (CPU top, GPU middle, RAM bottom).
-        RAM matches the combined graph, which also plots cpu+gpu+ram — separate just gives each its
+        RAM matches the combined graph, which also plots cpu+gpu+ram - separate just gives each its
         own axis so there's no shared-axis collision."""
         self.ax_cpu = self.figure.add_subplot(3, 1, 1)
         self.ax_gpu = self.figure.add_subplot(3, 1, 2, sharex=self.ax_cpu)
@@ -914,7 +914,7 @@ class GraphRenderer(QObject):
         self.ax_ram.tick_params(labelbottom=True)
 
     def _render_hwseparate(self, data_dict, start_time, end_time, period_key, hw_styles=None):
-        """CPU top, GPU middle, RAM bottom — each its own axis, so no shared-axis collision and thus
+        """CPU top, GPU middle, RAM bottom - each its own axis, so no shared-axis collision and thus
         each vendor-coloured SOLID (no dashed sibling needed). Mirrors the combined graph's roles."""
         from netspeedtray.utils import hardware_vendors as hv
         styles = hw_styles or {}
@@ -953,8 +953,8 @@ class GraphRenderer(QObject):
 
     def _render_hwsingle(self, history_data, start_time, end_time, period_key, stat_type, hw_styles=None):
         """One CPU- OR GPU-only line for the Monitor's "toggle" layout. Honours the same display
-        settings as _render_hwcombined/_render_hwseparate — per-role colour (vendor default fallback),
-        the Smooth toggle, and the fixed-0-100 vs auto y-axis — which the legacy single-stat path
+        settings as _render_hwcombined/_render_hwseparate - per-role colour (vendor default fallback),
+        the Smooth toggle, and the fixed-0-100 vs auto y-axis - which the legacy single-stat path
         (still used by the standalone GraphWindow, hw_styles=None) does not."""
         from netspeedtray.utils import hardware_vendors as hv
         styles = hw_styles or {}
@@ -976,7 +976,7 @@ class GraphRenderer(QObject):
         ax.set_xlim(xs, xe)
         self._configure_xaxis_format(period_key, axis=ax)
         # After _configure_xaxis_format (and unlike _configure_hardware_axes, this never forces 0-100),
-        # so this is the single authoritative y-limit — mirroring _render_hwcombined's override order.
+        # so this is the single authoritative y-limit - mirroring _render_hwcombined's override order.
         self._apply_hw_ylim(ax, fixed, float(values.max()) if len(values) else 0.0)
 
     def _plot_aggregated(self, plot_datetimes, upload_mbps, download_mbps, mode="daily", target_end_time=None):
@@ -1388,7 +1388,7 @@ class GraphRenderer(QObject):
         """
         Intelligently configures the x-axis locator and formatter.
 
-        ``axis`` is the Axes that actually carries the bottom tick labels — ax_upload for the 2-row
+        ``axis`` is the Axes that actually carries the bottom tick labels - ax_upload for the 2-row
         network view, but ax_download for the single-axis hardware / hwcombined modes (where ax_upload
         is hidden, so formatters set on it would never reach the visible labels).
         """

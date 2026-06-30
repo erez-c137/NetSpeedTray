@@ -3,7 +3,7 @@ Tier rollup must not under-count a bucket that straddles the aggregation cutoff.
 
 Regression for the audit blocker: with a raw-second cutoff, a minute bucket spanning it was aggregated
 from only its rows < cutoff (then those raw rows deleted); the next maintenance pass re-rolled the
-bucket's remainder into the same key, which `INSERT OR IGNORE` silently dropped — losing the second
+bucket's remainder into the same key, which `INSERT OR IGNORE` silently dropped - losing the second
 half of one bucket per cycle, cascading into the hour tier and corrupting exported long-term totals.
 The fix floors the cutoff to the bucket boundary so a bucket is only ever rolled up once, complete.
 """
@@ -45,7 +45,7 @@ def test_straddling_minute_bucket_is_not_undercounted(tmp_path):
         f"VALUES (?, 'Ethernet', 1000, 2000)", [(ts,) for ts in sample_ts])
     w.conn.commit()
 
-    # Run 1: 'now' is 24h + 30s past t_M, so the *unfloored* cutoff (t_M+30) splits the bucket in half —
+    # Run 1: 'now' is 24h + 30s past t_M, so the *unfloored* cutoff (t_M+30) splits the bucket in half -
     # the exact straddle that used to lose data. Run 2: 'now' advances 2 min, so M is wholly in the past.
     now1 = datetime.fromtimestamp(t_M + 86400 + 30)
     now2 = datetime.fromtimestamp(t_M + 86400 + 30 + 120)

@@ -1,12 +1,12 @@
 """
 Widget Settings Page (2.0 IA).
 
-Everything about the on-taskbar widget itself — how its stats are laid out (display mode + order),
+Everything about the on-taskbar widget itself - how its stats are laid out (display mode + order),
 and how it behaves/sits on the taskbar (free-move, keep-visible-in-fullscreen, tray offset). These
 controls used to be scattered across the General page (behaviour) and the Hardware page (layout); the
 2.0 IA gathers them here so "the widget" is one place.
 
-Slider→Segmented and QListWidget upgrades are intentionally NOT done here — the controls move as-is
+Slider→Segmented and QListWidget upgrades are intentionally NOT done here - the controls move as-is
 (same widgets, same config mappings) so the reshuffle can't silently corrupt a saved value.
 """
 from typing import Dict, Any, Callable, List
@@ -114,7 +114,7 @@ class WidgetPage(QWidget):
     # --- config ------------------------------------------------------------------
     def load_settings(self, config: Dict[str, Any]) -> None:
         mode = config.get("widget_display_mode", "network_only")
-        # "side_by_stack" is the side-by-side layout with the hardware column stacked — encoded as
+        # "side_by_stack" is the side-by-side layout with the hardware column stacked - encoded as
         # widget_display_mode="side_by_side" + stack_hardware_stats=True on disk.
         if mode == "side_by_side" and config.get("stack_hardware_stats", False):
             mode = "side_by_stack"

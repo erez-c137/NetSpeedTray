@@ -1,6 +1,6 @@
 """
 The Monitor's embedded graph must theme from the OS apps theme (su.is_dark_mode), like the rest of the
-Monitor — NOT from config['dark_mode'], which is never synced to the OS and so stays at its default.
+Monitor - NOT from config['dark_mode'], which is never synced to the OS and so stays at its default.
 
 Regression for the audit High: a default-True config['dark_mode'] rendered a near-black graph inside a
 light-mode Monitor (split theme) on every light-mode PC.

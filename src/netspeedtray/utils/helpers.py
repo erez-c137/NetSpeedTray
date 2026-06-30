@@ -13,7 +13,7 @@ from typing import Optional, Tuple, List
 from pathlib import Path
 from datetime import datetime
 
-# numpy is imported lazily inside calculate_monotone_cubic_interpolation —
+# numpy is imported lazily inside calculate_monotone_cubic_interpolation -
 # loading it here adds ~20 MB RSS to every NST process, even when the
 # widget's mini-graph (the only consumer of curve interpolation) is off.
 
@@ -80,7 +80,7 @@ def get_app_data_path() -> Path:
 def get_machine_id() -> str:
     """
     A stable per-install identifier for exported stats (so an MSP can tell two machines' CSVs apart).
-    A random UUID generated once and cached at %APPDATA%/NetSpeedTray/machine_id — NOT a hardware
+    A random UUID generated once and cached at %APPDATA%/NetSpeedTray/machine_id - NOT a hardware
     fingerprint (no MAC/serial), so it identifies the install, not the person. Falls back to a
     volatile UUID if the file can't be written (export still works, just not stable across runs).
     """
@@ -155,7 +155,7 @@ def get_reference_value_string(force_mega_unit: bool, decimal_places: int, unit_
     # integer digits at multi-gig speeds (e.g. 1250 MB/s or ~1192 MiB/s at 10GbE,
     # 10000 Mbps). Reserve 4 digits for BOTH bits and bytes so the widget is sized
     # wide enough and the renderer doesn't clip the text (issue #106). `is_bytes` is
-    # intentionally not excluded here — that exclusion was the truncation bug.
+    # intentionally not excluded here - that exclusion was the truncation bug.
     if min_digits < 4 and force_mega_unit:
         integer_part = "8888"
 
@@ -288,7 +288,7 @@ def format_data_size(data_bytes: int | float, i18n, precision: int = 2) -> Tuple
     """
     Formats a byte count into a human-readable string with units (B, KB, MB, GB, etc.).
 
-    Uses base 1000 (decimal KB/MB/GB) — NOT 1024 — to match the data-cap accounting, which is
+    Uses base 1000 (decimal KB/MB/GB) - NOT 1024 - to match the data-cap accounting, which is
     decimal GB (1000**3, the ISP convention). The usage card and the cap must agree, so both go
     through this function. (See the BASE_DATA_SIZE comment below.)
     """

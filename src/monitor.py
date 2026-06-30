@@ -5,10 +5,10 @@ Application entry point and lifecycle management for NetSpeedTray.
 # matplotlib's Qt backend setup lives at the top of `views/graph/window.py`
 # (the only module that imports matplotlib). Loading it here would cost
 # ~30-50 MB of RAM at startup even for users who never open the graph
-# window — and most launches never do.
+# window - and most launches never do.
 
 import warnings
-# These filters are pattern-only and don't load matplotlib themselves —
+# These filters are pattern-only and don't load matplotlib themselves -
 # safe to register early so they're in place whenever matplotlib first runs.
 warnings.filterwarnings("ignore", "Tight layout not applied")
 warnings.filterwarnings("ignore", "constrained_layout not applied")
@@ -34,7 +34,7 @@ from netspeedtray.views.widget import NetworkSpeedWidget
 
 class AlreadyRunningError(RuntimeError):
     """Raised when a second instance launches while one is already running. Distinct from a real
-    mutex failure so the caller can exit silently (no dialog) — a duplicate launch is a no-op."""
+    mutex failure so the caller can exit silently (no dialog) - a duplicate launch is a no-op."""
 
 
 class SingleInstanceChecker:
@@ -54,7 +54,7 @@ class SingleInstanceChecker:
             self.mutex = win32event.CreateMutex(None, False, constants.app.MUTEX_NAME)
             if win32api.GetLastError() == winerror.ERROR_ALREADY_EXISTS:
                 # Expected, not an error: a duplicate launch while the app is already running. Log it and
-                # let the caller exit quietly — no dialog (per design: re-launch is a silent no-op).
+                # let the caller exit quietly - no dialog (per design: re-launch is a silent no-op).
                 self.logger.info("NetSpeedTray is already running; this duplicate launch will exit quietly.")
                 raise AlreadyRunningError("Application is already running.")
         except win32api.error as e:
@@ -130,7 +130,7 @@ def main() -> int:
     
     sys.excepthook = excepthook
 
-    # Clear any orphaned update temp dir left by a past in-app update — its installer ran from the dir,
+    # Clear any orphaned update temp dir left by a past in-app update - its installer ran from the dir,
     # so the success path couldn't delete it; sweep it here so they don't pile up in %TEMP% (#19).
     try:
         from netspeedtray.core.update_installer import sweep_stale_update_dirs
@@ -212,7 +212,7 @@ def main() -> int:
             return app.exec()
 
     except AlreadyRunningError:
-        # A second instance — exit silently with a clean code, no dialog (logged in the checker above).
+        # A second instance - exit silently with a clean code, no dialog (logged in the checker above).
         return 0
     except Exception as e:
         # This is a global catch-all for any critical error during startup.

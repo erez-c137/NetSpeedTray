@@ -121,8 +121,8 @@ class StatsController(QObject):
                 if self.widget_state:
                     self.widget_state.add_hardware_stat('gpu', gpu)
             # GPU presence (no-GPU boxes enumerate zero Engine counters): let the Monitor's at-a-glance
-            # tiles hide the GPU rather than show a permanent 0%. LATCH it — only ever set True, never
-            # back to False — so a transient empty-counter poll (re-init, driver hiccup) can't flicker
+            # tiles hide the GPU rather than show a permanent 0%. LATCH it - only ever set True, never
+            # back to False - so a transient empty-counter poll (re-init, driver hiccup) can't flicker
             # the tile on/off. A genuinely GPU-less box never sets it, so it stays hidden (default False).
             if stats.get('gpu_present') and self.view is not None:
                 try:
@@ -145,7 +145,7 @@ class StatsController(QObject):
             # Persist temperature + power as their own (unclamped) hardware stat_types so the Monitor's
             # pro-stats (avg/max/p95, the Stats-detail sheet, export, throttle-time) have real history.
             # Total power = CPU + GPU watts (a "CPU+GPU power" figure, not whole-system draw).
-            # Whole-system power (RAPL PSYS / battery) — a real source when present; stash it on the
+            # Whole-system power (RAPL PSYS / battery) - a real source when present; stash it on the
             # widget so the Monitor can show a true "System N W" distinct from the CPU+GPU sum.
             if 'system_power' in stats and self.view is not None:
                 try:
@@ -211,7 +211,7 @@ class StatsController(QObject):
             return
 
         self.current_speed_data.clear()
-        # Exact per-interface byte deltas (pre-spike-filter) for the usage odometer —
+        # Exact per-interface byte deltas (pre-spike-filter) for the usage odometer -
         # the spike filter caps bursts for *display*, but a data cap must count them.
         byte_deltas: Dict[str, Tuple[float, float]] = {}
 
@@ -219,7 +219,7 @@ class StatsController(QObject):
             last = self.last_interface_counters.get(name)
             if last:
                 # Per-direction counter-reset/wrap guard: a reset in ONE direction must not
-                # discard the OTHER direction's real bytes — they're independent counters.
+                # discard the OTHER direction's real bytes - they're independent counters.
                 up_diff = current.bytes_sent - last.bytes_sent
                 down_diff = current.bytes_recv - last.bytes_recv
                 if up_diff < 0:
@@ -263,7 +263,7 @@ class StatsController(QObject):
                     recent_down_avg = sum(sorted(recent_downs)[1:-1]) / max(1, len(recent_downs) - 2) if len(recent_downs) > 2 else sum(recent_downs) / len(recent_downs)
                     
                     # Cap an ISOLATED over-threshold sample (a likely counter glitch), but let a
-                    # SUSTAINED jump through after one poll — a 2nd consecutive over-threshold sample is
+                    # SUSTAINED jump through after one poll - a 2nd consecutive over-threshold sample is
                     # a real ramp, not a glitch, and must not stay pinned at 2x baseline (#5).
                     streak = self._spike_streak.setdefault(name, [0, 0])
                     if recent_up_avg > 1000 and final_up_speed_bps > recent_up_avg * 5.0:
@@ -317,7 +317,7 @@ class StatsController(QObject):
                                resolve_primary: bool = True) -> Tuple[float, float]:
         """Aggregates speeds based on mode. `resolve_primary=False` reuses the already-
         resolved primary interface (auto mode) without re-running the blocking routing
-        lookup — used for the second (byte-delta) aggregation in the same poll."""
+        lookup - used for the second (byte-delta) aggregation in the same poll."""
         mode = self.config.get("interface_mode", "auto")
 
         if mode == "selected":
@@ -359,7 +359,7 @@ class StatsController(QObject):
     def _update_primary_interface_name(self) -> None:
         """Resolve the primary (routing) interface, CACHED so the blocking lookup
         (`get_primary_interface_name()` does a UDP connect + `net_if_addrs`) runs at most
-        every _PRIMARY_REFRESH_SEC instead of every poll — keeping the GUI thread
+        every _PRIMARY_REFRESH_SEC instead of every poll - keeping the GUI thread
         responsive in the default 'auto' mode (H1). A NIC change is picked up within the
         refresh window (the speed briefly attributes to the old primary)."""
         now = time.monotonic()

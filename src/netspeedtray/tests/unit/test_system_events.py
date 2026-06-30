@@ -29,7 +29,7 @@ def test_initialization(system_handler):
 
 def test_timer_connections_do_not_accumulate_across_restarts(system_handler):
     """#11/#12: repeated start/stop cycles (one per Explorer restart) must NOT add duplicate timeout
-    connections — the slots are connected once in __init__, so the receiver count stays 1 no matter how
+    connections - the slots are connected once in __init__, so the receiver count stays 1 no matter how
     many times the timers are (re)started. Previously each restart added another connection."""
     h = system_handler
     vt, ft = h._taskbar_validity_timer, h._fullscreen_poll_timer
@@ -215,7 +215,7 @@ def test_color_scheme_change_emits_theme_changed_signal(system_handler):
 
 def test_color_scheme_change_suppressed_when_paused(system_handler):
     """When events are paused (e.g. settings dialog open), theme changes
-    should not fire — same contract as other system events."""
+    should not fire - same contract as other system events."""
     mock_slot = MagicMock()
     system_handler.theme_changed.connect(mock_slot)
     system_handler._is_paused = True

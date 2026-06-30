@@ -1,8 +1,8 @@
 """
-LatencyProbe — a small background thread that measures network latency.
+LatencyProbe - a small background thread that measures network latency.
 
-Privacy-first design (owner decision): it pings the **default gateway** by default — a LAN probe that
-never leaves your network — and ONLY pings a public anchor (e.g. 1.1.1.1, for true internet latency)
+Privacy-first design (owner decision): it pings the **default gateway** by default - a LAN probe that
+never leaves your network - and ONLY pings a public anchor (e.g. 1.1.1.1, for true internet latency)
 when the user explicitly opts in. ICMP uses the Windows ICMP helper API (IcmpSendEcho) via ctypes, so
 it needs NO admin and spawns no subprocess. It records a timed-out flag per probe so loss% / p99 are
 real for the ISP-dispute use-case. Runs on its OWN QThread so a 1 s timeout never blocks the stats
@@ -123,7 +123,7 @@ class LatencyProbe(QThread):
         return self._gateway
 
     def run(self) -> None:
-        # This thread calls wmi.WMI() (via default_gateway_ip) which needs COM initialized PER THREAD —
+        # This thread calls wmi.WMI() (via default_gateway_ip) which needs COM initialized PER THREAD -
         # without it, wmi raises "CoInitialize has not been called", default_gateway_ip swallows it, and
         # the gateway probe (the privacy-preserving default) silently never produces a reading. Mirror
         # StatsMonitorThread, which inits COM on its own thread for the same reason.

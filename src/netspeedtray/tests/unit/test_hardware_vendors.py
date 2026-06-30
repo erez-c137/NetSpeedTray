@@ -36,7 +36,7 @@ def test_classify_gpu():
 
 
 def test_cpu_and_gpu_colors_always_distinct_full_palette():
-    """The collision rule must hold for EVERY CPU x GPU pairing in BOTH themes — not just this box's
+    """The collision rule must hold for EVERY CPU x GPU pairing in BOTH themes - not just this box's
     one pairing (a future palette edit that collided a pair would otherwise pass on most machines)."""
     for cpu_hex in hv._CPU_COLORS.values():
         for table in (hv._GPU_COLORS_DARK, hv._GPU_COLORS_LIGHT):
@@ -51,7 +51,7 @@ def test_gpu_color_is_theme_aware_cpu_is_not():
 
 
 def test_hybrid_gpu_returns_neutral(monkeypatch):
-    """A discrete GPU + an Intel iGPU (hybrid laptop) must NOT assert the discrete brand — the graphed
+    """A discrete GPU + an Intel iGPU (hybrid laptop) must NOT assert the discrete brand - the graphed
     util is max-across-adapters, so colour/legend stay neutral."""
     try:
         hv.gpu_vendor.cache_clear()
@@ -106,7 +106,7 @@ def test_worker_hwcombined_emits_cpu_gpu_dict(q_app):
     ram = [_Snap(60.0, now)]
     ws.cpu_history, ws.gpu_history, ws.ram_history = cpu, gpu, ram
     # The worker reads the session deques via the COPY GETTERS (thread-safe: it runs on its own thread
-    # while the GUI thread appends), not the live deques — so the fake must expose them too.
+    # while the GUI thread appends), not the live deques - so the fake must expose them too.
     ws.get_cpu_history.return_value = cpu
     ws.get_gpu_history.return_value = gpu
     ws.get_ram_history.return_value = ram

@@ -1,5 +1,5 @@
 """
-OverviewTab tiles — the matplotlib-free glance. Verifies the sparkline stat tiles and the usage
+OverviewTab tiles - the matplotlib-free glance. Verifies the sparkline stat tiles and the usage
 tile read live values defensively, that the refresh timer only runs while visible, and that a
 missing data source degrades to a dash instead of crashing.
 """
@@ -66,7 +66,7 @@ class _MW:
     gpu_present = True
     # download_speed/upload_speed are in MBPS (the controller emits Mbps; main.py stores it verbatim).
     # The old fixture used bytes/sec values here, which masked the Overview's missing Mbps→bytes/sec
-    # conversion (the "Overview shows 0.0" bug) — the raw-pass happened to format ~16 Mbps.
+    # conversion (the "Overview shows 0.0" bug) - the raw-pass happened to format ~16 Mbps.
     download_speed = 80.0   # Mbps
     upload_speed = 40.0     # Mbps
     ram_used = 8.0e9
@@ -113,7 +113,7 @@ def test_latency_pill_classification(q_app):
 def test_context_right_prefers_true_system_power(q_app):
     from types import SimpleNamespace
     ov = OverviewTab(_MW(), _cfg(), I18nStrings("en_US"))
-    # The strip's right slot shows TRUE system power (PSYS/battery) when the platform exposes it —
+    # The strip's right slot shows TRUE system power (PSYS/battery) when the platform exposes it -
     # CPU/GPU power is on the cards now, so it's no longer repeated here.
     mw = SimpleNamespace(system_power=95.0, latency_gw=10.0, latency_anchor=None)
     assert ov._context_right_text(mw) == "System 95 W"
@@ -178,7 +178,7 @@ def test_tiles_show_live_values(q_app):
     assert ov._tiles["cpu"]._value.text() == "42%"
     assert ov._tiles["ram"]._value.text() == "50%"          # 8/16
     # Network hero shows the live speed in the right MAGNITUDE (the Mbps→bytes/sec conversion must be
-    # applied — passing raw Mbps to format_speed collapsed it to ~0.0). 80 Mbps must read ~80, not 0 or
+    # applied - passing raw Mbps to format_speed collapsed it to ~0.0). 80 Mbps must read ~80, not 0 or
     # thousands of Gbps.
     down_text = ov._hero._down_v.text()
     assert "Mbps" in down_text and "Mbps" in ov._hero._up_v.text()
@@ -194,7 +194,7 @@ def test_tiles_show_live_values(q_app):
 
 def test_responsive_reflow_grid_positions(q_app):
     """The hardware tiles + bottom cards reflow between a wide (1×4 / side-by-side) and a compact
-    (2×2 / stacked) arrangement — never overlapping, so a narrow window stays usable."""
+    (2×2 / stacked) arrangement - never overlapping, so a narrow window stays usable."""
     ov = OverviewTab(_MW(), _cfg(), I18nStrings("en_US"))
     # Compact: 2 columns -> RAM drops to the second row; bottom cards stack.
     ov._narrow = True
@@ -216,7 +216,7 @@ def test_responsive_reflow_grid_positions(q_app):
 
 
 def test_three_tiles_fill_the_width(q_app):
-    """With only 3 tiles (no dedicated VRAM on an iGPU) they reflow to 3 columns and FILL the width —
+    """With only 3 tiles (no dedicated VRAM on an iGPU) they reflow to 3 columns and FILL the width -
     no empty hole where the 4th tile would be (regression for the owner's iGPU screenshot)."""
     ov = OverviewTab(_MW(), _cfg(), I18nStrings("en_US"))
     ov._narrow = False
@@ -275,7 +275,7 @@ def test_dynamic_range_zooms_to_active_band(q_app):
     """The sparkline scale fits the data's band so low-but-varying activity reads in detail, with a
     minimum span so a steady metric isn't blown up into dramatic noise."""
     from netspeedtray.views.monitor.overview.tiles import dynamic_range
-    # CPU mostly 5–20%: zoom near the data, NOT 0–100, but at least the minimum span wide.
+    # CPU mostly 5-20%: zoom near the data, NOT 0-100, but at least the minimum span wide.
     lo, hi = dynamic_range([5, 8, 12, 20, 15, 10])
     assert 0 <= lo and hi <= 100
     assert hi - lo >= 15 - 1e-6        # minimum span enforced
@@ -328,8 +328,8 @@ def test_usage_tile_avg_and_projected(q_app):
     day = max(1, datetime.now().day)
     dim = calendar.monthrange(datetime.now().year, datetime.now().month)[1]
     # Avg/day text reflects month/day; projected reflects the month-end estimate (both non-empty).
-    assert u._avgday[1].text() not in ("", "—")
-    assert u._proj[1].text() not in ("", "—")
+    assert u._avgday[1].text() not in ("", "-")
+    assert u._proj[1].text() not in ("", "-")
     # A cap hides the hint and shows the bar.
     u.set((1e8, 2e8), month, cap=(4.0, 10.0, 40.0))
     assert not u._cap_hint.isVisibleTo(u)

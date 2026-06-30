@@ -1,10 +1,10 @@
 """
-Background worker for per-application network activity sampling (v2 — honest model).
+Background worker for per-application network activity sampling (v2 - honest model).
 
 Windows can't attribute network *bytes* to a process without admin/ETW, so this worker no
 longer dresses up disk-I/O deltas as "download/upload speed" (the old lie). Instead it reports
-only what it can measure exactly and for free: the live network *connections* each app holds —
-their count, how many are established, the distinct remote hosts, and TCP/UDP split — rolled up
+only what it can measure exactly and for free: the live network *connections* each app holds -
+their count, how many are established, the distinct remote hosts, and TCP/UDP split - rolled up
 by application identity (one row per program, not per PID). Every number here is exact.
 
 Runs in a dedicated QThread, only while the App Activity window is open.

@@ -1,8 +1,8 @@
 """
 Render-verification tests: drive WidgetRenderer into an offscreen QImage and probe
 the ACTUAL painted pixels. This automates the "squint at the widget to check the
-colors look right" QA — especially color coding (the #153 banding + the canonical-Mbps
-unit fix) — font-independently and deterministically.
+colors look right" QA - especially color coding (the #153 banding + the canonical-Mbps
+unit fix) - font-independently and deterministically.
 
 We use distinct pure band colors (red/green/blue) so the band is unambiguous in the
 image, count only solid glyph-core pixels (alpha>=250, skipping anti-aliased edges),
@@ -28,7 +28,7 @@ DEFAULT = (0, 0, 255)  # default_color
 
 @pytest.fixture
 def renderer(q_app):
-    # q_app ensures a QApplication exists before we build QFont/QPen/QPainter — without
+    # q_app ensures a QApplication exists before we build QFont/QPen/QPainter - without
     # one those Qt calls hang under the offscreen platform.
     cfg = dict(constants.config.defaults.DEFAULT_CONFIG)
     cfg.update({

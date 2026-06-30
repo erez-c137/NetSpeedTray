@@ -1,13 +1,13 @@
 """
-HardwareTab — the Monitor's Hardware tab: a CPU+GPU history graph over a live per-process
+HardwareTab - the Monitor's Hardware tab: a CPU+GPU history graph over a live per-process
 CPU / RAM / GPU list (vertical splitter, mirroring the Network tab).
 
 The graph is hosted by the shared GraphHost. Its layout follows the ``monitor_hw_graph_mode`` setting:
-  • combined — CPU + GPU on one 0-100% axis (CPU solid, GPU dashed), vendor-coloured.  [default]
-  • separate — CPU and GPU on two stacked axes, each vendor-coloured solid.
-  • toggle   — one stat at a time (CPU **or** GPU), chosen by an in-header CPU|GPU switch.
+  • combined - CPU + GPU on one 0-100% axis (CPU solid, GPU dashed), vendor-coloured.  [default]
+  • separate - CPU and GPU on two stacked axes, each vendor-coloured solid.
+  • toggle   - one stat at a time (CPU **or** GPU), chosen by an in-header CPU|GPU switch.
 Smoothing and the fixed/auto y-axis are read from config by the host's ``_hw_styles``. The per-process
-list is fed by HardwareFeed. The tab imports nothing from views.graph — the graph engine enters only
+list is fed by HardwareFeed. The tab imports nothing from views.graph - the graph engine enters only
 via the shared host on showEvent.
 """
 from __future__ import annotations
@@ -49,11 +49,11 @@ class HardwareTab(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # Header band (control row) — FIRST, at the very top of the tab so its timeline/Live sit at the
+        # Header band (control row) - FIRST, at the very top of the tab so its timeline/Live sit at the
         # exact same height + right edge as the Overview/Network bands (no jump on tab switch). The band
         # is a fixed-height shell with the shared side inset; controls are right-docked + vertically
         # centred. It used to sit *below* the telemetry strip, which pushed it far lower than the other
-        # tabs' controls — the visible inconsistency the owner flagged.
+        # tabs' controls - the visible inconsistency the owner flagged.
         self._period_key = constants.data.history_period.PERIOD_MAP.get(
             int(config.get("history_period_slider_value", 2)), "TIMELINE_24_HOURS")
         c = su.semantic_colors()
@@ -63,7 +63,7 @@ class HardwareTab(QWidget):
         top.setContentsMargins(_m, 0, _m, 0)
         top.setSpacing(constants.layout.MONITOR_CONTROL_SPACING)   # shared with Network for a matching Live gap
         top.addStretch(1)
-        # CPU|GPU switch — only meaningful (and only shown) in "toggle" mode.
+        # CPU|GPU switch - only meaningful (and only shown) in "toggle" mode.
         self._cpu_gpu = Win11Segmented([
             (str(getattr(i18n, "ORDER_TYPE_CPU", "CPU")), "cpu"),
             (str(getattr(i18n, "ORDER_TYPE_GPU", "GPU")), "gpu"),
@@ -78,14 +78,14 @@ class HardwareTab(QWidget):
         self._timeline.period_changed.connect(self._host.set_period)
         self._timeline.period_changed.connect(self._on_period)
         top.addWidget(self._timeline, 0, Qt.AlignmentFlag.AlignVCenter)
-        # Live/Pause pill — RIGHTMOST (owner preference), after the timeline; shared state with the
+        # Live/Pause pill - RIGHTMOST (owner preference), after the timeline; shared state with the
         # Network tab via the host (freeze to read a point).
         from netspeedtray.views.monitor.live_toggle import LiveToggle
         self._live = LiveToggle(self._host, i18n)
         top.addWidget(self._live, 0, Qt.AlignmentFlag.AlignVCenter)
         root.addWidget(band)
 
-        # Body — the telemetry strip then the graph/list splitter, with the shared side inset.
+        # Body - the telemetry strip then the graph/list splitter, with the shared side inset.
         body = QVBoxLayout()
         body.setContentsMargins(_m, 4, _m, _m)
         body.setSpacing(8)
@@ -167,7 +167,7 @@ class HardwareTab(QWidget):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
-        # The period is shared with Network — re-sync our timeline dropdown to the host's current value
+        # The period is shared with Network - re-sync our timeline dropdown to the host's current value
         # so a change made on the Network tab is reflected here.
         try:
             pv = getattr(self._host, "_history_period_value", None)

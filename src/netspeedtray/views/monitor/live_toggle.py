@@ -1,9 +1,9 @@
 """
-LiveToggle — a compact pill that freezes/resumes the Monitor graph's realtime updates.
+LiveToggle - a compact pill that freezes/resumes the Monitor graph's realtime updates.
 
 The canonical "is live" state lives on the shared GraphHost (one engine drives both the Network and
 Hardware tabs), so this is a thin *view*: it reads ``host.is_live``, flips it on click via
-``host.set_live()``, and re-renders from the host's ``live_changed`` signal — which means a pause on
+``host.set_live()``, and re-renders from the host's ``live_changed`` signal - which means a pause on
 one tab is instantly reflected on the other's pill.
 
 Matplotlib-free and graph-package-free (it only holds a reference to the already-built host object),

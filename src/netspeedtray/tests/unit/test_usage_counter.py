@@ -80,14 +80,14 @@ def test_new_period_reanchors_and_boundary_poll_counts_to_new_period():
     s._compute_period_key = lambda *a, **k: "2026-06-01"  # ...but now it's a new one
     WidgetState.add_usage_bytes(s, 1000.0, 1000.0)
     # The rollover anchors BEFORE adding this poll, so the boundary poll's bytes land in the
-    # NEW period (audit #15 — previously they were stranded at the anchor and read as 0).
+    # NEW period (audit #15 - previously they were stranded at the anchor and read as 0).
     up, down = WidgetState.get_usage_this_period(s)
     assert up == 1000.0 and down == 1000.0
     assert s._usage["period_key"] == "2026-06-01"
 
 
 def test_idle_across_reset_rolls_over_on_read():
-    # No traffic this period, but the reset day passed — reading must roll the period over
+    # No traffic this period, but the reset day passed - reading must roll the period over
     # (audit #5) instead of reporting last period's usage as this period's.
     s = _fake_state(period_key="2026-05-01")
     s._usage = {"cumulative_up": 5000.0, "cumulative_down": 9000.0,
@@ -101,7 +101,7 @@ def test_idle_across_reset_rolls_over_on_read():
 
 
 def test_backward_period_does_not_reanchor():
-    # A backward clock/DST shift yields an earlier period key — it must NOT wipe the
+    # A backward clock/DST shift yields an earlier period key - it must NOT wipe the
     # running total (only a strictly-newer period re-anchors).
     s = _fake_state(period_key="2026-06-01")
     s._compute_period_key = lambda *a, **k: "2026-06-01"  # same period

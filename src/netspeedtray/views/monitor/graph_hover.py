@@ -1,15 +1,15 @@
 """
-GraphHoverTooltip — a lightweight, stat-agnostic hover readout for the Monitor's shared graph.
+GraphHoverTooltip - a lightweight, stat-agnostic hover readout for the Monitor's shared graph.
 
 The old standalone Graph window had a rich hover layer (crosshair + focus dots + tooltip + blit) hard-
 wired to the network download/upload dual-axis. The Monitor graph is multi-stat (network OR cpu/gpu/ram),
 so instead of porting that, this is a clean Qt-label tooltip that reads whatever lines are currently
-plotted in the axis under the cursor and shows their value at the nearest time — so it works for the
+plotted in the axis under the cursor and shows their value at the nearest time - so it works for the
 network graph AND the hardware graphs, and survives a re-render (it reads the live Line2D data each move,
 caches no artists, and triggers no matplotlib redraw, so it stays cheap).
 
 matplotlib is already loaded by the time this attaches (GraphHost.ensure_loaded built the canvas), so the
-top-level matplotlib import here is fine — this module is only imported from inside ensure_loaded().
+top-level matplotlib import here is fine - this module is only imported from inside ensure_loaded().
 """
 from __future__ import annotations
 

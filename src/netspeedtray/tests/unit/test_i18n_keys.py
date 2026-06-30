@@ -69,7 +69,7 @@ ALLOWLIST: Dict[str, str] = {
 # test; we pin them as known-dead via an xfail-style check and REPORT them so a human
 # can fix the source (restore the key, or correct the reference) and then remove the
 # entry here. `value` is the human-readable bug note.
-# Currently empty: the one known dead key (SPEED_GRAPH_TITLE — a latent crash in
+# Currently empty: the one known dead key (SPEED_GRAPH_TITLE - a latent crash in
 # views/graph/window.py) was fixed to use the existing SPEED_GRAPH_TAB_LABEL. Add an
 # entry here (key -> note) only to track a NEW dead reference that can't be fixed
 # immediately; test_known_dead_keys_are_consistent guards the entries.

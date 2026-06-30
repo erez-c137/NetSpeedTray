@@ -1,9 +1,9 @@
 """
-AppActivityWorker v2 — the HONEST connection-count model.
+AppActivityWorker v2 - the HONEST connection-count model.
 
 The worker no longer estimates per-app speed from disk I/O (the old lie). These tests pin the
 honest contract: roll up PIDs by app identity, count live sockets / distinct hosts / TCP-UDP
-exactly, the active-first sort, and — as a regression guard — that NO byte/speed keys leak back in.
+exactly, the active-first sort, and - as a regression guard - that NO byte/speed keys leak back in.
 """
 import socket
 from types import SimpleNamespace

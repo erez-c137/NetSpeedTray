@@ -1,5 +1,5 @@
 """
-MonitorWindow shell — the unified Monitor (Overview / Network / Hardware): construction, lazy tab
+MonitorWindow shell - the unified Monitor (Overview / Network / Hardware): construction, lazy tab
 building, and Hardware-tab config gating. Plus the import firewall (the whole point of the lazy
 design): the shell must not pull matplotlib at module scope, or a glance at Overview would regress
 the idle-RAM win.
@@ -48,7 +48,7 @@ def test_constructs_and_lazily_builds_tabs(q_app):
 
 def test_hardware_tab_always_visible(q_app):
     # The Monitor forces hardware collection while open, so the Hardware tab is a dedicated
-    # monitoring screen that always appears — not gated on the widget's monitor_*_enabled flags.
+    # monitoring screen that always appears - not gated on the widget's monitor_*_enabled flags.
     off = MonitorWindow(_main_widget(), _cfg(monitor_cpu_enabled=False, monitor_gpu_enabled=False,
                                              monitor_ram_enabled=False, monitor_vram_enabled=False),
                         I18nStrings("en_US"))
@@ -57,7 +57,7 @@ def test_hardware_tab_always_visible(q_app):
 
 def test_monitor_forces_hardware_collection_while_open(q_app):
     # The Monitor flips the stats thread's override on while open (set in showEvent) and reverts it
-    # on close — so its Overview/Hardware screens show hardware even with the widget's flags off.
+    # on close - so its Overview/Hardware screens show hardware even with the widget's flags off.
     mw = _main_widget()
     win = MonitorWindow(mw, _cfg(monitor_cpu_enabled=False), I18nStrings("en_US"))
     win._set_force_hardware(True)
@@ -70,7 +70,7 @@ def test_import_firewall_no_matplotlib_at_module_scope():
     """Importing the Monitor shell modules must NOT pull matplotlib (the lazy-loading contract)."""
     src = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))  # .../src
     # Import the shell AND the at-risk modules (graph_host / network.tab / overview.tab). These sit
-    # behind lazy factories so the shell never pulls them — but a module-scope `from views.graph...`
+    # behind lazy factories so the shell never pulls them - but a module-scope `from views.graph...`
     # in any of them would load matplotlib (graph/__init__.py eagerly imports GraphWindow). Importing
     # them here directly is what catches such a regression.
     code = (
@@ -91,7 +91,7 @@ def test_import_firewall_no_matplotlib_at_module_scope():
         "leaked = [m for m in sys.modules if m == 'matplotlib' or m.startswith('matplotlib.')]\n"
         "assert not leaked, 'matplotlib leaked into the Monitor modules: %r' % leaked\n"
         # The firewall contract names numpy too (it's the heaviest dep after matplotlib). The Overview's
-        # summaries pull numpy, so they must be lazy — importing the modules must not load numpy.
+        # summaries pull numpy, so they must be lazy - importing the modules must not load numpy.
         "assert 'numpy' not in sys.modules, 'numpy leaked into the Monitor modules at import time'\n"
         "assert 'netspeedtray.views.graph.window' not in sys.modules, 'graph package imported at module scope'\n"
         "print('FIREWALL_OK')\n"

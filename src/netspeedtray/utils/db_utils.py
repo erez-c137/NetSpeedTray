@@ -235,7 +235,7 @@ def get_total_bandwidth_for_period(db_path: Union[str, Path], start_time: Option
     Calculates total bandwidth by running SUM queries across all relevant tables.
     Uses a separate, read-only connection for thread safety.
 
-    NOTE: this standalone variant is currently UNUSED — the live path is
+    NOTE: this standalone variant is currently UNUSED - the live path is
     ``WidgetState.get_total_bandwidth_for_period`` (tray glance + graph worker), which scales
     by the poll interval. This one's raw tier assumes a 1s interval (its minute/hour tiers use
     the correct 60s/3600s bucket durations). Keep them in sync if this is ever wired up.

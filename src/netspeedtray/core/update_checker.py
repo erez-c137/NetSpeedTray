@@ -1,5 +1,5 @@
 """
-Update Checker — checks for new releases via the GitHub Releases API.
+Update Checker - checks for new releases via the GitHub Releases API.
 
 Runs in a background thread to avoid blocking the UI. Emits Qt signals
 when a result is available.

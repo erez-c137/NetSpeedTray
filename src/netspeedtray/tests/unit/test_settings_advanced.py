@@ -1,4 +1,4 @@
-"""Advanced settings page (2.0 IA) — retention/reduce-motion round-trip + reset affordances (C6)."""
+"""Advanced settings page (2.0 IA) - retention/reduce-motion round-trip + reset affordances (C6)."""
 from unittest.mock import MagicMock
 
 import pytest
@@ -16,7 +16,7 @@ def page(q_app):
 
 
 def test_advanced_round_trips_retention_and_reduce_motion(page):
-    page.load_settings({"keep_data": 90, "reduce_motion": True})  # 3 months — a valid ladder value
+    page.load_settings({"keep_data": 90, "reduce_motion": True})  # 3 months - a valid ladder value
     out = page.get_settings()
     assert out["keep_data"] == 90
     assert out["reduce_motion"] is True
@@ -76,7 +76,7 @@ def test_hardware_deeplink_points_at_hardware_page(dialog):
 def test_data_usage_deeplink_points_at_network_page(dialog):
     """The Monitor's 'Set a monthly limit' hint deep-links via PAGE_NETWORK; it must be the Network
     Interfaces row (the data-cap 'Data usage' section lives there). Regression for the hint opening
-    General — the headline data-cap feature reading as broken."""
+    General - the headline data-cap feature reading as broken."""
     idx = SettingsDialog.PAGE_NETWORK
     assert dialog.sidebar.item(idx).text() == dialog.i18n.NETWORK_INTERFACES_GROUP
 

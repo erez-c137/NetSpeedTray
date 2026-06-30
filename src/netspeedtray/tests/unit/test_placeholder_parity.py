@@ -4,9 +4,9 @@ Guardrail: every locale must carry the SAME set of {placeholder} names as en_US 
 The app renders many strings via ``str.format(**kwargs)`` with a FIXED kwarg set per key. So:
   * a locale that introduces a placeholder en_US doesn't supply -> KeyError the moment it's shown
     (a real crash; always flagged).
-  * a locale that OMITS a placeholder is safe for .format() (the extra kwarg is just unused) — but
+  * a locale that OMITS a placeholder is safe for .format() (the extra kwarg is just unused) - but
     omitting a *meaningful* value (e.g. {procs}, {updated_at}) silently loses information, so we flag
-    that too — EXCEPT grammar helpers like {plural} that many languages legitimately don't use.
+    that too - EXCEPT grammar helpers like {plural} that many languages legitimately don't use.
 
 Key parity (test_locales_parity) can't catch any of this because the key is still present; only
 comparing placeholders can. Fails the build with a precise locale::key list, caught in the PR.

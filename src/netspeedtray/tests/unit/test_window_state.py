@@ -67,7 +67,7 @@ def test_restore_clamps_offscreen_position_onto_available_geometry():
 def test_restore_resolves_screen_from_saved_point_multimonitor():
     # Regression: an unshown top-level window reports the PRIMARY screen, so clamping
     # to window.screen() would yank a secondary-monitor position back to primary.
-    # The saved point (3000,200) is on a secondary monitor at x:1920..3840 — restore
+    # The saved point (3000,200) is on a secondary monitor at x:1920..3840 - restore
     # must resolve and clamp to THAT screen, not the primary.
     secondary = _mock_screen(left=1920, top=0, right=3840, bottom=1080)
     window = _mock_window(width=400, height=300, screen=_mock_screen())  # window.screen() == primary

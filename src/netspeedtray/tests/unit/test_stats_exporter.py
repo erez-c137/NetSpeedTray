@@ -1,5 +1,5 @@
 """
-StatsExporter — the Monitor's "export key figures" writer. Verifies the two-file shape (summary +
+StatsExporter - the Monitor's "export key figures" writer. Verifies the two-file shape (summary +
 raw), the JSON sidecar, unit conversion at the boundary (bytes/sec -> Mbps), and the honesty spine:
 rollup-tier metrics write avg+max with blank percentiles and a method note, never a fabricated p95.
 """

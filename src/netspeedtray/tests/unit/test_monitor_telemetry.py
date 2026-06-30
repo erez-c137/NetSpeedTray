@@ -1,5 +1,5 @@
 """
-TelemetryStrip — the Hardware tab's live band of temp/power/RAM/VRAM tiles. The Monitor forces
+TelemetryStrip - the Hardware tab's live band of temp/power/RAM/VRAM tiles. The Monitor forces
 hardware collection while it's open, so the strip always builds all four tiles and shows whatever was
 collected: CPU/GPU always have a usage%; temp/power append when present; the memory tiles hide
 themselves when their reading is unavailable.
@@ -32,7 +32,7 @@ def _widget(**kw):
 
 def test_all_four_tiles_created(q_app):
     s = _strip()
-    assert s._cpu and s._gpu and s._ram and s._vram   # always — collection is forced while open
+    assert s._cpu and s._gpu and s._ram and s._vram   # always - collection is forced while open
 
 
 def test_proc_text_shows_only_present_metrics(q_app):
@@ -46,7 +46,7 @@ def test_mem_text_formats(q_app):
     s = _strip()
     assert s._mem_text(12.4, 32.0) == "12.4 / 32.0 GB"
     assert s._mem_text(3.1, None) == "3.1 GB"             # VRAM total often absent (no nvidia-smi)
-    assert s._mem_text(None, None) == "—"
+    assert s._mem_text(None, None) == "-"
 
 
 def test_update_from_populates_tiles(q_app):
@@ -59,7 +59,7 @@ def test_update_from_populates_tiles(q_app):
 
 
 def test_mem_tile_hidden_when_no_data(q_app):
-    # A memory tile with no reading (e.g. VRAM with no PDH counter) hides itself rather than "—".
+    # A memory tile with no reading (e.g. VRAM with no PDH counter) hides itself rather than "-".
     s = _strip()
     s.update_from(_widget(vram_used=None))
     assert not s._vram.isVisibleTo(s)

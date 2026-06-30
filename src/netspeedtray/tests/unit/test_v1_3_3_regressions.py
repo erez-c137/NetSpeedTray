@@ -2,10 +2,10 @@
 Regression tests for bugs fixed in v1.3.3.
 
 Each test pins a specific defect so it cannot silently come back:
-  * #131 — Auto-Cycling crash from a `constants.renderer.renderer.X` typo.
-  * #154 — 10GbE NICs showing a constant 0 because real samples above the
+  * #131 - Auto-Cycling crash from a `constants.renderer.renderer.X` typo.
+  * #154 - 10GbE NICs showing a constant 0 because real samples above the
            (unreliable) psutil per-NIC link speed were silently dropped.
-  * #153 — Color/threshold edits not applying until restart because
+  * #153 - Color/threshold edits not applying until restart because
            update_config() never rebuilt the cached pens.
 """
 import os
@@ -47,7 +47,7 @@ def test_cycle_interval_constant_resolves():
 
 def test_main_does_not_reintroduce_double_renderer_typo():
     """
-    main.py must not reference `constants.renderer.renderer.*` — that typo raised
+    main.py must not reference `constants.renderer.renderer.*` - that typo raised
     AttributeError on every startup once 'cycle' display mode was saved (#131).
     """
     import netspeedtray

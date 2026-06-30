@@ -1,4 +1,4 @@
-"""Custom arrow glyph override (#129) — empty falls back to the native i18n arrow."""
+"""Custom arrow glyph override (#129) - empty falls back to the native i18n arrow."""
 from netspeedtray.utils.widget_renderer import RenderConfig
 
 

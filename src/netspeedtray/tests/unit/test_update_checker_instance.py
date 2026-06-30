@@ -1,6 +1,6 @@
 """
 Unit tests for UpdateChecker.should_check (the 24h interval gate) and _on_result
-(notify / skip-version logic) — the same diagnostics-family code as the v1.3.2
+(notify / skip-version logic) - the same diagnostics-family code as the v1.3.2
 updater regression, previously untested at the instance level. These drive the
 methods directly (no network, no QThread); _on_result's outcome is checked via
 mock slots connected to its signals (direct connections fire synchronously).
@@ -35,7 +35,7 @@ def test_should_check_false_within_interval():
 
 
 def test_should_check_true_on_malformed_timestamp():
-    # A garbage / non-ISO timestamp must not crash — fall back to checking.
+    # A garbage / non-ISO timestamp must not crash - fall back to checking.
     assert UpdateChecker({"last_update_check": "not-a-date"}).should_check() is True
 
 

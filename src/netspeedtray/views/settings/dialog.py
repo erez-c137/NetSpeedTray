@@ -62,7 +62,7 @@ class SettingsDialog(QDialog):
     # Must stay in sync with the sidebar order in _setup_ui; test_settings_pages guards it so a
     # future page reshuffle trips a red test instead of silently opening the wrong page.
     PAGE_HARDWARE: int = 3
-    PAGE_NETWORK: int = 4   # Network Interfaces — hosts the "Data usage" / data-cap section
+    PAGE_NETWORK: int = 4   # Network Interfaces - hosts the "Data usage" / data-cap section
 
     def __init__(
         self,
@@ -165,7 +165,7 @@ class SettingsDialog(QDialog):
         # NOTE: unlike the Graph / App Activity windows, the Settings dialog does NOT
         # auto-save its position on move. During a live preview it mutates the live
         # config in memory (handle_settings_changed save_to_disk=False), so a debounced
-        # move-save would flush those un-applied edits to disk — which Cancel wouldn't
+        # move-save would flush those un-applied edits to disk - which Cancel wouldn't
         # undo. The dialog is always closed via Save/Cancel/X, whose handlers persist
         # the position AFTER the apply/revert, so the close-path save is leak-free.
 
@@ -190,10 +190,10 @@ class SettingsDialog(QDialog):
             self.sidebar.setStyleSheet(style_utils.sidebar_style())
             self.sidebar.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             self.sidebar.setIconSize(QSize(16, 16))
-            # (label, Segoe Fluent codepoint) — Win10-safe MDL2 glyphs; Hardware/Network match the
+            # (label, Segoe Fluent codepoint) - Win10-safe MDL2 glyphs; Hardware/Network match the
             # Monitor tabs for cross-window consistency. Settings/Personalize/Color/DeveloperTools/
             # FontSize/Ethernet/Repair.
-            # 2.0 IA — 6 pages: Settings / View(Widget) / Personalize / DeveloperTools / Ethernet / Repair.
+            # 2.0 IA - 6 pages: Settings / View(Widget) / Personalize / DeveloperTools / Ethernet / Repair.
             self._sidebar_icons = [0xE713, 0xE8A9, 0xE771, 0xEC7A, 0xE839, 0xE90F]
             for label in (self.i18n.GENERAL_SETTINGS_GROUP, self.i18n.WIDGET_SETTINGS_GROUP,
                           self.i18n.APPEARANCE_SETTINGS_GROUP, self.i18n.HARDWARE_MONITORING_GROUP,
@@ -217,7 +217,7 @@ class SettingsDialog(QDialog):
                                               _cm, constants.layout.MAIN_MARGIN)
             content_layout.setSpacing(constants.layout.MAIN_SPACING)
 
-            # Page-level H1 (the native Win11 Settings header) — fixed above the scrolling content, giving
+            # Page-level H1 (the native Win11 Settings header) - fixed above the scrolling content, giving
             # the page identity + the top breathing room WinUI opens with. Updated on sidebar selection.
             self._page_title = QLabel()
             _title_font = QFont()
@@ -276,7 +276,7 @@ class SettingsDialog(QDialog):
                 self.stack.addWidget(self._wrap_in_scroll(page))
 
             # Hairline that anchors the fixed footer (preview + command buttons) below the scrolling
-            # content — the native Win11 command-bar separator.
+            # content - the native Win11 command-bar separator.
             footer_sep = QWidget()
             footer_sep.setObjectName("footerSep")
             footer_sep.setFixedHeight(1)
@@ -284,7 +284,7 @@ class SettingsDialog(QDialog):
                 f"#footerSep {{ background-color: {style_utils.semantic_colors()['card_stroke']}; }}")
             content_layout.addWidget(footer_sep)
 
-            # --- Live preview strip (C5) — a faithful, inert render of the widget that
+            # --- Live preview strip (C5) - a faithful, inert render of the widget that
             # reflects the current settings as you change them, on a taskbar-like backdrop.
             # Uses the shared PreviewWidget keystone, so it matches the real widget exactly.
             try:
@@ -352,7 +352,7 @@ class SettingsDialog(QDialog):
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
         # Let the dark content background show through the scroll region so cards FLOAT on it (the page
-        # otherwise renders an opaque mid-grey that the cards blend into — the "cards section is a
+        # otherwise renders an opaque mid-grey that the cards blend into - the "cards section is a
         # different shade" bug). Mirrors how the Monitor's Overview scroll content is made transparent.
         scroll.viewport().setAutoFillBackground(False)
         page.setStyleSheet("background: transparent;")   # cards/inputs keep their own fill (more specific)
@@ -647,12 +647,12 @@ class SettingsDialog(QDialog):
             final_settings = self.get_settings()
             if not final_settings:
                 # get_settings() returns {} only when a page raised while collecting. Don't silently
-                # no-op (the user clicked Save and would see nothing happen) — tell them it failed (#18).
+                # no-op (the user clicked Save and would see nothing happen) - tell them it failed (#18).
                 self.logger.warning("Could not retrieve settings from pages.")
                 QMessageBox.critical(
                     self, self.i18n.ERROR_TITLE,
                     getattr(self.i18n, "SETTINGS_SAVE_FAILED",
-                            "Settings could not be saved — a settings page failed to provide its "
+                            "Settings could not be saved - a settings page failed to provide its "
                             "values, so your changes were not applied. See the log for details."))
                 return
 

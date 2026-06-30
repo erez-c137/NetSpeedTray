@@ -44,7 +44,7 @@ class AppearancePage(QWidget):
         # --- Font ---
         layout.addWidget(section_header(self.i18n.FONT_SETTINGS_GROUP_TITLE))
 
-        # Font family — the button opens the picker; the label shows (and stores) the current family.
+        # Font family - the button opens the picker; the label shows (and stores) the current family.
         self.font_family_button = QPushButton(self.i18n.SELECT_FONT_BUTTON)
         self.font_family_button.clicked.connect(lambda: self.open_font_dialog(self.current_font, "main"))
         self.font_family_label = QLabel()
@@ -81,7 +81,7 @@ class AppearancePage(QWidget):
 
         # --- Arrow styling (merged from the old Arrows page) ---
         layout.addWidget(section_header(self.i18n.ARROW_STYLING_GROUP))
-        # Arrow STYLE picker (#129) — curated glyph presets + Custom (full-width control). The default
+        # Arrow STYLE picker (#129) - curated glyph presets + Custom (full-width control). The default
         # "Classic" tracks the native locale arrow; the others set arrow_up/down_symbol overrides.
         self.arrow_style_picker = ArrowStylePicker(self.i18n)
         self.arrow_style_picker.changed.connect(self.on_change)
@@ -232,7 +232,7 @@ class AppearancePage(QWidget):
             "arrow_font_family": self.arrow_font_family_label.text(),
             "arrow_font_size": int(self.arrow_font_size.value()),
             "arrow_font_weight": constants.fonts.WEIGHT_DEMIBOLD, # Fixed default due to glyph fallback issues
-            # Arrow style glyphs (#129) — empty == native locale default (Classic)
+            # Arrow style glyphs (#129) - empty == native locale default (Classic)
             **self.arrow_style_picker.get_values(),
             # Mini Graph
             "graph_enabled": self.enable_graph.isChecked(),

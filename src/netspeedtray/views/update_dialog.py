@@ -1,5 +1,5 @@
 """
-Update-available dialog — shows the version delta + the GitHub release notes and
+Update-available dialog - shows the version delta + the GitHub release notes and
 Download / Skip / Not Now.
 
 The release body is rendered as INERT plain text via a read-only QPlainTextEdit

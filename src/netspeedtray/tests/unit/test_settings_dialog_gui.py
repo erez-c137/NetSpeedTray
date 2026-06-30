@@ -1,7 +1,7 @@
 """
 GUI interaction tests for the Settings dialog (pytest-qt / qtbot, headless offscreen).
 
-These drive the REAL widgets — clicking the actual Save / Cancel buttons — and assert
+These drive the REAL widgets - clicking the actual Save / Cancel buttons - and assert
 the parent callback fires with the correct save_to_disk flag. This is the highest-value
 slice of the manual Settings QA, now automated and CI-runnable.
 
@@ -100,7 +100,7 @@ def test_live_preview_strip_exists_and_reflects_config(qtbot, dialog):
 
 
 def test_changed_toggle_propagates_to_parent_on_save(qtbot, dialog, fake_main_widget):
-    """A real widget change (the Free Move toggle) round-trips to the parent on Save —
+    """A real widget change (the Free Move toggle) round-trips to the parent on Save -
     not just that Save fired, but that the changed value is in the applied settings.
     Free Move moved to the Widget page in the 2.0 IA."""
     toggle = dialog.widget_page.free_move

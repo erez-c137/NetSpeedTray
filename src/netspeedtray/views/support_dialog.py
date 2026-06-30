@@ -1,5 +1,5 @@
 """
-Support dialog — a calm, Windows 11-styled way to support the project.
+Support dialog - a calm, Windows 11-styled way to support the project.
 
 Replaces the old plain QMessageBox: a dark, rounded dialog (native Win11 chrome via DWM) with the
 app icon, a warm line, and one styled option row per support channel (each opens in the browser and
@@ -41,7 +41,7 @@ class SupportDialog(QDialog):
         root.setContentsMargins(22, 20, 22, 18)
         root.setSpacing(14)
 
-        # Header — app icon + title
+        # Header - app icon + title
         header = QHBoxLayout()
         header.setSpacing(12)
         if app_icon is not None and not app_icon.isNull():
@@ -62,13 +62,13 @@ class SupportDialog(QDialog):
         body.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
         root.addWidget(body)
 
-        # Option rows — heart = recurring sponsorship (accented), coffee = one-off tips, star = free.
+        # Option rows - heart = recurring sponsorship (accented), coffee = one-off tips, star = free.
         root.addWidget(self._option(i18n.SUPPORT_GITHUB_SPONSORS, 0xEB51, _SPONSORS_URL, accent=True))
         root.addWidget(self._option(i18n.SUPPORT_KOFI, 0xEC32, _KOFI_URL))
         root.addWidget(self._option(i18n.SUPPORT_BMC, 0xEC32, _BMC_URL))
         root.addWidget(self._option(i18n.SUPPORT_STAR_GITHUB, 0xE735, _STAR_URL))
 
-        # Footer — Close
+        # Footer - Close
         foot = QHBoxLayout()
         foot.addStretch(1)
         close_btn = QPushButton(getattr(i18n, "CLOSE_BUTTON", "Close"), self)

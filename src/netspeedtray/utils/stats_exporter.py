@@ -1,16 +1,16 @@
 """
-StatsExporter — the Monitor's honest "export key figures" writer.
+StatsExporter - the Monitor's honest "export key figures" writer.
 
 Two files from one action, scoped to a [start, end] window (the design panel's unanimous shape):
-  • SUMMARY (one row per metric × interface) — the "argument": pasted into an ISP ticket / RMM pivot.
-  • RAW time-series (long format: timestamp, metric, value) — the "proof": loads into pandas/Excel,
+  • SUMMARY (one row per metric × interface) - the "argument": pasted into an ISP ticket / RMM pivot.
+  • RAW time-series (long format: timestamp, metric, value) - the "proof": loads into pandas/Excel,
     lets anyone recompute any percentile.
 Both as CSV (UTF-8, dot decimal regardless of UI locale) with a JSON sidecar of the summary.
 
 The honesty spine (non-negotiable): percentiles/min/stddev are EXACT only inside the raw tier; beyond
-that they are written as empty with a `summary_method_note` saying so — never a fabricated p95. Every
+that they are written as empty with a `summary_method_note` saying so - never a fabricated p95. Every
 row carries sample_count + coverage_pct. Units are human/standard at the boundary: Mbps, ms, W, °C, %.
-No phone-home — bytes leave only on the user's explicit action; this module just writes local files.
+No phone-home - bytes leave only on the user's explicit action; this module just writes local files.
 """
 from __future__ import annotations
 
@@ -77,7 +77,7 @@ def export_window(widget_state, start: datetime, end: datetime, window_label: st
             s = widget_state.summarize_hardware(key, start, end, poll_interval)
             conv = _r
         if s.count == 0:
-            continue   # nothing recorded for this metric in the window — omit, don't emit zeros
+            continue   # nothing recorded for this metric in the window - omit, don't emit zeros
 
         loss = None
         if key == "latency_gw":

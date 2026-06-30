@@ -55,7 +55,7 @@ if TYPE_CHECKING:
 
 
 # Win32 MSG layout for reading native messages in nativeEvent(). Defined once at
-# module scope — nativeEvent is a hot path (fires for every native message), so we
+# module scope - nativeEvent is a hot path (fires for every native message), so we
 # must not rebuild this Structure on each call.
 class _NativeMSG(ctypes.Structure):
     _fields_ = [
@@ -126,7 +126,7 @@ class NetworkSpeedWidget(QWidget):
         self.cpu_usage: float = 0.0
         self.gpu_usage: float = 0.0
         self.gpu_present: bool = False  # LATCHES True once any poll detects GPU counters (never flips
-        #                                 back — a GPU doesn't vanish), so the Monitor's GPU tile shows
+        #                                 back - a GPU doesn't vanish), so the Monitor's GPU tile shows
         #                                 stably for a real/integrated GPU and stays hidden only on a
         #                                 genuinely GPU-less box. Default False => hidden until proven.
         self.cpu_temp: Optional[float] = None
@@ -167,7 +167,7 @@ class NetworkSpeedWidget(QWidget):
         # self._tray_watcher_timer moved to PositionManager
         self._state_watcher_timer = QTimer(self) # The "Safety Net" timer
 
-        # Hover usage card — a Win11 flyout we position ourselves (above the taskbar) so it is
+        # Hover usage card - a Win11 flyout we position ourselves (above the taskbar) so it is
         # never clipped, unlike Qt's built-in tooltip. Shown after a short rest on the widget.
         self._hover_card = None
         self._hover_card_timer = QTimer(self)
@@ -233,7 +233,7 @@ class NetworkSpeedWidget(QWidget):
         except Exception as e:
             self.logger.error(f"Could not start usage-alert controller: {e}", exc_info=True)
 
-        # Update Checker — delayed startup check
+        # Update Checker - delayed startup check
         self.update_checker = UpdateChecker(self.config, self)
         self.update_checker.update_available.connect(self._on_update_available)
         if self.update_checker.should_check():
@@ -409,8 +409,8 @@ class NetworkSpeedWidget(QWidget):
     def _maybe_show_welcome(self) -> None:
         """First-run onboarding. A brand-new install gets the calm 'unfold' flyout that
         points at the features most users never find; an upgrader gets the one-time 2.0
-        welcome dialog. The two gates are mutually exclusive — they never both fire."""
-        # Brand-new install: the unfold flyout is DISABLED for this release — its only action opens the
+        welcome dialog. The two gates are mutually exclusive - they never both fire."""
+        # Brand-new install: the unfold flyout is DISABLED for this release - its only action opens the
         # Monitor, so there's no real guided tour to justify an interrupting pop-up yet (re-enable once
         # there's an actual walkthrough; _show_unfold_flyout() is kept for that). We still advance the
         # first-run flags so nothing pops later and the upgrade dialog stays correctly suppressed.
@@ -474,7 +474,7 @@ class NetworkSpeedWidget(QWidget):
 
     def _on_monitor_error(self, message: str) -> None:
         """
-        The monitor thread crossed its error threshold (now recoverable — it keeps retrying
+        The monitor thread crossed its error threshold (now recoverable - it keeps retrying
         with backoff). Surface a calm one-time flyout so a degraded readout isn't silent.
         """
         try:
@@ -512,12 +512,12 @@ class NetworkSpeedWidget(QWidget):
     def pause(self) -> None:
         """Freeze the live readout. The monitor keeps recording history in the background; only
         the on-widget numbers stop updating (see the `is_paused` gate in the update_* slots),
-        until resume(). Opt-in — surfaced in the tray menu only when `pause_in_menu` is set."""
+        until resume(). Opt-in - surfaced in the tray menu only when `pause_in_menu` is set."""
         if self.is_paused:
             self.logger.debug("Widget already paused")
             return
         self.logger.info("Pausing widget updates")
-        # is_paused is a transient live-view toggle only — deliberately NOT persisted, so the
+        # is_paused is a transient live-view toggle only - deliberately NOT persisted, so the
         # widget never reboots into a frozen state that looks like a hang.
         self.is_paused = True
         self.update()
@@ -538,7 +538,7 @@ class NetworkSpeedWidget(QWidget):
         Slot for the controller's `display_speed_updated` signal.
         Receives aggregated speeds in Mbps and schedules a repaint of the widget.
         """
-        if self.is_paused:  # frozen by the user — keep the last numbers on screen
+        if self.is_paused:  # frozen by the user - keep the last numbers on screen
             return
         self.upload_speed = upload_mbps
         self.download_speed = download_mbps
@@ -713,7 +713,7 @@ class NetworkSpeedWidget(QWidget):
             self._refresh_cached_layout_mode()
             self.system_event_handler.theme_changed.connect(self._on_theme_changed)
             
-            # Emergency-hide on unambiguous fullscreen — but honor the user's
+            # Emergency-hide on unambiguous fullscreen - but honor the user's
             # "keep visible over fullscreen" choice (issue #107). Without this guard
             # the immediate-hide path bypassed keep_visible_fullscreen, which
             # _execute_refresh() already respects, so the widget vanished anyway.
@@ -762,7 +762,7 @@ class NetworkSpeedWidget(QWidget):
         try:
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-            # Base hit-test layer (nearly transparent) — widget-only, so the frameless
+            # Base hit-test layer (nearly transparent) - widget-only, so the frameless
             # window still receives mouse events across its full rect.
             painter.fillRect(self.rect(), QColor(0, 0, 0, 1))
 
@@ -888,7 +888,7 @@ class NetworkSpeedWidget(QWidget):
         return self._hover_usage_cache
 
     def _hover_hint_text(self) -> Optional[str]:
-        """The fading gesture hint — shown for the first few app runs, then retired. Counted at
+        """The fading gesture hint - shown for the first few app runs, then retired. Counted at
         most once per run so it teaches without nagging."""
         try:
             count = int(self.config.get("tooltip_hint_shown_count", 0))
@@ -903,8 +903,8 @@ class NetworkSpeedWidget(QWidget):
             return None
 
     def _hover_cap_info(self) -> Optional[Tuple[float, float, float]]:
-        """(used_gb, cap_gb, pct) when a data cap is set — preserves the live cap glance that
-        used to live in the tray menu — else None (the card stays clean when no cap is set)."""
+        """(used_gb, cap_gb, pct) when a data cap is set - preserves the live cap glance that
+        used to live in the tray menu - else None (the card stays clean when no cap is set)."""
         try:
             cap = float(self.config.get("data_cap_gb", 0) or 0)
             if not self.config.get("data_cap_enabled") or cap <= 0:
@@ -1084,7 +1084,7 @@ class NetworkSpeedWidget(QWidget):
         sleep). Re-validate position and re-assert visibility/Z-order with a couple of
         staggered passes, since Windows needs a moment to settle taskbar + monitor geometry.
         """
-        self.logger.debug("Environment changed (%s) — re-asserting widget.", reason)
+        self.logger.debug("Environment changed (%s) - re-asserting widget.", reason)
         try:
             self.update_position()
             for i in range(1, constants.timeouts.TASKBAR_RESTART_RETRIES + 1):
@@ -1097,13 +1097,13 @@ class NetworkSpeedWidget(QWidget):
         """
         Observe WM_POWERBROADCAST so the widget re-asserts itself on wake from sleep/hibernate
         (monitors and the taskbar are often re-arranged across a suspend cycle). We only watch
-        the message — we never consume it.
+        the message - we never consume it.
 
         CRITICAL: do NOT call ``super().nativeEvent(eventType, message)`` here. Re-dispatching the
         native message through the base implementation from a Python override access-violates
-        inside Qt during window creation — it crashed the widget on its very first show() (a hard
+        inside Qt during window creation - it crashed the widget on its very first show() (a hard
         0xC0000005 in QtCore, no Python traceback). Since this handler only *observes*, returning
-        ``(False, 0)`` — "not handled, let Qt continue normal processing" — is the correct and
+        ``(False, 0)`` - "not handled, let Qt continue normal processing" - is the correct and
         safe contract, and is equivalent to what a working base call would return for us.
         """
         try:
@@ -1112,7 +1112,7 @@ class NetworkSpeedWidget(QWidget):
                 if msg.message == _WM_POWERBROADCAST and msg.wParam in (
                     _PBT_APMRESUMESUSPEND, _PBT_APMRESUMEAUTOMATIC
                 ):
-                    self.logger.info("Resume from sleep detected — re-asserting widget.")
+                    self.logger.info("Resume from sleep detected - re-asserting widget.")
                     QTimer.singleShot(constants.timeouts.TASKBAR_RESTART_RECOVERY_DELAY_MS,
                                       lambda: self._on_environment_changed("resume"))
         except Exception as e:
@@ -1154,7 +1154,7 @@ class NetworkSpeedWidget(QWidget):
             self.logger.error("Error opening hardware settings: %s", e, exc_info=True)
 
     def open_data_usage_settings(self) -> None:
-        """Open Settings straight on the Network page, where the data-cap 'Data usage' section lives —
+        """Open Settings straight on the Network page, where the data-cap 'Data usage' section lives -
         the Monitor's 'Set a monthly limit' hint's door (was dropping the user on General)."""
         try:
             self.show_settings()
@@ -1237,7 +1237,7 @@ class NetworkSpeedWidget(QWidget):
             if self.monitor_window is None:
                 self.monitor_window = MonitorWindow(self, self.config, self.i18n)
                 self.monitor_window.window_closed.connect(self._on_monitor_window_closed)
-                # If the user left it maximized, map straight to maximized — otherwise restore_window_geometry
+                # If the user left it maximized, map straight to maximized - otherwise restore_window_geometry
                 # sets the WindowMaximized flag but the window still maps at the normal size for one frame,
                 # then expands (the "small window then grows" flash). showMaximized() skips that frame.
                 if self.monitor_window.windowState() & Qt.WindowState.WindowMaximized:
@@ -1252,7 +1252,7 @@ class NetworkSpeedWidget(QWidget):
             self.logger.error(f"Error showing Monitor window: {e}", exc_info=True)
 
     def _on_monitor_window_closed(self) -> None:
-        # Restore the widget's Z-order/visibility after the Monitor closes — via the authoritative
+        # Restore the widget's Z-order/visibility after the Monitor closes - via the authoritative
         # refresh, which RESPECTS fullscreen obstruction (so it won't flash the widget over a
         # fullscreen app). A second deferred pass lets the Windows focus transition settle.
         self.monitor_window = None
@@ -1335,7 +1335,7 @@ class NetworkSpeedWidget(QWidget):
         QApplication.instance().quit()
 
     def show_support_dialog(self) -> None:
-        """Show the support/donate dialog — a Win11-styled custom dialog (replaces the old QMessageBox)."""
+        """Show the support/donate dialog - a Win11-styled custom dialog (replaces the old QMessageBox)."""
         try:
             from netspeedtray.views.support_dialog import SupportDialog
             SupportDialog(self.i18n, self, app_icon=self.windowIcon()).exec()
@@ -1400,7 +1400,7 @@ class NetworkSpeedWidget(QWidget):
         Naming follows the taskbar's *orientation*: a TOP/BOTTOM taskbar is 'horizontal', a LEFT/RIGHT
         taskbar is 'vertical'. This is the value passed to ``render_widget(layout_mode=...)`` and must
         match what ``PreviewWidget`` uses for the same scenario (it renders a horizontal taskbar strip,
-        so it passes 'horizontal') — otherwise the live widget and the Settings/Overview preview of the
+        so it passes 'horizontal') - otherwise the live widget and the Settings/Overview preview of the
         same config diverge. In particular the side-by-side right-align probe only fires for 'horizontal'
         (the over-reserved, right-anchored-to-the-tray case); a side taskbar is docked differently and is
         left as-is. (The renderer's draw methods accept layout_mode but don't branch on it today, so this
@@ -1414,7 +1414,7 @@ class NetworkSpeedWidget(QWidget):
 
     @staticmethod
     def _layout_mode_for_edge(edge) -> str:
-        """Map a taskbar edge to the paint ``layout_mode`` — 'vertical' for a side (LEFT/RIGHT) taskbar,
+        """Map a taskbar edge to the paint ``layout_mode`` - 'vertical' for a side (LEFT/RIGHT) taskbar,
         'horizontal' for TOP/BOTTOM. See ``_refresh_cached_layout_mode`` for why this drives the
         side-by-side right-align and live/preview parity."""
         return 'vertical' if edge in (
@@ -1512,7 +1512,7 @@ class NetworkSpeedWidget(QWidget):
         self.logger.debug("Performing widget cleanup...")
         try:
             # Tear down the hover usage card + its armed timer first, before the data layer
-            # (widget_state / monitor thread) goes away — otherwise a pending 350ms singleShot
+            # (widget_state / monitor thread) goes away - otherwise a pending 350ms singleShot
             # could fire _show_usage_hover_card into half-torn-down state, or leave an orphan
             # card window during shutdown.
             self._hover_card_timer.stop()

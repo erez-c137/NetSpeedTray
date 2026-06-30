@@ -1,4 +1,4 @@
-"""Data-cap "Data usage" settings section — round-trips all five data_cap_* keys."""
+"""Data-cap "Data usage" settings section - round-trips all five data_cap_* keys."""
 import pytest
 
 from netspeedtray.constants.i18n import I18nStrings

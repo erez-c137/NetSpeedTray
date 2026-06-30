@@ -1,5 +1,5 @@
 """
-Unit tests for GraphLogic — the reusable graph-engine math the Monitor's GraphHost drives.
+Unit tests for GraphLogic - the reusable graph-engine math the Monitor's GraphHost drives.
 
 (The old GraphWindow's `_update_stats_bar` overlay tests were retired with the standalone window in
 2.0; the Monitor surfaces stats in its tab header + Stats-detail sheet instead, and the worker's data

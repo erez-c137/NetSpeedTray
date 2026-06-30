@@ -1,8 +1,8 @@
 """
 Shared Fluent helpers for the Settings pages.
 
-The 2.0 Settings pages are built from one idiom — a small section caption over a stack of
-``SettingCard`` rows (the native Win11 Settings layout) — instead of the old ``QGroupBox`` frames.
+The 2.0 Settings pages are built from one idiom - a small section caption over a stack of
+``SettingCard`` rows (the native Win11 Settings layout) - instead of the old ``QGroupBox`` frames.
 This module holds the one piece that ``components.SettingCard`` doesn't: the section caption that
 groups related cards. Keeping it here means every page renders the same heading at the same size,
 colour and inset.
@@ -18,7 +18,7 @@ from netspeedtray.constants.styles import styles as tokens
 def section_header(text: str) -> QLabel:
     """A Win11 Settings section caption: semibold, transparent (NO band), with generous space ABOVE so a
     new group reads as airy/title-led, a tight gap BELOW tying it to its cards, and a left indent so its
-    text aligns with the card CONTENT (not the card stroke) — the native WinUI group-header rhythm.
+    text aligns with the card CONTENT (not the card stroke) - the native WinUI group-header rhythm.
     (Net spacing also gets the page layout's inter-widget gap added on each side.)"""
     c = su.semantic_colors()
     lbl = QLabel(text)

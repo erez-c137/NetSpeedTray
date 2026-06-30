@@ -1,5 +1,5 @@
 """
-NetworkHeader — the Monitor Network tab's header band. Verifies the period segmented control emits
+NetworkHeader - the Monitor Network tab's header band. Verifies the period segmented control emits
 the right PERIOD_MAP index, programmatic selection is silent, and the totals format with the
 locale decimal separator (matching the graph's localized text in the same window).
 """
@@ -73,10 +73,10 @@ def test_set_period_key_updates_timeline(q_app):
 
 
 def test_initial_value_placeholders_seeded(q_app):
-    """Value blocks seed to the populated shape ('↓ —' / '↑ —') so the first emit only swaps digits."""
+    """Value blocks seed to the populated shape ('↓ -' / '↑ -') so the first emit only swaps digits."""
     h = NetworkHeader(I18nStrings("en_US"), "TIMELINE_24_HOURS")
-    assert h._down[1].text() == "↓ —"
-    assert h._up[1].text() == "↑ —"
+    assert h._down[1].text() == "↓ -"
+    assert h._up[1].text() == "↑ -"
 
 
 def test_pills_style_is_theme_aware(q_app):

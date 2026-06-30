@@ -99,7 +99,7 @@ def test_smooth_series_preserves_length_and_range():
 
 
 def test_smooth_series_noop_when_too_short():
-    """Below the window length there's nothing to smooth — return the series untouched."""
+    """Below the window length there's nothing to smooth - return the series untouched."""
     import numpy as np
     ys = np.array([10.0, 20.0, 30.0])
     out = GraphRenderer._smooth_series(ys, 5)

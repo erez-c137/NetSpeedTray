@@ -36,13 +36,13 @@ class UnitsPage(QWidget):
         self.unit_type.currentIndexChanged.connect(self.on_change)
         layout.addWidget(SettingCard(self.i18n.UNIT_TYPE_LABEL, control=self.unit_type))
 
-        # Force MB Display — when on, the renderer forces MB output regardless of unit type.
+        # Force MB Display - when on, the renderer forces MB output regardless of unit type.
         self.speed_display_mode = Win11Toggle(label_text="")
         self.speed_display_mode.toggled.connect(self._on_force_mb_toggled)
         layout.addWidget(SettingCard(self._tr("FORCE_MB_LABEL", "Force MB Display"),
                                      control=self.speed_display_mode))
 
-        # Decimals — a 3-value enum {0,1,2}: a segmented control is the native Win11 idiom, NOT a
+        # Decimals - a 3-value enum {0,1,2}: a segmented control is the native Win11 idiom, NOT a
         # continuous slider (which implied a magnitude and showed a meaningless "1").
         self.decimal_places = Win11Segmented([("0", 0), ("1", 1), ("2", 2)])
         self.decimal_places.valueChanged.connect(self.on_change)
@@ -51,7 +51,7 @@ class UnitsPage(QWidget):
         # --- Interface Layout ---
         layout.addWidget(section_header(self._tr("INTERFACE_LAYOUT_GROUP", "Interface Layout")))
 
-        # NOTE: the old "Text Alignment" (left/center/right) control was removed in 2.0 — it was wired
+        # NOTE: the old "Text Alignment" (left/center/right) control was removed in 2.0 - it was wired
         # into config but never consulted by any drawText call (the widget is right-anchored to the tray
         # and left-aligns its content), so the three options did nothing. The orphan config key is left
         # in the schema for back-compat; nothing reads it.

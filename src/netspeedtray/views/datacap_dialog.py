@@ -1,8 +1,8 @@
 """
 Data-cap settings dialog (interim).
 
-A small, self-contained dialog to configure the data cap — enable, monthly cap, reset
-day, what counts, and the 80%/100% alerts — opened from the tray menu. Built from the
+A small, self-contained dialog to configure the data cap - enable, monthly cap, reset
+day, what counts, and the 80%/100% alerts - opened from the tray menu. Built from the
 new design-system primitives (a preview of the settings rework); when the full Fluent
 settings rework lands, these controls move to a "Data usage" expander on the Network page
 and this dialog can retire.

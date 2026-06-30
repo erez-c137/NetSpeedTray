@@ -1,14 +1,14 @@
 r"""
-HardwareActivityWorker — per-process CPU / RAM / GPU sampler for the Monitor's Hardware tab.
+HardwareActivityWorker - per-process CPU / RAM / GPU sampler for the Monitor's Hardware tab.
 
 Honest, admin-free, and every number measured (not estimated):
-  * CPU%  — psutil per-process, summed across a program's PIDs, normalised to total-CPU (0-100%).
-  * RAM   — psutil USS (Unique Set Size = private resident memory), summed across PIDs. This is what
+  * CPU%  - psutil per-process, summed across a program's PIDs, normalised to total-CPU (0-100%).
+  * RAM   - psutil USS (Unique Set Size = private resident memory), summed across PIDs. This is what
             Task Manager's "Memory" column shows; rss would double-count shared DLLs across a
             multi-process app and read 2-3x high. USS is heavier to read, so it's refreshed every
             ~6s (every 3rd poll) and cached, while CPU%/GPU% stay on the 2s cadence.
-  * GPU%  — Windows PDH "\GPU Engine(*)\Utilization Percentage", parsed pid_<PID>_..._engtype_ and
-            reduced with MAX across that PID's engines — the per-engine busy fractions overlap in the
+  * GPU%  - Windows PDH "\GPU Engine(*)\Utilization Percentage", parsed pid_<PID>_..._engtype_ and
+            reduced with MAX across that PID's engines - the per-engine busy fractions overlap in the
             same wall-clock interval (a frame uses 3D + Copy + Video at once) so they are NOT
             additive; max mirrors the app's system-wide _poll_gpu_hybrid. No admin, no ETW. Absent
             gracefully when the GPU Engine counter set isn't present (non-Windows / odd drivers).
@@ -51,7 +51,7 @@ class HardwareActivityWorker(QObject):
     error = pyqtSignal(str)
 
     #: Reading USS (memory_full_info) for every process is ~2.5x the cost of a plain rss sweep, but
-    #: memory moves slowly — so refresh it only every Nth poll and cache it between (CPU%/GPU% still
+    #: memory moves slowly - so refresh it only every Nth poll and cache it between (CPU%/GPU% still
     #: update every poll). With the feed's 2s cadence that's a USS refresh roughly every 6s.
     _USS_EVERY_N_POLLS: int = 3
 
@@ -70,7 +70,7 @@ class HardwareActivityWorker(QObject):
             gpu_by_pid = self._sample_gpu_by_pid()
             agg: Dict[str, Dict[str, Any]] = defaultdict(self._new_agg)
 
-            # USS (Unique Set Size) = a process's private *resident* memory — exactly what Task Manager's
+            # USS (Unique Set Size) = a process's private *resident* memory - exactly what Task Manager's
             # "Memory" column shows. rss (the full working set) includes shared DLLs, so summing it across
             # a multi-process app's children (Code's 16 procs) double-counts the shared pages and reads
             # 2-3x high. USS is ~2.5x heavier to read, so we only refresh it every Nth poll and cache it;
@@ -87,7 +87,7 @@ class HardwareActivityWorker(QObject):
                         continue
                     cpu = proc.cpu_percent(None)          # delta on psutil's cached Process object
                     # Read USS on a full refresh, OR for a program we have no cached USS for yet (e.g.
-                    # one that just launched between refreshes) — otherwise a new multi-process app would
+                    # one that just launched between refreshes) - otherwise a new multi-process app would
                     # fall back to summed rss and read 2-3x high until the next refresh.
                     uss = None
                     if refresh_uss or name_key not in self._uss_cache:

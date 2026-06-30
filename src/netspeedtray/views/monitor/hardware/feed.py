@@ -1,5 +1,5 @@
 """
-HardwareFeed — owns the per-process CPU/RAM/GPU sampler for the Monitor's Hardware tab.
+HardwareFeed - owns the per-process CPU/RAM/GPU sampler for the Monitor's Hardware tab.
 
 Same lifecycle shape as the Network tab's AppActivityFeed: a worker on its own QThread, polled only
 while the Hardware tab is visible, degrading to an 'unavailable' signal under RDP (where psutil
@@ -51,7 +51,7 @@ class HardwareFeed(QObject):
         self._worker.data_ready.connect(self.payload_ready)
         self._worker.error.connect(lambda m: self.logger.debug("hardware feed worker error: %s", m))
         self._request_sample.connect(self._worker.sample)
-        # On thread finish (during quit), release the PDH query then delete the worker — both on the
+        # On thread finish (during quit), release the PDH query then delete the worker - both on the
         # worker's own loop, so neither is lost to a stopped event loop.
         self._thread.finished.connect(self._worker.close_gpu_query)
         self._thread.finished.connect(self._worker.deleteLater)
@@ -80,7 +80,7 @@ class HardwareFeed(QObject):
             if self._thread is not None:
                 self._thread.quit()
                 if not self._thread.wait(1500):
-                    # Don't hang the GUI on an in-flight psutil.process_iter sweep — finished ->
+                    # Don't hang the GUI on an in-flight psutil.process_iter sweep - finished ->
                     # close_gpu_query/deleteLater still run when the sample completes (safe on a
                     # finished loop). The orphaned thread/worker self-release shortly after.
                     self.logger.debug("hardware feed thread slow to quit; releasing without blocking")

@@ -6,7 +6,7 @@ window: a dark title bar that follows the OS theme, rounded window corners, and
 (optionally) the Mica system backdrop.
 
 Everything here is best-effort and fail-safe. On Windows 10, on older Windows 11
-builds, or on any error, the calls become silent no-ops — so callers never have to
+builds, or on any error, the calls become silent no-ops - so callers never have to
 guard by OS version. `hwnd` is the window's native handle, i.e. ``int(widget.winId())``.
 
 Mica is intentionally OFF by default: it only reads through a window whose base has

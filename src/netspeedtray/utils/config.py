@@ -10,7 +10,7 @@ affecting the application.
 import os
 import json
 import logging
-import logging.handlers  # RotatingFileHandler — `logging` alone doesn't import this submodule
+import logging.handlers  # RotatingFileHandler - `logging` alone doesn't import this submodule
 import re
 import shutil
 import tempfile
@@ -121,7 +121,7 @@ class ObfuscatingFormatter(logging.Formatter):
         # Order matters: paths first (most specific), then narrower patterns.
         for pattern in self._path_regexes:
             sanitized_message = pattern.sub("<REDACTED_PATH>", sanitized_message)
-        # MAC and GUID before IPv6 — they contain hex/colons that could be
+        # MAC and GUID before IPv6 - they contain hex/colons that could be
         # partially matched by the IPv6 regex if processed in the wrong order.
         sanitized_message = self.MAC_REGEX.sub("<REDACTED_MAC>", sanitized_message)
         sanitized_message = self.GUID_REGEX.sub("<REDACTED_GUID>", sanitized_message)
@@ -245,7 +245,7 @@ class ConfigManager:
         # keep_data: the retention ladder values changed between versions (the old 1/7/14/30-day options
         # were replaced by 31/90/180/...). Snap any legacy value not on the CURRENT ladder to the nearest
         # current value, so an old short-retention choice maps to the new minimum (31d) instead of being
-        # reset by validation to the 1-year default — which silently expanded a privacy-conscious user's
+        # reset by validation to the 1-year default - which silently expanded a privacy-conscious user's
         # 7-day retention to a full year (#3). Runs before _validate_config (see load()).
         try:
             valid_days = list(constants.data.retention.DAYS_MAP.values())

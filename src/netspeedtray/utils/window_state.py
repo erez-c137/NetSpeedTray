@@ -161,7 +161,7 @@ def save_window_geometry(window: QWidget, main_widget: Optional[QWidget], key: s
             x, y, w, h = g.x(), g.y(), g.width(), g.height()
         else:
             # Save the FRAME top-left (pos()), NOT geometry()'s CLIENT top-left. restore_window_geometry
-            # repositions with move(), which sets the frame top-left — geometry().y() is the client top
+            # repositions with move(), which sets the frame top-left - geometry().y() is the client top
             # (frame + title-bar), so mixing the two drifts the window DOWN by the title-bar height on
             # every reopen. pos() <-> move() is the consistent, drift-free round-trip. Size stays the
             # client size (what resize() expects).

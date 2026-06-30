@@ -48,7 +48,7 @@ def mock_i18n():
     i18n.LOW_SPEED_COLOR_TOOLTIP = "Select Low Color"
     i18n.MBITS_UNIT = "Mbps"  # threshold spin-box suffix (legacy key)
 
-    # Unit labels for get_unit_labels_for_type — the Colors threshold suffix (PR #165) + Units page
+    # Unit labels for get_unit_labels_for_type - the Colors threshold suffix (PR #165) + Units page
     # resolve these. The unit constants store their own key-name as value, so getattr(i18n, "MBITS_LABEL")
     # is what the helper requests. Mega-position labels get realistic units so the suffix is assertable.
     _units = constants.network.units
@@ -64,7 +64,7 @@ def mock_i18n():
             if isinstance(_key, str):
                 setattr(i18n, _key, _unit_label_values.get(_key, _key))
 
-    # Click actions (PR #165) — General page reads these via getattr-with-default, so they're optional;
+    # Click actions (PR #165) - General page reads these via getattr-with-default, so they're optional;
     # set them so the rendered combos carry readable labels.
     i18n.INTERACTION_GROUP_TITLE = "Interaction"
     i18n.DOUBLE_CLICK_ACTION_LABEL = "Double-click action"
@@ -170,7 +170,7 @@ def test_general_page(q_app, mock_i18n, mock_callback):
     assert settings["language"] == "fr_FR"
     assert settings["update_rate"] == 2.0
     assert settings["start_with_windows"] is True
-    # free_move / tray_offset_x moved to the Widget page in the 2.0 IA — General no longer returns them.
+    # free_move / tray_offset_x moved to the Widget page in the 2.0 IA - General no longer returns them.
     assert "free_move" not in settings
     assert "tray_offset_x" not in settings
 
@@ -187,7 +187,7 @@ def test_general_page(q_app, mock_i18n, mock_callback):
 
 
 def test_language_none_round_trips_as_auto_detect(q_app, mock_i18n, mock_callback):
-    """#2: config language=None (auto-detect) must round-trip — loading selects the Auto-detect row and
+    """#2: config language=None (auto-detect) must round-trip - loading selects the Auto-detect row and
     saving returns None, NOT 'en_US' (which silently switched non-English users to English on any Save)."""
     page = GeneralPage(mock_i18n, mock_callback)
     page.load_settings({"language": None, "update_rate": 1.0}, is_startup_enabled=False)
@@ -337,7 +337,7 @@ def test_interfaces_page(q_app, mock_i18n, mock_callback):
 
 
 def test_display_enums_are_segmented_and_round_trip(q_app, mock_i18n, mock_callback):
-    """Decimal Places is a 3-value enum — a segmented control, not a slider — and must round-trip its
+    """Decimal Places is a 3-value enum - a segmented control, not a slider - and must round-trip its
     canonical int values (0/1/2). (Text Alignment was removed in 2.0; it never affected rendering.)"""
     from netspeedtray.views.settings.pages.units import UnitsPage
     from netspeedtray.utils.components import Win11Segmented

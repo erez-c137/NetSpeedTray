@@ -193,7 +193,7 @@ class TestInputHandler(unittest.TestCase):
         event.accept.assert_called_once()
 
     def test_middle_click_default_is_noop(self):
-        """Middle-click defaults to 'Nothing' — nothing fires on an empty config."""
+        """Middle-click defaults to 'Nothing' - nothing fires on an empty config."""
         event = self._create_mouse_event(button=Qt.MouseButton.MiddleButton)
 
         self.handler.handle_mouse_press(event)

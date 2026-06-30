@@ -1,10 +1,10 @@
 """
-ConnectionDetailPanel — the per-app "detail-on-demand" panel for the Monitor's Network tab.
+ConnectionDetailPanel - the per-app "detail-on-demand" panel for the Monitor's Network tab.
 
 Clicking an app in the AppBarList opens this panel for that app: its PIDs, the distinct remote hosts
 it's talking to, and the full list of live connections (TCP/UDP, local -> remote, state). It reuses
 the AppActivityWorker payload the list already receives (``distinct_hosts`` + ``endpoints``), so it
-needs no extra sampling — and it reuses the standalone App Activity window's translated strings, so
+needs no extra sampling - and it reuses the standalone App Activity window's translated strings, so
 the Monitor and that window read identically. This is the view that lets the Monitor retire the
 standalone App Activity window.
 

@@ -30,10 +30,10 @@ class TestDatabaseMigration(unittest.TestCase):
     def _create_v2_schema(self, conn):
         """Creates the legacy v2 schema (before any v3 changes).
 
-        A real v2 DB has all three speed tiers — the v2->v3 migration builds covering
+        A real v2 DB has all three speed tiers - the v2->v3 migration builds covering
         indexes on the minute/hour tables, so they must exist for it to run. (Previously
         only raw was created, so the migration failed and the old code silently
-        fresh-built over it — the exact data-loss bug now guarded against.)
+        fresh-built over it - the exact data-loss bug now guarded against.)
         """
         cursor = conn.cursor()
         cursor.execute("CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT)")

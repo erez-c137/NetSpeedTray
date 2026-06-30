@@ -1,5 +1,5 @@
 """
-HardwareActivityWorker + HardwareBarList — the Monitor Hardware tab. Verifies per-process CPU is
+HardwareActivityWorker + HardwareBarList - the Monitor Hardware tab. Verifies per-process CPU is
 normalised to total-CPU and the idle process is excluded, GPU% is summed per PID from PDH instance
 names, and the bar list builds/updates/sorts + handles empty/RDP states.
 """
@@ -76,7 +76,7 @@ def test_worker_excludes_idle_and_normalises_cpu(monkeypatch, q_app):
 
 def test_worker_new_multiproc_app_between_refreshes_uses_uss(monkeypatch, q_app):
     """A multi-process program that appears AFTER the first (refresh) poll must still report summed USS,
-    not summed rss — which double-counts shared DLLs. Regression for the cache-miss fallback (USS is
+    not summed rss - which double-counts shared DLLs. Regression for the cache-miss fallback (USS is
     only fully refreshed every Nth poll, so a newly launched app would otherwise read 2-3x high)."""
     import psutil
     monkeypatch.setattr(W, "win32pdh", None)
@@ -198,7 +198,7 @@ def test_list_empty_and_rdp(q_app):
 def test_gpu_column_shows_dash_when_unavailable(q_app):
     lst = HardwareBarList(I18nStrings("en_US"))
     lst.set_payload(_hpayload([_hrow("a.exe", 5, 100, 0)], gpu=False))
-    assert lst._rows["a.exe"]._gpu.text() == "—"
+    assert lst._rows["a.exe"]._gpu.text() == "-"
 
 
 def test_feed_rdp_degrades_without_thread(q_app, monkeypatch):

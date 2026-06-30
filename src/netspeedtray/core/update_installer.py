@@ -2,7 +2,7 @@
 Secure one-click update: download the signed installer, verify it, run it.
 
 Flow (any failure falls back to opening the GitHub release page in the browser, i.e.
-the old behavior — so the worst case is never worse than before):
+the old behavior - so the worst case is never worse than before):
 
     download installer_url -> %TEMP%  (HTTPS, with a progress dialog)
       -> signature_verifier.verify_file()  (WinVerifyTrust + SignPath pin, fail-closed)
@@ -83,7 +83,7 @@ def launch_installer(path: str) -> None:
 
 
 class _DownloadWorker(QObject):
-    """Downloads, THEN verifies — both on the worker thread so the UI never blocks."""
+    """Downloads, THEN verifies - both on the worker thread so the UI never blocks."""
     progress = pyqtSignal(int)
     verified = pyqtSignal(str, bool, str)  # path, trusted, reason
     failed = pyqtSignal(str)
@@ -108,7 +108,7 @@ class _DownloadWorker(QObject):
         if self._cancelled:
             self.failed.emit("cancelled")
             return
-        # Verify on THIS (worker) thread — WinVerifyTrust can block on revocation I/O.
+        # Verify on THIS (worker) thread - WinVerifyTrust can block on revocation I/O.
         result = verify_file(self._dest)
         self.verified.emit(self._dest, result.trusted, result.reason)
 
@@ -149,7 +149,7 @@ class SecureUpdater(QObject):
             # Download into a private per-run directory. mkdtemp creates it 0700
             # (owner-only) instead of the shared %TEMP% root, so the verified file
             # can't be swapped out from under us between verification and launch
-            # (TOCTOU hardening — H5).
+            # (TOCTOU hardening - H5).
             sweep_stale_update_dirs()   # clear any orphaned dir from a previous successful update first
             self._tmpdir = tempfile.mkdtemp(prefix="NetSpeedTray-update-")
             self._dest = os.path.join(self._tmpdir, "NetSpeedTray-Setup.exe")

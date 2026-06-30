@@ -6,7 +6,7 @@ draws live values and expands the number area to fit them. If the reserved
 reference is narrower than a realistic value, the rendered text clips past the
 widget edge. In "always_mbps" mode the value is shown in the mega unit, which at
 multi-gig speeds is four integer digits (e.g. 1250 MB/s at 10GbE, ~1192 MiB/s),
-so the reference MUST reserve >= 4 integer digits for every unit type — including
+so the reference MUST reserve >= 4 integer digits for every unit type - including
 the bytes units, which previously only reserved 3 and clipped at ~8 Gbit/s.
 """
 import pytest

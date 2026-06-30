@@ -78,12 +78,12 @@ def test_settings_changed_rerenders_active_graph(q_app):
 
 def test_gear_persistent_enabled_only_on_hardware(q_app):
     win = _window()
-    # The gear is PERSISTENT (always visible — hiding it made it flicker on every pivot); it's only
+    # The gear is PERSISTENT (always visible - hiding it made it flicker on every pivot); it's only
     # *enabled* on Hardware, where it has an effect, and dimmed/disabled elsewhere.
-    win._on_tab_changed(1)                       # Network — gear has no effect here
+    win._on_tab_changed(1)                       # Network - gear has no effect here
     assert not win._gear.isHidden()
     assert not win._gear.isEnabled()
-    win._on_tab_changed(2)                       # Hardware — gear is relevant
+    win._on_tab_changed(2)                       # Hardware - gear is relevant
     assert not win._gear.isHidden()
     assert win._gear.isEnabled()
 
@@ -135,7 +135,7 @@ def test_refresh_resyncs_mode_smoothing_axis(q_app):
     assert f._mode.value() == "separate"
     assert f._smooth.isChecked() is True
     assert f._axis.value() is False
-    # Re-sync must not echo back as a write storm — values still match config (no flip-flop).
+    # Re-sync must not echo back as a write storm - values still match config (no flip-flop).
     assert config["monitor_hw_graph_mode"] == "separate"
 
 

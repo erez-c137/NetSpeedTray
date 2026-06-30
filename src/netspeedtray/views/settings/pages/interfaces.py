@@ -50,7 +50,7 @@ class InterfacesPage(QWidget):
         self.all_virtual_interfaces_radio = QRadioButton(self.i18n.MONITORING_MODE_VIRTUAL)
         self.selected_interfaces_radio = QRadioButton(self.i18n.MONITORING_MODE_SELECTED)
 
-        # Subtitle under each option (muted, indented to align under the radio label) — the Win11
+        # Subtitle under each option (muted, indented to align under the radio label) - the Win11
         # "option + helper text" pattern.
         subtitle_style = (f"color: {c['text_secondary']}; font-size: 11px;"
                           f" margin-left: 24px; margin-bottom: 6px; background: transparent;")
@@ -89,7 +89,7 @@ class InterfacesPage(QWidget):
 
         layout.addWidget(mode_card)
 
-        # Connection section — latency monitoring (gateway + opt-in public anchor) + advertised plan.
+        # Connection section - latency monitoring (gateway + opt-in public anchor) + advertised plan.
         self.connection = ConnectionSettings(self.on_change, self.i18n)
         layout.addWidget(self.connection)
 

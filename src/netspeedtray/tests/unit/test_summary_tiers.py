@@ -1,6 +1,6 @@
 """
 Window summaries (and the hardware-history series) for a window LONGER than the 24h raw horizon must
-cover the WHOLE window — the recent <24h is still in the raw tier, the older portion in minute/hour.
+cover the WHOLE window - the recent <24h is still in the raw tier, the older portion in minute/hour.
 
 Regression for the audit blocker: summarize_* read only the rollup tier for win>24h (raw fallback fired
 only when the rollup was totally empty), so a 48h/week/month summary silently dropped the most recent
@@ -42,12 +42,12 @@ def test_network_summary_includes_recent_raw_tier_for_long_window(state):
     MIN = constants.data.SPEED_TABLE_MINUTE
     RAW = constants.data.SPEED_TABLE_RAW
 
-    # Older half (24–48h ago) lives in the MINUTE rollup: 10 buckets, 60 samples each, modest speeds.
+    # Older half (24-48h ago) lives in the MINUTE rollup: 10 buckets, 60 samples each, modest speeds.
     cur.executemany(
         f"INSERT INTO {MIN} (timestamp, interface_name, upload_avg, download_avg, upload_max, download_max, sample_count) "
         f"VALUES (?, 'Ethernet', 0, 1000, 0, 2000, 60)",
         [(st + 60 * i,) for i in range(10)])
-    # Recent half (<24h) lives only in RAW — with a distinctive PEAK the rollup tier never saw.
+    # Recent half (<24h) lives only in RAW - with a distinctive PEAK the rollup tier never saw.
     PEAK = 9_000_000
     cur.executemany(
         f"INSERT INTO {RAW} (timestamp, interface_name, upload_bytes_sec, download_bytes_sec) "
@@ -57,7 +57,7 @@ def test_network_summary_includes_recent_raw_tier_for_long_window(state):
 
     s = state.summarize_network("download", now - timedelta(hours=48), now, "all", poll_interval=1.0)
     assert s.count == 10 * 60 + 50, "summary dropped a tier (recent raw not merged with older rollup)"
-    assert s.max == PEAK, "the recent raw peak was missing — the most-recent-day-dropped bug"
+    assert s.max == PEAK, "the recent raw peak was missing - the most-recent-day-dropped bug"
     assert s.exact is False                         # a rolled-up window is honestly non-exact
 
 
@@ -84,7 +84,7 @@ def test_hardware_summary_includes_recent_raw_tier_for_long_window(state):
 
 def test_network_coverage_is_interface_count_independent(state):
     """The evidence-admissibility coverage_pct must reflect distinct TIME buckets, not SUM(sample_count)
-    — which doubled (then clamped) for an 'all' aggregate with ≥2 NICs, masking real under-coverage."""
+    - which doubled (then clamped) for an 'all' aggregate with ≥2 NICs, masking real under-coverage."""
     now = datetime.now()
     st = int((now - timedelta(hours=48)).timestamp())
     cur = state.db_worker.conn.cursor()

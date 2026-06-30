@@ -382,7 +382,7 @@ class PositionCalculator:
             dpi_scale = taskbar_info.dpi_scale if taskbar_info.dpi_scale > 0 else 1.0
 
             if edge in (constants.taskbar.edge.BOTTOM, constants.taskbar.edge.TOP):
-                # Horizontal Constraint — center on visible taskbar area
+                # Horizontal Constraint - center on visible taskbar area
                 screen_obj = taskbar_info.get_screen()
                 if screen_obj and edge == constants.taskbar.edge.BOTTOM:
                     vis_top = screen_obj.availableGeometry().bottom() + 1
@@ -458,7 +458,7 @@ class PositionManager(QObject):
     def update_position(self, fresh_taskbar_info: Optional[TaskbarInfo] = None) -> None:
         """
         Main entry point to update the widget's position.
-        Uses fresh taskbar info if provided, otherwise fetches it — honoring
+        Uses fresh taskbar info if provided, otherwise fetches it - honoring
         the `preferred_monitor` setting (#72) when present.
         """
         try:
@@ -515,7 +515,7 @@ class PositionManager(QObject):
 
         # Use the widget's center to identify which monitor the saved position
         # belongs to. This handles the case where the user drags the widget to
-        # a secondary screen — the primary-screen taskbar in self._state would
+        # a secondary screen - the primary-screen taskbar in self._state would
         # otherwise reject coordinates that are perfectly valid on monitor 2.
         center = QPoint(saved_x + widget_width // 2, saved_y + widget_height // 2)
         screen = QApplication.screenAt(center)

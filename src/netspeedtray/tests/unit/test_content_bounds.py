@@ -67,14 +67,14 @@ def test_side_by_side_content_right_aligns(q_app):
     """The side-by-side widget right-aligns its content so the worst-case width reservation's surplus
     sits on the LEFT (toward the app icons), not as dead space between the content and the system tray.
     Rendered at a width deliberately wider than the content, the content's right edge hugs the widget
-    edge — and a single-metric (network-only) layout is left unchanged (it fills its width)."""
+    edge - and a single-metric (network-only) layout is left unchanged (it fills its width)."""
     from PyQt6.QtGui import QPixmap, QPainter, QColor
     from netspeedtray.utils.widget_paint import render_widget, WidgetMetrics, font_from_config
 
     m = WidgetMetrics(upload_mbps=0.3, download_mbps=0.1, cpu_usage=14.0, gpu_usage=0.0,
                       cpu_temp=65.0, ram_used=12.0, ram_total=15.7)
     # Render onto a canvas deliberately MUCH wider than the content so the right-align engages
-    # regardless of the host's font metrics (CI ships no fonts, so absolute widths aren't portable —
+    # regardless of the host's font metrics (CI ships no fonts, so absolute widths aren't portable -
     # but "content narrower than a 600px canvas" holds for every font).
     W, H = 600, 40
 
@@ -101,7 +101,7 @@ def test_layout_mode_maps_horizontal_taskbar_so_right_align_fires(q_app):
     """The right-align probe only fires for layout_mode='horizontal'. The live widget derives that from
     the taskbar edge, and the value MUST match what PreviewWidget uses for the same scenario (a bottom
     taskbar) or the live widget and the Settings/Overview preview diverge. Regression for the inverted
-    mapping that left the common TOP/BOTTOM taskbar at 'vertical' (probe skipped) — preview right-aligned
+    mapping that left the common TOP/BOTTOM taskbar at 'vertical' (probe skipped) - preview right-aligned
     while the live widget kept the dead-space gap."""
     from netspeedtray import constants
     from netspeedtray.views.widget.main import NetworkSpeedWidget

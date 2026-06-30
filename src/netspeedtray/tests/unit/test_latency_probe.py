@@ -1,5 +1,5 @@
 """
-LatencyProbe — the gateway/anchor latency sampler. ICMP + WMI gateway detection need a real network,
+LatencyProbe - the gateway/anchor latency sampler. ICMP + WMI gateway detection need a real network,
 so this covers the testable logic: gateway caching, and that one probe iteration emits gw/anchor/loss
 with the public anchor gated on the opt-in flag.
 """
@@ -52,7 +52,7 @@ def test_timeout_is_loss(monkeypatch):
 
 def test_run_initializes_and_uninitializes_com(monkeypatch):
     """run() MUST CoInitialize on its own thread or wmi.WMI() (gateway detection) raises and the gateway
-    probe — the privacy-preserving default — silently never works. Regression for the missing COM init."""
+    probe - the privacy-preserving default - silently never works. Regression for the missing COM init."""
     import pythoncom
     calls = []
     monkeypatch.setattr(pythoncom, "CoInitialize", lambda: calls.append("init"))

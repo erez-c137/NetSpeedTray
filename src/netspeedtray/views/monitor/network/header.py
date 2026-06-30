@@ -1,9 +1,9 @@
 """
-NetworkHeader — the Monitor Network tab's header band: machine-wide Download/Upload totals for the
+NetworkHeader - the Monitor Network tab's header band: machine-wide Download/Upload totals for the
 selected period, plus a segmented timeline control that drives the shared graph.
 
 Standalone by design. It reuses only the pill *style* from utils.styles (matplotlib-free) and the
-period keys from constants — never the graph package — so importing this module can't trip the
+period keys from constants - never the graph package - so importing this module can't trip the
 Monitor's matplotlib firewall, and the Monitor stays decoupled from the graph window it replaces.
 """
 from __future__ import annotations
@@ -20,7 +20,7 @@ from netspeedtray.constants.styles import styles as tokens
 from netspeedtray.utils.helpers import format_data_size
 from netspeedtray.views.monitor.timeline_selector import TimelineSelector
 
-# (short label, period key) — mirrors the graph window's pills so the two surfaces feel identical.
+# (short label, period key) - mirrors the graph window's pills so the two surfaces feel identical.
 _PILLS = [
     ("SESS", "TIMELINE_SESSION"),
     ("BOOT", "TIMELINE_SYSTEM_UPTIME"),
@@ -97,11 +97,11 @@ class NetworkHeader(QWidget):
         c = su.semantic_colors()
 
         # One calm, full-width band: the Download/Upload totals as the headline (left), and the two
-        # controls — interface filter + the SAME timeline dropdown the Overview uses — given proper room
+        # controls - interface filter + the SAME timeline dropdown the Overview uses - given proper room
         # on the right. (Replaces the cramped six-pill strip; the dropdown also unlocks the finer ranges
         # 30m/1h/4h/8h/12h/48h the pills never had, and keeps all three tabs consistent.)
         # Fixed height + the shared side inset so the controls sit at the SAME vertical centre + right
-        # edge as the Overview/Hardware bands — switching tabs no longer makes the dropdown jump.
+        # edge as the Overview/Hardware bands - switching tabs no longer makes the dropdown jump.
         self.setFixedHeight(constants.layout.MONITOR_HEADER_BAND_HEIGHT)
         root = QHBoxLayout(self)
         _m = constants.layout.MONITOR_BODY_MARGIN
@@ -121,10 +121,10 @@ class NetworkHeader(QWidget):
         controls.setSpacing(constants.layout.MONITOR_CONTROL_SPACING)
         root.addLayout(controls)
 
-        # Per-NIC filter — scopes both the graph and these totals to one interface (or all). Built as a
+        # Per-NIC filter - scopes both the graph and these totals to one interface (or all). Built as a
         # QToolButton + menu styled IDENTICALLY to the TimelineSelector (a QComboBox loses its native
         # arrow when styled and renders as a bare box; this also keeps the two right-side controls the
-        # same height + look — the owner's consistency note).
+        # same height + look - the owner's consistency note).
         self._iface_value = "all"
         self._iface_btn = QToolButton()
         self._iface_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -154,7 +154,7 @@ class NetworkHeader(QWidget):
         self._timeline.period_changed.connect(self.period_changed)
         controls.addWidget(self._timeline, 0, Qt.AlignmentFlag.AlignVCenter)
 
-        # Live/Pause pill — RIGHTMOST (owner preference), after the timeline. Bound to the shared host's
+        # Live/Pause pill - RIGHTMOST (owner preference), after the timeline. Bound to the shared host's
         # canonical state so the Hardware tab's pill mirrors it (and vice-versa).
         if graph_host is not None:
             from netspeedtray.views.monitor.live_toggle import LiveToggle
@@ -168,7 +168,7 @@ class NetworkHeader(QWidget):
         name = QLabel(label)
         name.setFont(su.font(tokens.TYPE_CAPTION))
         name.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
-        value = QLabel(f"{glyph} —")     # seed the populated shape so the first emit only swaps the number
+        value = QLabel(f"{glyph} -")     # seed the populated shape so the first emit only swaps the number
         value.setFont(su.font(tokens.TYPE_SUBTITLE))
         value.setStyleSheet(f"color: {c['text_primary']}; background: transparent;")
         col.addWidget(name)
@@ -176,7 +176,7 @@ class NetworkHeader(QWidget):
         return col, value
 
     def _period_label(self, period_key: str) -> str:
-        """Localized window name for the totals — reuses the existing TIMELINE_* i18n values
+        """Localized window name for the totals - reuses the existing TIMELINE_* i18n values
         (e.g. '24 Hours'), so no new translator keys."""
         return self._tr(period_key, period_key.replace("TIMELINE_", "").replace("_", " ").title())
 

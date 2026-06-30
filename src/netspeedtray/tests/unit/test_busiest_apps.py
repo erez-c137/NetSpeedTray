@@ -1,5 +1,5 @@
 """
-BusiestAppsCard — the Overview's top-talkers tile. Verifies the honest ranking (active-first, then by
+BusiestAppsCard - the Overview's top-talkers tile. Verifies the honest ranking (active-first, then by
 live connection count), the hard cap of 5 rows, the empty/unavailable states, and that a row/card click
 asks to navigate to the Network tab. The psutil sampler itself isn't started here (no real network).
 """
