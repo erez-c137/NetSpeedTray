@@ -77,8 +77,8 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 ; The app self-registers its "start with Windows" entry at runtime (StartupManager writes the HKCU Run
 ; key so the path always matches the actually-installed exe). The installer never creates it - but since
 ; start-with-Windows is ON by default, we delete the value on UNINSTALL only, so removing the app never
-; leaves a dead Run entry pointing at a deleted exe. (uninstalldeletevalue does nothing at install time.)
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "{#MyAppName}"; Flags: uninstalldeletevalue
+; leaves a dead Run entry pointing at a deleted exe. (uninsdeletevalue does nothing at install time.)
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "{#MyAppName}"; Flags: uninsdeletevalue
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
