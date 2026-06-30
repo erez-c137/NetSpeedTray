@@ -28,6 +28,12 @@ class GeneralPage(QWidget):
         self.language_combo = Win11ComboBox()
         self.language_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.language_combo.setMinimumWidth(220)
+        # First row = "Auto-detect (system)" (userData=None), so the default config `language: None`
+        # round-trips. Without it, None couldn't be selected, the combo sat on row 0 (en_US), and
+        # clicking Save without ever touching the dropdown silently switched non-English users to
+        # English + popped a spurious "restart to apply language" dialog (#2).
+        self.language_combo.addItem(
+            getattr(self.i18n, "LANGUAGE_AUTO_DETECT", "Auto-detect (system)"), userData=None)
         for code, name in self.i18n.LANGUAGE_MAP.items():
             self.language_combo.addItem(name, userData=code)
         self.language_combo.currentIndexChanged.connect(self.on_change)
@@ -118,11 +124,14 @@ class GeneralPage(QWidget):
             self._populate_monitor_combo()
 
     def load_settings(self, config: Dict[str, Any], is_startup_enabled: bool):
-        # Language
-        current_lang = config.get("language", "en")
-        index = self.language_combo.findData(current_lang)
-        if index >= 0:
-            self.language_combo.setCurrentIndex(index)
+        # Language — None means auto-detect (the first combo row); a real code selects its own row.
+        current_lang = config.get("language")
+        if current_lang is None:
+            self.language_combo.setCurrentIndex(0)   # "Auto-detect (system)"
+        else:
+            index = self.language_combo.findData(current_lang)
+            if index >= 0:
+                self.language_combo.setCurrentIndex(index)
 
         # Update Rate - Map config value to slider position (0-4)
         raw_rate = float(config.get("update_rate", constants.config.defaults.DEFAULT_UPDATE_RATE))

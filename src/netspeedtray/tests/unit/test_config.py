@@ -165,6 +165,19 @@ def test_config_migration_with_valid_version(config_manager):
     assert "font_size" in result
 
 
+def test_keep_data_legacy_value_snaps_to_nearest_not_year(config_manager):
+    """#3: a retention value from the OLD ladder (e.g. 7-day) must snap to the nearest CURRENT ladder
+    value (the 31-day minimum), not get reset to the 1-year default by validation on upgrade."""
+    valid = list(constants.data.retention.DAYS_MAP.values())
+    # Old short retentions -> the new minimum, not 365
+    for old in (1, 7, 14, 30):
+        result = config_manager._migrate_config({"keep_data": old})
+        assert result["keep_data"] == min(valid), f"old keep_data {old} -> {result['keep_data']}"
+    # Values still on the current ladder are untouched
+    for keep in (90, 365):
+        assert config_manager._migrate_config({"keep_data": keep})["keep_data"] == keep
+
+
 def test_config_migration_with_non_string_version(config_manager):
     """Verify migration handles non-string version values (edge case)."""
     invalid_config = {

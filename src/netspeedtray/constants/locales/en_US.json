@@ -417,5 +417,7 @@
     "CONN_PLAN_OFF": "Off",
     "HW_THROTTLE_LABEL": "Throttle temp (stats)",
     "STATS_DETAIL_EXPORT_SAVE": "Save export",
-    "STATS_DETAIL_EXPORT_ZIP_LABEL": "Zip archive"
+    "STATS_DETAIL_EXPORT_ZIP_LABEL": "Zip archive",
+    "LANGUAGE_AUTO_DETECT": "Auto-detect (system)",
+    "SETTINGS_SAVE_FAILED": "Settings could not be saved — a settings page failed to provide its values, so your changes were not applied. See the log for details."
 }

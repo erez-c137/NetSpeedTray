@@ -159,6 +159,18 @@ def test_general_page(q_app, mock_i18n, mock_callback):
     assert settings_smart["update_rate"] == -1.0  # Smart mode
     assert settings_smart["language"] == "en_US"
 
+
+def test_language_none_round_trips_as_auto_detect(q_app, mock_i18n, mock_callback):
+    """#2: config language=None (auto-detect) must round-trip — loading selects the Auto-detect row and
+    saving returns None, NOT 'en_US' (which silently switched non-English users to English on any Save)."""
+    page = GeneralPage(mock_i18n, mock_callback)
+    page.load_settings({"language": None, "update_rate": 1.0}, is_startup_enabled=False)
+    assert page.language_combo.currentIndex() == 0            # the "Auto-detect (system)" row is first
+    assert page.get_settings()["language"] is None            # None round-trips, not 'en_US'
+    # An explicit language still selects + returns its own code
+    page.load_settings({"language": "fr_FR", "update_rate": 1.0}, is_startup_enabled=False)
+    assert page.get_settings()["language"] == "fr_FR"
+
 def test_appearance_page(q_app, mock_i18n, mock_callback):
     """Test AppearancePage."""
     font_cb = MagicMock()

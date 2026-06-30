@@ -242,7 +242,23 @@ class ConfigManager:
             migrated["unit_type"] = unit_migration[current_unit]
             self.logger.info(f"Migrated unit_type: '{current_unit}' -> '{migrated['unit_type']}'")
             changes_made = True
-        
+
+        # keep_data: the retention ladder values changed between versions (the old 1/7/14/30-day options
+        # were replaced by 31/90/180/...). Snap any legacy value not on the CURRENT ladder to the nearest
+        # current value, so an old short-retention choice maps to the new minimum (31d) instead of being
+        # reset by validation to the 1-year default — which silently expanded a privacy-conscious user's
+        # 7-day retention to a full year (#3). Runs before _validate_config (see load()).
+        try:
+            valid_days = list(constants.data.retention.DAYS_MAP.values())
+            kd = migrated.get("keep_data")
+            if isinstance(kd, (int, float)) and not isinstance(kd, bool) and int(kd) not in valid_days:
+                nearest = min(valid_days, key=lambda v: abs(v - kd))
+                self.logger.info("Migrated keep_data %s -> %s (nearest on the current retention ladder)", kd, nearest)
+                migrated["keep_data"] = nearest
+                changes_made = True
+        except Exception as e:
+            self.logger.debug("keep_data migration skipped: %s", e)
+
         # Version-based migrations (applied if loaded_version < target version)
         # Example structure for future versions:
         # if self._version_less_than(loaded_version, "2.0"):

@@ -646,7 +646,14 @@ class SettingsDialog(QDialog):
         try:
             final_settings = self.get_settings()
             if not final_settings:
+                # get_settings() returns {} only when a page raised while collecting. Don't silently
+                # no-op (the user clicked Save and would see nothing happen) — tell them it failed (#18).
                 self.logger.warning("Could not retrieve settings from pages.")
+                QMessageBox.critical(
+                    self, self.i18n.ERROR_TITLE,
+                    getattr(self.i18n, "SETTINGS_SAVE_FAILED",
+                            "Settings could not be saved — a settings page failed to provide its "
+                            "values, so your changes were not applied. See the log for details."))
                 return
 
             selected_language = final_settings.get("language")
