@@ -53,6 +53,15 @@ def test_zero_and_negative_clamp_to_base_zero(en):
     assert format_speed(-9999, en, split_unit=True) == ("0", en.BITS_LABEL)
 
 
+def test_non_finite_input_renders_zero_not_inf_or_nan(en):
+    """#14: NaN/inf from a bad caller must clamp to zero, never the literal 'inf'/'nan' in the UI."""
+    for bad in (float("inf"), float("-inf"), float("nan")):
+        s = format_speed(bad, en, force_mega_unit=True)
+        assert "inf" not in s.lower() and "nan" not in s.lower(), s
+        v, _u = format_speed(bad, en, split_unit=True)
+        assert v == "0"
+
+
 # --- bytes, decimal ----------------------------------------------------------
 
 def test_bytes_decimal_scaling(en):

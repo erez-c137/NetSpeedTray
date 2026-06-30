@@ -119,6 +119,28 @@ def test_update_speeds_handles_resume_from_sleep(controller_instance, mock_widge
     assert controller.last_check_time == time_before_sleep + 600.0
 
 
+def test_odometer_counts_bytes_even_when_all_rates_exceed_ceiling(controller_instance, mock_widget_state):
+    """#13: a counter jump whose RATE exceeds MAX_REASONABLE_SPEED_BPS is display-dropped (continue),
+    but the REAL bytes must still reach the data-cap odometer (add_usage_bytes), not be lost with the
+    display. Previously the odometer feed was gated on the (now-empty) display data."""
+    controller = controller_instance
+    controller.config["interface_mode"] = "all_physical"
+    controller.last_check_time = time.monotonic()
+    controller.last_interface_counters = {"Wi-Fi": MockNetIO(bytes_sent=0, bytes_recv=0)}
+    controller.primary_interface = None
+    controller.set_view(MagicMock())
+
+    huge = 30 * 1024**3  # 30 GiB in 1s -> ~30 GB/s, far above the ~12.5 GB/s ceiling -> display-dropped
+    second = {"Wi-Fi": MockNetIO(bytes_sent=huge, bytes_recv=0)}
+    with patch('time.monotonic', return_value=controller.last_check_time + 1.0):
+        controller._handle_network_counters(second)
+
+    mock_widget_state.add_speed_data.assert_not_called()       # over-ceiling rate -> dropped from display
+    mock_widget_state.add_usage_bytes.assert_called_once()     # ...but the real bytes WERE counted
+    up_bytes, down_bytes = mock_widget_state.add_usage_bytes.call_args[0]
+    assert up_bytes == huge and down_bytes == 0
+
+
 def test_aggregate_for_display_select_specific_mode(controller_instance):
     """
     Tests that the _aggregate_for_display method correctly sums only the

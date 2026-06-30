@@ -200,7 +200,7 @@ class PositionCalculator:
                         "Widget height %s exceeds max %spx (DPI-scaled). Clamping to prevent off-screen positioning.",
                         widget_height, max_height
                     )
-                    widget_height = ui_widget.MAX_WIDGET_HEIGHT_PX
+                    widget_height = max_height   # DPI-scaled bound (mirror the width clamp; was the unscaled const)
 
             # Use possibly-clamped size for subsequent calculations
             widget_size = (widget_width, widget_height)

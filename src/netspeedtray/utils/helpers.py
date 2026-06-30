@@ -5,6 +5,7 @@ This module provides foundational functions for directory management, logging se
 and data formatting used across the application.
 """
 
+import math
 import os
 import sys
 import logging
@@ -181,6 +182,8 @@ def format_speed(
     decimal_places = max(0, min(2, int(decimal_places)))
 
     current_speed = max(0.0, float(speed))
+    if not math.isfinite(current_speed):
+        current_speed = 0.0   # reject NaN/inf so we never render the literal "inf"/"nan" (#14)
     val: float
     unit: str
     network_consts = constants.network.units

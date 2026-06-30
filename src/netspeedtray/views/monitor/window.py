@@ -107,7 +107,9 @@ class MonitorWindow(QWidget):
             d.stack_index = i
             self._stack.addWidget(self._placeholder())
 
-        # Hardware tab is config-gated (hidden when no hardware monitoring is on).
+        # Apply per-tab visibility. NOTE: the Hardware tab is intentionally ALWAYS visible — its
+        # descriptor uses the default is_visible (lambda cfg: True) because the Monitor force-enables
+        # hardware collection while it's open (see _build_descriptors). No tab is config-gated today.
         for d in self._descriptors:
             self._tab_bar.set_tab_visible(d.tab_id, d.is_visible(self.config))
 

@@ -62,7 +62,8 @@ class PreviewWidget(QWidget):
         self.update()
 
     def set_layout_mode(self, mode: str) -> None:
-        """'horizontal' or 'vertical' (small-taskbar two-row) layout."""
+        """'horizontal' (TOP/BOTTOM taskbar) or 'vertical' (LEFT/RIGHT side taskbar) — informational;
+        the shared paint path always draws the two-row stack today."""
         self._layout_mode = mode
         self.update()
 

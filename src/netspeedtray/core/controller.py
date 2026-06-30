@@ -269,15 +269,17 @@ class StatsController(QObject):
 
         agg_upload, agg_download = self._aggregate_for_display(self.current_speed_data)
 
-        if self.current_speed_data:
-            if self.widget_state:
-                self.widget_state.add_speed_data(self.current_speed_data, aggregated_up=agg_upload, aggregated_down=agg_download)
-                # Feed the odometer the exact aggregated bytes transferred this poll
-                # (same interface selection as the display, but raw deltas not rates).
-                # resolve_primary=False reuses the primary already resolved above, so we
-                # don't run the blocking routing lookup twice per poll.
-                agg_up_bytes, agg_down_bytes = self._aggregate_for_display(byte_deltas, resolve_primary=False)
-                self.widget_state.add_usage_bytes(agg_up_bytes, agg_down_bytes)
+        if self.current_speed_data and self.widget_state:
+            self.widget_state.add_speed_data(self.current_speed_data, aggregated_up=agg_upload, aggregated_down=agg_download)
+
+        # Feed the odometer the exact aggregated bytes transferred this poll (same interface selection
+        # as the display, but raw deltas not rates). Gated on byte_deltas, NOT current_speed_data: when
+        # every interface's *rate* exceeds the ceiling it is display-dropped (continue above) and
+        # current_speed_data is empty, but the bytes are real and must still be counted (#13).
+        # resolve_primary=False reuses the primary already resolved by _aggregate_for_display above.
+        if byte_deltas and self.widget_state:
+            agg_up_bytes, agg_down_bytes = self._aggregate_for_display(byte_deltas, resolve_primary=False)
+            self.widget_state.add_usage_bytes(agg_up_bytes, agg_down_bytes)
 
         upload_mbps = (agg_upload * 8) / 1_000_000
         download_mbps = (agg_download * 8) / 1_000_000

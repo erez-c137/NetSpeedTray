@@ -216,7 +216,9 @@ def render_widget(painter: QPainter, rect: QRect, renderer: WidgetRenderer, conf
         rect: the target rectangle (the widget/preview rect).
         renderer: a `WidgetRenderer` bound to `config`'s i18n/theme.
         metrics: the frame snapshot to draw.
-        layout_mode: 'horizontal' or 'vertical' (small-taskbar two-row).
+        layout_mode: 'horizontal' for a TOP/BOTTOM taskbar, 'vertical' for a LEFT/RIGHT (side) taskbar
+            (per NetworkSpeedWidget._layout_mode_for_edge). NOTE: the renderer does not currently branch
+            on this — it always draws the two-row stack — so the value is informational today.
         cycle_mode: which single metric to show when `config.widget_display_mode == 'cycle'`.
         network_width: width of the network segment for side_by_side graph scoping.
         font: font to apply before drawing foreground text.

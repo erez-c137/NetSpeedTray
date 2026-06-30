@@ -75,7 +75,12 @@ def run_interactive_export(parent, widget_state, start: datetime, end: datetime,
     box.exec()
     if box.clickedButton() is open_btn:
         try:
-            subprocess.Popen(["explorer", "/select,", os.path.normpath(zip_path)])
+            # Launch explorer by ABSOLUTE path (it lives in the Windows dir, not System32). A bare
+            # "explorer" lets CreateProcess search the current directory first, and the portable build
+            # chdir's into its own — user/attacker-writable — folder, so a planted explorer.exe could run.
+            # Same CWD-hijack hardening the codebase already applies to nvidia-smi (monitor_thread.py).
+            explorer = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "explorer.exe")
+            subprocess.Popen([explorer, "/select,", os.path.normpath(zip_path)])
         except Exception:
             pass
 
