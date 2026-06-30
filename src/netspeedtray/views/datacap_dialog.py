@@ -19,6 +19,7 @@ from netspeedtray.utils import styles as su
 from netspeedtray.constants.styles import styles as tokens
 from netspeedtray.utils.components import SettingCard, Win11Toggle, Win11Segmented
 from netspeedtray.utils.dwm import apply_win11_chrome
+from netspeedtray.utils.helpers import format_decimal
 
 
 def _bytes_to_gb(b: float) -> float:
@@ -43,8 +44,8 @@ class DataCapDialog(QDialog):
         title.setStyleSheet(f"color: {c['text_primary']}; background: transparent;")
         root.addWidget(title)
 
-        used = QLabel(self._tr("DATA_CAP_USED_TEMPLATE", "Used this period: {used:.1f} GB")
-                      .format(used=_bytes_to_gb(used_bytes)))
+        used = QLabel(self._tr("DATA_CAP_USED_TEMPLATE", "Used this period: {used} GB")
+                      .format(used=format_decimal(_bytes_to_gb(used_bytes), self._i18n, 1)))
         used.setFont(su.font(tokens.TYPE_CAPTION))
         used.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
         root.addWidget(used)

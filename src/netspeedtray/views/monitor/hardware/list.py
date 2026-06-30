@@ -196,11 +196,11 @@ class HardwareBarList(QWidget):
     def _summary_text(self, payload: Dict[str, Any]) -> str:
         rv, ru = format_data_size(int(payload.get("total_rss_bytes", 0)), self._i18n, precision=1)
         tmpl = self._tr("HARDWARE_SUMMARY_TEMPLATE",
-                        "{procs} processes · CPU {cpu:.0f}% · RAM {ram} {ram_unit} · Updated {updated_at}")
+                        "{procs} processes · CPU {cpu}% · RAM {ram} {ram_unit} · Updated {updated_at}")
         try:
             return tmpl.format(
                 procs=int(payload.get("proc_count", 0)),
-                cpu=float(payload.get("total_cpu_pct", 0.0)),
+                cpu=format_decimal(float(payload.get("total_cpu_pct", 0.0)), self._i18n, 0),  # plain token, no spec (#10)
                 ram=format_decimal(rv, self._i18n, 1), ram_unit=ru,   # locale decimal separator
                 updated_at=payload.get("updated_at", "--:--:--"))
         except Exception:

@@ -28,7 +28,7 @@ from PyQt6.QtWidgets import (
 
 from netspeedtray.utils import styles as su
 from netspeedtray.constants.styles import styles as tokens
-from netspeedtray.utils.helpers import format_data_size
+from netspeedtray.utils.helpers import format_data_size, format_decimal
 
 _SPARK_POINTS = 120  #: cap the series so an all-day session can't grow the polyline unbounded
 
@@ -522,12 +522,18 @@ class UsageTile(QFrame):
         used_gb, cap_gb, pct = cap
         self._apply_cap_color(pct)
         self._cap_bar.setValue(int(max(0.0, min(100.0, pct))))
+        # Pre-format numbers with the locale decimal separator and pass plain tokens, so the template
+        # carries no Python format spec (a translator can't break it, and comma-locales show "12,5"
+        # not "12.5") (#10). cap drops a whole-number's decimal to mirror the old :g.
+        used_s = format_decimal(used_gb, self._i18n, 1)
+        cap_s = format_decimal(cap_gb, self._i18n, 0) if float(cap_gb).is_integer() else format_decimal(cap_gb, self._i18n, 1)
+        pct_s = format_decimal(pct, self._i18n, 0)
         tmpl = self._tr("TRAY_DATA_CAP_PROGRESS_TEMPLATE",
-                        "Data cap:   {used:.1f} / {cap:g} GB   ({pct:.0f}%)")
+                        "Data cap:   {used} / {cap} GB   ({pct}%)")
         try:
-            self._cap_text.setText(tmpl.format(used=used_gb, cap=cap_gb, pct=pct))
+            self._cap_text.setText(tmpl.format(used=used_s, cap=cap_s, pct=pct_s))
         except Exception:
-            self._cap_text.setText(f"{used_gb:.1f} / {cap_gb:g} GB ({pct:.0f}%)")
+            self._cap_text.setText(f"{used_s} / {cap_s} GB ({pct_s}%)")
         self._cap_bar.setVisible(True)
         self._cap_text.setVisible(True)
 
