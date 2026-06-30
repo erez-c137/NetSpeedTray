@@ -1335,29 +1335,12 @@ class NetworkSpeedWidget(QWidget):
         QApplication.instance().quit()
 
     def show_support_dialog(self) -> None:
-        """Show the support/donate dialog."""
-        import webbrowser
-        msg = QMessageBox(self)
-        msg.setWindowTitle(self.i18n.SUPPORT_DIALOG_TITLE)
-        msg.setText(self.i18n.SUPPORT_DIALOG_TEXT)
-        msg.setIcon(QMessageBox.Icon.Information)
-
-        github_btn = msg.addButton(self.i18n.SUPPORT_GITHUB_SPONSORS, QMessageBox.ButtonRole.ActionRole)
-        kofi_btn = msg.addButton(self.i18n.SUPPORT_KOFI, QMessageBox.ButtonRole.ActionRole)
-        bmc_btn = msg.addButton(self.i18n.SUPPORT_BMC, QMessageBox.ButtonRole.ActionRole)
-        star_btn = msg.addButton(self.i18n.SUPPORT_STAR_GITHUB, QMessageBox.ButtonRole.ActionRole)
-        msg.addButton(QMessageBox.StandardButton.Close)
-
-        msg.exec()
-
-        if msg.clickedButton() == github_btn:
-            webbrowser.open("https://github.com/sponsors/erez-c137")
-        elif msg.clickedButton() == kofi_btn:
-            webbrowser.open("https://ko-fi.com/erezc137")
-        elif msg.clickedButton() == bmc_btn:
-            webbrowser.open("https://buymeacoffee.com/erez.c137")
-        elif msg.clickedButton() == star_btn:
-            webbrowser.open("https://github.com/erez-c137/NetSpeedTray")
+        """Show the support/donate dialog — a Win11-styled custom dialog (replaces the old QMessageBox)."""
+        try:
+            from netspeedtray.views.support_dialog import SupportDialog
+            SupportDialog(self.i18n, self, app_icon=self.windowIcon()).exec()
+        except Exception as e:
+            self.logger.error("Error showing support dialog: %s", e, exc_info=True)
 
     def _on_lhm_not_detected(self) -> None:
         """

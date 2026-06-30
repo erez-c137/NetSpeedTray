@@ -426,5 +426,6 @@
     "CLICK_ACTION_OPEN_MONITOR_LABEL": "Open Monitor",
     "CLICK_ACTION_SETTINGS_LABEL": "Open Settings",
     "CLICK_ACTION_PAUSE_LABEL": "Pause / Resume",
-    "CLICK_ACTION_NONE_LABEL": "Nothing"
+    "CLICK_ACTION_NONE_LABEL": "Nothing",
+    "CLOSE_BUTTON": "Close"
 }

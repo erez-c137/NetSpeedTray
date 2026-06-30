@@ -426,5 +426,6 @@
     "CLICK_ACTION_OPEN_MONITOR_LABEL": "Monitor openen",
     "CLICK_ACTION_SETTINGS_LABEL": "Instellingen openen",
     "CLICK_ACTION_PAUSE_LABEL": "Pauzeren / Hervatten",
-    "CLICK_ACTION_NONE_LABEL": "Niets"
+    "CLICK_ACTION_NONE_LABEL": "Niets",
+    "CLOSE_BUTTON": "Sluiten"
 }

@@ -426,5 +426,6 @@
     "CLICK_ACTION_OPEN_MONITOR_LABEL": "Открыть Монитор",
     "CLICK_ACTION_SETTINGS_LABEL": "Открыть Настройки",
     "CLICK_ACTION_PAUSE_LABEL": "Пауза / Возобновить",
-    "CLICK_ACTION_NONE_LABEL": "Ничего"
+    "CLICK_ACTION_NONE_LABEL": "Ничего",
+    "CLOSE_BUTTON": "Закрыть"
 }

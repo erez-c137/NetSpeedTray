@@ -426,5 +426,6 @@
     "CLICK_ACTION_OPEN_MONITOR_LABEL": "モニターを開く",
     "CLICK_ACTION_SETTINGS_LABEL": "設定を開く",
     "CLICK_ACTION_PAUSE_LABEL": "一時停止 / 再開",
-    "CLICK_ACTION_NONE_LABEL": "なし"
+    "CLICK_ACTION_NONE_LABEL": "なし",
+    "CLOSE_BUTTON": "閉じる"
 }

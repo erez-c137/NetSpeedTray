@@ -426,5 +426,6 @@
     "CLICK_ACTION_OPEN_MONITOR_LABEL": "Otwórz Monitor",
     "CLICK_ACTION_SETTINGS_LABEL": "Otwórz Ustawienia",
     "CLICK_ACTION_PAUSE_LABEL": "Wstrzymaj / Wznów",
-    "CLICK_ACTION_NONE_LABEL": "Nic"
+    "CLICK_ACTION_NONE_LABEL": "Nic",
+    "CLOSE_BUTTON": "Zamknij"
 }

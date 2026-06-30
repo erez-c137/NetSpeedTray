@@ -426,5 +426,6 @@
     "CLICK_ACTION_OPEN_MONITOR_LABEL": "Odpri Monitor",
     "CLICK_ACTION_SETTINGS_LABEL": "Odpri Nastavitve",
     "CLICK_ACTION_PAUSE_LABEL": "Premor / Nadaljuj",
-    "CLICK_ACTION_NONE_LABEL": "Nič"
+    "CLICK_ACTION_NONE_LABEL": "Nič",
+    "CLOSE_BUTTON": "Zapri"
 }
