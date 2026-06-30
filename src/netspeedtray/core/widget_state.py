@@ -97,6 +97,10 @@ class WidgetState(QObject):
         # Batching lists for database writes
         self._db_batch: List[Tuple[int, str, float, float]] = []
         self._hw_batch: List[Tuple[int, str, float]] = []
+        # Guards the two batch lists: they're APPENDED on the GUI thread but flushed (snapshot+reset)
+        # from the graph-worker thread (get_speed_history(wait_for_flush=True)). Without it an append
+        # landing between the snapshot and the reset would silently drop that persisted row (#6).
+        self._batch_lock = threading.Lock()
 
         # Database Worker Thread
         self._db_path = Path(get_app_data_path()) / "speed_history.db"
@@ -173,9 +177,10 @@ class WidgetState(QObject):
         timestamp = int(_now.timestamp())
         max_speed = network.interface.MAX_REASONABLE_SPEED_BPS
         
-        for interface, (up_speed, down_speed) in speed_data.items():
-            if up_speed >= network.speed.MIN_RECORDABLE_SPEED_BPS or down_speed >= network.speed.MIN_RECORDABLE_SPEED_BPS:
-                self._db_batch.append((timestamp, interface, min(up_speed, max_speed), min(down_speed, max_speed)))
+        with self._batch_lock:
+            for interface, (up_speed, down_speed) in speed_data.items():
+                if up_speed >= network.speed.MIN_RECORDABLE_SPEED_BPS or down_speed >= network.speed.MIN_RECORDABLE_SPEED_BPS:
+                    self._db_batch.append((timestamp, interface, min(up_speed, max_speed), min(down_speed, max_speed)))
 
 
     # Utilisation stats are 0-100% and clamped; physical stats (power W, temperature °C, latency ms)
@@ -197,7 +202,8 @@ class WidgetState(QObject):
 
         # Clamp only the percentage stats; store physical stats unclamped (just floor at 0).
         v = max(0.0, min(100.0, value)) if stat_type in self._PCT_STATS else max(0.0, float(value))
-        self._hw_batch.append((int(_now.timestamp()), stat_type, v))
+        with self._batch_lock:
+            self._hw_batch.append((int(_now.timestamp()), stat_type, v))
 
 
     # --- Data-usage odometer (data-cap feature) ------------------------------
@@ -327,14 +333,17 @@ class WidgetState(QObject):
         return self._compute_period_key(self.config.get("data_cap_reset_day", 1))
 
     def flush_batch(self) -> None:
-        """Sends all batches to the database worker."""
-        if self._db_batch:
-            self.db_worker.enqueue_task("persist_speed", self._db_batch.copy())
-            self._db_batch.clear()
-
-        if self._hw_batch:
-            self.db_worker.enqueue_task("persist_hardware", self._hw_batch.copy())
-            self._hw_batch.clear()
+        """Sends all batches to the database worker. Each list is swapped out for a fresh one under the
+        lock (atomic snapshot+reset), so a concurrent GUI-thread append can't land between copy and
+        clear and be lost (#6). Enqueue happens after the lock is released (the worker queue is its own
+        thread-safe handoff)."""
+        with self._batch_lock:
+            db_batch, self._db_batch = self._db_batch, []
+            hw_batch, self._hw_batch = self._hw_batch, []
+        if db_batch:
+            self.db_worker.enqueue_task("persist_speed", db_batch)
+        if hw_batch:
+            self.db_worker.enqueue_task("persist_hardware", hw_batch)
 
     def flush_and_wait(self, timeout: float = 2.0) -> None:
         """
@@ -352,8 +361,17 @@ class WidgetState(QObject):
                 return
             done = threading.Event()
             self.db_worker.enqueue_task("__signal__", done)
-            if not done.wait(timeout):
-                self.logger.warning("flush_and_wait timed out after %.1fs; reading possibly-stale history.", timeout)
+            # Poll in short steps rather than one long wait: if the worker thread exits AFTER the
+            # isRunning() check above (e.g. a graph read overlapping shutdown), the barrier would never
+            # fire and a single wait(timeout) would stall the reader for the full timeout (#15).
+            waited = 0.0
+            while waited < timeout:
+                if done.wait(0.05):
+                    return
+                if not self.db_worker.isRunning():
+                    return   # worker exited; the barrier will never fire — don't burn the timeout
+                waited += 0.05
+            self.logger.warning("flush_and_wait timed out after %.1fs; reading possibly-stale history.", timeout)
         except Exception as e:
             self.logger.error("flush_and_wait failed: %s", e, exc_info=True)
 
