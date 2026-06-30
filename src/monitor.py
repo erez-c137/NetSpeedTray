@@ -123,6 +123,14 @@ def main() -> int:
     
     sys.excepthook = excepthook
 
+    # Clear any orphaned update temp dir left by a past in-app update — its installer ran from the dir,
+    # so the success path couldn't delete it; sweep it here so they don't pile up in %TEMP% (#19).
+    try:
+        from netspeedtray.core.update_installer import sweep_stale_update_dirs
+        sweep_stale_update_dirs()
+    except Exception:
+        pass
+
     # Headless export path: `--export-csv --period 24h --out <dir>` writes the two-file stats export
     # and exits, without ever creating the GUI QApplication (so it can run alongside the live app).
     try:

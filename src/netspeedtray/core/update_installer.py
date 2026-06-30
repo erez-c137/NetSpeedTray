@@ -61,6 +61,21 @@ def download_to(url: str, dest: str,
                 progress_cb(int(read * 100 / total) if total > 0 else -1)
 
 
+def sweep_stale_update_dirs() -> None:
+    """Remove leftover ``NetSpeedTray-update-*`` temp directories from past in-app updates. The success
+    path can't delete its own dir (the installer runs from it), so it orphans a ~10-30 MB Setup.exe;
+    this clears any that are no longer in use (#19). Safe to call at startup and before a new download
+    (a dir whose installer is still running is locked and simply skipped)."""
+    import glob
+    import shutil
+    try:
+        for d in glob.glob(os.path.join(tempfile.gettempdir(), "NetSpeedTray-update-*")):
+            if os.path.isdir(d):
+                shutil.rmtree(d, ignore_errors=True)
+    except Exception:
+        pass
+
+
 def launch_installer(path: str) -> None:
     """Launch the (already-verified) installer. The app must then quit so Inno's
     AppMutex check passes and it can replace the running files."""
@@ -135,6 +150,7 @@ class SecureUpdater(QObject):
             # (owner-only) instead of the shared %TEMP% root, so the verified file
             # can't be swapped out from under us between verification and launch
             # (TOCTOU hardening — H5).
+            sweep_stale_update_dirs()   # clear any orphaned dir from a previous successful update first
             self._tmpdir = tempfile.mkdtemp(prefix="NetSpeedTray-update-")
             self._dest = os.path.join(self._tmpdir, "NetSpeedTray-Setup.exe")
         except Exception as e:

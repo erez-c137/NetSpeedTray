@@ -90,12 +90,15 @@ class UsageAlertController:
         state_id = self._state_id(period, cap_gb, cfg.get("data_cap_count", "total"))
         fired = self._parse_state(cfg.get("usage_alert_state", ""), state_id)
 
-        newly = False
-        for level in _LEVELS:
-            if pct >= level and level not in fired:
-                fired.add(level)
-                newly = True
-                self._fire(level, used_gb, cap_gb)
+        newly_levels = [level for level in _LEVELS if pct >= level and level not in fired]
+        newly = bool(newly_levels)
+        if newly_levels:
+            fired.update(newly_levels)
+            # If more than one threshold is newly crossed in a single check (e.g. usage is already over
+            # cap on the first check of a period), fire ONLY the highest — otherwise the 80% and 100%
+            # flyouts render on top of each other at the same position (#9). All crossed levels are still
+            # marked fired so neither re-fires later in the period.
+            self._fire(max(newly_levels), used_gb, cap_gb)
 
         if newly:
             try:

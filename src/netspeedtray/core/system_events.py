@@ -55,9 +55,13 @@ class SystemEventHandler(QObject):
         self.foreground_hook: Optional[WinEventHook] = None
         self.movesize_hook: Optional[WinEventHook] = None
         
-        # Timers
+        # Timers — connect the timeout slots ONCE here (not in _setup_timers), so the repeated
+        # start()/stop() cycles on every Explorer restart can't accumulate duplicate connections that
+        # multiply the per-tick work and the taskbar-restart fan-out (#11/#12).
         self._taskbar_validity_timer = QTimer(self)
+        self._taskbar_validity_timer.timeout.connect(self._check_taskbar_validity)
         self._fullscreen_poll_timer = QTimer(self)
+        self._fullscreen_poll_timer.timeout.connect(self._poll_fullscreen)
 
         # State
         self._is_paused = False
@@ -126,13 +130,11 @@ class SystemEventHandler(QObject):
         return True
 
     def _setup_timers(self) -> None:
-        """Sets up the taskbar validity + fast fullscreen-hide timers."""
-        self._taskbar_validity_timer.timeout.connect(self._check_taskbar_validity)
+        """Start the taskbar-validity + fast fullscreen-hide timers. The timeout slots are connected
+        once in __init__, so this only (re)starts them — repeated start()/stop() can't accumulate
+        duplicate connections (#11/#12). (Fullscreen poll catches an app going fullscreen while already
+        focused, when no foreground event fires, so the widget hides promptly.)"""
         self._taskbar_validity_timer.start(timeouts.TASKBAR_VALIDITY_CHECK_INTERVAL_MS)
-
-        # Catch an app fullscreening while already focused (no foreground event fires),
-        # so the widget hides promptly instead of waiting for the 1s state-watcher.
-        self._fullscreen_poll_timer.timeout.connect(self._poll_fullscreen)
         self._fullscreen_poll_timer.start(timeouts.FULLSCREEN_POLL_INTERVAL_MS)
 
     def _poll_fullscreen(self) -> None:

@@ -43,13 +43,21 @@ def test_fires_80_once():
     assert fired == []
 
 
-def test_fires_both_80_and_100_when_over_cap():
+def test_over_cap_on_first_check_fires_only_reached_not_a_stacked_warning():
+    """#9: when 80% and 100% cross in the SAME check (already over cap on a period's first check), fire
+    ONLY the highest ('reached') — not two flyouts stacked at the same position — yet record both levels
+    so neither re-fires. (The normal gradual path still fires 80% then 100% on separate checks.)"""
     ctrl, _, fired, saved = _make(used_down_gb=120)  # 120%
     ctrl.check()
     titles = [t for t, _ in fired]
-    assert any("warning" in t.lower() for t in titles)
+    assert len(fired) == 1
     assert any("reached" in t.lower() for t in titles)
-    assert len(fired) == 2
+    assert not any("warning" in t.lower() for t in titles)
+    # Both levels were recorded as fired -> a re-check at the same usage fires nothing.
+    ctrl._config()["usage_alert_state"] = saved[-1]
+    fired.clear()
+    ctrl.check()
+    assert fired == []
 
 
 def test_new_period_clears_fired_state():

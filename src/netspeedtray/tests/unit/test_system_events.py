@@ -26,6 +26,19 @@ def test_initialization(system_handler):
     assert system_handler.foreground_hook is None
     assert system_handler.movesize_hook is None
 
+
+def test_timer_connections_do_not_accumulate_across_restarts(system_handler):
+    """#11/#12: repeated start/stop cycles (one per Explorer restart) must NOT add duplicate timeout
+    connections — the slots are connected once in __init__, so the receiver count stays 1 no matter how
+    many times the timers are (re)started. Previously each restart added another connection."""
+    h = system_handler
+    vt, ft = h._taskbar_validity_timer, h._fullscreen_poll_timer
+    assert vt.receivers(vt.timeout) == 1 and ft.receivers(ft.timeout) == 1   # connected once at init
+    for _ in range(5):          # simulate five Explorer-restart stop()/start() cycles
+        h._setup_timers()
+        h.stop()
+    assert vt.receivers(vt.timeout) == 1 and ft.receivers(ft.timeout) == 1   # still exactly one
+
 def test_start_creates_hooks(system_handler, mock_hooks):
     """Tests that start() initializes and starts the hooks."""
     MockHook, mock_instance = mock_hooks

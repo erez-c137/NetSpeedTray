@@ -35,6 +35,9 @@ class Flyout(QWidget):
                          | Qt.WindowType.WindowStaysOnTopHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)  # never steal focus
+        # Single-use, self-dismissing toast: free it on close instead of letting the closed-but-hidden
+        # parentless widget linger held by the caller's reference until the next alert replaces it (#20).
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self._auto_dismiss_ms = auto_dismiss_ms
 
         c = su.semantic_colors()
