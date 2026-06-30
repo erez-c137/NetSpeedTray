@@ -140,20 +140,6 @@ def test_refresh_dynamic_items_toggles_pause_label(mock_widget, mock_i18n, q_app
     assert manager.pause_action.text() == "Resume"
 
 
-def test_hardware_state_line_reflects_config(mock_widget, mock_i18n, q_app):
-    """The self-describing hardware row reads On/Off from the widget config on open."""
-    mock_widget.config = {"monitor_cpu_enabled": False, "monitor_gpu_enabled": False}
-    manager = TrayIconManager(mock_widget, mock_i18n)
-    manager.initialize()
-
-    manager._refresh_dynamic_items()
-    assert "Off" in manager.hardware_action.text()
-
-    mock_widget.config = {"monitor_gpu_enabled": True}
-    manager._refresh_dynamic_items()
-    assert "On" in manager.hardware_action.text()
-
-
 def test_tour_removed_and_pause_is_opt_in(mock_widget, mock_i18n, q_app):
     """The 'Show me around' tour is gone, and Pause/Resume is hidden unless the user opts in via
     Settings (pause_in_menu) — refreshed on every menu open, no restart needed."""

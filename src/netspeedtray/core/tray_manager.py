@@ -16,6 +16,8 @@ from PyQt6.QtGui import QIcon, QAction
 from PyQt6.QtWidgets import QMenu, QApplication, QWidget
 
 from netspeedtray import constants
+from netspeedtray.utils import styles as su
+from netspeedtray.utils.dwm import set_rounded_corners, set_dark_titlebar
 
 if TYPE_CHECKING:
     from netspeedtray.views.widget import NetworkSpeedWidget
@@ -41,7 +43,8 @@ class TrayIconManager(QObject):
         # Retrieve actions for external use if needed (e.g., toggling text)
         self.pause_action: Optional[QAction] = None
         self.pause_separator: Optional[QAction] = None
-        self.hardware_action: Optional[QAction] = None
+        # [(QAction, Segoe-Fluent-codepoint)] — icons are (re)tinted to the text colour on each open.
+        self._menu_icon_actions: list = []
 
     def initialize(self) -> None:
         """Loads the icon and initializes the context menu."""
@@ -98,15 +101,6 @@ class TrayIconManager(QObject):
             if hasattr(self.widget, 'open_monitor_window'):
                 monitor_action.triggered.connect(self.widget.open_monitor_window)
 
-            # Self-describing hardware-monitor state — surfaces the entire CPU/GPU/temps half of
-            # the app that stays hidden until you go looking. Opens Settings → Hardware directly.
-            # Text set live on open.
-            self.hardware_action = self.context_menu.addAction("")  # text set live on open
-            if hasattr(self.widget, 'open_hardware_settings'):
-                self.hardware_action.triggered.connect(self.widget.open_hardware_settings)
-            elif hasattr(self.widget, 'show_settings'):
-                self.hardware_action.triggered.connect(self.widget.show_settings)
-
             self.context_menu.addSeparator()
 
             # --- Control (opt-in) — Pause/Resume plus its own divider, shown only when the user
@@ -135,18 +129,22 @@ class TrayIconManager(QObject):
                 exit_action.triggered.connect(self.widget.fully_exit_application)
             else:
                 exit_action.setEnabled(False)
-            
+
+            # Native Win11 menu iconography: a Segoe Fluent glyph beside each item (tinted to the text
+            # colour per theme in _apply_menu_style, which runs on every open). The pause glyph swaps
+            # pause<->play with the action's state in _refresh_dynamic_items.
+            self._menu_icon_actions = [
+                (settings_action, 0xE713),    # Settings (gear)
+                (monitor_action, 0xE9D9),     # Monitor (chart)
+                (self.pause_action, 0xE769),  # Pause (→ play when paused)
+                (update_action, 0xE895),      # Check for updates (sync)
+                (support_action, 0xEB51),     # Support (heart)
+                (exit_action, 0xE7E8),        # Exit (power)
+            ]
+
             self.logger.debug("Context menu initialized successfully.")
         except Exception as e:
             self.logger.error("Error initializing context menu: %s", e, exc_info=True)
-
-    def _format_hardware_state(self) -> str:
-        """'Hardware monitor: On/Off ▸' — self-describing, points at Settings."""
-        cfg = getattr(self.widget, "config", {})
-        on = bool(cfg.get("monitor_cpu_enabled") or cfg.get("monitor_gpu_enabled")
-                  or cfg.get("monitor_ram_enabled") or cfg.get("monitor_vram_enabled"))
-        state = self.i18n.TRAY_HARDWARE_STATE_ON if on else self.i18n.TRAY_HARDWARE_STATE_OFF
-        return self.i18n.TRAY_HARDWARE_MONITOR_TEMPLATE.format(state=state)
 
     def _toggle_pause(self, _checked: bool = False) -> None:
         """Toggle the widget's paused state from the tray menu."""
@@ -157,6 +155,29 @@ class TrayIconManager(QObject):
                 self.widget.pause()
         except Exception as e:
             self.logger.error("Error toggling pause: %s", e, exc_info=True)
+
+    def _apply_menu_style(self) -> None:
+        """Style the context menu to fit Windows 11: a dark, rounded card with generous padding,
+        rounded-pill item highlights on a subtle NEUTRAL hover (the Win11 taskbar/jump-list look, not
+        a saturated accent block), and quiet separators. Theme- and accent-aware — re-applied on each
+        open so it tracks an OS light/dark switch. Native rounded window corners are added in
+        show_context_menu via DWM; the QSS radius is the fallback on Win10 / if DWM no-ops."""
+        if not self.context_menu:
+            return
+        try:
+            c = su.semantic_colors()
+            self.context_menu.setStyleSheet(
+                f"QMenu {{ background: {c['card_bg']}; color: {c['text_primary']};"
+                f" border: 1px solid {c['card_stroke']}; border-radius: 8px; padding: 4px; }}"
+                f" QMenu::item {{ padding: 7px 30px 7px 14px; margin: 1px 4px; border-radius: 4px; }}"
+                f" QMenu::item:selected {{ background: {c['subtle_fill']}; color: {c['text_primary']}; }}"
+                f" QMenu::item:disabled {{ color: {c['text_secondary']}; }}"
+                f" QMenu::separator {{ height: 1px; background: {c['card_stroke']}; margin: 4px 10px; }}")
+            # Tint the Fluent glyphs to the current text colour so they track the OS light/dark theme.
+            for action, cp in self._menu_icon_actions:
+                action.setIcon(su.fluent_icon(cp, 16, c['text_primary']))
+        except Exception as e:
+            self.logger.debug("Menu style apply failed: %s", e)
 
     def _refresh_dynamic_items(self) -> None:
         """Update menu items whose text depends on live state, just before showing."""
@@ -169,10 +190,11 @@ class TrayIconManager(QObject):
                 self.pause_action.setText(
                     self.i18n.RESUME_MENU_ITEM if paused else self.i18n.PAUSE_MENU_ITEM
                 )
+                # Match the glyph to the state: play when paused (→ resume), pause when running.
+                self.pause_action.setIcon(
+                    su.fluent_icon(0xE768 if paused else 0xE769, 16, su.semantic_colors()['text_primary']))
             if self.pause_separator is not None:
                 self.pause_separator.setVisible(show_pause)
-            if self.hardware_action is not None:
-                self.hardware_action.setText(self._format_hardware_state())
         except Exception as e:
             self.logger.error("Error refreshing dynamic menu items: %s", e, exc_info=True)
 
@@ -184,12 +206,22 @@ class TrayIconManager(QObject):
             return
 
         try:
+            self._apply_menu_style()
             self._refresh_dynamic_items()
             menu_pos = self._calculate_menu_position()
-            
+
             self.is_context_menu_visible = True
             if hasattr(self.widget, '_is_context_menu_visible'):
                 self.widget._is_context_menu_visible = True
+
+            # Native Win11 rounded corners + dark frame on the popup window. winId() realizes the
+            # menu's native handle before exec; best-effort (silent no-op on Win10 / older builds).
+            try:
+                hwnd = int(self.context_menu.winId())
+                set_dark_titlebar(hwnd, su.is_dark_mode())
+                set_rounded_corners(hwnd)
+            except Exception:
+                pass
 
             self.context_menu.exec(menu_pos)
             
