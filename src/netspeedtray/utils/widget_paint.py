@@ -149,7 +149,8 @@ def _draw_side_by_side(painter: QPainter, renderer: WidgetRenderer, width: int, 
                 renderer.draw_mini_graph(painter, net_w, height, config, list(metrics.net_history), layout)
                 painter.restore()
             up_bytes, dw_bytes = metrics.net_bytes()
-            renderer.draw_network_speeds(painter, up_bytes, dw_bytes, width, height, config, layout, x_offset=current_x)
+            renderer.draw_network_speeds(painter, up_bytes, dw_bytes, width, height, config, layout,
+                                         x_offset=current_x, slot_width=network_width)
         elif key == "cpu" and config.monitor_cpu_enabled:
             ram = (metrics.ram_used, metrics.ram_total) if config.monitor_ram_enabled else None
             renderer.draw_hardware_stats(painter, metrics.cpu_usage, None, width, height, config,

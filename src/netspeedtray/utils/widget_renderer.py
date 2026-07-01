@@ -246,7 +246,7 @@ class WidgetRenderer:
             
         painter.fillRect(rect, self._cached_bg_color)
 
-    def draw_network_speeds(self, painter: QPainter, upload: float, download: float, width: int, height: int, config: RenderConfig, layout_mode: str = 'vertical', x_offset: int = 0, fixed_width: Optional[int] = None) -> None:
+    def draw_network_speeds(self, painter: QPainter, upload: float, download: float, width: int, height: int, config: RenderConfig, layout_mode: str = 'vertical', x_offset: int = 0, slot_width: Optional[int] = None, fixed_width: Optional[int] = None) -> None:
         """Draws current upload and download speeds."""
         try:
             # Format speeds
@@ -296,6 +296,14 @@ class WidgetRenderer:
             vertical_gap = 1
             margin = constants.renderer.TEXT_MARGIN
             
+            # Right-align the whole readout inside its reserved slot (side_by_side) so the network hugs
+            # the hardware instead of floating left in the worst-case width. The slack lands on the left,
+            # toward the app icons; both rows shift equally so the arrows stay mutually aligned.
+            max_unit_width = max(self.metrics.horizontalAdvance(up_unit), self.metrics.horizontalAdvance(dw_unit)) if not config.hide_unit_suffix else 0
+            block_width = max_arrow_width + arrow_gap + number_area_width + unit_gap + max_unit_width
+            if slot_width and slot_width > block_width + 2 * margin:
+                x_offset += slot_width - block_width - 2 * margin
+
             # Fixed Offsets (Arrow and Number start are fixed)
             arrow_x = x_offset + margin
             number_x = arrow_x + max_arrow_width + arrow_gap
@@ -320,8 +328,7 @@ class WidgetRenderer:
             bot_raw = upload if bot_is_upload else download
             self._draw_speed_line(painter, bot_is_upload, bot_val, bot_unit, bot_raw, arrow_x, number_x, unit_x, dw_y, config, number_area_width)
 
-            # Update bounding rect for context menu positioning
-            max_unit_width = max(self.metrics.horizontalAdvance(up_unit), self.metrics.horizontalAdvance(dw_unit)) if not config.hide_unit_suffix else 0
+            # Update bounding rect for context menu positioning (max_unit_width computed above)
             total_width = (unit_x - arrow_x) + max_unit_width
             self._last_text_rect = QRect(arrow_x, top_y, total_width, total_height)
             self._extend_content_bounds(self._last_text_rect)
@@ -500,9 +507,12 @@ class WidgetRenderer:
                     self._draw_icon(painter, r['label'], current_x, y, QColor(r['color']))
                 vx = current_x + label_col
                 painter.setPen(self.default_color)
-                # inline memory (stacked): right-align the percent so the suffix/"|" sit one space past
-                # the % and line up across rows. Otherwise left-align so it lines up under a memory row.
-                px = (vx + pct_col - self.metrics.horizontalAdvance(r['pct'])) if (inline_mem and any_mem) else vx
+                # Right-align the percent in its column whenever something trails it on the same row (a
+                # suffix, or inline memory) so "8% (48C)" / "8% | 11.8/15.7G" stay tight and line up across
+                # rows. Left-align only when the percent is alone above a memory row (CPU+RAM), so it lines
+                # up with the memory beneath it.
+                has_trailing = (inline_mem and mem_col and r['mem']) or bool(suffix_col and r['suffix'])
+                px = (vx + pct_col - self.metrics.horizontalAdvance(r['pct'])) if has_trailing else vx
                 painter.drawText(px, y, r['pct'])
                 if suffix_col and r['suffix']:
                     painter.drawText(vx + pct_col + sp, y, r['suffix'])  # live suffix in its worst-case column
