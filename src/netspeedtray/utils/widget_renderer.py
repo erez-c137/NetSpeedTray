@@ -523,7 +523,10 @@ class WidgetRenderer:
                     painter.drawText(mx + mem_col - self.metrics.horizontalAdvance(r['mem']), y, r['mem'])
                 y += line_height
                 if not inline_mem and r['mem']:
-                    painter.drawText(vx, y, r['mem'])                    # memory on its own row (single-stat modes)
+                    # right-align memory to the segment's right edge, so its right bound lines up with the
+                    # %/temp above it (per #179 feedback) instead of floating left under the value column
+                    mem_right = current_x + seg_w
+                    painter.drawText(mem_right - self.metrics.horizontalAdvance(r['mem']), y, r['mem'])
                     y += line_height
 
             self._last_text_rect = QRect(x_offset, top_y, seg_w + margin, total_height)
