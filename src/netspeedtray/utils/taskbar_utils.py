@@ -543,6 +543,77 @@ def get_all_taskbar_info() -> List[TaskbarInfo]:
     return taskbars
 
 
+def _select_taskbar_for_screen(
+    taskbars: List[TaskbarInfo], preferred_screen_name: str
+) -> Optional[TaskbarInfo]:
+    """
+    Find the taskbar living on the user's preferred monitor (#72 / #166).
+
+    Matches on any of several identities so that a single Qt-vs-WinAPI naming or
+    DPI desync (common on mixed-DPI multi-monitor setups, e.g. dual 4K at 150%)
+    does not silently drop the preference and fall back to primary:
+
+      1. the name stored at enumeration time (``TaskbarInfo.screen_name``),
+      2. the freshly re-resolved ``get_screen().name()``, and
+      3. geometry equality with the preferred QScreen (name-independent).
+
+    Returns the matching ``TaskbarInfo``, or ``None`` if the preferred monitor
+    simply has no taskbar to attach to (e.g. "Show taskbar on all displays" is
+    off) - the caller then falls back to primary and logs why.
+    """
+    preferred_screen = next(
+        (s for s in QApplication.screens() if s.name() == preferred_screen_name), None
+    )
+    preferred_geo = preferred_screen.geometry() if preferred_screen is not None else None
+
+    for tb in taskbars:
+        if tb.screen_name == preferred_screen_name:
+            return tb
+        resolved = tb.get_screen()
+        if resolved is not None and resolved.name() == preferred_screen_name:
+            return tb
+        if (
+            preferred_geo is not None
+            and resolved is not None
+            and resolved.geometry() == preferred_geo
+        ):
+            return tb
+    return None
+
+
+def _log_preferred_monitor_fallback(
+    preferred_screen_name: str, taskbars: List[TaskbarInfo]
+) -> None:
+    """
+    Log (at INFO, so it lands in Support Bundles) exactly why a preferred-monitor
+    selection fell back to primary: the preferred name plus every enumerated
+    taskbar's class, stored name, re-resolved name, and geometry. Turns an
+    otherwise-silent fallback into an immediately diagnosable one (#72 / #166).
+    """
+    details = []
+    for tb in taskbars:
+        resolved = tb.get_screen()
+        details.append(
+            "[%s hwnd=%s stored='%s' resolved='%s' geo=%s]"
+            % (
+                "primary" if tb.is_primary else "secondary",
+                tb.hwnd,
+                tb.screen_name,
+                resolved.name() if resolved is not None else None,
+                tb.screen_geometry,
+            )
+        )
+    logger.info(
+        "Preferred monitor '%s' did not match any of %d taskbar(s); using primary. "
+        "Enumerated taskbars: %s. If the preferred monitor has no taskbar of its own, "
+        "enabling 'Show taskbar on all displays' is the current workaround (a no-taskbar "
+        "fallback is tracked in #166).",
+        preferred_screen_name,
+        len(taskbars),
+        " ".join(details) if details else "(none)",
+    )
+
+
 def get_taskbar_info(preferred_screen_name: Optional[str] = None) -> TaskbarInfo:
     """
     Retrieves the taskbar to attach the widget to.
@@ -567,18 +638,14 @@ def get_taskbar_info(preferred_screen_name: Optional[str] = None) -> TaskbarInfo
         all_taskbars = get_all_taskbar_info()
 
         if preferred_screen_name:
-            for tb in all_taskbars:
-                screen = tb.get_screen()
-                if screen is not None and screen.name() == preferred_screen_name:
-                    logger.debug(
-                        "Preferred taskbar selected for screen '%s': HWND=%s",
-                        preferred_screen_name, tb.hwnd,
-                    )
-                    return tb
-            logger.info(
-                "Preferred monitor '%s' not found among %d taskbars; falling back to primary.",
-                preferred_screen_name, len(all_taskbars),
-            )
+            preferred_tb = _select_taskbar_for_screen(all_taskbars, preferred_screen_name)
+            if preferred_tb is not None:
+                logger.debug(
+                    "Preferred taskbar selected for screen '%s': HWND=%s",
+                    preferred_screen_name, preferred_tb.hwnd,
+                )
+                return preferred_tb
+            _log_preferred_monitor_fallback(preferred_screen_name, all_taskbars)
 
         primary_taskbar = next((tb for tb in all_taskbars if tb.is_primary), all_taskbars[0])
         logger.debug("Primary taskbar selected: HWND=%s (Is fallback: %s)", primary_taskbar.hwnd, primary_taskbar.hwnd == 0)
