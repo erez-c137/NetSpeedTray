@@ -39,18 +39,16 @@ def test_speed_band_handles_bad_input():
     assert WidgetRenderer._speed_band(None, 10.0, 1.0) == "default"
 
 
-def test_hw_percent_is_fixed_width_field():
-    """CPU/GPU percent renders as a fixed 3-char, right-justified field so its character count stays
-    constant across the 1/2/3 digit boundary. That is what keeps the side-by-side right-anchor (and
-    a network readout to its left) from sliding by a digit as CPU/GPU cross 9<->10 - issue #179.
-    Right-justified with spaces, NOT zero-padded, so it stays readable ('  9%' not '009%')."""
+def test_hw_percent_is_plain_text():
+    """The percent is plain text now; the fixed percent COLUMN in draw_hardware_stats provides the
+    constant width (right-aligned when memory is inline, left-aligned above a memory row), so the
+    value reads naturally and still lines up. Regression guard against re-padding the string."""
     f = WidgetRenderer._fmt_hw_percent
-    assert f(9) == "  9%"
-    assert f(10) == " 10%"
+    assert f(9) == "9%"
+    assert f(10) == "10%"
     assert f(100) == "100%"
-    assert f(0) == "  0%"
-    assert f(7.8) == "  7%"          # truncates toward zero, same as the old int(val)
-    assert all(len(f(v)) == 4 for v in (0, 5, 9, 10, 42, 99, 100))  # always 4 chars
+    assert f(0) == "0%"
+    assert f(7.8) == "7%"            # truncates toward zero
 
 def test_peak_label_placement_logic():
     # Mock dependencies for GraphRenderer

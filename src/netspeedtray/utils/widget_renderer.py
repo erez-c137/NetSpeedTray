@@ -391,19 +391,15 @@ class WidgetRenderer:
 
     @staticmethod
     def _fmt_hw_percent(val: float) -> str:
-        """CPU/GPU percent as a fixed 3-char field ("  9%" / " 42%" / "100%").
+        """CPU/GPU percent as plain text ("9%" / "100%").
 
-        Right-justifying to 3 digits keeps the DRAWN width constant across the 1<->2<->3 digit
-        boundary. It matters because in the side-by-side layout the whole readout is right-anchored
-        to the tray every frame from the LIVE measured content width (widget_paint.render_widget),
-        so an unpadded "9%" vs "10%" shoved the entire block - including a network readout sitting
-        to its left - sideways by one digit as CPU/GPU crossed 9<->10. That is the #179 jitter. The
-        layout manager already reserves " 100%" worst-case width (views/widget/layout.py:239,255),
-        so this fixed field fits with no window resize. Plain space (not the U+2007 figure space):
-        the default UI font (Segoe UI) has tabular figures where a space and a digit share one
-        advance, and a plain space never risks a missing-glyph box in a user-chosen font.
+        The FIXED percent COLUMN in draw_hardware_stats (not this string) provides the constant width
+        now, so the value reads naturally: it's right-aligned in that column when memory is inline
+        (stacked - keeps the "|" lined up across rows) and left-aligned when memory is on its own row
+        (single-stat modes - lines up under the percent). Either way the segment width never changes,
+        so the readout no longer slides or clips (#179 and the side-by-side alignment work).
         """
-        return f"{int(val):>3d}%"
+        return f"{int(val)}%"
 
     def draw_hardware_stats(self, painter: QPainter, cpu_usage: Optional[float], gpu_usage: Optional[float],
                            width: int, height: int, config: RenderConfig,
@@ -504,7 +500,10 @@ class WidgetRenderer:
                     self._draw_icon(painter, r['label'], current_x, y, QColor(r['color']))
                 vx = current_x + label_col
                 painter.setPen(self.default_color)
-                painter.drawText(vx, y, r['pct'])                       # fixed-width percent
+                # inline memory (stacked): right-align the percent so the suffix/"|" sit one space past
+                # the % and line up across rows. Otherwise left-align so it lines up under a memory row.
+                px = (vx + pct_col - self.metrics.horizontalAdvance(r['pct'])) if (inline_mem and any_mem) else vx
+                painter.drawText(px, y, r['pct'])
                 if suffix_col and r['suffix']:
                     painter.drawText(vx + pct_col + sp, y, r['suffix'])  # live suffix in its worst-case column
                 if inline_mem and mem_col and r['mem']:

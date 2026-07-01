@@ -243,16 +243,23 @@ class WidgetLayoutManager:
                     mem_total = 0.0
                     if monitor_ram:
                         rt = getattr(self.widget, 'ram_total', 0.0) or 0.0
-                        if rt <= 0:
+                        if rt <= 0:   # RAM total is knowable synchronously - use it so we reserve tight, not huge
                             try:
                                 import psutil
                                 rt = psutil.virtual_memory().total / (1024 ** 3)
                             except Exception:
-                                rt = 99.9
+                                rt = 32.0
                         mem_total = max(mem_total, rt)
                     if monitor_vram:
+                        # Use the real VRAM total when known; do NOT bloat to a 99.9 default when it isn't -
+                        # the renderer shows VRAM used-only and aligns it to the (known) RAM column, so a big
+                        # default just widened the whole widget for nothing.
                         vt = getattr(self.widget, 'vram_total', 0.0) or 0.0
-                        mem_total = max(mem_total, vt if vt > 0 else 99.9)
+                        if vt > 0:
+                            mem_total = max(mem_total, vt)
+                    # Only if nothing is known yet (e.g. VRAM-only at cold start) fall back to a modest column.
+                    if (monitor_ram or monitor_vram) and mem_total <= 0:
+                        mem_total = 32.0
                     mem_ref = f"{mem_total:.1f}/{mem_total:.1f}G" if mem_total > 0 else ""
 
                     cpu_width = 0
