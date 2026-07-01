@@ -84,6 +84,34 @@ def test_peak_label_placement_logic():
     print("Peak label placement tests passed!")
 
 
+def test_peak_label_is_localized():
+    """The peak marker label must use the locale decimal separator AND the locale's
+    speed unit, not a hardcoded '.'/'Mbps'. Regression guard for the graph-i18n fix:
+    a German user's graph showed '12.3 Mbps' while the widget showed '12,3 Mbit/s'.
+    Drives the real _add_peak_markers path with a real de_DE i18n."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from netspeedtray.constants.i18n import I18nStrings
+
+    i18n = I18nStrings("de_DE")               # sep=',', MBITS_UNIT='Mbit/s'
+    GraphRenderer._init_matplotlib = MagicMock()
+    renderer = GraphRenderer(MagicMock(), i18n)
+
+    fig, ax = plt.subplots()
+    ax.set_xlim(0, 5)
+    ax.set_ylim(0, 20)
+    x_data = [0, 1, 2, 3, 4]
+    y_data = [0.3, 0.6, 0.4, 12.34, 5.2]      # peak = 12.34 Mbps at index 3
+    renderer._add_peak_markers(ax, x_data, y_data, "#4aa3ff", "Download", "download")
+    text = renderer._peak_artists_download["label"].get_text()
+    plt.close(fig)
+
+    assert "12,3" in text, f"expected comma decimal separator, got {text!r}"
+    assert "Mbit/s" in text, f"expected localized unit, got {text!r}"
+    assert "Mbps" not in text and "12.3" not in text, f"leaked English unit/decimal: {text!r}"
+
+
 # --- 6.2b hardware-graph shaping (smoothing + fixed/auto axis) -------------------
 
 def test_smooth_series_preserves_length_and_range():
