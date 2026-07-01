@@ -15,7 +15,7 @@ class RendererConstants:
     # Breathing room kept between the RIGHT-ALIGNED side-by-side content and the widget's tray-side edge,
     # so the readout doesn't crowd the tray-overflow chevron once it's anchored right. Larger than
     # TEXT_MARGIN (which only kept text off the very edge) - this is deliberate visual padding.
-    RIGHT_ANCHOR_PADDING: Final[int] = 4
+    RIGHT_ANCHOR_PADDING: Final[int] = 7
     GRAPH_MARGIN: Final[int] = 3
     GRAPH_LEFT_PADDING: Final[int] = 2
     GRAPH_RIGHT_PADDING: Final[int] = 2
