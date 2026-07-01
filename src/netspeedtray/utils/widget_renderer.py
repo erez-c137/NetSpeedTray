@@ -448,54 +448,76 @@ class WidgetRenderer:
             show_temps = getattr(config, "show_hardware_temps", False)
             show_power = getattr(config, "show_hardware_power", False)
 
-            render_rows = []
+            style = getattr(config, 'hardware_label_style', 'icons_colored')
+            sp = self.metrics.horizontalAdvance(" ")
+
+            # Keep percent / suffix / memory as SEPARATE cells (not one concatenated string) so each sits
+            # in its own fixed-width column. That lines the rows up (the "|" and RAM/VRAM align across CPU
+            # and GPU even when one has a temp sensor and the other doesn't) AND makes the segment width
+            # CONSTANT as values cross digit boundaries - so the whole readout stops sliding and never
+            # clips. Worst-case column widths are computed once and are identical for every row.
+            rows = []
             for (label, val, temp, mem_info, color_hex, power) in enabled_stats:
-                main_text = self._fmt_hw_percent(val)
-
-                # Unified parenthetical suffix: "(43°C, 7.8W)", "(43°C)", "(7.8W)", or "(N/A)"
-                suffix = self._build_hw_suffix(temp, power, show_temps, show_power)
-                if suffix:
-                    main_text += f" {suffix}"
-
-                mem_text = ""
+                mem_text, total = "", 0.0
                 if mem_info and mem_info[0] is not None:
-                    used, total = mem_info
-                    mem_text = f"{used:.1f}/{total:.1f}G" if total and total > 0 else f"{used:.1f}G"
+                    used, total = mem_info[0], (mem_info[1] or 0.0)
+                    mem_text = f"{used:.1f}/{total:.1f}G" if total > 0 else f"{used:.1f}G"
+                rows.append({'label': label, 'color': color_hex, 'total': total,
+                             'pct': self._fmt_hw_percent(val),
+                             'suffix': self._build_hw_suffix(temp, power, show_temps, show_power),
+                             'mem': mem_text})
 
-                if mem_text:
-                    if is_compact:
-                        main_text += f" | {mem_text}"
-                        render_rows.append({'label': label, 'text': main_text, 'color': color_hex, 'draw_icon': True})
-                    else:
-                        render_rows.append({'label': label, 'text': main_text, 'color': color_hex, 'draw_icon': True})
-                        render_rows.append({'label': label, 'text': mem_text, 'color': color_hex, 'draw_icon': False})
-                else:
-                    render_rows.append({'label': label, 'text': main_text, 'color': color_hex, 'draw_icon': True})
-                    
-            total_height = line_height * len(render_rows)
+            label_col = (max(self.metrics.horizontalAdvance(r['label']) for r in rows) + 4) if style == "text" else 14
+            pct_col = self.metrics.horizontalAdvance("100%")   # the >3d percent is already a fixed 4-char field
+            if show_temps and show_power:
+                suffix_ref = "(99°C, 250.0W)"
+            elif show_power:
+                suffix_ref = "(250.0W)"
+            elif show_temps:
+                suffix_ref = "(99°C)"
+            else:
+                suffix_ref = ""
+            suffix_col = (sp + self.metrics.horizontalAdvance(suffix_ref)) if suffix_ref else 0
+
+            any_mem = any(r['mem'] for r in rows)
+            totals = [r['total'] for r in rows if r['total'] > 0]
+            t = max(totals) if totals else 0.0
+            mem_num_col = self.metrics.horizontalAdvance(f"{t:.1f}/{t:.1f}G" if t > 0 else "9999G") if any_mem else 0
+            sep_col = self.metrics.horizontalAdvance(" | ")
+            inline_mem = is_compact
+            mem_col = (sep_col + mem_num_col) if (any_mem and inline_mem) else 0
+
+            extra_rows = 0 if inline_mem else sum(1 for r in rows if r['mem'])
+            total_height = line_height * (len(rows) + extra_rows)
             top_y = int((height - total_height) / 2 + ascent)
             current_x = x_offset + margin
-            
-            style = getattr(config, 'hardware_label_style', 'icons_colored')
-            for i, row in enumerate(render_rows):
-                y_pos = top_y + (i * line_height)
-                if row['draw_icon']:
-                    if style == "text":
-                        painter.setPen(QPen(QColor(row['color'])))
-                        painter.drawText(current_x, y_pos, row['label'])
-                        val_x = current_x + self.metrics.horizontalAdvance(row['label']) + 4
-                    else:
-                        self._draw_icon(painter, row['label'], current_x, y_pos, QColor(row['color']))
-                        val_x = current_x + 14
+
+            stat_col = label_col + pct_col + suffix_col + mem_col
+            seg_w = max(stat_col, (label_col + mem_num_col) if (any_mem and not inline_mem) else 0)
+
+            y = top_y
+            for r in rows:
+                if style == "text":
+                    painter.setPen(QPen(QColor(r['color'])))
+                    painter.drawText(current_x, y, r['label'])
                 else:
-                    val_x = current_x # Align with icon, no indent!
-                
+                    self._draw_icon(painter, r['label'], current_x, y, QColor(r['color']))
+                vx = current_x + label_col
                 painter.setPen(self.default_color)
-                painter.drawText(val_x, y_pos, row['text'])
-                
-            # Update bounding rect for accurate spacing in side-by-side or grouped layout views
-            max_text_width = max((14 if row['draw_icon'] else 0) + self.metrics.horizontalAdvance(row['text']) for row in render_rows)
-            self._last_text_rect = QRect(x_offset, top_y, max_text_width + margin, total_height)
+                painter.drawText(vx, y, r['pct'])                       # fixed-width percent
+                if suffix_col and r['suffix']:
+                    painter.drawText(vx + pct_col + sp, y, r['suffix'])  # live suffix in its worst-case column
+                if inline_mem and mem_col and r['mem']:
+                    mx = vx + pct_col + suffix_col
+                    painter.drawText(mx, y, " | ")
+                    # right-align the number in its column so the trailing 'G' lines up across rows
+                    painter.drawText(mx + mem_col - self.metrics.horizontalAdvance(r['mem']), y, r['mem'])
+                y += line_height
+                if not inline_mem and r['mem']:
+                    painter.drawText(vx, y, r['mem'])                    # memory on its own row (single-stat modes)
+                    y += line_height
+
+            self._last_text_rect = QRect(x_offset, top_y, seg_w + margin, total_height)
             self._extend_content_bounds(self._last_text_rect)
 
         except Exception as e:
