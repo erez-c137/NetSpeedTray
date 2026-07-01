@@ -51,7 +51,7 @@ The widget lives on your taskbar - at its simplest, just your up &amp; down spee
     </tr>
     <tr>
       <td align="right"><img src="screenshots/widget_hardware_2.0.png" alt="Widget - with CPU/GPU/RAM stats" /></td>
-      <td align="left">&nbsp;&nbsp;+ CPU / GPU / RAM, temps &amp; power</td>
+      <td align="left">&nbsp;&nbsp;+ CPU / GPU / RAM, temps</td>
     </tr>
     <tr>
       <td align="right"><img src="screenshots/widget_full_2.0.png" alt="Widget - everything at once" /></td>
