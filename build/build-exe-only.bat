@@ -85,9 +85,13 @@ set "start_time=%TIME%"
 set "UPX_DIR_ARG="
 if exist "%BUILD_DIR%tools\upx-5.0.2-win64\upx.exe" set "UPX_DIR_ARG=--upx-dir %BUILD_DIR%tools\upx-5.0.2-win64"
 
+:: EXE-only build = a single self-contained file (onefile mode). build.bat leaves
+:: this unset and gets the slim onedir folder instead. setlocal scopes this var.
+set "NST_ONEFILE=1"
+
 "%ROOT_DIR%\.venv\Scripts\python.exe" -m PyInstaller --noconfirm --distpath "%DIST_DIR%" %UPX_DIR_ARG% netspeedtray.spec >> "%LOG_FILE%" 2>&1
 if errorlevel 1 (echo ERROR: PyInstaller compilation failed. Check %LOG_FILE% for details & exit /b 1)
-if not exist "%DIST_DIR%\NetSpeedTray\NetSpeedTray.exe" (echo ERROR: Executable not found after compilation & exit /b 1)
+if not exist "%DIST_DIR%\NetSpeedTray.exe" (echo ERROR: Executable not found after compilation & exit /b 1)
 set "end_time=%TIME%"
 call :log_elapsed "Compiling executable" "%start_time%" "%end_time%"
 
@@ -97,7 +101,7 @@ echo Moving executable to output directory...
 echo Moving executable to output directory... >> "%LOG_FILE%"
 set "start_time=%TIME%"
 mkdir "%OUTPUT_DIR%" 2>nul
-move "%DIST_DIR%\NetSpeedTray\NetSpeedTray.exe" "%OUTPUT_DIR%\NetSpeedTray-v%VERSION%.exe" > NUL
+move "%DIST_DIR%\NetSpeedTray.exe" "%OUTPUT_DIR%\NetSpeedTray-v%VERSION%.exe" > NUL
 if errorlevel 1 (echo ERROR: Failed to move executable & exit /b 1)
 set "end_time=%TIME%"
 call :log_elapsed "Moving executable" "%start_time%" "%end_time%"

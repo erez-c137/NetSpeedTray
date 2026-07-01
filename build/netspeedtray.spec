@@ -320,36 +320,74 @@ upx_exclude = [
 # Note: PyInstaller already auto-disables UPX for Qt plugins (e.g. qwindows.dll)
 # and CFG-enabled binaries, so those need no manual entry here.
 
-exe = EXE(
-    pyz,
-    a.scripts,
-    [],
-    a.binaries,
-    a.datas,
-    name='NetSpeedTray',
-    debug=False,
-    bootloader_ignore_signals=False,
-    strip=False,
-    upx=bool(upx_dir),
-    upx_dir=upx_dir,
-    upx_exclude=upx_exclude,
-    runtime_tmpdir=None,
-    console=False,
-    disable_windowed_traceback=False,
-    target_arch=None,
-    codesign_identity=None,
-    entitlements_file=None,
-    icon='..\\assets\\NetSpeedTray.ico',
-    version='version_info.txt'
-)
+# --- Build mode: ONEDIR (release, default) vs ONEFILE (dev/test) ---
+# ONEDIR (default): a small bootstrap exe + an `_internal/` folder that holds the
+#   dependencies exactly once. Roughly HALF the size of onefile, and faster to
+#   launch (no self-extraction to a temp dir on every run). This is what
+#   build.bat ships (installer + portable zip) and what setup.iss expects.
+# ONEFILE (NST_ONEFILE=1): a single self-contained exe - convenient for quick
+#   testing or handing someone one portable file. Produced by build-exe-only.bat.
+#
+# The previous spec did BOTH at once: the EXE bundled a.binaries/a.datas
+# (onefile) AND COLLECT re-copied them loose into the folder, so the release
+# folder carried the whole payload twice (~2x on-disk). Splitting the two modes
+# fixes that.
+_onefile = bool(os.environ.get('NST_ONEFILE'))
 
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    strip=False,
-    upx=bool(upx_dir),
-    upx_exclude=upx_exclude,
-    name='NetSpeedTray'
-)
+if _onefile:
+    print('[netspeedtray.spec] Build mode: ONEFILE (single self-contained exe).')
+    exe = EXE(
+        pyz,
+        a.scripts,
+        [],
+        a.binaries,
+        a.datas,
+        name='NetSpeedTray',
+        debug=False,
+        bootloader_ignore_signals=False,
+        strip=False,
+        upx=bool(upx_dir),
+        upx_dir=upx_dir,
+        upx_exclude=upx_exclude,
+        runtime_tmpdir=None,
+        console=False,
+        disable_windowed_traceback=False,
+        target_arch=None,
+        codesign_identity=None,
+        entitlements_file=None,
+        icon='..\\assets\\NetSpeedTray.ico',
+        version='version_info.txt'
+    )
+else:
+    print('[netspeedtray.spec] Build mode: ONEDIR (bootstrap exe + _internal/).')
+    exe = EXE(
+        pyz,
+        a.scripts,
+        [],
+        exclude_binaries=True,
+        name='NetSpeedTray',
+        debug=False,
+        bootloader_ignore_signals=False,
+        strip=False,
+        upx=bool(upx_dir),
+        upx_dir=upx_dir,
+        upx_exclude=upx_exclude,
+        runtime_tmpdir=None,
+        console=False,
+        disable_windowed_traceback=False,
+        target_arch=None,
+        codesign_identity=None,
+        entitlements_file=None,
+        icon='..\\assets\\NetSpeedTray.ico',
+        version='version_info.txt'
+    )
+    coll = COLLECT(
+        exe,
+        a.binaries,
+        a.zipfiles,
+        a.datas,
+        strip=False,
+        upx=bool(upx_dir),
+        upx_exclude=upx_exclude,
+        name='NetSpeedTray'
+    )
