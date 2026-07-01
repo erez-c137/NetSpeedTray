@@ -6,7 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ## [2.0.1] - Unreleased
 
-A small polish release on top of 2.0.0: localization fixes for the history graph, a data-size rounding fix, a cleaner and more stable hardware readout on the widget, more reliable positioning on mixed-DPI multi-monitor setups, and a noticeably smaller download.
+A small polish release on top of 2.0.0: localization fixes for the history graph, a data-size rounding fix, a cleaner and more stable hardware readout on the widget, a Preferred Monitor setting that finally works across multiple monitors, and a noticeably smaller download.
 
 ### Fixed
 - **The history graph ignored your locale's number format.** The peak-marker labels and y-axis ticks hardcoded an English "." decimal separator and the unit "Mbps", so a German, French, or Polish user saw "12.3 Mbps" on the graph while the widget and the Monitor showed the localized "12,3 Mbit/s" in the same session. Six of the ten locales use "," as the decimal separator, and the unit differs too (de/fr use "Mbit/s", pl uses "Mb/s"), so the label was outright wrong rather than merely inconsistent. Both the labels and the axis now follow your language. (#176)
