@@ -389,6 +389,22 @@ class WidgetRenderer:
 
 
 
+    @staticmethod
+    def _fmt_hw_percent(val: float) -> str:
+        """CPU/GPU percent as a fixed 3-char field ("  9%" / " 42%" / "100%").
+
+        Right-justifying to 3 digits keeps the DRAWN width constant across the 1<->2<->3 digit
+        boundary. It matters because in the side-by-side layout the whole readout is right-anchored
+        to the tray every frame from the LIVE measured content width (widget_paint.render_widget),
+        so an unpadded "9%" vs "10%" shoved the entire block - including a network readout sitting
+        to its left - sideways by one digit as CPU/GPU crossed 9<->10. That is the #179 jitter. The
+        layout manager already reserves " 100%" worst-case width (views/widget/layout.py:239,255),
+        so this fixed field fits with no window resize. Plain space (not the U+2007 figure space):
+        the default UI font (Segoe UI) has tabular figures where a space and a digit share one
+        advance, and a plain space never risks a missing-glyph box in a user-chosen font.
+        """
+        return f"{int(val):>3d}%"
+
     def draw_hardware_stats(self, painter: QPainter, cpu_usage: Optional[float], gpu_usage: Optional[float],
                            width: int, height: int, config: RenderConfig,
                            cpu_temp: Optional[float] = None, gpu_temp: Optional[float] = None,
@@ -434,7 +450,7 @@ class WidgetRenderer:
 
             render_rows = []
             for (label, val, temp, mem_info, color_hex, power) in enabled_stats:
-                main_text = f"{int(val)}%"
+                main_text = self._fmt_hw_percent(val)
 
                 # Unified parenthetical suffix: "(43°C, 7.8W)", "(43°C)", "(7.8W)", or "(N/A)"
                 suffix = self._build_hw_suffix(temp, power, show_temps, show_power)
