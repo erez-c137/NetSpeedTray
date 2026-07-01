@@ -12,7 +12,8 @@ from unittest.mock import MagicMock, patch
 from PyQt6.QtCore import QRect
 from PyQt6.QtWidgets import QApplication
 
-from netspeedtray.utils.taskbar_utils import _select_taskbar_for_screen
+import netspeedtray.utils.taskbar_utils as tbu
+from netspeedtray.utils.taskbar_utils import _select_taskbar_for_screen, _taskbar_window_is_ready
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -99,3 +100,41 @@ class TestPreferredMonitorSelection:
         with _patch_screens([PRIMARY, SECOND]):
             tb = _select_taskbar_for_screen(tbs, r"\\.\DISPLAY1")
         assert tb is not None and tb.hwnd == 1
+
+
+class _FakeWin32Error(Exception):
+    pass
+
+
+def _fake_win32gui(*, rect=(0, 0, 2560, 1440), tray_hwnd=0, is_window=True, rect_raises=False):
+    w = MagicMock()
+    w.error = _FakeWin32Error
+    if rect_raises:
+        w.GetWindowRect.side_effect = _FakeWin32Error("not queryable")
+    else:
+        w.GetWindowRect.return_value = rect
+    w.FindWindowEx.return_value = tray_hwnd
+    w.IsWindow.return_value = is_window
+    return w
+
+
+class TestTaskbarReadinessGate:
+    """#72: process_taskbar dropped every secondary-monitor taskbar because it required a TrayNotifyWnd
+    child that only the primary taskbar has, so only one taskbar ever enumerated and Preferred Monitor
+    always fell back to primary. _taskbar_window_is_ready gates that check to the primary only."""
+
+    def test_secondary_survives_without_tray_child(self):
+        with patch.object(tbu, "win32gui", _fake_win32gui(tray_hwnd=0)):
+            assert _taskbar_window_is_ready(2, "Shell_SecondaryTrayWnd") is True
+
+    def test_primary_ready_with_valid_tray_child(self):
+        with patch.object(tbu, "win32gui", _fake_win32gui(tray_hwnd=99, is_window=True)):
+            assert _taskbar_window_is_ready(1, "Shell_TrayWnd") is True
+
+    def test_primary_not_ready_without_tray_child(self):
+        with patch.object(tbu, "win32gui", _fake_win32gui(tray_hwnd=0)):
+            assert _taskbar_window_is_ready(1, "Shell_TrayWnd") is False
+
+    def test_not_ready_when_taskbar_window_unqueryable(self):
+        with patch.object(tbu, "win32gui", _fake_win32gui(rect_raises=True)):
+            assert _taskbar_window_is_ready(2, "Shell_SecondaryTrayWnd") is False

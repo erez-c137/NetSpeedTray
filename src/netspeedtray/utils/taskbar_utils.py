@@ -389,6 +389,31 @@ def get_dpi_for_monitor(monitor: Any, hwnd: Optional[int] = None) -> Optional[fl
         return get_fallback_dpi()
 
 
+def _taskbar_window_is_ready(hwnd: int, class_name: str) -> bool:
+    """Whether an enumerated taskbar window is ready to dock to.
+
+    The PRIMARY taskbar (``Shell_TrayWnd``) is only ready once its ``TrayNotifyWnd`` tray/clock child is a
+    valid, queryable window. A SECONDARY-monitor taskbar (``Shell_SecondaryTrayWnd``) never has a
+    ``TrayNotifyWnd`` child, so requiring one used to drop EVERY secondary taskbar - which left the
+    enumeration with only the primary, so multi-monitor "Preferred Monitor" always fell back to primary
+    (#72). For a secondary, readiness is simply that its own window is queryable.
+    """
+    try:
+        win32gui.GetWindowRect(hwnd)
+    except win32gui.error:
+        return False
+    if class_name == "Shell_SecondaryTrayWnd":
+        return True
+    tray_hwnd = win32gui.FindWindowEx(hwnd, 0, "TrayNotifyWnd", None)
+    if not tray_hwnd or not win32gui.IsWindow(tray_hwnd):
+        return False
+    try:
+        win32gui.GetWindowRect(tray_hwnd)
+    except win32gui.error:
+        return False
+    return True
+
+
 def get_all_taskbar_info() -> List[TaskbarInfo]:
     """
     Finds all taskbars (primary and secondary) and gathers their details.
@@ -464,16 +489,11 @@ def get_all_taskbar_info() -> List[TaskbarInfo]:
             if class_name not in ("Shell_TrayWnd", "Shell_SecondaryTrayWnd"):
                 return None
 
-            tray_hwnd = win32gui.FindWindowEx(hwnd, 0, "TrayNotifyWnd", None)
-            # A taskbar is not "ready" until its TrayNotifyWnd child is a valid, queryable window.
-            if not tray_hwnd or not win32gui.IsWindow(tray_hwnd):
-                logger.debug(f"Found taskbar HWND {hwnd}, but its tray child is not yet valid. Ignoring.")
-                return None
-            try:
-                # This is the ultimate test: can we get its rectangle? If not, it's not ready.
-                win32gui.GetWindowRect(tray_hwnd)
-            except win32gui.error:
-                logger.debug(f"Found tray HWND {tray_hwnd}, but it is not yet queryable. Ignoring.")
+            # Readiness gate (#72): the system tray/clock (TrayNotifyWnd) lives only on the PRIMARY taskbar,
+            # so a secondary-monitor taskbar must NOT be required to have one - that requirement silently
+            # dropped every secondary taskbar, leaving only the primary to match against.
+            if not _taskbar_window_is_ready(hwnd, class_name):
+                logger.debug(f"Taskbar HWND {hwnd} ({class_name}) is not ready yet. Ignoring.")
                 return None
 
             rect_phys = win32gui.GetWindowRect(hwnd)
