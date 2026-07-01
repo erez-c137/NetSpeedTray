@@ -336,16 +336,19 @@ def test_aggregation_raw_to_minute(managed_widget_state, mock_config):
     
     now = datetime.now()
     
-    # "Old" data from 25 hours ago, belonging to the same minute
-    old_timestamp_base = int((now - timedelta(hours=25)).timestamp())
+    # "Old" data from 25 hours ago, all belonging to the SAME minute. Floor the base to the start of its
+    # minute so the +1/+2/+3-second records can't straddle a clock-minute boundary - otherwise, when this
+    # test happened to run in the last few seconds of a minute, the two Wi-Fi records split into two
+    # per-minute buckets and the count became 3 instead of 2 (a real, intermittent CI flake).
+    old_timestamp_base = (int((now - timedelta(hours=25)).timestamp()) // 60) * 60
     old_data = [
         (old_timestamp_base + 1, "Wi-Fi", 100.0, 200.0),
         (old_timestamp_base + 2, "Wi-Fi", 300.0, 400.0),
         (old_timestamp_base + 3, "Ethernet", 50.0, 60.0),
     ]
-    
-    # "Recent" data from 1 hour ago (should NOT be aggregated)
-    recent_timestamp_base = int((now - timedelta(hours=1)).timestamp())
+
+    # "Recent" data from 1 hour ago (should NOT be aggregated); floored to its minute for the same reason.
+    recent_timestamp_base = (int((now - timedelta(hours=1)).timestamp()) // 60) * 60
     recent_data = [ (recent_timestamp_base + 1, "Wi-Fi", 1000.0, 2000.0) ]
     
     cursor.executemany("INSERT INTO speed_history_raw VALUES (?, ?, ?, ?)", old_data + recent_data)
