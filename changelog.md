@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [2.0.1] - Unreleased
+
+A small polish release on top of 2.0.0: localization fixes for the history graph, a data-size rounding fix, more reliable positioning on mixed-DPI multi-monitor setups, and a noticeably smaller download.
+
+### Fixed
+- **The history graph ignored your locale's number format.** The peak-marker labels and y-axis ticks hardcoded an English "." decimal separator and the unit "Mbps", so a German, French, or Polish user saw "12.3 Mbps" on the graph while the widget and the Monitor showed the localized "12,3 Mbit/s" in the same session. Six of the ten locales use "," as the decimal separator, and the unit differs too (de/fr use "Mbit/s", pl uses "Mb/s"), so the label was outright wrong rather than merely inconsistent. Both the labels and the axis now follow your language. (#176)
+- **Graph axis labels showed as empty boxes in Japanese and Korean.** The "Download"/"Upload" labels rendered as tofu because matplotlib's default font carries no CJK glyphs. The graph now picks an installed Windows CJK font for those locales (Yu Gothic for Japanese, Malgun Gothic for Korean, Microsoft YaHei for Chinese). No font is bundled, so the download size is unchanged. (#173)
+- **Data sizes could round up into the wrong unit.** A value like 999,999 bytes displayed as "1000.0 KB" instead of "1.0 MB", because the formatter rounded before checking whether it had crossed into the next unit. This affected the data-usage glance and several Monitor readouts. It now promotes to the next unit after rounding. (#174)
+- **The widget could land on the wrong monitor on mixed-DPI setups (#72, #166).** When your displays ran at different scaling factors, the "preferred monitor" choice could fall back to the primary display instead of the monitor you selected, because the taskbar match relied on a screen name Windows reports inconsistently across DPI scales. It now matches by stored name, resolved name, and geometry, and logs which path it took. (Thanks to @Mythos for the report.)
+
+### Changed
+- **Smaller download.** The portable ZIP and the installer were nearly twice the size they needed to be: the one-folder build was accidentally packing the whole app a second time. Fixed, cutting the standalone download roughly in half. (#172)
+
+---
+
 ## [2.0.0] - June 30, 2026
 
 **The widget is now a true part of the taskbar.** Since v1.0 the speed readout has lived in a separate always-on-top window perched over the taskbar - which meant it could fall behind the taskbar, flicker when you clicked around the shell, and disappear (sometimes until you clicked into another window) the moment you opened the Start menu or a system flyout. This release re-architects how the widget sits in the desktop: it's now Z-order-docked to the taskbar so the Windows shell can no longer cover it. After years of chasing this, the widget finally behaves like it belongs there - significant enough to the widget's identity to warrant the major version bump.
