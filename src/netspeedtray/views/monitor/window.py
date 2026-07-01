@@ -86,6 +86,10 @@ class MonitorWindow(QWidget):
         header.addWidget(self._tab_bar)
         header.addStretch(1)
         self._gear = QToolButton()
+        _gear_sp = self._gear.sizePolicy()
+        _gear_sp.setRetainSizeWhenHidden(True)   # keep the header slot when hidden so hiding never reflows (#170)
+        self._gear.setSizePolicy(_gear_sp)
+        self._gear.setVisible(False)             # shown only on the Hardware tab (set in _on_tab_changed)
         self._gear.setText(chr(0xE713))   # Segoe Fluent Icons "Settings" - monochrome, obeys QSS colour
         self._gear.setCursor(Qt.CursorShape.PointingHandCursor)
         self._gear.setToolTip(self._tr("MONITOR_SETTINGS_TIP", "Monitor display settings"))
@@ -174,10 +178,12 @@ class MonitorWindow(QWidget):
             self._stack.removeWidget(old)
             old.deleteLater()
         self._stack.setCurrentIndex(index)
-        # The display-settings gear opens the Hardware-graph options. Keep it PERSISTENT (never hide -
-        # hiding made it flicker in/out on pivot); just enable it on Hardware and dim it elsewhere.
+        # The display-settings gear only configures the Hardware graph, so it shows on the Hardware tab
+        # and hides elsewhere (a visible-but-inert gear on Overview/Network confused users - #170). Its
+        # layout slot is retained when hidden (setRetainSizeWhenHidden at construction), so hiding it
+        # never reflows the header - which is what used to make it flicker in/out on pivot.
         is_hw = (d.tab_id == "hardware")
-        self._gear.setEnabled(is_hw)
+        self._gear.setVisible(is_hw)
         if not is_hw and self._settings_flyout is not None:
             self._settings_flyout.hide()
         # Remember the active tab so the Monitor reopens where the user left it.

@@ -76,16 +76,19 @@ def test_settings_changed_rerenders_active_graph(q_app):
     win._on_settings_changed()                                   # no-op (no crash) when no host yet
 
 
-def test_gear_persistent_enabled_only_on_hardware(q_app):
+def test_gear_visible_only_on_hardware_and_flyout_dismissed(q_app):
     win = _window()
-    # The gear is PERSISTENT (always visible - hiding it made it flicker on every pivot); it's only
-    # *enabled* on Hardware, where it has an effect, and dimmed/disabled elsewhere.
-    win._on_tab_changed(1)                       # Network - gear has no effect here
+    # The gear only configures the Hardware graph, so it's shown on Hardware and hidden elsewhere
+    # (#170). Its layout slot is retained when hidden, so hiding it never reflows the header - which is
+    # why it used to be kept persistent-but-dimmed. Leaving Hardware also dismisses an open flyout.
+    win._on_tab_changed(2)                       # Hardware - gear relevant + visible
     assert not win._gear.isHidden()
-    assert not win._gear.isEnabled()
-    win._on_tab_changed(2)                       # Hardware - gear is relevant
-    assert not win._gear.isHidden()
-    assert win._gear.isEnabled()
+    win._open_settings_flyout()
+    assert win._settings_flyout is not None
+    win._on_tab_changed(1)                       # Network - gear hidden, flyout dismissed
+    assert win._gear.isHidden()
+    assert win._gear.sizePolicy().retainSizeWhenHidden() is True
+    assert win._settings_flyout.isHidden()
 
 
 def test_flyout_reused_not_rebuilt(q_app):
