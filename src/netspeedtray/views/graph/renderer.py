@@ -17,7 +17,7 @@ from matplotlib.ticker import NullLocator
 from netspeedtray import constants
 from netspeedtray.constants import styles as style_constants
 from netspeedtray.constants.renderer import RendererConstants
-from netspeedtray.utils.helpers import calculate_monotone_cubic_interpolation
+from netspeedtray.utils.helpers import calculate_monotone_cubic_interpolation, format_decimal
 from netspeedtray.utils.mpl_fonts import configure_cjk_font
 import matplotlib.colors as mcolors
 from matplotlib.patches import PathPatch
@@ -416,7 +416,7 @@ class GraphRenderer(QObject):
                 label.set_position(label_offset)
                 label.set_ha(label_ha)
                 label.set_va(label_va)
-                label.set_text(f"{label_prefix}: {peak_y:.1f} Mbps")
+                label.set_text(f"{label_prefix}: {format_decimal(peak_y, self.i18n, 1)} {self.i18n.MBITS_UNIT}")
                 label.get_bbox_patch().set_edgecolor(color_hex)
                 
                 for artist in artist_dict.values():
@@ -451,7 +451,7 @@ class GraphRenderer(QObject):
             
             # Label with background
             artist_dict['label'] = ax.annotate(
-                f"{label_prefix}: {peak_y:.1f} Mbps",
+                f"{label_prefix}: {format_decimal(peak_y, self.i18n, 1)} {self.i18n.MBITS_UNIT}",
                 xy=(peak_x, peak_y),
                 xytext=label_offset,
                 textcoords='offset points',
@@ -1317,8 +1317,8 @@ class GraphRenderer(QObject):
         self._set_smart_y_ticks(self.ax_download, y_top_down)
         
         # Formatters for clean labels (no decimals for large ranges)
-        self.ax_upload.yaxis.set_major_formatter(lambda x, pos: f"{int(x)}" if x >= 1 else f"{x:.1f}")
-        self.ax_download.yaxis.set_major_formatter(lambda x, pos: f"{int(x)}" if x >= 1 else f"{x:.1f}")
+        self.ax_upload.yaxis.set_major_formatter(lambda x, pos: f"{int(x)}" if x >= 1 else format_decimal(x, self.i18n, 1))
+        self.ax_download.yaxis.set_major_formatter(lambda x, pos: f"{int(x)}" if x >= 1 else format_decimal(x, self.i18n, 1))
 
         self.ax_upload.set_ylim(bottom=0, top=y_top_up)
         self.ax_download.set_ylim(bottom=0, top=y_top_down)
