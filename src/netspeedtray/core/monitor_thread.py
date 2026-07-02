@@ -88,8 +88,7 @@ class StatsMonitorThread(QThread):
         # LibreHardwareMonitor / OpenHardwareMonitor WMI object.
         # None = not yet tried, False = tried and unavailable, object = connected.
         self._wmi_ohm: Any = None
-        self._ohm_empty_ns_logged: set = set()  # Namespaces already warned about (log once)
-        self._ohm_probe_failed_logged: set = set()  # Namespaces whose probe-failure was already logged
+        self._ohm_guidance_logged: bool = False  # One-time "no sensor source" guidance, logged only when NO namespace connects
         self._lhm_notice_emitted: bool = False  # One-time notification flag
         self._lhm_check_polls: int = 0  # Count polls before emitting notice
         self._nvidia_smi_path: Optional[str] = self._get_cached_path("nvidia-smi")
@@ -611,6 +610,14 @@ class StatsMonitorThread(QThread):
         """
         if self._wmi_ohm is not None or not win32com.client:
             return
+        # Probe every namespace BEFORE deciding on any user-facing guidance: a working
+        # fallback (e.g. a live root\OpenHardwareMonitor) must not trigger a misleading
+        # "install LHM v0.9.4" note just because the LHM namespace happens to be absent
+        # (issue #134 / CMTriX - his sensors came from a live OHM publisher). Per-namespace
+        # outcomes stay at DEBUG; the single actionable line is logged once, after the loop,
+        # only if NOTHING connected.
+        saw_empty_namespace = False
+        probe_errors: List[str] = []
         for ns in ("root\\LibreHardwareMonitor", "root\\OpenHardwareMonitor"):
             try:
                 obj = win32com.client.GetObject(f"winmgmts:{ns}")
@@ -620,28 +627,35 @@ class StatsMonitorThread(QThread):
                 results = obj.ExecQuery("SELECT SensorType FROM Sensor")
                 count = sum(1 for _ in results)
                 if count == 0:
-                    if ns not in self._ohm_empty_ns_logged:
-                        self._ohm_empty_ns_logged.add(ns)
-                        self.logger.info(
-                            "Hardware monitor: %s namespace exists but has 0 sensors. "
-                            "Ensure LibreHardwareMonitor is running as Administrator.", ns
-                        )
+                    saw_empty_namespace = True
+                    self.logger.debug("Hardware monitor: %s exists but exposes 0 sensors.", ns)
                     continue
                 self._wmi_ohm = obj
                 self.logger.info("Hardware monitor: connected to %s (%d sensors).", ns, count)
                 return
             except Exception as e:
-                # Surface the first failure per namespace at INFO so a support bundle
-                # shows whether LHM/OHM was simply not running (issue #130); quieter after.
-                if ns not in self._ohm_probe_failed_logged:
-                    self._ohm_probe_failed_logged.add(ns)
-                    tool = ns.rsplit("\\", 1)[-1]  # LibreHardwareMonitor / OpenHardwareMonitor
-                    self.logger.info(
-                        "Hardware monitor: %s not available (%s). Run %s as Administrator "
-                        "to expose CPU/GPU temps and power.", ns, e, tool
-                    )
-                else:
-                    self.logger.debug("Hardware monitor: %s probe failed: %s", ns, e)
+                # A missing namespace (0x8004100e WBEM_E_INVALID_NAMESPACE) is normal when
+                # that particular tool isn't the one running - keep it quiet here.
+                tool = ns.rsplit("\\", 1)[-1]  # LibreHardwareMonitor / OpenHardwareMonitor
+                probe_errors.append(f"{tool}: {e}")
+                self.logger.debug("Hardware monitor: %s probe failed: %s", ns, e)
+        # Nothing connected across all namespaces. Surface ONE actionable line, once.
+        if not self._ohm_guidance_logged:
+            self._ohm_guidance_logged = True
+            if saw_empty_namespace:
+                # Genuine "running but not elevated" case: a namespace exists, 0 sensors.
+                self.logger.info(
+                    "Hardware monitor: a sensor namespace exists but exposes 0 sensors. "
+                    "Run LibreHardwareMonitor as Administrator to expose CPU/GPU temps and power."
+                )
+            else:
+                # No namespace at all: tool not running, or LHM v0.9.5+ (which removed WMI).
+                self.logger.info(
+                    "Hardware monitor: no CPU/GPU sensor source found (%s). Start "
+                    "LibreHardwareMonitor if it is not running. Note: LibreHardwareMonitor "
+                    "v0.9.5+ removed its WMI provider, so temps and power need LHM v0.9.4 "
+                    "(the last WMI-capable release).", "; ".join(probe_errors)
+                )
         # Leave _wmi_ohm as None so we retry next poll (LHM may not be running yet)
 
     def _poll_cpu_temperature(self) -> Optional[float]:
