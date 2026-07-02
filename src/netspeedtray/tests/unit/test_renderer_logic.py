@@ -38,6 +38,18 @@ def test_speed_band_handles_bad_input():
     """Non-numeric input must fall back to the default band, never raise."""
     assert WidgetRenderer._speed_band(None, 10.0, 1.0) == "default"
 
+
+def test_hw_percent_is_plain_text():
+    """The percent is plain text now; the fixed percent COLUMN in draw_hardware_stats provides the
+    constant width (right-aligned when memory is inline, left-aligned above a memory row), so the
+    value reads naturally and still lines up. Regression guard against re-padding the string."""
+    f = WidgetRenderer._fmt_hw_percent
+    assert f(9) == "9%"
+    assert f(10) == "10%"
+    assert f(100) == "100%"
+    assert f(0) == "0%"
+    assert f(7.8) == "7%"            # truncates toward zero
+
 def test_peak_label_placement_logic():
     # Mock dependencies for GraphRenderer
     parent_widget = MagicMock()

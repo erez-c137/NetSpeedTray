@@ -38,7 +38,8 @@ class HardwarePage(QWidget):
 
         self.monitor_ram = Win11Toggle(label_text="")
         self.monitor_ram.toggled.connect(self.on_change)
-        layout.addWidget(SettingCard(self.i18n.MONITOR_RAM_LABEL, control=self.monitor_ram))
+        self._ram_card = SettingCard(self.i18n.MONITOR_RAM_LABEL, control=self.monitor_ram)
+        layout.addWidget(self._ram_card)
 
         self.monitor_gpu = Win11Toggle(label_text="")
         self.monitor_gpu.toggled.connect(self._on_monitor_toggled)
@@ -46,7 +47,8 @@ class HardwarePage(QWidget):
 
         self.monitor_vram = Win11Toggle(label_text="")
         self.monitor_vram.toggled.connect(self.on_change)
-        layout.addWidget(SettingCard(self.i18n.MONITOR_VRAM_LABEL, control=self.monitor_vram))
+        self._vram_card = SettingCard(self.i18n.MONITOR_VRAM_LABEL, control=self.monitor_vram)
+        layout.addWidget(self._vram_card)
 
         self.show_temps = Win11Toggle(label_text="")
         self.show_temps.toggled.connect(self.on_change)
@@ -173,12 +175,16 @@ class HardwarePage(QWidget):
         eff.setOpacity(1.0 if enabled else 0.4)
 
     def _sync_dependent_cards(self) -> None:
-        """Temperature & power are drawn appended to the CPU/GPU utilisation readout, so with BOTH of
-        those monitors off there is nowhere for them to render - gray them out so the toggles can't
-        promise something that never shows (Win11 dependent-control pattern)."""
-        has_util = self.monitor_cpu.isChecked() or self.monitor_gpu.isChecked()
+        """Several readouts ride on the CPU/GPU utilisation lines, so gray their toggles out when there's
+        nowhere for them to render (Win11 dependent-control pattern): temperature & power need at least
+        one of CPU/GPU on; RAM rides on the CPU line, and VRAM on the GPU line, so each is grayed when its
+        host monitor is off - otherwise turning on RAM with CPU off promised something that never shows."""
+        cpu_on, gpu_on = self.monitor_cpu.isChecked(), self.monitor_gpu.isChecked()
+        has_util = cpu_on or gpu_on
         self._set_card_enabled(self._temps_card, has_util)
         self._set_card_enabled(self._power_card, has_util)
+        self._set_card_enabled(self._ram_card, cpu_on)
+        self._set_card_enabled(self._vram_card, gpu_on)
 
     def get_settings(self) -> Dict[str, Any]:
         return {

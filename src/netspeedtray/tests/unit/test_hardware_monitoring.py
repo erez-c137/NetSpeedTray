@@ -234,6 +234,47 @@ class TestHardwareMonitoring:
             # Should NOT have cached the connection - still None for retry
             assert monitor_thread._wmi_ohm is None
 
+    def test_init_ohm_wmi_no_v094_guidance_when_fallback_connects(self, monitor_thread):
+        """LHM namespace absent but a live OpenHardwareMonitor namespace has sensors:
+        connect to OHM and do NOT emit the misleading 'need LHM v0.9.4' guidance
+        (issue #134 - CMTriX's sensors came from a live OHM publisher, not stale data)."""
+        monitor_thread._wmi_ohm = None
+        monitor_thread._ohm_guidance_logged = False
+        monitor_thread.logger = MagicMock()
+
+        ohm_obj = MagicMock()
+        ohm_obj.ExecQuery.return_value = [MagicMock() for _ in range(68)]  # 68 live sensors
+
+        def fake_get_object(path):
+            if "LibreHardwareMonitor" in path:
+                raise Exception("(-2147217394, 'OLE error 0x8004100e', None, None)")
+            return ohm_obj  # root\OpenHardwareMonitor
+
+        with patch('win32com.client.GetObject', side_effect=fake_get_object), \
+             patch('pythoncom.CoInitialize'):
+            monitor_thread._init_ohm_wmi()
+
+        assert monitor_thread._wmi_ohm is ohm_obj  # connected via the OHM fallback
+        templates = " ".join(str(c.args[0]) for c in monitor_thread.logger.info.call_args_list if c.args)
+        assert "v0.9.4" not in templates, "must not cry wolf when a fallback namespace connects"
+        assert monitor_thread._ohm_guidance_logged is False  # no guidance was needed
+
+    def test_init_ohm_wmi_guidance_once_when_nothing_connects(self, monitor_thread):
+        """When no namespace connects at all, emit the 'need v0.9.4' guidance exactly once."""
+        monitor_thread._wmi_ohm = None
+        monitor_thread._ohm_guidance_logged = False
+        monitor_thread.logger = MagicMock()
+
+        with patch('win32com.client.GetObject', side_effect=Exception("0x8004100e")), \
+             patch('pythoncom.CoInitialize'):
+            monitor_thread._init_ohm_wmi()
+            monitor_thread._init_ohm_wmi()  # a second poll must not re-log the guidance
+
+        assert monitor_thread._wmi_ohm is None
+        guidance = [c for c in monitor_thread.logger.info.call_args_list
+                    if c.args and "v0.9.4" in str(c.args[0])]
+        assert len(guidance) == 1, "guidance must be logged exactly once across retries"
+
     # ------------------------------------------------------------------
     # CPU temperature polling
     # ------------------------------------------------------------------

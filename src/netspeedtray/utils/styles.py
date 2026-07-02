@@ -65,6 +65,29 @@ def combo_chevron_url(color_hex: str) -> str:
         return ""
 
 
+def spin_arrow_url(up: bool, color_hex: str) -> str:
+    """Up/down chevron for a QSpinBox's stepper buttons, cached like ``combo_chevron_url``.
+
+    Qt drops the native stepper arrows the moment ``::up-button``/``::down-button`` are QSS-styled.
+    We supply our own themed chevrons AND (in ``dialog_style``) give the buttons an explicit width,
+    which stops the styled edit field from overlapping the up-button and swallowing its clicks - the
+    root of #169 ("down arrow works, up arrow doesn't"), since the native side-by-side layout puts the
+    up-button under the edit field's right edge. Degrades to no image (empty string) on failure.
+    """
+    try:
+        from netspeedtray.utils.helpers import get_app_data_path
+        codepoint = 0xE70E if up else 0xE70D  # Fluent ChevronUp / ChevronDown
+        key = hashlib.md5(f"{codepoint}_{color_hex}".encode("utf-8")).hexdigest()[:8]
+        cache_dir = os.path.join(get_app_data_path(), "cache")
+        os.makedirs(cache_dir, exist_ok=True)
+        path = os.path.join(cache_dir, f"spin_{key}_v1.png")
+        if not os.path.exists(path):
+            fluent_icon(codepoint, 10, color_hex).pixmap(QSize(10, 10)).save(path, "PNG")
+        return path.replace("\\", "/")
+    except Exception:
+        return ""
+
+
 def font(token: tuple) -> QFont:
     """
     Build a QFont for a Fluent type token - a ``(style_name, pixel_size, weight)`` tuple
@@ -169,6 +192,10 @@ def dialog_style() -> str:
     input_bg = "#383838" if dark_mode_active else "#FFFFFF"
     # A themed dropdown chevron (Qt drops the native arrow once ::drop-down is styled).
     chevron_url = combo_chevron_url("#C8C8C8" if dark_mode_active else "#505050")
+    # Themed up/down chevrons for spinbox steppers (see spin_arrow_url / #169).
+    _spin_glyph = "#C8C8C8" if dark_mode_active else "#505050"
+    spin_up_url = spin_arrow_url(True, _spin_glyph)
+    spin_down_url = spin_arrow_url(False, _spin_glyph)
 
     accent_qcolor = get_accent_color()
     accent_rgb = f"rgb({accent_qcolor.red()}, {accent_qcolor.green()}, {accent_qcolor.blue()})"
@@ -272,6 +299,39 @@ def dialog_style() -> str:
         }}
         QComboBox::down-arrow {{
             image: url("{chevron_url}");
+        }}
+        /* Explicit spinbox stepper geometry. Without this Qt lays the native up/down
+           buttons under the styled edit field's right edge, so the up-button's clicks
+           get swallowed while the down-button (further right) still works - the #169
+           "up arrow doesn't work" bug. Reserving a fixed-width, stacked pair keeps the
+           edit field clear of both and restores a themed, unambiguous stepper. */
+        QSpinBox::up-button, QDoubleSpinBox::up-button {{
+            subcontrol-origin: border;
+            subcontrol-position: top right;
+            width: 20px;
+            border-left: 1px solid {border_color};
+            border-top-right-radius: 4px;
+        }}
+        QSpinBox::down-button, QDoubleSpinBox::down-button {{
+            subcontrol-origin: border;
+            subcontrol-position: bottom right;
+            width: 20px;
+            border-left: 1px solid {border_color};
+            border-bottom-right-radius: 4px;
+        }}
+        QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover,
+        QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {{
+            background-color: {accent_rgb};
+        }}
+        QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {{
+            image: url("{spin_up_url}");
+            width: 10px;
+            height: 10px;
+        }}
+        QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {{
+            image: url("{spin_down_url}");
+            width: 10px;
+            height: 10px;
         }}
         QComboBox QAbstractItemView {{
             background-color: {input_bg};

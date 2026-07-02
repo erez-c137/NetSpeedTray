@@ -19,8 +19,11 @@ from PyQt6.QtWidgets import (
 from netspeedtray.utils import styles as su
 from netspeedtray.utils.dwm import apply_win11_chrome
 
-# The download lives on the project's releases page; opened in the user's browser.
-LHM_RELEASES_URL = "https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases"
+# LibreHardwareMonitor v0.9.5+ dropped its WMI provider (the ".NET 10 build"
+# change, Jan 2026), so temps/power only work with v0.9.4 - the last WMI-capable
+# release. Pin the download there until we read LHM's HTTP server instead (2.1).
+# Opened in the user's browser.
+LHM_RELEASES_URL = "https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases/tag/v0.9.4"
 
 
 class TempOnboardingDialog(QDialog):

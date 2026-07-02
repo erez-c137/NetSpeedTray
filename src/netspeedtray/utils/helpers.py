@@ -325,8 +325,18 @@ def format_data_size(data_bytes: int | float, i18n, precision: int = 2) -> Tuple
         formatted_value = round(value, precision)
     except TypeError:
         logger_instance.error("TypeError during rounding in format_data_size. Value: %s, Precision: %s", value, precision, exc_info=True)
-        return round(value, 0), UNITS_DATA_SIZE[unit_index] 
-        
+        return round(value, 0), UNITS_DATA_SIZE[unit_index]
+
+    # Rounding can push a just-under-boundary value up to the base: e.g. 999_999 B
+    # scales to 999.999 KB, which rounds to 1000.0 - so without this we'd show
+    # "1000.0 KB" instead of "1.0 MB" (and "1000.0 MB" instead of "1.0 GB", etc.).
+    # Promote one more tier. A single re-check suffices: after promotion the value
+    # is < 1 and can't reach the base again. Guard against the top unit (PB).
+    if formatted_value >= BASE_DATA_SIZE and unit_index < len(UNITS_DATA_SIZE) - 1:
+        value /= BASE_DATA_SIZE
+        unit_index += 1
+        formatted_value = round(value, precision)
+
     return formatted_value, UNITS_DATA_SIZE[unit_index]
 
 

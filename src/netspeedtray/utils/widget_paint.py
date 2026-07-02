@@ -149,7 +149,8 @@ def _draw_side_by_side(painter: QPainter, renderer: WidgetRenderer, width: int, 
                 renderer.draw_mini_graph(painter, net_w, height, config, list(metrics.net_history), layout)
                 painter.restore()
             up_bytes, dw_bytes = metrics.net_bytes()
-            renderer.draw_network_speeds(painter, up_bytes, dw_bytes, width, height, config, layout, x_offset=current_x)
+            renderer.draw_network_speeds(painter, up_bytes, dw_bytes, width, height, config, layout,
+                                         x_offset=current_x, slot_width=network_width)
         elif key == "cpu" and config.monitor_cpu_enabled:
             ram = (metrics.ram_used, metrics.ram_total) if config.monitor_ram_enabled else None
             renderer.draw_hardware_stats(painter, metrics.cpu_usage, None, width, height, config,
@@ -252,11 +253,16 @@ def render_widget(painter: QPainter, rect: QRect, renderer: WidgetRenderer, conf
             renderer.reset_content_bounds()
             _draw_side_by_side(mp, renderer, width, height, config, metrics, layout_mode, network_width)
             mp.end()
-            content_w = renderer.get_content_bounds().width()
-            if 0 < content_w < width:
-                # Keep deliberate breathing room from the tray-side edge (not just TEXT_MARGIN) so the
-                # right-anchored readout doesn't crowd the tray-overflow chevron.
-                align_dx = max(0, width - content_w - constants.renderer.RIGHT_ANCHOR_PADDING)
+            bounds = renderer.get_content_bounds()
+            # Anchor from the content's RIGHT EDGE, not its width: the network segment is right-aligned
+            # inside its own slot (draw_network_speeds), so the bounds no longer start at x=0. Using the
+            # width here double-counted that shift and pushed the readout past the tray edge, clipping the
+            # unit ("Mbps" -> "Mbp"). The right edge already includes the shift, so the anchor is correct.
+            content_right = bounds.x() + bounds.width()
+            if 0 < content_right <= width:
+                # Keep deliberate breathing room from the tray-side edge so the right-anchored readout
+                # doesn't crowd the tray-overflow chevron.
+                align_dx = max(0, width - content_right - constants.renderer.RIGHT_ANCHOR_PADDING)
         except Exception:
             align_dx = 0
         finally:
