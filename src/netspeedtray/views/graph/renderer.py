@@ -18,6 +18,7 @@ from netspeedtray import constants
 from netspeedtray.constants import styles as style_constants
 from netspeedtray.constants.renderer import RendererConstants
 from netspeedtray.utils.helpers import calculate_monotone_cubic_interpolation
+from netspeedtray.utils.mpl_fonts import configure_cjk_font
 import matplotlib.colors as mcolors
 from matplotlib.patches import PathPatch
 from matplotlib.path import Path
@@ -37,7 +38,11 @@ class GraphRenderer(QObject):
         self.logger = logger or logging.getLogger(__name__)
         self.i18n = i18n
         self.parent_widget = parent_widget
-        
+
+        # Ensure CJK graph labels (ja/ko/zh) render with real glyphs instead of
+        # tofu boxes (#161). Uses a Windows system font; a no-op for other locales.
+        configure_cjk_font(getattr(self.i18n, "language", None))
+
         # UI Elements
         self.figure = None
         self.canvas = None
