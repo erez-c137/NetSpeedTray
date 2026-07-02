@@ -146,3 +146,28 @@ def test_hardware_stats_render_smoke(q_app):
     ptr.setsize(img.height() * img.width() * 4)
     arr = np.frombuffer(ptr, dtype=np.uint8).reshape((img.height(), img.width(), 4))
     assert int((arr[:, :, 3] >= 250).sum()) > 30, "hardware stats drew almost nothing"
+
+
+def test_hw_percent_content_width_stable_across_digits(q_app):
+    """Integration proof for #179: the CPU% segment's measured content width is IDENTICAL at 9%,
+    10% and 100%. That width is exactly what widget_paint feeds into the side-by-side right-anchor
+    (align_dx = widget_width - content_width), so a constant width means the whole block - including
+    a network readout drawn to its left - can no longer slide by a digit as CPU crosses 9<->10.
+    Guarded to fonts with tabular figures (space==digit), which the default Segoe UI has; CI fallback
+    fonts make the padding best-effort, so we skip the exact-equality assertion there rather than fail."""
+    cfg = dict(constants.config.defaults.DEFAULT_CONFIG)
+    cfg.update({"hardware_label_style": "text", "monitor_cpu_enabled": True, "monitor_gpu_enabled": False})
+    r = WidgetRenderer(cfg, I18nStrings("en_US"))
+    if r.metrics.horizontalAdvance(" ") != r.metrics.horizontalAdvance("0"):
+        pytest.skip("test font lacks tabular space==digit metrics; the padding is best-effort there")
+
+    def content_w(cpu):
+        img = QImage(320, 56, QImage.Format.Format_ARGB32)
+        img.fill(QColor(0, 0, 0, 0))
+        p = QPainter(img)
+        r.draw_hardware_stats(p, float(cpu), None, 320, 56, r.config)
+        p.end()
+        return r.get_last_text_rect().width()
+
+    w9, w10, w100 = content_w(9), content_w(10), content_w(100)
+    assert w9 == w10 == w100, f"CPU% segment width still jitters: 9->{w9}, 10->{w10}, 100->{w100}"

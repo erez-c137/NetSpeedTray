@@ -233,36 +233,57 @@ class WidgetLayoutManager:
                     else:
                         hw_suffix_width = 0
 
+                    # Worst-case memory column, reserved for BOTH stacked rows so they align and never
+                    # clip. Uses the machine TOTAL (used can never exceed it), not a live used value: a
+                    # live ram_used is None at cold start, which previously SKIPPED this reservation and
+                    # clipped the readout (e.g. "11.6/15.7G" -> "1") until the user toggled hardware off/on.
+                    # Falls back to psutil RAM / a generous default when a total isn't known yet; any slack
+                    # lands on the LEFT (toward the app icons), not as a gap. Matches the renderer's fixed
+                    # memory column (utils/widget_renderer.draw_hardware_stats), which uses max(totals).
+                    mem_total = 0.0
+                    if monitor_ram:
+                        rt = getattr(self.widget, 'ram_total', 0.0) or 0.0
+                        if rt <= 0:   # RAM total is knowable synchronously - use it so we reserve tight, not huge
+                            try:
+                                import psutil
+                                rt = psutil.virtual_memory().total / (1024 ** 3)
+                            except Exception:
+                                rt = 32.0
+                        mem_total = max(mem_total, rt)
+                    if monitor_vram:
+                        # Use the real VRAM total when known; do NOT bloat to a 99.9 default when it isn't -
+                        # the renderer shows VRAM used-only and aligns it to the (known) RAM column, so a big
+                        # default just widened the whole widget for nothing.
+                        vt = getattr(self.widget, 'vram_total', 0.0) or 0.0
+                        if vt > 0:
+                            mem_total = max(mem_total, vt)
+                    # Only if nothing is known yet (e.g. VRAM-only at cold start) fall back to a modest column.
+                    if (monitor_ram or monitor_vram) and mem_total <= 0:
+                        mem_total = 32.0
+                    mem_ref = f"{mem_total:.1f}/{mem_total:.1f}G" if mem_total > 0 else ""
+
                     cpu_width = 0
                     if "cpu" in display_order and monitor_cpu:
-                        cpu_val = int(getattr(self.widget, 'cpu_usage', 0))
                         cpu_width = label_offset + self.metrics.horizontalAdvance(" 100%")
                         if hw_suffix_width:
                             cpu_width += hw_suffix_width
-                        if monitor_ram and getattr(self.widget, 'ram_used', None) is not None:
-                            used = getattr(self.widget, 'ram_used', 0)
-                            total = getattr(self.widget, 'ram_total', -1.0)
-                            mem_text = f"{used:.1f}/{total:.1f}G" if total and total > 0 else f"{used:.1f}G"
+                        if monitor_ram and mem_ref:
                             if stack_hw: # inline
-                                cpu_width += self.metrics.horizontalAdvance(f" | {mem_text}")
+                                cpu_width += self.metrics.horizontalAdvance(f" | {mem_ref}")
                             else: # row
-                                cpu_width = max(cpu_width, self.metrics.horizontalAdvance(mem_text))
+                                cpu_width = max(cpu_width, self.metrics.horizontalAdvance(mem_ref))
                         cpu_width += margin # Reclaim Left Margin offset budget from draw_hardware_stats
-                                
+
                     gpu_width = 0
                     if "gpu" in display_order and monitor_gpu:
-                        gpu_val = int(getattr(self.widget, 'gpu_usage', 0))
                         gpu_width = label_offset + self.metrics.horizontalAdvance(" 100%")
                         if hw_suffix_width:
                             gpu_width += hw_suffix_width
-                        if monitor_vram and getattr(self.widget, 'vram_used', None) is not None:
-                            used = getattr(self.widget, 'vram_used', 0)
-                            total = getattr(self.widget, 'vram_total', -1.0)
-                            mem_text = f"{used:.1f}/{total:.1f}G" if total and total > 0 else f"{used:.1f}G"
+                        if monitor_vram and mem_ref:
                             if stack_hw: # inline
-                                gpu_width += self.metrics.horizontalAdvance(f" | {mem_text}")
+                                gpu_width += self.metrics.horizontalAdvance(f" | {mem_ref}")
                             else: # row
-                                gpu_width = max(gpu_width, self.metrics.horizontalAdvance(mem_text))
+                                gpu_width = max(gpu_width, self.metrics.horizontalAdvance(mem_ref))
                         gpu_width += margin # Reclaim Left Margin offset budget
                             
                     if stack_hw and monitor_cpu and monitor_gpu:
