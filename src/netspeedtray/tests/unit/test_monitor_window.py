@@ -55,6 +55,25 @@ def test_hardware_tab_always_visible(q_app):
     assert not off._tab_bar._buttons["hardware"].isHidden()
 
 
+def test_gear_visible_only_on_hardware_tab(q_app):
+    """The display-settings gear configures only the Hardware graph, so it shows on the Hardware tab
+    and hides on Overview/Network - a persistent but inert gear on the other tabs confused users
+    (#170). Its layout slot is retained when hidden so hiding it never reflows the header (the reason
+    it used to be kept persistent-but-dimmed)."""
+    w = MonitorWindow(_main_widget(), _cfg(monitor_cpu_enabled=True), I18nStrings("en_US"))
+    hw = next(i for i, d in enumerate(w._descriptors) if d.tab_id == "hardware")
+    ov = next(i for i, d in enumerate(w._descriptors) if d.tab_id == "overview")
+
+    w._on_tab_changed(ov)
+    assert w._gear.isHidden(), "gear must be hidden on Overview"
+    w._on_tab_changed(hw)
+    assert not w._gear.isHidden(), "gear must be shown on Hardware"
+    w._on_tab_changed(ov)
+    assert w._gear.isHidden(), "gear must hide again when leaving Hardware"
+    # retained slot => hiding never reflows the header (no pivot flicker)
+    assert w._gear.sizePolicy().retainSizeWhenHidden() is True
+
+
 def test_monitor_forces_hardware_collection_while_open(q_app):
     # The Monitor flips the stats thread's override on while open (set in showEvent) and reverts it
     # on close - so its Overview/Hardware screens show hardware even with the widget's flags off.
