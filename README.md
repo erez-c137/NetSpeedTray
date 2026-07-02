@@ -158,11 +158,13 @@ Double-click the widget (or pick **Monitor** from the right-click menu) to open 
 | **CPU temperature** | ⚠️ only if your board exposes ACPI thermal zones | AMD Ryzen, and boards without usable zones |
 | **CPU power** | ✅ Intel (RAPL) | AMD CPUs |
 
-**In plain terms:** on a typical **NVIDIA + Intel** PC you'll see most temps and power without installing anything. If you have an **AMD CPU**, accurate CPU temperature and power realistically need LHM. To enable it, install LibreHardwareMonitor, run it **as Administrator**, and NetSpeedTray detects it automatically - temps and power across all vendors light up.
+**In plain terms:** on a typical **NVIDIA + Intel** PC you'll see most temps and power without installing anything. If you have an **AMD CPU**, accurate CPU temperature and power realistically need LHM. To enable it, install **[LibreHardwareMonitor v0.9.4](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases/tag/v0.9.4)** (that specific version - see the note below), run it **as Administrator**, and NetSpeedTray detects it automatically - temps and power across all vendors light up.
 
 > NetSpeedTray itself **never runs as admin and never ships a kernel driver.** Reading CPU/GPU die
 > temperatures requires a driver that Windows doesn't expose to normal apps; LHM provides that driver and
-> publishes the values over WMI, which NetSpeedTray simply reads. Your choice, fully optional.
+> publishes the values over WMI, which NetSpeedTray simply reads. **Use [LHM v0.9.4](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases/tag/v0.9.4):** LibreHardwareMonitor removed that WMI
+> interface in v0.9.5, so v0.9.4 is the last version NetSpeedTray can read today (support for LHM's newer
+> web-server interface is planned). Your choice, fully optional.
 
 ---
 
@@ -171,7 +173,7 @@ Double-click the widget (or pick **Monitor** from the right-click menu) to open 
 1. **Install** with the Winget command [above](#install) (or the installer).
 2. **Right-click the widget** - open **Settings** or the **Monitor**, **Pause/Resume** monitoring, or **Exit**. The top of the menu shows your data used today / this month at a glance.
 3. **Double-click the widget** to open the **Monitor** (history, per-app activity, hardware, statistics).
-4. **Want temperatures?** Most NVIDIA/Intel systems show them out of the box. For full coverage (or any AMD CPU), install and run [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) as Administrator.
+4. **Want temperatures?** Most NVIDIA/Intel systems show them out of the box. For full coverage (or any AMD CPU), install and run [LibreHardwareMonitor **v0.9.4**](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases/tag/v0.9.4) as Administrator (v0.9.5+ removed the interface NetSpeedTray reads).
 
 ---
 
@@ -184,7 +186,7 @@ Task Manager shows network speed too - but you have to *open* it, and it disappe
 Idle RAM is roughly **50-80 MB** (Python + Qt overhead) and CPU is near zero between polls. The Monitor's Overview tab is deliberately chart-free, so glancing at it stays light; opening the Network or Hardware **charts** loads the plotting library once for the session. The widget polls every ~1 second using the same Windows APIs Task Manager uses.
 
 **Do I need LibreHardwareMonitor?**
-Often no - see the [hardware table above](#hardware-monitoring---do-i-need-librehardwaremonitor). Usage stats and NVIDIA/Intel temps & power work natively; LHM (run as admin) is the universal fallback and the realistic way to get **AMD CPU** temperature and power. The widget never asks for admin itself.
+Often no - see the [hardware table above](#hardware-monitoring---do-i-need-librehardwaremonitor). Usage stats and NVIDIA/Intel temps & power work natively; LHM (run as admin, **v0.9.4** - v0.9.5+ dropped the interface we read) is the universal fallback and the realistic way to get **AMD CPU** temperature and power. The widget never asks for admin itself.
 
 **Can I set a data limit and get warned?**
 Yes - **Settings → Network → Data usage**, or the tray's **Data cap…**. Set a monthly cap, a billing reset day, and opt-in 80% / 100% alerts. The alert is a quiet flyout above the widget; the tray shows live progress.
