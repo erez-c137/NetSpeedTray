@@ -636,9 +636,17 @@ class StatsMonitorThread(QThread):
                 if ns not in self._ohm_probe_failed_logged:
                     self._ohm_probe_failed_logged.add(ns)
                     tool = ns.rsplit("\\", 1)[-1]  # LibreHardwareMonitor / OpenHardwareMonitor
+                    # 0x8004100e (WBEM_E_INVALID_NAMESPACE) means the namespace does
+                    # not exist - which happens both when the tool isn't running AND
+                    # when LibreHardwareMonitor v0.9.5+ is running (it removed its WMI
+                    # provider in the ".NET 10 build"). Don't advise "run as admin"
+                    # here: for a missing namespace that's misleading. The genuine
+                    # "running but not elevated" case is the 0-sensors branch above.
                     self.logger.info(
-                        "Hardware monitor: %s not available (%s). Run %s as Administrator "
-                        "to expose CPU/GPU temps and power.", ns, e, tool
+                        "Hardware monitor: %s namespace not found (%s). Start %s if it "
+                        "is not running. Note: LibreHardwareMonitor v0.9.5+ removed its "
+                        "WMI provider, so CPU/GPU temps and power need LHM v0.9.4 (the "
+                        "last WMI-capable release).", ns, e, tool
                     )
                 else:
                     self.logger.debug("Hardware monitor: %s probe failed: %s", ns, e)
