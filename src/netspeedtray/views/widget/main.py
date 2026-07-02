@@ -347,7 +347,14 @@ class NetworkSpeedWidget(QWidget):
             return
         
         try:
-            taskbar_info = get_taskbar_info()
+            # Resolve the widget's OWN taskbar (honoring the preferred_monitor
+            # setting, #72), not the primary. Using a bare get_taskbar_info()
+            # here re-pinned the widget to the primary taskbar within one
+            # event-loop tick, dragging it off a secondary monitor even after
+            # the initial placement landed correctly. The visibility/obstruction
+            # checks below are also judged against the widget's own taskbar.
+            preferred = self.config.get("preferred_monitor")
+            taskbar_info = get_taskbar_info(preferred_screen_name=preferred)
 
             # Implement the "coasting" logic for taskbar detection failures.
             if taskbar_info.hwnd == 0: # hwnd=0 signifies a fallback object from get_taskbar_info
