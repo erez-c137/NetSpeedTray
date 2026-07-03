@@ -10,6 +10,14 @@ All notable changes to this project will be documented in this file.
 - **Network identity on the widget - see *which* Wi-Fi network you're on, not just how fast.** A new optional indicator shows the Wi-Fi **band** (2.4G / 5G / 6G) - the one thing Windows hides at a glance - and, optionally, the **network name (SSID)**, as a small pill/badge beside your speed (the name and band combine into one capsule). Turn it on in **Settings > Network > Network identity**. The band can be shown *Always* (neutral), *Color-coded* (2.4G amber / 5G green / 6G blue), or **Alert only** - a red `2.4G` appears *only* when your PC has silently dropped to the slow band, and the widget stays clean otherwise. Directly answers "did my PC quietly rejoin 2.4 GHz after the last reconnect?".
   - **About the Location permission (please read):** the band works on every PC and needs **no permission**. The **network name (SSID)** is different - **Windows only reveals the SSID to apps that have Location access** - so choosing to show the name asks you to turn on Windows Location. This is a **Windows privacy gate, not GPS or tracking**: NetSpeedTray does not use your position; it reads the network name **locally, only to show it on the widget**, and never stores or transmits it. A one-time in-app explainer spells this out, with a button straight to the Location settings and a "just show the band" option. See the [Privacy Policy](privacy.md) for the full detail.
 
+### Changed
+- **The readout hugs the system tray more consistently.** In Cycle mode and the single-metric (CPU-only / GPU-only) layouts, a narrower reading used to leave a small gap between the widget and the system tray. Every mode now right-aligns its content to the tray edge, so the widget sits flush against the tray with the spare width tucked onto the app-icon side, where it's invisible. (#106)
+
+### Fixed
+- **The widget could crowd the "show hidden icons" (∧) button.** Its right edge sat flush against the tray chevron, making that button awkward to click. It now keeps a small gap so the chevron stays fully clickable. (#161)
+- **Pinned to a second monitor, the widget could land on the clock.** On a secondary display whose taskbar has no system tray of its own, the widget's default position could overlap that monitor's date/time. It now leaves room for the clock (tunable via `secondary_clock_reserve_px` for wide date formats); as always, dragging it once remembers your exact spot. (#186)
+- **Runaway logging on taskbar-less monitors.** When a preferred monitor had no taskbar, NetSpeedTray wrote its "falling back to the primary taskbar" note to the log every second, bloating log files and Support Bundles. It now logs that once per change. (#191)
+
 ---
 
 ## [2.0.1] - Unreleased
