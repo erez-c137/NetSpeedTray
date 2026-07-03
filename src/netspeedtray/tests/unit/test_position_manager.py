@@ -27,18 +27,40 @@ class TestPositionCalculator(unittest.TestCase):
         self.mock_taskbar.hwnd = 12345
 
     def test_calculate_position_bottom_edge(self):
-        """Test position calculation for bottom taskbar."""
+        """Test position calculation for bottom taskbar (offset >= the #161 tray-edge floor)."""
         widget_size = (100, 40) # w, h
-        config = {'tray_offset_x': 5}
-        
+        config = {'tray_offset_x': 10}   # >= TRAY_EDGE_MIN_GAP_PX (8), so the floor doesn't alter it
+
         # Expected Y: tb_top + (tb_height - widget_h) / 2
         # TB Top = 1040, H = 40. Widget H = 40. Y = 1040 + (40-40)/2 = 1040.
-        # Expected X: Tray Left (1700) - Widget W (100) - Offset (5) = 1595.
-        
+        # Expected X: Tray Left (1700) - Widget W (100) - Offset (10) = 1590.
+
         pos = self.calculator.calculate_position(self.mock_taskbar, widget_size, config)
-        
-        self.assertEqual(pos.x, 1595)
+
+        self.assertEqual(pos.x, 1590)
         self.assertEqual(pos.y, 1040)
+
+    def test_tray_edge_min_gap_floor(self):
+        """#161 pt1: a below-floor tray offset (incl. 0) is raised to TRAY_EDGE_MIN_GAP_PX so the
+        widget never abuts the '^' chevron; a larger user offset is preserved."""
+        gap = constants.layout.TRAY_EDGE_MIN_GAP_PX
+        # offset 0 -> floored to `gap`: x = 1700 - 100 - gap
+        pos = self.calculator.calculate_position(self.mock_taskbar, (100, 40), {'tray_offset_x': 0})
+        self.assertEqual(pos.x, 1700 - 100 - gap)
+        # a larger user offset survives untouched
+        pos2 = self.calculator.calculate_position(self.mock_taskbar, (100, 40), {'tray_offset_x': 40})
+        self.assertEqual(pos2.x, 1700 - 100 - 40)
+
+    def test_secondary_taskbar_reserves_clock_width(self):
+        """#186: a preferred secondary taskbar has no tray rect, so the widget anchors a clock-reserve
+        off the screen edge instead of landing on the clock."""
+        self.mock_taskbar.get_tray_rect.return_value = None   # Win11 secondary: no TrayNotifyWnd
+        reserve = constants.config.defaults.DEFAULT_SECONDARY_CLOCK_RESERVE_PX
+        pos = self.calculator.calculate_position(self.mock_taskbar, (100, 40), {})
+        # right_boundary = full_geom.right()+1 - reserve; QRect(0,0,1920,1080).right()==1919 -> +1==1920.
+        # x = right_boundary - width - offset(0)
+        screen_edge = self.mock_screen.geometry.return_value.right() + 1   # 1920
+        self.assertEqual(pos.x, (screen_edge - reserve) - 100)
 
     def test_calculate_position_fallback(self):
         """Test fallback when taskbar is invalid."""

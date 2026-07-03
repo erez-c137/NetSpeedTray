@@ -248,22 +248,24 @@ def render_widget(painter: QPainter, rect: QRect, renderer: WidgetRenderer, conf
     if font is not None:
         painter.setFont(font)
 
-    # Right-align the side-by-side content so the widget's worst-case width reservation (the anti-jiggle
-    # "888.8"/"100%" headroom, plus any hidden GPU/VRAM segment) shows up as space on the LEFT - toward
-    # the app icons, where it's invisible - instead of a gap between the content and the system tray.
-    # Only side_by_side over-reserves like this; single-metric modes fill their width (graph or one
-    # block) and vertical docking is sized to the taskbar. We have to MEASURE first because the renderer
-    # computes its segment rects from font metrics during the draw, not before - so we run one draw onto
-    # a throwaway surface (the mini-graph's point cache, keyed by data, is simply warmed by it).
+    # Right-align the content so the widget's worst-case width reservation (the anti-jiggle "888.8"/"100%"
+    # headroom, any hidden GPU/VRAM segment, and in cycle mode the widest-phase reserve) shows up as space
+    # on the LEFT - toward the app icons, where it's invisible - instead of a gap between the content and
+    # the system tray (#106). side_by_side over-reserves across segments; cycle over-reserves because it's
+    # sized to the widest phase but draws one narrower phase. network_only/cpu_only/combined already fill
+    # their width and vertical docking is sized to the taskbar. We MEASURE first because the renderer
+    # computes its segment rects from font metrics during the draw, not before - so we run one draw onto a
+    # throwaway surface (the mini-graph's point cache, keyed by data, is simply warmed by it).
     align_dx = 0
-    if mode == "side_by_side" and layout_mode != "vertical" and width > 0:
+    if (mode == "side_by_side" or config.widget_display_mode == "cycle") and layout_mode != "vertical" and width > 0:
         try:
             probe = QImage(max(1, width), max(1, height), QImage.Format.Format_ARGB32_Premultiplied)
             mp = QPainter(probe)
             if font is not None:
                 mp.setFont(font)
             renderer.reset_content_bounds()
-            _draw_side_by_side(mp, renderer, width, height, config, metrics, layout_mode, network_width)
+            # Mode-generic probe: measures side_by_side OR the single resolved cycle phase.
+            _draw_foreground(mp, renderer, width, height, config, metrics, mode, layout_mode, network_width)
             mp.end()
             bounds = renderer.get_content_bounds()
             # Anchor from the content's RIGHT EDGE, not its width: the network segment is right-aligned
