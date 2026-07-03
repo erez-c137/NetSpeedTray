@@ -607,12 +607,16 @@ class WidgetRenderer:
                     self._draw_icon(painter, r['label'], current_x, y, QColor(r['color']))
                 vx = current_x + label_col
                 painter.setPen(self.default_color)
-                # Right-align the percent in its column whenever something trails it on the same row (a
-                # suffix, or inline memory) so "8% (48C)" / "8% | 11.8/15.7G" stay tight and line up across
-                # rows. Left-align only when the percent is alone above a memory row (CPU+RAM), so it lines
-                # up with the memory beneath it.
+                # Right-align the percent in its fixed "100%" column whenever something trails it on the
+                # same row (a suffix, or inline memory) so "8% (48C)" / "8% | 11.8/15.7G" stay tight and
+                # line up across rows. Also right-align when the percent is the row's ONLY content (no
+                # suffix, no memory anywhere) so a sub-100 value hugs the tray instead of leaving the
+                # fixed-column surplus as a gap (#106). Left-align ONLY when it sits alone above a stacked
+                # memory row (CPU+RAM), so it lines up with the memory beneath it (#179).
                 has_trailing = (inline_mem and mem_col and r['mem']) or bool(suffix_col and r['suffix'])
-                px = (vx + pct_col - self.metrics.horizontalAdvance(r['pct'])) if has_trailing else vx
+                has_mem_below = (not inline_mem) and bool(r['mem'])
+                right_align_pct = has_trailing or not has_mem_below
+                px = (vx + pct_col - self.metrics.horizontalAdvance(r['pct'])) if right_align_pct else vx
                 painter.drawText(px, y, r['pct'])
                 if suffix_col and r['suffix']:
                     painter.drawText(vx + pct_col + sp, y, r['suffix'])  # live suffix in its worst-case column

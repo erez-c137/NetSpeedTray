@@ -271,16 +271,26 @@ class PositionCalculator:
         y_center = y_origin + (visible_tb_height - widget_height) / 2.0
         y = round(y_center)
         
-        # Calculate X: align to right (system tray side) with offset.
-        # right_boundary is the left edge of the tray/notification area when available.
+        # Calculate X: align to the right (system-tray side), keeping the widget clear of the tray.
         tray_rect = taskbar_info.get_tray_rect()
-        right_boundary = round(tray_rect[0] / dpi_scale) if tray_rect else (full_geom.right() + 1)
+        offset = config.get('tray_offset_x', constants.config.defaults.DEFAULT_TRAY_OFFSET_X)
+        if tray_rect:
+            # Normal taskbar: hug the tray's left edge, but floor the gap so the widget never abuts
+            # the show-hidden-icons "^" chevron and steals its clicks (#161 pt1).
+            right_boundary = round(tray_rect[0] / dpi_scale)
+            offset = max(offset, constants.layout.TRAY_EDGE_MIN_GAP_PX)
+        else:
+            # A Win11 SECONDARY taskbar (Shell_SecondaryTrayWnd) has no TrayNotifyWnd child, so
+            # get_tray_rect() is None. Its clock is shell-drawn with no HWND to hug; reserve an
+            # estimate of the clock width off the screen edge instead of landing on it (#186).
+            reserve = config.get('secondary_clock_reserve_px',
+                                 constants.config.defaults.DEFAULT_SECONDARY_CLOCK_RESERVE_PX)
+            right_boundary = (full_geom.right() + 1) - reserve
 
         # left_boundary is the right edge of the task list/app-icons region when available.
         tasklist_rect = taskbar_info.tasklist_rect
         left_boundary = round(tasklist_rect[2] / dpi_scale) if tasklist_rect else full_geom.left()
 
-        offset = config.get('tray_offset_x', constants.config.defaults.DEFAULT_TRAY_OFFSET_X)
         x = round(right_boundary - widget_width - offset)
         
         # Safety check: don't overlap with app icons on left
@@ -395,7 +405,9 @@ class PositionCalculator:
                     vis_bot = round(taskbar_info.rect[3] / dpi_scale)
                 fixed_y = round((vis_top + vis_bot) / 2.0 - widget_height / 2.0)
                 
-                right_boundary = (round(taskbar_info.get_tray_rect()[0] / dpi_scale) - widget_width) if taskbar_info.get_tray_rect() else (screen.geometry().right() - widget_width)
+                # Keep the same tray-side gap as the auto-placement, so a user can't drag the widget
+                # flush against the "^" chevron (#161 pt1).
+                right_boundary = (round(taskbar_info.get_tray_rect()[0] / dpi_scale) - widget_width - constants.layout.TRAY_EDGE_MIN_GAP_PX) if taskbar_info.get_tray_rect() else (screen.geometry().right() - widget_width)
                 left_boundary = (round(taskbar_info.tasklist_rect[2] / dpi_scale) + constants.layout.DEFAULT_PADDING) if taskbar_info.tasklist_rect else screen.geometry().left()
                 
                 constrained_x = max(left_boundary, min(desired_pos.x(), right_boundary))
