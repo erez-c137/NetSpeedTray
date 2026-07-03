@@ -220,6 +220,12 @@ class ConfigConstants:
         "widget_display_mode": DEFAULT_WIDGET_DISPLAY_MODE,
         "widget_display_order": DEFAULT_WIDGET_DISPLAY_ORDER,
         "widget_cycle_interval": DEFAULT_WIDGET_CYCLE_INTERVAL,
+        # v2.1 network identity: the Wi-Fi band (2.4G/5G) is Location-free; the SSID is gated behind
+        # the Windows Location permission, so it is opt-in and defaults off. See releases/v2.1/KICKOFF.md.
+        "show_network_identity": False,
+        "identity_mode": "band",           # band (Location-free) | ssid (Location-gated) | both
+        "band_display": "always",          # always (neutral) | colored (by band) | alert_only (2.4G warning)
+        "location_onboarding_dismissed": False,  # user permanently dismissed the SSID/Location explainer
         "cpu_load_high_threshold": DEFAULT_CPU_LOAD_HIGH_THRESHOLD,
         "cpu_load_low_threshold": DEFAULT_CPU_LOAD_LOW_THRESHOLD,
         "gpu_load_high_threshold": DEFAULT_GPU_LOAD_HIGH_THRESHOLD,
@@ -332,6 +338,10 @@ class ConfigConstants:
         "widget_display_mode": {"type": str, "default": DEFAULT_WIDGET_DISPLAY_MODE, "choices": ["network_only", "cycle", "side_by_side"]},
         "widget_display_order": {"type": list, "default": DEFAULT_WIDGET_DISPLAY_ORDER, "item_type": str},
         "widget_cycle_interval": {"type": int, "default": DEFAULT_WIDGET_CYCLE_INTERVAL, "min": 1, "max": 60},
+        "show_network_identity": {"type": bool, "default": False},
+        "identity_mode": {"type": str, "default": "band", "choices": ["band", "ssid", "both"]},
+        "band_display": {"type": str, "default": "always", "choices": ["always", "colored", "alert_only"]},
+        "location_onboarding_dismissed": {"type": bool, "default": False},
         "cpu_load_high_threshold": {"type": (int, float), "default": DEFAULT_CPU_LOAD_HIGH_THRESHOLD, "min": 0, "max": 100},
         "cpu_load_low_threshold": {"type": (int, float), "default": DEFAULT_CPU_LOAD_LOW_THRESHOLD, "min": 0, "max": 100},
         "gpu_load_high_threshold": {"type": (int, float), "default": DEFAULT_GPU_LOAD_HIGH_THRESHOLD, "min": 0, "max": 100},

@@ -14,8 +14,45 @@ from dataclasses import dataclass, field
 from netspeedtray.core.widget_state import SpeedDataSnapshot, AggregatedSpeedData
 from netspeedtray.utils.helpers import format_speed, calculate_monotone_cubic_interpolation
 from PyQt6.QtGui import QPainter, QColor, QFont, QFontMetrics, QPen, QPainterPath
-from PyQt6.QtCore import Qt, QPointF, QRect
+from PyQt6.QtCore import Qt, QPointF, QRect, QRectF
 from netspeedtray import constants
+
+# v2.1 network-identity band tag, drawn as a rounded pill/badge. The layout RESERVES the fixed
+# worst-case slot and the renderer DRAWS the actual (usually narrower) tag in it - both MUST use these
+# same values or the tag clips (#106 class). "2.4G" is the widest band label. See KICKOFF.md §3.
+IDENTITY_BAND_REFERENCE: str = "2.4G"
+IDENTITY_BAND_GAP_PX: int = 6
+IDENTITY_PILL_PAD_X: int = 7      # horizontal padding inside the band pill
+
+
+def identity_pill_width(fm, text: str) -> int:
+    """Total pill width for `text` under font metrics `fm` (advance + both-side padding)."""
+    return fm.horizontalAdvance(text) + 2 * IDENTITY_PILL_PAD_X
+
+
+def identity_layout(fm, ssid, band):
+    """Geometry for the identity badge. Returns (total_width, parts dict).
+
+    Three shapes, all one capsule high:
+      - band only  -> a single band pill.
+      - ssid only  -> a single outline pill with the name.
+      - both       -> a COMPOUND capsule: an outer outline pill holding the name, with the band as a
+                      same-height pill nested flush to the right edge ("one big pill with two left edges").
+    `parts` carries 'mode', 'w', 'h', and the relative x offsets the drawer needs.
+    """
+    pad = IDENTITY_PILL_PAD_X
+    h = fm.height() + 2
+    ssid_w = fm.horizontalAdvance(ssid) if ssid else 0
+    band_pill_w = (fm.horizontalAdvance(band) + 2 * pad) if band else 0
+    if ssid and band:
+        w = pad + ssid_w + pad + band_pill_w
+        return w, {"mode": "both", "w": w, "h": h, "ssid_x": pad, "band_x": w - band_pill_w, "band_w": band_pill_w}
+    if ssid:
+        w = 2 * pad + ssid_w
+        return w, {"mode": "ssid", "w": w, "h": h, "ssid_x": pad}
+    if band:
+        return band_pill_w, {"mode": "band", "w": band_pill_w, "h": h, "band_x": 0, "band_w": band_pill_w}
+    return 0, {"mode": "none", "w": 0, "h": h}
 
 logger = logging.getLogger("NetSpeedTray.WidgetRenderer")
 
@@ -246,8 +283,14 @@ class WidgetRenderer:
             
         painter.fillRect(rect, self._cached_bg_color)
 
-    def draw_network_speeds(self, painter: QPainter, upload: float, download: float, width: int, height: int, config: RenderConfig, layout_mode: str = 'vertical', x_offset: int = 0, slot_width: Optional[int] = None, fixed_width: Optional[int] = None) -> None:
-        """Draws current upload and download speeds."""
+    def draw_network_speeds(self, painter: QPainter, upload: float, download: float, width: int, height: int, config: RenderConfig, layout_mode: str = 'vertical', x_offset: int = 0, slot_width: Optional[int] = None, fixed_width: Optional[int] = None, identity_text: Optional[str] = None, identity_color: Optional[str] = None, identity_solid: bool = False, identity_ssid: Optional[str] = None) -> None:
+        """Draws current upload and download speeds.
+
+        identity_text: optional network-identity band tag (e.g. "5G") drawn to the right of the unit
+        column, vertically centred. When present it participates in the block width (so side_by_side
+        right-align accounts for it) and the content bounds. Reserved width is the fixed worst-case
+        (IDENTITY_BAND_REFERENCE), so a 2.4G<->5G change never shifts the layout.
+        """
         try:
             # Format speeds
             up_val, up_unit = format_speed(
@@ -300,7 +343,12 @@ class WidgetRenderer:
             # the hardware instead of floating left in the worst-case width. The slack lands on the left,
             # toward the app icons; both rows shift equally so the arrows stay mutually aligned.
             max_unit_width = max(self.metrics.horizontalAdvance(up_unit), self.metrics.horizontalAdvance(dw_unit)) if not config.hide_unit_suffix else 0
-            block_width = max_arrow_width + arrow_gap + number_area_width + unit_gap + max_unit_width
+            # v2.1: reserve the identity badge slot (SSID pill / band pill / compound capsule) so
+            # right-align accounts for it and the layout reserves the same amount. Matches
+            # NetworkSpeedWidget._identity_reserve_px (same identity_layout geometry).
+            identity_badge_w, identity_parts = identity_layout(self.metrics, identity_ssid, identity_text)
+            identity_reserve = (IDENTITY_BAND_GAP_PX + identity_badge_w) if identity_badge_w else 0
+            block_width = max_arrow_width + arrow_gap + number_area_width + unit_gap + max_unit_width + identity_reserve
             if slot_width and slot_width > block_width + 2 * margin:
                 x_offset += slot_width - block_width - 2 * margin
 
@@ -328,13 +376,65 @@ class WidgetRenderer:
             bot_raw = upload if bot_is_upload else download
             self._draw_speed_line(painter, bot_is_upload, bot_val, bot_unit, bot_raw, arrow_x, number_x, unit_x, dw_y, config, number_area_width)
 
-            # Update bounding rect for context menu positioning (max_unit_width computed above)
-            total_width = (unit_x - arrow_x) + max_unit_width
+            # v2.1: draw the network-identity badge to the right of the unit column, vertically centred.
+            if identity_badge_w:
+                badge_x = unit_x + max_unit_width + IDENTITY_BAND_GAP_PX
+                badge_y = (height - identity_parts["h"]) / 2.0
+                self._draw_identity_badge(painter, badge_x, badge_y, identity_parts,
+                                          identity_ssid, identity_text, identity_color, identity_solid)
+
+            # Update bounding rect for context menu positioning (max_unit_width + band reserve)
+            total_width = (unit_x - arrow_x) + max_unit_width + identity_reserve
             self._last_text_rect = QRect(arrow_x, top_y, total_width, total_height)
             self._extend_content_bounds(self._last_text_rect)
 
         except Exception as e:
             self.logger.error("Failed to draw network speeds: %s", e)
+
+    def _draw_pill(self, painter: QPainter, rect: QRectF, accent: QColor, text: str, solid: bool, radius: float) -> None:
+        """Draw one rounded pill: SOLID fills `accent` with white text; OUTLINE strokes `accent`, text in `accent`."""
+        if solid:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(accent)
+            painter.drawRoundedRect(rect, radius, radius)
+            painter.setPen(QColor("#FFFFFF"))
+        else:
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setPen(QPen(accent, 1.3))
+            painter.drawRoundedRect(rect, radius, radius)
+            painter.setPen(accent)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
+
+    def _draw_identity_badge(self, painter: QPainter, x: float, y: float, parts: dict,
+                             ssid: Optional[str], band: Optional[str],
+                             band_color: Optional[str], band_solid: bool) -> None:
+        """Draw the identity badge (band pill / ssid pill / compound capsule) per `parts` geometry."""
+        h = parts["h"]
+        radius = h / 2.0
+        accent = QColor(band_color) if band_color else self.default_color
+        mode = parts["mode"]
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setFont(self.font)
+        if mode == "band":
+            self._draw_pill(painter, QRectF(x, y, parts["band_w"], h), accent, band, band_solid, radius)
+        elif mode == "ssid":
+            # Neutral outline pill with the name.
+            self._draw_pill(painter, QRectF(x, y, parts["w"], h), self.default_color, ssid, False, radius)
+        elif mode == "both":
+            # Outer outline capsule holding the name; band as a same-height pill nested flush to the
+            # right edge ("two left edges"). The nested band is always filled so it reads as a segment.
+            outer = QRectF(x, y, parts["w"], h)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setPen(QPen(self.default_color, 1.3))
+            painter.drawRoundedRect(outer, radius, radius)
+            painter.setPen(self.default_color)
+            ssid_baseline = int(y + (h + self.metrics.ascent() - self.metrics.descent()) / 2)
+            painter.drawText(int(x + parts["ssid_x"]), ssid_baseline, ssid)
+            band_rect = QRectF(x + parts["band_x"], y, parts["band_w"], h)
+            self._draw_pill(painter, band_rect, accent, band, True, radius)
+        painter.restore()
 
     @staticmethod
     def _speed_band(raw_bytes: float, high_threshold_mbps: float, low_threshold_mbps: float) -> str:

@@ -125,6 +125,9 @@ class NetworkSpeedWidget(QWidget):
         self.download_speed: float = 0.0
         self.cpu_usage: float = 0.0
         self.gpu_usage: float = 0.0
+        self.network_identity: Optional[object] = None  # NetworkIdentity|None: Wi-Fi band/SSID, set by update_network_identity (v2.1)
+        self._identity_reserve_sig_last: object = None  # last identity reserve signature (band-shown, ssid); re-layout on change
+        self._location_prompt_shown: bool = False  # SSID Location nudge shown at most once per session
         self.gpu_present: bool = False  # LATCHES True once any poll detects GPU counters (never flips
         #                                 back - a GPU doesn't vanish), so the Monitor's GPU tile shows
         #                                 stably for a real/integrated GPU and stays hidden only on a
@@ -568,6 +571,34 @@ class NetworkSpeedWidget(QWidget):
         if self.config.get("widget_display_mode") in ["gpu_only", "combined", "side_by_side", "cycle"]:
             self.update()
 
+    def update_network_identity(self, identity: Optional[object]) -> None:
+        """Update the connected network's identity (Wi-Fi band / SSID) and repaint if shown.
+
+        `identity` is a NetworkIdentity (or None). Sub-polled ~5s in StatsMonitorThread, never on the
+        hot path. The on-widget rendering + width reserve land with the identity element (KICKOFF §3);
+        for now we store the value so the paint path can read it and repaint when the feature is on.
+        """
+        if self.is_paused:
+            return
+        self.network_identity = identity
+        if not self.config.get("show_network_identity", False):
+            return
+        # The user asked for the network name but Windows Location is off (SSID came back blocked):
+        # explain once why, and how, rather than silently showing nothing.
+        self._maybe_prompt_location(identity)
+        # The reserved identity slot depends on which band shows (alert_only flips on/off 2.4G) and on
+        # the SSID text (variable width). Both change only on a network change (rare), so re-lay out on
+        # that transition - keeping the widget tight - and otherwise just repaint.
+        sig = self._identity_reserve_signature()
+        if sig != self._identity_reserve_sig_last:
+            self._identity_reserve_sig_last = sig
+            try:
+                self.layout_manager.resize_widget_for_font()
+                return
+            except Exception:
+                pass
+        self.update()
+
     def update_cpu_temp(self, temp: Optional[float]) -> None:
         """Update CPU temperature and trigger repaint."""
         if self.is_paused:
@@ -793,6 +824,8 @@ class NetworkSpeedWidget(QWidget):
 
     def _build_metrics(self) -> WidgetMetrics:
         """Snapshot the current live state into the shared paint path's metrics object."""
+        identity_text, identity_color, identity_solid = self._identity_presentation()
+        identity_ssid = self._identity_ssid_text()
         return WidgetMetrics(
             upload_mbps=self.upload_speed,
             download_mbps=self.download_speed,
@@ -809,7 +842,58 @@ class NetworkSpeedWidget(QWidget):
             net_history=self.widget_state.get_aggregated_speed_history(),
             cpu_history=list(self.widget_state.cpu_history),
             gpu_history=list(self.widget_state.gpu_history),
+            identity_band=identity_text,
+            identity_band_color=identity_color,
+            identity_band_solid=identity_solid,
+            identity_ssid=identity_ssid,
         )
+
+    def _identity_ssid_text(self) -> Optional[str]:
+        """The truncated SSID / connection name to draw, or None (off, band-only mode, or unavailable).
+
+        Location-gated: for Wi-Fi with Location off, `NetworkIdentity.name` is None (ssid_blocked) and
+        this returns None - the band still shows and Settings explains why (never a blank/fake name).
+        """
+        if not self.config.get("show_network_identity", False):
+            return None
+        if self.config.get("identity_mode", "band") not in ("ssid", "both"):
+            return None
+        from netspeedtray.utils.network_utils import truncate_ssid
+        ni = self.network_identity
+        return truncate_ssid(getattr(ni, "name", None) if ni is not None else None)
+
+    def _identity_presentation(self) -> "tuple[Optional[str], Optional[str], bool]":
+        """(text, color_hex, solid) for the band pill, honoring show_network_identity + mode + band_display.
+
+        Returns (None, None, False) when the feature is off, the mode hides the band, the band is
+        unknown, or band_display == 'alert_only' and the current band is good (clean widget = you're fine).
+        """
+        if not self.config.get("show_network_identity", False):
+            return None, None, False
+        if self.config.get("identity_mode", "band") == "ssid":
+            return None, None, False
+        from netspeedtray.utils.network_utils import resolve_band_presentation
+        ni = self.network_identity
+        band = getattr(ni, "band", None) if ni is not None else None
+        return resolve_band_presentation(band, self.config.get("band_display", "always"))
+
+    def _identity_reserve_px(self, fm) -> int:
+        """Total width to reserve for the identity badge (band pill / SSID pill / compound), given `fm`.
+
+        Uses the exact `identity_layout` geometry the renderer draws with, so reserve == draw (no #106
+        clip). The badge width tracks the ACTUAL band + truncated SSID; a network change (rare) re-lays
+        out. Either element being absent (alert_only on a good band, blocked SSID, band-only) shrinks it.
+        """
+        from netspeedtray.utils.widget_renderer import IDENTITY_BAND_GAP_PX, identity_layout
+        band_text, _c, _s = self._identity_presentation()
+        ssid = self._identity_ssid_text()
+        total, _parts = identity_layout(fm, ssid, band_text)
+        return (IDENTITY_BAND_GAP_PX + total) if total else 0
+
+    def _identity_reserve_signature(self) -> object:
+        """What determines the badge width - re-layout only when this changes (a network change)."""
+        band_text, _c, _s = self._identity_presentation()
+        return (band_text, self._identity_ssid_text())
 
     # Number of app runs the gesture hint rides along in the hover card before it fades for good.
     _TOOLTIP_HINT_MAX_SHOWS = 8
@@ -1370,6 +1454,34 @@ class NetworkSpeedWidget(QWidget):
                 webbrowser.open(LHM_RELEASES_URL)
         except Exception as e:
             self.logger.error("Error showing temperature onboarding: %s", e, exc_info=True)
+
+    def _maybe_prompt_location(self, identity: Optional[object]) -> None:
+        """One-time, honest explainer when the user wants the SSID but Windows Location is off.
+
+        Fires at most once per session and is suppressible forever. Only when the network name was
+        actually requested (ssid/both mode) and actually blocked - never for band-only users.
+        """
+        try:
+            if identity is None or not getattr(identity, "ssid_blocked", False):
+                return
+            if self.config.get("identity_mode", "band") not in ("ssid", "both"):
+                return
+            if self._location_prompt_shown or self.config.get("location_onboarding_dismissed", False):
+                return
+            self._location_prompt_shown = True
+            from netspeedtray.views.location_onboarding_dialog import (
+                LocationOnboardingDialog, LOCATION_SETTINGS_URI,
+            )
+            dlg = LocationOnboardingDialog(self.i18n, self)
+            dlg.exec()
+            if dlg.dismissed_forever():
+                self.update_config({"location_onboarding_dismissed": True})
+            if dlg.action == LocationOnboardingDialog.ACTION_OPEN_LOCATION:
+                from PyQt6.QtGui import QDesktopServices
+                from PyQt6.QtCore import QUrl
+                QDesktopServices.openUrl(QUrl(LOCATION_SETTINGS_URI))
+        except Exception as e:
+            self.logger.error("Error showing location onboarding: %s", e, exc_info=True)
 
 
     # update_config (redundant definition) removed

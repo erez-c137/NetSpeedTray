@@ -16,6 +16,7 @@ from netspeedtray.utils import styles as style_utils
 from netspeedtray.views.settings.pages._fluent import section_header, page_layout
 from netspeedtray.views.settings.pages.datacap_section import DataCapSettings
 from netspeedtray.views.settings.pages.connection_section import ConnectionSettings
+from netspeedtray.views.settings.pages.network_identity_section import NetworkIdentitySettings
 
 class InterfacesPage(QWidget):
     layout_changed = pyqtSignal()
@@ -89,6 +90,10 @@ class InterfacesPage(QWidget):
 
         layout.addWidget(mode_card)
 
+        # Network identity (v2.1) - the Wi-Fi band / network indicator on the widget.
+        self.identity = NetworkIdentitySettings(self.on_change, self.i18n)
+        layout.addWidget(self.identity)
+
         # Connection section - latency monitoring (gateway + opt-in public anchor) + advertised plan.
         self.connection = ConnectionSettings(self.on_change, self.i18n)
         layout.addWidget(self.connection)
@@ -159,6 +164,7 @@ class InterfacesPage(QWidget):
             else:
                 checkbox.setChecked(False)
 
+        self.identity.load_settings(config)
         self.connection.load_settings(config)
         self.datacap.load_settings(config)
 
@@ -174,6 +180,7 @@ class InterfacesPage(QWidget):
             "interface_mode": mode,
             "selected_interfaces": selected,
         }
+        settings.update(self.identity.get_settings())
         settings.update(self.connection.get_settings())
         settings.update(self.datacap.get_settings())
         return settings
