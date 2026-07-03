@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [2.1.0] - Unreleased
+
+### Added
+- **Network identity on the widget - see *which* Wi-Fi network you're on, not just how fast.** A new optional indicator shows the Wi-Fi **band** (2.4G / 5G / 6G) - the one thing Windows hides at a glance - and, optionally, the **network name (SSID)**, as a small pill/badge beside your speed (the name and band combine into one capsule). Turn it on in **Settings > Network > Network identity**. The band can be shown *Always* (neutral), *Color-coded* (2.4G amber / 5G green / 6G blue), or **Alert only** - a red `2.4G` appears *only* when your PC has silently dropped to the slow band, and the widget stays clean otherwise. Directly answers "did my PC quietly rejoin 2.4 GHz after the last reconnect?".
+  - **About the Location permission (please read):** the band works on every PC and needs **no permission**. The **network name (SSID)** is different - **Windows only reveals the SSID to apps that have Location access** - so choosing to show the name asks you to turn on Windows Location. This is a **Windows privacy gate, not GPS or tracking**: NetSpeedTray does not use your position; it reads the network name **locally, only to show it on the widget**, and never stores or transmits it. A one-time in-app explainer spells this out, with a button straight to the Location settings and a "just show the band" option. See the [Privacy Policy](privacy.md) for the full detail.
+
+---
+
 ## [2.0.1] - Unreleased
 
 A small polish release on top of 2.0.0: localization fixes for the history graph, a data-size rounding fix, a cleaner and more stable hardware readout on the widget, a Preferred Monitor setting that finally works across multiple monitors, clearer temperature-sensor guidance, and a noticeably smaller download.

@@ -51,6 +51,10 @@ class WidgetMetrics:
     net_history: List[Any] = field(default_factory=list)   # AggregatedSpeedData items
     cpu_history: List[float] = field(default_factory=list)
     gpu_history: List[float] = field(default_factory=list)
+    identity_band: Optional[str] = None        # v2.1 Wi-Fi band tag ("5G"/"2.4G") or None when off/unknown/hidden
+    identity_band_color: Optional[str] = None  # band tint (hex) or None for the widget's default text color
+    identity_band_solid: bool = False          # True = solid alert pill; False = outline pill
+    identity_ssid: Optional[str] = None        # v2.1 truncated SSID / connection name, or None when off/blocked
 
     def net_bytes(self) -> Tuple[float, float]:
         """(upload, download) in bytes/sec from the stored Mbps - the renderer's unit."""
@@ -150,7 +154,11 @@ def _draw_side_by_side(painter: QPainter, renderer: WidgetRenderer, width: int, 
                 painter.restore()
             up_bytes, dw_bytes = metrics.net_bytes()
             renderer.draw_network_speeds(painter, up_bytes, dw_bytes, width, height, config, layout,
-                                         x_offset=current_x, slot_width=network_width)
+                                         x_offset=current_x, slot_width=network_width,
+                                         identity_text=metrics.identity_band,
+                                         identity_color=metrics.identity_band_color,
+                                         identity_solid=metrics.identity_band_solid,
+                                         identity_ssid=metrics.identity_ssid)
         elif key == "cpu" and config.monitor_cpu_enabled:
             ram = (metrics.ram_used, metrics.ram_total) if config.monitor_ram_enabled else None
             renderer.draw_hardware_stats(painter, metrics.cpu_usage, None, width, height, config,
@@ -185,7 +193,11 @@ def _draw_foreground(painter: QPainter, renderer: WidgetRenderer, width: int, he
         _draw_side_by_side(painter, renderer, width, height, config, metrics, layout, network_width)
     elif mode == "network_only":
         up_bytes, dw_bytes = metrics.net_bytes()
-        renderer.draw_network_speeds(painter, up_bytes, dw_bytes, width, height, config, layout)
+        renderer.draw_network_speeds(painter, up_bytes, dw_bytes, width, height, config, layout,
+                                     identity_text=metrics.identity_band,
+                                     identity_color=metrics.identity_band_color,
+                                     identity_solid=metrics.identity_band_solid,
+                                     identity_ssid=metrics.identity_ssid)
     elif mode == "cpu_only":
         ram = (metrics.ram_used, metrics.ram_total) if config.monitor_ram_enabled else None
         renderer.draw_hardware_stats(painter, metrics.cpu_usage, None, width, height, config,

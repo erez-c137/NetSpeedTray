@@ -34,8 +34,13 @@ from functools import lru_cache
 
 from netspeedtray import constants
 from netspeedtray.utils.rdp_utils import is_rdp_session
+from netspeedtray.utils.network_utils import get_connected_network_identity
 
 logger = logging.getLogger("NetSpeedTray.StatsMonitorThread")
+
+# Network identity (Wi-Fi band / SSID) changes rarely, so poll it on a slow sub-cadence off the
+# per-second network readout - never on the GUI thread. See releases/v2.1/KICKOFF.md §2/§3.
+_IDENTITY_POLL_INTERVAL_SEC: float = 5.0
 
 
 class GpuPollResult(NamedTuple):
@@ -91,6 +96,7 @@ class StatsMonitorThread(QThread):
         self._ohm_guidance_logged: bool = False  # One-time "no sensor source" guidance, logged only when NO namespace connects
         self._lhm_notice_emitted: bool = False  # One-time notification flag
         self._lhm_check_polls: int = 0  # Count polls before emitting notice
+        self._last_identity_poll: float = 0.0  # monotonic ts of the last network-identity sub-poll (0 = poll immediately)
         self._nvidia_smi_path: Optional[str] = self._get_cached_path("nvidia-smi")
         # nvidia-smi is a synchronous subprocess (up to NVIDIA_SMI_TIMEOUT_SEC). Temps/power
         # change slowly, so poll it on a slow sub-cadence and cache between calls - keeps the
@@ -813,7 +819,16 @@ class StatsMonitorThread(QThread):
                 network_counters = psutil.net_io_counters(pernic=True)
                 if network_counters:
                     stats['network'] = network_counters
-                
+
+                # 1b. Network identity (Wi-Fi band / SSID) - only when the widget wants it, and only
+                # on the slow sub-cadence. get_connected_network_identity() never raises. Emitting on
+                # a present key lets the controller forward it exactly like the temp/power stats.
+                if self.config.get('show_network_identity', False):
+                    now = time.monotonic()
+                    if now - self._last_identity_poll >= _IDENTITY_POLL_INTERVAL_SEC:
+                        self._last_identity_poll = now
+                        stats['network_identity'] = get_connected_network_identity()
+
                 # Monitor-window override forces hardware collection even with the widget's flags off.
                 _force_hw = self._force_hardware_collection
                 # Always-on history recording: collect cheap CPU/GPU/RAM utilisation so the Monitor's

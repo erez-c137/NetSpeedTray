@@ -1,6 +1,6 @@
 # Privacy Policy for NetSpeedTray
 
-Last Updated: June 26, 2026
+Last Updated: July 3, 2026
 
 This privacy policy outlines how NetSpeedTray handles information. As an open-source project created by a single developer, transparency and user privacy are top priorities.
 
@@ -11,6 +11,7 @@ This privacy policy outlines how NetSpeedTray handles information. As an open-so
 The application is designed to be completely self-contained on your computer. It does not include any analytics, telemetry, advertising, or crash-reporting services.
 
 - **Network Monitoring:** The application monitors your network adapters locally to calculate your current upload and download speeds. It measures the *volume* of traffic (bytes per second) - it never inspects the *content* of your traffic. This information is **only displayed to you** on the widget and is **never sent to any server**.
+- **Network Identity (optional):** If you enable the network-identity indicator, NetSpeedTray can show the Wi-Fi **band** (2.4 GHz / 5 GHz) and, optionally, the **network name (SSID)** on the widget. The band is read from your wireless adapter locally and needs no permission. The SSID is different: **Windows only reveals the network name to apps that have Location access**, so enabling the "Network name" option requires you to turn on Windows Location. This is a **Windows privacy gate, not GPS or geolocation** - NetSpeedTray does not use your position, and reads the network name **locally only to display it on the widget**. Like everything else here, the band and SSID are **never stored to the history database and never transmitted**.
 - **Hardware Monitoring (optional):** If you enable the CPU/GPU/RAM monitoring features, the application reads utilization, memory, temperature, and power figures from your own hardware locally. This is displayed to you and, like speed history, may be stored in the local database below. It is never transmitted.
 - **App Activity (optional):** The App Activity window shows which running applications are using the network, using process information from your own computer. This data is the most sensitive the app touches (it can include process names and remote addresses), so it is computed and displayed **live only** - it is **never written to disk, never stored in the history database, and never transmitted**. It also never leaves your machine in a Support Bundle (see below).
 - **Configuration File:** Your settings are saved locally on your computer in a `NetSpeedTray_Config.json` file located in your `%appdata%\NetSpeedTray` folder. It contains only your preferences (such as colors, position, and which features are enabled) - no personal data. This file is never transmitted.
