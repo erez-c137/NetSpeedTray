@@ -504,11 +504,14 @@ class PositionManager(QObject):
         return screen
 
     @pyqtSlot()
-    def update_position(self, fresh_taskbar_info: Optional[TaskbarInfo] = None) -> None:
+    def update_position(self, fresh_taskbar_info: Optional[TaskbarInfo] = None,
+                        _float_refreshed: bool = False) -> None:
         """
         Main entry point to update the widget's position.
         Uses fresh taskbar info if provided, otherwise fetches it - honoring
-        the `preferred_monitor` setting (#72) when present.
+        the `preferred_monitor` setting (#72) when present. `_float_refreshed` lets the ~1s refresh
+        loop (which already called refresh_float_state() for its visibility check) skip the duplicate
+        taskbar enumeration here (#188).
         """
         try:
             if fresh_taskbar_info:
@@ -518,7 +521,8 @@ class PositionManager(QObject):
                 self._state.taskbar_info = get_taskbar_info(preferred_screen_name=preferred)
 
             # #188: is the preferred monitor a taskbar-less display we should float on?
-            self.refresh_float_state()
+            if not _float_refreshed:
+                self.refresh_float_state()
 
             # A saved (dragged) position wins in both free-move and free-float.
             if self._apply_saved_position():

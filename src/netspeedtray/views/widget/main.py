@@ -396,7 +396,9 @@ class NetworkSpeedWidget(QWidget):
                 # Free-move keeps the user's exact saved spot (applied once); docked and free-float both
                 # reposition on the refresh (free-float re-places on / re-detects its taskbar-less display).
                 if not self.config.get("free_move", False):
-                    self.position_manager.update_position(fresh_taskbar_info=taskbar_info)
+                    # _float_refreshed=True: we already called refresh_float_state() above for the
+                    # visibility check this tick, so don't re-enumerate taskbars inside (#188).
+                    self.position_manager.update_position(fresh_taskbar_info=taskbar_info, _float_refreshed=True)
                 
                 # Always re-assert topmost status when visible to prevent falling behind taskbar (#77)
                 self._ensure_win32_topmost()
@@ -1693,15 +1695,18 @@ class NetworkSpeedWidget(QWidget):
                     pass
                 self.monitor_window = None
 
-            # Floating (Free Move OR #188 free-float) persists its absolute spot; a docked widget clears
-            # it so it re-docks to the tray next launch.
-            floating = (self.position_manager.is_floating() if self.position_manager
-                        else self.config.get("free_move", False))
-            if floating:
+            # Persist the widget's absolute spot when it's actively floating (Free Move or #188
+            # free-float). Only CLEAR the saved coords when the widget is genuinely docked - i.e. BOTH
+            # free_move and free_float are OFF in config. Crucially we do NOT clear just because the
+            # free-float display is currently absent (asleep/unplugged): is_floating() is runtime state,
+            # so gating the clear on it would wipe a user's dragged spot every time the accessory panel
+            # sleeps. (config_controller clears on an explicit switch to docked.) (#188)
+            if self.position_manager and self.position_manager.is_floating():
                 pos = self.pos()
                 self.update_config({"position_x": pos.x(), "position_y": pos.y()}, save_to_disk=False)
-            else:
+            elif not self.config.get("free_move", False) and not self.config.get("free_float", True):
                 self.update_config({"position_x": None, "position_y": None}, save_to_disk=False)
+            # else: free-float-capable but the display is temporarily absent -> keep the saved spot.
             
             self.logger.debug("Performing final configuration save...")
             self.config_manager.save(self.config)
