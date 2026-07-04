@@ -77,6 +77,25 @@ def get_app_data_path() -> Path:
         raise OSError(f"Error with app data directory: {path}. Check disk space or path validity.") from e
 
 
+def is_portable_install() -> bool:
+    """
+    True when the app is running as the portable ZIP build.
+
+    The portable ZIP ships a ``portable.marker`` file next to the executable (added at package time -
+    see build.bat); the Inno installer build never contains it. A non-frozen (development) run is not
+    "portable". Used by the updater to pick the guided folder-copy update flow instead of launching the
+    installer, which can't update a portable folder in place (#195).
+    """
+    import sys
+    if not getattr(sys, "frozen", False):
+        return False
+    try:
+        app_dir = os.path.dirname(os.path.abspath(sys.executable))
+        return os.path.isfile(os.path.join(app_dir, constants.app.PORTABLE_MARKER_FILENAME))
+    except Exception:
+        return False
+
+
 def get_machine_id() -> str:
     """
     A stable per-install identifier for exported stats (so an MSP can tell two machines' CSVs apart).

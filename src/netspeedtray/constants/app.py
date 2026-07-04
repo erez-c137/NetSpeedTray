@@ -13,6 +13,11 @@ class AppConstants:
     ICON_FILENAME: Final[str] = "NetSpeedTray.ico"
     GITHUB_OWNER: Final[str] = "erez-c137"
     GITHUB_REPO: Final[str] = "NetSpeedTray"
+    # Marker file the portable ZIP ships next to the EXE (added at package time in build.bat, just
+    # before Compress-Archive). Its presence is how the app knows it's the portable build and should
+    # use the guided (folder-copy) update flow instead of the Inno installer flow (#195). The installer
+    # copy never contains it. NOTE: build.bat writes this literal name - keep the two in sync.
+    PORTABLE_MARKER_FILENAME: Final[str] = "portable.marker"
 
     def __init__(self) -> None:
         self.validate()

@@ -112,6 +112,11 @@ if not exist "!RELEASE_DIR!" mkdir "!RELEASE_DIR!"
 :: Move the installer into the release directory
 move "%INSTALLER_DIR%\NetSpeedTray-%VERSION%-x64-Setup.exe" "!RELEASE_DIR!\" > NUL
 
+:: Mark this as the portable build so it uses the guided folder-copy update flow at runtime (#195).
+:: The Inno installer was already built above (Stage 4), so this file lands ONLY inside the zip, never
+:: in the installed copy. Keep the filename in sync with constants.app.PORTABLE_MARKER_FILENAME.
+echo portable> "%DIST_DIR%\NetSpeedTray\portable.marker"
+
 :: Create the portable zip archive
 echo Creating portable zip file...
 powershell -Command "Compress-Archive -Path '%DIST_DIR%\NetSpeedTray' -DestinationPath '!RELEASE_DIR!\%PORTABLE_DIR_NAME%-%VERSION%.zip' -Force" >> "%LOG_FILE%" 2>&1
