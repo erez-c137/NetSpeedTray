@@ -9,6 +9,9 @@ Relies on Windows API calls via pywin32 and ctypes.
 import os
 import logging
 import ctypes
+import subprocess
+import threading
+import time
 from ctypes import wintypes, windll, byref, Structure
 from dataclasses import dataclass
 from typing import Tuple, Optional, List, Any
@@ -103,6 +106,108 @@ def find_tasklist_rect(taskbar_hwnd: int) -> Optional[Tuple[int, int, int, int]]
         return None
 
 
+# --- Win11 Widgets/weather element detection (#200 / #24) --------------------------------
+# The Windows 11 Widgets/weather element has NO classic Win32 HWND - it lives inside a XAML island, so
+# EnumChildWindows/GetWindowRect can't see it. It IS reachable via UI Automation. Rather than add a COM
+# dependency we shell out to PowerShell's built-in UIAutomationClient (the same approach used for
+# nvidia-smi etc.), match the STABLE AutomationId 'WidgetsButton' (never the Name - it's localized and
+# embeds live weather text), and return the VISIBLE CONTENT extent (min-left..max-right of its child
+# icon/text), not the padded button box - so an overlap test reflects what's actually shown, not the
+# element's dead space. Depending on taskbar alignment it sits far-left (centred) or just left of the
+# tray (edge-aligned - the case that can overlap the widget). ~200ms, so it's cached + refreshed on a
+# background thread; callers get the last-known rect instantly and never block. Fail-safe: any error /
+# Widgets disabled / future-build rename -> None. Used only to nudge the user (never to auto-move).
+_CREATE_NO_WINDOW = 0x08000000
+_WIDGETS_CACHE_TTL_S = 30.0
+_widgets_lock = threading.Lock()
+_widgets_state: dict = {"rect": None, "ts": 0.0, "querying": False}
+_WIDGETS_PS = (
+    "$ErrorActionPreference='SilentlyContinue';"
+    "Add-Type -AssemblyName UIAutomationClient;"
+    "Add-Type -AssemblyName UIAutomationTypes;"
+    "$r=[System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]{hwnd});"
+    "if($r){{"
+    "$c=New-Object System.Windows.Automation.PropertyCondition("
+    "[System.Windows.Automation.AutomationElement]::AutomationIdProperty,'WidgetsButton');"
+    "$e=$r.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$c);"
+    "if($e){{$b=$e.Current.BoundingRectangle;$cl=$b.Right;$cr=$b.Left;"
+    "$kids=$e.FindAll([System.Windows.Automation.TreeScope]::Descendants,"
+    "[System.Windows.Automation.Condition]::TrueCondition);"
+    "foreach($k in $kids){{$kr=$k.Current.BoundingRectangle;"
+    "if($kr.Width -gt 0 -and $kr.Left -ge $b.Left -and $kr.Right -le ($b.Right+2)){{"
+    "if($kr.Left -lt $cl){{$cl=$kr.Left}};if($kr.Right -gt $cr){{$cr=$kr.Right}}}}}}"
+    "if($cr -le $cl){{$cl=$b.Left;$cr=$b.Right}};"
+    "Write-Output ('{{0}},{{1}},{{2}},{{3}}' -f [int]$cl,[int]$b.Top,[int]$cr,[int]$b.Bottom)}}}}"
+)
+
+
+def _query_widgets_rect_blocking(taskbar_hwnd: int) -> Optional[Tuple[int, int, int, int]]:
+    """Run the UIA probe via PowerShell and return the Widgets button's physical-pixel rect, or None.
+    ``taskbar_hwnd`` must be the Shell_TrayWnd root (the WidgetsButton is a descendant of the taskbar
+    frame, NOT of TrayNotifyWnd). Blocking (~200ms); always called from a background thread. Never raises."""
+    try:
+        ps = _WIDGETS_PS.format(hwnd=int(taskbar_hwnd))
+        proc = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+            capture_output=True, text=True, timeout=6, creationflags=_CREATE_NO_WINDOW,
+        )
+        parts = (proc.stdout or "").strip().split(",")
+        if len(parts) == 4:
+            left, top, right, bottom = (int(p) for p in parts)
+            if right > left and bottom > top:
+                return (left, top, right, bottom)
+    except Exception as e:  # noqa: BLE001 - fail-safe: any problem means "no Widgets rect"
+        logger.debug("Widgets UIA probe failed (treating as no Widgets button): %s", e)
+    return None
+
+
+def rect_overlaps_x(left: float, right: float, widgets_rect: Optional[Tuple[int, int, int, int]],
+                    dpi_scale: float) -> bool:
+    """
+    True if the horizontal span ``[left, right]`` (logical px, e.g. the widget's own geometry) overlaps
+    the Widgets/weather element's x-extent (``widgets_rect`` is physical px; converted via ``dpi_scale``).
+
+    Used to decide the one-time #200 nudge. ``widgets_rect`` is the visible content extent (dead space
+    excluded), so a widget that merely grazes the element's padding is correctly NOT counted as overlap.
+    """
+    if not widgets_rect or dpi_scale <= 0:
+        return False
+    r_left = widgets_rect[0] / dpi_scale
+    r_right = widgets_rect[2] / dpi_scale
+    return left < r_right and right > r_left
+
+
+def get_widgets_rect(taskbar_hwnd: Optional[int]) -> Optional[Tuple[int, int, int, int]]:
+    """
+    Non-blocking, cached rect of the Win11 Widgets/weather button (physical px), or None if it can't be
+    detected (Widgets off, older Windows, or a future build that renamed the element).
+
+    ``taskbar_hwnd`` is the Shell_TrayWnd root (NOT the TrayNotifyWnd - the WidgetsButton lives under the
+    taskbar frame, not the tray). Returns the last-known cached value immediately; when the cache is older
+    than the TTL it kicks off a one-shot background refresh so the ~200ms UIA probe never runs on the
+    caller's thread. The rect changes only when Widgets is toggled or its weather text resizes.
+    """
+    if not taskbar_hwnd:
+        return None
+    now = time.monotonic()
+    start_refresh = False
+    with _widgets_lock:
+        rect = _widgets_state["rect"]
+        stale = (now - _widgets_state["ts"]) > _WIDGETS_CACHE_TTL_S
+        if stale and not _widgets_state["querying"]:
+            _widgets_state["querying"] = True
+            start_refresh = True
+    if start_refresh:
+        def _refresh() -> None:
+            result = _query_widgets_rect_blocking(taskbar_hwnd)
+            with _widgets_lock:
+                _widgets_state["rect"] = result
+                _widgets_state["ts"] = time.monotonic()
+                _widgets_state["querying"] = False
+        threading.Thread(target=_refresh, name="nst-widgets-uia", daemon=True).start()
+    return rect
+
+
 # Dataclasses
 @dataclass(slots=True)
 class TaskbarInfo:
@@ -119,6 +224,10 @@ class TaskbarInfo:
     dpi_scale: float
     is_primary: bool
     height: int
+    # Physical-pixel rect of the Win11 Widgets/weather button on this (primary) taskbar, or None when
+    # it's absent/undetected. Used to keep the widget from landing on it in a left-aligned layout
+    # (#200/#24). Defaulted so the fallback/no-taskbar constructions don't need to pass it.
+    widgets_rect: Optional[Tuple[int, int, int, int]] = None
 
     def __post_init__(self) -> None:
         """Basic validation of critical attributes after initialization."""
@@ -527,7 +636,10 @@ def get_all_taskbar_info() -> List[TaskbarInfo]:
                 work_area=work_area_phys,
                 dpi_scale=dpi_scale,
                 is_primary=is_primary_qt,
-                height=logical_height
+                height=logical_height,
+                # Only the primary taskbar hosts a Widgets button; cached + non-blocking. Pass the
+                # Shell_TrayWnd root (`hwnd`), not tray_hwnd - the button is under the taskbar frame.
+                widgets_rect=get_widgets_rect(hwnd) if is_primary_qt else None,
             )
         except win32gui.error as e:
             if e.winerror != 0:

@@ -128,6 +128,7 @@ class NetworkSpeedWidget(QWidget):
         self.network_identity: Optional[object] = None  # NetworkIdentity|None: Wi-Fi band/SSID, set by update_network_identity (v2.1)
         self._identity_reserve_sig_last: object = None  # last identity reserve signature (band-shown, ssid); re-layout on change
         self._location_prompt_shown: bool = False  # SSID Location nudge shown at most once per session
+        self._widgets_nudge_shown: bool = False  # #200 Widgets/weather overlap nudge, once per session
         self.gpu_present: bool = False  # LATCHES True once any poll detects GPU counters (never flips
         #                                 back - a GPU doesn't vanish), so the Monitor's GPU tile shows
         #                                 stably for a real/integrated GPU and stays hidden only on a
@@ -390,6 +391,9 @@ class NetworkSpeedWidget(QWidget):
                 
                 # Always re-assert topmost status when visible to prevent falling behind taskbar (#77)
                 self._ensure_win32_topmost()
+
+                # One-time heads-up if we're sitting over the Win11 Widgets/weather panel (#200).
+                self._maybe_nudge_widgets_overlap(taskbar_info)
 
         except Exception as e:
             self.logger.error(f"Critical error in _execute_refresh (failure count: {self._taskbar_lost_count}): {e}")
@@ -1482,6 +1486,36 @@ class NetworkSpeedWidget(QWidget):
                 QDesktopServices.openUrl(QUrl(LOCATION_SETTINGS_URI))
         except Exception as e:
             self.logger.error("Error showing location onboarding: %s", e, exc_info=True)
+
+
+    def _maybe_nudge_widgets_overlap(self, taskbar_info) -> None:
+        """One-time heads-up (#200): if the widget currently overlaps the Win11 Widgets/weather panel's
+        visible content, tell the user once that they can drag the widget wherever they like and it's
+        remembered. We deliberately never auto-move it - the panel's width changes with the weather, so
+        repositioning would make the widget jitter, and the user may want it right where it is. Fires at
+        most once, ever (session flag + persisted config flag)."""
+        try:
+            if self._widgets_nudge_shown or self.config.get("widgets_overlap_nudge_shown", False):
+                return
+            widgets_rect = getattr(taskbar_info, "widgets_rect", None)
+            if not widgets_rect:
+                return
+            from netspeedtray.utils.taskbar_utils import rect_overlaps_x
+            if not rect_overlaps_x(self.x(), self.x() + self.width(), widgets_rect,
+                                   getattr(taskbar_info, "dpi_scale", 1.0) or 1.0):
+                return
+            # Latch immediately so a re-entrant refresh (or the deferred call below) can't double-fire.
+            self._widgets_nudge_shown = True
+            self.update_config({"widgets_overlap_nudge_shown": True})
+            title = getattr(self.i18n, "WIDGETS_OVERLAP_NUDGE_TITLE", "NetSpeedTray overlaps the Widgets panel")
+            body = getattr(
+                self.i18n, "WIDGETS_OVERLAP_NUDGE_BODY",
+                "NetSpeedTray is sitting over the Windows Widgets/weather panel on your taskbar. You can "
+                "drag it anywhere you like - it'll remember the spot. (This message won't show again.)")
+            # Defer out of the refresh tick so the modal doesn't run inside the timer callstack.
+            QTimer.singleShot(0, lambda: QMessageBox.information(self, title, body))
+        except Exception as e:
+            self.logger.debug("widgets-overlap nudge check failed: %s", e)
 
 
     # update_config (redundant definition) removed

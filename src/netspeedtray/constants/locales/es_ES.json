@@ -213,6 +213,8 @@
     "UPDATE_AVAILABLE_TITLE": "Actualización disponible",
     "UPDATE_DOWNLOADING_TITLE": "Descargando actualización",
     "UPDATE_FALLBACK_MESSAGE": "No se pudo completar la actualización en la aplicación. Se abrirá la página de descarga en su lugar.",
+    "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray overlaps the Widgets panel",
+    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray is sitting over the Windows Widgets/weather panel on your taskbar. You can drag it anywhere you like - it'll remember the spot. (This message won't show again.)",
     "UPDATE_AVAILABLE_TEXT": "¡Una nueva versión de NetSpeedTray está disponible!\n\nActual: v{current}\nÚltima: v{latest}",
     "UPDATE_RELEASE_NOTES_LABEL": "Novedades en v{latest}",
     "WELCOME_2_0_TITLE": "Te damos la bienvenida a NetSpeedTray 2.0",

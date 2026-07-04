@@ -213,6 +213,8 @@
     "UPDATE_AVAILABLE_TITLE": "有可用更新",
     "UPDATE_DOWNLOADING_TITLE": "正在下載更新",
     "UPDATE_FALLBACK_MESSAGE": "無法完成應用程式內更新，改為開啟下載頁面。",
+    "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray overlaps the Widgets panel",
+    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray is sitting over the Windows Widgets/weather panel on your taskbar. You can drag it anywhere you like - it'll remember the spot. (This message won't show again.)",
     "UPDATE_AVAILABLE_TEXT": "有新版本的 NetSpeedTray 可用！\n\n目前版本: v{current}\n最新版本: v{latest}",
     "UPDATE_RELEASE_NOTES_LABEL": "v{latest} 的新功能",
     "WELCOME_2_0_TITLE": "歡迎使用 NetSpeedTray 2.0",

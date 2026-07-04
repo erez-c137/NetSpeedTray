@@ -292,12 +292,18 @@ class PositionCalculator:
         left_boundary = round(tasklist_rect[2] / dpi_scale) if tasklist_rect else full_geom.left()
 
         x = round(right_boundary - widget_width - offset)
-        
+
         # Safety check: don't overlap with app icons on left
         if x < left_boundary:
             logger.warning("Calculated position overlaps app icons; snapping to safe zone.")
             x = round(left_boundary + constants.layout.DEFAULT_PADDING)
-        
+
+        # NOTE: we deliberately do NOT auto-avoid the Win11 Widgets/weather element here. Its width
+        # changes with the weather text, so auto-repositioning would make the widget jitter left/right
+        # as the weather updates, and it would override a position the user chose. Instead the widget
+        # stays put and the user is nudged once that they can drag it (main.py, using widgets_rect). The
+        # user is always free to sit in the gap, or overlap it, or move it - their call (#200/#24).
+
         return x, y
 
     def _calculate_vertical_position(self, taskbar_info: TaskbarInfo, widget_size: Tuple[int, int],
