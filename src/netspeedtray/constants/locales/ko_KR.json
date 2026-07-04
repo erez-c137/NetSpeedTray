@@ -448,5 +448,7 @@
     "LOCATION_ONBOARDING_BODY": "NetSpeedTray can show the name of the Wi-Fi network you're on. Windows only reveals that name to apps that have <b>Location</b> access &mdash; so this is a Windows privacy setting, <b>not</b> GPS or tracking. NetSpeedTray reads the name locally to display it and never stores or sends it anywhere.<br><br>Turn on Location to show the network name, or keep just the band (2.4G&nbsp;/&nbsp;5G), which needs no permission.",
     "LOCATION_ONBOARDING_DONT_REMIND": "Don't remind me again",
     "LOCATION_ONBOARDING_OPEN_BUTTON": "Open Location settings",
-    "LOCATION_ONBOARDING_BAND_BUTTON": "Just show the band"
+    "LOCATION_ONBOARDING_BAND_BUTTON": "Just show the band",
+    "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray가 위젯 패널과 겹칩니다",
+    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray가 작업 표시줄의 Windows 위젯/날씨 패널 위에 겹쳐 있습니다. 원하는 위치로 자유롭게 드래그할 수 있으며, 위치는 자동으로 기억됩니다. (이 메시지는 다시 표시되지 않습니다.)"
 }

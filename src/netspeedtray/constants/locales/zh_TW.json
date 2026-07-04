@@ -214,6 +214,8 @@
     "UPDATE_AVAILABLE_TITLE": "有可用更新",
     "UPDATE_DOWNLOADING_TITLE": "正在下載更新",
     "UPDATE_FALLBACK_MESSAGE": "無法完成應用程式內更新，改為開啟下載頁面。",
+    "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray 與小工具面板重疊",
+    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray 目前壓在工作列上的 Windows 小工具/天氣面板上方。您可以將它拖曳到任何喜歡的位置，它會記住這個位置。（此訊息不會再次顯示。）",
     "UPDATE_AVAILABLE_TEXT": "有新版本的 NetSpeedTray 可用！\n\n目前版本: v{current}\n最新版本: v{latest}",
     "UPDATE_RELEASE_NOTES_LABEL": "v{latest} 的新功能",
     "WELCOME_2_0_TITLE": "歡迎使用 NetSpeedTray 2.0",

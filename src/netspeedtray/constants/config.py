@@ -236,6 +236,7 @@ class ConfigConstants:
         "identity_mode": "band",           # band (Location-free) | ssid (Location-gated) | both
         "band_display": "always",          # always (neutral) | colored (by band) | alert_only (2.4G warning)
         "location_onboarding_dismissed": False,  # user permanently dismissed the SSID/Location explainer
+        "widgets_overlap_nudge_shown": False,  # one-time #200 nudge: widget overlaps the Widgets/weather panel
         "cpu_load_high_threshold": DEFAULT_CPU_LOAD_HIGH_THRESHOLD,
         "cpu_load_low_threshold": DEFAULT_CPU_LOAD_LOW_THRESHOLD,
         "gpu_load_high_threshold": DEFAULT_GPU_LOAD_HIGH_THRESHOLD,
@@ -354,6 +355,7 @@ class ConfigConstants:
         "identity_mode": {"type": str, "default": "band", "choices": ["band", "ssid", "both"]},
         "band_display": {"type": str, "default": "always", "choices": ["always", "colored", "alert_only"]},
         "location_onboarding_dismissed": {"type": bool, "default": False},
+        "widgets_overlap_nudge_shown": {"type": bool, "default": False},
         "cpu_load_high_threshold": {"type": (int, float), "default": DEFAULT_CPU_LOAD_HIGH_THRESHOLD, "min": 0, "max": 100},
         "cpu_load_low_threshold": {"type": (int, float), "default": DEFAULT_CPU_LOAD_LOW_THRESHOLD, "min": 0, "max": 100},
         "gpu_load_high_threshold": {"type": (int, float), "default": DEFAULT_GPU_LOAD_HIGH_THRESHOLD, "min": 0, "max": 100},

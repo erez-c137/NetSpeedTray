@@ -25,6 +25,7 @@ class TestPositionCalculator(unittest.TestCase):
         self.mock_taskbar.dpi_scale = 1.0
         self.mock_taskbar.get_screen.return_value = self.mock_screen
         self.mock_taskbar.hwnd = 12345
+        self.mock_taskbar.widgets_rect = None   # no Win11 Widgets button by default (#200)
 
     def test_calculate_position_bottom_edge(self):
         """Test position calculation for bottom taskbar (offset >= the #161 tray-edge floor)."""
@@ -61,6 +62,14 @@ class TestPositionCalculator(unittest.TestCase):
         # x = right_boundary - width - offset(0)
         screen_edge = self.mock_screen.geometry.return_value.right() + 1   # 1920
         self.assertEqual(pos.x, (screen_edge - reserve) - 100)
+
+    def test_widgets_rect_does_not_affect_placement(self):
+        """#200: positioning is deliberately independent of the Widgets/weather element - the widget
+        stays put (the nudge, not auto-move, handles the overlap). Present widgets_rect must be a no-op."""
+        base = self.calculator.calculate_position(self.mock_taskbar, (100, 40), {'tray_offset_x': 10})
+        self.mock_taskbar.widgets_rect = (1400, 1040, 1650, 1080)   # weather right by the tray
+        with_widgets = self.calculator.calculate_position(self.mock_taskbar, (100, 40), {'tray_offset_x': 10})
+        self.assertEqual(base.x, with_widgets.x)   # identical - placement ignores widgets_rect
 
     def test_calculate_position_fallback(self):
         """Test fallback when taskbar is invalid."""
