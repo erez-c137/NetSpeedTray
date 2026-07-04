@@ -99,6 +99,56 @@ def test_refresh_float_state_optout_skips_detection(mock_gffs):
     mock_gffs.assert_not_called()   # the opt-out means we don't even query
 
 
+# --- is_free_float_active() ----------------------------------------------------------
+
+def test_is_free_float_active_true_only_for_runtime_float():
+    m = _manager({"free_move": False, "free_float": True})
+    m._free_float_active = True
+    assert m.is_free_float_active() is True
+
+
+def test_is_free_float_active_false_for_plain_free_move():
+    # Free Move floats, but is NOT the taskbar-less runtime float - callers that guard the
+    # off-taskbar widget (e.g. the fullscreen immediate-hide) must not treat it as such.
+    m = _manager({"free_move": True, "free_float": True})
+    m._free_float_active = False
+    assert m.is_free_float_active() is False
+    assert m.is_floating() is True   # ... but it IS floating
+
+
+# --- immediate fullscreen-hide guard (#188) ------------------------------------------
+
+def _fake_widget(keep_visible, free_float_active):
+    from netspeedtray.views.widget.main import NetworkSpeedWidget
+    w = MagicMock(spec=NetworkSpeedWidget)
+    w.config = {"keep_visible_fullscreen": keep_visible}
+    w.position_manager = MagicMock()
+    w.position_manager.is_free_float_active.return_value = free_float_active
+    return w
+
+
+def test_immediate_hide_fires_when_docked_and_not_kept():
+    from netspeedtray.views.widget.main import NetworkSpeedWidget
+    w = _fake_widget(keep_visible=False, free_float_active=False)
+    NetworkSpeedWidget._on_immediate_hide_requested(w)
+    w.setVisible.assert_called_once_with(False)
+
+
+def test_immediate_hide_skipped_when_keep_visible():
+    from netspeedtray.views.widget.main import NetworkSpeedWidget
+    w = _fake_widget(keep_visible=True, free_float_active=False)
+    NetworkSpeedWidget._on_immediate_hide_requested(w)
+    w.setVisible.assert_not_called()
+
+
+def test_immediate_hide_skipped_when_free_floating():
+    # The regression: a fullscreen app on the primary must NOT blink the off-taskbar widget out.
+    from netspeedtray.views.widget.main import NetworkSpeedWidget
+    w = _fake_widget(keep_visible=False, free_float_active=True)
+    NetworkSpeedWidget._on_immediate_hide_requested(w)
+    w.setVisible.assert_not_called()
+
+
 # --- default placement ---------------------------------------------------------------
 
 def test_free_float_default_position_is_inside_the_target_screen():

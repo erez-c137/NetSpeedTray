@@ -341,6 +341,18 @@ class NetworkSpeedWidget(QWidget):
 
 
 
+    def _on_immediate_hide_requested(self) -> None:
+        """Handle the fast fullscreen-obstruction hide, honoring the two states that must
+        stay visible: the user's keep_visible_fullscreen choice (#107), and runtime
+        free-float (#188) - where a taskbar-less preferred monitor falls back to the
+        primary taskbar, so a fullscreen app on the primary would otherwise transiently
+        hide the off-taskbar widget. Mirrors the visibility gate in _execute_refresh()."""
+        if self.config.get("keep_visible_fullscreen", False):
+            return
+        if self.position_manager and self.position_manager.is_free_float_active():
+            return
+        self.setVisible(False)
+
     def _execute_refresh(self, hwnd: int = 0) -> None:
         """
         The AUTHORITATIVE refresh trigger. This version includes a grace period
@@ -767,9 +779,13 @@ class NetworkSpeedWidget(QWidget):
             # "keep visible over fullscreen" choice (issue #107). Without this guard
             # the immediate-hide path bypassed keep_visible_fullscreen, which
             # _execute_refresh() already respects, so the widget vanished anyway.
-            self.system_event_handler.immediate_hide_requested.connect(
-                lambda: None if self.config.get("keep_visible_fullscreen", False) else self.setVisible(False)
-            )
+            #
+            # Also skip the hide when free-floating (#188): a taskbar-less preferred
+            # monitor falls back to the *primary* taskbar for obstruction checks, so a
+            # fullscreen app on the primary would otherwise blink the off-taskbar widget
+            # out until the next refresh re-shows it. _execute_refresh() already forces
+            # it visible in this state; mirror that here so there's no transient flicker.
+            self.system_event_handler.immediate_hide_requested.connect(self._on_immediate_hide_requested)
 
             # Immediately re-assert topmost when the taskbar gains focus, so the widget
             # never lingers behind the activating taskbar (the debounced refresh is too

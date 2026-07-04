@@ -491,6 +491,13 @@ class PositionManager(QObject):
         runtime free-float mode active when the preferred monitor has no taskbar of its own (#188)."""
         return bool(self._state.config.get('free_move', False)) or self._free_float_active
 
+    def is_free_float_active(self) -> bool:
+        """True only when the runtime free-float mode is live (preferred monitor has no taskbar of its
+        own, #188). Unlike is_floating() this excludes plain Free Move, so callers that need to protect
+        the off-taskbar float specifically - e.g. not hiding it for a fullscreen app on another monitor -
+        don't also change docked Free-Move behavior."""
+        return self._free_float_active
+
     def refresh_float_state(self) -> Optional[QScreen]:
         """Re-evaluate whether the preferred monitor is a taskbar-less display to free-float on. Sets
         `_free_float_active` / `_free_float_screen` and returns the target screen (or None). Cheap;
