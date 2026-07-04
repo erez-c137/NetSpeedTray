@@ -124,7 +124,16 @@ class WidgetLayoutManager:
             #      This caused text truncation when layout predicted smaller width than actual render
             # Solution: Pass short_labels consistently to both layout calculation and actual rendering
             short_labels = self.widget.config.get("short_unit_labels", constants.config.defaults.DEFAULT_SHORT_UNIT_LABELS)
-            
+
+            # v2.1: reserve the fixed worst-case width for the network-identity band tag. It's part of
+            # the network segment, so adding it to the base network width flows correctly into
+            # network_only / side_by_side / cycle, and is correctly dropped by the hw-only modes that
+            # rebuild calculated_width from scratch (they show no network segment). Same constants the
+            # renderer draws with, so reserve == draw (no #106 clip). SSID (item 2) reserves separately.
+            _identity_reserve = 0
+            if hasattr(self.widget, "_identity_reserve_px"):
+                _identity_reserve = self.widget._identity_reserve_px(self.metrics)
+
             if is_horizontal:
                 # --- HORIZONTAL TASKBAR (TOP/BOTTOM) ---
                 if is_small:
@@ -155,7 +164,7 @@ class WidgetLayoutManager:
                     # The renderer draws upload OVER download (two stacked rows), not side-by-side, so
                     # reserve the single-column width (the wider line). Reserving up + separator + down
                     # left dead space the render never fills (#8); HORIZONTAL_LAYOUT_SEPARATOR is unused.
-                    calculated_width = max(up_width, down_width) + (margin * 2)
+                    calculated_width = max(up_width, down_width) + (margin * 2) + _identity_reserve
                 else:
                     # Large Horizontal Layout Width Calculation (Vertical Mode)
                     always_mbps = self.widget.config.get("speed_display_mode", constants.config.defaults.DEFAULT_SPEED_DISPLAY_MODE) == "always_mbps"
@@ -182,7 +191,7 @@ class WidgetLayoutManager:
 
                     calculated_width = (margin + arrow_width + arrow_gap +
                                         max_number_width + unit_gap +
-                                        max_unit_width + margin)
+                                        max_unit_width + margin + _identity_reserve)
 
                 # Save calculated network width for other layout consumers (e.g. mini-graph)
                 self._network_width = calculated_width
