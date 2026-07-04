@@ -12,7 +12,7 @@ If you'd like to contribute a translation or improve an existing one, see the lo
 | Dutch | `nl_NL` | [@CMTriX](https://github.com/CMTriX) | [#124](https://github.com/erez-c137/NetSpeedTray/pull/124) |
 | Russian | `ru_RU` | [@ZeoNish](https://github.com/ZeoNish) | [#63](https://github.com/erez-c137/NetSpeedTray/pull/63) |
 | Slovenian | `sl_SI` | [@anderlli0053](https://github.com/anderlli0053) (Andrew Poženel) | [#79](https://github.com/erez-c137/NetSpeedTray/pull/79) |
-| Polish | `pl_PL` | [@FadeMind](https://github.com/FadeMind) | [#39](https://github.com/erez-c137/NetSpeedTray/pull/39) |
+| Polish | `pl_PL` | FadeMind | [#39](https://github.com/erez-c137/NetSpeedTray/pull/39) |
 | French | `fr_FR` | [@logounet](https://github.com/logounet) | #94 |
 | Japanese | `ja_JP` | [@coolvitto](https://github.com/coolvitto) | [#155](https://github.com/erez-c137/NetSpeedTray/pull/155) |
 | Traditional Chinese (Taiwan) | `zh_TW` | [@raylolhue](https://github.com/raylolhue), with terminology improvements from [@in2002-tw](https://github.com/in2002-tw) — pending native polish | [#199](https://github.com/erez-c137/NetSpeedTray/pull/199) |
