@@ -90,12 +90,12 @@ class MonitorSettingsFlyout(QFrame):
         grid.addWidget(self._label(self._tr("MONITOR_SHOW_LEGEND", "Show legend"), c), 2, 0)
         self._legend = Win11Toggle("", bool(config.get("monitor_graph_legend", True)))
         self._legend.toggled.connect(lambda on: self._set("monitor_graph_legend", bool(on)))
-        grid.addWidget(self._legend, 2, 2, Qt.AlignmentFlag.AlignRight)
+        grid.addWidget(self._legend, 2, 2, Qt.AlignmentFlag.AlignTrailing)  # AlignTrailing mirrors under RTL (#194)
 
         grid.addWidget(self._label(self._tr("MONITOR_GRAPH_SMOOTH", "Smooth lines"), c), 3, 0)
         self._smooth = Win11Toggle("", bool(config.get("monitor_graph_smoothing", False)))
         self._smooth.toggled.connect(lambda on: self._set("monitor_graph_smoothing", bool(on)))
-        grid.addWidget(self._smooth, 3, 2, Qt.AlignmentFlag.AlignRight)
+        grid.addWidget(self._smooth, 3, 2, Qt.AlignmentFlag.AlignTrailing)  # AlignTrailing mirrors under RTL (#194)
         root.addLayout(grid)
         root.addSpacing(10)
 
