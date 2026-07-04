@@ -75,6 +75,7 @@
     "UPDATE_INTERVAL_LABEL": "更新間隔:",
     "START_WITH_WINDOWS_LABEL": "隨 Windows 啟動",
     "FREE_MOVE_LABEL": "自由移動 (不吸附)",
+    "FREE_FLOAT_LABEL": "Float on a display without a taskbar",
     "KEEP_VISIBLE_FULLSCREEN_LABEL": "全螢幕時保持顯示",
     "FONT_SIZE_LABEL": "字型大小:",
     "FONT_FAMILY_LABEL": "字型:",

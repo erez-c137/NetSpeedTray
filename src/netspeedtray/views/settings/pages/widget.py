@@ -69,6 +69,13 @@ class WidgetPage(QWidget):
         self.free_move.toggled.connect(self.on_change)
         layout.addWidget(SettingCard(self.i18n.FREE_MOVE_LABEL, control=self.free_move))
 
+        # #188: float the widget on a preferred monitor that has no taskbar of its own.
+        self.free_float = Win11Toggle(label_text="")
+        self.free_float.toggled.connect(self.on_change)
+        layout.addWidget(SettingCard(
+            getattr(self.i18n, "FREE_FLOAT_LABEL", "Float on a display without a taskbar"),
+            control=self.free_float))
+
         self.keep_visible_fullscreen = Win11Toggle(label_text="")
         self.keep_visible_fullscreen.toggled.connect(self.on_change)
         layout.addWidget(SettingCard(self.i18n.KEEP_VISIBLE_FULLSCREEN_LABEL,
@@ -130,6 +137,7 @@ class WidgetPage(QWidget):
                 combo.setCurrentIndex(idx)
 
         self.free_move.setChecked(config.get("free_move", False))
+        self.free_float.setChecked(config.get("free_float", True))
         self.keep_visible_fullscreen.setChecked(
             config.get("keep_visible_fullscreen", constants.config.defaults.DEFAULT_KEEP_VISIBLE_FULLSCREEN))
 
@@ -141,5 +149,6 @@ class WidgetPage(QWidget):
             "stack_hardware_stats": mode == "side_by_stack",
             "widget_display_order": order,
             "free_move": self.free_move.isChecked(),
+            "free_float": self.free_float.isChecked(),
             "keep_visible_fullscreen": self.keep_visible_fullscreen.isChecked(),
         }

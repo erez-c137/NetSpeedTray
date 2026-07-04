@@ -75,6 +75,7 @@
     "UPDATE_INTERVAL_LABEL": "Interval posodabljanja:",
     "START_WITH_WINDOWS_LABEL": "Zaženi z zagonom sistema Windows",
     "FREE_MOVE_LABEL": "Prosto premikanje (brez pripenjanja)",
+    "FREE_FLOAT_LABEL": "Float on a display without a taskbar",
     "KEEP_VISIBLE_FULLSCREEN_LABEL": "Ohrani vidno v celozaslonskem načinu",
     "FONT_SIZE_LABEL": "Velikost pisave:",
     "FONT_FAMILY_LABEL": "Pisava:",

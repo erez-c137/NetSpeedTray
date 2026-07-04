@@ -651,6 +651,30 @@ def _log_preferred_monitor_fallback(
     )
 
 
+def get_free_float_screen(preferred_screen_name: Optional[str]) -> Optional[QScreen]:
+    """
+    Return the QScreen the widget should FREE-FLOAT on, or None to dock to a taskbar as usual.
+
+    Free-float applies only when the user's preferred monitor is (a) set, (b) currently connected, and
+    (c) has NO taskbar of its own (e.g. the Corsair Xeneon Edge, or a secondary display with "Show
+    taskbar on all displays" off). In every other case - no preference, preferred monitor disconnected,
+    or the preferred monitor has a taskbar - this returns None and the normal docking path runs (#188).
+    """
+    if not preferred_screen_name:
+        return None
+    try:
+        screen = next((s for s in QApplication.screens() if s.name() == preferred_screen_name), None)
+        if screen is None:
+            return None  # preferred monitor not connected -> the primary-taskbar fallback is correct
+        taskbars = get_all_taskbar_info()
+        if _select_taskbar_for_screen(taskbars, preferred_screen_name) is not None:
+            return None  # it has a taskbar of its own -> dock to it normally
+        return screen    # present but taskbar-less -> free-float on it
+    except Exception as e:  # noqa: BLE001 - fail-safe: never break placement over float detection
+        logger.error("get_free_float_screen failed for '%s': %s", preferred_screen_name, e, exc_info=True)
+        return None
+
+
 def get_taskbar_info(preferred_screen_name: Optional[str] = None) -> TaskbarInfo:
     """
     Retrieves the taskbar to attach the widget to.
