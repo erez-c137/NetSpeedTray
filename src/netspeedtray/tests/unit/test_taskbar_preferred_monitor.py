@@ -138,3 +138,25 @@ class TestTaskbarReadinessGate:
     def test_not_ready_when_taskbar_window_unqueryable(self):
         with patch.object(tbu, "win32gui", _fake_win32gui(rect_raises=True)):
             assert _taskbar_window_is_ready(2, "Shell_SecondaryTrayWnd") is False
+
+
+def test_preferred_monitor_fallback_logs_once_per_state(caplog):
+    """The no-taskbar fallback logs once per distinct state, not once per (~1s) reposition tick (#188)."""
+    import logging
+
+    tbu._last_fallback_log_key = None
+    tb = _mock_tb(1, r"\.\DISPLAY1", PRIMARY, (0, 0, 2560, 1440), is_primary=True)
+
+    def count():
+        return sum(1 for r in caplog.records if "did not match" in r.getMessage())
+
+    try:
+        with caplog.at_level(logging.INFO, logger="NetSpeedTray.TaskbarUtils"):
+            for _ in range(3):  # three per-second ticks, same state
+                tbu._log_preferred_monitor_fallback("XENEON EDGE", [tb])
+            assert count() == 1, "identical fallback state must log only once, not per tick"
+
+            tbu._log_preferred_monitor_fallback("OTHER MON", [tb])  # preference changed -> logs again
+            assert count() == 2, "a genuine state change should re-log once"
+    finally:
+        tbu._last_fallback_log_key = None  # don't leak module state to other tests

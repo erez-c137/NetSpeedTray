@@ -601,6 +601,14 @@ def _select_taskbar_for_screen(
     return None
 
 
+# The preferred-monitor fallback is logged at most once per distinct state, not once per reposition
+# tick. get_taskbar_info() runs on the ~1s safety-net loop, so an unmatched preferred monitor (a
+# taskbar-less accessory display like the Corsair Xeneon Edge, #188) otherwise spammed this INFO line
+# every second and bloated Support Bundles. Keyed on (preferred, taskbar set) so a genuine topology
+# change (monitor plugged/unplugged, or a changed preference) still logs once more.
+_last_fallback_log_key: Optional[tuple] = None
+
+
 def _log_preferred_monitor_fallback(
     preferred_screen_name: str, taskbars: List[TaskbarInfo]
 ) -> None:
@@ -609,7 +617,16 @@ def _log_preferred_monitor_fallback(
     selection fell back to primary: the preferred name plus every enumerated
     taskbar's class, stored name, re-resolved name, and geometry. Turns an
     otherwise-silent fallback into an immediately diagnosable one (#72 / #166).
+
+    Throttled to once per distinct (preferred, taskbar-set) state so the ~1s
+    safety-net refresh can't spam it (#188).
     """
+    global _last_fallback_log_key
+    key = (preferred_screen_name, tuple(sorted((tb.hwnd, tb.screen_name) for tb in taskbars)))
+    if key == _last_fallback_log_key:
+        return
+    _last_fallback_log_key = key
+
     details = []
     for tb in taskbars:
         resolved = tb.get_screen()
