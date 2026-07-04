@@ -50,6 +50,9 @@ class LayoutConstants:
     # close to the hardware rather than floating far from it.
     WIDGET_SEGMENT_GAP_AFTER_NETWORK_PX: Final[int] = 10
     WIDGET_SEGMENT_GAP_BETWEEN_HARDWARE_PX: Final[int] = 5
+    # Minimum gap (logical px) kept between the widget's tray-side edge and the tray boundary /
+    # the "^" show-hidden-icons chevron, so the widget never abuts it and steals its clicks (#161 pt1).
+    TRAY_EDGE_MIN_GAP_PX: Final[int] = 8
 
     def __init__(self) -> None:
         self.validate()

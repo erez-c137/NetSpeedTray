@@ -147,7 +147,9 @@ class InputHandler(QObject):
                 from netspeedtray.utils.taskbar_utils import get_taskbar_info
                 from netspeedtray import constants
                 
-                tb_info = get_taskbar_info()
+                # Resolve against the PREFERRED taskbar (a secondary drag must not measure its offset
+                # against the primary taskbar's geometry) (#186).
+                tb_info = get_taskbar_info(preferred_screen_name=config.get("preferred_monitor"))
                 edge = tb_info.get_edge_position()
                 dpi_scale = tb_info.dpi_scale if tb_info.dpi_scale > 0 else 1.0
                 
@@ -162,9 +164,14 @@ class InputHandler(QObject):
                     if tray_rect:
                         right_boundary = tray_rect[0] / dpi_scale
                     else:
+                        # Secondary taskbar (no tray HWND): match the calculator's clock reserve (#186)
+                        # so the saved offset keeps the widget in the same clock-clear spot.
+                        reserve = config.get("secondary_clock_reserve_px",
+                                             constants.config.defaults.DEFAULT_SECONDARY_CLOCK_RESERVE_PX)
                         screen = tb_info.get_screen()
-                        right_boundary = float(screen.geometry().right() + 1) if screen else (tb_info.rect[2] / dpi_scale)
-                    
+                        screen_right = float(screen.geometry().right() + 1) if screen else (tb_info.rect[2] / dpi_scale)
+                        right_boundary = screen_right - reserve
+
                     # Current Widget X
                     current_x_log = self.widget.pos().x() # Use logical pos from pos()
                     widget_width = self.widget.width()
