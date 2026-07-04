@@ -81,6 +81,9 @@ class ConfigConstants:
     DEFAULT_START_WITH_WINDOWS: Final[bool] = True
     DEFAULT_TRAY_OFFSET_X: Final[int] = 0
     DEFAULT_TRAY_OFFSET_Y: Final[int] = 3
+    # A Win11 secondary-monitor taskbar has no tray/clock child HWND to hug, so on a preferred
+    # secondary display we reserve this many logical px off the screen edge to clear its clock (#186).
+    DEFAULT_SECONDARY_CLOCK_RESERVE_PX: Final[int] = 75
     DEFAULT_LEGEND_POSITION: Final[str] = data.legend_position.DEFAULT_LEGEND_POSITION
     DEFAULT_SHOW_LEGEND: Final[bool] = False
 
@@ -173,6 +176,7 @@ class ConfigConstants:
         "short_unit_labels": DEFAULT_SHORT_UNIT_LABELS,
         "tray_offset_x": DEFAULT_TRAY_OFFSET_X,
         "tray_offset_y": DEFAULT_TRAY_OFFSET_Y,
+        "secondary_clock_reserve_px": DEFAULT_SECONDARY_CLOCK_RESERVE_PX,
         "graph_window_pos": None,
         "settings_window_pos": None,
         "app_activity_window_pos": None,
@@ -308,6 +312,7 @@ class ConfigConstants:
         # negative offset; clamping it to 0 snapped the widget back left on the next reposition.
         "tray_offset_x": {"type": int, "default": DEFAULT_TRAY_OFFSET_X, "min": -500, "max": 500},
         "tray_offset_y": {"type": int, "default": DEFAULT_TRAY_OFFSET_Y, "min": 0, "max": 500},
+        "secondary_clock_reserve_px": {"type": int, "default": DEFAULT_SECONDARY_CLOCK_RESERVE_PX, "min": 0, "max": 500},
         "graph_window_pos": {"type": (dict, type(None)), "default": None},
         "settings_window_pos": {"type": (dict, type(None)), "default": None},
         "app_activity_window_pos": {"type": (dict, type(None)), "default": None},
