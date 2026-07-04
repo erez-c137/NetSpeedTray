@@ -1362,12 +1362,12 @@ class NetworkSpeedWidget(QWidget):
     def _on_update_available(self, latest_version: str, release_url: str, body: str = "",
                              installer_url: str = "", portable_url: str = "") -> None:
         """Handle update available from automatic startup check."""
-        self._show_update_dialog(latest_version, release_url, body, installer_url)
+        self._show_update_dialog(latest_version, release_url, body, installer_url, portable_url)
 
     def _on_update_available_manual(self, latest_version: str, release_url: str, body: str = "",
                                     installer_url: str = "", portable_url: str = "") -> None:
         """Handle update available from manual menu check."""
-        self._show_update_dialog(latest_version, release_url, body, installer_url)
+        self._show_update_dialog(latest_version, release_url, body, installer_url, portable_url)
 
     def _on_up_to_date_manual(self) -> None:
         """Show up-to-date message for manual check."""
@@ -1381,7 +1381,7 @@ class NetworkSpeedWidget(QWidget):
         QMessageBox.warning(self, self.i18n.UPDATE_CHECK_TITLE, self.i18n.UPDATE_CHECK_FAILED_TEXT)
 
     def _show_update_dialog(self, latest_version: str, release_url: str, body: str = "",
-                            installer_url: str = "") -> None:
+                            installer_url: str = "", portable_url: str = "") -> None:
         """Show the update-available dialog: version delta + inert release notes,
         with Download / Skip / Not Now."""
         from netspeedtray.views.update_dialog import UpdateDialog
@@ -1390,25 +1390,35 @@ class NetworkSpeedWidget(QWidget):
         dlg.exec()
 
         if dlg.action == UpdateDialog.ACTION_DOWNLOAD:
-            self._start_secure_update(installer_url, release_url)
+            self._start_secure_update(installer_url, release_url,
+                                      portable_url=portable_url, latest_version=latest)
         elif dlg.action == UpdateDialog.ACTION_SKIP:
             self.config["skipped_version"] = latest
             self.update_config({"skipped_version": latest})
 
-    def _start_secure_update(self, installer_url: str, release_url: str) -> None:
+    def _start_secure_update(self, installer_url: str, release_url: str,
+                             *, portable_url: str = "", latest_version: str = "") -> None:
         """
         One-click update: download the signed installer, verify it (Authenticode +
         SignPath pin), and run it. Any failure falls back to opening the release page
         in the browser (the old behavior), so the worst case is never worse than before.
+
+        On the portable build (detected via the packaged marker file) the installer can't update the
+        unzipped folder in place, so this runs the guided portable flow instead: download + verify the
+        portable ZIP and stage it for the user to copy over (#195).
         """
         try:
             from netspeedtray.core.update_installer import SecureUpdater
+            from netspeedtray.utils.helpers import is_portable_install
             # In-flight guard: don't start a second download over a running one.
             existing = getattr(self, "_secure_updater", None)
             if existing is not None and existing.is_running():
                 return
+            portable = is_portable_install()
             # Parented to self (not GC'd); it self-destructs via deleteLater when done.
-            self._secure_updater = SecureUpdater(self, installer_url, release_url, self.i18n)
+            self._secure_updater = SecureUpdater(
+                self, installer_url, release_url, self.i18n,
+                portable=portable, portable_url=portable_url, latest_version=latest_version)
             self._secure_updater.launching.connect(self._quit_for_update)
             self._secure_updater.start()
         except Exception as e:

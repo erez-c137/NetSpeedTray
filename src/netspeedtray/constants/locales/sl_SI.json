@@ -213,6 +213,8 @@
     "UPDATE_AVAILABLE_TITLE": "Posodobitev na voljo",
     "UPDATE_DOWNLOADING_TITLE": "Prenašanje posodobitve",
     "UPDATE_FALLBACK_MESSAGE": "Posodobitve v aplikaciji ni bilo mogoče dokončati. Namesto tega bo odprta stran za prenos.",
+    "UPDATE_PORTABLE_READY_TITLE": "Update ready to install",
+    "UPDATE_PORTABLE_READY_MESSAGE": "NetSpeedTray {version} is ready in the folder that just opened:\n{ready}\n\nTo finish updating: close NetSpeedTray, then copy everything from that folder into your current folder:\n{app_dir}\n(replacing the old files). Your settings are kept.",
     "UPDATE_AVAILABLE_TEXT": "Na voljo je nova različica NetSpeedTray!\n\nTrenutna: v{current}\nNajnovejša: v{latest}",
     "UPDATE_RELEASE_NOTES_LABEL": "Novosti v {latest}",
     "WELCOME_2_0_TITLE": "Dobrodošli v NetSpeedTray 2.0",

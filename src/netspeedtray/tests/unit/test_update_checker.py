@@ -20,7 +20,7 @@ and pre-release tags being truncated rather than ordered).
 """
 import pytest
 
-from netspeedtray.core.update_checker import _parse_version, is_newer
+from netspeedtray.core.update_checker import _parse_version, is_newer, select_release_assets
 
 
 # --- _parse_version: normalization -------------------------------------------
@@ -156,3 +156,24 @@ def test_prerelease_compares_older_than_final_by_accident():
 )
 def test_successive_prereleases_are_ordered():
     assert is_newer("1.4.0-beta2", "1.4.0-beta1") is True
+
+
+# --- release-asset selection (installer + portable) --------------------------
+
+def test_select_release_assets_picks_installer_and_portable():
+    """Both URLs must be surfaced so the updater can pick the portable ZIP for a portable run (#195)."""
+    assets = [
+        {"name": "checksums.txt", "browser_download_url": "https://x/sums"},
+        {"name": "NetSpeedTray-2.1.0-x64-Setup.exe", "browser_download_url": "https://x/setup"},
+        {"name": "NetSpeedTray-Portable-2.1.0.zip", "browser_download_url": "https://x/portable"},
+    ]
+    installer, portable = select_release_assets(assets)
+    assert installer == "https://x/setup"
+    assert portable == "https://x/portable"
+
+
+def test_select_release_assets_missing_are_empty():
+    installer, portable = select_release_assets([{"name": "notes.md", "browser_download_url": "https://x/n"}])
+    assert installer == ""
+    assert portable == ""
+

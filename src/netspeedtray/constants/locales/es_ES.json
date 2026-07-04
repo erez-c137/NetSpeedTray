@@ -213,6 +213,8 @@
     "UPDATE_AVAILABLE_TITLE": "Actualización disponible",
     "UPDATE_DOWNLOADING_TITLE": "Descargando actualización",
     "UPDATE_FALLBACK_MESSAGE": "No se pudo completar la actualización en la aplicación. Se abrirá la página de descarga en su lugar.",
+    "UPDATE_PORTABLE_READY_TITLE": "Update ready to install",
+    "UPDATE_PORTABLE_READY_MESSAGE": "NetSpeedTray {version} is ready in the folder that just opened:\n{ready}\n\nTo finish updating: close NetSpeedTray, then copy everything from that folder into your current folder:\n{app_dir}\n(replacing the old files). Your settings are kept.",
     "UPDATE_AVAILABLE_TEXT": "¡Una nueva versión de NetSpeedTray está disponible!\n\nActual: v{current}\nÚltima: v{latest}",
     "UPDATE_RELEASE_NOTES_LABEL": "Novedades en v{latest}",
     "WELCOME_2_0_TITLE": "Te damos la bienvenida a NetSpeedTray 2.0",
