@@ -47,3 +47,5 @@ six==1.17.0
     # via python-dateutil
 wmi==1.5.1
     # via -r requirements.in
+python-bidi==0.6.11
+    # via -r requirements.in

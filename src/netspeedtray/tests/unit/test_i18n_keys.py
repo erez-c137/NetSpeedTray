@@ -257,3 +257,13 @@ def test_no_dead_i18n_references(
             "the correct key, or -- if intentionally reserved -- add it to ALLOWLIST "
             "with a reason."
         )
+
+
+def test_hebrew_rtl_registration():
+    """he_IL is a registered, RTL locale; other locales are LTR (v2.1 item 6 foundation)."""
+    from netspeedtray.constants.i18n import I18nStrings
+    assert "he_IL" in I18nStrings.LANGUAGE_MAP
+    assert "he_IL" in I18nStrings.RTL_LANGUAGES
+    assert I18nStrings("he_IL").is_rtl is True
+    assert I18nStrings("en_US").is_rtl is False
+    assert I18nStrings("ru_RU").is_rtl is False

@@ -1,6 +1,6 @@
 # Translators
 
-NetSpeedTray's UI is available in 11 languages thanks to the community contributors below. Each name represents real time and care invested in making the app feel native to its users - thank you.
+NetSpeedTray's UI is available in 12 languages - including Hebrew, its first right-to-left locale - thanks to the community contributors below. Each name represents real time and care invested in making the app feel native to its users - thank you.
 
 If you'd like to contribute a translation or improve an existing one, see the locale files in [`src/netspeedtray/constants/locales/`](src/netspeedtray/constants/locales/) and open a pull request. The `en_US.json` file is the source of truth - all other locales must keep key parity with it (enforced by [`test_locales_parity.py`](src/netspeedtray/tests/unit/test_locales_parity.py)).
 
@@ -16,6 +16,7 @@ If you'd like to contribute a translation or improve an existing one, see the lo
 | French | `fr_FR` | [@logounet](https://github.com/logounet) | #94 |
 | Japanese | `ja_JP` | [@coolvitto](https://github.com/coolvitto) | [#155](https://github.com/erez-c137/NetSpeedTray/pull/155) |
 | Traditional Chinese (Taiwan) | `zh_TW` | [@raylolhue](https://github.com/raylolhue), with terminology improvements from [@in2002-tw](https://github.com/in2002-tw) — pending native polish | [#199](https://github.com/erez-c137/NetSpeedTray/pull/199) |
+| Hebrew (RTL) | `he_IL` | [@rami123](https://github.com/rami123) (initiated the locale) — remaining strings AI-assisted, **pending native review** | [#165](https://github.com/erez-c137/NetSpeedTray/pull/165) |
 
 Other locales (English, German, Spanish) are currently maintained by the project owner. Native-speaker reviews are very welcome - even one-line corrections to phrasing or terminology are valuable.
 
@@ -26,6 +27,8 @@ Other locales (English, German, Spanish) are currently maintained by the project
 > - Update dialog / one-click updater: `UPDATE_RELEASE_NOTES_LABEL`, `UPDATE_DOWNLOADING_TITLE`, `UPDATE_FALLBACK_MESSAGE`
 > - First-run welcome: `WELCOME_2_0_TITLE`, `WELCOME_2_0_BODY`, `WELCOME_2_0_WHATS_NEW_BUTTON`, `WELCOME_2_0_GOT_IT_BUTTON` (the **body** is the longest/most nuanced - most worth a look)
 > - **Monitor window (Overview / Network / Hardware tabs):** `GRAPH_HW_UTIL_AXIS_LABEL`, `MEMORY_HEADER`, `HARDWARE_LOADING_MESSAGE`, `HARDWARE_NO_DATA_MESSAGE`, and `HARDWARE_SUMMARY_TEMPLATE` (**keep every `{…}` field - `{procs}`, `{cpu:.0f}`, `{ram:.1f}`, `{ram_unit}`, `{updated_at}`**). Drafts were grounded in your existing terms (e.g. "Utilization" follows your `GRAPH_CPU_UTIL_AXIS_LABEL`). `MONITOR_TILE_RAM` / `MONITOR_TILE_VRAM` are acronyms left as-is - localize only if your language does.
+
+> 🆕 **Pending native review for Hebrew (2.1):** `he_IL` was seeded by [@rami123](https://github.com/rami123) (~74 strings); the remaining ~300 were AI-assisted for the 2.1 RTL work, each checked to preserve its `{…}` placeholders. The whole locale is **pending a native-speaker pass** - Hebrew is the app's first right-to-left language, so both the wording and any RTL layout quirks are worth a look. Corrections are hugely welcome and credited.
 
 ## How translation works in NetSpeedTray
 

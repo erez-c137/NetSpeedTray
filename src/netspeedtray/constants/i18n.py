@@ -51,7 +51,13 @@ class I18nStrings:
         "sl_SI": "Slovenščina (Slovenija)",
         "ja_JP": "日本語 (日本)",
         "zh_TW": "繁體中文 (台灣)",
+        "he_IL": "עברית (ישראל)",
     }
+
+    # Right-to-left languages. When one is active, the app flips its layout direction (mirrored
+    # settings/monitor layouts + a mirrored widget). Kept as a set so more RTL locales (ar_*, fa_*)
+    # can be added later without touching the direction logic.
+    RTL_LANGUAGES: set = {"he_IL"}
 
     def __init__(self, language_code: Optional[str] = None) -> None:
         """
@@ -137,6 +143,11 @@ class I18nStrings:
             return f"[ERR: TYPE {name}]"
         
         return value
+
+    @property
+    def is_rtl(self) -> bool:
+        """True when the active language is right-to-left - drives QApplication.setLayoutDirection."""
+        return self.language in self.RTL_LANGUAGES
 
     def set_language(self, language_code: str) -> None:
         """Sets the current language and loads the corresponding strings from file."""
