@@ -745,53 +745,74 @@ class PositionManager(QObject):
         self.update_position()
         self.ensure_topmost()
 
-    def _ensure_taskbar_owner(self, hwnd: int) -> None:
+    def _ensure_taskbar_owner(self, hwnd: int) -> bool:
         """
         Dock the widget to the taskbar by making it an OWNED window of the taskbar
         (GWLP_HWNDPARENT). The window manager then keeps the widget above its owner
         at all times, so shell activity (Start menu, quick-settings, taskbar clicks)
         can no longer raise the taskbar over the widget and occlude it.
 
-        Re-applied on the topmost cadence because Qt can reset the owner across
+        Re-checked on the topmost cadence because Qt can reset the owner across
         show/flag changes, and the taskbar HWND changes on an explorer restart
-        (we re-own to the fresh handle automatically via _state.taskbar_info).
+        (we re-own to the fresh handle automatically via _state.taskbar_info). The
+        check is a cheap no-op once the owner is already correct, so in steady state
+        it never touches Z-order -- which is what keeps open shell menus undisturbed
+        (see the #200 note in ensure_topmost()).
+
+        Returns:
+            True iff the owner was just (re)established on this call.
         """
         try:
             tb_info = self._state.taskbar_info or get_taskbar_info()
             tb_hwnd = int(tb_info.hwnd) if tb_info and tb_info.hwnd else 0
             if not tb_hwnd or not win32gui.IsWindow(tb_hwnd):
-                return
+                return False
             if (_GetWindowLongPtr(hwnd, _GWLP_HWNDPARENT) or 0) != tb_hwnd:
                 _SetWindowLongPtr(hwnd, _GWLP_HWNDPARENT, tb_hwnd)
                 logger.debug("Widget docked to taskbar HWND %s (owner Z-order).", tb_hwnd)
+                return True
         except Exception as e:
             logger.error("Failed to set taskbar owner: %s", e)
+        return False
 
     def ensure_topmost(self) -> None:
         """
-        Re-assert the widget's Z-order.
+        Keep the widget docked above the taskbar -- WITHOUT re-inserting it at the top of
+        the topmost Z-band on every call.
 
-        Now that the widget is an OWNED window of the taskbar (_ensure_taskbar_owner),
-        the taskbar can never occlude it, so the old NOTOPMOST -> TOPMOST 're-promotion'
-        bounce is unnecessary. Its one-frame drop out of the topmost band was the
-        residual flicker seen on foreground changes. We keep only a single, flicker-free
-        HWND_TOPMOST assert as a light safety net above other (non-taskbar) topmost
-        windows -- re-asserting HWND_TOPMOST on an already-topmost window does not remove
-        it from the band, so there is no drop.
+        The widget is an OWNED window of the taskbar (_ensure_taskbar_owner). That owner
+        relationship alone keeps it above the taskbar through all shell activity (Start
+        menu, taskbar clicks, the taskbar being explicitly raised) -- an owned window is
+        always kept above its owner. So no periodic HWND_TOPMOST re-assert is needed to
+        stop the taskbar occluding the widget.
+
+        Why the old re-assert was actively harmful (#200): the previous code called
+        SetWindowPos(HWND_TOPMOST) here on every foreground change and on a ~1 Hz timer.
+        Because the widget is owned by the taskbar, each assert dragged the taskbar's whole
+        owner-cluster back up to the top of the topmost band -- ABOVE any classic shell
+        menu/flyout that happened to be open (taskbar right-click "Close", "Safely remove
+        hardware", jump lists, ...). That clipped exactly the menu rows overlapping the
+        taskbar strip. Measured with a genuine #32768 menu: with the periodic assert the
+        taskbar sat above the open menu in 23/23 samples; without it, 0/23.
+
+        We therefore assert HWND_TOPMOST only ONCE, at the moment we (re)establish the
+        owner -- first dock at startup and after an explorer restart -- when no such menu
+        can be up. In steady state this method only re-verifies the (unchanged) owner and
+        reorders nothing.
         """
         try:
             hwnd = int(self._state.widget.winId())
             if not win32gui.IsWindow(hwnd):
                 return
 
-            # Dock the widget to the taskbar (owned window): keeps it above the taskbar.
-            self._ensure_taskbar_owner(hwnd)
-
-            # Single, flicker-free topmost assert (no NOTOPMOST drop).
-            win32gui.SetWindowPos(
-                hwnd, win32con.HWND_TOPMOST, 0, 0, 0, 0,
-                win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE
-            )
+            # Dock (or re-dock) to the taskbar. Only reorders Z when the owner is actually
+            # (re)established; a single topmost assert then seats it in the band. This
+            # never runs in steady state, so open shell menus are left alone (#200).
+            if self._ensure_taskbar_owner(hwnd):
+                win32gui.SetWindowPos(
+                    hwnd, win32con.HWND_TOPMOST, 0, 0, 0, 0,
+                    win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE
+                )
         except Exception as e:
             logger.error("Failed to ensure topmost status: %s", e)
 
