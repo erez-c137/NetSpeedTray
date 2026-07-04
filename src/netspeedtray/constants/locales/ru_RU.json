@@ -75,6 +75,7 @@
     "UPDATE_INTERVAL_LABEL": "Интервал обновления:",
     "START_WITH_WINDOWS_LABEL": "Запускать с Windows",
     "FREE_MOVE_LABEL": "Свободное перемещение (без прилипания)",
+    "FREE_FLOAT_LABEL": "Float on a display without a taskbar",
     "KEEP_VISIBLE_FULLSCREEN_LABEL": "Оставаться видимым в полноэкранном режиме",
     "FONT_SIZE_LABEL": "Размер шрифта:",
     "FONT_FAMILY_LABEL": "Шрифт:",

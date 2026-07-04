@@ -75,6 +75,7 @@
     "UPDATE_INTERVAL_LABEL": "Intervalle de Mise à Jour :",
     "START_WITH_WINDOWS_LABEL": "Lancer avec Windows",
     "FREE_MOVE_LABEL": "Déplacement Libre (Pas de Collage)",
+    "FREE_FLOAT_LABEL": "Float on a display without a taskbar",
     "KEEP_VISIBLE_FULLSCREEN_LABEL": "Rester visible en plein écran",
     "FONT_SIZE_LABEL": "Taille de Police :",
     "FONT_FAMILY_LABEL": "Police :",

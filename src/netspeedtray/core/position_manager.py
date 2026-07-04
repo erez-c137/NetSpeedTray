@@ -380,6 +380,22 @@ class PositionCalculator:
         except Exception:
             return ScreenPosition(0, 0)
 
+    def calculate_free_float_default_position(self, screen: QScreen,
+                                              widget_size: Tuple[int, int]) -> ScreenPosition:
+        """Default position for a free-floating widget on a taskbar-less display (#188): bottom-right of
+        that screen's available geometry, inset by the edge margin. Mirrors `_get_safe_fallback_position`
+        but targets the given screen instead of primary."""
+        try:
+            screen_rect: QRect = screen.availableGeometry()
+            widget_width, widget_height = widget_size
+            ui_widget = getattr(constants.ui, 'widget', None)
+            margin_px = ui_widget.SCREEN_EDGE_MARGIN_PX if ui_widget else 10
+            x = screen_rect.right() - widget_width - margin_px
+            y = screen_rect.bottom() - widget_height - margin_px
+            return ScreenPosition(max(screen_rect.left(), x), max(screen_rect.top(), y))
+        except Exception:
+            return self._get_safe_fallback_position(widget_size)
+
     def constrain_drag_position(self, desired_pos: QPoint, taskbar_info: TaskbarInfo, widget_size_q: QSize) -> Optional[QPoint]:
         """Constrains a desired widget position during dragging to the 'safe zone'."""
         try:
@@ -448,6 +464,10 @@ class PositionManager(QObject):
         self._last_tray_rect: Optional[Tuple[int, int, int, int]] = None
         self._last_applied_geometry: Optional[QRect] = None
         self._taskbar_lost_count: int = 0
+        # Free-float (#188): set by refresh_float_state() when the preferred monitor is a taskbar-less
+        # display we should float on instead of docking to the primary taskbar.
+        self._free_float_active: bool = False
+        self._free_float_screen: Optional[QScreen] = None
         
         # Timers
         self._tray_watcher_timer = QTimer(self)
@@ -466,6 +486,23 @@ class PositionManager(QObject):
         self._tray_watcher_timer.stop()
         logger.debug("PositionManager monitoring stopped.")
 
+    def is_floating(self) -> bool:
+        """True when the widget should ignore taskbar docking - either the user's Free Move, or the
+        runtime free-float mode active when the preferred monitor has no taskbar of its own (#188)."""
+        return bool(self._state.config.get('free_move', False)) or self._free_float_active
+
+    def refresh_float_state(self) -> Optional[QScreen]:
+        """Re-evaluate whether the preferred monitor is a taskbar-less display to free-float on. Sets
+        `_free_float_active` / `_free_float_screen` and returns the target screen (or None). Cheap;
+        called each reposition. Honors the `free_float` opt-out."""
+        screen: Optional[QScreen] = None
+        if self._state.config.get('free_float', True):
+            preferred = self._state.config.get('preferred_monitor')
+            screen = taskbar_utils.get_free_float_screen(preferred)
+        self._free_float_screen = screen
+        self._free_float_active = screen is not None
+        return screen
+
     @pyqtSlot()
     def update_position(self, fresh_taskbar_info: Optional[TaskbarInfo] = None) -> None:
         """
@@ -480,7 +517,15 @@ class PositionManager(QObject):
                 preferred = self._state.config.get('preferred_monitor')
                 self._state.taskbar_info = get_taskbar_info(preferred_screen_name=preferred)
 
+            # #188: is the preferred monitor a taskbar-less display we should float on?
+            self.refresh_float_state()
+
+            # A saved (dragged) position wins in both free-move and free-float.
             if self._apply_saved_position():
+                return
+
+            # No saved position + a taskbar-less preferred display -> default-place on that display.
+            if self._free_float_active and self._apply_free_float_position():
                 return
 
             if self._apply_calculated_position():
@@ -489,6 +534,23 @@ class PositionManager(QObject):
                 logger.warning("Failed to calculate position.")
         except Exception as e:
             logger.error("Error updating position: %s", e, exc_info=True)
+
+    def _apply_free_float_position(self) -> bool:
+        """Place the widget at a sensible default on the taskbar-less preferred display (#188). Returns
+        False (so the caller falls through to normal docking) if the target screen is gone or the widget
+        isn't laid out yet - a later reposition retries with valid dimensions."""
+        screen = self._free_float_screen
+        if screen is None:
+            return False
+        widget_width = self._state.widget.width()
+        widget_height = self._state.widget.height()
+        if widget_width <= 0 or widget_height <= 0:
+            return False
+        pos = self._calculator.calculate_free_float_default_position(screen, (widget_width, widget_height))
+        if pos is None:
+            return False
+        self._apply_geometry(pos.x, pos.y)
+        return True
 
     def _apply_saved_position(self) -> bool:
         """Applies saved position if 'free_move' is enabled.
@@ -499,7 +561,7 @@ class PositionManager(QObject):
         falls through to the calculated position so the widget appears near
         the tray instead of off-screen. Fixes #133.
         """
-        if not self._state.config.get('free_move', False):
+        if not self.is_floating():
             return False
 
         saved_x = self._state.config.get('position_x')
@@ -599,7 +661,7 @@ class PositionManager(QObject):
     @pyqtSlot()
     def _check_for_tray_changes(self) -> None:
         """Checks if the system tray geometry has changed (Stub for smart polling)."""
-        if self._state.config.get("free_move", False) or not self._state.widget.isVisible():
+        if self.is_floating() or not self._state.widget.isVisible():
             return
 
         try:
@@ -631,9 +693,9 @@ class PositionManager(QObject):
              preferred = self._state.config.get('preferred_monitor')
              self._state.taskbar_info = get_taskbar_info(preferred_screen_name=preferred)
 
-        # FIX for #87: specific check for Free Move
-        if self._state.config.get("free_move", False):
-            # If Free Move is enabled, only constrain to screen bounds (prevent total loss)
+        # FIX for #87: specific check for Free Move (and #188 free-float - both are "floating")
+        if self.is_floating():
+            # If floating, only constrain to screen bounds (prevent total loss)
             # FIX for #102: Use the screen at the drag destination, not the taskbar's screen
             # This allows the widget to be dragged freely across all connected monitors
             screen = QApplication.screenAt(pos)

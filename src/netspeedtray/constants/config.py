@@ -73,6 +73,11 @@ class ConfigConstants:
     DEFAULT_DECIMAL_PLACES: Final[int] = 1
     DEFAULT_TEXT_ALIGNMENT: Final[str] = "center"
     DEFAULT_FREE_MOVE: Final[bool] = False
+    # When the preferred monitor has NO taskbar of its own (e.g. the Corsair Xeneon Edge, or a
+    # secondary display with "show taskbar on all displays" off), float the widget on THAT display
+    # instead of falling back to the primary taskbar. On by default so the accessory-display case
+    # just works; a user can turn it off to keep the old primary-taskbar fallback (#188).
+    DEFAULT_FREE_FLOAT: Final[bool] = True
     DEFAULT_KEEP_VISIBLE_FULLSCREEN: Final[bool] = False
     DEFAULT_FORCE_DECIMALS: Final[bool] = True
     # ON by default: a taskbar status widget people want always-present should come back after a reboot.
@@ -162,6 +167,7 @@ class ConfigConstants:
         "decimal_places": DEFAULT_DECIMAL_PLACES,
         "text_alignment": DEFAULT_TEXT_ALIGNMENT,
         "free_move": DEFAULT_FREE_MOVE,
+        "free_float": DEFAULT_FREE_FLOAT,
         "double_click_action": DEFAULT_DOUBLE_CLICK_ACTION,
         "middle_click_action": DEFAULT_MIDDLE_CLICK_ACTION,
         "hardware_label_style": DEFAULT_HARDWARE_LABEL_STYLE,
@@ -296,6 +302,7 @@ class ConfigConstants:
         "arrow_up_symbol": {"type": str, "default": ""},
         "arrow_down_symbol": {"type": str, "default": ""},
         "free_move": {"type": bool, "default": DEFAULT_FREE_MOVE},
+        "free_float": {"type": bool, "default": DEFAULT_FREE_FLOAT},
         "double_click_action": {"type": str, "default": DEFAULT_DOUBLE_CLICK_ACTION, "choices": CLICK_ACTION_CHOICES},
         "middle_click_action": {"type": str, "default": DEFAULT_MIDDLE_CLICK_ACTION, "choices": CLICK_ACTION_CHOICES},
         "hardware_label_style": {"type": str, "default": DEFAULT_HARDWARE_LABEL_STYLE, "choices": ["icons_colored", "icons_monochrome", "text"]},

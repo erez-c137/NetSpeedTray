@@ -107,13 +107,24 @@ class WidgetLayoutManager:
             raise RuntimeError("Renderer not initialized before resizing.")
 
         try:
+            # #188: when the preferred monitor is a taskbar-less display we free-float on, there's no
+            # taskbar to size against - render a normal compact horizontal readout with a font-derived
+            # height (below), so it renders crisp on that screen regardless of the primary's DPI.
+            from netspeedtray.utils.taskbar_utils import get_free_float_screen
+            float_screen = get_free_float_screen(self.widget.config.get("preferred_monitor")) \
+                if self.widget.config.get("free_float", True) else None
+
             taskbar_info = get_taskbar_info()
-            edge = taskbar_info.get_edge_position()
-            is_horizontal = edge in (constants.TaskbarEdge.TOP, constants.TaskbarEdge.BOTTOM)
             dpi_scale = taskbar_info.dpi_scale if taskbar_info.dpi_scale > 0 else 1.0
-            
-            is_small = is_small_taskbar(taskbar_info)
-            self.logger.debug(f"Taskbar edge: {edge}, Small: {is_small}")
+            if float_screen is not None:
+                edge = constants.TaskbarEdge.BOTTOM   # nominal; free-float doesn't dock to an edge
+                is_horizontal = True
+                is_small = False
+            else:
+                edge = taskbar_info.get_edge_position()
+                is_horizontal = edge in (constants.TaskbarEdge.TOP, constants.TaskbarEdge.BOTTOM)
+                is_small = is_small_taskbar(taskbar_info)
+            self.logger.debug(f"Taskbar edge: {edge}, Small: {is_small}, FreeFloat: {float_screen is not None}")
 
             precision = self.widget.config.get("decimal_places", constants.config.defaults.DEFAULT_DECIMAL_PLACES)
             margin = constants.renderer.TEXT_MARGIN
@@ -364,19 +375,24 @@ class WidgetLayoutManager:
                         calculated_width = max(calculated_width, gpu_width)
                 
                 
-                # Height is the TRUE visible taskbar height for horizontal docking (Fixes #104/PR #110)
-                screen = taskbar_info.get_screen()
-                full_geom = screen.geometry()
-                avail_geom = screen.availableGeometry()
-                
-                if edge == constants.TaskbarEdge.BOTTOM:
-                    visible_tb_height = full_geom.bottom() - avail_geom.bottom()
-                elif edge == constants.TaskbarEdge.TOP:
-                    visible_tb_height = avail_geom.top() - full_geom.top()
+                if float_screen is not None:
+                    # No taskbar to match on a taskbar-less display: font-derived height in LOGICAL px, so
+                    # Qt scales it correctly on that screen regardless of the primary monitor's DPI (#188).
+                    calculated_height = self.metrics.height() * 2 + (margin * 4)
                 else:
-                    visible_tb_height = (taskbar_info.rect[3] - taskbar_info.rect[1]) / dpi_scale
+                    # Height is the TRUE visible taskbar height for horizontal docking (Fixes #104/PR #110)
+                    screen = taskbar_info.get_screen()
+                    full_geom = screen.geometry()
+                    avail_geom = screen.availableGeometry()
 
-                calculated_height = visible_tb_height
+                    if edge == constants.TaskbarEdge.BOTTOM:
+                        visible_tb_height = full_geom.bottom() - avail_geom.bottom()
+                    elif edge == constants.TaskbarEdge.TOP:
+                        visible_tb_height = avail_geom.top() - full_geom.top()
+                    else:
+                        visible_tb_height = (taskbar_info.rect[3] - taskbar_info.rect[1]) / dpi_scale
+
+                    calculated_height = visible_tb_height
 
             else:
                 # Width is the TRUE visible taskbar width for vertical docking (Fixes #104/PR #110)

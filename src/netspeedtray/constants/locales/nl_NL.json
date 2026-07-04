@@ -75,6 +75,7 @@
     "UPDATE_INTERVAL_LABEL": "Update-interval:",
     "START_WITH_WINDOWS_LABEL": "Starten met Windows",
     "FREE_MOVE_LABEL": "Vrij bewegen (geen uitlijning)",
+    "FREE_FLOAT_LABEL": "Float on a display without a taskbar",
     "KEEP_VISIBLE_FULLSCREEN_LABEL": "Zichtbaar houden in volledig scherm",
     "FONT_SIZE_LABEL": "Lettergrootte:",
     "FONT_FAMILY_LABEL": "Lettertype:",

@@ -75,6 +75,7 @@
     "UPDATE_INTERVAL_LABEL": "업데이트 간격:",
     "START_WITH_WINDOWS_LABEL": "Windows와 함께 시작",
     "FREE_MOVE_LABEL": "자유 이동 (스냅핑 안 함)",
+    "FREE_FLOAT_LABEL": "Float on a display without a taskbar",
     "KEEP_VISIBLE_FULLSCREEN_LABEL": "전체화면에서도 위젯 유지",
     "FONT_SIZE_LABEL": "글꼴 크기:",
     "FONT_FAMILY_LABEL": "글꼴:",
