@@ -308,7 +308,7 @@ NetSpeedTray's UI lives in 10 languages thanks to the people below. Each transla
 | 🇳🇱 Dutch | `nl_NL` | [@CMTriX](https://github.com/CMTriX) |
 | 🇷🇺 Russian | `ru_RU` | [@ZeoNish](https://github.com/ZeoNish) |
 | 🇸🇮 Slovenian | `sl_SI` | [@anderlli0053](https://github.com/anderlli0053) (Andrew Poženel) |
-| 🇵🇱 Polish | `pl_PL` | [@FadeMind](https://github.com/FadeMind) |
+| 🇵🇱 Polish | `pl_PL` | FadeMind |
 | 🇫🇷 French | `fr_FR` | [@logounet](https://github.com/logounet) |
 | 🇯🇵 Japanese | `ja_JP` | [@coolvitto](https://github.com/coolvitto) |
 | 🇩🇪 German | `de_DE` | Maintainer - **native-speaker review welcome** |
