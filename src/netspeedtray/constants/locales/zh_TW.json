@@ -214,8 +214,8 @@
     "UPDATE_AVAILABLE_TITLE": "有可用更新",
     "UPDATE_DOWNLOADING_TITLE": "正在下載更新",
     "UPDATE_FALLBACK_MESSAGE": "無法完成應用程式內更新，改為開啟下載頁面。",
-    "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray 與小工具面板重疊",
-    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray 目前壓在工作列上的 Windows 小工具/天氣面板上方。您可以將它拖曳到任何喜歡的位置，它會記住這個位置。（此訊息不會再次顯示。）",
+    "UPDATE_PORTABLE_READY_TITLE": "Update ready to install",
+    "UPDATE_PORTABLE_READY_MESSAGE": "NetSpeedTray {version} is ready in the folder that just opened:\n{ready}\n\nTo finish updating: close NetSpeedTray, then copy everything from that folder into your current folder:\n{app_dir}\n(replacing the old files). Your settings are kept.",
     "UPDATE_AVAILABLE_TEXT": "有新版本的 NetSpeedTray 可用！\n\n目前版本: v{current}\n最新版本: v{latest}",
     "UPDATE_RELEASE_NOTES_LABEL": "v{latest} 的新功能",
     "WELCOME_2_0_TITLE": "歡迎使用 NetSpeedTray 2.0",
@@ -448,5 +448,7 @@
     "LOCATION_ONBOARDING_BODY": "NetSpeedTray 可以顯示您目前所在 Wi-Fi 網路的名稱。Windows 只會將此名稱提供給擁有 <b>定位</b> 權限的應用程式 &mdash; 因此這其實是 Windows 的隱私權設定，<b>並非</b> GPS 或行蹤追蹤。NetSpeedTray 僅在本機讀取名稱以供顯示，絕不會儲存或傳送到任何地方。<br><br>開啟定位服務即可顯示網路名稱，或僅保留頻段顯示 (2.4G&nbsp;/&nbsp;5G)，此選項不需要任何權限。",
     "LOCATION_ONBOARDING_DONT_REMIND": "不要再提醒我",
     "LOCATION_ONBOARDING_OPEN_BUTTON": "開啟定位設定",
-    "LOCATION_ONBOARDING_BAND_BUTTON": "僅顯示頻段"
+    "LOCATION_ONBOARDING_BAND_BUTTON": "僅顯示頻段",
+    "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray 與小工具面板重疊",
+    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray 目前壓在工作列上的 Windows 小工具/天氣面板上方。您可以將它拖曳到任何喜歡的位置，它會記住這個位置。（此訊息不會再次顯示。）"
 }
