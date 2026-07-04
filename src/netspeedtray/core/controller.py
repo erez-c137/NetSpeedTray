@@ -40,6 +40,9 @@ class StatsController(QObject):
     gpu_power_updated = pyqtSignal(object)
     ram_info_updated = pyqtSignal(float, float) # (used, total) in GB
     vram_info_updated = pyqtSignal(float, float) # (used, total) in GB
+    # Network identity (Wi-Fi band / SSID). object carries a NetworkIdentity (or None) so the widget
+    # can render the band tag and detect the Location-gated SSID case. Sub-polled ~5s, not per tick.
+    network_identity_updated = pyqtSignal(object)
 
 
     def __init__(self, config: Dict[str, Any], widget_state: 'WidgetState') -> None:
@@ -91,7 +94,9 @@ class StatsController(QObject):
             self.ram_info_updated.connect(self.view.update_ram_info)
         if hasattr(self.view, 'update_vram_info'):
             self.vram_info_updated.connect(self.view.update_vram_info)
-            
+        if hasattr(self.view, 'update_network_identity'):
+            self.network_identity_updated.connect(self.view.update_network_identity)
+
         self.logger.debug("View set and signals connected.")
 
 
@@ -102,7 +107,12 @@ class StatsController(QObject):
         # 1. Handle Network
         if 'network' in stats:
             self._handle_network_counters(stats['network'])
-            
+
+        # Forward the network identity (band/SSID) whenever the thread sub-polled it (present-key
+        # emits, like temp/power). The payload is a NetworkIdentity or None.
+        if 'network_identity' in stats:
+            self.network_identity_updated.emit(stats['network_identity'])
+
         if 'cpu' in stats or 'gpu' in stats:
             cpu = stats.get('cpu')
             gpu = stats.get('gpu')
@@ -406,6 +416,7 @@ class StatsController(QObject):
                     (self.gpu_power_updated, 'update_gpu_power'),
                     (self.ram_info_updated, 'update_ram_info'),
                     (self.vram_info_updated, 'update_vram_info'),
+                    (self.network_identity_updated, 'update_network_identity'),
                 ):
                     if hasattr(self.view, slot):
                         sig.disconnect(getattr(self.view, slot))

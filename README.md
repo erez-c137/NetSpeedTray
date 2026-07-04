@@ -194,6 +194,10 @@ Yes - **Settings → Network → Data usage**, or the tray's **Data cap…**. Se
 **Does the latency check phone home?**
 Only if you ask it to. The default target is your own **gateway**, which never leaves your LAN. Pinging a public host is a separate, explicit opt-in where *you* choose the host. Nothing else about your network is sent anywhere - there's no telemetry of any kind.
 
+<a id="why-does-the-network-name-need-location-access"></a>
+**Why does the network name need "Location" access?**
+The Wi-Fi **band** (2.4G / 5G) shows on any PC with **no permission**. The **network name (SSID)** is different: since Windows 11, Windows only hands the SSID to apps that have **Location** access - a Windows privacy gate, the same one your browser hits for Wi-Fi features. It is **not** GPS and **not** tracking: NetSpeedTray never uses your position, reads the name **locally** only to show it on the widget, and never stores or transmits it (see the [Privacy Policy](privacy.md)). Prefer not to? Leave "Network name" off and use the band - it needs nothing. The first time the name is blocked, NetSpeedTray shows a one-time explainer with a shortcut straight to the Windows Location setting.
+
 **Where does it store data and settings?**
 `%APPDATA%\NetSpeedTray\` - `config.json` for settings, `speed_history.db` (SQLite) for network/hardware history, and rotated logs. Everything stays local. Settings has an **Export Support Bundle** button that auto-redacts paths, IPs, hostnames, and MACs for clean bug reports.
 
@@ -213,6 +217,7 @@ You probably grabbed an unsigned dev build. The official releases ([Setup.exe / 
 - **Auto-primary mode** - finds your main internet connection, ignoring VPNs and virtual adapters
 - **Interface filtering** - all hardware, specific adapters, or include virtual interfaces
 - **Color coding** - custom speed thresholds and colors to read load at a glance
+- **Network identity** - show the Wi-Fi **band** (2.4G / 5G / 6G) and, optionally, the **network name (SSID)** on the widget as a small pill; color-code it, or use **alert-only** mode to flash a red `2.4G` *only* when your PC has silently dropped to the slow band. The band needs no permission; the SSID needs Windows Location on - a Windows privacy gate, read locally and never sent ([why?](#why-does-the-network-name-need-location-access))
 - **Per-app connections** (in the Monitor) - live connection counts and remote hosts per program, no admin needed
 
 ### Hardware Monitoring
