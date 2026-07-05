@@ -24,8 +24,26 @@ except ImportError:
     win32pdh = None
 
 try:
+    import win32com
+    # A frozen install under read-only Program Files makes win32com's default gen_py cache
+    # dir (inside the bundle, `_internal\win32com\gen_py`) unwritable. Importing win32com.client
+    # then crashes while (re)building its COM cache there -- and it raises FileNotFoundError,
+    # NOT ImportError, so the old guard let it through and the app failed to start (#210).
+    # Point the generated-code cache at a writable per-user temp dir BEFORE importing
+    # win32com.client. (We only ever use late-bound GetObject("winmgmts:...") for WMI, which
+    # doesn't need this cache at all; the redirect just keeps the import from crashing.)
+    import os as _os, tempfile as _tempfile
+    try:
+        _gen_dir = _os.path.join(_tempfile.gettempdir(), "netspeedtray_win32com_gen")
+        _os.makedirs(_gen_dir, exist_ok=True)
+        win32com.__gen_path__ = _gen_dir
+    except OSError:
+        pass
     import win32com.client
-except ImportError:
+except (ImportError, OSError):
+    # win32com is a bundled dependency, so the package import above effectively always
+    # succeeds; on the off chance win32com.client still can't load, degrade gracefully
+    # (WMI hardware monitoring disabled) instead of crashing the app.
     win32com.client = None
 
 import subprocess
