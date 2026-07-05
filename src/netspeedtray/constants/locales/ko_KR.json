@@ -427,7 +427,7 @@
     "CLICK_ACTION_SETTINGS_LABEL": "설정 열기",
     "CLICK_ACTION_PAUSE_LABEL": "일시정지 / 재개",
     "CLICK_ACTION_NONE_LABEL": "없음",
-    "CLOSE_BUTTON": "닫기"
+    "CLOSE_BUTTON": "닫기",
     "NETWORK_IDENTITY_TITLE": "네트워크 식별",
     "NETWORK_IDENTITY_SUB": "위젯에 Wi-Fi 대역 (2.4G / 5G) 표시 - Windows에서는 한눈에 확인하기 어렵게 숨겨져 있는 정보입니다.",
     "BAND_DISPLAY_LABEL": "대역 표시",
