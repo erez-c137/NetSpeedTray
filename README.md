@@ -173,7 +173,8 @@ Double-click the widget (or pick **Monitor** from the right-click menu) to open 
 1. **Install** with the Winget command [above](#install) (or the installer).
 2. **Right-click the widget** - open **Settings** or the **Monitor**, **Pause/Resume** monitoring, or **Exit**. The top of the menu shows your data used today / this month at a glance.
 3. **Double-click the widget** to open the **Monitor** (history, per-app activity, hardware, statistics).
-4. **Want temperatures?** Most NVIDIA/Intel systems show them out of the box. For full coverage (or any AMD CPU), install and run [LibreHardwareMonitor **v0.9.4**](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases/tag/v0.9.4) as Administrator (v0.9.5+ removed the interface NetSpeedTray reads).
+4. **Drag it to reposition** - grab the widget and drag it along the taskbar to wherever you like; it remembers the spot. Turn on **Free Move (No Snapping)** in Settings to place it anywhere, including off the taskbar.
+5. **Want temperatures?** Most NVIDIA/Intel systems show them out of the box. For full coverage (or any AMD CPU), install and run [LibreHardwareMonitor **v0.9.4**](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases/tag/v0.9.4) as Administrator (v0.9.5+ removed the interface NetSpeedTray reads).
 
 ---
 
@@ -246,7 +247,8 @@ You probably grabbed an unsigned dev build. The official releases ([Setup.exe / 
 
 ### Positioning & Integration
 - **Taskbar-docked** - stays above the taskbar through the Start menu, flyovers, and the tray overflow
-- **Preferred monitor** - pin to a specific display; **free-move** anywhere, including off-taskbar
+- **Drag to reposition** - drag the widget to move it along the taskbar; your spot is remembered. **Free Move (No Snapping)** lets you place it anywhere, including off the taskbar
+- **Preferred monitor** - pin to a specific display (auto free-floats on a taskbar-less screen)
 - **Survives** sleep/resume, monitor add/remove/primary-swap, and Explorer restarts
 - **Vertical taskbar** + **high-DPI** aware
 
