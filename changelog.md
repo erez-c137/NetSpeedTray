@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ---
 
-## [2.1.0] - Unreleased
+## [2.1.0] - July 8, 2026
 
 ### Added
 - **Network identity on the widget - see *which* Wi-Fi network you're on, not just how fast.** A new optional indicator shows the Wi-Fi **band** (2.4G / 5G / 6G) - the one thing Windows hides at a glance - and, optionally, the **network name (SSID)**, as a small pill/badge beside your speed (the name and band combine into one capsule). Turn it on in **Settings > Network > Network identity**. The band can be shown *Always* (neutral), *Color-coded* (2.4G amber / 5G green / 6G blue), or **Alert only** - a red `2.4G` appears *only* when your PC has silently dropped to the slow band, and the widget stays clean otherwise. Directly answers "did my PC quietly rejoin 2.4 GHz after the last reconnect?".
@@ -26,6 +26,7 @@ All notable changes to this project will be documented in this file.
 - **Pinned to a second monitor, the widget could land on the clock.** On a secondary display whose taskbar has no system tray of its own, the widget's default position could overlap that monitor's date/time. It now leaves room for the clock (tunable via `secondary_clock_reserve_px` for wide date formats); as always, dragging it once remembers your exact spot. (#186)
 - **Runaway logging on taskbar-less monitors.** When a preferred monitor had no taskbar, NetSpeedTray wrote its "falling back to the primary taskbar" note to the log every second, bloating log files and Support Bundles. It now logs that once per change. (#191)
 - **The portable version couldn't install updates.** On the portable ZIP build, "Download Update" launched the installer, which can't update an unzipped folder in place - so nothing happened. The portable build now runs a guided update: it downloads the new version, verifies the whole download's checksum against the official release, extracts it, and opens it ready for you to copy over your folder (your settings, kept in `%APPDATA%`, are untouched). (#195)
+- **Scrolling the Settings window no longer changes the control under your cursor.** Mouse-wheeling down a Settings page used to nudge whatever slider or dropdown you scrolled past (font size, colours, thresholds). Settings pages now scroll cleanly; a control only responds to the wheel once you click into it.
 
 ---
 
