@@ -424,7 +424,10 @@ class WidgetRenderer:
             self._draw_pill(painter, QRectF(x, y, parts["w"], h), self.default_color, ssid, False, radius)
         elif mode == "both":
             # Outer outline capsule holding the name; band as a same-height pill nested flush to the
-            # right edge ("two left edges"). The nested band is always filled so it reads as a segment.
+            # right edge ("two left edges"). The nested band honors band_solid just like the band-only
+            # pill: OUTLINE for the calm "always"/"colored" modes, SOLID only for the alert. Forcing it
+            # solid here filled the neutral band with default_color (white in dark mode) under white
+            # text, making it invisible.
             outer = QRectF(x, y, parts["w"], h)
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.setPen(QPen(self.default_color, 1.3))
@@ -433,7 +436,7 @@ class WidgetRenderer:
             ssid_baseline = int(y + (h + self.metrics.ascent() - self.metrics.descent()) / 2)
             painter.drawText(int(x + parts["ssid_x"]), ssid_baseline, ssid)
             band_rect = QRectF(x + parts["band_x"], y, parts["band_w"], h)
-            self._draw_pill(painter, band_rect, accent, band, True, radius)
+            self._draw_pill(painter, band_rect, accent, band, band_solid, radius)
         painter.restore()
 
     @staticmethod
