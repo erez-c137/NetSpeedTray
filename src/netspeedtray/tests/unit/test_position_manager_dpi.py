@@ -41,6 +41,7 @@ class MockTaskbarInfo:
         self.dpi_scale = dpi_scale
         self._edge = edge
         self.tasklist_rect = None
+        self.widgets_rect = None  # no Win11 Widgets button in these DPI tests (#200)
         self.hwnd = hwnd  # Add hwnd attribute
     
     def get_edge_position(self):
