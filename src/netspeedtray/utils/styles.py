@@ -88,6 +88,18 @@ def spin_arrow_url(up: bool, color_hex: str) -> str:
         return ""
 
 
+def _is_rtl() -> bool:
+    """True when the app is running in a right-to-left layout (Hebrew). Reads the
+    QApplication layout direction the app already sets from i18n.is_rtl(), so it stays
+    decoupled from the i18n module (no circular import) and needs no locale argument."""
+    try:
+        from PyQt6.QtWidgets import QApplication
+        app = QApplication.instance()
+        return bool(app is not None and app.layoutDirection() == Qt.LayoutDirection.RightToLeft)
+    except Exception:
+        return False
+
+
 def font(token: tuple) -> QFont:
     """
     Build a QFont for a Fluent type token - a ``(style_name, pixel_size, weight)`` tuple
@@ -96,9 +108,22 @@ def font(token: tuple) -> QFont:
     On Windows 11 the optical cut + weight is selected via ``setStyleName`` on the single
     "Segoe UI Variable" family (the cuts are STYLES, not family names). On Windows 10,
     where that family isn't installed, falls back to plain Segoe UI at the same px/weight.
+
+    RTL exception (#194): "Segoe UI Variable" carries no Hebrew glyphs, so Qt substitutes
+    the missing letters from an arbitrary fallback at mismatched metrics - some Hebrew
+    letters (e.g. נ, ת) then render visibly smaller than their neighbors. Plain "Segoe UI"
+    has full, consistent Hebrew, so for a right-to-left UI we use it for everything (the
+    Win11 optical-cut niceness isn't worth broken text).
     """
     global _variable_present
     style_name, px, weight = token
+
+    if _is_rtl():
+        f = QFont(style_constants.FONT_FALLBACK)
+        f.setPixelSize(px)
+        f.setWeight(weight)
+        return f
+
     if _variable_present is None:
         try:
             _variable_present = style_constants.FONT_FAMILY_VARIABLE in QFontDatabase.families()

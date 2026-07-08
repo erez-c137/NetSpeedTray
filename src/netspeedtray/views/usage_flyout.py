@@ -137,7 +137,7 @@ class UsageFlyout(QWidget):
         return str(getattr(self._i18n, key, default)) if self._i18n is not None else default
 
     def _label(self, text: str, token: tuple, color: str,
-               align: Qt.AlignmentFlag = Qt.AlignmentFlag.AlignLeft) -> QLabel:
+               align: Qt.AlignmentFlag = Qt.AlignmentFlag.AlignLeading) -> QLabel:  # start-aligned; mirrors under RTL (#194)
         lbl = QLabel(text)
         lbl.setFont(su.font(token))
         lbl.setStyleSheet(f"color: {color}; background: transparent;")

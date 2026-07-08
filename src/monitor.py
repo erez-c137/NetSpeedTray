@@ -181,6 +181,14 @@ def main() -> int:
             # 4. Initialize the internationalization module with the user's saved language.
             i18n_strings = constants.i18n.get_i18n(config.get("language"))
 
+            # 4b. Flip the whole app to right-to-left when a Hebrew/RTL locale is active. This mirrors
+            # every Qt layout (settings pages, Monitor, flyouts) for free; the widget's pixel-positioned
+            # rendering is mirrored separately. Language changes require a restart, so applying this once
+            # at startup is sufficient.
+            from PyQt6.QtCore import Qt
+            app.setLayoutDirection(
+                Qt.LayoutDirection.RightToLeft if i18n_strings.is_rtl else Qt.LayoutDirection.LeftToRight)
+
             # 5. Create and configure the main widget.
             taskbar_height = get_taskbar_height()
             widget = NetworkSpeedWidget(

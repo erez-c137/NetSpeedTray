@@ -93,3 +93,16 @@ class TestPickAndConfigure:
         finally:
             for k, v in saved.items():
                 mpl.rcParams[k] = v
+
+
+def test_shape_rtl_hebrew_and_passthrough():
+    """shape_rtl reshapes Hebrew (RTL) for matplotlib but leaves LTR text untouched (item 6)."""
+    from netspeedtray.utils.mpl_fonts import shape_rtl, _script_for_language
+    assert _script_for_language("he_IL") == "he"     # Hebrew now maps to a font script
+    assert shape_rtl("Download", "en_US") == "Download"   # LTR passthrough
+    assert shape_rtl("", "he_IL") == ""                    # empty passthrough
+    heb = "הורדה"
+    shaped = shape_rtl(heb, "he_IL")
+    assert shaped != heb and len(shaped) == len(heb)       # reshaped to visual order, same glyphs
+    # a non-RTL locale never reshapes even Hebrew text
+    assert shape_rtl(heb, "ja_JP") == heb

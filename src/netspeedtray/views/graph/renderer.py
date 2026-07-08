@@ -39,8 +39,8 @@ class GraphRenderer(QObject):
         self.i18n = i18n
         self.parent_widget = parent_widget
 
-        # Ensure CJK graph labels (ja/ko/zh) render with real glyphs instead of
-        # tofu boxes (#161). Uses a Windows system font; a no-op for other locales.
+        # Ensure non-Latin graph labels render with real glyphs instead of tofu boxes: CJK (ja/ko/zh,
+        # #161) and Hebrew (he, item 6). Uses a Windows system font; a no-op for Latin locales.
         configure_cjk_font(getattr(self.i18n, "language", None))
 
         # UI Elements
@@ -153,13 +153,13 @@ class GraphRenderer(QObject):
              self._current_grid_color = style_constants.GRID_COLOR_LIGHT
 
         # Download Axis (Top)
-        self.ax_download.set_ylabel(self.i18n.DOWNLOAD_LABEL, color=self._current_text_color)
+        self.ax_download.set_ylabel(self._lbl(self.i18n.DOWNLOAD_LABEL), color=self._current_text_color)
         self.ax_download.tick_params(labelbottom=False, colors=self._current_text_color, which='both') 
         self.ax_download.grid(True, linestyle=constants.graph.GRID_LINESTYLE, alpha=constants.graph.GRID_ALPHA, color=self._current_grid_color)
         self.ax_download.yaxis.label.set_color(self._current_text_color) # Redundant but safe
 
         # Upload Axis (Bottom)
-        self.ax_upload.set_ylabel(self.i18n.UPLOAD_LABEL, color=self._current_text_color)
+        self.ax_upload.set_ylabel(self._lbl(self.i18n.UPLOAD_LABEL), color=self._current_text_color)
         self.ax_upload.tick_params(colors=self._current_text_color, which='both')
         self.ax_upload.grid(True, linestyle=constants.graph.GRID_LINESTYLE, alpha=constants.graph.GRID_ALPHA, color=self._current_grid_color)
         self.ax_upload.yaxis.label.set_color(self._current_text_color)
@@ -692,10 +692,10 @@ class GraphRenderer(QObject):
             if ax != getattr(self, "ax_gpu", None):
                 ax.tick_params(labelbottom=False)
 
-        self.ax_download.set_ylabel(self.i18n.DOWNLOAD_LABEL, fontsize=8, color=text_color)
-        self.ax_upload.set_ylabel(self.i18n.UPLOAD_LABEL, fontsize=8, color=text_color)
-        self.ax_cpu.set_ylabel(self.i18n.ORDER_TYPE_CPU, fontsize=8, color=text_color)
-        self.ax_gpu.set_ylabel(self.i18n.ORDER_TYPE_GPU, fontsize=8, color=text_color)
+        self.ax_download.set_ylabel(self._lbl(self.i18n.DOWNLOAD_LABEL), fontsize=8, color=text_color)
+        self.ax_upload.set_ylabel(self._lbl(self.i18n.UPLOAD_LABEL), fontsize=8, color=text_color)
+        self.ax_cpu.set_ylabel(self._lbl(self.i18n.ORDER_TYPE_CPU), fontsize=8, color=text_color)
+        self.ax_gpu.set_ylabel(self._lbl(self.i18n.ORDER_TYPE_GPU), fontsize=8, color=text_color)
 
     def _render_overview(self, data_dict, start_time, end_time, period_key: str, boot_time):
         """Internal helper for overview plotting."""
@@ -770,10 +770,15 @@ class GraphRenderer(QObject):
 
 
 
+    def _lbl(self, text: str) -> str:
+        """Reshape an axis/legend label for RTL (Hebrew) matplotlib rendering; no-op for LTR locales."""
+        from netspeedtray.utils.mpl_fonts import shape_rtl
+        return shape_rtl(text, getattr(self.i18n, "language", None))
+
     def _format_hardware_axes(self, stat_type: str):
         """Formats the single axis for hardware utilization."""
         label = self.i18n.GRAPH_CPU_UTIL_AXIS_LABEL if stat_type == "cpu" else self.i18n.GRAPH_GPU_UTIL_AXIS_LABEL
-        self.ax_download.set_ylabel(label, color=self._current_text_color)
+        self.ax_download.set_ylabel(self._lbl(label), color=self._current_text_color)
         self.ax_download.tick_params(labelbottom=True, colors=self._current_text_color, which='both')
         self.ax_download.grid(True, linestyle=constants.graph.GRID_LINESTYLE, alpha=constants.graph.GRID_ALPHA, color=self._current_grid_color)
         
@@ -783,7 +788,7 @@ class GraphRenderer(QObject):
     def _format_hwcombined_axes(self):
         """Single 0-100% axis for the combined CPU+GPU graph (Monitor Hardware tab)."""
         label = getattr(self.i18n, "GRAPH_HW_UTIL_AXIS_LABEL", "Utilization (%)")
-        self.ax_download.set_ylabel(label, color=self._current_text_color)
+        self.ax_download.set_ylabel(self._lbl(label), color=self._current_text_color)
         self.ax_download.tick_params(labelbottom=True, colors=self._current_text_color, which='both')
         self.ax_download.grid(True, linestyle=constants.graph.GRID_LINESTYLE,
                               alpha=constants.graph.GRID_ALPHA, color=self._current_grid_color)
@@ -909,7 +914,7 @@ class GraphRenderer(QObject):
         gpu_lbl = getattr(self.i18n, "ORDER_TYPE_GPU", "GPU")
         ram_lbl = getattr(self.i18n, "MONITOR_TILE_RAM", "RAM")
         for ax, lbl in ((self.ax_cpu, cpu_lbl), (self.ax_gpu, gpu_lbl), (self.ax_ram, ram_lbl)):
-            ax.set_ylabel(lbl, color=text)
+            ax.set_ylabel(self._lbl(lbl), color=text)
             ax.grid(True, linestyle=constants.graph.GRID_LINESTYLE,
                     alpha=constants.graph.GRID_ALPHA, color=grid)
             ax.tick_params(colors=text, which="both")
