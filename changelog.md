@@ -11,12 +11,16 @@ All notable changes to this project will be documented in this file.
   - **About the Location permission (please read):** the band works on every PC and needs **no permission**. The **network name (SSID)** is different - **Windows only reveals the SSID to apps that have Location access** - so choosing to show the name asks you to turn on Windows Location. This is a **Windows privacy gate, not GPS or tracking**: NetSpeedTray does not use your position; it reads the network name **locally, only to show it on the widget**, and never stores or transmits it. A one-time in-app explainer spells this out, with a button straight to the Location settings and a "just show the band" option. See the [Privacy Policy](privacy.md) for the full detail.
 - **Traditional Chinese (Taiwan)** (`zh_TW`) UI translation, contributed by [@raylolhue](https://github.com/raylolhue) with terminology improvements from [@in2002-tw](https://github.com/in2002-tw). Selectable in Settings > Language. (#199)
 
-- **Hebrew, and right-to-left support.** NetSpeedTray now speaks **Hebrew** (`he_IL`) — its first right-to-left language. The whole UI mirrors for RTL (Settings, the Monitor, menus) and the history graph renders Hebrew correctly. Started from [@rami123](https://github.com/rami123)'s translation; the rest is an AI-assisted first pass, so a native-speaker review is very welcome (see [TRANSLATORS.md](TRANSLATORS.md)).
+- **Hebrew, and right-to-left support.** NetSpeedTray now speaks **Hebrew** (`he_IL`) — its first right-to-left language. The whole UI mirrors for RTL (Settings, the Monitor, menus), the history graph renders Hebrew correctly, and the Monitor now uses a font with full Hebrew coverage so every letter renders consistently. Started from [@rami123](https://github.com/rami123)'s translation; the rest is an AI-assisted first pass, so a native-speaker review is very welcome (see [TRANSLATORS.md](TRANSLATORS.md)).
+- **Japanese** (`ja_JP`) and **Korean** (`ko_KR`) translations refreshed by [@coolvitto](https://github.com/coolvitto) (#205) and [@VenusGirl](https://github.com/VenusGirl) (#207).
+- **Use the widget on a display that has no taskbar of its own.** Choose a Preferred Monitor that Windows leaves without a taskbar - an accessory panel like the Corsair Xeneon Edge, for instance - and the widget now free-floats at the bottom of that screen instead of snapping back to your main taskbar. It stays put across sleep/wake and monitor changes, and you can drag it anywhere on that display. (#188)
+- **A one-time heads-up when the widget overlaps the Windows Widgets/weather panel.** With the Start button moved to the left, Windows shifts its Widgets button to the right - under where the readout likes to sit - so the two can overlap. NetSpeedTray now shows a single, dismissible nudge pointing this out; it never moves your widget for you, and you're free to drag it aside or leave it overlapping if you prefer. (#200)
 
 ### Changed
 - **The readout hugs the system tray more consistently.** In Cycle mode and the single-metric (CPU-only / GPU-only) layouts, a narrower reading used to leave a small gap between the widget and the system tray. Every mode now right-aligns its content to the tray edge, so the widget sits flush against the tray with the spare width tucked onto the app-icon side, where it's invisible. (#106)
 
 ### Fixed
+- **Windows menus and flyouts no longer hide behind the taskbar.** While NetSpeedTray was running, the bottom rows of shell menus that overlap the taskbar - the taskbar right-click **Close**, the **Safely remove hardware** device list, jump lists - could slip behind it. To stay above the taskbar the widget had been re-asserting its top-most position on a timer, which as a side effect kept pulling the taskbar itself up over any open menu; it now holds its place structurally without that re-assert, so your menus stay fully visible. (#200)
 - **The widget could crowd the "show hidden icons" (∧) button.** Its right edge sat flush against the tray chevron, making that button awkward to click. It now keeps a small gap so the chevron stays fully clickable. (#161)
 - **Pinned to a second monitor, the widget could land on the clock.** On a secondary display whose taskbar has no system tray of its own, the widget's default position could overlap that monitor's date/time. It now leaves room for the clock (tunable via `secondary_clock_reserve_px` for wide date formats); as always, dragging it once remembers your exact spot. (#186)
 - **Runaway logging on taskbar-less monitors.** When a preferred monitor had no taskbar, NetSpeedTray wrote its "falling back to the primary taskbar" note to the log every second, bloating log files and Support Bundles. It now logs that once per change. (#191)
@@ -24,7 +28,7 @@ All notable changes to this project will be documented in this file.
 
 ---
 
-## [2.0.1] - Unreleased
+## [2.0.1] - July 2, 2026
 
 A small polish release on top of 2.0.0: localization fixes for the history graph, a data-size rounding fix, a cleaner and more stable hardware readout on the widget, a Preferred Monitor setting that finally works across multiple monitors, clearer temperature-sensor guidance, and a noticeably smaller download.
 
