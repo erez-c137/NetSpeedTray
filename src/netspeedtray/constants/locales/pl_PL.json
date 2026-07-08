@@ -75,6 +75,7 @@
     "UPDATE_INTERVAL_LABEL": "Interwał aktualizacji:",
     "START_WITH_WINDOWS_LABEL": "Uruchamiaj z systemem Windows",
     "FREE_MOVE_LABEL": "Swobodne przesuwanie (bez przyciągania)",
+    "FREE_FLOAT_LABEL": "Float on a display without a taskbar",
     "KEEP_VISIBLE_FULLSCREEN_LABEL": "Pozostań widoczny w trybie pełnoekranowym",
     "FONT_SIZE_LABEL": "Rozmiar czcionki:",
     "FONT_FAMILY_LABEL": "Czcionka:",

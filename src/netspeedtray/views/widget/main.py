@@ -341,6 +341,18 @@ class NetworkSpeedWidget(QWidget):
 
 
 
+    def _on_immediate_hide_requested(self) -> None:
+        """Handle the fast fullscreen-obstruction hide, honoring the two states that must
+        stay visible: the user's keep_visible_fullscreen choice (#107), and runtime
+        free-float (#188) - where a taskbar-less preferred monitor falls back to the
+        primary taskbar, so a fullscreen app on the primary would otherwise transiently
+        hide the off-taskbar widget. Mirrors the visibility gate in _execute_refresh()."""
+        if self.config.get("keep_visible_fullscreen", False):
+            return
+        if self.position_manager and self.position_manager.is_free_float_active():
+            return
+        self.setVisible(False)
+
     def _execute_refresh(self, hwnd: int = 0) -> None:
         """
         The AUTHORITATIVE refresh trigger. This version includes a grace period
@@ -376,17 +388,29 @@ class NetworkSpeedWidget(QWidget):
             if hwnd == 0:
                 hwnd = win32gui.GetForegroundWindow()
 
+            # #188: is the preferred monitor a taskbar-less display we should free-float on?
+            free_float_active = self.position_manager.refresh_float_state() is not None
+
             # Allow user override to keep widget visible even when a fullscreen window is present
             keep_visible = self.config.get("keep_visible_fullscreen", False)
-            should_be_visible = is_taskbar_visible(taskbar_info) and (keep_visible or not is_taskbar_obstructed(taskbar_info, hwnd))
+            if free_float_active:
+                # The accessory display has no taskbar to hide behind, and the visibility/obstruction
+                # checks are judged against the (irrelevant) primary taskbar - so just keep it shown.
+                should_be_visible = True
+            else:
+                should_be_visible = is_taskbar_visible(taskbar_info) and (keep_visible or not is_taskbar_obstructed(taskbar_info, hwnd))
 
             if self.isVisible() != should_be_visible:
                 self.setVisible(should_be_visible)
-            
+
             # Only update position if we are supposed to be visible.
             if self.isVisible():
+                # Free-move keeps the user's exact saved spot (applied once); docked and free-float both
+                # reposition on the refresh (free-float re-places on / re-detects its taskbar-less display).
                 if not self.config.get("free_move", False):
-                    self.position_manager.update_position(fresh_taskbar_info=taskbar_info)
+                    # _float_refreshed=True: we already called refresh_float_state() above for the
+                    # visibility check this tick, so don't re-enumerate taskbars inside (#188).
+                    self.position_manager.update_position(fresh_taskbar_info=taskbar_info, _float_refreshed=True)
                 
                 # Always re-assert topmost status when visible to prevent falling behind taskbar (#77)
                 self._ensure_win32_topmost()
@@ -755,9 +779,13 @@ class NetworkSpeedWidget(QWidget):
             # "keep visible over fullscreen" choice (issue #107). Without this guard
             # the immediate-hide path bypassed keep_visible_fullscreen, which
             # _execute_refresh() already respects, so the widget vanished anyway.
-            self.system_event_handler.immediate_hide_requested.connect(
-                lambda: None if self.config.get("keep_visible_fullscreen", False) else self.setVisible(False)
-            )
+            #
+            # Also skip the hide when free-floating (#188): a taskbar-less preferred
+            # monitor falls back to the *primary* taskbar for obstruction checks, so a
+            # fullscreen app on the primary would otherwise blink the off-taskbar widget
+            # out until the next refresh re-shows it. _execute_refresh() already forces
+            # it visible in this state; mirror that here so there's no transient flicker.
+            self.system_event_handler.immediate_hide_requested.connect(self._on_immediate_hide_requested)
 
             # Immediately re-assert topmost when the taskbar gains focus, so the widget
             # never lingers behind the activating taskbar (the debounced refresh is too
@@ -1536,6 +1564,13 @@ class NetworkSpeedWidget(QWidget):
         only drives the right-align decision and the live/preview parity.)
         """
         try:
+            # A free-floating widget on a taskbar-less display has no taskbar edge; render it as a
+            # compact horizontal readout (#188).
+            from netspeedtray.utils.taskbar_utils import get_free_float_screen
+            if self.config.get("free_float", True) and \
+                    get_free_float_screen(self.config.get("preferred_monitor")) is not None:
+                self._cached_layout_mode = 'horizontal'
+                return
             taskbar_info = get_taskbar_info()
             self._cached_layout_mode = self._layout_mode_for_edge(taskbar_info.get_edge_position())
         except Exception:
@@ -1686,11 +1721,18 @@ class NetworkSpeedWidget(QWidget):
                     pass
                 self.monitor_window = None
 
-            if self.config.get("free_move", False):
+            # Persist the widget's absolute spot when it's actively floating (Free Move or #188
+            # free-float). Only CLEAR the saved coords when the widget is genuinely docked - i.e. BOTH
+            # free_move and free_float are OFF in config. Crucially we do NOT clear just because the
+            # free-float display is currently absent (asleep/unplugged): is_floating() is runtime state,
+            # so gating the clear on it would wipe a user's dragged spot every time the accessory panel
+            # sleeps. (config_controller clears on an explicit switch to docked.) (#188)
+            if self.position_manager and self.position_manager.is_floating():
                 pos = self.pos()
                 self.update_config({"position_x": pos.x(), "position_y": pos.y()}, save_to_disk=False)
-            else:
+            elif not self.config.get("free_move", False) and not self.config.get("free_float", True):
                 self.update_config({"position_x": None, "position_y": None}, save_to_disk=False)
+            # else: free-float-capable but the display is temporarily absent -> keep the saved spot.
             
             self.logger.debug("Performing final configuration save...")
             self.config_manager.save(self.config)

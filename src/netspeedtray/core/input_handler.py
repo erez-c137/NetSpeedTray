@@ -129,15 +129,15 @@ class InputHandler(QObject):
     def _save_dragged_position(self) -> None:
         """
         Saves the final position based on the current mode:
-        - Free Move ON: Saves absolute X/Y coordinates.
-        - Free Move OFF: Calculates and saves the offset relative to the tray/edge.
+        - Floating (Free Move, or #188 free-float on a taskbar-less display): absolute X/Y.
+        - Docked: the offset relative to the tray/edge.
         """
         try:
             config = self.widget.config
-            is_free_move = config.get("free_move", False)
+            is_floating = self.position_manager.is_floating()
             updates = {}
 
-            if is_free_move:
+            if is_floating:
                 # Save absolute coordinates
                 updates["position_x"] = self.widget.x()
                 updates["position_y"] = self.widget.y()

@@ -80,6 +80,9 @@ class TestInputHandler(unittest.TestCase):
         self.mock_widget.setGeometry(100, 100, 200, 50)
         
         self.mock_position_manager = MagicMock()
+        # _save_dragged_position asks the position manager whether we're "floating" (free-move OR the
+        # #188 free-float); mirror the widget's free_move config so the docked/offset path is exercised.
+        self.mock_position_manager.is_floating.side_effect = lambda: bool(self.mock_widget.config.get('free_move', False))
         self.mock_tray_manager = MagicMock()
         
         self.handler = InputHandler(

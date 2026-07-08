@@ -75,6 +75,7 @@
     "UPDATE_INTERVAL_LABEL": "更新間隔 :",
     "START_WITH_WINDOWS_LABEL": "Windows 起動時に実行",
     "FREE_MOVE_LABEL": "自由移動 (スナップ無効)",
+    "FREE_FLOAT_LABEL": "Float on a display without a taskbar",
     "KEEP_VISIBLE_FULLSCREEN_LABEL": "フルスクリーン時も表示を維持",
     "FONT_SIZE_LABEL": "フォントサイズ :",
     "FONT_FAMILY_LABEL": "フォント :",
