@@ -50,6 +50,7 @@ class I18nStrings:
         "ko_KR": "한국어 (대한민국)",
         "sl_SI": "Slovenščina (Slovenija)",
         "ja_JP": "日本語 (日本)",
+        "zh_CN": "简体中文 (中国)",
         "zh_TW": "繁體中文 (台灣)",
         "he_IL": "עברית (ישראל)",
     }
