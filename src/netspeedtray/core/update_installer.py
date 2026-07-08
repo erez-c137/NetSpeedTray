@@ -11,19 +11,32 @@ the old behavior - so the worst case is never worse than before):
 Both the download AND the (potentially network-blocking) signature verification run on
 the worker thread, so the UI never freezes. The download host doesn't have to be
 trusted: the Authenticode + publisher-pin gate is what authorizes execution.
+
+Portable builds can't be updated by an installer (it targets Program Files, not the folder the user
+unzipped), so in portable mode the same worker runs a guided flow instead (#195). A PyInstaller onedir
+ZIP is many files, not one signed binary, so Authenticode on the bootstrap EXE alone would NOT vouch
+for the _internal/ payload that actually runs. Instead the whole ZIP's SHA-256 is checked against the
+release's published checksums.txt (fetched over HTTPS) - i.e. the download is exactly as trustworthy as
+fetching that ZIP yourself from the release page. On a match it's extracted and staged in the user's
+Downloads for them to copy over their folder. Settings live in %APPDATA%, so a folder replace never
+touches them. (Installer-grade signing of the portable bundle is a tracked hardening follow-up.)
 """
 from __future__ import annotations
 
 import logging
 import os
+import shutil
 import subprocess
+import sys
 import tempfile
 import urllib.request
+import zipfile
 from typing import Callable, Optional
 
 from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import QMessageBox, QProgressDialog, QWidget
 
+from netspeedtray import constants
 from netspeedtray.utils.signature_verifier import verify_file
 
 logger = logging.getLogger("NetSpeedTray.UpdateInstaller")
@@ -82,16 +95,126 @@ def launch_installer(path: str) -> None:
     subprocess.Popen([path], close_fds=True)
 
 
+def _safe_extract(zip_path: str, dest_dir: str) -> None:
+    """
+    Extract ``zip_path`` into ``dest_dir``, refusing any member that would escape it (zip-slip).
+
+    The download host is untrusted - the Authenticode gate on the *extracted* EXE is what authorizes
+    the update - so a hostile archive must not be able to write a single byte outside the private temp
+    directory during extraction.
+    """
+    os.makedirs(dest_dir, exist_ok=True)
+    dest_root = os.path.realpath(dest_dir)
+    with zipfile.ZipFile(zip_path) as zf:
+        for member in zf.namelist():
+            target = os.path.realpath(os.path.join(dest_dir, member))
+            if target != dest_root and not target.startswith(dest_root + os.sep):
+                raise RuntimeError(f"unsafe path in archive: {member!r}")
+        zf.extractall(dest_dir)
+
+
+def _locate_portable_exe(root: str) -> str:
+    """Return the path to the bundled ``<APP_NAME>.exe`` inside an extracted portable tree (raises if
+    absent - a portable archive without the app EXE is not something we hand to the user)."""
+    wanted = f"{constants.app.APP_NAME}.exe".lower()
+    for dirpath, _dirs, files in os.walk(root):
+        for name in files:
+            if name.lower() == wanted:
+                return os.path.join(dirpath, name)
+    raise RuntimeError(f"no {constants.app.APP_NAME}.exe in the portable archive")
+
+
+def _downloads_dir() -> str:
+    """The user's Downloads folder if it exists, else their home directory - a persistent, findable
+    place to stage the verified new version (the temp dir gets swept on the next launch)."""
+    home = os.path.expanduser("~")
+    downloads = os.path.join(home, "Downloads")
+    return downloads if os.path.isdir(downloads) else home
+
+
+def _sha256_file(path: str) -> str:
+    """Streaming SHA-256 of a file, as lowercase hex."""
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest().lower()
+
+
+def _fetch_checksums(url: str) -> str:
+    """Download the release's checksums.txt over HTTPS (small; capped)."""
+    req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return resp.read(1_000_000).decode("utf-8", "replace")
+
+
+def _expected_hash_for(checksums_text: str, filename: str) -> Optional[str]:
+    """
+    Return the lowercase SHA-256 listed for ``filename`` in a checksums.txt, or None if absent.
+
+    The release publishes ``<HASH> <FILENAME>`` lines (uppercase hex from PowerShell Get-FileHash);
+    match the filename case-insensitively and normalize the hash to lowercase.
+    """
+    fn = filename.lower()
+    for line in checksums_text.splitlines():
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        token, name = parts[0].lower(), " ".join(parts[1:]).lower()
+        if name == fn and len(token) == 64 and all(c in "0123456789abcdef" for c in token):
+            return token
+    return None
+
+
+def _unique_dir(path: str) -> str:
+    """
+    Return a directory path that does not currently exist, so a subsequent ``shutil.move`` renames the
+    source *to* it rather than nesting *inside* a surviving directory.
+
+    Tries to clear ``path`` first (a stale staging folder from a previous run); if a locked file leaves
+    it partly present, falls back to ``path-2``, ``path-3``, ... so we never move into a mixed folder.
+    """
+    if not os.path.exists(path):
+        return path
+    shutil.rmtree(path, ignore_errors=True)
+    if not os.path.exists(path):
+        return path
+    i = 2
+    while os.path.exists(f"{path}-{i}"):
+        i += 1
+    return f"{path}-{i}"
+
+
 class _DownloadWorker(QObject):
-    """Downloads, THEN verifies - both on the worker thread so the UI never blocks."""
+    """
+    Downloads, THEN verifies - ALL heavy I/O on the worker thread so the UI never blocks or freezes.
+
+    Installer mode: the downloaded Setup.exe is Authenticode-verified (publisher-pinned) and the emitted
+    path is that EXE; the caller launches it.
+
+    Portable mode: a PyInstaller onedir ZIP is not one signed file, so instead of Authenticode the whole
+    ZIP's SHA-256 is checked against the release's published checksums.txt - i.e. the download is exactly
+    as trustworthy as fetching that ZIP yourself from the release page (#195). On a match the archive is
+    extracted and the app folder is staged (moved) to its final Downloads location *here*, off the UI
+    thread, and ``staged`` carries that final path; the caller only reveals it and shows instructions.
+    """
     progress = pyqtSignal(int)
-    verified = pyqtSignal(str, bool, str)  # path, trusted, reason
+    verified = pyqtSignal(str, bool, str)  # installer path, trusted, reason
+    staged = pyqtSignal(str)               # portable: final staged folder in Downloads
     failed = pyqtSignal(str)
 
-    def __init__(self, url: str, dest: str) -> None:
+    def __init__(self, url: str, dest: str, *, portable: bool = False,
+                 extract_dir: Optional[str] = None, checksums_url: str = "",
+                 expected_name: str = "", ready_target: str = "") -> None:
         super().__init__()
         self._url = url
         self._dest = dest
+        self._portable = portable
+        self._extract_dir = extract_dir
+        self._checksums_url = checksums_url
+        self._expected_name = expected_name
+        self._ready_target = ready_target
         self._cancelled = False
 
     def cancel(self) -> None:
@@ -108,9 +231,34 @@ class _DownloadWorker(QObject):
         if self._cancelled:
             self.failed.emit("cancelled")
             return
-        # Verify on THIS (worker) thread - WinVerifyTrust can block on revocation I/O.
-        result = verify_file(self._dest)
-        self.verified.emit(self._dest, result.trusted, result.reason)
+        try:
+            if self._portable:
+                self._run_portable()
+            else:
+                # Verify on THIS (worker) thread - WinVerifyTrust can block on revocation I/O.
+                result = verify_file(self._dest)
+                self.verified.emit(self._dest, result.trusted, result.reason)
+        except Exception as e:  # noqa: BLE001
+            self.failed.emit(str(e))
+
+    def _run_portable(self) -> None:
+        """Checksum-verify the whole ZIP against the release, then extract + stage. Runs on the worker
+        thread; any problem raises and run() routes it to the browser fallback."""
+        self.progress.emit(-1)  # flip the dialog to a busy indicator during verify/extract/stage
+        if not self._checksums_url or not self._expected_name or not self._ready_target:
+            raise RuntimeError("missing checksums reference for the portable update")
+        checksums = _fetch_checksums(self._checksums_url)
+        expected = _expected_hash_for(checksums, self._expected_name)
+        if not expected:
+            raise RuntimeError("no published checksum for the portable build")
+        actual = _sha256_file(self._dest)
+        if actual != expected:
+            raise RuntimeError("checksum mismatch - the download may be corrupt or tampered")
+        _safe_extract(self._dest, self._extract_dir or "")
+        app_folder = os.path.dirname(_locate_portable_exe(self._extract_dir or ""))
+        ready = _unique_dir(self._ready_target)
+        shutil.move(app_folder, ready)   # move the verified tree out of the temp dir, off the UI thread
+        self.staged.emit(ready)
 
 
 class SecureUpdater(QObject):
@@ -122,16 +270,21 @@ class SecureUpdater(QObject):
     """
     launching = pyqtSignal()
 
-    def __init__(self, parent_widget: QWidget, installer_url: str, release_url: str, i18n) -> None:
+    def __init__(self, parent_widget: QWidget, installer_url: str, release_url: str, i18n,
+                 *, portable: bool = False, portable_url: str = "", latest_version: str = "") -> None:
         super().__init__(parent_widget)
         self._parent = parent_widget
         self._installer_url = installer_url
+        self._portable = portable
+        self._portable_url = portable_url
+        self._latest_version = latest_version
         self._release_url = release_url
         self.i18n = i18n
         self._thread: Optional[QThread] = None
         self._worker: Optional[_DownloadWorker] = None
         self._dest: Optional[str] = None
         self._tmpdir: Optional[str] = None
+        self._extract_dir: Optional[str] = None
         self._progress: Optional[QProgressDialog] = None
         self._active = False
         self._user_cancelled = False
@@ -142,8 +295,10 @@ class SecureUpdater(QObject):
     def start(self) -> None:
         if self._active:  # in-flight guard: no concurrent downloads
             return
-        if not self._installer_url:
-            self._fallback("no installer asset in the release")
+        url = self._portable_url if self._portable else self._installer_url
+        if not url:
+            self._fallback("no portable asset in the release" if self._portable
+                           else "no installer asset in the release")
             return
         try:
             # Download into a private per-run directory. mkdtemp creates it 0700
@@ -152,7 +307,11 @@ class SecureUpdater(QObject):
             # (TOCTOU hardening - H5).
             sweep_stale_update_dirs()   # clear any orphaned dir from a previous successful update first
             self._tmpdir = tempfile.mkdtemp(prefix="NetSpeedTray-update-")
-            self._dest = os.path.join(self._tmpdir, "NetSpeedTray-Setup.exe")
+            if self._portable:
+                self._dest = os.path.join(self._tmpdir, "NetSpeedTray-Portable.zip")
+                self._extract_dir = os.path.join(self._tmpdir, "extracted")
+            else:
+                self._dest = os.path.join(self._tmpdir, "NetSpeedTray-Setup.exe")
         except Exception as e:
             self._fallback(f"could not create a temp directory: {e}")
             return
@@ -168,12 +327,26 @@ class SecureUpdater(QObject):
         self._progress.setAutoReset(False)
         self._progress.canceled.connect(self._on_cancel)
 
+        checksums_url = expected_name = ready_target = ""
+        if self._portable:
+            # checksums.txt is published next to the portable ZIP in the same release-download folder;
+            # the expected filename is the ZIP's own basename as listed there.
+            base, _, fname = self._portable_url.rpartition("/")
+            checksums_url = f"{base}/checksums.txt" if base else ""
+            expected_name = fname
+            name = (f"{constants.app.APP_NAME}-{self._latest_version}"
+                    if self._latest_version else f"{constants.app.APP_NAME}-update")
+            ready_target = os.path.join(_downloads_dir(), name)
+
         self._thread = QThread(self)
-        self._worker = _DownloadWorker(self._installer_url, self._dest)
+        self._worker = _DownloadWorker(url, self._dest, portable=self._portable,
+                                       extract_dir=self._extract_dir, checksums_url=checksums_url,
+                                       expected_name=expected_name, ready_target=ready_target)
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
         self._worker.progress.connect(self._on_progress)
         self._worker.verified.connect(self._on_verified)
+        self._worker.staged.connect(self._on_staged)
         self._worker.failed.connect(self._on_failed)
         self._thread.start()
         self._progress.show()
@@ -212,6 +385,46 @@ class SecureUpdater(QObject):
             logger.error("Could not launch installer: %s", e, exc_info=True)
             self._cleanup_file()
             self._fallback(f"could not start the installer: {e}")
+
+    def _on_staged(self, ready: str) -> None:
+        """
+        Portable update: the ZIP's SHA-256 matched the release's checksums.txt and the new version was
+        extracted + staged to ``ready`` (in Downloads) on the worker thread. Reveal it and tell the user
+        to copy it over their current folder. Settings live in ``%APPDATA%``, not the app folder, so
+        replacing the folder never touches them (#195).
+        """
+        self._teardown_thread()
+        self._close_progress()
+        self._cleanup_file()   # drop the temp zip + now-empty extract dir; `ready` is outside it
+        if self._user_cancelled:
+            # Staging already finished before the cancel landed; don't leave a surprise folder behind.
+            try:
+                shutil.rmtree(ready, ignore_errors=True)
+            except Exception:
+                pass
+            self._finish()
+            return
+        try:
+            os.startfile(ready)   # type: ignore[attr-defined]  # reveal in Explorer (Windows)
+        except Exception:
+            pass
+        try:
+            app_dir = os.path.dirname(os.path.abspath(sys.executable))
+        except Exception:
+            app_dir = ""
+        try:
+            title = getattr(self.i18n, "UPDATE_PORTABLE_READY_TITLE", "Update ready to install")
+            msg = getattr(
+                self.i18n, "UPDATE_PORTABLE_READY_MESSAGE",
+                "NetSpeedTray {version} is ready in the folder that just opened:\n{ready}\n\n"
+                "To finish updating: close NetSpeedTray, then copy everything from that folder into "
+                "your current folder:\n{app_dir}\n(replacing the old files). Your settings are kept.")
+            QMessageBox.information(
+                self._parent, title,
+                msg.format(version=self._latest_version or "", ready=ready, app_dir=app_dir))
+        except Exception:
+            pass
+        self._finish()
 
     def _on_failed(self, reason: str) -> None:
         self._teardown_thread()

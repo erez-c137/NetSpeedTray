@@ -17,6 +17,7 @@ All notable changes to this project will be documented in this file.
 - **The widget could crowd the "show hidden icons" (∧) button.** Its right edge sat flush against the tray chevron, making that button awkward to click. It now keeps a small gap so the chevron stays fully clickable. (#161)
 - **Pinned to a second monitor, the widget could land on the clock.** On a secondary display whose taskbar has no system tray of its own, the widget's default position could overlap that monitor's date/time. It now leaves room for the clock (tunable via `secondary_clock_reserve_px` for wide date formats); as always, dragging it once remembers your exact spot. (#186)
 - **Runaway logging on taskbar-less monitors.** When a preferred monitor had no taskbar, NetSpeedTray wrote its "falling back to the primary taskbar" note to the log every second, bloating log files and Support Bundles. It now logs that once per change. (#191)
+- **The portable version couldn't install updates.** On the portable ZIP build, "Download Update" launched the installer, which can't update an unzipped folder in place - so nothing happened. The portable build now runs a guided update: it downloads the new version, verifies the whole download's checksum against the official release, extracts it, and opens it ready for you to copy over your folder (your settings, kept in `%APPDATA%`, are untouched). (#195)
 
 ---
 
