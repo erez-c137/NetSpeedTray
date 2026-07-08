@@ -13,9 +13,10 @@ from typing import Optional, Final
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QCheckBox, QLabel, QSlider,
     QSizePolicy, QStyleOption, QLineEdit, QFrame, QToolButton, QButtonGroup,
-    QPushButton, QColorDialog, QComboBox
+    QPushButton, QColorDialog, QComboBox,
+    QApplication, QScrollArea, QAbstractSlider, QAbstractSpinBox
 )
-from PyQt6.QtCore import Qt, QSize, pyqtSignal, QPropertyAnimation, QEasingCurve, QPoint, QTimer
+from PyQt6.QtCore import Qt, QSize, pyqtSignal, QPropertyAnimation, QEasingCurve, QPoint, QTimer, QObject, QEvent
 from PyQt6.QtGui import QFont, QPaintEvent, QPainter, QColor
 from netspeedtray.utils.styles import (
     toggle_style, slider_style, font as token_font, semantic_colors, get_accent_color,
@@ -26,6 +27,43 @@ from netspeedtray import constants
 
 
 logger = logging.getLogger("NetSpeedTray.Components")
+
+
+class _WheelGuard(QObject):
+    """Stops the mouse wheel from changing a scroll-sensitive control the cursor merely hovers.
+
+    Sliders, spin boxes and combo boxes normally eat the wheel to change their value, so scrolling
+    a long settings page silently nudges whatever you happen to scroll past. This filter forwards the
+    wheel to the enclosing QScrollArea (so the page scrolls) whenever the control is NOT focused. A
+    control the user has clicked/tabbed into keeps normal wheel behavior.
+    """
+    def eventFilter(self, obj, event) -> bool:
+        if event.type() == QEvent.Type.Wheel and isinstance(obj, QWidget) and not obj.hasFocus():
+            sa = obj.parentWidget()
+            while sa is not None and not isinstance(sa, QScrollArea):
+                sa = sa.parentWidget()
+            if isinstance(sa, QScrollArea):
+                QApplication.sendEvent(sa.verticalScrollBar(), event)
+            return True   # never let an unfocused control consume the wheel itself
+        return False
+
+
+_WHEEL_GUARD = _WheelGuard()   # single shared, stateless instance
+
+
+def install_wheel_guard(root: QWidget) -> None:
+    """Install the wheel guard on every scroll-sensitive control under `root`.
+
+    Call once on a page/dialog (e.g. after building a settings page): scrolling the page then
+    scrolls it, instead of changing the slider/combo/spin box the cursor passes over. Covers the
+    custom Win11 controls too, since Win11ComboBox is a QComboBox and Win11Slider wraps a QSlider.
+    """
+    for cls in (QComboBox, QAbstractSpinBox, QAbstractSlider):
+        for w in root.findChildren(cls):
+            w.installEventFilter(_WHEEL_GUARD)
+            # Drop wheel-focus so a scroll can't first focus the control and then change it.
+            if w.focusPolicy() == Qt.FocusPolicy.WheelFocus:
+                w.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
 
 class Win11ComboBox(QComboBox):

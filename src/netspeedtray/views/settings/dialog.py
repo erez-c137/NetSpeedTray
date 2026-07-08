@@ -357,6 +357,10 @@ class SettingsDialog(QDialog):
         scroll.viewport().setAutoFillBackground(False)
         page.setStyleSheet("background: transparent;")   # cards/inputs keep their own fill (more specific)
         scroll.setWidget(page)
+        # Scrolling the page should scroll it - not change the slider/combo/spin box the cursor
+        # happens to pass over. The guard forwards stray wheel events to this scroll area.
+        from netspeedtray.utils.components import install_wheel_guard
+        install_wheel_guard(page)
         return scroll
 
     def _init_ui_state(self) -> None:
