@@ -75,6 +75,7 @@
     "UPDATE_INTERVAL_LABEL": "מרווח עדכון:",
     "START_WITH_WINDOWS_LABEL": "התחל עם Windows",
     "FREE_MOVE_LABEL": "תנועה חופשית (ללא הצמדה)",
+    "FREE_FLOAT_LABEL": "Float on a display without a taskbar",
     "KEEP_VISIBLE_FULLSCREEN_LABEL": "השאר גלוי במסך מלא",
     "FONT_SIZE_LABEL": "גודל גופן:",
     "FONT_FAMILY_LABEL": "גופן:",
@@ -213,6 +214,8 @@
     "UPDATE_AVAILABLE_TITLE": "עדכון זמין",
     "UPDATE_DOWNLOADING_TITLE": "הורדת עדכון",
     "UPDATE_FALLBACK_MESSAGE": "לא ניתן היה להשלים את העדכון מתוך היישום. פותח את דף ההורדה במקום זאת.",
+    "UPDATE_PORTABLE_READY_TITLE": "Update ready to install",
+    "UPDATE_PORTABLE_READY_MESSAGE": "NetSpeedTray {version} is ready in the folder that just opened:\n{ready}\n\nTo finish updating: close NetSpeedTray, then copy everything from that folder into your current folder:\n{app_dir}\n(replacing the old files). Your settings are kept.",
     "UPDATE_AVAILABLE_TEXT": "גרסה חדשה של NetSpeedTray זמינה!\n\nנוכחית: v{current}\nאחרונה: v{latest}",
     "UPDATE_RELEASE_NOTES_LABEL": "מה חדש ב-v{latest}",
     "WELCOME_2_0_TITLE": "ברוכים הבאים ל-NetSpeedTray 2.0",
@@ -445,5 +448,7 @@
     "LOCATION_ONBOARDING_BODY": "NetSpeedTray יכול להציג את שם רשת ה-Wi-Fi שאליה אתה מחובר. Windows חושף שם זה רק לאפליקציות בעלות גישת <b>מיקום</b> &mdash; כלומר זוהי הגדרת פרטיות של Windows, <b>ולא</b> GPS או מעקב. NetSpeedTray קורא את השם באופן מקומי כדי להציגו, ולעולם אינו שומר או שולח אותו לשום מקום.<br><br>הפעל מיקום כדי להציג את שם הרשת, או השאר רק את התדר (2.4G&nbsp;/&nbsp;5G), שאינו דורש הרשאה.",
     "LOCATION_ONBOARDING_DONT_REMIND": "אל תזכיר לי שוב",
     "LOCATION_ONBOARDING_OPEN_BUTTON": "פתח הגדרות מיקום",
-    "LOCATION_ONBOARDING_BAND_BUTTON": "הצג רק את התדר"
+    "LOCATION_ONBOARDING_BAND_BUTTON": "הצג רק את התדר",
+    "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray overlaps the Widgets panel",
+    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray is sitting over the Windows Widgets/weather panel on your taskbar. You can drag it anywhere you like - it'll remember the spot. (This message won't show again.)"
 }
