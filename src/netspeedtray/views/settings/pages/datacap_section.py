@@ -23,7 +23,7 @@ class DataCapSettings(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
 
         self._expander = SettingExpander(
-            self._tr("DATA_CAP_SECTION_TITLE", "Data usage"),
+            self._tr("SETTINGS_DATA_CAP_TITLE", "Data usage"),
             self._tr("DATA_CAP_SECTION_SUBTITLE", "Warn me as I approach a monthly limit"),
             header_toggle=True, initial_on=False,
         )

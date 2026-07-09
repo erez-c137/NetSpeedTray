@@ -414,7 +414,7 @@ class UsageTile(QFrame):
         lay.setContentsMargins(16, 14, 16, 14)
         lay.setSpacing(8)
 
-        title = QLabel(self._tr("DATA_CAP_SECTION_TITLE", "Data usage"))
+        title = QLabel(self._tr("PANEL_DATA_USAGE_TITLE", "Data usage"))
         title.setFont(su.font(tokens.TYPE_BODY_STRONG))
         title.setStyleSheet(f"color: {c['text_primary']}; background: transparent;")
         lay.addWidget(title)
