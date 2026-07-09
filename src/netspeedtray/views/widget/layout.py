@@ -380,19 +380,10 @@ class WidgetLayoutManager:
                     # Qt scales it correctly on that screen regardless of the primary monitor's DPI (#188).
                     calculated_height = self.metrics.height() * 2 + (margin * 4)
                 else:
-                    # Height is the TRUE visible taskbar height for horizontal docking (Fixes #104/PR #110)
-                    screen = taskbar_info.get_screen()
-                    full_geom = screen.geometry()
-                    avail_geom = screen.availableGeometry()
-
-                    if edge == constants.TaskbarEdge.BOTTOM:
-                        visible_tb_height = full_geom.bottom() - avail_geom.bottom()
-                    elif edge == constants.TaskbarEdge.TOP:
-                        visible_tb_height = avail_geom.top() - full_geom.top()
-                    else:
-                        visible_tb_height = (taskbar_info.rect[3] - taskbar_info.rect[1]) / dpi_scale
-
-                    calculated_height = visible_tb_height
+                    # Visible taskbar height for horizontal docking (#104/PR #110), with a #221
+                    # fallback + two-row floor so a work area Windows doesn't inset for the taskbar
+                    # (availableGeometry() == geometry()) can't collapse the widget below the readout.
+                    calculated_height = self._horizontal_dock_height(edge, taskbar_info, dpi_scale)
 
             else:
                 # Width is the TRUE visible taskbar width for vertical docking (Fixes #104/PR #110)
@@ -424,3 +415,37 @@ class WidgetLayoutManager:
             self.logger.error(f"Failed to resize widget: {e}", exc_info=True)
             self.widget.setFixedSize(150, 40)
             self.logger.warning("Applied fallback widget size: 150x40px")
+
+    def _horizontal_dock_height(self, edge: "constants.TaskbarEdge", taskbar_info: Any, dpi_scale: float) -> float:
+        """Visible taskbar height (logical px) to size a horizontal-taskbar widget to.
+
+        Normally this is the work-area inset - the slice of the screen the taskbar covers, i.e.
+        ``screen.geometry()`` minus ``screen.availableGeometry()`` (the "TRUE visible" height from
+        #104/PR #110). Two robustness guards were added for #221 (text cropped top and bottom):
+
+        - Part A (fallback): Windows does not always inset the work area for the taskbar - on some
+          Win11 26200 setups ``availableGeometry() == geometry()``, so the diff is 0 and the widget
+          would collapse onto the ``max(..., 20)`` floor. Fall back to the validated LOGICAL taskbar
+          height (``TaskbarInfo.height``, > 0 for a real taskbar) - the value ``is_small_taskbar()``
+          trusts, and the same ``<= 0`` guard ``position_manager`` already uses to POSITION the
+          widget. This only brings the sizing into line with the positioning already happening.
+        - Part B (floor): the renderer always stacks two rows (``draw_network_speeds``:
+          ``total_height = 2*line_height + 1``), so any docked height below that crops the glyphs.
+          Floor to the two-row content (+1px for the ``int()`` rounding in ``top_y``) so text can
+          never crop, without the generous margin pad the free-float/side branches use.
+        """
+        screen = taskbar_info.get_screen()
+        full_geom = screen.geometry()
+        avail_geom = screen.availableGeometry()
+
+        if edge == constants.TaskbarEdge.BOTTOM:
+            visible_tb_height = full_geom.bottom() - avail_geom.bottom()
+        elif edge == constants.TaskbarEdge.TOP:
+            visible_tb_height = avail_geom.top() - full_geom.top()
+        else:
+            visible_tb_height = (taskbar_info.rect[3] - taskbar_info.rect[1]) / dpi_scale
+
+        if visible_tb_height <= 0:                      # Part A (#221)
+            visible_tb_height = taskbar_info.height
+
+        return max(visible_tb_height, self.metrics.height() * 2 + 2)   # Part B (#221)
