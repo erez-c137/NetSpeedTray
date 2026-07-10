@@ -118,7 +118,7 @@ my_excludes = [
     'win32uiole',
 
     # Windows Event Log bindings. Pulled in transitively (the only stdlib
-    # consumer is logging.handlers.NTEventLogHandler, which we don't use — we
+    # consumer is logging.handlers.NTEventLogHandler, which we don't use - we
     # log to a file). Nothing in src/ imports win32evtlog. Excluding it drops
     # win32\win32evtlog.pyd, which some heuristic AVs (e.g. Webroot) flag as a
     # false positive on the frozen build (#135). Verify the EXE still launches
