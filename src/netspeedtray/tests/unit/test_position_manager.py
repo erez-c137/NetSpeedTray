@@ -76,6 +76,36 @@ class TestPositionCalculator(unittest.TestCase):
         # Band = bottom 40px of the screen: y_origin = (1079+1 - 40) = 1040, centered (equal h) = 1040.
         self.assertEqual(y_shown, 1040)
 
+    def test_autohide_right_x_anchored_to_screen_not_sliding_rect(self):
+        """#135 vertical-taskbar analogue: a RIGHT auto-hide taskbar reserves no work area, so
+        _calculate_vertical_position falls into the rect-based fallback. X must anchor to the
+        stable screen edge, NOT the live taskbar rect left - which slides during the show/hide
+        animation and would make the widget chase it sideways. Raw computed X must be identical
+        whether the taskbar rect is fully shown or caught mid-slide."""
+        screen = MagicMock()
+        screen.geometry.return_value = QRect(0, 0, 1920, 1080)
+        screen.availableGeometry.return_value = QRect(0, 0, 1920, 1080)  # auto-hide: NO inset
+
+        def _tb(rect_left: int):
+            tb = MagicMock(spec=TaskbarInfo)
+            tb.rect = (rect_left, 0, rect_left + 40, 1080)  # 40px-wide right taskbar
+            tb.tasklist_rect = None
+            tb.get_tray_rect.return_value = (rect_left, 900, rect_left + 40, 1080)
+            tb.get_edge_position.return_value = constants.taskbar.edge.RIGHT
+            tb.dpi_scale = 1.0
+            tb.get_screen.return_value = screen
+            return tb
+
+        widget_size = (100, 40)
+        config = {'tray_offset_y': 5}
+
+        x_shown, _ = self.calculator._calculate_vertical_position(_tb(1880), widget_size, config, 1.0)  # fully shown
+        x_slide, _ = self.calculator._calculate_vertical_position(_tb(1900), widget_size, config, 1.0)  # mid-slide
+
+        self.assertEqual(x_shown, x_slide)   # anchored -> no jump as the taskbar animates
+        # Band = right 40px: x_origin = (1919+1 - 40) = 1880, centered = 1880 + (40-100)/2 = 1850.
+        self.assertEqual(x_shown, 1850)
+
     def test_tray_edge_min_gap_floor(self):
         """#161 pt1: a below-floor tray offset (incl. 0) is raised to TRAY_EDGE_MIN_GAP_PX so the
         widget never abuts the '^' chevron; a larger user offset is preserved."""

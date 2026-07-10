@@ -343,15 +343,21 @@ class PositionCalculator:
             visible_tb_width = full_geom.right() - avail_geom.right()
             x_origin = avail_geom.right() + 1
             if visible_tb_width <= 0:
+                # No work-area inset (auto-hide, or the #221 quirk). Anchor X to the STABLE
+                # screen edge, not taskbar_info.rect[0] which slides during the auto-hide
+                # animation (the vertical-taskbar analogue of the #135 bottom/top jump). A
+                # docked right taskbar always occupies the right `visible_tb_width` band.
                 visible_tb_width = (taskbar_info.rect[2] - taskbar_info.rect[0]) / dpi_scale
-                x_origin = taskbar_info.rect[0] / dpi_scale
+                x_origin = (full_geom.right() + 1) - visible_tb_width
         else: # LEFT
             # Visible taskbar is the space to the left of available geometry
             visible_tb_width = avail_geom.left() - full_geom.left()
             x_origin = full_geom.left()
             if visible_tb_width <= 0:
+                # See the RIGHT note (#135/#221). Anchor to the screen's left edge, which is
+                # stable; the rect left slides off-screen while a left auto-hide bar animates.
                 visible_tb_width = (taskbar_info.rect[2] - taskbar_info.rect[0]) / dpi_scale
-                x_origin = taskbar_info.rect[0] / dpi_scale
+                x_origin = full_geom.left()
             
         # Calculate X: center widget horizontally in taskbar gap
         x_center = x_origin + (visible_tb_width - widget_width) / 2.0
