@@ -391,9 +391,17 @@ Every release you download from this repo is signed end-to-end - no SmartScreen 
 
 ---
 
+## Star History
+
 <div align="center">
 
-[![Star History Chart](https://api.star-history.com/svg?repos=erez-c137/NetSpeedTray&type=Date)](https://star-history.com/#erez-c137/NetSpeedTray&Date)
+<a href="https://www.star-history.com/?type=date&repos=erez-c137%2FNetSpeedTray">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=erez-c137/NetSpeedTray&type=date&theme=dark&legend=top-left&sealed_token=g6Vso18jKEaxFTNmiO_SQiH6FghFMJaYtQcfxlf_CkBRG9L0_5qPpfLnJv3TjDWWyW2AgEjzknIhRo104R-2gP7mZ3Unw7GVSwKOZLGNqmPk8vWnVeRy0l0W4X0_4qSD_N4by_q87KMvWN4s8-_zY4wCQYUv0ICzhIrJpSE1dVvEczpbFC7Z9dIeON4M" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=erez-c137/NetSpeedTray&type=date&legend=top-left&sealed_token=g6Vso18jKEaxFTNmiO_SQiH6FghFMJaYtQcfxlf_CkBRG9L0_5qPpfLnJv3TjDWWyW2AgEjzknIhRo104R-2gP7mZ3Unw7GVSwKOZLGNqmPk8vWnVeRy0l0W4X0_4qSD_N4by_q87KMvWN4s8-_zY4wCQYUv0ICzhIrJpSE1dVvEczpbFC7Z9dIeON4M" />
+    <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=erez-c137/NetSpeedTray&type=date&legend=top-left&sealed_token=g6Vso18jKEaxFTNmiO_SQiH6FghFMJaYtQcfxlf_CkBRG9L0_5qPpfLnJv3TjDWWyW2AgEjzknIhRo104R-2gP7mZ3Unw7GVSwKOZLGNqmPk8vWnVeRy0l0W4X0_4qSD_N4by_q87KMvWN4s8-_zY4wCQYUv0ICzhIrJpSE1dVvEczpbFC7Z9dIeON4M" />
+  </picture>
+</a>
 
 </div>
 
