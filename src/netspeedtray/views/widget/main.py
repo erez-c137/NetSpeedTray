@@ -1386,19 +1386,20 @@ class NetworkSpeedWidget(QWidget):
     def check_for_updates(self) -> None:
         """Manually trigger an update check (from menu)."""
         if self.update_checker:
-            self.update_checker.update_available.connect(self._on_update_available_manual, Qt.ConnectionType.SingleShotConnection)
+            # update_available is already wired to _on_update_available at construction
+            # (persistent, see __init__). Do NOT connect a second handler here: on a manual
+            # check both would fire and the update dialog shows twice - the first starts the
+            # download, the second "pops back up" over it and races the install/quit, so the
+            # installer never visibly runs. Only the up-to-date / failed messages are manual-
+            # only (the automatic startup check stays silent on those).
             self.update_checker.up_to_date.connect(self._on_up_to_date_manual, Qt.ConnectionType.SingleShotConnection)
             self.update_checker.check_failed.connect(self._on_check_failed_manual, Qt.ConnectionType.SingleShotConnection)
             self.update_checker.check_now()
 
     def _on_update_available(self, latest_version: str, release_url: str, body: str = "",
                              installer_url: str = "", portable_url: str = "") -> None:
-        """Handle update available from automatic startup check."""
-        self._show_update_dialog(latest_version, release_url, body, installer_url, portable_url)
-
-    def _on_update_available_manual(self, latest_version: str, release_url: str, body: str = "",
-                                    installer_url: str = "", portable_url: str = "") -> None:
-        """Handle update available from manual menu check."""
+        """Handle update available - from either the automatic startup check or a manual
+        menu check (both use this single persistent handler; see check_for_updates)."""
         self._show_update_dialog(latest_version, release_url, body, installer_url, portable_url)
 
     def _on_up_to_date_manual(self) -> None:
