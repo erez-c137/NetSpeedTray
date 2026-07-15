@@ -112,6 +112,7 @@ class StatsMonitorThread(QThread):
         # None = not yet tried, False = tried and unavailable, object = connected.
         self._wmi_ohm: Any = None
         self._ohm_guidance_logged: bool = False  # One-time "no sensor source" guidance, logged only when NO namespace connects
+        self._last_temp_source_sig: Optional[Tuple[str, str]] = None  # (source, sensor) of the last-logged CPU-temp read; re-logged only on change (#216)
         self._lhm_notice_emitted: bool = False  # One-time notification flag
         self._lhm_check_polls: int = 0  # Count polls before emitting notice
         self._last_identity_poll: float = 0.0  # monotonic ts of the last network-identity sub-poll (0 = poll immediately)
@@ -685,53 +686,21 @@ class StatsMonitorThread(QThread):
     def _poll_cpu_temperature(self) -> Optional[float]:
         """
         Polls CPU temperature, trying sources in order:
-          1. PDH Thermal Zone Information  (standard ACPI)
-          2. LibreHardwareMonitor / OpenHardwareMonitor WMI  (if running)
+          1. LibreHardwareMonitor / OpenHardwareMonitor WMI  (accurate CPU-die sensor, if running)
+          2. PDH Thermal Zone Information  (generic ACPI - often a motherboard/ambient zone)
           3. WMI MSAcpi_ThermalZoneTemperature  (legacy ACPI fallback)
+
+        LHM/OHM is tried FIRST because its CPU-die sensor (CPU Package / Tctl/Tdie) is
+        the accurate source. The generic ACPI "Thermal Zone" is frequently a
+        motherboard/ambient sensor near room temperature; when it short-circuits ahead
+        of LHM it pins the readout to a flat wrong value (issue #216: stuck at 27°C).
+        The ACPI zones remain as fallbacks so machines without a hardware-monitor tool
+        still get a reading.
 
         Note: Modern Intel/AMD CPUs often require a kernel-driver tool
         (LibreHardwareMonitor, HWiNFO64, etc.) - see the settings note.
         """
-        # 1. PDH Thermal Zone Information
-        if win32pdh:
-            if not self._thermal_query:
-                self._init_thermal_query()
-            if self._thermal_query and (self._thermal_hp_counters or self._thermal_counters):
-                try:
-                    win32pdh.CollectQueryData(self._thermal_query)
-                    readings = []
-
-                    # 1a. High Precision Temperature (preferred)
-                    for handle in self._thermal_hp_counters:
-                        try:
-                            _, val = win32pdh.GetFormattedCounterValue(handle, win32pdh.PDH_FMT_DOUBLE)
-                            if val is not None:
-                                # Standard: tenths of Kelvin → Celsius
-                                celsius = (val / 10.0) - 273.15
-                                if 0.0 < celsius < 150.0:
-                                    readings.append(celsius)
-                                # Some OEMs (HP, Dell) report direct Celsius
-                                elif 15.0 < val < 110.0:
-                                    readings.append(val)
-                        except: continue
-
-                    # 1b. Standard Temperature counter (fallback)
-                    if not readings:
-                        for handle in self._thermal_counters:
-                            try:
-                                _, val = win32pdh.GetFormattedCounterValue(handle, win32pdh.PDH_FMT_DOUBLE)
-                                if val is not None:
-                                    celsius = (val / 10.0) - 273.15
-                                    if 0.0 < celsius < 150.0:
-                                        readings.append(celsius)
-                            except: continue
-
-                    if readings:
-                        return max(readings)
-                except Exception as e:
-                    self.logger.debug("Thermal PDH polling error: %s", e)
-
-        # 2. LibreHardwareMonitor / OpenHardwareMonitor
+        # 1. LibreHardwareMonitor / OpenHardwareMonitor - the accurate CPU-die source.
         self._init_ohm_wmi()
         if self._wmi_ohm:
             try:
@@ -741,7 +710,7 @@ class StatsMonitorThread(QThread):
                 for s in sensors:
                     val = float(s.Value)
                     if 0.0 < val < 150.0:
-                        return val
+                        return self._log_temp(val, "LHM/OHM", "CPU Package")
                 # Some boards label it differently (AMD Ryzen exposes "Core (Tctl/Tdie)",
                 # not "CPU Package"). Match on the LHM Identifier (/amdcpu/ or /intelcpu/),
                 # which reliably scopes to the CPU regardless of the display name, and
@@ -749,7 +718,8 @@ class StatsMonitorThread(QThread):
                 sensors = self._wmi_ohm.ExecQuery(
                     "SELECT Value, Name, Identifier FROM Sensor WHERE SensorType='Temperature'"
                 )
-                readings = []
+                best_val: Optional[float] = None
+                best_name: str = ""
                 for s in sensors:
                     name = str(getattr(s, 'Name', '')).upper()
                     ident = str(getattr(s, 'Identifier', '')).lower()
@@ -763,13 +733,53 @@ class StatsMonitorThread(QThread):
                         val = float(s.Value)
                     except (TypeError, ValueError):
                         continue
-                    if 0.0 < val < 150.0:
-                        readings.append(val)
-                if readings:
-                    return max(readings)
+                    if 0.0 < val < 150.0 and (best_val is None or val > best_val):
+                        best_val = val
+                        best_name = str(getattr(s, 'Name', '')) or "CPU"
+                if best_val is not None:
+                    return self._log_temp(best_val, "LHM/OHM", best_name)
             except Exception as e:
                 self.logger.debug("OHM/LHM CPU temp error: %s", e)
                 self._wmi_ohm = None
+
+        # 2. PDH Thermal Zone Information (generic ACPI; may be motherboard/ambient - #216)
+        if win32pdh:
+            if not self._thermal_query:
+                self._init_thermal_query()
+            if self._thermal_query and (self._thermal_hp_counters or self._thermal_counters):
+                try:
+                    win32pdh.CollectQueryData(self._thermal_query)
+                    readings = []
+
+                    # 2a. High Precision Temperature (preferred)
+                    for handle in self._thermal_hp_counters:
+                        try:
+                            _, val = win32pdh.GetFormattedCounterValue(handle, win32pdh.PDH_FMT_DOUBLE)
+                            if val is not None:
+                                # Standard: tenths of Kelvin → Celsius
+                                celsius = (val / 10.0) - 273.15
+                                if 0.0 < celsius < 150.0:
+                                    readings.append(celsius)
+                                # Some OEMs (HP, Dell) report direct Celsius
+                                elif 15.0 < val < 110.0:
+                                    readings.append(val)
+                        except: continue
+
+                    # 2b. Standard Temperature counter (fallback)
+                    if not readings:
+                        for handle in self._thermal_counters:
+                            try:
+                                _, val = win32pdh.GetFormattedCounterValue(handle, win32pdh.PDH_FMT_DOUBLE)
+                                if val is not None:
+                                    celsius = (val / 10.0) - 273.15
+                                    if 0.0 < celsius < 150.0:
+                                        readings.append(celsius)
+                            except: continue
+
+                    if readings:
+                        return self._log_temp(max(readings), "PDH ACPI", "Thermal Zone")
+                except Exception as e:
+                    self.logger.debug("Thermal PDH polling error: %s", e)
 
         # 3. WMI MSAcpi_ThermalZoneTemperature (legacy ACPI fallback)
         if not win32com.client:
@@ -786,16 +796,26 @@ class StatsMonitorThread(QThread):
                 # Standard ACPI: tenths of Kelvin (valid range ~2932-3932 for 20-120°C)
                 celsius = (raw / 10.0) - 273.15
                 if 0.0 < celsius < 150.0:
-                    return celsius
+                    return self._log_temp(celsius, "MSAcpi", "Thermal Zone")
                 # Some OEMs (HP, Dell, Lenovo) return direct Celsius instead
                 if 15.0 < raw < 110.0:
                     self.logger.debug("ACPI temp raw=%s interpreted as direct Celsius", raw)
-                    return float(raw)
+                    return self._log_temp(float(raw), "MSAcpi", "Thermal Zone (direct-C)")
         except Exception as e:
             self.logger.debug("CPU Temp WMI fallback error: %s", e)
             if "RPC server is unavailable" in str(e) or "0x800706ba" in str(e):
                 self._wmi = None
         return None
+
+    def _log_temp(self, celsius: float, source: str, sensor: str) -> float:
+        """Logs the selected CPU-temperature source once, and again only when it
+        changes, so a wrong reading (e.g. #216) is self-diagnosing without flooding
+        the per-second poll log. Returns the temperature unchanged."""
+        signature = (source, sensor)
+        if signature != self._last_temp_source_sig:
+            self._last_temp_source_sig = signature
+            self.logger.info("CPU temperature: %.1f°C via %s (sensor: %s).", celsius, source, sensor)
+        return celsius
 
     def run(self) -> None:
         """Main monitoring loop."""
