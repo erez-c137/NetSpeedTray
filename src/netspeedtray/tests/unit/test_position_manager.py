@@ -41,6 +41,131 @@ class TestPositionCalculator(unittest.TestCase):
         self.assertEqual(pos.x, 1590)
         self.assertEqual(pos.y, 1040)
 
+    def test_autohide_bottom_y_anchored_to_screen_not_sliding_rect(self):
+        """#135: an auto-hide taskbar reserves no work area (availableGeometry() ==
+        geometry()), so _calculate_horizontal_position falls into the rect-based fallback.
+        Y must anchor to the stable screen edge, NOT the live taskbar rect top - which slides
+        during the show/hide animation and made the widget chase it (jump up/down) every
+        refresh tick. The raw computed Y must be identical whether the taskbar rect is fully
+        shown or caught mid-slide.
+
+        This exercises the calculator directly, before validate_position() clamps the widget
+        on-screen - the clamp would otherwise mask an off-screen mid-slide Y and hide the bug.
+        """
+        screen = MagicMock()
+        screen.geometry.return_value = QRect(0, 0, 1920, 1080)
+        screen.availableGeometry.return_value = QRect(0, 0, 1920, 1080)  # auto-hide: NO inset
+
+        def _tb(rect_top: int):
+            tb = MagicMock(spec=TaskbarInfo)
+            tb.rect = (0, rect_top, 1920, rect_top + 40)  # 40px-tall taskbar
+            tb.tasklist_rect = None
+            tb.get_tray_rect.return_value = (1700, rect_top, 1920, rect_top + 40)
+            tb.get_edge_position.return_value = constants.taskbar.edge.BOTTOM
+            tb.dpi_scale = 1.0
+            tb.get_screen.return_value = screen
+            return tb
+
+        widget_size = (100, 40)
+        config = {'tray_offset_x': 10}
+
+        _, y_shown = self.calculator._calculate_horizontal_position(_tb(1040), widget_size, config, 1.0)  # fully shown
+        _, y_slide = self.calculator._calculate_horizontal_position(_tb(1060), widget_size, config, 1.0)  # mid-slide
+
+        self.assertEqual(y_shown, y_slide)   # anchored -> no jump as the taskbar animates
+        # Band = bottom 40px of the screen: y_origin = (1079+1 - 40) = 1040, centered (equal h) = 1040.
+        self.assertEqual(y_shown, 1040)
+
+    def test_autohide_right_x_anchored_to_screen_not_sliding_rect(self):
+        """#135 vertical-taskbar analogue: a RIGHT auto-hide taskbar reserves no work area, so
+        _calculate_vertical_position falls into the rect-based fallback. X must anchor to the
+        stable screen edge, NOT the live taskbar rect left - which slides during the show/hide
+        animation and would make the widget chase it sideways. Raw computed X must be identical
+        whether the taskbar rect is fully shown or caught mid-slide."""
+        screen = MagicMock()
+        screen.geometry.return_value = QRect(0, 0, 1920, 1080)
+        screen.availableGeometry.return_value = QRect(0, 0, 1920, 1080)  # auto-hide: NO inset
+
+        def _tb(rect_left: int):
+            tb = MagicMock(spec=TaskbarInfo)
+            tb.rect = (rect_left, 0, rect_left + 40, 1080)  # 40px-wide right taskbar
+            tb.tasklist_rect = None
+            tb.get_tray_rect.return_value = (rect_left, 900, rect_left + 40, 1080)
+            tb.get_edge_position.return_value = constants.taskbar.edge.RIGHT
+            tb.dpi_scale = 1.0
+            tb.get_screen.return_value = screen
+            return tb
+
+        widget_size = (100, 40)
+        config = {'tray_offset_y': 5}
+
+        x_shown, _ = self.calculator._calculate_vertical_position(_tb(1880), widget_size, config, 1.0)  # fully shown
+        x_slide, _ = self.calculator._calculate_vertical_position(_tb(1900), widget_size, config, 1.0)  # mid-slide
+
+        self.assertEqual(x_shown, x_slide)   # anchored -> no jump as the taskbar animates
+        # Band = right 40px: x_origin = (1919+1 - 40) = 1880, centered = 1880 + (40-100)/2 = 1850.
+        self.assertEqual(x_shown, 1850)
+
+    def test_autohide_top_y_anchored_to_screen_not_sliding_rect(self):
+        """#135 top-taskbar analogue: a TOP auto-hide taskbar reserves no work area, so
+        _calculate_horizontal_position falls into the rect-based fallback. Y must anchor to
+        the stable screen top edge, NOT the live taskbar rect top - which slides off-screen
+        (rect top goes negative) as the bar hides and shows. Raw computed Y must be identical
+        whether the taskbar rect is fully shown or caught mid-slide."""
+        screen = MagicMock()
+        screen.geometry.return_value = QRect(0, 0, 1920, 1080)
+        screen.availableGeometry.return_value = QRect(0, 0, 1920, 1080)  # auto-hide: NO inset
+
+        def _tb(rect_top: int):
+            tb = MagicMock(spec=TaskbarInfo)
+            tb.rect = (0, rect_top, 1920, rect_top + 40)  # 40px-tall top taskbar
+            tb.tasklist_rect = None
+            tb.get_tray_rect.return_value = (1700, rect_top, 1920, rect_top + 40)
+            tb.get_edge_position.return_value = constants.taskbar.edge.TOP
+            tb.dpi_scale = 1.0
+            tb.get_screen.return_value = screen
+            return tb
+
+        widget_size = (100, 40)
+        config = {'tray_offset_x': 10}
+
+        _, y_shown = self.calculator._calculate_horizontal_position(_tb(0), widget_size, config, 1.0)    # fully shown
+        _, y_slide = self.calculator._calculate_horizontal_position(_tb(-20), widget_size, config, 1.0)  # mid-slide (hiding up)
+
+        self.assertEqual(y_shown, y_slide)   # anchored -> no jump as the taskbar animates
+        # Band = top 40px of the screen: y_origin = full_geom.top() = 0, centered (equal h) = 0.
+        self.assertEqual(y_shown, 0)
+
+    def test_autohide_left_x_anchored_to_screen_not_sliding_rect(self):
+        """#135 left-taskbar analogue: a LEFT auto-hide taskbar reserves no work area, so
+        _calculate_vertical_position falls into the rect-based fallback. X must anchor to the
+        stable screen left edge, NOT the live taskbar rect left - which slides off-screen
+        (rect left goes negative) as the bar hides and shows. Raw computed X must be identical
+        whether the taskbar rect is fully shown or caught mid-slide."""
+        screen = MagicMock()
+        screen.geometry.return_value = QRect(0, 0, 1920, 1080)
+        screen.availableGeometry.return_value = QRect(0, 0, 1920, 1080)  # auto-hide: NO inset
+
+        def _tb(rect_left: int):
+            tb = MagicMock(spec=TaskbarInfo)
+            tb.rect = (rect_left, 0, rect_left + 40, 1080)  # 40px-wide left taskbar
+            tb.tasklist_rect = None
+            tb.get_tray_rect.return_value = (rect_left, 900, rect_left + 40, 1080)
+            tb.get_edge_position.return_value = constants.taskbar.edge.LEFT
+            tb.dpi_scale = 1.0
+            tb.get_screen.return_value = screen
+            return tb
+
+        widget_size = (100, 40)
+        config = {'tray_offset_y': 5}
+
+        x_shown, _ = self.calculator._calculate_vertical_position(_tb(0), widget_size, config, 1.0)    # fully shown
+        x_slide, _ = self.calculator._calculate_vertical_position(_tb(-20), widget_size, config, 1.0)  # mid-slide (hiding left)
+
+        self.assertEqual(x_shown, x_slide)   # anchored -> no jump as the taskbar animates
+        # Band = left 40px: x_origin = full_geom.left() = 0, centered = 0 + (40-100)/2 = -30 (raw, pre-clamp).
+        self.assertEqual(x_shown, -30)
+
     def test_tray_edge_min_gap_floor(self):
         """#161 pt1: a below-floor tray offset (incl. 0) is raised to TRAY_EDGE_MIN_GAP_PX so the
         widget never abuts the '^' chevron; a larger user offset is preserved."""
