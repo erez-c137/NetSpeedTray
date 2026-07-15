@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [2.1.1] - July 15, 2026
+
+A patch release. It makes the widget behave correctly on **auto-hide taskbars**, fixes a flat CPU-temperature reading, clears an antivirus false-positive, and folds in the latest community translation updates.
+
+### Fixed
+- **CPU temperature stuck at a flat value (often ~27 °C). (#216)** On some systems NetSpeedTray read the Windows ACPI "thermal zone" first and locked onto it - a sensor that's frequently a motherboard/ambient reading sitting near room temperature - instead of the accurate CPU-die value, so the temperature never moved under load. It now prefers the **LibreHardwareMonitor / OpenHardwareMonitor CPU sensor** over the ACPI zone, and records exactly which source and sensor it used so a mis-read is easy to trace. (Thanks to [@Jackboy001](https://github.com/Jackboy001) for the reports and [@CMTriX](https://github.com/CMTriX) for helping narrow it down.)
+- **Widget text cropped at the top and bottom on some taskbars. (#221)** When Windows doesn't inset the desktop work area for the taskbar - seen on some Windows 11 builds, and always with an **auto-hide** taskbar - the widget derived a height of zero and collapsed to a tiny box, clipping the two-row readout equally top and bottom. It now falls back to the true taskbar height and never shrinks below the space the text needs. (Thanks to [@vilmantasr](https://github.com/vilmantasr) for the report.)
+- **Widget jumped up and down (or sideways) when an auto-hide taskbar slid in and out. (#135)** As the hidden taskbar animated back onto the screen, the widget chased the taskbar's moving edge frame-by-frame instead of settling at its final spot. It now anchors to the stable screen edge and reappears exactly where it belongs - fixed for taskbars on every edge (bottom, top, left, and right). (Thanks to [@Johnnym3334](https://github.com/Johnnym3334) for the report.)
+- **Antivirus false-positive on a bundled file. (#135)** Some heuristic antivirus tools (for example Webroot) flagged `win32evtlog.pyd` in the application folder. NetSpeedTray never used that file - it was bundled by accident - so it has been dropped. (Heuristic scanners can still warn on *unsigned* builds; the signed release is not affected.)
+
+### Localization
+- Translation updates across **French** ([@logounet](https://github.com/logounet)), **Korean** ([@VenusGirl](https://github.com/VenusGirl)), **Simplified Chinese** ([@RainThings](https://github.com/RainThings)), and **Traditional Chinese** ([@in2002-tw](https://github.com/in2002-tw)) - collectively filling in the 2.1 network-identity, Location-onboarding, and portable-update strings and polishing existing ones.
+
+---
+
 ## [2.1.0] - July 8, 2026
 
 ### Added
@@ -12,7 +27,7 @@ All notable changes to this project will be documented in this file.
 - **Simplified Chinese** (`zh_CN`) UI translation, contributed by [@RainThings](https://github.com/RainThings). Selectable in Settings > Language. (#209)
 - **Traditional Chinese (Taiwan)** (`zh_TW`) UI translation, contributed by [@raylolhue](https://github.com/raylolhue) with terminology improvements from [@in2002-tw](https://github.com/in2002-tw) and native punctuation/phrasing polish from [@tony8077616](https://github.com/tony8077616). Selectable in Settings > Language. (#199, #215)
 
-- **Hebrew, and right-to-left support.** NetSpeedTray now speaks **Hebrew** (`he_IL`) — its first right-to-left language. The whole UI mirrors for RTL (Settings, the Monitor, menus), the history graph renders Hebrew correctly, and the Monitor now uses a font with full Hebrew coverage so every letter renders consistently. Started from [@rami123](https://github.com/rami123)'s translation; the rest is an AI-assisted first pass, so a native-speaker review is very welcome (see [TRANSLATORS.md](TRANSLATORS.md)).
+- **Hebrew, and right-to-left support.** NetSpeedTray now speaks **Hebrew** (`he_IL`) - its first right-to-left language. The whole UI mirrors for RTL (Settings, the Monitor, menus), the history graph renders Hebrew correctly, and the Monitor now uses a font with full Hebrew coverage so every letter renders consistently. Started from [@rami123](https://github.com/rami123)'s translation; the rest is an AI-assisted first pass, so a native-speaker review is very welcome (see [TRANSLATORS.md](TRANSLATORS.md)).
 - **Japanese** (`ja_JP`) and **Korean** (`ko_KR`) translations refreshed by [@coolvitto](https://github.com/coolvitto) (#205) and [@VenusGirl](https://github.com/VenusGirl) (#207).
 - **Use the widget on a display that has no taskbar of its own.** Choose a Preferred Monitor that Windows leaves without a taskbar - an accessory panel like the Corsair Xeneon Edge, for instance - and the widget now free-floats at the bottom of that screen instead of snapping back to your main taskbar. It stays put across sleep/wake and monitor changes, and you can drag it anywhere on that display. (#188)
 - **A one-time heads-up when the widget overlaps the Windows Widgets/weather panel.** With the Start button moved to the left, Windows shifts its Widgets button to the right - under where the readout likes to sit - so the two can overlap. NetSpeedTray now shows a single, dismissible nudge pointing this out; it never moves your widget for you, and you're free to drag it aside or leave it overlapping if you prefer. (#200)
