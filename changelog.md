@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [2.1.2] - July 15, 2026
+
+A small patch fixing the in-app updater.
+
+### Fixed
+- **"Check for updates" opened the update window twice.** Choosing *Check for updates* from the tray menu showed the update dialog, and after you clicked **Download** a second copy of the dialog popped up over the download - which could also keep the downloaded installer from launching. The menu now shows a single update dialog, and the download and install proceed cleanly. (The automatic daily update check was never affected by this.)
+
+---
+
 ## [2.1.1] - July 15, 2026
 
 A patch release. It makes the widget behave correctly on **auto-hide taskbars**, fixes a flat CPU-temperature reading, clears an antivirus false-positive, and folds in the latest community translation updates.
