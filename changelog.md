@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ---
 
-## [2.1.1] - Unreleased
+## [2.1.1] - July 15, 2026
 
 A patch release. It makes the widget behave correctly on **auto-hide taskbars**, fixes a flat CPU-temperature reading, clears an antivirus false-positive, and folds in the latest community translation updates.
 
@@ -15,7 +15,7 @@ A patch release. It makes the widget behave correctly on **auto-hide taskbars**,
 - **Antivirus false-positive on a bundled file. (#135)** Some heuristic antivirus tools (for example Webroot) flagged `win32evtlog.pyd` in the application folder. NetSpeedTray never used that file - it was bundled by accident - so it has been dropped. (Heuristic scanners can still warn on *unsigned* builds; the signed release is not affected.)
 
 ### Localization
-- Translation updates filling in the 2.1 network-identity, Location-onboarding, and portable-update strings and polishing existing ones: **French** ([@logounet](https://github.com/logounet)), **Korean** ([@VenusGirl](https://github.com/VenusGirl)), **Simplified Chinese** ([@RainThings](https://github.com/RainThings)), and **Traditional Chinese**.
+- Translation updates across **French** ([@logounet](https://github.com/logounet)), **Korean** ([@VenusGirl](https://github.com/VenusGirl)), **Simplified Chinese** ([@RainThings](https://github.com/RainThings)), and **Traditional Chinese** ([@in2002-tw](https://github.com/in2002-tw)) - collectively filling in the 2.1 network-identity, Location-onboarding, and portable-update strings and polishing existing ones.
 
 ---
 
