@@ -25,6 +25,7 @@ from netspeedtray.constants.styles import styles as tokens
 from netspeedtray.utils.dwm import apply_win11_chrome
 from netspeedtray.utils.window_state import (
     restore_window_geometry, attach_geometry_memory, save_window_geometry,
+    set_window_always_on_top,
 )
 from netspeedtray.views.monitor.tab_bar import FlatTabBar
 from netspeedtray.views.monitor.lazy import LazyTabDescriptor
@@ -307,6 +308,8 @@ class MonitorWindow(QWidget):
             apply_win11_chrome(int(self.winId()), dark=su.is_dark_mode())
         except Exception:
             pass
+        # Always-on-top (#213) - same native flip the Settings dialog uses.
+        set_window_always_on_top(self, bool(self.config.get("keep_windows_on_top", False)))
 
     def closeEvent(self, event) -> None:
         self._is_closing = True

@@ -233,3 +233,37 @@ def save_window_position(window: QWidget, main_widget: Optional[QWidget], key: s
         mgr.save(cfg)
     except Exception as e:
         logger.debug("save_window_position(%s) failed: %s", key, e)
+
+
+def set_window_always_on_top(window: QWidget, on_top: bool) -> bool:
+    """Toggle a window's always-on-top state WITHOUT re-creating its native handle (#213).
+
+    Qt's ``setWindowFlags(WindowStaysOnTopHint)`` destroys and rebuilds the native window when the
+    widget is already visible. Besides the visible hide/show flicker, that re-creation is what makes
+    frame-vs-client geometry drift - the failure mode ``save_window_geometry`` above already warns
+    about, where a window creeps down by its title-bar height on every reopen.
+
+    Flipping ``WS_EX_TOPMOST`` through ``SetWindowPos`` avoids all of it: the HWND is untouched, so
+    geometry, focus and the saved position are unaffected. Same call shape the widget's own
+    ``PositionManager.ensure_topmost`` uses.
+
+    Returns True when the state was applied, False on any failure (never raises - this is a cosmetic
+    preference and must not be able to break opening a window).
+    """
+    try:
+        import win32con
+        import win32gui
+
+        hwnd = int(window.winId())
+        if not hwnd or not win32gui.IsWindow(hwnd):
+            return False
+        win32gui.SetWindowPos(
+            hwnd,
+            win32con.HWND_TOPMOST if on_top else win32con.HWND_NOTOPMOST,
+            0, 0, 0, 0,
+            win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE,
+        )
+        return True
+    except Exception as e:                       # pragma: no cover - platform/COM edge
+        logger.debug("set_window_always_on_top(%s) failed: %s", on_top, e)
+        return False

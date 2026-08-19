@@ -51,6 +51,12 @@ class AdvancedPage(QWidget):
         self.reduce_motion.toggled.connect(self.on_change)
         layout.addWidget(SettingCard(self.i18n.ADVANCED_REDUCE_MOTION_LABEL, control=self.reduce_motion))
 
+        # Applies to the Settings dialog and the Monitor window together (#213).
+        self.keep_windows_on_top = Win11Toggle(label_text="")
+        self.keep_windows_on_top.toggled.connect(self.on_change)
+        layout.addWidget(SettingCard(self.i18n.KEEP_WINDOWS_ON_TOP_LABEL,
+                                     control=self.keep_windows_on_top))
+
         self.show_usage_hover = Win11Toggle(label_text="")
         self.show_usage_hover.toggled.connect(self.on_change)
         layout.addWidget(SettingCard(self.i18n.HOVER_USAGE_CARD_LABEL, control=self.show_usage_hover))
@@ -99,6 +105,7 @@ class AdvancedPage(QWidget):
                       key=lambda i: abs(int(self.keep_data.itemData(i)) - days))
         self.keep_data.setCurrentIndex(idx)
         self.reduce_motion.setChecked(bool(config.get("reduce_motion", False)))
+        self.keep_windows_on_top.setChecked(bool(config.get("keep_windows_on_top", False)))
         self.show_usage_hover.setChecked(bool(config.get("show_usage_on_hover", True)))
         self.show_hover_tips.setChecked(bool(config.get("show_hover_tips", True)))
         self.pause_in_menu.setChecked(bool(config.get("pause_in_menu", False)))
@@ -107,6 +114,7 @@ class AdvancedPage(QWidget):
         return {
             "keep_data": int(self.keep_data.currentData()),
             "reduce_motion": self.reduce_motion.isChecked(),
+            "keep_windows_on_top": self.keep_windows_on_top.isChecked(),
             "show_usage_on_hover": self.show_usage_hover.isChecked(),
             "show_hover_tips": self.show_hover_tips.isChecked(),
             "pause_in_menu": self.pause_in_menu.isChecked(),

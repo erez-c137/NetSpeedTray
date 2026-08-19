@@ -111,6 +111,9 @@ def mock_i18n():
     i18n.ARROW_STYLE_LABEL = "Arrow style"
     i18n.POSITION_GROUP = "Positioning"
     i18n.USE_CUSTOM_ARROW_FONT = "Use Custom Arrow Font"
+    i18n.USE_CUSTOM_ARROW_COLORS = "Custom arrow colors"
+    i18n.ARROW_UP_COLOR_LABEL = "Upload arrow"
+    i18n.ARROW_DOWN_COLOR_LABEL = "Download arrow"
     i18n.FONT_WEIGHT_DEMIBOLD = "Demibold"
     i18n.FONT_WEIGHT_NORMAL = "Normal"
     i18n.FONT_WEIGHT_BOLD = "Bold"
@@ -418,3 +421,40 @@ def test_display_enums_are_segmented_and_round_trip(q_app, mock_i18n, mock_callb
     p.load_settings({"decimal_places": 0})
     got = p.get_settings()
     assert got["decimal_places"] == 0
+
+
+def test_arrow_colors_round_trip(q_app, mock_i18n, mock_callback):
+    """#168: the toggle and both swatches persist, and the swatch rows only appear when enabled."""
+    page = AppearancePage(mock_i18n, mock_callback, MagicMock(), MagicMock())
+
+    page.load_settings({"use_custom_arrow_colors": True,
+                        "arrow_up_color": "#123456",
+                        "arrow_down_color": "#654321"})
+    assert page.use_custom_arrow_colors.isChecked() is True
+    assert page.arrow_colors_container.isVisibleTo(page) is True
+
+    out = page.get_settings()
+    assert out["use_custom_arrow_colors"] is True
+    assert out["arrow_up_color"] == "#123456"
+    assert out["arrow_down_color"] == "#654321"
+
+    # Off hides the swatches but must still round-trip the stored colours.
+    page.load_settings({"use_custom_arrow_colors": False,
+                        "arrow_up_color": "#ABCDEF",
+                        "arrow_down_color": "#FEDCBA"})
+    assert page.arrow_colors_container.isVisibleTo(page) is False
+    out = page.get_settings()
+    assert out["use_custom_arrow_colors"] is False
+    assert out["arrow_up_color"] == "#ABCDEF"
+
+
+def test_arrow_color_widgets_follow_the_dialog_naming_convention(q_app, mock_i18n, mock_callback):
+    """SettingsDialog routes every non-threshold colour back through set_color_input by the
+    "{key}_color_button" / "{key}_color_input" attribute convention. Naming them anything else
+    silently breaks the colour picker with no test to catch it."""
+    page = AppearancePage(mock_i18n, mock_callback, MagicMock(), MagicMock())
+    for key in ("arrow_up", "arrow_down"):
+        assert hasattr(page, f"{key}_color_button")
+        assert hasattr(page, f"{key}_color_input")
+    page.set_color_input("arrow_up", "#0F0F0F")
+    assert page.arrow_up_color_input.text() == "#0F0F0F"

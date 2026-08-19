@@ -2,6 +2,7 @@ import pytest
 from unittest.mock import MagicMock
 from netspeedtray.views.graph.renderer import GraphRenderer
 from netspeedtray.utils.widget_renderer import WidgetRenderer
+from netspeedtray.constants.i18n import I18nStrings
 
 # 1 Mbps expressed in bytes/sec (1_000_000 bits / 8 bits-per-byte).
 MBPS_IN_BYTES = 125_000
@@ -43,12 +44,29 @@ def test_hw_percent_is_plain_text():
     """The percent is plain text now; the fixed percent COLUMN in draw_hardware_stats provides the
     constant width (right-aligned when memory is inline, left-aligned above a memory row), so the
     value reads naturally and still lines up. Regression guard against re-padding the string."""
-    f = WidgetRenderer._fmt_hw_percent
+    f = WidgetRenderer({}, I18nStrings("en_US"))._fmt_hw_percent
     assert f(9) == "9%"
     assert f(10) == "10%"
     assert f(100) == "100%"
     assert f(0) == "0%"
     assert f(7.8) == "7%"            # truncates toward zero
+
+
+def test_hw_percent_without_a_measurement_is_na():
+    """A non-finite value means "enabled, but nothing has measured it" - the widget seeds cpu_usage
+    and gpu_usage with NaN. Rendering that as "0%" showed a confident number that was really just
+    the initialiser, which is precisely what happens under RDP: monitor_thread skips the GPU poll
+    entirely, so update_gpu_usage is never called for the whole session."""
+    f = WidgetRenderer({}, I18nStrings("en_US"))._fmt_hw_percent
+    na = I18nStrings("en_US").DEFAULT_TEXT
+    assert f(float("nan")) == na
+    assert f(float("inf")) == na
+    assert f(float("-inf")) == na
+    assert f(None) == na
+    assert f("nonsense") == na
+    # A real zero is still a real measurement and must NOT become N/A.
+    assert f(0) == "0%"
+    assert f(0.0) == "0%"
 
 def test_peak_label_placement_logic():
     # Mock dependencies for GraphRenderer

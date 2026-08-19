@@ -111,6 +111,37 @@ class AppearancePage(QWidget):
         # Arrow Weight - REMOVED per user request (font support issues)
         layout.addWidget(self.arrow_font_container)
 
+        # Per-direction arrow colour (#168). Off by default: the arrow shares the speed text's pen,
+        # so with colour-coding on the whole line bands together as one signal. Turning this on
+        # splits it into two colour languages (direction vs magnitude) - defensible, but a real
+        # design change, so nobody's widget shifts on upgrade.
+        self.use_custom_arrow_colors = Win11Toggle(label_text="")
+        self.use_custom_arrow_colors.toggled.connect(self._on_arrow_colors_toggle)
+        layout.addWidget(SettingCard(self.i18n.USE_CUSTOM_ARROW_COLORS,
+                                     control=self.use_custom_arrow_colors))
+
+        self.arrow_colors_container = QWidget()
+        arrow_c_layout = QVBoxLayout(self.arrow_colors_container)
+        arrow_c_layout.setContentsMargins(0, 0, 0, 0)
+        arrow_c_layout.setSpacing(tokens.SPACE_XS)
+        for key, label in (("arrow_up", self.i18n.ARROW_UP_COLOR_LABEL),
+                           ("arrow_down", self.i18n.ARROW_DOWN_COLOR_LABEL)):
+            # Widget names must be "{key}_color_button" / "{key}_color_input": SettingsDialog routes
+            # every non-threshold colour back through set_color_input by that convention, so naming
+            # them this way needs zero routing changes.
+            button = QPushButton()
+            button.setObjectName(f"{key}_color")
+            button.setFixedSize(36, 26)
+            button.clicked.connect(lambda _=False, k=f"{key}_color": self.open_color_dialog(k))
+            line = QLineEdit()
+            line.setMaxLength(7)
+            line.setFixedWidth(90)
+            line.textChanged.connect(lambda: self.on_change())
+            setattr(self, f"{key}_color_button", button)
+            setattr(self, f"{key}_color_input", line)
+            arrow_c_layout.addWidget(SettingCard(label, control=self._row(button, line)))
+        layout.addWidget(self.arrow_colors_container)
+
         # --- Background ---
         layout.addWidget(section_header(self.i18n.BACKGROUND_SETTINGS_GROUP_TITLE))
         self.background_color_button = QPushButton()
@@ -210,6 +241,12 @@ class AppearancePage(QWidget):
         
         self.arrow_font_container.setVisible(self.use_separate_arrow_font.isChecked())
 
+        self.use_custom_arrow_colors.setChecked(bool(config.get("use_custom_arrow_colors", False)))
+        for key, cfg_key in (("arrow_up", "arrow_up_color"), ("arrow_down", "arrow_down_color")):
+            self.set_color_input(key, str(config.get(
+                cfg_key, getattr(constants.config.defaults, f"DEFAULT_{cfg_key.upper()}"))))
+        self.arrow_colors_container.setVisible(self.use_custom_arrow_colors.isChecked())
+
         # Mini Graph
         self.enable_graph.setChecked(config.get("graph_enabled", True))
         self.history_duration.setValue(config.get("history_minutes", constants.config.defaults.DEFAULT_HISTORY_MINUTES))
@@ -228,6 +265,9 @@ class AppearancePage(QWidget):
             "background_color": self.background_color_input.text(),
             "background_opacity": self.bg_opacity.value(),
             # Arrow Config
+            "use_custom_arrow_colors": self.use_custom_arrow_colors.isChecked(),
+            "arrow_up_color": self.arrow_up_color_input.text(),
+            "arrow_down_color": self.arrow_down_color_input.text(),
             "use_separate_arrow_font": self.use_separate_arrow_font.isChecked(),
             "arrow_font_family": self.arrow_font_family_label.text(),
             "arrow_font_size": int(self.arrow_font_size.value()),
@@ -268,6 +308,10 @@ class AppearancePage(QWidget):
         if 0 <= idx < len(self.allowed_font_weights):
             w = self.allowed_font_weights[idx]
             self.font_weight.setValueText(self.font_weight_name_map.get(w, str(w)))
+        self.on_change()
+
+    def _on_arrow_colors_toggle(self, checked: bool):
+        self.arrow_colors_container.setVisible(checked)
         self.on_change()
 
     def _on_arrow_font_toggle(self, checked: bool):

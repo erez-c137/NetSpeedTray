@@ -29,7 +29,8 @@ from PyQt6.QtWidgets import (
 # --- Custom Application Imports ---
 from netspeedtray import constants
 from netspeedtray.utils import styles as style_utils
-from netspeedtray.utils.window_state import restore_window_position, save_window_position
+from netspeedtray.utils.window_state import (restore_window_position, save_window_position,
+                                             set_window_always_on_top)
 from netspeedtray.utils.helpers import get_app_data_path, get_app_asset_path
 from netspeedtray.utils.styles import is_dark_mode
 from netspeedtray.utils.support_bundle import build_support_bundle
@@ -722,6 +723,10 @@ class SettingsDialog(QDialog):
             apply_win11_chrome(int(self.winId()), dark=is_dark_mode())
         except Exception as e:
             self.logger.debug(f"Win11 chrome not applied: {e}")
+        # Always-on-top (#213). Applied here rather than as a Qt window flag: the dialog is a cached
+        # instance that is hidden rather than destroyed, and setWindowFlags on a live window
+        # re-creates the native handle - which is exactly what makes frame-vs-client geometry drift.
+        set_window_always_on_top(self, bool(self.config.get("keep_windows_on_top", False)))
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self._cancel_and_close()

@@ -49,6 +49,13 @@ class ConfigConstants:
     DEFAULT_ARROW_FONT_FAMILY: Final[str] = fonts.DEFAULT_FONT
     DEFAULT_ARROW_FONT_SIZE: Final[int] = 10
     DEFAULT_ARROW_FONT_WEIGHT: Final[int] = fonts.WEIGHT_DEMIBOLD
+    # Arrows share the speed text's pen by design - one setPen paints the arrow, the number and the
+    # unit, so with colour-coding on the whole line bands together. Opting in splits that into two
+    # colour languages (direction vs magnitude), which is a real design change, so it is off by
+    # default and existing widgets render byte-identically after an upgrade (#168).
+    DEFAULT_USE_CUSTOM_ARROW_COLORS: Final[bool] = False
+    DEFAULT_ARROW_UP_COLOR: Final[str] = color.GREEN
+    DEFAULT_ARROW_DOWN_COLOR: Final[str] = color.WHITE
     DEFAULT_COLOR: Final[str] = color.WHITE # Referencing color palette
     DEFAULT_COLOR_CODING: Final[bool] = False
     DEFAULT_HIGH_SPEED_THRESHOLD: Final[float] = 10.0
@@ -153,6 +160,10 @@ class ConfigConstants:
         "excluded_interfaces": network.interface.DEFAULT_EXCLUSIONS,
         "keep_data": DEFAULT_KEEP_DATA_DAYS,
         "reduce_motion": False,            # app-wide: disable preview/hold-still animations
+        # ONE flag for both the Settings dialog and the Monitor window. A per-window pair would
+        # double the config surface and the translation cost for no real benefit - someone who
+        # wants the Monitor pinned while they work wants the same of Settings (#213).
+        "keep_windows_on_top": False,
         "show_usage_on_hover": True,       # the hover card's data-usage rows (Today / This month)
         "show_hover_tips": True,           # the hover card's right-click/double-click gesture hint
         "pause_in_menu": False,            # opt-in: surface Pause/Resume in the right-click menu
@@ -202,6 +213,9 @@ class ConfigConstants:
         "arrow_font_size": DEFAULT_ARROW_FONT_SIZE,
         "arrow_font_weight": DEFAULT_ARROW_FONT_WEIGHT,
         # Custom arrow glyphs (#129). Empty = the native i18n arrow (the Windows default).
+        "use_custom_arrow_colors": DEFAULT_USE_CUSTOM_ARROW_COLORS,
+        "arrow_up_color": DEFAULT_ARROW_UP_COLOR,
+        "arrow_down_color": DEFAULT_ARROW_DOWN_COLOR,
         "arrow_up_symbol": "",
         "arrow_down_symbol": "",
         "monitor_cpu_enabled": DEFAULT_MONITOR_CPU_ENABLED,
@@ -283,6 +297,7 @@ class ConfigConstants:
         "excluded_interfaces": {"type": list, "default": network.interface.DEFAULT_EXCLUSIONS, "item_type": str},
         "keep_data": {"type": int, "default": DEFAULT_KEEP_DATA_DAYS, "choices": list(data.retention.DAYS_MAP.values()), "min": min(data.retention.DAYS_MAP.values()), "max": max(data.retention.DAYS_MAP.values())},
         "reduce_motion": {"type": bool, "default": False},
+        "keep_windows_on_top": {"type": bool, "default": False},
         "show_usage_on_hover": {"type": bool, "default": True},
         "show_hover_tips": {"type": bool, "default": True},
         "pause_in_menu": {"type": bool, "default": False},
@@ -300,6 +315,9 @@ class ConfigConstants:
         "arrow_font_family": {"type": str, "default": DEFAULT_ARROW_FONT_FAMILY},
         "arrow_font_size": {"type": int, "default": DEFAULT_ARROW_FONT_SIZE, "min": fonts.FONT_SIZE_MIN, "max": fonts.FONT_SIZE_MAX},
         "arrow_font_weight": {"type": int, "default": DEFAULT_ARROW_FONT_WEIGHT, "min": 1, "max": 1000},
+        "use_custom_arrow_colors": {"type": bool, "default": DEFAULT_USE_CUSTOM_ARROW_COLORS},
+        "arrow_up_color": {"type": str, "default": DEFAULT_ARROW_UP_COLOR, "regex": r"#[0-9a-fA-F]{6}"},
+        "arrow_down_color": {"type": str, "default": DEFAULT_ARROW_DOWN_COLOR, "regex": r"#[0-9a-fA-F]{6}"},
         "arrow_up_symbol": {"type": str, "default": ""},
         "arrow_down_symbol": {"type": str, "default": ""},
         "free_move": {"type": bool, "default": DEFAULT_FREE_MOVE},

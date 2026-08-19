@@ -92,6 +92,9 @@ class RenderConfig:
     # Custom arrow glyphs; empty falls back to the native i18n arrow (the Windows default).
     arrow_up_symbol: str = ""
     arrow_down_symbol: str = ""
+    use_custom_arrow_colors: bool = constants.config.defaults.DEFAULT_USE_CUSTOM_ARROW_COLORS
+    arrow_up_color: str = constants.config.defaults.DEFAULT_ARROW_UP_COLOR
+    arrow_down_color: str = constants.config.defaults.DEFAULT_ARROW_DOWN_COLOR
     
     # New: Hardware Monitoring Toggles
     monitor_cpu_enabled: bool = False
@@ -154,6 +157,12 @@ class RenderConfig:
                 hardware_label_style=str(config.get('hardware_label_style', 'icons_colored')),
                 short_unit_labels=bool(config.get('short_unit_labels', constants.config.defaults.DEFAULT_SHORT_UNIT_LABELS)),
                 max_samples=max_samples,
+                use_custom_arrow_colors=bool(config.get(
+                    'use_custom_arrow_colors', constants.config.defaults.DEFAULT_USE_CUSTOM_ARROW_COLORS)),
+                arrow_up_color=str(config.get(
+                    'arrow_up_color', constants.config.defaults.DEFAULT_ARROW_UP_COLOR)),
+                arrow_down_color=str(config.get(
+                    'arrow_down_color', constants.config.defaults.DEFAULT_ARROW_DOWN_COLOR)),
                 use_separate_arrow_font=bool(config.get('use_separate_arrow_font', False)),
                 arrow_font_family=str(config.get('arrow_font_family', constants.config.defaults.DEFAULT_FONT_FAMILY)),
                 arrow_font_size=int(config.get('arrow_font_size', constants.config.defaults.DEFAULT_FONT_SIZE)),
@@ -250,7 +259,11 @@ class WidgetRenderer:
             'high': QPen(self.high_color),
             'low': QPen(self.low_color),
             'cpu': QPen(QColor(constants.renderer.CPU_LINE_COLOR)),
-            'gpu': QPen(QColor(constants.renderer.GPU_LINE_COLOR))
+            'gpu': QPen(QColor(constants.renderer.GPU_LINE_COLOR)),
+            # Pre-baked like every other pen - _draw_speed_line runs on every repaint, so it must
+            # never allocate. Present unconditionally; whether they are USED is a config check (#168).
+            'arrow_up': QPen(QColor(self.config.arrow_up_color)),
+            'arrow_down': QPen(QColor(self.config.arrow_down_color)),
         }
 
 
@@ -484,7 +497,19 @@ class WidgetRenderer:
                 arrow = config.arrow_up_symbol or self.i18n.UPLOAD_ARROW
             else:
                 arrow = config.arrow_down_symbol or self.i18n.DOWNLOAD_ARROW
+            # Opt-in per-direction arrow colour (#168). Off by default, so the arrow keeps sharing
+            # the band pen set above and the whole line stays one colour signal.
+            if config.use_custom_arrow_colors:
+                painter.setPen(self._cached_pens['arrow_up' if is_upload else 'arrow_down'])
             painter.drawText(arrow_x, y, arrow)
+            if config.use_custom_arrow_colors:
+                # Restore the band pen BEFORE the number. Forgetting this makes the value silently
+                # inherit the arrow colour, which reads as a colour-coding regression (cf. #153).
+                if config.color_coding:
+                    band = self._speed_band(raw_bytes, config.high_speed_threshold, config.low_speed_threshold)
+                    painter.setPen(self._cached_pens[band])
+                else:
+                    painter.setPen(self._cached_pens['default'])
 
         # 2. Draw Value (Right-aligned within fixed/expanded number area)
         painter.setFont(self.font)
@@ -499,16 +524,27 @@ class WidgetRenderer:
 
 
 
-    @staticmethod
-    def _fmt_hw_percent(val: float) -> str:
-        """CPU/GPU percent as plain text ("9%" / "100%").
+    def _fmt_hw_percent(self, val: float) -> str:
+        """CPU/GPU percent as plain text ("9%" / "100%"), or N/A when there is no measurement.
 
         The FIXED percent COLUMN in draw_hardware_stats (not this string) provides the constant width
         now, so the value reads naturally: it's right-aligned in that column when memory is inline
         (stacked - keeps the "|" lined up across rows) and left-aligned when memory is on its own row
         (single-stat modes - lines up under the percent). Either way the segment width never changes,
         so the readout no longer slides or clips (#179 and the side-by-side alignment work).
+
+        A non-finite value means "this stat is enabled but nothing has measured it" - the widget seeds
+        its usage fields with NaN and only replaces them when a real sample arrives. That distinction
+        matters: under RDP the GPU poll is skipped entirely (monitor_thread.run), so no sample ever
+        arrives, and seeding with 0.0 made the widget display a confident "GPU 0%" that was really
+        just the initialiser. N/A is the same idiom _build_hw_suffix already uses for an unavailable
+        temperature or wattage.
         """
+        try:
+            if not math.isfinite(float(val)):
+                return self.i18n.DEFAULT_TEXT
+        except (TypeError, ValueError):
+            return self.i18n.DEFAULT_TEXT
         return f"{int(val)}%"
 
     def draw_hardware_stats(self, painter: QPainter, cpu_usage: Optional[float], gpu_usage: Optional[float],
