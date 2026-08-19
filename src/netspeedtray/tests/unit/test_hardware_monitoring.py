@@ -17,18 +17,25 @@ class TestHardwareMonitoring:
     # GPU hybrid polling
     # ------------------------------------------------------------------
 
-    @patch('win32pdh.GetFormattedCounterValue')
+    @patch('win32pdh.GetFormattedCounterArray')
     @patch('win32pdh.CollectQueryData')
-    def test_poll_gpu_hybrid_success(self, mock_collect, mock_get_val, monitor_thread):
-        """Test successful hybrid GPU stats polling (PDH util/VRAM + nvidia-smi for temp+total+power)."""
+    def test_poll_gpu_hybrid_success(self, mock_collect, mock_get_arr, monitor_thread):
+        """Test successful hybrid GPU stats polling (PDH util/VRAM + nvidia-smi for temp+total+power).
+
+        Util and VRAM are read from WILDCARD counters as instance->value maps (#236): the old
+        per-PID snapshot never saw processes started after launch."""
         monitor_thread._gpu_query = 123
-        monitor_thread._gpu_util_counters = [1]
-        monitor_thread._gpu_vram_counters = [2]
+        monitor_thread._gpu_util_counter = 1
+        monitor_thread._gpu_vram_counter = 2
         monitor_thread._nvidia_smi_path = "nvidia-smi"
         monitor_thread._wmi_ohm = False  # LHM not available; fall back to nvidia-smi
 
-        # Counter 1 (Util): 45.0%, Counter 2 (VRAM used): 1073741824 bytes = 1024 MiB
-        mock_get_val.side_effect = [(None, 45.0), (None, 1073741824.0)]
+        # Util: max across engines = 45.0%. VRAM: 1073741824 bytes = 1024 MiB.
+        mock_get_arr.side_effect = [
+            {"pid_100_luid_0x0_0x1_phys_0_eng_0_engtype_3D": 45.0,
+             "pid_200_luid_0x0_0x1_phys_0_eng_1_engtype_Copy": 12.0},
+            {"luid_0x0_0x1_phys_0": 1073741824.0},
+        ]
 
         # nvidia-smi returns: temperature, memory.total (MiB), power.draw (W)
         mock_smi_output = "52, 8192, 75.3\n"
@@ -54,8 +61,8 @@ class TestHardwareMonitoring:
     def test_poll_gpu_hybrid_lhm_temp(self, mock_collect, mock_get_val, monitor_thread):
         """LHM/OHM GPU temp should be used before nvidia-smi and works for all vendors."""
         monitor_thread._gpu_query = 123
-        monitor_thread._gpu_util_counters = [1]
-        monitor_thread._gpu_vram_counters = []
+        monitor_thread._gpu_util_counter = 1
+        monitor_thread._gpu_vram_counter = None
         monitor_thread._nvidia_smi_path = "nvidia-smi"
 
         mock_get_val.return_value = (None, 55.0)
@@ -80,8 +87,8 @@ class TestHardwareMonitoring:
     def test_poll_gpu_hybrid_no_temp_flag(self, mock_collect, mock_get_val, monitor_thread):
         """With include_temp=False and include_power=False, nvidia-smi is not called."""
         monitor_thread._gpu_query = 123
-        monitor_thread._gpu_util_counters = [1]
-        monitor_thread._gpu_vram_counters = []
+        monitor_thread._gpu_util_counter = 1
+        monitor_thread._gpu_vram_counter = None
         monitor_thread._nvidia_smi_path = "nvidia-smi"
 
         mock_get_val.return_value = (None, 30.0)
@@ -96,12 +103,13 @@ class TestHardwareMonitoring:
     def test_poll_gpu_hybrid_no_smi(self, monitor_thread):
         """AMD/Intel with no nvidia-smi and no LHM: total, temp, and power are None."""
         monitor_thread._gpu_query = 123
-        monitor_thread._gpu_util_counters = [1]
+        monitor_thread._gpu_util_counter = 1
+        monitor_thread._gpu_vram_counter = None
         monitor_thread._nvidia_smi_path = None
         monitor_thread._wmi_ohm = False  # LHM not available
 
         with patch('win32pdh.CollectQueryData'):
-            with patch('win32pdh.GetFormattedCounterValue', return_value=(None, 10.0)):
+            with patch('win32pdh.GetFormattedCounterArray', return_value={"eng_0": 10.0}):
                 result = monitor_thread._poll_gpu_hybrid()
                 assert result.util == 10.0
                 assert result.vram_total is None
@@ -111,13 +119,13 @@ class TestHardwareMonitoring:
     def test_poll_gpu_hybrid_smi_error(self, monitor_thread):
         """nvidia-smi subprocess failure should not crash polling; temp, total, and power stay None."""
         monitor_thread._gpu_query = 123
-        monitor_thread._gpu_util_counters = [1]
-        monitor_thread._gpu_vram_counters = []
+        monitor_thread._gpu_util_counter = 1
+        monitor_thread._gpu_vram_counter = None
         monitor_thread._nvidia_smi_path = "nvidia-smi"
         monitor_thread._wmi_ohm = False  # LHM not available
 
         with patch('win32pdh.CollectQueryData'):
-            with patch('win32pdh.GetFormattedCounterValue', return_value=(None, 20.0)):
+            with patch('win32pdh.GetFormattedCounterArray', return_value={"eng_0": 20.0}):
                 with patch('subprocess.check_output', side_effect=Exception("SMI Error")):
                     result = monitor_thread._poll_gpu_hybrid()
                     assert result.util == 20.0
@@ -134,8 +142,8 @@ class TestHardwareMonitoring:
     def test_poll_gpu_hybrid_power_from_smi(self, mock_collect, mock_get_val, monitor_thread):
         """nvidia-smi should provide GPU power when include_power=True and LHM unavailable."""
         monitor_thread._gpu_query = 123
-        monitor_thread._gpu_util_counters = [1]
-        monitor_thread._gpu_vram_counters = []
+        monitor_thread._gpu_util_counter = 1
+        monitor_thread._gpu_vram_counter = None
         monitor_thread._nvidia_smi_path = "nvidia-smi"
         monitor_thread._wmi_ohm = False
 
@@ -154,8 +162,8 @@ class TestHardwareMonitoring:
     def test_poll_gpu_hybrid_power_from_lhm(self, mock_collect, mock_get_val, monitor_thread):
         """LHM/OHM GPU power sensor should be preferred over nvidia-smi."""
         monitor_thread._gpu_query = 123
-        monitor_thread._gpu_util_counters = [1]
-        monitor_thread._gpu_vram_counters = []
+        monitor_thread._gpu_util_counter = 1
+        monitor_thread._gpu_vram_counter = None
         monitor_thread._nvidia_smi_path = "nvidia-smi"
 
         mock_get_val.return_value = (None, 40.0)
