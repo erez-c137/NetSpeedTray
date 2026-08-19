@@ -715,7 +715,10 @@ class WidgetRenderer:
             except Exception:
                 temp_ok = False
             if temp_ok:
-                parts.append(f"{int(float(temp))}°C")
+                # Round, don't truncate. int() floors, so 27.9 rendered as "27" on the taskbar
+                # while the Monitor window - which uses :.0f everywhere - said "28" for the same
+                # sample, and users reasonably read the disagreement as a bug (#237).
+                parts.append(f"{float(temp):.0f}°C")
                 has_any_data = True
             else:
                 parts.append(None)  # placeholder - will be replaced with N/A if nothing else has data

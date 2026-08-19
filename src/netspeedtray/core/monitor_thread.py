@@ -60,6 +60,16 @@ logger = logging.getLogger("NetSpeedTray.StatsMonitorThread")
 # per-second network readout - never on the GUI thread. See releases/v2.1/KICKOFF.md §2/§3.
 _IDENTITY_POLL_INTERVAL_SEC: float = 5.0
 
+# LibreHardwareMonitor identifier prefixes that scope a sensor to something that is NOT the CPU.
+# The CPU-temperature search falls back to matching sensor *names* (for boards that label the die
+# sensor oddly - Ryzen's "Core (Tctl/Tdie)", super-I/O chips under /lpc/), and a name match must
+# never out-vote an identifier that says the sensor belongs to another device: NVIDIA's sensor is
+# literally named "GPU Core", which matched the "CORE" keyword, so on a hybrid laptop with no
+# CPU-die sensor we reported the GPU's temperature as the CPU's (#237).
+_NON_CPU_SENSOR_IDENTS: tuple = (
+    "/gpu", "/nvme", "/hdd", "/ssd", "/psu", "/battery", "/network", "/ram",
+)
+
 
 class GpuPollResult(NamedTuple):
     """Structured result from GPU polling, replacing opaque 4-tuple."""
@@ -168,6 +178,17 @@ class StatsMonitorThread(QThread):
         circuit-breaker increment / "monitor degraded" notice. So just flag it; run() applies the
         cleanup + LHM re-probe on its own thread at the top of the next tick."""
         self.config = config
+        self._hw_queries_dirty = True
+
+    def invalidate_hardware_queries(self) -> None:
+        """Flag the PDH/WMI hardware handles for a rebuild on the next poll.
+
+        Same mechanism and same thread-safety reasoning as update_config, but for environment
+        changes rather than settings changes: PDH handles do not survive suspend/resume or a GPU
+        adapter appearing or disappearing, and a stale handle just returns nothing forever (a flat
+        0.0 VRAM after every wake - #237). Safe to call from the GUI thread; run() does the actual
+        cleanup on its own thread.
+        """
         self._hw_queries_dirty = True
 
     def _init_gpu_query(self) -> bool:
@@ -723,6 +744,10 @@ class StatsMonitorThread(QThread):
                 for s in sensors:
                     name = str(getattr(s, 'Name', '')).upper()
                     ident = str(getattr(s, 'Identifier', '')).lower()
+                    # The identifier is authoritative: reject other devices before the name
+                    # keywords get a vote, or "GPU Core" matches on "CORE" (#237).
+                    if any(marker in ident for marker in _NON_CPU_SENSOR_IDENTS):
+                        continue
                     is_cpu = (
                         "/amdcpu/" in ident or "/intelcpu/" in ident
                         or any(k in name for k in ("CPU", "CORE", "PACKAGE", "TCTL", "TDIE", "TCCD"))

@@ -316,10 +316,18 @@ class ConfigConstants:
         "background_color": {"type": str, "default": DEFAULT_BACKGROUND_COLOR, "regex": r"#[0-9a-fA-F]{6}"},
         "background_opacity": {"type": int, "default": DEFAULT_BACKGROUND_OPACITY, "min": 0, "max": 100},
         "short_unit_labels": {"type": bool, "default": DEFAULT_SHORT_UNIT_LABELS},
-        # min is negative (PR #165, @rami123): dragging the widget right of the tray boundary produces a
-        # negative offset; clamping it to 0 snapped the widget back left on the next reposition.
-        "tray_offset_x": {"type": int, "default": DEFAULT_TRAY_OFFSET_X, "min": -500, "max": 500},
-        "tray_offset_y": {"type": int, "default": DEFAULT_TRAY_OFFSET_Y, "min": 0, "max": 500},
+        # These are DISTANCES FROM THE SCREEN EDGE, not small nudges, so the bound has to cover a
+        # whole taskbar. InputHandler._save_dragged_position stores `right_boundary - widget_x -
+        # width`, which on a 3840px taskbar is 2000-3000 for any drag toward the left. The old
+        # +/-500 cap rejected those and _validate_value reset them to 0, so dragging the widget
+        # more than ~500px from the tray silently snapped it back on the next load - one reporter's
+        # log had 12 such resets in half an hour (#234). 10000 still catches a corrupt value while
+        # accommodating an 8K display.
+        # min is negative (PR #165, @rami123): dragging the widget past the tray boundary produces a
+        # negative offset; clamping it to 0 snapped the widget back on the next reposition. The same
+        # applies to Y on a vertical taskbar, which was still clamped at 0.
+        "tray_offset_x": {"type": int, "default": DEFAULT_TRAY_OFFSET_X, "min": -10000, "max": 10000},
+        "tray_offset_y": {"type": int, "default": DEFAULT_TRAY_OFFSET_Y, "min": -10000, "max": 10000},
         "secondary_clock_reserve_px": {"type": int, "default": DEFAULT_SECONDARY_CLOCK_RESERVE_PX, "min": 0, "max": 500},
         "graph_window_pos": {"type": (dict, type(None)), "default": None},
         "settings_window_pos": {"type": (dict, type(None)), "default": None},
