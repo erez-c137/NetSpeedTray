@@ -16,7 +16,24 @@ was showing you your *graphics card's* temperature under a CPU label.
 > also means the whole interface mirrors right-to-left. If you preferred it in English, pick
 > **English (US)** in **Settings > General > Language** - the choice sticks.
 
+### Added
+
+- **Optional colours for the upload and download arrows. (#168)** The arrows have always taken their
+  colour from the speed text beside them - one pen paints the arrow, the number and the unit - so
+  with colour coding on, the whole line changes together. That is still the default and nothing
+  moves on upgrade. Turn on **Settings > Appearance > Custom arrow colors** to give each direction
+  its own fixed colour instead. (Thanks to [@VenusGirl](https://github.com/VenusGirl).)
+- **Keep the Settings and Monitor windows on top. (#213)** A new toggle in **Settings > Advanced >
+  Behavior** pins both windows above everything else, so the Monitor can sit over a full-screen app
+  while you watch a transfer. (Thanks to [@CMTriX](https://github.com/CMTriX).)
+
 ### Fixed
+
+- **The widget could show "GPU 0%" without ever having measured the GPU.** Over a Remote Desktop
+  connection NetSpeedTray deliberately skips GPU polling, but the readout still displayed a
+  confident `0%` - which was really just the value it starts up with, not a measurement. An
+  unmeasured CPU or GPU reading now shows **N/A**, the same way an unavailable temperature or
+  wattage already did. A genuine 0% on an idle GPU is still shown as 0%.
 
 - **"Auto-detect (system)" never detected anything. (#234)** NetSpeedTray asked Windows for your
   system language, but on Windows that call returns a name like `Korean_Korea` rather than the
