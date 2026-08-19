@@ -60,6 +60,17 @@ class I18nStrings:
     # can be added later without touching the direction logic.
     RTL_LANGUAGES: set = {"he_IL"}
 
+    # Locale codes that need an explicit target because a bare prefix scan would pick the wrong
+    # file. Windows reports script-neutral Chinese as zh_CHS/zh_CHT (LCIDs 4 and 31748), and the
+    # regional Chinese codes don't say which script they use - but LANGUAGE_MAP lists zh_CN before
+    # zh_TW, so a prefix scan hands every Traditional user the Simplified file. Hong Kong and Macau
+    # are Traditional; Singapore is Simplified. zh_Hans/zh_Hant are included because newer CPython
+    # releases spell the neutral codes that way. Keys are lower-cased for matching.
+    LANGUAGE_ALIASES: Dict[str, str] = {
+        "zh_chs": "zh_CN", "zh_hans": "zh_CN", "zh_sg": "zh_CN",
+        "zh_cht": "zh_TW", "zh_hant": "zh_TW", "zh_hk": "zh_TW", "zh_mo": "zh_TW",
+    }
+
     def __init__(self, language_code: Optional[str] = None) -> None:
         """
         Initialize the I18nStrings instance by loading language files.
@@ -97,31 +108,109 @@ class I18nStrings:
             logger.error(f"Failed to load or parse language file {lang_file}: {e}")
             return {}
 
+    @classmethod
+    def resolve_language(cls, detected: Optional[str]) -> str:
+        """Map an arbitrary locale code onto one of our shipped locales, else en_US.
+
+        Handles three cases in order: an explicit alias (Chinese script disambiguation), an exact
+        shipped locale, and a regional variant of a language we do ship (de_AT -> de_DE,
+        es_MX -> es_ES, fr_CA -> fr_FR, nl_BE -> nl_NL). Matching is case-insensitive and accepts
+        either separator, so 'ko-kr' and 'ko_KR' both work.
+        """
+        if not detected:
+            return "en_US"
+        normalized = detected.replace('-', '_')
+        lowered = normalized.lower()
+
+        alias = cls.LANGUAGE_ALIASES.get(lowered)
+        if alias:
+            return alias
+
+        for code in cls.LANGUAGE_MAP:
+            if code.lower() == lowered:
+                return code
+
+        base = lowered.split('_')[0]
+        if base:
+            for code in cls.LANGUAGE_MAP:
+                if code.lower().startswith(base + '_'):
+                    return code
+
+        return "en_US"
+
+    @staticmethod
+    def _read_ui_language() -> Optional[str]:
+        """The Windows *display* language as a locale code, or None off Windows."""
+        try:
+            # Imported lazily and dereferenced inside the try: `ctypes.windll` does not exist off
+            # Windows, and this module is imported by the whole test suite.
+            import ctypes
+            lcid = ctypes.windll.kernel32.GetUserDefaultUILanguage()
+            name = locale.windows_locale.get(lcid)
+            if name:
+                return name
+            logger.debug("UI language LCID %s has no locale.windows_locale entry.", lcid)
+        except Exception as e:
+            logger.debug("GetUserDefaultUILanguage unavailable (%s); using the locale module.", e)
+        return None
+
+    @staticmethod
+    def _read_format_locale() -> Optional[str]:
+        """The regional-format locale, as the C runtime reports it."""
+        try:
+            detected_locale = locale.getlocale(locale.LC_CTYPE)
+            if detected_locale and detected_locale[0]:
+                return detected_locale[0]
+        except Exception as e:
+            logger.debug("locale.getlocale failed (%s).", e)
+        return None
+
+    @classmethod
+    def _read_system_locale(cls) -> Optional[str]:
+        """The raw system locale code, preferring the Windows *display* language.
+
+        Two independent signals, because neither alone is sufficient:
+
+        * The **display language** (`GetUserDefaultUILanguage`) is the language Windows itself is
+          shown in, and is what a user means by "my system language". This is the signal we want.
+        * The **regional format** (`locale.getlocale`) is the number/date locale, and is what the
+          old code read. On Windows it returns the C-runtime name - 'Korean_Korea', not 'ko_KR' -
+          which matches no locale file we ship, so 9 of our 13 languages silently fell back to
+          English (#234). Only German, Spanish and French ever resolved, because CPython's
+          `locale_alias` happens to carry their CRT names.
+
+        Display language wins. But when it is English we still consult the format locale, because a
+        German user on an English-language Windows with German regional format *did* get a German
+        app before this fix, and a patch release must not silently take that away.
+        """
+        ui_language = cls._read_ui_language()
+        if ui_language and cls.resolve_language(ui_language) != "en_US":
+            return ui_language
+
+        format_language = cls._read_format_locale()
+        if format_language and cls.resolve_language(format_language) != "en_US":
+            return format_language
+
+        return ui_language or format_language
+
+    @classmethod
+    def detect_system_language(cls) -> str:
+        """The locale that auto-detect resolves to on this machine.
+
+        Public because Settings shows it on the "Auto-detect (system)" row - without that, a user
+        whose language silently failed to resolve has no way to tell.
+        """
+        return cls.resolve_language(cls._read_system_locale())
+
     def _determine_and_set_language(self, language_code: Optional[str]) -> None:
         """Determines the most appropriate language to use and loads it."""
         if language_code:
-            detected_language = language_code.replace('-', '_')
+            effective_language = self.resolve_language(language_code)
         else:
-            try:
-                detected_locale = locale.getlocale(locale.LC_CTYPE)
-                detected_language = detected_locale[0].replace('-', '_') if detected_locale and detected_locale[0] else "en_US"
-            except Exception as e:
-                logger.warning(f"Failed to get default locale: {e}, falling back to en_US.")
-                detected_language = "en_US"
-        
-        # Use the keys from LANGUAGE_MAP as the source of truth for available languages
-        available_languages = list(self.LANGUAGE_MAP.keys())
+            raw = self._read_system_locale()
+            effective_language = self.resolve_language(raw)
+            logger.info("Language auto-detect: system reported %r -> using '%s'.", raw, effective_language)
 
-        effective_language = "en_US"
-        if detected_language in available_languages:
-            effective_language = detected_language
-        else:
-            base_language = detected_language.split('_')[0]
-            for supported_lang in available_languages:
-                if supported_lang.startswith(base_language + '_'):
-                    effective_language = supported_lang
-                    break
-        
         self.set_language(effective_language)
 
     def __getattr__(self, name: str) -> str:

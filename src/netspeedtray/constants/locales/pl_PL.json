@@ -423,6 +423,7 @@
     "STATS_DETAIL_EXPORT_SAVE": "Zapisz eksport",
     "STATS_DETAIL_EXPORT_ZIP_LABEL": "Archiwum ZIP",
     "LANGUAGE_AUTO_DETECT": "Wykryj automatycznie (system)",
+    "LANGUAGE_DETECTED_NOTE": "Wykryto: {language}",
     "SETTINGS_SAVE_FAILED": "Nie udało się zapisać ustawień - jedna ze stron ustawień nie dostarczyła swoich wartości, więc zmiany nie zostały zastosowane. Szczegóły znajdziesz w dzienniku.",
     "INTERACTION_GROUP_TITLE": "Interakcja",
     "DOUBLE_CLICK_ACTION_LABEL": "Akcja podwójnego kliknięcia",

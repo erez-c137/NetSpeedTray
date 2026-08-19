@@ -36,8 +36,31 @@ class GeneralPage(QWidget):
             getattr(self.i18n, "LANGUAGE_AUTO_DETECT", "Auto-detect (system)"), userData=None)
         for code, name in self.i18n.LANGUAGE_MAP.items():
             self.language_combo.addItem(name, userData=code)
+        # Qt defaults to 10 visible rows; we ship 13 languages plus the auto-detect row, so the
+        # last entries sat below the fold with no wheel scrolling in the popup (#237).
+        self.language_combo.setMaxVisibleItems(self.language_combo.count())
         self.language_combo.currentIndexChanged.connect(self.on_change)
-        layout.addWidget(SettingCard(self.i18n.LANGUAGE_LABEL, control=self.language_combo))
+
+        # Name what auto-detect resolved to. Without it the row is unfalsifiable - a user whose
+        # language silently failed to resolve sees a correct-looking "Auto-detect (system)" while
+        # the app runs in English, which is exactly how #234 hid for a year.
+        #
+        # It goes in the card's description, NOT the combo row: the combo is pinned to 220px and
+        # never grows to fit (AdjustToMinimumContentsLengthWithIcon with minimumContentsLength 0),
+        # and the closed label is drawn via drawItemText, which hard-clips without even an
+        # ellipsis. A composed row label measured 420-684px against ~178px of usable width, so it
+        # was invisible in all 13 locales. The description word-wraps at full card width.
+        detected_note = ""
+        try:
+            resolved_name = self.i18n.LANGUAGE_MAP.get(self.i18n.detect_system_language())
+            if resolved_name:
+                detected_note = getattr(
+                    self.i18n, "LANGUAGE_DETECTED_NOTE", "Detected: {language}"
+                ).format(language=resolved_name)
+        except Exception:
+            pass  # cosmetic only; never block the settings page over a label
+        layout.addWidget(SettingCard(self.i18n.LANGUAGE_LABEL, description=detected_note,
+                                     control=self.language_combo))
 
         # --- Update Rate ---
         layout.addWidget(section_header(self.i18n.UPDATE_RATE_GROUP_TITLE))

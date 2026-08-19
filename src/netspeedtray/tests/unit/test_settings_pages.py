@@ -197,6 +197,75 @@ def test_language_none_round_trips_as_auto_detect(q_app, mock_i18n, mock_callbac
     page.load_settings({"language": "fr_FR", "update_rate": 1.0}, is_startup_enabled=False)
     assert page.get_settings()["language"] == "fr_FR"
 
+
+def _language_card_description(page):
+    """The muted description on the Language SettingCard, or '' when there is none."""
+    from netspeedtray.utils.components import SettingCard
+    for card in page.findChildren(SettingCard):
+        if card._title_label.text() == "Language":
+            return getattr(card, "_desc_label", None).text() if hasattr(card, "_desc_label") else ""
+    raise AssertionError("Language SettingCard not found")
+
+
+def test_detected_language_is_named_on_the_language_card(q_app, mock_i18n, mock_callback):
+    """#234: the auto-detect affordance must name what it resolved to. Without it the row is
+    unfalsifiable - a user whose language silently fell back to English sees a correct-looking
+    "Auto-detect (system)" and has no way to know, which is how this hid for a year.
+
+    It lives on the card description, not the combo row: the combo is pinned to 220px and hard
+    clips, so a composed row label (420-684px across our locales) was invisible everywhere."""
+    mock_i18n.LANGUAGE_AUTO_DETECT = "Auto-detect (system)"
+    mock_i18n.LANGUAGE_DETECTED_NOTE = "Detected: {language}"
+    mock_i18n.detect_system_language.return_value = "fr_FR"
+
+    page = GeneralPage(mock_i18n, mock_callback)
+
+    assert page.language_combo.itemData(0) is None            # still the auto-detect row
+    assert page.language_combo.itemText(0) == "Auto-detect (system)"   # row stays short
+    assert _language_card_description(page) == "Detected: French"
+
+
+def test_language_card_degrades_when_detection_fails(q_app, mock_i18n, mock_callback):
+    """The note is cosmetic - a detection failure must never break the settings page."""
+    mock_i18n.LANGUAGE_AUTO_DETECT = "Auto-detect (system)"
+    mock_i18n.LANGUAGE_DETECTED_NOTE = "Detected: {language}"
+    mock_i18n.detect_system_language.side_effect = OSError("no windll")
+
+    page = GeneralPage(mock_i18n, mock_callback)
+
+    assert page.language_combo.itemData(0) is None
+    assert page.language_combo.itemText(0) == "Auto-detect (system)"
+    assert _language_card_description(page) == ""
+    assert page.get_settings()["language"] is None
+
+
+@pytest.mark.parametrize("locale_code", list(constants.i18n.I18nStrings.LANGUAGE_MAP))
+def test_combo_rows_are_never_composed_with_the_detected_language(q_app, mock_callback, locale_code):
+    """The reason the detected language lives on the card description instead of the combo row.
+
+    The combo is pinned to 220px and never grows to fit, and its closed label is hard-clipped
+    rather than elided - a row composed as "<auto-detect> - <endonym>" measured 420-684px across
+    our locales and was invisible in every one of them. Pixel widths depend on the platform font,
+    so this asserts the structural property instead: every row is exactly one label."""
+    i18n = constants.i18n.I18nStrings(locale_code)
+    page = GeneralPage(i18n, mock_callback)
+
+    expected = [i18n.LANGUAGE_AUTO_DETECT] + list(i18n.LANGUAGE_MAP.values())
+    actual = [page.language_combo.itemText(r) for r in range(page.language_combo.count())]
+    assert actual == expected
+
+
+def test_language_dropdown_shows_every_language(q_app, mock_callback):
+    """#237: Qt defaults to 10 visible rows and we ship 13 languages plus auto-detect, so the
+    last entries sat below the fold - a zh_CN user could not see their own language."""
+    real_i18n = constants.i18n.I18nStrings("en_US")
+    page = GeneralPage(real_i18n, mock_callback)
+
+    expected = len(real_i18n.LANGUAGE_MAP) + 1               # + the auto-detect row
+    assert page.language_combo.count() == expected
+    assert page.language_combo.maxVisibleItems() >= expected, \
+        "every shipped language must be reachable without arrow-keying past the fold"
+
 def test_general_click_actions_round_trip(q_app, mock_i18n, mock_callback):
     """#165: double/middle-click actions load + save through the General page."""
     page = GeneralPage(mock_i18n, mock_callback)

@@ -423,6 +423,7 @@
     "STATS_DETAIL_EXPORT_SAVE": "내보내기 저장",
     "STATS_DETAIL_EXPORT_ZIP_LABEL": "ZIP 압축파일",
     "LANGUAGE_AUTO_DETECT": "자동 감지 (시스템)",
+    "LANGUAGE_DETECTED_NOTE": "감지됨: {language}",
     "SETTINGS_SAVE_FAILED": "설정을 저장할 수 없습니다 - 설정 페이지에서 값을 제공하지 못해 변경 사항이 적용되지 않았습니다. 자세한 내용은 로그를 참조하세요.",
     "INTERACTION_GROUP_TITLE": "상호작용",
     "DOUBLE_CLICK_ACTION_LABEL": "더블 클릭 동작",

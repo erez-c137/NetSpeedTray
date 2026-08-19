@@ -1209,6 +1209,13 @@ class NetworkSpeedWidget(QWidget):
         """
         self.logger.debug("Environment changed (%s) - re-asserting widget.", reason)
         try:
+            # PDH counter handles do not survive a suspend cycle or a GPU adapter coming and going:
+            # they keep returning nothing, so VRAM reads a flat 0.0 after every wake. Nothing else
+            # invalidated them - the only path that did was update_config, so opening Settings and
+            # clicking Save was genuinely the user's sole recovery (#237). Flag them here; the
+            # worker rebuilds on its own thread at the top of the next tick.
+            if getattr(self, "monitor_thread", None):
+                self.monitor_thread.invalidate_hardware_queries()
             self.update_position()
             for i in range(1, constants.timeouts.TASKBAR_RESTART_RETRIES + 1):
                 QTimer.singleShot(i * constants.timeouts.TASKBAR_RESTART_RECOVERY_DELAY_MS,

@@ -423,6 +423,7 @@
     "STATS_DETAIL_EXPORT_SAVE": "儲存匯出檔案",
     "STATS_DETAIL_EXPORT_ZIP_LABEL": "Zip 壓縮檔",
     "LANGUAGE_AUTO_DETECT": "自動偵測 (系統語言)",
+    "LANGUAGE_DETECTED_NOTE": "偵測到：{language}",
     "SETTINGS_SAVE_FAILED": "無法儲存設定 - 有個設定頁面未能提供其數值，因此變更未套用。詳情請參閱紀錄檔。",
     "INTERACTION_GROUP_TITLE": "互動",
     "DOUBLE_CLICK_ACTION_LABEL": "滑鼠左鍵點兩下動作",

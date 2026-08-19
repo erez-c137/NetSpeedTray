@@ -423,6 +423,7 @@
     "STATS_DETAIL_EXPORT_SAVE": "Сохранить экспорт",
     "STATS_DETAIL_EXPORT_ZIP_LABEL": "ZIP-архив",
     "LANGUAGE_AUTO_DETECT": "Автоопределение (система)",
+    "LANGUAGE_DETECTED_NOTE": "Обнаружено: {language}",
     "SETTINGS_SAVE_FAILED": "Не удалось сохранить настройки - одна из страниц настроек не предоставила свои значения, поэтому изменения не были применены. Подробности см. в журнале.",
     "INTERACTION_GROUP_TITLE": "Взаимодействие",
     "DOUBLE_CLICK_ACTION_LABEL": "Действие двойного щелчка",

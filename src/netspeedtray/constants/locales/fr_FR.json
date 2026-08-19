@@ -423,6 +423,7 @@
     "STATS_DETAIL_EXPORT_SAVE": "Enregistrer l'export",
     "STATS_DETAIL_EXPORT_ZIP_LABEL": "Archive ZIP",
     "LANGUAGE_AUTO_DETECT": "Détection automatique (système)",
+    "LANGUAGE_DETECTED_NOTE": "Détecté : {language}",
     "SETTINGS_SAVE_FAILED": "Impossible d'enregistrer les paramètres : une page de paramètres n'a pas fourni ses valeurs, vos modifications n'ont donc pas été appliquées. Consultez le journal pour plus de détails.",
     "INTERACTION_GROUP_TITLE": "Interaction",
     "DOUBLE_CLICK_ACTION_LABEL": "Action du double-clic",
