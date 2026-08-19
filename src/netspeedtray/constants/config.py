@@ -49,6 +49,13 @@ class ConfigConstants:
     DEFAULT_ARROW_FONT_FAMILY: Final[str] = fonts.DEFAULT_FONT
     DEFAULT_ARROW_FONT_SIZE: Final[int] = 10
     DEFAULT_ARROW_FONT_WEIGHT: Final[int] = fonts.WEIGHT_DEMIBOLD
+    # Arrows share the speed text's pen by design - one setPen paints the arrow, the number and the
+    # unit, so with colour-coding on the whole line bands together. Opting in splits that into two
+    # colour languages (direction vs magnitude), which is a real design change, so it is off by
+    # default and existing widgets render byte-identically after an upgrade (#168).
+    DEFAULT_USE_CUSTOM_ARROW_COLORS: Final[bool] = False
+    DEFAULT_ARROW_UP_COLOR: Final[str] = color.GREEN
+    DEFAULT_ARROW_DOWN_COLOR: Final[str] = color.WHITE
     DEFAULT_COLOR: Final[str] = color.WHITE # Referencing color palette
     DEFAULT_COLOR_CODING: Final[bool] = False
     DEFAULT_HIGH_SPEED_THRESHOLD: Final[float] = 10.0
@@ -202,6 +209,9 @@ class ConfigConstants:
         "arrow_font_size": DEFAULT_ARROW_FONT_SIZE,
         "arrow_font_weight": DEFAULT_ARROW_FONT_WEIGHT,
         # Custom arrow glyphs (#129). Empty = the native i18n arrow (the Windows default).
+        "use_custom_arrow_colors": DEFAULT_USE_CUSTOM_ARROW_COLORS,
+        "arrow_up_color": DEFAULT_ARROW_UP_COLOR,
+        "arrow_down_color": DEFAULT_ARROW_DOWN_COLOR,
         "arrow_up_symbol": "",
         "arrow_down_symbol": "",
         "monitor_cpu_enabled": DEFAULT_MONITOR_CPU_ENABLED,
@@ -300,6 +310,9 @@ class ConfigConstants:
         "arrow_font_family": {"type": str, "default": DEFAULT_ARROW_FONT_FAMILY},
         "arrow_font_size": {"type": int, "default": DEFAULT_ARROW_FONT_SIZE, "min": fonts.FONT_SIZE_MIN, "max": fonts.FONT_SIZE_MAX},
         "arrow_font_weight": {"type": int, "default": DEFAULT_ARROW_FONT_WEIGHT, "min": 1, "max": 1000},
+        "use_custom_arrow_colors": {"type": bool, "default": DEFAULT_USE_CUSTOM_ARROW_COLORS},
+        "arrow_up_color": {"type": str, "default": DEFAULT_ARROW_UP_COLOR, "regex": r"#[0-9a-fA-F]{6}"},
+        "arrow_down_color": {"type": str, "default": DEFAULT_ARROW_DOWN_COLOR, "regex": r"#[0-9a-fA-F]{6}"},
         "arrow_up_symbol": {"type": str, "default": ""},
         "arrow_down_symbol": {"type": str, "default": ""},
         "free_move": {"type": bool, "default": DEFAULT_FREE_MOVE},
