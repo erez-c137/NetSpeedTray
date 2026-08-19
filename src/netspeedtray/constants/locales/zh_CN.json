@@ -423,6 +423,7 @@
     "STATS_DETAIL_EXPORT_SAVE": "保存并导出",
     "STATS_DETAIL_EXPORT_ZIP_LABEL": "Zip 压缩包",
     "LANGUAGE_AUTO_DETECT": "自动检测（跟随系统）",
+    "LANGUAGE_DETECTED_NOTE": "检测到：{language}",
     "SETTINGS_SAVE_FAILED": "设置保存失败——某些设置页面未能返回数据，更改未生效。详情请查看日志。",
     "INTERACTION_GROUP_TITLE": "交互",
     "DOUBLE_CLICK_ACTION_LABEL": "双击操作",

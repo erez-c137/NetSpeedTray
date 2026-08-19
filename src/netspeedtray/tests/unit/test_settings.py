@@ -34,7 +34,10 @@ def settings_dialog(q_app, mock_parent_widget):
         main_widget=mock_parent_widget, # Pass the mock to the correct argument
         config=mock_parent_widget.config.copy(),
         version="1.2.1",
-        i18n=constants.i18n.get_i18n(),
+        # Pin to en_US. A bare get_i18n() seeds the process-wide singleton through the auto-detect
+        # branch, which only landed on English because detection was broken; now that it works, a
+        # contributor on non-English Windows would run this suite in their own locale.
+        i18n=constants.i18n.I18nStrings("en_US"),
         available_interfaces=mock_parent_widget.get_available_interfaces(),
         is_startup_enabled=mock_parent_widget.is_startup_enabled()
     )

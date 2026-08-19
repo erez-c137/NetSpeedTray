@@ -423,6 +423,7 @@
     "STATS_DETAIL_EXPORT_SAVE": "Save export",
     "STATS_DETAIL_EXPORT_ZIP_LABEL": "Zip archive",
     "LANGUAGE_AUTO_DETECT": "Auto-detect (system)",
+    "LANGUAGE_DETECTED_NOTE": "Detected: {language}",
     "SETTINGS_SAVE_FAILED": "Settings could not be saved - a settings page failed to provide its values, so your changes were not applied. See the log for details.",
     "INTERACTION_GROUP_TITLE": "Interaction",
     "DOUBLE_CLICK_ACTION_LABEL": "Double-click action",

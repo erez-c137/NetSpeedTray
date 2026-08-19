@@ -423,6 +423,7 @@
     "STATS_DETAIL_EXPORT_SAVE": "エクスポートを保存",
     "STATS_DETAIL_EXPORT_ZIP_LABEL": "ZIP アーカイブ",
     "LANGUAGE_AUTO_DETECT": "自動検出（システム）",
+    "LANGUAGE_DETECTED_NOTE": "検出: {language}",
     "SETTINGS_SAVE_FAILED": "設定を保存できませんでした - 設定ページが値を取得できなかったため、変更は適用されませんでした。詳細はログを参照してください。",
     "INTERACTION_GROUP_TITLE": "操作",
     "DOUBLE_CLICK_ACTION_LABEL": "ダブルクリックの動作",

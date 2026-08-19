@@ -423,6 +423,7 @@
     "STATS_DETAIL_EXPORT_SAVE": "Shrani izvoz",
     "STATS_DETAIL_EXPORT_ZIP_LABEL": "Arhiv ZIP",
     "LANGUAGE_AUTO_DETECT": "Samodejno zaznaj (sistem)",
+    "LANGUAGE_DETECTED_NOTE": "Zaznano: {language}",
     "SETTINGS_SAVE_FAILED": "Nastavitev ni bilo mogoče shraniti - stran z nastavitvami ni posredovala svojih vrednosti, zato spremembe niso bile uveljavljene. Za podrobnosti glejte dnevnik.",
     "INTERACTION_GROUP_TITLE": "Interakcija",
     "DOUBLE_CLICK_ACTION_LABEL": "Dejanje ob dvojnem kliku",

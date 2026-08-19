@@ -423,6 +423,7 @@
     "STATS_DETAIL_EXPORT_SAVE": "Export opslaan",
     "STATS_DETAIL_EXPORT_ZIP_LABEL": "Zip-archief",
     "LANGUAGE_AUTO_DETECT": "Automatisch detecteren (systeem)",
+    "LANGUAGE_DETECTED_NOTE": "Gedetecteerd: {language}",
     "SETTINGS_SAVE_FAILED": "Instellingen konden niet worden opgeslagen - een instellingenpagina kon zijn waarden niet leveren, dus je wijzigingen zijn niet toegepast. Zie het logboek voor meer details.",
     "INTERACTION_GROUP_TITLE": "Interactie",
     "DOUBLE_CLICK_ACTION_LABEL": "Actie bij dubbelklik",

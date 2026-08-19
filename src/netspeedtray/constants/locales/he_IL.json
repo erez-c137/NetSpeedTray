@@ -423,6 +423,7 @@
     "STATS_DETAIL_EXPORT_SAVE": "שמור ייצוא",
     "STATS_DETAIL_EXPORT_ZIP_LABEL": "ארכיון Zip",
     "LANGUAGE_AUTO_DETECT": "זיהוי אוטומטי (מערכת)",
+    "LANGUAGE_DETECTED_NOTE": "זוהה: {language}",
     "SETTINGS_SAVE_FAILED": "לא ניתן היה לשמור את ההגדרות - עמוד הגדרות נכשל בהספקת הערכים שלו, ולכן השינויים שלך לא הוחלו. עיין ביומן לפרטים.",
     "INTERACTION_GROUP_TITLE": "אינטראקציה",
     "DOUBLE_CLICK_ACTION_LABEL": "פעולת לחיצה כפולה",

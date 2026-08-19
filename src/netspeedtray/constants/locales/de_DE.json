@@ -423,6 +423,7 @@
     "STATS_DETAIL_EXPORT_SAVE": "Export speichern",
     "STATS_DETAIL_EXPORT_ZIP_LABEL": "ZIP-Archiv",
     "LANGUAGE_AUTO_DETECT": "Automatisch (System)",
+    "LANGUAGE_DETECTED_NOTE": "Erkannt: {language}",
     "SETTINGS_SAVE_FAILED": "Einstellungen konnten nicht gespeichert werden - eine Einstellungsseite konnte ihre Werte nicht bereitstellen, daher wurden Ihre Änderungen nicht übernommen. Weitere Informationen finden Sie im Protokoll.",
     "INTERACTION_GROUP_TITLE": "Interaktion",
     "DOUBLE_CLICK_ACTION_LABEL": "Aktion bei Doppelklick",
