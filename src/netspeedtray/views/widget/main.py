@@ -123,8 +123,14 @@ class NetworkSpeedWidget(QWidget):
         
         self.upload_speed: float = 0.0
         self.download_speed: float = 0.0
-        self.cpu_usage: float = 0.0
-        self.gpu_usage: float = 0.0
+        # NaN, not 0.0: these are seeded before anything has measured them, and 0.0 is a value a
+        # user reads as a measurement. Under RDP the GPU poll is skipped outright (monitor_thread.run
+        # gates the whole block on `not _in_rdp`), so update_gpu_usage is NEVER called and the seed is
+        # all the widget ever has - it rendered a confident "GPU 0%" for the entire session. The
+        # renderer turns a non-finite value into N/A, the same way it already does for an unavailable
+        # temperature or wattage.
+        self.cpu_usage: float = float('nan')
+        self.gpu_usage: float = float('nan')
         self.network_identity: Optional[object] = None  # NetworkIdentity|None: Wi-Fi band/SSID, set by update_network_identity (v2.1)
         self._identity_reserve_sig_last: object = None  # last identity reserve signature (band-shown, ssid); re-layout on change
         self._location_prompt_shown: bool = False  # SSID Location nudge shown at most once per session

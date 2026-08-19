@@ -97,3 +97,33 @@ def test_preview_widget_constructs_and_updates(q_app):
     assert pv.config["widget_display_mode"] == "combined"
     assert pv._renderer.config.widget_display_mode == "combined"
     pv.set_metrics(WidgetMetrics(upload_mbps=1.0, download_mbps=2.0))  # must not raise
+
+
+def test_unmeasured_gpu_renders_na_not_zero(q_app):
+    """A GPU stat that was never measured must not paint as "0%".
+
+    Under RDP the GPU poll is skipped for the whole session (monitor_thread.run gates the block on
+    `not _in_rdp`), so `update_gpu_usage` is never called and the widget only ever has its seed
+    value. Seeding 0.0 made that seed indistinguishable from a real idle GPU. The widget now seeds
+    NaN, which the renderer paints as N/A.
+    """
+    cfg = _base_config(widget_display_mode="gpu_only")
+
+    measured_idle = _render_to_bytes(cfg, WidgetMetrics(gpu_usage=0.0), cycle_mode="gpu_only")
+    never_measured = _render_to_bytes(cfg, WidgetMetrics(gpu_usage=float("nan")), cycle_mode="gpu_only")
+
+    # It must still paint - the segment is enabled, so blanking it would just leave a hole.
+    assert _solid_pixels(never_measured) > 0
+    # And it must not be pixel-identical to a genuine 0% reading.
+    assert never_measured != measured_idle, \
+        "an unmeasured GPU painted the same as a measured 0% - the seed is being shown as data"
+
+
+def test_a_real_zero_still_paints_as_zero(q_app):
+    """The converse guard: 0% is a legitimate measurement on an idle GPU and must keep rendering as
+    a number, not get swept into N/A."""
+    cfg = _base_config(widget_display_mode="gpu_only")
+    a = _render_to_bytes(cfg, WidgetMetrics(gpu_usage=0.0), cycle_mode="gpu_only")
+    b = _render_to_bytes(cfg, WidgetMetrics(gpu_usage=0.0), cycle_mode="gpu_only")
+    assert a == b
+    assert _solid_pixels(a) > 0

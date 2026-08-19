@@ -499,16 +499,27 @@ class WidgetRenderer:
 
 
 
-    @staticmethod
-    def _fmt_hw_percent(val: float) -> str:
-        """CPU/GPU percent as plain text ("9%" / "100%").
+    def _fmt_hw_percent(self, val: float) -> str:
+        """CPU/GPU percent as plain text ("9%" / "100%"), or N/A when there is no measurement.
 
         The FIXED percent COLUMN in draw_hardware_stats (not this string) provides the constant width
         now, so the value reads naturally: it's right-aligned in that column when memory is inline
         (stacked - keeps the "|" lined up across rows) and left-aligned when memory is on its own row
         (single-stat modes - lines up under the percent). Either way the segment width never changes,
         so the readout no longer slides or clips (#179 and the side-by-side alignment work).
+
+        A non-finite value means "this stat is enabled but nothing has measured it" - the widget seeds
+        its usage fields with NaN and only replaces them when a real sample arrives. That distinction
+        matters: under RDP the GPU poll is skipped entirely (monitor_thread.run), so no sample ever
+        arrives, and seeding with 0.0 made the widget display a confident "GPU 0%" that was really
+        just the initialiser. N/A is the same idiom _build_hw_suffix already uses for an unavailable
+        temperature or wattage.
         """
+        try:
+            if not math.isfinite(float(val)):
+                return self.i18n.DEFAULT_TEXT
+        except (TypeError, ValueError):
+            return self.i18n.DEFAULT_TEXT
         return f"{int(val)}%"
 
     def draw_hardware_stats(self, painter: QPainter, cpu_usage: Optional[float], gpu_usage: Optional[float],
