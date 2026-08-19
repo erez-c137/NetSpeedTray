@@ -264,6 +264,7 @@
     "ADVANCED_DATA_GROUP": "Données",
     "ADVANCED_KEEP_HISTORY_LABEL": "Conserver l'historique pendant",
     "ADVANCED_REDUCE_MOTION_LABEL": "Réduire les animations",
+    "KEEP_WINDOWS_ON_TOP_LABEL": "Garder les fenêtres Paramètres et Moniteur au premier plan",
     "ADVANCED_RESET_GROUP": "Réinitialisation",
     "ADVANCED_RESET_NOTE": "Rétablir les paramètres par défaut. Cette action est irréversible.",
     "ADVANCED_RESET_PAGE_BUTTON": "Réinitialiser cette page",

@@ -264,6 +264,7 @@
     "ADVANCED_DATA_GROUP": "資料",
     "ADVANCED_KEEP_HISTORY_LABEL": "保留歷史紀錄期間",
     "ADVANCED_REDUCE_MOTION_LABEL": "減少動態效果 (較少動畫)",
+    "KEEP_WINDOWS_ON_TOP_LABEL": "設定與監控視窗保持在最上層",
     "ADVANCED_RESET_GROUP": "重設",
     "ADVANCED_RESET_NOTE": "將設定還原為預設值。此動作無法復原。",
     "ADVANCED_RESET_PAGE_BUTTON": "重設此頁面",

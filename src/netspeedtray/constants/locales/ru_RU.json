@@ -264,6 +264,7 @@
     "ADVANCED_DATA_GROUP": "Данные",
     "ADVANCED_KEEP_HISTORY_LABEL": "Хранить историю",
     "ADVANCED_REDUCE_MOTION_LABEL": "Меньше движения (меньше анимаций)",
+    "KEEP_WINDOWS_ON_TOP_LABEL": "Держать окна «Настройки» и «Монитор» поверх других",
     "ADVANCED_RESET_GROUP": "Сброс",
     "ADVANCED_RESET_NOTE": "Восстановить настройки по умолчанию. Это действие нельзя отменить.",
     "ADVANCED_RESET_PAGE_BUTTON": "Сбросить эту страницу",

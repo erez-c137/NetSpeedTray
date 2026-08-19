@@ -264,6 +264,7 @@
     "ADVANCED_DATA_GROUP": "Data",
     "ADVANCED_KEEP_HISTORY_LABEL": "Keep history for",
     "ADVANCED_REDUCE_MOTION_LABEL": "Reduce motion (fewer animations)",
+    "KEEP_WINDOWS_ON_TOP_LABEL": "Keep Settings and Monitor windows on top",
     "ADVANCED_RESET_GROUP": "Reset",
     "ADVANCED_RESET_NOTE": "Restore settings to their defaults. This can't be undone.",
     "ADVANCED_RESET_PAGE_BUTTON": "Reset this page",

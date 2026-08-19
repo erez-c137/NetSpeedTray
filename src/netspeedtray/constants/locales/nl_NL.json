@@ -264,6 +264,7 @@
     "ADVANCED_DATA_GROUP": "Gegevens",
     "ADVANCED_KEEP_HISTORY_LABEL": "Geschiedenis bewaren gedurende",
     "ADVANCED_REDUCE_MOTION_LABEL": "Beweging beperken (minder animaties)",
+    "KEEP_WINDOWS_ON_TOP_LABEL": "Vensters Instellingen en Monitor op de voorgrond houden",
     "ADVANCED_RESET_GROUP": "Herstellen",
     "ADVANCED_RESET_NOTE": "Instellingen terugzetten naar de standaardwaarden. Dit kan niet ongedaan worden gemaakt.",
     "ADVANCED_RESET_PAGE_BUTTON": "Deze pagina herstellen",

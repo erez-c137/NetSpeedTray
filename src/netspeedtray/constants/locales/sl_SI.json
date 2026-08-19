@@ -264,6 +264,7 @@
     "ADVANCED_DATA_GROUP": "Podatki",
     "ADVANCED_KEEP_HISTORY_LABEL": "Hrani zgodovino",
     "ADVANCED_REDUCE_MOTION_LABEL": "Zmanjšaj gibanje (manj animacij)",
+    "KEEP_WINDOWS_ON_TOP_LABEL": "Ohrani okni Nastavitve in Nadzornik v ospredju",
     "ADVANCED_RESET_GROUP": "Ponastavitev",
     "ADVANCED_RESET_NOTE": "Obnovi nastavitve na privzete vrednosti. Tega ni mogoče razveljaviti.",
     "ADVANCED_RESET_PAGE_BUTTON": "Ponastavi to stran",

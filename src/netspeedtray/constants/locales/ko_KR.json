@@ -264,6 +264,7 @@
     "ADVANCED_DATA_GROUP": "데이터",
     "ADVANCED_KEEP_HISTORY_LABEL": "기록 보관 기간",
     "ADVANCED_REDUCE_MOTION_LABEL": "모션 줄이기 (애니메이션 최소화)",
+    "KEEP_WINDOWS_ON_TOP_LABEL": "설정 및 모니터 창을 항상 위에 표시",
     "ADVANCED_RESET_GROUP": "초기화",
     "ADVANCED_RESET_NOTE": "설정을 기본값으로 되돌립니다. 이 작업은 취소할 수 없습니다.",
     "ADVANCED_RESET_PAGE_BUTTON": "이 페이지 초기화",

@@ -264,6 +264,7 @@
     "ADVANCED_DATA_GROUP": "Daten",
     "ADVANCED_KEEP_HISTORY_LABEL": "Verlauf speichern für",
     "ADVANCED_REDUCE_MOTION_LABEL": "Bewegung reduzieren (weniger Animationen)",
+    "KEEP_WINDOWS_ON_TOP_LABEL": "Einstellungen und Monitor im Vordergrund halten",
     "ADVANCED_RESET_GROUP": "Zurücksetzen",
     "ADVANCED_RESET_NOTE": "Einstellungen auf die Standardwerte zurücksetzen. Dies kann nicht rückgängig gemacht werden.",
     "ADVANCED_RESET_PAGE_BUTTON": "Diese Seite zurücksetzen",

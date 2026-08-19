@@ -160,6 +160,10 @@ class ConfigConstants:
         "excluded_interfaces": network.interface.DEFAULT_EXCLUSIONS,
         "keep_data": DEFAULT_KEEP_DATA_DAYS,
         "reduce_motion": False,            # app-wide: disable preview/hold-still animations
+        # ONE flag for both the Settings dialog and the Monitor window. A per-window pair would
+        # double the config surface and the translation cost for no real benefit - someone who
+        # wants the Monitor pinned while they work wants the same of Settings (#213).
+        "keep_windows_on_top": False,
         "show_usage_on_hover": True,       # the hover card's data-usage rows (Today / This month)
         "show_hover_tips": True,           # the hover card's right-click/double-click gesture hint
         "pause_in_menu": False,            # opt-in: surface Pause/Resume in the right-click menu
@@ -293,6 +297,7 @@ class ConfigConstants:
         "excluded_interfaces": {"type": list, "default": network.interface.DEFAULT_EXCLUSIONS, "item_type": str},
         "keep_data": {"type": int, "default": DEFAULT_KEEP_DATA_DAYS, "choices": list(data.retention.DAYS_MAP.values()), "min": min(data.retention.DAYS_MAP.values()), "max": max(data.retention.DAYS_MAP.values())},
         "reduce_motion": {"type": bool, "default": False},
+        "keep_windows_on_top": {"type": bool, "default": False},
         "show_usage_on_hover": {"type": bool, "default": True},
         "show_hover_tips": {"type": bool, "default": True},
         "pause_in_menu": {"type": bool, "default": False},

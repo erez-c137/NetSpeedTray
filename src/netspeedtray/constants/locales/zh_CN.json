@@ -264,6 +264,7 @@
     "ADVANCED_DATA_GROUP": "数据",
     "ADVANCED_KEEP_HISTORY_LABEL": "历史记录保留时长",
     "ADVANCED_REDUCE_MOTION_LABEL": "减弱动画效果 (较少动画)",
+    "KEEP_WINDOWS_ON_TOP_LABEL": "设置和监控窗口保持在最前",
     "ADVANCED_RESET_GROUP": "重置",
     "ADVANCED_RESET_NOTE": "恢复默认设置，此操作无法撤销。",
     "ADVANCED_RESET_PAGE_BUTTON": "重置本页",

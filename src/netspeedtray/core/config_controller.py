@@ -11,6 +11,7 @@ from typing import Any, Dict, Optional, TYPE_CHECKING
 from PyQt6.QtGui import QColor
 
 from netspeedtray import constants
+from netspeedtray.utils.window_state import set_window_always_on_top
 from netspeedtray.utils.config import ConfigManager
 
 if TYPE_CHECKING:
@@ -27,6 +28,23 @@ class ConfigController:
         self.widget = widget
         self.config_manager = config_manager
         self.logger = logging.getLogger(f"{constants.app.APP_NAME}.ConfigController")
+        # Last applied always-on-top state. apply_all_settings is the LIVE-PREVIEW path, not a
+        # commit path - SettingsDialog re-emits on a 250ms throttle while you drag a slider - so a
+        # native SetWindowPos here would fire several times a second. Only act on an actual change.
+        self._last_keep_on_top: Optional[bool] = None
+
+    def _apply_keep_on_top(self, on_top: bool) -> None:
+        """Push the always-on-top preference to the open auxiliary windows, once per change."""
+        on_top = bool(on_top)
+        if on_top == self._last_keep_on_top:
+            return
+        self._last_keep_on_top = on_top
+        w = self.widget
+        for window in (getattr(w, "settings_dialog", None), getattr(w, "monitor_window", None)):
+            # Only touch a window that actually exists and is on screen; a hidden Settings dialog
+            # picks the state up from its own showEvent on the next open.
+            if window is not None and window.isVisible():
+                set_window_always_on_top(window, on_top)
 
     def load_initial_config(self, taskbar_height: int) -> Dict[str, Any]:
         """Loads configuration and injects taskbar height."""
@@ -200,7 +218,11 @@ class ConfigController:
                     w._cycle_timer.stop()
                     self.logger.debug("Cycle timer stopped via ConfigController.")
 
-            # 5. Schedule a repaint to reflect all changes.
+            # 5. Always-on-top for the Settings/Monitor windows (#213). Guarded: see
+            # _last_keep_on_top - this method runs on every throttled live-preview tick.
+            self._apply_keep_on_top(w.config.get("keep_windows_on_top", False))
+
+            # 6. Schedule a repaint to reflect all changes.
             w.update()
             
             self.logger.info("All settings applied successfully.")

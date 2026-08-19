@@ -264,6 +264,7 @@
     "ADVANCED_DATA_GROUP": "データ",
     "ADVANCED_KEEP_HISTORY_LABEL": "履歴の保存期間",
     "ADVANCED_REDUCE_MOTION_LABEL": "視覚効果を減らす (アニメーションを抑制)",
+    "KEEP_WINDOWS_ON_TOP_LABEL": "設定とモニターのウィンドウを最前面に表示",
     "ADVANCED_RESET_GROUP": "リセット",
     "ADVANCED_RESET_NOTE": "設定を初期値に戻します。この操作は取り消せません。",
     "ADVANCED_RESET_PAGE_BUTTON": "このページをリセット",

@@ -264,6 +264,7 @@
     "ADVANCED_DATA_GROUP": "נתונים",
     "ADVANCED_KEEP_HISTORY_LABEL": "שמור היסטוריה למשך",
     "ADVANCED_REDUCE_MOTION_LABEL": "הפחת תנועה (פחות אנימציות)",
+    "KEEP_WINDOWS_ON_TOP_LABEL": "השאר את חלונות ההגדרות והמוניטור עליונים",
     "ADVANCED_RESET_GROUP": "איפוס",
     "ADVANCED_RESET_NOTE": "שחזר את ההגדרות לברירת המחדל. לא ניתן לבטל פעולה זו.",
     "ADVANCED_RESET_PAGE_BUTTON": "אפס דף זה",
