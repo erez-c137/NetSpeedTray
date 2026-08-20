@@ -265,8 +265,13 @@ class StatsDetailSheet(QDialog):
                 thr_bps = plan * 1_000_000.0 / 8.0
                 below = S.pct_below([v for _, v in pairs], thr_bps)
                 if below is not None:
-                    extra = (f"{below:.0f}% {self._tr('STATS_DETAIL_BELOW_PLAN', 'of time below the')} "
-                             f"{plan:.0f} Mbps {self._tr('STATS_DETAIL_PLAN', 'plan')}")
+                    # One template, not two fragments glued around the number. English word order
+                    # ("below the N Mbps plan") does not survive translation: Spanish and French
+                    # were left with a dangling noun, and Russian said "тариф" twice. A template
+                    # lets each language put the number and the noun where they belong.
+                    extra = self._tr(
+                        'STATS_DETAIL_BELOW_PLAN_TEMPLATE', '{pct}% of time below the {plan} Mbps plan'
+                    ).format(pct=f"{below:.0f}", plan=f"{plan:.0f}")
                     text = f"{text}   ·   {extra}" if text else extra
 
         if not text:
