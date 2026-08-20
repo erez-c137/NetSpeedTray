@@ -178,7 +178,7 @@
     "GIBPS_SHORT_LABEL": "ГиБ",
     "KIBITS_SHORT_LABEL": "Кибит",
     "MIBITS_SHORT_LABEL": "Мибит",
-    "GIBITS_SHORT_LABEL": "Гибит"
+    "GIBITS_SHORT_LABEL": "Гибит",
     "UNIT_TYPE_LABEL": "Тип единиц",
     "UNIT_TYPE_BITS_DECIMAL": "Биты (Kbps, Mbps)",
     "UNIT_TYPE_BITS_BINARY": "Биты (Kibps, Mibps)",
@@ -237,7 +237,7 @@
     "SUPPORT_DIALOG_TEXT": "NetSpeedTray - бесплатный, с открытым кодом и без рекламы.\nЕсли он вам полезен, поддержите его развитие!",
     "SUPPORT_GITHUB_SPONSORS": "GitHub Sponsors",
     "SUPPORT_KOFI": "Ko-fi",
-    "SUPPORT_BMC": "Купить мне кофе"
+    "SUPPORT_BMC": "Купить мне кофе",
     "SUPPORT_STAR_GITHUB": "Звезда на GitHub",
     "APP_ACTIVITY_LOADING_MESSAGE": "Загрузка активности приложений...",
     "APP_ACTIVITY_RDP_UNAVAILABLE_MESSAGE": "Активность приложений недоступна в сеансах удалённого рабочего стола. Данные производительности psutil ненадёжны в виртуализированных средах.",
