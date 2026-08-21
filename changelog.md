@@ -75,7 +75,7 @@ ALSO
 
 ---
 
-## [2.1.3] - Unreleased
+## [2.1.3] - August 22, 2026
 
 Fixes from a month of bug reports, including one that has been in every release since the beginning: the app never actually detected your system language.
 
