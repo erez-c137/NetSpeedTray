@@ -265,7 +265,7 @@ You probably grabbed an unsigned dev build. The official releases ([Setup.exe / 
 - **Support Bundle** - one-click sanitized zip of logs + config + system info for bug reports
 
 ### Localization
-- **10 languages:** English, Korean, French, German, Russian, Spanish, Dutch, Polish, Slovenian, Japanese
+- **14 languages:** English, Korean, French, German, Russian, Spanish, Dutch, Polish, Slovenian, Japanese, Simplified Chinese, Traditional Chinese, Hebrew (RTL), Turkish
 - 100% key parity across all locales
 
 </details>
@@ -296,13 +296,13 @@ I'm not doing this for the money - but I'd be lying if I said a little support d
 
 - ⭐ **Star the repo** - one click, and it genuinely helps others find the project.
 - 🐛 **File a good bug report** - use the [template](https://github.com/erez-c137/NetSpeedTray/issues/new?template=bug_report.yml) and attach a Support Bundle; it saves me real triage time.
-- 🌍 **Improve a translation** - German and Spanish especially could use a native-speaker review. See [TRANSLATORS.md](TRANSLATORS.md).
+- 🌍 **Improve a translation** - German, Spanish and Hebrew especially could use a native-speaker review. See [TRANSLATORS.md](TRANSLATORS.md).
 
 ---
 
 ## Translators
 
-NetSpeedTray's UI lives in 10 languages thanks to the people below. Each translation is real time and care - if you use NetSpeedTray in your language, please give them a star and a thank-you.
+NetSpeedTray's UI lives in 14 languages thanks to the people below. Each translation is real time and care - if you use NetSpeedTray in your language, please give them a star and a thank-you.
 
 | Language | Locale | Translator |
 |---|---|---|
@@ -313,6 +313,10 @@ NetSpeedTray's UI lives in 10 languages thanks to the people below. Each transla
 | 🇵🇱 Polish | `pl_PL` | FadeMind |
 | 🇫🇷 French | `fr_FR` | [@logounet](https://github.com/logounet) |
 | 🇯🇵 Japanese | `ja_JP` | [@coolvitto](https://github.com/coolvitto) |
+| 🇨🇳 Simplified Chinese | `zh_CN` | [@RainThings](https://github.com/RainThings) |
+| 🇹🇼 Traditional Chinese | `zh_TW` | [@raylolhue](https://github.com/raylolhue), [@in2002-tw](https://github.com/in2002-tw), [@tony8077616](https://github.com/tony8077616) |
+| 🇹🇷 Turkish | `tr_TR` | [@lezgintekay](https://github.com/lezgintekay) |
+| 🇮🇱 Hebrew (RTL) | `he_IL` | [@rami123](https://github.com/rami123) - **native-speaker review welcome** |
 | 🇩🇪 German | `de_DE` | Maintainer - **native-speaker review welcome** |
 | 🇪🇸 Spanish | `es_ES` | Maintainer - **native-speaker review welcome** |
 
