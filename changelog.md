@@ -111,6 +111,7 @@ Fixes from a month of bug reports, including one that has been in every release 
 
 ### Localization
 
+- **Turkish - the fourteenth language**, contributed by [@lezgintekay] ([#249]).
 - Japanese ([@coolvitto]) and Russian ([@ZeoNish]) updates, a Korean review ([@VenusGirl]), and a fill-in pass across the remaining languages. Several strings that were still English - the free-float label and the portable-update messages - are now translated. Native review is still welcome: [#202].
 
 
@@ -121,10 +122,12 @@ Fixes from a month of bug reports, including one that has been in every release 
 [#234]: https://github.com/erez-c137/NetSpeedTray/issues/234
 [#236]: https://github.com/erez-c137/NetSpeedTray/issues/236
 [#237]: https://github.com/erez-c137/NetSpeedTray/issues/237
+[#249]: https://github.com/erez-c137/NetSpeedTray/pull/249
 [@Aaronxiexyl]: https://github.com/Aaronxiexyl
 [@balciseri]: https://github.com/balciseri
 [@CMTriX]: https://github.com/CMTriX
 [@coolvitto]: https://github.com/coolvitto
+[@lezgintekay]: https://github.com/lezgintekay
 [@VenusGirl]: https://github.com/VenusGirl
 [@ZeoNish]: https://github.com/ZeoNish
 

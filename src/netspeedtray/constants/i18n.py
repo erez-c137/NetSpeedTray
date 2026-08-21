@@ -53,6 +53,7 @@ class I18nStrings:
         "zh_CN": "简体中文 (中国)",
         "zh_TW": "繁體中文 (台灣)",
         "he_IL": "עברית (ישראל)",
+        "tr_TR": "Türkçe (Türkiye)",
     }
 
     # Right-to-left languages. When one is active, the app flips its layout direction (mirrored
