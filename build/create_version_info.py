@@ -2,6 +2,20 @@
 import sys
 import os
 
+# A note on the structure below, because the wrong version of it looks right and builds fine:
+#
+# StringFileInfo must contain a StringTable keyed by "<lang><codepage>" - it is that key that ties
+# the strings to a translation. Passing the StringStructs to StringFileInfo directly (as this did
+# until 2.1.3) still produces an exe: PyInstaller accepts it, the strings really are written into
+# the resource, and nothing warns. But Windows finds no StringTable to read them from, so every
+# consumer - Explorer's Properties > Details tab, .NET's FileVersionInfo, installers, AV reputation
+# heuristics - sees a binary with no version metadata at all.
+#
+# "040904B0" is US English (0x0409) + codepage 1200 (0x04B0, Unicode), and the Translation entry
+# below must agree with it. They previously disagreed too: the key said Unicode while Translation
+# declared 1252.
+
+
 def create_version_file(version_str):
     # Ensure version has 4 parts (e.g., 1.1.8 -> 1.1.8.0)
     parts = version_str.split('.')
@@ -28,17 +42,22 @@ VSVersionInfo(
   kids=[
     StringFileInfo(
       [
-        StringStruct('CompanyName', 'Erez C137'),
-        StringStruct('FileDescription', 'NetSpeedTray'),
-        StringStruct('FileVersion', '{version_full_str}'),
-        StringStruct('InternalName', 'NetSpeedTray'),
-        StringStruct('LegalCopyright', 'Copyright (c) Erez C137'),
-        StringStruct('OriginalFilename', 'NetSpeedTray.exe'),
-        StringStruct('ProductName', 'NetSpeedTray'),
-        StringStruct('ProductVersion', '{version_str}'),
+        StringTable(
+          '040904B0',
+          [
+            StringStruct('CompanyName', 'Erez C137'),
+            StringStruct('FileDescription', 'NetSpeedTray'),
+            StringStruct('FileVersion', '{version_full_str}'),
+            StringStruct('InternalName', 'NetSpeedTray'),
+            StringStruct('LegalCopyright', 'Copyright (c) Erez C137'),
+            StringStruct('OriginalFilename', 'NetSpeedTray.exe'),
+            StringStruct('ProductName', 'NetSpeedTray'),
+            StringStruct('ProductVersion', '{version_str}'),
+          ]
+        )
       ]
     ),
-    VarFileInfo([VarStruct('Translation', [0x0409, 1252])])
+    VarFileInfo([VarStruct('Translation', [0x0409, 1200])])
   ]
 )
 """
