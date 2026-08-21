@@ -2,10 +2,11 @@
 
 What changed in each release of NetSpeedTray, newest first.
 
-Versions follow [semantic versioning](https://semver.org): the **patch** number
-(2.1.**3**) means fixes only, **minor** (2.**1**.0) adds features, **major**
-(**2**.0.0) changes how the app works. Every entry links the issue or PR behind
-it, so you can read the full story or the code.
+Versions follow [semantic versioning](https://semver.org): a **patch** release
+(2.1.**3**) is mostly fixes, sometimes with a small opt-in addition; a **minor**
+release (2.**1**.0) adds features; a **major** one (**2**.0.0) changes how the app
+works. Every entry links the issue or PR behind it, so you can read the full story
+or the code.
 
 Downloads and signed installers: [Releases](https://github.com/erez-c137/NetSpeedTray/releases).
 
@@ -74,11 +75,11 @@ ALSO
 
 ---
 
-## [2.1.3] - August 19, 2026
+## [2.1.3] - Unreleased
 
 Fixes from a month of bug reports, including one that has been in every release since the beginning: the app never actually detected your system language.
 
-> **Upgrading:** if you have never picked a language by hand, NetSpeedTray may now start in your **Windows display language** instead of English - Hebrew also switches the layout to right-to-left. To keep English, choose it in **Settings → General → Language**. Nothing else changes.
+> **Upgrading:** if you have never picked a language by hand, NetSpeedTray may now start in your **Windows display language** instead of English - Hebrew also switches the layout to right-to-left. To keep English, choose it in **Settings → General → Language** - it is the third item down, under the first dropdown. If your display language is English but your *regional format* is German, Spanish or French, you keep the localized app you already had.
 
 ### Added
 
@@ -87,17 +88,17 @@ Fixes from a month of bug reports, including one that has been in every release 
 
 ### Changed
 
-- **Clearer guidance for CPU/GPU temperatures.** The setup dialog now names the LibreHardwareMonitor version that works (v0.9.4 - later ones removed the interface NetSpeedTray reads) and says plainly that some very new CPUs report no temperature at all, so you can stop troubleshooting something that cannot be fixed from our side. ([#187])
+- **Clearer guidance for CPU/GPU temperatures.** The setup dialog now names the LibreHardwareMonitor version that works (v0.9.4 - later ones removed the interface NetSpeedTray reads) and says plainly that some very new CPUs report no temperature at all, so you can stop troubleshooting something that cannot be fixed from our side. Reading current LibreHardwareMonitor releases over their web interface is still open ([#187]).
 
 ### Fixed
 
-- **The app now starts in your Windows display language.** Auto-detect never worked, so Korean, Japanese, Russian, Polish, Dutch, Slovenian, Hebrew and both Chinese variants always fell back to English - in every release ever shipped. The Language settings card now also shows what was detected. ([#234], thanks [@VenusGirl])
+- **The app now starts in your Windows display language.** Auto-detect never worked, so Korean, Japanese, Russian, Polish, Dutch, Slovenian, Hebrew and both Chinese variants always fell back to English - in every release ever shipped. If you found the app in English despite your system being set otherwise and assumed it simply wasn't translated: it was, and I'm sorry. The Language settings card now shows what was detected, so this can't fail quietly again, and choosing Auto-detect correctly prompts you to restart - it used to stay silent. ([#234], thanks [@VenusGirl])
 
   *Under the hood: `locale.getlocale()` returns the C-runtime name on Windows ("Korean_Korea"), not "ko_KR", so every lookup missed and fell through to English. German, Spanish and French worked only because CPython's `locale_alias` happens to carry their CRT names - which is why this survived a year on an English dev machine. Now reads `GetUserDefaultUILanguage()`.*
-- **The CPU temperature no longer shows your graphics card's.** On laptops whose CPU reports no temperature, NetSpeedTray picked up the GPU's sensor instead and labelled it CPU. ([#237], thanks [@Aaronxiexyl])
+- **The CPU temperature no longer shows your graphics card's.** On laptops whose CPU reports no temperature, NetSpeedTray picked up the GPU's sensor instead and labelled it CPU. ([#237], thanks [@Aaronxiexyl], whose sensor report made this visible)
 
   *Under the hood: when nothing is named exactly "CPU Package" we fall back to matching sensor names, and one keyword was "CORE" - which matches NVIDIA's "GPU Core". The sensor identifier now decides before any name is considered.*
-- **GPU usage now counts apps you start after NetSpeedTray.** It only ever watched programs that were already running, so on laptops with two GPUs the discrete card was never measured at all. ([#236], thanks [@balciseri])
+- **GPU usage now counts apps you start after NetSpeedTray.** It only ever watched programs that were already running, so on laptops with two GPUs the discrete card was never measured at all. ([#236], thanks [@balciseri], who filed this as a feature request and turned out to have found a bug)
 
   *Under the hood: `\GPU Engine` PDH instances are per-process, and they were enumerated once at startup. Now a wildcard counter re-expanded on every sample. Note `AddCounter` succeeds on a wildcard even with no GPU present, so "is there a GPU" must come from the returned array, not from the handle.*
 - **An unmeasured CPU or GPU now shows N/A instead of 0%.** Over Remote Desktop the GPU is deliberately not polled, but the readout still displayed a confident `0%`. A real 0% still shows as 0%.
@@ -185,7 +186,7 @@ Connection awareness: see *which* Wi-Fi network you are on, not just how fast. P
 - **The widget can show your Wi-Fi band (2.4G / 5G / 6G), and optionally the network name.** Turn it on in **Settings → Network**. The band can show *Always*, *Color-coded*, or **Alert only** - a red `2.4G` appears solely when your PC has quietly dropped to the slow band, and the widget stays clean otherwise. It answers "did my PC rejoin 2.4 GHz after the last reconnect?" at a glance.
 
   > **The band needs no permission. The network name does.** Windows only reveals the SSID to apps with Location access, so choosing to show the name asks you to turn Location on. That is a Windows privacy gate, not GPS or tracking - NetSpeedTray reads the name locally to display it and never stores or sends it. A one-time explainer offers a "just show the band" option instead. See the [Privacy Policy](privacy.md).
-- **Hebrew, and full right-to-left support.** The whole interface mirrors - Settings, the Monitor, menus - and the graph renders Hebrew correctly. Started from [@rami123]'s translation; the rest is an AI-assisted first pass, so native review is very welcome ([TRANSLATORS.md]).
+- **Hebrew, and full right-to-left support.** The whole interface mirrors - Settings, the Monitor, menus - and the graph renders Hebrew correctly. Started from [@rami123]'s translation; the rest is an AI-assisted first pass, so native review is genuinely wanted - corrections are always welcome ([TRANSLATORS.md]).
 - **Simplified Chinese**, contributed by [@RainThings]. ([#209])
 - **Traditional Chinese (Taiwan)**, contributed by [@raylolhue], with terminology from [@in2002-tw] and native polish from [@tony8077616]. ([#199], [#215])
 - **Japanese and Korean refreshed** by [@coolvitto] ([#205]) and [@VenusGirl] ([#207]).
@@ -242,7 +243,7 @@ Polish on top of 2.0.0: localization fixes for the history graph, a rounding fix
 ### Fixed
 
 - **The history graph now uses your language's number format.** Peak labels and axis ticks were hardcoded to an English "." and "Mbps", so a German user saw "12.3 Mbps" on the graph and "12,3 Mbit/s" everywhere else in the same session. ([#176])
-- **Japanese, Korean and Chinese graph labels no longer show as empty boxes.** matplotlib's default font has no CJK glyphs; the graph now picks an installed Windows CJK font. No font is bundled, so the download is unchanged. ([#173])
+- **Japanese and Korean graph labels no longer show as empty boxes.** matplotlib's default font has no CJK glyphs; the graph now picks an installed Windows CJK font. No font is bundled, so the download is unchanged. ([#173])
 - **Data sizes no longer round into the wrong unit.** 999,999 bytes showed as "1000.0 KB" instead of "1.0 MB". ([#174])
 
   *Under the hood: the formatter rounded before checking whether the value had crossed into the next unit. It now promotes after rounding.*
@@ -275,18 +276,14 @@ Polish on top of 2.0.0: localization fixes for the history graph, a rounding fix
 
 **The widget is now part of the taskbar rather than a window sitting on top of it**, so the Windows shell can no longer cover it. And everything beyond the taskbar moved into one new window: the **Monitor**.
 
-> **Upgrading:** your settings and history carry over. New installs now start with Windows by default (existing installs keep whatever you had). The separate Graph and App Activity windows are gone - both live in the Monitor now.
+> **Upgrading:** your settings and history carry over. The separate Graph and App Activity windows are gone - both live in the Monitor now, which no longer shows a per-app download/upload speed, because Windows cannot honestly measure that per app (see Changed, below). New installs now start with Windows by default; existing installs keep whatever you had.
 
 ### Added
 
-- **The widget no longer disappears behind the taskbar.** Opening the Start menu, Quick Settings, the tray overflow, or just clicking the taskbar used to make it vanish - sometimes until another window took focus. It now stays put through every shell interaction and recovers after an Explorer restart.
+- **The widget now docks into the taskbar itself**, so the Start menu, Quick Settings and the tray overflow can no longer cover it. It used to vanish behind them - sometimes until another window took focus - and now stays put through every shell interaction and recovers after an Explorer restart.
 
-  *Under the hood: it was a separate top-level window competing for the same pixels. It is now an owned window of the taskbar (`GWLP_HWNDPARENT`), so Windows keeps it above. This is the "native embed" problem the project chased since v1.0, and it is why this is a major version.*
-- **No more flicker when you click the taskbar** or switch foreground windows.
-
-  *Under the hood: two causes. A "re-assert position when the taskbar takes focus" step had been lost in an earlier refactor, and a redundant Z-order re-promotion briefly dropped the translucent widget out of the top layer - unnecessary once docked.*
-- **Fullscreen hide and show is near-instant both ways**, including apps that go fullscreen without taking focus, like double-clicking a video. It used to lag up to a second.
-- **The Monitor - one window with three tabs**, replacing the old Graph and App Activity windows. Double-click the widget or pick it from the tray menu.
+  *Under the hood: it was a separate top-level window competing for the same pixels. It is now an owned window of the taskbar (`GWLP_HWNDPARENT`), so Windows keeps it above. This is the "native embed" problem the project chased since v1.0 - after years of trying, the widget finally behaves like it belongs there, which is why this is a major version.*
+- **The Monitor - one window with three tabs**, replacing the old Graph and App Activity windows. It is the half of the app most people never found, finally given a front door. Double-click the widget or pick it from the tray menu.
   - **Overview** - live tiles for network, CPU, GPU, RAM and VRAM with sparklines that adapt their scale, a data-usage card, and a top-talkers list. Every card clicks through to detail.
   - **Network** - the history graph over a per-app *connection* list: how many connections each program holds, how many are active, and which remote hosts it reaches.
   - **Hardware** - a combined CPU+GPU graph over live per-process CPU / RAM / GPU%, plus temperatures, power and memory.
@@ -314,8 +311,12 @@ Polish on top of 2.0.0: localization fixes for the history graph, a rounding fix
 
 ### Fixed
 
-- **Colour coding used the number on screen instead of the real speed.** Thresholds are defined in Mbps but were compared against whatever was displayed, so in Kbps or MB/s mode the bands triggered at the wrong speeds - a 0.5 Mbps stream shown as "500 Kbps" counted as fast. Banding is now computed from the canonical speed.
-- **Log files could silently never be written.** Support Bundles arrived with no logs at all.
+- **No more flicker when you click the taskbar** or switch foreground windows.
+
+  *Under the hood: two causes. A "re-assert position when the taskbar takes focus" step had been lost in an earlier refactor, and a redundant Z-order re-promotion briefly dropped the translucent widget out of the top layer - unnecessary once docked.*
+- **Fullscreen hide and show is near-instant both ways**, including apps that go fullscreen without taking focus, like double-clicking a video. It used to lag up to a second.
+- **Colour coding now follows the real speed, not the number on screen.** Thresholds are defined in Mbps but were compared against whatever was displayed, so in Kbps or MB/s mode the bands triggered at the wrong speeds - a 0.5 Mbps stream shown as "500 Kbps" counted as fast. Banding is now computed from the canonical speed.
+- **Log files are written reliably again.** They could previously fail silently, so Support Bundles arrived with no logs at all.
 
   *Under the hood: `config.py` imported `logging` but not `logging.handlers`, which Python does not import automatically. Depending on import order this raised `AttributeError`, fell back to console-only logging, and produced no file.*
 - **Windows now remember their position, including which monitor.** Closing Settings with Cancel or X discarded the move - only Save kept it - and a window saved on a secondary monitor was pulled back to the primary on reopen.
@@ -327,6 +328,11 @@ Polish on top of 2.0.0: localization fixes for the history graph, a rounding fix
 - **The Support Bundle reports the real monitor resolution on high-DPI displays**, showing native and logical together. ([#152])
 - **No more stray system-wide hook at startup** when Explorer was mid-restart, which had permanently disabled the app's own restart recovery.
 - **No gap at the right edge of the history graph.** Reads now wait for the most recent write to land.
+- **The graph window no longer crashes while building a tab title.** It referenced a translation key that exists in no language file.
+
+  *Under the hood: a new test now scans the code for references to nonexistent translation keys, so this class cannot come back silently.*
+- **The colour threshold boxes now follow your chosen unit.** They always read "Mbps", even when the widget was set to byte or binary units. Contributed by [@rami123] ([#165]).
+- **Dragging the widget right of the tray no longer snaps it back.** The saved offset went negative and was clamped to zero, so the next reposition pulled it left again. Contributed by [@rami123] ([#165]).
 
 ### Performance
 
@@ -346,7 +352,7 @@ Polish on top of 2.0.0: localization fixes for the history graph, a rounding fix
 - **Tests grew from 196 to 722.** Notable new coverage: the data-cap odometer and restart-safe alerts, the shared paint path and preview render-parity, the honest connection model, the recoverable circuit breaker, and the first headless GUI tests including render-pixel verification of the colour bands.
 - **Shared widget paint path.** The widget's drawing was lifted into one pure render function driven by a metrics snapshot, so the live widget and every preview render through identical code.
 - **The Monitor reuses the existing matplotlib engine byte-for-byte** behind one lazily-loaded canvas, under an import firewall - the matplotlib-free Overview never triggers the heavy import, keeping the idle-RAM win.
-- **A retention-maintenance crash had been silently stopping all history writes** on the "Keep everything" setting - Windows raises `OSError 22` on pre-1970 `datetime.timestamp()`. Fixed with safe cutoff arithmetic.
+- **History is no longer silently lost on the "Keep everything" setting.** A crash in retention maintenance had been stopping all history writes - Windows raises `OSError 22` on pre-1970 `datetime.timestamp()`. Fixed with safe cutoff arithmetic.
 
 
 [#106]: https://github.com/erez-c137/NetSpeedTray/issues/106
@@ -640,7 +646,7 @@ This is a major stability and reliability release that resolves several critical
 *   **O(log n) Lookup:** Implemented binary search for nearest-point finding, ensuring fluid tooltip movement even on high-resolution displays.
 *   **Blitting Performance:** Cached static background with dynamic artist redraws for a smooth 60 FPS interaction experience.
 
-### Security
+### Fixed
 
 *   **Explicit Exit Logic (#98):** Fixed a critical bug where closing the settings or graph windows could inadvertently shut down the entire application.
 *   **Y-Axis Sticky Logic:** Integrated "Sticky Top" scaling that prevents the Y-axis from jittering when speed fluctuates slightly, while still adapting to huge spikes.
@@ -892,6 +898,31 @@ The graph has been completely re-architected for performance and clarity. This u
     *   **Accurate Total Bandwidth:** Corrected the stats bar logic to ensure "Total" bandwidth calculations are fast and accurate across all timelines.
     *   **Visual Glitch Fixes:** Resolved bugs that caused Y-axis labels to appear in black on a dark background or display in scientific notation. Added a separator line for better clarity.
 
+### Fixed
+
+*   **Definitive Fix for "Phantom" Speed Spikes:** Implemented a new multi-stage "re-priming" state to permanently fix the bug where impossible network speeds would be recorded after the computer resumed from sleep or experienced heavy lag. The data collection engine now waits for the network drivers to stabilize before resuming measurements.
+*   **Enhanced Shell & Display Resilience:** Fixed major bugs where the widget would disappear or move to the wrong position after `explorer.exe` was restarted, a monitor was disconnected (e.g., via a KVM switch), or on some multi-monitor setups. The application is now significantly more robust in detecting and recovering from these events.
+*   **Fixed "Zombie" Process Bug:** Solved a critical issue where closing the graph window would also incorrectly close the main widget, leaving a lingering "zombie" process running in the background.
+*   **Fixed Start Menu Shortcut:** Corrected a bug in the installer that prevented the Start Menu shortcut from being created on a fresh installation.
+*   **Fixed "0 Mbps" Bug:** Fixed a logic error that caused the meter to show `0.00 Mbps` for users with a very fast `update_rate` by making internal timing checks dynamic and more robust.
+*   **Fixed UI Glitches:**
+    *   Resolved an issue where the widget would incorrectly move position after the user clicked the "Show hidden icons" tray chevron.
+    *   Fixed a visual glitch that could cause duplicated "Apply" and "Cancel" buttons to appear in the settings dialog.
+
+### Developer notes
+
+*   **Comprehensive Code Refactoring:** Many internal components were refactored to improve maintainability and performance. This includes centralizing application-wide constants to eliminate "magic numbers" and improve consistency.
+*   **Hardened Test Suite:** The project's automated test suite (`pytest`) has been significantly expanded and improved, ensuring that all new features and bug fixes are thoroughly validated, leading to a more stable application.
+*   **Enhanced Logging Privacy:** The logging system's privacy filter has been replaced with a more powerful `ObfuscatingFormatter` that redacts sensitive information (user paths, IP addresses) from the *entire* log message, including full tracebacks.
+
+
+---
+
+## [1.1.6] - August 27, 2025
+
+This version represents a major leap forward in stability, internationalization, and user control, addressing critical bugs from previous versions and fundamentally improving the application's architecture for future development.
+
+### Added
 
 -   **Full Internationalization (i18n) Framework:**
     -   The application has been completely re-architected to support multiple languages.
@@ -909,16 +940,6 @@ The graph has been completely re-architected for performance and clarity. This u
 
 ### Fixed
 
-*   **Definitive Fix for "Phantom" Speed Spikes:** Implemented a new multi-stage "re-priming" state to permanently fix the bug where impossible network speeds would be recorded after the computer resumed from sleep or experienced heavy lag. The data collection engine now waits for the network drivers to stabilize before resuming measurements.
-*   **Enhanced Shell & Display Resilience:** Fixed major bugs where the widget would disappear or move to the wrong position after `explorer.exe` was restarted, a monitor was disconnected (e.g., via a KVM switch), or on some multi-monitor setups. The application is now significantly more robust in detecting and recovering from these events.
-*   **Fixed "Zombie" Process Bug:** Solved a critical issue where closing the graph window would also incorrectly close the main widget, leaving a lingering "zombie" process running in the background.
-*   **Fixed Start Menu Shortcut:** Corrected a bug in the installer that prevented the Start Menu shortcut from being created on a fresh installation.
-*   **Fixed "0 Mbps" Bug:** Fixed a logic error that caused the meter to show `0.00 Mbps` for users with a very fast `update_rate` by making internal timing checks dynamic and more robust.
-*   **Fixed UI Glitches:**
-    *   Resolved an issue where the widget would incorrectly move position after the user clicked the "Show hidden icons" tray chevron.
-    *   Fixed a visual glitch that could cause duplicated "Apply" and "Cancel" buttons to appear in the settings dialog.
-
-
 -   **Definitive Fix for Disappearing/Flickering Widget:**
     -   A fundamental issue in event handling, which caused the widget to disappear when interacting with the desktop, taskbar, or RDP sessions, has been resolved.
     -   **New Architecture:** The old, aggressive logic has been replaced with a **debounced refresh architecture**. The application now uses `WinEventHook` listeners to intelligently wait for system UI events (like window focus changes or resizes) to "settle" before performing a single, authoritative check on the widget's visibility and Z-order.
@@ -928,17 +949,6 @@ The graph has been completely re-architected for performance and clarity. This u
     -   Fixed a bug in the SQL `GROUP BY` clause for both minute-to-hour and raw-to-minute data aggregation, ensuring that records are correctly combined and preventing duplicate entries in aggregated tables.
 
 ### Developer notes
-
-*   **Comprehensive Code Refactoring:** Many internal components were refactored to improve maintainability and performance. This includes centralizing application-wide constants to eliminate "magic numbers" and improve consistency.
-*   **Hardened Test Suite:** The project's automated test suite (`pytest`) has been significantly expanded and improved, ensuring that all new features and bug fixes are thoroughly validated, leading to a more stable application.
-*   **Enhanced Logging Privacy:** The logging system's privacy filter has been replaced with a more powerful `ObfuscatingFormatter` that redacts sensitive information (user paths, IP addresses) from the *entire* log message, including full tracebacks.
-
----
-
-## [1.1.6] - August 27, 2025
-
-This version represents a major leap forward in stability, internationalization, and user control, addressing critical bugs from previous versions and fundamentally improving the application's architecture for future development.
-
 
 -   **Constants Refactoring:** All user-facing strings were removed from the `constants` files and replaced with non-translatable keys. This improves code clarity and centralizes all text in the `locales` directory.
 -   **Dependency Injection for i18n:** The internationalization object (`i18n`) is now properly initialized at the application entry point (`monitor.py`) and passed down as a dependency to all UI components (`widget`, `settings`, `graph`, `renderer`) and helper functions (`format_speed`).
@@ -1011,21 +1021,6 @@ This is a major stability and quality-of-life release that addresses critical bu
 
 -   **Adaptive Layout for Small Taskbars:** The widget now automatically detects when Windows' "Use small taskbar buttons" setting is active and switches to a clean, compact, single-line horizontal layout for a much better visual fit.
 
-### Fixed
-
--   **Fixed "Auto" Interface Monitoring:** Fixed a critical bug where the "Auto" mode logic existed but was never actually called, making the feature non-functional. The controller now correctly uses this logic when the "Auto" mode is selected.
--   **Fixed Phantom Speed Spikes (Data Integrity):** Resolved a critical bug where waking the computer from sleep could cause the application to calculate and save impossibly high network speeds. The data collection logic is now more robust and includes multiple sanity checks to discard these "phantom" spikes.
--   **Fixed "Invisible Shield" & RDP Bugs (UI Stability):** Resolved a severe bug where the widget could act as an "invisible shield," blocking mouse clicks to other applications. The widget's transparent areas are now correctly "click-through" by default. This also resolves related stability issues for users in Remote Desktop (RDP) sessions.
--   **Fixed Graph Window Accuracy (Live Data):** Corrected a bug in the Graph Window where selecting a specific network interface would still display the total speed of all interfaces in "Live Update" mode. The graph now correctly displays only the selected interface's data.
--   **Fixed Settings Window Stability:** The Settings window has been re-engineered to be a normal, non-modal window. This fixes numerous UI bugs, including dropdown menus instantly closing and the entire application shutting down when the settings window was closed.
--   **Fixed Interface Selection Logic:** Corrected a logic flaw where monitoring would fall back to all interfaces if the "Selected" option was chosen but no interfaces were checked. It now correctly shows zero speed.
--   **Database & Data Integrity:**
-    -   Fixed a bug where negligible, sub-byte network speeds were being incorrectly saved to the database.
-    -   Resolved a `KeyError` crash that could occur during application shutdown due to a race condition in the timer management system.
--   **UI & Visual Polish:**
-    -   The mini-graph on the widget now has dynamic Y-axis padding, preventing graph peaks from being "cut off".
-    -   Fixed inconsistent decimal formatting for download speeds.
-
 ### Developer notes
 
 -   **Installer Overhaul:** The Inno Setup installer and uninstaller have been significantly improved:
@@ -1040,6 +1035,21 @@ This is a major stability and quality-of-life release that addresses critical bu
 -   **Log File Privacy (Verified):** The privacy filter is now fully effective. It automatically obfuscates personal information before it is written to the log file.
     -   User home directories in file paths are replaced (e.g., `C:\Users\Erez\...` becomes `<USER_HOME>\...`).
     -   IP addresses found in rare error messages are partially redacted (e.g., `192.168.1.100` becomes `192.168.x.x`).
+
+### Fixed
+
+-   **Fixed "Auto" Interface Monitoring:** Fixed a critical bug where the "Auto" mode logic existed but was never actually called, making the feature non-functional. The controller now correctly uses this logic when the "Auto" mode is selected.
+-   **Fixed Phantom Speed Spikes (Data Integrity):** Resolved a critical bug where waking the computer from sleep could cause the application to calculate and save impossibly high network speeds. The data collection logic is now more robust and includes multiple sanity checks to discard these "phantom" spikes.
+-   **Fixed "Invisible Shield" & RDP Bugs (UI Stability):** Resolved a severe bug where the widget could act as an "invisible shield," blocking mouse clicks to other applications. The widget's transparent areas are now correctly "click-through" by default. This also resolves related stability issues for users in Remote Desktop (RDP) sessions.
+-   **Fixed Graph Window Accuracy (Live Data):** Corrected a bug in the Graph Window where selecting a specific network interface would still display the total speed of all interfaces in "Live Update" mode. The graph now correctly displays only the selected interface's data.
+-   **Fixed Settings Window Stability:** The Settings window has been re-engineered to be a normal, non-modal window. This fixes numerous UI bugs, including dropdown menus instantly closing and the entire application shutting down when the settings window was closed.
+-   **Fixed Interface Selection Logic:** Corrected a logic flaw where monitoring would fall back to all interfaces if the "Selected" option was chosen but no interfaces were checked. It now correctly shows zero speed.
+-   **Database & Data Integrity:**
+    -   Fixed a bug where negligible, sub-byte network speeds were being incorrectly saved to the database.
+    -   Resolved a `KeyError` crash that could occur during application shutdown due to a race condition in the timer management system.
+-   **UI & Visual Polish:**
+    -   The mini-graph on the widget now has dynamic Y-axis padding, preventing graph peaks from being "cut off".
+    -   Fixed inconsistent decimal formatting for download speeds.
 
 
 ---
@@ -1195,18 +1205,19 @@ This is a landmark stability release that perfects the core user experience of t
 
 This release focused on quality-of-life improvements, introducing the initial version of the adaptive widget positioning and overhauling the installation process for seamless future updates.
 
-#### ✨ Added
+### Added
 
 - **Adaptive Positioning (Beta):**
   - The widget now learns and maintains your preferred distance from the system tray.
   - It automatically shifts its position to prevent being overlapped by new application icons appearing in the tray.
   - Your custom spacing is "learned" simply by dragging the widget while _Free Move_ is disabled.
 
-#### 🛠️ Improved
+### Changed
 
 - **Seamless Upgrades & WinGet Compatibility:** The Windows installer has been overhauled. It now correctly replaces the previous version's files, ensuring a clean and reliable upgrade experience. This change also prepares the application for distribution via the Windows Package Manager (WinGet).
 - **UI Clarity:** Renamed the confusing "Smart Threshold" toggle to **"Dynamic Update Rate"** to more accurately describe its power-saving function.
 - **User-Friendly File Naming:** The configuration and log files have been renamed to be more descriptive (`NetSpeedTray_Config.json` and `NetSpeedTray_Log.log`), making them easier for users to identify.
+
 
 ---
 
@@ -1246,7 +1257,7 @@ This release focused on quality-of-life improvements, introducing the initial ve
 
 This release introduces powerful new customization features for the taskbar widget and resolves a series of critical bugs that were discovered following the major refactor in Beta1.
 
-#### Added
+### Added
 
 - **Free Move Feature:**
 
@@ -1260,13 +1271,13 @@ This release introduces powerful new customization features for the taskbar widg
   - **Text Alignment:** Align the speed text to the left, center, or right of the widget.
   - **Force Decimals:** An option to always show decimal points (e.g., '5.0' or '5.00' instead of '5').
 
-#### Changed
+### Changed
 
 - **Speed Unit Logic:** The old 'Use MB/s' toggle has been removed and replaced by the more flexible and powerful Speed Display Mode.
 - **Configuration Management:** Refactored the `ConfigManager` to be more robust and declarative, preventing future issues with unsaved settings.
 - **Data Flow:** Streamlined the data pipeline between the widget and the renderer to prevent data corruption and improve stability.
 
-#### Fixed
+### Fixed
 
 - **Main Graph Stats:** Improved the accuracy of the main graph's status bar; statistics for the 'All' timeline are now calculated correctly.
 - **Mini-Graph Rendering:** Fixed a critical bug where the **Mini-Graph would not render** on the widget. This was caused by a series of silent failures, including a `NameError`, a data corruption issue in the renderer's data flow, and an incorrect drawing call.
@@ -1275,16 +1286,12 @@ This release introduces powerful new customization features for the taskbar widg
   - Fixed a state management bug that required clicking 'Save' twice to disable Free Move; the widget now snaps back instantly.
 - **Settings Not Saving:** Corrected a validation issue that prevented several settings (`force_decimals`, `start_with_windows`, etc.) from being saved to the configuration file.
 
+
 ---
 
 ## [1.0.5-Beta1] - July 27, 2025
 
-#### Major Overhaul
-
-- **Full Modular Refactor:**  
-  Migrated from a single-file script to a modern, maintainable package structure (`src/netspeedtray/`). All logic is now organized into `core`, `views`, `utils`, `constants`, and `tests` modules.
-
-#### Added
+### Added
 
 - **Modern UI/UX:**
   - Redesigned settings and graph windows with PyQt6, custom dark mode and improved layout.
@@ -1293,7 +1300,11 @@ This release introduces powerful new customization features for the taskbar widg
 - **Testing:**
   - Added unit tests for configuration, constants, and core logic.
 
-#### Changed
+### Changed
+
+- **Full Modular Refactor:**  
+  Migrated from a single-file script to a modern, maintainable package structure (`src/netspeedtray/`). All logic is now organized into `core`, `views`, `utils`, `constants`, and `tests` modules.
+
 
 - **Code Quality:**
   - Improved type hints, docstrings, and error handling throughout.
@@ -1301,22 +1312,23 @@ This release introduces powerful new customization features for the taskbar widg
 - **User Experience:**
   - Graph and settings dialogs now always open centered and within screen bounds.
 
-#### Fixed
+### Fixed
 
 - **Stability & Layout:**
   - Fixed window icon issues and theme inconsistencies.
   - Improved error overlays and ensured dialogs respect minimum sizes and DPI scaling.
 
-#### Known Issues
+### Known Issues
 
 - **App Usage Tab:** Temporarily disabled pending further development.
 - **Multi-Monitor:** Still limited to primary taskbar’s screen; multi-monitor support improvements planned.
+
 
 ---
 
 ## [1.0.4] - March 7, 2025
 
-#### Added
+### Added
 
 - **Double-Click Full Graph**:
   - Double-clicking the widget now opens the detailed `GraphWindow` for network speed history.
@@ -1332,7 +1344,7 @@ This release introduces powerful new customization features for the taskbar widg
   - Added live preview for font size and weight adjustments.
   - Improved network interface selection with a scrollable list and "All Interfaces" toggle.
 
-#### Changed
+### Changed
 
 - **UI Improvements**:
   - Modernized `SettingsDialog` with toggle switches and better layout spacing.
@@ -1343,7 +1355,7 @@ This release introduces powerful new customization features for the taskbar widg
 - **Configuration**:
   - Updated default font to "Segoe UI Variable Small" for consistency.
 
-#### Fixed
+### Fixed
 
 - **Stability**:
   - Improved error handling in `GraphWindow` and CSV logging with thread-safe locking.
@@ -1352,11 +1364,12 @@ This release introduces powerful new customization features for the taskbar widg
 - **Visibility**:
   - Refined fullscreen app detection to prevent widget hiding issues.
 
-#### Known Issues
+### Known Issues
 
 - **Multi-Monitor**: Limited to the primary taskbar’s screen; doesn’t fully support multiple taskbars or dynamic monitor changes without manual repositioning.
 - **High-Frequency Updates**: May still impact performance on low-end systems despite throttling.
 - **False Flagging** - [VirusTotal report](https://www.virustotal.com/gui/file/3c045c40ae2dd077fa66f5881649763b11b2584419f9e35b4421bee4f17fc3cf)
+
 
 ---
 
