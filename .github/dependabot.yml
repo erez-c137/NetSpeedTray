@@ -1,0 +1,38 @@
+# Alerts alone were enough to accumulate 26 open advisories against a single package before anyone
+# looked (all Pillow, all cleared by one patch bump in #252). These keep the pins moving on their own.
+#
+# Grouped and capped deliberately: this is a solo-maintained project, and a stream of one-PR-per-pin
+# is noise that gets ignored, which is the failure mode this is meant to prevent. Security updates
+# are ungrouped so they arrive on their own and stay visible.
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      # Runtime pins move together; a bump here needs a real smoke test either way.
+      runtime:
+        patterns: ["*"]
+        exclude-patterns: ["pyinstaller*", "pytest*", "pip-tools", "wheel", "build", "coverage*", "freezegun", "parameterized"]
+        update-types: ["minor", "patch"]
+      # Build and test tooling never ships to a user, so these can land with just CI green.
+      dev-tooling:
+        patterns: ["pyinstaller*", "pytest*", "pip-tools", "wheel", "build", "coverage*", "freezegun", "parameterized"]
+    commit-message:
+      prefix: "build(deps)"
+    labels: ["dependencies"]
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 3
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "ci(deps)"
+    labels: ["dependencies", "ci"]
