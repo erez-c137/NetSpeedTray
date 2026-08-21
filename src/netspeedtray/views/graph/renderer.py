@@ -697,6 +697,28 @@ class GraphRenderer(QObject):
         self.ax_cpu.set_ylabel(self._lbl(self.i18n.ORDER_TYPE_CPU), fontsize=8, color=text_color)
         self.ax_gpu.set_ylabel(self._lbl(self.i18n.ORDER_TYPE_GPU), fontsize=8, color=text_color)
 
+    @staticmethod
+    def _rows_as_floats(series) -> np.ndarray:
+        """(timestamp, value, ...) rows as a float array, accepting datetime OR epoch timestamps.
+
+        The two data sources disagree on the first column and both reach these renderers:
+        `get_hardware_history()` is typed - and really returns - `List[Tuple[datetime, float]]`,
+        while the speed-history path yields epoch floats. `np.array(rows, dtype=float)` cannot
+        convert a datetime, so every hardware series raised
+
+            TypeError: float() argument must be ... not 'datetime.datetime'
+
+        which `GraphHost._on_data_ready` swallowed into a log line - leaving the Monitor's Hardware
+        tab drawing empty 0.0-1.0 axes with no hint that anything had failed. Mirrors the coercion
+        the network branch of `render()` already does inline.
+        """
+        rows = []
+        for row in series:
+            ts = row[0]
+            rows.append([ts.timestamp() if isinstance(ts, datetime) else float(ts)]
+                        + [float(v) for v in row[1:]])
+        return np.array(rows, dtype=float)
+
     def _render_overview(self, data_dict, start_time, end_time, period_key: str, boot_time):
         """Internal helper for overview plotting."""
         # Clear existing artists so live refresh doesn't keep stacking lines.
@@ -716,14 +738,14 @@ class GraphRenderer(QObject):
             self.ax_upload.set_ylim(bottom=0, top=max(up)*1.2 if max(up)>0 else 1)
 
         # Plot CPU
-        cpu = np.array(data_dict.get("cpu", []), dtype=float)
+        cpu = self._rows_as_floats(data_dict.get("cpu", []))
         if len(cpu) > 0:
             ts = [datetime.fromtimestamp(t) for t in cpu[:, 0]]
             self.ax_cpu.plot(ts, cpu[:, 1], color=constants.graph.CPU_LINE_COLOR, linewidth=1)
             self.ax_cpu.set_ylim(0, 100)
 
         # Plot GPU
-        gpu = np.array(data_dict.get("gpu", []), dtype=float)
+        gpu = self._rows_as_floats(data_dict.get("gpu", []))
         if len(gpu) > 0:
             ts = [datetime.fromtimestamp(t) for t in gpu[:, 0]]
             self.ax_gpu.plot(ts, gpu[:, 1], color=constants.graph.GPU_LINE_COLOR, linewidth=1)
@@ -823,7 +845,7 @@ class GraphRenderer(QObject):
             series = data_dict.get(role) or []
             if not series:
                 continue
-            arr = np.array([(float(item[0]), float(item[1])) for item in series], dtype=float)
+            arr = self._rows_as_floats(series)
             ts = arr[:, 0]
             dts = [datetime.fromtimestamp(t) for t in ts]
             ys = self._smooth_series(arr[:, 1], styles.get("smooth_window", 5)) if smooth else arr[:, 1]
@@ -941,7 +963,7 @@ class GraphRenderer(QObject):
             if not series:
                 self._apply_hw_ylim(ax, fixed, 0.0)
                 continue
-            arr = np.array([(float(item[0]), float(item[1])) for item in series], dtype=float)
+            arr = self._rows_as_floats(series)
             ts = arr[:, 0]
             dts = [datetime.fromtimestamp(t) for t in ts]
             ys = self._smooth_series(arr[:, 1], styles.get("smooth_window", 5)) if smooth else arr[:, 1]
@@ -974,7 +996,7 @@ class GraphRenderer(QObject):
         ax.clear()
         self._format_hardware_axes(stat_type)
 
-        raw = np.array(history_data, dtype=float)
+        raw = self._rows_as_floats(history_data)
         timestamps = raw[:, 0]
         dts = [datetime.fromtimestamp(t) for t in timestamps]
         values = raw[:, 1]

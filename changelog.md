@@ -107,6 +107,9 @@ Fixes from a month of bug reports, including one that has been in every release 
 - **VRAM no longer reads 0.0 GB after sleep.** It stayed there until you opened Settings and clicked Save. ([#237])
 - **The taskbar and the Monitor window now agree on the temperature.** One rounded and the other cut the decimal off, so 27.9 °C showed as both "27" and "28". ([#237])
 - **Dragging the widget more than ~500 px from the tray no longer snaps it back** on the next launch. ([#234])
+- **The Monitor's Hardware graph draws again.** It had been showing an empty grid with a 0-1 scale instead of your CPU, GPU and RAM history - in 2.1.0, 2.1.1 and 2.1.2. The Network graph on the next tab was never affected.
+
+  *Under the hood: `get_hardware_history()` returns `datetime` timestamps, as its type hint says, but the hardware renderers built their arrays with `np.array(rows, dtype=float)`, which cannot convert one. The `TypeError` was caught and logged by `GraphHost._on_data_ready`, so the tab failed silently and only a log line ever said so - which is why it survived three releases. Found by opening the tab during a release smoke test.*
 - **The app now tells Windows what version it is.** Right-clicking `NetSpeedTray.exe` and opening Properties showed a blank Details tab in every release so far - no version, no publisher, no copyright. Installers, update tooling and antivirus reputation checks all read that same metadata.
 
   *Under the hood: the generated version resource put its `StringStruct`s straight into `StringFileInfo` with no `StringTable` wrapper, so there was no lang-codepage key for Windows to read them under. PyInstaller accepts that silently and the strings really were written into the binary - they were just unreachable. The key and the `Translation` entry also disagreed (Unicode vs 1252) and now match.*
