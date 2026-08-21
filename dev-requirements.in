@@ -8,7 +8,7 @@ pytest-cov
 freezegun
 pip-tools
 wheel>=0.46.2  # Explicitly added to enforce Security CVE fix
-pillow>=12.2.0  # Security: ensure patched Pillow (FITS GZIP decompression bomb)
+pillow>=12.3.0  # Security: 13 CVEs fixed in 12.3.0 (see dependabot)
 pytest>=9.0.3   # Security: vulnerable tmpdir handling fix
 parameterized
 pytest-qt       # GUI interaction tests (qtbot) for the PyQt6 dialogs, run headless via offscreen

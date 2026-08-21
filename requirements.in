@@ -6,5 +6,5 @@ matplotlib
 numpy
 wmi
 fonttools>=4.61.0   # Explicitly added to enforce Security CVE fix
-pillow>=12.2.0      # Security: ensure patched Pillow (FITS GZIP decompression bomb)
+pillow>=12.3.0      # Security: 13 CVEs fixed in 12.3.0 (see dependabot)
 python-bidi          # RTL (Hebrew) bidi reshaping for matplotlib graph labels (item 6)
