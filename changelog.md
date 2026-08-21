@@ -107,6 +107,9 @@ Fixes from a month of bug reports, including one that has been in every release 
 - **VRAM no longer reads 0.0 GB after sleep.** It stayed there until you opened Settings and clicked Save. ([#237])
 - **The taskbar and the Monitor window now agree on the temperature.** One rounded and the other cut the decimal off, so 27.9 °C showed as both "27" and "28". ([#237])
 - **Dragging the widget more than ~500 px from the tray no longer snaps it back** on the next launch. ([#234])
+- **The app now tells Windows what version it is.** Right-clicking `NetSpeedTray.exe` and opening Properties showed a blank Details tab in every release so far - no version, no publisher, no copyright. Installers, update tooling and antivirus reputation checks all read that same metadata.
+
+  *Under the hood: the generated version resource put its `StringStruct`s straight into `StringFileInfo` with no `StringTable` wrapper, so there was no lang-codepage key for Windows to read them under. PyInstaller accepts that silently and the strings really were written into the binary - they were just unreachable. The key and the `Translation` entry also disagreed (Unicode vs 1252) and now match.*
 - **The language list shows every language.** Three sat below the fold with no way to scroll to them, and the list has since grown to fourteen. ([#237])
 
 ### Security
