@@ -107,13 +107,23 @@ Fixes from a month of bug reports, including one that has been in every release 
 - **VRAM no longer reads 0.0 GB after sleep.** It stayed there until you opened Settings and clicked Save. ([#237])
 - **The taskbar and the Monitor window now agree on the temperature.** One rounded and the other cut the decimal off, so 27.9 °C showed as both "27" and "28". ([#237])
 - **Dragging the widget more than ~500 px from the tray no longer snaps it back** on the next launch. ([#234])
-- **The language list shows all 13 languages.** Three sat below the fold with no way to scroll to them. ([#237])
+- **The language list shows every language.** Three sat below the fold with no way to scroll to them, and the list has since grown to fourteen. ([#237])
+
+### Security
+
+- **Pillow updated to 12.3.0**, closing thirteen advisories in the image library matplotlib uses for the history graph. Nothing here was exploitable - NetSpeedTray never opens an image, it only writes its own graph - but the dependency is current again. ([#252])
 
 ### Localization
 
 - **Turkish - the fourteenth language**, contributed by [@lezgintekay] ([#249]).
 - Japanese ([@coolvitto]) and Russian ([@ZeoNish]) updates, a Korean review ([@VenusGirl]), and a fill-in pass across the remaining languages. Several strings that were still English - the free-float label and the portable-update messages - are now translated. Native review is still welcome: [#202].
 
+### Developer notes
+
+- **Tests grew from 865 to 1135**, covering language auto-detect, the tray-menu accelerators, CPU sensor selection, the GPU wildcard counters and the arrow colours.
+- **A new locale is now checked for more than key parity.** A locale file that isn't registered in `LANGUAGE_MAP` is unreachable from the UI - Turkish arrived that way and every existing test passed, because parity only ever compares keys between files. ([#254])
+
+  *Under the hood: the new checks also pin each locale's decimal separator to CLDR and cap `DEFAULT_TEXT`, which is painted on the taskbar itself - a spelled-out phrase overflows a slot sized for "N/A".*
 
 [#168]: https://github.com/erez-c137/NetSpeedTray/issues/168
 [#187]: https://github.com/erez-c137/NetSpeedTray/issues/187
@@ -122,6 +132,8 @@ Fixes from a month of bug reports, including one that has been in every release 
 [#234]: https://github.com/erez-c137/NetSpeedTray/issues/234
 [#236]: https://github.com/erez-c137/NetSpeedTray/issues/236
 [#237]: https://github.com/erez-c137/NetSpeedTray/issues/237
+[#252]: https://github.com/erez-c137/NetSpeedTray/pull/252
+[#254]: https://github.com/erez-c137/NetSpeedTray/pull/254
 [#249]: https://github.com/erez-c137/NetSpeedTray/pull/249
 [@Aaronxiexyl]: https://github.com/Aaronxiexyl
 [@balciseri]: https://github.com/balciseri
