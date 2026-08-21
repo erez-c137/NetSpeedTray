@@ -23,7 +23,7 @@ numpy==2.3.2
     #   matplotlib
 packaging==25.0
     # via matplotlib
-pillow==12.2.0
+pillow==12.3.0
     # via
     #   -r requirements.in
     #   matplotlib
