@@ -171,3 +171,50 @@ def test_hw_percent_content_width_stable_across_digits(q_app):
 
     w9, w10, w100 = content_w(9), content_w(10), content_w(100)
     assert w9 == w10 == w100, f"CPU% segment width still jitters: 9->{w9}, 10->{w10}, 100->{w100}"
+
+
+# --------------------------------------------------------------------------- #250: the separator
+
+def _drawn_strings(renderer, **kwargs) -> list:
+    """Every string draw_hardware_stats paints, captured in order."""
+    from unittest.mock import patch
+
+    img = QImage(360, 52, QImage.Format.Format_ARGB32)
+    img.fill(QColor(0, 0, 0, 0))
+    painter = QPainter(img)
+    seen = []
+    real = QPainter.drawText
+
+    def spy(self, *args):
+        if args and isinstance(args[-1], str):
+            seen.append(args[-1])
+        return real(self, *args)
+
+    with patch.object(QPainter, "drawText", spy):
+        renderer.draw_hardware_stats(painter, width=360, height=52, config=renderer.config, **kwargs)
+    painter.end()
+    return seen
+
+
+def test_memory_is_not_introduced_by_a_pipe(renderer):
+    """#250: the reporter found the ' | ' before the memory value cluttered a readout that is only a
+    few characters wide. A gap separates it just as well.
+
+    Asserted on the painted strings rather than pixels, because a glyph's pixels are a fragile thing
+    to test and its presence in the draw calls is not.
+    """
+    renderer.config.hardware_label_style = "icons_colored"
+    drawn = _drawn_strings(renderer, cpu_usage=8.0, gpu_usage=3.0,
+                           ram_info=(11.8, 15.7), vram_info=(2.1, 8.0), layout_mode="horizontal")
+
+    assert drawn, "nothing was painted - the fixture is not exercising the memory path"
+    assert not [d for d in drawn if "|" in d], (
+        "the memory value is still introduced by a pipe: %r" % [d for d in drawn if "|" in d])
+
+
+def test_the_memory_value_is_still_painted(renderer):
+    """Guard the obvious regression: removing the separator must not remove the number with it."""
+    renderer.config.hardware_label_style = "icons_colored"
+    drawn = _drawn_strings(renderer, cpu_usage=8.0, gpu_usage=3.0,
+                           ram_info=(11.8, 15.7), vram_info=(2.1, 8.0), layout_mode="horizontal")
+    assert any("15.7" in d for d in drawn), "the RAM total vanished along with the separator"

@@ -124,9 +124,53 @@ def _locate_portable_exe(root: str) -> str:
     raise RuntimeError(f"no {constants.app.APP_NAME}.exe in the portable archive")
 
 
+# FOLDERID_Downloads - the only reliable way to find this folder.
+_FOLDERID_DOWNLOADS = "{374DE290-123F-4565-9164-39C4925E467B}"
+
+
+def _known_downloads_dir() -> Optional[str]:
+    """Ask Windows where Downloads actually is, or None if it cannot say.
+
+    Guessing `~/Downloads` is wrong for anyone who has **moved** their Downloads folder - right-click
+    -> Properties -> Location, which people do routinely to keep it off the system drive. The guess
+    then silently misses, and the caller falls back to dumping a folder in the user's home directory
+    instead, where they will not think to look. Windows knows the real path; ask it.
+    """
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class GUID(ctypes.Structure):
+            _fields_ = [("Data1", wintypes.DWORD), ("Data2", wintypes.WORD),
+                        ("Data3", wintypes.WORD), ("Data4", ctypes.c_ubyte * 8)]
+
+        guid = GUID()
+        if ctypes.windll.ole32.CLSIDFromString(_FOLDERID_DOWNLOADS, ctypes.byref(guid)) != 0:
+            return None
+        out = ctypes.c_wchar_p()
+        # 0 = current user, no default-path fallback, no forced creation.
+        if ctypes.windll.shell32.SHGetKnownFolderPath(
+                ctypes.byref(guid), 0, None, ctypes.byref(out)) != 0:
+            return None
+        try:
+            path = out.value
+        finally:
+            ctypes.windll.ole32.CoTaskMemFree(out)
+        return path if path and os.path.isdir(path) else None
+    except Exception:
+        return None
+
+
 def _downloads_dir() -> str:
-    """The user's Downloads folder if it exists, else their home directory - a persistent, findable
-    place to stage the verified new version (the temp dir gets swept on the next launch)."""
+    """A persistent, findable place to stage the verified new version.
+
+    Windows' own answer first, then the `~/Downloads` guess, then the home directory. The staged
+    folder is something we then ask the user to look at, so putting it somewhere they do not expect
+    is the same as losing it.
+    """
+    known = _known_downloads_dir()
+    if known:
+        return known
     home = os.path.expanduser("~")
     downloads = os.path.join(home, "Downloads")
     return downloads if os.path.isdir(downloads) else home

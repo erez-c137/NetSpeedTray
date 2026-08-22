@@ -103,15 +103,40 @@ def test_locate_portable_exe_raises_when_absent(tmp_path):
         ui._locate_portable_exe(str(tmp_path))
 
 
+def test_downloads_dir_trusts_windows_over_the_guess(tmp_path, monkeypatch):
+    """Windows' own answer wins - it is the only one that survives a relocated Downloads folder.
+
+    People move Downloads off the system drive routinely (right-click -> Properties -> Location).
+    The `~/Downloads` guess then misses, and we would stage the update somewhere the user has no
+    reason to look - which, for a folder we then ask them to go and copy, is the same as losing it.
+    """
+    real = tmp_path / "D_drive_downloads"
+    real.mkdir()
+    (tmp_path / "Downloads").mkdir()          # the guess exists too, and must NOT win
+    monkeypatch.setattr(ui, "_known_downloads_dir", lambda: str(real))
+    monkeypatch.setattr(ui.os.path, "expanduser", lambda p: str(tmp_path))
+    assert ui._downloads_dir() == str(real)
+
+
 def test_downloads_dir_prefers_downloads(tmp_path, monkeypatch):
+    """When Windows cannot answer, fall back to the guess."""
+    monkeypatch.setattr(ui, "_known_downloads_dir", lambda: None)
     monkeypatch.setattr(ui.os.path, "expanduser", lambda p: str(tmp_path))
     (tmp_path / "Downloads").mkdir()
     assert ui._downloads_dir() == str(tmp_path / "Downloads")
 
 
 def test_downloads_dir_falls_back_to_home(tmp_path, monkeypatch):
+    """Last resort: somewhere that definitely exists."""
+    monkeypatch.setattr(ui, "_known_downloads_dir", lambda: None)
     monkeypatch.setattr(ui.os.path, "expanduser", lambda p: str(tmp_path))  # no Downloads subdir
     assert ui._downloads_dir() == str(tmp_path)
+
+
+def test_known_downloads_dir_never_raises():
+    """It is best-effort by contract - a COM failure must degrade to the guess, not crash."""
+    result = ui._known_downloads_dir()
+    assert result is None or ui.os.path.isdir(result)
 
 
 def test_is_portable_install_true_with_marker(tmp_path, monkeypatch):
