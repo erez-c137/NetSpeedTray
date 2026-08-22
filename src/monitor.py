@@ -138,6 +138,34 @@ def main() -> int:
     except Exception:
         pass
 
+    # A hands-off portable update renames the old folder aside and deletes it once the new copy is
+    # running. If that delete could not finish (a handle still held), the folder survives - sweep it
+    # here rather than leaving ~57 MB next to the install forever.
+    try:
+        from netspeedtray.core.update_applier import sweep_old_backups, sweep_staged_leftovers
+        _install_dir = os.path.dirname(os.path.abspath(sys.executable))
+        sweep_old_backups(_install_dir)
+        # The applier cannot delete the staged folder it was running from, so if we were just
+        # updated, that folder is still on disk. We are the relaunched copy - clean it up.
+        sweep_staged_leftovers(os.path.dirname(_install_dir),
+                               os.path.join(os.path.expanduser("~"), "Downloads"))
+    except Exception:
+        pass
+
+    # Apply-update path: `--apply-update <install_dir> --wait-pid <pid>`. We are the freshly
+    # downloaded, checksum-verified copy; the previous version launched us so we can replace the
+    # folder it was running from, which it could not do itself. Headless and short-lived - it must
+    # run before the QApplication and before the single-instance mutex, because the old instance may
+    # still be shutting down and holding both.
+    try:
+        from netspeedtray.core.update_applier import run_apply_update_cli
+        apply_code = run_apply_update_cli()
+        if apply_code is not None:
+            return apply_code
+    except Exception as e:
+        logger.error("Apply-update errored: %s", e, exc_info=True)
+        return 1
+
     # Headless export path: `--export-csv --period 24h --out <dir>` writes the two-file stats export
     # and exits, without ever creating the GUI QApplication (so it can run alongside the live app).
     try:

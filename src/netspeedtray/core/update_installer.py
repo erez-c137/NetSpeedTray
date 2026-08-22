@@ -410,13 +410,20 @@ class SecureUpdater(QObject):
             self._finish()
             return
         try:
-            os.startfile(ready)   # type: ignore[attr-defined]  # reveal in Explorer (Windows)
-        except Exception:
-            pass
-        try:
             app_dir = os.path.dirname(os.path.abspath(sys.executable))
         except Exception:
             app_dir = ""
+
+        # Hands-off path: hand the swap to the copy we just verified. It can replace this folder
+        # because it is not running from it. Only offered when the swap is provably safe - anything
+        # doubtful falls through to the guided copy below rather than being worked around.
+        if self._try_hands_off(ready, app_dir):
+            return
+
+        try:
+            os.startfile(ready)   # type: ignore[attr-defined]  # reveal in Explorer (Windows)
+        except Exception:
+            pass
         try:
             title = getattr(self.i18n, "UPDATE_PORTABLE_READY_TITLE", "Update ready to install")
             msg = getattr(
@@ -430,6 +437,35 @@ class SecureUpdater(QObject):
         except Exception:
             pass
         self._finish()
+
+    def _try_hands_off(self, ready: str, app_dir: str) -> bool:
+        """Launch the staged copy to apply the update itself. True if handed off (caller must stop).
+
+        Returns False for every reason the swap is not provably safe, so the guided copy below stays
+        the fallback rather than the user being left with nothing.
+        """
+        try:
+            from netspeedtray.core.update_applier import APP_EXE, validate
+            reason = validate(app_dir, ready)
+            if reason:
+                logger.info("Hands-off update not available (%s); using the guided copy.", reason)
+                return False
+
+            staged_exe = os.path.join(ready, APP_EXE)
+            flags = (getattr(subprocess, "DETACHED_PROCESS", 0)
+                     | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+            subprocess.Popen(
+                [staged_exe, "--apply-update", app_dir, "--wait-pid", str(os.getpid())],
+                cwd=ready, creationflags=flags, close_fds=True)
+            logger.info("Handed the update to the staged copy; quitting so it can swap the folder.")
+        except Exception:
+            logger.error("Could not hand off to the staged copy; using the guided copy.", exc_info=True)
+            return False
+
+        # Only now commit: quitting is what lets the swap proceed.
+        self._finish()
+        self.launching.emit()
+        return True
 
     def _on_failed(self, reason: str) -> None:
         self._teardown_thread()
