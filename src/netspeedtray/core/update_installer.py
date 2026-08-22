@@ -124,9 +124,82 @@ def _locate_portable_exe(root: str) -> str:
     raise RuntimeError(f"no {constants.app.APP_NAME}.exe in the portable archive")
 
 
+# FOLDERID_Downloads - the only reliable way to find this folder.
+_FOLDERID_DOWNLOADS = "{374DE290-123F-4565-9164-39C4925E467B}"
+
+
+def _known_downloads_dir() -> Optional[str]:
+    """Ask Windows where Downloads actually is, or None if it cannot say.
+
+    Guessing `~/Downloads` is wrong for anyone who has **moved** their Downloads folder - right-click
+    -> Properties -> Location, which people do routinely to keep it off the system drive. The guess
+    then silently misses, and the caller falls back to dumping a folder in the user's home directory
+    instead, where they will not think to look. Windows knows the real path; ask it.
+    """
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class GUID(ctypes.Structure):
+            _fields_ = [("Data1", wintypes.DWORD), ("Data2", wintypes.WORD),
+                        ("Data3", wintypes.WORD), ("Data4", ctypes.c_ubyte * 8)]
+
+        guid = GUID()
+        if ctypes.windll.ole32.CLSIDFromString(_FOLDERID_DOWNLOADS, ctypes.byref(guid)) != 0:
+            return None
+        out = ctypes.c_wchar_p()
+        # 0 = current user, no default-path fallback, no forced creation.
+        if ctypes.windll.shell32.SHGetKnownFolderPath(
+                ctypes.byref(guid), 0, None, ctypes.byref(out)) != 0:
+            return None
+        try:
+            path = out.value
+        finally:
+            ctypes.windll.ole32.CoTaskMemFree(out)
+        return path if path and os.path.isdir(path) else None
+    except Exception:
+        return None
+
+
+def _info_box(parent: Optional[QWidget], title: str, text: str) -> None:
+    """An information box that actually ends up in front of the user.
+
+    `QMessageBox.information()` inherits its stacking from its parent, and our parent is the widget -
+    frameless, always-on-top, and since 2.0 docked into the *taskbar's* Z-order as an owned window.
+    A dialog parented to that can end up behind the shell, which is the same class of problem as
+    #200. For most dialogs that is survivable; for this one it is not, because the entire point of
+    the portable flow is to tell the user where their update went. A dialog they never see is
+    indistinguishable from nothing happening at all - which is precisely what #260 reported.
+    """
+    try:
+        box = QMessageBox(parent)
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setWindowTitle(title)
+        box.setText(text)
+        box.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+        box.show()
+        box.raise_()
+        box.activateWindow()
+        box.exec()
+    except Exception:
+        logger.warning("Could not show the update dialog; falling back to the plain box.",
+                       exc_info=True)
+        try:
+            QMessageBox.information(parent, title, text)
+        except Exception:
+            pass
+
+
 def _downloads_dir() -> str:
-    """The user's Downloads folder if it exists, else their home directory - a persistent, findable
-    place to stage the verified new version (the temp dir gets swept on the next launch)."""
+    """A persistent, findable place to stage the verified new version.
+
+    Windows' own answer first, then the `~/Downloads` guess, then the home directory. The staged
+    folder is something we then ask the user to look at, so putting it somewhere they do not expect
+    is the same as losing it.
+    """
+    known = _known_downloads_dir()
+    if known:
+        return known
     home = os.path.expanduser("~")
     downloads = os.path.join(home, "Downloads")
     return downloads if os.path.isdir(downloads) else home
@@ -431,9 +504,8 @@ class SecureUpdater(QObject):
                 "NetSpeedTray {version} is ready in the folder that just opened:\n{ready}\n\n"
                 "To finish updating: close NetSpeedTray, then copy everything from that folder into "
                 "your current folder:\n{app_dir}\n(replacing the old files). Your settings are kept.")
-            QMessageBox.information(
-                self._parent, title,
-                msg.format(version=self._latest_version or "", ready=ready, app_dir=app_dir))
+            _info_box(self._parent, title,
+                      msg.format(version=self._latest_version or "", ready=ready, app_dir=app_dir))
         except Exception:
             pass
         self._finish()
@@ -512,7 +584,7 @@ class SecureUpdater(QObject):
         try:
             msg = getattr(self.i18n, "UPDATE_FALLBACK_MESSAGE",
                           "Couldn't complete the in-app update. Opening the download page instead.")
-            QMessageBox.information(self._parent, getattr(self.i18n, "UPDATE_AVAILABLE_TITLE", "Update"), msg)
+            _info_box(self._parent, getattr(self.i18n, "UPDATE_AVAILABLE_TITLE", "Update"), msg)
         except Exception:
             pass
         try:

@@ -103,15 +103,40 @@ def test_locate_portable_exe_raises_when_absent(tmp_path):
         ui._locate_portable_exe(str(tmp_path))
 
 
+def test_downloads_dir_trusts_windows_over_the_guess(tmp_path, monkeypatch):
+    """Windows' own answer wins - it is the only one that survives a relocated Downloads folder.
+
+    People move Downloads off the system drive routinely (right-click -> Properties -> Location).
+    The `~/Downloads` guess then misses, and we would stage the update somewhere the user has no
+    reason to look - which, for a folder we then ask them to go and copy, is the same as losing it.
+    """
+    real = tmp_path / "D_drive_downloads"
+    real.mkdir()
+    (tmp_path / "Downloads").mkdir()          # the guess exists too, and must NOT win
+    monkeypatch.setattr(ui, "_known_downloads_dir", lambda: str(real))
+    monkeypatch.setattr(ui.os.path, "expanduser", lambda p: str(tmp_path))
+    assert ui._downloads_dir() == str(real)
+
+
 def test_downloads_dir_prefers_downloads(tmp_path, monkeypatch):
+    """When Windows cannot answer, fall back to the guess."""
+    monkeypatch.setattr(ui, "_known_downloads_dir", lambda: None)
     monkeypatch.setattr(ui.os.path, "expanduser", lambda p: str(tmp_path))
     (tmp_path / "Downloads").mkdir()
     assert ui._downloads_dir() == str(tmp_path / "Downloads")
 
 
 def test_downloads_dir_falls_back_to_home(tmp_path, monkeypatch):
+    """Last resort: somewhere that definitely exists."""
+    monkeypatch.setattr(ui, "_known_downloads_dir", lambda: None)
     monkeypatch.setattr(ui.os.path, "expanduser", lambda p: str(tmp_path))  # no Downloads subdir
     assert ui._downloads_dir() == str(tmp_path)
+
+
+def test_known_downloads_dir_never_raises():
+    """It is best-effort by contract - a COM failure must degrade to the guess, not crash."""
+    result = ui._known_downloads_dir()
+    assert result is None or ui.os.path.isdir(result)
 
 
 def test_is_portable_install_true_with_marker(tmp_path, monkeypatch):
@@ -182,3 +207,45 @@ def test_unique_dir_suffixes_when_stale_cannot_be_removed(tmp_path, monkeypatch)
     target.mkdir()
     monkeypatch.setattr(ui.shutil, "rmtree", lambda *a, **k: None)  # simulate a surviving locked dir
     assert ui._unique_dir(str(target)) == str(tmp_path / "NetSpeedTray-2.1.0-2")
+
+
+# --------------------------------------------------------------------------- #260: visible dialogs
+
+def test_info_box_is_raised_and_activated(q_app, monkeypatch):
+    """#260: a dialog the user never sees is indistinguishable from nothing happening.
+
+    The update dialogs are parented to the widget, which is frameless, always-on-top and - since
+    2.0 - docked into the taskbar's own Z-order. A plain QMessageBox parented to that can end up
+    behind the shell, the same class of problem as #200. This one matters more than most, because
+    telling the user where their update went IS the portable flow.
+    """
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtWidgets import QMessageBox
+
+    calls = {"raise_": 0, "activate": 0, "exec": 0, "on_top": None}
+    monkeypatch.setattr(QMessageBox, "raise_", lambda self: calls.__setitem__("raise_", calls["raise_"] + 1))
+    monkeypatch.setattr(QMessageBox, "activateWindow",
+                        lambda self: calls.__setitem__("activate", calls["activate"] + 1))
+    monkeypatch.setattr(QMessageBox, "show", lambda self: None)
+    monkeypatch.setattr(QMessageBox, "exec", lambda self: (
+        calls.__setitem__("on_top", bool(self.windowFlags() & Qt.WindowType.WindowStaysOnTopHint)),
+        calls.__setitem__("exec", calls["exec"] + 1))[1])
+
+    ui._info_box(None, "Update ready", "the new version is in your Downloads folder")
+
+    assert calls["exec"] == 1, "the dialog was never shown"
+    assert calls["raise_"] == 1, "the dialog was not raised above the shell"
+    assert calls["activate"] == 1, "the dialog was not activated"
+    assert calls["on_top"] is True, "the dialog did not carry WindowStaysOnTopHint"
+
+
+def test_info_box_never_raises(q_app, monkeypatch):
+    """Best-effort by contract: a dialog failure must not take the update flow down with it."""
+    from PyQt6.QtWidgets import QMessageBox
+
+    def boom(self):
+        raise RuntimeError("simulated: no display")
+
+    monkeypatch.setattr(QMessageBox, "show", boom)
+    monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda *a, **k: None))
+    ui._info_box(None, "t", "m")   # must not propagate

@@ -529,7 +529,7 @@ class WidgetRenderer:
 
         The FIXED percent COLUMN in draw_hardware_stats (not this string) provides the constant width
         now, so the value reads naturally: it's right-aligned in that column when memory is inline
-        (stacked - keeps the "|" lined up across rows) and left-aligned when memory is on its own row
+        (stacked - keeps the memory column lined up across rows) and left-aligned when memory is on its own row
         (single-stat modes - lines up under the percent). Either way the segment width never changes,
         so the readout no longer slides or clips (#179 and the side-by-side alignment work).
 
@@ -594,7 +594,7 @@ class WidgetRenderer:
             sp = self.metrics.horizontalAdvance(" ")
 
             # Keep percent / suffix / memory as SEPARATE cells (not one concatenated string) so each sits
-            # in its own fixed-width column. That lines the rows up (the "|" and RAM/VRAM align across CPU
+            # in its own fixed-width column. That lines the rows up (the memory values align across CPU
             # and GPU even when one has a temp sensor and the other doesn't) AND makes the segment width
             # CONSTANT as values cross digit boundaries - so the whole readout stops sliding and never
             # clips. Worst-case column widths are computed once and are identical for every row.
@@ -625,7 +625,10 @@ class WidgetRenderer:
             totals = [r['total'] for r in rows if r['total'] > 0]
             t = max(totals) if totals else 0.0
             mem_num_col = self.metrics.horizontalAdvance(f"{t:.1f}/{t:.1f}G" if t > 0 else "9999G") if any_mem else 0
-            sep_col = self.metrics.horizontalAdvance(" | ")
+            # A gap, not a glyph. The memory value used to be introduced by " | ", which read as
+            # clutter on a readout that is only a few characters wide (#250). Whitespace separates
+            # it just as well, and drops a few pixels of reserved width while it is at it.
+            sep_col = self.metrics.horizontalAdvance("  ")
             inline_mem = is_compact
             mem_col = (sep_col + mem_num_col) if (any_mem and inline_mem) else 0
 
@@ -661,7 +664,6 @@ class WidgetRenderer:
                     painter.drawText(vx + pct_col + sp, y, r['suffix'])  # live suffix in its worst-case column
                 if inline_mem and mem_col and r['mem']:
                     mx = vx + pct_col + suffix_col
-                    painter.drawText(mx, y, " | ")
                     # right-align the number in its column so the trailing 'G' lines up across rows
                     painter.drawText(mx + mem_col - self.metrics.horizontalAdvance(r['mem']), y, r['mem'])
                 y += line_height
