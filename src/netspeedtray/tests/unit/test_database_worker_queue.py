@@ -23,7 +23,7 @@ def test_running_worker_drains_queue_and_fires_barrier(tmp_path, qtbot=None):
     worker = DatabaseWorker(tmp_path / "hist.db")
     worker.start()
     try:
-        # Give the worker a moment to initialise its connection/schema.
+        # Give the worker a moment to initialize its connection/schema.
         ready = threading.Event()
         # The barrier proves the worker reached and processed an enqueued task in order.
         barrier = threading.Event()
@@ -85,7 +85,7 @@ def test_maintenance_survives_keep_forever_and_keeps_writing(tmp_path):
     try:
         done = threading.Event()
         worker.enqueue_task("__signal__", done)
-        assert done.wait(5.0), "worker failed to initialise"
+        assert done.wait(5.0), "worker failed to initialize"
         worker.enqueue_task("maintenance", {"keep_data": 36500})    # would crash the thread pre-fix
         worker.enqueue_task("persist_hardware", [(int(time.time()), "ram", 47.5)])
         flushed = threading.Event()

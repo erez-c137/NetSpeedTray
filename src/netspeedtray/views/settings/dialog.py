@@ -45,7 +45,7 @@ from netspeedtray.views.settings.pages.appearance import AppearancePage
 from netspeedtray.views.settings.pages.hardware import HardwarePage
 from netspeedtray.views.settings.pages.advanced import AdvancedPage
 # units.py + colors.py are now embedded inside AppearancePage (the dialog reaches them via
-# appearance_page.units_section / .colors_section for the Force-MB rule + colour-picker routing).
+# appearance_page.units_section / .colors_section for the Force-MB rule + color-picker routing).
 from netspeedtray.views.widget.preview import PreviewWidget
 from netspeedtray.constants.update_mode import UpdateMode
 
@@ -247,7 +247,7 @@ class SettingsDialog(QDialog):
                 self._open_color_dialog
             )
             # The old Color Coding + Display(Units) pages are now sections INSIDE Appearance. Keep
-            # references so the existing colour-picker routing + Force-MB rule reach the same objects.
+            # references so the existing color-picker routing + Force-MB rule reach the same objects.
             self.colors_page = self.appearance_page.colors_section
             self.units_page = self.appearance_page.units_section
 
@@ -268,7 +268,7 @@ class SettingsDialog(QDialog):
             for page in [
                 self.general_page,       # 0 - General
                 self.widget_page,        # 1 - Widget
-                self.appearance_page,    # 2 - Appearance (font/colour/units/colour-coding/graph)
+                self.appearance_page,    # 2 - Appearance (font/color/units/color-coding/graph)
                 self.hardware_page,      # 3 - Hardware
                 self.interfaces_page,    # 4 - Network
                 self.advanced_page,      # 5 - Advanced
@@ -352,7 +352,7 @@ class SettingsDialog(QDialog):
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
         # Let the dark content background show through the scroll region so cards FLOAT on it (the page
-        # otherwise renders an opaque mid-grey that the cards blend into - the "cards section is a
+        # otherwise renders an opaque mid-gray that the cards blend into - the "cards section is a
         # different shade" bug). Mirrors how the Monitor's Overview scroll content is made transparent.
         scroll.viewport().setAutoFillBackground(False)
         page.setStyleSheet("background: transparent;")   # cards/inputs keep their own fill (more specific)
@@ -369,7 +369,7 @@ class SettingsDialog(QDialog):
         try:
             self.general_page.load_settings(self.config, self.startup_enabled_initial_state)
             self.widget_page.load_settings(self.config)
-            self.appearance_page.load_settings(self.config)   # also loads the embedded units + colours
+            self.appearance_page.load_settings(self.config)   # also loads the embedded units + colors
             self.hardware_page.load_settings(self.config)
             self.interfaces_page.load_settings(self.config)
             self.advanced_page.load_settings(self.config)
@@ -439,7 +439,7 @@ class SettingsDialog(QDialog):
             pass
 
     def _tint_sidebar_icons(self) -> None:
-        """Re-render each sidebar glyph in the right colour (a QIcon pixmap can't be tinted by QSS):
+        """Re-render each sidebar glyph in the right color (a QIcon pixmap can't be tinted by QSS):
         accent on the selected row to match the accent indicator bar, text_secondary on the rest."""
         try:
             c = style_utils.semantic_colors()
@@ -500,7 +500,7 @@ class SettingsDialog(QDialog):
             settings = self.config.copy()
             settings.update(self.general_page.get_settings())
             settings.update(self.widget_page.get_settings())
-            settings.update(self.appearance_page.get_settings())   # includes embedded units + colours
+            settings.update(self.appearance_page.get_settings())   # includes embedded units + colors
             settings.update(self.hardware_page.get_settings())
             settings.update(self.interfaces_page.get_settings())
             settings.update(self.advanced_page.get_settings())

@@ -6,7 +6,7 @@ across opens (the window caches it); ``refresh()`` re-reads the current config/t
 before each show. Changes apply LIVE - each control writes its config key (persisted via the widget's
 config_controller) and emits ``changed`` so the Monitor re-renders the active graph. Matplotlib-free.
 
-6.2a covers the combined-graph essentials (CPU/GPU line colours with a vendor "Auto" reset, and the
+6.2a covers the combined-graph essentials (CPU/GPU line colors with a vendor "Auto" reset, and the
 legend toggle). 6.2b/6.2c add the graph mode, smoothing, axis, cadence, theme and open-on-startup
 here and on a mirrored Settings → Monitor page.
 """
@@ -115,7 +115,7 @@ class MonitorSettingsFlyout(QFrame):
 
         # Don't HARD-pin the width: the 3-button Layout segmented (and longer localized labels like
         # de "Kombiniert/Umschalten") need more than 300px and Win11Segmented buttons hard-clip (no
-        # elide). A min width keeps the colour rows from looking sparse; _open_settings_flyout's
+        # elide). A min width keeps the color rows from looking sparse; _open_settings_flyout's
         # adjustSize() then grows the panel to the controls' sizeHint so no label is ever truncated.
         self.setMinimumWidth(300)
 

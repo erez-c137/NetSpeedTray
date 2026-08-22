@@ -7,7 +7,7 @@ control can return the wrong value (corrupt mapping). This test pins both:
 
   * COVERAGE - every mutable key the dialog manages today is still present in get_settings().
   * ROUND-TRIP - loading a config with the high-risk keys (the moved ones + the segmented enums +
-    the colours) and reading it straight back returns the same values.
+    the colors) and reading it straight back returns the same values.
 
 It is deliberately structure-agnostic: it drives the public SettingsDialog API only, so it holds
 identically before and after the page reshuffle. A red here means the reshuffle dropped/corrupted a
@@ -27,10 +27,10 @@ from netspeedtray.views.settings.dialog import SettingsDialog
 MANAGED_KEYS = {
     # General
     "language", "update_rate", "start_with_windows", "check_for_updates", "preferred_monitor",
-    # Widget (layout + on-taskbar behaviour)
+    # Widget (layout + on-taskbar behavior)
     "free_move", "keep_visible_fullscreen",
     "widget_display_mode", "stack_hardware_stats", "widget_display_order",
-    # Appearance - font / colour / arrows / background
+    # Appearance - font / color / arrows / background
     "font_family", "font_size", "font_weight", "default_color",
     "background_color", "background_opacity",
     "use_separate_arrow_font", "arrow_font_family", "arrow_font_size",
@@ -39,7 +39,7 @@ MANAGED_KEYS = {
     # Appearance - units / format (was the Display page)
     "unit_type", "speed_display_mode", "decimal_places", "text_alignment",
     "swap_upload_download", "hide_arrows", "hide_unit_suffix", "short_unit_labels",
-    # Appearance - colour coding (was the Color Coding page)
+    # Appearance - color coding (was the Color Coding page)
     "color_coding", "high_speed_threshold", "low_speed_threshold",
     "high_speed_color", "low_speed_color",
     # Hardware
@@ -60,7 +60,7 @@ MANAGED_KEYS = {
 }
 
 # High-risk keys for the reshuffle: the ones that MOVE pages, the segmented enums (int/string
-# userData mappings that silently corrupt if mis-wired), and the colours. Mapped to a valid
+# userData mappings that silently corrupt if mis-wired), and the colors. Mapped to a valid
 # non-default value we can prove round-trips.
 ROUNDTRIP = {
     "free_move": True,
@@ -108,7 +108,7 @@ def test_no_managed_key_is_dropped(qtbot):
 
 
 def test_highrisk_keys_round_trip(qtbot):
-    """Load a config with the moved + segmented + colour keys at non-defaults; read them straight
+    """Load a config with the moved + segmented + color keys at non-defaults; read them straight
     back. A corrupt mapping (e.g. a segmented control losing its userData) returns the wrong value."""
     cfg = dict(constants.config.defaults.DEFAULT_CONFIG)
     cfg.update(ROUNDTRIP)
@@ -145,8 +145,8 @@ def test_unmanaged_keys_are_preserved_through_get_settings(qtbot):
 # --- integration tests for the cross-page wiring the UI/UX audit flagged as untested -----------------
 
 def test_color_picker_routes_to_the_right_embedded_section(qtbot, monkeypatch):
-    """Appearance embeds the old Colors page as colors_section. The dialog's colour picker must route
-    high/low-speed colours to that section and default/background to Appearance itself - a mis-wired
+    """Appearance embeds the old Colors page as colors_section. The dialog's color picker must route
+    high/low-speed colors to that section and default/background to Appearance itself - a mis-wired
     branch would silently paint the wrong swatch."""
     from PyQt6.QtGui import QColor
     from PyQt6.QtWidgets import QColorDialog
@@ -183,8 +183,8 @@ def test_enabling_a_hardware_monitor_switches_widget_out_of_network_only(qtbot):
 
 
 def test_color_is_automatic_flips_false_after_user_picks_default_colour(qtbot, monkeypatch):
-    """Picking an explicit default colour must clear the implicit color_is_automatic flag, so the text
-    colour stops auto-tracking the theme."""
+    """Picking an explicit default color must clear the implicit color_is_automatic flag, so the text
+    color stops auto-tracking the theme."""
     from PyQt6.QtGui import QColor
     from PyQt6.QtWidgets import QColorDialog
     cfg = dict(constants.config.defaults.DEFAULT_CONFIG)

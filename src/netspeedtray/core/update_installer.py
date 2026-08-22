@@ -62,7 +62,7 @@ def download_to(url: str, dest: str,
         read = 0
         while True:
             if is_cancelled is not None and is_cancelled():
-                raise RuntimeError("cancelled")
+                raise RuntimeError("canceled")
             chunk = resp.read(_CHUNK)
             if not chunk:
                 break
@@ -229,7 +229,7 @@ class _DownloadWorker(QObject):
             self.failed.emit(str(e))
             return
         if self._cancelled:
-            self.failed.emit("cancelled")
+            self.failed.emit("canceled")
             return
         try:
             if self._portable:
@@ -430,7 +430,7 @@ class SecureUpdater(QObject):
         self._teardown_thread()
         self._close_progress()
         self._cleanup_file()
-        if reason == "cancelled":
+        if reason == "canceled":
             self._finish()
             return
         self._fallback(reason)

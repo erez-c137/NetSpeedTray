@@ -43,7 +43,7 @@ class TrayIconManager(QObject):
         # Retrieve actions for external use if needed (e.g., toggling text)
         self.pause_action: Optional[QAction] = None
         self.pause_separator: Optional[QAction] = None
-        # [(QAction, Segoe-Fluent-codepoint)] - icons are (re)tinted to the text colour on each open.
+        # [(QAction, Segoe-Fluent-codepoint)] - icons are (re)tinted to the text color on each open.
         self._menu_icon_actions: list = []
 
     def initialize(self) -> None:
@@ -131,7 +131,7 @@ class TrayIconManager(QObject):
                 exit_action.setEnabled(False)
 
             # Native Win11 menu iconography: a Segoe Fluent glyph beside each item (tinted to the text
-            # colour per theme in _apply_menu_style, which runs on every open). The pause glyph swaps
+            # color per theme in _apply_menu_style, which runs on every open). The pause glyph swaps
             # pause<->play with the action's state in _refresh_dynamic_items.
             self._menu_icon_actions = [
                 (settings_action, 0xE713),    # Settings (gear)
@@ -173,7 +173,7 @@ class TrayIconManager(QObject):
                 f" QMenu::item:selected {{ background: {c['subtle_fill']}; color: {c['text_primary']}; }}"
                 f" QMenu::item:disabled {{ color: {c['text_secondary']}; }}"
                 f" QMenu::separator {{ height: 1px; background: {c['card_stroke']}; margin: 4px 10px; }}")
-            # Tint the Fluent glyphs to the current text colour so they track the OS light/dark theme.
+            # Tint the Fluent glyphs to the current text color so they track the OS light/dark theme.
             for action, cp in self._menu_icon_actions:
                 action.setIcon(su.fluent_icon(cp, 16, c['text_primary']))
         except Exception as e:

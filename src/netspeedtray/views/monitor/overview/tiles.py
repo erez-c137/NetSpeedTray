@@ -57,7 +57,7 @@ def dynamic_range(series: List[float], min_span: float = 15.0,
 
 
 class Sparkline(QWidget):
-    """A tiny trend line with a soft gradient fill, in a single accent colour."""
+    """A tiny trend line with a soft gradient fill, in a single accent color."""
 
     def __init__(self, color: str, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -329,7 +329,7 @@ class NetworkHero(ClickableCard):
         title_row.addStretch(1)
         # Latency pill (top-right) - plain word first (Good/OK/Slow), the ms as quiet subtext. Wrapped
         # in a subtle inset chip so it reads as a native Win11 status badge, not floating text (the
-        # status colour is carried by the inline text; the label hides itself when there's no reading).
+        # status color is carried by the inline text; the label hides itself when there's no reading).
         self._latency = QLabel("")
         self._latency.setFont(su.font(tokens.TYPE_CAPTION))
         self._latency.setStyleSheet(
@@ -387,7 +387,7 @@ class NetworkHero(ClickableCard):
         self._sub.setVisible(bool(sub_text))
 
     def set_latency(self, html: str) -> None:
-        """Set the top-right latency pill (rich text: a colour-coded word + quiet ms/loss subtext)."""
+        """Set the top-right latency pill (rich text: a color-coded word + quiet ms/loss subtext)."""
         self._latency.setText(html)
         self._latency.setVisible(bool(html))
 
@@ -473,7 +473,7 @@ class UsageTile(QFrame):
         return row, value
 
     def _fmt_num(self, value: float) -> str:
-        """One-decimal, honouring the locale's decimal separator (so the usage rows match the
+        """One-decimal, honoring the locale's decimal separator (so the usage rows match the
         Network tile's localized speed text in the same window - e.g. ``1,2`` on de_DE)."""
         s = f"{value:.1f}"
         sep = getattr(self._i18n, "DECIMAL_SEPARATOR", ".")

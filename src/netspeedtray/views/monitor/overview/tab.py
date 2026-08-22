@@ -3,7 +3,7 @@ OverviewTab - the Monitor's control center: an at-a-glance "everything that's go
 
 By contract this tab NEVER imports matplotlib (it's the default tab, so a glance-only session stays
 at the idle-RAM baseline). It leads with a NetworkHero (co-equal download + upload over a dual
-sparkline), then a row of hardware tiles (CPU / GPU / RAM / VRAM - utilisation, temperature, memory),
+sparkline), then a row of hardware tiles (CPU / GPU / RAM / VRAM - utilization, temperature, memory),
 then a Today/This-month data-usage card. The Monitor forces hardware collection while it's open, so
 the hardware tiles show real data even when the taskbar widget has hardware monitoring off.
 
@@ -29,7 +29,7 @@ from netspeedtray.utils import styles as su
 from netspeedtray.constants.styles import styles as tokens
 from netspeedtray.utils.helpers import format_speed, format_data_size, format_duration_short
 from netspeedtray.utils.widget_paint import WidgetMetrics   # reuse its Mbps→bytes/sec converter (DRY)
-# NOTE: `summaries` imports numpy at module scope. To honour the Monitor's import firewall (a glance at
+# NOTE: `summaries` imports numpy at module scope. To honor the Monitor's import firewall (a glance at
 # the default Overview must not eagerly pull the heavy compute deps), it is imported LAZILY inside
 # _reload_window - the one place it's used - NOT here. Keep it that way.
 from netspeedtray.views.monitor.overview.tiles import StatTile, UsageTile, NetworkHero, dynamic_range
@@ -39,7 +39,7 @@ from netspeedtray.views.monitor.timeline_selector import TimelineSelector
 # exports, so it is imported LAZILY in those handlers - keeping numpy off the Overview's import path.
 
 # Per-resource accent as (dark, light) pairs. Network up/down get a distinct, harmonious pair; CPU/GPU
-# echo the graph's line hues; RAM/VRAM get their own calm colours. The light variant keeps the thin
+# echo the graph's line hues; RAM/VRAM get their own calm colors. The light variant keeps the thin
 # trend line legible on the near-white light card.
 _ACCENTS = {
     # Download green / upload blue - the SAME codes as the standalone graph (color.DOWNLOAD/UPLOAD_LINE_COLOR)
@@ -433,7 +433,7 @@ class OverviewTab(QWidget):
             vu, vt = getattr(mw, "vram_used", None), getattr(mw, "vram_total", None)
             integrated = vu is None and vt is None
 
-            # Each utilisation sparkline auto-zooms to its own active band (dynamic_range), so a
+            # Each utilization sparkline auto-zooms to its own active band (dynamic_range), so a
             # low-but-varying metric (e.g. CPU mostly 5-20%) reads in detail instead of as a flat
             # squiggle against a fixed 0-100% - with a minimum span so a steady metric isn't blown up.
             cpu_series = ser.get("cpu", [])
@@ -583,7 +583,7 @@ class OverviewTab(QWidget):
         return s.replace(".", sep) if sep and sep != "." else s
 
     def _latency_html(self, mw) -> str:
-        """Latency pill: a colour-coded plain word (Good/OK/Slow - the panel insisted avg-ms is a bad
+        """Latency pill: a color-coded plain word (Good/OK/Slow - the panel insisted avg-ms is a bad
         headline) with the ms + loss% as quiet subtext. Internet (public anchor) latency wins over the
         gateway when the user opted into the public probe."""
         gw = getattr(mw, "latency_gw", None)
@@ -611,7 +611,7 @@ class OverviewTab(QWidget):
 
     def _detail_subjects(self, metric: str):
         """The subject list a card opens its Stats-detail sheet with. Hardware cards lead with their
-        utilisation and add temperature/power when a sensor reported them; network leads with both
+        utilization and add temperature/power when a sensor reported them; network leads with both
         directions plus gateway latency. (Empty secondary blocks drop out inside the sheet.)"""
         cpu = self._tr("ORDER_TYPE_CPU", "CPU")
         gpu = self._tr("ORDER_TYPE_GPU", "GPU")

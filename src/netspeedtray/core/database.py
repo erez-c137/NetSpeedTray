@@ -803,7 +803,7 @@ class DatabaseWorker(QThread):
                 
                 return pruned_count > 0
             else:
-                self.logger.warning("Scheduled prune was due, but no pending retention period was found. Cancelling.")
+                self.logger.warning("Scheduled prune was due, but no pending retention period was found. Canceling.")
                 cursor.execute("DELETE FROM metadata WHERE key = 'prune_scheduled_at'")
                 return False
         elif new_retention_config < current_retention_db:
@@ -816,7 +816,7 @@ class DatabaseWorker(QThread):
         elif new_retention_config > current_retention_db:
             if prune_scheduled_at_ts is not None:
                 cursor.execute("DELETE FROM metadata WHERE key IN ('prune_scheduled_at', 'pending_retention_days')")
-                self.logger.info("Retention period increased. Pending data prune has been cancelled.")
+                self.logger.info("Retention period increased. Pending data prune has been canceled.")
             cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES ('current_retention_days', ?)", (str(new_retention_config),))
         
         cutoff = self._retention_cutoff(now, current_retention_db)

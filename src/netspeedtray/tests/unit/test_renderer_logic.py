@@ -180,10 +180,10 @@ def test_apply_hw_ylim_fixed_vs_auto():
     ax.set_ylim.assert_called_with(0, 10.0)
 
 
-# --- 6.2b review fix: toggle (single-stat) mode must honour hw_styles -------------
+# --- 6.2b review fix: toggle (single-stat) mode must honor hw_styles -------------
 # Regression guard for the adversarial-review finding: the Monitor's "toggle" layout renders one
 # CPU/GPU line via render(stat_type="cpu"/"gpu", hw_styles=...). That path must route through the
-# hw-aware _render_hwsingle (configured colour + Smooth + fixed/auto axis), while the standalone
+# hw-aware _render_hwsingle (configured color + Smooth + fixed/auto axis), while the standalone
 # GraphWindow (hw_styles=None) must keep the legacy _plot_high_res path. Mock-based to avoid a real
 # canvas.draw() (which hangs under pytest-qt); the visual integration is covered by the render smoke.
 
@@ -216,7 +216,7 @@ def test_toggle_mode_dispatches_to_hwsingle_with_styles():
     r.render(data, datetime.fromtimestamp(now - 60), datetime.fromtimestamp(now),
              "TIMELINE_60_MINUTES", stat_type="cpu", hw_styles=hw, force_rebuild=True)
     r._render_hwsingle.assert_called_once()
-    assert r._render_hwsingle.call_args[0][-1] is hw     # the colour/smooth/axis styles reach the renderer
+    assert r._render_hwsingle.call_args[0][-1] is hw     # the color/smooth/axis styles reach the renderer
     r._plot_high_res.assert_not_called()                 # not the legacy path
 
 

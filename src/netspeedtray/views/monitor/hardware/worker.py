@@ -2,7 +2,7 @@ r"""
 HardwareActivityWorker - per-process CPU / RAM / GPU sampler for the Monitor's Hardware tab.
 
 Honest, admin-free, and every number measured (not estimated):
-  * CPU%  - psutil per-process, summed across a program's PIDs, normalised to total-CPU (0-100%).
+  * CPU%  - psutil per-process, summed across a program's PIDs, normalized to total-CPU (0-100%).
   * RAM   - psutil USS (Unique Set Size = private resident memory), summed across PIDs. This is what
             Task Manager's "Memory" column shows; rss would double-count shared DLLs across a
             multi-process app and read 2-3x high. USS is heavier to read, so it's refreshed every
@@ -127,7 +127,7 @@ class HardwareActivityWorker(QObject):
                     "identity_key": key,
                     "display_name": a["display_name"],
                     "pids": sorted(a["pids"]),
-                    # Normalise summed-across-cores CPU to a 0-100% share of the whole CPU.
+                    # Normalize summed-across-cores CPU to a 0-100% share of the whole CPU.
                     "cpu_pct": min(100.0, a["cpu"] / self._cpu_count),
                     "rss_bytes": self._uss_cache.get(key, a["rss"]),  # accurate USS if cached, else rss
                     "gpu_pct": min(100.0, a["gpu"]),   # max-of-engines is already 0-100; clamp is belt-and-braces

@@ -26,7 +26,7 @@ class HardwarePage(QWidget):
 
     def _setup_ui(self):
         # 2.0 IA: the primary monitoring toggles are Win11 Settings cards under a plain section caption;
-        # the lower-frequency groups (display mode / order / load colours) stay behind Fluent expanders.
+        # the lower-frequency groups (display mode / order / load colors) stay behind Fluent expanders.
         # All control objects + the load/get wiring are unchanged.
         layout = page_layout(self)
 
@@ -165,7 +165,7 @@ class HardwarePage(QWidget):
 
     def _set_card_enabled(self, card: SettingCard, enabled: bool) -> None:
         """Gray out a dependent card when its prerequisite is off. setEnabled alone won't visually dim
-        our fixed-colour custom toggle, so pair it with an opacity effect for the Win11 'unavailable'
+        our fixed-color custom toggle, so pair it with an opacity effect for the Win11 'unavailable'
         look (and to make the card non-interactive)."""
         card.setEnabled(enabled)
         eff = card.graphicsEffect()
@@ -175,7 +175,7 @@ class HardwarePage(QWidget):
         eff.setOpacity(1.0 if enabled else 0.4)
 
     def _sync_dependent_cards(self) -> None:
-        """Several readouts ride on the CPU/GPU utilisation lines, so gray their toggles out when there's
+        """Several readouts ride on the CPU/GPU utilization lines, so gray their toggles out when there's
         nowhere for them to render (Win11 dependent-control pattern): temperature & power need at least
         one of CPU/GPU on; RAM rides on the CPU line, and VRAM on the GPU line, so each is grayed when its
         host monitor is off - otherwise turning on RAM with CPU off promised something that never shows."""

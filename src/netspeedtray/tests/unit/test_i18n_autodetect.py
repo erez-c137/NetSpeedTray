@@ -158,7 +158,7 @@ class TestDisplayLanguageVersusRegionalFormat:
         ("de_DE", "de_DE"), ("es_ES", "es_ES"), ("fr_FR", "fr_FR"),
     ])
     def test_english_display_falls_back_to_a_supported_regional_format(self, format_locale, expected):
-        """The behaviour this fix must NOT take away: English-language Windows with a German,
+        """The behavior this fix must NOT take away: English-language Windows with a German,
         Spanish or French regional format is common across Europe, and those users got a localized
         app in 2.1.2. CPython's locale_alias resolves exactly these three CRT names."""
         with patch("ctypes.windll", self._windll(1033), create=True), \

@@ -5,7 +5,7 @@ The 2.0 Settings pages are built from one idiom - a small section caption over a
 ``SettingCard`` rows (the native Win11 Settings layout) - instead of the old ``QGroupBox`` frames.
 This module holds the one piece that ``components.SettingCard`` doesn't: the section caption that
 groups related cards. Keeping it here means every page renders the same heading at the same size,
-colour and inset.
+color and inset.
 """
 from __future__ import annotations
 

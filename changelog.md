@@ -17,7 +17,7 @@ Downloads and signed installers: [Releases](https://github.com/erez-c137/NetSpee
 
 WHO READS THIS FILE
   Users deciding whether to upgrade, people checking if their bug got fixed,
-  and developers looking for when a behaviour changed. Write for the first two;
+  and developers looking for when a behavior changed. Write for the first two;
   the link at the end of each line serves the third.
 
 THE RULE
@@ -52,7 +52,7 @@ WHEN THE MECHANISM MATTERS
 
 SECTIONS - use only these, in this order, and omit any that are empty:
     ### Added        new features
-    ### Changed      behaviour that changed for existing users
+    ### Changed      behavior that changed for existing users
     ### Fixed        bugs
     ### Removed      features taken away
     ### Security     anything with a security impact
@@ -63,7 +63,7 @@ SECTIONS - use only these, in this order, and omit any that are empty:
 
 ALSO
   - Start each release with ONE sentence saying what it is.
-  - Anything that changes behaviour on upgrade goes in a "> **Upgrading:**"
+  - Anything that changes behavior on upgrade goes in a "> **Upgrading:**"
     callout right under that sentence, before the sections.
   - Credit inline and compactly: ([#234], thanks [@user]).
   - Link issues as ([#234]) using the reference-style links kept at the bottom
@@ -83,7 +83,7 @@ Fixes from a month of bug reports, including one that has been in every release 
 
 ### Added
 
-- **Upload and download arrows can have their own colours.** Turn on *Custom arrow colors* in **Settings → Appearance**. Off by default, so nothing moves unless you ask. ([#168], thanks [@VenusGirl])
+- **Upload and download arrows can have their own colors.** Turn on *Custom arrow colors* in **Settings → Appearance**. Off by default, so nothing moves unless you ask. ([#168], thanks [@VenusGirl])
 - **The Settings and Monitor windows can stay on top.** New toggle in **Settings → Advanced**, so the Monitor can sit over a full-screen app. ([#213], thanks [@CMTriX])
 
 ### Changed
@@ -95,7 +95,7 @@ Fixes from a month of bug reports, including one that has been in every release 
 - **The app now starts in your Windows display language.** Auto-detect never worked, so Korean, Japanese, Russian, Polish, Dutch, Slovenian, Hebrew and both Chinese variants always fell back to English - in every release ever shipped. If you found the app in English despite your system being set otherwise and assumed it simply wasn't translated: it was, and I'm sorry. The Language settings card now shows what was detected, so this can't fail quietly again, and choosing Auto-detect correctly prompts you to restart - it used to stay silent. ([#234], thanks [@VenusGirl])
 
   *Under the hood: `locale.getlocale()` returns the C-runtime name on Windows ("Korean_Korea"), not "ko_KR", so every lookup missed and fell through to English. German, Spanish and French worked only because CPython's `locale_alias` happens to carry their CRT names - which is why this survived a year on an English dev machine. Now reads `GetUserDefaultUILanguage()`.*
-- **The CPU temperature no longer shows your graphics card's.** On laptops whose CPU reports no temperature, NetSpeedTray picked up the GPU's sensor instead and labelled it CPU. ([#237], thanks [@Aaronxiexyl], whose sensor report made this visible)
+- **The CPU temperature no longer shows your graphics card's.** On laptops whose CPU reports no temperature, NetSpeedTray picked up the GPU's sensor instead and labeled it CPU. ([#237], thanks [@Aaronxiexyl], whose sensor report made this visible)
 
   *Under the hood: when nothing is named exactly "CPU Package" we fall back to matching sensor names, and one keyword was "CORE" - which matches NVIDIA's "GPU Core". The sensor identifier now decides before any name is considered.*
 - **GPU usage now counts apps you start after NetSpeedTray.** It only ever watched programs that were already running, so on laptops with two GPUs the discrete card was never measured at all. ([#236], thanks [@balciseri], who filed this as a feature request and turned out to have found a bug)
@@ -126,7 +126,7 @@ Fixes from a month of bug reports, including one that has been in every release 
 
 ### Developer notes
 
-- **Tests grew from 865 to 1135**, covering language auto-detect, the tray-menu accelerators, CPU sensor selection, the GPU wildcard counters and the arrow colours.
+- **Tests grew from 865 to 1135**, covering language auto-detect, the tray-menu accelerators, CPU sensor selection, the GPU wildcard counters and the arrow colors.
 - **A new locale is now checked for more than key parity.** A locale file that isn't registered in `LANGUAGE_MAP` is unreachable from the UI - Turkish arrived that way and every existing test passed, because parity only ever compares keys between files. ([#254])
 
   *Under the hood: the new checks also pin each locale's decimal separator to CLDR and cap `DEFAULT_TEXT`, which is painted on the taskbar itself - a spelled-out phrase overflows a slot sized for "N/A".*
@@ -166,7 +166,7 @@ One fix for the in-app updater.
 
 ## [2.1.1] - July 15, 2026
 
-Auto-hide taskbar behaviour, a flat CPU temperature, and an antivirus false positive.
+Auto-hide taskbar behavior, a flat CPU temperature, and an antivirus false positive.
 
 ### Fixed
 
@@ -270,11 +270,11 @@ Polish on top of 2.0.0: localization fixes for the history graph, a rounding fix
   *Under the hood: the formatter rounded before checking whether the value had crossed into the next unit. It now promotes after rounding.*
 - **Preferred Monitor works on multi-monitor setups.** Choosing a secondary display did nothing at all before. ([#72], thanks [@Mythos])
 
-  *Under the hood: two separate faults. Taskbar discovery required a system-tray area, which on Windows 11 only the primary taskbar has - so every secondary taskbar was silently discarded. And even once placed, the once-a-second refresh re-resolved the primary taskbar and pulled the widget back within a frame. Every repositioning path now honours the setting.*
+  *Under the hood: two separate faults. Taskbar discovery required a system-tray area, which on Windows 11 only the primary taskbar has - so every secondary taskbar was silently discarded. And even once placed, the once-a-second refresh re-resolved the primary taskbar and pulled the widget back within a frame. Every repositioning path now honors the setting.*
 - **Both arrows on the plan-speed and data-cap spinboxes now work.** The text field overlapped the up button and swallowed its clicks. ([#169])
 - **The Monitor's settings gear only appears on the Hardware tab**, where it actually does something. ([#170])
 - **The side-by-side hardware readout stays aligned and stops sliding.** The block shifted sideways whenever a percentage ticked over (9→10, 99→100), RAM and VRAM didn't line up between rows, and memory could clip to a single digit after a language change. Each field now sits in its own fixed-width column. ([#179])
-- **"Show RAM" and "Show VRAM" grey out when their monitor is off.** RAM rides on the CPU readout and VRAM on the GPU readout, so enabling either alone showed nothing.
+- **"Show RAM" and "Show VRAM" gray out when their monitor is off.** RAM rides on the CPU readout and VRAM on the GPU readout, so enabling either alone showed nothing.
 - **Honest guidance when temperature and power aren't available.** NetSpeedTray used to tell you to run LibreHardwareMonitor as Administrator, sending you after a permissions problem that doesn't exist. ([#134], thanks [@Mythos])
 
   *Under the hood: LHM removed its WMI provider in v0.9.5, so `root\LibreHardwareMonitor` no longer exists in current builds - no amount of elevation brings it back. The download link now points at v0.9.4, the last WMI-capable release.*
@@ -317,7 +317,7 @@ Polish on top of 2.0.0: localization fixes for the history graph, a rounding fix
   *Under the hood: the cap reads a dedicated monotonic counter, not the sampled history, which would under-count. Alerts are debounced and restart-safe.*
 - **Network latency and a plain-word verdict** - *Internet: Good / OK / Slow* - with milliseconds as subtext. Defaults to your gateway, so it stays on your LAN; a public host is strictly opt-in.
 - **Native Windows 11 chrome** - dark title bars that follow your theme, rounded corners, a Fluent tab strip, styled settings controls, and a rebuilt right-click menu and Support dialog. Silently does nothing on Windows 10.
-- **Live settings preview.** Settings shows an inert render of the widget on a taskbar-like strip that updates as you change font, colour, arrows, layout or mode - drawn through the same paint path as the real widget, so it matches exactly.
+- **Live settings preview.** Settings shows an inert render of the widget on a taskbar-like strip that updates as you change font, color, arrows, layout or mode - drawn through the same paint path as the real widget, so it matches exactly.
 - **Six arrow styles** plus a custom option: Classic, Solid, Compact, Outline, Outline Compact, Double.
 - **Scroll to switch metrics in Cycle mode**, instead of waiting for the rotation.
 - **Pause / Resume in the right-click menu**, and a hover card showing data used today and this month.
@@ -336,7 +336,7 @@ Polish on top of 2.0.0: localization fixes for the history graph, a rounding fix
 
   *Under the hood: two causes. A "re-assert position when the taskbar takes focus" step had been lost in an earlier refactor, and a redundant Z-order re-promotion briefly dropped the translucent widget out of the top layer - unnecessary once docked.*
 - **Fullscreen hide and show is near-instant both ways**, including apps that go fullscreen without taking focus, like double-clicking a video. It used to lag up to a second.
-- **Colour coding now follows the real speed, not the number on screen.** Thresholds are defined in Mbps but were compared against whatever was displayed, so in Kbps or MB/s mode the bands triggered at the wrong speeds - a 0.5 Mbps stream shown as "500 Kbps" counted as fast. Banding is now computed from the canonical speed.
+- **Color coding now follows the real speed, not the number on screen.** Thresholds are defined in Mbps but were compared against whatever was displayed, so in Kbps or MB/s mode the bands triggered at the wrong speeds - a 0.5 Mbps stream shown as "500 Kbps" counted as fast. Banding is now computed from the canonical speed.
 - **Log files are written reliably again.** They could previously fail silently, so Support Bundles arrived with no logs at all.
 
   *Under the hood: `config.py` imported `logging` but not `logging.handlers`, which Python does not import automatically. Depending on import order this raised `AttributeError`, fell back to console-only logging, and produced no file.*
@@ -352,7 +352,7 @@ Polish on top of 2.0.0: localization fixes for the history graph, a rounding fix
 - **The graph window no longer crashes while building a tab title.** It referenced a translation key that exists in no language file.
 
   *Under the hood: a new test now scans the code for references to nonexistent translation keys, so this class cannot come back silently.*
-- **The colour threshold boxes now follow your chosen unit.** They always read "Mbps", even when the widget was set to byte or binary units. Contributed by [@rami123] ([#165]).
+- **The color threshold boxes now follow your chosen unit.** They always read "Mbps", even when the widget was set to byte or binary units. Contributed by [@rami123] ([#165]).
 - **Dragging the widget right of the tray no longer snaps it back.** The saved offset went negative and was clamped to zero, so the next reposition pulled it left again. Contributed by [@rami123] ([#165]).
 
 ### Performance
@@ -370,7 +370,7 @@ Polish on top of 2.0.0: localization fixes for the history graph, a rounding fix
 ### Developer notes
 
 - **First CI pipeline.** The full suite now runs on every push and PR to `main`; previously tests ran only on release tags, so a regression could land unnoticed.
-- **Tests grew from 196 to 722.** Notable new coverage: the data-cap odometer and restart-safe alerts, the shared paint path and preview render-parity, the honest connection model, the recoverable circuit breaker, and the first headless GUI tests including render-pixel verification of the colour bands.
+- **Tests grew from 196 to 722.** Notable new coverage: the data-cap odometer and restart-safe alerts, the shared paint path and preview render-parity, the honest connection model, the recoverable circuit breaker, and the first headless GUI tests including render-pixel verification of the color bands.
 - **Shared widget paint path.** The widget's drawing was lifted into one pure render function driven by a metrics snapshot, so the live widget and every preview render through identical code.
 - **The Monitor reuses the existing matplotlib engine byte-for-byte** behind one lazily-loaded canvas, under an import firewall - the matplotlib-free Overview never triggers the heavy import, keeping the idle-RAM win.
 - **History is no longer silently lost on the "Keep everything" setting.** A crash in retention maintenance had been stopping all history writes - Windows raises `OSError 22` on pre-1970 `datetime.timestamp()`. Fixed with safe cutoff arithmetic.

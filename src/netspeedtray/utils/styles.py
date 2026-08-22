@@ -47,7 +47,7 @@ def combo_chevron_url(color_hex: str) -> str:
 
     Qt drops a combo's native arrow as soon as ``::drop-down`` is QSS-styled, which left every styled
     dropdown looking like a bare box. Supplying our own themed glyph restores the affordance with the
-    native Win11 chevron. Rendered at 2× then scaled by QSS for crispness; cached per colour so it's
+    native Win11 chevron. Rendered at 2× then scaled by QSS for crispness; cached per color so it's
     written once. Degrades to no-arrow (empty string) if the app-data dir can't be written.
     """
     try:
@@ -413,7 +413,7 @@ def sidebar_style() -> str:
     sidebar_bg = style_constants.DIALOG_SIDEBAR_BG_DARK if dark_mode_active else style_constants.DIALOG_SIDEBAR_BG_LIGHT
     text_color = style_constants.DARK_MODE_TEXT_COLOR if dark_mode_active else style_constants.LIGHT_MODE_TEXT_COLOR
     # Win11 NavigationView selection: a subtle fill + a short accent indicator bar, NOT a saturated
-    # full-bleed accent block; hover is the same subtle fill (not an opaque grey).
+    # full-bleed accent block; hover is the same subtle fill (not an opaque gray).
     subtle_fill = style_constants.SUBTLE_FILL_DARK if dark_mode_active else style_constants.SUBTLE_FILL_LIGHT
     # The selected nav row uses the SAME fill as the cards so the whole UI reads as exactly two tones:
     # a dark base (window + sidebar) and a lighter surface (cards + the selected row).
@@ -673,7 +673,7 @@ def timeline_pills_style() -> str:
 def segmented_pills_style(dark: bool) -> str:
     """Theme-aware variant of timeline_pills_style() for the Monitor's period control.
 
-    timeline_pills_style() is hardcoded for the graph window's dark canvas (light-grey glyphs on a
+    timeline_pills_style() is hardcoded for the graph window's dark canvas (light-gray glyphs on a
     translucent-white fill); on the Monitor's theme-aware surface that's invisible in light mode. This
     keeps the exact geometry + accent checked-state but flips the unchecked fill/text/border by theme.
     """
@@ -799,7 +799,7 @@ def slider_style() -> str:
         handle_hover_border_color_str = "#606060"
         handle_pressed_border_color_str = "#303030"
     else:
-        # Light mode: Darker grey border
+        # Light mode: Darker gray border
         handle_border_color_str = "#cccccc"
         handle_hover_border_color_str = "#bbbbbb"
         handle_pressed_border_color_str = "#999999"

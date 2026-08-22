@@ -300,7 +300,7 @@ class WidgetRenderer:
         """Draws current upload and download speeds.
 
         identity_text: optional network-identity band tag (e.g. "5G") drawn to the right of the unit
-        column, vertically centred. When present it participates in the block width (so side_by_side
+        column, vertically centered. When present it participates in the block width (so side_by_side
         right-align accounts for it) and the content bounds. Reserved width is the fixed worst-case
         (IDENTITY_BAND_REFERENCE), so a 2.4G<->5G change never shifts the layout.
         """
@@ -389,7 +389,7 @@ class WidgetRenderer:
             bot_raw = upload if bot_is_upload else download
             self._draw_speed_line(painter, bot_is_upload, bot_val, bot_unit, bot_raw, arrow_x, number_x, unit_x, dw_y, config, number_area_width)
 
-            # v2.1: draw the network-identity badge to the right of the unit column, vertically centred.
+            # v2.1: draw the network-identity badge to the right of the unit column, vertically centered.
             if identity_badge_w:
                 badge_x = unit_x + max_unit_width + IDENTITY_BAND_GAP_PX
                 badge_y = (height - identity_parts["h"]) / 2.0
@@ -497,14 +497,14 @@ class WidgetRenderer:
                 arrow = config.arrow_up_symbol or self.i18n.UPLOAD_ARROW
             else:
                 arrow = config.arrow_down_symbol or self.i18n.DOWNLOAD_ARROW
-            # Opt-in per-direction arrow colour (#168). Off by default, so the arrow keeps sharing
-            # the band pen set above and the whole line stays one colour signal.
+            # Opt-in per-direction arrow color (#168). Off by default, so the arrow keeps sharing
+            # the band pen set above and the whole line stays one color signal.
             if config.use_custom_arrow_colors:
                 painter.setPen(self._cached_pens['arrow_up' if is_upload else 'arrow_down'])
             painter.drawText(arrow_x, y, arrow)
             if config.use_custom_arrow_colors:
                 # Restore the band pen BEFORE the number. Forgetting this makes the value silently
-                # inherit the arrow colour, which reads as a colour-coding regression (cf. #153).
+                # inherit the arrow color, which reads as a color-coding regression (cf. #153).
                 if config.color_coding:
                     band = self._speed_band(raw_bytes, config.high_speed_threshold, config.low_speed_threshold)
                     painter.setPen(self._cached_pens[band])
@@ -784,7 +784,7 @@ class WidgetRenderer:
         if not config.graph_enabled or len(history) < constants.renderer.MIN_GRAPH_POINTS:
             return
 
-        # Honour the configured graph timespan: the series buffers more than the visible window (so a
+        # Honor the configured graph timespan: the series buffers more than the visible window (so a
         # longer timespan reveals already-recorded samples at once), so show only the last `max_samples`
         # points (= history_minutes worth). Without this the graph plotted the whole buffer and 3 min
         # looked identical to 20 min.

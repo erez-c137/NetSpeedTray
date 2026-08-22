@@ -24,7 +24,7 @@ class ColorsPage(QWidget):
 
     def _setup_ui(self):
         # 2.0 IA: a Win11 Settings card per setting. The master toggle gates a container of
-        # threshold + swatch cards (shown only when colour coding is on). All control attribute
+        # threshold + swatch cards (shown only when color coding is on). All control attribute
         # names + the load/get wiring are unchanged.
         layout = page_layout(self)
 
@@ -38,7 +38,7 @@ class ColorsPage(QWidget):
         cc_v_layout.setContentsMargins(0, 0, 0, 0)
         cc_v_layout.setSpacing(tokens.SPACE_XS)
 
-        # Thresholds + colours, two cards each (the speed at which to switch, then the colour to use).
+        # Thresholds + colors, two cards each (the speed at which to switch, then the color to use).
         for key, t_label, c_label in [
             ("high_speed", self.i18n.HIGH_SPEED_THRESHOLD_LABEL, self.i18n.HIGH_SPEED_COLOR_LABEL),
             ("low_speed", self.i18n.LOW_SPEED_THRESHOLD_LABEL, self.i18n.LOW_SPEED_COLOR_LABEL),

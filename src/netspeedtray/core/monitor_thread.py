@@ -881,7 +881,7 @@ class StatsMonitorThread(QThread):
         if _in_rdp:
             self.logger.info("RDP session detected - GPU monitoring will be skipped.")
 
-        # Initialise the COM apartment ONCE for this thread (H4). Was done per-poll inside
+        # Initialize the COM apartment ONCE for this thread (H4). Was done per-poll inside
         # the WMI helpers, leaking a COM ref every poll while no LHM source was connected.
         self._init_com()
 
@@ -921,7 +921,7 @@ class StatsMonitorThread(QThread):
 
                 # Monitor-window override forces hardware collection even with the widget's flags off.
                 _force_hw = self._force_hardware_collection
-                # Always-on history recording: collect cheap CPU/GPU/RAM utilisation so the Monitor's
+                # Always-on history recording: collect cheap CPU/GPU/RAM utilization so the Monitor's
                 # graphs have real past data. Temps/power stay on their own (heavier) gates below.
                 _record = self.config.get('record_hardware_history', True)
 
@@ -1036,7 +1036,7 @@ class StatsMonitorThread(QThread):
         self._wmi_ohm = None
 
     def _init_com(self) -> None:
-        """Initialise the COM apartment ONCE for this thread (WMI/LHM access)."""
+        """Initialize the COM apartment ONCE for this thread (WMI/LHM access)."""
         try:
             import pythoncom
             pythoncom.CoInitialize()
@@ -1044,7 +1044,7 @@ class StatsMonitorThread(QThread):
             pass
 
     def _cleanup_com(self) -> None:
-        """Releases COM apartment initialised for WMI access."""
+        """Releases COM apartment initialized for WMI access."""
         try:
             import pythoncom
             pythoncom.CoUninitialize()

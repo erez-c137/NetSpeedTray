@@ -1,4 +1,4 @@
-"""Widget settings page (2.0 IA) - the controls that moved here from General (behaviour) and Hardware
+"""Widget settings page (2.0 IA) - the controls that moved here from General (behavior) and Hardware
 (layout) must round-trip, and the hardware auto-switch convenience must survive the move."""
 import pytest
 

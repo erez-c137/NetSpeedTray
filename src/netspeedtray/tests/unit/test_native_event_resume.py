@@ -63,7 +63,7 @@ def test_resume_message_schedules_reassert(monkeypatch):
 
 
 def test_resume_suspend_flag_also_reasserts(monkeypatch):
-    """The other resume flag (PBT_APMRESUMESUSPEND) is honoured too."""
+    """The other resume flag (PBT_APMRESUMESUSPEND) is honored too."""
     scheduled = []
     monkeypatch.setattr(
         "netspeedtray.views.widget.main.QTimer.singleShot",

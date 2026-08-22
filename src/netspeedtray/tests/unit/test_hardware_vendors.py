@@ -52,7 +52,7 @@ def test_gpu_color_is_theme_aware_cpu_is_not():
 
 def test_hybrid_gpu_returns_neutral(monkeypatch):
     """A discrete GPU + an Intel iGPU (hybrid laptop) must NOT assert the discrete brand - the graphed
-    util is max-across-adapters, so colour/legend stay neutral."""
+    util is max-across-adapters, so color/legend stay neutral."""
     try:
         hv.gpu_vendor.cache_clear()
         monkeypatch.setattr(hv, "_enumerate_gpu_adapters", lambda: ["intel", "nvidia"])
