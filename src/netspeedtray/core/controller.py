@@ -373,7 +373,13 @@ class StatsController(QObject):
         responsive in the default 'auto' mode (H1). A NIC change is picked up within the
         refresh window (the speed briefly attributes to the old primary)."""
         now = time.monotonic()
-        if self.primary_interface is not None and (now - self.last_primary_check_time) < self._PRIMARY_REFRESH_SEC:
+        # Throttle on ELAPSED TIME ALONE. This used to also require `primary_interface is not None`,
+        # which meant the cache stopped applying in exactly the case it was built for: with no route
+        # (offline, VPN dropping, waking up), the lookup returns None, so the guard fell through and
+        # the blocking UDP connect + net_if_addrs ran on EVERY poll instead of every 15s - and logged
+        # a warning each time. One reporter's bundle was 137,497 of 139,638 lines from that single
+        # call (#260). `last_primary_check_time` starts at 0.0, so the first lookup still runs at once.
+        if (now - self.last_primary_check_time) < self._PRIMARY_REFRESH_SEC:
             return
         self.last_primary_check_time = now
         previous = self.primary_interface

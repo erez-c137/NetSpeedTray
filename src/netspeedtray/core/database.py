@@ -591,7 +591,7 @@ class DatabaseWorker(QThread):
         config = data
         _now = now or datetime.now()
         
-        self.logger.info("Starting periodic database maintenance...")
+        self.logger.debug("Starting periodic database maintenance...")
         cursor = self.conn.cursor()
         try:
             self._aggregate_raw_to_minute(cursor, _now)
@@ -606,7 +606,7 @@ class DatabaseWorker(QThread):
             cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES ('last_maintenance_at', ?)", (str(int(_now.timestamp())),))
             self.conn.commit()
             
-            self.logger.info("Database maintenance tasks committed successfully.")
+            self.logger.debug("Database maintenance tasks committed successfully.")
 
             # Bound the WAL file: long-lived reader connections (the Monitor's graph worker) can hold
             # back the automatic checkpoint, letting -wal grow across a long session. A TRUNCATE
@@ -659,9 +659,9 @@ class DatabaseWorker(QThread):
             WHERE timestamp < ?
             GROUP BY (timestamp / 60) * 60, stat_type
         """, (cutoff,))
-        if cursor.rowcount > 0: self.logger.info("Aggregated %d per-minute hardware records.", cursor.rowcount)
+        if cursor.rowcount > 0: self.logger.debug("Aggregated %d per-minute hardware records.", cursor.rowcount)
         cursor.execute(f"DELETE FROM {constants.data.HARDWARE_STATS_TABLE_RAW} WHERE timestamp < ?", (cutoff,))
-        if cursor.rowcount > 0: self.logger.info("Pruned %d raw hardware records after aggregation.", cursor.rowcount)
+        if cursor.rowcount > 0: self.logger.debug("Pruned %d raw hardware records after aggregation.", cursor.rowcount)
 
 
     def _aggregate_hardware_minute_to_hour(self, cursor: sqlite3.Cursor, now: datetime) -> None:
@@ -683,9 +683,9 @@ class DatabaseWorker(QThread):
             WHERE timestamp < ?
             GROUP BY hour_timestamp, stat_type
         """, (cutoff,))
-        if cursor.rowcount > 0: self.logger.info("Aggregated %d per-hour hardware records.", cursor.rowcount)
+        if cursor.rowcount > 0: self.logger.debug("Aggregated %d per-hour hardware records.", cursor.rowcount)
         cursor.execute(f"DELETE FROM {constants.data.HARDWARE_STATS_TABLE_MINUTE} WHERE timestamp < ?", (cutoff,))
-        if cursor.rowcount > 0: self.logger.info("Pruned %d minute hardware records after aggregation.", cursor.rowcount)
+        if cursor.rowcount > 0: self.logger.debug("Pruned %d minute hardware records after aggregation.", cursor.rowcount)
 
     @staticmethod
     def _retention_cutoff(now: datetime, retention_days: float) -> int:
@@ -744,10 +744,10 @@ class DatabaseWorker(QThread):
             WHERE timestamp < ?
             GROUP BY minute_timestamp, interface_name
         """, (cutoff,))
-        if cursor.rowcount > 0: self.logger.info("Aggregated %d per-minute records.", cursor.rowcount)
+        if cursor.rowcount > 0: self.logger.debug("Aggregated %d per-minute records.", cursor.rowcount)
         
         cursor.execute(f"DELETE FROM {constants.data.SPEED_TABLE_RAW} WHERE timestamp < ?", (cutoff,))
-        if cursor.rowcount > 0: self.logger.info("Pruned %d raw records after aggregation.", cursor.rowcount)
+        if cursor.rowcount > 0: self.logger.debug("Pruned %d raw records after aggregation.", cursor.rowcount)
 
 
     def _aggregate_minute_to_hour(self, cursor: sqlite3.Cursor, now: datetime) -> None:
@@ -769,10 +769,10 @@ class DatabaseWorker(QThread):
             WHERE timestamp < ?
             GROUP BY hour_timestamp, interface_name
         """, (cutoff,))
-        if cursor.rowcount > 0: self.logger.info("Aggregated %d per-hour records.", cursor.rowcount)
+        if cursor.rowcount > 0: self.logger.debug("Aggregated %d per-hour records.", cursor.rowcount)
 
         cursor.execute(f"DELETE FROM {constants.data.SPEED_TABLE_MINUTE} WHERE timestamp < ?", (cutoff,))
-        if cursor.rowcount > 0: self.logger.info("Pruned %d minute records after aggregation.", cursor.rowcount)
+        if cursor.rowcount > 0: self.logger.debug("Pruned %d minute records after aggregation.", cursor.rowcount)
 
 
     def _prune_data_with_grace_period(self, cursor: sqlite3.Cursor, config: Dict[str, Any], now: datetime) -> bool:

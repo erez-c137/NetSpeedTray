@@ -9,6 +9,7 @@ import ctypes
 import logging
 import socket
 import sys
+import time
 from ctypes import wintypes
 from dataclasses import dataclass
 from typing import Optional
@@ -46,6 +47,35 @@ def guid_to_friendly_name(guid: str) -> Optional[str]:
         logger.error(f"Error mapping GUID to friendly name: {e}", exc_info=True)
     return None
 
+# --- transient-state logging ------------------------------------------------------------------
+#
+# `get_primary_interface_name()` sits on the per-poll path. Logging a warning on every failed
+# attempt turned a normal condition - a laptop with no route - into a flood: one support bundle
+# arrived with 137,497 of its 139,638 lines from this one call, which rotated away every genuinely
+# useful entry and made the report undiagnosable (#260). Log the EDGE instead of the state.
+_unreachable_since: Optional[float] = None
+
+
+def _note_unreachable(err: BaseException) -> None:
+    """First failure warns; repeats drop to DEBUG."""
+    global _unreachable_since
+    if _unreachable_since is None:
+        _unreachable_since = time.monotonic()
+        logger.warning("No primary interface - the network looks unreachable (%s). "
+                       "Further attempts log at DEBUG until it comes back.", err)
+    else:
+        logger.debug("Primary interface still unreachable (%s).", err)
+
+
+def _note_reachable() -> None:
+    """Recovery closes the loop, so a reader can see how long the gap was."""
+    global _unreachable_since
+    if _unreachable_since is not None:
+        gap = time.monotonic() - _unreachable_since
+        _unreachable_since = None
+        logger.info("Primary interface reachable again after %.0fs.", gap)
+
+
 
 def get_primary_interface_name() -> Optional[str]:
     """
@@ -76,11 +106,15 @@ def get_primary_interface_name() -> Optional[str]:
         for iface_name, addrs in all_addrs.items():
             for addr in addrs:
                 if addr.family == socket.AF_INET and addr.address == local_ip:
+                    _note_reachable()
                     logger.debug(f"Determined primary interface: '{iface_name}' with IP {local_ip}")
                     return iface_name
                     
     except (OSError, socket.gaierror) as e:
-        logger.warning(f"Could not determine primary interface due to network error: {e}")
+        # Having no route is a NORMAL, recurring state (offline, VPN reconnecting, resuming from
+        # sleep), not an event worth a line per attempt. Log the EDGE: once on the way in, once on
+        # the way out. See _note_unreachable().
+        _note_unreachable(e)
         return None
     except Exception as e:
         logger.error(f"Unexpected error determining primary interface: {e}", exc_info=True)
