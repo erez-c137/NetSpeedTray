@@ -315,7 +315,7 @@ NetSpeedTray's UI lives in 14 languages thanks to the people below. Each transla
 | 🇯🇵 Japanese | `ja_JP` | [@coolvitto](https://github.com/coolvitto) |
 | 🇨🇳 Simplified Chinese | `zh_CN` | [@RainThings](https://github.com/RainThings) |
 | 🇹🇼 Traditional Chinese | `zh_TW` | [@raylolhue](https://github.com/raylolhue), [@in2002-tw](https://github.com/in2002-tw), [@tony8077616](https://github.com/tony8077616) |
-| 🇹🇷 Turkish | `tr_TR` | [@lezgintekay](https://github.com/lezgintekay) |
+| 🇹🇷 Turkish | `tr_TR` | [@lezgintekay](https://github.com/lezgintekay) - ongoing maintainer |
 | 🇮🇱 Hebrew (RTL) | `he_IL` | [@rami123](https://github.com/rami123) - **native-speaker review welcome** |
 | 🇩🇪 German | `de_DE` | Maintainer - **native-speaker review welcome** |
 | 🇪🇸 Spanish | `es_ES` | Maintainer - **native-speaker review welcome** |

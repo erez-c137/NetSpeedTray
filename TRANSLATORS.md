@@ -15,7 +15,7 @@ If you'd like to contribute a translation or improve an existing one, see the lo
 | Polish | `pl_PL` | FadeMind | [#39](https://github.com/erez-c137/NetSpeedTray/pull/39) |
 | French | `fr_FR` | [@logounet](https://github.com/logounet) | #94 |
 | Japanese | `ja_JP` | [@coolvitto](https://github.com/coolvitto) | [#155](https://github.com/erez-c137/NetSpeedTray/pull/155) |
-| Turkish | `tr_TR` | [@lezgintekay](https://github.com/lezgintekay) | [#249](https://github.com/erez-c137/NetSpeedTray/pull/249) |
+| Turkish | `tr_TR` | [@lezgintekay](https://github.com/lezgintekay) - **ongoing maintainer** | [#249](https://github.com/erez-c137/NetSpeedTray/pull/249) |
 | Simplified Chinese | `zh_CN` | [@RainThings](https://github.com/RainThings) | [#209](https://github.com/erez-c137/NetSpeedTray/pull/209) |
 | Traditional Chinese (Taiwan) | `zh_TW` | [@raylolhue](https://github.com/raylolhue), with terminology improvements from [@in2002-tw](https://github.com/in2002-tw) and native polish from [@tony8077616](https://github.com/tony8077616) | [#199](https://github.com/erez-c137/NetSpeedTray/pull/199), [#215](https://github.com/erez-c137/NetSpeedTray/pull/215) |
 | Hebrew (RTL) | `he_IL` | [@rami123](https://github.com/rami123) (initiated the locale) — remaining strings AI-assisted, **pending native review** | [#165](https://github.com/erez-c137/NetSpeedTray/pull/165) |
