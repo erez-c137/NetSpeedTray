@@ -74,7 +74,7 @@ class GeneralPage(QWidget):
 
         # --- Behavior ---
         # NOTE (2.0 IA): free-move, keep-visible-in-fullscreen and tray-offset moved to the new Widget
-        # page (they're about the on-taskbar widget, not the app). General keeps app-level behaviour.
+        # page (they're about the on-taskbar widget, not the app). General keeps app-level behavior.
         layout.addWidget(section_header(self.i18n.BEHAVIOR_GROUP_TITLE))
         self.start_with_windows = Win11Toggle(label_text="")
         self.start_with_windows.toggled.connect(self.on_change)

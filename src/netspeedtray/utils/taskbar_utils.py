@@ -113,7 +113,7 @@ def find_tasklist_rect(taskbar_hwnd: int) -> Optional[Tuple[int, int, int, int]]
 # nvidia-smi etc.), match the STABLE AutomationId 'WidgetsButton' (never the Name - it's localized and
 # embeds live weather text), and return the VISIBLE CONTENT extent (min-left..max-right of its child
 # icon/text), not the padded button box - so an overlap test reflects what's actually shown, not the
-# element's dead space. Depending on taskbar alignment it sits far-left (centred) or just left of the
+# element's dead space. Depending on taskbar alignment it sits far-left (centered) or just left of the
 # tray (edge-aligned - the case that can overlap the widget). ~200ms, so it's cached + refreshed on a
 # background thread; callers get the last-known rect instantly and never block. Fail-safe: any error /
 # Widgets disabled / future-build rename -> None. Used only to nudge the user (never to auto-move).

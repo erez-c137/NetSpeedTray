@@ -1,13 +1,13 @@
 """
-Per-direction arrow colours (#168).
+Per-direction arrow colors (#168).
 
-The arrows share the speed text's pen by design: `_draw_speed_line` sets ONE pen - the colour-coding
-band, or the default - and that same pen paints the arrow, the number and the unit. So with colour
+The arrows share the speed text's pen by design: `_draw_speed_line` sets ONE pen - the color-coding
+band, or the default - and that same pen paints the arrow, the number and the unit. So with color
 coding on, the whole line lights up together as a single signal. That is a defensible design, not an
-oversight, which is why this ships opt-in and defaults to the old behaviour.
+oversight, which is why this ships opt-in and defaults to the old behavior.
 
 The trap these tests exist for: overriding the pen to draw the arrow and forgetting to restore it
-leaves the NUMBER wearing the arrow's colour, which reads as a colour-coding regression (cf. #153).
+leaves the NUMBER wearing the arrow's color, which reads as a color-coding regression (cf. #153).
 """
 
 import pytest
@@ -31,7 +31,7 @@ def _cfg(**over):
 
 
 def _render(cfg, up_mbps=5.0, down_mbps=5.0) -> set:
-    """Render one frame and return the set of distinct opaque RGB colours drawn."""
+    """Render one frame and return the set of distinct opaque RGB colors drawn."""
     img = QImage(W, H, QImage.Format.Format_ARGB32)
     img.fill(QColor(0, 0, 0, 0))
     renderer = WidgetRenderer(cfg, I18nStrings("en_US"))
@@ -58,7 +58,7 @@ class TestDefaultIsUnchanged:
         assert constants.config.defaults.DEFAULT_CONFIG["use_custom_arrow_colors"] is False
 
     def test_disabled_renders_identically_to_before(self, q_app):
-        """Nobody's widget may shift on upgrade. With the toggle off, the arrow colour keys must
+        """Nobody's widget may shift on upgrade. With the toggle off, the arrow color keys must
         make no difference at all - even when they hold wild values."""
         base = _render(_cfg())
         with_unused_colors = _render(_cfg(arrow_up_color="#FF00FF", arrow_down_color="#00FFFF"))
@@ -70,27 +70,27 @@ class TestEnabledColorsTheArrowsOnly:
     def test_both_arrow_colors_are_painted(self, q_app):
         colors = _render(_cfg(use_custom_arrow_colors=True,
                               arrow_up_color="#FF0000", arrow_down_color="#0000FF"))
-        assert _rgb("#FF0000") in colors, "upload arrow colour was not painted"
-        assert _rgb("#0000FF") in colors, "download arrow colour was not painted"
+        assert _rgb("#FF0000") in colors, "upload arrow color was not painted"
+        assert _rgb("#0000FF") in colors, "download arrow color was not painted"
 
     def test_the_number_keeps_the_default_pen(self, q_app):
-        """THE trap. If the arrow's pen is not restored, the number inherits it and the arrow colour
-        silently becomes the whole line's colour."""
+        """THE trap. If the arrow's pen is not restored, the number inherits it and the arrow color
+        silently becomes the whole line's color."""
         default_color = constants.config.defaults.DEFAULT_CONFIG["default_color"]
         colors = _render(_cfg(use_custom_arrow_colors=True, color_coding=False,
                               arrow_up_color="#FF0000", arrow_down_color="#0000FF"))
         assert _rgb(default_color) in colors, \
-            "the speed text lost its own colour - the arrow pen was not restored"
+            "the speed text lost its own color - the arrow pen was not restored"
 
     def test_the_number_keeps_its_color_coding_band(self, q_app):
-        """Same trap, with colour coding on: the number must still band by speed while the arrows
-        hold their fixed colours."""
+        """Same trap, with color coding on: the number must still band by speed while the arrows
+        hold their fixed colors."""
         cfg = _cfg(use_custom_arrow_colors=True, color_coding=True,
                    arrow_up_color="#FF0000", arrow_down_color="#0000FF",
                    high_speed_threshold=1.0, low_speed_threshold=0.1,
                    high_speed_color="#00FF00")
         colors = _render(cfg, up_mbps=500.0, down_mbps=500.0)
-        assert _rgb("#00FF00") in colors, "the number lost its high-speed band colour"
+        assert _rgb("#00FF00") in colors, "the number lost its high-speed band color"
         assert _rgb("#FF0000") in colors and _rgb("#0000FF") in colors
 
     def test_hidden_arrows_are_unaffected(self, q_app):

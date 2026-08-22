@@ -1,6 +1,6 @@
 """
 HardwareActivityWorker + HardwareBarList - the Monitor Hardware tab. Verifies per-process CPU is
-normalised to total-CPU and the idle process is excluded, GPU% is summed per PID from PDH instance
+normalized to total-CPU and the idle process is excluded, GPU% is summed per PID from PDH instance
 names, and the bar list builds/updates/sorts + handles empty/RDP states.
 """
 import types

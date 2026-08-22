@@ -19,7 +19,7 @@ class UIStyleConstants:
     # --- Light Mode ---
     LIGHT_MODE_TEXT_COLOR: Final[str] = color.BLACK
     DIALOG_SIDEBAR_BG_LIGHT: Final[str] = "#f3f3f3"
-    # Light-mode counterpart: a soft grey base so the near-white #FBFBFB cards float (was #ffffff, which
+    # Light-mode counterpart: a soft gray base so the near-white #FBFBFB cards float (was #ffffff, which
     # made the cards read as slightly darker insets on white instead of floating panels).
     DIALOG_CONTENT_BG_LIGHT: Final[str] = "#f3f3f3"
     DIALOG_SECTION_BG_LIGHT: Final[str] = "#F0F0F0"

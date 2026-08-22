@@ -4,19 +4,19 @@ Hardware vendor detection + the Monitor's vendor-aware graph palette.
 CPU vendor comes from the registry (CentralProcessor\\0\\VendorIdentifier), GPU vendor from the
 display-adapter DriverDesc - both no-admin, cached for the process. (CPU silicon never changes at
 runtime; GPU is cached too - a Thunderbolt eGPU hot-plug or a driver TDR/reinstall mid-session is
-knowingly NOT re-detected until restart, which at worst means a slightly-off line colour.)
+knowingly NOT re-detected until restart, which at worst means a slightly-off line color.)
 
 The palette solves the brand-collision problem: AMD ships red for both Ryzen and Radeon, Intel ships
-blue for both Core and Arc/iGPU - so CPU and GPU would draw the same colour on a same-vendor box (the
+blue for both Core and Arc/iGPU - so CPU and GPU would draw the same color on a same-vendor box (the
 Intel-CPU + Intel-iGPU case is very common). We separate them on TWO channels: the GPU always gets a
-distinct sibling SHADE *and* a dashed line. Hue + lightness + dash survives even red/green colour-
+distinct sibling SHADE *and* a dashed line. Hue + lightness + dash survives even red/green color-
 blindness. The GPU shades are theme-aware (the dark hues fail WCAG contrast on the light graph
-background, so light mode gets darker siblings). Smart defaults only - Monitor settings expose colour
+background, so light mode gets darker siblings). Smart defaults only - Monitor settings expose color
 pickers that override.
 
 On a HYBRID laptop (Intel iGPU + a discrete Nvidia/AMD) the graphed value is max-across-adapters
 (usually the idle-busy iGPU), so asserting the discrete brand would be a lie - we return 'unknown'
-(neutral) in that case so colour + legend never claim a GPU the data isn't about.
+(neutral) in that case so color + legend never claim a GPU the data isn't about.
 """
 from __future__ import annotations
 
@@ -74,7 +74,7 @@ def gpu_vendor() -> str:
     discrete = sorted({v for v in adapters if v in ("nvidia", "amd")})
     has_intel = "intel" in adapters
     if discrete and has_intel:
-        _logger.debug("Hybrid GPU detected (%s + intel) - using neutral colour.", discrete)
+        _logger.debug("Hybrid GPU detected (%s + intel) - using neutral color.", discrete)
         return "unknown"
     if discrete:
         if len(discrete) > 1:
@@ -136,7 +136,7 @@ def _classify_gpu(desc: str) -> str:
 def graph_line_style(role: str, override_color: Optional[str] = None,
                      is_dark: bool = True) -> Tuple[str, object]:
     """(color, linestyle) for 'cpu' or 'gpu'. ``override_color`` (Monitor settings) wins; the GPU
-    colour is theme-aware so it stays legible on the light graph background."""
+    color is theme-aware so it stays legible on the light graph background."""
     if role == "gpu":
         table = _GPU_COLORS_DARK if is_dark else _GPU_COLORS_LIGHT
         color = override_color or table.get(gpu_vendor(), table["unknown"])
@@ -146,7 +146,7 @@ def graph_line_style(role: str, override_color: Optional[str] = None,
 
 
 def default_color(role: str, is_dark: bool = True) -> str:
-    """The vendor-default hex for 'cpu' / 'gpu' (for pre-filling the settings colour pickers)."""
+    """The vendor-default hex for 'cpu' / 'gpu' (for pre-filling the settings color pickers)."""
     if role == "gpu":
         table = _GPU_COLORS_DARK if is_dark else _GPU_COLORS_LIGHT
         return table.get(gpu_vendor(), table["unknown"])

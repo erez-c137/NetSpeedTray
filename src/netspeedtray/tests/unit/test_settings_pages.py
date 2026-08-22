@@ -438,7 +438,7 @@ def test_arrow_colors_round_trip(q_app, mock_i18n, mock_callback):
     assert out["arrow_up_color"] == "#123456"
     assert out["arrow_down_color"] == "#654321"
 
-    # Off hides the swatches but must still round-trip the stored colours.
+    # Off hides the swatches but must still round-trip the stored colors.
     page.load_settings({"use_custom_arrow_colors": False,
                         "arrow_up_color": "#ABCDEF",
                         "arrow_down_color": "#FEDCBA"})
@@ -449,9 +449,9 @@ def test_arrow_colors_round_trip(q_app, mock_i18n, mock_callback):
 
 
 def test_arrow_color_widgets_follow_the_dialog_naming_convention(q_app, mock_i18n, mock_callback):
-    """SettingsDialog routes every non-threshold colour back through set_color_input by the
+    """SettingsDialog routes every non-threshold color back through set_color_input by the
     "{key}_color_button" / "{key}_color_input" attribute convention. Naming them anything else
-    silently breaks the colour picker with no test to catch it."""
+    silently breaks the color picker with no test to catch it."""
     page = AppearancePage(mock_i18n, mock_callback, MagicMock(), MagicMock())
     for key in ("arrow_up", "arrow_down"):
         assert hasattr(page, f"{key}_color_button")

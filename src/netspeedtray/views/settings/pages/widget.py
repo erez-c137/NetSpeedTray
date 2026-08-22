@@ -3,7 +3,7 @@ Widget Settings Page (2.0 IA).
 
 Everything about the on-taskbar widget itself - how its stats are laid out (display mode + order),
 and how it behaves/sits on the taskbar (free-move, keep-visible-in-fullscreen, tray offset). These
-controls used to be scattered across the General page (behaviour) and the Hardware page (layout); the
+controls used to be scattered across the General page (behavior) and the Hardware page (layout); the
 2.0 IA gathers them here so "the widget" is one place.
 
 Slider→Segmented and QListWidget upgrades are intentionally NOT done here - the controls move as-is
@@ -21,7 +21,7 @@ from netspeedtray.views.settings.pages._fluent import section_header, page_layou
 
 
 class WidgetPage(QWidget):
-    """Layout (display mode + order) and on-taskbar behaviour (free-move, fullscreen, offset)."""
+    """Layout (display mode + order) and on-taskbar behavior (free-move, fullscreen, offset)."""
 
     layout_changed = pyqtSignal()
 
@@ -63,7 +63,7 @@ class WidgetPage(QWidget):
             layout.addWidget(SettingCard(getattr(self.i18n, f"ORDER_POSITION_{i+1}"), control=combo))
             self.pos_combos.append(combo)
 
-        # --- Behaviour (was on the General page) ---
+        # --- Behavior (was on the General page) ---
         layout.addWidget(section_header(self.i18n.BEHAVIOR_GROUP_TITLE))
         self.free_move = Win11Toggle(label_text="")
         self.free_move.toggled.connect(self.on_change)
@@ -87,7 +87,7 @@ class WidgetPage(QWidget):
 
         layout.addStretch()
 
-    # --- behaviour ---------------------------------------------------------------
+    # --- behavior ---------------------------------------------------------------
     def ensure_hardware_visible(self) -> None:
         """Called by the dialog when a hardware monitor is enabled on the Hardware page: switch the
         widget out of network-only so the freshly-enabled stat is actually visible. This is the

@@ -33,7 +33,7 @@ _TRAY_MENU_KEYS = [
     "EXIT_MENU_ITEM",
 ]
 
-# Pause and Resume are the same QAction, relabelled - they can never be on screen together
+# Pause and Resume are the same QAction, relabeled - they can never be on screen together
 # (tray_manager.update_pause_action), so they are allowed to share a letter.
 _MUTUALLY_EXCLUSIVE = [{"PAUSE_MENU_ITEM", "RESUME_MENU_ITEM"}]
 

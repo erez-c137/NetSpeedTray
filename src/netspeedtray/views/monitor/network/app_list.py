@@ -3,7 +3,7 @@ AppBarList - the per-app connection list for the Monitor's Network tab.
 
 Renders the AppActivityWorker's honest payload (live connections per app, never estimated bytes) as
 a calm bar list: one row per app, an activity bar sized (log scale) to its share of live
-connections, active apps in the accent colour and idle apps muted. Rows are keyed by app identity
+connections, active apps in the accent color and idle apps muted. Rows are keyed by app identity
 and reused across ticks (no flicker); ordering is stable (selected-first, then active-first, then by
 name), so a row only moves when its active/idle state actually flips - never because its connection
 count jittered. The selected row is pinned to the top so its highlight (and the detail panel reading
@@ -168,7 +168,7 @@ class AppRow(QFrame):
         self._name.setText(fm.elidedText(name, Qt.TextElideMode.ElideRight, _NAME_W))
         self._bar.set_value(frac, active)
         self._count.setText(str(conn))
-        # Dim idle apps so the eye lands on what's actually talking. Re-resolve colours each tick so
+        # Dim idle apps so the eye lands on what's actually talking. Re-resolve colors each tick so
         # a mid-session light/dark switch is picked up (the bar already re-reads per paint).
         c = su.semantic_colors()
         name_color = c["text_primary"] if active else c["text_secondary"]

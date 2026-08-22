@@ -64,7 +64,7 @@ class FlatTabBar(QWidget):
             self._buttons[self._order[0]].setChecked(True)
 
         self._apply_style()
-        # A QIcon pixmap can't be tinted by QSS, so re-render each tab's glyph in the right colour
+        # A QIcon pixmap can't be tinted by QSS, so re-render each tab's glyph in the right color
         # whenever selection moves (secondary at rest, accent when checked).
         self._group.buttonToggled.connect(lambda *_: self._update_icons())
         self._update_icons()

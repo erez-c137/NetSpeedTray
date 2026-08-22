@@ -189,12 +189,12 @@ class WidgetState(QObject):
                     self._db_batch.append((timestamp, interface, min(up_speed, max_speed), min(down_speed, max_speed)))
 
 
-    # Utilisation stats are 0-100% and clamped; physical stats (power W, temperature °C, latency ms)
+    # Utilization stats are 0-100% and clamped; physical stats (power W, temperature °C, latency ms)
     # are NOT percentages and must be stored unclamped - a 200 ms ping or 180 W draw must not become 100.
     _PCT_STATS = frozenset({'cpu', 'gpu', 'ram', 'vram'})
 
     def add_hardware_stat(self, stat_type: str, value: float, now: Optional[datetime] = None) -> None:
-        """Record a hardware sample (utilisation %, power W, temperature °C, or latency ms) to the
+        """Record a hardware sample (utilization %, power W, temperature °C, or latency ms) to the
         in-memory deque (for graphed util stats) + the DB batch (for all, via the 3-tier rollups)."""
         _now = now or datetime.now()
         snapshot = HardwareStatSnapshot(value=value, timestamp=_now)
@@ -448,7 +448,7 @@ class WidgetState(QObject):
             return []
 
     # --- pro-stats: tier-aware honest window summaries (exact ≤24h raw, avg+max beyond) ----------
-    _RAW_SUMMARY_SECONDS = 24 * 3600   # the raw tier retains ~24h; windows within it summarise exactly
+    _RAW_SUMMARY_SECONDS = 24 * 3600   # the raw tier retains ~24h; windows within it summarize exactly
 
     def summarize_hardware(self, stat_type: str, start_time: datetime, end_time: datetime,
                            poll_interval: float = 1.0):

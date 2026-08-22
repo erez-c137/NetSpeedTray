@@ -3,8 +3,8 @@ HardwareTab - the Monitor's Hardware tab: a CPU+GPU history graph over a live pe
 CPU / RAM / GPU list (vertical splitter, mirroring the Network tab).
 
 The graph is hosted by the shared GraphHost. Its layout follows the ``monitor_hw_graph_mode`` setting:
-  • combined - CPU + GPU on one 0-100% axis (CPU solid, GPU dashed), vendor-coloured.  [default]
-  • separate - CPU and GPU on two stacked axes, each vendor-coloured solid.
+  • combined - CPU + GPU on one 0-100% axis (CPU solid, GPU dashed), vendor-colored.  [default]
+  • separate - CPU and GPU on two stacked axes, each vendor-colored solid.
   • toggle   - one stat at a time (CPU **or** GPU), chosen by an in-header CPU|GPU switch.
 Smoothing and the fixed/auto y-axis are read from config by the host's ``_hw_styles``. The per-process
 list is fed by HardwareFeed. The tab imports nothing from views.graph - the graph engine enters only
@@ -52,7 +52,7 @@ class HardwareTab(QWidget):
         # Header band (control row) - FIRST, at the very top of the tab so its timeline/Live sit at the
         # exact same height + right edge as the Overview/Network bands (no jump on tab switch). The band
         # is a fixed-height shell with the shared side inset; controls are right-docked + vertically
-        # centred. It used to sit *below* the telemetry strip, which pushed it far lower than the other
+        # centered. It used to sit *below* the telemetry strip, which pushed it far lower than the other
         # tabs' controls - the visible inconsistency the owner flagged.
         self._period_key = constants.data.history_period.PERIOD_MAP.get(
             int(config.get("history_period_slider_value", 2)), "TIMELINE_24_HOURS")
@@ -108,7 +108,7 @@ class HardwareTab(QWidget):
         splitter.addWidget(self._list)
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 2)
-        splitter.setSizes([360, 235])         # graph-favoured, fits the default 620px window
+        splitter.setSizes([360, 235])         # graph-favored, fits the default 620px window
         body.addWidget(splitter, 1)
         root.addLayout(body, 1)
 
@@ -136,7 +136,7 @@ class HardwareTab(QWidget):
 
     def _apply_graph(self, *, first_mount: bool = False) -> None:
         """Show the right stat for the current mode. On first mount we attach (reparent the shared
-        canvas); afterwards we switch in place (set_stat) or just re-render (colours/legend/smoothing)."""
+        canvas); afterwards we switch in place (set_stat) or just re-render (colors/legend/smoothing)."""
         stat = self._resolve_stat()
         self._cpu_gpu.setVisible(str(self._config.get("monitor_hw_graph_mode", "combined")) == "toggle")
         try:
@@ -156,7 +156,7 @@ class HardwareTab(QWidget):
 
     def on_settings_changed(self) -> None:
         """Called by the Monitor window when the display-settings flyout changes anything (mode,
-        colours, legend, smoothing, axis). Re-resolve the mode + re-render."""
+        colors, legend, smoothing, axis). Re-resolve the mode + re-render."""
         self._apply_graph()
 
     def _update_telemetry(self) -> None:

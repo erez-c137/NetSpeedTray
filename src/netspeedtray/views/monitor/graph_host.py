@@ -285,7 +285,7 @@ class GraphHost(QObject):
 
     def _hw_styles(self) -> Dict[str, Any]:
         """Vendor-aware (color, linestyle) per role for the combined CPU+GPU graph; Monitor-settings
-        colour overrides (when set) win over the auto vendor default."""
+        color overrides (when set) win over the auto vendor default."""
         from netspeedtray.utils import hardware_vendors as hv
         cpu_c = self.config.get("monitor_cpu_graph_color") or None
         gpu_c = self.config.get("monitor_gpu_graph_color") or None

@@ -37,7 +37,7 @@ class AppearancePage(QWidget):
 
     def _setup_ui(self):
         # 2.0 IA: Win11 Settings cards under section captions (was QGroupBox frames). Compound controls
-        # (font picker button + label, colour swatch + hex) are packed into a small composite docked on
+        # (font picker button + label, color swatch + hex) are packed into a small composite docked on
         # the right of each card via _row(). All control objects + the load/get wiring are unchanged.
         layout = page_layout(self)
 
@@ -52,7 +52,7 @@ class AppearancePage(QWidget):
         layout.addWidget(SettingCard(self.i18n.FONT_FAMILY_LABEL,
                                      control=self._row(self.font_family_label, self.font_family_button)))
 
-        # Default text colour (swatch + hex).
+        # Default text color (swatch + hex).
         self.default_color_button = QPushButton()
         self.default_color_button.setObjectName("default_color")
         self.default_color_button.setFixedSize(36, 26)
@@ -111,9 +111,9 @@ class AppearancePage(QWidget):
         # Arrow Weight - REMOVED per user request (font support issues)
         layout.addWidget(self.arrow_font_container)
 
-        # Per-direction arrow colour (#168). Off by default: the arrow shares the speed text's pen,
-        # so with colour-coding on the whole line bands together as one signal. Turning this on
-        # splits it into two colour languages (direction vs magnitude) - defensible, but a real
+        # Per-direction arrow color (#168). Off by default: the arrow shares the speed text's pen,
+        # so with color-coding on the whole line bands together as one signal. Turning this on
+        # splits it into two color languages (direction vs magnitude) - defensible, but a real
         # design change, so nobody's widget shifts on upgrade.
         self.use_custom_arrow_colors = Win11Toggle(label_text="")
         self.use_custom_arrow_colors.toggled.connect(self._on_arrow_colors_toggle)
@@ -127,7 +127,7 @@ class AppearancePage(QWidget):
         for key, label in (("arrow_up", self.i18n.ARROW_UP_COLOR_LABEL),
                            ("arrow_down", self.i18n.ARROW_DOWN_COLOR_LABEL)):
             # Widget names must be "{key}_color_button" / "{key}_color_input": SettingsDialog routes
-            # every non-threshold colour back through set_color_input by that convention, so naming
+            # every non-threshold color back through set_color_input by that convention, so naming
             # them this way needs zero routing changes.
             button = QPushButton()
             button.setObjectName(f"{key}_color")
@@ -187,9 +187,9 @@ class AppearancePage(QWidget):
         self.graph_opacity.valueChanged.connect(self.on_change)
         layout.addWidget(SettingCard(self.i18n.GRAPH_OPACITY_LABEL, control=self.graph_opacity))
 
-        # --- Data format (absorbed from the old Display/Units page) + Colour coding (absorbed from the
+        # --- Data format (absorbed from the old Display/Units page) + Color coding (absorbed from the
         # old Color Coding page), 2.0 IA. Reused as-is (their own tested control groups + load/get); the
-        # dialog keeps references to them for the Force-MB rule + the high/low colour-picker routing.
+        # dialog keeps references to them for the Force-MB rule + the high/low color-picker routing.
         self.units_section = UnitsPage(self.i18n, self.on_change)
         layout.addWidget(self.units_section)
         self.colors_section = ColorsPage(self.i18n, self.on_change, self.open_color_dialog)
@@ -252,7 +252,7 @@ class AppearancePage(QWidget):
         self.history_duration.setValue(config.get("history_minutes", constants.config.defaults.DEFAULT_HISTORY_MINUTES))
         self.graph_opacity.setValue(config.get("graph_opacity", constants.config.defaults.DEFAULT_GRAPH_OPACITY))
 
-        # Absorbed sections (units / colour coding).
+        # Absorbed sections (units / color coding).
         self.units_section.load_settings(config)
         self.colors_section.load_settings(config)
 
@@ -279,7 +279,7 @@ class AppearancePage(QWidget):
             "history_minutes": self.history_duration.value(),
             "graph_opacity": self.graph_opacity.value()
         }
-        # Merge the absorbed sections' keys (units / colour coding).
+        # Merge the absorbed sections' keys (units / color coding).
         settings.update(self.units_section.get_settings())
         settings.update(self.colors_section.get_settings())
         return settings

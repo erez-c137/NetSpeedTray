@@ -73,7 +73,7 @@ class Win11ComboBox(QComboBox):
     for the native rounded drop-shadow). Under our dark theme the styled item-view didn't actually
     cover that container on screen, so the open list rendered see-through over whatever it overlapped -
     unreadable. We force both the container window and its viewport opaque each time the pop-up opens
-    (the container is created lazily on the first show and then reused). Colours still come from the
+    (the container is created lazily on the first show and then reused). Colors still come from the
     QSS (``QComboBox QAbstractItemView``); this only removes the transparency. Use everywhere a
     settings combo is needed, exactly like a plain QComboBox."""
 
@@ -235,7 +235,7 @@ class Win11Toggle(QWidget):
             return
         self.thumb_animation.stop()
         if animate and prefers_reduced_motion():
-            animate = False   # honour Windows "Animation effects" off - snap instead of slide
+            animate = False   # honor Windows "Animation effects" off - snap instead of slide
         if animate:
             self.thumb_animation.setStartValue(current_pos)
             self.thumb_animation.setEndValue(end_pos)

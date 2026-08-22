@@ -91,7 +91,7 @@ class MonitorWindow(QWidget):
         _gear_sp.setRetainSizeWhenHidden(True)   # keep the header slot when hidden so hiding never reflows (#170)
         self._gear.setSizePolicy(_gear_sp)
         self._gear.setVisible(False)             # shown only on the Hardware tab (set in _on_tab_changed)
-        self._gear.setText(chr(0xE713))   # Segoe Fluent Icons "Settings" - monochrome, obeys QSS colour
+        self._gear.setText(chr(0xE713))   # Segoe Fluent Icons "Settings" - monochrome, obeys QSS color
         self._gear.setCursor(Qt.CursorShape.PointingHandCursor)
         self._gear.setToolTip(self._tr("MONITOR_SETTINGS_TIP", "Monitor display settings"))
         self._gear.setAccessibleName(self._tr("MONITOR_SETTINGS_TIP", "Monitor display settings"))
@@ -247,7 +247,7 @@ class MonitorWindow(QWidget):
     def _on_settings_changed(self) -> None:
         # Live-apply. The active page may need more than a re-render - a graph-mode change re-resolves
         # which stat is shown - so delegate to its on_settings_changed when it has one. Otherwise just
-        # re-render the active graph (colour/legend/smoothing/axis). No-op until a chart tab built the host.
+        # re-render the active graph (color/legend/smoothing/axis). No-op until a chart tab built the host.
         idx = self._stack.currentIndex()
         page = self._descriptors[idx].page if 0 <= idx < len(self._descriptors) else None
         if page is not None and hasattr(page, "on_settings_changed"):

@@ -83,7 +83,7 @@ class GraphDataWorker(QObject):
                 self.error.emit("Data source (WidgetState) not available.")
                 return
 
-            # The fast in-memory session path only has the ALL-interfaces aggregate, so it can't honour a
+            # The fast in-memory session path only has the ALL-interfaces aggregate, so it can't honor a
             # per-NIC filter. When the user scopes the graph to one interface, fall through to the DB path
             # (which is per-interface) even for the session range. "all"/None keeps the in-memory path.
             net_use_memory = request.is_session_view and not request.interface_name

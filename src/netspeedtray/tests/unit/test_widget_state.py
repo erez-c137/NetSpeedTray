@@ -735,7 +735,7 @@ def test_hardware_history_raw_fallback_for_recent_long_window(managed_widget_sta
 
 
 def test_add_hardware_stat_clamps_pct_not_physical(managed_widget_state):
-    """Utilisation stats clamp 0-100; physical stats (power W / temp °C / latency ms) store unclamped
+    """Utilization stats clamp 0-100; physical stats (power W / temp °C / latency ms) store unclamped
     so a 180 W draw or 200 ms ping isn't corrupted to 100."""
     state, _ = managed_widget_state
     state._hw_batch.clear()

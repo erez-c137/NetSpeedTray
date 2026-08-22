@@ -620,8 +620,8 @@ class GraphRenderer(QObject):
             plotted_ts, plotted_up, plotted_down = self._plot_high_res(plot_datetimes_array, upload_mbps, download_mbps, target_end_time=end_time)
             self._configure_axes(start_time, end_time, period_key, timestamps, plotted_up, plotted_down)
         elif stat_type in ("cpu", "gpu") and hw_styles is not None:
-            # Monitor's "toggle" layout: a single CPU- or GPU-only line that must honour the same
-            # display settings as combined/separate (per-role colour, Smooth, fixed/auto y-axis). The
+            # Monitor's "toggle" layout: a single CPU- or GPU-only line that must honor the same
+            # display settings as combined/separate (per-role color, Smooth, fixed/auto y-axis). The
             # standalone GraphWindow passes no hw_styles, so it keeps the legacy path below (+ tooltips).
             self._render_hwsingle(history_data, start_time, end_time, period_key, stat_type, hw_styles)
         else:
@@ -827,7 +827,7 @@ class GraphRenderer(QObject):
                 (end_time or datetime.fromtimestamp(ts_max)))
 
     def _render_hwcombined(self, data_dict, start_time, end_time, period_key, hw_styles=None):
-        """Plots CPU + GPU on one 0-100% axis: CPU solid, GPU dashed, vendor-coloured, with a legend.
+        """Plots CPU + GPU on one 0-100% axis: CPU solid, GPU dashed, vendor-colored, with a legend.
         Two lines, no fills - overlapping gradient fills would muddy a shared axis."""
         from netspeedtray.utils import hardware_vendors as hv
         ax = self.ax_download
@@ -947,7 +947,7 @@ class GraphRenderer(QObject):
 
     def _render_hwseparate(self, data_dict, start_time, end_time, period_key, hw_styles=None):
         """CPU top, GPU middle, RAM bottom - each its own axis, so no shared-axis collision and thus
-        each vendor-coloured SOLID (no dashed sibling needed). Mirrors the combined graph's roles."""
+        each vendor-colored SOLID (no dashed sibling needed). Mirrors the combined graph's roles."""
         from netspeedtray.utils import hardware_vendors as hv
         styles = hw_styles or {}
         smooth = bool(styles.get("smoothing"))
@@ -984,8 +984,8 @@ class GraphRenderer(QObject):
         self._configure_xaxis_format(period_key, axis=self.ax_ram)
 
     def _render_hwsingle(self, history_data, start_time, end_time, period_key, stat_type, hw_styles=None):
-        """One CPU- OR GPU-only line for the Monitor's "toggle" layout. Honours the same display
-        settings as _render_hwcombined/_render_hwseparate - per-role colour (vendor default fallback),
+        """One CPU- OR GPU-only line for the Monitor's "toggle" layout. Honors the same display
+        settings as _render_hwcombined/_render_hwseparate - per-role color (vendor default fallback),
         the Smooth toggle, and the fixed-0-100 vs auto y-axis - which the legacy single-stat path
         (still used by the standalone GraphWindow, hw_styles=None) does not."""
         from netspeedtray.utils import hardware_vendors as hv

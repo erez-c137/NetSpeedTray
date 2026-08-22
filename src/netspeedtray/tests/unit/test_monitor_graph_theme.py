@@ -24,7 +24,7 @@ def test_hw_styles_follow_os_theme_not_config(q_app, monkeypatch):
     host = GH.GraphHost(MagicMock(), cfg, I18nStrings("en_US"))
     monkeypatch.setattr(GH.su, "is_dark_mode", lambda: False)   # ...but the OS is in light mode
     styles = host._hw_styles()
-    # The RAM line colour is derived from the theme; light mode -> #388E3C, dark -> #4CAF50.
+    # The RAM line color is derived from the theme; light mode -> #388E3C, dark -> #4CAF50.
     assert styles["ram"][0] == "#388E3C", "graph theme ignored the OS (light) theme and used config"
 
     monkeypatch.setattr(GH.su, "is_dark_mode", lambda: True)

@@ -50,8 +50,8 @@ class ConfigConstants:
     DEFAULT_ARROW_FONT_SIZE: Final[int] = 10
     DEFAULT_ARROW_FONT_WEIGHT: Final[int] = fonts.WEIGHT_DEMIBOLD
     # Arrows share the speed text's pen by design - one setPen paints the arrow, the number and the
-    # unit, so with colour-coding on the whole line bands together. Opting in splits that into two
-    # colour languages (direction vs magnitude), which is a real design change, so it is off by
+    # unit, so with color-coding on the whole line bands together. Opting in splits that into two
+    # color languages (direction vs magnitude), which is a real design change, so it is off by
     # default and existing widgets render byte-identically after an upgrade (#168).
     DEFAULT_USE_CUSTOM_ARROW_COLORS: Final[bool] = False
     DEFAULT_ARROW_UP_COLOR: Final[str] = color.GREEN
@@ -113,7 +113,7 @@ class ConfigConstants:
         CLICK_ACTION_PAUSE,
         CLICK_ACTION_NONE,
     ]
-    # Defaults preserve existing behaviour: double-click already opened the Monitor; middle-click
+    # Defaults preserve existing behavior: double-click already opened the Monitor; middle-click
     # did nothing, so it stays "Nothing" until a user opts in.
     DEFAULT_DOUBLE_CLICK_ACTION: Final[str] = CLICK_ACTION_OPEN_MONITOR
     DEFAULT_MIDDLE_CLICK_ACTION: Final[str] = CLICK_ACTION_NONE
@@ -224,7 +224,7 @@ class ConfigConstants:
         "monitor_vram_enabled": DEFAULT_MONITOR_VRAM_ENABLED,
         "show_hardware_temps": DEFAULT_SHOW_HARDWARE_TEMPS,
         "show_hardware_power": DEFAULT_SHOW_HARDWARE_POWER,
-        # Record cheap CPU/GPU/RAM utilisation to the DB always (not just while the widget displays it),
+        # Record cheap CPU/GPU/RAM utilization to the DB always (not just while the widget displays it),
         # so the Monitor's history graphs have real data to show for past periods. Cheap (psutil +
         # one PDH read); temps/power are NOT recorded here (those stay gated/forced-only).
         "record_hardware_history": True,
