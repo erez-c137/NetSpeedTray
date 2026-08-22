@@ -161,6 +161,35 @@ def _known_downloads_dir() -> Optional[str]:
         return None
 
 
+def _info_box(parent: Optional[QWidget], title: str, text: str) -> None:
+    """An information box that actually ends up in front of the user.
+
+    `QMessageBox.information()` inherits its stacking from its parent, and our parent is the widget -
+    frameless, always-on-top, and since 2.0 docked into the *taskbar's* Z-order as an owned window.
+    A dialog parented to that can end up behind the shell, which is the same class of problem as
+    #200. For most dialogs that is survivable; for this one it is not, because the entire point of
+    the portable flow is to tell the user where their update went. A dialog they never see is
+    indistinguishable from nothing happening at all - which is precisely what #260 reported.
+    """
+    try:
+        box = QMessageBox(parent)
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setWindowTitle(title)
+        box.setText(text)
+        box.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+        box.show()
+        box.raise_()
+        box.activateWindow()
+        box.exec()
+    except Exception:
+        logger.warning("Could not show the update dialog; falling back to the plain box.",
+                       exc_info=True)
+        try:
+            QMessageBox.information(parent, title, text)
+        except Exception:
+            pass
+
+
 def _downloads_dir() -> str:
     """A persistent, findable place to stage the verified new version.
 
@@ -475,9 +504,8 @@ class SecureUpdater(QObject):
                 "NetSpeedTray {version} is ready in the folder that just opened:\n{ready}\n\n"
                 "To finish updating: close NetSpeedTray, then copy everything from that folder into "
                 "your current folder:\n{app_dir}\n(replacing the old files). Your settings are kept.")
-            QMessageBox.information(
-                self._parent, title,
-                msg.format(version=self._latest_version or "", ready=ready, app_dir=app_dir))
+            _info_box(self._parent, title,
+                      msg.format(version=self._latest_version or "", ready=ready, app_dir=app_dir))
         except Exception:
             pass
         self._finish()
@@ -556,7 +584,7 @@ class SecureUpdater(QObject):
         try:
             msg = getattr(self.i18n, "UPDATE_FALLBACK_MESSAGE",
                           "Couldn't complete the in-app update. Opening the download page instead.")
-            QMessageBox.information(self._parent, getattr(self.i18n, "UPDATE_AVAILABLE_TITLE", "Update"), msg)
+            _info_box(self._parent, getattr(self.i18n, "UPDATE_AVAILABLE_TITLE", "Update"), msg)
         except Exception:
             pass
         try:

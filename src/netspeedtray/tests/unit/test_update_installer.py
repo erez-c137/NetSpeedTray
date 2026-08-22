@@ -207,3 +207,45 @@ def test_unique_dir_suffixes_when_stale_cannot_be_removed(tmp_path, monkeypatch)
     target.mkdir()
     monkeypatch.setattr(ui.shutil, "rmtree", lambda *a, **k: None)  # simulate a surviving locked dir
     assert ui._unique_dir(str(target)) == str(tmp_path / "NetSpeedTray-2.1.0-2")
+
+
+# --------------------------------------------------------------------------- #260: visible dialogs
+
+def test_info_box_is_raised_and_activated(q_app, monkeypatch):
+    """#260: a dialog the user never sees is indistinguishable from nothing happening.
+
+    The update dialogs are parented to the widget, which is frameless, always-on-top and - since
+    2.0 - docked into the taskbar's own Z-order. A plain QMessageBox parented to that can end up
+    behind the shell, the same class of problem as #200. This one matters more than most, because
+    telling the user where their update went IS the portable flow.
+    """
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtWidgets import QMessageBox
+
+    calls = {"raise_": 0, "activate": 0, "exec": 0, "on_top": None}
+    monkeypatch.setattr(QMessageBox, "raise_", lambda self: calls.__setitem__("raise_", calls["raise_"] + 1))
+    monkeypatch.setattr(QMessageBox, "activateWindow",
+                        lambda self: calls.__setitem__("activate", calls["activate"] + 1))
+    monkeypatch.setattr(QMessageBox, "show", lambda self: None)
+    monkeypatch.setattr(QMessageBox, "exec", lambda self: (
+        calls.__setitem__("on_top", bool(self.windowFlags() & Qt.WindowType.WindowStaysOnTopHint)),
+        calls.__setitem__("exec", calls["exec"] + 1))[1])
+
+    ui._info_box(None, "Update ready", "the new version is in your Downloads folder")
+
+    assert calls["exec"] == 1, "the dialog was never shown"
+    assert calls["raise_"] == 1, "the dialog was not raised above the shell"
+    assert calls["activate"] == 1, "the dialog was not activated"
+    assert calls["on_top"] is True, "the dialog did not carry WindowStaysOnTopHint"
+
+
+def test_info_box_never_raises(q_app, monkeypatch):
+    """Best-effort by contract: a dialog failure must not take the update flow down with it."""
+    from PyQt6.QtWidgets import QMessageBox
+
+    def boom(self):
+        raise RuntimeError("simulated: no display")
+
+    monkeypatch.setattr(QMessageBox, "show", boom)
+    monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda *a, **k: None))
+    ui._info_box(None, "t", "m")   # must not propagate
