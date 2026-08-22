@@ -373,7 +373,14 @@ class StatsMonitorThread(QThread):
         # 4. nvidia-smi fallback for temp/power (vram_total comes as bonus). The subprocess
         #    runs on a slow sub-cadence; values are cached and reused on intervening polls so
         #    a synchronous (up to 1.5s) nvidia-smi call never stalls the network readout.
-        if self._nvidia_smi_path and (need_smi_temp or need_smi_power):
+        # Total VRAM is a property of the card, not a reading, so it is fetched once and cached for
+        # the life of the process - which is why asking for it here costs nothing on later polls.
+        # It has to be its own reason to call nvidia-smi: this used to run only when temp or power
+        # were needed FROM it, so with LibreHardwareMonitor supplying those, nvidia-smi never ran and
+        # the total silently never arrived. Users saw VRAM as used-only with LHM open and used/total
+        # with it closed, which is a bizarre thing to have to notice (#250).
+        need_smi_vram_total = self._nvidia_cache_vram_total is None
+        if self._nvidia_smi_path and (need_smi_temp or need_smi_power or need_smi_vram_total):
             now_mono = time.monotonic()
             if (now_mono - self._nvidia_last_poll) >= self._NVIDIA_POLL_INTERVAL_SEC:
                 # Stamp first: a hung/failed call then waits the full interval before retry,
@@ -415,8 +422,11 @@ class StatsMonitorThread(QThread):
                 temp_c = self._nvidia_cache_temp
             if need_smi_power and power_w is None and self._nvidia_cache_power is not None:
                 power_w = self._nvidia_cache_power
-            if vram_total is None and self._nvidia_cache_vram_total is not None:
-                vram_total = self._nvidia_cache_vram_total
+
+        # Outside the gate on purpose: once the total is known it applies on every poll, whatever the
+        # reason nvidia-smi did or did not run this time round.
+        if vram_total is None and self._nvidia_cache_vram_total is not None:
+            vram_total = self._nvidia_cache_vram_total
 
         # 5. RAPL PP1 fallback for Intel iGPU power (if no LHM/nvidia-smi power).
         # Init the PDH query FIRST (it's idempotent and sets _power_pp1_counter on first call) -

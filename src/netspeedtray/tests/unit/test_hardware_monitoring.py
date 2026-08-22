@@ -66,6 +66,7 @@ class TestHardwareMonitoring:
         monitor_thread._nvidia_smi_path = "nvidia-smi"
 
         mock_get_val.return_value = (None, 55.0)
+        monitor_thread._nvidia_cache_vram_total = 8192.0   # already known: not a reason to call smi
 
         # Set up a mock LHM WMI object
         mock_ohm = MagicMock()
@@ -80,13 +81,14 @@ class TestHardwareMonitoring:
             result = monitor_thread._poll_gpu_hybrid()
 
             assert result.temp == 68.0            # From LHM, not nvidia-smi
-            mock_sub.assert_not_called()   # nvidia-smi not reached when LHM provides temp
+            mock_sub.assert_not_called()   # LHM supplies temp, and the total is already known
 
     @patch('win32pdh.GetFormattedCounterValue')
     @patch('win32pdh.CollectQueryData')
     def test_poll_gpu_hybrid_no_temp_flag(self, mock_collect, mock_get_val, monitor_thread):
         """With include_temp=False and include_power=False, nvidia-smi is not called."""
         monitor_thread._gpu_query = 123
+        monitor_thread._nvidia_cache_vram_total = 8192.0   # already known: not a reason to call smi
         monitor_thread._gpu_util_counter = 1
         monitor_thread._gpu_vram_counter = None
         monitor_thread._nvidia_smi_path = "nvidia-smi"
@@ -98,7 +100,7 @@ class TestHardwareMonitoring:
 
             assert result.temp is None
             assert result.power is None
-            mock_sub.assert_not_called()  # No subprocess call when neither temp nor power needed
+            mock_sub.assert_not_called()  # nothing needed, and the total is already known
 
     def test_poll_gpu_hybrid_no_smi(self, monitor_thread):
         """AMD/Intel with no nvidia-smi and no LHM: total, temp, and power are None."""
@@ -189,13 +191,79 @@ class TestHardwareMonitoring:
 
         mock_ohm.ExecQuery.side_effect = mock_exec_query
         monitor_thread._wmi_ohm = mock_ohm
+        monitor_thread._nvidia_cache_vram_total = 8192.0   # already known: not a reason to call smi
 
         with patch('subprocess.check_output') as mock_sub:
             result = monitor_thread._poll_gpu_hybrid(include_temp=True, include_power=True)
 
             assert result.temp == 72.0
             assert result.power == 95.2
-            mock_sub.assert_not_called()  # nvidia-smi not needed
+            mock_sub.assert_not_called()  # LHM supplies both, and the total is already known
+
+    @patch('win32pdh.GetFormattedCounterValue')
+    @patch('win32pdh.CollectQueryData')
+    def test_total_vram_arrives_even_when_lhm_supplies_temp_and_power(
+            self, mock_collect, mock_get_val, monitor_thread):
+        """#250: total VRAM must not depend on where the temperature comes from.
+
+        nvidia-smi used to run only when temp or power were needed FROM it. With
+        LibreHardwareMonitor supplying both, it never ran - and `memory.total`, which only that call
+        provides, silently never arrived. The reporter saw VRAM as used-only with LHM open and
+        used/total with it closed, which is a very strange thing to have to notice.
+        """
+        monitor_thread._gpu_query = 123
+        monitor_thread._gpu_util_counter = 1
+        monitor_thread._gpu_vram_counter = None
+        monitor_thread._nvidia_smi_path = "nvidia-smi"
+        monitor_thread._nvidia_cache_vram_total = None       # the total is NOT yet known
+        monitor_thread._nvidia_last_poll = -9999.0           # bypass the sub-cadence throttle
+        mock_get_val.return_value = (None, 55.0)
+
+        # LHM supplies temperature, so the old gate would have skipped nvidia-smi entirely.
+        mock_ohm = MagicMock()
+        sensor = MagicMock()
+        sensor.Value = 68.0
+        sensor.Identifier = "/nvidiagpu/0/temperature/0"
+        sensor.Name = "GPU Core"
+        mock_ohm.ExecQuery.return_value = [sensor]
+        monitor_thread._wmi_ohm = mock_ohm
+
+        with patch('subprocess.check_output', return_value="68, 8192, 95.2\n") as mock_sub:
+            result = monitor_thread._poll_gpu_hybrid(include_temp=True, include_power=False)
+            mock_sub.assert_called_once()                    # called for the total, not the temp
+
+        assert result.temp == 68.0, "temperature must still come from LHM"
+        assert result.vram_total == 8192.0, "total VRAM never arrived - this is the #250 bug"
+
+    @patch('win32pdh.GetFormattedCounterValue')
+    @patch('win32pdh.CollectQueryData')
+    def test_a_known_total_vram_is_applied_without_calling_smi(
+            self, mock_collect, mock_get_val, monitor_thread):
+        """Once known, the cached total applies on every poll - it is a property of the card.
+
+        The application used to sit *inside* the same gate, so even an already-cached total was
+        dropped on any poll where nvidia-smi was not called.
+        """
+        monitor_thread._gpu_query = 123
+        monitor_thread._gpu_util_counter = 1
+        monitor_thread._gpu_vram_counter = None
+        monitor_thread._nvidia_smi_path = "nvidia-smi"
+        monitor_thread._nvidia_cache_vram_total = 8192.0
+        mock_get_val.return_value = (None, 55.0)
+
+        mock_ohm = MagicMock()
+        sensor = MagicMock()
+        sensor.Value = 68.0
+        sensor.Identifier = "/nvidiagpu/0/temperature/0"
+        sensor.Name = "GPU Core"
+        mock_ohm.ExecQuery.return_value = [sensor]
+        monitor_thread._wmi_ohm = mock_ohm
+
+        with patch('subprocess.check_output') as mock_sub:
+            result = monitor_thread._poll_gpu_hybrid(include_temp=True, include_power=False)
+            mock_sub.assert_not_called()
+
+        assert result.vram_total == 8192.0, "a cached total must survive a poll that skips smi"
 
     # ------------------------------------------------------------------
     # CPU power polling
