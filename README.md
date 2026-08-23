@@ -259,6 +259,7 @@ You probably grabbed an unsigned dev build. The official releases ([Setup.exe / 
 ### Security & Privacy
 - **Digitally signed** by the [SignPath Foundation](https://signpath.org/) - no SmartScreen warnings
 - **100% open source** (GPLv3) - no ads, no tracking, no telemetry · [Privacy Policy](privacy.md)
+- **Your history is a plain SQLite file you can query yourself** - schema, units and example queries in [DATABASE.md](DATABASE.md)
 - **PII obfuscation** - logs auto-redact paths, IPs (incl. IPv6), MACs, hostnames, and interface GUIDs
 - **Latency boundary** - off by default; gateway-only unless you explicitly opt in to a public host you name
 - **Verified updates** - the in-app updater authenticates the installer (Windows `WinVerifyTrust` + a publisher pin) before running, with a GitHub fallback
