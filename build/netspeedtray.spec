@@ -313,7 +313,10 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 upx_exclude = [
     'vcruntime140.dll', 'vcruntime140_1.dll',
     'msvcp140.dll', 'msvcp140_1.dll', 'msvcp140_2.dll',
-    'python311.dll',          # Already heavily optimized; packing causes startup overhead.
+    # Globbed, not pinned: this said 'python311.dll' and would have silently stopped applying
+    # the moment the build moved to 3.13 - UPX would then pack the interpreter and pay the
+    # startup cost this line exists to avoid, with nothing to warn you.
+    'python3*.dll',           # Already heavily optimized; packing causes startup overhead.
     'qt6webenginecore.dll',   # Excluded above but defensive.
     'opengl32sw.dll',         # Mesa-derived, breaks if UPX-packed.
     # OpenSSL + Python's bindings. UPX-packing these is a known cause of SSL
