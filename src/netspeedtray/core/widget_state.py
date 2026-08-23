@@ -120,7 +120,7 @@ class WidgetState(QObject):
             self.maintenance_timer.start(60 * 60 * 1000) # Run maintenance every hour
             self.trigger_maintenance()
 
-        self._read_conns: Dict[int, sqlite3.Connection] = {}
+        self._read_conns: Dict[int, Tuple[sqlite3.Connection, float]] = {}   # tid -> (conn, last_used)
         self._read_conns_lock = threading.Lock()
 
         # Data-usage odometer (data-cap feature). Lazily loaded from the DB on first
@@ -135,6 +135,12 @@ class WidgetState(QObject):
         self.logger.debug("WidgetState initialized with threaded database worker.")
 
 
+    # How long a read connection may sit untouched before another thread may close it. Generous on
+    # purpose: it only has to exceed the interval at which a live worker re-fetches its connection
+    # (the Monitor refreshes every few seconds), and erring high costs one idle file handle while
+    # erring low would close a connection out from under a slow query.
+    _READ_CONN_IDLE_SEC: float = 120.0
+
     def _get_read_conn(self) -> sqlite3.Connection:
         """Returns a thread-local read connection, pruning ones left behind by dead threads.
 
@@ -142,14 +148,31 @@ class WidgetState(QObject):
         its own read connection here, removed otherwise only in cleanup() at exit. Without pruning, every
         Monitor open/close leaked a connection (a file handle + a WAL reader slot) for the whole session,
         and a recycled thread id could even hand a new worker a dead thread's stale connection. So evict
-        entries whose owning thread has exited (safe to close cross-thread: check_same_thread=False)."""
+        entries whose owning thread has stopped using them.
+
+        **Pruning is by IDLE TIME, not by thread liveness, and that is not a stylistic choice.** This
+        used to evict any connection whose thread id was missing from ``threading.enumerate()`` - but
+        Qt worker threads (``QThread``) never appear there unless they happen to call
+        ``threading.current_thread()``, and ours only call ``get_ident()``. So every Monitor graph
+        worker was invisible, and the next caller from any other thread closed its connection **while
+        it was still querying** - "Cannot operate on a closed database", caught and logged, once per
+        Monitor session.
+
+        Registering the thread instead (calling ``current_thread()``) is worse: on CPython 3.11 the
+        resulting ``_DummyThread`` never leaves ``enumerate()`` when the native thread dies, so
+        nothing would ever be pruned and the leak this exists to prevent comes straight back
+        (verified, not assumed).
+
+        A thread mid-query has just fetched its connection, so an idle threshold it cannot trip is
+        both simpler and correct. Closing cross-thread stays safe: check_same_thread=False."""
         thread_id = threading.get_ident()
+        now = time.monotonic()
         with self._read_conns_lock:
             if self._read_conns:
-                live = {t.ident for t in threading.enumerate()}
-                for dead in [tid for tid in self._read_conns if tid not in live and tid != thread_id]:
+                for stale in [tid for tid, (_c, seen) in self._read_conns.items()
+                              if tid != thread_id and (now - seen) > self._READ_CONN_IDLE_SEC]:
                     try:
-                        self._read_conns.pop(dead).close()
+                        self._read_conns.pop(stale)[0].close()
                     except Exception:
                         pass
             if thread_id not in self._read_conns:
@@ -164,8 +187,11 @@ class WidgetState(QObject):
                 conn.execute("PRAGMA cache_size = -8000;")
                 conn.execute("PRAGMA temp_store = MEMORY;")
                 conn.execute("PRAGMA mmap_size = 268435456;")
-                self._read_conns[thread_id] = conn
-            return self._read_conns[thread_id]
+                self._read_conns[thread_id] = (conn, now)
+                return conn
+            conn, _seen = self._read_conns[thread_id]
+            self._read_conns[thread_id] = (conn, now)   # touch: this thread is demonstrably alive
+            return conn
 
     def add_speed_data(self, speed_data: Dict[str, Tuple[float, float]], now: Optional[datetime] = None, aggregated_up: Optional[float] = None, aggregated_down: Optional[float] = None) -> None:
         """Adds new per-interface speed data."""
@@ -923,7 +949,7 @@ class WidgetState(QObject):
 
         # Close persistent read connections
         with self._read_conns_lock:
-            for tid, conn in self._read_conns.items():
+            for tid, (conn, _seen) in self._read_conns.items():
                 try:
                     conn.close()
                 except:
