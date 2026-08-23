@@ -21,16 +21,68 @@ RELEASES_URL = f"https://api.github.com/repos/{constants.app.GITHUB_OWNER}/{cons
 CHECK_INTERVAL_HOURS = 24
 
 
+# Pre-release stage ordering. An unrecognised stage sorts ABOVE these but still
+# below any final release, so an unexpected tag can never look newer than a real one.
+_PRERELEASE_STAGES = {"alpha": 0, "a": 0, "beta": 1, "b": 1, "rc": 2, "c": 2, "pre": 2}
+_UNKNOWN_STAGE_RANK = 3
+
+
 def _parse_version(version_str: str) -> Tuple[int, ...]:
-    """Parse 'v1.3.1' or '1.3.1' into a comparable tuple of ints."""
+    """
+    Parse a release tag into a comparable tuple of ints.
+
+    The tag is split into a release core and an optional pre-release suffix, then
+    padded to a fixed shape so plain tuple comparison implements the ordering we
+    need for a beta cycle::
+
+        (major, minor, patch, is_final, stage_rank, stage_number)
+
+    - ``1.3`` and ``1.3.0`` are the same release -> both ``(1, 3, 0, 1, 0, 0)``.
+    - A final release outranks every pre-release of it (``is_final`` 1 beats 0),
+      so ``2.2.0`` > ``2.2.0-beta.4``.
+    - Successive pre-releases order correctly: ``beta.1`` < ``beta.2`` < ``rc.1``.
+      Without this a beta tester is stranded, because every ``2.2.0-beta.N``
+      compared EQUAL and `is_newer` could never advance between them.
+    - Build metadata (``+abc``) never affects precedence, per semver.
+
+    Never raises; an unparseable tag yields ``()`` so it sorts below everything.
+    """
     cleaned = version_str.lstrip("vV").strip()
-    parts = []
-    for part in cleaned.split("."):
+    cleaned = cleaned.split("+", 1)[0]              # build metadata is not precedence
+    core, _, pre = cleaned.partition("-")
+
+    release: list[int] = []
+    for part in core.split("."):
         try:
-            parts.append(int(part))
+            release.append(int(part))
         except ValueError:
             break
-    return tuple(parts)
+    if not release:
+        return ()                                   # unparseable sorts below everything
+
+    while len(release) < 3:                         # 1.3 and 1.3.0 are one release
+        release.append(0)
+
+    if not pre:
+        return (*release, 1, 0, 0)
+
+    stage_rank, stage_number = _UNKNOWN_STAGE_RANK, 0
+    for token in pre.replace("-", ".").split("."):
+        if token.isdigit():
+            stage_number = int(token)
+            continue
+        name = token.lower()
+        if name in _PRERELEASE_STAGES:
+            stage_rank = _PRERELEASE_STAGES[name]
+            continue
+        # digits glued to the stage name, e.g. 'beta2'
+        head = name.rstrip("0123456789")
+        tail = name[len(head):]
+        if head in _PRERELEASE_STAGES:
+            stage_rank = _PRERELEASE_STAGES[head]
+            if tail:
+                stage_number = int(tail)
+    return (*release, 0, stage_rank, stage_number)
 
 
 def is_newer(latest: str, current: str) -> bool:

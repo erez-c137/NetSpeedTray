@@ -14,9 +14,13 @@ updates. These tests pin the REAL behavior of `_parse_version` and `is_newer`:
 Only the pure comparison/parsing is exercised here - no network, no Qt threads,
 no UpdateChecker instance (that would need real HTTP + a QThread).
 
-Known quirks that are intentional and should NOT be "fixed" in a patch are
-xfailed below with a clear note (zero-padding asymmetry: "1.3" vs "1.3.0",
-and pre-release tags being truncated rather than ordered).
+**2.1.4: the two quirks previously xfailed here are now FIXED**, because the
+2.2.0 beta cycle depends on them. `_parse_version` pads to a fixed shape,
+`(major, minor, patch, is_final, stage_rank, stage_number)`, which makes
+"1.3" == "1.3.0", keeps a final release above its own pre-releases, and orders
+successive pre-releases so `is_newer` can actually advance between betas.
+Before this, every "2.2.0-beta.N" parsed to (2, 2) and compared EQUAL, so a
+beta tester was stranded on whichever build they installed first.
 """
 import pytest
 
@@ -25,34 +29,45 @@ from netspeedtray.core.update_checker import _parse_version, is_newer, select_re
 
 # --- _parse_version: normalization -------------------------------------------
 
+# Shape is (major, minor, patch, is_final, stage_rank, stage_number).
+# is_final=1 for a real release, 0 for a pre-release.
 @pytest.mark.parametrize("raw, expected", [
-    ("1.3.1", (1, 3, 1)),
-    ("v1.3.1", (1, 3, 1)),     # lowercase v stripped
-    ("V1.3.1", (1, 3, 1)),     # uppercase V stripped
-    ("vv1.0", (1, 0)),         # lstrip removes *all* leading v/V chars
-    (" 1.2.3 ", (1, 2, 3)),    # surrounding whitespace stripped
-    ("1.3.10", (1, 3, 10)),    # multi-digit component kept as int 10, not "10"
-    ("2", (2,)),               # single component
-    ("0.0.0", (0, 0, 0)),
+    ("1.3.1", (1, 3, 1, 1, 0, 0)),
+    ("v1.3.1", (1, 3, 1, 1, 0, 0)),     # lowercase v stripped
+    ("V1.3.1", (1, 3, 1, 1, 0, 0)),     # uppercase V stripped
+    ("vv1.0", (1, 0, 0, 1, 0, 0)),      # lstrip removes *all* leading v/V chars
+    (" 1.2.3 ", (1, 2, 3, 1, 0, 0)),    # surrounding whitespace stripped
+    ("1.3.10", (1, 3, 10, 1, 0, 0)),    # multi-digit component kept as int 10
+    ("2", (2, 0, 0, 1, 0, 0)),          # single component padded to a full release
+    ("0.0.0", (0, 0, 0, 1, 0, 0)),
+    ("1.4.0+build7", (1, 4, 0, 1, 0, 0)),   # build metadata is not precedence
 ])
 def test_parse_version_normalizes(raw, expected):
     assert _parse_version(raw) == expected
 
 
 @pytest.mark.parametrize("raw, expected", [
-    ("", ()),                  # empty -> empty tuple, no crash
-    ("v", ()),                 # only the prefix
-    ("   ", ()),               # whitespace only
-    ("abc", ()),               # no numeric leading component
-    ("1.3.x", (1, 3)),         # stops at first non-int component
-    # A pre-release suffix is attached to the LAST numeric component, so the
-    # whole component (e.g. "3-beta") fails int() and parsing stops *before* it.
-    ("1.3-beta", (1,)),        # "3-beta" is non-int -> only (1,) survives
-    ("1.3.1-rc2", (1, 3)),     # "1-rc2" is non-int -> stops, (1, 3)
-    ("1..2", (1,)),            # empty middle component is non-int -> stops at it
+    ("", ()),                          # empty -> empty tuple, no crash
+    ("v", ()),                         # only the prefix
+    ("   ", ()),                       # whitespace only
+    ("abc", ()),                       # no numeric leading component
+    ("1.3.x", (1, 3, 0, 1, 0, 0)),     # stops at first non-int, then pads
+    ("1..2", (1, 0, 0, 1, 0, 0)),      # empty middle component stops parsing
 ])
 def test_parse_version_malformed_is_graceful(raw, expected):
-    # The contract is: never raise, return a (possibly short/empty) int tuple.
+    # The contract is: never raise, return a (possibly empty) int tuple.
+    assert _parse_version(raw) == expected
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ("1.3-beta", (1, 3, 0, 0, 1, 0)),      # suffix no longer eats the component
+    ("1.3.1-rc2", (1, 3, 1, 0, 2, 2)),     # digits glued to the stage name
+    ("2.2.0-beta.1", (2, 2, 0, 0, 1, 1)),
+    ("2.2.0-alpha", (2, 2, 0, 0, 0, 0)),
+    ("2.2.0-rc.1", (2, 2, 0, 0, 2, 1)),
+    ("2.2.0-nightly", (2, 2, 0, 0, 3, 0)),  # unknown stage: above rc, below final
+])
+def test_parse_version_prerelease_shape(raw, expected):
     assert _parse_version(raw) == expected
 
 
@@ -104,58 +119,49 @@ def test_is_newer_malformed_does_not_crash():
     assert is_newer("1.3.4", "garbage") is True   # (1,3,4) > ()
 
 
-# --- known quirks: pin as xfail, do NOT change in a patch --------------------
+# --- release / pre-release ordering (fixed in 2.1.4) -------------------------
 
-@pytest.mark.xfail(
-    reason="Zero-padding asymmetry: tuple compare makes (1,3) < (1,3,0), so "
-           "is_newer('1.3.0','1.3') is True but is_newer('1.3','1.3.0') is "
-           "False. '1.3' and '1.3.0' are the same release; treating one as "
-           "newer is arguably wrong. Intentional/known - not a patch fix.",
-    strict=True,
-)
 def test_trailing_zero_components_treated_as_equal():
-    # If this ever starts passing, the normalization changed (good!) - update.
+    # "1.3" and "1.3.0" are the same release; neither is newer. Previously the
+    # shorter tuple compared as older, so "1.3.0" looked like an update over "1.3".
     assert is_newer("1.3.0", "1.3") is False
     assert is_newer("1.3", "1.3.0") is False
 
 
-def test_trailing_zero_asymmetry_actual_behavior():
-    # Documents the CURRENT (arguably-wrong) behavior so a regression is visible.
-    assert is_newer("1.3.0", "1.3") is True    # longer tuple wins
-    assert is_newer("1.3", "1.3.0") is False
-
-
-def test_prerelease_suffix_truncates_last_component():
-    # A '-beta'/'-rc' suffix is glued to the LAST numeric component, so that
-    # whole component fails int() and parsing stops *before* it. The suffixed
-    # component is lost entirely, not just its text part:
-    #   "1.4.0-beta" -> ["1","4","0-beta"] -> int("0-beta") fails -> (1, 4)
-    assert _parse_version("1.4.0-beta") == (1, 4)
-    assert _parse_version("1.4.0") == (1, 4, 0)
-
-
-def test_prerelease_compares_older_than_final_by_accident():
-    # Because the suffixed component is dropped, the pre-release tuple is SHORTER
-    # and therefore compares as older than the final release. This yields the
-    # arguably-desirable result (final > beta) but only as a side effect of
-    # truncation, not real semver ordering. Pinned so the accident is visible.
-    assert is_newer("1.4.0", "1.4.0-beta") is True       # (1,4,0) > (1,4)
+def test_final_release_outranks_its_own_prereleases():
+    assert is_newer("1.4.0", "1.4.0-beta") is True
+    assert is_newer("1.4.0", "1.4.0-rc.9") is True
     assert is_newer("1.4.0-beta", "1.4.0") is False
-    # The flip side of the same accident: a beta of a HIGHER version can look
-    # equal-or-older than a lower final because its last component vanished.
-    # "1.5.0-beta" -> (1,5) which is still > (1,4,0), so this one is fine:
+    assert is_newer("1.4.0-rc.9", "1.4.0") is False
+
+
+def test_prerelease_of_higher_version_beats_lower_final():
+    # A 2.2.0 beta IS newer than 2.1.4 - this is what lets a tester opt in.
     assert is_newer("1.5.0-beta", "1.4.0") is True
+    assert is_newer("2.2.0-beta.1", "2.1.4") is True
+    assert is_newer("2.1.4", "2.2.0-beta.1") is False
 
 
-@pytest.mark.xfail(
-    reason="No real semver pre-release ordering: '1.4.0-beta1' and "
-           "'1.4.0-beta2' both truncate to (1,4), so successive betas compare "
-           "EQUAL and is_newer can never advance between them. Proper "
-           "pre-release ordering is out of scope for a patch.",
-    strict=True,
-)
 def test_successive_prereleases_are_ordered():
+    """The 2.2.0 beta cycle depends on this.
+
+    Previously every '2.2.0-beta.N' truncated to (2, 2) and compared EQUAL, so a
+    beta tester could never be offered the next beta - they were stranded on
+    whichever build they installed first.
+    """
     assert is_newer("1.4.0-beta2", "1.4.0-beta1") is True
+    assert is_newer("2.2.0-beta.2", "2.2.0-beta.1") is True
+    assert is_newer("2.2.0-beta.10", "2.2.0-beta.9") is True   # numeric, not lexical
+    assert is_newer("2.2.0-beta.1", "2.2.0-beta.2") is False
+
+
+def test_prerelease_stages_are_ordered():
+    assert is_newer("2.2.0-beta.1", "2.2.0-alpha.9") is True
+    assert is_newer("2.2.0-rc.1", "2.2.0-beta.9") is True
+    # An unrecognised stage sorts above rc but still below the final release,
+    # so an unexpected tag can never look newer than a real one.
+    assert is_newer("2.2.0-nightly", "2.2.0-rc.1") is True
+    assert is_newer("2.2.0", "2.2.0-nightly") is True
 
 
 # --- release-asset selection (installer + portable) --------------------------
