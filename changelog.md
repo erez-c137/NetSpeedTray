@@ -129,7 +129,7 @@ The portable build updates itself - plus a log that had been drowning out the bu
 
 ### Developer notes
 
-- **User-facing text is American English throughout**, and a test keeps it that way. The app's own strings were already consistent; the changelog and README had drifted, at one point saying "colours" in the same sentence as the real UI label "Custom arrow colors". ([#262])
+- **User-facing text is American English throughout**, and a test keeps it that way. The app's own strings were already consistent; the changelog and README had drifted, at one point using the British spelling in the same sentence as the real UI label "Custom arrow colors". ([#262])
 - **The app now ships on Python 3.13.** Nothing changes for you - the runtime is bundled, so this is not something you install - but 3.11.9 was the last release of its series with Windows binaries, so the build could no longer pick up CPython security fixes at all. ([#270])
 
   *Under the hood: dependency versions were deliberately left alone - every pin already had cp313 wheels - so the interpreter move is verifiable on its own. Also fixed a UPX exclusion that named `python311.dll` literally and would have silently stopped applying.*
