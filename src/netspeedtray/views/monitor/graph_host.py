@@ -104,6 +104,7 @@ class GraphHost(QObject):
         self._accept_from_seq = 0             # drop in-flight results from a previous stat (cross-tab)
         self._cached_boot_time = None         # fetched once for the uptime range (mirrors GraphWindow)
         self._cached_earliest_db = None
+        self._earliest_db_fetched = False
 
         # shims the coordinator drives (matplotlib-free)
         self.ui = _UiShim()
@@ -304,9 +305,18 @@ class GraphHost(QObject):
         # Fetch boot/earliest ONCE for the uptime range. These are UI-thread DB calls and _time_range
         # runs on every refresh + realtime tick - GraphWindow caches them the same way (and the cache
         # is naturally fresh each session, since GraphHost is recreated per Monitor window).
-        if period_key == "TIMELINE_SYSTEM_UPTIME" and self._cached_boot_time is None:
+        # ALL needs the earliest row too, not just SYSTEM UPTIME. Without it, get_start_time() falls
+        # back to `now - 10 years`, so "All" drew an axis from ~2016 with every real sample crushed
+        # into a sliver at the right edge - the one period whose whole job is to show everything was
+        # the one that showed nothing. The Overview tab already asked for both; this path had drifted.
+        if period_key in ("TIMELINE_SYSTEM_UPTIME", "TIMELINE_ALL") and not self._earliest_db_fetched:
+            # Latch on the ATTEMPT, not on the result: an empty database legitimately returns None,
+            # and this runs on every refresh and realtime tick - retrying would be a UI-thread DB
+            # call per tick, forever.
+            self._earliest_db_fetched = True
             try:
-                self._cached_boot_time = GraphLogic.get_boot_time()
+                if period_key == "TIMELINE_SYSTEM_UPTIME":
+                    self._cached_boot_time = GraphLogic.get_boot_time()
                 self._cached_earliest_db = self._main_widget.widget_state.get_earliest_data_timestamp()
             except Exception:
                 self._cached_boot_time = self._cached_earliest_db = None
