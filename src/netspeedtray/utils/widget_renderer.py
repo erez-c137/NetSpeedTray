@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 from dataclasses import dataclass, field
 
 from netspeedtray.core.widget_state import SpeedDataSnapshot, AggregatedSpeedData
-from netspeedtray.utils.helpers import format_speed, calculate_monotone_cubic_interpolation
+from netspeedtray.utils.helpers import has_dedicated_vram, format_speed, calculate_monotone_cubic_interpolation
 from PyQt6.QtGui import QPainter, QColor, QFont, QFontMetrics, QPen, QPainterPath
 from PyQt6.QtCore import Qt, QPointF, QRect, QRectF
 from netspeedtray import constants
@@ -603,7 +603,14 @@ class WidgetRenderer:
                 mem_text, total = "", 0.0
                 if mem_info and mem_info[0] is not None:
                     used, total = mem_info[0], (mem_info[1] or 0.0)
-                    mem_text = f"{used:.1f}/{total:.1f}G" if total > 0 else f"{used:.1f}G"
+                    # An iGPU has no dedicated VRAM and PDH reports 0.0 for it. Draw nothing rather
+                    # than spend width on a "0.0G" that reads like a measurement. RAM is unaffected:
+                    # it always has a real total. Matches the Monitor's Overview tile, which has
+                    # always hidden itself in this case.
+                    if total <= 0 and not has_dedicated_vram(used):
+                        mem_text = ""
+                    else:
+                        mem_text = f"{used:.1f}/{total:.1f}G" if total > 0 else f"{used:.1f}G"
                 rows.append({'label': label, 'color': color_hex, 'total': total,
                              'pct': self._fmt_hw_percent(val),
                              'suffix': self._build_hw_suffix(temp, power, show_temps, show_power),
