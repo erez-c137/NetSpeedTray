@@ -328,7 +328,9 @@ See [TRANSLATORS.md](TRANSLATORS.md) for how translation works and how to contri
 <summary><b>🛠️ Building from Source</b> (click to expand)</summary>
 
 ### Prerequisites
-- [Python 3.11+](https://www.python.org/downloads/)
+- [Python 3.13](https://www.python.org/downloads/) - what the release is built and tested with.
+  3.11 and 3.12 still work for running from source, but 3.11 is the last version with Windows
+  binaries for its series, so the shipped build moved off it.
 - [Git](https://git-scm.com/downloads/)
 - *(Optional)* [Inno Setup 6](https://jrsoftware.org/isinfo.php) for the Windows installer
 - *(Optional)* UPX - auto-downloaded by the build script into `build/tools/` if missing
@@ -358,7 +360,7 @@ pytest -v
 .\build\build-exe-only.bat   # exe only (faster iteration)
 ```
 
-Output lands in `dist/`. *(Python 3.13+ pre-release? add `--pre` to the pip install if stable wheels aren't out yet.)*
+Output lands in `dist/`. *(On a Python newer than 3.13? If a stable wheel isn't out yet, add `--pre` to the pip install.)*
 
 </details>
 
