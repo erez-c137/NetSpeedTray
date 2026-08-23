@@ -41,6 +41,10 @@ class DatabaseWorker(QThread):
         # no 100ms busy-poll, lower latency, near-zero idle CPU. None is a wake-up sentinel.
         self._queue: "queue.Queue[Optional[Tuple[str, Any]]]" = queue.Queue()
         self._stop_event = threading.Event()
+        # Set when the file on disk was written by a NEWER build than this one. Every write
+        # path is then refused - see _check_and_create_schema for why silence is not an option.
+        self._schema_incompatible = False
+        self._downgrade_warned = False
         self.logger = logging.getLogger(f"NetSpeedTray.{self.__class__.__name__}")
 
 
@@ -55,7 +59,11 @@ class DatabaseWorker(QThread):
             try:
                 self._initialize_connection()
                 self._check_and_create_schema()
-                self._ensure_indexes()  # idempotent; runs regardless of schema version
+                if not self._schema_incompatible:
+                    # Skipped on a downgrade: CREATE INDEX against a newer schema either errors
+                    # (a compatibility view cannot be indexed) or writes to a file this build
+                    # does not understand. Both are exactly what the guard exists to prevent.
+                    self._ensure_indexes()  # idempotent; runs regardless of schema version
                 initialized = True
                 break
             except sqlite3.Error as e:
@@ -119,6 +127,18 @@ class DatabaseWorker(QThread):
             except Exception:
                 pass
             return
+        if self._schema_incompatible:
+            # Downgrade: every task below writes (maintenance DELETEs and aggregates). Drop them
+            # rather than letting them fail into a swallowed OperationalError. Warn once - this
+            # fires per persist tick, and #263 was a 137,000-line flood from exactly this shape.
+            if not self._downgrade_warned:
+                self._downgrade_warned = True
+                self.logger.warning(
+                    "Refusing database task '%s' and all further writes: the file was written by a "
+                    "newer version of NetSpeedTray. This is logged once per session.", task,
+                )
+            return
+
         handlers = {
             "persist_speed": self._persist_speed_batch,
             "persist_hardware": self._persist_hardware_batch,
@@ -243,19 +263,130 @@ class DatabaseWorker(QThread):
         except Exception:
             return True
 
+    # Keep the newest N pre-migration backups; older ones are pruned. Nothing used to
+    # delete these at all, and at a year-scale database that is hundreds of MB of
+    # abandoned copies sitting in the user's roaming profile.
+    _BACKUP_RETENTION = 2
+
     def _backup_database(self) -> bool:
-        """Backs up the current database file before critical operations."""
+        """
+        Make a **verified**, WAL-safe copy of the database before a migration.
+
+        Uses ``VACUUM INTO`` rather than a file copy. ``shutil.copy2`` copies only the
+        main ``.db`` file, but in WAL mode everything committed since the last
+        checkpoint lives in the ``-wal`` sidecar - so a copy taken while the WAL is hot
+        silently loses it. That is precisely the state during an upgrade: the installer
+        force-kills the running app (``taskkill /F`` in setup.iss), so no checkpoint
+        runs. Measured against a hot WAL, a ``copy2`` backup recovered **zero of 30,000
+        committed rows** - and the result still passed ``PRAGMA integrity_check``,
+        because an empty database is a perfectly valid one.
+
+        ``VACUUM INTO`` reads through this connection, so it sees WAL content, and it
+        compacts the copy as a side effect.
+
+        The copy is then opened and checked against the source before this returns
+        True. A backup that silently isn't one is worse than no backup at all, because
+        the caller reasons about its existence.
+        """
+        backup_path: Optional[Path] = None
         try:
+            version = self._get_current_db_version()
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup_path = self.db_path.with_suffix(f".db.bak.v{self._get_current_db_version()}_{timestamp}")
+            backup_path = self.db_path.with_suffix(f".db.bak.v{version}_{timestamp}")
+
+            # VACUUM INTO refuses to write an existing file. The timestamp is only
+            # second-resolution while run()'s init retry backs off in 0.1s steps, so two
+            # attempts land in the same second - and that collision would fire in exactly
+            # the retry path a backup exists to protect.
+            suffix = 0
+            while backup_path.exists():
+                suffix += 1
+                backup_path = self.db_path.with_suffix(f".db.bak.v{version}_{timestamp}_{suffix}")
+
             self.logger.info("Backing up database to: %s", backup_path)
-            shutil.copy2(self.db_path, backup_path)
+            self.conn.execute("VACUUM INTO ?", (str(backup_path),))
+
+            if not self._verify_backup(backup_path, version):
+                self.logger.error("Pre-migration backup FAILED VERIFICATION; treating as no backup.")
+                backup_path.unlink(missing_ok=True)
+                return False
+
+            self._prune_old_backups()
             return True
         except Exception as e:
             # Don't swallow silently: the migration's data-loss guard assumes a backup was made, so a
             # disk-full / permission / lock failure here must be visible in the log (and the bak's absence).
             self.logger.error("Pre-migration database backup FAILED: %s", e)
+            if backup_path is not None:
+                try:
+                    backup_path.unlink(missing_ok=True)   # never leave a partial copy that looks real
+                except Exception:
+                    pass
             return False
+
+
+    def _verify_backup(self, backup_path: Path, expected_version: int) -> bool:
+        """
+        Open the backup and prove it holds the same data as the source.
+
+        Structural checks alone are not enough: the failure this exists to catch (a
+        WAL-blind copy) produces a *valid* database that is merely missing rows, which
+        ``integrity_check`` reports as ``ok``. So compare content - the schema version
+        and the row count of every history table.
+        """
+        check: Optional[sqlite3.Connection] = None
+        try:
+            # NOTE: `with sqlite3.connect(...)` commits/rolls back the transaction but does
+            # NOT close the connection. On Windows the leaked handle keeps the file locked,
+            # so _prune_old_backups() then fails with WinError 32. Close it explicitly.
+            check = sqlite3.connect(f"file:{backup_path}?mode=ro", uri=True)
+
+            if check.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+                self.logger.error("Backup verification: quick_check did not return ok.")
+                return False
+
+            row = check.execute("SELECT value FROM metadata WHERE key='db_version'").fetchone()
+            if row is None or int(row[0]) != expected_version:
+                self.logger.error(
+                    "Backup verification: db_version is %s, expected %d.",
+                    row[0] if row else "missing", expected_version,
+                )
+                return False
+
+            tables = [r[0] for r in self.conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            )]
+            for table in tables:
+                src = self.conn.execute(f"SELECT COUNT(*) FROM '{table}'").fetchone()[0]
+                dst = check.execute(f"SELECT COUNT(*) FROM '{table}'").fetchone()[0]
+                if src != dst:
+                    self.logger.error(
+                        "Backup verification: table '%s' has %d rows in the backup but %d in the "
+                        "source. The backup is incomplete.", table, dst, src,
+                    )
+                    return False
+            return True
+        except Exception as e:
+            self.logger.error("Backup verification failed to read the copy: %s", e)
+            return False
+        finally:
+            if check is not None:
+                check.close()
+
+
+    def _prune_old_backups(self) -> None:
+        """Keep only the newest `_BACKUP_RETENTION` backups; nothing else ever deleted them."""
+        try:
+            backups = sorted(
+                self.db_path.parent.glob(f"{self.db_path.stem}.db.bak.*"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+            for stale in backups[self._BACKUP_RETENTION:]:
+                stale.unlink(missing_ok=True)
+                self.logger.debug("Pruned old database backup: %s", stale.name)
+        except Exception as e:
+            self.logger.warning("Could not prune old database backups: %s", e)
 
 
     def _migrate_schema(self, current_version: int) -> None:
@@ -411,6 +542,26 @@ class DatabaseWorker(QThread):
             # M7: version read failed unexpectedly. Never rebuild - preserve the file and
             # degrade gracefully. A retry on next launch may succeed once the lock clears.
             self.logger.error("DB version is UNKNOWN; refusing to migrate or rebuild - preserving the database as-is.")
+            return
+
+        if current_version > self._DB_VERSION:
+            # DOWNGRADE. The file was written by a newer build; this one cannot understand it.
+            # There is no migration to run - range(new, old) is empty - so the old code fell
+            # through and did two harmful things:
+            #   1. _migrate_schema() still ran _backup_database() unconditionally, writing a
+            #      full copy of the database on EVERY launch, which nothing ever deletes.
+            #   2. Reads kept working (a newer schema may expose compatibility views), while
+            #      every write raised OperationalError - a sqlite3.Error subclass that the
+            #      handlers below swallow. The app looked healthy and silently recorded nothing.
+            # Refusing outright is the only honest option: no backup, no writes, no maintenance.
+            self._schema_incompatible = True
+            self.logger.error(
+                "Database schema v%d was written by a NEWER version of NetSpeedTray than this one "
+                "(which understands v%d). Running READ-ONLY: history will be shown but nothing new "
+                "will be recorded, and no data will be modified or deleted. Upgrade again to resume "
+                "recording, or move %s aside to start a fresh history.",
+                current_version, self._DB_VERSION, self.db_path.name,
+            )
             return
 
         if current_version > 0:
