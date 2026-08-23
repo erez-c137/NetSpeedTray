@@ -18,6 +18,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QWidget, QFrame, QHBoxLayout, QVBoxLayout, QLabel
 
 from netspeedtray.utils import styles as su
+from netspeedtray.utils.helpers import has_dedicated_vram
 from netspeedtray.constants.styles import styles as tokens
 
 
@@ -95,7 +96,11 @@ class TelemetryStrip(QWidget):
             self._gpu.set_value(self._proc_text(getattr(w, "gpu_usage", 0.0),
                                                 getattr(w, "gpu_temp", None), getattr(w, "gpu_power", None)))
         self._update_mem(self._ram, getattr(w, "ram_used", None), getattr(w, "ram_total", None))
-        self._update_mem(self._vram, getattr(w, "vram_used", None), getattr(w, "vram_total", None))
+        # An iGPU reports 0.0 GB dedicated VRAM; hide the tile rather than show it, exactly as the
+        # Overview tab already does. Passing None is what _update_mem treats as "no reading".
+        _vu = getattr(w, "vram_used", None)
+        self._update_mem(self._vram, _vu if has_dedicated_vram(_vu) else None,
+                         getattr(w, "vram_total", None))
 
     def _set_tile_visible(self, tile, visible: bool) -> None:
         """Show/hide a tile AND reclaim its stretch so the remaining tiles fill the width (no gap)."""

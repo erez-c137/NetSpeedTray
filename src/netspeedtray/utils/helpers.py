@@ -77,6 +77,25 @@ def get_app_data_path() -> Path:
         raise OSError(f"Error with app data directory: {path}. Check disk space or path validity.") from e
 
 
+# An integrated GPU has no dedicated video memory, and the PDH counter dutifully reports 0.0 GB for
+# it. Rendering that as "0.0G" spends widget width to tell the user nothing - worse, it reads as a
+# measurement rather than an absence. Treat a reading this small as "there is nothing here".
+VRAM_READING_FLOOR_GB: float = 0.05
+
+
+def has_dedicated_vram(used: Optional[float]) -> bool:
+    """True when a GPU reports dedicated video memory worth displaying.
+
+    Kept in one place because three call sites need the same answer and had drifted: the Monitor's
+    Overview tile already hid itself on an iGPU, while the widget and the Hardware telemetry strip
+    both showed a flat "0.0 GB".
+    """
+    try:
+        return used is not None and float(used) >= VRAM_READING_FLOOR_GB
+    except (TypeError, ValueError):
+        return False
+
+
 def is_portable_install() -> bool:
     """
     True when the app is running as the portable ZIP build.
