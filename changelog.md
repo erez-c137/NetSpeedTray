@@ -75,6 +75,90 @@ ALSO
 
 ---
 
+## [2.1.4] - August 23, 2026
+
+The portable build updates itself - plus a log that had been drowning out the bugs it was meant to record, and the groundwork that makes the next release safe to try.
+
+> **Upgrading (portable only):** this is the release that teaches NetSpeedTray to update itself, not the one that benefits. Updating takes two halves - the *old* version has to hand the job over, and only the *new* one can ship in a release. So **2.1.3 → 2.1.4 is the copy-it-yourself flow one last time**, and **2.1.4 → 2.1.5 onward is automatic**. Installer users were never affected.
+
+### Added
+
+- **The portable build now updates itself.** Click *Download Update* and it verifies the new version, replaces your folder and restarts - no copying files by hand. Your settings and history are kept. ([#264], reported by [@kiro5678] in [#260])
+
+  *Under the hood: the verified new EXE does the work, because a program cannot replace the folder it runs from. Deliberately not a helper script - "terminate a process, overwrite binaries" is a malware heuristic, and this path is otherwise WinVerifyTrust + a SignPath pin. The old install is renamed aside before anything is written, so a failure is reversible, and anything doubtful falls back to the guided copy rather than being forced.*
+
+### Fixed
+
+- **The log no longer fills with one repeated line when you lose your connection.** Losing the network wrote a warning every second - one support bundle was 98.5% that single message, which pushed everything useful out and made the bug it was attached to impossible to diagnose. ([#263])
+
+  *Under the hood: the routing lookup is cached to once per 15s, but the guard also required a previous success - so with no route it fell through and the blocking UDP connect ran on every poll. The cache stopped applying in exactly the case it was written for. The throttle is time-only now, and a lost connection logs once on the way out and once on the way back with the duration.*
+- **The in-app updater now records what it did**, so a support bundle can show whether an update downloaded, verified and installed. It previously logged only failures. ([#263])
+- **Total VRAM now shows whether or not LibreHardwareMonitor is running.** It appeared as used-only with LHM open and used/total with it closed. ([#265], thanks [@PilaScat])
+
+  *Under the hood: total VRAM only ever comes from `nvidia-smi`, and that call was gated on needing temperature or power from it - so with LHM supplying those, it never ran. The total is a property of the card, not a reading, so it is fetched once and cached.*
+- **The update dialogs no longer hide behind the taskbar**, and the downloaded folder goes to your real Downloads folder even if you have moved it. Either one could make an update look like it did nothing at all. ([#267], [#260])
+
+  *Under the hood: the dialogs were parented to the widget, which is docked into the taskbar's own Z-order - the same class of problem as #200. And `_downloads_dir()` guessed `~/Downloads` and fell back to the home directory, so a relocated Downloads folder sent the update somewhere nobody would look. Now uses `SHGetKnownFolderPath`.*
+- **The memory readout on the widget dropped the `|` before it.** ([#267], thanks [@PilaScat])
+- **Closing the Monitor no longer errors in the background.** A database read could be cut off mid-query, which was harmless but wrong. ([#268])
+
+  *Under the hood: per-thread read connections were reclaimed by checking the owning thread against `threading.enumerate()` - which never lists Qt worker threads, so the Monitor's graph worker looked permanently dead and had its connection closed while still querying. Registering the thread would have been worse: on CPython 3.11 the `_DummyThread` never leaves `enumerate()`, so nothing would ever be reclaimed. Pruning is by idle time now, which a busy thread cannot trip.*
+- **On a laptop or PC with only integrated graphics, the widget no longer shows `0.0G` for VRAM.** An integrated GPU has no dedicated video memory, so there is nothing to report - it shows nothing rather than a zero that looks like a reading. ([#269])
+
+  *Under the hood: the Monitor's Overview tile already hid itself in this case; the widget and the Hardware telemetry strip had drifted from it. The threshold now lives once, in `helpers.has_dedicated_vram()`.*
+- **The "All" period on the Monitor's graphs now shows your actual history.** It was drawing a timeline stretching back roughly a decade, with every real reading squeezed into an unreadable sliver at the right-hand edge. ([#271])
+
+  *Under the hood: `get_start_time()` falls back to `now - 10 years` for ALL when it is not given the earliest row in the database, and the graph only looked that up for the System Uptime period. The query already existed; the Overview tab had always called it. Month and the shorter periods were never affected.*
+- **The SMART update rate no longer speeds up to ten times a second after you save settings.** It starts correctly at 2 seconds, then silently dropped to 100 ms the first time you opened Settings. ([#273])
+
+  *Under the hood: SMART is the sentinel `-1.0`, and `set_interval` clamps with `max(0.1, interval)` - so handing it the raw value meant 0.1s, the one rate `constants/update_mode.py` rules out in its own header. `calculate_timer_interval()` already resolved the sentinel; this path never called it. It was also a data bug: the raw tier's key is one-second and written `INSERT OR IGNORE`, so at 100 ms roughly nine of every ten samples were discarded.*
+- **Going back to an older version no longer silently stops recording.** Open a database written by a newer NetSpeedTray and it now says so and runs read-only, instead of looking healthy while saving nothing. ([#273])
+
+  *Under the hood: the migration loop is empty on a downgrade, so the old code fell straight through - it still wrote a full copy of the database to a `.bak` on every launch, which nothing ever deleted, and every write raised an `OperationalError`, a `sqlite3.Error` subclass the handlers swallow. Reads kept working, so nothing looked wrong. This matters now because 2.2.0's schema change is the first one anyone will roll back from.*
+- **The backup taken before a database upgrade is verified now, and actually contains your history.** ([#273])
+
+  *Under the hood: it was `shutil.copy2`, which copies only the main `.db` - in WAL mode everything since the last checkpoint lives in the sidecar, and the installer force-kills the app, so the WAL is hot exactly when the backup matters. Measured: a copy taken that way recovered zero of 30,000 committed rows and still passed `integrity_check`, because an empty database is a valid one. Now `VACUUM INTO` (which also compacts it ~8x), and the copy is opened and its row counts compared against the source before it is trusted. Old backups are pruned to the newest two.*
+- **Pre-release versions are compared correctly**, so anyone testing a beta can be offered the next one. ([#273])
+
+  *Under the hood: parsing stopped at the first non-integer component, so every `2.2.0-beta.N` became `(2, 2)` and successive betas compared EQUAL - a tester was stranded on whichever build they installed first. Needed before 2.2.0 ships as a beta.*
+
+### Localization
+
+- Simplified Chinese refresh from [@RainThings] - including the same "dashboard" → "Monitor" terminology fix that was made in the English source, found independently. ([#261])
+- **Turkish now has a maintainer:** [@lezgintekay], who contributed the language in 2.1.3, has offered to keep it current. ([#266])
+
+### Developer notes
+
+- **User-facing text is American English throughout**, and a test keeps it that way. The app's own strings were already consistent; the changelog and README had drifted, at one point using the British spelling in the same sentence as the real UI label "Custom arrow colors". ([#262])
+- **The app now ships on Python 3.13.** Nothing changes for you - the runtime is bundled, so this is not something you install - but 3.11.9 was the last release of its series with Windows binaries, so the build could no longer pick up CPython security fixes at all. ([#270])
+
+  *Under the hood: dependency versions were deliberately left alone - every pin already had cp313 wheels - so the interpreter move is verifiable on its own. Also fixed a UPX exclusion that named `python311.dll` literally and would have silently stopped applying.*
+- **The history database has a documented schema.** [`DATABASE.md`](DATABASE.md) at the repo root describes every table, unit and rollup tier so you can query your own history - and lists the traps: speeds are bytes, not bits; there is no "All interfaces" row; virtual adapters are mixed in with your real one. Every example query was run before it was published. ([#272])
+- CI moved to `actions/setup-python@v7`. ([#256])
+- **1,225 automated tests**, up from 1,141 in 2.1.3.
+
+[#256]: https://github.com/erez-c137/NetSpeedTray/pull/256
+[#260]: https://github.com/erez-c137/NetSpeedTray/issues/260
+[#261]: https://github.com/erez-c137/NetSpeedTray/pull/261
+[#262]: https://github.com/erez-c137/NetSpeedTray/pull/262
+[#263]: https://github.com/erez-c137/NetSpeedTray/pull/263
+[#264]: https://github.com/erez-c137/NetSpeedTray/pull/264
+[#265]: https://github.com/erez-c137/NetSpeedTray/pull/265
+[#266]: https://github.com/erez-c137/NetSpeedTray/pull/266
+[#267]: https://github.com/erez-c137/NetSpeedTray/pull/267
+[#268]: https://github.com/erez-c137/NetSpeedTray/pull/268
+[#269]: https://github.com/erez-c137/NetSpeedTray/pull/269
+[#270]: https://github.com/erez-c137/NetSpeedTray/pull/270
+[#271]: https://github.com/erez-c137/NetSpeedTray/pull/271
+[#272]: https://github.com/erez-c137/NetSpeedTray/pull/272
+[#273]: https://github.com/erez-c137/NetSpeedTray/pull/273
+[@kiro5678]: https://github.com/kiro5678
+[@PilaScat]: https://github.com/PilaScat
+[@RainThings]: https://github.com/RainThings
+[@lezgintekay]: https://github.com/lezgintekay
+
+---
+
 ## [2.1.3] - August 22, 2026
 
 Fixes from a month of bug reports, including one that has been in every release since the beginning: the app never actually detected your system language.
