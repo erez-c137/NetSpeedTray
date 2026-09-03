@@ -28,6 +28,7 @@ from netspeedtray import constants
 from netspeedtray.utils import styles as su
 from netspeedtray.constants.styles import styles as tokens
 from netspeedtray.utils.helpers import format_speed, format_data_size, format_duration_short
+from netspeedtray.utils.timer_utils import resolve_poll_interval_seconds
 from netspeedtray.utils.widget_paint import WidgetMetrics   # reuse its Mbps→bytes/sec converter (DRY)
 # NOTE: `summaries` imports numpy at module scope. To honor the Monitor's import firewall (a glance at
 # the default Overview must not eagerly pull the heavy compute deps), it is imported LAZILY inside
@@ -347,7 +348,9 @@ class OverviewTab(QWidget):
             self._render()
             return
         start, end, is_session = self._window()
-        poll = float(self._config.get("update_rate", 1.0) or 1.0)
+        # NOT `or 1.0`: the SMART sentinel (-1.0) is truthy and samples at 2.0 s; leaking it
+        # zeroed coverage_pct on every Overview summary (2.1.5 item 9).
+        poll = resolve_poll_interval_seconds(self._config.get("update_rate", 1.0))
         try:
             if is_session:
                 agg = ws.get_aggregated_speed_history()

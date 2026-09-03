@@ -110,6 +110,33 @@ def test_latency_pill_classification(q_app):
     assert L(None, None, 0.0) == ""                                           # no data -> empty
 
 
+def test_reload_window_normalizes_smart_poll(q_app):
+    """2.1.5 item 9: update_rate=-1.0 (SMART) must reach summarize_* as 2.0 s (SMART samples every
+    SMART_MODE_INTERVAL_MS), not leak through `or 1.0` as -1.0 - which made every Overview summary
+    report coverage 0% in SMART mode."""
+    captured = []
+
+    class _CapWS(_WS):
+        def get_speed_history(self, start, end, iface, resolution='auto', **kwargs):
+            return super().get_speed_history(start, end, iface, resolution=resolution)
+
+        def summarize_network(self, direction, start, end, iface, poll):
+            captured.append(poll)
+            return super().summarize_network(direction, start, end, iface, poll)
+
+        def summarize_hardware(self, stat, start, end, poll):
+            captured.append(poll)
+            return super().summarize_hardware(stat, start, end, poll)
+
+    class _MW2(_MW):
+        widget_state = _CapWS()
+
+    ov = OverviewTab(_MW2(), _cfg(update_rate=-1.0), I18nStrings("en_US"))
+    ov.isVisible = lambda: True          # bypass the visibility guard without show() (no feed thread)
+    ov._reload_window()
+    assert captured and all(p == 2.0 for p in captured)
+
+
 def test_context_right_prefers_true_system_power(q_app):
     from types import SimpleNamespace
     ov = OverviewTab(_MW(), _cfg(), I18nStrings("en_US"))

@@ -86,6 +86,7 @@ def run_export_cli(argv: Optional[List[str]] = None) -> Optional[int]:
     from netspeedtray import constants, __version__
     from netspeedtray.utils.config import ConfigManager
     from netspeedtray.utils.helpers import get_machine_id
+    from netspeedtray.utils.timer_utils import resolve_poll_interval_seconds
     from netspeedtray.utils import stats_exporter
     from netspeedtray.core.widget_state import WidgetState
 
@@ -122,7 +123,9 @@ def run_export_cli(argv: Optional[List[str]] = None) -> Optional[int]:
         ts = now.strftime("%Y%m%d-%H%M%S")
         basename = ns.basename or f"nst_export_{machine}_{token}_{ts}"
         out_dir = os.path.abspath(ns.out)
-        poll = float(config.get("update_rate", 1.0) or 1.0)
+        # NOT `or 1.0`: the SMART sentinel (-1.0) is truthy and samples at 2.0 s, and letting it
+        # through stamped coverage 0.0% on every exported row (2.1.5 item 9).
+        poll = resolve_poll_interval_seconds(config.get("update_rate", 1.0))
 
         paths = stats_exporter.export_window(
             ws, start, now, label, out_dir, basename,

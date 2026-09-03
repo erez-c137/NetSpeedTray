@@ -15,6 +15,7 @@ in the application that needs to create or manage timers. For managing the speed
 timer specifically, use the `SpeedTimerManager` class in `timer_manager.py`.
 """
 
+import math
 from typing import Optional, Callable
 import logging
 from PyQt6.QtCore import QTimer, QObject
@@ -59,6 +60,36 @@ def calculate_timer_interval(update_rate: float) -> int:
     interval = max(constants.timers.MINIMUM_INTERVAL_MS, int(update_rate * 1000))
     logger.debug("Calculated timer interval: %dms from update_rate %.2fs", interval, update_rate)
     return interval
+
+
+def resolve_poll_interval_seconds(update_rate: object) -> float:
+    """
+    Normalize a configured update rate into the EFFECTIVE sampling interval in seconds.
+
+    The config persists the poll rate in seconds, with non-positive values meaning
+    "smart mode" (0 is the historical sentinel, -1.0 is UpdateMode.SMART). Smart mode
+    actually samples every ``SMART_MODE_INTERVAL_MS`` (2.0 s), NOT 1.0 s - so any
+    seconds-per-sample math (coverage %, bytes-from-rates totals, time-above windows)
+    must come through here rather than the ``or 1.0`` idiom, which lets the *truthy*
+    ``-1.0`` sentinel straight through - and normalizing it to 1.0 would still be
+    wrong by 2x (2.1.5 item 9).
+
+    Unparseable or non-finite input is treated like the historical ``0`` sentinel
+    (smart mode) rather than raising: this is called with raw config values.
+
+    Examples:
+        >>> resolve_poll_interval_seconds(1.0)
+        1.0
+        >>> resolve_poll_interval_seconds(-1.0)   # SMART -> SMART_MODE_INTERVAL_MS
+        2.0
+    """
+    try:
+        rate = float(update_rate)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        rate = 0.0
+    if not math.isfinite(rate):
+        rate = 0.0
+    return calculate_timer_interval(rate) / 1000.0
 
 
 def create_timer(parent: QObject, callback: Callable[[], None], interval: int, single_shot: bool = False) -> QTimer:
