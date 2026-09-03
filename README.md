@@ -2,7 +2,7 @@
 
 # NetSpeedTray
 
-![GitHub release](https://img.shields.io/github/v/release/erez-c137/NetSpeedTray?style=flat-square) ![Downloads](https://img.shields.io/github/downloads/erez-c137/NetSpeedTray/total?style=flat-square) ![License](https://img.shields.io/github/license/erez-c137/NetSpeedTray?style=flat-square) ![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6?style=flat-square&logo=windows&logoColor=white) ![Made with Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white) [![winget](https://img.shields.io/badge/winget-install-blue?style=flat-square&logo=windows&logoColor=white)](https://github.com/microsoft/winget-pkgs) ![Stars](https://img.shields.io/github/stars/erez-c137/NetSpeedTray?style=flat-square&color=yellow)
+![GitHub release](https://img.shields.io/github/v/release/erez-c137/NetSpeedTray?style=flat-square) ![Downloads](https://img.shields.io/github/downloads/erez-c137/NetSpeedTray/total?style=flat-square) ![License](https://img.shields.io/github/license/erez-c137/NetSpeedTray?style=flat-square) ![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6?style=flat-square&logo=windows&logoColor=white) ![Made with Python](https://img.shields.io/badge/Python-3.13-3776AB?style=flat-square&logo=python&logoColor=white) [![winget](https://img.shields.io/badge/winget-install-blue?style=flat-square&logo=windows&logoColor=white)](https://github.com/microsoft/winget-pkgs) [![Microsoft Store](https://img.shields.io/badge/Microsoft%20Store-get-0078D6?style=flat-square&logo=windows&logoColor=white)](https://apps.microsoft.com/detail/XP9MHWQZJPLQM8) ![Stars](https://img.shields.io/github/stars/erez-c137/NetSpeedTray?style=flat-square&color=yellow)
 
 ![NetSpeedTray Banner](./screenshots/netspeedtray-hero.jpg)
 
@@ -13,10 +13,11 @@ Open source, signed, no ads, no telemetry. The feature Windows forgot.
 
 </div>
 
-> 🎉 **v2.0 is here - the biggest release yet.** The widget now **docks to the taskbar itself**, so it
-> no longer vanishes behind the Start menu or system flyouts. And everything beyond the readout moved into
-> one calm window - the new **Monitor** - with history charts, honest per-app and per-process detail,
-> exportable statistics, network latency, and data-usage tracking. [Read the release notes →](https://github.com/erez-c137/NetSpeedTray/releases/latest)
+> 🎉 **The 2.x era.** The widget **docks to the taskbar itself**, so it no longer vanishes behind the
+> Start menu or system flyouts. Everything beyond the readout lives in one calm window - the **Monitor** -
+> with history charts, honest per-app and per-process detail, exportable statistics, network latency, and
+> data-usage tracking. And since 2.1.4, the **portable build updates itself** - verified, swapped, and
+> relaunched without you touching a file. [Read the release notes →](https://github.com/erez-c137/NetSpeedTray/releases/latest)
 
 ---
 
@@ -27,6 +28,8 @@ winget install --id erez-c137.NetSpeedTray
 ```
 
 Or grab the latest [**Setup.exe** or **Portable.zip**](https://github.com/erez-c137/NetSpeedTray/releases/latest) directly. Both are digitally signed - no SmartScreen warnings.
+
+Also on the [**Microsoft Store**](https://apps.microsoft.com/detail/XP9MHWQZJPLQM8) - the same signed installer and the same free, open-source app, one click from the Store. It's the *only* NetSpeedTray on the Store; anything with a similar name isn't this project.
 
 **Requirements:** Windows 10 or 11 (64-bit). The widget needs no admin rights. CPU/GPU **temperatures** on some hardware need an optional helper - [see below](#hardware-monitoring---do-i-need-librehardwaremonitor).
 
@@ -124,7 +127,7 @@ So I built NetSpeedTray: live up/down speeds, CPU and GPU utilization, temperatu
 
 🎨 **Make it yours.** Layout modes, fonts, decimals, arrow styles, color thresholds, a mini-graph overlay, light/dark auto-theming, and a live preview in Settings that shows the exact effect before you commit.
 
-🔒 **Trustworthy by design.** Open source under GPLv3. Signed installer, zero ads/tracking/telemetry, logs auto-redacted of paths/IPs/MACs/hostnames, and an in-app updater that *verifies the signature* before running anything. And it stays free: GPLv3 means that even if I lose interest or get hit by a bus, the code can't be bought, closed, or paywalled out from under you - anyone can fork it.
+🔒 **Trustworthy by design.** Open source under GPLv3. Signed installer, zero ads/tracking/telemetry, logs auto-redacted of paths/IPs/MACs/hostnames/adapter names, and an in-app updater that *verifies the signature* before running anything. And it stays free: GPLv3 means that even if I lose interest or get hit by a bus, the code can't be bought, closed, or paywalled out from under you - anyone can fork it.
 
 ---
 
@@ -200,7 +203,7 @@ Only if you ask it to. The default target is your own **gateway**, which never l
 The Wi-Fi **band** (2.4G / 5G) shows on any PC with **no permission**. The **network name (SSID)** is different: since Windows 11, Windows only hands the SSID to apps that have **Location** access - a Windows privacy gate, the same one your browser hits for Wi-Fi features. It is **not** GPS and **not** tracking: NetSpeedTray never uses your position, reads the name **locally** only to show it on the widget, and never stores or transmits it (see the [Privacy Policy](privacy.md)). Prefer not to? Leave "Network name" off and use the band - it needs nothing. The first time the name is blocked, NetSpeedTray shows a one-time explainer with a shortcut straight to the Windows Location setting.
 
 **Where does it store data and settings?**
-`%APPDATA%\NetSpeedTray\` - `config.json` for settings, `speed_history.db` (SQLite) for network/hardware history, and rotated logs. Everything stays local. Settings has an **Export Support Bundle** button that auto-redacts paths, IPs, hostnames, and MACs for clean bug reports.
+`%APPDATA%\NetSpeedTray\` - `NetSpeedTray_Config.json` for settings, `speed_history.db` (SQLite) for network/hardware history, and rotated logs. Everything stays local. Settings has an **Export Support Bundle** button that auto-redacts paths, IPs, hostnames, MACs, and adapter names for clean bug reports. The database's schema, example queries, and how to restore a backup are all documented in [DATABASE.md](DATABASE.md).
 
 **Does it work on Windows 7 or 8?**
 Officially Windows 10 and 11 (64-bit). The taskbar APIs changed enough after Win8 that older versions aren't tested. It might work; it's not supported.
@@ -246,7 +249,7 @@ You probably grabbed an unsigned dev build. The official releases ([Setup.exe / 
 - **Units** - Bits (Mbps), Bytes (MB/s), Binary (MiB/s), or Decimal, with toggleable suffixes
 
 ### Positioning & Integration
-- **Taskbar-docked** - stays above the taskbar through the Start menu, flyovers, and the tray overflow
+- **Taskbar-docked** - stays above the taskbar through the Start menu, flyouts, and the tray overflow
 - **Drag to reposition** - drag the widget to move it along the taskbar; your spot is remembered. **Free Move (No Snapping)** lets you place it anywhere, including off the taskbar
 - **Preferred monitor** - pin to a specific display (auto free-floats on a taskbar-less screen)
 - **Survives** sleep/resume, monitor add/remove/primary-swap, and Explorer restarts
@@ -260,9 +263,9 @@ You probably grabbed an unsigned dev build. The official releases ([Setup.exe / 
 - **Digitally signed** by the [SignPath Foundation](https://signpath.org/) - no SmartScreen warnings
 - **100% open source** (GPLv3) - no ads, no tracking, no telemetry · [Privacy Policy](privacy.md)
 - **Your history is a plain SQLite file you can query yourself** - schema, units and example queries in [DATABASE.md](DATABASE.md)
-- **PII obfuscation** - logs auto-redact paths, IPs (incl. IPv6), MACs, hostnames, and interface GUIDs
+- **PII obfuscation** - logs auto-redact paths, IPs (incl. IPv6), MACs, hostnames, and interface GUIDs - and network-adapter names are replaced with **stable pseudonyms**, so repeated log lines still correlate for debugging without carrying the labels you gave your adapters
 - **Latency boundary** - off by default; gateway-only unless you explicitly opt in to a public host you name
-- **Verified updates** - the in-app updater authenticates the installer (Windows `WinVerifyTrust` + a publisher pin) before running, with a GitHub fallback
+- **Verified updates** - the in-app updater authenticates every download (Windows `WinVerifyTrust` + a publisher pin) before running it, with a GitHub fallback. Since 2.1.4 the **portable build updates itself in place**, and the updater never offers a prerelease - trying a beta is always a deliberate download
 - **Support Bundle** - one-click sanitized zip of logs + config + system info for bug reports
 
 ### Localization
