@@ -17,7 +17,7 @@ VSVersionInfo(
           [
             StringStruct('CompanyName', 'Erez C137'),
             StringStruct('FileDescription', 'NetSpeedTray'),
-            StringStruct('FileVersion', '2.1.4.0'),
+            StringStruct('FileVersion', '2.1.4'),
             StringStruct('InternalName', 'NetSpeedTray'),
             StringStruct('LegalCopyright', 'Copyright (c) Erez C137'),
             StringStruct('OriginalFilename', 'NetSpeedTray.exe'),

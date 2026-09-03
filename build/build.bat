@@ -74,6 +74,15 @@ cd /d "%BUILD_DIR%"
 echo Generating version info for v%VERSION%...
 "%ROOT_DIR%\.venv\Scripts\python.exe" create_version_info.py "%VERSION%" >> "%LOG_FILE%" 2>&1
 if errorlevel 1 (echo ERROR: Failed to generate version info & exit /b 1)
+
+:: Derive the numeric-only quad for ISCC's VersionInfoVersion, which rejects prerelease
+:: suffixes ("2.2.0-beta.1" -> "2.2.0.1"). AppVersion keeps the display string.
+"%ROOT_DIR%\.venv\Scripts\python.exe" create_version_info.py "%VERSION%" --numeric > "%BUILD_DIR%version_numeric.tmp" 2>>"%LOG_FILE%"
+if errorlevel 1 (echo ERROR: Failed to derive numeric version & exit /b 1)
+set /p VERSION_NUMERIC=<"%BUILD_DIR%version_numeric.tmp"
+del "%BUILD_DIR%version_numeric.tmp"
+if "%VERSION_NUMERIC%"=="" (echo ERROR: Could not derive numeric version - empty result. & exit /b 1)
+echo Numeric version for installer metadata: %VERSION_NUMERIC%
 :: --------------------------------------------------
 
 :: --- Ensure UPX is available for compression (auto-download if missing) ---
@@ -91,8 +100,9 @@ echo.
 echo Generating installer...
 echo Generating installer... >> "%LOG_FILE%"
 set "start_time=%TIME%"
-:: UPDATED: Pass the version to Inno Setup using /DAppVersion
-"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DAppVersion="%VERSION%" "%BUILD_DIR%setup.iss" >> "%LOG_FILE%" 2>&1
+:: UPDATED: Pass the display version (/DAppVersion) and the numeric quad ISCC's
+:: VersionInfoVersion requires (/DAppVersionNumeric) to Inno Setup separately.
+"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DAppVersion="%VERSION%" /DAppVersionNumeric="%VERSION_NUMERIC%" "%BUILD_DIR%setup.iss" >> "%LOG_FILE%" 2>&1
 if errorlevel 1 (echo ERROR: Installer creation failed. Check %LOG_FILE% & exit /b 1)
 if not exist "%INSTALLER_DIR%\NetSpeedTray-%VERSION%-x64-Setup.exe" (echo ERROR: Setup file not found after compilation & exit /b 1)
 set "end_time=%TIME%"

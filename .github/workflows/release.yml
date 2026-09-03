@@ -106,11 +106,19 @@ jobs:
             signed-installer/**/*
             signed-portable/**/*
             checksums.txt
+          # A tag with a '-' is a prerelease (v2.2.0-beta.1). Without these two flags the
+          # action defaults prerelease to false and the API defaults make_latest to true,
+          # so a beta would become /releases/latest - the endpoint the in-app updater polls.
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          make_latest: ${{ !contains(github.ref_name, '-') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   submit-to-winget:
     needs: build-and-sign
+    # Never submit a prerelease to WinGet - this guard is independent of the
+    # prerelease flag above; without it every tag lands in microsoft/winget-pkgs.
+    if: "!contains(github.ref_name, '-')"
     runs-on: ubuntu-latest
     steps:
       - name: Sync WinGet Fork
@@ -129,3 +137,64 @@ jobs:
           
           # The token you just created
           token: ${{ secrets.WINGET_TOKEN }}
+
+  submit-to-msstore:
+    needs: build-and-sign
+    # Same guard as WinGet: a prerelease must never reach the Store listing. The listing is a
+    # Win32 EXE submission (Store ID XP9MHWQZJPLQM8), so the Store downloads and caches the
+    # Setup.exe from the GitHub release asset URL below, then runs its own certification pass.
+    # Nothing here is MSIX - the taskbar dock and the in-app updater behave exactly as on GitHub.
+    if: "!contains(github.ref_name, '-')"
+    runs-on: ubuntu-latest
+    # Partner Center is a best-effort channel: a Store hiccup must not fail the release.
+    continue-on-error: true
+    steps:
+      - name: Check Store credentials
+        id: creds
+        env:
+          CLIENT_ID: ${{ secrets.MSSTORE_CLIENT_ID }}
+        run: |
+          if [ -z "$CLIENT_ID" ]; then
+            echo "::warning::MSSTORE_* secrets are not set - Store submission skipped. Submit ${GITHUB_REF_NAME} by hand in Partner Center."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure Store credentials
+        if: steps.creds.outputs.ok == 'true'
+        uses: microsoft/store-submission@v1
+        with:
+          command: configure
+          type: win32
+          seller-id: ${{ secrets.MSSTORE_SELLER_ID }}
+          product-id: ${{ secrets.MSSTORE_PRODUCT_ID }}
+          tenant-id: ${{ secrets.MSSTORE_TENANT_ID }}
+          client-id: ${{ secrets.MSSTORE_CLIENT_ID }}
+          client-secret: ${{ secrets.MSSTORE_CLIENT_SECRET }}
+
+      - name: Point the listing at this release's installer
+        if: steps.creds.outputs.ok == 'true'
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          V="${VERSION#v}"
+          URL="https://github.com/erez-c137/NetSpeedTray/releases/download/${VERSION}/NetSpeedTray-${V}-x64-Setup.exe"
+          # Must match the package module Partner Center already holds (installer switches and
+          # the error-code doc URL are what the by-hand submission used). This PUT replaces it.
+          printf '{"packages":[{"packageUrl":"%s","languages":["en"],"architectures":["X64"],"isSilentInstall":false,"installerParameters":"/VERYSILENT /NORESTART /SUPPRESSMSGBOXES","genericDocUrl":"https://github.com/erez-c137/NetSpeedTray/blob/main/README.md","packageType":"exe"}]}' "$URL" > product-update.json
+          echo "PRODUCT_UPDATE=$(cat product-update.json)" >> "$GITHUB_ENV"
+          echo "Store package URL: $URL"
+
+      - name: Update draft submission
+        if: steps.creds.outputs.ok == 'true'
+        uses: microsoft/store-submission@v1
+        with:
+          command: update
+          product-update: ${{ env.PRODUCT_UPDATE }}
+
+      - name: Publish submission
+        if: steps.creds.outputs.ok == 'true'
+        uses: microsoft/store-submission@v1
+        with:
+          command: publish
