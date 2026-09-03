@@ -142,3 +142,87 @@ class TestLegitimateCpuSensorsStillResolve:
         ])
         with patch.object(thread, "_init_ohm_wmi"):
             assert thread._poll_cpu_temperature() == 57.0
+
+# ---------------------------------------------------------------------------------------------
+# ACPI thermal zones that are placeholders, not sensors (#237, #275)
+# ---------------------------------------------------------------------------------------------
+
+def _pdh_returning(raw_by_poll):
+    """A win32pdh stub exposing ONE thermal zone whose High Precision Temperature counter returns
+    the next value in `raw_by_poll` (tenths of a kelvin) on each poll. The standard Temperature
+    counter is left unreadable so the high-precision path is the only source."""
+    import itertools
+    pdh = MagicMock()
+    pdh.OpenQuery.return_value = 7
+    pdh.EnumObjectItems.return_value = (None, ["\_TZ.TZ00"])
+    handles = itertools.count(100)
+    pdh.AddCounter.side_effect = lambda q, path: next(handles)   # 100 = HP, 101 = standard
+    values = iter(raw_by_poll)
+
+    def formatted(handle, fmt):
+        if handle == 100:
+            return (0, float(next(values)))
+        raise OSError("counter unavailable")
+    pdh.GetFormattedCounterValue.side_effect = formatted
+    return pdh
+
+
+class TestAcpiPlaceholderZonesAreNotSensors:
+    """#275's board reports exactly 290.0 K on every poll and shows as 17 °C; #237's reports 300.0 K
+    and shows as 27 °C. Real zones report tenths of a kelvin and drift. A zone that only ever
+    returns one round-kelvin value is firmware filling in a field, and the honest readout is none."""
+
+    def _only_pdh(self, thread, pdh):
+        thread._init_ohm_wmi = lambda: None            # no LHM/OHM
+        thread._wmi_ohm = None
+        return (
+            patch("netspeedtray.core.monitor_thread.win32pdh", pdh),
+            patch("netspeedtray.core.monitor_thread.win32com.client", None),
+        )
+
+    def test_a_fixed_round_kelvin_zone_is_ignored(self, thread):
+        p1, p2 = self._only_pdh(thread, _pdh_returning([2900.0] * 5))     # 290.0 K forever (#275)
+        with p1, p2:
+            assert [thread._poll_cpu_temperature() for _ in range(5)] == [None] * 5
+
+    def test_three_hundred_kelvin_forever_is_the_237_case(self, thread):
+        p1, p2 = self._only_pdh(thread, _pdh_returning([3000.0] * 3))
+        with p1, p2:
+            assert [thread._poll_cpu_temperature() for _ in range(3)] == [None] * 3
+
+    def test_a_real_zone_is_read_normally(self, thread):
+        p1, p2 = self._only_pdh(thread, _pdh_returning([3284.0, 3291.0]))  # 55.25, 55.95 °C
+        with p1, p2:
+            assert thread._poll_cpu_temperature() == pytest.approx(55.25)
+            assert thread._poll_cpu_temperature() == pytest.approx(55.95)
+
+    def test_a_zone_that_moves_is_trusted_even_on_a_round_value(self, thread):
+        # Starts on 300.0 K (looks like #237), then moves - a real, coarse sensor. From then on it
+        # is trusted, including when it lands back on the round value.
+        p1, p2 = self._only_pdh(thread, _pdh_returning([3000.0, 3010.0, 3000.0]))
+        with p1, p2:
+            assert thread._poll_cpu_temperature() is None
+            assert thread._poll_cpu_temperature() == pytest.approx(27.85)
+            assert thread._poll_cpu_temperature() == pytest.approx(26.85)
+
+    def test_the_placeholder_is_logged_once_not_per_poll(self, thread):
+        p1, p2 = self._only_pdh(thread, _pdh_returning([2900.0] * 4))
+        with p1, p2:
+            for _ in range(4):
+                thread._poll_cpu_temperature()
+        placeholder_logs = [c for c in thread.logger.info.call_args_list
+                            if "placeholder" in str(c.args[0]).lower()]
+        assert len(placeholder_logs) == 1
+
+    def test_the_wmi_fallback_applies_the_same_rule(self, thread):
+        """Source 3 (MSAcpi_ThermalZoneTemperature) is the same zone through a different door."""
+        zone = MagicMock(); zone.CurrentTemperature = 2900
+        wmi = MagicMock(); wmi.ExecQuery.return_value = [zone]
+        thread._init_ohm_wmi = lambda: None
+        thread._wmi_ohm = None
+        thread._wmi = wmi
+        with patch("netspeedtray.core.monitor_thread.win32pdh", None):
+            assert thread._poll_cpu_temperature() is None
+            zone.CurrentTemperature = 3284
+            assert thread._poll_cpu_temperature() == pytest.approx(55.25)
+

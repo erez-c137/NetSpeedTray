@@ -123,6 +123,11 @@ class StatsMonitorThread(QThread):
         self._wmi_ohm: Any = None
         self._ohm_guidance_logged: bool = False  # One-time "no sensor source" guidance, logged only when NO namespace connects
         self._last_temp_source_sig: Optional[Tuple[str, str]] = None  # (source, sensor) of the last-logged CPU-temp read; re-logged only on change (#216)
+        # ACPI thermal-zone placeholder detection (#237, #275): first raw value seen per zone, the
+        # zones that have moved since (trusted for good), and the ones already logged as placeholders.
+        self._thermal_first_raw: Dict[Any, float] = {}
+        self._thermal_moved: set = set()
+        self._thermal_placeholder_logged: set = set()
         self._lhm_notice_emitted: bool = False  # One-time notification flag
         self._lhm_check_polls: int = 0  # Count polls before emitting notice
         self._last_identity_poll: float = 0.0  # monotonic ts of the last network-identity sub-poll (0 = poll immediately)
@@ -535,6 +540,10 @@ class StatsMonitorThread(QThread):
             self._thermal_query = None
             self._thermal_counters = []
             self._thermal_hp_counters = []
+            for key in [k for k in self._thermal_first_raw if k[0] == "pdh"]:
+                self._thermal_first_raw.pop(key, None)
+                self._thermal_moved.discard(key)
+                self._thermal_placeholder_logged.discard(key)
 
     def _init_power_query(self) -> bool:
         """Initializes Windows PDH query for Intel RAPL power counters (Energy Meter).
@@ -821,6 +830,8 @@ class StatsMonitorThread(QThread):
                                 # Standard: tenths of Kelvin → Celsius
                                 celsius = (val / 10.0) - 273.15
                                 if 0.0 < celsius < 150.0:
+                                    if self._is_placeholder_zone(("pdh", handle), val):
+                                        continue
                                     readings.append(celsius)
                                 # Some OEMs (HP, Dell) report direct Celsius
                                 elif 15.0 < val < 110.0:
@@ -835,6 +846,8 @@ class StatsMonitorThread(QThread):
                                 if val is not None:
                                     celsius = (val / 10.0) - 273.15
                                     if 0.0 < celsius < 150.0:
+                                        if self._is_placeholder_zone(("pdh", handle), val):
+                                            continue
                                         readings.append(celsius)
                             except: continue
 
@@ -853,11 +866,13 @@ class StatsMonitorThread(QThread):
                 except Exception:
                     self._wmi = win32com.client.GetObject("winmgmts:root\\wmi")
             temps = self._wmi.ExecQuery("SELECT CurrentTemperature FROM MSAcpi_ThermalZoneTemperature")
-            for t in temps:
+            for idx, t in enumerate(temps):
                 raw = t.CurrentTemperature
                 # Standard ACPI: tenths of Kelvin (valid range ~2932-3932 for 20-120°C)
                 celsius = (raw / 10.0) - 273.15
                 if 0.0 < celsius < 150.0:
+                    if self._is_placeholder_zone(("msacpi", idx), float(raw)):
+                        continue
                     return self._log_temp(celsius, "MSAcpi", "Thermal Zone")
                 # Some OEMs (HP, Dell, Lenovo) return direct Celsius instead
                 if 15.0 < raw < 110.0:
@@ -868,6 +883,31 @@ class StatsMonitorThread(QThread):
             if "RPC server is unavailable" in str(e) or "0x800706ba" in str(e):
                 self._wmi = None
         return None
+
+    def _is_placeholder_zone(self, key: Any, raw: float) -> bool:
+        """True when an ACPI thermal zone is firmware filling in a field rather than a sensor.
+
+        #275's board answers exactly 290.0 K on every poll (shown as 17 °C); #237's answers 300.0 K
+        (27 °C). Real zones report tenths of a kelvin - a Celsius-derived value lands on x.x5 - and
+        they drift. So a zone is a placeholder while its reading is a whole ten-kelvin multiple
+        (raw % 100 == 0 in tenths) AND it has never reported anything else. The first time a zone's
+        value changes it is trusted for good, so a genuine coarse sensor that starts on a round
+        value loses at most its first poll, and one that passes through a round value later loses
+        nothing.
+        """
+        first = self._thermal_first_raw.setdefault(key, raw)
+        if raw != first:
+            self._thermal_moved.add(key)
+        if key in self._thermal_moved or raw % 100 != 0:
+            return False
+        if key not in self._thermal_placeholder_logged:
+            self._thermal_placeholder_logged.add(key)
+            self.logger.info(
+                "Ignoring ACPI thermal zone %s: it reports a fixed %.1f K (%.1f°C) on every poll - "
+                "a firmware placeholder, not a sensor (#275). No CPU temperature will be shown "
+                "unless a real source (e.g. LibreHardwareMonitor) is available.",
+                key, raw / 10.0, raw / 10.0 - 273.15)
+        return True
 
     def _log_temp(self, celsius: float, source: str, sensor: str) -> float:
         """Logs the selected CPU-temperature source once, and again only when it
