@@ -11,7 +11,21 @@
 ; If AppVersion is NOT defined (e.g., manual compile without build.bat), use a default.
 ; When running via build.bat, the /DAppVersion="x.x.x" flag overrides this.
 #ifndef AppVersion
-  #define AppVersion "0.0.0" 
+  #define AppVersion "0.0.0"
+#endif
+
+; VersionInfoVersion only accepts dot-separated integers, so a prerelease AppVersion like
+; "2.2.0-beta.1" aborts the compile ("Value of [Setup] section directive VersionInfoVersion is
+; invalid"). build.bat passes /DAppVersionNumeric with the numeric quad derived by
+; create_version_info.py --numeric ("2.2.0-beta.1" -> "2.2.0.1"); AppVersion keeps the display
+; string for filenames and the free-text version fields. On a manual compile without the define,
+; fall back to AppVersion itself when it is numeric-only, else to a recognisable placeholder.
+#ifndef AppVersionNumeric
+  #if Pos("-", AppVersion) == 0
+    #define AppVersionNumeric AppVersion
+  #else
+    #define AppVersionNumeric "0.0.0.0"
+  #endif
 #endif
 
 [Setup]
@@ -36,7 +50,11 @@ SolidCompression=yes
 OutputDir=installer
 
 OutputBaseFilename=NetSpeedTray-{#AppVersion}-x64-Setup
-VersionInfoVersion={#AppVersion}
+VersionInfoVersion={#AppVersionNumeric}
+; Free-text version fields carry the full display string, so a beta installer is identifiable
+; as a beta in Properties > Details even though the numeric quad above cannot say so.
+VersionInfoTextVersion={#AppVersion}
+VersionInfoProductTextVersion={#AppVersion}
 
 DisableDirPage=auto
 UsePreviousAppDir=no
