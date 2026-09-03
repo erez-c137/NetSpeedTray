@@ -249,3 +249,75 @@ def test_info_box_never_raises(q_app, monkeypatch):
     monkeypatch.setattr(QMessageBox, "show", boom)
     monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda *a, **k: None))
     ui._info_box(None, "t", "m")   # must not propagate
+
+
+# --- v2.1.5 item 3: the hands-off handoff records exactly what it staged ----------
+# The startup sweep removes ONLY recorded paths, so if the handoff does not record
+# the staged folder it can never be cleaned - and if it recorded it at the wrong
+# moment, the guided-copy folder the user is told to use would be deleted.
+
+import json
+import os
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
+from netspeedtray.core import update_applier as _ua
+
+
+def _make_app_dir(root, name):
+    d = root / name
+    (d / "_internal").mkdir(parents=True)
+    (d / "NetSpeedTray.exe").write_text("x", encoding="utf-8")
+    return d
+
+
+def _updater(q_app):
+    return ui.SecureUpdater(None, "", "https://example/release", SimpleNamespace(),
+                            portable=True, portable_url="https://example/portable.zip",
+                            latest_version="9.9.9")
+
+
+def test_try_hands_off_records_the_staged_path(q_app, tmp_path, monkeypatch):
+    marker = tmp_path / "appdata" / _ua._STAGED_MARKER_NAME
+    monkeypatch.setattr(_ua, "_marker_path", lambda: str(marker))
+    install = _make_app_dir(tmp_path, "NetSpeedTray")
+    ready = _make_app_dir(tmp_path, "NetSpeedTray-9.9.9")
+    monkeypatch.setattr(ui.subprocess, "Popen", MagicMock())
+
+    handed_off = _updater(q_app)._try_hands_off(str(ready), str(install))
+
+    assert handed_off is True
+    assert json.loads(marker.read_text(encoding="utf-8")) == [
+        {"path": os.path.abspath(str(ready)), "validated": False}], (
+        "the committed handoff must record the exact staged path for the post-update sweep")
+
+
+def test_try_hands_off_launch_failure_records_nothing(q_app, tmp_path, monkeypatch):
+    """A failed handoff falls back to the guided copy, which points the user at the staged
+    folder - so it must NOT be marked for sweeping."""
+    marker = tmp_path / "appdata" / _ua._STAGED_MARKER_NAME
+    monkeypatch.setattr(_ua, "_marker_path", lambda: str(marker))
+    install = _make_app_dir(tmp_path, "NetSpeedTray")
+    ready = _make_app_dir(tmp_path, "NetSpeedTray-9.9.9")
+    monkeypatch.setattr(ui.subprocess, "Popen",
+                        MagicMock(side_effect=OSError("simulated: AV blocked the launch")))
+
+    handed_off = _updater(q_app)._try_hands_off(str(ready), str(install))
+
+    assert handed_off is False
+    assert not marker.exists(), "an uncommitted handoff must record nothing"
+
+
+def test_try_hands_off_validation_refusal_records_nothing(q_app, tmp_path, monkeypatch):
+    marker = tmp_path / "appdata" / _ua._STAGED_MARKER_NAME
+    monkeypatch.setattr(_ua, "_marker_path", lambda: str(marker))
+    ready = _make_app_dir(tmp_path, "NetSpeedTray-9.9.9")
+    popen = MagicMock()
+    monkeypatch.setattr(ui.subprocess, "Popen", popen)
+
+    # No install dir at all -> validate() refuses -> guided copy path.
+    handed_off = _updater(q_app)._try_hands_off(str(ready), str(tmp_path / "missing"))
+
+    assert handed_off is False
+    popen.assert_not_called()
+    assert not marker.exists()

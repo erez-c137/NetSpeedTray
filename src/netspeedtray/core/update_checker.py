@@ -190,9 +190,23 @@ class UpdateChecker(QObject):
         current = constants.app.VERSION
         skipped = self.config.get("skipped_version")
 
+        parsed = _parse_version(latest_version)
+        # is_final sits at a fixed offset from the END of the tuple: _parse_version pads the
+        # release core to AT LEAST 3 parts without capping it, so for a 4-part tag (v2.2.1.0)
+        # index 3 is the fourth core number, not the flag (review L3).
+        is_final_release = len(parsed) >= 4 and parsed[-3] == 1
+
         if is_newer(latest_version, current):
+            if not is_final_release:
+                # Never auto-offer a prerelease. `/releases/latest` should not return one, but
+                # the workflow flag guaranteeing that lives in the repo, not in this binary -
+                # and by the time a beta lands at that endpoint, the whole polling population
+                # would be offered a destructive migration. Treated as "up to date".
+                logger.info("Latest release %s is a prerelease; not offering it (current: %s).",
+                            latest_version, current)
+                self.up_to_date.emit()
             # Don't notify if the user chose to skip this version
-            if skipped and latest_version.lstrip("vV") == skipped.lstrip("vV"):
+            elif skipped and latest_version.lstrip("vV") == skipped.lstrip("vV"):
                 logger.info("Update %s available but skipped by user.", latest_version)
                 self.up_to_date.emit()
             else:

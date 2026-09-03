@@ -306,6 +306,8 @@
     "UNFOLD_FLYOUT_BODY": "Faites un clic droit sur l'affichage des vitesses pour accéder aux graphiques, à l'activité par application et aux CPU/GPU/températures. Double-cliquez dessus pour ouvrir le tableau de bord.",
     "MONITOR_ERROR_FLYOUT_TITLE": "Surveillance suspendue brièvement",
     "MONITOR_ERROR_FLYOUT_BODY": "NetSpeedTray a rencontré un problème lors de la lecture des statistiques et réessaie automatiquement. Si cela persiste, un redémarrage résout généralement le souci.",
+    "DB_READONLY_FLYOUT_TITLE": "Enregistrement de l'historique en pause",
+    "DB_READONLY_FLYOUT_BODY": "Votre historique de vitesse a été créé par une version plus récente de NetSpeedTray, donc cette version l'affiche sans rien enregistrer de nouveau. Votre historique existant est conservé. Mettez à jour NetSpeedTray pour reprendre l'enregistrement.",
     "WIDGET_HOVER_TOOLTIP": "Clic droit pour les graphiques, l'activité des applications et les statistiques CPU/GPU\nDouble-clic pour ouvrir le tableau de bord de l'historique",
     "APP_ACTIVITY_TALKING_TO_SECTION": "Communique avec :",
     "APP_ACTIVITY_CONNECTIONS_SECTION": "Connexions :",

@@ -306,6 +306,8 @@
     "UNFOLD_FLYOUT_BODY": "Haz clic derecho en la lectura de velocidad para ver gráficos, actividad por aplicación y CPU/GPU/temperaturas. Haz doble clic para abrir el panel.",
     "MONITOR_ERROR_FLYOUT_TITLE": "Supervisión pausada brevemente",
     "MONITOR_ERROR_FLYOUT_BODY": "NetSpeedTray tuvo un problema al leer las estadísticas y lo está reintentando automáticamente. Si persiste, suele bastar con reiniciar.",
+    "DB_READONLY_FLYOUT_TITLE": "Registro del historial en pausa",
+    "DB_READONLY_FLYOUT_BODY": "Tu historial de velocidad fue creado por una versión más reciente de NetSpeedTray, así que esta versión lo muestra sin registrar nada nuevo. Tu historial existente está a salvo. Actualiza NetSpeedTray para reanudar el registro.",
     "WIDGET_HOVER_TOOLTIP": "Clic derecho para gráficos, actividad de aplicaciones y estadísticas de CPU/GPU\nDoble clic para abrir el panel de historial",
     "APP_ACTIVITY_TALKING_TO_SECTION": "Comunicándose con:",
     "APP_ACTIVITY_CONNECTIONS_SECTION": "Conexiones:",

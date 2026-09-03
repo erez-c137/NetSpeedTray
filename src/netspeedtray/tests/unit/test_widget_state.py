@@ -778,3 +778,145 @@ def test_summarize_network_download(managed_widget_state):
     conn.commit(); conn.close()
     s = state.summarize_network('download', now - timedelta(hours=1), now + timedelta(minutes=1))
     assert s.exact and s.count == 3 and s.avg == 20e6 and s.max == 30e6
+
+
+# --- The VACUUM gate (v2.1.5, action-plan item 10) ---------------------------------------
+#
+# The old gate was `if pruned:` - the rowcount of the retention DELETE - which matches
+# nothing until the install outlives its retention setting (a year at the default, never
+# on "keep everything"). Meanwhile the hourly aggregation DELETEs fragment the file from
+# day one. The gate is now the freelist itself; the once-a-day interval and the free-page
+# floor stay. NOTE: test_pruning_with_grace_period above does enter `if pruned:` but its
+# DB has too few free pages to reach the VACUUM - it does NOT cover this.
+
+
+def _fragment_db(db_path: Path, rows: int = 1500) -> int:
+    """
+    Litter the file with free pages: insert page-sized junk rows, then delete them all.
+    DELETE hands pages to the freelist but never shrinks the file - exactly the state
+    hourly aggregation leaves behind on a real install. Returns the freelist_count.
+    """
+    conn = sqlite3.connect(db_path)
+    junk = "x" * 3500  # ~one 4096-byte page per row
+    conn.executemany(
+        "INSERT INTO speed_history_raw VALUES (?, ?, 0.0, 0.0)",
+        [(i, f"junk-{i}-{junk}") for i in range(rows)],
+    )
+    conn.commit()
+    conn.execute("DELETE FROM speed_history_raw")
+    conn.commit()
+    try:
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+    except sqlite3.Error:
+        pass  # freelist_count reads through the WAL either way
+    free = conn.execute("PRAGMA freelist_count").fetchone()[0]
+    conn.close()
+    return free
+
+
+@pytest.mark.parametrize("keep_data", [365, 36500])
+def test_vacuum_runs_on_fragmented_db_without_prunable_data(managed_widget_state, mock_config, keep_data):
+    """
+    BOTH previously-unreachable shapes: a young install at default retention (prunes
+    nothing for a year) and "keep everything" (prunes nothing, ever). With real freelist
+    slack and no recent last_vacuum_at, maintenance must VACUUM, write last_vacuum_at,
+    and leave the WAL truncated (the checkpoint must run AFTER the VACUUM - VACUUM in
+    WAL mode writes the whole vacuumed DB into -wal).
+    """
+    state, db_path = managed_widget_state
+    free_before = _fragment_db(db_path)
+    assert free_before >= 1000, "fixture must produce enough slack to clear the floor"
+
+    config = mock_config.copy()
+    config["keep_data"] = keep_data
+    state.db_worker._run_maintenance(config)
+
+    wal = Path(str(db_path) + "-wal")
+    if wal.exists():
+        assert wal.stat().st_size == 0, (
+            "WAL left at result size after VACUUM - wal_checkpoint(TRUNCATE) must run after it"
+        )
+
+    conn = sqlite3.connect(db_path)
+    row = conn.execute("SELECT value FROM metadata WHERE key='last_vacuum_at'").fetchone()
+    free_after = conn.execute("PRAGMA freelist_count").fetchone()[0]
+    conn.close()
+    assert row is not None, "VACUUM did not run: last_vacuum_at was never written"
+    assert int(row[0]) > 0
+    assert free_after == 0, "VACUUM ran but the freelist slack was not reclaimed"
+
+
+def test_vacuum_skips_below_free_page_floor(managed_widget_state, mock_config):
+    """The other direction: a healthy file (freelist under the floor) is never rewritten."""
+    state, db_path = managed_widget_state
+
+    state.db_worker._run_maintenance(mock_config)
+
+    conn = sqlite3.connect(db_path)
+    row = conn.execute("SELECT value FROM metadata WHERE key='last_vacuum_at'").fetchone()
+    conn.close()
+    assert row is None, "VACUUM must not run on a file with no freelist slack"
+
+
+def test_vacuum_respects_daily_interval(managed_widget_state, mock_config):
+    """The retained inner gate: at most one VACUUM per day, however fragmented the file."""
+    state, db_path = managed_widget_state
+    free_before = _fragment_db(db_path)
+    assert free_before >= 1000
+
+    recent = str(int(datetime.now().timestamp()) - 60)
+    conn = sqlite3.connect(db_path)
+    conn.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES ('last_vacuum_at', ?)", (recent,))
+    conn.commit()
+    conn.close()
+
+    state.db_worker._run_maintenance(mock_config)
+
+    conn = sqlite3.connect(db_path)
+    val = conn.execute("SELECT value FROM metadata WHERE key='last_vacuum_at'").fetchone()[0]
+    free_after = conn.execute("PRAGMA freelist_count").fetchone()[0]
+    conn.close()
+    assert val == recent, "last_vacuum_at must not be rewritten inside the daily window"
+    assert free_after >= 1000, "no rewrite may happen inside the daily window"
+
+
+def test_vacuum_skipped_during_shutdown(managed_widget_state, mock_config):
+    """
+    stop() drains queued tasks after the flag is set (database.py run loop) and cleanup()
+    waits only 2000 ms for the thread - a full-file rewrite must never start mid-shutdown.
+    """
+    state, db_path = managed_widget_state
+    free_before = _fragment_db(db_path)
+    assert free_before >= 1000
+
+    state.db_worker._stop_event.set()
+    try:
+        state.db_worker._run_maintenance(mock_config)
+    finally:
+        state.db_worker._stop_event.clear()
+
+    conn = sqlite3.connect(db_path)
+    row = conn.execute("SELECT value FROM metadata WHERE key='last_vacuum_at'").fetchone()
+    conn.close()
+    assert row is None, "VACUUM must not start while shutdown is in progress"
+
+
+def test_vacuum_warranted_ratio_and_cap(managed_widget_state):
+    """
+    The freelist floor alone is absolute (1000 pages = ~4 MB) with no reference to file
+    size. The gate needs a ratio conjunct - a rewrite must be worth the whole-file cost -
+    plus an absolute cap so a huge file with huge slack still vacuums at any ratio.
+    Shapes below are the action plan's measured numbers.
+    """
+    state, _ = managed_widget_state
+    warranted = state.db_worker._vacuum_warranted
+
+    # Floor: under 1000 free pages is never worth a full-file rewrite.
+    assert not warranted(999, 1000)
+    # Ratio: the measured live-DB shape (53 MB, 84% free) - clearly warranted.
+    assert warranted(10881, 12948)
+    # Mostly-live data, proportionally little slack (the measured ~90 MB / 5.1% case:
+    # a 1.66 s rewrite peaking at 176 MB to reclaim 4.7 MB) - not warranted.
+    assert not warranted(1170, 23040)
+    # Absolute cap: past it, the slack is reclaimed regardless of ratio.
+    assert warranted(state.db_worker._VACUUM_FREE_PAGES_CAP, 1_000_000)

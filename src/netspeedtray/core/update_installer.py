@@ -517,7 +517,7 @@ class SecureUpdater(QObject):
         the fallback rather than the user being left with nothing.
         """
         try:
-            from netspeedtray.core.update_applier import APP_EXE, validate
+            from netspeedtray.core.update_applier import APP_EXE, record_staged_path, validate
             reason = validate(app_dir, ready)
             if reason:
                 logger.info("Hands-off update not available (%s); using the guided copy.", reason)
@@ -534,7 +534,11 @@ class SecureUpdater(QObject):
             logger.error("Could not hand off to the staged copy; using the guided copy.", exc_info=True)
             return False
 
-        # Only now commit: quitting is what lets the swap proceed.
+        # Only now commit: quitting is what lets the swap proceed. Record the staged folder for
+        # the startup sweep, which removes ONLY recorded paths - the applier cannot delete the
+        # folder it runs from, and without the record it would linger in Downloads forever, while
+        # recording any earlier would mark the very folder the guided fallback hands the user.
+        record_staged_path(ready)
         self._finish()
         self.launching.emit()
         return True

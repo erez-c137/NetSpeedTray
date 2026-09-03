@@ -44,6 +44,7 @@ The staged copy is still on disk, so the guided "copy it yourself" path remains 
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import shutil
@@ -306,34 +307,156 @@ def apply_update(install_dir: str, wait_pid: Optional[int], staged_dir: Optional
     return 0
 
 
-def sweep_staged_leftovers(*roots: str) -> int:
-    """Remove a staged update folder that the applier could not delete from inside itself.
+# --- the staged-update marker ------------------------------------------------------------------
+# The hands-off flow records the EXACT folder it staged, and the sweep on the next launch removes
+# only what was recorded. Anything that merely looks like a staged copy - a tester's own
+# "NetSpeedTray-2.1.5-backup" rollback folder beside the install, say - is never touched: keeping
+# a copy of the previous version next to the install is the only sane rollback plan for a portable
+# user, and an earlier sweep was deleting exactly that. No marker, no sweep. The marker lives in
+# the app data dir because the install folder itself is renamed aside and replaced during the
+# swap - a sentinel inside it would ride away with the `.old-` backup and be lost.
+_STAGED_MARKER_NAME = "staged_update.json"
 
-    Called on normal startup with the places staging happens (Downloads, and beside the install).
-    Only removes a directory that looks like ours *and* is not the one we are running from.
+# A recorded folder younger than this is deferred, never deleted: the marker is written the
+# moment the handoff COMMITS, and the applier then runs FROM that folder for up to ~30 s of
+# pid-wait plus the whole folder swap. A duplicate launch in that window (the user restarting
+# the app they just watched vanish) must not gut it (review C1). Generous on purpose - a
+# deferred folder is only untidy for one more launch; a gutted one becomes a broken install
+# with its backup deleted.
+_STAGED_SWEEP_GRACE_SEC = 600.0
+
+
+def _marker_path() -> str:
+    """Where the staged-update marker lives. Mirrors helpers.get_app_data_path() without importing
+    it - this module stays stdlib-only so the applier can run headless from the staged copy."""
+    base = os.environ.get("APPDATA") or os.path.expanduser("~")
+    return os.path.join(base, "NetSpeedTray", _STAGED_MARKER_NAME)
+
+
+def _read_staged_paths() -> List[dict]:
+    """The recorded staged entries as ``{"path": str, "validated": bool}``, or []. Bare-string
+    entries from older markers are accepted as unvalidated. A missing or unreadable marker reads
+    as empty - the sweep then removes nothing (fail-safe) and cleans the file up.
+
+    ``validated`` means a prior sweep already passed this folder through the looks-like-ours
+    guard and partially deleted it (a transient lock kept the folder alive). Such an entry must
+    be retried even though our own sweep removed its exe - otherwise the remnant leaks in
+    Downloads forever (review C3)."""
+    entries: List[dict] = []
+    try:
+        with open(_marker_path(), "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        if isinstance(data, list):
+            for item in data:
+                if isinstance(item, str) and item:
+                    entries.append({"path": item, "validated": False})
+                elif (isinstance(item, dict) and isinstance(item.get("path"), str)
+                        and item["path"]):
+                    entries.append({"path": item["path"],
+                                    "validated": bool(item.get("validated"))})
+    except Exception:
+        pass
+    return entries
+
+
+def record_staged_path(path: str) -> None:
+    """Record a staged-update folder so ``sweep_staged_leftovers`` may remove it on a later launch.
+
+    Called by the hands-off flow at the moment it commits to the handoff - never earlier, because
+    an uncommitted staging falls back to the guided copy, which points the user at that very
+    folder. Best-effort: a failure here means the folder survives the sweep (untidy), never that
+    something is deleted that should not be.
     """
-    removed = 0
+    try:
+        target = os.path.abspath(path)
+        marker = _marker_path()
+        os.makedirs(os.path.dirname(marker), exist_ok=True)
+        entries = _read_staged_paths()
+        if target not in (e["path"] for e in entries):
+            entries.append({"path": target, "validated": False})
+        with open(marker, "w", encoding="utf-8") as fh:
+            json.dump(entries, fh)
+        logger.info("Recorded staged folder for the post-update sweep: %s", target)
+    except Exception:
+        logger.warning("Could not record the staged folder %s; it will survive the sweep.",
+                       path, exc_info=True)
+
+
+def sweep_staged_leftovers() -> int:
+    """Remove staged-update folders a hands-off update recorded but could not delete from inside
+    itself. Returns the number removed.
+
+    Only paths recorded via ``record_staged_path`` are ever candidates - with no marker present
+    the sweep removes NOTHING, so a folder that merely looks like a staged copy (a user's own
+    rollback backup, for instance) is never collateral. Every removal is logged with its full
+    path. Entries whose folder is already gone are dropped; an entry the sweep refuses (the
+    running copy, or a folder that does not look like ours) is dropped without deleting or kept
+    as appropriate; a folder still locked is retried on the next launch.
+    """
+    marker = _marker_path()
+    if not os.path.isfile(marker):
+        return 0
+    recorded = _read_staged_paths()
     try:
         here = os.path.normcase(os.path.dirname(os.path.abspath(sys.executable)))
     except Exception:
         here = ""
-    for root in roots:
-        if not root or not os.path.isdir(root):
-            continue
+    removed = 0
+    remaining: List[dict] = []
+    for entry in recorded:
+        path = entry["path"]
         try:
-            for name in os.listdir(root):
-                path = os.path.join(root, name)
-                if os.path.normcase(os.path.abspath(path)) == here:
-                    continue                       # never delete the running install
-                if not os.path.isdir(path) or not name.startswith("NetSpeedTray-"):
+            if os.path.normcase(os.path.abspath(path)) == here:
+                # Never delete the ground we stand on. Keep the entry rather than drop it: this
+                # is the staged copy itself running (the --apply-update handoff); the relaunched
+                # install is the one that sweeps it, on the next normal startup.
+                logger.info("Recorded staged folder is the running copy; deferring: %s", path)
+                remaining.append(entry)
+                continue
+            if not os.path.isdir(path):
+                continue                        # already gone - drop the stale entry quietly
+            if not os.path.basename(path).startswith("NetSpeedTray-"):
+                # A corrupted marker must never become a way to delete an arbitrary folder.
+                logger.warning("Recorded staged folder does not look like ours; "
+                               "leaving it alone: %s", path)
+                continue                        # refuse AND stop tracking it
+            if not entry["validated"] and not os.path.isfile(os.path.join(path, APP_EXE)):
+                # Same corrupted-marker guard - but a `validated` entry skips it: OUR earlier
+                # sweep already deleted the exe (partial rmtree around a transient lock), and
+                # re-refusing it here would untrack the remnant forever (review C3).
+                logger.warning("Recorded staged folder does not look like ours; "
+                               "leaving it alone: %s", path)
+                continue                        # refuse AND stop tracking it
+            if not entry["validated"]:
+                try:
+                    age = time.time() - os.path.getmtime(path)
+                except OSError:
+                    age = 0.0
+                if age < _STAGED_SWEEP_GRACE_SEC:
+                    # A fresh mtime may mean the handoff is IN FLIGHT and the applier is running
+                    # from this folder - a duplicate launch must not gut it (review C1).
+                    # Deferred, never lost: the next launch re-sweeps it.
+                    logger.info("Recorded staged folder is recent; deferring in case an update "
+                                "is still in flight: %s", path)
+                    remaining.append(entry)
                     continue
-                if not os.path.isfile(os.path.join(path, APP_EXE)):
-                    continue
-                shutil.rmtree(path, ignore_errors=True)
-                if not os.path.isdir(path):
-                    removed += 1
+            shutil.rmtree(path, ignore_errors=True)
+            if os.path.isdir(path):
+                logger.info("Staged folder still in use; will retry next launch: %s", path)
+                remaining.append({"path": path, "validated": True})
+            else:
+                removed += 1
+                logger.info("Removed staged update folder: %s", path)
         except Exception:
-            continue
+            remaining.append(entry)
+    try:
+        if remaining:
+            with open(marker, "w", encoding="utf-8") as fh:
+                json.dump(remaining, fh)
+        else:
+            os.remove(marker)
+    except Exception:
+        pass
     return removed
 
 

@@ -6,8 +6,11 @@ methods directly (no network, no QThread); _on_result's outcome is checked via
 mock slots connected to its signals (direct connections fire synchronously).
 """
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from netspeedtray.core.update_checker import UpdateChecker, _CheckWorker, select_release_assets
 
@@ -70,6 +73,57 @@ def test_on_result_not_newer_is_up_to_date():
     uc._on_result("0.0.1", "http://example/release")  # older than the current version
     avail.assert_not_called()
     uptodate.assert_called_once()
+
+
+# --- v2.1.5 item 2: never auto-offer a prerelease -----------------------------
+# `/releases/latest` should never return one, but the workflow flag that
+# guarantees it lives in the repo. This refusal lives in the shipped binary -
+# the only control that cannot be forgotten at beta-tag time. A prerelease is
+# treated as "up to date": logged at INFO, never surfaced to the user.
+
+def test_on_result_prerelease_is_never_offered(caplog):
+    uc = UpdateChecker({})
+    avail, uptodate = _spies(uc)
+    with caplog.at_level(logging.INFO, logger="NetSpeedTray.UpdateChecker"):
+        uc._on_result("v99.0.0-beta.1", "http://example/release")  # newer, but a prerelease
+    avail.assert_not_called()
+    uptodate.assert_called_once()
+    assert any("prerelease" in rec.getMessage().lower()
+               for rec in caplog.records if rec.levelno == logging.INFO), (
+        "the refusal must be logged at INFO so a beta-gone-Latest incident is diagnosable")
+
+
+@pytest.mark.parametrize("tag", [
+    "v99.0.0-beta.1",     # the exact shape a 2.2.0-beta tag would have
+    "99.0.0-rc.2",        # release candidates are still prereleases
+    "v99.0.0-alpha",
+    "99.0.0-nightly",     # unknown stage: still not a final release
+])
+def test_on_result_every_prerelease_stage_is_refused(tag):
+    uc = UpdateChecker({})
+    avail, uptodate = _spies(uc)
+    uc._on_result(tag, "http://example/release")
+    avail.assert_not_called()
+    uptodate.assert_called_once()
+
+
+def test_on_result_final_release_still_offered():
+    """The inverse guard: the refusal must not overmatch. Every normal release -
+    including 2.1.5's own tag - exercises this branch."""
+    uc = UpdateChecker({})
+    avail, uptodate = _spies(uc)
+    uc._on_result("v99.0.0", "http://example/release")
+    avail.assert_called_once()
+    uptodate.assert_not_called()
+
+
+def test_on_result_final_release_with_build_metadata_still_offered():
+    """Build metadata (`+abc`) is not a prerelease marker, per semver."""
+    uc = UpdateChecker({})
+    avail, uptodate = _spies(uc)
+    uc._on_result("99.0.0+build7", "http://example/release")
+    avail.assert_called_once()
+    uptodate.assert_not_called()
 
 
 # --- _CheckWorker fetch (mocked HTTP) ---------------------------------------
@@ -138,3 +192,13 @@ def test_worker_emits_failed_on_network_error():
         worker.run()
     failed.assert_called_once()
     assert "boom" in failed.call_args[0][0]
+
+
+def test_on_result_four_part_final_tag_still_offered():
+    """Review L3: is_final lives at a fixed offset from the END of the parse tuple. A 4-part
+    final tag (x.y.z.0) shifted index 3 into the release core and was refused as a prerelease."""
+    uc = UpdateChecker({})
+    avail, uptodate = _spies(uc)
+    uc._on_result("v99.0.0.0", "http://example/release")
+    avail.assert_called_once()
+    uptodate.assert_not_called()

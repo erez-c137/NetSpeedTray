@@ -306,6 +306,8 @@
     "UNFOLD_FLYOUT_BODY": "Z desnim klikom na prikaz hitrosti odprete grafe, dejavnost po aplikacijah ter CPU/GPU/temperature. Z dvojnim klikom odprete nadzorno ploščo.",
     "MONITOR_ERROR_FLYOUT_TITLE": "Nadzor je na kratko prekinjen",
     "MONITOR_ERROR_FLYOUT_BODY": "NetSpeedTray je naletel na težavo pri branju statistike in samodejno poskuša znova. Če težava ne izgine, jo ponovni zagon običajno odpravi.",
+    "DB_READONLY_FLYOUT_TITLE": "Beleženje zgodovine je zaustavljeno",
+    "DB_READONLY_FLYOUT_BODY": "Vašo zgodovino hitrosti je ustvarila novejša različica NetSpeedTray, zato jo ta različica prikazuje, ne beleži pa ničesar novega. Obstoječa zgodovina je varna. Posodobite NetSpeedTray, da nadaljujete z beleženjem.",
     "WIDGET_HOVER_TOOLTIP": "Desni klik za grafe, dejavnost aplikacij in statistiko CPU/GPU\nDvojni klik za odprtje nadzorne plošče zgodovine",
     "APP_ACTIVITY_TALKING_TO_SECTION": "Povezano z:",
     "APP_ACTIVITY_CONNECTIONS_SECTION": "Povezave:",

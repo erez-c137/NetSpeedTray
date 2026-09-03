@@ -306,6 +306,8 @@
     "UNFOLD_FLYOUT_BODY": "Rechtsklick auf die Geschwindigkeitsanzeige für Diagramme, App-Aktivität und CPU/GPU/Temperaturen. Doppelklick öffnet das Dashboard.",
     "MONITOR_ERROR_FLYOUT_TITLE": "Überwachung kurz pausiert",
     "MONITOR_ERROR_FLYOUT_BODY": "NetSpeedTray hatte ein Problem beim Auslesen der Statistiken und versucht es automatisch erneut. Falls es weiterhin auftritt, behebt ein Neustart das Problem meist.",
+    "DB_READONLY_FLYOUT_TITLE": "Verlaufsaufzeichnung pausiert",
+    "DB_READONLY_FLYOUT_BODY": "Dein Geschwindigkeitsverlauf wurde von einer neueren Version von NetSpeedTray erstellt. Diese Version zeigt ihn an, zeichnet aber nichts Neues auf. Dein vorhandener Verlauf ist sicher. Aktualisiere NetSpeedTray, um die Aufzeichnung fortzusetzen.",
     "WIDGET_HOVER_TOOLTIP": "Rechtsklick für Diagramme, App-Aktivität und CPU-/GPU-Statistiken\nDoppelklick öffnet das Verlaufs-Dashboard",
     "APP_ACTIVITY_TALKING_TO_SECTION": "Verbunden mit:",
     "APP_ACTIVITY_CONNECTIONS_SECTION": "Verbindungen:",

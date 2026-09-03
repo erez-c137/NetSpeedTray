@@ -306,6 +306,8 @@
     "UNFOLD_FLYOUT_BODY": "Grafikler, uygulama bazında etkinlik ve CPU/GPU sıcaklıkları için hız göstergesine sağ tıklayın. İzleyiciyi açmak için çift tıklayın.",
     "MONITOR_ERROR_FLYOUT_TITLE": "İzleme kısa süreliğine duraklatıldı",
     "MONITOR_ERROR_FLYOUT_BODY": "NetSpeedTray istatistikleri okurken bir sorunla karşılaştı ve otomatik olarak yeniden deniyor. Sorun devam ederse uygulamayı yeniden başlatmak genellikle sorunu çözer.",
+    "DB_READONLY_FLYOUT_TITLE": "Geçmiş kaydı duraklatıldı",
+    "DB_READONLY_FLYOUT_BODY": "Hız geçmişiniz NetSpeedTray'in daha yeni bir sürümü tarafından oluşturulduğu için bu sürüm geçmişi gösteriyor ancak yeni kayıt yapmıyor. Mevcut geçmişiniz güvende. Kayda devam etmek için NetSpeedTray'i güncelleyin.",
     "WIDGET_HOVER_TOOLTIP": "Grafikler, uygulama etkinliği ve CPU/GPU istatistikleri için sağ tıklayın\nİzleyiciyi açmak için çift tıklayın",
     "APP_ACTIVITY_TALKING_TO_SECTION": "İletişim kurduğu:",
     "APP_ACTIVITY_CONNECTIONS_SECTION": "Bağlantılar:",
@@ -455,4 +457,5 @@
     "LOCATION_ONBOARDING_OPEN_BUTTON": "Konum ayarlarını aç",
     "LOCATION_ONBOARDING_BAND_BUTTON": "Yalnızca bandı göster",
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray Widget'lar panelinin üzerine geliyor",
-    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray, görev çubuğundaki Windows Widget'ları/hava durumu panelinin üzerine geliyor. İstediğiniz yere sürükleyebilirsiniz; konumu hatırlanır. (Bu mesaj bir daha gösterilmeyecek.)"}
+    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray, görev çubuğundaki Windows Widget'ları/hava durumu panelinin üzerine geliyor. İstediğiniz yere sürükleyebilirsiniz; konumu hatırlanır. (Bu mesaj bir daha gösterilmeyecek.)"
+}

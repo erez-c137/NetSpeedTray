@@ -34,6 +34,7 @@ from PyQt6.QtCore import QObject, QThread, pyqtSignal, QTimer
 from netspeedtray import constants
 from netspeedtray.constants import network, timeouts
 from netspeedtray.utils.helpers import get_app_data_path
+from netspeedtray.utils.timer_utils import resolve_poll_interval_seconds
 
 logger = logging.getLogger("NetSpeedTray.WidgetState")
 
@@ -67,6 +68,14 @@ from netspeedtray.core.database import DatabaseWorker
 
 class WidgetState(QObject):
     """Manages all system statistics and bandwidth history for the Tray Widget."""
+
+    # Re-emitted from DatabaseWorker.schema_incompatible: (file_version,
+    # supported_version, newest_backup_full_path or ""). The worker detects the
+    # downgrade on its own thread during startup; chaining through this QObject queues
+    # delivery onto the GUI thread's event loop, which only spins after the view has
+    # finished construction and connected (main.py wires the flyout there) - so the
+    # notification cannot be emitted before anyone is listening.
+    db_schema_incompatible = pyqtSignal(int, int, str)
 
     def __init__(self, config: Dict[str, Any], read_only: bool = False) -> None:
         super().__init__()
@@ -106,6 +115,9 @@ class WidgetState(QObject):
         self._db_path = Path(get_app_data_path()) / "speed_history.db"
         self.db_worker = DatabaseWorker(self._db_path)
         self.db_worker.error.connect(lambda msg: self.logger.error("DB Worker Error: %s", msg))
+        # Surface the downgrade guard (v2.1.5, action-plan item 1). Connected BEFORE
+        # start() so the worker can never trip the guard while nothing is wired.
+        self.db_worker.schema_incompatible.connect(self.db_schema_incompatible)
         if not read_only:
             self.db_worker.start()
 
@@ -605,9 +617,9 @@ class WidgetState(QObject):
             # the poll rate is unchanged the two agree (sample_count × poll ≈ bucket duration); the fix
             # only changes the rate-changed case. The raw tier has no stored capture interval, so it uses
             # the current poll interval (it's ≤24h, where the rate rarely changes). Per the db_utils model.
-            poll_interval = float(self.config.get("update_rate", 1.0) or 1.0)
-            if poll_interval <= 0:  # SMART (-1.0) / invalid → ~1s nominal
-                poll_interval = 1.0
+            # SMART (-1.0) / the historical 0 sentinel actually sample every 2.0 s, not 1.0 s -
+            # resolve through the shared helper so raw-tier volume is not under-reported 2x.
+            poll_interval = resolve_poll_interval_seconds(self.config.get("update_rate", 1.0))
 
             tiers = []
             if start_ts <= now_ts:                  # raw: SUM(bytes_sec) × poll_interval
