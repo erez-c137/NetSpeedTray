@@ -797,6 +797,16 @@ class GraphRenderer(QObject):
         from netspeedtray.utils.mpl_fonts import shape_rtl
         return shape_rtl(text, getattr(self.i18n, "language", None))
 
+    def _hw_role_label(self, role: str) -> str:
+        """The name a hardware series carries as its matplotlib label - one place, so the legend and
+        the hover tooltip (which reads `line.get_label()` and skips unlabelled `_childN` lines)
+        agree wherever the line is drawn."""
+        return {
+            "cpu": getattr(self.i18n, "ORDER_TYPE_CPU", "CPU"),
+            "gpu": getattr(self.i18n, "ORDER_TYPE_GPU", "GPU"),
+            "ram": getattr(self.i18n, "MONITOR_TILE_RAM", "RAM"),
+        }.get(role, str(role).upper())
+
     def _format_hardware_axes(self, stat_type: str):
         """Formats the single axis for hardware utilization."""
         label = self.i18n.GRAPH_CPU_UTIL_AXIS_LABEL if stat_type == "cpu" else self.i18n.GRAPH_GPU_UTIL_AXIS_LABEL
@@ -837,9 +847,7 @@ class GraphRenderer(QObject):
         smooth = bool(styles.get("smoothing"))
         fixed = bool(styles.get("fixed_axis", True))
 
-        roles = (("cpu", getattr(self.i18n, "ORDER_TYPE_CPU", "CPU")),
-                 ("gpu", getattr(self.i18n, "ORDER_TYPE_GPU", "GPU")),
-                 ("ram", getattr(self.i18n, "MONITOR_TILE_RAM", "RAM")))
+        roles = tuple((role, self._hw_role_label(role)) for role in ("cpu", "gpu", "ram"))
         all_ts, handles, data_max = [], [], 0.0
         for role, label in roles:
             series = data_dict.get(role) or []
@@ -968,7 +976,7 @@ class GraphRenderer(QObject):
             dts = [datetime.fromtimestamp(t) for t in ts]
             ys = self._smooth_series(arr[:, 1], styles.get("smooth_window", 5)) if smooth else arr[:, 1]
             color, _ls = styles.get(role) or hv.graph_line_style(role)
-            ax.plot(dts, ys, color=color, linewidth=1.5, zorder=10)
+            ax.plot(dts, ys, color=color, linewidth=1.5, zorder=10, label=self._hw_role_label(role))
             self._apply_hw_ylim(ax, fixed, float(arr[:, 1].max()))
             any_data = True
             all_ts.append(ts)
@@ -1002,7 +1010,7 @@ class GraphRenderer(QObject):
         values = raw[:, 1]
         ys = self._smooth_series(values, styles.get("smooth_window", 5)) if smooth else values
         color, _ls = styles.get(stat_type) or hv.graph_line_style(stat_type)   # solid for a lone line
-        ax.plot(dts, ys, color=color, linewidth=1.5, zorder=10)
+        ax.plot(dts, ys, color=color, linewidth=1.5, zorder=10, label=self._hw_role_label(stat_type))
 
         xs, xe = self._hw_xlim(period_key, start_time, end_time, timestamps.min(), timestamps.max())
         ax.set_xlim(xs, xe)
@@ -1178,8 +1186,12 @@ class GraphRenderer(QObject):
                 seg_ts, seg_up, seg_down = self._process_plot_segment(ts, up, down, enable_spline=ENABLE_SPLINE)
                 
                 # Plot
-                self.ax_download.plot(seg_ts, seg_down, color=color_down, linewidth=1.5, zorder=10)
-                self.ax_upload.plot(seg_ts, seg_up, color=color_up, linewidth=1.5, zorder=10)
+                # label= is what the hover tooltip keys on; the dashed gap bridges stay unlabelled
+                # on purpose so the hover never reads a synthesized zero as a measurement.
+                self.ax_download.plot(seg_ts, seg_down, color=color_down, linewidth=1.5, zorder=10,
+                                      label=self.i18n.DOWNLOAD_LABEL)
+                self.ax_upload.plot(seg_ts, seg_up, color=color_up, linewidth=1.5, zorder=10,
+                                    label=self.i18n.UPLOAD_LABEL)
                 
                 # Add Gradient (per segment)
                 self._apply_gradient_fill(self.ax_download, np.array(seg_ts), seg_down, color_down, 'download')
@@ -1217,16 +1229,18 @@ class GraphRenderer(QObject):
                     self.line_upload.set_data(dense_ts, dense_up)
                 except Exception as e:
                     self.logger.debug(f"High-res update failed, rebuilding: {e}")
-                    self.line_download, = self.ax_download.plot(dense_ts, dense_down, color=color_down, linewidth=1.5, zorder=10)
-                    self.line_upload, = self.ax_upload.plot(dense_ts, dense_up, color=color_up, linewidth=1.5, zorder=10)
+                    self.line_download, = self.ax_download.plot(dense_ts, dense_down, color=color_down, linewidth=1.5, zorder=10,
+                                                                label=self.i18n.DOWNLOAD_LABEL)
+                    self.line_upload, = self.ax_upload.plot(dense_ts, dense_up, color=color_up, linewidth=1.5, zorder=10,
+                                                            label=self.i18n.UPLOAD_LABEL)
             else:
                 self.line_download, = self.ax_download.plot(
                     dense_ts, dense_down, 
-                    color=color_down, linewidth=1.5, zorder=10
+                    color=color_down, linewidth=1.5, zorder=10, label=self.i18n.DOWNLOAD_LABEL
                 )
                 self.line_upload, = self.ax_upload.plot(
                     dense_ts, dense_up, 
-                    color=color_up, linewidth=1.5, zorder=10
+                    color=color_up, linewidth=1.5, zorder=10, label=self.i18n.UPLOAD_LABEL
                 )
             
             # Apply premium gradient fills
