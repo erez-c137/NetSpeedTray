@@ -61,7 +61,7 @@ def test_registered_language_resolves_to_itself(code):
 _EXPECTED_DECIMAL_SEPARATOR = {
     "en_US": ".", "ko_KR": ".", "ja_JP": ".", "zh_CN": ".", "zh_TW": ".", "he_IL": ".",
     "de_DE": ",", "es_ES": ",", "fr_FR": ",", "nl_NL": ",", "pl_PL": ",", "ru_RU": ",",
-    "sl_SI": ",", "tr_TR": ",",
+    "sl_SI": ",", "tr_TR": ",", "it_IT": ",",
 }
 
 
