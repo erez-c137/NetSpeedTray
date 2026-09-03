@@ -58,7 +58,8 @@ _CONFIG_KEYS_TO_STRIP: tuple = ()
 # Keys whose VALUES can carry a user's own labels and so MUST NOT ship verbatim:
 #   - selected_interfaces / excluded_interfaces hold Windows NIC *friendly names*, which users freely
 #     rename ("Office VPN", a site/company label, a hostname-bearing virtual adapter). The bundle's
-#     MANIFEST explicitly promises "network interface friendly names" are NOT included.
+#     MANIFEST promises those names never ship verbatim: config values are redacted outright here,
+#     and log lines are pseudonymized by ObfuscatingFormatter's message-shape rules (v2.1.5 item 7).
 #   - latency_public_host is a user-chosen ping target (a public hostname/IP) - reveals network choices.
 # We keep the diagnostic SHAPE (how many interfaces, that a host was set) but never the literal name.
 # IMPORTANT: any NEW config field that can hold a name/path/host/ID must be added here.
@@ -84,6 +85,13 @@ def _sanitize_config(config: Dict[str, Any]) -> Dict[str, Any]:
     for key in _CONFIG_VALUE_KEYS_TO_REDACT:
         if sanitized.get(key):
             sanitized[key] = "<redacted>"
+    # A rollback carries keys written by a NEWER build (preserved by config item 4c); the
+    # allowlists above structurally cannot know them, so their VALUES must not ship (review
+    # C8). The key name stays - THAT a newer-build setting exists is the useful diagnostic.
+    known_keys = set(constants.config.defaults.VALIDATION_SCHEMA)
+    for key in list(sanitized):
+        if key not in known_keys:
+            sanitized[key] = "<redacted-unknown-key>"
     return sanitized
 
 
@@ -230,13 +238,20 @@ def build_support_bundle(
             "\n"
             "Contents:\n"
             "  system_info.txt   - App version, OS, monitor layout (no display names)\n"
-            "  config.json       - Your settings (preferences only, no PII)\n"
+            "  config.json       - Your settings (interface names and ping host redacted)\n"
             "  logs/             - Log files, scrubbed for paths/IPs/MACs/GUIDs/hostnames\n"
             "\n"
             "NOT included:\n"
             "  - App Activity per-process / per-connection data\n"
-            "  - Hostname, MAC addresses, network interface friendly names\n"
+            "  - Hostname, MAC addresses\n"
             "  - Full GPU model strings, raw device IDs\n"
+            "\n"
+            "Replaced with placeholders (best-effort scrubbing):\n"
+            "  - Network interface friendly names: redacted from the bundled config,\n"
+            "    and replaced in logs with a stable placeholder (e.g. NIC-1a2b3c4d).\n"
+            "    The placeholder is a one-way hash, so repeated log lines still\n"
+            "    correlate but never contain the name.\n"
+            "  - Display device names in logs (e.g. DISPLAY-1a2b3c4d).\n"
             "\n"
             "It is safe to attach this file to a GitHub issue.\n"
         )

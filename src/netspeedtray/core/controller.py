@@ -13,6 +13,7 @@ from PyQt6.QtCore import pyqtSignal, QObject
 import psutil
 
 from netspeedtray import constants
+from netspeedtray.utils.config import stable_pseudonym
 from netspeedtray.utils.network_utils import get_primary_interface_name
 
 if TYPE_CHECKING:
@@ -388,8 +389,13 @@ class StatsController(QObject):
         except Exception:
             self.primary_interface = None
         if previous != self.primary_interface:
+            # Log a STABLE pseudonym, never the raw friendly name: users rename
+            # adapters to personal/site labels and this INFO line ships in support
+            # bundles (v2.1.5 item 7). Same hash ObfuscatingFormatter uses to scrub
+            # historical lines, so old and new lines still correlate (#263).
             self.logger.info(
-                "Primary network interface changed: %r -> %r", previous, self.primary_interface
+                "Primary network interface changed: %s -> %s",
+                stable_pseudonym(previous), stable_pseudonym(self.primary_interface),
             )
 
 

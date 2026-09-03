@@ -32,6 +32,9 @@ from PyQt6.QtGui import QScreen
 from PyQt6.QtWidgets import QApplication
 
 from netspeedtray import constants
+# Screen names are logged pseudonymized: the support bundle's MANIFEST promises
+# no display names ship (v2.1.5 item 7).
+from netspeedtray.utils.config import stable_pseudonym
 
 logger = logging.getLogger("NetSpeedTray.TaskbarUtils")
 # Caches to improve performance and prevent log spam for invalid handles
@@ -566,7 +569,8 @@ def get_all_taskbar_info() -> List[TaskbarInfo]:
                     best_match_screen = screen
             
             if best_match_screen:
-                logger.debug(f"Found best screen match for taskbar via intersection: {best_match_screen.name()}")
+                logger.debug("Found best screen match for taskbar via intersection: %s",
+                             stable_pseudonym(best_match_screen.name(), "DISPLAY"))
                 return best_match_screen
         except Exception as e:
             logger.error(f"Error during screen intersection check: {e}. Proceeding to fallbacks.")
@@ -576,7 +580,8 @@ def get_all_taskbar_info() -> List[TaskbarInfo]:
             point = QPoint(tb_rect_phys[0], tb_rect_phys[1])
             screen_at_point = QApplication.screenAt(point)
             if screen_at_point:
-                logger.warning(f"Used point-based fallback to find screen: {screen_at_point.name()}")
+                logger.warning("Used point-based fallback to find screen: %s",
+                               stable_pseudonym(screen_at_point.name(), "DISPLAY"))
                 return screen_at_point
         except Exception as e:
             logger.error(f"Error during point-based screen check: {e}. Proceeding to final fallback.")
@@ -783,7 +788,8 @@ def get_free_float_screen(preferred_screen_name: Optional[str]) -> Optional[QScr
             return None  # it has a taskbar of its own -> dock to it normally
         return screen    # present but taskbar-less -> free-float on it
     except Exception as e:  # noqa: BLE001 - fail-safe: never break placement over float detection
-        logger.error("get_free_float_screen failed for '%s': %s", preferred_screen_name, e, exc_info=True)
+        logger.error("get_free_float_screen failed for '%s': %s",
+                     stable_pseudonym(preferred_screen_name, "DISPLAY"), e, exc_info=True)
         return None
 
 
