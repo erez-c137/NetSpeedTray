@@ -280,3 +280,13 @@ class TestLoggingSetupIntegrity:
         assert src.count("ObfuscatingFormatter") >= 2, (
             "Expected ObfuscatingFormatter on both file and console handlers"
         )
+
+
+def test_found_new_primary_interface_legacy_shape_is_pseudonymized(formatter):
+    """Review C4: v1.1.9-v1.2.6 logged the primary interface with a Gateway suffix at INFO.
+    Long-lived logs still carry those lines; they must scrub like the current shapes, with
+    the name hashed ALONE so it correlates with modern lines for the same adapter."""
+    out = _format(formatter, "Found new primary interface: 'ACME-HQ Office VPN' (Gateway: 192.168.1.1)")
+    assert "ACME-HQ Office VPN" not in out
+    assert "Found new primary interface: NIC-" in out
+    assert "<REDACTED_IP>" in out, "the gateway operand must still hit the generic IP rule"

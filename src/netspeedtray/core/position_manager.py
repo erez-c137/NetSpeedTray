@@ -22,6 +22,9 @@ from PyQt6.QtGui import QFontMetrics, QScreen
 from PyQt6.QtWidgets import QApplication, QWidget
 
 from netspeedtray import constants
+# Screen names are logged pseudonymized: the support bundle's MANIFEST promises
+# no display names ship (v2.1.5 item 7).
+from netspeedtray.utils.config import stable_pseudonym
 # We import taskbar_utils for low-level detection
 from netspeedtray.utils import taskbar_utils
 from netspeedtray.utils.taskbar_utils import TaskbarInfo, get_taskbar_info, is_small_taskbar
@@ -116,12 +119,13 @@ class ScreenUtils:
 
             if valid_x != x or valid_y != y:
                 logger.debug("Position (%s,%s) validated to (%s,%s) using full geometry for screen '%s'",
-                             x, y, valid_x, valid_y, screen.name())
+                             x, y, valid_x, valid_y, stable_pseudonym(screen.name(), "DISPLAY"))
 
             return ScreenPosition(valid_x, valid_y)
 
         except Exception as e:
-            logger.error("Error validating position (%s,%s) on screen '%s': %s", x, y, screen.name(), e, exc_info=True)
+            logger.error("Error validating position (%s,%s) on screen '%s': %s",
+                         x, y, stable_pseudonym(screen.name(), "DISPLAY"), e, exc_info=True)
             return ScreenPosition(x, y)
 
     @staticmethod
@@ -638,12 +642,12 @@ class PositionManager(QObject):
         if (clamped.x, clamped.y) != (saved_x, saved_y):
             logger.info(
                 "Clamped saved free-move position (%s,%s) onto screen '%s' -> (%s,%s).",
-                saved_x, saved_y, screen.name(), clamped.x, clamped.y,
+                saved_x, saved_y, stable_pseudonym(screen.name(), "DISPLAY"), clamped.x, clamped.y,
             )
         else:
             logger.info(
                 "Restored saved free-move position (%s,%s) on screen '%s'.",
-                saved_x, saved_y, screen.name(),
+                saved_x, saved_y, stable_pseudonym(screen.name(), "DISPLAY"),
             )
         self._apply_geometry(clamped.x, clamped.y)
         return True

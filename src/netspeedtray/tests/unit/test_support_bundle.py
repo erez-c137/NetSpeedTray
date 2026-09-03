@@ -8,6 +8,8 @@ Covers:
 - App Activity exclusion (no app-activity data ever included)
 """
 import json
+import logging
+import re
 import zipfile
 from pathlib import Path
 from unittest.mock import patch
@@ -75,6 +77,11 @@ class TestStructure:
         assert "App Activity" in manifest
         assert "Hostname" in manifest
         assert "MAC" in manifest
+        # v2.1.5 item 7 (words half): the promise must match what the code does -
+        # NIC/display names are pseudonymized best-effort, not silently absent.
+        assert "placeholder" in manifest.lower()
+        assert "NIC-" in manifest
+        assert "best-effort" in manifest.lower()
 
 
 class TestConfigSanitization:
@@ -151,6 +158,136 @@ class TestLogScrubbing:
         assert "{12345678-1234-1234-1234-123456789012}" not in log_content
         assert "<REDACTED_GUID>" in log_content
 
+    # --- v2.1.5 item 7: NIC friendly names in logs -------------------------
+    # controller.py's "Primary network interface changed" INFO line shipped the
+    # raw adapter friendly name (94 lines on a real machine's live log). The
+    # scrub must clean those HISTORICAL lines - a source-only fix cannot - by
+    # replacing each name with a STABLE pseudonym so repeated changes still
+    # correlate (#263's edge-triggered logging depends on that).
+
+    def test_primary_interface_change_lines_are_pseudonymized(self, q_app, tmp_path, fake_config, fake_log_dir):
+        from netspeedtray.utils.config import stable_pseudonym
+        # Real message shapes as written by shipped builds (%r operands).
+        (fake_log_dir / "NetSpeedTray_Log.log").write_text(
+            "2026-06-12 10:23:45 - NetSpeedTray.StatsController - INFO - "
+            "controller._update_primary_interface_name:392 - "
+            "Primary network interface changed: None -> 'ACME-HQ Office VPN'\n"
+            "2026-06-12 11:00:01 - NetSpeedTray.StatsController - INFO - "
+            "controller._update_primary_interface_name:392 - "
+            "Primary network interface changed: 'ACME-HQ Office VPN' -> 'Wi-Fi 3'\n"
+            "2026-06-12 12:34:56 - NetSpeedTray.StatsController - INFO - "
+            "controller._update_primary_interface_name:392 - "
+            "Primary network interface changed: 'Wi-Fi 3' -> 'ACME-HQ Office VPN'\n",
+            encoding="utf-8",
+        )
+        dest = tmp_path / "bundle.zip"
+        support_bundle.build_support_bundle(dest, fake_config)
+        log_content = _open_zip_entry(dest, "logs/NetSpeedTray_Log.log")
+
+        # Zero occurrences of the raw names may remain.
+        assert "ACME-HQ Office VPN" not in log_content
+        assert "Wi-Fi 3" not in log_content
+        # The None operand keeps its shape.
+        assert "Primary network interface changed: None ->" in log_content
+        # Stable pseudonyms: the SAME adapter maps to the SAME token every time.
+        vpn = stable_pseudonym("ACME-HQ Office VPN")
+        wifi = stable_pseudonym("Wi-Fi 3")
+        assert re.fullmatch(r"NIC-[0-9a-f]{8}", vpn)
+        found = re.findall(r"NIC-[0-9a-f]{8}", log_content)
+        assert found == [vpn, vpn, wifi, wifi, vpn]
+
+    def test_already_pseudonymized_lines_pass_through_unchanged(self, q_app, tmp_path, fake_config, fake_log_dir):
+        """Lines the NEW build writes (already pseudonymized) must not be re-hashed."""
+        (fake_log_dir / "NetSpeedTray_Log.log").write_text(
+            "2026-08-20 09:00:00 - NetSpeedTray.StatsController - INFO - "
+            "controller._update_primary_interface_name:392 - "
+            "Primary network interface changed: NIC-00aabb11 -> None\n",
+            encoding="utf-8",
+        )
+        dest = tmp_path / "bundle.zip"
+        support_bundle.build_support_bundle(dest, fake_config)
+        log_content = _open_zip_entry(dest, "logs/NetSpeedTray_Log.log")
+        assert "NIC-00aabb11 -> None" in log_content
+
+    def test_display_names_in_logs_are_pseudonymized(self, q_app, tmp_path, fake_config, fake_log_dir):
+        """The MANIFEST promises no display names; `\\\\.\\DISPLAYn` is an
+        OS-generated shape, so a global scrub rule is safe (unlike NIC names)."""
+        (fake_log_dir / "NetSpeedTray_Log.log").write_text(
+            "2026-08-20 09:00:00 - NetSpeedTray.Core.PositionManager - INFO - "
+            "position_manager.restore:646 - "
+            "Restored saved free-move position (10,20) on screen '\\\\.\\DISPLAY2'.\n",
+            encoding="utf-8",
+        )
+        dest = tmp_path / "bundle.zip"
+        support_bundle.build_support_bundle(dest, fake_config)
+        log_content = _open_zip_entry(dest, "logs/NetSpeedTray_Log.log")
+        assert "\\\\.\\DISPLAY" not in log_content
+        assert re.search(r"DISPLAY-[0-9a-f]{8}", log_content)
+
+
+class TestNicPseudonymization:
+    """v2.1.5 item 7 - the pseudonym helper and the source half (controller.py)."""
+
+    def test_stable_pseudonym_is_stable_and_distinct(self):
+        from netspeedtray.utils.config import stable_pseudonym
+        a1 = stable_pseudonym("Wi-Fi 3")
+        a2 = stable_pseudonym("Wi-Fi 3")
+        b = stable_pseudonym("Ethernet")
+        assert a1 == a2, "pseudonym must be stable across calls"
+        assert a1 != b, "different adapters must get different pseudonyms"
+        assert re.fullmatch(r"NIC-[0-9a-f]{8}", a1)
+        assert "Wi-Fi" not in a1
+        # None keeps its printable shape so %s call sites stay readable.
+        assert stable_pseudonym(None) == "None"
+
+    def test_formatter_covers_resolved_debug_shape(self):
+        """network_utils' 'Determined primary interface' debug shape is covered
+        too - belt and suspenders if log levels ever change."""
+        from netspeedtray.utils.config import ObfuscatingFormatter, stable_pseudonym
+        fmt = ObfuscatingFormatter("%(message)s")
+        record = logging.LogRecord(
+            name="t", level=logging.DEBUG, pathname="", lineno=0,
+            msg="Determined primary interface: 'ACME-HQ Office VPN' with IP 192.168.1.10",
+            args=None, exc_info=None,
+        )
+        out = fmt.format(record)
+        assert "ACME-HQ Office VPN" not in out
+        assert stable_pseudonym("ACME-HQ Office VPN") in out
+        assert "192.168.1.10" not in out
+
+    def test_controller_logs_pseudonym_not_raw_name(self, q_app, caplog):
+        """Source half: controller.py must log a stable pseudonym, never the raw
+        friendly name - and repeated changes must still correlate."""
+        import netspeedtray.core.controller as controller_mod
+        from netspeedtray.utils.config import stable_pseudonym
+
+        ctrl = controller_mod.StatsController({}, None)
+        with caplog.at_level(logging.INFO, logger="NetSpeedTray.StatsController"):
+            with patch.object(controller_mod, "get_primary_interface_name",
+                              return_value="ACME-HQ Office VPN"):
+                ctrl.last_primary_check_time = 0.0
+                ctrl._update_primary_interface_name()
+            with patch.object(controller_mod, "get_primary_interface_name",
+                              return_value="Wi-Fi 3"):
+                ctrl.last_primary_check_time = 0.0
+                ctrl._update_primary_interface_name()
+            with patch.object(controller_mod, "get_primary_interface_name",
+                              return_value="ACME-HQ Office VPN"):
+                ctrl.last_primary_check_time = 0.0
+                ctrl._update_primary_interface_name()
+
+        changes = [r.getMessage() for r in caplog.records
+                   if "Primary network interface changed" in r.getMessage()]
+        assert len(changes) == 3
+        joined = "\n".join(changes)
+        assert "ACME-HQ Office VPN" not in joined
+        assert "Wi-Fi 3" not in joined
+        vpn = stable_pseudonym("ACME-HQ Office VPN")
+        wifi = stable_pseudonym("Wi-Fi 3")
+        assert changes[0].endswith(f"None -> {vpn}")
+        assert changes[1].endswith(f"{vpn} -> {wifi}")
+        assert changes[2].endswith(f"{wifi} -> {vpn}")
+
 
 class TestSystemInfo:
     def test_no_display_names_leaked(self, q_app, tmp_path, fake_config, fake_log_dir):
@@ -181,3 +318,14 @@ class TestAppActivityExclusion:
         for name in names:
             for token in forbidden:
                 assert token not in name, f"forbidden token '{token}' in bundled path '{name}'"
+
+
+def test_unknown_config_keys_are_redacted_in_bundle():
+    """Review C8: item 4c preserves unknown (newer-build) keys, so the bundle key-allowlist
+    sanitizer can never know them - their VALUES must not ship. The key name stays: that a
+    newer-build setting exists is the useful diagnostic in a rollback bundle."""
+    cfg = {"metrics_bind_host": "acme-nas.local", "config_version": "9.9", "font_size": 10}
+    out = support_bundle._sanitize_config(cfg)
+    assert out["metrics_bind_host"] == "<redacted-unknown-key>"
+    assert out["config_version"] == "9.9", "config_version is schema-known and the key rollback diagnostic"
+    assert out["font_size"] == 10
