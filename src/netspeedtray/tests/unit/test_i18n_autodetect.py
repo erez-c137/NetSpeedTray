@@ -155,12 +155,13 @@ class TestDisplayLanguageVersusRegionalFormat:
             assert I18nStrings(None).language == "ko_KR"
 
     @pytest.mark.parametrize("format_locale,expected", [
-        ("de_DE", "de_DE"), ("es_ES", "es_ES"), ("fr_FR", "fr_FR"),
+        ("de_DE", "de_DE"), ("es_ES", "es_ES"), ("fr_FR", "fr_FR"), ("it_IT", "it_IT"),
     ])
     def test_english_display_falls_back_to_a_supported_regional_format(self, format_locale, expected):
         """The behavior this fix must NOT take away: English-language Windows with a German,
         Spanish or French regional format is common across Europe, and those users got a localized
-        app in 2.1.2. CPython's locale_alias resolves exactly these three CRT names."""
+        app in 2.1.2. CPython's locale_alias resolves exactly these three CRT names. Italian joined
+        the list in #277, so it_IT now takes this path too."""
         with patch("ctypes.windll", self._windll(1033), create=True), \
              patch("locale.getlocale", return_value=(format_locale, "ISO8859-1")):
             assert I18nStrings(None).language == expected
@@ -178,8 +179,10 @@ class TestDisplayLanguageVersusRegionalFormat:
             assert I18nStrings(None).language == "en_US"
 
     def test_english_display_with_an_unsupported_format_stays_english(self):
+        """pt_BR resolves in CPython but has no locale file here. (This used it_IT until Italian
+        shipped - a supported format is the previous test's case, not this one's.)"""
         with patch("ctypes.windll", self._windll(1033), create=True), \
-             patch("locale.getlocale", return_value=("it_IT", "UTF-8")):
+             patch("locale.getlocale", return_value=("pt_BR", "UTF-8")):
             assert I18nStrings(None).language == "en_US"
 
 def test_the_module_imports_without_windll():
