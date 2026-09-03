@@ -256,6 +256,41 @@ exists will break every existing install.
 
 ---
 
+## Restoring a backup
+
+Before every migration, NetSpeedTray writes a verified backup next to the database:
+
+```
+%APPDATA%\NetSpeedTray\speed_history.db.bak.v7_20260827_141503
+```
+
+The `v7` is the schema version the backup holds; the rest is when it was taken. The newest two are
+kept.
+
+You need this if you have gone back to an older NetSpeedTray after a newer one migrated your
+database. The older build then runs read-only — it shows your history but refuses to record, because
+writing to a schema it doesn't understand would corrupt it. The log names the exact backup to
+restore. Here is how, **with NetSpeedTray fully closed**, in `%APPDATA%\NetSpeedTray`:
+
+1. Delete **all three** of these files — not just the first one:
+   - `speed_history.db`
+   - `speed_history.db-wal`
+   - `speed_history.db-shm`
+2. Copy the `.bak` file and rename the copy to `speed_history.db`.
+3. Start NetSpeedTray.
+
+**Step 1 is not optional, and the `-wal`/`-shm` files are the dangerous part.** They are the
+write-ahead log of the database you are replacing. Leave them behind and SQLite silently replays
+them into the restored file on the next launch — the result *passes* an integrity check but has the
+wrong schema inside, and the history in it is unrecoverable. Don't be reassured by their absence
+either: a clean shutdown removes them, but a force-killed app (which is exactly what the installer
+does during an upgrade) leaves them hot.
+
+Copying in step 2, rather than renaming the `.bak` itself, keeps the backup intact in case anything
+goes wrong.
+
+---
+
 ## Maintenance
 
 A background pass runs periodically and does three things: roll each tier up into the next, delete

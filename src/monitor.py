@@ -138,20 +138,6 @@ def main() -> int:
     except Exception:
         pass
 
-    # A hands-off portable update renames the old folder aside and deletes it once the new copy is
-    # running. If that delete could not finish (a handle still held), the folder survives - sweep it
-    # here rather than leaving ~57 MB next to the install forever.
-    try:
-        from netspeedtray.core.update_applier import sweep_old_backups, sweep_staged_leftovers
-        _install_dir = os.path.dirname(os.path.abspath(sys.executable))
-        sweep_old_backups(_install_dir)
-        # The applier cannot delete the staged folder it was running from, so if we were just
-        # updated, that folder is still on disk. We are the relaunched copy - clean it up.
-        sweep_staged_leftovers(os.path.dirname(_install_dir),
-                               os.path.join(os.path.expanduser("~"), "Downloads"))
-    except Exception:
-        pass
-
     # Apply-update path: `--apply-update <install_dir> --wait-pid <pid>`. We are the freshly
     # downloaded, checksum-verified copy; the previous version launched us so we can replace the
     # folder it was running from, which it could not do itself. Headless and short-lived - it must
@@ -202,6 +188,20 @@ def main() -> int:
     try:
         # 2. Use the context manager to ensure only one instance is running.
         with SingleInstanceChecker():
+            # Update-janitor work runs INSIDE the single-instance mutex (review C1): a duplicate
+            # launch during the update handoff dies at the mutex above before it can sweep the
+            # staged folder the applier is still running from. The --apply-update process exits
+            # before ever reaching this point, so the applier never sweeps its own ground. Only
+            # paths the hands-off flow RECORDED in its marker are removed; anything that merely
+            # looks like a staged copy - e.g. a rollback backup like NetSpeedTray-2.1.5-backup
+            # kept beside the install - is never touched.
+            try:
+                from netspeedtray.core.update_applier import sweep_old_backups, sweep_staged_leftovers
+                sweep_old_backups(os.path.dirname(os.path.abspath(sys.executable)))
+                sweep_staged_leftovers()
+            except Exception:
+                pass
+
             # 3. Load the application configuration from the file.
             config_manager = ConfigManager()
             config = config_manager.load()

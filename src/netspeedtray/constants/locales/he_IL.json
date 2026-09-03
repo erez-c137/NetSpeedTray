@@ -306,6 +306,8 @@
     "UNFOLD_FLYOUT_BODY": "לחץ לחיצה ימנית על תצוגת המהירות לקבלת גרפים, פעילות לפי אפליקציה ונתוני CPU/GPU/טמפרטורות. לחץ לחיצה כפולה כדי לפתוח את לוח המחוונים.",
     "MONITOR_ERROR_FLYOUT_TITLE": "הניטור הושהה זמנית",
     "MONITOR_ERROR_FLYOUT_BODY": "NetSpeedTray נתקל בתקלה בקריאת הנתונים ומנסה שוב באופן אוטומטי. אם הבעיה נמשכת, הפעלה מחדש בדרך כלל פותרת אותה.",
+    "DB_READONLY_FLYOUT_TITLE": "שמירת ההיסטוריה מושהית",
+    "DB_READONLY_FLYOUT_BODY": "היסטוריית המהירות נוצרה על ידי גרסה חדשה יותר של NetSpeedTray, ולכן גרסה זו מציגה אותה בלי לשמור נתונים חדשים. ההיסטוריה הקיימת בטוחה. עדכן את NetSpeedTray כדי לחדש את השמירה.",
     "WIDGET_HOVER_TOOLTIP": "לחיצה ימנית לגרפים, פעילות אפליקציות ונתוני CPU/GPU\nלחיצה כפולה לפתיחת לוח ההיסטוריה",
     "APP_ACTIVITY_TALKING_TO_SECTION": "מתקשר עם:",
     "APP_ACTIVITY_CONNECTIONS_SECTION": "חיבורים:",

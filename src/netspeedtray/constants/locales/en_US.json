@@ -306,6 +306,8 @@
     "UNFOLD_FLYOUT_BODY": "Right-click the speed readout for graphs, per-app activity, and CPU/GPU/temperatures. Double-click it to open the Monitor.",
     "MONITOR_ERROR_FLYOUT_TITLE": "Monitoring paused briefly",
     "MONITOR_ERROR_FLYOUT_BODY": "NetSpeedTray hit a snag reading stats and is retrying automatically. If it persists, a restart usually clears it.",
+    "DB_READONLY_FLYOUT_TITLE": "History recording is paused",
+    "DB_READONLY_FLYOUT_BODY": "Your speed history was created by a newer version of NetSpeedTray, so this version is showing it without recording anything new. Your existing history is safe. Update NetSpeedTray to resume recording.",
     "WIDGET_HOVER_TOOLTIP": "Right-click for graphs, app activity, and CPU/GPU stats\nDouble-click to open the Monitor",
     "APP_ACTIVITY_TALKING_TO_SECTION": "Talking to:",
     "APP_ACTIVITY_CONNECTIONS_SECTION": "Connections:",

@@ -306,6 +306,8 @@
     "UNFOLD_FLYOUT_BODY": "滑鼠右鍵點選速度顯示可檢視圖表、各應用程式活動，以及 CPU/GPU/溫度資訊。左鍵點兩下則可開啟儀表板。",
     "MONITOR_ERROR_FLYOUT_TITLE": "監控暫時暫停",
     "MONITOR_ERROR_FLYOUT_BODY": "NetSpeedTray 在讀取統計資料時發生小問題，正在自動重試。若持續發生，重新啟動應用程式通常可以解決。",
+    "DB_READONLY_FLYOUT_TITLE": "歷史紀錄已暫停記錄",
+    "DB_READONLY_FLYOUT_BODY": "速度歷史紀錄是由較新版本的 NetSpeedTray 建立，因此此版本只會顯示而不會記錄新資料。現有的歷史紀錄不會遺失。請更新 NetSpeedTray 以恢復記錄。",
     "WIDGET_HOVER_TOOLTIP": "滑鼠右鍵點選可檢視圖表、應用程式活動與 CPU/GPU 統計資料\n左鍵點兩下可開啟歷史紀錄儀表板",
     "APP_ACTIVITY_TALKING_TO_SECTION": "連線對象：",
     "APP_ACTIVITY_CONNECTIONS_SECTION": "連線：",

@@ -306,6 +306,8 @@
     "UNFOLD_FLYOUT_BODY": "Kliknij prawym przyciskiem odczyt prędkości, aby zobaczyć wykresy, aktywność poszczególnych aplikacji oraz CPU/GPU/temperatury. Kliknij dwukrotnie, aby otworzyć panel.",
     "MONITOR_ERROR_FLYOUT_TITLE": "Monitorowanie chwilowo wstrzymane",
     "MONITOR_ERROR_FLYOUT_BODY": "NetSpeedTray napotkał problem podczas odczytu statystyk i ponawia próbę automatycznie. Jeśli problem nie ustępuje, zwykle pomaga ponowne uruchomienie.",
+    "DB_READONLY_FLYOUT_TITLE": "Zapisywanie historii wstrzymane",
+    "DB_READONLY_FLYOUT_BODY": "Twoja historia prędkości została utworzona przez nowszą wersję NetSpeedTray, więc ta wersja ją wyświetla, ale nie zapisuje nic nowego. Istniejąca historia jest bezpieczna. Zaktualizuj NetSpeedTray, aby wznowić zapisywanie.",
     "WIDGET_HOVER_TOOLTIP": "Kliknij prawym przyciskiem, aby zobaczyć wykresy, aktywność aplikacji i statystyki CPU/GPU\nKliknij dwukrotnie, aby otworzyć panel historii",
     "APP_ACTIVITY_TALKING_TO_SECTION": "Łączy się z:",
     "APP_ACTIVITY_CONNECTIONS_SECTION": "Połączenia:",

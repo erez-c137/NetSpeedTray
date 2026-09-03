@@ -129,21 +129,26 @@ def test_version_less_than_empty_string_raises_error(config_manager):
 
 
 def test_config_migration_with_corrupted_version(config_manager):
-    """Verify migration gracefully handles corrupted version strings."""
+    """v2.1.5 item 4a: an unparseable config_version must NOT wipe the user's settings.
+
+    Field-level migrations are idempotent and version-independent, so they run
+    regardless; the version string is treated like an unknown-but-newer one and
+    left untouched. DEFAULT_CONFIG.copy() is reachable only from load()'s
+    unreadable-file branch (which makes a .corrupt backup first).
+    """
     corrupted_config = {
         "config_version": "INVALID_VERSION",
         "update_rate": 1.5,
         "font_size": 12,
     }
-    
-    # Should not raise, should reset to defaults
+
+    # Should not raise, and must NOT reset to defaults
     result = config_manager._migrate_config(corrupted_config)
-    
-    # Should reset to defaults, not crash
-    assert result["config_version"] == constants.config.defaults.CONFIG_SCHEMA_VERSION
-    # Verify it's a proper default config (has all required keys)
-    assert "update_rate" in result
-    assert "font_size" in result
+
+    assert result["update_rate"] == 1.5
+    assert result["font_size"] == 12
+    # The unparseable version string is left as-is, never stamped over.
+    assert result["config_version"] == "INVALID_VERSION"
 
 
 def test_config_migration_with_valid_version(config_manager):
@@ -179,15 +184,21 @@ def test_keep_data_legacy_value_snaps_to_nearest_not_year(config_manager):
 
 
 def test_config_migration_with_non_string_version(config_manager):
-    """Verify migration handles non-string version values (edge case)."""
+    """Verify migration handles non-string version values (edge case).
+
+    v2.1.5 item 4a: unparseable == keep the user's values. The bogus version is
+    left for _validate_config to coerce (its schema type is str), so migration
+    itself must not touch it - and must not wipe anything else.
+    """
     invalid_config = {
         "config_version": 123,  # Integer instead of string
         "update_rate": 1.5,
     }
-    
-    # Should handle gracefully
+
+    # Should handle gracefully, preserving user values
     result = config_manager._migrate_config(invalid_config)
-    assert result["config_version"] == constants.config.defaults.CONFIG_SCHEMA_VERSION
+    assert result["update_rate"] == 1.5
+    assert result["config_version"] == 123
 
 
 def test_config_migration_missing_version_defaults_to_1_0(config_manager):
@@ -196,9 +207,181 @@ def test_config_migration_missing_version_defaults_to_1_0(config_manager):
         "update_rate": 1.5,
         "font_size": 12,
     }
-    
+
     # Should not raise, should default to 1.0 and migrate
     result = config_manager._migrate_config(config_without_version)
-    
+
     # Should set to current version
     assert result["config_version"] == constants.config.defaults.CONFIG_SCHEMA_VERSION
+
+
+# ============================================================================
+# v2.1.5 item 4: config round-trip safety
+# 4a - unparseable version keeps user settings; 4b - never stamp the version
+# DOWNWARD; 4c - unknown keys survive load -> mutate -> save; plus the
+# version-mismatch backup (`config.json.bak.v<loaded>`).
+# ============================================================================
+
+def _write_config_file(tmp_path, payload):
+    path = tmp_path / "NetSpeedTray_Config.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
+def test_unparseable_version_preserves_user_settings(tmp_path):
+    """4a: config_version='2.0-beta' (a rollback from a prerelease build) must load
+    with ALL user settings intact - reproducing the exact wipe from the action plan."""
+    path = _write_config_file(tmp_path, {
+        "config_version": "2.0-beta",
+        "language": "de_DE",
+        "keep_data": 36500,
+        "data_cap_gb": 250.0,
+        "plan_down_mbps": 500,
+        "tray_offset_x": -120,
+    })
+    loaded = ConfigManager(path).load()
+
+    assert loaded["language"] == "de_DE"
+    assert loaded["keep_data"] == 36500
+    assert loaded["data_cap_gb"] == 250.0
+    assert loaded["plan_down_mbps"] == 500
+    assert loaded["tray_offset_x"] == -120
+
+
+def test_unparseable_version_string_survives_load(tmp_path):
+    """4a: the unparseable version string itself is left alone, so the config still
+    looks like what wrote it (a prerelease build) instead of getting restamped."""
+    path = _write_config_file(tmp_path, {"config_version": "2.0-beta", "font_size": 10})
+    loaded = ConfigManager(path).load()
+    assert loaded["config_version"] == "2.0-beta"
+    assert loaded["font_size"] == 10
+
+
+def test_newer_version_is_not_stamped_down(config_manager):
+    """4b: a config_version that parses HIGHER than the schema version must not be
+    stamped downward - '1.2' in must stay '1.2', not become '1.1'."""
+    result = config_manager._migrate_config({"config_version": "1.2"})
+    assert result["config_version"] == "1.2"
+
+
+def test_newer_version_survives_full_load(tmp_path):
+    """4b, end to end: load() of a newer-versioned config keeps the version."""
+    path = _write_config_file(tmp_path, {"config_version": "1.2", "font_size": 10})
+    loaded = ConfigManager(path).load()
+    assert loaded["config_version"] == "1.2"
+    assert loaded["font_size"] == 10
+
+
+def test_older_version_still_stamped_forward(config_manager):
+    """Guard: 4b must not break the normal upgrade stamp (older -> current)."""
+    result = config_manager._migrate_config({"config_version": "1.0"})
+    assert result["config_version"] == constants.config.defaults.CONFIG_SCHEMA_VERSION
+
+
+def test_unknown_key_survives_load_mutate_save(tmp_path):
+    """4c: keys written by a newer build must ride through a full
+    load -> mutate -> save round trip untouched, or a rollback erases them."""
+    current = constants.config.defaults.CONFIG_SCHEMA_VERSION
+    path = _write_config_file(tmp_path, {
+        "config_version": current,
+        "font_size": 10,
+        "metrics_endpoint_enabled": True,       # hypothetical 2.2-era keys
+        "beta_opt_in": {"channel": "beta"},
+    })
+    manager = ConfigManager(path)
+    loaded = manager.load()
+
+    assert loaded["metrics_endpoint_enabled"] is True
+    assert loaded["beta_opt_in"] == {"channel": "beta"}
+
+    loaded["font_size"] = 9                     # a realistic settings edit
+    manager.save(loaded)
+
+    on_disk = json.loads(path.read_text(encoding="utf-8"))
+    assert on_disk["font_size"] == 9
+    assert on_disk["metrics_endpoint_enabled"] is True
+    assert on_disk["beta_opt_in"] == {"channel": "beta"}
+
+
+def test_unknown_key_rides_through_noop_save_shortcut(tmp_path):
+    """4c blast radius: save() filters on `is not None` and compares against
+    _last_config for its no-op shortcut. Unknown keys must be present on BOTH
+    sides of that comparison, or the shortcut stops firing."""
+    current = constants.config.defaults.CONFIG_SCHEMA_VERSION
+    path = _write_config_file(tmp_path, {
+        "config_version": current,
+        "font_size": 10,
+        "future_key": "x",
+    })
+    manager = ConfigManager(path)
+    loaded = manager.load()
+    assert loaded["future_key"] == "x"
+
+    mtime_before = path.stat().st_mtime_ns
+    manager.save(dict(loaded))  # nothing changed -> the no-op shortcut must fire
+    assert path.stat().st_mtime_ns == mtime_before, "no-op save rewrote the file"
+
+    on_disk = json.loads(path.read_text(encoding="utf-8"))
+    assert on_disk["future_key"] == "x"
+
+
+def test_version_mismatch_creates_config_backup(tmp_path):
+    """A config written by a DIFFERENT schema version is copied to
+    `<name>.bak.v<loaded_version>` before migration touches it."""
+    path = _write_config_file(tmp_path, {"config_version": "1.0", "font_size": 10})
+    ConfigManager(path).load()
+
+    backup = path.with_name(f"{path.name}.bak.v1.0")
+    assert backup.exists(), "no pre-migration config backup was created"
+    raw = json.loads(backup.read_text(encoding="utf-8"))
+    assert raw["config_version"] == "1.0"
+    assert raw["font_size"] == 10
+
+
+def test_same_version_creates_no_backup(tmp_path):
+    """No version change -> no backup churn on every launch."""
+    current = constants.config.defaults.CONFIG_SCHEMA_VERSION
+    path = _write_config_file(tmp_path, {"config_version": current, "font_size": 10})
+    ConfigManager(path).load()
+    assert not list(tmp_path.glob("*.bak.v*"))
+
+
+def test_backup_filename_sanitizes_hostile_version_string(tmp_path):
+    """A corrupted version string must still produce a usable backup filename."""
+    path = _write_config_file(tmp_path, {"config_version": "2.0/beta:*?", "font_size": 10})
+    loaded = ConfigManager(path).load()
+    assert loaded["font_size"] == 10           # 4a: still no wipe
+    backups = list(tmp_path.glob("*.bak.v*"))
+    assert len(backups) == 1, "hostile version string prevented the backup"
+
+# --- adversarial-review regressions (C2, L4) ---------------------------------------------------
+
+def test_config_backup_is_not_overwritten_by_a_second_load(tmp_path):
+    """Review C2: the FIRST backup per source version is the pristine one. Launch 2 of a
+    rolled-back build must not overwrite it with the by-then-mutated config."""
+    path = _write_config_file(tmp_path, {"config_version": "9.9", "font_size": 10})
+    ConfigManager(path).load()
+    backup = path.with_name(f"{path.name}.bak.v9.9")
+    pristine = backup.read_text(encoding="utf-8")
+
+    mutated = json.loads(path.read_text(encoding="utf-8"))
+    mutated["font_size"] = 22                   # the exit-save of session 1
+    path.write_text(json.dumps(mutated), encoding="utf-8")
+    ConfigManager(path).load()                  # session 2
+
+    assert backup.read_text(encoding="utf-8") == pristine, (
+        "the pristine pre-migration backup was overwritten by a later load")
+
+
+def test_unknown_null_key_survives_save(tmp_path):
+    """Review L4: for a newer build's key, null and absent are different things - a JSON-null
+    unknown key must ride through a real save, not be dropped by the is-not-None filter."""
+    path = _write_config_file(
+        tmp_path, {"config_version": "9.9", "font_size": 10, "future_null_key": None})
+    mgr = ConfigManager(path)
+    cfg = mgr.load()
+    assert "future_null_key" in cfg
+    cfg["font_size"] = 22                       # a real change, so the no-op shortcut cannot hide it
+    mgr.save(cfg)
+    on_disk = json.loads(path.read_text(encoding="utf-8"))
+    assert "future_null_key" in on_disk and on_disk["future_null_key"] is None

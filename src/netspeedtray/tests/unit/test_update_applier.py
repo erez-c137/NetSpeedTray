@@ -18,6 +18,8 @@ Windows will not move a directory containing a running executable. A live test a
 found that; these tests, with their dummy text files, had not.
 """
 
+import json
+import logging
 import os
 import shutil
 import time
@@ -166,21 +168,125 @@ def test_the_staged_copy_survives_the_swap(tmp_path, monkeypatch):
     assert (staged / ua.APP_EXE).exists()
 
 
-def test_staged_leftovers_are_swept_but_never_the_running_install(tmp_path, monkeypatch):
-    root = tmp_path / "Downloads"
-    root.mkdir()
-    leftover = _make_install(root, "NetSpeedTray-2.1.5")
-    running = _make_install(root, "NetSpeedTray-running")
-    unrelated = root / "Holiday-Photos"
-    unrelated.mkdir()
+# ------------------------------------------------------------- staged-leftover sweep (marker-based)
+#
+# v2.1.5 item 3. The old sweep deleted ANY `NetSpeedTray-*` folder containing the app EXE - which is
+# exactly what a tester's rollback copy looks like. The beta cycle is precisely when people keep a
+# "NetSpeedTray-2.1.5-backup" folder beside the install, and the app was deleting it, silently.
+# Now the hands-off update RECORDS the exact folder it staged, and the sweep removes only recorded
+# paths: no marker, no sweep, and every removal is logged with its full path.
 
-    monkeypatch.setattr(ua.sys, "executable", str(running / ua.APP_EXE))
-    removed = ua.sweep_staged_leftovers(str(root))
+
+@pytest.fixture
+def marker(tmp_path, monkeypatch):
+    """Point the staged-update marker at a scratch file - never the user's real %APPDATA%."""
+    path = tmp_path / "appdata" / ua._STAGED_MARKER_NAME
+    monkeypatch.setattr(ua, "_marker_path", lambda: str(path))
+    return path
+
+
+def test_a_testers_backup_folder_survives_repeated_sweeps(tmp_path, monkeypatch, marker):
+    """THE pinned scenario: a rollback copy beside the install AND one in Downloads both survive
+    the sweep across repeated launches. This is the tester's only escape route from a bad beta."""
+    beside = tmp_path / "PortableApps"
+    downloads = tmp_path / "Downloads"
+    install = _make_install(beside, "NetSpeedTray")
+    backup_beside = _make_install(beside, "NetSpeedTray-2.1.5-backup")
+    backup_downloads = _make_install(downloads, "NetSpeedTray-2.1.5-backup")
+    monkeypatch.setattr(ua.sys, "executable", str(install / ua.APP_EXE))
+
+    for _ in range(3):  # three consecutive launches, per the readiness checklist
+        assert ua.sweep_staged_leftovers() == 0, "no marker present: the sweep must remove NOTHING"
+
+    assert backup_beside.is_dir() and (backup_beside / ua.APP_EXE).exists()
+    assert backup_downloads.is_dir() and (backup_downloads / ua.APP_EXE).exists()
+    assert install.is_dir()
+
+
+def test_a_recorded_staged_folder_is_removed_and_logged(tmp_path, monkeypatch, marker, caplog):
+    """The genuine leftover - the folder the applier ran from and could not delete - IS removed,
+    the removal is logged at INFO with the full path, and a lookalike beside it is spared."""
+    downloads = tmp_path / "Downloads"
+    staged = _make_install(downloads, "NetSpeedTray-2.1.6")
+    lookalike = _make_install(downloads, "NetSpeedTray-2.1.5-backup")
+    install = _make_install(tmp_path, "NetSpeedTray")
+    monkeypatch.setattr(ua.sys, "executable", str(install / ua.APP_EXE))
+
+    ua.record_staged_path(str(staged))
+    _backdate(staged)   # old enough that no handoff could still be using it (see review C1)
+    with caplog.at_level(logging.INFO, logger="NetSpeedTray.UpdateApplier"):
+        removed = ua.sweep_staged_leftovers()
 
     assert removed == 1
-    assert not leftover.exists(), "a staged leftover should be swept"
-    assert running.is_dir(), "the running install must never be swept"
-    assert unrelated.exists(), "unrelated folders must be left alone"
+    assert not staged.exists(), "the recorded staged folder should be swept"
+    assert lookalike.is_dir(), "only RECORDED paths may be removed"
+    assert any(str(staged) in rec.getMessage()
+               for rec in caplog.records if rec.levelno == logging.INFO), (
+        "every removal must be logged with the full path")
+    assert not marker.exists(), "a fully processed marker must clean itself up"
+    assert ua.sweep_staged_leftovers() == 0, "a second sweep has nothing left to do"
+
+
+def test_a_stale_marker_entry_cleans_itself_without_crashing(tmp_path, monkeypatch, marker):
+    """A marker pointing at a since-deleted path is dropped quietly - no crash, no residue."""
+    install = _make_install(tmp_path)
+    monkeypatch.setattr(ua.sys, "executable", str(install / ua.APP_EXE))
+    ua.record_staged_path(str(tmp_path / "NetSpeedTray-long-gone"))
+
+    assert ua.sweep_staged_leftovers() == 0
+    assert not marker.exists(), "the stale marker must clean itself up"
+
+
+def test_a_corrupt_marker_removes_nothing_and_cleans_itself(tmp_path, monkeypatch, marker):
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text("{this is not json", encoding="utf-8")
+    backup = _make_install(tmp_path, "NetSpeedTray-2.1.5-backup")
+    install = _make_install(tmp_path, "NetSpeedTray")
+    monkeypatch.setattr(ua.sys, "executable", str(install / ua.APP_EXE))
+
+    assert ua.sweep_staged_leftovers() == 0
+    assert backup.is_dir(), "an unreadable marker must not degrade to deleting lookalikes"
+    assert not marker.exists()
+
+
+def test_the_running_copy_is_never_removed_even_if_recorded(tmp_path, monkeypatch, marker):
+    """Defense in depth: an entry naming the folder we run from is deferred, never deleted.
+    (The --apply-update process runs from the staged folder; the entry must survive for the
+    relaunched install to act on.)"""
+    staged = _make_install(tmp_path, "NetSpeedTray-2.1.6")
+    monkeypatch.setattr(ua.sys, "executable", str(staged / ua.APP_EXE))
+    ua.record_staged_path(str(staged))
+
+    assert ua.sweep_staged_leftovers() == 0
+    assert staged.is_dir(), "never delete the ground we stand on"
+    assert os.path.abspath(str(staged)) in [
+        e["path"] for e in json.loads(marker.read_text(encoding="utf-8"))], (
+        "the entry must be kept for the relaunched copy to sweep")
+
+
+def test_a_recorded_path_that_is_not_ours_is_refused_and_untracked(tmp_path, monkeypatch, marker):
+    """A corrupted/tampered marker must not become a way to delete an arbitrary folder."""
+    victim = tmp_path / "Documents"
+    victim.mkdir()
+    (victim / "taxes.pdf").write_text("important", encoding="utf-8")
+    install = _make_install(tmp_path)
+    monkeypatch.setattr(ua.sys, "executable", str(install / ua.APP_EXE))
+    ua.record_staged_path(str(victim))
+
+    assert ua.sweep_staged_leftovers() == 0
+    assert (victim / "taxes.pdf").exists(), "a folder that does not look like ours is never removed"
+    assert not marker.exists(), "the refused entry is dropped rather than retried forever"
+
+
+def test_record_staged_path_appends_and_dedupes(tmp_path, marker):
+    first = tmp_path / "NetSpeedTray-2.1.6"
+    second = tmp_path / "NetSpeedTray-2.1.7"
+    ua.record_staged_path(str(first))
+    ua.record_staged_path(str(first))     # recording twice must not duplicate
+    ua.record_staged_path(str(second))
+    assert json.loads(marker.read_text(encoding="utf-8")) == [
+        {"path": os.path.abspath(str(first)), "validated": False},
+        {"path": os.path.abspath(str(second)), "validated": False}]
 
 
 def test_backup_paths_do_not_collide(tmp_path):
@@ -264,3 +370,57 @@ def test_apply_refuses_if_the_old_process_never_exits(tmp_path, monkeypatch):
 def test_waiting_on_a_dead_pid_returns_immediately():
     """A PID that cannot be opened has already exited - that is success, not an error."""
     assert ua._wait_for_exit(0x7FFFFFFE, timeout=1.0) is True
+
+
+# --- adversarial-review regressions (C1, C3): the sweep vs the update handoff -------------------
+
+def _backdate(path, age_sec=24 * 3600.0):
+    """Make a folder look old enough that no update handoff could still be using it."""
+    old = time.time() - age_sec
+    os.utime(path, (old, old))
+
+
+def test_a_fresh_staged_folder_is_never_swept_mid_handoff(tmp_path, monkeypatch, marker):
+    """Review C1: a duplicate launch during the handoff window must not gut the staged folder
+    the applier is still running from. A recorded folder with a fresh mtime is deferred."""
+    downloads = tmp_path / "Downloads"
+    staged = _make_install(downloads, "NetSpeedTray-2.1.6")
+    payload = staged / "_internal" / "matplotlib.pyd"
+    payload.parent.mkdir(parents=True, exist_ok=True)
+    payload.write_bytes(b"x")
+    install = _make_install(tmp_path, "NetSpeedTray")
+    monkeypatch.setattr(ua.sys, "executable", str(install / ua.APP_EXE))
+
+    ua.record_staged_path(str(staged))          # mtime is NOW: a handoff may be in flight
+
+    assert ua.sweep_staged_leftovers() == 0
+    assert payload.exists() and (staged / ua.APP_EXE).exists(), (
+        "a freshly staged folder must survive INTACT - the applier may be running from it")
+    assert marker.exists(), "the deferred entry must stay tracked for a later sweep"
+
+    _backdate(staged)                           # much later: the handoff is long over
+    assert ua.sweep_staged_leftovers() == 1
+    assert not staged.exists()
+
+
+def test_a_partially_swept_folder_is_retried_until_gone(tmp_path, monkeypatch, marker):
+    """Review C3: a folder our own sweep half-deleted (a transient AV/indexer lock) must be
+    retried on later launches - never untracked as not-ours because WE removed its exe."""
+    downloads = tmp_path / "Downloads"
+    staged = _make_install(downloads, "NetSpeedTray-2.1.6")
+    blocker = staged / "_internal" / "locked.dat"
+    blocker.parent.mkdir(parents=True, exist_ok=True)
+    blocker.write_bytes(b"x")
+    install = _make_install(tmp_path, "NetSpeedTray")
+    monkeypatch.setattr(ua.sys, "executable", str(install / ua.APP_EXE))
+    ua.record_staged_path(str(staged))
+    _backdate(staged)
+
+    with open(blocker, "rb"):                   # Windows: an open handle blocks deletion
+        assert ua.sweep_staged_leftovers() == 0
+        assert staged.is_dir(), "the locked file keeps the folder alive"
+        assert marker.exists(), "the half-deleted folder must stay tracked"
+
+    assert ua.sweep_staged_leftovers() == 1, "retried and removed once the lock is gone"
+    assert not staged.exists()
+    assert not marker.exists()

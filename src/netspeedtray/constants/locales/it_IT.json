@@ -306,6 +306,8 @@
     "UNFOLD_FLYOUT_BODY": "Fai clic con il tasto destro sulla velocità per grafici, attività per app e dati CPU/GPU/temperature. Fai doppio clic per aprire Monitor.",
     "MONITOR_ERROR_FLYOUT_TITLE": "Monitoraggio temporaneamente in pausa",
     "MONITOR_ERROR_FLYOUT_BODY": "NetSpeedTray ha avuto un problema nella lettura delle statistiche e sta riprovando automaticamente. Se persiste, di solito un riavvio risolve.",
+    "DB_READONLY_FLYOUT_TITLE": "Registrazione della cronologia in pausa",
+    "DB_READONLY_FLYOUT_BODY": "La cronologia delle velocità è stata creata da una versione più recente di NetSpeedTray, quindi questa versione la mostra senza registrare nulla di nuovo. La cronologia esistente è al sicuro. Aggiorna NetSpeedTray per riprendere la registrazione.",
     "WIDGET_HOVER_TOOLTIP": "Clic destro per grafici, attività app e statistiche CPU/GPU\nDoppio clic per aprire Monitor",
     "APP_ACTIVITY_TALKING_TO_SECTION": "Comunicazione con:",
     "APP_ACTIVITY_CONNECTIONS_SECTION": "Connessioni:",

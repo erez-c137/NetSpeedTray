@@ -7,6 +7,7 @@ asynchronous SQLite operations, ensuring the main UI thread remains responsive.
 
 import logging
 import queue
+import re
 import sqlite3
 import threading
 import shutil
@@ -30,8 +31,24 @@ class DatabaseWorker(QThread):
     """
     error = pyqtSignal(str)
     database_updated = pyqtSignal()
+    # Emitted when the file on disk was written by a NEWER build and this worker goes
+    # read-only: (file_version, supported_version, newest_backup_full_path or ""). The
+    # view surfaces it as a flyout - a log line alone leaves a rolled-back install
+    # looking perfectly healthy while recording nothing, forever.
+    schema_incompatible = pyqtSignal(int, int, str)
 
     _DB_VERSION = 7  # Covering indexes, metadata, eager aggregation, sample_count, hardware stats, hardware hourly, usage_counter (data-cap odometer)
+
+    # VACUUM gates (all three must hold, on top of the once-a-day interval below):
+    #   * the floor - under ~4 MB of slack a full-file rewrite is never worth it;
+    #   * the ratio - a rewrite costs the whole file, so the slack must be a real
+    #     fraction of it (the measured bad case: ~90 MB with 5.1% free would spend a
+    #     1.66 s rewrite peaking at 176 MB to reclaim 4.7 MB);
+    #   * OR the cap - past ~50 MB of absolute slack, reclaim regardless of ratio.
+    _VACUUM_MIN_INTERVAL_SEC = 86400
+    _VACUUM_MIN_FREE_PAGES = 1000     # ~4 MB at the 4096-byte page size
+    _VACUUM_MIN_FREE_RATIO = 0.20     # at least a fifth of the file is slack
+    _VACUUM_FREE_PAGES_CAP = 12800    # ~50 MB of slack vacuums at any ratio
 
     def __init__(self, db_path: Path, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
@@ -389,6 +406,36 @@ class DatabaseWorker(QThread):
             self.logger.warning("Could not prune old database backups: %s", e)
 
 
+    def _find_newest_backup(self) -> Optional[Path]:
+        """
+        The newest pre-migration backup sibling (``speed_history.db.bak.v*``), or None.
+
+        Used by the downgrade guard to point the user AT their data: the old refusal
+        message advised moving the database aside to start a fresh history while a
+        verified backup sat in the same folder. A rollback session never prunes these
+        (_prune_old_backups only runs from _backup_database, inside _migrate_schema),
+        so whatever the migrating build left behind is still here.
+        """
+        try:
+            backups = sorted(
+                self.db_path.parent.glob(f"{self.db_path.stem}.db.bak.v*"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+            for path in backups:
+                m = re.search(r"\.db\.bak\.v(\d+)_", path.name)
+                if m and int(m.group(1)) <= self._DB_VERSION:
+                    return path
+            # Every backup on disk was written by a NEWER schema than this build reads -
+            # naming one would send the user into a dead-end restore (review C5). Treat as
+            # "no backup": the refusal message then leads with Upgrade, which is the only
+            # path that can actually open those files.
+            return None
+        except Exception as e:
+            self.logger.debug("Could not scan for database backups: %s", e)
+            return None
+
+
     def _migrate_schema(self, current_version: int) -> None:
         """Handles migration from current_version to _DB_VERSION."""
         self.logger.info("Migrating database from version %d to %d...", current_version, self._DB_VERSION)
@@ -555,12 +602,31 @@ class DatabaseWorker(QThread):
             #      handlers below swallow. The app looked healthy and silently recorded nothing.
             # Refusing outright is the only honest option: no backup, no writes, no maintenance.
             self._schema_incompatible = True
-            self.logger.error(
-                "Database schema v%d was written by a NEWER version of NetSpeedTray than this one "
-                "(which understands v%d). Running READ-ONLY: history will be shown but nothing new "
-                "will be recorded, and no data will be modified or deleted. Upgrade again to resume "
-                "recording, or move %s aside to start a fresh history.",
-                current_version, self._DB_VERSION, self.db_path.name,
+            newest_backup = self._find_newest_backup()
+            if newest_backup is not None:
+                # A verified pre-migration backup is sitting right there - name it by
+                # full path and never advise discarding the history it holds.
+                self.logger.error(
+                    "Database schema v%d was written by a NEWER version of NetSpeedTray than this one "
+                    "(which understands v%d). Running READ-ONLY: history will be shown but nothing new "
+                    "will be recorded, and no data will be modified or deleted. Upgrade again to resume "
+                    "recording. A pre-migration backup of your earlier history exists at: %s - to go "
+                    "back to it, follow 'Restoring a backup' in DATABASE.md exactly (renaming it into "
+                    "place without deleting the -wal/-shm sidecar files corrupts it).",
+                    current_version, self._DB_VERSION, newest_backup,
+                )
+            else:
+                self.logger.error(
+                    "Database schema v%d was written by a NEWER version of NetSpeedTray than this one "
+                    "(which understands v%d). Running READ-ONLY: history will be shown but nothing new "
+                    "will be recorded, and no data will be modified or deleted. Upgrade again to resume "
+                    "recording; if you have your own backup copy, see 'Restoring a backup' in "
+                    "DATABASE.md. As a last resort, moving %s aside starts a fresh, empty history.",
+                    current_version, self._DB_VERSION, self.db_path.name,
+                )
+            self.schema_incompatible.emit(
+                current_version, self._DB_VERSION,
+                str(newest_backup) if newest_backup is not None else "",
             )
             return
 
@@ -749,7 +815,7 @@ class DatabaseWorker(QThread):
             self._aggregate_minute_to_hour(cursor, _now)
             self._aggregate_hardware_raw_to_minute(cursor, _now)
             self._aggregate_hardware_minute_to_hour(cursor, _now)
-            pruned = self._prune_data_with_grace_period(cursor, config, _now)
+            self._prune_data_with_grace_period(cursor, config, _now)
             self._prune_hardware_data(cursor, config, _now)
             
             self.conn.commit()
@@ -759,44 +825,75 @@ class DatabaseWorker(QThread):
             
             self.logger.debug("Database maintenance tasks committed successfully.")
 
+            # VACUUM is a full-DB rewrite under a write lock. It used to be gated on
+            # `if pruned:` - the retention DELETE's rowcount - which matches nothing until
+            # the install outlives its retention setting: a year at the default 365, never
+            # on "keep everything". Meanwhile the hourly aggregation DELETEs above fragment
+            # the file from day one (measured: 84% free pages after two months, VACUUM never
+            # run once). So gate on the freelist itself: at most once/day, and only when the
+            # slack justifies the rewrite (_vacuum_warranted). Its own try: a VACUUM failure
+            # must not roll back the pruning that already committed above.
+            try:
+                row = cursor.execute("SELECT value FROM metadata WHERE key='last_vacuum_at'").fetchone()
+                last_vac = int(row[0]) if (row and str(row[0]).isdigit()) else 0
+                if int(_now.timestamp()) - last_vac >= self._VACUUM_MIN_INTERVAL_SEC:
+                    free_row = cursor.execute("PRAGMA freelist_count").fetchone()
+                    free_pages = int(free_row[0]) if free_row else 0
+                    page_row = cursor.execute("PRAGMA page_count").fetchone()
+                    page_count = int(page_row[0]) if page_row else 0
+                    if self._stop_event.is_set():
+                        # stop() drains queued tasks after the flag is set, and cleanup()
+                        # waits only 2000 ms for this thread - never start a full-file
+                        # rewrite mid-shutdown.
+                        self.logger.debug("Skipping VACUUM - shutdown in progress.")
+                    elif self._vacuum_warranted(free_pages, page_count):
+                        self.logger.info(
+                            "Running VACUUM (%d of %d pages free, >= 1 day since last)...",
+                            free_pages, page_count)
+                        self.conn.execute("VACUUM;")
+                        self.conn.execute(
+                            "INSERT OR REPLACE INTO metadata (key, value) VALUES ('last_vacuum_at', ?)",
+                            (str(int(_now.timestamp())),))
+                        self.conn.commit()
+                        self.logger.info("VACUUM complete.")
+                    else:
+                        self.logger.debug(
+                            "Skipping VACUUM - %d free of %d pages is not worth a rewrite.",
+                            free_pages, page_count)
+            except sqlite3.Error as e:
+                self.logger.warning("VACUUM skipped (maintenance already committed): %s", e)
+
             # Bound the WAL file: long-lived reader connections (the Monitor's graph worker) can hold
-            # back the automatic checkpoint, letting -wal grow across a long session. A TRUNCATE
-            # checkpoint each maintenance pass reclaims it. Own try-block - a busy checkpoint (a reader
-            # blocking it) is harmless and must not roll back the maintenance already committed above.
+            # back the automatic checkpoint, letting -wal grow across a long session - and VACUUM in
+            # WAL mode writes the ENTIRE vacuumed database into -wal, so this must run AFTER the
+            # VACUUM above or the app leaves a WAL at result size until the next hourly pass. Own
+            # try-block - a busy checkpoint (a reader blocking it) is harmless and must not roll back
+            # the maintenance already committed above.
             try:
                 self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
             except sqlite3.Error as e:
                 self.logger.debug("WAL checkpoint skipped: %s", e)
-            
-            if pruned:
-                # VACUUM is a full-DB rewrite under a write lock. On a long-running install the
-                # rolling 24h/30d/1yr windows mean `pruned` is ~always truthy, so this ran every
-                # maintenance cycle (hourly). Gate it to at most once/day AND only when there's
-                # real fragmentation to reclaim (M2 + audit #25). Its own try: a VACUUM failure
-                # must not roll back the pruning that already committed above.
-                try:
-                    row = cursor.execute("SELECT value FROM metadata WHERE key='last_vacuum_at'").fetchone()
-                    last_vac = int(row[0]) if (row and str(row[0]).isdigit()) else 0
-                    if int(_now.timestamp()) - last_vac >= 86400:
-                        free_row = cursor.execute("PRAGMA freelist_count").fetchone()
-                        free_pages = int(free_row[0]) if free_row else 0
-                        if free_pages >= 1000:  # ~4 MB of slack - below that it's not worth it
-                            self.logger.info("Running VACUUM (%d free pages, >= 1 day since last)...", free_pages)
-                            self.conn.execute("VACUUM;")
-                            self.conn.execute(
-                                "INSERT OR REPLACE INTO metadata (key, value) VALUES ('last_vacuum_at', ?)",
-                                (str(int(_now.timestamp())),))
-                            self.conn.commit()
-                            self.logger.info("VACUUM complete.")
-                        else:
-                            self.logger.debug("Skipping VACUUM - only %d free pages.", free_pages)
-                except sqlite3.Error as e:
-                    self.logger.warning("VACUUM skipped (maintenance already committed): %s", e)
 
             self.database_updated.emit()
         except sqlite3.Error as e:
             self.logger.error("Maintenance failed: %s", e)
             self.conn.rollback()
+
+
+    def _vacuum_warranted(self, free_pages: int, page_count: int) -> bool:
+        """
+        Whether the freelist justifies a full-file rewrite (see the class constants).
+
+        The floor alone is absolute (~4 MB) with no reference to file size, so it would
+        rewrite a 90 MB, 5%-free file for a 4.7 MB return. The ratio conjunct demands the
+        slack be a real fraction of the file; the absolute cap makes sure a huge file
+        with huge slack is still reclaimed even at a low ratio.
+        """
+        if free_pages < self._VACUUM_MIN_FREE_PAGES:
+            return False
+        if free_pages >= self._VACUUM_FREE_PAGES_CAP:
+            return True
+        return page_count > 0 and (free_pages / page_count) >= self._VACUUM_MIN_FREE_RATIO
 
 
     def _aggregate_hardware_raw_to_minute(self, cursor: sqlite3.Cursor, now: datetime) -> None:

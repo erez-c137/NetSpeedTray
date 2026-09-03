@@ -32,6 +32,7 @@ from netspeedtray.core.monitor_thread import StatsMonitorThread
 from netspeedtray.core.tray_manager import TrayIconManager
 from netspeedtray.core.widget_state import WidgetState as CoreWidgetState
 from netspeedtray.utils.config import ConfigManager as CoreConfigManager
+from netspeedtray.utils.timer_utils import resolve_poll_interval_seconds
 from netspeedtray.core.position_manager import PositionManager, WindowState
 from netspeedtray.core.input_handler import InputHandler
 from netspeedtray.utils.taskbar_utils import (
@@ -269,30 +270,24 @@ class NetworkSpeedWidget(QWidget):
             self.timer_manager = SpeedTimerManager(self.config, parent=self)
             
             # Background Monitoring Thread
-            # Determine effective monitor interval. Support SMART sentinel (-1.0)
+            # One shared resolver decides the sampling interval for SMART (-1.0) and the legacy
+            # 0 sentinel, so the sampler, the exports and the raw-tier volume math can never
+            # disagree (review C6/C7). The old speed_display_mode=='auto' fallback is gone: the
+            # Settings dialog already refuses to save that combination, so it only ever fired on
+            # hand-edited configs - and silently sampled at 1.0 s while every seconds-per-sample
+            # computation assumed 2.0 s, doubling raw-tier volume. The 0 sentinel previously fell
+            # into the fixed-rate clamp and sampled at 0.1 s - the #273 bug shape, at startup.
             cfg_rate = self.config.get("update_rate", constants.config.defaults.DEFAULT_UPDATE_RATE)
-
-            # If the user is using "auto" scaling (unit auto-selection), running in
-            # SMART adaptive mode produces very frequent UI changes that can be
-            # visually jarring (e.g. rapid unit switching). Enforce a safe fallback:
-            # when speed_display_mode == "auto" and update_rate signals SMART (<=0),
-            # fall back to a sensible default fixed rate to avoid live-mode jitter.
-            speed_mode = str(self.config.get("speed_display_mode", constants.config.defaults.DEFAULT_SPEED_DISPLAY_MODE))
-            if isinstance(cfg_rate, (int, float)) and cfg_rate < 0:
-                if speed_mode == "auto":
-                    # Log and fallback to default fixed update rate (do not persist silently)
-                    self.logger.warning(
-                        "Incompatible settings: speed_display_mode='auto' with SMART update_rate. Falling back to default update rate %.1fs to avoid live-mode jitter.",
-                        constants.config.defaults.DEFAULT_UPDATE_RATE
-                    )
-                    cfg_rate = constants.config.defaults.DEFAULT_UPDATE_RATE
-                    effective_interval = max(constants.config.defaults.MINIMUM_UPDATE_RATE, min(float(cfg_rate), constants.timers.MAXIMUM_UPDATE_RATE_SECONDS))
-                else:
-                    # SMART mode (-1.0): Use adaptive interval
-                    effective_interval = constants.timers.SMART_MODE_INTERVAL_MS / 1000.0
+            try:
+                cfg_rate = float(cfg_rate)
+            except (TypeError, ValueError):
+                cfg_rate = float(constants.config.defaults.DEFAULT_UPDATE_RATE)
+            if cfg_rate <= 0:
+                effective_interval = resolve_poll_interval_seconds(cfg_rate)
             else:
                 # Fixed interval: Clamp to allowed min/max
-                effective_interval = max(constants.config.defaults.MINIMUM_UPDATE_RATE, min(float(cfg_rate), constants.timers.MAXIMUM_UPDATE_RATE_SECONDS))
+                effective_interval = max(constants.config.defaults.MINIMUM_UPDATE_RATE,
+                                         min(cfg_rate, constants.timers.MAXIMUM_UPDATE_RATE_SECONDS))
 
             self.monitor_thread = StatsMonitorThread(interval=effective_interval, config=self.config)
             
@@ -529,6 +524,28 @@ class NetworkSpeedWidget(QWidget):
         except Exception as e:
             self.logger.error("Error showing monitor-error notice: %s", e, exc_info=True)
 
+    def _on_db_schema_incompatible(self, file_version: int, supported_version: int,
+                                   backup_path: str) -> None:
+        """
+        The database on disk was written by a newer build, so the worker runs read-only
+        and records nothing (the downgrade guard). Without this flyout a rolled-back
+        install looks perfectly healthy while silently recording nothing, forever - the
+        exact shape that gets filed as "this version stopped recording". The worker's
+        ERROR log names the newest pre-migration backup by full path; the flyout stays
+        calm and short.
+        """
+        try:
+            self.logger.info(
+                "Surfacing read-only database notice (file v%d > supported v%d; backup: %s).",
+                file_version, supported_version, backup_path or "none found",
+            )
+            self._show_usage_alert(
+                self.i18n.DB_READONLY_FLYOUT_TITLE,
+                self.i18n.DB_READONLY_FLYOUT_BODY,
+            )
+        except Exception as e:
+            self.logger.error("Error showing database read-only notice: %s", e, exc_info=True)
+
     def _show_usage_alert(self, title: str, message: str) -> None:
         """Show a data-cap usage alert via the flyout (no system-tray icon needed)."""
         try:
@@ -763,6 +780,13 @@ class NetworkSpeedWidget(QWidget):
             # Degraded-monitor notice (recoverable circuit breaker fired). Previously wired to
             # nothing, so a stalled monitor died silently; now it surfaces a calm flyout.
             self.monitor_thread.error_occurred.connect(self._on_monitor_error)
+
+            # Downgrade guard (DB written by a newer build): the worker refuses every write;
+            # make that visible instead of log-only. The rolled-back build is the only one
+            # that can ever show this message. Delivery is queued through WidgetState, so
+            # a guard tripped during startup arrives once the event loop spins - after this
+            # connect has run.
+            self.widget_state.db_schema_incompatible.connect(self._on_db_schema_incompatible)
 
             # Start the monitoring thread
             self.monitor_thread.start()

@@ -306,6 +306,8 @@
     "UNFOLD_FLYOUT_BODY": "속도 표시를 마우스 오른쪽 버튼으로 클릭하면 그래프, 앱별 활동, CPU/GPU/온도를 볼 수 있습니다. 두 번 클릭하면 대시보드가 열립니다.",
     "MONITOR_ERROR_FLYOUT_TITLE": "모니터링이 잠시 중단됨",
     "MONITOR_ERROR_FLYOUT_BODY": "NetSpeedTray가 통계를 읽는 중 문제가 발생하여 자동으로 다시 시도하고 있습니다. 문제가 계속되면 대개 다시 시작하면 해결됩니다.",
+    "DB_READONLY_FLYOUT_TITLE": "기록 저장이 일시정지됨",
+    "DB_READONLY_FLYOUT_BODY": "속도 기록이 더 새로운 버전의 NetSpeedTray에서 생성되어, 이 버전에서는 표시만 하고 새로 저장하지 않습니다. 기존 기록은 안전합니다. 저장을 재개하려면 NetSpeedTray를 업데이트하세요.",
     "WIDGET_HOVER_TOOLTIP": "마우스 오른쪽 버튼 클릭: 그래프, 앱 활동, CPU/GPU 통계\n두 번 클릭: 기록 대시보드 열기",
     "APP_ACTIVITY_TALKING_TO_SECTION": "통신 대상:",
     "APP_ACTIVITY_CONNECTIONS_SECTION": "연결:",

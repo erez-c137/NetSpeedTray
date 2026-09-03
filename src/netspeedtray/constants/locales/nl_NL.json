@@ -306,6 +306,8 @@
     "UNFOLD_FLYOUT_BODY": "Klik met de rechtermuisknop op de snelheidsweergave voor grafieken, activiteit per app en CPU/GPU/temperaturen. Dubbelklik erop om het dashboard te openen.",
     "MONITOR_ERROR_FLYOUT_TITLE": "Monitoring even gepauzeerd",
     "MONITOR_ERROR_FLYOUT_BODY": "NetSpeedTray liep tegen een probleem aan bij het uitlezen van statistieken en probeert het automatisch opnieuw. Als het aanhoudt, lost een herstart het meestal op.",
+    "DB_READONLY_FLYOUT_TITLE": "Opslaan van geschiedenis gepauzeerd",
+    "DB_READONLY_FLYOUT_BODY": "Je snelheidsgeschiedenis is aangemaakt door een nieuwere versie van NetSpeedTray, dus deze versie toont hem zonder iets nieuws op te slaan. Je bestaande geschiedenis is veilig. Werk NetSpeedTray bij om het opslaan te hervatten.",
     "WIDGET_HOVER_TOOLTIP": "Rechtsklik voor grafieken, app-activiteit en CPU/GPU-statistieken\nDubbelklik om het geschiedenisdashboard te openen",
     "APP_ACTIVITY_TALKING_TO_SECTION": "Communiceert met:",
     "APP_ACTIVITY_CONNECTIONS_SECTION": "Verbindingen:",

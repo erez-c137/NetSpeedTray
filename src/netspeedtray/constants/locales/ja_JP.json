@@ -306,6 +306,8 @@
     "UNFOLD_FLYOUT_BODY": "速度表示を右クリックすると、コンテキストメニューを表示できます。ダブルクリックでモニターを表示します。",
     "MONITOR_ERROR_FLYOUT_TITLE": "モニタリングを一時停止しました",
     "MONITOR_ERROR_FLYOUT_BODY": "NetSpeedTray は統計情報の読み取りで問題が発生したため、自動的に再試行しています。解消しない場合は、再起動すると通常は改善します。",
+    "DB_READONLY_FLYOUT_TITLE": "履歴の記録を一時停止しています",
+    "DB_READONLY_FLYOUT_BODY": "この速度履歴は新しいバージョンの NetSpeedTray で作成されたため、このバージョンでは表示のみを行い、新しい記録は行いません。既存の履歴は安全です。記録を再開するには NetSpeedTray を更新してください。",
     "WIDGET_HOVER_TOOLTIP": "右クリックでメニューを表示\nダブルクリックでモニターを表示",
     "APP_ACTIVITY_TALKING_TO_SECTION": "通信先 :",
     "APP_ACTIVITY_CONNECTIONS_SECTION": "接続 :",

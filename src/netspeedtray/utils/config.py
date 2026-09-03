@@ -7,6 +7,7 @@ merging, and strict validation, preventing corrupted or invalid configurations f
 affecting the application.
 """
 
+import hashlib
 import os
 import json
 import logging
@@ -22,6 +23,33 @@ from netspeedtray.utils.styles import is_dark_mode
 from netspeedtray import constants
 
 
+# Length of the hex digest kept in a stable pseudonym (e.g. "NIC-1a2b3c4d"): long
+# enough that collisions among one machine's handful of adapters/displays are
+# implausible, short enough to keep log lines readable.
+_PSEUDONYM_HEX_LEN = 8
+
+
+def stable_pseudonym(name: Optional[str], prefix: str = "NIC") -> str:
+    """
+    Replace a user-identifying device name with a stable, non-reversible pseudonym.
+
+    Used for network adapter friendly names (users rename them to personal/site
+    labels like "Office VPN") and display device names, both of which the support
+    bundle's MANIFEST promises never ship verbatim.
+
+    Same input -> same output across runs and processes (sha256, NOT the
+    per-process-salted builtin ``hash()``), so repeated log lines still correlate -
+    the edge-triggered primary-interface logging (#263) depends on being able to
+    tell "changed A -> B" apart from "changed B -> A" without knowing the names.
+
+    ``None`` maps to the string ``"None"`` so ``%s`` call sites keep their shape.
+    """
+    if name is None:
+        return "None"
+    digest = hashlib.sha256(str(name).encode("utf-8", "replace")).hexdigest()
+    return f"{prefix}-{digest[:_PSEUDONYM_HEX_LEN]}"
+
+
 class ObfuscatingFormatter(logging.Formatter):
     """
     Logging formatter that redacts sensitive information from log records.
@@ -33,10 +61,45 @@ class ObfuscatingFormatter(logging.Formatter):
     - Hostname / computer name
     - MAC addresses (colon and dash separated)
     - Windows network interface GUIDs
+    - Windows display device names (pseudonymized, not blanked)
+    - Network adapter friendly names in KNOWN message shapes (pseudonymized)
 
     All regexes are pre-compiled at construction time.
     """
     IPV4_REGEX = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+
+    # --- Message-shape rules (v2.1.5 item 7) --------------------------------
+    # Known log lines whose operands are NETWORK ADAPTER FRIENDLY NAMES - free
+    # text users rename to personal/site labels ("Office VPN"). We deliberately
+    # do NOT enumerate psutil.net_if_addrs() here: names change at runtime, and
+    # an adapter literally named "Ethernet" would redact that word everywhere.
+    # Instead, each known message shape has its operands replaced with the SAME
+    # stable pseudonym the live code logs (see core/controller.py), so lines
+    # written by old builds and scrubbed here still correlate with lines the
+    # current build writes (#263's edge-triggered logging needs that).
+    NIC_CHANGED_REGEX = re.compile(
+        r"(Primary network interface changed: )(.+?) -> (.+)$", re.MULTILINE
+    )
+    NIC_RESOLVED_REGEX = re.compile(
+        r"(Determined primary interface: )(.+?)( with IP .*)$", re.MULTILINE
+    )
+    # v1.1.9-v1.2.6 logged "Found new primary interface: '<name>' (Gateway: <ip>)" at INFO
+    # (removed in v1.3.1, commit 66e8b30) - long-lived logs still carry those lines, so the
+    # bundle re-scrub must cover the shape (review C4). The gateway suffix stays OUT of the
+    # hashed operand so the pseudonym correlates with modern lines for the same adapter; the
+    # generic IPv4 rule redacts the gateway afterwards.
+    NIC_FOUND_REGEX = re.compile(
+        r"(Found new primary interface: )(.+?)(\s*\(Gateway: .*\))?$", re.MULTILINE
+    )
+    # An operand already safe to keep as-is: a None marker or a pseudonym.
+    # Keeping pseudonyms untouched makes the shape rules idempotent, so lines
+    # written by the current build are never double-hashed by the bundle scrub.
+    _SAFE_OPERAND_REGEX = re.compile(r"^(?:None|[A-Z]+-[0-9a-f]{%d})$" % _PSEUDONYM_HEX_LEN)
+
+    # Windows display device names ('\\.\DISPLAY2'). Unlike adapter names this
+    # is an OS-generated shape, so a global pattern IS safe. Pseudonymized (not
+    # blanked) so multi-monitor log lines keep telling displays apart.
+    DISPLAY_NAME_REGEX = re.compile(r"\\\\\.\\DISPLAY\d+", re.IGNORECASE)
 
     # IPv6 covering full, compressed (::), and link-local with zone IDs (%5).
     # Boundaries use negative lookarounds for hex chars and colons to avoid
@@ -115,9 +178,49 @@ class ObfuscatingFormatter(logging.Formatter):
         except Exception:
             self._hostname_regex = None
 
+    @classmethod
+    def _pseudonymize_operand(cls, operand: str) -> str:
+        """One adapter-name operand -> its stable pseudonym.
+
+        Accepts the %r-quoted form historical log lines carry, the bare form,
+        ``None``, and already-pseudonymized values (returned unchanged, so
+        write-time formatting and the bundle re-scrub never double-hash).
+        """
+        raw = operand.strip()
+        if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in ("'", '"'):
+            raw = raw[1:-1]
+        if cls._SAFE_OPERAND_REGEX.match(raw):
+            return raw
+        return stable_pseudonym(raw, "NIC")
+
+    def _apply_message_shape_rules(self, message: str) -> str:
+        """Pseudonymize adapter/display names in the known message shapes."""
+        message = self.NIC_CHANGED_REGEX.sub(
+            lambda m: f"{m.group(1)}{self._pseudonymize_operand(m.group(2))} -> "
+                      f"{self._pseudonymize_operand(m.group(3))}",
+            message,
+        )
+        message = self.NIC_RESOLVED_REGEX.sub(
+            lambda m: f"{m.group(1)}{self._pseudonymize_operand(m.group(2))}{m.group(3)}",
+            message,
+        )
+        message = self.NIC_FOUND_REGEX.sub(
+            lambda m: f"{m.group(1)}{self._pseudonymize_operand(m.group(2))}{m.group(3) or ''}",
+            message,
+        )
+        message = self.DISPLAY_NAME_REGEX.sub(
+            lambda m: stable_pseudonym(m.group(0), "DISPLAY"), message
+        )
+        return message
+
     def format(self, record: logging.LogRecord) -> str:
         formatted_message = super().format(record)
         sanitized_message = formatted_message
+        # Shape rules FIRST: they hash the ORIGINAL operand, so the pseudonym
+        # for a given adapter is identical whether a line is written live or
+        # scrubbed from history - the generic rules below must not get a chance
+        # to alter the operand before it is hashed.
+        sanitized_message = self._apply_message_shape_rules(sanitized_message)
         # Order matters: paths first (most specific), then narrower patterns.
         for pattern in self._path_regexes:
             sanitized_message = pattern.sub("<REDACTED_PATH>", sanitized_message)
@@ -172,38 +275,50 @@ class ConfigManager:
         
         Migration strategy:
         1. Extract the config version (defaults to "1.0" if missing)
-        2. Validate version format (will raise ConfigError if invalid)
+        2. Parse the version to learn its direction (never resets on failure)
         3. Apply field migrations (support for renamed/removed fields)
         4. Apply version-based migrations if needed
-        5. Update config_version to current schema version
-        
+        5. Stamp config_version forward - never downward (see below)
+
         Args:
             config: Configuration dictionary to migrate
-        
+
         Returns:
-            Migrated configuration dictionary with current schema version
-        
-        Raises:
-            ConfigError: If configuration version is invalid/corrupted (logs error and returns defaults)
-        
-        This ensures a smooth transition and preserves user settings when fields are renamed.
+            Migrated configuration dictionary
+
+        Version handling (v2.1.5 item 4):
+        - Unparseable version (4a): keep ALL user values and the version string
+          itself; the field-level migrations below are idempotent and
+          version-independent, so they still run. DEFAULT_CONFIG.copy() is
+          reachable only from load()'s unreadable-file branch, which backs the
+          original up as `.corrupt` first.
+        - Version parses HIGHER than this build's schema (4b): a rollback from a
+          newer build. Leave the version untouched - stamping it down would make
+          an already-migrated config look un-migrated and re-run every
+          version-gated migration on the next upgrade.
         """
         current_version = constants.config.defaults.CONFIG_SCHEMA_VERSION
         loaded_version = config.get("config_version", "1.0")  # Default to 1.0 for configs predating versioning
-        
+
         if loaded_version != current_version:
             self.logger.info(f"Migrating config from version {loaded_version} to {current_version}")
         else:
             self.logger.debug(f"Config version {loaded_version} is up to date")
-        
-        # NEW: Validate version format before proceeding (prevent silent failures)
+
+        # Parse the version ONCE to learn its direction. Neither outcome may reset
+        # the user's settings (v2.1.5 item 4a).
+        version_parses = True
+        loaded_is_newer = False
         try:
-            self._version_less_than(loaded_version, current_version)
-        except ConfigError as e:
-            self.logger.error(f"Config corruption detected: {e}")
-            self.logger.warning("Resetting config to defaults due to version corruption")
-            return constants.config.defaults.DEFAULT_CONFIG.copy()
-        
+            loaded_is_newer = self._version_less_than(current_version, loaded_version)
+        except ConfigError:
+            version_parses = False
+            self.logger.warning(
+                "Unparseable config_version %r (written by a pre-release build?): "
+                "keeping all user settings; running field-level migrations only.",
+                loaded_version,
+            )
+
         # Field renaming / removal (legacy migrations)
         migration_map = {
             "monitoring_mode": "interface_mode",
@@ -264,15 +379,22 @@ class ConfigManager:
         #     migrated = self._migrate_to_v2_0(migrated)
         #     changes_made = True
         
-        # Update config_version to current
-        if migrated.get("config_version") != current_version:
-            migrated["config_version"] = current_version
-            if not changes_made:
-                self.logger.info(f"Updated config_version from {loaded_version} to {current_version}")
-            else:
-                self.logger.info(f"Updated config_version from {loaded_version} to {current_version} (with other migrations)")
-            changes_made = True
-        
+        # Update config_version to current - but NEVER stamp it DOWNWARD or over an
+        # unparseable value (v2.1.5 items 4a/4b, see docstring).
+        if version_parses and not loaded_is_newer:
+            if migrated.get("config_version") != current_version:
+                migrated["config_version"] = current_version
+                if not changes_made:
+                    self.logger.info(f"Updated config_version from {loaded_version} to {current_version}")
+                else:
+                    self.logger.info(f"Updated config_version from {loaded_version} to {current_version} (with other migrations)")
+                changes_made = True
+        elif loaded_is_newer:
+            self.logger.info(
+                "Config version %s is newer than this build's schema %s (rollback?): leaving it untouched.",
+                loaded_version, current_version,
+            )
+
         if changes_made and loaded_version != current_version:
             self.logger.info(f"Config migration completed. User should be notified of any breaking changes.")
 
@@ -478,13 +600,60 @@ class ConfigManager:
             validated["high_speed_threshold"] = constants.config.defaults.DEFAULT_HIGH_SPEED_THRESHOLD
             validated["low_speed_threshold"] = constants.config.defaults.DEFAULT_LOW_SPEED_THRESHOLD
 
-        # Warn about unknown keys
+        # Preserve unknown keys VERBATIM (v2.1.5 item 4c). They are usually settings
+        # written by a NEWER build; a rollback must not strip them from disk. They
+        # ride through save() too: save() drops None values and compares against
+        # `_last_config` for its no-op shortcut, and both sides of that comparison
+        # carry the same preserved keys, so the shortcut still fires.
         extra_keys = set(loaded_config.keys()) - set(schema.keys())
         if extra_keys:
-            self.logger.warning("Ignoring unknown config fields: %s", ", ".join(extra_keys))
+            self.logger.warning(
+                "Preserving unknown config fields (written by a newer version?): %s",
+                ", ".join(sorted(extra_keys)),
+            )
+            for key in extra_keys:
+                validated[key] = loaded_config[key]
 
         return validated
 
+
+    # `config.json.bak.v<version>` backups: keep filesystem-safe characters only,
+    # and cap the suffix length so a corrupted version string cannot produce an
+    # unusable filename.
+    _BACKUP_VERSION_SAFE_CHARS = re.compile(r"[^A-Za-z0-9._-]")
+    _BACKUP_VERSION_MAX_LEN = 32
+
+    def _backup_config_if_version_differs(self, config: Any) -> None:
+        """
+        Copy the on-disk config to `<name>.bak.v<loaded_version>` when the loaded
+        config_version differs from the current schema version (v2.1.5 item 4).
+
+        Best-effort: a failed backup is logged and never blocks loading. The FIRST
+        copy per source version is kept and later loads leave it untouched (review
+        C2): a rolled-back build re-loads a differing version on every launch, and
+        by launch 2 the on-disk config is already the old-schema-mangled one - the
+        pristine copy is the whole point of the backup.
+        """
+        try:
+            if not isinstance(config, dict):
+                return
+            loaded_version = str(config.get("config_version", "1.0"))
+            if loaded_version == constants.config.defaults.CONFIG_SCHEMA_VERSION:
+                return
+            safe_version = self._BACKUP_VERSION_SAFE_CHARS.sub("_", loaded_version)
+            safe_version = safe_version[: self._BACKUP_VERSION_MAX_LEN] or "unknown"
+            backup_path = self.config_path.with_name(f"{self.config_path.name}.bak.v{safe_version}")
+            if backup_path.exists():
+                self.logger.debug("Config backup %s already exists; keeping the pristine copy.",
+                                  backup_path.name)
+                return
+            shutil.copy2(self.config_path, backup_path)
+            self.logger.info(
+                "Backed up config written by schema version %s to %s before migrating.",
+                loaded_version, backup_path.name,
+            )
+        except Exception:
+            self.logger.exception("Failed to back up config before migration; continuing with load.")
 
     def load(self) -> Dict[str, Any]:
         """Loads and validates the configuration from the file."""
@@ -507,6 +676,11 @@ class ConfigManager:
             self.logger.critical(msg)
             raise ConfigError(msg) from e
 
+        # Keep a pristine pre-migration copy whenever the file on disk was written
+        # by a DIFFERENT schema version (older, newer after a rollback, or
+        # unparseable). This is the only config backup that exists anywhere.
+        self._backup_config_if_version_differs(config)
+
         migrated_config = self._migrate_config(config)
         validated_config = self._validate_config(migrated_config)
         self._last_config = validated_config.copy()
@@ -517,8 +691,16 @@ class ConfigManager:
         """Atomically saves the provided configuration to the file."""
         validated_config = self._validate_config(config)
         
-        config_to_save = { key: value for key, value in validated_config.items() if value is not None }
-        last_config_to_compare = { k: v for k, v in self._last_config.items() if v is not None } if self._last_config else None
+        # For SCHEMA-KNOWN keys, None means "use the default" and absence is equivalent - they
+        # are filtered so defaults never pin themselves to disk. An UNKNOWN key (a newer build's,
+        # preserved by item 4c) must ride through even when null: for a schema we do not know,
+        # null and absent may mean different things (review L4).
+        known_keys = set(constants.config.defaults.VALIDATION_SCHEMA)
+        config_to_save = { key: value for key, value in validated_config.items()
+                           if value is not None or key not in known_keys }
+        last_config_to_compare = ({ k: v for k, v in self._last_config.items()
+                                    if v is not None or k not in known_keys }
+                                  if self._last_config else None)
 
         if last_config_to_compare == config_to_save:
             self.logger.debug("Skipping save, configuration is unchanged.")

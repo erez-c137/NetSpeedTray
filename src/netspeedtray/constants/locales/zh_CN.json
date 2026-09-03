@@ -1,5 +1,4 @@
 {
-    "//TRANSLATION_VERSION": "2.1.3-zh_CN-260822",
     "//_1": "--- 单位与格式 ---",
     "SETTINGS_WINDOW_TITLE": "设置",
     "EXPORT_CSV_TITLE": "导出历史记录",
@@ -307,6 +306,8 @@
     "UNFOLD_FLYOUT_BODY": "右键点击网速可查看图表、应用流量及 CPU/GPU/温度；双击打开监控面板。",
     "MONITOR_ERROR_FLYOUT_TITLE": "监控暂时中断",
     "MONITOR_ERROR_FLYOUT_BODY": "NetSpeedTray 读取数据时出了点问题，正在自动重试。若问题依旧，可尝试重启程序。",
+    "DB_READONLY_FLYOUT_TITLE": "历史记录暂停中",
+    "DB_READONLY_FLYOUT_BODY": "速度历史记录由较新版本的 NetSpeedTray 创建，因此当前版本仅显示、不再记录新数据。现有历史记录不会丢失。请更新 NetSpeedTray 以恢复记录。",
     "WIDGET_HOVER_TOOLTIP": "右键查看图表、应用流量及 CPU/GPU 状态\n双击打开监控面板",
     "APP_ACTIVITY_TALKING_TO_SECTION": "连接目标:",
     "APP_ACTIVITY_CONNECTIONS_SECTION": "连接:",
@@ -456,5 +457,6 @@
     "LOCATION_ONBOARDING_OPEN_BUTTON": "打开位置设置",
     "LOCATION_ONBOARDING_BAND_BUTTON": "仅显示频段",
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray 遮挡了系统小组件",
-    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray 遮挡了任务栏上的小组件/天气。你可以拖动它到喜欢的位置，设置会自动保存。（此消息仅显示一次）"
+    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray 遮挡了任务栏上的小组件/天气。你可以拖动它到喜欢的位置，设置会自动保存。（此消息仅显示一次）",
+    "//TRANSLATION_VERSION": "2.1.3-zh_CN-260822"
 }
