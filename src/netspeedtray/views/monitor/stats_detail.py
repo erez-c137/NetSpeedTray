@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
 from netspeedtray.utils import styles as su
 from netspeedtray.constants.styles import styles as tokens
 from netspeedtray.utils.helpers import format_speed, get_machine_id, format_duration_short
+from netspeedtray.utils.timer_utils import resolve_poll_interval_seconds
 from netspeedtray.utils import summaries as S
 from netspeedtray.utils import stats_exporter
 
@@ -56,7 +57,8 @@ def run_interactive_export(parent, widget_state, start: datetime, end: datetime,
         return
     if not zip_path.lower().endswith(".zip"):
         zip_path += ".zip"
-    poll = float(config.get("update_rate", 1.0) or 1.0)
+    # NOT `or 1.0`: the SMART sentinel (-1.0) is truthy and samples at 2.0 s (2.1.5 item 9).
+    poll = resolve_poll_interval_seconds(config.get("update_rate", 1.0))
     try:
         zip_path = stats_exporter.export_window_zip(
             widget_state, start, end, window_label, zip_path, basename,
@@ -99,7 +101,9 @@ class StatsDetailSheet(QDialog):
         self._i18n = i18n
         self._app_version = app_version
         self.logger = logging.getLogger("NetSpeedTray.StatsDetailSheet")
-        self._poll = float(config.get("update_rate", 1.0) or 1.0)
+        # NOT `or 1.0`: the SMART sentinel (-1.0) is truthy and samples at 2.0 s; leaking it
+        # zeroed coverage_pct on every stats sheet (2.1.5 item 9).
+        self._poll = resolve_poll_interval_seconds(config.get("update_rate", 1.0))
         self._copy_text_parts: List[str] = []
 
         self.setModal(True)

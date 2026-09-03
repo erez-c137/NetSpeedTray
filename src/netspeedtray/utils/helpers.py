@@ -202,12 +202,23 @@ def get_reference_value_string(force_mega_unit: bool, decimal_places: int, unit_
     return integer_part
 
 
+# Adaptive decimal floor for force-mega display (2.1.5 item 11c). At the shipped defaults
+# (always_mbps, decimal_places=1) any traffic under ~6.25 KB/s rounds to "0.0 Mbps" - Discord
+# idle at 3,000 B/s read as dead air. When the forced-mega value rounds to zero at the
+# configured precision but the TRUE value is at least this fraction of the mega unit
+# (0.001 Mbps = 1 kbps in bits_decimal), extend the decimals just enough to show the first
+# significant digit. Below the floor, plain zero at the configured precision is honest.
+FORCE_MEGA_ZERO_FLOOR: float = 0.001
+# Cap on the borrowed decimals ("0.003" at most): further digits report noise, not traffic.
+FORCE_MEGA_MAX_ADAPTIVE_DECIMALS: int = 3
+
+
 def format_speed(
-    speed: float, 
-    i18n, 
+    speed: float,
+    i18n,
     use_megabytes: bool = False,  # Deprecated
-    *, 
-    force_mega_unit: bool = False, 
+    *,
+    force_mega_unit: bool = False,
     decimal_places: int = 1,
     unit_type: str = "bits_decimal",
     fixed_width: bool = False,
@@ -254,32 +265,77 @@ def format_speed(
     # Select numeric value based on bytes vs bits
     speed_value = current_speed if is_bytes else current_speed * network_consts.BITS_PER_BYTE
 
-    # Determine scale and unit
+    # Determine scale and unit. The unit is chosen from the value as it will be DISPLAYED
+    # (i.e. after rounding), not from the raw value: 999.95..999.999 in a unit used to round
+    # up to "1000.0" and render four integer digits in a slot sized for three (2.1.5 item 11a).
+    # The tier-to-tier ratio is uniform within a family: 1000 decimal, 1024 binary.
+    step_ratio = float(kilo_div)
+    divisors = (1.0, float(kilo_div), float(mega_div), float(giga_div))
+    tier: int
+
     if current_speed < network_consts.MINIMUM_DISPLAY_SPEED:
+        tier = 2 if force_mega_unit else 1
         val = 0.0
-        unit = labels[2] if force_mega_unit else labels[1]
+        unit = labels[tier]
     elif force_mega_unit:
+        tier = 2
         val = speed_value / mega_div
-        unit = labels[2]
+        # Owner decision D4 (no widget widening): once the ROUNDED mega value reaches the
+        # mega->giga ratio, promote to the giga unit ("10000.0 Mbps" -> "10.0 Gbps", which
+        # fits the existing '8888.8' reservation). Applies to the bytes modes too
+        # (1250 MB/s -> GB/s). The reference string is deliberately unchanged.
+        if round(val, decimal_places) >= step_ratio:
+            tier = 3
+            val = speed_value / giga_div
+        unit = labels[tier]
     else:
         if speed_value >= giga_div:
-            val = speed_value / giga_div
-            unit = labels[3]
+            tier = 3
         elif speed_value >= mega_div:
-            val = speed_value / mega_div
-            unit = labels[2]
+            tier = 2
         elif speed_value >= kilo_div:
-            val = speed_value / kilo_div
-            unit = labels[1]
+            tier = 1
         else:
-            val = speed_value
-            unit = labels[0]
+            tier = 0
+        val = speed_value / divisors[tier]
+        # Round-first promotion: a value that ROUNDS to the next divisor at its display
+        # precision (the base unit renders %.0f) shows as "1.0" of the next unit, never as
+        # "1000.0" of this one. A loop, not a single check, because the base tier's %.0f
+        # verdict feeds the kilo tier's decimal_places verdict. Giga is the top unit, so
+        # ~1000 Gbps still (honestly) renders "1000.0".
+        while tier < 3:
+            display_dp = 0 if tier == 0 else decimal_places
+            if round(val, display_dp) < step_ratio:
+                break
+            tier += 1
+            val = speed_value / divisors[tier]
+        unit = labels[tier]
+
+    # Adaptive decimal floor (2.1.5 item 11c): only in force-mega mode, only when the value
+    # rounds to zero at the configured precision yet real traffic is flowing (>= the 1 kbps
+    # floor). Extend to the first significant digit, capped at FORCE_MEGA_MAX_ADAPTIVE_DECIMALS
+    # and at the reference-string width so the widget never grows ("0.02", "0.003"). The
+    # condition is on the VALUE - a config alone never changes precision. Auto mode is
+    # untouched: it never renders zero for nonzero traffic.
+    effective_decimal_places = decimal_places
+    if (
+        force_mega_unit
+        and tier == 2
+        and val >= FORCE_MEGA_ZERO_FLOOR
+        and round(val, decimal_places) == 0
+    ):
+        ref_len = len(get_reference_value_string(force_mega_unit, decimal_places, unit_type=unit_type))
+        max_dp = min(FORCE_MEGA_MAX_ADAPTIVE_DECIMALS, ref_len - 2)  # "0." + decimals must fit the reference
+        for extra_dp in range(decimal_places + 1, max_dp + 1):
+            if round(val, extra_dp) > 0:
+                effective_decimal_places = extra_dp
+                break
 
     # Format numeric part
-    if unit == labels[0]:
+    if tier == 0:
         formatted_val = f"{val:.0f}"
     else:
-        formatted_val = f"{val:.{decimal_places}f}"
+        formatted_val = f"{val:.{effective_decimal_places}f}"
 
     if fixed_width:
         # Use reference string to match logic in layout/renderer

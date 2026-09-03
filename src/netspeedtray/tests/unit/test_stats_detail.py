@@ -113,3 +113,46 @@ def test_below_plan_when_threshold_set(q_app):
     sheet = StatsDetailSheet(_WS(), subjects, _window(), _cfg(plan_down_mbps=100), I18nStrings("en_US"))
     text = "\n".join(sheet._copy_text_parts)
     assert "100 Mbps" in text and "below" in text
+
+
+def test_smart_mode_poll_normalized_to_two_seconds(q_app):
+    """2.1.5 item 9: update_rate=-1.0 (SMART) must reach summarize_* as 2.0 s (SMART samples every
+    SMART_MODE_INTERVAL_MS), not leak through `or 1.0` as -1.0 (which zeroed coverage_pct on every
+    stats sheet) and not normalize to a wrong 1.0 s."""
+    captured = []
+
+    class _CapturingWS(_WS):
+        def summarize_network(self, direction, start, end, iface, poll):
+            captured.append(poll)
+            return super().summarize_network(direction, start, end, iface, poll)
+
+    subjects = [{"key": "download", "label": "Download", "unit": "Mbps", "kind": "net_down", "primary": True}]
+    sheet = StatsDetailSheet(_CapturingWS(), subjects, _window(), _cfg(update_rate=-1.0),
+                             I18nStrings("en_US"))
+    assert sheet._poll == 2.0
+    assert captured and all(p == 2.0 for p in captured)
+
+
+def test_interactive_export_normalizes_smart_poll(q_app, monkeypatch, tmp_path):
+    """The Export path (stats_detail.run_interactive_export) is another of the four leak sites: a
+    SMART config must hand export_window_zip poll_interval=2.0, not -1.0."""
+    from PyQt6.QtWidgets import QFileDialog, QMessageBox
+    from netspeedtray.views.monitor import stats_detail as SD
+
+    captured = {}
+
+    def _fake_zip(ws, start, end, label, zip_path, basename, *, machine_id="", app_version="",
+                  poll_interval=1.0):
+        captured["poll"] = poll_interval
+        return zip_path
+
+    monkeypatch.setattr(SD.stats_exporter, "export_window_zip", _fake_zip)
+    monkeypatch.setattr(SD, "get_machine_id", lambda: "cafebabe12345678")
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (str(tmp_path / "x.zip"), "")))
+    monkeypatch.setattr(QMessageBox, "exec", lambda self: 0)   # swallow the success dialog
+
+    start, end, label = _window()
+    SD.run_interactive_export(None, _WS(), start, end, label,
+                              _cfg(update_rate=-1.0), I18nStrings("en_US"))
+    assert captured["poll"] == 2.0
