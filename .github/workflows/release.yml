@@ -180,11 +180,30 @@ jobs:
         run: |
           V="${VERSION#v}"
           URL="https://github.com/erez-c137/NetSpeedTray/releases/download/${VERSION}/NetSpeedTray-${V}-x64-Setup.exe"
-          # Must match the package module Partner Center already holds (installer switches and
-          # the error-code doc URL are what the by-hand submission used). This PUT replaces it.
-          printf '{"packages":[{"packageUrl":"%s","languages":["en"],"architectures":["X64"],"isSilentInstall":false,"installerParameters":"/VERYSILENT /NORESTART /SUPPRESSMSGBOXES","genericDocUrl":"https://github.com/erez-c137/NetSpeedTray/blob/main/README.md","packageType":"exe"}]}' "$URL" > product-update.json
+          # This PUT replaces the listing's package module, so every field below mirrors what the
+          # by-hand 2.1.4 submission holds - read back verbatim by the Store preflight workflow on
+          # 2026-09-04 - except packageUrl, which moves from the one-off upload to the GitHub
+          # release asset. Change a field here only after re-reading the module with the preflight.
+          python3 - "$URL" > product-update.json <<'PY'
+          import json, sys
+          scenarios = ["installationCancelledByUser", "applicationAlreadyExists",
+                       "installationAlreadyInProgress", "diskSpaceIsFull", "rebootRequired",
+                       "networkFailure", "packageRejectedDuringInstallation",
+                       "installationSuccessful", "miscellaneous"]
+          print(json.dumps({"packages": [{
+              "packageUrl": sys.argv[1],
+              "languages": ["zh", "zh-tw", "nl", "en", "fr", "de", "he", "ja", "ko", "pl", "ru", "sl", "tr", "es", "it"],
+              "architectures": ["X64"],
+              "isSilentInstall": False,
+              "installerParameters": "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-",
+              "genericDocUrl": "https://github.com/erez-c137/NetSpeedTray",
+              "errorDetails": [{"errorScenario": s, "errorScenarioDetails": []} for s in scenarios],
+              "packageType": "exe",
+          }]}, separators=(",", ":")))
+          PY
           echo "PRODUCT_UPDATE=$(cat product-update.json)" >> "$GITHUB_ENV"
           echo "Store package URL: $URL"
+          python3 -c "import json;p=json.load(open('product-update.json'))['packages'][0];p.pop('errorDetails');print(json.dumps(p,indent=2))"
 
       - name: Update draft submission
         if: steps.creds.outputs.ok == 'true'
