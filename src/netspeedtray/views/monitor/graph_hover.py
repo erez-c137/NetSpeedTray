@@ -28,6 +28,7 @@ from netspeedtray import constants
 
 # Don't pop a tooltip when the cursor is miles from any point (in axis-fraction of the x-range).
 _MAX_SNAP_FRAC = 0.04
+_PIXEL_SLACK = 1.5      # the cursor's pixel column plus half a pixel each side - what the eye reads
 
 
 class GraphHoverTooltip(QObject):
@@ -101,18 +102,27 @@ class GraphHoverTooltip(QObject):
             self._hide()
 
     def _rows_at(self, ax, x: float) -> Tuple[List[Tuple[str, float, str]], Optional[float]]:
-        """The value of every labelled series at the sample nearest `x`, plus that sample's x.
+        """The value of every labelled series under the cursor, plus the x of the sample reported.
+
+        "Under the cursor" means the highest sample within the pixel column the cursor is on
+        (plus a pixel of slack), not the sample nearest `x`. At the one-hour window a pixel is
+        about two seconds and a spike is one sample wide, so nearest-x picks the spike's neighbour
+        half the time: the owner hovered a 12 Mbps spike and read 0.8. The line is drawn through
+        the peak, so the peak is the honest readout. Where nothing falls inside the column (sparse
+        data) the nearest sample within the snap distance is used, as before.
 
         Lines without a legend label (matplotlib's `_childN`) are helpers - crosshairs and the
         renderer's dashed zero bridges across gaps - and are skipped, so the hover never reports a
         synthesized zero as a measurement. The renderer draws one series as several segments when
-        the data has gaps; those share a label and collapse to ONE row, the segment nearest the
-        cursor. X is read in axis units (`orig=False`), which is what `event.xdata` is in - the
-        original data are datetimes and cannot be compared to it.
+        the data has gaps; those share a label and collapse to ONE row. X is read in axis units
+        (`orig=False`), which is what `event.xdata` is in - the original data are datetimes.
         """
         xmin, xmax = ax.get_xlim()
         span = (xmax - xmin) or 1.0
-        best: Dict[str, Tuple[float, float, str, float]] = {}   # label -> (dx, y, color, x_at)
+        width_px = float(getattr(ax.bbox, "width", 0.0) or 0.0)
+        column = span / width_px * _PIXEL_SLACK if width_px > 0 else 0.0   # data units per pixel column
+        # label -> (rank, y, color, x_at, dx); rank sorts in-column peaks before nearest fallbacks
+        best: Dict[str, Tuple[Tuple[int, float], float, str, float, float]] = {}
         for line in ax.get_lines():
             lbl = line.get_label()
             if not lbl or str(lbl).startswith("_"):
@@ -121,18 +131,24 @@ class GraphHoverTooltip(QObject):
             yd = np.asarray(line.get_ydata(orig=False), dtype=float)
             if xd.size == 0 or yd.size != xd.size:
                 continue
-            idx = int(np.argmin(np.abs(xd - x)))
-            dx = abs(xd[idx] - x)
-            if dx > span * _MAX_SNAP_FRAC:          # cursor too far from this line's samples
-                continue
+            dist = np.abs(xd - x)
+            in_column = np.flatnonzero(dist <= column) if column > 0 else np.empty(0, dtype=int)
+            if in_column.size:
+                idx = int(in_column[np.argmax(yd[in_column])])       # the peak the line draws here
+                rank = (0, -float(yd[idx]))
+            else:
+                idx = int(np.argmin(dist))
+                if dist[idx] > span * _MAX_SNAP_FRAC:               # cursor too far from this line
+                    continue
+                rank = (1, float(dist[idx]))
             cur = best.get(str(lbl))
-            if cur is None or dx < cur[0]:
-                best[str(lbl)] = (dx, float(yd[idx]), line.get_color(), float(xd[idx]))
+            if cur is None or rank < cur[0]:
+                best[str(lbl)] = (rank, float(yd[idx]), line.get_color(), float(xd[idx]), float(dist[idx]))
         if not best:
             return [], None
-        rows = [(lbl, y, color) for lbl, (_dx, y, color, _xa) in best.items()]
-        nearest_x = min(best.values(), key=lambda t: t[0])[3]
-        return rows, nearest_x
+        rows = [(lbl, y, color) for lbl, (_r, y, color, _xa, _dx) in best.items()]
+        at = min(best.values(), key=lambda t: t[0])[3]                   # the reported peak's time
+        return rows, at
 
     def _format(self, x_num: float, rows: List[Tuple[str, float, str]]) -> str:
         when = mdates.num2date(x_num).strftime("%H:%M:%S")

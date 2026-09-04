@@ -102,3 +102,26 @@ def test_rows_at_returns_nothing_far_from_any_sample():
     ax.set_xlim(mdates.date2num(T0), mdates.date2num(T0 + timedelta(minutes=10)))
     x = mdates.date2num(T0 + timedelta(minutes=5))
     assert GraphHoverTooltip(_host("network"))._rows_at(ax, x) == ([], None)
+
+
+def test_rows_at_reports_the_peak_under_the_cursor_not_its_neighbour():
+    """A one-second spike is narrower than a pixel at the one-hour window, so the sample nearest the
+    cursor's x is the spike's NEIGHBOUR half the time - the owner hovered a 12 Mbps spike and read
+    0.8 (2026-09-04). The readout must be the peak within the pixel column under the cursor."""
+    ys = [1.0] * 10
+    ys[4] = 12.0
+    ax = _axes_with([("Upload", T0, ys, {})])
+    ax.set_xlim(mdates.date2num(T0 - timedelta(minutes=30)), mdates.date2num(T0 + timedelta(minutes=30)))
+    x = mdates.date2num(T0 + timedelta(seconds=4.6))          # nearest sample is +5 s (1.0), spike is +4 s
+    rows, at = GraphHoverTooltip(_host("network"))._rows_at(ax, x)
+    assert [(r[0], r[1]) for r in rows] == [("Upload", 12.0)]
+    assert at == pytest.approx(mdates.date2num(T0 + timedelta(seconds=4)))
+
+
+def test_rows_at_on_a_flat_line_still_reads_the_nearest_sample():
+    ys = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]
+    ax = _axes_with([("Upload", T0, ys, {})])
+    ax.set_xlim(mdates.date2num(T0), mdates.date2num(T0 + timedelta(seconds=9)))   # ~65 px per second
+    x = mdates.date2num(T0 + timedelta(seconds=6.2))
+    rows, _ = GraphHoverTooltip(_host("network"))._rows_at(ax, x)
+    assert [(r[0], r[1]) for r in rows] == [("Upload", 7.0)]
