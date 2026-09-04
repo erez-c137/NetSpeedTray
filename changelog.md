@@ -163,7 +163,7 @@ honest numbers on the widget and in every export.
 - **Hovering the Monitor graph shows a readout on every tab.** It only ever worked on the combined
   Hardware view; the Network tab and the other Hardware layouts showed nothing. The readout uses
   your unit setting, and it reports the peak under the cursor, so a one-second spike reads as
-  drawn instead of as its neighbour.
+  drawn instead of as its neighbor.
 
   *Under the hood: two bugs masking each other. Only one plot call passed `label=`, so the
   tooltip skipped every other line as a helper; and the network axes carry Mbps while the
