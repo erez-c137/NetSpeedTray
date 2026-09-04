@@ -77,7 +77,7 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
         run: |
-          python3 - "$ASSET_URL "${VERSION#v}" > product-update.json <<'PY'
+          python3 - "$ASSET_URL" "${VERSION#v}" > product-update.json <<'PY'
           import json, sys
           version = tuple(int(x) for x in sys.argv[2].split("."))
           languages = ["zh", "zh-tw", "nl", "en", "fr", "de", "he", "ja", "ko", "pl", "ru", "sl", "tr", "es"]
