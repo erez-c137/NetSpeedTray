@@ -70,16 +70,22 @@ jobs:
           client-secret: ${{ secrets.MSSTORE_CLIENT_SECRET }}
 
       - name: Build the package payload
+        env:
+          VERSION: ${{ inputs.version }}
         run: |
-          python3 - "$ASSET_URL" > product-update.json <<'PY'
+          python3 - "$ASSET_URL "${VERSION#v}" > product-update.json <<'PY'
           import json, sys
+          version = tuple(int(x) for x in sys.argv[2].split("."))
+          languages = ["zh", "zh-tw", "nl", "en", "fr", "de", "he", "ja", "ko", "pl", "ru", "sl", "tr", "es"]
+          if version >= (2, 1, 5):
+              languages.append("it")          # Italian shipped in 2.1.5 (#279)
           scenarios = ["installationCancelledByUser", "applicationAlreadyExists",
                        "installationAlreadyInProgress", "diskSpaceIsFull", "rebootRequired",
                        "networkFailure", "packageRejectedDuringInstallation",
                        "installationSuccessful", "miscellaneous"]
           print(json.dumps({"packages": [{
               "packageUrl": sys.argv[1],
-              "languages": ["zh", "zh-tw", "nl", "en", "fr", "de", "he", "ja", "ko", "pl", "ru", "sl", "tr", "es", "it"],
+              "languages": languages,
               "architectures": ["X64"],
               "isSilentInstall": False,
               "installerParameters": "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-",
