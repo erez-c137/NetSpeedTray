@@ -1,0 +1,60 @@
+name: Store preflight
+
+# Manual, read-only check of the Microsoft Store credentials and listing. Run this once after the
+# five MSSTORE_* secrets are created, and again whenever they change. It never submits anything:
+# it configures the Store action with the secrets, fetches the listing's current draft, and prints
+# the package module - the installer URL, the silent-install switches and the error-doc URL that
+# the by-hand submission used - so release.yml's submit-to-msstore payload can be matched to it
+# before a real tag ever runs that job.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  store-preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - name: All five secrets present?
+        env:
+          MSSTORE_SELLER_ID: ${{ secrets.MSSTORE_SELLER_ID }}
+          MSSTORE_PRODUCT_ID: ${{ secrets.MSSTORE_PRODUCT_ID }}
+          MSSTORE_TENANT_ID: ${{ secrets.MSSTORE_TENANT_ID }}
+          MSSTORE_CLIENT_ID: ${{ secrets.MSSTORE_CLIENT_ID }}
+          MSSTORE_CLIENT_SECRET: ${{ secrets.MSSTORE_CLIENT_SECRET }}
+        run: |
+          missing=0
+          for name in MSSTORE_SELLER_ID MSSTORE_PRODUCT_ID MSSTORE_TENANT_ID MSSTORE_CLIENT_ID MSSTORE_CLIENT_SECRET; do
+            if [ -z "${!name}" ]; then echo "::error::$name is not set"; missing=1; else echo "$name: set (${#name} chars in name, value hidden)"; fi
+          done
+          [ "$missing" -eq 0 ] || exit 1
+
+      - name: Configure Store credentials
+        uses: microsoft/store-submission@v1
+        with:
+          command: configure
+          type: win32
+          seller-id: ${{ secrets.MSSTORE_SELLER_ID }}
+          product-id: ${{ secrets.MSSTORE_PRODUCT_ID }}
+          tenant-id: ${{ secrets.MSSTORE_TENANT_ID }}
+          client-id: ${{ secrets.MSSTORE_CLIENT_ID }}
+          client-secret: ${{ secrets.MSSTORE_CLIENT_SECRET }}
+
+      - name: Fetch the listing's current draft (read-only)
+        id: draft
+        uses: microsoft/store-submission@v1
+        with:
+          command: get
+
+      - name: Show the package module release.yml must match
+        env:
+          DRAFT: ${{ steps.draft.outputs.draft-submission }}
+        run: |
+          if [ -z "$DRAFT" ]; then
+            echo "::warning::the action returned an empty draft - credentials worked but nothing came back; check the product id"
+            exit 0
+          fi
+          echo "== packages module (installer URL, switches, error-doc URL) =="
+          printf '%s' "$DRAFT" | jq '.packages // .' 2>/dev/null || printf '%s\n' "$DRAFT"
+          echo
+          echo "Compare with release.yml -> submit-to-msstore -> 'Point the listing at this release's installer':"
+          echo "  isSilentInstall / installerParameters / genericDocUrl / languages / architectures must match the above."
