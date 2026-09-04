@@ -28,8 +28,9 @@ on:
 jobs:
   submit:
     runs-on: ubuntu-latest
-    # Partner Center is a best-effort channel: a Store hiccup must never fail a release run.
-    continue-on-error: true
+    # Partner Center is a best-effort channel: a Store hiccup must never fail a RELEASE run (the
+    # caller's event is the tag push). A by-hand dispatch must show red when it fails.
+    continue-on-error: ${{ github.event_name == 'push' }}
     steps:
       - name: Refuse prereleases and check the asset exists
         env:
@@ -43,8 +44,11 @@ jobs:
           URL="https://github.com/erez-c137/NetSpeedTray/releases/download/v${VERSION}/NetSpeedTray-${VERSION}-x64-Setup.exe"
           # The Store downloads this URL itself. Prove it resolves to the real installer first -
           # the 2.1.4 by-hand submission pointed at a link that served a 3 KB HTML page instead.
-          read -r code bytes < <(curl -sSL -o /dev/null -w '%{http_code} %{size_download}' "$URL")
-          echo "asset: $URL -> HTTP $code, $bytes bytes"
+          # Not `read < <(curl ...)`: curl's -w output has no trailing newline, so `read` returns 1
+          # at EOF and the shell's exit-on-error kills the step before it prints anything.
+          out=$(curl -sSL -o /dev/null -w '%{http_code} %{size_download}' "$URL" || true)
+          code="${out%% *}"; bytes="${out##* }"; bytes="${bytes:-0}"
+          echo "asset: $URL -> HTTP ${code:-none}, $bytes bytes"
           if [ "$code" != "200" ] || [ "$bytes" -lt 10000000 ]; then
             echo "::error::release asset missing or too small ($bytes bytes) - not submitting"; exit 1
           fi
