@@ -140,80 +140,11 @@ jobs:
 
   submit-to-msstore:
     needs: build-and-sign
-    # Same guard as WinGet: a prerelease must never reach the Store listing. The listing is a
-    # Win32 EXE submission (Store ID XP9MHWQZJPLQM8), so the Store downloads and caches the
-    # Setup.exe from the GitHub release asset URL below, then runs its own certification pass.
-    # Nothing here is MSIX - the taskbar dock and the in-app updater behave exactly as on GitHub.
+    # Same guard as WinGet: a prerelease must never reach the Store listing. The implementation
+    # lives in store-submit.yml (one payload, also runnable by hand for a repair) and carries its
+    # own continue-on-error, so a Partner Center hiccup never fails the release run.
     if: "!contains(github.ref_name, '-')"
-    runs-on: ubuntu-latest
-    # Partner Center is a best-effort channel: a Store hiccup must not fail the release.
-    continue-on-error: true
-    steps:
-      - name: Check Store credentials
-        id: creds
-        env:
-          CLIENT_ID: ${{ secrets.MSSTORE_CLIENT_ID }}
-        run: |
-          if [ -z "$CLIENT_ID" ]; then
-            echo "::warning::MSSTORE_* secrets are not set - Store submission skipped. Submit ${GITHUB_REF_NAME} by hand in Partner Center."
-            echo "ok=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "ok=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Configure Store credentials
-        if: steps.creds.outputs.ok == 'true'
-        uses: microsoft/store-submission@v1
-        with:
-          command: configure
-          type: win32
-          seller-id: ${{ secrets.MSSTORE_SELLER_ID }}
-          product-id: ${{ secrets.MSSTORE_PRODUCT_ID }}
-          tenant-id: ${{ secrets.MSSTORE_TENANT_ID }}
-          client-id: ${{ secrets.MSSTORE_CLIENT_ID }}
-          client-secret: ${{ secrets.MSSTORE_CLIENT_SECRET }}
-
-      - name: Point the listing at this release's installer
-        if: steps.creds.outputs.ok == 'true'
-        env:
-          VERSION: ${{ github.ref_name }}
-        run: |
-          V="${VERSION#v}"
-          URL="https://github.com/erez-c137/NetSpeedTray/releases/download/${VERSION}/NetSpeedTray-${V}-x64-Setup.exe"
-          # This PUT replaces the listing's package module, so every field below mirrors what the
-          # by-hand 2.1.4 submission holds - read back verbatim by the Store preflight workflow on
-          # 2026-09-04 - except packageUrl, which moves from the one-off upload to the GitHub
-          # release asset. Change a field here only after re-reading the module with the preflight.
-          python3 - "$URL" > product-update.json <<'PY'
-          import json, sys
-          scenarios = ["installationCancelledByUser", "applicationAlreadyExists",
-                       "installationAlreadyInProgress", "diskSpaceIsFull", "rebootRequired",
-                       "networkFailure", "packageRejectedDuringInstallation",
-                       "installationSuccessful", "miscellaneous"]
-          print(json.dumps({"packages": [{
-              "packageUrl": sys.argv[1],
-              "languages": ["zh", "zh-tw", "nl", "en", "fr", "de", "he", "ja", "ko", "pl", "ru", "sl", "tr", "es", "it"],
-              "architectures": ["X64"],
-              "isSilentInstall": False,
-              "installerParameters": "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-",
-              "genericDocUrl": "https://github.com/erez-c137/NetSpeedTray",
-              "errorDetails": [{"errorScenario": s, "errorScenarioDetails": []} for s in scenarios],
-              "packageType": "exe",
-          }]}, separators=(",", ":")))
-          PY
-          echo "PRODUCT_UPDATE=$(cat product-update.json)" >> "$GITHUB_ENV"
-          echo "Store package URL: $URL"
-          python3 -c "import json;p=json.load(open('product-update.json'))['packages'][0];p.pop('errorDetails');print(json.dumps(p,indent=2))"
-
-      - name: Update draft submission
-        if: steps.creds.outputs.ok == 'true'
-        uses: microsoft/store-submission@v1
-        with:
-          command: update
-          product-update: ${{ env.PRODUCT_UPDATE }}
-
-      - name: Publish submission
-        if: steps.creds.outputs.ok == 'true'
-        uses: microsoft/store-submission@v1
-        with:
-          command: publish
+    uses: ./.github/workflows/store-submit.yml
+    with:
+      version: ${{ github.ref_name }}
+    secrets: inherit
