@@ -75,13 +75,13 @@ ALSO
 
 ---
 
-## [2.1.5] - September 8, 2026
+## [2.1.5] - September 4, 2026
 
 The release that makes rolling back safe - the escape hatch the 2.2 beta cycle depends on, plus
 honest numbers on the widget and in every export.
 
-> **Upgrading:** the first launch compacts the history database (a typical install drops from
-> ~53 MB to ~7 MB - nothing is deleted, the file was mostly slack). And very light traffic now
+> **Upgrading:** the first launch compacts the history database (the maintainer's own went from
+> 53 MB to 3.7 MB - nothing is deleted, the file was mostly slack). And very light traffic now
 > shows as `0.02 Mbps` instead of `0.0 Mbps` - a display change, not a measurement change.
 
 ### Added
@@ -115,7 +115,8 @@ honest numbers on the widget and in every export.
 
 - **After a silent install, NetSpeedTray starts right away.** Installs from the Microsoft Store
   and `winget` show no Finish page, so until now the app was simply not running until your next
-  sign-in - and a `winget upgrade` left it closed. The installer now starts it, unelevated.
+  sign-in - and a `winget upgrade` left it closed. The installer now starts it, unelevated. A
+  silent upgrade over a running copy also no longer waits on an invisible "close it?" prompt.
 
 - **The startup cleanup only deletes update folders it created itself, and logs every removal.**
   A rollback copy like `NetSpeedTray-2.1.5-backup` kept beside the install now survives every
@@ -160,8 +161,9 @@ honest numbers on the widget and in every export.
   the placeholders through is unchanged.*
 
 - **Hovering the Monitor graph shows a readout on every tab.** It only ever worked on the combined
-  Hardware view; the Network tab and the other Hardware layouts showed nothing. The readout also
-  uses your unit setting.
+  Hardware view; the Network tab and the other Hardware layouts showed nothing. The readout uses
+  your unit setting, and it reports the peak under the cursor, so a one-second spike reads as
+  drawn instead of as its neighbour.
 
   *Under the hood: two bugs masking each other. Only one plot call passed `label=`, so the
   tooltip skipped every other line as a helper; and the network axes carry Mbps while the
@@ -199,10 +201,12 @@ honest numbers on the widget and in every export.
   to end. The false branch is rehearsed by this very release's tag. ([#257])
 - The exe's `FileVersion` string in Explorer's file Properties now reads `2.1.5` (previously
   `2.1.4.0`-style); the numeric version resource is unchanged.
-- Each release is also submitted to the Microsoft Store listing by CI once the Partner Center
-  credentials are configured; until then the job skips with a warning and the submission is
-  done by hand. Prereleases never reach the Store, by the same guard as WinGet.
-- 1,361 tests, up 136 from 2.1.4. Every fix above landed with a test demonstrated failing first.
+- Each release is submitted to the Microsoft Store listing by CI (`store-submit.yml`, which can
+  also be run by hand for an existing release); the Store fetches the installer from the GitHub
+  release asset. Prereleases never reach the Store, by the same guard as WinGet.
+- The signing step waits up to 30 minutes for SignPath approval instead of 10, so a held
+  approval no longer fails the whole run.
+- 1,363 tests, up 138 from 2.1.4. Every fix above landed with a test demonstrated failing first.
 
 [#202]: https://github.com/erez-c137/NetSpeedTray/issues/202
 [#237]: https://github.com/erez-c137/NetSpeedTray/issues/237
