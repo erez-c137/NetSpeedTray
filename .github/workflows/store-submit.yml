@@ -1,0 +1,109 @@
+name: Store submit
+
+# Submits ONE released version's Setup.exe to the Microsoft Store listing (Win32 EXE listing
+# XP9MHWQZJPLQM8) and starts certification. Two entry points, one implementation:
+#   - workflow_call:     release.yml calls it after a non-prerelease tag is published.
+#   - workflow_dispatch: run it by hand for a version that is already a GitHub release, e.g. to
+#                        repair the listing (2026-09-04: the by-hand submission had pointed the
+#                        Store at a tmpfiles.org link, so the Store cached a 3 KB HTML page as
+#                        the installer and every install failed).
+# The package payload mirrors what Partner Center holds field for field - read it back with the
+# Store preflight workflow before changing anything here. Only packageUrl differs: it is always the
+# GitHub release asset, never a one-off upload.
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: "Release version without the v, e.g. 2.1.5 (its GitHub release must exist)"
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version without the v, e.g. 2.1.4 (its GitHub release must exist)"
+        required: true
+        type: string
+
+jobs:
+  submit:
+    runs-on: ubuntu-latest
+    # Partner Center is a best-effort channel: a Store hiccup must never fail a release run.
+    continue-on-error: true
+    steps:
+      - name: Refuse prereleases and check the asset exists
+        env:
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${VERSION#v}"                      # release.yml passes the raw tag (v2.1.5)
+          case "$VERSION" in
+            *-*) echo "::error::'$VERSION' is a prerelease - the Store listing never gets one"; exit 1 ;;
+          esac
+          URL="https://github.com/erez-c137/NetSpeedTray/releases/download/v${VERSION}/NetSpeedTray-${VERSION}-x64-Setup.exe"
+          # The Store downloads this URL itself. Prove it resolves to the real installer first -
+          # the 2.1.4 by-hand submission pointed at a link that served a 3 KB HTML page instead.
+          read -r code bytes < <(curl -sSL -o /dev/null -w '%{http_code} %{size_download}' "$URL")
+          echo "asset: $URL -> HTTP $code, $bytes bytes"
+          if [ "$code" != "200" ] || [ "$bytes" -lt 10000000 ]; then
+            echo "::error::release asset missing or too small ($bytes bytes) - not submitting"; exit 1
+          fi
+          echo "ASSET_URL=$URL" >> "$GITHUB_ENV"
+
+      - name: Check Store credentials
+        env:
+          CLIENT_ID: ${{ secrets.MSSTORE_CLIENT_ID }}
+        run: |
+          if [ -z "$CLIENT_ID" ]; then
+            echo "::error::MSSTORE_* secrets are not set - submit ${{ inputs.version }} by hand in Partner Center"; exit 1
+          fi
+
+      - name: Configure Store credentials
+        uses: microsoft/store-submission@v1
+        with:
+          command: configure
+          type: win32
+          seller-id: ${{ secrets.MSSTORE_SELLER_ID }}
+          product-id: ${{ secrets.MSSTORE_PRODUCT_ID }}
+          tenant-id: ${{ secrets.MSSTORE_TENANT_ID }}
+          client-id: ${{ secrets.MSSTORE_CLIENT_ID }}
+          client-secret: ${{ secrets.MSSTORE_CLIENT_SECRET }}
+
+      - name: Build the package payload
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          python3 - "$ASSET_URL "${VERSION#v}" > product-update.json <<'PY'
+          import json, sys
+          version = tuple(int(x) for x in sys.argv[2].split("."))
+          languages = ["zh", "zh-tw", "nl", "en", "fr", "de", "he", "ja", "ko", "pl", "ru", "sl", "tr", "es"]
+          if version >= (2, 1, 5):
+              languages.append("it")          # Italian shipped in 2.1.5 (#279)
+          scenarios = ["installationCancelledByUser", "applicationAlreadyExists",
+                       "installationAlreadyInProgress", "diskSpaceIsFull", "rebootRequired",
+                       "networkFailure", "packageRejectedDuringInstallation",
+                       "installationSuccessful", "miscellaneous"]
+          print(json.dumps({"packages": [{
+              "packageUrl": sys.argv[1],
+              "languages": languages,
+              "architectures": ["X64"],
+              "isSilentInstall": False,
+              "installerParameters": "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-",
+              "genericDocUrl": "https://github.com/erez-c137/NetSpeedTray",
+              "errorDetails": [{"errorScenario": s, "errorScenarioDetails": []} for s in scenarios],
+              "packageType": "exe",
+          }]}, separators=(",", ":")))
+          PY
+          echo "PRODUCT_UPDATE=$(cat product-update.json)" >> "$GITHUB_ENV"
+          python3 -c "import json;p=json.load(open('product-update.json'))['packages'][0];p.pop('errorDetails');print(json.dumps(p,indent=2))"
+
+      - name: Update the draft's package module
+        uses: microsoft/store-submission@v1
+        with:
+          command: update
+          product-update: ${{ env.PRODUCT_UPDATE }}
+
+      - name: Publish (starts certification)
+        uses: microsoft/store-submission@v1
+        with:
+          command: publish
