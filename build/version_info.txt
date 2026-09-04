@@ -1,7 +1,7 @@
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(2, 1, 4, 0),
-    prodvers=(2, 1, 4, 0),
+    filevers=(2, 1, 5, 0),
+    prodvers=(2, 1, 5, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -17,12 +17,12 @@ VSVersionInfo(
           [
             StringStruct('CompanyName', 'Erez C137'),
             StringStruct('FileDescription', 'NetSpeedTray'),
-            StringStruct('FileVersion', '2.1.4'),
+            StringStruct('FileVersion', '2.1.5'),
             StringStruct('InternalName', 'NetSpeedTray'),
             StringStruct('LegalCopyright', 'Copyright (c) Erez C137'),
             StringStruct('OriginalFilename', 'NetSpeedTray.exe'),
             StringStruct('ProductName', 'NetSpeedTray'),
-            StringStruct('ProductVersion', '2.1.4'),
+            StringStruct('ProductVersion', '2.1.5'),
           ]
         )
       ]
