@@ -113,6 +113,10 @@ honest numbers on the widget and in every export.
 
 ### Changed
 
+- **After a silent install, NetSpeedTray starts right away.** Installs from the Microsoft Store
+  and `winget` show no Finish page, so until now the app was simply not running until your next
+  sign-in - and a `winget upgrade` left it closed. The installer now starts it, unelevated.
+
 - **The startup cleanup only deletes update folders it created itself, and logs every removal.**
   A rollback copy like `NetSpeedTray-2.1.5-backup` kept beside the install now survives every
   launch. ([#264])
