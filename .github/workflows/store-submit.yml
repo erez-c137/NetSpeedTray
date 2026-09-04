@@ -92,7 +92,10 @@ jobs:
               "languages": languages,
               "architectures": ["X64"],
               "isSilentInstall": False,
-              "installerParameters": "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-",
+              # The submission API caps this at 40 characters (the Partner Center UI accepted the
+              # 45-character "... /SP-"; the API rejects it). /SP- only suppresses Inno's startup
+              # prompt, which never shows under /VERYSILENT - same install. Exactly 40 characters.
+              "installerParameters": "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART",
               "genericDocUrl": "https://github.com/erez-c137/NetSpeedTray",
               "errorDetails": [{"errorScenario": s, "errorScenarioDetails": []} for s in scenarios],
               "packageType": "exe",
