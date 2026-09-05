@@ -75,6 +75,60 @@ ALSO
 
 ---
 
+## [2.1.6] - September 6, 2026
+
+The hotfix for the in-app updater. Since 2.1.4 it downloaded and verified every update and then
+threw it away. If you are on 2.1.4 or 2.1.5, update **once by hand** - after that, updates are one
+click again.
+
+> **Upgrading from 2.1.4 or 2.1.5:** the built-in updater in those versions cannot finish an update
+> (below). Download the installer from the release page and run it, or use `winget upgrade`, or the
+> Microsoft Store. You only have to do this once.
+
+### Fixed
+
+- **In-app updates no longer end in nothing.** Since 2.1.4, every update downloaded, verified, and
+  then silently deleted itself: the progress window closing counted as you pressing Cancel. Both the
+  installer and the portable paths were affected. ([#296], [#260])
+
+  *Under the hood: Qt's `QProgressDialog` emits `canceled()` from its close event, not only from
+  the Cancel button. `_close_progress()` closed the dialog one line before `_on_verified` checked
+  the cancelled flag, so the finished download was cleaned up and the updater returned without a
+  log line - the one silent path in the module. The dialog is now detached and silenced before it
+  is closed, a late `canceled` is ignored, and the cancel path logs. The regression tests drive a
+  real `QProgressDialog`; the sixteen updater tests that existed never built one.*
+
+- **The update installs itself and brings the app back.** One click, and about ten seconds later
+  NetSpeedTray is running on the new version - no wizard, no copying files. Declining the
+  permission prompt keeps the app running and opens the download page instead of leaving you with
+  nothing.
+
+  *Under the hood: even with the cancel bug fixed, nothing installed. Two more mechanisms, both
+  measured live. Windows tears down an elevated process when the process that requested it exits,
+  so quitting for the installer killed it. Keeping the app alive got further, and then the
+  installer's own `taskkill /F /IM NetSpeedTray.exe /T` walked the tree it was standing in - as a
+  descendant of the app, it killed itself mid-install, its log stopping inside the line that
+  announces the taskkill. The app now elevates a shell that starts the installer and exits, so the
+  installer is orphaned and the update survives the app quitting, being killed, or crashing. The
+  app no longer quits at all; the installer closes it, exactly as a Store or winget upgrade does.
+  `/T` is gone from the installer - `/IM` always ended every process with that name.*
+
+- **An update that goes wrong now says so.** The installer writes its own log next to the app's, so
+  a support bundle shows what happened after the app handed over, and if the installer never
+  replaces the running version the app reports it instead of waiting silently.
+
+### Developer notes
+
+- 1,371 tests. Every fix was reproduced with a failing test first, then the whole path was verified
+  live: a client labeled 2.1.4 built from this code, installed, and updated to the published 2.1.5
+  release by pressing Download - twelve seconds from click to the new version running. The target
+  was the 2.1.5 installer, so the app-side fix stands on its own.
+
+[#260]: https://github.com/erez-c137/NetSpeedTray/issues/260
+[#296]: https://github.com/erez-c137/NetSpeedTray/issues/296
+
+---
+
 ## [2.1.5] - September 4, 2026
 
 The release that makes rolling back safe - the escape hatch the 2.2 beta cycle depends on, plus
