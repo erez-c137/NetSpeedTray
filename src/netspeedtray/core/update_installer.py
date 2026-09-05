@@ -89,10 +89,62 @@ def sweep_stale_update_dirs() -> None:
         pass
 
 
-def launch_installer(path: str) -> None:
-    """Launch the (already-verified) installer. The app must then quit so Inno's
-    AppMutex check passes and it can replace the running files."""
-    subprocess.Popen([path], close_fds=True)
+# The switches the Microsoft Store and winget run the installer with - and, since 2.1.5, what makes
+# the installer relaunch the app as the original user when it is done (setup.iss, LaunchAfterSilentInstall).
+INSTALLER_SILENT_ARGS = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART"
+_ERROR_CANCELLED = 1223
+
+
+class UpdateElevationDeclined(RuntimeError):
+    """The user said No at the UAC prompt. Not a failure of ours - and not a reason to vanish."""
+
+
+def _shell_execute_runas(path: str, params: str, hwnd: int = 0) -> None:
+    """ShellExecuteEx(runas): start `path` elevated. Blocks until the UAC prompt is answered, then
+    returns once the elevated process exists. Raises UpdateElevationDeclined on ERROR_CANCELLED,
+    OSError on anything else. Isolated so tests can replace it without touching UAC."""
+    import ctypes
+    from ctypes import wintypes as w
+
+    class SHELLEXECUTEINFOW(ctypes.Structure):
+        _fields_ = [("cbSize", w.DWORD), ("fMask", w.ULONG), ("hwnd", w.HWND), ("lpVerb", w.LPCWSTR),
+                    ("lpFile", w.LPCWSTR), ("lpParameters", w.LPCWSTR), ("lpDirectory", w.LPCWSTR),
+                    ("nShow", ctypes.c_int), ("hInstApp", w.HINSTANCE), ("lpIDList", ctypes.c_void_p),
+                    ("lpClass", w.LPCWSTR), ("hkeyClass", w.HKEY), ("dwHotKey", w.DWORD),
+                    ("hIcon", w.HANDLE), ("hProcess", w.HANDLE)]
+
+    SEE_MASK_NOCLOSEPROCESS, SEE_MASK_NOASYNC, SEE_MASK_FLAG_NO_UI = 0x40, 0x100, 0x400
+    sei = SHELLEXECUTEINFOW()
+    sei.cbSize = ctypes.sizeof(sei)
+    sei.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC | SEE_MASK_FLAG_NO_UI
+    sei.hwnd = hwnd or None
+    sei.lpVerb = "runas"
+    sei.lpFile = path
+    sei.lpParameters = params
+    sei.lpDirectory = os.path.dirname(path) or None
+    sei.nShow = 1  # SW_SHOWNORMAL
+    shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+    if not shell32.ShellExecuteExW(ctypes.byref(sei)):
+        err = ctypes.get_last_error()
+        if err == _ERROR_CANCELLED:
+            raise UpdateElevationDeclined("the UAC prompt was declined")
+        raise OSError(err, f"ShellExecuteEx(runas) failed with Win32 error {err}")
+    if sei.hProcess:
+        ctypes.windll.kernel32.CloseHandle(sei.hProcess)
+
+
+def launch_installer(path: str, hwnd: int = 0) -> None:
+    """Start the (already-verified) installer ELEVATED and SILENT, then return so the app can quit.
+
+    Why not just `Popen([path])`: that ran the installer's non-elevated stub, which requested
+    elevation on its own AFTER the app had quit - the UAC prompt belonged to a process with no
+    window, so on some machines it never came to the front, and a declined prompt left the user
+    with no app and no message (#296, #260). Now the elevation request is ours, made while we are
+    the foreground app, and the installer runs with the Store/winget switches, which also relaunch
+    the app when it is done (since 2.1.5). A declined prompt raises UpdateElevationDeclined so the
+    caller can say so; the app keeps running.
+    """
+    _shell_execute_runas(path, INSTALLER_SILENT_ARGS, hwnd)
 
 
 def _safe_extract(zip_path: str, dest_dir: str) -> None:
@@ -462,9 +514,20 @@ class SecureUpdater(QObject):
             self._fallback(f"signature check failed: {reason}")
             return
         try:
-            launch_installer(path)
+            hwnd = 0
+            try:
+                if self._parent is not None:
+                    hwnd = int(self._parent.winId())
+            except Exception:  # noqa: BLE001
+                hwnd = 0
+            launch_installer(path, hwnd)
+            logger.info("Verified installer started elevated and silent; it will relaunch the app when done.")
             self.launching.emit()
             self._finish()
+        except UpdateElevationDeclined:
+            logger.info("Update cancelled at the UAC prompt; staying on the current version.")
+            self._cleanup_file()
+            self._fallback("the elevation prompt was declined")
         except Exception as e:  # noqa: BLE001
             logger.error("Could not launch installer: %s", e, exc_info=True)
             self._cleanup_file()
