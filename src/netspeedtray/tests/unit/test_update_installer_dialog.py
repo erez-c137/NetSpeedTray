@@ -55,6 +55,19 @@ def test_closing_the_progress_dialog_is_not_a_user_cancel(updater, q_app):
 def test_a_verified_installer_is_launched_not_discarded(updater, monkeypatch, q_app):
     launched = []
     monkeypatch.setattr(ui, "launch_installer", lambda path, hwnd=0: launched.append(path))
+
+    updater._on_progress(100)
+    updater._on_verified(updater._dest, True, "ok")
+    q_app.processEvents()
+
+    assert launched == [updater._dest], "the verified installer must be launched"
+    assert os.path.isfile(updater._dest), "the download must not be deleted on the success path"
+
+
+def test_the_app_does_not_quit_when_the_installer_starts(updater, monkeypatch, q_app):
+    """Windows kills the elevated installer when the process that asked for it exits. Quitting here
+    is what made the update end in nothing (measured live 2026-09-06); the installer closes us."""
+    monkeypatch.setattr(ui, "launch_installer", lambda path, hwnd=0: None)
     quit_requested = []
     updater.launching.connect(lambda: quit_requested.append(True))
 
@@ -62,9 +75,19 @@ def test_a_verified_installer_is_launched_not_discarded(updater, monkeypatch, q_
     updater._on_verified(updater._dest, True, "ok")
     q_app.processEvents()
 
-    assert launched == [updater._dest], "the verified installer must be launched"
-    assert quit_requested, "the app must be told to quit for the installer"
-    assert os.path.isfile(updater._dest), "the download must not be deleted on the success path"
+    assert quit_requested == [], "the app must stay alive so the installer survives"
+
+
+def test_still_running_much_later_is_reported_not_ignored(updater, monkeypatch, q_app):
+    """If the installer never replaces us, say so - silence is what hid this for three releases."""
+    monkeypatch.setattr(ui, "launch_installer", lambda path, hwnd=0: None)
+    fallbacks = []
+    monkeypatch.setattr(updater, "_fallback", lambda reason: fallbacks.append(reason))
+    updater._on_progress(100)
+    updater._on_verified(updater._dest, True, "ok")
+    updater._not_replaced()          # the watchdog, fired directly instead of waiting 3 minutes
+    q_app.processEvents()
+    assert fallbacks and "did not replace" in fallbacks[0]
 
 
 def test_a_real_cancel_click_still_cancels(updater, monkeypatch, q_app):
@@ -94,13 +117,24 @@ def test_portable_staged_path_is_not_cancelled_by_the_dialog_closing(updater, mo
 
 # ----------------------------------------------------------------------------- the elevated launch
 
-def test_launch_runs_the_installer_elevated_and_silent(monkeypatch):
-    """The installer is started through ShellExecuteEx(runas) with the Store/winget switches, so the
-    UAC prompt is the app's own and the install is hands-off, ending in the installer relaunching us."""
+def test_launch_orphans_the_installer_so_nothing_here_can_kill_it(monkeypatch):
+    """The installer must not be our child. We elevate a shell that `start`s it and exits, so the
+    installer survives this process quitting AND its own `taskkill /IM NetSpeedTray.exe` - which,
+    while it was a descendant of ours, killed it mid-install (measured live 2026-09-06)."""
     calls = []
-    monkeypatch.setattr(ui, "_shell_execute_runas", lambda path, params, hwnd=0: calls.append((path, params, hwnd)))
+    monkeypatch.setattr(ui, "_shell_execute_runas",
+                        lambda path, params, hwnd=0, show=1: calls.append((path, params, hwnd, show)))
+    monkeypatch.setattr(ui, "_installer_log_path", lambda: "C:/logs/update-install.log")
+    monkeypatch.setenv("COMSPEC", r"C:\Windows\System32\cmd.exe")
+
     ui.launch_installer(r"C:\dl\Setup.exe", hwnd=42)
-    assert calls == [(r"C:\dl\Setup.exe", "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART", 42)]
+
+    (elevated, params, hwnd, show), = calls
+    assert elevated.lower().endswith("cmd.exe"), "the elevated process is the shell, not the installer"
+    assert params.startswith('/c start "" "C:\\dl\\Setup.exe" '), params
+    assert "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART" in params, "the Store/winget switches"
+    assert '/LOG="C:/logs/update-install.log"' in params, "the installer must leave a log"
+    assert (hwnd, show) == (42, 0), "owned by our window, and no console flash"
 
 
 def test_a_declined_uac_prompt_keeps_the_app_and_says_so(updater, monkeypatch, q_app):

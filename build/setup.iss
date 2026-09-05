@@ -186,11 +186,14 @@ begin
     
     if IsAppRunning() or (FindWindow('', 'NetSpeedTrayHidden') <> 0) then
     begin
-      Log('Graceful close incomplete (parent/child lingering), using taskkill on EXE/tree...');
+      // No /T: it kills the whole process TREE, and when the in-app updater starts this installer
+      // the installer is a descendant of the app - so /T made it kill itself mid-install. /IM alone
+      // already ends every process with that name, which is all this ever needed.
+      Log('Graceful close incomplete (parent/child lingering), using taskkill on the EXE...');
       KillAttempts := 0;
       while (KillAttempts < 3) and IsAppRunning() do
       begin
-        if Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM "{#MyAppExeName}" /T', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+        if Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM "{#MyAppExeName}"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
         begin
           Log('taskkill (attempt ' + IntToStr(KillAttempts + 1) + ') executed with exit code: ' + IntToStr(ResultCode));
           Sleep(2000); 
@@ -221,11 +224,11 @@ begin
   end
   else
   begin
-    Log('Could not find NetSpeedTray window, falling back to taskkill on EXE/tree...');
+    Log('Could not find NetSpeedTray window, falling back to taskkill on the EXE...');
     KillAttempts := 0;
     while (KillAttempts < 3) and IsAppRunning() do
     begin
-      if Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM "{#MyAppExeName}" /T', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+      if Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM "{#MyAppExeName}"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
       begin
         Log('taskkill (attempt ' + IntToStr(KillAttempts + 1) + ') executed with exit code: ' + IntToStr(ResultCode));
         Sleep(2000);
