@@ -99,7 +99,7 @@ class UpdateElevationDeclined(RuntimeError):
     """The user said No at the UAC prompt. Not a failure of ours - and not a reason to vanish."""
 
 
-def _shell_execute_runas(path: str, params: str, hwnd: int = 0) -> None:
+def _shell_execute_runas(path: str, params: str, hwnd: int = 0, show: int = 1) -> None:
     """ShellExecuteEx(runas): start `path` elevated. Blocks until the UAC prompt is answered, then
     returns once the elevated process exists. Raises UpdateElevationDeclined on ERROR_CANCELLED,
     OSError on anything else. Isolated so tests can replace it without touching UAC."""
@@ -122,7 +122,7 @@ def _shell_execute_runas(path: str, params: str, hwnd: int = 0) -> None:
     sei.lpFile = path
     sei.lpParameters = params
     sei.lpDirectory = os.path.dirname(path) or None
-    sei.nShow = 1  # SW_SHOWNORMAL
+    sei.nShow = show
     shell32 = ctypes.WinDLL("shell32", use_last_error=True)
     if not shell32.ShellExecuteExW(ctypes.byref(sei)):
         err = ctypes.get_last_error()
@@ -152,16 +152,25 @@ def launch_installer(path: str, hwnd: int = 0) -> None:
     the installer relaunch the app when it is done (since 2.1.5). A declined prompt raises
     UpdateElevationDeclined, and the app carries on.
 
-    The caller must not exit here. Windows ties the elevated process to the requester: quitting
-    straight after this call killed the installer before it wrote a line of its own log (measured
-    2026-09-06). The installer closes the app itself and then brings the new version back.
+    The installer must NOT end up as this process's child, which is what `ShellExecuteEx` on the
+    installer itself produces. Two separate things then kill it (both measured live, 2026-09-06):
+    Windows tears down the elevated process when the requester exits, and the installer's own
+    ``taskkill /F /IM NetSpeedTray.exe /T`` walks the tree it is standing in and kills itself
+    mid-install - its log stops in the middle of the line that says so.
+
+    So we elevate a shell that `start`s the installer and exits immediately. The installer is
+    orphaned before anything can happen to it, and the update no longer depends on this process at
+    all: it survives us quitting, being killed, or crashing.
     """
     params = INSTALLER_SILENT_ARGS
     try:
         params += f' /LOG="{_installer_log_path()}"'
     except Exception as e:  # noqa: BLE001 - the log is a nice-to-have, the install is not
         logger.debug("No installer log path: %s", e)
-    _shell_execute_runas(path, params, hwnd)
+    comspec = os.environ.get("COMSPEC") or os.path.join(os.environ.get("SystemRoot", r"C:\Windows"),
+                                                        "System32", "cmd.exe")
+    # `start ""` needs the empty title first, or it eats the quoted path as one.
+    _shell_execute_runas(comspec, f'/c start "" "{path}" {params}', hwnd, show=0)
 
 
 def _safe_extract(zip_path: str, dest_dir: str) -> None:

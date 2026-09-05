@@ -117,14 +117,24 @@ def test_portable_staged_path_is_not_cancelled_by_the_dialog_closing(updater, mo
 
 # ----------------------------------------------------------------------------- the elevated launch
 
-def test_launch_runs_the_installer_elevated_and_silent(monkeypatch):
-    """The installer is started through ShellExecuteEx(runas) with the Store/winget switches, so the
-    UAC prompt is the app's own and the install is hands-off, ending in the installer relaunching us."""
+def test_launch_orphans_the_installer_so_nothing_here_can_kill_it(monkeypatch):
+    """The installer must not be our child. We elevate a shell that `start`s it and exits, so the
+    installer survives this process quitting AND its own `taskkill /IM NetSpeedTray.exe` - which,
+    while it was a descendant of ours, killed it mid-install (measured live 2026-09-06)."""
     calls = []
-    monkeypatch.setattr(ui, "_shell_execute_runas", lambda path, params, hwnd=0: calls.append((path, params, hwnd)))
+    monkeypatch.setattr(ui, "_shell_execute_runas",
+                        lambda path, params, hwnd=0, show=1: calls.append((path, params, hwnd, show)))
     monkeypatch.setattr(ui, "_installer_log_path", lambda: "C:/logs/update-install.log")
+    monkeypatch.setenv("COMSPEC", r"C:\Windows\System32\cmd.exe")
+
     ui.launch_installer(r"C:\dl\Setup.exe", hwnd=42)
-    assert calls == [(r"C:\dl\Setup.exe", '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG="C:/logs/update-install.log"', 42)]
+
+    (elevated, params, hwnd, show), = calls
+    assert elevated.lower().endswith("cmd.exe"), "the elevated process is the shell, not the installer"
+    assert params.startswith('/c start "" "C:\\dl\\Setup.exe" '), params
+    assert "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART" in params, "the Store/winget switches"
+    assert '/LOG="C:/logs/update-install.log"' in params, "the installer must leave a log"
+    assert (hwnd, show) == (42, 0), "owned by our window, and no console flash"
 
 
 def test_a_declined_uac_prompt_keeps_the_app_and_says_so(updater, monkeypatch, q_app):
