@@ -99,8 +99,9 @@ def test_launch_runs_the_installer_elevated_and_silent(monkeypatch):
     UAC prompt is the app's own and the install is hands-off, ending in the installer relaunching us."""
     calls = []
     monkeypatch.setattr(ui, "_shell_execute_runas", lambda path, params, hwnd=0: calls.append((path, params, hwnd)))
+    monkeypatch.setattr(ui, "_installer_log_path", lambda: "C:/logs/update-install.log")
     ui.launch_installer(r"C:\dl\Setup.exe", hwnd=42)
-    assert calls == [(r"C:\dl\Setup.exe", "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART", 42)]
+    assert calls == [(r"C:\dl\Setup.exe", '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG="C:/logs/update-install.log"', 42)]
 
 
 def test_a_declined_uac_prompt_keeps_the_app_and_says_so(updater, monkeypatch, q_app):

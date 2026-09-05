@@ -133,6 +133,15 @@ def _shell_execute_runas(path: str, params: str, hwnd: int = 0) -> None:
         ctypes.windll.kernel32.CloseHandle(sei.hProcess)
 
 
+def _installer_log_path() -> str:
+    """Where the elevated installer writes ITS log: next to the app's own log, so a support bundle
+    carries what the installer did. An update that ends in nothing must never be silent again."""
+    from netspeedtray.utils.helpers import get_app_data_path
+    logs = os.path.join(str(get_app_data_path()), "logs")
+    os.makedirs(logs, exist_ok=True)
+    return os.path.join(logs, "update-install.log")
+
+
 def launch_installer(path: str, hwnd: int = 0) -> None:
     """Start the (already-verified) installer ELEVATED and SILENT, then return so the app can quit.
 
@@ -144,7 +153,12 @@ def launch_installer(path: str, hwnd: int = 0) -> None:
     the app when it is done (since 2.1.5). A declined prompt raises UpdateElevationDeclined so the
     caller can say so; the app keeps running.
     """
-    _shell_execute_runas(path, INSTALLER_SILENT_ARGS, hwnd)
+    params = INSTALLER_SILENT_ARGS
+    try:
+        params += f' /LOG="{_installer_log_path()}"'
+    except Exception as e:  # noqa: BLE001 - the log is a nice-to-have, the install is not
+        logger.debug("No installer log path: %s", e)
+    _shell_execute_runas(path, params, hwnd)
 
 
 def _safe_extract(zip_path: str, dest_dir: str) -> None:
