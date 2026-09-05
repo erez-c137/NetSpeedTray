@@ -6,7 +6,7 @@ the old behavior - so the worst case is never worse than before):
 
     download installer_url -> %TEMP%  (HTTPS, with a progress dialog)
       -> signature_verifier.verify_file()  (WinVerifyTrust + SignPath pin, fail-closed)
-        -> launch the installer + quit the app   (Inno's AppMutex lets it replace us)
+        -> run the installer elevated + silent, and let IT close and replace us
 
 Both the download AND the (potentially network-blocking) signature verification run on
 the worker thread, so the UI never freezes. The download host doesn't have to be
@@ -33,7 +33,7 @@ import urllib.request
 import zipfile
 from typing import Callable, Optional
 
-from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal
+from PyQt6.QtCore import QObject, Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QMessageBox, QProgressDialog, QWidget
 
 from netspeedtray import constants
@@ -143,15 +143,18 @@ def _installer_log_path() -> str:
 
 
 def launch_installer(path: str, hwnd: int = 0) -> None:
-    """Start the (already-verified) installer ELEVATED and SILENT, then return so the app can quit.
+    """Start the (already-verified) installer ELEVATED and SILENT. The caller must then STAY ALIVE.
 
     Why not just `Popen([path])`: that ran the installer's non-elevated stub, which requested
-    elevation on its own AFTER the app had quit - the UAC prompt belonged to a process with no
-    window, so on some machines it never came to the front, and a declined prompt left the user
-    with no app and no message (#296, #260). Now the elevation request is ours, made while we are
-    the foreground app, and the installer runs with the Store/winget switches, which also relaunch
-    the app when it is done (since 2.1.5). A declined prompt raises UpdateElevationDeclined so the
-    caller can say so; the app keeps running.
+    elevation on its own after the app had quit - a prompt owned by a process with no window, and a
+    declined prompt left the user with no app and no message (#296, #260). The elevation request is
+    ours now, made while we are the foreground app, with the Store/winget switches - which also make
+    the installer relaunch the app when it is done (since 2.1.5). A declined prompt raises
+    UpdateElevationDeclined, and the app carries on.
+
+    The caller must not exit here. Windows ties the elevated process to the requester: quitting
+    straight after this call killed the installer before it wrote a line of its own log (measured
+    2026-09-06). The installer closes the app itself and then brings the new version back.
     """
     params = INSTALLER_SILENT_ARGS
     try:
@@ -408,9 +411,13 @@ class SecureUpdater(QObject):
     Orchestrates download -> verify -> launch with a progress dialog and a browser
     fallback. Parented to the widget; self-destructs (deleteLater) when it finishes.
 
-    Emits ``launching`` right before the verified installer starts, so the caller quits.
+    Emits ``launching`` when the app must quit for the update - the PORTABLE hand-off only. The
+    installer path deliberately does NOT quit; see ``_on_verified``.
     """
     launching = pyqtSignal()
+
+    # How long to wait to be closed by the installer before admitting the update did not happen.
+    _REPLACEMENT_TIMEOUT_MS = 180_000
 
     def __init__(self, parent_widget: QWidget, installer_url: str, release_url: str, i18n,
                  *, portable: bool = False, portable_url: str = "", latest_version: str = "") -> None:
@@ -535,9 +542,14 @@ class SecureUpdater(QObject):
             except Exception:  # noqa: BLE001
                 hwnd = 0
             launch_installer(path, hwnd)
-            logger.info("Verified installer started elevated and silent; it will relaunch the app when done.")
-            self.launching.emit()
-            self._finish()
+            # Do NOT quit here. Windows ties the elevated installer to the process that requested
+            # it: quitting immediately after ShellExecuteEx killed the installer outright before it
+            # wrote a single line of its own log (measured 2026-09-06 - the app vanished and nothing
+            # was installed). Staying alive costs nothing, because the installer closes us itself
+            # (CloseApplications=force plus the explicit taskkill in setup.iss) and then relaunches
+            # the new version. If we are somehow still here later, _not_replaced() says so.
+            logger.info("Verified installer started elevated and silent; waiting for it to replace this version.")
+            QTimer.singleShot(self._REPLACEMENT_TIMEOUT_MS, self._not_replaced)
         except UpdateElevationDeclined:
             logger.info("Update cancelled at the UAC prompt; staying on the current version.")
             self._cleanup_file()
@@ -546,6 +558,15 @@ class SecureUpdater(QObject):
             logger.error("Could not launch installer: %s", e, exc_info=True)
             self._cleanup_file()
             self._fallback(f"could not start the installer: {e}")
+
+    def _not_replaced(self) -> None:
+        """Still running three minutes after the installer started: it did not replace us. Say so
+        instead of leaving the user to wonder - the silence is what made this class of bug live for
+        three releases (#296, #260)."""
+        logger.warning("Still running %s after starting the installer; the update did not complete.",
+                       constants.app.VERSION)
+        self._cleanup_file()
+        self._fallback("the installer did not replace this version")
 
     def _on_staged(self, ready: str) -> None:
         """

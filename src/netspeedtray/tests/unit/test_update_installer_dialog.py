@@ -55,6 +55,19 @@ def test_closing_the_progress_dialog_is_not_a_user_cancel(updater, q_app):
 def test_a_verified_installer_is_launched_not_discarded(updater, monkeypatch, q_app):
     launched = []
     monkeypatch.setattr(ui, "launch_installer", lambda path, hwnd=0: launched.append(path))
+
+    updater._on_progress(100)
+    updater._on_verified(updater._dest, True, "ok")
+    q_app.processEvents()
+
+    assert launched == [updater._dest], "the verified installer must be launched"
+    assert os.path.isfile(updater._dest), "the download must not be deleted on the success path"
+
+
+def test_the_app_does_not_quit_when_the_installer_starts(updater, monkeypatch, q_app):
+    """Windows kills the elevated installer when the process that asked for it exits. Quitting here
+    is what made the update end in nothing (measured live 2026-09-06); the installer closes us."""
+    monkeypatch.setattr(ui, "launch_installer", lambda path, hwnd=0: None)
     quit_requested = []
     updater.launching.connect(lambda: quit_requested.append(True))
 
@@ -62,9 +75,19 @@ def test_a_verified_installer_is_launched_not_discarded(updater, monkeypatch, q_
     updater._on_verified(updater._dest, True, "ok")
     q_app.processEvents()
 
-    assert launched == [updater._dest], "the verified installer must be launched"
-    assert quit_requested, "the app must be told to quit for the installer"
-    assert os.path.isfile(updater._dest), "the download must not be deleted on the success path"
+    assert quit_requested == [], "the app must stay alive so the installer survives"
+
+
+def test_still_running_much_later_is_reported_not_ignored(updater, monkeypatch, q_app):
+    """If the installer never replaces us, say so - silence is what hid this for three releases."""
+    monkeypatch.setattr(ui, "launch_installer", lambda path, hwnd=0: None)
+    fallbacks = []
+    monkeypatch.setattr(updater, "_fallback", lambda reason: fallbacks.append(reason))
+    updater._on_progress(100)
+    updater._on_verified(updater._dest, True, "ok")
+    updater._not_replaced()          # the watchdog, fired directly instead of waiting 3 minutes
+    q_app.processEvents()
+    assert fallbacks and "did not replace" in fallbacks[0]
 
 
 def test_a_real_cancel_click_still_cancels(updater, monkeypatch, q_app):
