@@ -439,7 +439,12 @@ class SecureUpdater(QObject):
             self._progress.setValue(pct)
 
     def _on_cancel(self) -> None:
+        # Only a live dialog can carry a user's cancel. Once _close_progress() has detached it, any
+        # late `canceled` is the dialog being closed by us, not by the user (see _close_progress).
+        if self._progress is None:
+            return
         self._user_cancelled = True
+        logger.info("Update cancelled by the user.")
         if self._worker is not None:
             self._worker.cancel()
 
@@ -447,6 +452,7 @@ class SecureUpdater(QObject):
         self._teardown_thread()
         self._close_progress()
         if self._user_cancelled:
+            logger.info("Update cancelled before the installer was launched; download discarded.")
             self._cleanup_file()
             self._finish()
             return
@@ -561,9 +567,19 @@ class SecureUpdater(QObject):
         self._worker = None
 
     def _close_progress(self) -> None:
-        if self._progress is not None:
-            self._progress.close()  # WA_DeleteOnClose -> destroyed
-            self._progress = None
+        # QProgressDialog emits `canceled()` from its CLOSE EVENT, not only from the Cancel button.
+        # Closing the dialog with the signal still wired ran _on_cancel, and the very next line of
+        # _on_verified / _on_staged then treated the finished download as cancelled: it deleted the
+        # verified installer and returned without a word (#296, and #260 before it). Detach the
+        # dialog first, and silence it, so closing it can never look like a cancel.
+        dlg, self._progress = self._progress, None
+        if dlg is not None:
+            try:
+                dlg.canceled.disconnect(self._on_cancel)
+            except (TypeError, RuntimeError):
+                pass
+            dlg.blockSignals(True)
+            dlg.close()  # WA_DeleteOnClose -> destroyed
 
     def _cleanup_file(self) -> None:
         # Remove the whole private download directory (and the installer in it).
