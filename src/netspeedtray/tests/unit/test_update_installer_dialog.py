@@ -54,7 +54,7 @@ def test_closing_the_progress_dialog_is_not_a_user_cancel(updater, q_app):
 
 def test_a_verified_installer_is_launched_not_discarded(updater, monkeypatch, q_app):
     launched = []
-    monkeypatch.setattr(ui, "launch_installer", lambda path: launched.append(path))
+    monkeypatch.setattr(ui, "launch_installer", lambda path, hwnd=0: launched.append(path))
     quit_requested = []
     updater.launching.connect(lambda: quit_requested.append(True))
 
@@ -69,7 +69,7 @@ def test_a_verified_installer_is_launched_not_discarded(updater, monkeypatch, q_
 
 def test_a_real_cancel_click_still_cancels(updater, monkeypatch, q_app):
     launched = []
-    monkeypatch.setattr(ui, "launch_installer", lambda path: launched.append(path))
+    monkeypatch.setattr(ui, "launch_installer", lambda path, hwnd=0: launched.append(path))
     updater._progress.canceled.emit()     # what the Cancel button does (cancel() is the slot; the button emits)
     q_app.processEvents()
     assert updater._user_cancelled is True
@@ -90,3 +90,34 @@ def test_portable_staged_path_is_not_cancelled_by_the_dialog_closing(updater, mo
     q_app.processEvents()
     assert updater._user_cancelled is False
     assert handed_off, "the staged portable update must proceed to the hands-off swap"
+
+
+# ----------------------------------------------------------------------------- the elevated launch
+
+def test_launch_runs_the_installer_elevated_and_silent(monkeypatch):
+    """The installer is started through ShellExecuteEx(runas) with the Store/winget switches, so the
+    UAC prompt is the app's own and the install is hands-off, ending in the installer relaunching us."""
+    calls = []
+    monkeypatch.setattr(ui, "_shell_execute_runas", lambda path, params, hwnd=0: calls.append((path, params, hwnd)))
+    ui.launch_installer(r"C:\dl\Setup.exe", hwnd=42)
+    assert calls == [(r"C:\dl\Setup.exe", "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART", 42)]
+
+
+def test_a_declined_uac_prompt_keeps_the_app_and_says_so(updater, monkeypatch, q_app):
+    """Declining UAC used to leave the user with no app and no message. Now: no quit, the download
+    is dropped, and the existing fallback (message + release page) tells them what happened."""
+    def declined(path, params, hwnd=0):
+        raise ui.UpdateElevationDeclined("the UAC prompt was declined")
+    monkeypatch.setattr(ui, "_shell_execute_runas", declined)
+    fallbacks = []
+    monkeypatch.setattr(updater, "_fallback", lambda reason: fallbacks.append(reason))
+    quit_requested = []
+    updater.launching.connect(lambda: quit_requested.append(True))
+
+    updater._on_progress(100)
+    updater._on_verified(updater._dest, True, "ok")
+    q_app.processEvents()
+
+    assert quit_requested == [], "the app must keep running when the prompt is declined"
+    assert fallbacks and "declined" in fallbacks[0]
+    assert not os.path.exists(updater._tmpdir), "the download is dropped; nothing is left half-done"
