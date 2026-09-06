@@ -37,28 +37,32 @@ Also on the [**Microsoft Store**](https://apps.microsoft.com/detail/XP9MHWQZJPLQ
 
 ## See it in action
 
-The widget lives on your taskbar - at its simplest, just your up &amp; down speeds:
+The widget lives on your taskbar, next to the clock - live speeds and a mini-graph, at work:
 
 <div align="center">
-  <img src="screenshots/widget_network_2.0.png" alt="NetSpeedTray widget - up and download speeds" />
+  <img src="screenshots/widget_hero_2.1.5.gif" alt="NetSpeedTray widget on the taskbar - live download and upload speeds with a mini-graph" />
 </div>
 
 <details>
-  <summary>&nbsp;&nbsp;<b>➕ Show more on the taskbar</b> - mini-graph, CPU/GPU/RAM, temps &amp; power</summary>
+  <summary>&nbsp;&nbsp;<b>➕ Choose what it shows</b> - just speeds, a mini-graph, CPU/GPU/RAM, temps &amp; power</summary>
   <br/>
   <div align="center">
   <table>
     <tr>
-      <td align="right"><img src="screenshots/widget_minigraph_2.0.png" alt="Widget - with a live mini-graph" /></td>
+      <td align="right"><img src="screenshots/widget_network_2.1.5.png" alt="Widget - up and download speeds only" /></td>
+      <td align="left">&nbsp;&nbsp;at its simplest, just your up &amp; down speeds</td>
+    </tr>
+    <tr>
+      <td align="right"><img src="screenshots/widget_minigraph_2.1.5.png" alt="Widget - with a live mini-graph" /></td>
       <td align="left">&nbsp;&nbsp;+ a live mini-graph</td>
     </tr>
     <tr>
-      <td align="right"><img src="screenshots/widget_hardware_2.0.png" alt="Widget - with CPU/GPU/RAM stats" /></td>
-      <td align="left">&nbsp;&nbsp;+ CPU / GPU / RAM, temps</td>
+      <td align="right"><img src="screenshots/widget_hardware_2.1.5.png" alt="Widget - with CPU/GPU/RAM stats" /></td>
+      <td align="left">&nbsp;&nbsp;+ CPU / GPU / RAM</td>
     </tr>
     <tr>
-      <td align="right"><img src="screenshots/widget_full_2.0.png" alt="Widget - everything at once" /></td>
-      <td align="left">&nbsp;&nbsp;everything at once</td>
+      <td align="right"><img src="screenshots/widget_full_2.1.5.png" alt="Widget - everything at once, with temperatures and power" /></td>
+      <td align="left">&nbsp;&nbsp;everything at once - temps &amp; power too</td>
     </tr>
   </table>
   </div>
