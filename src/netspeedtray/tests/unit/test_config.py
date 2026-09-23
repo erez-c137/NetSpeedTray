@@ -36,7 +36,7 @@ def test_save_removes_null_keys_from_file(config_manager):
 
     with patch("json.dump") as mock_json_dump:
         with patch("tempfile.NamedTemporaryFile", mock_open()):
-            with patch("shutil.move"):
+            with patch("netspeedtray.utils.config.os.replace"):
                 config_manager.save(config_to_save)
                 written_data = mock_json_dump.call_args[0][0]
                 assert "position_x" not in written_data
