@@ -369,7 +369,7 @@
     "STAT_AVG_SHORT": "átl.",
     "STAT_SESSION_LABEL": "Munkamenet",
     "STAT_SYS_POWER_TRUE": "Rendszer",
-    "LATENCY_LABEL": "Késleltetés",
+    "LATENCY_LABEL": "Internet",
     "LATENCY_GOOD": "Jó",
     "LATENCY_OK": "OK",
     "LATENCY_SLOW": "Lassú",
