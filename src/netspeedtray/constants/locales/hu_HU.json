@@ -210,7 +210,7 @@
     "UPDATE_MODE_BALANCED_LABEL": "Kiegyensúlyozott (2 mp)",
     "UPDATE_MODE_EFFICIENT_LABEL": "Hatékony (5 mp)",
     "UPDATE_MODE_POWER_SAVER_LABEL": "Energiatakarékos (10 mp)",
-    "CHECK_FOR_UPDATES_MENU_ITEM": "&Frissítések keresése",
+    "CHECK_FOR_UPDATES_MENU_ITEM": "F&rissítések keresése",
     "CHECK_FOR_UPDATES_LABEL": "Frissítések keresése indításkor",
     "PREFERRED_MONITOR_LABEL": "Előnyben részesített monitor",
     "PREFERRED_MONITOR_PRIMARY": "Elsődleges (automatikus)",
