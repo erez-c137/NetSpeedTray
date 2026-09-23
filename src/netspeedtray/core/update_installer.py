@@ -90,7 +90,9 @@ def sweep_stale_update_dirs() -> None:
 
 
 # The switches the Microsoft Store and winget run the installer with - and, since 2.1.5, what makes
-# the installer relaunch the app as the original user when it is done (setup.iss, LaunchAfterSilentInstall).
+# the installer relaunch the app when it is done. Since 2.1.8 that relaunch goes through the running
+# shell so it comes back unelevated even though this updater starts Setup elevated
+# (setup.iss, LaunchSilentViaShell).
 INSTALLER_SILENT_ARGS = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART"
 _ERROR_CANCELLED = 1223
 
