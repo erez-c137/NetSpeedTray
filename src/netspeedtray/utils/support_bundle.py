@@ -112,9 +112,11 @@ def _collect_system_info(config: Dict[str, Any]) -> str:
     lines.append(f"Frozen build:         {getattr(sys, 'frozen', False)}")
     # #308: an exe flagged "Run as administrator" is silently skipped at sign-in, and an elevated
     # run is how a config ends up writable only by admins (#307). Both belong in every bundle.
-    from netspeedtray.core.startup_manager import get_compat_layers, is_process_elevated
+    from netspeedtray.core.startup_manager import (get_compat_layers, get_startup_approved_state,
+                                                   is_process_elevated)
     lines.append(f"Process elevated:     {is_process_elevated()}")
     lines.append(f"Compatibility flags:  {get_compat_layers(sys.executable) or '<none>'}")
+    lines.append(f"Task Manager startup: {get_startup_approved_state(constants.app.APP_NAME)}")
     lines.append("")
     lines.append(f"Configured language:  {config.get('language', '<unset>')}")
     lines.append(f"Configured update_rate: {config.get('update_rate', '<unset>')}s")

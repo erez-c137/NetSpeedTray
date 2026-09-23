@@ -45,7 +45,7 @@ def _sync(exe, should_be_enabled, caplog):
     mgr = StartupManager()
     with patch.object(sys, "frozen", True, create=True), \
          patch.object(sys, "executable", exe), \
-         patch.object(mgr, "is_startup_enabled", return_value=should_be_enabled), \
+         patch.object(mgr, "_check_startup_registry", return_value=should_be_enabled), \
          patch.object(mgr, "_set_startup_registry") as set_reg, \
          caplog.at_level(logging.WARNING):
         mgr.synchronize_startup_task(should_be_enabled)
