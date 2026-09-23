@@ -137,9 +137,9 @@ def _installer_log_path() -> str:
     """Where the elevated installer writes ITS log: next to the app's own log, so a support bundle
     carries what the installer did. An update that ends in nothing must never be silent again."""
     from netspeedtray.utils.helpers import get_app_data_path
-    logs = os.path.join(str(get_app_data_path()), "logs")
+    logs = os.path.join(str(get_app_data_path()), constants.logs.INSTALLER_LOG_SUBDIR)
     os.makedirs(logs, exist_ok=True)
-    return os.path.join(logs, "update-install.log")
+    return os.path.join(logs, constants.logs.INSTALLER_LOG_FILENAME)
 
 
 def launch_installer(path: str, hwnd: int = 0) -> None:
