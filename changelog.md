@@ -75,6 +75,101 @@ ALSO
 
 ---
 
+## [2.1.7] - September 23, 2026
+
+Fixes for what 2.1.6 users reported in its first two weeks: a support bundle that could include your
+Windows username, settings that wouldn't save, a "Start with Windows" switch that said ON when
+Windows had it off, and a Decimal Places setting that wasn't obeyed. Plus optional RAM/VRAM labels
+and Hungarian.
+
+> **Upgrading:** at the default one decimal place, very light traffic shows `0.0 Mbps` again rather
+> than `0.004 Mbps` - Decimal Places now means exactly what it says. And if NetSpeedTray is disabled
+> in Task Manager's Startup apps, Settings now shows "Start with Windows" as off, because that's what
+> Windows does with it.
+
+### Added
+
+- **Optional RAM and VRAM labels.** A new Settings → Hardware switch shows `RAM 8.1/15.7G` instead
+  of a bare number after the CPU. Off by default, so your widget keeps its width. ([#250], thanks
+  [@seahindeniz])
+
+### Fixed
+
+- **Support bundles no longer include your Windows username.** Paths inside error messages were
+  written with doubled backslashes and slipped past the redaction; old log lines are cleaned at
+  export too. ([#306], thanks [@CMTriX])
+
+  *Under the hood: the path rules matched only the literal single-backslash form, and every
+  `OSError` message carries the path's repr (`C:\\Users\\name\\...`). A separator now matches `\`,
+  `\\`, `\\\\` or `/` on any drive letter, and the bare account name is redacted as a backstop. On
+  the maintainer's own log, 25 leaking lines became 0.*
+
+- **Settings save even when the settings file only lets an admin write to it** - no more
+  "Permission denied" that only went away when running as administrator. The first save puts the
+  file's permissions back to normal. ([#307], thanks [@CMTriX])
+
+  *Under the hood: `shutil.move` falls back to copying over an existing file on Windows, which
+  needs write access to the file itself. `os.replace` needs only the folder's permission, and the
+  new file inherits the folder's permissions.*
+
+- **A settings file the app can't read no longer stops it from starting.** It's set aside as
+  `.unreadable` and the app starts on defaults, instead of showing "NetSpeedTray must close".
+  ([#307])
+- **"Start with Windows" tells the truth.** If NetSpeedTray is disabled in Task Manager's Startup
+  apps, Settings now shows the switch as off, and turning it on actually works. ([#308], thanks
+  [@CMTriX])
+
+  *Under the hood: Task Manager keeps its own switch in `Explorer\StartupApproved\Run` (first byte
+  `02` on, `03` off), separate from the Run entry we checked. The launch-time check still never
+  overrides a Task Manager choice by itself - only the switch in Settings does.*
+
+- **The log says why NetSpeedTray won't start at sign-in** when the app is set to always run as
+  administrator - Windows silently skips those. Support bundles now show that, plus the Task
+  Manager state. ([#308])
+- **Decimal Places is obeyed.** At 1 decimal place you'd sometimes see `0.004 Mbps`: 2.1.5 added
+  extra digits whenever a value rounded to zero. That's gone. ([#303], thanks [@Necromancerx9];
+  fix by [@kamal63442] in [#304])
+- **Support bundles include the in-app updater's own log**, which 2.1.6 started writing but never
+  actually put in the bundle.
+
+### Localization
+
+- **Hungarian** - 16 languages now. ([#302], thanks [@cscsanaki])
+- Simplified Chinese: the two history-paused strings, in native wording. ([#305], thanks
+  [@RainThings])
+- One new string, "Show RAM/VRAM Labels", in every language - native-speaker review welcome in
+  [#202].
+
+### Developer notes
+
+- 1,496 tests. Each fix was seen failing first, then checked live on the maintainer's machine: a
+  support bundle built from a real log; a source build started with an unreadable settings file; a
+  real sign-in with two throwaway startup entries (one flagged run-as-admin, one not); screenshots of
+  the labels in three layouts.
+- Release signing ([#311]): both SignPath requests now go in at once, so both approvals arrive
+  together, and the run polls every 20 s instead of backing off to 20 minutes. A throwaway
+  `v0.0.1-test` tag proved the prerelease path for the first time: marked prerelease, not Latest,
+  WinGet and Store skipped.
+
+[#202]: https://github.com/erez-c137/NetSpeedTray/issues/202
+[#250]: https://github.com/erez-c137/NetSpeedTray/issues/250
+[#302]: https://github.com/erez-c137/NetSpeedTray/pull/302
+[#303]: https://github.com/erez-c137/NetSpeedTray/issues/303
+[#304]: https://github.com/erez-c137/NetSpeedTray/pull/304
+[#305]: https://github.com/erez-c137/NetSpeedTray/pull/305
+[#306]: https://github.com/erez-c137/NetSpeedTray/issues/306
+[#307]: https://github.com/erez-c137/NetSpeedTray/issues/307
+[#308]: https://github.com/erez-c137/NetSpeedTray/issues/308
+[#311]: https://github.com/erez-c137/NetSpeedTray/pull/311
+[@seahindeniz]: https://github.com/seahindeniz
+[@CMTriX]: https://github.com/CMTriX
+[@Necromancerx9]: https://github.com/Necromancerx9
+[@kamal63442]: https://github.com/kamal63442
+[@cscsanaki]: https://github.com/cscsanaki
+[@RainThings]: https://github.com/RainThings
+
+---
+
 ## [2.1.6] - September 6, 2026
 
 The hotfix for the in-app updater. Since 2.1.4 it downloaded and verified every update and then
