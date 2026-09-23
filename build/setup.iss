@@ -102,9 +102,16 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
 ; A silent install (Microsoft Store, winget install, winget upgrade) shows no Finish page, so the
 ; entry above never fires and the app is simply not running until the next sign-in - "nothing
-; visible happened" (#260) on a new channel. This entry covers the silent path only, and
-; runasoriginaluser keeps the tray app unelevated even though Setup itself ran as admin.
-Filename: "{app}\{#MyAppExeName}"; Flags: nowait runasoriginaluser; Check: LaunchAfterSilentInstall
+; visible happened" (#260) on a new channel. These entries cover the silent path only.
+;
+; The relaunch must come back UNELEVATED. runasoriginaluser alone is not enough: it means "as whoever
+; started Setup", and the in-app updater (2.1.6+) starts Setup already elevated, so the app came back
+; as admin and stayed that way until the next sign-in (found verifying 2.1.7). So the launch is handed
+; to the running shell: explorer.exe passes it to the user's existing Explorer, which starts it at the
+; shell's own (medium) integrity whatever Setup's token is. Only when no shell is running (no
+; Shell_TrayWnd - e.g. a headless deployment) does the direct runasoriginaluser launch remain.
+Filename: "{win}\explorer.exe"; Parameters: """{app}\{#MyAppExeName}"""; Flags: nowait runasoriginaluser; Check: LaunchSilentViaShell
+Filename: "{app}\{#MyAppExeName}"; Flags: nowait runasoriginaluser; Check: LaunchSilentDirect
 
 [UninstallDelete]
 Type: files; Name: "{autodesktop}\{#MyAppName}.lnk"
@@ -126,11 +133,23 @@ const
   WM_CLOSE = $0010;  
 
 // --- Helper Functions ---
-function LaunchAfterSilentInstall(): Boolean;
+function ShellIsRunning(): Boolean;
 begin
-  Result := WizardSilent();
+  Result := FindWindowByClassName('Shell_TrayWnd') <> 0;
+end;
+
+function LaunchSilentViaShell(): Boolean;
+begin
+  Result := WizardSilent() and ShellIsRunning();
   if Result then
-    Log('Silent install: starting {#MyAppName} as the original user (no Finish page to offer it).');
+    Log('Silent install: starting {#MyAppName} through the shell, so it runs unelevated (no Finish page to offer it).');
+end;
+
+function LaunchSilentDirect(): Boolean;
+begin
+  Result := WizardSilent() and not ShellIsRunning();
+  if Result then
+    Log('Silent install: no shell running - starting {#MyAppName} as the original user.');
 end;
 
 function BoolToStr(Value: Boolean): string;
