@@ -47,6 +47,7 @@
     "MONITOR_GPU_LABEL": "GPU 사용률 모니터링",
     "MONITOR_RAM_LABEL": "RAM 사용량 표시",
     "MONITOR_VRAM_LABEL": "VRAM 사용량 표시",
+    "SHOW_MEMORY_LABELS_LABEL": "RAM/VRAM 레이블 표시",
     "SHOW_HARDWARE_TEMPS_LABEL": "CPU/GPU 온도 표시",
     "SHOW_HARDWARE_TEMPS_TOOLTIP": "CPU/GPU 사용률 옆에 온도를 표시합니다. 대부분의 시스템에서는 LibreHardwareMonitor (관리자 권한으로 실행)가 필요하며, NVIDIA GPU 온도는 nvidia-smi를 사용합니다.",
     "HARDWARE_TEMPS_LIMITATION_NOTE": "대부분의 CPU/GPU 온도 및 전력 센서는 LibreHardwareMonitor (관리자 권한으로 실행)가 필요합니다 - NetSpeedTray가 자동으로 감지하며, 자체적으로는 관리자 권한이 필요하지 않습니다. NVIDIA 값은 nvidia-smi를 통해 기본적으로 작동합니다.",

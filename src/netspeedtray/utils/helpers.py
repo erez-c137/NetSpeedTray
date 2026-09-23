@@ -202,6 +202,13 @@ def get_reference_value_string(force_mega_unit: bool, decimal_places: int, unit_
     return integer_part
 
 
+def memory_label_width(metrics) -> int:
+    """Width of the RAM/VRAM label cell (#250): the widest label plus a space. The renderer paints
+    into it and the layout reserves it, so both call this - the reserved and the painted width
+    cannot drift apart."""
+    return metrics.horizontalAdvance(constants.renderer.MEMORY_LABEL_VRAM + " ")
+
+
 def format_speed(
     speed: float,
     i18n,

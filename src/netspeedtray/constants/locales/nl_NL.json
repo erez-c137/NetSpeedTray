@@ -47,6 +47,7 @@
     "MONITOR_GPU_LABEL": "GPU-gebruik monitoren",
     "MONITOR_RAM_LABEL": "RAM-gebruik tonen",
     "MONITOR_VRAM_LABEL": "VRAM-gebruik tonen",
+    "SHOW_MEMORY_LABELS_LABEL": "RAM/VRAM-labels weergeven",
     "SHOW_HARDWARE_TEMPS_LABEL": "CPU/GPU-temperatuur tonen",
     "SHOW_HARDWARE_TEMPS_TOOLTIP": "Toont temperatuur naast CPU/GPU-gebruik indien beschikbaar.",
     "HARDWARE_TEMPS_LIMITATION_NOTE": "De meeste CPU-/GPU-temperatuur- en vermogenssensoren vereisen LibreHardwareMonitor (als Administrator uitvoeren) - NetSpeedTray detecteert het automatisch en heeft zelf nooit beheerdersrechten nodig. NVIDIA-waarden werken native via nvidia-smi.",

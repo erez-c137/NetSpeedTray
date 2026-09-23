@@ -50,6 +50,15 @@ class HardwarePage(QWidget):
         self._vram_card = SettingCard(self.i18n.MONITOR_VRAM_LABEL, control=self.monitor_vram)
         layout.addWidget(self._vram_card)
 
+        # #250: "RAM"/"VRAM" in front of the memory values. Only meaningful when one of them shows,
+        # so the RAM/VRAM toggles re-sync its enabled state too.
+        self.show_memory_labels = Win11Toggle(label_text="")
+        self.show_memory_labels.toggled.connect(self.on_change)
+        self._mem_labels_card = SettingCard(self.i18n.SHOW_MEMORY_LABELS_LABEL, control=self.show_memory_labels)
+        layout.addWidget(self._mem_labels_card)
+        self.monitor_ram.toggled.connect(lambda _on: self._sync_dependent_cards())
+        self.monitor_vram.toggled.connect(lambda _on: self._sync_dependent_cards())
+
         self.show_temps = Win11Toggle(label_text="")
         self.show_temps.toggled.connect(self.on_change)
         self._temps_card = SettingCard(self.i18n.SHOW_HARDWARE_TEMPS_LABEL, control=self.show_temps)
@@ -122,6 +131,7 @@ class HardwarePage(QWidget):
         self.monitor_vram.blockSignals(True)
         self.show_temps.blockSignals(True)
         self.show_power.blockSignals(True)
+        self.show_memory_labels.blockSignals(True)
 
         self.monitor_cpu.setChecked(config.get("monitor_cpu_enabled", False))
         self.monitor_gpu.setChecked(config.get("monitor_gpu_enabled", False))
@@ -129,6 +139,7 @@ class HardwarePage(QWidget):
         self.monitor_vram.setChecked(config.get("monitor_vram_enabled", False))
         self.show_temps.setChecked(config.get("show_hardware_temps", False))
         self.show_power.setChecked(config.get("show_hardware_power", False))
+        self.show_memory_labels.setChecked(config.get("show_memory_labels", False))
 
         style_val = config.get("hardware_label_style", "icons_colored")
         style_idx = self.label_style.findData(style_val)
@@ -143,6 +154,7 @@ class HardwarePage(QWidget):
         self.monitor_vram.blockSignals(False)
         self.show_temps.blockSignals(False)
         self.show_power.blockSignals(False)
+        self.show_memory_labels.blockSignals(False)
         # Signals were blocked above, so _on_monitor_toggled never fired - sync the dependent
         # (temp/power) cards' enabled state to the just-loaded CPU/GPU monitor values directly.
         self._sync_dependent_cards()
@@ -185,6 +197,8 @@ class HardwarePage(QWidget):
         self._set_card_enabled(self._power_card, has_util)
         self._set_card_enabled(self._ram_card, cpu_on)
         self._set_card_enabled(self._vram_card, gpu_on)
+        self._set_card_enabled(self._mem_labels_card,
+                               (cpu_on and self.monitor_ram.isChecked()) or (gpu_on and self.monitor_vram.isChecked()))
 
     def get_settings(self) -> Dict[str, Any]:
         return {
@@ -192,6 +206,7 @@ class HardwarePage(QWidget):
             "monitor_gpu_enabled": self.monitor_gpu.isChecked(),
             "monitor_ram_enabled": self.monitor_ram.isChecked(),
             "monitor_vram_enabled": self.monitor_vram.isChecked(),
+            "show_memory_labels": self.show_memory_labels.isChecked(),
             "show_hardware_temps": self.show_temps.isChecked(),
             "show_hardware_power": self.show_power.isChecked(),
             "hardware_label_style": self.label_style.currentData(),

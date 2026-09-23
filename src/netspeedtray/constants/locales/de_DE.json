@@ -47,6 +47,7 @@
     "MONITOR_GPU_LABEL": "GPU-Auslastung überwachen",
     "MONITOR_RAM_LABEL": "RAM-Auslastung anzeigen",
     "MONITOR_VRAM_LABEL": "VRAM-Auslastung anzeigen",
+    "SHOW_MEMORY_LABELS_LABEL": "RAM/VRAM-Beschriftung anzeigen",
     "SHOW_HARDWARE_TEMPS_LABEL": "CPU/GPU-Temperatur anzeigen",
     "SHOW_HARDWARE_TEMPS_TOOLTIP": "Zeigt die Temperatur neben der CPU/GPU-Auslastung an. Erfordert auf den meisten Systemen LibreHardwareMonitor (als Administrator ausführen) oder nvidia-smi für die Temperatur von NVIDIA-GPUs.",
     "HARDWARE_TEMPS_LIMITATION_NOTE": "Die meisten CPU-/GPU-Temperatur- und Leistungssensoren benötigen LibreHardwareMonitor (als Administrator ausführen) - NetSpeedTray erkennt es automatisch und benötigt selbst nie Administratorrechte. NVIDIA-Werte funktionieren nativ über nvidia-smi.",

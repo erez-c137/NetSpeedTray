@@ -47,6 +47,7 @@
     "MONITOR_GPU_LABEL": "GPU 使用率を監視",
     "MONITOR_RAM_LABEL": "RAM 使用量を表示",
     "MONITOR_VRAM_LABEL": "VRAM 使用量を表示",
+    "SHOW_MEMORY_LABELS_LABEL": "RAM/VRAM ラベルを表示",
     "SHOW_HARDWARE_TEMPS_LABEL": "CPU/GPU 温度を表示",
     "SHOW_HARDWARE_TEMPS_TOOLTIP": "CPU/GPU 使用率の横に温度を表示します。ほとんどのシステムでは LibreHardwareMonitor (管理者として実行) が必要です。NVIDIA GPU の温度は nvidia-smi でもネイティブに動作します。",
     "HARDWARE_TEMPS_LIMITATION_NOTE": "ほとんどの CPU/GPU の温度・電力センサーには LibreHardwareMonitor (管理者として実行) が必要です - NetSpeedTray は自動的に検出し、それ自体が管理者権限を必要とすることはありません。NVIDIA の値は nvidia-smi を介してネイティブに動作します。",

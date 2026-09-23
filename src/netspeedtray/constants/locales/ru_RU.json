@@ -47,6 +47,7 @@
     "MONITOR_GPU_LABEL": "Мониторинг загрузки видеокарты (GPU)",
     "MONITOR_RAM_LABEL": "Показать использование оперативной памяти (RAM)",
     "MONITOR_VRAM_LABEL": "Показать использование видеопамяти (VRAM)",
+    "SHOW_MEMORY_LABELS_LABEL": "Показывать подписи RAM/VRAM",
     "SHOW_HARDWARE_TEMPS_LABEL": "Показывать температуру ЦП/ГП",
     "SHOW_HARDWARE_TEMPS_TOOLTIP": "Показывает температуру рядом с использованием ЦП/ГП. Для большинства систем требуется LibreHardwareMonitor (запущенный от имени администратора) либо nvidia-smi для температуры видеокарт NVIDIA.",
     "HARDWARE_TEMPS_LIMITATION_NOTE": "Большинству датчиков температуры и энергопотребления CPU/GPU требуется LibreHardwareMonitor (запущенный от имени администратора) - NetSpeedTray обнаруживает его автоматически и сам никогда не требует прав администратора. Показания NVIDIA работают нативно через nvidia-smi.",

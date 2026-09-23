@@ -47,6 +47,7 @@
     "MONITOR_GPU_LABEL": "GPU-kihasználtság figyelése",
     "MONITOR_RAM_LABEL": "RAM-használat megjelenítése",
     "MONITOR_VRAM_LABEL": "VRAM-használat megjelenítése",
+    "SHOW_MEMORY_LABELS_LABEL": "RAM/VRAM címkék megjelenítése",
     "SHOW_HARDWARE_TEMPS_LABEL": "CPU/GPU-hőmérséklet megjelenítése",
     "SHOW_HARDWARE_TEMPS_TOOLTIP": "A hőmérséklet megjelenítése a CPU/GPU-használat mellett. A legtöbb rendszeren LibreHardwareMonitor szükséges (rendszergazdaként futtatva), NVIDIA GPU-hőmérséklethez pedig az nvidia-smi is használható.",
     "HARDWARE_TEMPS_LIMITATION_NOTE": "A legtöbb CPU/GPU hőmérséklet- és teljesítményérzékelőhöz a LibreHardwareMonitor v0.9.4 szükséges, rendszergazdaként futtatva – a későbbi verziókból eltávolították azt az interfészt, amelyből a NetSpeedTray olvas. A NetSpeedTray automatikusan felismeri, és maga soha nem igényel rendszergazdai jogosultságot. Az NVIDIA-adatok natívan működnek az nvidia-smi segítségével. Egyes nagyon új CPU-k egyáltalán nem tesznek közzé hőmérséklet-érzékelőt.",
