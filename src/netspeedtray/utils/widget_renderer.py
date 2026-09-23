@@ -12,7 +12,8 @@ from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 from dataclasses import dataclass, field
 
 from netspeedtray.core.widget_state import SpeedDataSnapshot, AggregatedSpeedData
-from netspeedtray.utils.helpers import has_dedicated_vram, format_speed, calculate_monotone_cubic_interpolation
+from netspeedtray.utils.helpers import (has_dedicated_vram, format_speed, calculate_monotone_cubic_interpolation,
+                                        memory_label_width)
 from PyQt6.QtGui import QPainter, QColor, QFont, QFontMetrics, QPen, QPainterPath
 from PyQt6.QtCore import Qt, QPointF, QRect, QRectF
 from netspeedtray import constants
@@ -101,6 +102,7 @@ class RenderConfig:
     monitor_gpu_enabled: bool = False
     monitor_ram_enabled: bool = False
     monitor_vram_enabled: bool = False
+    show_memory_labels: bool = False
     stack_hardware_stats: bool = False
     hardware_label_style: str = "icons_colored"
     widget_display_mode: str = "network_only"
@@ -175,6 +177,7 @@ class RenderConfig:
                 monitor_gpu_enabled=bool(config.get('monitor_gpu_enabled', False)),
                 monitor_ram_enabled=bool(config.get('monitor_ram_enabled', False)),
                 monitor_vram_enabled=bool(config.get('monitor_vram_enabled', False)),
+                show_memory_labels=bool(config.get('show_memory_labels', False)),
                 stack_hardware_stats=bool(config.get('stack_hardware_stats', False)),
                 widget_display_mode=str(config.get('widget_display_mode', 'network_only')),
                 widget_display_order=list(config.get('widget_display_order', ["network", "cpu", "gpu"])),
@@ -611,10 +614,12 @@ class WidgetRenderer:
                         mem_text = ""
                     else:
                         mem_text = f"{used:.1f}/{total:.1f}G" if total > 0 else f"{used:.1f}G"
+                mem_label = (constants.renderer.MEMORY_LABEL_RAM if label == 'CPU'
+                             else constants.renderer.MEMORY_LABEL_VRAM)
                 rows.append({'label': label, 'color': color_hex, 'total': total,
                              'pct': self._fmt_hw_percent(val),
                              'suffix': self._build_hw_suffix(temp, power, show_temps, show_power),
-                             'mem': mem_text})
+                             'mem': mem_text, 'mem_label': mem_label if mem_text else ''})
 
             label_col = (max(self.metrics.horizontalAdvance(r['label']) for r in rows) + 4) if style == "text" else 14
             pct_col = self.metrics.horizontalAdvance("100%")   # the >3d percent is already a fixed 4-char field
@@ -636,8 +641,12 @@ class WidgetRenderer:
             # clutter on a readout that is only a few characters wide (#250). Whitespace separates
             # it just as well, and drops a few pixels of reserved width while it is at it.
             sep_col = self.metrics.horizontalAdvance("  ")
+            # #250: an optional "RAM"/"VRAM" cell in front of the number, sized for the widest label
+            # so the numbers stay aligned across rows. Zero when off: the widget keeps its width.
+            show_mem_labels = bool(getattr(config, 'show_memory_labels', False))
+            mem_label_col = memory_label_width(self.metrics) if (show_mem_labels and any_mem) else 0
             inline_mem = is_compact
-            mem_col = (sep_col + mem_num_col) if (any_mem and inline_mem) else 0
+            mem_col = (sep_col + mem_label_col + mem_num_col) if (any_mem and inline_mem) else 0
 
             extra_rows = 0 if inline_mem else sum(1 for r in rows if r['mem'])
             total_height = line_height * (len(rows) + extra_rows)
@@ -645,7 +654,7 @@ class WidgetRenderer:
             current_x = x_offset + margin
 
             stat_col = label_col + pct_col + suffix_col + mem_col
-            seg_w = max(stat_col, (label_col + mem_num_col) if (any_mem and not inline_mem) else 0)
+            seg_w = max(stat_col, (label_col + mem_label_col + mem_num_col) if (any_mem and not inline_mem) else 0)
 
             y = top_y
             for r in rows:
@@ -672,13 +681,19 @@ class WidgetRenderer:
                 if inline_mem and mem_col and r['mem']:
                     mx = vx + pct_col + suffix_col
                     # right-align the number in its column so the trailing 'G' lines up across rows
-                    painter.drawText(mx + mem_col - self.metrics.horizontalAdvance(r['mem']), y, r['mem'])
+                    num_x = mx + mem_col - self.metrics.horizontalAdvance(r['mem'])
+                    if mem_label_col:
+                        self._draw_memory_label(painter, num_x, y, r)
+                    painter.drawText(num_x, y, r['mem'])
                 y += line_height
                 if not inline_mem and r['mem']:
                     # right-align memory to the segment's right edge, so its right bound lines up with the
                     # %/temp above it (per #179 feedback) instead of floating left under the value column
                     mem_right = current_x + seg_w
-                    painter.drawText(mem_right - self.metrics.horizontalAdvance(r['mem']), y, r['mem'])
+                    num_x = mem_right - self.metrics.horizontalAdvance(r['mem'])
+                    if mem_label_col:
+                        self._draw_memory_label(painter, num_x, y, r)
+                    painter.drawText(num_x, y, r['mem'])
                     y += line_height
 
             self._last_text_rect = QRect(x_offset, top_y, seg_w + margin, total_height)
@@ -687,6 +702,15 @@ class WidgetRenderer:
         except Exception as e:
             self.logger.error("Failed to draw hardware stats: %s", e)
 
+
+    def _draw_memory_label(self, painter: QPainter, number_x: int, y: int, row: Dict[str, Any]) -> None:
+        """Paint a row's RAM/VRAM label immediately before its number (which starts at `number_x`),
+        in the row's CPU/GPU colour (white in monochrome style), then restore the value pen. Hugging
+        the number reads as one value; the reserved cell (memory_label_width) is always wide enough."""
+        painter.setPen(QPen(QColor(row['color'])))
+        label = row['mem_label']
+        painter.drawText(number_x - self.metrics.horizontalAdvance(label + " "), y, label)
+        painter.setPen(self.default_color)
 
     def _draw_icon(self, painter: QPainter, icon_type: str, x: int, y_ascent: int, color: Optional[QColor] = None) -> None:
         """Draws a tiny symbolic icon for CPU or GPU."""

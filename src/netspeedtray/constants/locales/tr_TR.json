@@ -47,6 +47,7 @@
     "MONITOR_GPU_LABEL": "GPU kullanımı izle",
     "MONITOR_RAM_LABEL": "RAM kullanımını göster",
     "MONITOR_VRAM_LABEL": "VRAM kullanımını göster",
+    "SHOW_MEMORY_LABELS_LABEL": "RAM/VRAM etiketlerini göster",
     "SHOW_HARDWARE_TEMPS_LABEL": "CPU/GPU sıcaklığını göster",
     "SHOW_HARDWARE_TEMPS_TOOLTIP": "CPU/GPU kullanımının yanında sıcaklığı gösterir. Çoğu sistemde LibreHardwareMonitor'un (Yönetici olarak çalıştırılması gerekir) veya NVIDIA GPU sıcaklığı için nvidia-smi'nin kullanılması gerekir.",
     "HARDWARE_TEMPS_LIMITATION_NOTE": "Çoğu CPU/GPU sıcaklık ve güç sensörü, Yönetici olarak çalıştırılan LibreHardwareMonitor v0.9.4'ü gerektirir. Daha sonraki sürümlerde NetSpeedTray'in okuduğu arayüz kaldırılmıştır. NetSpeedTray bunu otomatik olarak algılar ve kendisinin yönetici olarak çalıştırılması gerekmez. NVIDIA değerleri nvidia-smi aracılığıyla yerel olarak okunur. Bazı çok yeni CPU'larda sıcaklık sensörü hiç bulunmayabilir.",

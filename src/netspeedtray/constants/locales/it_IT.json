@@ -47,6 +47,7 @@
     "MONITOR_GPU_LABEL": "Monitora utilizzo GPU",
     "MONITOR_RAM_LABEL": "Mostra utilizzo RAM",
     "MONITOR_VRAM_LABEL": "Mostra utilizzo VRAM",
+    "SHOW_MEMORY_LABELS_LABEL": "Mostra etichette RAM/VRAM",
     "SHOW_HARDWARE_TEMPS_LABEL": "Mostra temperatura CPU/GPU",
     "SHOW_HARDWARE_TEMPS_TOOLTIP": "Mostra la temperatura accanto all'utilizzo CPU/GPU. Nella maggior parte dei sistemi richiede LibreHardwareMonitor (avviato come amministratore), oppure nvidia-smi per la temperatura delle GPU NVIDIA.",
     "HARDWARE_TEMPS_LIMITATION_NOTE": "La maggior parte dei sensori di temperatura e potenza CPU/GPU richiede LibreHardwareMonitor v0.9.4 avviato come amministratore. Le versioni successive hanno rimosso l'interfaccia letta da NetSpeedTray. NetSpeedTray lo rileva automaticamente e non necessita mai dei privilegi di amministratore. Le letture NVIDIA funzionano nativamente tramite nvidia-smi. Alcune CPU molto recenti non espongono alcun sensore di temperatura.",

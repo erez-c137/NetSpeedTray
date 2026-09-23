@@ -256,3 +256,47 @@ def test_a_gpu_with_no_total_but_real_usage_still_shows_it(renderer):
                            ram_info=(9.2, 15.7), vram_info=(2.5, 0.0),
                            layout_mode="horizontal")
     assert any("2.5G" in d for d in drawn), "usage without a known total was hidden"
+
+
+# --------------------------------------------------------------------------- #250: memory labels
+
+def _mem_kwargs():
+    return dict(cpu_usage=8.0, gpu_usage=30.0, ram_info=(19.1, 23.9), vram_info=(1.4, 8.0),
+                layout_mode="horizontal")
+
+
+def test_memory_labels_painted_when_on(renderer):
+    """#250 (seahindeniz): "19.1/23.9G" after the CPU temp said RAM nowhere."""
+    renderer.config.hardware_label_style = "text"
+    renderer.config.show_memory_labels = True
+    drawn = _drawn_strings(renderer, **_mem_kwargs())
+    assert "RAM" in drawn and "VRAM" in drawn, drawn
+    assert any("23.9" in d for d in drawn) and any("8.0" in d for d in drawn), drawn
+
+
+def test_memory_labels_absent_by_default(renderer):
+    renderer.config.hardware_label_style = "text"
+    drawn = _drawn_strings(renderer, **_mem_kwargs())
+    assert "RAM" not in drawn and "VRAM" not in drawn, drawn
+
+
+def test_no_label_for_a_hidden_igpu_vram(renderer):
+    """The iGPU's VRAM is blank, not "0.0G" - its label must not appear on its own either."""
+    renderer.config.show_memory_labels = True
+    drawn = _drawn_strings(renderer, cpu_usage=8.0, gpu_usage=3.0, ram_info=(9.2, 15.7),
+                           vram_info=(0.0, 0.0), layout_mode="horizontal")
+    assert "RAM" in drawn and "VRAM" not in drawn, drawn
+
+
+def _content_width(renderer, labels_on):
+    renderer.config.show_memory_labels = labels_on
+    _drawn_strings(renderer, **_mem_kwargs())
+    return renderer.get_last_text_rect().width()
+
+
+def test_labels_widen_the_segment_by_exactly_the_shared_label_cell(renderer):
+    """The layout reserves memory_label_width() for the labels; the renderer must paint into exactly
+    that much extra, or the widget clips (too little reserved) or gains dead space (too much)."""
+    from netspeedtray.utils.helpers import memory_label_width
+    off, on = _content_width(renderer, False), _content_width(renderer, True)
+    assert on - off == memory_label_width(renderer.metrics), (off, on)

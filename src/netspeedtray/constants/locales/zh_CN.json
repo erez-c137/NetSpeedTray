@@ -47,6 +47,7 @@
     "MONITOR_GPU_LABEL": "监控 GPU 使用率",
     "MONITOR_RAM_LABEL": "显示 RAM 使用量",
     "MONITOR_VRAM_LABEL": "显示 VRAM 使用量",
+    "SHOW_MEMORY_LABELS_LABEL": "显示 RAM/VRAM 标签",
     "SHOW_HARDWARE_TEMPS_LABEL": "显示 CPU/GPU 温度",
     "SHOW_HARDWARE_TEMPS_TOOLTIP": "在 CPU/GPU 使用率旁显示温度。多数系统需以管理员身份运行 LibreHardwareMonitor；NVIDIA GPU 温度可通过 nvidia-smi 获取。",
     "HARDWARE_TEMPS_LIMITATION_NOTE": "大多数 CPU/GPU 温度与功耗传感器需要 LibreHardwareMonitor（需管理员权限运行）——NetSpeedTray 会自动检测且自身无需管理员权限。NVIDIA 数据通过 nvidia-smi 原生支持。",

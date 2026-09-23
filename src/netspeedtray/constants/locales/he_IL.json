@@ -47,6 +47,7 @@
     "MONITOR_GPU_LABEL": "נטר ניצול GPU",
     "MONITOR_RAM_LABEL": "הצג שימוש ב-RAM",
     "MONITOR_VRAM_LABEL": "הצג שימוש ב-VRAM",
+    "SHOW_MEMORY_LABELS_LABEL": "הצג תוויות RAM/VRAM",
     "SHOW_HARDWARE_TEMPS_LABEL": "הצג טמפרטורת CPU/GPU",
     "SHOW_HARDWARE_TEMPS_TOOLTIP": "הצג טמפרטורה לצד השימוש ב-CPU/GPU. דורש את LibreHardwareMonitor (הרץ כמנהל) ברוב המערכות, או את nvidia-smi עבור טמפרטורת GPU של NVIDIA.",
     "HARDWARE_TEMPS_LIMITATION_NOTE": "רוב חיישני הטמפרטורה וההספק של CPU/GPU דורשים את LibreHardwareMonitor (הרץ כמנהל) - NetSpeedTray מזהה אותו אוטומטית ולעולם אינו זקוק בעצמו להרשאות מנהל. קריאות של NVIDIA פועלות באופן מקורי דרך nvidia-smi.",

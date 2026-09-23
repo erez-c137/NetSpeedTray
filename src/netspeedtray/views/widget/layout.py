@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import QWidget
 
 from netspeedtray import constants
 from netspeedtray.utils.taskbar_utils import is_small_taskbar, get_taskbar_info
+from netspeedtray.utils.helpers import memory_label_width
 
 if TYPE_CHECKING:
     from netspeedtray.views.widget.main import NetworkSpeedWidget
@@ -217,6 +218,10 @@ class WidgetLayoutManager:
                 # the #131 crash class).
                 _hw_label_style = self.widget.config.get('hardware_label_style', 'icons_colored')
                 label_offset = self.metrics.horizontalAdvance("CPU ") if _hw_label_style == "text" else 14
+                # #250: the RAM/VRAM label cell, reserved only when the labels are on (same helper
+                # the renderer paints with). Zero when off, so no existing widget changes width.
+                mem_label_w = (memory_label_width(self.metrics)
+                               if self.widget.config.get("show_memory_labels", False) else 0)
                 if display_mode == "side_by_side":
                     active_segments = 0
                     monitor_cpu = self.widget.config.get("monitor_cpu_enabled", False)
@@ -289,9 +294,9 @@ class WidgetLayoutManager:
                             cpu_width += hw_suffix_width
                         if monitor_ram and mem_ref:
                             if stack_hw: # inline
-                                cpu_width += self.metrics.horizontalAdvance(f" | {mem_ref}")
+                                cpu_width += self.metrics.horizontalAdvance(f" | {mem_ref}") + mem_label_w
                             else: # row
-                                cpu_width = max(cpu_width, self.metrics.horizontalAdvance(mem_ref))
+                                cpu_width = max(cpu_width, self.metrics.horizontalAdvance(mem_ref) + mem_label_w)
                         cpu_width += margin # Reclaim Left Margin offset budget from draw_hardware_stats
 
                     gpu_width = 0
@@ -301,9 +306,9 @@ class WidgetLayoutManager:
                             gpu_width += hw_suffix_width
                         if monitor_vram and mem_ref:
                             if stack_hw: # inline
-                                gpu_width += self.metrics.horizontalAdvance(f" | {mem_ref}")
+                                gpu_width += self.metrics.horizontalAdvance(f" | {mem_ref}") + mem_label_w
                             else: # row
-                                gpu_width = max(gpu_width, self.metrics.horizontalAdvance(mem_ref))
+                                gpu_width = max(gpu_width, self.metrics.horizontalAdvance(mem_ref) + mem_label_w)
                         gpu_width += margin # Reclaim Left Margin offset budget
                             
                     if stack_hw and monitor_cpu and monitor_gpu:
@@ -337,7 +342,7 @@ class WidgetLayoutManager:
                         if hw_suffix_w:
                             cpu_width += hw_suffix_w
                         if monitor_ram and getattr(self.widget, 'ram_used', None) is not None:
-                            cpu_width += self.metrics.horizontalAdvance(" | 16.0/16.0G")
+                            cpu_width += self.metrics.horizontalAdvance(" | 16.0/16.0G") + mem_label_w
                         calculated_width = max(calculated_width, cpu_width)
 
                     if display_mode in ["gpu_only", "combined"]:
@@ -345,7 +350,7 @@ class WidgetLayoutManager:
                         if hw_suffix_w:
                             gpu_width += hw_suffix_w
                         if monitor_vram and getattr(self.widget, 'vram_used', None) is not None:
-                            gpu_width += self.metrics.horizontalAdvance(" | 16.0/16.0G")
+                            gpu_width += self.metrics.horizontalAdvance(" | 16.0/16.0G") + mem_label_w
                         calculated_width = max(calculated_width, gpu_width)
                 elif display_mode == "cycle":
                     # Cycle shows one metric at a time (network, then each enabled HW
@@ -366,12 +371,12 @@ class WidgetLayoutManager:
                     if monitor_cpu:
                         cpu_width = label_offset + self.metrics.horizontalAdvance(" 100%") + hw_suffix_w
                         if monitor_ram and getattr(self.widget, 'ram_used', None) is not None:
-                            cpu_width += self.metrics.horizontalAdvance(" | 16.0/16.0G")
+                            cpu_width += self.metrics.horizontalAdvance(" | 16.0/16.0G") + mem_label_w
                         calculated_width = max(calculated_width, cpu_width)
                     if monitor_gpu:
                         gpu_width = label_offset + self.metrics.horizontalAdvance(" 100%") + hw_suffix_w
                         if monitor_vram and getattr(self.widget, 'vram_used', None) is not None:
-                            gpu_width += self.metrics.horizontalAdvance(" | 16.0/16.0G")
+                            gpu_width += self.metrics.horizontalAdvance(" | 16.0/16.0G") + mem_label_w
                         calculated_width = max(calculated_width, gpu_width)
                 
                 

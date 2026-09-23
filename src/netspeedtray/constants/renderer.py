@@ -37,6 +37,10 @@ class RendererConstants:
     GRAPH_LINE_COLOR: Final[str] = color.WHITE # Reference master palette
     CPU_LINE_COLOR: Final[str] = "#3498db" # Blue
     GPU_LINE_COLOR: Final[str] = "#e74c3c" # Red
+    # Optional labels in front of the memory values (#250). Not translated - same as the
+    # hard-coded CPU/GPU labels, these are universal abbreviations.
+    MEMORY_LABEL_RAM: Final[str] = "RAM"
+    MEMORY_LABEL_VRAM: Final[str] = "VRAM"
 
     # ========== MATPLOTLIB GRAPH WINDOW CONSTANTS ==========
     

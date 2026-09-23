@@ -47,6 +47,7 @@
     "MONITOR_GPU_LABEL": "Nadzoruj izkoriščenost GPU",
     "MONITOR_RAM_LABEL": "Prikaži porabo RAM-a",
     "MONITOR_VRAM_LABEL": "Prikaži porabo VRAM-a",
+    "SHOW_MEMORY_LABELS_LABEL": "Prikaži oznaki RAM/VRAM",
     "SHOW_HARDWARE_TEMPS_LABEL": "Pokaži temperaturo CPU/GPU",
     "SHOW_HARDWARE_TEMPS_TOOLTIP": "Prikaže temperaturo poleg izkoriščenosti CPU/GPU. Za večino sistemov zahteva LibreHardwareMonitor (zagnan kot skrbnik) ali nvidia-smi za temperaturo grafičnih kartic NVIDIA.",
     "HARDWARE_TEMPS_LIMITATION_NOTE": "Večina senzorjev temperature in porabe CPU/GPU potrebuje LibreHardwareMonitor (zagnan kot skrbnik) - NetSpeedTray ga zazna samodejno in sam nikoli ne potrebuje skrbniških pravic. Vrednosti NVIDIA delujejo izvorno prek nvidia-smi.",
