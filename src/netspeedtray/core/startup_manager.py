@@ -11,6 +11,34 @@ from typing import Optional
 
 from netspeedtray import constants
 
+# Where Windows keeps Program Compatibility flags ("Run this program as an administrator" etc.),
+# as one value per exe path, in both hives.
+_COMPAT_LAYERS_KEY = r"Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers"
+
+
+def get_compat_layers(exe_path: str) -> str:
+    """The compatibility flags Windows applies to `exe_path` (HKCU and HKLM joined), e.g.
+    "~ RUNASADMIN". Empty when there are none or the key can't be read."""
+    found = []
+    for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        try:
+            with winreg.OpenKey(hive, _COMPAT_LAYERS_KEY) as key:
+                value, _ = winreg.QueryValueEx(key, exe_path)
+                if value:
+                    found.append(str(value))
+        except OSError:
+            pass
+    return " ".join(found)
+
+
+def is_process_elevated() -> bool:
+    try:
+        import ctypes
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return False
+
+
 class StartupManager:
     """
     Manages the 'Run at Startup' functionality using the Windows Registry.
@@ -73,6 +101,21 @@ class StartupManager:
         elif not should_be_enabled and is_actually_enabled:
             self.logger.debug("Disabling startup task to match configuration.")
             self._set_startup_registry(False)
+
+        if should_be_enabled and getattr(sys, 'frozen', False):
+            self._warn_if_startup_will_be_skipped(sys.executable)
+
+    def _warn_if_startup_will_be_skipped(self, exe_path: str) -> None:
+        """Windows silently skips a Run-key entry whose exe requires elevation (#308: verified on a
+        real logon - the flagged entry never ran, even with silent UAC elevation). Nothing reaches
+        our log because we never start, so say it now, from a launch that did happen."""
+        layers = get_compat_layers(exe_path)
+        if "RUNASADMIN" in layers.upper():
+            self.logger.warning(
+                "Start with Windows is on, but this exe is set to always run as administrator "
+                "(compatibility flags: %s). Windows skips startup entries that require elevation, "
+                "so NetSpeedTray will NOT start at sign-in. Untick 'Run this program as an "
+                "administrator' in the exe's Properties > Compatibility.", layers)
 
     def _get_executable_path(self) -> str:
         """Gets the correct, quoted executable path or command for the registry."""
