@@ -31,6 +31,34 @@ def get_compat_layers(exe_path: str) -> str:
     return " ".join(found)
 
 
+# Task Manager's Startup apps switch lives apart from the Run value, one REG_BINARY per entry name:
+# first byte even (02) = enabled, odd (03) = disabled, then a FILETIME of when it was disabled.
+# Windows skips a disabled entry at sign-in even though the Run value is still there (#308).
+_STARTUP_APPROVED_KEY = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
+
+
+def get_startup_approved_state(app_name: str) -> str:
+    """Task Manager's verdict on the Run entry `app_name`: "enabled", "disabled" or "not set"
+    (never toggled in Task Manager, which Windows treats as enabled)."""
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _STARTUP_APPROVED_KEY) as key:
+            data, _ = winreg.QueryValueEx(key, app_name)
+    except OSError:
+        return "not set"
+    if not isinstance(data, (bytes, bytearray)) or not data:
+        return "not set"
+    return "disabled" if data[0] & 1 else "enabled"
+
+
+def _clear_startup_approved(app_name: str) -> None:
+    """Forget Task Manager's switch for `app_name` - a missing value means enabled."""
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _STARTUP_APPROVED_KEY, 0, winreg.KEY_SET_VALUE) as key:
+            winreg.DeleteValue(key, app_name)
+    except OSError:
+        pass
+
+
 def is_process_elevated() -> bool:
     try:
         import ctypes
@@ -49,11 +77,14 @@ class StartupManager:
 
     def is_startup_enabled(self, force_check: bool = False) -> bool:
         """
-        Checks if the application is configured to start with Windows.
-        By default, this uses the improved 'correctness' check.
-        `force_check=True` can be used to do a simple existence check.
+        Whether Windows will actually start the app at sign-in: our Run value is present (and, by
+        default, points at this exe) AND Task Manager hasn't disabled it. Before 2.1.7 the Task
+        Manager half was ignored, so Settings read ON for an entry Windows skipped (#308).
+        `force_check=True` does a simple existence check of the Run value.
         """
-        return self._check_startup_registry(check_for_correctness=not force_check)
+        if not self._check_startup_registry(check_for_correctness=not force_check):
+            return False
+        return get_startup_approved_state(constants.app.APP_NAME) != "disabled"
 
     def toggle_startup(self, enable: bool) -> bool:
         """
@@ -62,6 +93,9 @@ class StartupManager:
         """
         self.logger.debug(f"Toggling startup: {enable}")
         self._set_startup_registry(enable)
+        # An explicit choice in our Settings overrides an older Task Manager disable - otherwise
+        # turning it ON here did nothing at all (#308). Turning it off removes the stale entry too.
+        _clear_startup_approved(constants.app.APP_NAME)
         actual_state = self.is_startup_enabled()
         
         if actual_state != enable:
@@ -92,7 +126,9 @@ class StartupManager:
             except Exception:
                 pass # Key doesn't exist or other error, safe to proceed with normal logic
 
-        is_actually_enabled = self.is_startup_enabled()
+        # The Run value only: a Task Manager disable is the user's choice, and this runs on every
+        # launch - it must never silently undo it (it warns below instead).
+        is_actually_enabled = self._check_startup_registry()
         self.logger.debug(f"Syncing startup task. Config says: {should_be_enabled}, Registry says: {is_actually_enabled}")
 
         if should_be_enabled and not is_actually_enabled:
@@ -102,6 +138,11 @@ class StartupManager:
             self.logger.debug("Disabling startup task to match configuration.")
             self._set_startup_registry(False)
 
+        if should_be_enabled and get_startup_approved_state(constants.app.APP_NAME) == "disabled":
+            self.logger.warning(
+                "Start with Windows is on in NetSpeedTray, but NetSpeedTray is disabled in Task Manager's "
+                "Startup apps, so Windows will NOT start it at sign-in. Turn it on in Settings or in "
+                "Task Manager > Startup apps.")
         if should_be_enabled and getattr(sys, 'frozen', False):
             self._warn_if_startup_will_be_skipped(sys.executable)
 
