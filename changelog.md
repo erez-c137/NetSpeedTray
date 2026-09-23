@@ -115,9 +115,9 @@ and Hungarian.
 - **A settings file the app can't read no longer stops it from starting.** It's set aside as
   `.unreadable` and the app starts on defaults, instead of showing "NetSpeedTray must close".
   ([#307])
-- **"Start with Windows" tells the truth.** If NetSpeedTray is disabled in Task Manager's Startup
-  apps, Settings now shows the switch as off, and turning it on actually works. ([#308], thanks
-  [@CMTriX])
+- **"Start with Windows" tells the truth.** When Task Manager's Startup apps has NetSpeedTray
+  disabled, Settings now shows that - and switching it on in Settings actually turns it on.
+  ([#308], thanks [@CMTriX])
 
   *Under the hood: Task Manager keeps its own switch in `Explorer\StartupApproved\Run` (first byte
   `02` on, `03` off), separate from the Run entry we checked. The launch-time check still never
@@ -130,7 +130,8 @@ and Hungarian.
   extra digits whenever a value rounded to zero. That's gone. ([#303], thanks [@Necromancerx9];
   fix by [@kamal63442] in [#304])
 - **Support bundles include the in-app updater's own log**, which 2.1.6 started writing but never
-  actually put in the bundle.
+  actually put in the bundle. [privacy.md](privacy.md) and the bundle's `MANIFEST.txt` now list
+  everything a bundle contains.
 
 ### Localization
 
@@ -145,7 +146,8 @@ and Hungarian.
 - 1,496 tests. Each fix was seen failing first, then checked live on the maintainer's machine: a
   support bundle built from a real log; a source build started with an unreadable settings file; a
   real sign-in with two throwaway startup entries (one flagged run-as-admin, one not); screenshots of
-  the labels in three layouts.
+  the labels in three layouts. Before tagging, the built exe was smoke-tested against a scratch
+  profile - every Decimal Places setting, plus the labels on the widget and in Settings.
 - Release signing ([#311]): both SignPath requests now go in at once, so both approvals arrive
   together, and the run polls every 20 s instead of backing off to 20 minutes. A throwaway
   `v0.0.1-test` tag proved the prerelease path for the first time: marked prerelease, not Latest,
