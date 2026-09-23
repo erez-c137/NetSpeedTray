@@ -17,6 +17,10 @@ class LogConstants:
     MAX_LOG_SIZE: Final[int] = 10 * 1024 * 1024
     BYTES_TO_MEGABYTES: Final[int] = 1024 * 1024
     LOG_BACKUP_COUNT: Final[int] = 3
+    # The elevated installer's own log (2.1.6), in a subfolder of the app-data dir. The support
+    # bundle ships it: an in-app update that ends in nothing must be diagnosable.
+    INSTALLER_LOG_SUBDIR: Final[str] = "logs"
+    INSTALLER_LOG_FILENAME: Final[str] = "update-install.log"
 
     def __init__(self) -> None:
         self.validate()

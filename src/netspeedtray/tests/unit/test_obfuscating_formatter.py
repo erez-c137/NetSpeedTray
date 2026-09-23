@@ -137,6 +137,81 @@ class TestPathRedaction:
         assert home not in out
 
 
+# --- Escaped and relocated path forms (#306) ----------------------------------
+# The plain-path test above builds its message by hand with single backslashes. A real OSError
+# carries the path's repr - doubled backslashes - and that form leaked the username through every
+# "[Errno 13] Permission denied: 'C:\Users\<name>\...'" line in 2.1.6 (#306, visible in #307).
+
+def _appdata_file() -> str:
+    from netspeedtray.utils.helpers import get_app_data_path
+    return str(Path(get_app_data_path()).resolve() / "NetSpeedTray_Config.json")
+
+
+def _username() -> str:
+    return Path.home().resolve().name
+
+
+class TestEscapedPathRedaction:
+    def test_redacts_real_oserror_message(self, formatter):
+        err = PermissionError(13, "Permission denied", _appdata_file())
+        out = _format(formatter, "Failed to save configuration: %s", err)
+        assert _username().lower() not in out.lower(), out
+        assert "<REDACTED_PATH>" in out
+
+    def test_redacts_repr_of_str_path(self, formatter):
+        out = _format(formatter, "Moving %r", _appdata_file())
+        assert _username().lower() not in out.lower(), out
+
+    def test_redacts_json_escaped_path(self, formatter):
+        import json
+        out = _format(formatter, "config dump: %s", json.dumps({"path": _appdata_file()}))
+        assert _username().lower() not in out.lower(), out
+
+    def test_redacts_doubly_escaped_path(self, formatter):
+        # repr() of a JSON string: four backslashes per separator.
+        import json
+        out = _format(formatter, "%r", json.dumps(_appdata_file()))
+        assert _username().lower() not in out.lower(), out
+
+    def test_redacts_profile_on_another_drive(self, formatter):
+        home = str(Path.home().resolve())
+        other = ("D" if home[0].upper() != "D" else "E") + home[1:]
+        out = _format(formatter, f"Found {other}\\Documents\\x.txt")
+        assert _username().lower() not in out.lower(), out
+
+    def test_redacted_path_keeps_the_file_name(self, formatter):
+        # Diagnostics still need to know WHICH file failed.
+        err = PermissionError(13, "Permission denied", _appdata_file())
+        out = _format(formatter, "%s", err)
+        assert "NetSpeedTray_Config.json" in out
+
+
+class TestUsernameBackstop:
+    def test_bare_username_is_redacted(self, formatter):
+        name = _username()
+        if len(name) <= 3:
+            pytest.skip("short usernames are deliberately not redacted as bare words")
+        out = _format(formatter, f"profile owner is {name}, done")
+        assert name.lower() not in out.lower(), out
+
+    def test_username_inside_a_longer_word_is_kept(self, formatter):
+        name = _username()
+        if len(name) <= 3:
+            pytest.skip("short usernames are deliberately not redacted as bare words")
+        word = f"x{name}y"
+        out = _format(formatter, f"token {word} here")
+        assert word in out
+
+    @pytest.mark.parametrize("generic", ["user", "admin", "Administrator", "owner", "public"])
+    def test_generic_account_names_do_not_redact_ordinary_words(self, generic, monkeypatch):
+        import netspeedtray.utils.config as cfg
+        monkeypatch.setattr(cfg.ObfuscatingFormatter, "_current_username",
+                            staticmethod(lambda: generic))
+        f = ObfuscatingFormatter("%(message)s")
+        out = _format(f, f"The {generic} chose a setting")
+        assert generic in out
+
+
 # --- Hostname / Computer Name -------------------------------------------------
 
 class TestHostnameRedaction:

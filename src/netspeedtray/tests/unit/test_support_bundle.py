@@ -329,3 +329,44 @@ def test_unknown_config_keys_are_redacted_in_bundle():
     assert out["metrics_bind_host"] == "<redacted-unknown-key>"
     assert out["config_version"] == "9.9", "config_version is schema-known and the key rollback diagnostic"
     assert out["font_size"] == 10
+
+
+class TestInstallerLog:
+    """2.1.6 writes the elevated installer's log to logs/update-install.log so a failed in-app update
+    is diagnosable - but the bundle only collected the app's own log, so it never shipped."""
+
+    # The REAL home dir, not a literal: the formatter redacts the running user's paths, so a
+    # hard-coded "C:\Users\Erez" would only pass on the owner's machine.
+    _home = str(Path.home().resolve())
+
+    def _write_installer_log(self, log_dir):
+        sub = log_dir / "logs"
+        sub.mkdir()
+        (sub / "update-install.log").write_text(
+            "2026-09-06 12:59:58.101   Log opened. (Time zone: UTC+03:00)\n"
+            f"2026-09-06 12:59:58.102   Original command line: \"{self._home}\\AppData\\Local\\Temp"
+            "\\NetSpeedTray-2.1.6-Setup.exe\" /VERYSILENT\n"
+            "2026-09-06 13:00:04.310   Installation process succeeded.\n",
+            encoding="utf-8",
+        )
+
+    def test_installer_log_is_bundled(self, q_app, tmp_path, fake_config, fake_log_dir):
+        self._write_installer_log(fake_log_dir)
+        dest = tmp_path / "bundle.zip"
+        support_bundle.build_support_bundle(dest, fake_config)
+        text = _open_zip_entry(dest, "logs/update-install.log")
+        assert "Installation process succeeded." in text
+
+    def test_installer_log_is_scrubbed(self, q_app, tmp_path, fake_config, fake_log_dir):
+        self._write_installer_log(fake_log_dir)
+        dest = tmp_path / "bundle.zip"
+        support_bundle.build_support_bundle(dest, fake_config)
+        text = _open_zip_entry(dest, "logs/update-install.log")
+        assert self._home.lower() not in text.lower()
+        assert "NetSpeedTray-2.1.6-Setup.exe" in text   # the file name survives for diagnosis
+
+    def test_bundle_without_installer_log_still_builds(self, q_app, tmp_path, fake_config, fake_log_dir):
+        dest = tmp_path / "bundle.zip"
+        support_bundle.build_support_bundle(dest, fake_config)
+        with zipfile.ZipFile(dest, "r") as zf:
+            assert "logs/update-install.log" not in zf.namelist()

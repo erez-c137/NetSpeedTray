@@ -55,7 +55,9 @@ class ObfuscatingFormatter(logging.Formatter):
     Logging formatter that redacts sensitive information from log records.
 
     Redacted patterns:
-    - User paths (Windows backslash and forward-slash forms, case-insensitive)
+    - User paths (plain, repr/JSON-escaped and forward-slash forms, any drive letter,
+      case-insensitive)
+    - The account name as a bare word (backstop; generic names like "user" excluded)
     - IPv4 addresses
     - IPv6 addresses (full, compressed, link-local with zone IDs, IPv4-mapped)
     - Hostname / computer name
@@ -134,7 +136,9 @@ class ObfuscatingFormatter(logging.Formatter):
         super().__init__(*args, **kwargs)
         self._path_regexes: List[re.Pattern] = []
         self._hostname_regex: Optional[re.Pattern] = None
+        self._username_regex: Optional[re.Pattern] = None
         self._setup_paths()
+        self._setup_username()
         self._setup_hostname()
 
     def _setup_paths(self):
@@ -156,14 +160,50 @@ class ObfuscatingFormatter(logging.Formatter):
             except Exception: pass
         for path_str in potential_paths:
             if not path_str or len(path_str) <= 3: continue
-            normalized_path = os.path.normcase(os.path.normpath(path_str))
-            paths_to_obfuscate.add(normalized_path)
-            # Also register the forward-slash form: pathlib.Path.__repr__
-            # and many third-party error messages use C:/Users/... on Windows.
-            paths_to_obfuscate.add(normalized_path.replace("\\", "/"))
+            paths_to_obfuscate.add(os.path.normcase(os.path.normpath(path_str)))
         # Sort longest-first so AppData paths get matched before the user home prefix.
         sorted_paths = sorted(list(paths_to_obfuscate), key=len, reverse=True)
-        self._path_regexes = [re.compile(re.escape(p), re.IGNORECASE) for p in sorted_paths]
+        self._path_regexes = [re.compile(self._path_pattern(p), re.IGNORECASE) for p in sorted_paths]
+
+    # One path separator in any spelling a log line carries it: "\" (plain), "\\" (repr() - every
+    # OSError message - and JSON), "\\\\" (repr of JSON), or "/" (pathlib repr, URLs). Matching only
+    # the literal plain form leaked the username through every "[Errno 13] ... 'C:\\Users\\<name>'"
+    # line in 2.1.6 (#306).
+    _PATH_SEP = r"(?:\\{1,4}|/)"
+
+    @classmethod
+    def _path_pattern(cls, path: str) -> str:
+        """Regex for `path` in any separator spelling, on any drive letter (a profile on D: is
+        still the user's name)."""
+        parts = [p for p in re.split(r"[\\/]+", path) if p]
+        if not parts:
+            return re.escape(path)
+        head = r"[a-z]:" if re.fullmatch(r"[a-zA-Z]:", parts[0]) else cls._PATH_SEP + re.escape(parts[0])
+        return head + "".join(cls._PATH_SEP + re.escape(p) for p in parts[1:])
+
+    # Account names that are also ordinary words. Redacting them as bare words would blank out
+    # "user", "admin" etc. across every log line; the path rules still catch them inside paths.
+    _GENERIC_ACCOUNT_NAMES = frozenset({
+        "admin", "administrator", "user", "users", "owner", "default", "public", "guest", "test",
+    })
+
+    @staticmethod
+    def _current_username() -> str:
+        return Path.home().name
+
+    def _setup_username(self):
+        """Backstop for path shapes the rules above don't anticipate: the bare account name as a
+        whole word. Same length guard as the hostname rule, plus the generic-name list."""
+        self._username_regex = None
+        names = {self._current_username(), os.environ.get("USERNAME", "")}
+        names = sorted((n for n in names
+                        if n and len(n) > 3 and n.lower() not in self._GENERIC_ACCOUNT_NAMES),
+                       key=len, reverse=True)
+        if names:
+            alternation = "|".join(re.escape(n) for n in names)
+            self._username_regex = re.compile(
+                r"(?<![A-Za-z0-9_])(?:" + alternation + r")(?![A-Za-z0-9_])", re.IGNORECASE
+            )
 
     def _setup_hostname(self):
         try:
@@ -224,6 +264,8 @@ class ObfuscatingFormatter(logging.Formatter):
         # Order matters: paths first (most specific), then narrower patterns.
         for pattern in self._path_regexes:
             sanitized_message = pattern.sub("<REDACTED_PATH>", sanitized_message)
+        if self._username_regex is not None:
+            sanitized_message = self._username_regex.sub("<REDACTED_USER>", sanitized_message)
         # MAC and GUID before IPv6 - they contain hex/colons that could be
         # partially matched by the IPv6 regex if processed in the wrong order.
         sanitized_message = self.MAC_REGEX.sub("<REDACTED_MAC>", sanitized_message)

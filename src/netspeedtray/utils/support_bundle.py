@@ -174,7 +174,8 @@ def _scrub_log_text(text: str) -> str:
 
 
 def _list_log_files() -> List[Path]:
-    """Returns all NetSpeedTray log files (current + rotated backups)."""
+    """Returns all NetSpeedTray log files (current + rotated backups), plus the in-app updater's
+    installer log when one exists - 2.1.6 started writing it precisely so bundles would carry it."""
     base = get_app_data_path()
     main = base / constants.logs.LOG_FILENAME
     files: List[Path] = []
@@ -185,6 +186,9 @@ def _list_log_files() -> List[Path]:
         rotated = base / f"{constants.logs.LOG_FILENAME}.{i}"
         if rotated.exists():
             files.append(rotated)
+    installer_log = base / constants.logs.INSTALLER_LOG_SUBDIR / constants.logs.INSTALLER_LOG_FILENAME
+    if installer_log.exists():
+        files.append(installer_log)
     return files
 
 
