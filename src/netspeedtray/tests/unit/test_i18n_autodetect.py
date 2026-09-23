@@ -156,6 +156,7 @@ class TestDisplayLanguageVersusRegionalFormat:
 
     @pytest.mark.parametrize("format_locale,expected", [
         ("de_DE", "de_DE"), ("es_ES", "es_ES"), ("fr_FR", "fr_FR"), ("it_IT", "it_IT"),
+        ("hu_HU", "hu_HU"),
     ])
     def test_english_display_falls_back_to_a_supported_regional_format(self, format_locale, expected):
         """The behavior this fix must NOT take away: English-language Windows with a German,
