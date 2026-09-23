@@ -709,9 +709,22 @@ class ConfigManager:
             self.logger.error("Configuration file is corrupt. Backing it up and using defaults.")
             try:
                 corrupt_path = self.config_path.with_name(f"{self.config_path.name}.corrupt")
-                shutil.move(self.config_path, corrupt_path)
+                os.replace(self.config_path, corrupt_path)
             except Exception:
                 self.logger.exception("Failed to back up corrupt config file.")
+            return self.reset_to_defaults()
+        except PermissionError as e:
+            # The file exists but its ACL denies us read (#307/#308: a config left writable only
+            # elevated). Raising here made startup show a fatal "must close" dialog. Start on
+            # defaults instead, and move the file aside rather than overwrite it - the folder
+            # allows the rename, and the user's settings survive for whoever CAN read them.
+            self.logger.error("Configuration file is not readable (%s). Moving it aside and "
+                              "starting with default settings.", e)
+            try:
+                os.replace(self.config_path,
+                           self.config_path.with_name(f"{self.config_path.name}.unreadable"))
+            except OSError:
+                self.logger.exception("Failed to move the unreadable config file aside.")
             return self.reset_to_defaults()
         except OSError as e:
             msg = f"OS error reading config file {self.config_path}: {e}"
@@ -748,20 +761,32 @@ class ConfigManager:
             self.logger.debug("Skipping save, configuration is unchanged.")
             return
 
+        temp_path = None
         try:
             self.config_path.parent.mkdir(parents=True, exist_ok=True)
             with tempfile.NamedTemporaryFile(
                 "w", delete=False, dir=self.config_path.parent, encoding="utf-8"
             ) as temp_f:
-                json.dump(config_to_save, temp_f, indent=4)
                 temp_path = temp_f.name
-            shutil.move(temp_path, self.config_path)
+                json.dump(config_to_save, temp_f, indent=4)
+            # os.replace, NOT shutil.move (#307). On Windows shutil.move degrades to COPYING over an
+            # existing destination, which needs write access to the file itself - so a config whose
+            # ACL denies the user write failed every save. os.replace needs only the delete right
+            # the folder grants, and the new file inherits the folder's ACL, healing that state.
+            os.replace(temp_path, self.config_path)
+            temp_path = None
             self._last_config = validated_config.copy()
             self.logger.debug("Configuration saved successfully to %s", self.config_path)
         except OSError as e:
             msg = f"Failed to save configuration to {self.config_path}: {e}"
             self.logger.error(msg)
             raise ConfigError(msg) from e
+        finally:
+            if temp_path is not None:   # a failed save used to leave a tmpXXXX file behind every time
+                try:
+                    os.unlink(temp_path)
+                except OSError:
+                    pass
 
 
     def reset_to_defaults(self) -> Dict[str, Any]:

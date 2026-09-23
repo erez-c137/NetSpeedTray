@@ -1,7 +1,7 @@
 """
 Save/load round-trip tests for utils.config.ConfigManager.
 
-These exercise the *real* atomic-write path (tempfile + shutil.move) against a
+These exercise the *real* atomic-write path (tempfile + os.replace) against a
 real temp directory (pytest ``tmp_path``) -- nothing in json/tempfile/shutil is
 mocked. The point is to pin the invariant CLAUDE.md calls core: a config saved
 by one manager and read back by a fresh manager returns the same values, and
