@@ -202,17 +202,6 @@ def get_reference_value_string(force_mega_unit: bool, decimal_places: int, unit_
     return integer_part
 
 
-# Adaptive decimal floor for force-mega display (2.1.5 item 11c). At the shipped defaults
-# (always_mbps, decimal_places=1) any traffic under ~6.25 KB/s rounds to "0.0 Mbps" - Discord
-# idle at 3,000 B/s read as dead air. When the forced-mega value rounds to zero at the
-# configured precision but the TRUE value is at least this fraction of the mega unit
-# (0.001 Mbps = 1 kbps in bits_decimal), extend the decimals just enough to show the first
-# significant digit. Below the floor, plain zero at the configured precision is honest.
-FORCE_MEGA_ZERO_FLOOR: float = 0.001
-# Cap on the borrowed decimals ("0.003" at most): further digits report noise, not traffic.
-FORCE_MEGA_MAX_ADAPTIVE_DECIMALS: int = 3
-
-
 def format_speed(
     speed: float,
     i18n,
@@ -311,31 +300,11 @@ def format_speed(
             val = speed_value / divisors[tier]
         unit = labels[tier]
 
-    # Adaptive decimal floor (2.1.5 item 11c): only in force-mega mode, only when the value
-    # rounds to zero at the configured precision yet real traffic is flowing (>= the 1 kbps
-    # floor). Extend to the first significant digit, capped at FORCE_MEGA_MAX_ADAPTIVE_DECIMALS
-    # and at the reference-string width so the widget never grows ("0.02", "0.003"). The
-    # condition is on the VALUE - a config alone never changes precision. Auto mode is
-    # untouched: it never renders zero for nonzero traffic.
-    effective_decimal_places = decimal_places
-    if (
-        force_mega_unit
-        and tier == 2
-        and val >= FORCE_MEGA_ZERO_FLOOR
-        and round(val, decimal_places) == 0
-    ):
-        ref_len = len(get_reference_value_string(force_mega_unit, decimal_places, unit_type=unit_type))
-        max_dp = min(FORCE_MEGA_MAX_ADAPTIVE_DECIMALS, ref_len - 2)  # "0." + decimals must fit the reference
-        for extra_dp in range(decimal_places + 1, max_dp + 1):
-            if round(val, extra_dp) > 0:
-                effective_decimal_places = extra_dp
-                break
-
     # Format numeric part
     if tier == 0:
         formatted_val = f"{val:.0f}"
     else:
-        formatted_val = f"{val:.{effective_decimal_places}f}"
+        formatted_val = f"{val:.{decimal_places}f}"
 
     if fixed_width:
         # Use reference string to match logic in layout/renderer

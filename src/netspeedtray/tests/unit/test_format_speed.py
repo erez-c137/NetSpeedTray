@@ -206,47 +206,33 @@ def test_force_mega_giga_promotion_binary(en):
                         split_unit=True) == ("8.0", en.GIBITS_LABEL)
 
 
-# --- adaptive decimal floor in force_mega mode (2.1.5 item 11c) ---------------
-# At shipped defaults (always_mbps, dp=1) traffic under 6,250 B/s rendered "0.0 Mbps".
-# When the value rounds to zero but is >= 0.001 of the mega unit (1 kbps), extend the
-# decimals just enough to show the first significant digit, capped at 3.
-
-def test_adaptive_floor_shows_idle_traffic(en):
-    # 3000 B/s = 0.024 Mbit/s (Discord idle): was "0.0 Mbps"
-    assert format_speed(3_000, en, force_mega_unit=True, split_unit=True) == ("0.02", en.MBITS_LABEL)
-
-
-def test_adaptive_floor_extends_to_three_decimals(en):
-    # 500 B/s = 0.004 Mbit/s
-    assert format_speed(500, en, force_mega_unit=True, split_unit=True) == ("0.004", en.MBITS_LABEL)
-
-
-def test_adaptive_floor_at_exact_1kbps(en):
-    # 125 B/s = exactly 0.001 Mbit/s - the floor itself is shown
-    assert format_speed(125, en, force_mega_unit=True, split_unit=True) == ("0.001", en.MBITS_LABEL)
-
-
-def test_below_floor_renders_plain_zero(en):
-    # 124 B/s = 0.000992 Mbit/s - below the 1 kbps floor: plain zero at configured precision
-    assert format_speed(124, en, force_mega_unit=True, split_unit=True) == ("0.0", en.MBITS_LABEL)
-
-
-def test_adaptive_floor_with_dp2_config(en):
-    assert format_speed(500, en, force_mega_unit=True, decimal_places=2,
-                        split_unit=True) == ("0.004", en.MBITS_LABEL)
-
-
-def test_adaptive_floor_dp0_is_width_capped(en):
-    # dp=0's reference is "8888" (4 chars): the borrow may never outgrow it. "0.02" fits;
-    # "0.004" would not, so a dp=0 config keeps plain zero for values needing 3 decimals.
-    assert format_speed(3_000, en, force_mega_unit=True, decimal_places=0,
-                        split_unit=True) == ("0.02", en.MBITS_LABEL)
-    assert format_speed(500, en, force_mega_unit=True, decimal_places=0,
-                        split_unit=True) == ("0", en.MBITS_LABEL)
-
-
-def test_adaptive_floor_never_fires_on_true_zero(en):
-    assert format_speed(0, en, force_mega_unit=True, split_unit=True) == ("0.0", en.MBITS_LABEL)
+@pytest.mark.parametrize("unit_type,mega_bytes,label", [
+    ("bits_decimal", 125_000, "MBITS_LABEL"),
+    ("bits_binary", 131_072, "MIBITS_LABEL"),
+    ("bytes_decimal", 1_000_000, "MBPS_LABEL"),
+    ("bytes_binary", 1_048_576, "MIBPS_LABEL"),
+])
+@pytest.mark.parametrize("decimal_places", [0, 1, 2])
+@pytest.mark.parametrize("mega_value,expected", [
+    (0, ("0", "0.0", "0.00")),
+    (0.000992, ("0", "0.0", "0.00")),
+    (0.001, ("0", "0.0", "0.00")),
+    (0.004, ("0", "0.0", "0.00")),
+    (0.024, ("0", "0.0", "0.02")),
+    (0.064, ("0", "0.1", "0.06")),
+    (1.234, ("1", "1.2", "1.23")),
+])
+def test_force_mega_respects_selected_precision(en, unit_type, mega_bytes, label,
+                                               decimal_places, mega_value, expected):
+    speed = mega_value * mega_bytes
+    value = expected[decimal_places]
+    unit = getattr(en, label)
+    options = {"force_mega_unit": True, "unit_type": unit_type, "decimal_places": decimal_places}
+    assert format_speed(speed, en, split_unit=True, **options) == (value, unit)
+    assert format_speed(speed, en, **options) == f"{value} {unit}"
+    ref = get_reference_value_string(True, decimal_places, unit_type)
+    assert format_speed(speed, en, fixed_width=True, split_unit=True,
+                        **options) == (value.rjust(len(ref)), unit)
 
 
 def test_auto_mode_untouched_at_low_traffic(en):
@@ -255,9 +241,14 @@ def test_auto_mode_untouched_at_low_traffic(en):
     assert format_speed(1, en, split_unit=True) == ("8", en.BITS_LABEL)
 
 
-def test_adaptive_floor_respects_locale_separator(de):
-    assert format_speed(3_000, de, force_mega_unit=True, split_unit=True) == ("0,02", de.MBITS_LABEL)
-    assert format_speed(500, de, force_mega_unit=True, split_unit=True) == ("0,004", de.MBITS_LABEL)
+@pytest.mark.parametrize("decimal_places,expected", [
+    (0, "0"),
+    (1, "0,0"),
+    (2, "0,02"),
+])
+def test_force_mega_precision_respects_locale_separator(de, decimal_places, expected):
+    assert format_speed(3_000, de, force_mega_unit=True, decimal_places=decimal_places,
+                        split_unit=True) == (expected, de.MBITS_LABEL)
 
 
 # --- width invariants: nothing new outgrows the reference string --------------
@@ -273,11 +264,11 @@ def test_new_renderings_fit_reference_width(en):
         assert len(val) <= len(ref_auto), (speed, val)
 
 
-def test_fixed_width_pads_adaptive_and_promoted_values(en):
+def test_fixed_width_pads_rounded_and_promoted_values(en):
     # fixed_width rjust against the UNCHANGED reference string keeps behaving.
     ref = get_reference_value_string(True, 1, "bits_decimal")        # "8888.8" (6 chars)
     val, _ = format_speed(500, en, force_mega_unit=True, fixed_width=True, split_unit=True)
-    assert val == "0.004".rjust(len(ref))
+    assert val == "0.0".rjust(len(ref))
     val2, _ = format_speed(1_250_000_000, en, force_mega_unit=True, fixed_width=True, split_unit=True)
     assert val2 == "10.0".rjust(len(ref))
 
