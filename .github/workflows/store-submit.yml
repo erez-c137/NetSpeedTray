@@ -25,6 +25,12 @@ on:
         required: true
         type: string
 
+# Reads the public release asset and talks to Partner Center with the MSSTORE_* secrets; the GitHub
+# token needs read access at most (code-scanning alert #10). As a called workflow it can never exceed
+# the caller's permissions either.
+permissions:
+  contents: read
+
 jobs:
   submit:
     runs-on: ubuntu-latest
