@@ -60,7 +60,13 @@ jobs:
           name: portable-unsigned
           path: dist/NetSpeedTray-*/NetSpeedTray-Portable-*.zip
 
+      # Both signing requests are submitted WITHOUT waiting, so both approval prompts reach the
+      # owner at once. SignPath Foundation requires a manual approval per release (signpath.org/terms);
+      # submitted one after the other, the portable's prompt only appeared once the installer's was
+      # approved (2.1.5: ~21 min + ~10 min). The wait below also polls at a fixed 20 s - the action's
+      # own wait backs off to ~20 min between polls, so a late approval sat unnoticed (2.1.6 timed out).
       - name: Submit Installer to SignPath
+        id: sign_installer
         uses: signpath/github-action-submit-signing-request@v2
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
@@ -69,12 +75,10 @@ jobs:
           artifact-configuration-slug: "netspeedtray-installer"
           signing-policy-slug: "release-signing"
           github-artifact-id: ${{ steps.upload_installer.outputs.artifact-id }}
-          output-artifact-directory: "signed-installer"
-          # SignPath holds rapid successive requests for manual approval; the default 600 s wait
-          # failed a whole release run once (v2.1.2). 30 min gives the owner time to approve.
-          wait-for-completion-timeout-in-seconds: 1800
+          wait-for-completion: false
 
       - name: Submit Portable ZIP to SignPath
+        id: sign_portable
         uses: signpath/github-action-submit-signing-request@v2
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
@@ -83,8 +87,43 @@ jobs:
           artifact-configuration-slug: "netspeedtray-portable"
           signing-policy-slug: "release-signing"
           github-artifact-id: ${{ steps.upload_portable.outputs.artifact-id }}
-          output-artifact-directory: "signed-portable"
-          wait-for-completion-timeout-in-seconds: 1800
+          wait-for-completion: false
+
+      - name: Wait for both approvals, then download the signed artifacts
+        env:
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+          SIGNPATH_ORG: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          INSTALLER_ID: ${{ steps.sign_installer.outputs.signing-request-id }}
+          PORTABLE_ID: ${{ steps.sign_portable.outputs.signing-request-id }}
+          INSTALLER_URL: ${{ steps.sign_installer.outputs.signing-request-web-url }}
+          PORTABLE_URL: ${{ steps.sign_portable.outputs.signing-request-web-url }}
+        shell: pwsh
+        run: |
+          # Links on the run page, so approving is one click from the Actions tab.
+          "## Signing requests - approve both`n`n- Installer: $env:INSTALLER_URL`n- Portable: $env:PORTABLE_URL" >> $env:GITHUB_STEP_SUMMARY
+          $api = "https://app.signpath.io/Api/v1/$env:SIGNPATH_ORG/SigningRequests"
+          $headers = @{ Authorization = "Bearer $env:SIGNPATH_API_TOKEN" }
+          $pending = [ordered]@{ "signed-installer" = $env:INSTALLER_ID; "signed-portable" = $env:PORTABLE_ID }
+          $deadline = (Get-Date).AddMinutes(45)
+          while ($pending.Count -gt 0) {
+            foreach ($dir in @($pending.Keys)) {
+              $id = $pending[$dir]
+              try { $st = Invoke-RestMethod -Uri "$api/$id/Status" -Headers $headers }
+              catch { Write-Host "$dir : status call failed ($($_.Exception.Message)), retrying"; continue }
+              if (-not $st.isFinalStatus) { Write-Host "$dir : $($st.status)"; continue }
+              if ($st.status -ne "Completed") { throw "$dir signing request $id ended as $($st.status)" }
+              $zip = "$dir.zip"
+              Invoke-WebRequest -Uri "$api/$id/SignedArtifact" -Headers $headers -OutFile $zip
+              Expand-Archive -Path $zip -DestinationPath $dir -Force
+              Remove-Item $zip
+              Write-Host "$dir : signed and downloaded"
+              $pending.Remove($dir)
+            }
+            if ($pending.Count -eq 0) { break }
+            if ((Get-Date) -gt $deadline) { throw "Timed out after 45 min waiting for: $($pending.Keys -join ', ')" }
+            Start-Sleep -Seconds 20
+          }
+          Get-ChildItem signed-installer, signed-portable -Recurse -File | ForEach-Object { Write-Host $_.FullName }
 
       # --- Calculate Checksums of SIGNED files ---
       - name: Generate Checksums
