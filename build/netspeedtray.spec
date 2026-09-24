@@ -1,6 +1,31 @@
 # NetSpeedTray.spec
 import os
 
+
+def _remove_path_entries_shadowing_windows_icu():
+    """Keep foreign ICU DLLs from contaminating PyInstaller's Qt bundle."""
+    system32 = os.path.join(os.environ.get('SystemRoot', r'C:\Windows'), 'System32')
+    icu_names = tuple(
+        name for name in ('icuuc.dll', 'icuin.dll')
+        if os.path.isfile(os.path.join(system32, name))
+    )
+    if not icu_names:
+        return
+
+    kept = []
+    for entry in os.environ.get('PATH', '').split(os.pathsep):
+        candidate = entry.strip('"')
+        is_system32 = os.path.normcase(os.path.abspath(candidate)) == os.path.normcase(system32)
+        shadows_icu = any(os.path.isfile(os.path.join(candidate, name)) for name in icu_names)
+        if shadows_icu and not is_system32:
+            print(f'[netspeedtray.spec] Ignoring PATH entry with incompatible ICU DLLs: {entry}')
+            continue
+        kept.append(entry)
+    os.environ['PATH'] = os.pathsep.join(kept)
+
+
+_remove_path_entries_shadowing_windows_icu()
+
 block_cipher = None
 
 # Local UPX install (auto-downloaded by build.bat into build/tools/upx-<ver>/).

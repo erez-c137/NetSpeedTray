@@ -46,6 +46,11 @@ def _wmi_returning(sensors):
 def thread(q_app):
     t = StatsMonitorThread(interval=0.1)
     t.logger = MagicMock()
+    # These tests isolate the legacy WMI/ACPI selection paths. A real LHM web
+    # server may be running on a developer's machine, so never let HTTP data
+    # short-circuit the source under test.
+    t._lhm_http = MagicMock()
+    t._lhm_http.get_snapshot.return_value = None
     return t
 
 

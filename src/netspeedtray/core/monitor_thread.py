@@ -51,6 +51,7 @@ import shutil
 from functools import lru_cache
 
 from netspeedtray import constants
+from netspeedtray.core.lhm_http import LhmHttpClient
 from netspeedtray.utils.rdp_utils import is_rdp_session
 from netspeedtray.utils.network_utils import get_connected_network_identity
 
@@ -121,6 +122,10 @@ class StatsMonitorThread(QThread):
         # LibreHardwareMonitor / OpenHardwareMonitor WMI object.
         # None = not yet tried, False = tried and unavailable, object = connected.
         self._wmi_ohm: Any = None
+        # LHM 0.9.5+ removed its WMI provider; its built-in web server is the
+        # primary sensor source. The client's short cache shares one data.json
+        # response across CPU/GPU temperature and power reads in this poll.
+        self._lhm_http = LhmHttpClient()
         self._ohm_guidance_logged: bool = False  # One-time "no sensor source" guidance, logged only when NO namespace connects
         self._last_temp_source_sig: Optional[Tuple[str, str]] = None  # (source, sensor) of the last-logged CPU-temp read; re-logged only on change (#216)
         # ACPI thermal-zone placeholder detection (#237, #275): first raw value seen per zone, the
@@ -276,8 +281,8 @@ class StatsMonitorThread(QThread):
         - Power via LHM/OHM WMI (all vendors) → nvidia-smi (NVIDIA) → PDH RAPL PP1 (Intel iGPU)
         Returns: GpuPollResult named tuple
         """
-        if not self._gpu_query and not self._init_gpu_query():
-            return GpuPollResult()
+        if not self._gpu_query:
+            self._init_gpu_query()
 
         util_pct = 0.0
         vram_used = None   # None = no VRAM counter available -> N/A (not a misleading "0.0 GB used")
@@ -329,11 +334,23 @@ class StatsMonitorThread(QThread):
         need_smi_temp = include_temp
         need_smi_power = include_power
 
-        if include_temp or include_power:
+        # LHM 0.9.5+ HTTP source. SensorId/HardwareId grouping in lhm_http
+        # prevents the iGPU or a motherboard "CPU Socket" sensor from winning.
+        lhm_snapshot = self._lhm_http.get_snapshot() if (include_temp or include_power) else None
+        lhm_gpu = lhm_snapshot.preferred_gpu if lhm_snapshot else None
+        if lhm_gpu:
+            if include_temp and lhm_gpu.temperature is not None:
+                temp_c = lhm_gpu.temperature
+                need_smi_temp = False
+            if include_power and lhm_gpu.power is not None:
+                power_w = lhm_gpu.power
+                need_smi_power = False
+
+        if (include_temp and temp_c is None) or (include_power and power_w is None):
             self._init_ohm_wmi()
             if self._wmi_ohm:
                 # 3a. LHM/OHM GPU temperature
-                if include_temp:
+                if include_temp and temp_c is None:
                     try:
                         sensors = self._wmi_ohm.ExecQuery(
                             "SELECT Value, Identifier, Name FROM Sensor WHERE SensorType='Temperature'"
@@ -356,7 +373,7 @@ class StatsMonitorThread(QThread):
                         self._wmi_ohm = None
 
                 # 3b. LHM/OHM GPU power (all vendors)
-                if include_power and self._wmi_ohm:
+                if include_power and power_w is None and self._wmi_ohm:
                     try:
                         sensors = self._wmi_ohm.ExecQuery(
                             "SELECT Value, Identifier, Name FROM Sensor WHERE SensorType='Power'"
@@ -450,7 +467,7 @@ class StatsMonitorThread(QThread):
         # Clamp utilization to [0, 100] - PDH GPU-Engine counters can momentarily read >100%.
         util_pct = max(0.0, min(100.0, util_pct))
         return GpuPollResult(util_pct, vram_used, vram_total, temp_c, power_w,
-                             present=self._gpu_engine_seen)
+                             present=self._gpu_engine_seen or lhm_gpu is not None)
 
     @lru_cache(maxsize=4)
     def _get_cached_path(self, binary: str) -> Optional[str]:
@@ -648,7 +665,12 @@ class StatsMonitorThread(QThread):
           1. PDH RAPL PKG (Intel - milliwatts, non-admin)
           2. LHM/OHM WMI (all vendors, requires admin)
         """
-        # 1. PDH RAPL PKG
+        # 1. LHM 0.9.5+ HTTP source
+        snapshot = self._lhm_http.get_snapshot()
+        if snapshot and snapshot.cpu_power is not None:
+            return snapshot.cpu_power
+
+        # 2. PDH RAPL PKG
         if win32pdh:
             if not self._power_query:
                 self._init_power_query()
@@ -661,7 +683,7 @@ class StatsMonitorThread(QThread):
                 except Exception as e:
                     self.logger.debug("RAPL PKG power polling error: %s", e)
 
-        # 2. LHM/OHM WMI fallback
+        # 3. LHM 0.9.4 / OHM WMI fallback
         self._init_ohm_wmi()
         if self._wmi_ohm:
             try:
@@ -767,7 +789,13 @@ class StatsMonitorThread(QThread):
         Note: Modern Intel/AMD CPUs often require a kernel-driver tool
         (LibreHardwareMonitor, HWiNFO64, etc.) - see the settings note.
         """
-        # 1. LibreHardwareMonitor / OpenHardwareMonitor - the accurate CPU-die source.
+        # 1. LibreHardwareMonitor 0.9.5+ HTTP source.
+        snapshot = self._lhm_http.get_snapshot()
+        if snapshot and snapshot.cpu_temp is not None:
+            return self._log_temp(
+                snapshot.cpu_temp, "LHM HTTP", snapshot.cpu_temp_sensor or "CPU")
+
+        # 2. LibreHardwareMonitor 0.9.4 / OpenHardwareMonitor WMI.
         self._init_ohm_wmi()
         if self._wmi_ohm:
             try:
@@ -1106,3 +1134,4 @@ class StatsMonitorThread(QThread):
         self._is_running = False
         self.wait(constants.timeouts.MONITOR_THREAD_STOP_WAIT_MS)
         self.logger.info("StatsMonitorThread stopped.")
+

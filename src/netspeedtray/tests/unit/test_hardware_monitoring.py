@@ -11,7 +11,12 @@ class TestHardwareMonitoring:
     @pytest.fixture
     def monitor_thread(self, q_app):
         """Creates a thread instance for testing."""
-        return StatsMonitorThread(interval=0.1)
+        thread = StatsMonitorThread(interval=0.1)
+        # Keep legacy-source tests deterministic when a real LHM HTTP server
+        # happens to be running on the test machine.
+        thread._lhm_http = MagicMock()
+        thread._lhm_http.get_snapshot.return_value = None
+        return thread
 
     # ------------------------------------------------------------------
     # GPU hybrid polling
@@ -391,3 +396,4 @@ class TestHardwareMonitoring:
         temp = monitor_thread._poll_cpu_temperature()
         assert temp is None
         assert monitor_thread._wmi is None  # Should have been reset for reconnection
+
