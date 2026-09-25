@@ -37,7 +37,10 @@ def test_power_summary_returns_dict():
     summary = NetworkSpeedWidget._hover_power_summary(stub)
 
     assert summary is not None          # the NameError regression: used to be None
-    assert summary["mode"] == state.mode
+    # The watts-authoritative rule: a positive live reading always reads as discharge,
+    # whatever the API flags say (CI runners and AC-idle desktops report 'ac' with no
+    # battery, and the stub's 8.8 W must win over that).
+    assert summary["mode"] == power_utils.MODE_DISCHARGE
     assert summary["live_w"] == 8.8
     assert summary["charge_pct"] == state.charge_pct
 
