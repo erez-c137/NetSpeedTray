@@ -58,6 +58,7 @@
     "HARDWARE_LABEL_STYLE_TEXT_LABELS": "תוויות טקסט (CPU, GPU)",
     "WIDGET_DISPLAY_MODE_LABEL": "מצב תצוגת היישומון",
     "DISPLAY_MODE_NETWORK": "רשת בלבד",
+    "DISPLAY_MODE_POWER": "סוללה בלבד",
     "DISPLAY_MODE_COMBINED": "זה לצד זה",
     "DISPLAY_MODE_STACKED_COLUMN": "מוערם",
     "DISPLAY_MODE_CYCLE": "מחזור אוטומטי",
@@ -458,5 +459,10 @@
     "LOCATION_ONBOARDING_OPEN_BUTTON": "פתח הגדרות מיקום",
     "LOCATION_ONBOARDING_BAND_BUTTON": "הצג רק את התדר",
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray חופף ללוח הווידג'טים",
-    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray יושב מעל לוח הווידג'טים/מזג האוויר של Windows בשורת המשימות שלך. אפשר לגרור אותו לכל מקום שתרצה - הוא יזכור את המיקום. (הודעה זו לא תוצג שוב.)"
+    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray יושב מעל לוח הווידג'טים/מזג האוויר של Windows בשורת המשימות שלך. אפשר לגרור אותו לכל מקום שתרצה - הוא יזכור את המיקום. (הודעה זו לא תוצג שוב.)",
+    "POWER_HOVER_CARD_LABEL": "הצגת צריכת סוללה בריחוף מעל הווידג'ט",
+    "POWER_NOW_LABEL": "כעת",
+    "POWER_TODAY_AVG_LABEL": "ממוצע היום",
+    "POWER_ON_AC_VALUE": "בחשמל",
+    "POWER_CHARGE_PCT_TEMPLATE": "{pct}% סוללה"
 }

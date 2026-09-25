@@ -38,6 +38,7 @@ class WidgetMetrics:
     """
     upload_mbps: float = 0.0
     download_mbps: float = 0.0
+    power_watts: Optional[float] = None     # kept for stats/preview compat; no longer painted
     cpu_usage: Optional[float] = 0.0
     gpu_usage: Optional[float] = 0.0
     cpu_temp: Optional[float] = None
@@ -89,6 +90,7 @@ def demo_metrics() -> WidgetMetrics:
     """
     return WidgetMetrics(
         upload_mbps=12.4, download_mbps=88.6,
+        power_watts=11.5,
         cpu_usage=37.0, gpu_usage=52.0,
         cpu_temp=58.0, gpu_temp=64.0,
         cpu_power=35.0, gpu_power=120.0,
@@ -107,6 +109,8 @@ def _draw_graph(painter: QPainter, renderer: WidgetRenderer, width: int, height:
                 config: RenderConfig, metrics: WidgetMetrics, mode: str, layout: str) -> None:
     """Mini-graph background layer (skipped in side_by_side - scoped per-segment there)."""
     if mode == "side_by_side":
+        # side_by_side scopes the graph per segment; power has no history graph - a bare
+        # net graph behind a watts readout would read as network throughput.
         return
     if mode == "cpu_only":
         renderer.draw_mini_graph(painter, width, height, config, list(metrics.cpu_history),
@@ -121,7 +125,7 @@ def _draw_graph(painter: QPainter, renderer: WidgetRenderer, width: int, height:
 def _draw_side_by_side(painter: QPainter, renderer: WidgetRenderer, width: int, height: int,
                        config: RenderConfig, metrics: WidgetMetrics, layout: str,
                        network_width: Optional[int]) -> None:
-    """Multi-segment side-by-side painting (network + cpu/gpu/combined laid out in a row)."""
+    """Multi-segment side-by-side painting (network + cpu/gpu laid out in a row)."""
     active_keys: List[str] = []
     stack_hw = getattr(config, "stack_hardware_stats", False)
 

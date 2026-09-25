@@ -29,6 +29,7 @@ from netspeedtray.constants.styles import styles as tokens
 _GAP_ABOVE = 8
 _EDGE_MARGIN = 8
 _OVER_CAP_COLOR = "#E81123"  # Win11 "critical" red, used when usage is at/over the cap
+_CHARGING_COLOR = "#6CCB5F"  # Win11 dark-mode success green
 
 # (up_bytes, down_bytes)
 Totals = Tuple[float, float]
@@ -41,6 +42,7 @@ class UsageFlyout(QWidget):
 
     def __init__(self, i18n, today: Optional[Totals] = None, month: Optional[Totals] = None,
                  hint: Optional[str] = None, cap: Optional[CapInfo] = None,
+                 power: Optional[dict] = None,
                  parent: Optional[QWidget] = None) -> None:
         super().__init__(
             parent,
@@ -131,6 +133,14 @@ class UsageFlyout(QWidget):
             )
             body.addWidget(bar)
 
+        # --- Battery power (fed by utils/power_utils + the system_power stat; every
+        # value degrades silently - a row whose data is missing is omitted, not dashed) ---
+        if power is not None:
+            if sections:
+                body.addWidget(self._separator())
+            self._battery_section(body, power)
+            sections += 1
+
     # ----------------------------------------------------------------- helpers
 
     def _tr(self, key: str, default: str) -> str:
@@ -162,6 +172,67 @@ class UsageFlyout(QWidget):
                                    self._c["text_primary"], Qt.AlignmentFlag.AlignRight), row, 1)
         grid.addWidget(self._label(f"↑ {self._fmt(up_bytes)}", tokens.TYPE_BODY,
                                    self._c["text_primary"], Qt.AlignmentFlag.AlignRight), row, 2)
+
+    def _battery_section(self, body: QVBoxLayout, power: dict) -> None:
+        """The battery rows: live draw, today's average, projected runtime, charge level."""
+        mode = power.get("mode", "none")
+        live_w = power.get("live_w")
+        today_avg_w = power.get("today_avg_w")
+        projected_hours = power.get("projected_hours")
+        charge_pct = power.get("charge_pct")
+
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(16)
+        grid.setVerticalSpacing(tokens.SPACE_S)
+        grid.setColumnStretch(0, 1)
+        grid_row = 0
+
+        # Now - the live rate. Charging is "+" and green (always good news); a missing
+        # reading (first seconds after launch, or a firmware that reports nothing yet)
+        # shows an em-dash rather than a wrong 0.0 W.
+        if mode == "charge" and live_w:
+            # live_w is the signed poll value (negative while charging) - render "+".
+            now_text, now_color = f"+{abs(live_w):.1f} W", _CHARGING_COLOR
+        elif mode == "ac":
+            now_text, now_color = self._tr("POWER_ON_AC_VALUE", "On AC"), self._c["text_secondary"]
+        elif live_w:
+            now_text, now_color = f"{live_w:.1f} W", self._c["text_primary"]
+        else:
+            now_text, now_color = "—", self._c["text_secondary"]
+        grid.addWidget(self._label(self._tr("POWER_NOW_LABEL", "Now"), tokens.TYPE_BODY_STRONG,
+                                   self._c["text_primary"]), grid_row, 0)
+        grid.addWidget(self._label(now_text, tokens.TYPE_BODY_STRONG, now_color,
+                                   Qt.AlignmentFlag.AlignRight), grid_row, 1)
+        grid_row += 1
+
+        if today_avg_w:
+            grid.addWidget(self._label(self._tr("POWER_TODAY_AVG_LABEL", "Today avg"),
+                                       tokens.TYPE_BODY_STRONG, self._c["text_primary"]), grid_row, 0)
+            grid.addWidget(self._label(f"{today_avg_w:.1f} W", tokens.TYPE_BODY,
+                                       self._c["text_primary"],
+                                       Qt.AlignmentFlag.AlignRight), grid_row, 1)
+            grid_row += 1
+
+        # Only meaningful while discharging with a real reading and a known pack size.
+        if mode == "discharge" and projected_hours:
+            grid.addWidget(self._label(self._tr("USAGE_PROJECTED_LABEL", "Projected"),
+                                       tokens.TYPE_BODY_STRONG, self._c["text_primary"]), grid_row, 0)
+            grid.addWidget(self._label(self._fmt_duration(projected_hours), tokens.TYPE_BODY,
+                                       self._c["text_primary"],
+                                       Qt.AlignmentFlag.AlignRight), grid_row, 1)
+            grid_row += 1
+        body.addLayout(grid)
+
+        if charge_pct is not None:
+            foot = self._tr("POWER_CHARGE_PCT_TEMPLATE", "{pct}% battery").replace("{pct}", str(charge_pct))
+            body.addWidget(self._label(foot, tokens.TYPE_BODY, self._c["text_secondary"]))
+
+    @staticmethod
+    def _fmt_duration(hours: float) -> str:
+        total = int(round(hours * 60.0))
+        h, m = divmod(total, 60)
+        return f"{h} h {m:02d} m" if h else f"{m} m"
 
     # ----------------------------------------------------------------- show
 

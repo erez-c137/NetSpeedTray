@@ -121,6 +121,10 @@ class WidgetPage(QWidget):
     # --- config ------------------------------------------------------------------
     def load_settings(self, config: Dict[str, Any]) -> None:
         mode = config.get("widget_display_mode", "network_only")
+        # "power_only" was removed as a display mode (battery power is the Advanced tab's
+        # hover card now) - anything still set to it falls back to network-only.
+        if mode == "power_only":
+            mode = "network_only"
         # "side_by_stack" is the side-by-side layout with the hardware column stacked - encoded as
         # widget_display_mode="side_by_side" + stack_hardware_stats=True on disk.
         if mode == "side_by_side" and config.get("stack_hardware_stats", False):

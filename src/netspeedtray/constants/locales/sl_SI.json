@@ -58,6 +58,7 @@
     "HARDWARE_LABEL_STYLE_TEXT_LABELS": "Besedilne oznake (CPU, GPU)",
     "WIDGET_DISPLAY_MODE_LABEL": "Način prikaza gradnika",
     "DISPLAY_MODE_NETWORK": "Samo omrežje",
+    "DISPLAY_MODE_POWER": "Le baterija",
     "DISPLAY_MODE_COMBINED": "Stran ob strani",
     "DISPLAY_MODE_STACKED_COLUMN": "Naloženo",
     "DISPLAY_MODE_CYCLE": "Samodejno kroženje",
@@ -458,5 +459,10 @@
     "LOCATION_ONBOARDING_OPEN_BUTTON": "Odpri nastavitve lokacije",
     "LOCATION_ONBOARDING_BAND_BUTTON": "Pokaži samo frekvenčni pas",
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray prekriva ploščo s pripomočki",
-    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray je na vaši opravilni vrstici postavljen čez ploščo s pripomočki/vremenom sistema Windows. Povlečete ga lahko kamor koli želite – zapomnil si bo mesto. (To sporočilo se ne bo več prikazalo.)"
+    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray je na vaši opravilni vrstici postavljen čez ploščo s pripomočki/vremenom sistema Windows. Povlečete ga lahko kamor koli želite – zapomnil si bo mesto. (To sporočilo se ne bo več prikazalo.)",
+    "POWER_HOVER_CARD_LABEL": "Pokaži napajanje iz baterije ob prehodu miške nad pripomočkom",
+    "POWER_NOW_LABEL": "Zdaj",
+    "POWER_TODAY_AVG_LABEL": "Povp. danes",
+    "POWER_ON_AC_VALUE": "Na omrežju",
+    "POWER_CHARGE_PCT_TEMPLATE": "{pct}% baterije"
 }

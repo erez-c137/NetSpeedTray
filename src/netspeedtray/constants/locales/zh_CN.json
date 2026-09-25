@@ -58,6 +58,7 @@
     "HARDWARE_LABEL_STYLE_TEXT_LABELS": "文字标签 (CPU、GPU)",
     "WIDGET_DISPLAY_MODE_LABEL": "小部件显示模式",
     "DISPLAY_MODE_NETWORK": "仅网络",
+    "DISPLAY_MODE_POWER": "仅电池",
     "DISPLAY_MODE_COMBINED": "并排显示",
     "DISPLAY_MODE_STACKED_COLUMN": "堆叠显示",
     "DISPLAY_MODE_CYCLE": "自动轮播",
@@ -459,5 +460,10 @@
     "LOCATION_ONBOARDING_BAND_BUTTON": "仅显示频段",
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray 遮挡了系统小组件",
     "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray 遮挡了任务栏上的小组件/天气。你可以拖动它到喜欢的位置，设置会自动保存。（此消息仅显示一次）",
-    "//TRANSLATION_VERSION": "2.2.0-zh_CN-260921"
+    "//TRANSLATION_VERSION": "2.2.0-zh_CN-260921",
+    "POWER_HOVER_CARD_LABEL": "鼠标悬停小组件时显示电池功耗",
+    "POWER_NOW_LABEL": "当前",
+    "POWER_TODAY_AVG_LABEL": "今日平均",
+    "POWER_ON_AC_VALUE": "交流电源",
+    "POWER_CHARGE_PCT_TEMPLATE": "电量 {pct}%"
 }

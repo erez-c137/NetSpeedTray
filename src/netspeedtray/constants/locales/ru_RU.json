@@ -58,6 +58,7 @@
     "HARDWARE_LABEL_STYLE_TEXT_LABELS": "Текстовые метки (CPU, GPU)",
     "WIDGET_DISPLAY_MODE_LABEL": "Режим отображения виджета",
     "DISPLAY_MODE_NETWORK": "Только сеть",
+    "DISPLAY_MODE_POWER": "Только батарея",
     "DISPLAY_MODE_COMBINED": "Рядом",
     "DISPLAY_MODE_STACKED_COLUMN": "Столбцом",
     "DISPLAY_MODE_CYCLE": "Автоцикл",
@@ -458,5 +459,10 @@
     "LOCATION_ONBOARDING_OPEN_BUTTON": "Открыть настройки местоположения",
     "LOCATION_ONBOARDING_BAND_BUTTON": "Показывать только диапазон",
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray перекрывает панель виджетов",
-    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray расположен поверх панели виджетов и погоды Windows на панели задач. Вы можете перетащить его куда угодно — он запомнит это место. (Это сообщение больше не появится.)"
+    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray расположен поверх панели виджетов и погоды Windows на панели задач. Вы можете перетащить его куда угодно — он запомнит это место. (Это сообщение больше не появится.)",
+    "POWER_HOVER_CARD_LABEL": "Показывать питание от батареи при наведении на виджет",
+    "POWER_NOW_LABEL": "Сейчас",
+    "POWER_TODAY_AVG_LABEL": "Среднее за день",
+    "POWER_ON_AC_VALUE": "От сети",
+    "POWER_CHARGE_PCT_TEMPLATE": "{pct}% заряда"
 }

@@ -161,6 +161,17 @@ class StatsController(QObject):
             if 'system_power' in stats and self.view is not None:
                 try:
                     self.view.system_power = stats['system_power']
+                    # Discharge and charge are mutually exclusive states; without this a
+                    # charging-period value would linger on the view after unplugging.
+                    self.view.battery_power = None
+                except Exception:
+                    pass
+            # Signed battery draw (discharge +, charge -) for the widget's power display:
+            # stashed on the view only, never persisted - charge rates must not land in a
+            # drain history, and discharge is already recorded via system_power above.
+            if 'battery_power' in stats and self.view is not None:
+                try:
+                    self.view.battery_power = stats['battery_power']
                 except Exception:
                     pass
             if self.widget_state:

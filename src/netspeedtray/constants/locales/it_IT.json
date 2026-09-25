@@ -58,6 +58,7 @@
     "HARDWARE_LABEL_STYLE_TEXT_LABELS": "Etichette di testo (CPU, GPU)",
     "WIDGET_DISPLAY_MODE_LABEL": "Modalità di visualizzazione widget",
     "DISPLAY_MODE_NETWORK": "Solo rete",
+    "DISPLAY_MODE_POWER": "Solo batteria",
     "DISPLAY_MODE_COMBINED": "Affiancato",
     "DISPLAY_MODE_STACKED_COLUMN": "Impilato",
     "DISPLAY_MODE_CYCLE": "Rotazione automatica",
@@ -458,5 +459,10 @@
     "LOCATION_ONBOARDING_OPEN_BUTTON": "Apri impostazioni Posizione",
     "LOCATION_ONBOARDING_BAND_BUTTON": "Mostra solo la banda",
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray si sovrappone al pannello Widget",
-    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray si trova sopra il pannello Widget/meteo di Windows nella barra delle applicazioni. Puoi trascinarlo dove preferisci: ricorderà la posizione. (Questo messaggio non verrà mostrato di nuovo.)"
+    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray si trova sopra il pannello Widget/meteo di Windows nella barra delle applicazioni. Puoi trascinarlo dove preferisci: ricorderà la posizione. (Questo messaggio non verrà mostrato di nuovo.)",
+    "POWER_HOVER_CARD_LABEL": "Mostra l'alimentazione della batteria al passaggio sul widget",
+    "POWER_NOW_LABEL": "Ora",
+    "POWER_TODAY_AVG_LABEL": "Media di oggi",
+    "POWER_ON_AC_VALUE": "Alla corrente",
+    "POWER_CHARGE_PCT_TEMPLATE": "{pct}% batteria"
 }

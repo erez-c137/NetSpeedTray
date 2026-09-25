@@ -702,7 +702,6 @@ class WidgetRenderer:
         except Exception as e:
             self.logger.error("Failed to draw hardware stats: %s", e)
 
-
     def _draw_memory_label(self, painter: QPainter, number_x: int, y: int, row: Dict[str, Any]) -> None:
         """Paint a row's RAM/VRAM label immediately before its number (which starts at `number_x`),
         in the row's CPU/GPU colour (white in monochrome style), then restore the value pen. Hugging

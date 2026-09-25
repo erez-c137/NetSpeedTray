@@ -58,6 +58,7 @@
     "HARDWARE_LABEL_STYLE_TEXT_LABELS": "Szöveges címkék (CPU, GPU)",
     "WIDGET_DISPLAY_MODE_LABEL": "Widget megjelenítési módja",
     "DISPLAY_MODE_NETWORK": "Csak hálózat",
+    "DISPLAY_MODE_POWER": "Csak akku",
     "DISPLAY_MODE_COMBINED": "Egymás mellett",
     "DISPLAY_MODE_STACKED_COLUMN": "Egymás alatt",
     "DISPLAY_MODE_CYCLE": "Automatikus váltás",
@@ -458,5 +459,10 @@
     "LOCATION_ONBOARDING_OPEN_BUTTON": "Helymeghatározási beállítások megnyitása",
     "LOCATION_ONBOARDING_BAND_BUTTON": "Csak a sáv megjelenítése",
     "WIDGETS_OVERLAP_NUDGE_TITLE": "A NetSpeedTray átfedi a Widgetek panelt",
-    "WIDGETS_OVERLAP_NUDGE_BODY": "A NetSpeedTray a Windows Widgetek/időjárás panelje fölött helyezkedik el a tálcán. Bárhová áthúzhatod – megjegyzi a helyét. (Ez az üzenet nem jelenik meg újra.)"
+    "WIDGETS_OVERLAP_NUDGE_BODY": "A NetSpeedTray a Windows Widgetek/időjárás panelje fölött helyezkedik el a tálcán. Bárhová áthúzhatod – megjegyzi a helyét. (Ez az üzenet nem jelenik meg újra.)",
+    "POWER_HOVER_CARD_LABEL": "Akkumulátor energia megjelenítése a widget fölötti rámutatáskor",
+    "POWER_NOW_LABEL": "Most",
+    "POWER_TODAY_AVG_LABEL": "Mai átlag",
+    "POWER_ON_AC_VALUE": "Hálózaton",
+    "POWER_CHARGE_PCT_TEMPLATE": "{pct}% akku"
 }
