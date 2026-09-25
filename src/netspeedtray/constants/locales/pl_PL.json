@@ -58,6 +58,7 @@
     "HARDWARE_LABEL_STYLE_TEXT_LABELS": "Etykiety tekstowe (CPU, GPU)",
     "WIDGET_DISPLAY_MODE_LABEL": "Tryb wyświetlania widgetu",
     "DISPLAY_MODE_NETWORK": "Tylko sieć",
+    "DISPLAY_MODE_POWER": "Tylko bateria",
     "DISPLAY_MODE_COMBINED": "Obok siebie",
     "DISPLAY_MODE_STACKED_COLUMN": "Kolumna warstwowa",
     "DISPLAY_MODE_CYCLE": "Cyklicznie wszystko",
@@ -458,5 +459,10 @@
     "LOCATION_ONBOARDING_OPEN_BUTTON": "Otwórz ustawienia lokalizacji",
     "LOCATION_ONBOARDING_BAND_BUTTON": "Pokaż tylko pasmo",
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray zasłania panel Widżetów",
-    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray nachodzi na panel Widżetów/pogody systemu Windows na pasku zadań. Możesz przeciągnąć go w dowolne miejsce – zapamięta tę pozycję. (Ten komunikat nie pojawi się ponownie.)"
+    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray nachodzi na panel Widżetów/pogody systemu Windows na pasku zadań. Możesz przeciągnąć go w dowolne miejsce – zapamięta tę pozycję. (Ten komunikat nie pojawi się ponownie.)",
+    "POWER_HOVER_CARD_LABEL": "Pokaż zasilanie z baterii po najechaniu na widżet",
+    "POWER_NOW_LABEL": "Teraz",
+    "POWER_TODAY_AVG_LABEL": "Śr. dzisiaj",
+    "POWER_ON_AC_VALUE": "Na zasilaczu",
+    "POWER_CHARGE_PCT_TEMPLATE": "{pct}% baterii"
 }

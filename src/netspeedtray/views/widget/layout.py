@@ -317,13 +317,14 @@ class WidgetLayoutManager:
                         calculated_width_accum += cpu_width + gpu_width
                         
                     calculated_width_accum += margin # Add padding for the rightmost edge of the window frame
-                        
+
                     gaps = 0
                     if "network" in display_order and (monitor_cpu or monitor_gpu):
                         gaps += constants.layout.WIDGET_SEGMENT_GAP_AFTER_NETWORK_PX # Gap after Network
                     if monitor_cpu and monitor_gpu and not stack_hw:
                         gaps += constants.layout.WIDGET_SEGMENT_GAP_BETWEEN_HARDWARE_PX  # Gap between CPU and GPU
                     calculated_width = calculated_width_accum + gaps
+
                 elif display_mode in ["cpu_only", "gpu_only", "combined"]:
                     calculated_width = 0
                     show_temps = bool(self.widget.config.get("show_hardware_temps", False))

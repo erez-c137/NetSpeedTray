@@ -53,6 +53,7 @@ from functools import lru_cache
 from netspeedtray import constants
 from netspeedtray.utils.rdp_utils import is_rdp_session
 from netspeedtray.utils.network_utils import get_connected_network_identity
+from netspeedtray.utils import power_utils
 
 logger = logging.getLogger("NetSpeedTray.StatsMonitorThread")
 
@@ -634,8 +635,22 @@ class StatsMonitorThread(QThread):
                 for b in self._wmi_battery.BatteryStatus():
                     # DischargeRate (mW) is non-zero only while actually discharging on battery.
                     rate = getattr(b, "DischargeRate", 0) or 0
-                    if getattr(b, "Discharging", False) and rate > 0:
+                    # The IMPLAUSIBLE_MW ceiling drops phantom readings some firmwares emit for
+                    # a few seconds after an AC transition (observed 33-36 kW on a 60 W pack);
+                    # unfiltered they'd land in the stats DB and poison every average since.
+                    if (getattr(b, "Discharging", False) and 0 < rate < power_utils.IMPLAUSIBLE_MW):
                         watts = float(rate) / 1000.0
+                        break
+                    # While charging, report the charge rate SIGNED NEGATIVE so the battery
+                    # display (taskbar power mode / hover card) can show "+38.2 W charging"
+                    # instead of a dead dash on a laptop that spends its life plugged in.
+                    # system_power stays discharge/RAPL-only: the Monitor tile and the stats
+                    # history mean "draw", and a negative sample there would lie. The charge
+                    # ceiling is the adapter's class, not the discharge phantom ceiling - a
+                    # real charge flow was observed at 28.7 kW on a 65 W adapter.
+                    c_rate = getattr(b, "ChargeRate", 0) or 0
+                    if (getattr(b, "Charging", False) and 0 < c_rate < power_utils.IMPLAUSIBLE_CHARGE_MW):
+                        watts = -float(c_rate) / 1000.0
                         break
         except Exception:
             self._wmi_battery = False   # no battery / WMI class - stop retrying
@@ -1016,6 +1031,18 @@ class StatsMonitorThread(QThread):
                     sysp = self._poll_system_power()
                     if sysp is not None:
                         stats['system_power'] = sysp
+                elif self.config.get('power_display_enabled', True):
+                    # The hover card's battery section reuses this poll as its live reading.
+                    # Battery-only polling is enough for that - skip RAPL, whose PDH handles
+                    # exist for the Monitor's power tiles, not for a hover glance. Discharge
+                    # lands in system_power (stat history + Monitor tile); the signed charge
+                    # value rides battery_power.
+                    sysp = self._poll_battery_power()
+                    if sysp is not None:
+                        if sysp < 0:
+                            stats['battery_power'] = sysp
+                        else:
+                            stats['system_power'] = sysp
 
                 if stats:
                     self.stats_ready.emit(stats)

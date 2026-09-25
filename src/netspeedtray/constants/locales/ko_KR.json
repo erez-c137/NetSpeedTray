@@ -58,6 +58,7 @@
     "HARDWARE_LABEL_STYLE_TEXT_LABELS": "텍스트 레이블 (CPU, GPU)",
     "WIDGET_DISPLAY_MODE_LABEL": "위젯 표시 모드",
     "DISPLAY_MODE_NETWORK": "네트워크 전용",
+    "DISPLAY_MODE_POWER": "배터리만",
     "DISPLAY_MODE_COMBINED": "나란히 보기",
     "DISPLAY_MODE_STACKED_COLUMN": "세로로 쌓기",
     "DISPLAY_MODE_CYCLE": "모두 순환",
@@ -458,5 +459,10 @@
     "LOCATION_ONBOARDING_OPEN_BUTTON": "위치 설정 열기",
     "LOCATION_ONBOARDING_BAND_BUTTON": "대역만 표시",
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray가 위젯 패널과 겹칩니다",
-    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray가 작업 표시줄의 Windows 위젯/날씨 패널 위에 겹쳐 있습니다. 원하는 위치로 자유롭게 드래그할 수 있으며, 위치는 자동으로 기억됩니다. (이 메시지는 다시 표시되지 않습니다.)"
+    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray가 작업 표시줄의 Windows 위젯/날씨 패널 위에 겹쳐 있습니다. 원하는 위치로 자유롭게 드래그할 수 있으며, 위치는 자동으로 기억됩니다. (이 메시지는 다시 표시되지 않습니다.)",
+    "POWER_HOVER_CARD_LABEL": "위젯 위에 마우스를 올릴 때 배터리 전원 표시",
+    "POWER_NOW_LABEL": "현재",
+    "POWER_TODAY_AVG_LABEL": "오늘 평균",
+    "POWER_ON_AC_VALUE": "AC 전원",
+    "POWER_CHARGE_PCT_TEMPLATE": "배터리 {pct}%"
 }

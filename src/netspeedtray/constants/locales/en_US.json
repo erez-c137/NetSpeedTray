@@ -58,6 +58,7 @@
     "HARDWARE_LABEL_STYLE_TEXT_LABELS": "Text Labels (CPU, GPU)",
     "WIDGET_DISPLAY_MODE_LABEL": "Widget Display Mode",
     "DISPLAY_MODE_NETWORK": "Network Only",
+    "DISPLAY_MODE_POWER": "Power Only",
     "DISPLAY_MODE_COMBINED": "Side-by-Side",
     "DISPLAY_MODE_STACKED_COLUMN": "Stacked",
     "DISPLAY_MODE_CYCLE": "Auto-Cycle",
@@ -458,5 +459,10 @@
     "LOCATION_ONBOARDING_OPEN_BUTTON": "Open Location settings",
     "LOCATION_ONBOARDING_BAND_BUTTON": "Just show the band",
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray overlaps the Widgets panel",
-    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray is sitting over the Windows Widgets/weather panel on your taskbar. You can drag it anywhere you like - it'll remember the spot. (This message won't show again.)"
+    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray is sitting over the Windows Widgets/weather panel on your taskbar. You can drag it anywhere you like - it'll remember the spot. (This message won't show again.)",
+    "POWER_HOVER_CARD_LABEL": "Show battery power when hovering the widget",
+    "POWER_NOW_LABEL": "Now",
+    "POWER_TODAY_AVG_LABEL": "Today avg",
+    "POWER_ON_AC_VALUE": "On AC",
+    "POWER_CHARGE_PCT_TEMPLATE": "{pct}% battery"
 }

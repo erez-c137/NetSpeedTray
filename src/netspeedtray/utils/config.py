@@ -620,6 +620,12 @@ class ConfigManager:
                 
             validated[key] = self._validate_value(key, loaded_value, rules)
 
+        # Rule: "power_only" was removed as a display mode (battery power lives only in
+        # the Advanced tab's hover card now). Map any stale value to network-only rather
+        # than letting the schema reset it to the side_by_side default.
+        if validated.get("widget_display_mode") == "power_only":
+            validated["widget_display_mode"] = "network_only"
+
         # Handle specific cross-field logic (Business Rules)
         # Rule: high_speed_threshold must be strictly greater than low_speed_threshold.
         # Per-field schema validation already enforces each field's range, so we only

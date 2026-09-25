@@ -58,6 +58,7 @@
     "HARDWARE_LABEL_STYLE_TEXT_LABELS": "テキストラベル (CPU、GPU)",
     "WIDGET_DISPLAY_MODE_LABEL": "ウィジェット表示モード",
     "DISPLAY_MODE_NETWORK": "ネットワークのみ",
+    "DISPLAY_MODE_POWER": "バッテリーのみ",
     "DISPLAY_MODE_COMBINED": "横に並べる",
     "DISPLAY_MODE_STACKED_COLUMN": "縦に並べる",
     "DISPLAY_MODE_CYCLE": "自動切り替え",
@@ -458,5 +459,10 @@
     "LOCATION_ONBOARDING_OPEN_BUTTON": "位置情報の設定を開く",
     "LOCATION_ONBOARDING_BAND_BUTTON": "バンドを表示するだけ",
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray がウィジェット パネルに重なっています",
-    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray がタスクバーの Windows ウィジェット (天気) パネルの上に表示されています。好きな場所へドラッグして移動でき、その位置は記憶されます。(このメッセージは次回以降表示されません。)"
+    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray がタスクバーの Windows ウィジェット (天気) パネルの上に表示されています。好きな場所へドラッグして移動でき、その位置は記憶されます。(このメッセージは次回以降表示されません。)",
+    "POWER_HOVER_CARD_LABEL": "ウィジェットのホバー時にバッテリー駆動を表示",
+    "POWER_NOW_LABEL": "現在",
+    "POWER_TODAY_AVG_LABEL": "今日の平均",
+    "POWER_ON_AC_VALUE": "AC電源",
+    "POWER_CHARGE_PCT_TEMPLATE": "{pct}% バッテリー"
 }

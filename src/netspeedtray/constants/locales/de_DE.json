@@ -58,6 +58,7 @@
     "HARDWARE_LABEL_STYLE_TEXT_LABELS": "Textbeschriftung (CPU, GPU)",
     "WIDGET_DISPLAY_MODE_LABEL": "Anzeigemodus des Widgets",
     "DISPLAY_MODE_NETWORK": "Nur Netzwerk",
+    "DISPLAY_MODE_POWER": "Nur Batterieverbrauch",
     "DISPLAY_MODE_COMBINED": "Nebeneinander",
     "DISPLAY_MODE_STACKED_COLUMN": "Gestapelte Spalte",
     "DISPLAY_MODE_CYCLE": "Alle durchlaufen",
@@ -458,5 +459,10 @@
     "LOCATION_ONBOARDING_OPEN_BUTTON": "Standorteinstellungen öffnen",
     "LOCATION_ONBOARDING_BAND_BUTTON": "Nur das Band anzeigen",
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray überdeckt das Widgets-Panel",
-    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray liegt in Ihrer Taskleiste über den Windows-Widgets bzw. der Wetteranzeige. Sie können es an eine beliebige Stelle ziehen – die Position wird gemerkt. (Diese Meldung wird nicht mehr angezeigt.)"
+    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray liegt in Ihrer Taskleiste über den Windows-Widgets bzw. der Wetteranzeige. Sie können es an eine beliebige Stelle ziehen – die Position wird gemerkt. (Diese Meldung wird nicht mehr angezeigt.)",
+    "POWER_HOVER_CARD_LABEL": "Batterieverbrauch beim Hovern über das Widget anzeigen",
+    "POWER_NOW_LABEL": "Aktuell",
+    "POWER_TODAY_AVG_LABEL": "Heute ø",
+    "POWER_ON_AC_VALUE": "Am Netz",
+    "POWER_CHARGE_PCT_TEMPLATE": "{pct} % Batterie"
 }

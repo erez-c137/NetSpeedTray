@@ -37,6 +37,7 @@ class RendererConstants:
     GRAPH_LINE_COLOR: Final[str] = color.WHITE # Reference master palette
     CPU_LINE_COLOR: Final[str] = "#3498db" # Blue
     GPU_LINE_COLOR: Final[str] = "#e74c3c" # Red
+    SUCCESS_COLOR: Final[str] = "#6CCB5F"  # Win11 dark-mode success green (charging battery)
     # Optional labels in front of the memory values (#250). Not translated - same as the
     # hard-coded CPU/GPU labels, these are universal abbreviations.
     MEMORY_LABEL_RAM: Final[str] = "RAM"

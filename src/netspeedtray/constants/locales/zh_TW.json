@@ -58,6 +58,7 @@
     "HARDWARE_LABEL_STYLE_TEXT_LABELS": "文字標籤 (CPU、GPU)",
     "WIDGET_DISPLAY_MODE_LABEL": "小工具顯示模式",
     "DISPLAY_MODE_NETWORK": "只有網路",
+    "DISPLAY_MODE_POWER": "僅電池",
     "DISPLAY_MODE_COMBINED": "並排顯示",
     "DISPLAY_MODE_STACKED_COLUMN": "堆疊顯示",
     "DISPLAY_MODE_CYCLE": "自動循環",
@@ -458,5 +459,10 @@
     "LOCATION_ONBOARDING_OPEN_BUTTON": "開啟定位設定",
     "LOCATION_ONBOARDING_BAND_BUTTON": "只有顯示頻段",
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray 與小工具面板重疊",
-    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray 目前壓在工作列上的 Windows 小工具/天氣面板上方。您可以將它拖曳到任何喜歡的位置，它會記住這個位置。（此訊息不會再次顯示。）"
+    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray 目前壓在工作列上的 Windows 小工具/天氣面板上方。您可以將它拖曳到任何喜歡的位置，它會記住這個位置。（此訊息不會再次顯示。）",
+    "POWER_HOVER_CARD_LABEL": "滑鼠停留小工具時顯示電池功耗",
+    "POWER_NOW_LABEL": "目前",
+    "POWER_TODAY_AVG_LABEL": "今日平均",
+    "POWER_ON_AC_VALUE": "交流電源",
+    "POWER_CHARGE_PCT_TEMPLATE": "電量 {pct}%"
 }

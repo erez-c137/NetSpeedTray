@@ -58,6 +58,7 @@
     "HARDWARE_LABEL_STYLE_TEXT_LABELS": "Tekstlabels (CPU, GPU)",
     "WIDGET_DISPLAY_MODE_LABEL": "Widget weergavemodus",
     "DISPLAY_MODE_NETWORK": "Alleen netwerk",
+    "DISPLAY_MODE_POWER": "Alleen batterij",
     "DISPLAY_MODE_COMBINED": "Zij-aan-zij",
     "DISPLAY_MODE_STACKED_COLUMN": "Gestapelde kolom",
     "DISPLAY_MODE_CYCLE": "Alles roteren",
@@ -458,5 +459,10 @@
     "LOCATION_ONBOARDING_OPEN_BUTTON": "Locatie-instellingen openen",
     "LOCATION_ONBOARDING_BAND_BUTTON": "Alleen de band tonen",
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray overlapt het Widgets-paneel",
-    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray staat over het Widgets-/weerpaneel van Windows op je taakbalk. Je kunt het overal naartoe slepen - de plek wordt onthouden. (Dit bericht verschijnt niet meer.)"
+    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray staat over het Widgets-/weerpaneel van Windows op je taakbalk. Je kunt het overal naartoe slepen - de plek wordt onthouden. (Dit bericht verschijnt niet meer.)",
+    "POWER_HOVER_CARD_LABEL": "Batterijverbruik tonen bij zweven boven de widget",
+    "POWER_NOW_LABEL": "Nu",
+    "POWER_TODAY_AVG_LABEL": "Vandaag gem.",
+    "POWER_ON_AC_VALUE": "Op netspanning",
+    "POWER_CHARGE_PCT_TEMPLATE": "{pct}% batterij"
 }

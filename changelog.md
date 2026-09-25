@@ -75,6 +75,16 @@ ALSO
 
 ---
 
+## Unreleased
+
+**Hovering the widget now shows battery power on laptops.** The hover card gains a battery
+section - live draw in watts, today's average, projected runtime, and charge level - reusing the
+battery polling and stats history the app already collects. Advanced settings has a toggle.
+
+**Phantom battery readings no longer reach the stats history.** Some firmwares report an absurd
+discharge rate (observed: 33 kW) for a few seconds after unplugging AC; those samples are now
+dropped at the source.
+
 ## [2.1.7] - September 23, 2026
 
 Fixes for what 2.1.6 users reported in its first two weeks: a support bundle that could include your

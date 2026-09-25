@@ -61,6 +61,10 @@ class AdvancedPage(QWidget):
         self.show_usage_hover.toggled.connect(self.on_change)
         layout.addWidget(SettingCard(self.i18n.HOVER_USAGE_CARD_LABEL, control=self.show_usage_hover))
 
+        self.power_display = Win11Toggle(label_text="")
+        self.power_display.toggled.connect(self.on_change)
+        layout.addWidget(SettingCard(self.i18n.POWER_HOVER_CARD_LABEL, control=self.power_display))
+
         self.show_hover_tips = Win11Toggle(label_text="")
         self.show_hover_tips.toggled.connect(self.on_change)
         layout.addWidget(SettingCard(self.i18n.HOVER_TIPS_LABEL, control=self.show_hover_tips))
@@ -107,6 +111,7 @@ class AdvancedPage(QWidget):
         self.reduce_motion.setChecked(bool(config.get("reduce_motion", False)))
         self.keep_windows_on_top.setChecked(bool(config.get("keep_windows_on_top", False)))
         self.show_usage_hover.setChecked(bool(config.get("show_usage_on_hover", True)))
+        self.power_display.setChecked(bool(config.get("power_display_enabled", True)))
         self.show_hover_tips.setChecked(bool(config.get("show_hover_tips", True)))
         self.pause_in_menu.setChecked(bool(config.get("pause_in_menu", False)))
 
@@ -116,6 +121,7 @@ class AdvancedPage(QWidget):
             "reduce_motion": self.reduce_motion.isChecked(),
             "keep_windows_on_top": self.keep_windows_on_top.isChecked(),
             "show_usage_on_hover": self.show_usage_hover.isChecked(),
+            "power_display_enabled": self.power_display.isChecked(),
             "show_hover_tips": self.show_hover_tips.isChecked(),
             "pause_in_menu": self.pause_in_menu.isChecked(),
         }
