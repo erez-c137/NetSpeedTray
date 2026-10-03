@@ -69,6 +69,18 @@ _WM_POWERBROADCAST = 0x0218
 _PBT_APMRESUMESUSPEND = 0x0007
 _PBT_APMRESUMEAUTOMATIC = 0x0012
 
+# "TaskbarCreated" is broadcast by explorer whenever the taskbar window is
+# (re)created - the canonical re-attach signal for tray-docked windows, and the
+# instant alternative to waiting out the 3s validity poll after an explorer
+# restart. RegisterWindowMessageW returns one system-wide atom for the string, so
+# resolving it once at import is correct for the process lifetime. 0 means
+# registration failed, in which case nativeEvent skips the branch and the
+# validity poll remains the only (slower) recovery path.
+try:
+    _WM_TASKBARCREATED = int(ctypes.windll.user32.RegisterWindowMessageW("TaskbarCreated"))
+except Exception:
+    _WM_TASKBARCREATED = 0
+
 
 class NetworkSpeedWidget(QWidget):
     """Main widget for displaying network speeds near the Windows system tray."""
@@ -416,6 +428,15 @@ class NetworkSpeedWidget(QWidget):
                 
                 # Always re-assert topmost status when visible to prevent falling behind taskbar (#77)
                 self._ensure_win32_topmost()
+
+                # Ownership keeps the widget above the taskbar in theory, but Win11 shell
+                # churn can bury it without breaking the owner link, and steady-state
+                # ensure_topmost() deliberately never touches Z-order (#200). Hit-test for
+                # exactly that state - the taskbar itself covering the widget - and re-seat
+                # once. Menus/flyouts covering us must NOT trigger this (#200).
+                if self.position_manager.is_buried_behind_taskbar():
+                    self.logger.info("Widget buried behind the taskbar - re-seating topmost.")
+                    self.position_manager.reseat_topmost()
 
                 # One-time heads-up if we're sitting over the Win11 Widgets/weather panel (#200).
                 self._maybe_nudge_widgets_overlap(taskbar_info)
@@ -826,8 +847,9 @@ class NetworkSpeedWidget(QWidget):
             # slow and shows as a "hide and return"). Restores a410aae's _handle_taskbar_focus.
             self.system_event_handler.taskbar_focused.connect(self._ensure_win32_topmost)
 
-            # Handle taskbar restarts
-            self.system_event_handler.taskbar_restarted.connect(lambda: [QTimer.singleShot(i * constants.timeouts.TASKBAR_RESTART_RECOVERY_DELAY_MS, self._execute_refresh) for i in range(constants.timeouts.TASKBAR_RESTART_RETRIES)])
+            # Handle taskbar restarts - both the 3s validity poll and the instant
+            # TaskbarCreated broadcast (nativeEvent) land in _recover_taskbar_restarted.
+            self.system_event_handler.taskbar_restarted.connect(self._recover_taskbar_restarted)
 
             # React to monitor topology changes (add/remove/primary swap, KVM, dock/undock):
             # re-validate the position + re-assert the widget. A set-and-forget app must follow
@@ -1269,7 +1291,10 @@ class NetworkSpeedWidget(QWidget):
         try:
             if eventType == b"windows_generic_MSG" and message is not None:
                 msg = _NativeMSG.from_address(int(message))
-                if msg.message == _WM_POWERBROADCAST and msg.wParam in (
+                if _WM_TASKBARCREATED and msg.message == _WM_TASKBARCREATED:
+                    self.logger.info("TaskbarCreated received - re-docking to the new taskbar.")
+                    self._recover_taskbar_restarted()
+                elif msg.message == _WM_POWERBROADCAST and msg.wParam in (
                     _PBT_APMRESUMESUSPEND, _PBT_APMRESUMEAUTOMATIC
                 ):
                     self.logger.info("Resume from sleep detected - re-asserting widget.")
@@ -1278,6 +1303,22 @@ class NetworkSpeedWidget(QWidget):
         except Exception as e:
             self.logger.debug("nativeEvent power handling failed: %s", e)
         return False, 0
+
+    def _recover_taskbar_restarted(self) -> None:
+        """
+        Explorer is (re)building the taskbar. Ride out the shell's startup with the
+        established staggered refreshes: each pass re-detects the taskbar, re-docks
+        the owner link and seats the widget back in the topmost band once detection
+        succeeds. Fired by the 3s validity poll and - via nativeEvent - by the
+        TaskbarCreated broadcast, which arrives the moment the new taskbar window
+        exists instead of up to a poll interval later.
+        """
+        try:
+            for i in range(constants.timeouts.TASKBAR_RESTART_RETRIES):
+                QTimer.singleShot(i * constants.timeouts.TASKBAR_RESTART_RECOVERY_DELAY_MS,
+                                  self._execute_refresh)
+        except Exception as e:
+            self.logger.error("Error recovering from taskbar restart: %s", e, exc_info=True)
 
     def _enforce_topmost_status(self) -> None:
         """Delegates to PositionManager."""

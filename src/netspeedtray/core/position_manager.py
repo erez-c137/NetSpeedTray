@@ -56,6 +56,19 @@ _SetWindowLongPtr.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_void_p]
 _GetWindowLongPtr.restype = ctypes.c_void_p
 _GetWindowLongPtr.argtypes = [wintypes.HWND, ctypes.c_int]
 
+# --- Buried-behind-taskbar hit-test (see PositionManager.is_buried_behind_taskbar) ---
+_GA_ROOT = 2
+_SHELL_TASKBAR_CLASSES = ("Shell_TrayWnd", "Shell_SecondaryTrayWnd")
+_WindowFromPoint = _user32.WindowFromPoint
+_WindowFromPoint.argtypes = [wintypes.POINT]
+_WindowFromPoint.restype = wintypes.HWND
+_GetAncestor = _user32.GetAncestor
+_GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+_GetAncestor.restype = wintypes.HWND
+_GetClassNameW = _user32.GetClassNameW
+_GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+_GetClassNameW.restype = ctypes.c_int
+
 
 # Protocols
 @runtime_checkable
@@ -832,6 +845,15 @@ class PositionManager(QObject):
                     hwnd, win32con.HWND_TOPMOST, 0, 0, 0, 0,
                     win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE
                 )
+            elif not (win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE) & win32con.WS_EX_TOPMOST):
+                # Owner link is correct, but the window itself fell out of the topmost
+                # band (Qt can drop WS_EX_TOPMOST across show/flag changes, the same
+                # churn that resets the owner). An owner link to a topmost taskbar does
+                # not pull a normal-band window up, so restore the style bit. This can't
+                # cause the #200 menu clipping: a normal-band window was never above an
+                # open menu to begin with.
+                logger.debug("Widget lost WS_EX_TOPMOST - restoring topmost band.")
+                self.reseat_topmost()
         except Exception as e:
             logger.error("Failed to ensure topmost status: %s", e)
 
@@ -842,3 +864,65 @@ class PositionManager(QObject):
         """
         if self._state.widget.isVisible():
             self.ensure_topmost()
+
+    def reseat_topmost(self) -> None:
+        """
+        One-shot re-insertion of the widget at the top of the topmost Z-band.
+
+        Unlike the blanket periodic re-assert removed for #200, this is only called
+        when the widget is known to be buried (is_buried_behind_taskbar) or to have
+        lost WS_EX_TOPMOST outright - states in which no shell menu can be clipped
+        by raising the widget.
+        """
+        try:
+            hwnd = int(self._state.widget.winId())
+            if win32gui.IsWindow(hwnd):
+                win32gui.SetWindowPos(
+                    hwnd, win32con.HWND_TOPMOST, 0, 0, 0, 0,
+                    win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE
+                )
+                logger.debug("Widget re-seated at the top of the topmost band.")
+        except Exception as e:
+            logger.error("Failed to re-seat topmost: %s", e)
+
+    def is_buried_behind_taskbar(self) -> bool:
+        """
+        True when the widget is visible but a hit-test at its center returns the
+        taskbar instead of the widget - i.e. it is sitting BELOW the taskbar in
+        Z-order and is invisible to the user even though isVisible() is True.
+
+        The ownership invariant (GWLP_HWNDPARENT) is supposed to make that state
+        impossible, but Win11's shell reorders the topmost band in ways that bury
+        the widget without touching its owner, and steady-state ensure_topmost()
+        deliberately never re-seats (#200). This is the detector for exactly that
+        state, so the 1 Hz refresh can reseat_topmost() as a one-shot fix.
+
+        Only the taskbar itself counts as burial. An open shell menu (#32768) or a
+        Win11 flyout covering the widget is the #200 case and must NOT trigger a
+        re-seat, or the widget would raise the taskbar over the open menu.
+        """
+        try:
+            widget = self._state.widget
+            hwnd = int(widget.winId())
+            if not widget.isVisible() or not win32gui.IsWindow(hwnd):
+                return False
+            # Native rect, not Qt's mapToGlobal(): Qt geometry is device-independent
+            # pixels while WindowFromPoint wants physical pixels - at 125% scaling the
+            # logical point lands ~25% off and hit-tests the wrong window, so the
+            # burial (which is real) would never be detected. GetWindowRect of the
+            # widget's own HWND is in the same physical space as the taskbar rects.
+            l, t, r, b = win32gui.GetWindowRect(hwnd)
+            if r - l < 2 or b - t < 2:
+                return False
+            hit = _WindowFromPoint(wintypes.POINT((l + r) // 2, (t + b) // 2))
+            if not hit:
+                return False
+            root = int(_GetAncestor(hit, _GA_ROOT) or hit)
+            if root == hwnd:
+                return False  # the point hits us (or one of our children) - we are on top
+            buf = ctypes.create_unicode_buffer(64)
+            _GetClassNameW(root, buf, 64)
+            return buf.value in _SHELL_TASKBAR_CLASSES
+        except Exception as e:
+            logger.debug("Buried-behind-taskbar check failed: %s", e)
+            return False
