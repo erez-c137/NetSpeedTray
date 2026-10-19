@@ -126,28 +126,39 @@ class SettingsDialog(QDialog):
         # add the sidebar, content margins, and room for a vertical scrollbar.
         margin = constants.layout.SETTINGS_CONTENT_MARGIN
         content_w = 560   # comfortable floor so the window is roomy and cards aren't pinned to their min
+        floor_w = 0       # the widest page's floor: below it some page would scroll sideways
         try:
             # minimumSizeHint is the floor below which the page can't shrink
-            # without forcing a horizontal scrollbar; size to the widest page's
-            # floor so no page ever scrolls sideways.
+            # without forcing a horizontal scrollbar. Cards wrap their titles and
+            # drop their control under the title when narrow, so these floors are
+            # small (~300px) in every locale; the window may never go below them.
             page_widths = [
                 self.stack.widget(i).widget().minimumSizeHint().width()
                 for i in range(self.stack.count())
                 if self.stack.widget(i).widget() is not None
             ]
             if page_widths:
-                content_w = max(max(page_widths), content_w)   # keep the comfortable floor
+                floor_w = max(page_widths)
+                content_w = max(floor_w, content_w)   # keep the comfortable floor
         except Exception:
             pass
         # +40 leaves room for the vertical scrollbar plus a little slack so the
         # horizontal scrollbar stays hidden even with slightly wider translations.
         # The final width is bounded by the screen below, so this can't run away.
-        desired_w = constants.layout.SIDEBAR_WIDTH + (2 * margin) + content_w + 40
+        sidebar_w = self.sidebar.maximumWidth()   # fixed; widened past SIDEBAR_WIDTH for long page names
+        chrome_w = sidebar_w + (2 * margin) + 40
+        desired_w = chrome_w + content_w
 
-        self.setMinimumSize(min(640, desired_w), 400)
+        # Resizing the window narrower never makes a page scroll sideways, and never clips the footer
+        # (preview strip + Support bundle / Cancel / Save, whose labels are longer in some languages).
+        footer_w = sidebar_w + self._content_widget.minimumSizeHint().width()
+        min_w = max(640, chrome_w + floor_w, footer_w)
         screen = self.screen() or QApplication.primaryScreen()
         if screen:
             avail = screen.availableGeometry()
+            min_w = min(min_w, avail.width())
+        self.setMinimumSize(min_w, 400)
+        if screen:
             width = min(desired_w, avail.width() - 80)
             # Open just tall enough for the short/moderate pages (General/Widget/Advanced ≈ 720px incl.
             # chrome) without scrolling, while staying compact. The genuinely long pages (Network,
@@ -188,6 +199,10 @@ class SettingsDialog(QDialog):
             self.sidebar = QListWidget()
             self.sidebar.setFixedWidth(constants.layout.SIDEBAR_WIDTH)
             self.sidebar.setMinimumWidth(180)
+            # The sidebar never scrolls sideways either: it widens to its longest page name (de_DE
+            # "Netzwerkschnittstellen" overflowed 200 px), and anything still too long elides.
+            self.sidebar.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            self.sidebar.setTextElideMode(Qt.TextElideMode.ElideRight)
             self.sidebar.setStyleSheet(style_utils.sidebar_style())
             self.sidebar.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             self.sidebar.setIconSize(QSize(16, 16))
@@ -203,12 +218,18 @@ class SettingsDialog(QDialog):
             self.sidebar.currentRowChanged.connect(lambda *_: self._tint_sidebar_icons())
             self.sidebar.setCurrentRow(0)
             self._tint_sidebar_icons()
+            for row in range(self.sidebar.count()):     # the full name, should it ever elide
+                self.sidebar.item(row).setToolTip(self.sidebar.item(row).text())
+            needed = self.sidebar.sizeHintForColumn(0) + 2 * self.sidebar.frameWidth() + 4
+            self.sidebar.setFixedWidth(min(max(constants.layout.SIDEBAR_WIDTH, needed),
+                                           constants.layout.SIDEBAR_MAX_WIDTH))
             sidebar_layout.addWidget(self.sidebar)
             main_layout.addWidget(sidebar_container)
 
             # --- Content Area ---
             content_widget = QWidget()
             content_widget.setObjectName("contentWidget")
+            self._content_widget = content_widget
             content_layout = QVBoxLayout(content_widget)
             # Generous horizontal inset around the card column (Win11 insets its content well clear of the
             # sidebar + window edge); matches the window-width budget so cards keep their width as the

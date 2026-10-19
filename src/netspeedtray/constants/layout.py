@@ -17,10 +17,16 @@ class LayoutConstants:
     MAIN_SPACING: Final[int] = 12
     GROUP_BOX_SPACING: Final[int] = 12
     SIDEBAR_WIDTH: Final[int] = 200
+    # The Settings sidebar grows past SIDEBAR_WIDTH to fit its longest translated page name, up to this.
+    SIDEBAR_MAX_WIDTH: Final[int] = 260
     # Horizontal breathing room around the Settings card column (Win11 Settings insets its content
     # generously from the sidebar + window edge; the bare 16px read edge-to-edge). The window width
     # formula and the content layout both use this so the cards keep their width as the inset grows.
     SETTINGS_CONTENT_MARGIN: Final[int] = 32
+    # A SettingCard keeps its control beside the title only while the title still gets at least this
+    # much width (or its whole one-line width, if shorter); below that the control drops under the
+    # title - the Win11 Settings narrow-window reflow - so no card ever forces the page to scroll sideways.
+    SETTING_CARD_MIN_TITLE_WIDTH: Final[int] = 120
 
     # --- Interface Page Specific ---
     INTERFACE_SCROLL_MAX_ITEMS: Final[int] = 7

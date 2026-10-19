@@ -11,7 +11,7 @@ import logging
 import re
 from typing import Optional, Final
 from PyQt6.QtWidgets import (
-    QWidget, QHBoxLayout, QVBoxLayout, QCheckBox, QLabel, QSlider,
+    QWidget, QHBoxLayout, QVBoxLayout, QBoxLayout, QCheckBox, QLabel, QSlider,
     QSizePolicy, QStyleOption, QLineEdit, QFrame, QToolButton, QButtonGroup,
     QPushButton, QColorDialog, QComboBox,
     QApplication, QScrollArea, QAbstractSlider, QAbstractSpinBox
@@ -646,15 +646,25 @@ class SettingCard(QFrame):
         # 12-8 padding read cramped next to the native Settings app).
         self.setMinimumHeight(58)
 
-        layout = QHBoxLayout(self)
+        # A box layout whose direction flips with the card's width: title | control side by side when
+        # there's room, the control under the title when there isn't (see _reflow). The title wraps, so
+        # a long translation grows the card taller instead of forcing the page to scroll sideways.
+        layout = QBoxLayout(QBoxLayout.Direction.LeftToRight, self)
         layout.setContentsMargins(16, tokens.SPACE_M, 16, tokens.SPACE_M)
         layout.setSpacing(tokens.SPACE_M)
+        self._row = layout
 
+        # The leading glyph and the title share one sub-row so a stacked card keeps the glyph beside it.
+        head = QHBoxLayout()
+        head.setContentsMargins(0, 0, 0, 0)
+        head.setSpacing(tokens.SPACE_M)
+        self._glyph: Optional[QLabel] = None
         if icon:
             glyph = QLabel(icon)
             glyph.setFixedWidth(22)
             glyph.setStyleSheet(f"color: {c['text_primary']}; background: transparent;")
-            layout.addWidget(glyph, 0, Qt.AlignmentFlag.AlignVCenter)
+            head.addWidget(glyph, 0, Qt.AlignmentFlag.AlignVCenter)
+            self._glyph = glyph
 
         text_col = QVBoxLayout()
         text_col.setContentsMargins(0, 0, 0, 0)
@@ -662,6 +672,7 @@ class SettingCard(QFrame):
         self._title_label = QLabel(title)
         self._title_label.setFont(token_font(tokens.TYPE_BODY_STRONG))
         self._title_label.setStyleSheet(f"color: {c['text_primary']}; background: transparent;")
+        self._title_label.setWordWrap(True)
         text_col.addWidget(self._title_label)
         if description:
             self._desc_label = QLabel(description)
@@ -669,7 +680,8 @@ class SettingCard(QFrame):
             self._desc_label.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
             self._desc_label.setWordWrap(True)
             text_col.addWidget(self._desc_label)
-        layout.addLayout(text_col, 1)
+        head.addLayout(text_col, 1)
+        layout.addLayout(head, 1)
 
         if control is not None:
             layout.addWidget(control, 0, Qt.AlignmentFlag.AlignVCenter)
@@ -677,11 +689,109 @@ class SettingCard(QFrame):
     def control(self) -> Optional[QWidget]:
         return self._control
 
+    def isStacked(self) -> bool:
+        """True while the control sits under the title (the card is too narrow for one row)."""
+        return self._row.direction() == QBoxLayout.Direction.TopToBottom
+
+    def _control_min_width(self) -> int:
+        ctl = self._control
+        if ctl is None or ctl.isHidden():
+            return 0
+        return ctl.minimumWidth() or ctl.minimumSizeHint().width()
+
+    def _head_min_width(self, side_by_side: bool) -> int:
+        """Narrowest the glyph + title column may get. Beside the control the title keeps its one-line
+        width (capped at SETTING_CARD_MIN_TITLE_WIDTH) so it isn't wrapped a word per line; stacked it
+        only needs its longest word."""
+        lbl = self._title_label
+        need = lbl.minimumSizeHint().width()   # a word-wrapped QLabel's floor: its longest word
+        if side_by_side:
+            one_line = lbl.fontMetrics().horizontalAdvance(lbl.text()) + 2
+            need = max(need, min(one_line, constants.layout.SETTING_CARD_MIN_TITLE_WIDTH))
+        desc = getattr(self, "_desc_label", None)
+        if desc is not None:
+            need = max(need, desc.minimumSizeHint().width())
+        if self._glyph is not None:
+            need += self._glyph.width() + tokens.SPACE_M
+        return need
+
+    def _side_by_side_width(self) -> int:
+        """The card width below which title + control no longer fit on one row."""
+        m = self._row.contentsMargins()
+        ctl = self._control_min_width()
+        gap = self._row.spacing() if ctl else 0
+        return m.left() + m.right() + self._head_min_width(True) + gap + ctl
+
+    def minimumSizeHint(self) -> QSize:
+        # The STACKED floor: a card can always reflow down to its widest single piece, so that - not
+        # title + control side by side - is what the page (and its scroll area) must make room for.
+        base = super().minimumSizeHint()
+        m = self._row.contentsMargins()
+        w = m.left() + m.right() + max(self._head_min_width(False), self._control_min_width())
+        return QSize(w, base.height())
+
+    def _reflow(self, width: int) -> None:
+        if self._control is None:
+            return
+        stacked = width < self._side_by_side_width()
+        if stacked == self.isStacked():
+            return
+        if stacked:
+            self._row.setDirection(QBoxLayout.Direction.TopToBottom)
+            self._row.setAlignment(self._control, Qt.AlignmentFlag.AlignLeft)
+        else:
+            self._row.setDirection(QBoxLayout.Direction.LeftToRight)
+            self._row.setAlignment(self._control, Qt.AlignmentFlag.AlignVCenter)
+        self.updateGeometry()
+
+    def resizeEvent(self, event) -> None:
+        self._reflow(event.size().width())
+        super().resizeEvent(event)
+
     def set_description(self, text: str) -> None:
         """Swap the muted description (only for a card built with one)."""
         label = getattr(self, "_desc_label", None)
         if label is not None:
             label.setText(text)
+
+
+class ReflowRow(QWidget):
+    """A left-packed row of widgets (e.g. action buttons) that stacks them vertically when the row is
+    too narrow to hold them side by side, so a long translation never forces a sideways scroll."""
+
+    def __init__(self, widgets, spacing: int = tokens.SPACE_S, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._widgets = list(widgets)
+        self._box = QBoxLayout(QBoxLayout.Direction.LeftToRight, self)
+        self._box.setContentsMargins(0, 0, 0, 0)
+        self._box.setSpacing(spacing)
+        for w in self._widgets:
+            self._box.addWidget(w, 0, Qt.AlignmentFlag.AlignLeft)
+        self._box.addStretch(1)
+
+    @staticmethod
+    def _min_w(w: QWidget) -> int:
+        return max(w.minimumWidth(), w.minimumSizeHint().width(), w.sizeHint().width())
+
+    def _one_row_width(self) -> int:
+        shown = [w for w in self._widgets if not w.isHidden()]
+        return sum(self._min_w(w) for w in shown) + self._box.spacing() * max(0, len(shown) - 1)
+
+    def isStacked(self) -> bool:
+        return self._box.direction() == QBoxLayout.Direction.TopToBottom
+
+    def minimumSizeHint(self) -> QSize:
+        base = super().minimumSizeHint()
+        widest = max((self._min_w(w) for w in self._widgets if not w.isHidden()), default=0)
+        return QSize(widest, base.height())
+
+    def resizeEvent(self, event) -> None:
+        stacked = event.size().width() < self._one_row_width()
+        if stacked != self.isStacked():
+            self._box.setDirection(QBoxLayout.Direction.TopToBottom if stacked
+                                   else QBoxLayout.Direction.LeftToRight)
+            self.updateGeometry()
+        super().resizeEvent(event)
 
 
 class SettingExpander(QWidget):
@@ -724,6 +834,7 @@ class SettingExpander(QWidget):
         title_label = QLabel(title)
         title_label.setFont(token_font(tokens.TYPE_BODY_STRONG))
         title_label.setStyleSheet(f"color: {c['text_primary']}; background: transparent;")
+        title_label.setWordWrap(True)   # a long translation wraps instead of widening the whole page
         text_col.addWidget(title_label)
         if description:
             d = QLabel(description)
@@ -805,38 +916,52 @@ class Win11Segmented(QWidget):
     """
     valueChanged = pyqtSignal(object)
 
-    def __init__(self, options, parent: Optional[QWidget] = None) -> None:
-        """options: an iterable of (label, value) pairs."""
+    def __init__(self, options, parent: Optional[QWidget] = None, wrap: bool = False) -> None:
+        """options: an iterable of (label, value) pairs. ``wrap=True`` lets a long row (e.g. the
+        seven arrow styles) break onto two rows when its parent is too narrow for one, instead of
+        forcing a sideways scroll - QToolButton segments hard-clip, so they can't shrink."""
         super().__init__(parent)
         self._value = None
         self._items = []  # (value, button) in order; matched by equality, not repr()
+        self._wrap = wrap
+        self._rows = 1
         options = list(options)
         n = len(options)
 
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
         self._group = QButtonGroup(self)
         self._group.setExclusive(True)
+        if wrap:
+            layout = QVBoxLayout(self)
+            layout.setSpacing(tokens.SPACE_XS)
+            self._row_layouts = []
+            for _ in range(2):
+                row = QHBoxLayout()
+                row.setContentsMargins(0, 0, 0, 0)
+                row.setSpacing(0)
+                row.addStretch(1)                  # rows stay left-packed
+                layout.addLayout(row)
+                self._row_layouts.append(row)
+        else:
+            layout = QHBoxLayout(self)
+            layout.setSpacing(0)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self._layout = layout
 
         for i, (label, value) in enumerate(options):
             btn = QToolButton()
             btn.setText(str(label))
             btn.setCheckable(True)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            if n == 1:
-                btn.setObjectName("segOnly")
-            elif i == 0:
-                btn.setObjectName("segFirst")
-            elif i == n - 1:
-                btn.setObjectName("segLast")
-            else:
-                btn.setObjectName("segMid")
+            btn.setObjectName(self._segment_name(i, n))
             btn.clicked.connect(lambda _checked=False, v=value: self.setValue(v))
             self._group.addButton(btn)
-            layout.addWidget(btn)
+            if not wrap:
+                layout.addWidget(btn)
             self._items.append((value, btn))
-        layout.addStretch(0)
+        if wrap:
+            self._place(1)
+        else:
+            layout.addStretch(0)
 
         accent = get_accent_color().name()
         c = semantic_colors()
@@ -856,6 +981,57 @@ class Win11Segmented(QWidget):
             QToolButton#segLast  {{ border-top-right-radius: {r}px; border-bottom-right-radius: {r}px; }}
             QToolButton#segOnly  {{ border-radius: {r}px; }}
         """)
+
+    @staticmethod
+    def _segment_name(i: int, n: int) -> str:
+        """Object name picking the rounded ends: segOnly / segFirst / segLast / segMid."""
+        if n == 1:
+            return "segOnly"
+        if i == 0:
+            return "segFirst"
+        if i == n - 1:
+            return "segLast"
+        return "segMid"
+
+    def _per_row(self, rows: int) -> int:
+        return -(-len(self._items) // rows)   # ceil
+
+    def _place(self, rows: int) -> None:
+        """(wrap mode) Lay the segments out on ``rows`` rows, each row its own rounded strip."""
+        self._rows = rows
+        per_row = self._per_row(rows)
+        for row in self._row_layouts:
+            for _v, btn in self._items:
+                row.removeWidget(btn)
+        for i, (_v, btn) in enumerate(self._items):
+            r, col = divmod(i, per_row)
+            in_row = min(per_row, len(self._items) - r * per_row)
+            name = self._segment_name(col, in_row)
+            if btn.objectName() != name:
+                btn.setObjectName(name)
+                btn.style().unpolish(btn)
+                btn.style().polish(btn)
+            self._row_layouts[r].insertWidget(col, btn)   # before the row's trailing stretch
+
+    def _row_width(self, rows: int) -> int:
+        """Width the segments need when laid out on ``rows`` rows."""
+        per_row = self._per_row(rows)
+        widths = [btn.sizeHint().width() for _v, btn in self._items]
+        return max(sum(widths[i:i + per_row]) for i in range(0, len(widths), per_row))
+
+    def minimumSizeHint(self) -> QSize:
+        base = super().minimumSizeHint()
+        if not self._wrap or len(self._items) < 2:
+            return base
+        return QSize(self._row_width(2), base.height())
+
+    def resizeEvent(self, event) -> None:
+        if self._wrap and len(self._items) > 1:
+            rows = 1 if event.size().width() >= self._row_width(1) else 2
+            if rows != self._rows:
+                self._place(rows)
+                self.updateGeometry()
+        super().resizeEvent(event)
 
     def _find(self, value):
         for v, btn in self._items:
@@ -979,7 +1155,7 @@ class ArrowStylePicker(QWidget):
 
         options = [(f"{up} {down}", name) for (name, up, down) in self._presets]
         options.append((self._tr("ARROW_STYLE_CUSTOM", "Custom"), self._CUSTOM))
-        self._seg = Win11Segmented(options)
+        self._seg = Win11Segmented(options, wrap=True)   # 7 segments: two rows in a narrow window
         self._seg.valueChanged.connect(self._on_segment)
         for value, btn in self._seg._items:
             if value != self._CUSTOM:
