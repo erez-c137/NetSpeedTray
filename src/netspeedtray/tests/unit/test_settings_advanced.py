@@ -88,3 +88,55 @@ def test_reset_advanced_page_only_resets_its_keys(qtbot, dialog):
     assert settings["reduce_motion"] == defaults["reduce_motion"]  # reset
     assert settings["keep_data"] == defaults["keep_data"]          # reset
     assert settings["monitor_cpu_enabled"] is True                 # untouched (other page)
+
+
+# --- 2.2 item C: hardware-recording toggle + Delete all history ------------------------------------
+
+def test_record_hardware_history_round_trips(page):
+    page.load_settings({"record_hardware_history": False})
+    assert page.get_settings()["record_hardware_history"] is False
+    page.load_settings({})                                  # absent -> the default (on)
+    assert page.get_settings()["record_hardware_history"] is True
+
+
+def test_delete_history_cancelled_deletes_nothing(dialog, monkeypatch):
+    monkeypatch.setattr(dialog, "_confirm_delete_history", lambda: None)
+    dialog._delete_all_history()
+    dialog.parent_widget.widget_state.delete_all_history.assert_not_called()
+
+
+def test_delete_history_keeps_usage_by_default(dialog, monkeypatch):
+    monkeypatch.setattr(dialog, "_confirm_delete_history", lambda: False)
+    dialog.config["usage_alert_state"] = "2026-10-01|100|total::80"
+    dialog._delete_all_history()
+    dialog.parent_widget.widget_state.delete_all_history.assert_called_once_with(include_usage=False)
+    assert dialog.get_settings()["usage_alert_state"] == "2026-10-01|100|total::80"
+    assert dialog.advanced_page.delete_history_btn.isEnabled() is False   # until the worker answers
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: None)
+    dialog._on_history_deleted(True)
+    assert dialog.advanced_page.delete_history_btn.isEnabled() is True
+
+
+def test_delete_history_with_usage_rearms_cap_alerts(dialog, monkeypatch):
+    monkeypatch.setattr(dialog, "_confirm_delete_history", lambda: True)
+    dialog.config["usage_alert_state"] = "2026-10-01|100|total::80"
+    dialog.original_config["usage_alert_state"] = "2026-10-01|100|total::80"
+    dialog._delete_all_history()
+    dialog.parent_widget.widget_state.delete_all_history.assert_called_once_with(include_usage=True)
+    dialog.parent_widget.update_config.assert_called_with({"usage_alert_state": ""})
+    # Neither Save (config) nor Cancel (original_config) may restore the stale alert state.
+    assert dialog.get_settings()["usage_alert_state"] == ""
+    assert dialog.original_config["usage_alert_state"] == ""
+
+
+def test_delete_confirmation_defaults_to_safe_choices(dialog, monkeypatch):
+    seen = {}
+
+    def fake_exec(box):
+        seen["usage_checked"] = box.checkBox().isChecked()
+        seen["default_is_cancel"] = box.defaultButton() is box.escapeButton()
+        return 0                                             # closed without clicking Delete
+
+    monkeypatch.setattr(QMessageBox, "exec", fake_exec)
+    assert dialog._confirm_delete_history() is None
+    assert seen == {"usage_checked": False, "default_is_cancel": True}
