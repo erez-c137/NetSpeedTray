@@ -54,6 +54,10 @@ CREATE TABLE speed_history_raw (
 );
 ```
 
+These are the rates the counters measured. The widget smooths an isolated burst for display (one
+poll at more than 5× the recent baseline is shown at 2×), but since 2.2 that smoothing is never
+written here — older rows may hold the smoothed value for such a second.
+
 ### `speed_history_minute` / `speed_history_hour` — the rollups
 
 ```sql
@@ -306,7 +310,9 @@ Before every migration, NetSpeedTray writes a verified backup next to the databa
 ```
 
 The `v7` is the schema version the backup holds; the rest is when it was taken. The newest two are
-kept.
+kept, plus the newest one of every schema version, so a later version's backups never push out the
+one an older NetSpeedTray can restore. If that backup can't be written or doesn't match the
+database, the migration doesn't run: the database stays as it is and the next launch tries again.
 
 You need this if you have gone back to an older NetSpeedTray after a newer one migrated your
 database. The older build then runs read-only — it shows your history but refuses to record, because

@@ -73,6 +73,7 @@ class SettingsDialog(QDialog):
         available_interfaces: Optional[List[str]] = None,
         is_startup_enabled: bool = False,
         parent: QWidget | None = None,
+        primary_interface: Optional[str] = None,
     ) -> None:
         """
         Initializes the settings dialog.
@@ -87,6 +88,7 @@ class SettingsDialog(QDialog):
         self.version = version
         self.i18n = i18n
         self.available_interfaces = available_interfaces or []
+        self.primary_interface = primary_interface   # the routing interface, marked in the picker
         self.startup_enabled_initial_state = is_startup_enabled
         self._user_chose_default_color = False
 
@@ -254,7 +256,8 @@ class SettingsDialog(QDialog):
             self.interfaces_page = InterfacesPage(
                 self.i18n,
                 self.available_interfaces,
-                self._schedule_settings_update
+                self._schedule_settings_update,
+                primary_interface=self.primary_interface,
             )
             self.advanced_page = AdvancedPage(
                 self.i18n,
@@ -574,11 +577,14 @@ class SettingsDialog(QDialog):
                 self.i18n.SUPPORT_BUNDLE_ERROR_MESSAGE.format(error=str(e)),
             )
 
-    def update_interface_list(self, new_interfaces: List[str]) -> None:
-        """Updates the list of available network interfaces."""
+    def update_interface_list(self, new_interfaces: List[str],
+                              primary_interface: Optional[str] = None) -> None:
+        """Updates the list of available network interfaces and the marked primary one (None
+        clears the mark - no route right now)."""
         self.available_interfaces = new_interfaces
+        self.primary_interface = primary_interface
         if hasattr(self, 'interfaces_page'):
-            self.interfaces_page.update_interface_list(new_interfaces)
+            self.interfaces_page.update_interface_list(new_interfaces, primary_interface)
             # Re-apply current selection
             self.interfaces_page.load_settings(self.get_settings())
 

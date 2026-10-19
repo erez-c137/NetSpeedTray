@@ -1,5 +1,5 @@
 """
-BusiestAppsCard - the Overview's top-talkers tile. Verifies the honest ranking (active-first, then by
+BusiestAppsCard - the Overview's "Most connections" tile. Verifies the honest ranking (active-first, then by
 live connection count), the hard cap of 5 rows, the empty/unavailable states, and that a row/card click
 asks to navigate to the Network tab. The psutil sampler itself isn't started here (no real network).
 """
@@ -61,3 +61,30 @@ def test_unavailable_rdp(q_app):
     card._on_unavailable("rdp")
     assert card._status.isVisibleTo(card)
     assert not any(r.isVisibleTo(card) for r in card._rows)
+
+
+# --- the title says what it ranks (2.2 scope C) ---------------------------------------------------
+# The card ranks by live connection COUNT. Windows can't attribute bytes to a process without
+# admin/ETW, so a bandwidth title ("Top talkers") promised something the card can't show.
+
+def test_title_says_connections_not_bandwidth(q_app):
+    i18n = I18nStrings("en_US")
+    card = BusiestAppsCard(i18n)
+    assert card._title.text() == i18n.MONITOR_MOST_CONNECTIONS == "Most connections"
+    assert card.accessibleName() == i18n.MONITOR_MOST_CONNECTIONS
+
+
+def test_every_locale_renamed_the_card():
+    import json
+    from pathlib import Path
+    import netspeedtray.constants as c
+    files = sorted((Path(c.__file__).parent / "locales").glob("*.json"))
+    assert len(files) == 16
+    old = {"Top talkers", "Top-Verbraucher", "Más activas", "Applications les plus actives",
+           "צרכנים מובילים", "Legnagyobb adatforgalmú alkalmazások", "App più attive", "通信量の多いアプリ",
+           "주요 사용 앱", "Meest actief", "Najaktywniejsze aplikacje", "Самые активные",
+           "Najaktivnejše aplikacije", "En çok veri kullananlar", "流量排行", "主要流量來源"}
+    for f in files:
+        d = json.loads(f.read_text(encoding="utf-8"))
+        assert "MONITOR_TOP_TALKERS" not in d, f.name
+        assert d.get("MONITOR_MOST_CONNECTIONS") and d["MONITOR_MOST_CONNECTIONS"] not in old, f.name

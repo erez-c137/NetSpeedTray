@@ -19,9 +19,14 @@ from typing import Any, Dict, List, Optional, Tuple
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
 from netspeedtray import constants
+from netspeedtray.core.db.schema_v8 import EXPECTED_TABLES_V8
 
 # Logger Setup
 logger = logging.getLogger("NetSpeedTray.Core.Database")
+
+
+class MigrationAborted(Exception):
+    """A schema migration refused to start (no verified pre-migration backup). Nothing was changed."""
 
 
 class DatabaseWorker(QThread):
@@ -301,10 +306,35 @@ class DatabaseWorker(QThread):
         except Exception:
             return True
 
-    # Keep the newest N pre-migration backups; older ones are pruned. Nothing used to
-    # delete these at all, and at a year-scale database that is hundreds of MB of
-    # abandoned copies sitting in the user's roaming profile.
+    # Keep the newest N pre-migration backups overall, PLUS the newest backup of every schema
+    # version (see _prune_old_backups). Nothing used to delete these at all, and at a year-scale
+    # database that is hundreds of MB of abandoned copies in the user's roaming profile.
     _BACKUP_RETENTION = 2
+
+    # The tables each schema version is DEFINED to have - static, from the version history
+    # (v2 first tiered schema; v3 bandwidth_history; v4 sample_count column only; v5 hardware
+    # raw/minute; v6 hardware hour; v7 usage_counter). _verify_backup checks a backup against
+    # this, never against the live source's own table list: a damaged source that lost a table
+    # would otherwise "verify" a backup missing the same table. A version absent here cannot be
+    # verified, so it cannot be migrated - add the new set in the same commit as a schema bump
+    # (test_v7_hardening pins the current one to what a fresh build creates).
+    _V2_TABLES = ("metadata", constants.data.SPEED_TABLE_RAW,
+                  constants.data.SPEED_TABLE_MINUTE, constants.data.SPEED_TABLE_HOUR)
+    _V3_TABLES = _V2_TABLES + (constants.data.BANDWIDTH_TABLE,)
+    _V5_TABLES = _V3_TABLES + (constants.data.HARDWARE_STATS_TABLE_RAW,
+                               constants.data.HARDWARE_STATS_TABLE_MINUTE)
+    _V6_TABLES = _V5_TABLES + (constants.data.HARDWARE_STATS_TABLE_HOUR,)
+    EXPECTED_TABLES: Dict[int, Tuple[str, ...]] = {
+        2: _V2_TABLES,
+        3: _V3_TABLES,
+        4: _V3_TABLES,
+        5: _V5_TABLES,
+        6: _V6_TABLES,
+        7: _V6_TABLES + (constants.data.USAGE_COUNTER_TABLE,),
+        # Defined with the v8 DDL so the set cannot drift from it. Dormant until _DB_VERSION
+        # becomes 8: _verify_backup only ever asks for the version being migrated FROM.
+        8: EXPECTED_TABLES_V8,
+    }
 
     def _backup_database(self) -> bool:
         """
@@ -370,8 +400,16 @@ class DatabaseWorker(QThread):
         Structural checks alone are not enough: the failure this exists to catch (a
         WAL-blind copy) produces a *valid* database that is merely missing rows, which
         ``integrity_check`` reports as ``ok``. So compare content - the schema version
-        and the row count of every history table.
+        and the row count of every table the version is DEFINED to have
+        (``EXPECTED_TABLES[expected_version]``). The source's own table list is never the
+        reference: a table missing from both source and backup fails here, it does not pass.
         """
+        expected_tables = self.EXPECTED_TABLES.get(expected_version)
+        if expected_tables is None:
+            self.logger.error(
+                "Backup verification: no expected table set is known for schema v%s; "
+                "refusing to call the backup verified.", expected_version)
+            return False
         check: Optional[sqlite3.Connection] = None
         try:
             # NOTE: `with sqlite3.connect(...)` commits/rolls back the transaction but does
@@ -391,10 +429,19 @@ class DatabaseWorker(QThread):
                 )
                 return False
 
-            tables = [r[0] for r in self.conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
-            )]
-            for table in tables:
+            _tables_sql = "SELECT name FROM sqlite_master WHERE type='table'"
+            src_tables = {r[0] for r in self.conn.execute(_tables_sql)}
+            dst_tables = {r[0] for r in check.execute(_tables_sql)}
+            for label, present in (("source", src_tables), ("backup", dst_tables)):
+                missing = sorted(set(expected_tables) - present)
+                if missing:
+                    self.logger.error(
+                        "Backup verification: the %s is missing table(s) %s that schema v%d must "
+                        "have. Not migrating a database whose backup cannot be proven whole.",
+                        label, ", ".join(missing), expected_version,
+                    )
+                    return False
+            for table in expected_tables:
                 src = self.conn.execute(f"SELECT COUNT(*) FROM '{table}'").fetchone()[0]
                 dst = check.execute(f"SELECT COUNT(*) FROM '{table}'").fetchone()[0]
                 if src != dst:
@@ -413,14 +460,28 @@ class DatabaseWorker(QThread):
 
 
     def _prune_old_backups(self) -> None:
-        """Keep only the newest `_BACKUP_RETENTION` backups; nothing else ever deleted them."""
+        """Keep the newest `_BACKUP_RETENTION` backups overall PLUS the newest backup of each
+        schema version (the version is the one the backup holds: ``.db.bak.v{N}_...``).
+
+        Version-blind "newest 2" would let two v8-era backups delete the last v7 one - the only
+        file a rolled-back 2.1.x can restore (_find_newest_backup skips newer versions). A backup
+        whose name carries no version is kept only while it is among the newest overall."""
         try:
             backups = sorted(
                 self.db_path.parent.glob(f"{self.db_path.stem}.db.bak.*"),
-                key=lambda p: p.stat().st_mtime,
+                key=lambda p: (p.stat().st_mtime, p.name),
                 reverse=True,
             )
-            for stale in backups[self._BACKUP_RETENTION:]:
+            keep = set(backups[:self._BACKUP_RETENTION])
+            seen_versions = set()
+            for path in backups:   # newest first, so the first hit per version is its newest
+                m = re.search(r"\.db\.bak\.v(\d+)_", path.name)
+                if m and m.group(1) not in seen_versions:
+                    seen_versions.add(m.group(1))
+                    keep.add(path)
+            for stale in backups:
+                if stale in keep:
+                    continue
                 stale.unlink(missing_ok=True)
                 self.logger.debug("Pruned old database backup: %s", stale.name)
         except Exception as e:
@@ -435,7 +496,9 @@ class DatabaseWorker(QThread):
         message advised moving the database aside to start a fresh history while a
         verified backup sat in the same folder. A rollback session never prunes these
         (_prune_old_backups only runs from _backup_database, inside _migrate_schema),
-        so whatever the migrating build left behind is still here.
+        so whatever the migrating build left behind is still here - and pruning keeps the
+        newest backup of every schema version, so a later build's own backups never
+        displace this build's restore target.
         """
         try:
             backups = sorted(
@@ -462,10 +525,14 @@ class DatabaseWorker(QThread):
         self.logger.info("Migrating database from version %d to %d...", current_version, self._DB_VERSION)
 
         if not self._backup_database():
-            # The per-migration transaction below is still the primary rollback safety for an in-progress
-            # failure; surface loudly that the extra .bak net is missing this run (don't abort - a backup
-            # failure shouldn't brick the app on an otherwise-valid migration).
-            self.logger.warning("Schema migration proceeding WITHOUT a pre-migration backup copy.")
+            # ABORT (release-plan Gate 2, item 3). The per-step transaction below cannot roll back an
+            # executescript() (it COMMITs implicitly), and a migration whose only undo is a backup
+            # that failed or did not verify has no undo at all. Nothing has been changed yet: the
+            # file stays on its old version, this session keeps running on it exactly as after any
+            # failed migration, and the next launch retries - by then the disk may have room or the
+            # lock may have cleared. Raised, so _check_and_create_schema's no-rebuild guard handles it.
+            raise MigrationAborted(
+                f"pre-migration backup failed or did not verify; staying on schema v{current_version}")
 
         try:
             for ver in range(current_version, self._DB_VERSION):
@@ -655,6 +722,10 @@ class DatabaseWorker(QThread):
              self.logger.info("Database version mismatch (Current: %d, Target: %d). Attempting migration...", current_version, self._DB_VERSION)
              try:
                  self._migrate_schema(current_version)
+                 return
+             except MigrationAborted as e:
+                 self.logger.error("Migration NOT started: %s. The database is unchanged; it will be "
+                                   "retried on the next launch.", e)
                  return
              except Exception as e:
                  # CRITICAL data-loss guard: NEVER fall through to the DROP/fresh-build

@@ -109,6 +109,50 @@ class InterfaceConstants:
     ROUTE_PROBE_V4: Final[tuple] = ("8.8.8.8", 80)
     ROUTE_PROBE_V6: Final[tuple] = ("2001:4860:4860::8888", 80)
 
+    # --- Adapter classification (utils/interface_classifier.py) ---------------------------------
+    # One classifier decides "is this a real adapter?" for both the Settings picker's grouping and
+    # the all_physical aggregation. Kinds:
+    KIND_PHYSICAL: Final[str] = "physical"
+    KIND_VIRTUAL: Final[str] = "virtual"   # VPN / tunnel / VM / container / Wi-Fi Direct / PAN
+    KIND_PSEUDO: Final[str] = "pseudo"     # loopback + the IPv6 transition shims; never a connection
+    # IANA ifType values as reported by GetIfTable2 (MIB_IF_ROW2.Type).
+    IF_TYPE_ETHERNET: Final[int] = 6
+    IF_TYPE_PPP: Final[int] = 23
+    IF_TYPE_SOFTWARE_LOOPBACK: Final[int] = 24
+    IF_TYPE_PROP_VIRTUAL: Final[int] = 53      # Tailscale, WireGuard, NordLynx, Wintun
+    IF_TYPE_IEEE80211: Final[int] = 71
+    IF_TYPE_TUNNEL: Final[int] = 131           # Teredo, 6to4, IP-HTTPS, WAN Miniport (SSTP/L2TP/...)
+    # Types that are virtual whatever the hardware flag says (a PPPoE session rides on a real NIC
+    # whose bytes are already counted, so counting it too would double-count).
+    VIRTUAL_IF_TYPES: Final[frozenset] = frozenset({IF_TYPE_PPP, IF_TYPE_PROP_VIRTUAL, IF_TYPE_TUNNEL})
+    # Friendly-name keywords (lower-case substrings) for pseudo-interfaces.
+    PSEUDO_NAME_KEYWORDS: Final[tuple] = ("loopback", "teredo", "isatap", "6to4", "ip-https")
+    # Friendly-name keywords that mark a virtual adapter. Applied on top of the user's
+    # `excluded_interfaces` (whose defaults are the 2.1 list) and used alone when the OS can't be
+    # asked (off Windows, a name only seen in history). "local area connection*" is how Windows
+    # names hidden miniports and Wi-Fi Direct adapters - the asterisk is part of the name.
+    VIRTUAL_NAME_KEYWORDS: Final[tuple] = (
+        "vethernet", "vswitch", "wsl", "hyper-v", "tailscale", "wireguard", "nordlynx", "zerotier",
+        "openvpn", "wintun", "tap-windows", "vpn", "virtual", "vmware", "vmnet", "vbox", "virtualbox",
+        "docker", "hamachi", "radmin", "mullvad", "bluetooth", "local area connection*",
+    )
+    # Adapter-description keywords (lower-case substrings). Narrower than the name list on purpose:
+    # a Hyper-V *guest* NIC is "Microsoft Hyper-V Network Adapter" and is the VM's real connection,
+    # so there is no bare "hyper-v" here. These veto even an adapter the OS calls hardware.
+    VIRTUAL_DESCRIPTION_KEYWORDS: Final[tuple] = (
+        "tunnel", "host-only", "tap-windows", "wintun", "wireguard", "nordlynx",
+        "zerotier", "tailscale", "wan miniport", "kernel debug", "vpn", "loopback",
+        "personal area network", "npcap",
+    )
+    # Soft description keywords: they mark an adapter virtual only when the OS does NOT say it is a
+    # hardware interface. An SR-IOV virtual function (Azure accelerated networking: "Mellanox
+    # ConnectX-4 Lx Virtual Ethernet Adapter") is hardware and can be the VM's real data path.
+    VIRTUAL_DESCRIPTION_SOFT_KEYWORDS: Final[tuple] = ("virtual",)
+    # A name the cached GetIfTable2 table doesn't know (a VPN that just came up) re-reads it at once,
+    # throttled to one read per this many seconds. A name-only answer is never cached, so the first
+    # read after the throttle corrects it.
+    CLASSIFIER_UNKNOWN_REREAD_SEC: Final[float] = 2.0
+
     def __init__(self) -> None:
         self.validate()
 
