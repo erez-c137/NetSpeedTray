@@ -392,10 +392,12 @@ def test_battery_power_clears_system_power_stash(controller_instance):
     assert mock_view.battery_power == -38.2
 
 
-def test_system_power_persisted_only_while_discharging(controller_instance, monkeypatch):
-    """On AC (or charging) the whole-system reading (e.g. RAPL PSYS) is not battery
-    drain and must never land in the system_power history the hover "Today avg"
-    averages."""
+def test_system_power_history_universal_battery_drain_discharge_only(controller_instance, monkeypatch):
+    """system_power keeps the stat history it always had (every real reading, AC
+    included - the Stats-export "System power" column must stay meaningful on a
+    desktop with RAPL), while the mirrored battery_drain stat_type only records
+    samples while the machine is actually discharging, so the hover "Today avg"
+    can never average an AC-side PSYS reading."""
     from netspeedtray.utils import power_utils
 
     controller = controller_instance
@@ -407,7 +409,8 @@ def test_system_power_persisted_only_while_discharging(controller_instance, monk
         controller.widget_state.add_hardware_stat.reset_mock()
         controller.handle_stats({"cpu": 50.0, "system_power": 12.0})
         keys = [c.args[0] for c in controller.widget_state.add_hardware_stat.call_args_list]
-        assert 'system_power' not in keys, f"AC-side reading persisted under mode={mode}"
+        assert 'system_power' in keys, f"AC-side reading dropped from history under mode={mode}"
+        assert 'battery_drain' not in keys, f"battery_drain recorded while mode={mode}"
 
     monkeypatch.setattr(power_utils, "read_power_state",
                         lambda: power_utils.PowerState(power_utils.MODE_DISCHARGE, 63))
@@ -415,14 +418,20 @@ def test_system_power_persisted_only_while_discharging(controller_instance, monk
     controller.handle_stats({"cpu": 50.0, "system_power": 12.0})
     keys = [c.args[0] for c in controller.widget_state.add_hardware_stat.call_args_list]
     assert 'system_power' in keys
+    assert 'battery_drain' in keys
+    drain_calls = [c for c in controller.widget_state.add_hardware_stat.call_args_list
+                   if c.args[0] == 'battery_drain']
+    assert drain_calls[0].args[1] == 12.0
 
-    # A failed power-state read keeps the historical behaviour (persist).
+    # A failed power-state read keeps the historical behaviour (persist; the
+    # failsafe treats the state as unknown, not as AC).
     controller.widget_state.add_hardware_stat.reset_mock()
     monkeypatch.setattr(power_utils, "read_power_state",
                         lambda: (_ for _ in ()).throw(RuntimeError("wmi exploded")))
     controller.handle_stats({"cpu": 50.0, "system_power": 12.0})
     keys = [c.args[0] for c in controller.widget_state.add_hardware_stat.call_args_list]
     assert 'system_power' in keys
+    assert 'battery_drain' in keys
 
 
 def test_power_slots_reach_the_view_without_cpu_stats(controller_instance):
