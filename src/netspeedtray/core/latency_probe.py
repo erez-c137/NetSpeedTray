@@ -8,8 +8,9 @@ it needs NO admin and spawns no subprocess. Each 3 s cycle sends a BURST of BURS
 hop, BURST_SPACING_MS (100 ms) apart, each with its own 1000 ms timeout (~1.3 packets/s of ~80 bytes per
 hop); a hop's RTT is the median of the burst's replies and its loss is lost/sent, so loss% resolves
 0.6% steps over the ~2 min live window - real for the ISP-dispute use-case. Runs on its OWN QThread so a
-timeout never blocks the stats poll; every wait inside a cycle is interruptible, so stop() returns
-within one in-flight echo. Emits `latency_ready(LatencySample)`; the widget persists it (latency_gw / latency_anchor RTTs plus
+timeout never blocks the stats poll. Every wait inside a cycle is interruptible and stop() is checked
+before every echo (and before the anchor burst and its DNS resolve), so after stop() at most the one
+echo already in flight completes (<= its 1 s timeout) and no new packet is sent. Emits `latency_ready(LatencySample)`; the widget persists it (latency_gw / latency_anchor RTTs plus
 the latency_gw_timeout / latency_anchor_timeout loss series) and keeps one live loss window per hop for
 the Monitor's latency pill.
 
@@ -258,15 +259,19 @@ def icmp_burst(host: str, count: int = constants.network.latency.BURST_SIZE,
                spacing_ms: int = constants.network.latency.BURST_SPACING_MS, timeout_ms: int = 1000,
                pause: Callable[[float], bool] = _sleep_pause) -> Optional[BurstResult]:
     """``count`` echoes to ``host``, ``spacing_ms`` apart, each with its own ``timeout_ms``. ``pause``
-    waits between echoes and returns False to abandon the burst (the probe is stopping) - then this
-    returns None and nothing is recorded. The host is resolved once per burst; a name that does not
-    resolve counts every echo as lost without sending any (what one failed ping recorded before)."""
+    waits between echoes (``pause(0)`` is a bare check) and returns False to abandon the burst (the
+    probe is stopping) - then this returns None and nothing is recorded. It is consulted BEFORE the
+    DNS resolve and before EVERY echo, the first included, so once stop() is called no further packet
+    leaves - in particular none to the public host. The host is resolved once per burst; a name that
+    does not resolve counts every echo as lost without sending any (what one failed ping recorded)."""
+    if not pause(0):
+        return None
     ip = _resolve_ipv4(host)
     if ip is None:
         return BurstResult((), count)
     rtts = []
     for i in range(count):
-        if i and not pause(spacing_ms / 1000.0):
+        if not pause(spacing_ms / 1000.0 if i else 0):
             return None
         ms = icmp_ping_ms(ip, timeout_ms)
         if ms is not None:
@@ -389,6 +394,8 @@ class LatencyProbe(QThread):
                 anchor_skipped = True
                 anchor = BurstResult((), lat.BURST_SIZE)
             else:
+                if not self._running:
+                    return None   # stopped after the gateway burst: never start the public one
                 host = str(self._config.get("latency_public_host", "1.1.1.1") or "1.1.1.1")
                 anchor = icmp_burst(host, lat.BURST_SIZE, lat.BURST_SPACING_MS, self._TIMEOUT_MS,
                                     self._pause)
@@ -405,8 +412,9 @@ class LatencyProbe(QThread):
     def _run_loop(self) -> None:
         # Cycle length = max(cadence, time the bursts took): a healthy cycle keeps the 3 s cadence; a
         # dead link (4 gateway timeouts + 3 gaps, anchor skipped) costs one ~4.3 s cycle. Every wait goes
-        # through _pause, so stop() is honoured between echoes and during the cadence wait - the worst
-        # case is one in-flight echo (<= the 1 s timeout), inside the widget's 1.5 s shutdown wait.
+        # through _pause, and stop() is checked before every echo, before the anchor burst and during the
+        # cadence wait - the worst case is the one echo in flight (<= the 1 s timeout), inside the
+        # widget's 1.5 s shutdown wait, and nothing is sent after stop().
         while self._running:
             started = time.monotonic()
             try:

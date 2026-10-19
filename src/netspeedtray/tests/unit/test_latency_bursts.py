@@ -180,7 +180,46 @@ def test_shutdown_is_bounded_mid_burst_on_a_dead_link(monkeypatch, q_app):
     assert not emitted, "a burst cut short by stop() must not be emitted as a sample"
 
 
-# --- the live windows: sum(lost) / sum(sent) --------------------------------------------------------------
+def test_stop_between_bursts_never_reaches_the_public_host(monkeypatch, q_app):
+    """stop() lands during the gateway burst's last echo (a real 1 s timeout, mocked). The anchor burst
+    must not start - no packet to the public host after stop() - and the thread must join well inside
+    the widget's 1.5 s shutdown wait, i.e. within that one in-flight echo."""
+    lock = threading.Lock()
+    log = []                                  # (monotonic start, ip)
+    gw_echoes = [0]
+
+    def ping(ip, timeout_ms=1000):
+        with lock:
+            log.append((time.monotonic(), ip))
+        if ip == GW_IP:
+            gw_echoes[0] += 1
+            if gw_echoes[0] == LAT.BURST_SIZE:
+                time.sleep(timeout_ms / 1000.0)   # the burst's last echo times out: a full 1 s
+                return None
+            return 3.0
+        time.sleep(timeout_ms / 1000.0)
+        return None
+
+    monkeypatch.setattr(LP, "default_gateway_ip", lambda: GW_IP)
+    monkeypatch.setattr(LP, "icmp_ping_ms", ping)
+    p = LP.LatencyProbe(_PUBLIC_ON)
+    p.start()
+    deadline = time.monotonic() + 3.0
+    while gw_echoes[0] < LAT.BURST_SIZE and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert gw_echoes[0] == LAT.BURST_SIZE
+    time.sleep(0.2)                           # mid-way through the in-flight 1 s echo
+    t_stop = time.monotonic()
+    p.stop()
+    assert p.wait(5000)
+    joined = time.monotonic() - t_stop
+    with lock:
+        late = [(round(t - t_stop, 2), ip) for t, ip in log if t >= t_stop]
+    assert not [ip for _, ip in late if ip == ANCHOR], f"echo to the public host after stop(): {late}"
+    assert joined < 1.2, f"thread joined {joined:.2f} s after stop() (the widget waits 1.5 s)"
+
+
+# --- the live windows: sum(lost) / sum(sent)--------------------------------------------------------------
 
 def _burst(gw_lost=0, an_lost=None, *, gw_ms=3.0, an_ms=14.0):
     n = LAT.BURST_SIZE
@@ -302,11 +341,18 @@ def test_exporter_loss_pct_on_mixed_rows(tmp_path):
     assert float(rows["latency_gw"]["loss_pct"]) == pytest.approx(40.0)
 
 
-def _pill(w):
+def _pill(w, lang="en_US"):
     from netspeedtray.constants.i18n import I18nStrings
     from netspeedtray.views.monitor.overview.tab import OverviewTab
     from netspeedtray.tests.unit.test_overview_tiles import _MW, _cfg
-    return OverviewTab(_MW(), _cfg(), I18nStrings("en_US"))._latency_html(w)
+    return OverviewTab(_MW(), _cfg(), I18nStrings(lang))._latency_html(w)
+
+
+def test_pill_sub_one_percent_loss_uses_the_locale_decimal_separator(q_app):
+    w = _fake_widget()
+    _feed(w, [_burst(0, 0)] * (LAT.LIVE_LOSS_WINDOW - 1) + [_burst(0, 1)])
+    html = _pill(w, "de_DE")
+    assert "0,6% Verlust" in html and "0.6" not in html, html
 
 
 def test_pill_on_fractional_loss_below_one_percent_is_good_and_says_so(q_app):
