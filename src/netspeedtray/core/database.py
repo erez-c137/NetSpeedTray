@@ -20,6 +20,7 @@ from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
 from netspeedtray import constants
 from netspeedtray.core.db.schema_v8 import EXPECTED_TABLES_V8
+from netspeedtray.core.db.sqlite_uri import sqlite_ro_uri
 
 # Logger Setup
 logger = logging.getLogger("NetSpeedTray.Core.Database")
@@ -415,7 +416,7 @@ class DatabaseWorker(QThread):
             # NOTE: `with sqlite3.connect(...)` commits/rolls back the transaction but does
             # NOT close the connection. On Windows the leaked handle keeps the file locked,
             # so _prune_old_backups() then fails with WinError 32. Close it explicitly.
-            check = sqlite3.connect(f"file:{backup_path}?mode=ro", uri=True)
+            check = sqlite3.connect(sqlite_ro_uri(backup_path), uri=True)   # encoded: a # in the path
 
             if check.execute("PRAGMA quick_check").fetchone()[0] != "ok":
                 self.logger.error("Backup verification: quick_check did not return ok.")
