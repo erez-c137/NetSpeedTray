@@ -13,8 +13,10 @@ steps.md``. The schema and the tier-watermark contract are in ``schema_v8.py``.
 **The seam (what step 7 calls)**::
 
     w = WriterV8(conn, version=__version__, poll_ms=..., is_physical=classifier_fn)
+                                               # ^ ON the worker thread: a call from any other raises
+    w.run_maintenance()                        # right after migrate_v8.migrate(), then hourly
     w.start_session()                          # once per app start -> a new app_sessions row
-    w.add_net_sample(NetSample(...))           # every poll, GUI side batches -> worker
+    w.add_net_sample(NetSample(...))           # every poll (GUI batches -> worker queue -> here)
     w.add_hw_sample(ts, 'cpu', 12.5)           # every hardware sample that may be recorded
     w.flush()                                  # the 10 s persist tick: rows + heartbeat, ONE commit
     w.run_maintenance(retention_days=...)      # the hourly pass: roll-ups + watermarks + prune + vacuum
@@ -58,10 +60,11 @@ a session that ends in a crash / ``taskkill /F`` keeps ``ended_ts`` NULL and ``c
 its last heartbeat bounds it (at most one tick of under-claim, never an over-claim).
 
 **Maintenance** (:meth:`run_maintenance`) MOVES data, one transaction per move, the watermark key
-written inside it (``schema_v8`` contract): ``net_raw -> net_minute`` (SUM bytes, AVG/MAX of the
-sample rates, COUNT, ``covered_ms`` from the union of session intervals, OR of flags) at
-``now - 24 h``, ``net_minute -> net_hour`` at ``now - 30 d`` (SUM bytes, sample-weighted avg, MAX,
-SUM count, ``covered_ms`` from sessions), and the same for ``hw_*`` (avg/min/max/count). Cutoffs are
+written inside it (``schema_v8`` contract): ``net_raw -> net_minute`` (SUM bytes, time-weighted avg rate,
+MAX rate, ``sample_count`` = measured SECONDS capped at the bucket, ``covered_ms`` from the union of
+session intervals, OR of flags) at ``now - 24 h``, ``net_minute -> net_hour`` at ``now - 30 d``
+(SUM bytes, seconds-weighted avg, MAX, seconds capped at 3600, ``covered_ms`` from sessions), and the
+same for ``hw_*`` (avg/min/max/count - there ``sample_count`` stays a sample count). Cutoffs are
 bucket-floored; a cutoff never moves below a still-valid watermark (the migration's raw watermark is
 the end of the minute it ran in - lowering it would orphan the folded minutes), and an old watermark
 is honoured up to the lead the migrator can stamp (``schema_v8.WATERMARK_MAX_LEAD_SECONDS``, 360 s).
@@ -69,7 +72,7 @@ Every move MERGES into a coarser bucket that already exists (the migration minut
 a re-run) - never ignored, never duplicated. Exact + exact: bytes add. Either side legacy (bytes
 NULL): the row stays legacy, so the reader keeps flagging it ``reconstructed``, and its avg is set
 so the reader's legacy estimate (avg x sample_count x 1 s) grows by exactly the new bytes - each part
-counted once (see ``_NET_MERGE``). Then retention pruning of the hour
+counted once (see ``_net_merge``). Then retention pruning of the hour
 tiers / ``link_events`` / ``app_sessions``, then ``PRAGMA incremental_vacuum(N)`` - never a full
 VACUUM (the file is ``auto_vacuum=INCREMENTAL``; ``.fetchall()`` is required or it frees one page).
 
@@ -80,6 +83,7 @@ Kill hooks: ``migrate_v8._killpoint`` with the names in :data:`KILLPOINTS`
 import logging
 import math
 import sqlite3
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
@@ -100,6 +104,10 @@ LINK_METRIC_MIN_INTERVAL_S = 60
 # Metrics whose samples are COUNTS over an interval: two in the same second add up instead of the
 # first one winning (the gauge rule, inherited from v7's INSERT OR IGNORE).
 _COUNT_METRICS = frozenset(ERR_DROP_FIELDS)
+
+# SQLite INTEGER is signed 64-bit; a larger Python int raises OverflowError at bind time - not a
+# sqlite3.Error. Capture refuses such values (a garbage counter), so they never reach a transaction.
+_SQL_INT_MAX = (1 << 63) - 1
 
 # A failed flush keeps its rows for the next tick, up to this many (then the oldest are dropped):
 # a locked file must not lose 10 s of history, a permanently failing one must not grow unbounded.
@@ -180,6 +188,10 @@ class WriterV8:
                  is_physical: Optional[Callable[[str], bool]] = None,
                  log: Optional[logging.Logger] = None) -> None:
         self.conn = conn
+        # Thread affinity: every call must come from the thread that owns the connection (the
+        # DatabaseWorker's run loop). The GUI side never touches this object; it hands batches to the
+        # worker queue. Construct it on the worker thread, or call bind_to_current_thread() there.
+        self._owner = threading.get_ident()
         self.version = str(version)
         self.poll_ms = max(1, int(poll_ms))
         self._is_physical = is_physical or (lambda n: bool(_guess_is_physical(n)))
@@ -203,12 +215,26 @@ class WriterV8:
         self._last_isup: Dict[str, int] = {}
         self._link_metric_last: Dict[Tuple[str, str], Tuple[float, int]] = {}
 
-    # ---- transactions ------------------------------------------------------------------------
+    # ---- threads / transactions ----------------------------------------------------------------
+
+    def bind_to_current_thread(self) -> None:
+        """Make the calling thread the owner (for a writer built before the worker thread started)."""
+        self._owner = threading.get_ident()
+
+    def _check_thread(self) -> None:
+        if threading.get_ident() != self._owner:
+            raise RuntimeError("WriterV8 used off its owning thread - every call must come from the "
+                               "DatabaseWorker thread (hand samples over through its queue)")
 
     def _begin(self) -> None:
+        """BEGIN IMMEDIATE. A transaction already open on the connection is NOT this writer's (each of its
+        own units commits or rolls back before returning): it is the worker's implicit legacy-mode
+        transaction, e.g. a v7-style write the step-7 worker left uncommitted. It is COMMITTED first,
+        with a warning, so this writer's statements are never folded into someone else's unit of work
+        and a later rollback here can never undo it."""
         if self.conn.in_transaction:
-            # The worker's own implicit transaction (legacy isolation mode): finish it first, so this
-            # writer's statements are never folded into someone else's unit of work.
+            self.logger.warning("v8 writer: committing a transaction left open on its connection by "
+                                "another code path before starting its own.")
             self.conn.commit()
         self.conn.execute("BEGIN IMMEDIATE")
 
@@ -281,6 +307,7 @@ class WriterV8:
     def start_session(self, now_ts: Optional[float] = None) -> int:
         """A new ``app_sessions`` row for this app run. A previous run that crashed keeps its row as
         it was: ``ended_ts`` NULL, bounded by its last heartbeat."""
+        self._check_thread()
         now = int(time.time() if now_ts is None else now_ts)
         self._begin()
         try:
@@ -303,6 +330,7 @@ class WriterV8:
 
     def end_session(self, now_ts: Optional[float] = None) -> None:
         """Clean exit: flush what is buffered, then close the session row."""
+        self._check_thread()
         now = int(time.time() if now_ts is None else now_ts)
         self.flush(now)
         if self.session_id is None:
@@ -312,8 +340,10 @@ class WriterV8:
             self.conn.execute(f"UPDATE {S.APP_SESSIONS} SET ended_ts = ?, last_seen_ts = ?, clean_exit = 1 "
                               "WHERE session_id = ?", (now, now, self.session_id))
             self.conn.commit()
-        except sqlite3.Error as e:
+        except BaseException as e:
             self._rollback()
+            if not isinstance(e, sqlite3.Error):
+                raise
             self.logger.error("Could not close the app session: %s", e)
 
     def set_poll_ms(self, poll_ms: int) -> None:
@@ -323,8 +353,12 @@ class WriterV8:
     # ---- capture (memory only) ---------------------------------------------------------------
 
     def add_net_sample(self, s: NetSample) -> None:
+        self._check_thread()
         ts = int(s.ts)
         dt_ms = max(1, int(round(s.dt_ms)))
+        if not (0 <= ts <= _SQL_INT_MAX and dt_ms <= _SQL_INT_MAX):
+            self.logger.warning("v8 writer: a sample with an impossible timestamp/interval was dropped.")
+            return
         base_flags = int(s.flags) | (S.FLAG_GAP if dt_ms > gap_threshold_ms(self.poll_ms) else 0)
         reset: Dict[str, bool] = {}
         if s.counters:
@@ -347,6 +381,9 @@ class WriterV8:
             if u is None or d is None:
                 continue
             u, d = max(0, int(round(u))), max(0, int(round(d)))
+            if u > _SQL_INT_MAX or d > _SQL_INT_MAX:
+                self.logger.warning("v8 writer: an impossible byte delta was dropped (counter glitch).")
+                continue
             flags = base_flags | (S.FLAG_COUNTER_RESET if reset.get(name) else 0)
             if u == 0 and d == 0 and not flags:
                 continue   # an idle poll says nothing a session row does not (a flagged one does)
@@ -372,8 +409,9 @@ class WriterV8:
 
     def add_hw_sample(self, ts: float, name: str, value: float, entity: str = "") -> None:
         """One hardware / latency sample, stored as given (``entity`` '' = the aggregate series)."""
+        self._check_thread()
         v = _finite(value)
-        if v is None or not name:
+        if v is None or not name or not (0 <= ts <= _SQL_INT_MAX):
             return
         self._hw_rows.append((int(ts), str(name), "=" + str(entity), v))
         self._trim()
@@ -395,6 +433,7 @@ class WriterV8:
     def flush(self, now_ts: Optional[float] = None) -> bool:
         """Write everything buffered + the session heartbeat, in ONE transaction. True on success. On a
         storage error the rows stay buffered for the next tick (bounded by MAX_PENDING_ROWS)."""
+        self._check_thread()
         now = int(time.time() if now_ts is None else now_ts)
         net, hw, links = self._net_rows, self._hw_rows, self._link_obs
         self._net_rows, self._hw_rows, self._link_obs = [], [], []
@@ -407,10 +446,14 @@ class WriterV8:
             _killpoint("writer_flush_before_commit")
             self.conn.commit()
             return True
-        except sqlite3.Error as e:
+        except BaseException as e:
+            # ANY failure - not only sqlite3.Error - rolls back here: a transaction left open would be
+            # committed, half-written, by the next _begin().
             self._rollback()
             self._net_rows[:0], self._hw_rows[:0], self._link_obs[:0] = net, hw, links
             self._trim()
+            if not isinstance(e, sqlite3.Error):
+                raise
             self.logger.error("v8 persist failed (rows kept for the next tick): %s", e)
             return False
 
@@ -472,6 +515,7 @@ class WriterV8:
         request is discarded, every cached id is dropped, and the running app becomes a new session
         (inside the same transaction, so coverage resumes from the delete). Checkpointing the WAL stays
         the worker's job, as in v7. Raises sqlite3.Error after rolling back."""
+        self._check_thread()
         now = int(time.time() if now_ts is None else now_ts)
         self._net_rows, self._hw_rows, self._link_obs = [], [], []
         self._last_isup.clear()
@@ -499,6 +543,7 @@ class WriterV8:
     def incremental_vacuum(self, pages: Optional[int] = None) -> int:
         """Return up to ``pages`` free pages to the OS (all of them when None). Pages actually freed.
         ``.fetchall()`` is load-bearing: the pragma frees one page per step (measured: 1 vs 4,078)."""
+        self._check_thread()
         if pages is not None and int(pages) <= 0:
             return 0   # NOT passed through: incremental_vacuum(0) means "the whole freelist"
         if self.conn.in_transaction:
@@ -582,34 +627,44 @@ class WriterV8:
 
     _FLAGS_OR = ("(MAX(r.flags & 1) | MAX(r.flags & 2) | MAX(r.flags & 4) | MAX(r.flags & 8) "
                  "| MAX(r.flags & 16) | MAX(r.flags & 32) | MAX(r.flags & 64) | MAX(r.flags & 128))")
+    # Units (schema_v8 contract): a net tier's ``sample_count`` is the MEASURED SECONDS the row stands
+    # for - SUM(dt_ms) / 1000 of its raw rows, rounded, capped at the bucket length - and its avg the
+    # time-weighted rate over them. That is the unit the legacy estimator already assumes for v7 rows
+    # (avg x MIN(sample_count, bucket) x LEGACY_SAMPLE_SECONDS = 1 s), so exact and legacy rows weigh
+    # the same way and an avg stays a rate at 2/5/10 s polls.
+    #
     # Every roll-up may land on a bucket that ALREADY EXISTS in the coarser tier: the minute the
     # migration ran (the folded v7 minute ends at the raw watermark, and the first v8 polls land below
     # it), a clock set back, a re-run. Rows are MERGED, never ignored, never duplicated:
-    # * both exact (bytes present): bytes add, avg = sample-weighted mean of the sample rates;
-    # * either side legacy (bytes NULL - migrated, an estimate): the merged row stays legacy (bytes
-    #   NULL, so the reader keeps flagging it `reconstructed`), and its avg is set so that
-    #   avg x sample_count - the reader's legacy estimate (LEGACY_SAMPLE_SECONDS = 1) - grows by
-    #   EXACTLY the new part's bytes. Volume counts each part once: the old part as before, the new
-    #   part exactly (as long as sample_count stays within the bucket's seconds, the reader's cap).
-    # max = MAX, sample_count adds, covered_ms = MAX when both known else NULL, flags OR.
-    _NET_MERGE = (
-        "ON CONFLICT (ts, iface_id) DO UPDATE SET "
-        "up_bytes = CASE WHEN up_bytes IS NULL OR excluded.up_bytes IS NULL THEN NULL "
-        "ELSE up_bytes + excluded.up_bytes END, "
-        "down_bytes = CASE WHEN down_bytes IS NULL OR excluded.down_bytes IS NULL THEN NULL "
-        "ELSE down_bytes + excluded.down_bytes END, "
-        + ", ".join(
+    # * both exact (bytes present): bytes add, avg = seconds-weighted mean;
+    # * either side legacy (bytes NULL - migrated, an estimate): the merged row stays legacy (bytes NULL,
+    #   so the reader keeps flagging it `reconstructed`). Its sample_count is MIN(n + n', bucket) and its
+    #   avg = (each side's reader estimate - bytes when exact, avg x MIN(n, bucket) when legacy) / that,
+    #   so the reader's estimate of the merged row is EXACTLY the sum of the two parts' - each part once,
+    #   even when a clock set back makes n + n' exceed the bucket (the avg then reads high; volume holds).
+    # max = MAX, covered_ms = MAX when both known else NULL, flags OR.
+    @staticmethod
+    def _net_merge(bucket: int) -> str:
+        n = f"MIN(sample_count + excluded.sample_count, {int(bucket)})"
+        avg = ", ".join(
             f"{d}_avg = CASE WHEN {d}_bytes IS NOT NULL AND excluded.{d}_bytes IS NOT NULL "
             f"THEN ({d}_avg * sample_count + excluded.{d}_avg * excluded.sample_count) "
             f"/ (sample_count + excluded.sample_count) "
-            f"ELSE (COALESCE({d}_bytes, {d}_avg * sample_count) "
-            f"+ COALESCE(excluded.{d}_bytes, excluded.{d}_avg * excluded.sample_count)) "
-            f"/ (sample_count + excluded.sample_count) END" for d in ("up", "down")) + ", "
-        "up_max = MAX(up_max, excluded.up_max), down_max = MAX(down_max, excluded.down_max), "
-        "sample_count = sample_count + excluded.sample_count, "
-        "covered_ms = CASE WHEN covered_ms IS NULL OR excluded.covered_ms IS NULL THEN NULL "
-        "ELSE MAX(covered_ms, excluded.covered_ms) END, "
-        "flags = flags | excluded.flags")
+            f"ELSE (COALESCE({d}_bytes, {d}_avg * MIN(sample_count, {int(bucket)})) "
+            f"+ COALESCE(excluded.{d}_bytes, excluded.{d}_avg * MIN(excluded.sample_count, {int(bucket)}))) "
+            f"/ {n} END" for d in ("up", "down"))
+        return ("ON CONFLICT (ts, iface_id) DO UPDATE SET "
+                "up_bytes = CASE WHEN up_bytes IS NULL OR excluded.up_bytes IS NULL THEN NULL "
+                "ELSE up_bytes + excluded.up_bytes END, "
+                "down_bytes = CASE WHEN down_bytes IS NULL OR excluded.down_bytes IS NULL THEN NULL "
+                "ELSE down_bytes + excluded.down_bytes END, "
+                f"{avg}, "
+                "up_max = MAX(up_max, excluded.up_max), down_max = MAX(down_max, excluded.down_max), "
+                f"sample_count = {n}, "
+                "covered_ms = CASE WHEN covered_ms IS NULL OR excluded.covered_ms IS NULL THEN NULL "
+                "ELSE MAX(covered_ms, excluded.covered_ms) END, "
+                "flags = flags | excluded.flags")
+
     _HW_MERGE = (
         "ON CONFLICT (ts, metric_id) DO UPDATE SET "
         "avg_value = (avg_value * sample_count + excluded.avg_value * excluded.sample_count) "
@@ -641,17 +696,20 @@ class WriterV8:
             return 0
         self._fill_cov(self._session_coverage(buckets, 60))
         rate = "r.{d}_bytes * 1000.0 / r.dt_ms"
+        # avg: time-weighted (bytes over the measured interval); sample_count: measured seconds (>= 1,
+        # <= the bucket - a gap row's long interval is not 'more than a minute of this minute').
         self.conn.execute(f"""
             INSERT INTO {S.NET_MINUTE} (ts, iface_id, up_bytes, down_bytes, up_avg, down_avg, up_max,
                                         down_max, sample_count, covered_ms, flags)
             SELECT r.ts / 60 * 60 AS b, r.iface_id, SUM(r.up_bytes), SUM(r.down_bytes),
-                   AVG({rate.format(d='up')}), AVG({rate.format(d='down')}),
-                   MAX({rate.format(d='up')}), MAX({rate.format(d='down')}), COUNT(*),
+                   SUM(r.up_bytes) * 1000.0 / SUM(r.dt_ms), SUM(r.down_bytes) * 1000.0 / SUM(r.dt_ms),
+                   MAX({rate.format(d='up')}), MAX({rate.format(d='down')}),
+                   MIN(MAX(1, CAST(ROUND(SUM(r.dt_ms) / 1000.0) AS INTEGER)), 60),
                    MAX(c.covered_ms), {self._FLAGS_OR}
             FROM {S.NET_RAW} r LEFT JOIN temp.v8w_cov c ON c.ts = r.ts / 60 * 60
             WHERE r.ts < ?
             GROUP BY b, r.iface_id
-            {self._NET_MERGE}""", (cutoff,))
+            {self._net_merge(60)}""", (cutoff,))
         return self.conn.execute(f"DELETE FROM {S.NET_RAW} WHERE ts < ?", (cutoff,)).rowcount
 
     def _roll_net_minute(self, cutoff: int) -> int:
@@ -661,24 +719,25 @@ class WriterV8:
             return 0
         self._fill_cov(self._session_coverage(buckets, 3600))
         exact = "CASE WHEN COUNT(r.{c}) = COUNT(*) THEN SUM(r.{c}) END"
-        # All-exact groups keep the sample-rate mean; a group with a legacy (NULL-bytes) row becomes a
-        # legacy row whose avg x sample_count is the exact bytes of its exact rows plus the legacy
-        # estimates of the rest (the merge rule, see _NET_MERGE).
+        n = "MIN(SUM(r.sample_count), 3600)"
+        # All-exact groups: the seconds-weighted mean. A group with a legacy (NULL-bytes) row becomes a
+        # legacy row whose avg x sample_count is the exact bytes of its exact rows plus the reader's
+        # estimate of each legacy minute (avg x MIN(n, 60)) - the same rule as _net_merge.
         wavg = ("CASE WHEN COUNT(r.{d}_bytes) = COUNT(*) THEN "
                 "COALESCE(SUM(r.{d}_avg * r.sample_count) / NULLIF(SUM(r.sample_count), 0), AVG(r.{d}_avg)) "
-                "ELSE COALESCE(SUM(COALESCE(r.{d}_bytes, r.{d}_avg * r.sample_count)) "
-                "/ NULLIF(SUM(r.sample_count), 0), AVG(r.{d}_avg)) END")
+                "ELSE COALESCE(SUM(COALESCE(r.{d}_bytes, r.{d}_avg * MIN(r.sample_count, 60))) "
+                f"/ NULLIF({n}, 0), AVG(r.{{d}}_avg)) END")
         self.conn.execute(f"""
             INSERT INTO {S.NET_HOUR} (ts, iface_id, up_bytes, down_bytes, up_avg, down_avg, up_max,
                                       down_max, sample_count, covered_ms, flags)
             SELECT r.ts / 3600 * 3600 AS b, r.iface_id, {exact.format(c='up_bytes')},
                    {exact.format(c='down_bytes')}, {wavg.format(d='up')}, {wavg.format(d='down')},
-                   MAX(r.up_max), MAX(r.down_max), SUM(r.sample_count),
+                   MAX(r.up_max), MAX(r.down_max), {n},
                    CASE WHEN COUNT(r.covered_ms) = COUNT(*) THEN MAX(c.covered_ms) END, {self._FLAGS_OR}
             FROM {S.NET_MINUTE} r LEFT JOIN temp.v8w_cov c ON c.ts = r.ts / 3600 * 3600
             WHERE r.ts < ?
             GROUP BY b, r.iface_id
-            {self._NET_MERGE}""", (cutoff,))
+            {self._net_merge(3600)}""", (cutoff,))
         return self.conn.execute(f"DELETE FROM {S.NET_MINUTE} WHERE ts < ?", (cutoff,)).rowcount
 
     def _roll_hw_raw(self, cutoff: int) -> int:
@@ -704,9 +763,13 @@ class WriterV8:
 
     def run_maintenance(self, now_ts: Optional[float] = None, retention_days: Optional[float] = None,
                         vacuum_pages: Optional[int] = None) -> Dict[str, int]:
-        """The hourly pass. ``retention_days``: the hour tiers' retention the worker has already resolved
-        through its grace-period logic (``_prune_data_with_grace_period``); None prunes nothing.
-        Returns counts (rows moved / pruned, pages vacuumed, the watermarks written)."""
+        """The hourly pass - and step 7 also calls it ONCE right after ``migrate_v8.migrate()`` succeeds,
+        before the first flush, so the first v8 polls that land in the folded minute (below the raw
+        watermark, invisible to readers until rolled) are merged within one tick rather than an hour.
+        ``retention_days``: the hour tiers' retention the worker has already resolved through its
+        grace-period logic (``_prune_data_with_grace_period``); None prunes nothing. Returns counts
+        (rows moved / pruned, pages vacuumed, the watermarks written)."""
+        self._check_thread()
         now = int(time.time() if now_ts is None else now_ts)
         out: Dict[str, int] = {}
         raw_keep, min_keep = _D.RAW_TIER_RETENTION_SECONDS, _D.MINUTE_TIER_RETENTION_SECONDS

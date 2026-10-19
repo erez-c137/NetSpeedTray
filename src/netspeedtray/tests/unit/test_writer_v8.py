@@ -364,9 +364,17 @@ def test_rollups_move_rows_write_watermarks_and_are_idempotent(conn):
     assert _volume(conn) == before == _all_rows_volume(conn)
     # Rates: minute rows hold the sample-rate stats; hour rows the sample-weighted mean and the max.
     m = conn.execute("SELECT up_bytes, up_avg, up_max, sample_count FROM net_minute ORDER BY ts LIMIT 1 OFFSET 5").fetchone()
-    assert m[3] == 20 and m[0] == 20 * 5 and m[1] == pytest.approx(5 / 3) and m[2] == pytest.approx(5 / 3)
-    h = conn.execute("SELECT SUM(sample_count) FROM net_hour").fetchone()[0]
-    assert h == len(range(0, 3 * 3600, 7))
+    # 20 polls x 3 s: sample_count is the 60 measured SECONDS, avg the time-weighted rate (5 B / 3 s).
+    assert m[3] == 60 and m[0] == 20 * 5 and m[1] == pytest.approx(5 / 3) and m[2] == pytest.approx(5 / 3)
+    # Hour rows: seconds = per minute MIN(ROUND(sum dt / 1000), 60), summed, capped at 3600.
+    per_min = {}
+    for i in range(0, 3 * 3600, 7):
+        per_min[(base + i) // 60 * 60] = per_min.get((base + i) // 60 * 60, 0) + 7
+    per_hour = {}
+    for mts, secs in per_min.items():
+        per_hour[mts // 3600 * 3600] = per_hour.get(mts // 3600 * 3600, 0) + min(secs, 60)
+    assert dict(conn.execute("SELECT ts, sample_count FROM net_hour").fetchall()) == {
+        k: min(v, 3600) for k, v in per_hour.items()}
     hw = conn.execute("SELECT SUM(avg_value * sample_count), SUM(sample_count), MIN(min_value), MAX(max_value) "
                       "FROM hw_hour").fetchone()
     assert hw[0] == pytest.approx(sum(float(i % 100) for i in range(0, 3 * 3600, 7))) and hw[2:] == (0.0, 99.0)
@@ -432,7 +440,7 @@ def test_cutoff_never_lowers_a_valid_watermark_and_ignores_a_future_one(conn):
     assert _wm(conn, S.HW_WATERMARK_RAW_KEY) == (NOW - 86400) // 60 * 60
     # The raw row inside the folded minute was merged into it (legacy row -> bytes stay NULL, the
     # samples count); the later one stays raw.
-    assert conn.execute("SELECT sample_count, up_bytes FROM net_minute").fetchall() == [(61, None)]
+    assert conn.execute("SELECT sample_count, up_bytes FROM net_minute").fetchall() == [(60, None)]
     assert conn.execute("SELECT ts - ?, up_bytes FROM net_raw", (m,)).fetchall() == [(90, 4)]
 
 
@@ -561,9 +569,14 @@ def test_incremental_vacuum_returns_pages_without_a_full_vacuum(conn):
 
 def test_dormant_nothing_in_the_app_imports_the_writer():
     assert DatabaseWorker._DB_VERSION == 7
+    import re
     root = Path(__file__).resolve().parents[2]
+    # Any reference in code (an import, import_module("...writer_v8"), WriterV8(...)) - comments in
+    # schema_v8 that point at the writer are not uses.
+    use = re.compile(r"^(?!\s*#).*(\bimport\b.*\bwriter_v8\b|\bwriter_v8\b.*\bimport\b|['\"][\w.]*writer_v8['\"]"
+                     r"|\bWriterV8\s*\()", re.M)
     users = [p for p in root.rglob("*.py") if "tests" not in p.parts and p.name != "writer_v8.py"
-             and "writer_v8" in p.read_text(encoding="utf-8", errors="replace")]
+             and use.search(p.read_text(encoding="utf-8", errors="replace"))]
     assert users == []
 
 
@@ -624,9 +637,9 @@ def test_rows_in_the_migration_minute_merge_into_the_folded_minute(tmp_path):
                      (bucket, iid)).fetchall()
     assert len(rows) == 1                     # merged, not duplicated, not ignored
     up_bytes, up_avg, up_max, n = rows[0]
-    assert up_bytes is None and n == old[3] + len(new)                    # stays legacy (reconstructed)
+    assert up_bytes is None and n == min(old[3] + 2 * len(new), 60)       # stays legacy; n in SECONDS
     assert up_max == max(old[2], max(b * 1000.0 / 2000 for _, b in new))
-    assert up_avg * n == pytest.approx(old[1] * old[3] + sum(b for _, b in new), rel=1e-12)
+    assert up_avg * min(n, 60) == pytest.approx(old[1] * min(old[3], 60) + sum(b for _, b in new), rel=1e-12)
     # ...and after it, both parts count exactly once.
     assert _legacy_volume(c, "Wi-Fi 3") == pytest.approx(before + sum(b for _, b in new) + 77, rel=1e-12)
     assert c.execute("SELECT COUNT(*) FROM net_raw WHERE ts < ?", (wr,)).fetchone()[0] == 0
@@ -668,3 +681,175 @@ def test_a_watermark_up_to_the_migrators_lead_is_honoured(conn):
     _writer(conn).run_maintenance(NOW)
     assert _wm(conn, S.WATERMARK_RAW_KEY) == lead
     assert _wm(conn, S.HW_WATERMARK_RAW_KEY) == (NOW - 86400) // 60 * 60   # beyond any lead: a wrong clock
+
+
+# --------------------------------------------------------------------------------------------
+# review #365: units of sample_count, legacy merges at slow polls / clock-back, failure safety
+# --------------------------------------------------------------------------------------------
+
+def _legacy_minute(conn, ts, avg, n, iface_id=1):
+    conn.execute("INSERT OR IGNORE INTO interfaces (iface_id, stable_key, name, first_seen, last_seen) "
+                 "VALUES (?, 'e', 'e', 0, 0)", (iface_id,))
+    conn.execute("INSERT INTO net_minute (ts, iface_id, up_avg, down_avg, up_max, down_max, sample_count) "
+                 "VALUES (?, ?, ?, ?, ?, ?, ?)", (ts, iface_id, avg, avg, avg, avg, n))
+    conn.commit()
+
+
+def _est(conn, table, bucket):
+    return conn.execute(f"SELECT SUM(COALESCE(up_bytes, up_avg * MIN(sample_count, {bucket}))) FROM {table}"
+                        ).fetchone()[0]
+
+
+@pytest.mark.parametrize("poll_s", [1, 2, 5, 10])
+def test_legacy_merge_at_any_poll_rate_keeps_volume_and_a_true_rate(conn, poll_s):
+    """A folded minute (30 s at 1000 B/s, estimate 30 000 B) + 30 s more at 1000 B/s from v8 polls of
+    poll_s: the merged row estimates 60 000 B through the minute AND the hour roll-up, and its avg is
+    still 1000 B/s (sample_count in seconds, not polls)."""
+    b = (NOW - 35 * 86400) // 3600 * 3600
+    _legacy_minute(conn, b, 1000.0, 30)
+    w = _writer(conn, poll_ms=poll_s * 1000)
+    w.start_session(b)
+    for k in range(30 // poll_s):
+        w.add_net_sample(W.NetSample(b + 30 + poll_s * (k + 1) - 1, poll_s * 1000, {"e": (1000 * poll_s,) * 2}))
+    assert w.flush(b + 60)
+    w.run_maintenance(b + 2 * 86400)            # raw -> minute only
+    bytes_, avg, n = conn.execute("SELECT up_bytes, up_avg, sample_count FROM net_minute").fetchone()
+    assert bytes_ is None and n == 60 and avg == pytest.approx(1000.0)
+    assert _est(conn, "net_minute", 60) == pytest.approx(60_000)
+    w.run_maintenance(NOW)                      # minute -> hour
+    assert conn.execute("SELECT COUNT(*) FROM net_minute").fetchone()[0] == 0
+    assert _est(conn, "net_hour", 3600) == pytest.approx(60_000)
+    assert conn.execute("SELECT up_avg FROM net_hour").fetchone()[0] == pytest.approx(1000.0)
+
+
+def test_clock_set_back_into_a_legacy_minute_keeps_both_parts_through_the_hour(conn):
+    """The probe: legacy n=50 at 100 B/s (5 000 B) + 30 one-second rows of 100 B stamped into the same
+    minute by a clock set back = 8 000 B. n would be 80 > 60: the cap is applied in the merge AND the
+    hour roll-up the same way the reader applies it, so the 8 000 survives both."""
+    b = (NOW - 35 * 86400) // 3600 * 3600
+    _legacy_minute(conn, b, 100.0, 50)
+    w = _writer(conn)
+    w.start_session(b)
+    for k in range(30):
+        w.add_net_sample(W.NetSample(b + k, 1000, {"e": (100, 100)}))
+    assert w.flush(b + 60)
+    w.run_maintenance(b + 2 * 86400)
+    assert _est(conn, "net_minute", 60) == pytest.approx(8000)
+    assert conn.execute("SELECT sample_count FROM net_minute").fetchone()[0] == 60
+    w.run_maintenance(NOW)
+    assert _est(conn, "net_hour", 3600) == pytest.approx(8000)
+
+
+@pytest.mark.parametrize("poll_s", [2, 5, 10])
+def test_exact_rows_at_slow_polls_store_seconds_and_a_true_rate(conn, poll_s):
+    b = (NOW - 2 * 86400) // 60 * 60
+    w = _writer(conn, poll_ms=poll_s * 1000)
+    w.start_session(b - 10)
+    for k in range(60 // poll_s):
+        w.add_net_sample(W.NetSample(b + poll_s * (k + 1) - 1, poll_s * 1000, {"e": (500 * poll_s,) * 2}))
+    assert w.flush(b + 60)
+    w.run_maintenance(NOW)
+    assert conn.execute("SELECT up_bytes, up_avg, sample_count FROM net_minute").fetchone() == (
+        30_000, pytest.approx(500.0), 60)
+
+
+def test_a_non_sqlite_error_inside_flush_rolls_back_and_keeps_the_rows(conn, monkeypatch):
+    w = _writer(conn)
+    w.start_session(NOW)
+    w.add_net_sample(W.NetSample(NOW + 1, 1000, {"nic": (5, 6)}))
+    w.add_hw_sample(NOW + 1, "cpu", 3.0)
+
+    def boom(rows):
+        raise ValueError("not a sqlite3.Error")
+    monkeypatch.setattr(w, "_write_hw", boom)
+    with pytest.raises(ValueError):
+        w.flush(NOW + 2)
+    assert not conn.in_transaction             # nothing half-written left for the next _begin to commit
+    assert w.pending_rows() == 2
+    assert conn.execute("SELECT COUNT(*) FROM net_raw").fetchone()[0] == 0
+    monkeypatch.undo()
+    assert w.flush(NOW + 3)
+    assert conn.execute("SELECT COUNT(*) FROM net_raw").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM hw_raw").fetchone()[0] == 1
+
+
+def test_a_counter_beyond_sqlite_integer_range_is_refused_at_capture(conn):
+    """The probe: 2**63 bytes raised OverflowError at bind time - outside sqlite3.Error - and used to
+    leave the flush transaction open with its buffers gone."""
+    w = _writer(conn)
+    w.start_session(NOW)
+    w.add_net_sample(W.NetSample(NOW, 1000, {"e": (2 ** 63, 5), "f": (7, 7)}))
+    assert w.flush(NOW + 1)
+    assert not conn.in_transaction
+    assert conn.execute("SELECT up_bytes FROM net_raw").fetchall() == [(7,)]
+
+
+def test_end_session_rolls_back_on_any_error(conn, monkeypatch):
+    w = _writer(conn)
+    w.start_session(NOW)
+    monkeypatch.setattr(w, "flush", lambda now=None: True)
+    real = conn
+
+    class Boom:
+        in_transaction = property(lambda self: real.in_transaction)
+
+        def execute(self, sql, *a):
+            if sql.startswith("UPDATE"):
+                raise KeyError("x")
+            return real.execute(sql, *a)
+
+        def commit(self):
+            real.commit()
+
+        def rollback(self):
+            real.rollback()
+    w.conn = Boom()
+    with pytest.raises(KeyError):
+        w.end_session(NOW + 5)
+    assert not real.in_transaction
+
+
+def test_every_writer_call_off_the_owning_thread_raises(conn):
+    import threading
+    w = _writer(conn)
+    errors = []
+
+    def other():
+        for call in (lambda: w.add_hw_sample(NOW, "cpu", 1.0),
+                     lambda: w.add_net_sample(W.NetSample(NOW, 1000, {"e": (1, 1)})),
+                     lambda: w.flush(NOW), lambda: w.run_maintenance(NOW), lambda: w.delete_history()):
+            try:
+                call()
+            except RuntimeError as e:
+                errors.append(str(e))
+    t = threading.Thread(target=other)
+    t.start()
+    t.join()
+    assert len(errors) == 5 and w.pending_rows() == 0
+    w.bind_to_current_thread()
+    assert w.flush(NOW)
+
+
+def test_begin_commits_a_foreign_open_transaction_with_a_warning(conn, caplog):
+    w = _writer(conn)
+    conn.execute("INSERT INTO metadata (key, value) VALUES ('foreign', '1')")   # implicit txn, uncommitted
+    assert conn.in_transaction
+    with caplog.at_level(logging.WARNING):
+        assert w.flush(NOW)
+    assert "left open" in caplog.text
+    other = sqlite3.connect(conn.execute("PRAGMA database_list").fetchone()[2])
+    assert other.execute("SELECT value FROM metadata WHERE key = 'foreign'").fetchone() == ("1",)
+    other.close()
+
+
+def test_hour_rollup_applies_the_readers_cap_to_garbled_legacy_minutes(conn):
+    """A migrated minute can carry sample_count > 60 (v7 never capped it); the reader estimates it as
+    avg x 60. The hour roll-up must estimate each minute the same way AND cap the hour at 3600 s, or
+    rolling a full hour of such minutes changes the volume (60 x 60 x 10 B = 36 000 B)."""
+    h = (NOW - 40 * 86400) // 3600 * 3600
+    for j in range(60):
+        _legacy_minute(conn, h + 60 * j, 10.0, 90)
+    assert _est(conn, "net_minute", 60) == pytest.approx(36_000)
+    _writer(conn).run_maintenance(NOW)
+    assert conn.execute("SELECT sample_count FROM net_hour").fetchone()[0] == 3600
+    assert _est(conn, "net_hour", 3600) == pytest.approx(36_000)

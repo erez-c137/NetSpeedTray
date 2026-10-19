@@ -55,10 +55,12 @@ def _child(mode, directory, killpoint=None, hooks=False):
                           env=_env(killpoint, hooks), capture_output=True, text=True, timeout=180)
 
 
-@pytest.fixture(scope="module")
-def template(tmp_path_factory):
-    d = tmp_path_factory.mktemp("writer_v8_template")
-    manifest = C.build(d, NOW)
+@pytest.fixture(scope="module", params=["empty_dest", "legacy_dest"])
+def template(request, tmp_path_factory):
+    """``legacy_dest``: the destination tiers already hold migrated (NULL-bytes) rows at the buckets the
+    roll-ups land on, so every kill also lands inside the MERGE path."""
+    d = tmp_path_factory.mktemp(f"writer_v8_template_{request.param}")
+    manifest = C.build(d, NOW, legacy_dest=request.param == "legacy_dest")
     return d, manifest
 
 
@@ -101,11 +103,22 @@ def _bounds(c, k_raw, k_min):
             (-big, min(big if wr is None else wr, big if wm is None else wm)))
 
 
+# The reader's volume rule: exact bytes, else the legacy estimate avg x MIN(sample_count, bucket).
+_BUCKET = {S.NET_RAW: 1, S.NET_MINUTE: 60, S.NET_HOUR: 3600}
+_EST = "COALESCE(SUM(COALESCE({d}_bytes, {d}_avg * MIN(sample_count, BUCKET_{t}))), 0)"
+
+
+def _est(t, d):
+    if t == S.NET_RAW:
+        return f"COALESCE(SUM({d}_bytes), 0)"
+    return _EST.replace("BUCKET_{t}", str(_BUCKET[t])).format(d=d)
+
+
 def _net_volume(c):
     (r_lo, r_hi), (m_lo, m_hi), (h_lo, h_hi) = _bounds(c, S.WATERMARK_RAW_KEY, S.WATERMARK_MINUTE_KEY)
     tot = [0, 0]
     for t, lo, hi in ((S.NET_RAW, r_lo, r_hi), (S.NET_MINUTE, m_lo, m_hi), (S.NET_HOUR, h_lo, h_hi)):
-        u, d = c.execute(f"SELECT COALESCE(SUM(up_bytes), 0), COALESCE(SUM(down_bytes), 0) FROM {t} "
+        u, d = c.execute(f"SELECT {_est(t, 'up')}, {_est(t, 'down')} FROM {t} "
                          "WHERE ts >= ? AND ts < ?", (lo, hi)).fetchone()
         tot[0] += u
         tot[1] += d
@@ -124,12 +137,12 @@ def _hw_sum(c, name):
 
 
 def _plain_net_sum(c):
-    return tuple(sum(c.execute(f"SELECT COALESCE(SUM({col}), 0) FROM {t}").fetchone()[0]
-                     for t in (S.NET_RAW, S.NET_MINUTE, S.NET_HOUR)) for col in ("up_bytes", "down_bytes"))
+    return tuple(sum(c.execute(f"SELECT {_est(t, d)} FROM {t}").fetchone()[0]
+                     for t in (S.NET_RAW, S.NET_MINUTE, S.NET_HOUR)) for d in ("up", "down"))
 
 
 def _assert_complete(c, manifest):
-    assert _net_volume(c) == (manifest["up"], manifest["down"])
+    assert _net_volume(c) == pytest.approx((manifest["up"], manifest["down"]), rel=1e-12)
     for name in ("cpu", "latency_anchor_timeout"):
         assert _hw_sum(c, name) == pytest.approx(manifest[name], rel=1e-12, abs=1e-9)
 
@@ -151,7 +164,8 @@ def test_kill_mid_rollup_then_relaunch(point, db, tmp_path):
     move = point[len("rollup_"):].rsplit("_", 1)[0].replace("_before", "")
     dest, key = _MOVES[move]
     pre = _snapshot(d, tmp_path, "pre")
-    assert pre.execute(f"SELECT COUNT(*) FROM {dest}").fetchone()[0] == 0 and _wm(pre, key) is None
+    pre_dest = sorted(pre.execute(f"SELECT * FROM {dest}").fetchall())
+    assert _wm(pre, key) is None
     pre.close()
 
     p = _child("maintain", d, killpoint=point)
@@ -160,16 +174,17 @@ def test_kill_mid_rollup_then_relaunch(point, db, tmp_path):
 
     c = _snapshot(d, tmp_path, "killed")
     _assert_complete(c, manifest)
-    # The killed move is all-or-nothing: no watermark, nothing in its destination tier.
+    # The killed move is all-or-nothing: no watermark, its destination tier exactly as before (empty,
+    # or the planted legacy rows un-merged).
     assert _wm(c, key) is None
-    assert c.execute(f"SELECT COUNT(*) FROM {dest}").fetchone()[0] == 0
+    assert sorted(c.execute(f"SELECT * FROM {dest}").fetchall()) == pre_dest
     c.close()
 
     p = _child("maintain", d)
     assert p.returncode == 0, p.stderr
     c = _snapshot(d, tmp_path, "relaunched")
     _assert_complete(c, manifest)
-    assert _plain_net_sum(c) == (manifest["up"], manifest["down"])
+    assert _plain_net_sum(c) == pytest.approx((manifest["up"], manifest["down"]), rel=1e-12)
     assert all(_wm(c, k) is not None for k in S.WATERMARK_KEYS)
     for t, k in ((S.NET_RAW, S.WATERMARK_RAW_KEY), (S.NET_MINUTE, S.WATERMARK_MINUTE_KEY),
                  (S.HW_RAW, S.HW_WATERMARK_RAW_KEY), (S.HW_MINUTE, S.HW_WATERMARK_MINUTE_KEY)):
@@ -193,7 +208,7 @@ def test_kill_maintenance_at_a_random_moment(seed, db, tmp_path):
     assert _child("maintain", d).returncode == 0
     c = _snapshot(d, tmp_path, "relaunched")
     _assert_complete(c, manifest)
-    assert _plain_net_sum(c) == (manifest["up"], manifest["down"])
+    assert _plain_net_sum(c) == pytest.approx((manifest["up"], manifest["down"]), rel=1e-12)
     c.close()
 
 

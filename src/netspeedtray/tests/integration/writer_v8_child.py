@@ -28,7 +28,9 @@ def _open(d: Path) -> sqlite3.Connection:
     return c
 
 
-def build(d: Path, now: int) -> Dict[str, float]:
+def build(d: Path, now: int, legacy_dest: bool = False) -> Dict[str, float]:
+    """``legacy_dest``: also plant migrated-style (NULL-bytes) rows in the DESTINATION tiers, at buckets
+    the roll-ups will land on - the merge path - and count their legacy estimates in the manifest."""
     c = sqlite3.connect(str(Path(d) / DB))
     S.create_v8_schema(c)
     c.execute("PRAGMA journal_mode = WAL")
@@ -57,6 +59,27 @@ def build(d: Path, now: int) -> Dict[str, float]:
             w.add_hw_sample(t, "latency_anchor_timeout", lv)
             hw["latency_anchor_timeout"] += lv
         assert w.flush(start + secs)
+    if legacy_dest:
+        iid = c.execute("SELECT iface_id FROM interfaces WHERE name = 'Wi-Fi 3'").fetchone()[0]
+        cpu = c.execute("SELECT metric_id FROM metrics WHERE name = 'cpu' AND entity = ''").fetchone()[0]
+        rows = []
+        for start in (now - 35 * 86400, now - 2 * 86400):
+            for j in range(10):          # minute buckets the raw rows also fall in
+                rows.append((start // 60 * 60 + 60 * j, 500.0 + j, 20 + j))
+        for ts, avg, n in rows:
+            c.execute("INSERT INTO net_minute (ts, iface_id, up_avg, down_avg, up_max, down_max, sample_count) "
+                      "VALUES (?, ?, ?, ?, ?, ?, ?)", (ts, iid, avg, avg, avg, avg, n))
+            up, down = up + avg * min(n, 60), down + avg * min(n, 60)
+        h = (now - 35 * 86400) // 3600 * 3600 + 3600   # an hour the 35-day-old minutes roll into
+        c.execute("INSERT INTO net_hour (ts, iface_id, up_avg, down_avg, up_max, down_max, sample_count) "
+                  "VALUES (?, ?, 50.0, 50.0, 50.0, 50.0, 100)", (h, iid))
+        up, down = up + 50.0 * 100, down + 50.0 * 100
+        for j in range(5):               # hardware minutes the raw cpu rows also fall in
+            ts = (now - 2 * 86400) // 60 * 60 + 60 * j
+            c.execute("INSERT INTO hw_minute (ts, metric_id, avg_value, max_value, sample_count) "
+                      "VALUES (?, ?, 10.0, 10.0, 5)", (ts, cpu))
+            hw["cpu"] += 50.0
+        c.commit()
     c.close()
     return {"up": up, "down": down, **hw}
 
