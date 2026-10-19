@@ -173,6 +173,7 @@ class StatsMonitorThread(QThread):
         self._lhm_notice_emitted: bool = False  # One-time notification flag
         self._lhm_check_polls: int = 0  # Count polls before emitting notice
         self._last_identity_poll: float = 0.0  # monotonic ts of the last network-identity sub-poll (0 = poll immediately)
+        self._last_link_stats_poll: float = 0.0  # monotonic ts of the last net_if_stats sub-poll (v8 link history)
         self._nvidia_smi_path: Optional[str] = self._get_cached_path("nvidia-smi")
         # nvidia-smi is a synchronous subprocess (up to NVIDIA_SMI_TIMEOUT_SEC). Temps/power
         # change slowly, so poll it on a slow sub-cadence and cache between calls - keeps the
@@ -1003,6 +1004,15 @@ class StatsMonitorThread(QThread):
                     # samples closer together than they were taken; the odometer's sanity cap must be
                     # measured over the real sampling span, not the handling span (#13).
                     stats['network_sampled_at'] = (time.monotonic(), time.time())
+                    # Link state for the v8 history (link_events, link speed/duplex), on a slow
+                    # sub-cadence. Never fatal: a failing call costs the link record, not the poll.
+                    now = time.monotonic()
+                    if now - self._last_link_stats_poll >= constants.network.speed.LINK_STATS_POLL_INTERVAL_SEC:
+                        self._last_link_stats_poll = now
+                        try:
+                            stats['network_if_stats'] = psutil.net_if_stats()
+                        except Exception as e:
+                            self.logger.debug("net_if_stats failed: %s", e)
 
                 # 1b. Network identity (Wi-Fi band / SSID) - only when the widget wants it, and only
                 # on the slow sub-cadence. get_connected_network_identity() never raises. Emitting on

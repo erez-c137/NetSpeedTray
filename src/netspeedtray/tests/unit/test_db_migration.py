@@ -74,7 +74,7 @@ class TestDatabaseMigration(unittest.TestCase):
         self._create_v2_schema(self.worker.conn)
         
         # Run Migration framework
-        self.worker._migrate_schema(2)
+        self.worker._migrate_schema(2, 3)
         
         # Assertions
         self.worker._migrate_v2_to_v3.assert_called_once()
@@ -86,40 +86,27 @@ class TestDatabaseMigration(unittest.TestCase):
         self.assertEqual(new_ver, 3)
         
     def test_no_migration_needed(self):
-        """Ensure migration is skipped if versions match."""
-        # Current _DB_VERSION is 3
-        self.worker._initialize_connection()
-        
-        # Create metadata with current target version
-        cursor = self.worker.conn.cursor()
-        cursor.execute("CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT)")
-        cursor.execute(f"INSERT INTO metadata (key, value) VALUES ('db_version', '{self.worker._DB_VERSION}')")
-        self.worker.conn.commit()
-        
-        with patch.object(self.worker, '_migrate_schema') as mock_migrate:
-            self.worker._check_and_create_schema()
+        """A file already at this build's version (v8) is opened as is - no migration."""
+        self.worker._prepare_storage()            # fresh install -> v8
+        self.worker._close_connection()
+        w2 = DatabaseWorker(self.db_path)
+        with patch("netspeedtray.core.db.migrate_v8.migrate") as mock_migrate,              patch.object(w2, '_migrate_schema') as mock_chain:
+            w2._prepare_storage()
             mock_migrate.assert_not_called()
+            mock_chain.assert_not_called()
+        self.assertEqual(w2.reader_version, 8)
+        w2._close_connection()
 
     def test_v3_migration_execution(self):
-        """Test that the actual v3 migration method executes without error."""
-        # Setup: Ensure we are starting with v2
-        self.worker._initialize_connection()
-        self._create_v2_schema(self.worker.conn)
-        
-        # Override the target version to 3 for this test instance
-        self.worker._DB_VERSION = 3
-        
-        # We generally DO NOT mock the migration method here because we want to test
-        # the *actual* implementation of _migrate_v2_to_v3 (even if it's just logging).
-        
-        # Act: Run the full schema check which triggers migration
-        self.worker._check_and_create_schema()
-        
-        # Assert: Check DB version is now 3
+        """The actual v2 -> v3 step runs without error (the legacy chain's own connection)."""
+        conn = sqlite3.connect(self.db_path)
+        self._create_v2_schema(conn)
+        conn.close()
+        self.worker.conn = sqlite3.connect(self.db_path)
+        self.worker._migrate_schema(2, 3)
         cursor = self.worker.conn.cursor()
         cursor.execute("SELECT value FROM metadata WHERE key='db_version'")
-        new_ver = int(cursor.fetchone()[0])
-        self.assertEqual(new_ver, 3)
+        self.assertEqual(int(cursor.fetchone()[0]), 3)
 
 if __name__ == '__main__':
     unittest.main()

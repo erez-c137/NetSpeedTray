@@ -25,7 +25,7 @@ from unittest.mock import patch
 import pytest
 
 from netspeedtray import constants
-from netspeedtray.core.database import DatabaseWorker
+from netspeedtray.tests.legacy_v7_worker import LegacyV7Worker
 from netspeedtray.core.db.history_reader import V7HistoryReader
 from netspeedtray.core.widget_state import WidgetState
 
@@ -43,7 +43,7 @@ def _build(db_dir: Path, now: datetime) -> None:
         for t in range(now_ts - a, now_ts - b, step):
             speed.append((t, NIC, float(rng.randint(1, 500)), float(rng.randint(1, 5000))))
             hw.append((t, "cpu", float(rng.randint(0, 100))))
-    w = DatabaseWorker(db_dir / "speed_history.db")
+    w = LegacyV7Worker(db_dir / "speed_history.db")
     w._initialize_connection()
     w._check_and_create_schema()
     w._persist_speed_batch(speed)
@@ -53,7 +53,7 @@ def _build(db_dir: Path, now: datetime) -> None:
 
 
 def _add_stray(db_dir: Path, stray_ts: int) -> None:
-    w = DatabaseWorker(db_dir / "speed_history.db")
+    w = LegacyV7Worker(db_dir / "speed_history.db")
     w._initialize_connection()
     w._persist_speed_batch([(stray_ts, NIC, STRAY_UP, STRAY_DOWN)])
     w._persist_hardware_batch([(stray_ts, "cpu", 50.0)])
@@ -163,7 +163,7 @@ class _MaintenanceMidRead:
     def _after(self, sql: str) -> None:
         if not self.fired and sql.lstrip().upper().startswith(("SELECT", "WITH")):
             self.fired = True
-            w = DatabaseWorker(self._db_path)
+            w = LegacyV7Worker(self._db_path)
             w._initialize_connection()
             cur = w.conn.cursor()
             later = datetime.now() + timedelta(days=2)

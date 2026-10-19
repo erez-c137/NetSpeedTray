@@ -510,9 +510,13 @@ class UsageTile(QFrame):
             f"QProgressBar::chunk {{ background: {chunk}; border-radius: 3px; }}")
 
     def set(self, today: Tuple[float, float], month: Tuple[float, float],
-            cap: Optional[Tuple[float, float, float]]) -> None:
+            cap: Optional[Tuple[float, float, float]], history_note: Optional[str] = None) -> None:
         self._today[1].setText(self._fmt_pair(today))
         self._month[1].setText(self._fmt_pair(month))
+        # D5: the rows are recorded history; when part of it was estimated from speeds saved before
+        # 2.2, say so where the eye already is (a tooltip on the rows), never in the headline.
+        for row in (self._today, self._month):
+            row[1].setToolTip(history_note or "")
         # Avg/day = this month's total ÷ days elapsed; projected = that rate × days in the month - a
         # quick "am I on track" read (and what makes a limit meaningful).
         now = datetime.now()

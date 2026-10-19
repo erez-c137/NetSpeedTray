@@ -396,9 +396,9 @@ def test_database_md_documents_the_burst_fraction():
 def test_database_md_recipe_and_rollup_on_mixed_rows(tmp_path):
     """Old 0/1 rows and new fractional rows in one database - in the same hour and across tiers. The
     rollup AVG and the documented recipe both read a per-cycle loss rate from either shape."""
-    from netspeedtray.core.database import DatabaseWorker
+    from netspeedtray.tests.legacy_v7_worker import LegacyV7Worker
 
-    w = DatabaseWorker(tmp_path / "mixed.db")
+    w = LegacyV7Worker(tmp_path / "mixed.db")
     w._initialize_connection()
     w._check_and_create_schema()
     now = int(time.time())
@@ -431,6 +431,9 @@ def test_database_md_recipe_and_rollup_on_mixed_rows(tmp_path):
         "WHERE stat_type = ?", (LAT.STAT_GW_TIMEOUT,)).fetchone()[0]
     assert minute == pytest.approx(0.10), "the rollup AVG must keep the per-cycle rate"
     w.conn.close()
+    # The documented recipe reads the v8 tables: run it on this v7 history as 2.2 sees it, migrated.
+    from netspeedtray.core.db import migrate_v8
+    assert migrate_v8.migrate(tmp_path / "mixed.db").status == "migrated"
 
     ro = sqlite3.connect(f"file:{tmp_path / 'mixed.db'}?mode=ro", uri=True)
     ro.row_factory = sqlite3.Row

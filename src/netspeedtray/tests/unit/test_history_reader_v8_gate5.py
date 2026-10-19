@@ -33,8 +33,8 @@ _REPO_ROOT = Path(__file__).resolve().parents[4]
 def _build_v7(path: Path) -> None:
     """Same shape as test_latency_bursts: each hour, 10 single-echo cycles (one lost) then 10 bursts
     (two at 0.5, and on the anchor one 0.25 and one 0.75). Router loss 10%, internet loss 15%."""
-    from netspeedtray.core.database import DatabaseWorker
-    w = DatabaseWorker(path)
+    from netspeedtray.tests.legacy_v7_worker import LegacyV7Worker
+    w = LegacyV7Worker(path)
     w._initialize_connection()
     w._check_and_create_schema()
     now = int(time.time())
@@ -165,16 +165,45 @@ def _documented_loss_query() -> str:
     return m.group(1)
 
 
+# The 2.1.x DATABASE.md recipe, frozen: since step 7 the document's recipe reads the v8 tables (with the
+# watermarks), and it must return exactly what this one returned on the v7 file - and this one must keep
+# working on v8 through the v7-named compatibility views (the promise to a rolled-back 2.1.x and to
+# anyone's saved query).
+_V7_LOSS_QUERY = """
+WITH samples AS (
+    SELECT timestamp, stat_type, value AS v, 1 AS n FROM hardware_stats_raw
+    UNION ALL
+    SELECT timestamp, stat_type, avg_value, sample_count FROM hardware_stats_minute
+)
+SELECT datetime(timestamp / 3600 * 3600, 'unixepoch', 'localtime') AS hour,
+       ROUND(SUM(CASE WHEN stat_type='latency_anchor' THEN v * n END)
+           / SUM(CASE WHEN stat_type='latency_anchor' THEN n END), 1) AS internet_ms,
+       ROUND(100.0 * SUM(CASE WHEN stat_type='latency_gw_timeout' THEN v * n END)
+           / SUM(CASE WHEN stat_type='latency_gw_timeout' THEN n END), 1) AS router_loss_pct,
+       ROUND(100.0 * SUM(CASE WHEN stat_type='latency_anchor_timeout' THEN v * n END)
+           / SUM(CASE WHEN stat_type='latency_anchor_timeout' THEN n END), 1) AS internet_loss_pct
+FROM samples
+WHERE timestamp > strftime('%s','now','-7 days')
+  AND stat_type IN ('latency_anchor', 'latency_gw_timeout', 'latency_anchor_timeout')
+GROUP BY timestamp / 3600
+ORDER BY timestamp / 3600;
+"""
+
+
 def test_database_md_recipe_returns_the_same_rows_on_both_files(pair):
-    """On v8 the recipe runs through the v7-named compatibility views - the promise DATABASE.md makes to
-    anyone with a SQL tool, and to a rolled-back 2.1.x."""
+    """The documented (v8) recipe on the v8 file == the 2.1 recipe on the v7 file == the 2.1 recipe on
+    the v8 file through the compatibility views."""
     d, _, _ = pair
-    out = []
-    for name in ("v7.db", "v8.db"):
+
+    def run(name, q):
         c = sqlite3.connect(sqlite_ro_uri(d / name), uri=True)
-        out.append(c.execute(_documented_loss_query()).fetchall())
-        c.close()
-    assert out[0] == out[1] and len(out[1]) == 2
+        try:
+            return c.execute(q).fetchall()
+        finally:
+            c.close()
+    out = [run("v7.db", _V7_LOSS_QUERY), run("v8.db", _documented_loss_query()),
+           run("v8.db", _V7_LOSS_QUERY)]
+    assert out[0] == out[1] == out[2] and len(out[1]) == 2
     for _, _, router, internet in out[1]:
         assert (router, internet) == (pytest.approx(10.0), pytest.approx(15.0))
 

@@ -53,6 +53,11 @@ class FakeState:
     def add_speed_data(self, *a, **k):
         self.speed_calls += 1
 
+    def add_net_sample(self, ts, dt_ms, byte_deltas, **k):
+        # The v8 history feed: the SAME exact deltas the odometer gets, per interface.
+        self.net_samples = getattr(self, "net_samples", [])
+        self.net_samples.append((ts, dt_ms, dict(byte_deltas)))
+
     def get_usage_launch_snapshot(self):
         if not self.loaded:
             return None
@@ -350,6 +355,9 @@ def test_restart_recovery_through_the_real_database_worker(tmp_path, q_app):
 
         s2 = _session(tmp_path, config)
         try:
+            # Reads are held off until the worker has opened (recover / migrate) the file; this test
+            # is about the reconciliation, not that window (test_bytes_before_the_odometer_loads_...).
+            assert s2.db_worker.ready.wait(10)
             c2 = StatsController(config=config, widget_state=s2)
             # The app was closed while 1 MB up / 2 MB down moved.
             _poll(c2, {"Wi-Fi": NetIO(1_004_000, 2_006_000)}, 5000.0)
@@ -360,6 +368,7 @@ def test_restart_recovery_through_the_real_database_worker(tmp_path, q_app):
         # A third launch with NO traffic since must add nothing - the snapshot moved with the total.
         s3 = _session(tmp_path, config)
         try:
+            assert s3.db_worker.ready.wait(10)
             c3 = StatsController(config=config, widget_state=s3)
             _poll(c3, {"Wi-Fi": NetIO(1_004_000, 2_006_000)}, 9000.0)
             assert s3.get_usage_this_period() == (1_003_000.0, 2_005_000.0)
@@ -560,3 +569,27 @@ def test_an_ipv6_only_network_resolves_the_primary_interface():
     with patch("socket.socket", _Sock), patch("psutil.net_if_addrs", return_value=addrs):
         assert nu.get_primary_interface_name() == "Wi-Fi"
     nu._unreachable_since = None
+
+
+def test_bytes_before_the_odometer_loads_are_kept_not_dropped(tmp_path, q_app):
+    """v8 step 7: the readers are held off while the worker recovers / migrates the file (seconds on
+    a large v7 database), so the odometer row cannot load yet. Polls in that window are real usage:
+    they are buffered and added once it loads - never dropped, never written as a fresh zero total."""
+    from PyQt6.QtCore import QThread
+    from netspeedtray.tests.state_helpers import prepare_v8
+    config = constants.config.defaults.DEFAULT_CONFIG.copy()
+    with patch.object(QThread, "start", lambda self: None), \
+         patch("netspeedtray.core.widget_state.get_app_data_path", return_value=tmp_path):
+        ws = WidgetState(config)
+    try:
+        assert not ws.db_worker.ready.is_set()
+        ws.add_usage_bytes(1_000.0, 2_000.0, window_start=time.time() - 1)   # worker not ready
+        ws.add_usage_bytes(10.0, 20.0, window_start=time.time() - 1)
+        assert not ws._usage_loaded and len(ws._usage_pending) == 2
+        prepare_v8(ws)                                                       # the worker is up
+        ws.add_usage_bytes(100.0, 200.0, window_start=time.time() - 1)
+        assert ws.get_usage_this_period() == (1_110.0, 2_220.0)
+        assert ws._usage_pending == []
+    finally:
+        ws.db_worker._close_connection()
+        ws.cleanup()

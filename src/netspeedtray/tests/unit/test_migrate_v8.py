@@ -18,6 +18,7 @@ import pytest
 
 sys.path.append(os.path.abspath("src"))
 from netspeedtray.core.database import DatabaseWorker
+from netspeedtray.tests.legacy_v7_worker import LegacyV7Worker
 from netspeedtray.core.db import migrate_v8 as M
 from netspeedtray.core.db import schema_v8 as S
 from netspeedtray.core.db.sqlite_uri import sqlite_ro_uri
@@ -29,7 +30,7 @@ NOW = datetime(2026, 10, 19, 12, 0, 0)
 
 def _make_v7(directory: Path) -> Path:
     db = directory / DB
-    w = DatabaseWorker(db)
+    w = LegacyV7Worker(db)       # 2.1.x's own worker: a real v7 file
     w._initialize_connection()
     w._check_and_create_schema()
     w._ensure_indexes()
@@ -330,9 +331,9 @@ def test_backup_name_collision_gets_a_suffix(v7, tmp_path):
 def test_backup_matches_the_worker_backup_pattern(v7, tmp_path, monkeypatch):
     bak = Path(M.migrate(v7, now=NOW).backup_path)
     assert re.search(r"\.db\.bak\.v(\d+)_", bak.name).group(1) == "7"
+    assert LegacyV7Worker(v7)._find_newest_backup() == bak      # a 2.1.x build (_DB_VERSION 7)
     w = DatabaseWorker(v7)
-    assert w._find_newest_backup() == bak                       # a 2.1.x build (_DB_VERSION 7)
-    monkeypatch.setattr(DatabaseWorker, "_DB_VERSION", 8)
+    assert DatabaseWorker._DB_VERSION == 8
     assert w._find_newest_backup() == bak                       # the 2.2 build
     for i in range(4):
         p = tmp_path / f"{DB}.bak.v8_2099010{i}_000000"
@@ -525,15 +526,16 @@ def test_migrator_never_uses_executescript():
     assert "executescript(" not in src
 
 
-def test_dormant_nothing_in_the_app_calls_the_migrator():
-    assert DatabaseWorker._DB_VERSION == 7
+def test_only_the_database_worker_calls_the_migrator():
+    """Step 7: the worker is the migrator's one caller in the app (recover() + migrate() before it
+    connects). writer_v8 shares its kill hook and clamps only."""
+    assert DatabaseWorker._DB_VERSION == 8
     root = Path(M.__file__).resolve().parents[2]          # src/netspeedtray
-    # writer_v8 (step 6) shares the migrator's kill hook and clamps; it is dormant itself
-    # (test_writer_v8.test_dormant_nothing_in_the_app_imports_the_writer), so still nothing live.
-    callers = [p for p in root.rglob("*.py")
-               if "tests" not in p.parts and p.name not in ("migrate_v8.py", "writer_v8.py")
-               and "migrate_v8" in p.read_text(encoding="utf-8", errors="ignore")]
-    assert callers == []
+    imports = re.compile(r"^(?!\s*#)\s*(from\s+\S+\s+)?import\s.*\bmigrate_v8\b", re.M)   # an import line
+    callers = sorted(p.name for p in root.rglob("*.py")
+                     if "tests" not in p.parts and p.name not in ("migrate_v8.py", "writer_v8.py")
+                     and imports.search(p.read_text(encoding="utf-8", errors="ignore")))
+    assert callers == ["database.py"]
 
 
 # --------------------------------------------------------------------------------------------

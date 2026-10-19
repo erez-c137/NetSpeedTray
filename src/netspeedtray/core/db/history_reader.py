@@ -10,8 +10,9 @@ place (step 7) instead of rewriting eight call sites against a new schema at onc
 (``tests/unit/legacy_v7_reader_oracle.py``) on one rich fixture database written through the real
 ``DatabaseWorker``. Change a query here and that test is the thing to satisfy - not to edit.
 
-``V8HistoryReader`` (step 3) is the v8 schema, DORMANT until the switch-over (step 7): nothing constructs
-it while ``_DB_VERSION`` is 7. ``tests/unit/test_history_reader_v8_parity.py`` writes one history into a v7
+``V8HistoryReader`` (step 3) is the v8 schema and, since the switch-over (step 7), the backend
+``WidgetState`` uses; ``V7HistoryReader`` is only used while a v8 upgrade is deferred (the session is
+read-only, the untouched v7 file live). ``tests/unit/test_history_reader_v8_parity.py`` writes one history into a v7
 and a v8 file and asserts the backends agree everywhere except volume, where v8 is more exact (each
 difference asserted). Its tier boundaries are the watermarks in ``schema_v8.WATERMARK_KEYS``, not MIN(ts).
 
@@ -140,7 +141,7 @@ class HistoryReader(ABC):
     @abstractmethod
     def coverage(self, start_time: datetime, end_time: datetime) -> Optional[Coverage]:
         """When the app was running in [start, end], or None when this schema records no sessions.
-        Dormant: no consumer until the v8 switch-over."""
+        No UI consumer yet (2.2): kept for the "the app was not running" coverage fact."""
 
     @abstractmethod
     def distinct_interfaces(self) -> List[str]:
@@ -227,7 +228,13 @@ class _ReaderBase(HistoryReader):
 
 class V7HistoryReader(_ReaderBase):
     """The v7 schema: speed_history_{raw,minute,hour} + hardware_stats_{raw,minute,hour} +
-    usage_counter + metadata."""
+    usage_counter + metadata.
+
+    Since 2.2 the app only reads a v7 file while its v8 upgrade is deferred (read-only session);
+    WidgetState then sets ``allow_fallback = False``, because the db_utils fallback opens a plain
+    read-write connection, and the last read-write connection to close a WAL file checkpoints it."""
+
+    allow_fallback = True
 
     # --- tier precedence ----------------------------------------------------------------------
 
@@ -400,7 +407,7 @@ class V7HistoryReader(_ReaderBase):
             # historical ranges by reading directly from raw where appropriate.
             # (Kept for parity. It reads a SUBSET of what the union above already read - raw from the
             # aggregation cutoff on, minute before it - so when the union is empty it is empty too.)
-            if not data_points and target_res != 'raw':
+            if not data_points and target_res != 'raw' and self.allow_fallback:
                 try:
                     from netspeedtray.utils.db_utils import get_speed_history as util_get_speed_history
                     self.logger.debug("Targeted query returned no rows; falling back to unified DB query.")
@@ -724,7 +731,7 @@ class V7HistoryReader(_ReaderBase):
 
 
 # =====================================================================================================
-# v8 backend (step 3) - DORMANT: nothing constructs it until the switch-over (step 7, _DB_VERSION = 8).
+# v8 backend (step 3) - the live backend since the switch-over (step 7, _DB_VERSION = 8).
 # =====================================================================================================
 
 # The legacy volume estimate for a rollup row with no stored bytes (every row migrated from v7):
@@ -937,16 +944,30 @@ class V8HistoryReader(_ReaderBase):
         bounds = self._tier_bounds(self._NET, "n")
 
         def run(cur):
-            def raw_vals():
-                # Summed per timestamp across interfaces, so an "all" summary matches the widget aggregate.
-                cur.execute(f"SELECT SUM({self._RAW_RATE.format(d=d)}) FROM {S8.NET_RAW} n {self._IFACE_JOIN} "
-                            f"WHERE n.ts BETWEEN ? AND ?{bounds[0][0]}{iface_sql} GROUP BY n.ts",
+            def raw_rows():
+                # (rate, seconds) per raw timestamp: the rate summed across interfaces, so an "all"
+                # summary matches the widget aggregate; the seconds the row stands for are its MEASURED
+                # interval (dt_ms - the longest of the interfaces' at that instant, which share one poll),
+                # clipped to the window (a row is the END of its interval: [ts - dt, ts]).
+                # FLAG_GAP rows (an interval spanning standby / a stall, far past the poll rate) are not
+                # samples: their bytes are real and count in volume(), but their bytes/dt is an average
+                # over hours, and their dt would claim coverage for time nobody measured - excluded here.
+                cur.execute(f"SELECT n.ts, SUM({self._RAW_RATE.format(d=d)}), MAX(n.dt_ms) / 1000.0 "
+                            f"FROM {S8.NET_RAW} n {self._IFACE_JOIN} "
+                            f"WHERE n.ts BETWEEN ? AND ? AND (n.flags & {S8.FLAG_GAP}) = 0"
+                            f"{bounds[0][0]}{iface_sql} GROUP BY n.ts",
                             (st, et) + bounds[0][1] + iface_p)
-                return [r[0] for r in cur.fetchall() if r[0] is not None]
+                return [(r[1], max(0.0, min(float(r[2] or 0.0), float(r[0] - st))))
+                        for r in cur.fetchall() if r[1] is not None]
+
+            def pct(seconds: float) -> float:
+                return min(100.0, seconds / win * 100.0) if win > 0 else 0.0
 
             if win <= self._RAW_SUMMARY_SECONDS:
-                vals = raw_vals()
-                return S.summarize_raw(vals, S.coverage_pct(len(vals), win, poll_interval))
+                rr = raw_rows()
+                # Coverage from the measured intervals, not row count x the live poll rate (a 2/5/10 s
+                # preset row stands for 2/5/10 s; the poll rate in force today is not evidence).
+                return S.summarize_raw([v for v, _ in rr], pct(sum(s for _, s in rr)))
             avgs, maxes, counts = [], [], []
             covered_seconds = 0.0   # distinct time buckets x their duration (see V7HistoryReader)
             for k in (1, 2):
@@ -960,12 +981,16 @@ class V8HistoryReader(_ReaderBase):
                         continue
                     avgs.append(r[0]); maxes.append(r[1]); counts.append(r[2] or 1)
                     covered_seconds += float(self._BUCKET_SECONDS[k])
-            rv = raw_vals()
+            rr = raw_rows()
             if not avgs:
-                return S.summarize_raw(rv, S.coverage_pct(len(rv), win, poll_interval))
-            avgs += rv; maxes += rv; counts += [1] * len(rv)
-            covered_seconds += len(rv) * poll_interval
-            coverage = min(100.0, (covered_seconds / win * 100.0)) if win > 0 else 0.0
+                return S.summarize_raw([v for v, _ in rr], pct(sum(s for _, s in rr)))
+            # Step-7 note 8: one unit for every weight. A rollup row weighs its sample_count, which on
+            # the net tiers is SECONDS (schema_v8.NET_TIER_UNITS); a raw row therefore weighs the
+            # seconds it measured (dt_ms / 1000), not 1 - at a 10 s poll, 1 would under-weight the most
+            # recent day tenfold against the minutes it is averaged with.
+            avgs += [v for v, _ in rr]; maxes += [v for v, _ in rr]; counts += [s for _, s in rr]
+            covered_seconds += sum(s for _, s in rr)
+            coverage = pct(covered_seconds)
             return S.summarize_rollup(avgs, maxes, counts, "minute" if win <= 30 * 86400 else "hour", coverage)
 
         return self._snapshot_call(run, lambda: S.summarize_raw([]))

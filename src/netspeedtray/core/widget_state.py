@@ -34,7 +34,9 @@ from PyQt6.QtCore import QObject, QThread, pyqtSignal, QTimer
 from netspeedtray import constants
 from netspeedtray.constants import network, timeouts
 from netspeedtray.core import usage_snapshot
-from netspeedtray.core.db.history_reader import HistoryReader, V7HistoryReader
+from netspeedtray.core.db.history_reader import HistoryReader, V7HistoryReader, V8HistoryReader, VolumeResult
+from netspeedtray.core.db.sqlite_uri import sqlite_ro_uri
+from netspeedtray.core.db.writer_v8 import NetSample
 from netspeedtray.utils.helpers import get_app_data_path
 from netspeedtray.utils.timer_utils import resolve_poll_interval_seconds
 
@@ -78,6 +80,10 @@ class WidgetState(QObject):
     # finished construction and connected (main.py wires the flyout there) - so the
     # notification cannot be emitted before anyone is listening.
     db_schema_incompatible = pyqtSignal(int, int, str)
+    # Re-emitted from DatabaseWorker.migration_deferred (a MIGRATION_* reason): the v7 -> v8 upgrade
+    # could not complete this launch, so nothing is recorded until the next start. Same queued
+    # delivery as above, so the flyout is wired before it can fire.
+    db_migration_deferred = pyqtSignal(str)
     # Re-emitted from DatabaseWorker.history_deleted (a DatabaseWorker.DELETE_* status), queued onto
     # the GUI thread.
     history_deleted = pyqtSignal(str)
@@ -108,8 +114,9 @@ class WidgetState(QObject):
         self.gpu_history: Deque[HardwareStatSnapshot] = deque(maxlen=self._graph_buffer_points)
         self.ram_history: Deque[HardwareStatSnapshot] = deque(maxlen=self._graph_buffer_points)
         
-        # Batching lists for database writes
-        self._db_batch: List[Tuple[int, str, float, float]] = []
+        # Batching lists for database writes (schema v8): one NetSample per poll (exact byte deltas
+        # over the measured interval - writer_v8), and hardware samples.
+        self._net_batch: List[NetSample] = []
         self._hw_batch: List[Tuple[int, str, float]] = []
         # Guards the two batch lists: they're APPENDED on the GUI thread but flushed (snapshot+reset)
         # from the graph-worker thread (get_speed_history(wait_for_flush=True)). Without it an append
@@ -118,11 +125,13 @@ class WidgetState(QObject):
 
         # Database Worker Thread
         self._db_path = Path(get_app_data_path()) / "speed_history.db"
-        self.db_worker = DatabaseWorker(self._db_path)
+        self.db_worker = DatabaseWorker(self._db_path, poll_ms=self._poll_ms(),
+                                        is_physical=self._classify_physical)
         self.db_worker.error.connect(lambda msg: self.logger.error("DB Worker Error: %s", msg))
-        # Surface the downgrade guard (v2.1.5, action-plan item 1). Connected BEFORE
-        # start() so the worker can never trip the guard while nothing is wired.
+        # Surface the downgrade guard (v2.1.5, action-plan item 1) and a deferred v8 upgrade (2.2).
+        # Connected BEFORE start() so the worker can never trip either while nothing is wired.
         self.db_worker.schema_incompatible.connect(self.db_schema_incompatible)
+        self.db_worker.migration_deferred.connect(self.db_migration_deferred)
         self.db_worker.history_deleted.connect(self.history_deleted)
         if not read_only:
             self.db_worker.start()
@@ -156,6 +165,8 @@ class WidgetState(QObject):
         self._usage_live_sampled_at: Optional[float] = None
         self._usage_live_primary: Optional[str] = None
         self._usage_launch_snapshot: Dict[str, Any] = {}
+        # Odometer polls that arrived before the row could be loaded (see add_usage_bytes).
+        self._usage_pending: List[Tuple[Any, ...]] = []
 
         self.logger.debug("WidgetState initialized with threaded database worker.")
 
@@ -165,6 +176,47 @@ class WidgetState(QObject):
     # (the Monitor refreshes every few seconds), and erring high costs one idle file handle while
     # erring low would close a connection out from under a slow query.
     _READ_CONN_IDLE_SEC: float = 120.0
+
+    def _poll_ms(self) -> int:
+        return int(round(resolve_poll_interval_seconds(self.config.get("update_rate", 1.0)) * 1000))
+
+    @staticmethod
+    def _classify_physical(name: str) -> bool:
+        """interfaces.is_physical, from the same classifier the Settings picker uses (2.2 scope C)."""
+        from netspeedtray.utils.interface_classifier import get_classifier
+        return bool(get_classifier().is_physical(name))
+
+    def _read_schema(self) -> Tuple[Optional[int], bool, bool]:
+        """(schema the live file reads as, use mode=ro connections, final).
+
+        A live instance asks its worker, which decides this during startup (recover / migrate) -
+        until it has, nothing may open the live name (a half-swapped migration leaves it absent, and a
+        plain connect would create an empty database there; an open handle would also block the
+        swap's rename), so readers get no connection and simply come back empty. A read-only
+        instance (the --export-csv CLI) never starts the worker: it probes the file itself, read-only,
+        and never runs recover() (that writes)."""
+        if self._read_only:
+            ver = None
+            if self._db_path.exists():
+                c = None
+                try:
+                    c = sqlite3.connect(sqlite_ro_uri(self._db_path), uri=True)
+                    row = c.execute("SELECT value FROM metadata WHERE key='db_version'").fetchone()
+                    ver = int(row[0]) if row else None
+                except Exception as e:
+                    self.logger.debug("Read-only schema probe failed: %s", e)
+                finally:
+                    if c is not None:
+                        c.close()
+            return ver, True, True
+        w = self.db_worker
+        ready = getattr(w, "ready", None)
+        if not isinstance(ready, threading.Event):
+            # A hand-assembled test double: behave as before (a plain v7 read).
+            return 7, False, True
+        if not ready.is_set():
+            return None, True, False
+        return getattr(w, "reader_version", None), bool(getattr(w, "readers_read_only", False)), True
 
     def _get_read_conn(self) -> sqlite3.Connection:
         """Returns a thread-local read connection, pruning ones left behind by dead threads.
@@ -201,7 +253,18 @@ class WidgetState(QObject):
                     except Exception:
                         pass
             if thread_id not in self._read_conns:
-                conn = sqlite3.connect(self._db_path, check_same_thread=False)
+                ver, ro, _final = self._read_schema()
+                if ver is None:
+                    # Nothing safe to open yet (the worker is still migrating), or ever (the live name
+                    # is absent until the next launch's recover()). Readers catch this and read empty.
+                    raise sqlite3.OperationalError("history database not available for reading")
+                if ro:
+                    # Read-only session (deferred upgrade / downgrade / export): never a read-write
+                    # handle on a file this build must not touch - not even the checkpoint SQLite runs
+                    # when the last read-write connection to a WAL file closes.
+                    conn = sqlite3.connect(sqlite_ro_uri(self._db_path), uri=True, check_same_thread=False)
+                else:
+                    conn = sqlite3.connect(self._db_path, check_same_thread=False)
                 conn.row_factory = sqlite3.Row
                 # Wait (up to 5s) for a lock instead of erroring out immediately - otherwise a
                 # read concurrent with the maintenance VACUUM can fail with "database is locked".
@@ -224,21 +287,37 @@ class WidgetState(QObject):
         than in __init__ so a WidgetState assembled by hand in tests still reads; it holds no connection
         of its own - each call fetches this thread's via _get_read_conn()."""
         reader = getattr(self, "_history_reader", None)
-        if reader is None:
+        if reader is not None:
+            return reader
+        ver, ro, final = self._read_schema()
+        if ver == 7:
             reader = V7HistoryReader(self._get_read_conn, lambda: self.db_worker.db_path, self.logger)
+            # The db_utils fallback opens a plain read-write connection; never on a file this session
+            # must not write (a deferred upgrade leaves the v7 file live and untouched).
+            reader.allow_fallback = not ro
+        else:
+            # v8 - and, best effort, a newer file. Before the worker is ready the conn provider
+            # raises, so every read comes back empty; the backend is cached only once the answer is
+            # final.
+            reader = V8HistoryReader(self._get_read_conn, lambda: self.db_worker.db_path, self.logger)
+        if final:
             self._history_reader = reader
         return reader
+
+    def history_schema_version(self) -> Optional[int]:
+        """The schema history is read from (8, 7 while an upgrade is deferred), or None before the
+        worker has decided / when nothing can be read."""
+        return self._read_schema()[0]
 
     def add_speed_data(self, speed_data: Dict[str, Tuple[float, float]], now: Optional[datetime] = None,
                        aggregated_up: Optional[float] = None, aggregated_down: Optional[float] = None,
                        persist_data: Optional[Dict[str, Tuple[float, float]]] = None) -> None:
-        """Adds new per-interface speed data.
+        """Adds new per-interface speed data to the IN-MEMORY live series (mini graph, Monitor session
+        view) - what the user sees; the controller passes its spike-FILTERED rates.
 
-        ``speed_data`` feeds the in-memory live series (mini graph, Monitor session view) and is
-        what the user sees - the controller passes its spike-FILTERED rates. ``persist_data``, when
-        given, is what goes to the DB batch instead: the MEASURED rates, so history holds
-        measurements rather than the filter's substitute values (v8 step 0). Omitted, the DB gets
-        ``speed_data`` (direct callers, tests)."""
+        Nothing here is persisted any more (schema v8): history stores the exact byte deltas of every
+        poll, handed over by :meth:`add_net_sample`, never a rate. ``persist_data`` (the measured rates)
+        is accepted for call-site compatibility and ignored."""
         _now = now or datetime.now()
         self.in_memory_history.append(SpeedDataSnapshot(speeds=speed_data.copy(), timestamp=_now))
 
@@ -250,14 +329,21 @@ class WidgetState(QObject):
             
         self.aggregated_history.append(AggregatedSpeedData(upload=total_up, download=total_down, timestamp=_now))
 
-        timestamp = int(_now.timestamp())
-        max_speed = network.interface.MAX_REASONABLE_SPEED_BPS
-        
-        to_persist = speed_data if persist_data is None else persist_data
+    def add_net_sample(self, ts: float, dt_ms: float, byte_deltas: Dict[str, Tuple[float, float]],
+                       counters: Optional[Dict[str, Any]] = None,
+                       if_stats: Optional[Dict[str, Any]] = None) -> None:
+        """One poll for the v8 history: the controller's exact per-interface ``byte_deltas`` (the
+        odometer's - pre-spike-filter, clamped, capped) over the measured interval ``dt_ms`` ending at
+        wall time ``ts``, plus the raw psutil ``counters`` (err/drop deltas, counter resets) and, when
+        sampled, ``if_stats`` (link up/down, speed, duplex). An empty ``byte_deltas`` only primes the
+        writer's counter baselines. Buffered here (GUI thread) and handed to the worker - the only
+        thread that touches WriterV8 - on the 10 s persist tick."""
+        if self._read_only:
+            return
+        sample = NetSample(ts=float(ts), dt_ms=max(1, int(round(dt_ms))), byte_deltas=dict(byte_deltas),
+                           counters=counters, if_stats=if_stats)
         with self._batch_lock:
-            for interface, (up_speed, down_speed) in to_persist.items():
-                if up_speed >= network.speed.MIN_RECORDABLE_SPEED_BPS or down_speed >= network.speed.MIN_RECORDABLE_SPEED_BPS:
-                    self._db_batch.append((timestamp, interface, min(up_speed, max_speed), min(down_speed, max_speed)))
+            self._net_batch.append(sample)
 
 
     # Utilization stats are 0-100% and clamped; physical stats (power W, temperature °C, latency ms)
@@ -383,7 +469,30 @@ class WidgetState(QObject):
         gap or a closed-app window spanning the reset day lands in the period it started in, never
         all in the new one (which could fire an early overage alert)."""
         if not self._usage_loaded and not self._try_load_usage():
-            return  # defer until the table exists, so we don't clobber the saved total
+            # Not loaded yet - the worker is still opening (or migrating) the file and the readers are
+            # held off until it has. Never write a fresh zero over the saved total, and never drop these
+            # bytes either: on a large v7 file the upgrade takes seconds, and every poll in that window
+            # is real usage. Buffered in memory (bounded) and replayed, in order, once the row loads.
+            pend = getattr(self, "_usage_pending", None)
+            if pend is None:
+                pend = self._usage_pending = []
+            if len(pend) < WidgetState._USAGE_PENDING_MAX:
+                pend.append((up_bytes, down_bytes, counters, sampled_at, window_start, primary))
+            else:
+                last = pend[-1]   # fold the overflow into the newest entry: totals stay exact
+                pend[-1] = (last[0] + up_bytes, last[1] + down_bytes, counters, sampled_at, last[4], primary)
+            return
+        if getattr(self, "_usage_pending", None):
+            pending, self._usage_pending = self._usage_pending, []
+            for args in pending:
+                WidgetState._add_usage_loaded(self, *args)
+        WidgetState._add_usage_loaded(self, up_bytes, down_bytes, counters, sampled_at, window_start, primary)
+
+    _USAGE_PENDING_MAX = 4096
+
+    def _add_usage_loaded(self, up_bytes: float, down_bytes: float, counters: Optional[Dict[str, Any]],
+                          sampled_at: Optional[float], window_start: Optional[float],
+                          primary: Optional[str]) -> None:
         u = self._usage
         # Roll the period over BEFORE adding this poll, so a boundary-crossing poll's bytes
         # count toward the NEW period rather than being stranded at the anchor (audit #15).
@@ -479,16 +588,16 @@ class WidgetState(QObject):
         lock (atomic snapshot+reset), so a concurrent GUI-thread append can't land between copy and
         clear and be lost (#6). Enqueue happens after the lock is released (the worker queue is its own
         thread-safe handoff)."""
+        if self._read_only:
+            return
         with self._batch_lock:
-            db_batch, self._db_batch = self._db_batch, []
+            net_batch, self._net_batch = self._net_batch, []
             hw_batch, self._hw_batch = self._hw_batch, []
             # Enqueued INSIDE the lock (queue.put on the unbounded worker queue never blocks), so a
             # flush from the graph-worker thread can't slip a pre-delete batch in behind a
-            # delete_all_history() that ran between the snapshot and the enqueue.
-            if db_batch:
-                self.db_worker.enqueue_task("persist_speed", db_batch)
-            if hw_batch:
-                self.db_worker.enqueue_task("persist_hardware", hw_batch)
+            # delete_all_history() that ran between the snapshot and the enqueue. Enqueued even when
+            # empty: the worker's flush also writes the app_sessions heartbeat (the coverage record).
+            self.db_worker.enqueue_task("persist_v8", (net_batch, hw_batch))
 
     def can_delete_history(self) -> bool:
         """Whether a delete request would be answered: a live (not read-only) instance whose write
@@ -519,7 +628,7 @@ class WidgetState(QObject):
         if self._read_only:
             return
         with self._batch_lock:
-            self._db_batch = []
+            self._net_batch = []
             self._hw_batch = []
             self.db_worker.enqueue_task("delete_history", {"include_usage": bool(include_usage)})
         for series in (self.in_memory_history, self.aggregated_history,
@@ -625,9 +734,21 @@ class WidgetState(QObject):
         if not hasattr(self, 'db_worker') or not self.db_worker:
             return 0.0, 0.0
 
-        # The raw tier has no stored capture interval: the reader scales it by the current poll rate.
+        # v8 ignores the poll rate (every raw row carries its dt_ms); a v7 file read while an upgrade
+        # is deferred scales its raw tier by it.
         poll_interval = resolve_poll_interval_seconds(self.config.get("update_rate", 1.0))
         return self.history_reader.total_bandwidth(start_time, end_time, interface_name, poll_interval)
+
+    def get_history_volume_for_period(self, start_time: Optional[datetime], end_time: Optional[datetime],
+                                      interface_name: Optional[str] = None) -> VolumeResult:
+        """get_total_bandwidth_for_period with its provenance (decision D5): ``reconstructed`` is True
+        when any part was estimated from stored rates (history recorded before 2.2), so the UI labels
+        the number "recorded history" rather than presenting it as exact."""
+        if not hasattr(self, 'db_worker') or not self.db_worker:
+            return VolumeResult(0.0, 0.0, 0.0, 0.0, False)
+        poll_interval = resolve_poll_interval_seconds(self.config.get("update_rate", 1.0))
+        return self.history_reader.volume(start_time, end_time or datetime.now(), interface_name,
+                                          poll_interval)
 
 
     def get_in_memory_speed_history(self) -> List[SpeedDataSnapshot]:
@@ -727,9 +848,18 @@ class WidgetState(QObject):
             self._read_conns.clear()
 
         self.db_worker.stop()
-        # Only wait for the thread if it was actually running
+        # Only wait for the thread if it was actually running. Usually it drains in well under a
+        # second, but a quit right after start can land inside the v7 -> v8 migration or the first
+        # maintenance pass; the worker skips what it can once stop is set, and the wait is bounded.
+        # Never let the QThread be destroyed while it runs (Qt aborts the process): past the bound it
+        # is detached, and monitor.py exits hard - a kill the migration and the writer are tested for.
         if self.db_worker.isRunning():
-            self.db_worker.wait(2000) # Wait up to 2 seconds for the thread to finish
+            if not self.db_worker.wait(int(constants.timeouts.DB_SHUTDOWN_WAIT_MS)):
+                from netspeedtray.core.database import detach_running_worker
+                self.logger.warning("The database thread is still busy after %d ms; exiting without "
+                                    "waiting for it (an interrupted upgrade resumes at the next start).",
+                                    int(constants.timeouts.DB_SHUTDOWN_WAIT_MS))
+                detach_running_worker(self.db_worker)
 
 
     def _get_max_history_points(self) -> int:
@@ -763,7 +893,11 @@ class WidgetState(QObject):
     def apply_config(self, config: Dict[str, Any]) -> None:
         """Apply updated configuration and adjust state."""
         self.logger.debug("Applying new configuration to WidgetState...")
+        old_poll = self._poll_ms()
         self.config = config.copy()
+        if not self._read_only and self._poll_ms() != old_poll:
+            # Only the writer's gap threshold depends on it; stored bytes never do.
+            self.db_worker.enqueue_task("set_poll_ms", self._poll_ms())
         new_max_points = self._get_max_history_points()
         if new_max_points != self.max_history_points:
             self.max_history_points = new_max_points

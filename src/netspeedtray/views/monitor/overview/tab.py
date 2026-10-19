@@ -490,7 +490,9 @@ class OverviewTab(QWidget):
             today, month = (mw._hover_usage_totals() if hasattr(mw, "_hover_usage_totals")
                             else ((0.0, 0.0), (0.0, 0.0)))
             cap = mw._hover_cap_info() if hasattr(mw, "_hover_cap_info") else None
-            self._usage.set(today, month, cap)
+            note = (self._tr("USAGE_RECORDED_HISTORY_NOTE", "")
+                    if getattr(mw, "_hover_usage_reconstructed", False) else None)
+            self._usage.set(today, month, cap, history_note=note or None)
 
             self._session_lbl.setText(self._session_text(mw))
             self._context_r_lbl.setText(self._context_right_text(mw))

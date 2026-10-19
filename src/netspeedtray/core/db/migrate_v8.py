@@ -1,7 +1,7 @@
 """
-The v7 -> v8 database migration - DORMANT. Nothing in the app calls this module yet;
-``_DB_VERSION`` in ``core/database.py`` stays 7 until the switch-over (implementation step 7), when
-the database worker calls :func:`recover` and then :func:`migrate` before it opens its connection.
+The v7 -> v8 database migration - LIVE since the switch-over (step 7, ``_DB_VERSION = 8``): the
+database worker calls :func:`recover` on every launch before any connection to the live name, and
+:func:`migrate` on a v7 file before it opens its own connection (``DatabaseWorker._prepare_storage``).
 
 Design authority: ``Docs/reference/database-v8-final.md`` section 5; the execution order is step 4
 of ``Docs/reference/database-v8-implementation-steps.md``; the checklist is Gate 2 of the 2.2
@@ -131,6 +131,11 @@ class MigrationError(RuntimeError):
 
 class InsufficientSpace(MigrationError):
     """Not enough free disk to build the v8 file aside."""
+
+
+class FileInUse(MigrationError):
+    """Another connection / program holds the v7 file (its WAL could not be checkpointed away). Nothing
+    was swapped; the v7 file is untouched and still live."""
 
 
 class VerificationFailed(MigrationError):
@@ -973,7 +978,7 @@ def _checkpoint_away(db_path: Path) -> None:
     try:
         busy, _log, _done = c.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
         if busy:
-            raise MigrationError("the v7 WAL could not be checkpointed (another connection is open)")
+            raise FileInUse("the v7 WAL could not be checkpointed (another connection is open)")
     finally:
         c.close()
     if _size(_sidecars(db_path)[0]):

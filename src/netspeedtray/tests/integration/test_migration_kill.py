@@ -329,8 +329,8 @@ def test_backup_is_the_one_a_rolled_back_build_names(hot_db):
     backup, and version-aware pruning keeps it when newer backups pile up."""
     assert _migrator(hot_db).returncode == 0
     bak = _newest_v7_backup(hot_db)
-    from netspeedtray.core.database import DatabaseWorker
-    w = DatabaseWorker(hot_db / DB)
+    from netspeedtray.tests.legacy_v7_worker import LegacyV7Worker
+    w = LegacyV7Worker(hot_db / DB)
     assert w._find_newest_backup() == bak
     for i in range(3):
         newer = hot_db / f"{DB}.bak.v8_20991231_00000{i}"

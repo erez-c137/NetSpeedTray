@@ -112,9 +112,14 @@ def test_hardware_history_agrees_and_ignores_per_entity_rows(twin):
 @pytest.mark.parametrize("iface", [None, "Ethernet", "Wi-Fi 3"])
 @pytest.mark.parametrize("poll", [1.0, 2.0])
 def test_network_summary_agrees(twin, direction, iface, poll):
+    """v8 == v7 read at the interval the twin was actually captured at (1 s rows). v8 ignores the
+    caller's ``poll``: a raw row's weight in a rollup summary, and its share of coverage, are its STORED
+    measured seconds (dt_ms / 1000, step-7 note 8 - the unit net-tier sample_count already has), so a
+    poll-rate change cannot rescale the summary of history captured at another rate. v7 can only
+    multiply its row count by the live rate."""
     _, r7, r8 = twin
     for s, e in WINDOWS[2:]:
-        _same(r7.summarize_network(direction, s, e, iface, poll), r8.summarize_network(direction, s, e, iface, poll),
+        _same(r7.summarize_network(direction, s, e, iface, 1.0), r8.summarize_network(direction, s, e, iface, poll),
               f"{direction} {iface} {s}..{e}")
 
 
@@ -251,10 +256,12 @@ def test_v8_raw_volume_ignores_the_live_poll_rate(tmp_path, q_app):
     for poll in (1.0, 2.0, 10.0):
         assert r8_2.total_bandwidth(s, now, None, poll) == pytest.approx(true_2s)
         assert r7.total_bandwidth(s, now, None, poll) == pytest.approx((true_2s[0] * poll / 2, true_2s[1] * poll / 2))
-    # ... while the rates (graph, summaries) are the same B/s v7 stores, whatever the capture interval.
-    for r8 in (r8_1, r8_2):
+    # ... while the rates (graph, summaries) are the same B/s v7 stores, whatever the capture interval;
+    # coverage counts the seconds each row MEASURED, so the 2 s file is v7 read at its true 2 s rate.
+    for r8, capture_s in ((r8_1, 1.0), (r8_2, 2.0)):
         _same(r8.speed_history(s, now, None, True, "raw"), r7.speed_history(s, now, None, True, "raw"))
-        _same(r8.summarize_network("download", s, now, None, 1.0), r7.summarize_network("download", s, now, None, 1.0))
+        _same(r8.summarize_network("download", s, now, None, 1.0),
+              r7.summarize_network("download", s, now, None, capture_s))
     for c in c1 + c2:
         c.close()
 
