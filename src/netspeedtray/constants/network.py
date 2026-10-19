@@ -142,6 +142,24 @@ class LatencyConstants:
         "latency_gw": STAT_GW_TIMEOUT,
         "latency_anchor": STAT_ANCHOR_TIMEOUT,
     }
+    # The Good / OK / Slow verdict (the Overview pill and the connection check share it). A hop with
+    # no RTT at all is Slow; otherwise the worse of its ms and its loss decides.
+    VERDICT_OK_MS: Final[float] = 50.0
+    VERDICT_SLOW_MS: Final[float] = 150.0
+    VERDICT_OK_LOSS_PCT: Final[float] = 1.0
+    VERDICT_SLOW_LOSS_PCT: Final[float] = 5.0
+    VERDICT_COLORS: Final[Dict[str, str]] = {
+        "good": "#3FB950",
+        "ok": "#FFB900",
+        "slow": "#E81123",
+    }
+    # The on-demand "Check connection" (2.2 D3): this many echoes per hop, this far apart, each with
+    # its own timeout. ~4 s on a healthy link; it runs beside the standing probe, never instead of it.
+    CHECK_ECHOES: Final[int] = 20
+    CHECK_SPACING_MS: Final[int] = 200
+    CHECK_TIMEOUT_MS: Final[int] = 1000
+    # How long closing the sheet waits for the worker: one in-flight echo plus slack.
+    CHECK_STOP_WAIT_MS: Final[int] = 1500
 
 
 class UsageOdometerConstants:

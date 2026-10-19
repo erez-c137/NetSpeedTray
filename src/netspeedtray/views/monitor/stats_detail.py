@@ -27,12 +27,17 @@ from PyQt6.QtWidgets import (
     QFrame, QFileDialog, QMessageBox, QApplication,
 )
 
+from netspeedtray import constants
 from netspeedtray.utils import styles as su
 from netspeedtray.constants.styles import styles as tokens
 from netspeedtray.utils.helpers import format_speed, get_machine_id, format_duration_short
 from netspeedtray.utils.timer_utils import resolve_poll_interval_seconds
 from netspeedtray.utils import summaries as S
 from netspeedtray.utils import stats_exporter
+
+
+# latency RTT series -> the loss series of the same hop (latency_gw -> latency_gw_timeout, ...)
+_LOSS_SERIES_FOR = constants.network.latency.LOSS_SERIES_FOR
 
 
 def _tr(i18n, key: str, default: str) -> str:
@@ -240,12 +245,14 @@ class StatsDetailSheet(QDialog):
                 if secs > 0:
                     text = (f"{self._tr('STATS_DETAIL_ABOVE', 'Above')} {thr:.0f}°C "
                             f"{self._tr('STATS_DETAIL_FOR', 'for')} {self._dur(secs)}")
-        elif key == "latency_gw":
+        elif key in _LOSS_SERIES_FOR:
+            # Loss and drops come from the SAME hop as the block's RTTs: the anchor's series when the
+            # block is the public anchor, so "Internet" never shows router-only loss (2.2 D1/D3).
             bits = []
             if loss is not None and loss > 0:
                 bits.append(f"{loss:.1f}% {self._tr('STATS_DETAIL_LOSS', 'packet loss')}")
             try:
-                o = S.outage_summary(self._ws.get_hardware_history("latency_gw_timeout",
+                o = S.outage_summary(self._ws.get_hardware_history(_LOSS_SERIES_FOR[key],
                                                                    self._start, self._end))
                 if o["count"]:
                     last = o["last_start"]
@@ -325,8 +332,8 @@ class StatsDetailSheet(QDialog):
             else:
                 summ = ws.summarize_hardware(key, self._start, self._end, self._poll)
                 pairs = ws.get_hardware_history(key, self._start, self._end)
-                if key == "latency_gw":
-                    ls = ws.summarize_hardware("latency_gw_timeout", self._start, self._end, self._poll)
+                if key in _LOSS_SERIES_FOR:
+                    ls = ws.summarize_hardware(_LOSS_SERIES_FOR[key], self._start, self._end, self._poll)
                     loss = round((ls.avg or 0.0) * 100.0, 1) if ls.count else None
         except Exception as e:
             self.logger.debug("summarize(%s) failed: %s", key, e)

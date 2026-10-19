@@ -49,6 +49,11 @@ LOSS_NONE = "none"                          # neither hop lost anything
 LOSS_LOCAL = "local"                        # the gateway lost it: Wi-Fi / LAN
 LOSS_BEYOND_ROUTER = "beyond_router"        # clean gateway, lossy anchor: ISP or path
 LOSS_LOCAL_AND_BEYOND = "local_and_beyond"  # both, and the anchor lost more than the gateway explains
+LOSS_UNKNOWN = "unknown"                    # the gateway never answered: where the loss is can't be told
+
+VERDICT_GOOD = "good"
+VERDICT_OK = "ok"
+VERDICT_SLOW = "slow"
 
 
 @dataclass(frozen=True)
@@ -100,17 +105,36 @@ def headline_hop(anchor_enabled: bool) -> str:
     return HOP_ANCHOR if anchor_enabled else HOP_GATEWAY
 
 
-def attribute_loss(gw_loss_pct: float, anchor_loss_pct: Optional[float]) -> str:
+def attribute_loss(gw_loss_pct: float, anchor_loss_pct: Optional[float],
+                   gw_answered: bool = True) -> str:
     """Where the loss happened, from each hop's loss % (anchor None = not probed). Reads the GATEWAY
     first so the internet is never blamed for loss the router already explains (anchor loss includes
-    every gateway loss by construction - see the module docstring)."""
+    every gateway loss by construction - see the module docstring).
+
+    ``gw_answered`` False = the gateway gave no reply at all over the span measured (many routers,
+    mesh nodes and VPN gateways never answer ICMP). Its "loss" then proves nothing about Wi-Fi/LAN, so
+    it is never blamed: a clean anchor still reads as no loss, anything else is LOSS_UNKNOWN."""
     gw = float(gw_loss_pct or 0.0)
     an = None if anchor_loss_pct is None else float(anchor_loss_pct)
+    if not gw_answered:
+        return LOSS_NONE if an is not None and an <= 0 else LOSS_UNKNOWN
     if gw > 0:
         return LOSS_LOCAL_AND_BEYOND if an is not None and an > gw else LOSS_LOCAL
     if an is not None and an > 0:
         return LOSS_BEYOND_ROUTER
     return LOSS_NONE
+
+
+def latency_verdict(ms: Optional[float], loss_pct: Optional[float]) -> str:
+    """Good / OK / Slow for one hop - the rule the Overview pill shows and the connection check reuses.
+    No RTT at all reads Slow; otherwise the worse of the ms and the loss decides."""
+    lat = constants.network.latency
+    loss = float(loss_pct or 0.0)
+    if ms is None or loss >= lat.VERDICT_SLOW_LOSS_PCT or ms >= lat.VERDICT_SLOW_MS:
+        return VERDICT_SLOW
+    if ms >= lat.VERDICT_OK_MS or loss >= lat.VERDICT_OK_LOSS_PCT:
+        return VERDICT_OK
+    return VERDICT_GOOD
 
 
 class LatencyLossWindows:
@@ -257,13 +281,15 @@ def _sleep_pause(seconds: float) -> bool:
 
 def icmp_burst(host: str, count: int = constants.network.latency.BURST_SIZE,
                spacing_ms: int = constants.network.latency.BURST_SPACING_MS, timeout_ms: int = 1000,
-               pause: Callable[[float], bool] = _sleep_pause) -> Optional[BurstResult]:
+               pause: Callable[[float], bool] = _sleep_pause,
+               on_echo: Optional[Callable[[int, Optional[float]], None]] = None) -> Optional[BurstResult]:
     """``count`` echoes to ``host``, ``spacing_ms`` apart, each with its own ``timeout_ms``. ``pause``
     waits between echoes (``pause(0)`` is a bare check) and returns False to abandon the burst (the
     probe is stopping) - then this returns None and nothing is recorded. It is consulted BEFORE the
     DNS resolve and before EVERY echo, the first included, so once stop() is called no further packet
     leaves - in particular none to the public host. The host is resolved once per burst; a name that
-    does not resolve counts every echo as lost without sending any (what one failed ping recorded)."""
+    does not resolve counts every echo as lost without sending any (what one failed ping recorded).
+    ``on_echo(index, ms_or_None)`` is called after each echo (the connection check's live progress)."""
     if not pause(0):
         return None
     ip = _resolve_ipv4(host)
@@ -276,6 +302,8 @@ def icmp_burst(host: str, count: int = constants.network.latency.BURST_SIZE,
         ms = icmp_ping_ms(ip, timeout_ms)
         if ms is not None:
             rtts.append(ms)
+        if on_echo is not None:
+            on_echo(i, ms)
     return BurstResult(tuple(rtts), count)
 
 
@@ -326,6 +354,11 @@ class LatencyProbe(QThread):
 
     def stop(self) -> None:
         self._running = False
+
+    @property
+    def gateway(self) -> Optional[str]:
+        """The default gateway this probe last looked up (None before the first cycle / none found)."""
+        return self._gateway
 
     def _pause(self, seconds: float) -> bool:
         """Wait up to ``seconds``; wakes at once on stop(). Returns False once stopping (True = go on)."""
