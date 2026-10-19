@@ -428,7 +428,7 @@
     "CONN_HEALTH_LABEL": "接続",
     "CONN_HEALTH_STEADY": "安定",
     "CONN_HEALTH_DROPS": "切断",
-    "MONITOR_TOP_TALKERS": "通信量の多いアプリ",
+    "MONITOR_MOST_CONNECTIONS": "接続数の多いアプリ",
     "MONITOR_VIEW_ALL_APPS": "すべてのアプリ →",
     "STATS_DETAIL_DROPS": "接続切断",
     "STATS_DETAIL_LAST": "直近",

@@ -428,7 +428,7 @@
     "CONN_HEALTH_LABEL": "连接状态",
     "CONN_HEALTH_STEADY": "稳定",
     "CONN_HEALTH_DROPS": "中断",
-    "MONITOR_TOP_TALKERS": "流量排行",
+    "MONITOR_MOST_CONNECTIONS": "连接数排行",
     "MONITOR_VIEW_ALL_APPS": "查看全部 →",
     "STATS_DETAIL_DROPS": "次中断",
     "STATS_DETAIL_LAST": "最近",

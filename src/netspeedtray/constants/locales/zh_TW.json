@@ -428,7 +428,7 @@
     "CONN_HEALTH_LABEL": "連線",
     "CONN_HEALTH_STEADY": "穩定",
     "CONN_HEALTH_DROPS": "斷線",
-    "MONITOR_TOP_TALKERS": "主要流量來源",
+    "MONITOR_MOST_CONNECTIONS": "連線數最多",
     "MONITOR_VIEW_ALL_APPS": "所有應用程式 →",
     "STATS_DETAIL_DROPS": "次斷線",
     "STATS_DETAIL_LAST": "最近",

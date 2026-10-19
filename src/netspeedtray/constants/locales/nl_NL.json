@@ -428,7 +428,7 @@
     "CONN_HEALTH_LABEL": "Verbinding",
     "CONN_HEALTH_STEADY": "stabiel",
     "CONN_HEALTH_DROPS": "onderbrekingen",
-    "MONITOR_TOP_TALKERS": "Meest actief",
+    "MONITOR_MOST_CONNECTIONS": "Meeste verbindingen",
     "MONITOR_VIEW_ALL_APPS": "Alle apps →",
     "STATS_DETAIL_DROPS": "verbindingsonderbrekingen",
     "STATS_DETAIL_LAST": "laatste",

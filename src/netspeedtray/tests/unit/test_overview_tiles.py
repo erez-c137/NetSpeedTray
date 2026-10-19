@@ -194,7 +194,7 @@ def test_gpu_tile_hides_on_no_gpu(q_app):
     q_app.processEvents()
     assert not ov._tiles["gpu"].isVisibleTo(ov)
     ov.hide()
-    ov.teardown()   # showing starts the top-talkers feed thread; tear it down so it can't leak
+    ov.teardown()   # showing starts the most-connections feed thread; tear it down so it can't leak
 
 
 def test_tiles_show_live_values(q_app):

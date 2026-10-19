@@ -428,7 +428,7 @@
     "CONN_HEALTH_LABEL": "Kapcsolat",
     "CONN_HEALTH_STEADY": "stabil",
     "CONN_HEALTH_DROPS": "megszakadások",
-    "MONITOR_TOP_TALKERS": "Legnagyobb adatforgalmú alkalmazások",
+    "MONITOR_MOST_CONNECTIONS": "Legtöbb kapcsolat",
     "MONITOR_VIEW_ALL_APPS": "Minden alkalmazás →",
     "STATS_DETAIL_DROPS": "kapcsolatmegszakadások",
     "STATS_DETAIL_LAST": "utolsó",

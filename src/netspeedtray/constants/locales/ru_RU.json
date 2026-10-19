@@ -428,7 +428,7 @@
     "CONN_HEALTH_LABEL": "Подключение",
     "CONN_HEALTH_STEADY": "стабильно",
     "CONN_HEALTH_DROPS": "обрывы",
-    "MONITOR_TOP_TALKERS": "Самые активные",
+    "MONITOR_MOST_CONNECTIONS": "Больше всего подключений",
     "MONITOR_VIEW_ALL_APPS": "Все приложения →",
     "STATS_DETAIL_DROPS": "обрывы соединения",
     "STATS_DETAIL_LAST": "за",

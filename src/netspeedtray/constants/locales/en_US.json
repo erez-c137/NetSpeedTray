@@ -428,7 +428,7 @@
     "CONN_HEALTH_LABEL": "Connection",
     "CONN_HEALTH_STEADY": "steady",
     "CONN_HEALTH_DROPS": "drops",
-    "MONITOR_TOP_TALKERS": "Top talkers",
+    "MONITOR_MOST_CONNECTIONS": "Most connections",
     "MONITOR_VIEW_ALL_APPS": "All apps →",
     "STATS_DETAIL_DROPS": "connection drops",
     "STATS_DETAIL_LAST": "last",

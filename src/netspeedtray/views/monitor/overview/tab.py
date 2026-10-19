@@ -184,7 +184,7 @@ class OverviewTab(QWidget):
             self._tiles[key] = t
         root.addLayout(self._hw_grid)
 
-        # --- Bottom row: Data-usage card + Top-talkers card. Grid so it reflows side-by-side (wide) →
+        # --- Bottom row: Data-usage card + Most-connections card. Grid so it reflows side-by-side (wide) →
         # stacked (narrow). ---
         self._bottom_grid = QGridLayout()
         self._bottom_grid.setContentsMargins(0, 0, 0, 0)
@@ -245,7 +245,7 @@ class OverviewTab(QWidget):
             self._hw_grid.setColumnStretch(c, 1)
 
     def _place_bottom(self, stacked: bool) -> None:
-        """Data-usage + Top-talkers cards side by side (wide) or stacked (narrow)."""
+        """Data-usage + Most-connections cards side by side (wide) or stacked (narrow)."""
         self._bottom_grid.addWidget(self._usage, 0, 0)
         if stacked:
             self._bottom_grid.addWidget(self._busiest, 1, 0)

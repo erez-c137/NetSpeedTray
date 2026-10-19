@@ -428,7 +428,7 @@
     "CONN_HEALTH_LABEL": "Povezava",
     "CONN_HEALTH_STEADY": "stabilna",
     "CONN_HEALTH_DROPS": "prekinitve",
-    "MONITOR_TOP_TALKERS": "Najaktivnejše aplikacije",
+    "MONITOR_MOST_CONNECTIONS": "Največ povezav",
     "MONITOR_VIEW_ALL_APPS": "Vse aplikacije →",
     "STATS_DETAIL_DROPS": "prekinitve povezave",
     "STATS_DETAIL_LAST": "zadnjih",
