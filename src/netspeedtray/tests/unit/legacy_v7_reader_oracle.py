@@ -1,7 +1,9 @@
 """
 FROZEN ORACLE - verbatim copies of the eight ``WidgetState`` history readers (plus the
 ``_read_usage_snapshot`` helper) as they stood on ``main`` @ a13bf62, BEFORE they were delegated to
-``core/db/history_reader.py`` (v8 step 2).
+``core/db/history_reader.py`` (v8 step 2). Main had moved to 0092539 by the time this branch was
+rebased; those commits touched only comments inside these methods, so the oracle is still the code
+the facade replaced.
 
 Do not edit, "fix" or modernise this file. Its only job is to be the old behaviour the golden tests
 (test_history_reader_golden.py) diff the facade against. The methods are called unbound with a real
