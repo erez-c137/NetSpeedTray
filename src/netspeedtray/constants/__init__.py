@@ -27,6 +27,7 @@ from netspeedtray.constants.config import config
 from netspeedtray.constants.data import data
 from netspeedtray.constants.export import export
 from netspeedtray.constants.fonts import fonts
+from netspeedtray.constants.gpu import gpu
 from netspeedtray.constants.graph import graph
 from netspeedtray.constants.i18n import strings, I18nStrings
 from netspeedtray.constants.layout import layout
@@ -51,6 +52,7 @@ __all__ = [
     "data",
     "export",
     "fonts",
+    "gpu",
     "graph",
     "strings",
     "I18nStrings",

@@ -43,15 +43,19 @@ jobs:
 
 
 
-      - name: Build the application
+      # Deep signing: the exe the installer puts in Program Files must be signed too, not only
+      # Setup.exe and the portable zip (Smart App Control blocks an unsigned exe, #333). SignPath
+      # cannot sign inside an Inno installer, but the portable zip carries exactly the
+      # dist\NetSpeedTray bytes the installer packs (portable.marker is its only extra). So: sign the
+      # portable first, copy its signed NetSpeedTray.exe into dist\NetSpeedTray, THEN compile and
+      # sign the installer. Two approvals, one after the other - SignPath Foundation needs a manual
+      # approval per request (signpath.org/terms), and the second request cannot exist before the
+      # first is signed. Each wait polls at a fixed 20 s (build/ci/wait-signpath.ps1) and puts its
+      # approval link on the run's Summary page.
+      - name: Build the exe and the portable zip (the installer is compiled after signing)
+        env:
+          NST_SKIP_INSTALLER: "1"
         run: .\build\build.bat
-
-      - name: Upload Unsigned Installer
-        id: upload_installer
-        uses: actions/upload-artifact@v7
-        with:
-          name: installer-unsigned
-          path: dist/NetSpeedTray-*/NetSpeedTray-*-Setup.exe
 
       - name: Upload Unsigned Portable Zip
         id: upload_portable
@@ -60,26 +64,9 @@ jobs:
           name: portable-unsigned
           path: dist/NetSpeedTray-*/NetSpeedTray-Portable-*.zip
 
-      # Both signing requests are submitted WITHOUT waiting, so both approval prompts reach the
-      # owner at once. SignPath Foundation requires a manual approval per release (signpath.org/terms);
-      # submitted one after the other, the portable's prompt only appeared once the installer's was
-      # approved (2.1.5: ~21 min + ~10 min). The wait below also polls at a fixed 20 s - the action's
-      # own wait backs off to ~20 min between polls, so a late approval sat unnoticed (2.1.6 timed out).
-      - name: Submit Installer to SignPath
-        id: sign_installer
-        uses: signpath/github-action-submit-signing-request@v2
-        with:
-          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
-          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
-          project-slug: "netspeedtray"
-          artifact-configuration-slug: "netspeedtray-installer"
-          signing-policy-slug: "release-signing"
-          github-artifact-id: ${{ steps.upload_installer.outputs.artifact-id }}
-          wait-for-completion: false
-
-      - name: Submit Portable ZIP to SignPath
+      - name: Submit Portable ZIP to SignPath (approval 1 of 2)
         id: sign_portable
-        uses: signpath/github-action-submit-signing-request@v2
+        uses: signpath/github-action-submit-signing-request@v3
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
           organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
@@ -89,41 +76,60 @@ jobs:
           github-artifact-id: ${{ steps.upload_portable.outputs.artifact-id }}
           wait-for-completion: false
 
-      - name: Wait for both approvals, then download the signed artifacts
+      - name: Wait for the portable approval, then download it
         env:
           SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
           SIGNPATH_ORG: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
-          INSTALLER_ID: ${{ steps.sign_installer.outputs.signing-request-id }}
-          PORTABLE_ID: ${{ steps.sign_portable.outputs.signing-request-id }}
-          INSTALLER_URL: ${{ steps.sign_installer.outputs.signing-request-web-url }}
-          PORTABLE_URL: ${{ steps.sign_portable.outputs.signing-request-web-url }}
+          REQUEST_ID: ${{ steps.sign_portable.outputs.signing-request-id }}
+          REQUEST_URL: ${{ steps.sign_portable.outputs.signing-request-web-url }}
+        shell: pwsh
+        run: ./build/ci/wait-signpath.ps1 -RequestId $env:REQUEST_ID -WebUrl $env:REQUEST_URL -Label "Portable (approval 1 of 2)" -OutDir signed-portable -TimeoutMinutes 30
+
+      - name: Put the signed exe into the installer payload
+        shell: pwsh
+        run: ./build/ci/use-signed-exe.ps1 -SignedPortableDir signed-portable
+
+      - name: Compile the installer from the signed exe
+        shell: pwsh
+        run: ./build/ci/compile-installer.ps1
+
+      - name: Upload Unsigned Installer
+        id: upload_installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: installer-unsigned
+          path: dist/NetSpeedTray-*/NetSpeedTray-*-Setup.exe
+
+      - name: Submit Installer to SignPath (approval 2 of 2)
+        id: sign_installer
+        uses: signpath/github-action-submit-signing-request@v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: "netspeedtray"
+          artifact-configuration-slug: "netspeedtray-installer"
+          signing-policy-slug: "release-signing"
+          github-artifact-id: ${{ steps.upload_installer.outputs.artifact-id }}
+          wait-for-completion: false
+
+      - name: Wait for the installer approval, then download it
+        env:
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+          SIGNPATH_ORG: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          REQUEST_ID: ${{ steps.sign_installer.outputs.signing-request-id }}
+          REQUEST_URL: ${{ steps.sign_installer.outputs.signing-request-web-url }}
+        shell: pwsh
+        run: ./build/ci/wait-signpath.ps1 -RequestId $env:REQUEST_ID -WebUrl $env:REQUEST_URL -Label "Installer (approval 2 of 2)" -OutDir signed-installer -TimeoutMinutes 30
+
+      # The point of all of the above: install the signed Setup.exe exactly as a user would
+      # (silently, as WinGet and the Store do) and refuse to publish unless the exe that lands in
+      # Program Files has a Valid signature. The runner is throwaway; the script uninstalls anyway.
+      - name: Verify the installed exe is signed
         shell: pwsh
         run: |
-          # Links on the run page, so approving is one click from the Actions tab.
-          "## Signing requests - approve both`n`n- Installer: $env:INSTALLER_URL`n- Portable: $env:PORTABLE_URL" >> $env:GITHUB_STEP_SUMMARY
-          $api = "https://app.signpath.io/Api/v1/$env:SIGNPATH_ORG/SigningRequests"
-          $headers = @{ Authorization = "Bearer $env:SIGNPATH_API_TOKEN" }
-          $pending = [ordered]@{ "signed-installer" = $env:INSTALLER_ID; "signed-portable" = $env:PORTABLE_ID }
-          $deadline = (Get-Date).AddMinutes(45)
-          while ($pending.Count -gt 0) {
-            foreach ($dir in @($pending.Keys)) {
-              $id = $pending[$dir]
-              try { $st = Invoke-RestMethod -Uri "$api/$id/Status" -Headers $headers }
-              catch { Write-Host "$dir : status call failed ($($_.Exception.Message)), retrying"; continue }
-              if (-not $st.isFinalStatus) { Write-Host "$dir : $($st.status)"; continue }
-              if ($st.status -ne "Completed") { throw "$dir signing request $id ended as $($st.status)" }
-              $zip = "$dir.zip"
-              Invoke-WebRequest -Uri "$api/$id/SignedArtifact" -Headers $headers -OutFile $zip
-              Expand-Archive -Path $zip -DestinationPath $dir -Force
-              Remove-Item $zip
-              Write-Host "$dir : signed and downloaded"
-              $pending.Remove($dir)
-            }
-            if ($pending.Count -eq 0) { break }
-            if ((Get-Date) -gt $deadline) { throw "Timed out after 45 min waiting for: $($pending.Keys -join ', ')" }
-            Start-Sleep -Seconds 20
-          }
-          Get-ChildItem signed-installer, signed-portable -Recurse -File | ForEach-Object { Write-Host $_.FullName }
+          $setup = @(Get-ChildItem signed-installer -Recurse -Filter "NetSpeedTray-*-Setup.exe")
+          if ($setup.Count -ne 1) { throw "Expected one signed Setup.exe, found $($setup.Count)" }
+          ./build/ci/verify-installed-exe.ps1 -Setup $setup[0].FullName
 
       # --- Calculate Checksums of SIGNED files ---
       - name: Generate Checksums

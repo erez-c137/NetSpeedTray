@@ -1,7 +1,8 @@
 """
 LatencyProbe - the gateway/anchor latency sampler. ICMP + WMI gateway detection need a real network,
-so this covers the testable logic: gateway caching, and that one probe iteration emits gw/anchor/loss
-with the public anchor gated on the opt-in flag.
+so this covers the testable logic: gateway caching, and that one probe iteration emits a LatencySample
+with the public anchor gated on the opt-in flag. (The anchor-loss series and the attribution rule are
+covered in test_latency_anchor_loss.py.)
 """
 import pytest
 
@@ -24,19 +25,19 @@ def test_one_iteration_emits_gateway_and_respects_public_optin(monkeypatch):
     # public anchor OFF (privacy default): only the gateway is probed.
     p = LP.LatencyProbe({"latency_public_enabled": False})
     got = []
-    p.latency_ready.connect(lambda gw, an, to: got.append((gw, an, to)))
+    p.latency_ready.connect(lambda s: got.append((s.gw_ms, s.anchor_ms, s.gw_timed_out)))
     p._running = True
     # run a single iteration manually (don't start the thread loop)
     gw = LP.icmp_ping_ms(p._gateway_ip())
-    p.latency_ready.emit(gw, None, gw is None)
+    p.latency_ready.emit(LP.LatencySample(gw, None, gw is None))
     assert got[-1] == (3.0, None, False)
 
     # public anchor ON: anchor also measured.
     p2 = LP.LatencyProbe({"latency_public_enabled": True, "latency_public_host": "1.1.1.1"})
     got2 = []
-    p2.latency_ready.connect(lambda gw, an, to: got2.append((gw, an, to)))
+    p2.latency_ready.connect(lambda s: got2.append((s.gw_ms, s.anchor_ms, s.gw_timed_out)))
     anchor = LP.icmp_ping_ms("1.1.1.1")
-    p2.latency_ready.emit(LP.icmp_ping_ms(p2._gateway_ip()), anchor, False)
+    p2.latency_ready.emit(LP.LatencySample(LP.icmp_ping_ms(p2._gateway_ip()), anchor, False))
     assert got2[-1] == (3.0, 14.0, False)
 
 
@@ -71,8 +72,8 @@ def test_run_loop_emits_once_via_the_real_path(monkeypatch):
     p = LP.LatencyProbe({"latency_public_enabled": False})
     got = []
 
-    def on_ready(gw, an, to):
-        got.append((gw, an, to))
+    def on_ready(s):
+        got.append((s.gw_ms, s.anchor_ms, s.gw_timed_out))
         p._running = False                   # stop after the first real iteration
 
     p.latency_ready.connect(on_ready)

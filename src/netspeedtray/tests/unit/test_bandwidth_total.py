@@ -59,16 +59,6 @@ def test_totals_scale_with_poll_interval(state_with_db):
     assert down == pytest.approx(1200.0)
 
 
-def test_smart_mode_uses_smart_interval_two_seconds(state_with_db):
-    """SMART (-1.0) samples every SMART_MODE_INTERVAL_MS = 2000 ms, NOT a nominal 1 s (2.1.5 item 9).
-    The old expectation (300.0, '# nominal 1s') pinned the wrong assumption as spec - totals must
-    scale by the interval the sampler actually runs at."""
-    state_with_db.config["update_rate"] = -1.0  # SMART/adaptive
-    up, down = _totals(state_with_db)
-    assert up == pytest.approx(600.0)   # 3 × 100 × 2s (SMART_MODE_INTERVAL_MS)
-    assert down == pytest.approx(1200.0)
-
-
 def test_minute_tier_is_poll_rate_independent(state_with_db):
     """A minute/hour rollup bucket represents a FIXED 60/3600s span. Changing the poll rate must NOT
     rescale historical rollup data (the audit's rate-change over-report: 1s→5s 5×-ing months of data)."""

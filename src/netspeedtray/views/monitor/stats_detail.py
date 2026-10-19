@@ -27,12 +27,19 @@ from PyQt6.QtWidgets import (
     QFrame, QFileDialog, QMessageBox, QApplication,
 )
 
+from netspeedtray import constants
 from netspeedtray.utils import styles as su
 from netspeedtray.constants.styles import styles as tokens
 from netspeedtray.utils.helpers import format_speed, get_machine_id, format_duration_short
 from netspeedtray.utils.timer_utils import resolve_poll_interval_seconds
 from netspeedtray.utils import summaries as S
 from netspeedtray.utils import stats_exporter
+
+
+# latency RTT series -> the loss series of the same hop (latency_gw -> latency_gw_timeout, ...)
+_LOSS_SERIES_FOR = constants.network.latency.LOSS_SERIES_FOR
+_ANCHOR_KEY = "latency_anchor"
+_GATEWAY_KEY = "latency_gw"
 
 
 def _tr(i18n, key: str, default: str) -> str:
@@ -57,7 +64,7 @@ def run_interactive_export(parent, widget_state, start: datetime, end: datetime,
         return
     if not zip_path.lower().endswith(".zip"):
         zip_path += ".zip"
-    # NOT `or 1.0`: the SMART sentinel (-1.0) is truthy and samples at 2.0 s (2.1.5 item 9).
+    # Seconds per sample for coverage / volume math: the shared resolver, never a local `or 1.0`.
     poll = resolve_poll_interval_seconds(config.get("update_rate", 1.0))
     try:
         zip_path = stats_exporter.export_window_zip(
@@ -101,10 +108,10 @@ class StatsDetailSheet(QDialog):
         self._i18n = i18n
         self._app_version = app_version
         self.logger = logging.getLogger("NetSpeedTray.StatsDetailSheet")
-        # NOT `or 1.0`: the SMART sentinel (-1.0) is truthy and samples at 2.0 s; leaking it
-        # zeroed coverage_pct on every stats sheet (2.1.5 item 9).
+        # Seconds per sample for coverage / volume math: the shared resolver, never a local `or 1.0`.
         self._poll = resolve_poll_interval_seconds(config.get("update_rate", 1.0))
         self._copy_text_parts: List[str] = []
+        self._loss_summ: Dict[str, Any] = {}   # latency key -> WindowSummary of its loss series
 
         self.setModal(True)
         self.setWindowTitle(self._tr("STATS_DETAIL_TITLE", "Statistics"))
@@ -135,9 +142,20 @@ class StatsDetailSheet(QDialog):
         key, label, unit, kind = subj["key"], subj["label"], subj["unit"], subj["kind"]
         summ, pairs, loss = self._summarize(key, kind)
 
+        # The internet anchor's RTT series only gets a row on a successful echo, so a fully blocked or
+        # just-enabled anchor has loss rows and no RTT rows - keep that block (loss and drops, RTT cells
+        # "-") instead of dropping it while the pill says 100% loss. Only when the anchor has neither
+        # series does the block fall back to the router, under the router's own label.
+        if key == _ANCHOR_KEY and summ.count == 0 and loss is None:
+            g_summ, g_pairs, g_loss = self._summarize(_GATEWAY_KEY, kind)
+            if g_summ.count or g_loss is not None:
+                key, summ, pairs, loss = _GATEWAY_KEY, g_summ, g_pairs, g_loss
+                label = self._tr("CHECK_CONN_ROUTER", "Router")
+        loss_only = summ.count == 0 and key in _LOSS_SERIES_FOR and loss is not None
+
         # A secondary subject (e.g. CPU temperature when there's no sensor) is dropped when it has no
         # data, rather than showing an empty block - but the primary metric always renders.
-        if summ.count == 0 and not subj.get("primary"):
+        if summ.count == 0 and not subj.get("primary") and not loss_only:
             return None
 
         card = QFrame()
@@ -156,13 +174,13 @@ class StatsDetailSheet(QDialog):
             ml.setStyleSheet(f"color: {c['text_primary']}; background: transparent;")
             head.addWidget(ml)
         head.addStretch(1)
-        badge = QLabel(self._coverage_text(summ))
+        badge = QLabel(self._coverage_text(self._loss_summ.get(key, summ) if loss_only else summ))
         badge.setFont(su.font(tokens.TYPE_CAPTION))
         badge.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
         head.addWidget(badge)
         box.addLayout(head)
 
-        if summ.count == 0:
+        if summ.count == 0 and not loss_only:
             empty = QLabel(self._tr("STATS_DETAIL_NO_DATA", "Not enough history for this period yet."))
             empty.setFont(su.font(tokens.TYPE_BODY))
             empty.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
@@ -191,7 +209,7 @@ class StatsDetailSheet(QDialog):
             f"{label} - {self._win_label}  [{self._coverage_text(summ)}]\n  " +
             "  ".join(f"{cap}: {val}" for cap, val in cells))
 
-        if not summ.exact:
+        if not summ.exact and not loss_only:
             note = QLabel(self._tr("STATS_DETAIL_ROLLUP_NOTE",
                                    "Median and percentiles need the last 24 hours (per-second data)."))
             note.setFont(su.font(tokens.TYPE_CAPTION))
@@ -241,12 +259,14 @@ class StatsDetailSheet(QDialog):
                 if secs > 0:
                     text = (f"{self._tr('STATS_DETAIL_ABOVE', 'Above')} {thr:.0f}°C "
                             f"{self._tr('STATS_DETAIL_FOR', 'for')} {self._dur(secs)}")
-        elif key == "latency_gw":
+        elif key in _LOSS_SERIES_FOR:
+            # Loss and drops come from the SAME hop as the block's RTTs: the anchor's series when the
+            # block is the public anchor, so "Internet" never shows router-only loss (2.2 D1/D3).
             bits = []
             if loss is not None and loss > 0:
                 bits.append(f"{loss:.1f}% {self._tr('STATS_DETAIL_LOSS', 'packet loss')}")
             try:
-                o = S.outage_summary(self._ws.get_hardware_history("latency_gw_timeout",
+                o = S.outage_summary(self._ws.get_hardware_history(_LOSS_SERIES_FOR[key],
                                                                    self._start, self._end))
                 if o["count"]:
                     last = o["last_start"]
@@ -326,8 +346,9 @@ class StatsDetailSheet(QDialog):
             else:
                 summ = ws.summarize_hardware(key, self._start, self._end, self._poll)
                 pairs = ws.get_hardware_history(key, self._start, self._end)
-                if key == "latency_gw":
-                    ls = ws.summarize_hardware("latency_gw_timeout", self._start, self._end, self._poll)
+                if key in _LOSS_SERIES_FOR:
+                    ls = ws.summarize_hardware(_LOSS_SERIES_FOR[key], self._start, self._end, self._poll)
+                    self._loss_summ[key] = ls
                     loss = round((ls.avg or 0.0) * 100.0, 1) if ls.count else None
         except Exception as e:
             self.logger.debug("summarize(%s) failed: %s", key, e)

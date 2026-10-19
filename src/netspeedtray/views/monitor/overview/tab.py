@@ -56,6 +56,8 @@ _ACCENTS = {
 _REFRESH_MS = 1000        # live current-value tick
 _HISTORY_MS = 6000        # DB window reload (sparklines + avg/peak) - cheap, off the 1 Hz path
 _NARROW_BP = 760          # below this content width: reflow to the compact layout (2×2 tiles, stacked cards)
+# latency_probe.latency_verdict code -> (i18n key, English fallback)
+_VERDICT_KEYS = {"good": ("LATENCY_GOOD", "Good"), "ok": ("LATENCY_OK", "OK"), "slow": ("LATENCY_SLOW", "Slow")}
 
 
 class OverviewTab(QWidget):
@@ -141,6 +143,7 @@ class OverviewTab(QWidget):
         # --- Network hero (the headline) ---
         self._hero = NetworkHero(i18n, accent("down"), accent("up"))
         self._hero.clicked.connect(lambda: self._open_detail("network"))
+        self._hero.check_connection_requested.connect(self._open_connection_check)
         root.addWidget(self._hero)
 
         # --- Thin context strip: session uptime + totals (left), and on the right the one thing you
@@ -184,7 +187,7 @@ class OverviewTab(QWidget):
             self._tiles[key] = t
         root.addLayout(self._hw_grid)
 
-        # --- Bottom row: Data-usage card + Top-talkers card. Grid so it reflows side-by-side (wide) →
+        # --- Bottom row: Data-usage card + Most-connections card. Grid so it reflows side-by-side (wide) →
         # stacked (narrow). ---
         self._bottom_grid = QGridLayout()
         self._bottom_grid.setContentsMargins(0, 0, 0, 0)
@@ -245,7 +248,7 @@ class OverviewTab(QWidget):
             self._hw_grid.setColumnStretch(c, 1)
 
     def _place_bottom(self, stacked: bool) -> None:
-        """Data-usage + Top-talkers cards side by side (wide) or stacked (narrow)."""
+        """Data-usage + Most-connections cards side by side (wide) or stacked (narrow)."""
         self._bottom_grid.addWidget(self._usage, 0, 0)
         if stacked:
             self._bottom_grid.addWidget(self._busiest, 1, 0)
@@ -348,8 +351,7 @@ class OverviewTab(QWidget):
             self._render()
             return
         start, end, is_session = self._window()
-        # NOT `or 1.0`: the SMART sentinel (-1.0) is truthy and samples at 2.0 s; leaking it
-        # zeroed coverage_pct on every Overview summary (2.1.5 item 9).
+        # Seconds per sample for coverage / volume math: the shared resolver, never a local `or 1.0`.
         poll = resolve_poll_interval_seconds(self._config.get("update_rate", 1.0))
         try:
             if is_session:
@@ -587,35 +589,52 @@ class OverviewTab(QWidget):
 
     def _latency_html(self, mw) -> str:
         """Latency pill: a color-coded plain word (Good/OK/Slow - the panel insisted avg-ms is a bad
-        headline) with the ms + loss% as quiet subtext. Internet (public anchor) latency wins over the
-        gateway when the user opted into the public probe."""
+        headline) with the ms + loss% as quiet subtext. Both follow the widget's HEADLINE hop: the
+        internet anchor when the user opted into the public probe, the gateway otherwise
+        (`latency_loss` is already that hop's loss; latency_probe.headline_hop is the rule).
+        The ms is the hop's most recent successful RTT within its live window, so one lost ping does
+        not flip the pill to "Slow"; the loss is None (no subtext) until the window is long enough."""
         gw = getattr(mw, "latency_gw", None)
         anchor = getattr(mw, "latency_anchor", None)
-        loss = float(getattr(mw, "latency_loss", 0.0) or 0.0)
-        ms = anchor if anchor is not None else gw
+        raw_loss = getattr(mw, "latency_loss", None)
+        loss_known = raw_loss is not None
+        loss = float(raw_loss or 0.0)
+        if getattr(mw, "latency_headline_hop", None) in ("anchor", "gateway"):
+            # Never the router's ms under "Internet": this is the headline hop's own last good RTT.
+            ms = getattr(mw, "latency_headline_ms", None)
+        else:
+            ms = anchor if anchor is not None else gw   # no hop reported (no sample yet / old caller)
         if ms is None and loss <= 0:
             return ""   # no probe data yet
-        if ms is None or loss >= 5 or (ms is not None and ms >= 150):
-            word, color = self._tr("LATENCY_SLOW", "Slow"), "#E81123"
-        elif (ms is not None and ms >= 50) or loss >= 1:
-            word, color = self._tr("LATENCY_OK", "OK"), "#FFB900"
-        else:
-            word, color = self._tr("LATENCY_GOOD", "Good"), "#3FB950"
+        from netspeedtray.core.latency_probe import latency_verdict   # the rule the check reuses
+        verdict = latency_verdict(ms, loss)
+        word = self._tr(_VERDICT_KEYS[verdict][0], _VERDICT_KEYS[verdict][1])
+        color = constants.network.latency.VERDICT_COLORS[verdict]
         sub = su.semantic_colors()["text_secondary"]
         out = f"<span style='color:{color};'>{self._tr('LATENCY_LABEL', 'Internet')}: {word}</span>"
         detail = []
         if ms is not None:
             detail.append(f"{ms:.0f} ms")
-        if loss > 0:
-            detail.append(self._tr("MONITOR_LATENCY_LOSS_FMT", "{pct}% loss").format(pct=f"{loss:.0f}"))
+        if loss_known and loss > 0:
+            # Bursts resolve 0.6% steps: below 1% keep the decimal, or a "Good" verdict would read
+            # "1% loss" - the very figure that makes it "OK".
+            pct = self._num(loss) if loss < 1 else f"{loss:.0f}"   # _num: the locale's separator
+            detail.append(self._tr("MONITOR_LATENCY_LOSS_FMT", "{pct}% loss").format(pct=pct))
         if detail:
             out += f"  <span style='color:{sub};'>· {' · '.join(detail)}</span>"
         return out
 
+    def _latency_detail_key(self) -> str:
+        """The latency series the "Internet" block describes - the HEADLINE hop, like the pill: the
+        public anchor when the user opted into it, the gateway otherwise (latency_probe.headline_hop)."""
+        from netspeedtray.core.latency_probe import HOP_ANCHOR, headline_hop
+        hop = headline_hop(bool(self._config.get("latency_public_enabled", False)))
+        return "latency_anchor" if hop == HOP_ANCHOR else "latency_gw"
+
     def _detail_subjects(self, metric: str):
         """The subject list a card opens its Stats-detail sheet with. Hardware cards lead with their
         utilization and add temperature/power when a sensor reported them; network leads with both
-        directions plus gateway latency. (Empty secondary blocks drop out inside the sheet.)"""
+        directions plus the headline hop's latency. (Empty secondary blocks drop out inside the sheet.)"""
         cpu = self._tr("ORDER_TYPE_CPU", "CPU")
         gpu = self._tr("ORDER_TYPE_GPU", "GPU")
         if metric == "network":
@@ -624,7 +643,7 @@ class OverviewTab(QWidget):
                  "unit": "Mbps", "kind": "net_down", "primary": True},
                 {"key": "upload", "label": self._tr("UPLOAD_LABEL", "Upload"),
                  "unit": "Mbps", "kind": "net_up", "primary": True},
-                {"key": "latency_gw", "label": self._tr("LATENCY_LABEL", "Internet"),
+                {"key": self._latency_detail_key(), "label": self._tr("LATENCY_LABEL", "Internet"),
                  "unit": "ms", "kind": "hw"},
             ]
         if metric == "cpu":
@@ -670,6 +689,11 @@ class OverviewTab(QWidget):
             sheet.exec()
         except Exception as e:
             self.logger.error("Could not open stats detail: %s", e, exc_info=True)
+
+    def _open_connection_check(self) -> None:
+        """The hero's "Check connection" action - the one-shot report sheet (2.2 D3)."""
+        from netspeedtray.views.monitor.connection_check import open_connection_check
+        open_connection_check(self._main_widget, self._config, self._i18n, parent=self.window())
 
     def _hw_sub(self, temp: Optional[float], power: Optional[float]) -> str:
         """CPU/GPU sub-line: temperature and (when collected) power, e.g. "62°C  ·  35 W"."""

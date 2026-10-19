@@ -78,6 +78,11 @@ def mock_i18n():
     i18n.GRAPH_NOTE_TEXT = "Note"
     i18n.HISTORY_DURATION_LABEL = "History"
     i18n.GRAPH_OPACITY_LABEL = "Opacity"
+    i18n.GRAPH_FIXED_SCALE_LABEL = "Fixed Graph Scale"
+    i18n.GRAPH_FIXED_SCALE_DESC = "Scale to your plan speed"
+    i18n.GRAPH_SCALE_HEADROOM_LABEL = "Headroom"
+    i18n.GRAPH_SHOW_CEILING_LABEL = "Show Plan Speed Line"
+    i18n.GRAPH_SHOW_CEILING_DESC = "Needs headroom above 0%"
     i18n.UNIT_TYPE_LABEL = "Unit Type"
     i18n.UNIT_TYPE_BITS_DECIMAL = "Bits (Dec)"
     i18n.UNIT_TYPE_BITS_BINARY = "Bits (Bin)"
@@ -102,6 +107,9 @@ def mock_i18n():
     i18n.MONITORING_MODE_SELECTED_TOOLTIP = "Selected Tooltip"
     i18n.EXPORT_ERROR_LOG_TOOLTIP = "Export Log"
     i18n.NO_INTERFACES_FOUND = "None"
+    i18n.INTERFACE_GROUP_PHYSICAL = "Physical adapters"
+    i18n.INTERFACE_GROUP_VIRTUAL = "Virtual adapters and VPNs"
+    i18n.INTERFACE_ACTIVE_CONNECTION = "Active connection"
     i18n.TROUBLESHOOTING_GROUP = "Troubleshooting"
     i18n.EXPORT_ERROR_LOG_BUTTON = "Export"
     i18n.DISPLAY_FORMAT_GROUP = "Data Format"
@@ -134,7 +142,6 @@ def mock_i18n():
     i18n.MONITORING_MODE_SELECTED_SUBTITLE = "Choose specific interfaces from the list below"
 
     # For GeneralPage update rate slider
-    i18n.SMART_MODE_LABEL = "Smart"
     i18n.UPDATE_MODE_AGGRESSIVE_LABEL = "Aggressive"
     i18n.UPDATE_MODE_BALANCED_LABEL = "Balanced"
     i18n.UPDATE_MODE_EFFICIENT_LABEL = "Efficient"
@@ -177,16 +184,11 @@ def test_general_page(q_app, mock_i18n, mock_callback):
     assert "free_move" not in settings
     assert "tray_offset_x" not in settings
 
-    # Test with Smart mode (update_rate = -1.0)
-    config_smart = {
-        "language": "en_US",
-        "update_rate": -1.0,  # SMART sentinel
-    }
-
-    page.load_settings(config_smart, is_startup_enabled=False)
-    settings_smart = page.get_settings()
-    assert settings_smart["update_rate"] == -1.0  # Smart mode
-    assert settings_smart["language"] == "en_US"
+    # The slowest preset round-trips too (10 s must not clamp to 5 s on a renumbered slider).
+    page.load_settings({"language": "en_US", "update_rate": 10.0}, is_startup_enabled=False)
+    settings_slow = page.get_settings()
+    assert settings_slow["update_rate"] == 10.0
+    assert settings_slow["language"] == "en_US"
 
 
 def test_language_none_round_trips_as_auto_detect(q_app, mock_i18n, mock_callback):
@@ -446,6 +448,52 @@ def test_arrow_colors_round_trip(q_app, mock_i18n, mock_callback):
     out = page.get_settings()
     assert out["use_custom_arrow_colors"] is False
     assert out["arrow_up_color"] == "#ABCDEF"
+
+
+def test_graph_fixed_scale_defaults_off(q_app, mock_i18n, mock_callback):
+    """A config from before the setting existed loads as automatic, with the sub-options hidden."""
+    page = AppearancePage(mock_i18n, mock_callback, MagicMock(), MagicMock())
+    page.load_settings({})
+    assert page.graph_fixed_scale.isChecked() is False
+    assert page.graph_scale_container.isVisibleTo(page) is False
+    out = page.get_settings()
+    assert out["graph_fixed_scale"] is False
+    assert out["graph_scale_headroom"] == constants.config.defaults.DEFAULT_GRAPH_SCALE_HEADROOM
+    assert out["graph_show_ceiling"] is constants.config.defaults.DEFAULT_GRAPH_SHOW_CEILING
+
+
+def test_graph_fixed_scale_round_trip(q_app, mock_i18n, mock_callback):
+    """Toggle, headroom and plan-speed line persist; headroom + line only show with the fixed scale on."""
+    page = AppearancePage(mock_i18n, mock_callback, MagicMock(), MagicMock())
+    page.load_settings({"graph_fixed_scale": True, "graph_scale_headroom": 30, "graph_show_ceiling": False})
+    assert page.graph_scale_container.isVisibleTo(page) is True
+    out = page.get_settings()
+    assert out["graph_fixed_scale"] is True
+    assert out["graph_scale_headroom"] == 30
+    assert out["graph_show_ceiling"] is False
+
+    page.graph_fixed_scale.setChecked(False)
+    assert page.graph_scale_container.isVisibleTo(page) is False
+
+
+def test_plan_speed_line_grayed_out_at_zero_headroom(q_app, mock_i18n, mock_callback):
+    """At 0% headroom the plan speed is the graph's top edge and no line is drawn, so the line toggle is
+    unavailable - and comes back as soon as there is headroom to show it in. Its saved value survives."""
+    page = AppearancePage(mock_i18n, mock_callback, MagicMock(), MagicMock())
+    page.load_settings({"graph_fixed_scale": True, "graph_scale_headroom": 0, "graph_show_ceiling": True})
+    assert page._ceiling_card.isEnabled() is False
+    assert page.get_settings()["graph_show_ceiling"] is True
+
+    page.graph_scale_headroom.setCurrentIndex(page.graph_scale_headroom.findData(20))
+    assert page._ceiling_card.isEnabled() is True
+    assert page.get_settings()["graph_scale_headroom"] == 20
+
+
+def test_graph_headroom_outside_the_choices_falls_back_to_default(q_app, mock_i18n, mock_callback):
+    """A hand-edited headroom the combo doesn't offer must not leave the combo blank."""
+    page = AppearancePage(mock_i18n, mock_callback, MagicMock(), MagicMock())
+    page.load_settings({"graph_fixed_scale": True, "graph_scale_headroom": 25})
+    assert page.get_settings()["graph_scale_headroom"] == constants.config.defaults.DEFAULT_GRAPH_SCALE_HEADROOM
 
 
 def test_arrow_color_widgets_follow_the_dialog_naming_convention(q_app, mock_i18n, mock_callback):

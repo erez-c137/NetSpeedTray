@@ -300,3 +300,47 @@ def test_labels_widen_the_segment_by_exactly_the_shared_label_cell(renderer):
     from netspeedtray.utils.helpers import memory_label_width
     off, on = _content_width(renderer, False), _content_width(renderer, True)
     assert on - off == memory_label_width(renderer.metrics), (off, on)
+
+
+def test_memory_label_positions_stay_fixed_across_value_width_changes(renderer):
+    """RAM/VRAM labels must not move when the live memory value gains a digit."""
+    from unittest.mock import patch
+
+    renderer.config.hardware_label_style = "text"
+    renderer.config.show_memory_labels = True
+
+    def label_positions(ram_used, vram_used):
+        img = QImage(420, 52, QImage.Format.Format_ARGB32)
+        img.fill(QColor(0, 0, 0, 0))
+        painter = QPainter(img)
+
+        positions = {}
+        real = QPainter.drawText
+
+        def spy(self, *args):
+            if args and isinstance(args[-1], str) and args[-1] in ("RAM", "VRAM"):
+                positions[args[-1]] = args[0]
+            return real(self, *args)
+
+        with patch.object(QPainter, "drawText", spy):
+            renderer.draw_hardware_stats(
+                painter,
+                cpu_usage=8.0,
+                gpu_usage=30.0,
+                width=420,
+                height=52,
+                config=renderer.config,
+                ram_info=(ram_used, 125.6),
+                vram_info=(vram_used, 31.8),
+                layout_mode="horizontal",
+            )
+
+        painter.end()
+        return positions
+
+    single_digit = label_positions(9.9, 9.9)
+    double_digit = label_positions(10.0, 10.0)
+
+    assert single_digit["RAM"] == double_digit["RAM"]
+    assert single_digit["VRAM"] == double_digit["VRAM"]
+    assert single_digit["RAM"] == single_digit["VRAM"]

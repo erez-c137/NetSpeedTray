@@ -9,8 +9,7 @@ import sys
 import time
 from ctypes import wintypes
 from datetime import datetime
-from collections import deque
-from typing import Any, Deque, Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 # --- Third-Party Imports ---
 import win32api
@@ -27,7 +26,6 @@ from PyQt6.QtWidgets import QApplication, QMenu, QMessageBox, QWidget
 # --- First-Party (Local) Imports ---
 from netspeedtray import constants
 from netspeedtray.core.controller import StatsController as CoreController
-from netspeedtray.core.timer_manager import SpeedTimerManager
 from netspeedtray.core.monitor_thread import StatsMonitorThread
 from netspeedtray.core.tray_manager import TrayIconManager
 from netspeedtray.core.widget_state import WidgetState as CoreWidgetState
@@ -96,8 +94,6 @@ except AttributeError:  # pre-Win7, unlikely
 class NetworkSpeedWidget(QWidget):
     """Main widget for displaying network speeds near the Windows system tray."""
 
-    MIN_UPDATE_INTERVAL = constants.config.defaults.MINIMUM_UPDATE_RATE
-
 
     def __init__(self, taskbar_height: int = constants.taskbar.taskbar.DEFAULT_HEIGHT, config: Optional[Dict[str, Any]] = None, i18n: Optional[constants.i18n.I18nStrings] = None, parent: QObject | None = None) -> None:
         """Initialize the NetworkSpeedTray with core components and UI setup."""
@@ -130,7 +126,6 @@ class NetworkSpeedWidget(QWidget):
 
         # --- Declare all instance attributes for clarity ---
         self.widget_state: CoreWidgetState
-        self.timer_manager: SpeedTimerManager
         self.controller: CoreController
         self.renderer: CoreWidgetRenderer
         self.position_manager: PositionManager
@@ -170,8 +165,18 @@ class NetworkSpeedWidget(QWidget):
         self.system_power: Optional[float] = None   # true whole-system W (RAPL PSYS / battery), if available
         self.latency_gw: Optional[float] = None      # gateway RTT ms (LAN latency); None = timeout
         self.latency_anchor: Optional[float] = None  # public-anchor RTT ms (internet latency); opt-in
-        self.latency_loss: float = 0.0               # rolling gateway loss% over recent probes
-        self._latency_window: Deque[bool] = deque(maxlen=40)   # recent timed-out flags for live loss%
+        # Live loss% (~2 min) per hop, and the HEADLINE loss: the anchor's when the public probe is on,
+        # the gateway's otherwise (latency_probe.headline_hop) - the figure the Overview pill shows.
+        # Loss values are None until the hop's window holds constants.network.latency.LOSS_MIN_SAMPLES.
+        self.latency_loss: Optional[float] = None
+        self.latency_loss_gw: Optional[float] = None
+        self.latency_loss_anchor: Optional[float] = None
+        self.latency_headline_hop: Optional[str] = None   # "anchor" / "gateway"; None before a sample
+        # Most recent successful RTT of the headline hop within its live window - the pill's ms, so one
+        # lost ping does not blank it (and the router's ms never stands in for the internet's).
+        self.latency_headline_ms: Optional[float] = None
+        from netspeedtray.core.latency_probe import LatencyLossWindows
+        self._latency_loss_windows = LatencyLossWindows()
         self.ram_used: Optional[float] = None
         self.ram_total: Optional[float] = None
         self.vram_used: Optional[float] = None
@@ -285,43 +290,26 @@ class NetworkSpeedWidget(QWidget):
         """
         Initialize non-UI core logic components.
 
-        Sets up WidgetState, SpeedTimerManager, StatsController, and WidgetRenderer.
+        Sets up WidgetState, the stats monitor thread, StatsController, and WidgetRenderer.
         """
         self.logger.debug("Initializing core components...")
         if not self.config:
             raise RuntimeError("Cannot initialize core: Config missing")
         try:
             self.widget_state = CoreWidgetState(self.config)
-            self.timer_manager = SpeedTimerManager(self.config, parent=self)
             
             # Background Monitoring Thread
-            # One shared resolver decides the sampling interval for SMART (-1.0) and the legacy
-            # 0 sentinel, so the sampler, the exports and the raw-tier volume math can never
-            # disagree (review C6/C7). The old speed_display_mode=='auto' fallback is gone: the
-            # Settings dialog already refuses to save that combination, so it only ever fired on
-            # hand-edited configs - and silently sampled at 1.0 s while every seconds-per-sample
-            # computation assumed 2.0 s, doubling raw-tier volume. The 0 sentinel previously fell
-            # into the fixed-rate clamp and sampled at 0.1 s - the #273 bug shape, at startup.
-            cfg_rate = self.config.get("update_rate", constants.config.defaults.DEFAULT_UPDATE_RATE)
-            try:
-                cfg_rate = float(cfg_rate)
-            except (TypeError, ValueError):
-                cfg_rate = float(constants.config.defaults.DEFAULT_UPDATE_RATE)
-            if cfg_rate <= 0:
-                effective_interval = resolve_poll_interval_seconds(cfg_rate)
-            else:
-                # Fixed interval: Clamp to allowed min/max
-                effective_interval = max(constants.config.defaults.MINIMUM_UPDATE_RATE,
-                                         min(cfg_rate, constants.timers.MAXIMUM_UPDATE_RATE_SECONDS))
-
+            # The monitor thread's sleep loop is the only sampling pacer. The rate is one of the
+            # 1/2/5/10 s presets (the config migration put it there); the shared resolver is the same
+            # clamp every seconds-per-sample computation uses, so they can never disagree.
+            effective_interval = resolve_poll_interval_seconds(
+                self.config.get("update_rate", constants.config.defaults.DEFAULT_UPDATE_RATE))
             self.monitor_thread = StatsMonitorThread(interval=effective_interval, config=self.config)
             
             self.controller = CoreController(config=self.config, widget_state=self.widget_state)
             self.controller.set_view(self)
             self.renderer = CoreWidgetRenderer(self.config, self.i18n)
             
-            # Note: We no longer start timer_manager for speeds; monitor_thread drives them.
-            # self.timer_manager.start_timer() 
             self.logger.debug("Core components initialized; monitor thread ready.")
         except Exception as e:
             self.logger.error("Failed to initialize core components: %s", e, exc_info=True)
@@ -524,23 +512,35 @@ class NetworkSpeedWidget(QWidget):
         except Exception as e:
             self.logger.error(f"Error showing unfold flyout: {e}", exc_info=True)
 
-    def _on_latency(self, gw_ms, anchor_ms, gw_timed_out: bool) -> None:
-        """A latency sample arrived (main thread, queued from the probe thread). Update the live
-        attributes + rolling loss%, and persist gateway/anchor RTT + the timeout flag so the Monitor's
-        window loss% (the ISP-dispute figure) is honest."""
-        self.latency_gw = gw_ms
-        self.latency_anchor = anchor_ms
-        self._latency_window.append(bool(gw_timed_out))
-        if self._latency_window:
-            self.latency_loss = round(sum(self._latency_window) / len(self._latency_window) * 100.0, 1)
+    def _on_latency(self, sample) -> None:
+        """A LatencySample arrived (main thread, queued from the probe thread). Update the live
+        attributes + each hop's rolling loss%, and persist both RTTs and both hops' loss fractions so the
+        Monitor's window loss% (the ISP-dispute figure) is honest for the internet, not just the router."""
+        from netspeedtray.core.latency_probe import HOP_ANCHOR, headline_hop
+        lat = constants.network.latency
+        self.latency_gw = sample.gw_ms
+        self.latency_anchor = sample.anchor_ms
+        windows = self._latency_loss_windows
+        windows.add(sample)
+        self.latency_loss_gw = windows.gw_loss
+        self.latency_loss_anchor = windows.anchor_loss
+        self.latency_headline_hop = headline_hop(sample.anchor_enabled)
+        self.latency_loss = (self.latency_loss_anchor if self.latency_headline_hop == HOP_ANCHOR
+                             else self.latency_loss_gw)
+        self.latency_headline_ms = windows.last_ms(self.latency_headline_hop)
         ws = getattr(self, "widget_state", None)
         if ws is not None:
             try:
-                if gw_ms is not None:
-                    ws.add_hardware_stat("latency_gw", float(gw_ms))
-                if anchor_ms is not None:
-                    ws.add_hardware_stat("latency_anchor", float(anchor_ms))
-                ws.add_hardware_stat("latency_gw_timeout", 1.0 if gw_timed_out else 0.0)
+                if sample.gw_ms is not None:
+                    ws.add_hardware_stat("latency_gw", float(sample.gw_ms))
+                if sample.anchor_ms is not None:
+                    ws.add_hardware_stat("latency_anchor", float(sample.anchor_ms))
+                # The loss series: lost / sent of this cycle's burst (0, .25, .5, .75, 1). Old 0/1 rows
+                # (one echo per cycle) mean the same thing - the share of that cycle's probes lost - so
+                # every reader (rollup AVG, outage_summary's >= 0.5, the exporter) takes both unchanged.
+                ws.add_hardware_stat(lat.STAT_GW_TIMEOUT, float(sample.gw_loss_fraction))
+                if sample.anchor_enabled:
+                    ws.add_hardware_stat(lat.STAT_ANCHOR_TIMEOUT, float(sample.anchor_loss_fraction))
             except Exception:
                 pass
 
@@ -795,7 +795,7 @@ class NetworkSpeedWidget(QWidget):
         stable, debounced visibility management.
         """
         self.logger.debug("Setting up signal connections and WinEventHooks...")
-        if not all([self.widget_state, self.timer_manager, self.controller]):
+        if not all([self.widget_state, self.controller]):
             raise RuntimeError("Core components missing during signal connection setup.")
         try:
             # Connect core component signals
@@ -997,6 +997,12 @@ class NetworkSpeedWidget(QWidget):
     _HOVER_CARD_DELAY_MS = 350
     # Cache window for the (today, this-month) DB totals so rapid hovers don't hammer the DB.
     _HOVER_USAGE_TTL_SEC = 30.0
+
+    def invalidate_usage_cache(self) -> None:
+        """Drop the hover card's cached today/this-month totals so the next hover re-reads them
+        (after Delete all history - otherwise it shows deleted usage for up to the TTL)."""
+        self._hover_usage_cache = None
+        self._hover_usage_cache_ts = 0.0
 
     def enterEvent(self, event) -> None:
         """On hover, arm the usage card (shown after a short rest, positioned above the taskbar).
@@ -1429,7 +1435,8 @@ class NetworkSpeedWidget(QWidget):
                     version=constants.app.VERSION,
                     i18n=self.i18n,
                     available_interfaces=self.get_unified_interface_list(),
-                    is_startup_enabled=self.is_startup_enabled()
+                    is_startup_enabled=self.is_startup_enabled(),
+                    primary_interface=self._primary_interface_for_picker(),
                 )
                 # Connect signal for live preview updates (don't save to disk during preview)
                 self.settings_dialog.settings_changed.connect(
@@ -1438,7 +1445,8 @@ class NetworkSpeedWidget(QWidget):
 
             if not self.settings_dialog.isVisible():
                 # Also update the interface list when showing an existing dialog
-                self.settings_dialog.update_interface_list(self.get_unified_interface_list())
+                self.settings_dialog.update_interface_list(
+                    self.get_unified_interface_list(), self._primary_interface_for_picker())
                 self.settings_dialog.reset_with_config(
                     config=self.config.copy(),
                     is_startup_enabled=self.is_startup_enabled()
@@ -1447,7 +1455,8 @@ class NetworkSpeedWidget(QWidget):
             else:
                 self.logger.debug("Settings dialog already visible. Activating.")
                 # Also update the interface list when re-activating the dialog
-                self.settings_dialog.update_interface_list(self.get_unified_interface_list())
+                self.settings_dialog.update_interface_list(
+                    self.get_unified_interface_list(), self._primary_interface_for_picker())
                 self.settings_dialog.raise_()
                 self.settings_dialog.activateWindow()
 
@@ -1723,8 +1732,8 @@ class NetworkSpeedWidget(QWidget):
         so it passes 'horizontal') - otherwise the live widget and the Settings/Overview preview of the
         same config diverge. In particular the side-by-side right-align probe only fires for 'horizontal'
         (the over-reserved, right-anchored-to-the-tray case); a side taskbar is docked differently and is
-        left as-is. (The renderer's draw methods accept layout_mode but don't branch on it today, so this
-        only drives the right-align decision and the live/preview parity.)
+        left as-is. (Beyond the right-align decision and the live/preview parity, 'vertical' only stacks
+        the side_by_side segments top-to-bottom, since a side taskbar has no room for them in a row.)
         """
         try:
             # A free-floating widget on a taskbar-less display has no taskbar edge; render it as a
@@ -1824,6 +1833,17 @@ class NetworkSpeedWidget(QWidget):
             return [] # Return an empty list on error
         
 
+    def _primary_interface_for_picker(self) -> Optional[str]:
+        """The routing interface, marked "Active connection" in the Settings picker. None if the
+        controller isn't up or there is no route."""
+        if not self.controller:
+            return None
+        try:
+            return self.controller.current_primary_interface()
+        except Exception as e:
+            self.logger.debug("Primary interface lookup for the picker failed: %s", e)
+            return None
+
     def get_active_interfaces(self) -> List[str]:
         """
         Provides a passthrough to the controller's method for getting a list
@@ -1872,7 +1892,6 @@ class NetworkSpeedWidget(QWidget):
                     pass
 
             # --- Clean up core components ---
-            if self.timer_manager: self.timer_manager.cleanup()
             if self.controller: self.controller.cleanup()
             if self.widget_state: self.widget_state.cleanup()
 

@@ -54,6 +54,10 @@ CREATE TABLE speed_history_raw (
 );
 ```
 
+These are the rates the counters measured. The widget smooths an isolated burst for display (one
+poll at more than 5× the recent baseline is shown at 2×), but since 2.2 that smoothing is never
+written here — older rows may hold the smoothed value for such a second.
+
 ### `speed_history_minute` / `speed_history_hour` — the rollups
 
 ```sql
@@ -93,12 +97,21 @@ CREATE TABLE hardware_stats_raw (
 | `cpu`, `gpu`, `ram` | percent | 0–100 |
 | `cpu_temp` | °C | needs LibreHardwareMonitor on most systems |
 | `cpu_power`, `gpu_power`, `total_power` | watts | |
-| `latency_gw` | milliseconds | ping to your router — your LAN |
-| `latency_anchor` | milliseconds | ping to a public anchor — true internet latency |
-| `latency_gw_timeout` | 0 or 1 | 1 = that probe timed out. **Averaged in the rollups, so in `_minute`/`_hour` this is a packet-loss *rate* between 0 and 1.** |
+| `latency_gw` | milliseconds | ping to your router — your LAN. Median of the cycle's burst of 4 pings |
+| `latency_anchor` | milliseconds | ping to a public anchor — true internet latency. Median of its burst of 4 |
+| `latency_gw_timeout` | 0 to 1 | The share of that cycle's ping burst that was lost: 0, 0.25, 0.5, 0.75 or 1 (4 pings per cycle since 2.2). Rows from before 2.2 are 0 or 1 for a single ping - the same meaning, so both shapes mix without conversion. **Averaged in the rollups, so in `_minute`/`_hour` this is a packet-loss *rate* between 0 and 1.** |
+| `latency_anchor_timeout` | 0 to 1 | The same for the public anchor - *internet* loss. Recorded only while the public probe is on. When the router loses its whole burst, the anchor is not pinged that cycle and is recorded as fully lost, so internet loss is always at least router loss. Averaged into a rate exactly like `latency_gw_timeout`. |
+
+The probe runs every 3 seconds: a burst of 4 pings, 100 ms apart, to your router - about 1.3 packets
+a second of ~80 bytes - and the same to the public anchor only while that probe is on.
 
 Because this table is generic, **adding a new metric needs no schema change** — a new `stat_type`
 flows through aggregation and retention automatically.
+
+The hardware rows (everything above except `latency_*`) are written only for metrics you monitor in
+Settings → Hardware, and only while **Settings → Advanced → Record hardware history** is on. The open
+Monitor window reads every metric live, but does not record the ones you are not monitoring. The
+`latency_*` rows follow the Connection settings instead.
 
 ### `usage_counter` — the data-cap odometer
 
@@ -120,10 +133,29 @@ CREATE TABLE usage_counter (
 Usage this period is `cumulative - anchor`. The anchor only ever advances on a genuine **forward**
 period rollover, so a clock change or DST shift cannot wipe your running total.
 
+The odometer counts every poll's exact counter delta, including across long gaps such as standby
+(only the speed display re-primes), capped per direction at 100 Gbps x the time elapsed so one
+counter glitch cannot add phantom gigabytes. Each write also stores, in `metadata`, the network
+counters that total was counted up to (`usage_counter_snapshot`, below); a later launch **in the
+same boot** adds what moved while the app was closed. After a reboot, or if an adapter's counters
+went backwards, nothing is added; in auto mode, nothing is added either when the primary interface
+is not the one the snapshot was metered on.
+
+Bytes are charged to the period in which their measurement window **began**: a standby gap or a
+closed-app window that spans the reset day counts toward the period it started in (the lifetime
+`cumulative` and the `anchor` both advance), never all toward the new one.
+
 ### `metadata` — bookkeeping
 
 `key`/`value` text pairs: `db_version`, `created_at`, `current_retention_days`,
 `last_maintenance_at`, `last_vacuum_at`, and the pending-retention keys used to schedule a prune.
+
+`usage_counter_snapshot` is JSON, written in the same transaction as the `usage_counter` row:
+`{"v": 1, "boot_time": <psutil.boot_time()>, "ts": <epoch s the counters were read>,
+"counters": {"<adapter name>": [bytes_sent, bytes_recv], ...}, "primary": "<adapter name>"}`
+(`primary` only in auto mode). Two boot times within 30 s are the same boot session. If counters were
+read but no snapshot could be written (boot time unreadable), the key is deleted in the same
+transaction, so a stale snapshot can never be re-added against a newer total.
 
 ### `bandwidth_history` — **not used**
 
@@ -207,18 +239,31 @@ LIMIT 10;
 **Internet latency and packet loss over the last week**
 
 ```sql
-SELECT datetime(timestamp, 'unixepoch', 'localtime') AS hour,
-       ROUND(MAX(CASE WHEN stat_type='latency_anchor' THEN avg_value END), 1) AS latency_ms,
-       ROUND(MAX(CASE WHEN stat_type='latency_gw_timeout' THEN avg_value END) * 100, 1) AS loss_pct
-FROM hardware_stats_hour
+WITH samples AS (                        -- the last week spans two tiers: raw (24h) + minute
+    SELECT timestamp, stat_type, value AS v, 1 AS n FROM hardware_stats_raw
+    UNION ALL
+    SELECT timestamp, stat_type, avg_value, sample_count FROM hardware_stats_minute
+)
+SELECT datetime(timestamp / 3600 * 3600, 'unixepoch', 'localtime') AS hour,
+       ROUND(SUM(CASE WHEN stat_type='latency_anchor' THEN v * n END)
+           / SUM(CASE WHEN stat_type='latency_anchor' THEN n END), 1) AS internet_ms,
+       ROUND(100.0 * SUM(CASE WHEN stat_type='latency_gw_timeout' THEN v * n END)
+           / SUM(CASE WHEN stat_type='latency_gw_timeout' THEN n END), 1) AS router_loss_pct,
+       ROUND(100.0 * SUM(CASE WHEN stat_type='latency_anchor_timeout' THEN v * n END)
+           / SUM(CASE WHEN stat_type='latency_anchor_timeout' THEN n END), 1) AS internet_loss_pct
+FROM samples
 WHERE timestamp > strftime('%s','now','-7 days')
-GROUP BY timestamp
-HAVING latency_ms IS NOT NULL
-ORDER BY hour;
+  AND stat_type IN ('latency_anchor', 'latency_gw_timeout', 'latency_anchor_timeout')
+GROUP BY timestamp / 3600
+ORDER BY timestamp / 3600;
 ```
 
-Empty result? The hourly tier only fills once data is older than 30 days, so on a young install
-widen the window or query `hardware_stats_minute` instead.
+Each minute row is weighted by its `sample_count`, so a minute the app was only partly running
+counts for what it measured. The loss columns average per probe *cycle*, so they read the same
+across the 2.2 change from one ping per cycle (0/1 rows) to a burst of four (quarter steps). `internet_ms` and `internet_loss_pct` stay empty unless **Also measure
+true internet latency** is on. Read the two loss columns together: router loss is your Wi-Fi or LAN;
+internet loss *above* router loss is beyond your router (ISP or path). For data older than 30 days,
+swap `hardware_stats_minute` for `hardware_stats_hour`, which has the same columns.
 
 **Percentiles — but only over the last 24 hours**, where per-second data still exists:
 
@@ -265,7 +310,9 @@ Before every migration, NetSpeedTray writes a verified backup next to the databa
 ```
 
 The `v7` is the schema version the backup holds; the rest is when it was taken. The newest two are
-kept.
+kept, plus the newest one of every schema version, so a later version's backups never push out the
+one an older NetSpeedTray can restore. If that backup can't be written or doesn't match the
+database, the migration doesn't run: the database stays as it is and the next launch tries again.
 
 You need this if you have gone back to an older NetSpeedTray after a newer one migrated your
 database. The older build then runs read-only — it shows your history but refuses to record, because
@@ -300,6 +347,15 @@ It also runs `VACUUM` to reclaim space, at most once a day and only when there i
 reclaim. Rolling data up deletes rows, and deleted rows leave free pages behind; without a periodic
 VACUUM the file keeps its high-water mark forever.
 
+**Settings → Advanced → Delete all history** empties every history table (all speed and hardware
+tiers, latency included), then runs `VACUUM` and a `wal_checkpoint(TRUNCATE)` straight away, so the
+deleted rows are gone from both `speed_history.db` and `speed_history.db-wal` rather than left in free
+pages. If a reader is mid-query (the Monitor's graphs) the checkpoint reports busy; the app then says
+the file is still being cleaned up and retries every few seconds while idle until it completes.
+`metadata` is kept, and so is `usage_counter` unless you tick
+"Also reset this period's data usage" in the confirmation. Recording carries on into the emptied
+tables.
+
 If you ever want to reclaim space by hand — with NetSpeedTray closed:
 
 ```sql
@@ -318,4 +374,5 @@ NetSpeedTray does not record what it cannot measure honestly:
 - **Which traffic was LAN and which was internet.** Adapter byte counters carry no addresses, ports
   or routes — the information simply is not there to filter on.
 - **Anything that leaves your machine.** No telemetry, no accounts, no uploads. The latency probe
-  pings your own gateway by default; pinging a public host is opt-in and you name the host.
+  pings your own gateway by default (about 1.3 small packets a second); pinging a public host is
+  opt-in and you name the host.

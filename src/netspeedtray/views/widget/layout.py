@@ -8,8 +8,9 @@ from PyQt6.QtGui import QFont, QFontMetrics
 from PyQt6.QtWidgets import QWidget
 
 from netspeedtray import constants
-from netspeedtray.utils.taskbar_utils import is_small_taskbar, get_taskbar_info
+from netspeedtray.utils.taskbar_utils import is_small_taskbar, get_taskbar_info, horizontal_taskbar_strip
 from netspeedtray.utils.helpers import memory_label_width
+from netspeedtray.utils.widget_paint import side_by_side_keys, stacked_segment_height
 
 if TYPE_CHECKING:
     from netspeedtray.views.widget.main import NetworkSpeedWidget
@@ -406,6 +407,23 @@ class WidgetLayoutManager:
                 # This prevents the widget from stretching the full length of the screen.
                 calculated_height = self.metrics.height() * 2 + (margin * 4)
 
+                # side_by_side has no room for its segments in a row on a widget only as wide as the
+                # taskbar, so the paint path stacks them top-to-bottom (widget_paint._draw_stacked):
+                # reserve every segment's band, with the same padding.
+                config = self.widget.config
+                if config.get("widget_display_mode", "network_only") == "side_by_side":
+                    keys = side_by_side_keys(config.get("widget_display_order", ["network", "cpu", "gpu"]),
+                                             config.get("monitor_cpu_enabled", False),
+                                             config.get("monitor_gpu_enabled", False),
+                                             config.get("stack_hardware_stats", False))
+                    if len(keys) > 1:
+                        ram = config.get("monitor_ram_enabled", False)
+                        vram = config.get("monitor_vram_enabled", False)
+                        calculated_height = (
+                            sum(stacked_segment_height(k, self.metrics.height(), ram, vram) for k in keys)
+                            + constants.layout.WIDGET_SEGMENT_GAP_STACKED_PX * (len(keys) - 1)
+                            + (margin * 4))
+
             # FIX for #88: Ensure minimum size to prevents widget from disappearing
             final_width = max(calculated_width, 50) 
             final_height = max(calculated_height, 20)
@@ -438,19 +456,17 @@ class WidgetLayoutManager:
           ``total_height = 2*line_height + 1``), so any docked height below that crops the glyphs.
           Floor to the two-row content (+1px for the ``int()`` rounding in ``top_y``) so text can
           never crop, without the generous margin pad the free-float/side branches use.
-        """
-        screen = taskbar_info.get_screen()
-        full_geom = screen.geometry()
-        avail_geom = screen.availableGeometry()
 
-        if edge == constants.TaskbarEdge.BOTTOM:
-            visible_tb_height = full_geom.bottom() - avail_geom.bottom()
-        elif edge == constants.TaskbarEdge.TOP:
-            visible_tb_height = avail_geom.top() - full_geom.top()
+        #322: the strip comes from ``horizontal_taskbar_strip`` - the work-area inset capped by the
+        taskbar window's height, the same value the position code centres in. When the floor makes
+        the widget taller than a thin strip, ``PositionCalculator._clamp_into_strip`` sits it flush
+        with the screen edge the bar is on, so the overhang is the minimum and faces the desktop.
+        """
+        if edge in (constants.TaskbarEdge.TOP, constants.TaskbarEdge.BOTTOM):
+            _, visible_tb_height = horizontal_taskbar_strip(taskbar_info, edge, dpi_scale)
         else:
             visible_tb_height = (taskbar_info.rect[3] - taskbar_info.rect[1]) / dpi_scale
 
         if visible_tb_height <= 0:                      # Part A (#221)
             visible_tb_height = taskbar_info.height
-
         return max(visible_tb_height, self.metrics.height() * 2 + 2)   # Part B (#221)

@@ -677,6 +677,12 @@ class SettingCard(QFrame):
     def control(self) -> Optional[QWidget]:
         return self._control
 
+    def set_description(self, text: str) -> None:
+        """Swap the muted description (only for a card built with one)."""
+        label = getattr(self, "_desc_label", None)
+        if label is not None:
+            label.setText(text)
+
 
 class SettingExpander(QWidget):
     """
@@ -795,7 +801,7 @@ class Win11Segmented(QWidget):
     """
     A Win11 segmented control: an exclusive row of joined pill buttons (the native
     idiom for a small mutually-exclusive choice - decimals 0/1/2, alignment L/C/R,
-    update-rate Smart/1s/2s/…). Emits ``valueChanged(value)`` with the option's value.
+    update-rate 1s/2s/5s/10s). Emits ``valueChanged(value)`` with the option's value.
     """
     valueChanged = pyqtSignal(object)
 

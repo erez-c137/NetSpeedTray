@@ -192,9 +192,27 @@ class DataConstants:
     # Accumulates exact byte deltas (gap-free, unlike the sampled speed history),
     # with a per-period anchor so usage_this_period = cumulative - anchor.
     USAGE_COUNTER_TABLE: Final[str] = "usage_counter"
-    
+
+    # Every table "Delete all history" empties (only those present in the file are touched). The
+    # odometer (USAGE_COUNTER_TABLE) is deliberately NOT here: it is the data-cap's billing source of
+    # truth (decision D5) and is only cleared when the user ticks the separate opt-in. `metadata`
+    # (db_version, maintenance stamps) is schema bookkeeping, not history, and is never deleted.
+    HISTORY_TABLES: Final[tuple] = (
+        SPEED_TABLE_RAW, SPEED_TABLE_MINUTE, SPEED_TABLE_HOUR,
+        HARDWARE_STATS_TABLE_RAW, HARDWARE_STATS_TABLE_MINUTE, HARDWARE_STATS_TABLE_HOUR,
+        BANDWIDTH_TABLE, APP_BANDWIDTH_TABLE, SPEED_TABLE, AGGREGATED_TABLE,
+    )
+
     AGGREGATION_CUTOFF_DAYS: Final[int] = 2  # Days before data is aggregated
-    
+
+    # How long each finer tier holds rows before maintenance rolls them down (raw -> minute after 24 h,
+    # minute -> hour after 30 days). The history reader bounds each coarser tier by the earliest finer
+    # row INSIDE this horizon (+ slack for the hourly maintenance cadence and the bucket floor), so one
+    # row stamped far in the past by a clock set back cannot hide days of coarser history.
+    RAW_TIER_RETENTION_SECONDS: Final[int] = 24 * 3600
+    MINUTE_TIER_RETENTION_SECONDS: Final[int] = 30 * 86400
+    TIER_BOUNDARY_SLACK_SECONDS: Final[int] = 2 * 3600
+
     def __init__(self) -> None:
         self.legend_position = LegendPositionConstants()
         self.retention = DataRetentionConstants()

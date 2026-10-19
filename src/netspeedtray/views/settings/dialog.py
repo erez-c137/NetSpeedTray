@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QSize
 from PyQt6.QtGui import QColor, QFont, QIcon, QCloseEvent, QShowEvent
 from PyQt6.QtWidgets import (
-    QApplication, QColorDialog, QDialog, QFileDialog, QFontDialog,
+    QApplication, QCheckBox, QColorDialog, QDialog, QFileDialog, QFontDialog,
     QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMessageBox, QPushButton, QScrollArea,
     QStackedWidget, QVBoxLayout, QWidget
 )
@@ -47,7 +47,6 @@ from netspeedtray.views.settings.pages.advanced import AdvancedPage
 # units.py + colors.py are now embedded inside AppearancePage (the dialog reaches them via
 # appearance_page.units_section / .colors_section for the Force-MB rule + color-picker routing).
 from netspeedtray.views.widget.preview import PreviewWidget
-from netspeedtray.constants.update_mode import UpdateMode
 
 
 class SettingsDialog(QDialog):
@@ -74,6 +73,7 @@ class SettingsDialog(QDialog):
         available_interfaces: Optional[List[str]] = None,
         is_startup_enabled: bool = False,
         parent: QWidget | None = None,
+        primary_interface: Optional[str] = None,
     ) -> None:
         """
         Initializes the settings dialog.
@@ -88,6 +88,7 @@ class SettingsDialog(QDialog):
         self.version = version
         self.i18n = i18n
         self.available_interfaces = available_interfaces or []
+        self.primary_interface = primary_interface   # the routing interface, marked in the picker
         self.startup_enabled_initial_state = is_startup_enabled
         self._user_chose_default_color = False
 
@@ -255,14 +256,27 @@ class SettingsDialog(QDialog):
             self.interfaces_page = InterfacesPage(
                 self.i18n,
                 self.available_interfaces,
-                self._schedule_settings_update
+                self._schedule_settings_update,
+                primary_interface=self.primary_interface,
             )
             self.advanced_page = AdvancedPage(
                 self.i18n,
                 self._schedule_settings_update,
                 reset_page_callback=self._reset_advanced_page,
                 reset_all_callback=self._reset_all_to_defaults,
+                delete_history_callback=self._delete_all_history,
             )
+            # The Record-hardware-history card greys out live as CPU/GPU monitoring is switched.
+            def _sync_record_card(_on: bool = False) -> None:
+                self.advanced_page.set_hardware_monitoring_active(
+                    self.hardware_page.monitor_cpu.isChecked() or self.hardware_page.monitor_gpu.isChecked())
+            self.hardware_page.monitor_cpu.toggled.connect(_sync_record_card)
+            self.hardware_page.monitor_gpu.toggled.connect(_sync_record_card)
+            # Safety net for Delete all history: if the worker never answers, give the button back.
+            self._delete_timeout = QTimer(self)
+            self._delete_timeout.setSingleShot(True)
+            self._delete_timeout.setInterval(constants.timeouts.DB_DELETE_HISTORY_UI_TIMEOUT_MS)
+            self._delete_timeout.timeout.connect(self._on_delete_timeout)
 
             # Add pages wrapped in scroll areas (order matches sidebar)
             for page in [
@@ -400,33 +414,6 @@ class SettingsDialog(QDialog):
             self.hardware_page.hardware_enabled.connect(self.widget_page.ensure_hardware_visible)
         except Exception:
             pass
-        # When Force MB toggle is changed, ensure SMART update_rate is not selected.
-        try:
-            self.units_page.speed_display_mode.toggled.connect(self._on_force_mb_toggled)
-        except Exception:
-            # Defensive: if widget API differs, ignore
-            pass
-
-    def _on_force_mb_toggled(self, checked: bool) -> None:
-        """When Force MB is toggled, ensure update_rate SMART is not selected when Force MB is OFF.
-
-        If the toggle is turned OFF (auto mode) and the update rate slider is on SMART (position 0),
-        move it to AGGRESSIVE (1s) to prevent jitter. This enforces the UI-level rule immediately
-        so users can't save an incompatible combination.
-        """
-        try:
-            # If turned off, ensure GeneralPage slider isn't set to SMART
-            if not checked and hasattr(self, 'general_page'):
-                try:
-                    if self.general_page.update_rate.value() == 0:
-                        self.general_page.update_rate.setValue(1)
-                        self.general_page.update_rate.setValueText(self.general_page._format_update_rate_label(1))
-                        # Propagate change immediately
-                        self._schedule_settings_update()
-                except Exception:
-                    pass
-        except Exception:
-            pass
 
     def _on_sidebar_selection_changed(self, row: int) -> None:
         """Handles sidebar row changes to switch the stacked page + retitle the page header."""
@@ -514,13 +501,6 @@ class SettingsDialog(QDialog):
             else:
                  settings["color_is_automatic"] = self.original_config.get("color_is_automatic", True)
                  
-            # UI-level rule: if Force MB is OFF (speed_display_mode == 'auto') then SMART
-            # adaptive update mode is not allowed because it causes rapid unit flips.
-            # Enforce at UI collection time by forcing to 1s (AGGRESSIVE) when needed.
-            if settings.get("speed_display_mode") == "auto" and float(settings.get("update_rate", 1.0)) <= 0:
-                self.logger.info("Force MB is off and SMART was selected; forcing update_rate to %ss", UpdateMode.AGGRESSIVE)
-                settings["update_rate"] = float(UpdateMode.AGGRESSIVE)
-
             return settings
         except Exception as e:
             self.logger.error(f"Error collecting settings: {e}", exc_info=True)
@@ -597,11 +577,14 @@ class SettingsDialog(QDialog):
                 self.i18n.SUPPORT_BUNDLE_ERROR_MESSAGE.format(error=str(e)),
             )
 
-    def update_interface_list(self, new_interfaces: List[str]) -> None:
-        """Updates the list of available network interfaces."""
+    def update_interface_list(self, new_interfaces: List[str],
+                              primary_interface: Optional[str] = None) -> None:
+        """Updates the list of available network interfaces and the marked primary one (None
+        clears the mark - no route right now)."""
         self.available_interfaces = new_interfaces
+        self.primary_interface = primary_interface
         if hasattr(self, 'interfaces_page'):
-            self.interfaces_page.update_interface_list(new_interfaces)
+            self.interfaces_page.update_interface_list(new_interfaces, primary_interface)
             # Re-apply current selection
             self.interfaces_page.load_settings(self.get_settings())
 
@@ -643,6 +626,98 @@ class SettingsDialog(QDialog):
                 defaults[k] = self.config[k]
         self.reset_with_config(defaults, self.startup_enabled_initial_state)
         self._schedule_settings_update()
+
+    def _confirm_delete_history(self) -> Optional[bool]:
+        """The destructive-action confirmation. Returns None if cancelled, else whether the user also
+        ticked "reset this period's data usage" (unchecked by default: the odometer is the data cap's
+        billing source, D5, and is the one thing here that history retention never touches)."""
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle(self.i18n.DELETE_HISTORY_CONFIRM_TITLE)
+        box.setText(self.i18n.DELETE_HISTORY_CONFIRM_TEXT)
+        # Said plainly: after a delete the cap still reads e.g. "120 of 200 GB" while "This month"
+        # (computed from the now-empty speed history) drops to ~0 - by design, not a bug.
+        box.setInformativeText(self.i18n.DELETE_HISTORY_USAGE_NOTE)
+        usage = QCheckBox(self.i18n.DELETE_HISTORY_INCLUDE_USAGE)
+        usage.setChecked(False)
+        box.setCheckBox(usage)
+        delete_btn = box.addButton(self.i18n.DELETE_HISTORY_CONFIRM_BUTTON,
+                                   QMessageBox.ButtonRole.DestructiveRole)
+        cancel_btn = box.addButton(self.i18n.CANCEL_BUTTON, QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(cancel_btn)
+        box.setEscapeButton(cancel_btn)
+        box.exec()
+        if box.clickedButton() is not delete_btn:
+            return None
+        return usage.isChecked()
+
+    def _delete_all_history(self) -> None:
+        """Settings > Advanced > Delete all history (2.2 item C). Immediate - not deferred to Save."""
+        ws = getattr(self.parent_widget, "widget_state", None)
+        if ws is None or not hasattr(ws, "delete_all_history") or not ws.can_delete_history():
+            # Checked BEFORE asking: no point confirming a delete nobody will carry out, and the
+            # button must never sit disabled waiting for a worker that isn't there.
+            self.logger.error("Delete all history: the history database is not available for writing.")
+            QMessageBox.critical(self, self.i18n.ERROR_TITLE, self.i18n.DELETE_HISTORY_FAILED)
+            return
+        include_usage = self._confirm_delete_history()
+        if include_usage is None:
+            return
+        if not getattr(self, "_history_deleted_connected", False):
+            try:
+                ws.history_deleted.connect(self._on_history_deleted)
+                self._history_deleted_connected = True
+            except Exception as e:
+                self.logger.debug("history_deleted not connectable: %s", e)
+        self.advanced_page.delete_history_btn.setEnabled(False)   # re-enabled on completion/timeout
+        self._delete_timeout.start()
+        ws.delete_all_history(include_usage=include_usage)
+        if include_usage:
+            # The odometer restarts at 0, so re-arm the 80%/100% cap alerts for this period. Write it
+            # into BOTH dialog snapshots too - Save writes self.config back, Cancel original_config,
+            # and either would otherwise restore the stale "already alerted" state.
+            self.config["usage_alert_state"] = ""
+            self.original_config["usage_alert_state"] = ""
+            if hasattr(self.parent_widget, "update_config"):
+                self.parent_widget.update_config({"usage_alert_state": ""})
+        try:
+            self.parent_widget.update()   # repaint the mini graph from the now-empty series
+        except Exception:
+            pass
+
+    def _on_history_deleted(self, status: str) -> None:
+        """The worker's answer - a DatabaseWorker.DELETE_* status - reported as it is: 'compact_pending'
+        means the rows are gone but the file is still being cleaned (the worker keeps retrying)."""
+        from netspeedtray.core.database import DatabaseWorker
+        self._delete_timeout.stop()
+        try:
+            self.advanced_page.delete_history_btn.setEnabled(True)
+        except Exception:
+            pass
+        if status != DatabaseWorker.DELETE_FAILED:
+            # The hover card caches its today/this-month totals; they were computed from the
+            # history that is now gone.
+            if hasattr(self.parent_widget, "invalidate_usage_cache"):
+                try:
+                    self.parent_widget.invalidate_usage_cache()
+                except Exception as e:
+                    self.logger.debug("hover usage cache not invalidated: %s", e)
+        if status == DatabaseWorker.DELETE_DONE:
+            QMessageBox.information(self, self.i18n.SUCCESS_TITLE, self.i18n.DELETE_HISTORY_DONE)
+        elif status == DatabaseWorker.DELETE_COMPACT_PENDING:
+            QMessageBox.information(self, self.i18n.SUCCESS_TITLE, self.i18n.DELETE_HISTORY_DONE_COMPACTING)
+        else:
+            QMessageBox.critical(self, self.i18n.ERROR_TITLE, self.i18n.DELETE_HISTORY_FAILED)
+
+    def _on_delete_timeout(self) -> None:
+        """No answer from the write thread in DB_DELETE_HISTORY_UI_TIMEOUT_MS: give the button back
+        and say so, rather than leaving Delete disabled for the rest of the session."""
+        self.logger.warning("Delete all history: no answer from the database worker; giving up waiting.")
+        try:
+            self.advanced_page.delete_history_btn.setEnabled(True)
+        except Exception:
+            pass
+        QMessageBox.critical(self, self.i18n.ERROR_TITLE, self.i18n.DELETE_HISTORY_FAILED)
 
     def _save_and_close(self) -> None:
         """Saves settings and closes."""

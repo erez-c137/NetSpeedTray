@@ -171,16 +171,21 @@ def test_position_memory_persists_a_user_move(qtbot, monkeypatch):
 
     w = QWidget()
     qtbot.addWidget(w)
-    window_state.attach_position_memory(w, main, "test_window_pos")
+    memory = window_state.attach_position_memory(w, main, "test_window_pos")
     w.show()
     qtbot.waitExposed(w)
 
     # A move during the arm grace period must NOT be saved (frame-adjustment guard).
     w.move(120, 120)
-    qtbot.wait(window_state._MOVE_SAVE_ARM_MS + 60)
+    # Wait for the arm timer itself, not a fixed sleep just past it: on a loaded CI runner the
+    # 400 ms arm single-shot was seen firing ~100 ms late, AFTER a 460 ms sleep had returned, so
+    # the next move landed while still disarmed and was (correctly) ignored - no save, ever.
+    qtbot.waitUntil(lambda: memory._armed, timeout=window_state._MOVE_SAVE_ARM_MS + 5000)
+    # Give the early move a full debounce to (wrongly) save, so this proves it was dropped.
+    qtbot.wait(window_state._MOVE_SAVE_DEBOUNCE_MS + 150)
     assert saved == [], "a move before arming should not be persisted"
 
     # A move after arming should debounce-save exactly once.
     w.move(300, 220)
-    qtbot.wait(window_state._MOVE_SAVE_DEBOUNCE_MS + 150)
+    qtbot.waitUntil(lambda: saved != [], timeout=window_state._MOVE_SAVE_DEBOUNCE_MS + 5000)
     assert saved == ["test_window_pos"], f"expected one debounced save, got {saved}"

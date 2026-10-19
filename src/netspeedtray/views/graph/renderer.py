@@ -6,6 +6,7 @@ import threading
 
 import numpy as np
 from PyQt6.QtCore import QObject, Qt, pyqtSignal
+from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QSizePolicy
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
@@ -19,6 +20,8 @@ from netspeedtray.constants import styles as style_constants
 from netspeedtray.constants.renderer import RendererConstants
 from netspeedtray.utils.helpers import calculate_monotone_cubic_interpolation, format_decimal
 from netspeedtray.utils.mpl_fonts import configure_cjk_font
+from netspeedtray.views.graph.time_axis import apply_time_axis
+from netspeedtray.views.graph.value_axis import ValueAxisFormatter, clipped_axis_max, clipped_runs
 import matplotlib.colors as mcolors
 from matplotlib.patches import PathPatch
 from matplotlib.path import Path
@@ -75,6 +78,7 @@ class GraphRenderer(QObject):
 
         self._current_ylim_up = constants.graph.MINIMUM_Y_AXIS_MBPS
         self._current_ylim_down = constants.graph.MINIMUM_Y_AXIS_MBPS
+        self._clip_artists = {}   # id(axes) -> the clipped-outlier marks drawn on it
         
         self._last_render_mode = None  # 'high_res' or aggregate modes
         self._last_period_key = None
@@ -129,6 +133,10 @@ class GraphRenderer(QObject):
         self.canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.canvas.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         self.canvas.setMouseTracking(True)
+        # matplotlib marks the canvas opaque, so Qt never paints its background; let it, so the edge
+        # sliver the buffer doesn't cover takes the graph color set in apply_theme.
+        self.canvas.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, False)
+        self.canvas.setAutoFillBackground(True)
         
         existing_layout = self.parent_widget.layout()
         if existing_layout is not None:
@@ -197,7 +205,13 @@ class GraphRenderer(QObject):
         self._current_grid_color = style_constants.GRID_COLOR_DARK if is_dark_mode else style_constants.GRID_COLOR_LIGHT
         
         self.figure.patch.set_facecolor(graph_bg)
-        
+        # The rendered buffer can fall a pixel short of the widget at fractional DPI scaling; fill the
+        # widget itself with the graph color so that sliver isn't left white.
+        if self.canvas is not None:
+            pal = self.canvas.palette()
+            pal.setColor(QPalette.ColorRole.Window, QColor(graph_bg))
+            self.canvas.setPalette(pal)
+
         for ax in self.axes:
             ax.set_facecolor(graph_bg)
             
@@ -618,7 +632,8 @@ class GraphRenderer(QObject):
             download_mbps = (raw_data[:, 2] * constants.network.units.BITS_PER_BYTE) / constants.network.units.MEGA_DIVISOR
             
             plotted_ts, plotted_up, plotted_down = self._plot_high_res(plot_datetimes_array, upload_mbps, download_mbps, target_end_time=end_time)
-            self._configure_axes(start_time, end_time, period_key, timestamps, plotted_up, plotted_down)
+            self._configure_axes(start_time, end_time, period_key, timestamps, plotted_up, plotted_down,
+                                 plotted_ts=plotted_ts)
         elif stat_type in ("cpu", "gpu") and hw_styles is not None:
             # Monitor's "toggle" layout: a single CPU- or GPU-only line that must honor the same
             # display settings as combined/separate (per-role color, Smooth, fixed/auto y-axis). The
@@ -760,31 +775,7 @@ class GraphRenderer(QObject):
         # Apply period-aware formatting to the bottom axis (GPU row).
         # Overview uses 4 stacked axes; we keep x labels only on the last one.
         try:
-            axis = self.ax_gpu
-            major_locator = mdates.AutoDateLocator(maxticks=8)
-            major_formatter = mdates.DateFormatter('%H:%M')
-
-            xlim = axis.get_xlim()
-            if xlim[0] < xlim[1]:
-                duration_days = xlim[1] - xlim[0]
-                duration_sec = duration_days * 86400
-                if duration_sec < 120:
-                    major_formatter = mdates.DateFormatter('%H:%M:%S')
-
-            if period_key == "TIMELINE_WEEK":
-                major_formatter = mdates.DateFormatter('%a %d')
-            elif period_key == "TIMELINE_MONTH":
-                major_formatter = mdates.DateFormatter('%b %d')
-            elif period_key == "TIMELINE_ALL":
-                major_formatter = mdates.DateFormatter('%Y-%m-%d')
-            elif period_key == "TIMELINE_SYSTEM_UPTIME":
-                major_formatter = mdates.ConciseDateFormatter(major_locator)
-
-            axis.xaxis.set_major_locator(major_locator)
-            axis.xaxis.set_major_formatter(major_formatter)
-
-            if "HOURS" in (period_key or ""):
-                axis.xaxis.set_minor_locator(NullLocator())
+            self._configure_xaxis_format(period_key, axis=self.ax_gpu)
         except Exception:
             pass
         
@@ -1312,11 +1303,18 @@ class GraphRenderer(QObject):
 
 
 
-    def _configure_axes(self, start_time, end_time, period_key, timestamps, upload_mbps, download_mbps):
-        """Sets limits and Formatters with sticky behavior to prevent jitter."""
+    def _configure_axes(self, start_time, end_time, period_key, timestamps, upload_mbps, download_mbps,
+                        plotted_ts=None):
+        """Sets limits and Formatters with sticky behavior to prevent jitter.
+
+        On long windows (VALUE_AXIS_CLIP_PERIODS) each speed axis may scale to the 99th percentile of
+        its plotted points instead of the max, so a couple of speed tests stop squashing a month into
+        the bottom few percent; the points above the edge are then marked (``_mark_clipped``).
+        ``plotted_ts`` (the x of ``upload_mbps``/``download_mbps``) is needed only for those marks.
+        """
         # Y-Axis Scaling (Sticky Logic with smart rounding)
-        max_up = np.max(upload_mbps) if len(upload_mbps) > 0 else 0
-        max_down = np.max(download_mbps) if len(download_mbps) > 0 else 0
+        max_up, _ = clipped_axis_max(upload_mbps if upload_mbps is not None else [], period_key)
+        max_down, _ = clipped_axis_max(download_mbps if download_mbps is not None else [], period_key)
         
         y_top_up = self._get_sticky_y_top(max_up, self._current_ylim_up)
         y_top_down = self._get_sticky_y_top(max_down, self._current_ylim_down)
@@ -1357,15 +1355,65 @@ class GraphRenderer(QObject):
         self._set_smart_y_ticks(self.ax_upload, y_top_up)
         self._set_smart_y_ticks(self.ax_download, y_top_down)
         
-        # Formatters for clean labels (no decimals for large ranges)
-        self.ax_upload.yaxis.set_major_formatter(lambda x, pos: f"{int(x)}" if x >= 1 else format_decimal(x, self.i18n, 1))
-        self.ax_download.yaxis.set_major_formatter(lambda x, pos: f"{int(x)}" if x >= 1 else format_decimal(x, self.i18n, 1))
+        # Labels carry exactly the precision the tick step needs ("0.5, 1, 1.5"), in the locale's
+        # decimal separator - the old int(x) for x >= 1 printed 1.5 as "1" ("0.0, 0.5, 1, 1, 2").
+        self.ax_upload.yaxis.set_major_formatter(ValueAxisFormatter(self.i18n))
+        self.ax_download.yaxis.set_major_formatter(ValueAxisFormatter(self.i18n))
 
         self.ax_upload.set_ylim(bottom=0, top=y_top_up)
         self.ax_download.set_ylim(bottom=0, top=y_top_down)
 
+        # Points the axis no longer reaches stay on the line (the hover reads their true value); mark
+        # them so they never silently vanish. A no-op off the long windows, where nothing is clipped.
+        self._mark_clipped(self.ax_download, plotted_ts, download_mbps, y_top_down,
+                           constants.graph.DOWNLOAD_LINE_COLOR)
+        self._mark_clipped(self.ax_upload, plotted_ts, upload_mbps, y_top_up,
+                           constants.graph.UPLOAD_LINE_COLOR)
+
         # X-Axis Formatting
         self._configure_xaxis_format(period_key)
+
+    def _mark_clipped(self, ax, xs, ys, top: float, color_hex: str) -> None:
+        """Caret markers on the top edge for each run of points above ``top``, plus the true peak.
+
+        Called on every axis configuration, so it first removes its previous marks (a re-render of
+        the same period does not rebuild the axes). The markers are a scatter collection, not a
+        Line2D, and carry no label, so the hover tooltip - which reads only labelled lines - never
+        mistakes them for data.
+        """
+        store = getattr(self, "_clip_artists", None)
+        if store is None:
+            store = self._clip_artists = {}
+        for artist in store.pop(id(ax), []):
+            try:
+                artist.remove()
+            except Exception:
+                pass
+        if xs is None or ys is None or len(xs) == 0 or len(xs) != len(ys):
+            return
+        try:
+            x = np.asarray(xs)
+            if x.dtype == object or np.issubdtype(x.dtype, np.datetime64):
+                x = mdates.date2num(list(x))
+            runs = clipped_runs(np.asarray(x, dtype=float), ys, top)
+            if not runs:
+                return
+            g = constants.graph
+            artists = [ax.scatter(
+                [rx for rx, _ in runs], [1.0] * len(runs), transform=ax.get_xaxis_transform(),
+                marker=g.VALUE_AXIS_CLIP_MARKER, s=g.VALUE_AXIS_CLIP_MARKER_SIZE, color=color_hex,
+                linewidths=0, clip_on=False, zorder=12, label="_value_axis_clip_markers",
+                gid="value_axis_clip_markers")]
+            peak = max(ry for _, ry in runs)
+            text = f"{self.i18n.GRAPH_PEAK_SHORT} {format_decimal(peak, self.i18n, 1)} {self.i18n.MBITS_UNIT}"
+            artists.append(ax.text(
+                1.0, 1.0, text, transform=ax.transAxes, ha="right", va="bottom",
+                fontsize=g.VALUE_AXIS_CLIP_PEAK_FONTSIZE, alpha=g.VALUE_AXIS_CLIP_PEAK_ALPHA,
+                color=getattr(self, "_current_text_color", style_constants.DARK_MODE_TEXT_COLOR),
+                clip_on=False, gid="value_axis_clip_peak"))
+            store[id(ax)] = artists
+        except Exception as e:
+            self.logger.debug("clip markers skipped: %s", e)
 
     def _set_smart_y_ticks(self, ax, y_max: float):
         """
@@ -1440,32 +1488,12 @@ class GraphRenderer(QObject):
         """
         if axis is None:
             axis = self.ax_upload
-        
-        # Default for most views
-        major_locator = mdates.AutoDateLocator(maxticks=8)
-        major_formatter = mdates.DateFormatter('%H:%M') 
 
-        # For extremely short views (e.g. freshly started Session), show seconds
-        # This prevents repeating labels like "19:27, 19:27, 19:27"
-        xlim = axis.get_xlim()
-        if xlim[0] < xlim[1]:
-            duration_days = xlim[1] - xlim[0]
-            duration_sec = duration_days * 86400
-            if duration_sec < 120: # Less than 2 minutes
-                major_formatter = mdates.DateFormatter('%H:%M:%S')
-        if period_key == "TIMELINE_WEEK":
-            major_formatter = mdates.DateFormatter('%a %d')
-        elif period_key == "TIMELINE_MONTH":
-            major_formatter = mdates.DateFormatter('%b %d')
-        elif period_key == "TIMELINE_ALL":
-            major_formatter = mdates.DateFormatter('%Y-%m-%d')
-        elif period_key == "TIMELINE_SYSTEM_UPTIME":
-             # Uptime can be minutes or days; Concise is best here
-             major_formatter = mdates.ConciseDateFormatter(major_locator)
-        
-        axis.xaxis.set_major_locator(major_locator)
-        axis.xaxis.set_major_formatter(major_formatter)
-        
+        # One locator + formatter for every period: the tick step follows the visible span and the
+        # axis width, and the label format follows the step, so no two ticks ever print the same text
+        # (the old fixed per-period formats printed "18:12, 18:12, 18:13" under 30 s ticks).
+        apply_time_axis(axis)
+
         if "HOURS" in (period_key or ""):
             axis.xaxis.set_minor_locator(NullLocator())
 

@@ -1,10 +1,11 @@
 """
-BusiestAppsCard - the Overview's "top talkers" tile.
+BusiestAppsCard - the Overview's "Most connections" tile.
 
 Reuses the Network tab's AppActivityFeed (the psutil connection sampler on its own QThread) and AppRow
 (the per-app bar row) to show the handful of apps with the most live connections, active-first. Honest
 by construction: Windows can't attribute bytes to a process without admin/ETW, so this ranks by live
-connection count + hosts - never an invented per-app speed. Clicking the card (or any row) jumps to the
+connection count + hosts - never an invented per-app speed. The title says so: it was "Top talkers"
+until 2.2, which promised bandwidth the card can't measure (per-app bytes need ETW, planned for 2.3). Clicking the card (or any row) jumps to the
 Network tab for the full per-app breakdown.
 
 The feed only polls while the Overview is visible (the tab drives start/stop/teardown), so the default
@@ -37,7 +38,7 @@ class BusiestAppsCard(QFrame):
         self.setObjectName("busiestCard")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)   # keyboard-reachable (was mouse-only)
-        self.setAccessibleName(self._tr("MONITOR_TOP_TALKERS", "Top talkers"))
+        self.setAccessibleName(self._tr("MONITOR_MOST_CONNECTIONS", "Most connections"))
         self.setStyleSheet(
             f"#busiestCard {{ background: {c['subtle_fill']}; border: 1px solid {c['card_stroke']};"
             f" border-radius: {tokens.RADIUS_CARD}px; }}"
@@ -50,10 +51,10 @@ class BusiestAppsCard(QFrame):
 
         head = QHBoxLayout()
         head.setContentsMargins(0, 0, 0, 0)
-        title = QLabel(self._tr("MONITOR_TOP_TALKERS", "Top talkers"))
-        title.setFont(su.font(tokens.TYPE_BODY_STRONG))
-        title.setStyleSheet(f"color: {c['text_primary']}; background: transparent;")
-        head.addWidget(title)
+        self._title = QLabel(self._tr("MONITOR_MOST_CONNECTIONS", "Most connections"))
+        self._title.setFont(su.font(tokens.TYPE_BODY_STRONG))
+        self._title.setStyleSheet(f"color: {c['text_primary']}; background: transparent;")
+        head.addWidget(self._title)
         head.addStretch(1)
         more = QLabel(self._tr("MONITOR_VIEW_ALL_APPS", "All apps →"))
         more.setFont(su.font(tokens.TYPE_CAPTION))
@@ -92,7 +93,7 @@ class BusiestAppsCard(QFrame):
     # --- data -------------------------------------------------------------------
     def _on_payload(self, payload: Dict[str, Any]) -> None:
         rows: List[Dict[str, Any]] = payload.get("rows", []) if isinstance(payload, dict) else []
-        # Top talkers: active first, then by live connection count, then name. Take the top N.
+        # Most connections: active first, then by live connection count, then name. Take the top N.
         ranked = sorted(rows, key=lambda r: (0 if _is_active(r) else 1,
                                              -int(r.get("conn_count", 0)),
                                              str(r.get("display_name", "")).casefold()))[:_MAX_ROWS]

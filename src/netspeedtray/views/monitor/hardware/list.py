@@ -138,7 +138,11 @@ class HardwareBarList(QWidget):
         self._scroll.setWidgetResizable(True)
         self._scroll.setFrameShape(QFrame.Shape.NoFrame)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # Transparent viewport + content: without this they paint the system (light) palette.
+        self._scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        self._scroll.viewport().setAutoFillBackground(False)
         self._content = QWidget()
+        self._content.setStyleSheet("background: transparent;")
         self._list_layout = QVBoxLayout(self._content)
         self._list_layout.setContentsMargins(0, 0, 0, 0)
         self._list_layout.setSpacing(2)

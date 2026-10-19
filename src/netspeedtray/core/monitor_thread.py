@@ -11,6 +11,7 @@ and prevents micro-stutters during system stack latency.
 """
 
 import logging
+import math
 import time
 from typing import Dict, Any, Optional, List, NamedTuple, Tuple
 
@@ -69,6 +70,47 @@ _IDENTITY_POLL_INTERVAL_SEC: float = 5.0
 _NON_CPU_SENSOR_IDENTS: tuple = (
     "/gpu", "/nvme", "/hdd", "/ssd", "/psu", "/battery", "/network", "/ram",
 )
+
+
+def hardware_collection_gates(config: Dict[str, Any], force: bool) -> Tuple[bool, bool]:
+    """(collect_cpu_ram, collect_gpu_vram) for one poll: the user's monitoring switches, or everything
+    while the Monitor window forces collection for its live tiles. Recording is NOT a reason to poll -
+    persistence is decided downstream (controller.hardware_persist_allowed)."""
+    return (bool(config.get('monitor_cpu_enabled', False)) or force,
+            bool(config.get('monitor_gpu_enabled', False)) or force)
+
+
+def aggregate_gpu_engine_utilization(samples: Dict[Any, Any]) -> float:
+    """Busiest-engine GPU utilization from a `\\GPU Engine(*)\\Utilization Percentage` array.
+
+    Each instance is ONE process on ONE engine (pid_..._luid_..._phys_N_eng_M_engtype_X), so the
+    engine's load is the SUM of its processes; taking max() over instances reported the busiest
+    process instead and under-read any shared engine (#328: 44 + 34 + 13 read as 44, not ~91).
+    Engines are never added to each other - 3D, Copy and Video run in the same wall-clock interval -
+    and neither are adapters: nothing in the app selects an adapter (VRAM is summed across all of
+    them), so on a dGPU + iGPU machine this is the busiest engine on ANY adapter, as Task Manager's
+    per-GPU pages would each show their own busiest engine.
+
+    Unparseable instance names cannot be attributed to an engine, so each counts as its own engine
+    (neither dropped nor summed into a parsed one). Non-numeric, bool, negative and non-finite
+    values are skipped. The result is not clamped here; the caller clamps to [0, 100].
+    """
+    engines: Dict[Any, float] = {}
+    for instance, value in samples.items():
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        value = float(value)
+        if not math.isfinite(value) or value < 0.0:
+            continue
+        match = (constants.gpu.ENGINE_INSTANCE_PATTERN.match(instance)
+                 if isinstance(instance, str) else None)
+        if match:
+            luid_high, luid_low, phys, eng = match.groups()
+            key: Any = (int(luid_high, 16), int(luid_low, 16), int(phys), int(eng))
+        else:
+            key = ("unparsed", instance)
+        engines[key] = engines.get(key, 0.0) + value
+    return max(engines.values(), default=0.0)
 
 
 class GpuPollResult(NamedTuple):
@@ -288,8 +330,8 @@ class StatsMonitorThread(QThread):
         try:
             win32pdh.CollectQueryData(self._gpu_query)
 
-            # 1. Broad Utilization (Max among engines, usually represents 3D load).
-            # The wildcard re-expands each collection, so processes started after us are included.
+            # 1. Utilization of the busiest engine, its processes summed (#328) - what Task Manager
+            # shows. The wildcard re-expands each collection, so processes started after us count.
             if self._gpu_util_counter is not None:
                 try:
                     arr = win32pdh.GetFormattedCounterArray(
@@ -299,9 +341,7 @@ class StatsMonitorThread(QThread):
                         # because the array is legitimately empty on an idle tick and we must not
                         # flap the Monitor's GPU tiles in and out.
                         self._gpu_engine_seen = True
-                    for val in arr.values():
-                        if isinstance(val, (int, float)):
-                            util_pct = max(util_pct, float(val))
+                    util_pct = aggregate_gpu_engine_utilization(arr)
                 except Exception as e:
                     self.logger.debug("GPU utilization array read failed: %s", e)
 
@@ -447,8 +487,8 @@ class StatsMonitorThread(QThread):
                         power_w = val / 1000.0  # mW to W
             except: pass
 
-        # Clamp utilization to [0, 100] - PDH GPU-Engine counters can momentarily read >100%.
-        util_pct = max(0.0, min(100.0, util_pct))
+        # Clamp utilization to [0, 100] - a per-engine sum can momentarily read >100%.
+        util_pct = max(constants.gpu.UTIL_MIN_PERCENT, min(constants.gpu.UTIL_MAX_PERCENT, util_pct))
         return GpuPollResult(util_pct, vram_used, vram_total, temp_c, power_w,
                              present=self._gpu_engine_seen)
 
@@ -959,6 +999,10 @@ class StatsMonitorThread(QThread):
                 network_counters = psutil.net_io_counters(pernic=True)
                 if network_counters:
                     stats['network'] = network_counters
+                    # When the counters were SAMPLED (monotonic, wall). The GUI thread may handle two
+                    # samples closer together than they were taken; the odometer's sanity cap must be
+                    # measured over the real sampling span, not the handling span (#13).
+                    stats['network_sampled_at'] = (time.monotonic(), time.time())
 
                 # 1b. Network identity (Wi-Fi band / SSID) - only when the widget wants it, and only
                 # on the slow sub-cadence. get_connected_network_identity() never raises. Emitting on
@@ -971,12 +1015,13 @@ class StatsMonitorThread(QThread):
 
                 # Monitor-window override forces hardware collection even with the widget's flags off.
                 _force_hw = self._force_hardware_collection
-                # Always-on history recording: collect cheap CPU/GPU/RAM utilization so the Monitor's
-                # graphs have real past data. Temps/power stay on their own (heavier) gates below.
-                _record = self.config.get('record_hardware_history', True)
+                # Collect only what the user monitors (or the open Monitor window shows). This used to
+                # OR in record_hardware_history, polling + recording CPU/GPU/RAM with monitoring off;
+                # whether a sample is persisted is now the controller's call (hardware_persist_allowed).
+                _collect_cpu, _collect_gpu = hardware_collection_gates(self.config, _force_hw)
 
                 # 2. CPU / RAM (Optional)
-                if self.config.get('monitor_cpu_enabled', False) or _force_hw or _record:
+                if _collect_cpu:
                     # non-blocking (percpu=False)
                     stats['cpu'] = psutil.cpu_percent(interval=None)
                     if self.config.get('show_hardware_temps', False) or _force_hw:
@@ -990,7 +1035,7 @@ class StatsMonitorThread(QThread):
                     stats['ram_total'] = mem.total / (1024**3) # GB
 
                 # 3. GPU / VRAM (Optional - skipped entirely in RDP sessions)
-                if (self.config.get('monitor_gpu_enabled', False) or _force_hw or _record) and not _in_rdp:
+                if _collect_gpu and not _in_rdp:
                     try:
                         include_temp = bool(self.config.get('show_hardware_temps', False)) or _force_hw
                         include_power = bool(self.config.get('show_hardware_power', False)) or _force_hw

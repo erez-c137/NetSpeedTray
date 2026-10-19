@@ -110,10 +110,9 @@ def test_latency_pill_classification(q_app):
     assert L(None, None, 0.0) == ""                                           # no data -> empty
 
 
-def test_reload_window_normalizes_smart_poll(q_app):
-    """2.1.5 item 9: update_rate=-1.0 (SMART) must reach summarize_* as 2.0 s (SMART samples every
-    SMART_MODE_INTERVAL_MS), not leak through `or 1.0` as -1.0 - which made every Overview summary
-    report coverage 0% in SMART mode."""
+def test_reload_window_passes_the_configured_poll(q_app):
+    """2.1.5 item 9: the configured update_rate must reach summarize_* through the shared resolver
+    (a local `or 1.0` once leaked a sentinel and made every Overview summary report coverage 0%)."""
     captured = []
 
     class _CapWS(_WS):
@@ -131,10 +130,10 @@ def test_reload_window_normalizes_smart_poll(q_app):
     class _MW2(_MW):
         widget_state = _CapWS()
 
-    ov = OverviewTab(_MW2(), _cfg(update_rate=-1.0), I18nStrings("en_US"))
+    ov = OverviewTab(_MW2(), _cfg(update_rate=5.0), I18nStrings("en_US"))
     ov.isVisible = lambda: True          # bypass the visibility guard without show() (no feed thread)
     ov._reload_window()
-    assert captured and all(p == 2.0 for p in captured)
+    assert captured and all(p == 5.0 for p in captured)
 
 
 def test_context_right_prefers_true_system_power(q_app):
@@ -195,7 +194,7 @@ def test_gpu_tile_hides_on_no_gpu(q_app):
     q_app.processEvents()
     assert not ov._tiles["gpu"].isVisibleTo(ov)
     ov.hide()
-    ov.teardown()   # showing starts the top-talkers feed thread; tear it down so it can't leak
+    ov.teardown()   # showing starts the most-connections feed thread; tear it down so it can't leak
 
 
 def test_tiles_show_live_values(q_app):

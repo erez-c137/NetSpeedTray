@@ -48,6 +48,7 @@ class NetworkTab(QWidget):
         self._header = NetworkHeader(i18n, initial_key, graph_host=self._host)
         self._header.period_changed.connect(self._host.set_period)
         self._header.interface_changed.connect(self._host.set_interface_filter)
+        self._header.check_connection_requested.connect(self._open_connection_check)
         self._host.network_totals_ready.connect(self._on_totals)
         # Populate the NIC dropdown from the unified (live + historical) interface list.
         try:
@@ -115,6 +116,11 @@ class NetworkTab(QWidget):
     def _on_detail_closed(self) -> None:
         self._detail.hide()
         self._app_list.clear_selection()
+
+    def _open_connection_check(self) -> None:
+        """The header's "Check connection" action - the same sheet the Overview hero opens (2.2 D3)."""
+        from netspeedtray.views.monitor.connection_check import open_connection_check
+        open_connection_check(self._main_widget, self._config, self._i18n, parent=self.window())
 
     def _on_totals(self, up_bytes: float, down_bytes: float, period_key: str) -> None:
         # Update the numbers (+ the window label) only. The pills are the period's source of truth -

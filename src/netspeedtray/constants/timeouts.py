@@ -13,6 +13,14 @@ class TimeoutConstants:
     # Database related timeouts (seconds)
     DB_FLUSH_BATCH_SYNC_SLEEP: Final[float] = 0.1
     DB_BUSY_TIMEOUT_MS: Final[int] = 250
+    # "Delete all history": the WAL checkpoint that moves the VACUUMed file back into the .db returns
+    # busy while a reader (the Monitor's graph worker) is mid-query. Retry briefly on the worker thread,
+    # then keep retrying on the worker's idle tick until it lands.
+    DB_CHECKPOINT_RETRIES: Final[int] = 5
+    DB_CHECKPOINT_RETRY_SLEEP: Final[float] = 0.2
+    DB_COMPACT_RETRY_INTERVAL_SEC: Final[float] = 5.0
+    # How long Settings waits for the worker's answer before giving the Delete button back.
+    DB_DELETE_HISTORY_UI_TIMEOUT_MS: Final[int] = 120000
 
     # System Event related intervals (milliseconds)
     TASKBAR_VALIDITY_CHECK_INTERVAL_MS: Final[int] = 3000

@@ -19,9 +19,14 @@ from typing import Any, Dict, List, Optional, Tuple
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
 from netspeedtray import constants
+from netspeedtray.core.db.schema_v8 import EXPECTED_TABLES_V8
 
 # Logger Setup
 logger = logging.getLogger("NetSpeedTray.Core.Database")
+
+
+class MigrationAborted(Exception):
+    """A schema migration refused to start (no verified pre-migration backup). Nothing was changed."""
 
 
 class DatabaseWorker(QThread):
@@ -36,6 +41,17 @@ class DatabaseWorker(QThread):
     # view surfaces it as a flyout - a log line alone leaves a rolled-back install
     # looking perfectly healthy while recording nothing, forever.
     schema_incompatible = pyqtSignal(int, int, str)
+    # Result of a user-requested "Delete all history" - one of the DELETE_* statuses below. Emitted
+    # from this thread; WidgetState re-emits it so the Settings dialog hears it on the GUI thread.
+    history_deleted = pyqtSignal(str)
+    # DELETE_DONE: rows deleted AND scrubbed from the .db and -wal files.
+    # DELETE_COMPACT_PENDING: rows deleted (gone from every query) but the VACUUM or the WAL checkpoint
+    #   couldn't finish yet (a reader mid-query), so old pages may still sit in the files; the worker
+    #   keeps retrying on its idle tick (_retry_pending_compaction).
+    # DELETE_FAILED: nothing was deleted.
+    DELETE_DONE = "done"
+    DELETE_COMPACT_PENDING = "compact_pending"
+    DELETE_FAILED = "failed"
 
     _DB_VERSION = 7  # Covering indexes, metadata, eager aggregation, sample_count, hardware stats, hardware hourly, usage_counter (data-cap odometer)
 
@@ -62,6 +78,10 @@ class DatabaseWorker(QThread):
         # path is then refused - see _check_and_create_schema for why silence is not an option.
         self._schema_incompatible = False
         self._downgrade_warned = False
+        # Compaction owed after a "Delete all history" whose VACUUM / WAL checkpoint couldn't finish.
+        self._compact_pending = False
+        self._vacuum_pending = False
+        self._last_compact_attempt = 0.0
         self.logger = logging.getLogger(f"NetSpeedTray.{self.__class__.__name__}")
 
 
@@ -81,6 +101,7 @@ class DatabaseWorker(QThread):
                     # (a compatibility view cannot be indexed) or writes to a file this build
                     # does not understand. Both are exactly what the guard exists to prevent.
                     self._ensure_indexes()  # idempotent; runs regardless of schema version
+                    self._resume_pending_compaction()
                 initialized = True
                 break
             except sqlite3.Error as e:
@@ -104,6 +125,8 @@ class DatabaseWorker(QThread):
             except queue.Empty:
                 if self._stop_event.is_set():
                     break
+                if self._compact_pending:
+                    self._retry_pending_compaction()   # throttled; idle ticks only
                 continue
             if item is None:
                 continue  # wake-up sentinel from stop(); re-check the loop condition
@@ -154,6 +177,8 @@ class DatabaseWorker(QThread):
                     "Refusing database task '%s' and all further writes: the file was written by a "
                     "newer version of NetSpeedTray. This is logged once per session.", task,
                 )
+            if task == "delete_history":
+                self.history_deleted.emit(self.DELETE_FAILED)   # the user is waiting on an answer
             return
 
         handlers = {
@@ -161,6 +186,7 @@ class DatabaseWorker(QThread):
             "persist_hardware": self._persist_hardware_batch,
             "persist_usage": self._persist_usage,
             "maintenance": self._run_maintenance,
+            "delete_history": self._delete_history,
         }
         handler = handlers.get(task)
         if handler:
@@ -280,10 +306,35 @@ class DatabaseWorker(QThread):
         except Exception:
             return True
 
-    # Keep the newest N pre-migration backups; older ones are pruned. Nothing used to
-    # delete these at all, and at a year-scale database that is hundreds of MB of
-    # abandoned copies sitting in the user's roaming profile.
+    # Keep the newest N pre-migration backups overall, PLUS the newest backup of every schema
+    # version (see _prune_old_backups). Nothing used to delete these at all, and at a year-scale
+    # database that is hundreds of MB of abandoned copies in the user's roaming profile.
     _BACKUP_RETENTION = 2
+
+    # The tables each schema version is DEFINED to have - static, from the version history
+    # (v2 first tiered schema; v3 bandwidth_history; v4 sample_count column only; v5 hardware
+    # raw/minute; v6 hardware hour; v7 usage_counter). _verify_backup checks a backup against
+    # this, never against the live source's own table list: a damaged source that lost a table
+    # would otherwise "verify" a backup missing the same table. A version absent here cannot be
+    # verified, so it cannot be migrated - add the new set in the same commit as a schema bump
+    # (test_v7_hardening pins the current one to what a fresh build creates).
+    _V2_TABLES = ("metadata", constants.data.SPEED_TABLE_RAW,
+                  constants.data.SPEED_TABLE_MINUTE, constants.data.SPEED_TABLE_HOUR)
+    _V3_TABLES = _V2_TABLES + (constants.data.BANDWIDTH_TABLE,)
+    _V5_TABLES = _V3_TABLES + (constants.data.HARDWARE_STATS_TABLE_RAW,
+                               constants.data.HARDWARE_STATS_TABLE_MINUTE)
+    _V6_TABLES = _V5_TABLES + (constants.data.HARDWARE_STATS_TABLE_HOUR,)
+    EXPECTED_TABLES: Dict[int, Tuple[str, ...]] = {
+        2: _V2_TABLES,
+        3: _V3_TABLES,
+        4: _V3_TABLES,
+        5: _V5_TABLES,
+        6: _V6_TABLES,
+        7: _V6_TABLES + (constants.data.USAGE_COUNTER_TABLE,),
+        # Defined with the v8 DDL so the set cannot drift from it. Dormant until _DB_VERSION
+        # becomes 8: _verify_backup only ever asks for the version being migrated FROM.
+        8: EXPECTED_TABLES_V8,
+    }
 
     def _backup_database(self) -> bool:
         """
@@ -349,8 +400,16 @@ class DatabaseWorker(QThread):
         Structural checks alone are not enough: the failure this exists to catch (a
         WAL-blind copy) produces a *valid* database that is merely missing rows, which
         ``integrity_check`` reports as ``ok``. So compare content - the schema version
-        and the row count of every history table.
+        and the row count of every table the version is DEFINED to have
+        (``EXPECTED_TABLES[expected_version]``). The source's own table list is never the
+        reference: a table missing from both source and backup fails here, it does not pass.
         """
+        expected_tables = self.EXPECTED_TABLES.get(expected_version)
+        if expected_tables is None:
+            self.logger.error(
+                "Backup verification: no expected table set is known for schema v%s; "
+                "refusing to call the backup verified.", expected_version)
+            return False
         check: Optional[sqlite3.Connection] = None
         try:
             # NOTE: `with sqlite3.connect(...)` commits/rolls back the transaction but does
@@ -370,10 +429,19 @@ class DatabaseWorker(QThread):
                 )
                 return False
 
-            tables = [r[0] for r in self.conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
-            )]
-            for table in tables:
+            _tables_sql = "SELECT name FROM sqlite_master WHERE type='table'"
+            src_tables = {r[0] for r in self.conn.execute(_tables_sql)}
+            dst_tables = {r[0] for r in check.execute(_tables_sql)}
+            for label, present in (("source", src_tables), ("backup", dst_tables)):
+                missing = sorted(set(expected_tables) - present)
+                if missing:
+                    self.logger.error(
+                        "Backup verification: the %s is missing table(s) %s that schema v%d must "
+                        "have. Not migrating a database whose backup cannot be proven whole.",
+                        label, ", ".join(missing), expected_version,
+                    )
+                    return False
+            for table in expected_tables:
                 src = self.conn.execute(f"SELECT COUNT(*) FROM '{table}'").fetchone()[0]
                 dst = check.execute(f"SELECT COUNT(*) FROM '{table}'").fetchone()[0]
                 if src != dst:
@@ -392,14 +460,28 @@ class DatabaseWorker(QThread):
 
 
     def _prune_old_backups(self) -> None:
-        """Keep only the newest `_BACKUP_RETENTION` backups; nothing else ever deleted them."""
+        """Keep the newest `_BACKUP_RETENTION` backups overall PLUS the newest backup of each
+        schema version (the version is the one the backup holds: ``.db.bak.v{N}_...``).
+
+        Version-blind "newest 2" would let two v8-era backups delete the last v7 one - the only
+        file a rolled-back 2.1.x can restore (_find_newest_backup skips newer versions). A backup
+        whose name carries no version is kept only while it is among the newest overall."""
         try:
             backups = sorted(
                 self.db_path.parent.glob(f"{self.db_path.stem}.db.bak.*"),
-                key=lambda p: p.stat().st_mtime,
+                key=lambda p: (p.stat().st_mtime, p.name),
                 reverse=True,
             )
-            for stale in backups[self._BACKUP_RETENTION:]:
+            keep = set(backups[:self._BACKUP_RETENTION])
+            seen_versions = set()
+            for path in backups:   # newest first, so the first hit per version is its newest
+                m = re.search(r"\.db\.bak\.v(\d+)_", path.name)
+                if m and m.group(1) not in seen_versions:
+                    seen_versions.add(m.group(1))
+                    keep.add(path)
+            for stale in backups:
+                if stale in keep:
+                    continue
                 stale.unlink(missing_ok=True)
                 self.logger.debug("Pruned old database backup: %s", stale.name)
         except Exception as e:
@@ -414,7 +496,9 @@ class DatabaseWorker(QThread):
         message advised moving the database aside to start a fresh history while a
         verified backup sat in the same folder. A rollback session never prunes these
         (_prune_old_backups only runs from _backup_database, inside _migrate_schema),
-        so whatever the migrating build left behind is still here.
+        so whatever the migrating build left behind is still here - and pruning keeps the
+        newest backup of every schema version, so a later build's own backups never
+        displace this build's restore target.
         """
         try:
             backups = sorted(
@@ -441,10 +525,14 @@ class DatabaseWorker(QThread):
         self.logger.info("Migrating database from version %d to %d...", current_version, self._DB_VERSION)
 
         if not self._backup_database():
-            # The per-migration transaction below is still the primary rollback safety for an in-progress
-            # failure; surface loudly that the extra .bak net is missing this run (don't abort - a backup
-            # failure shouldn't brick the app on an otherwise-valid migration).
-            self.logger.warning("Schema migration proceeding WITHOUT a pre-migration backup copy.")
+            # ABORT (release-plan Gate 2, item 3). The per-step transaction below cannot roll back an
+            # executescript() (it COMMITs implicitly), and a migration whose only undo is a backup
+            # that failed or did not verify has no undo at all. Nothing has been changed yet: the
+            # file stays on its old version, this session keeps running on it exactly as after any
+            # failed migration, and the next launch retries - by then the disk may have room or the
+            # lock may have cleared. Raised, so _check_and_create_schema's no-rebuild guard handles it.
+            raise MigrationAborted(
+                f"pre-migration backup failed or did not verify; staying on schema v{current_version}")
 
         try:
             for ver in range(current_version, self._DB_VERSION):
@@ -635,6 +723,10 @@ class DatabaseWorker(QThread):
              try:
                  self._migrate_schema(current_version)
                  return
+             except MigrationAborted as e:
+                 self.logger.error("Migration NOT started: %s. The database is unchanged; it will be "
+                                   "retried on the next launch.", e)
+                 return
              except Exception as e:
                  # CRITICAL data-loss guard: NEVER fall through to the DROP/fresh-build
                  # path on an existing database - that would silently wipe the user's
@@ -773,14 +865,21 @@ class DatabaseWorker(QThread):
             self.conn.rollback()
 
 
-    def _persist_usage(self, data: Tuple[float, float, float, float, str, int]) -> None:
+    def _persist_usage(self, data: Tuple[Any, ...]) -> None:
         """
         Upsert the single-row data-usage odometer. `data` is
-        (cumulative_up, cumulative_down, anchor_up, anchor_down, period_key, updated_ts).
+        (cumulative_up, cumulative_down, anchor_up, anchor_down, period_key, updated_ts[, snapshot_json]).
+
+        The optional snapshot_json (the NIC counters the cumulative accounts up to, for same-boot
+        launch reconciliation) goes to the existing `metadata` key/value table in the SAME
+        transaction, so total and snapshot can never disagree. No schema change: metadata has
+        existed since v3. None leaves the stored snapshot untouched; "" (usage_snapshot.
+        CLEAR_SNAPSHOT) deletes it.
         """
         if data is None or self.conn is None:
             return
-        cumulative_up, cumulative_down, anchor_up, anchor_down, period_key, updated_ts = data
+        cumulative_up, cumulative_down, anchor_up, anchor_down, period_key, updated_ts = data[:6]
+        snapshot_json = data[6] if len(data) > 6 else None
         cursor = self.conn.cursor()
         try:
             cursor.execute(
@@ -796,6 +895,14 @@ class DatabaseWorker(QThread):
                         updated_ts=excluded.updated_ts""",
                 (cumulative_up, cumulative_down, anchor_up, anchor_down, period_key, updated_ts),
             )
+            if snapshot_json == "":
+                # CLEAR_SNAPSHOT: counters were seen but no snapshot could be encoded - a stale one
+                # left next to this advanced total would be re-added at the next same-boot launch.
+                cursor.execute("DELETE FROM metadata WHERE key = ?",
+                               (constants.network.usage.SNAPSHOT_METADATA_KEY,))
+            elif snapshot_json is not None:
+                cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+                               (constants.network.usage.SNAPSHOT_METADATA_KEY, snapshot_json))
             self.conn.commit()
         except sqlite3.Error as e:
             self.logger.error("Failed to persist usage counter: %s", e)
@@ -878,6 +985,155 @@ class DatabaseWorker(QThread):
         except sqlite3.Error as e:
             self.logger.error("Maintenance failed: %s", e)
             self.conn.rollback()
+
+
+    def _delete_history(self, data: Optional[Dict[str, Any]] = None) -> None:
+        """
+        User-requested "Delete all history": empty every history tier, then VACUUM.
+
+        Runs on this thread like every other write, so it is serialized with the persist batches -
+        WidgetState drops its pending batches and enqueues this under the batch lock, so nothing
+        recorded before the request can be written after it, and samples enqueued after it land in
+        the emptied tables as normal (the app keeps recording).
+
+        The VACUUM is not optional here: a DELETE only moves pages to the freelist, where the old
+        samples stay readable in the file. It bypasses the daily/slack gates of the maintenance
+        VACUUM because the user asked for the data to be gone, not for the file to be tidied.
+
+        ``data["include_usage"]`` also clears the data-usage odometer (opt-in; see HISTORY_TABLES).
+        """
+        include_usage = bool((data or {}).get("include_usage", False))
+        if self.conn is None:
+            self.history_deleted.emit(self.DELETE_FAILED)
+            return
+        cursor = self.conn.cursor()
+        try:
+            present = {r[0] for r in cursor.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+            tables = [t for t in constants.data.HISTORY_TABLES if t in present]
+            if include_usage and constants.data.USAGE_COUNTER_TABLE in present:
+                tables.append(constants.data.USAGE_COUNTER_TABLE)
+            for table in tables:
+                cursor.execute(f"DELETE FROM {table}")
+            self.conn.commit()
+        except sqlite3.Error as e:
+            self.logger.error("Delete all history failed: %s", e)
+            self.conn.rollback()
+            self.history_deleted.emit(self.DELETE_FAILED)
+            return
+        self.logger.info("History deleted (%d tables%s).", len(tables),
+                         ", incl. data-usage counter" if include_usage else "")
+        vacuum_ok = self._vacuum_now()
+        # Only a COMPLETED truncate checkpoint moves the rewritten file out of -wal and over the old
+        # pages in the .db. It does not raise when a reader is mid-query - it returns busy=1 - so the
+        # result row has to be read, or the old samples silently stay in both files.
+        checkpoint_ok = vacuum_ok and self._checkpoint_truncate(constants.timeouts.DB_CHECKPOINT_RETRIES)
+        self.database_updated.emit()
+        if vacuum_ok and checkpoint_ok:
+            self.history_deleted.emit(self.DELETE_DONE)
+            return
+        self._compact_pending = True
+        self._vacuum_pending = not vacuum_ok
+        self._last_compact_attempt = time.monotonic()
+        self._set_compaction_marker(True)   # survives a quit before the retry lands
+        self.logger.warning(
+            "History rows deleted, but the file is not compacted yet (%s); old pages may remain in "
+            "the database file until it is. Retrying while idle.",
+            "VACUUM failed" if not vacuum_ok else "WAL checkpoint busy")
+        self.history_deleted.emit(self.DELETE_COMPACT_PENDING)
+
+    def _vacuum_now(self) -> bool:
+        """Ungated VACUUM for Delete all history. True on success; a failure is a WARNING."""
+        try:
+            self.conn.execute("VACUUM;")
+            self.conn.execute(
+                "INSERT OR REPLACE INTO metadata (key, value) VALUES ('last_vacuum_at', ?)",
+                (str(int(time.time())),))
+            self.conn.commit()
+            return True
+        except sqlite3.Error as e:
+            # The rows are already deleted and committed; until a VACUUM succeeds their pages sit
+            # on the freelist, still readable in the file.
+            self.logger.warning("VACUUM after history delete failed: %s", e)
+            return False
+
+    def _checkpoint_truncate(self, attempts: int) -> bool:
+        """PRAGMA wal_checkpoint(TRUNCATE), retried up to ``attempts`` times. True only when the row
+        reports busy == 0 (the whole WAL was copied back and the file truncated).
+
+        The connection's 5 s busy_timeout is lowered for these attempts: a checkpoint blocked by a
+        reader would otherwise park this thread (and every queued write) for 5 s per attempt - and
+        the idle retry would do it again every few seconds while the Monitor stays open."""
+        try:
+            prev = self.conn.execute("PRAGMA busy_timeout;").fetchone()[0]
+        except (sqlite3.Error, TypeError):
+            prev = 5000
+        try:
+            self.conn.execute(f"PRAGMA busy_timeout = {int(constants.timeouts.DB_BUSY_TIMEOUT_MS)};")
+            for i in range(max(1, attempts)):
+                try:
+                    row = self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE);").fetchone()
+                    if row is not None and int(row[0]) == 0:
+                        return True
+                except sqlite3.Error as e:
+                    self.logger.debug("WAL checkpoint attempt %d failed: %s", i + 1, e)
+                if i + 1 < attempts:
+                    time.sleep(constants.timeouts.DB_CHECKPOINT_RETRY_SLEEP)
+            return False
+        finally:
+            try:
+                self.conn.execute(f"PRAGMA busy_timeout = {int(prev)};")
+            except sqlite3.Error:
+                pass
+
+    def _retry_pending_compaction(self, force: bool = False) -> None:
+        """Finish a compaction a Delete all history couldn't (run from the idle tick, throttled)."""
+        if not self._compact_pending or self.conn is None:
+            return
+        now = time.monotonic()
+        if not force and now - self._last_compact_attempt < constants.timeouts.DB_COMPACT_RETRY_INTERVAL_SEC:
+            return
+        self._last_compact_attempt = now
+        if self._vacuum_pending:
+            if not self._vacuum_now():
+                return
+            self._vacuum_pending = False
+        # Clear the restart marker BEFORE the checkpoint, so the checkpoint also folds that write in.
+        self._set_compaction_marker(False)
+        if self._checkpoint_truncate(1):
+            self._compact_pending = False
+            self.logger.info("Deferred compaction after history delete completed.")
+            self.database_updated.emit()
+        else:
+            self._set_compaction_marker(True)
+
+    _COMPACT_MARKER_KEY = "pending_history_compaction"
+
+    def _set_compaction_marker(self, on: bool) -> None:
+        """Persist 'a history delete still owes a VACUUM + checkpoint' in metadata, so a quit before
+        the idle retry lands is picked up at the next start (_resume_pending_compaction)."""
+        try:
+            if on:
+                self.conn.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, '1')",
+                                  (self._COMPACT_MARKER_KEY,))
+            else:
+                self.conn.execute("DELETE FROM metadata WHERE key = ?", (self._COMPACT_MARKER_KEY,))
+            self.conn.commit()
+        except sqlite3.Error as e:
+            self.logger.debug("Compaction marker not updated: %s", e)
+
+    def _resume_pending_compaction(self) -> None:
+        """At startup: a previous session deleted history but quit before the file was compacted."""
+        try:
+            row = self.conn.execute("SELECT value FROM metadata WHERE key = ?",
+                                    (self._COMPACT_MARKER_KEY,)).fetchone()
+        except sqlite3.Error:
+            return
+        if row:
+            self.logger.info("Resuming the file compaction a previous history delete could not finish.")
+            self._compact_pending = True
+            self._vacuum_pending = True    # cheap insurance: the old pages may also be on the freelist
+            self._retry_pending_compaction(force=True)
 
 
     def _vacuum_warranted(self, free_pages: int, page_count: int) -> bool:

@@ -4,7 +4,6 @@ Constants for application configuration defaults and constraints.
 from typing import Final, Dict, Any, List
 
 # --- IMPORT OTHER CONSTANTS TO CREATE A SINGLE SOURCE OF TRUTH ---
-from netspeedtray.constants.timers import timers
 from netspeedtray.constants.data import data
 from netspeedtray.constants.network import network
 from netspeedtray.constants.app import app
@@ -41,7 +40,6 @@ class ConfigConstants:
     
     # --- Default Values for Individual Settings (referencing other constants) ---
     DEFAULT_UPDATE_RATE: Final[float] = 1.0
-    MINIMUM_UPDATE_RATE: Final[float] = timers.MINIMUM_INTERVAL_MS / 1000.0
     DEFAULT_FONT_FAMILY: Final[str] = fonts.DEFAULT_FONT
     DEFAULT_FONT_SIZE: Final[int] = 9
     DEFAULT_FONT_WEIGHT: Final[int] = fonts.WEIGHT_NORMAL
@@ -67,6 +65,14 @@ class ConfigConstants:
     DEFAULT_GRAPH_ENABLED: Final[bool] = False
     DEFAULT_HISTORY_MINUTES: Final[int] = 3
     DEFAULT_GRAPH_OPACITY: Final[int] = 66
+    # Fixed y-axis for the taskbar mini graph (DU Meter-style). Off by default: the graph keeps
+    # auto-fitting to the busiest recent sample, so nobody's graph changes on upgrade. When on, the
+    # axis tops out at the advertised plan speed (plan_down_mbps / plan_up_mbps) plus the headroom,
+    # with an optional dotted line at the plan speed itself. No plan set = stays automatic.
+    DEFAULT_GRAPH_FIXED_SCALE: Final[bool] = False
+    DEFAULT_GRAPH_SCALE_HEADROOM: Final[int] = 10   # percent above the plan speed
+    GRAPH_SCALE_HEADROOM_CHOICES: Final[List[int]] = [0, 10, 20, 30]
+    DEFAULT_GRAPH_SHOW_CEILING: Final[bool] = True  # only drawn when the headroom is above 0%
     DEFAULT_INTERFACE_MODE: Final[str] = network.interface.DEFAULT_MODE
     DEFAULT_KEEP_DATA_DAYS: Final[int] = data.retention.DEFAULT_DAYS # 365 days (1 Year) default
     DEFAULT_DARK_MODE: Final[bool] = True
@@ -158,6 +164,9 @@ class ConfigConstants:
         "graph_enabled": DEFAULT_GRAPH_ENABLED,
         "history_minutes": DEFAULT_HISTORY_MINUTES,
         "graph_opacity": DEFAULT_GRAPH_OPACITY,
+        "graph_fixed_scale": DEFAULT_GRAPH_FIXED_SCALE,
+        "graph_scale_headroom": DEFAULT_GRAPH_SCALE_HEADROOM,
+        "graph_show_ceiling": DEFAULT_GRAPH_SHOW_CEILING,
         "interface_mode": DEFAULT_INTERFACE_MODE,
         "selected_interfaces": [],
         "excluded_interfaces": network.interface.DEFAULT_EXCLUSIONS,
@@ -228,9 +237,10 @@ class ConfigConstants:
         "show_memory_labels": DEFAULT_SHOW_MEMORY_LABELS,
         "show_hardware_temps": DEFAULT_SHOW_HARDWARE_TEMPS,
         "show_hardware_power": DEFAULT_SHOW_HARDWARE_POWER,
-        # Record cheap CPU/GPU/RAM utilization to the DB always (not just while the widget displays it),
-        # so the Monitor's history graphs have real data to show for past periods. Cheap (psutil +
-        # one PDH read); temps/power are NOT recorded here (those stay gated/forced-only).
+        # Settings > Advanced > "Record hardware history". Persists hardware samples to the history DB,
+        # but ONLY for metrics the user monitors (CPU/GPU/RAM switches, temps/power switches) - see
+        # controller.hardware_persist_allowed. Off = nothing hardware is written; live display (widget,
+        # mini graph, Monitor tiles) is unaffected. Latency has its own switch (latency_enabled).
         "record_hardware_history": True,
         # Latency: ping the default GATEWAY (LAN-only, never leaves the network) so the Monitor shows
         # connection latency + loss history. The public anchor (true internet latency) is STRICTLY
@@ -281,8 +291,9 @@ class ConfigConstants:
         "config_version": {"type": str, "default": CONFIG_SCHEMA_VERSION},
         "start_with_windows": {"type": bool, "default": DEFAULT_START_WITH_WINDOWS},
         "language": {"type": (str, type(None)), "default": None, "choices": list(I18nStrings.LANGUAGE_MAP.keys()) + [None]},
-        # Allow -1.0 sentinel for SMART/adaptive mode in addition to positive intervals
-        "update_rate": {"type": (int, float), "default": DEFAULT_UPDATE_RATE, "min": -1.0, "max": timers.MAXIMUM_UPDATE_RATE_SECONDS},
+        # Seconds between samples: one of the four slider presets (1/2/5/10). `_migrate_config` snaps
+        # any other persisted value onto the ladder first, so this only catches a bad in-memory value.
+        "update_rate": {"type": (int, float), "default": DEFAULT_UPDATE_RATE, "choices": list(UpdateMode.PRESETS)},
         "font_family": {"type": str, "default": DEFAULT_FONT_FAMILY},
         "font_size": {"type": int, "default": DEFAULT_FONT_SIZE, "min": fonts.FONT_SIZE_MIN, "max": fonts.FONT_SIZE_MAX},
         "font_weight": {"type": int, "default": DEFAULT_FONT_WEIGHT, "min": 1, "max": 1000},
@@ -296,6 +307,9 @@ class ConfigConstants:
         "graph_enabled": {"type": bool, "default": DEFAULT_GRAPH_ENABLED},
         "history_minutes": {"type": int, "default": DEFAULT_HISTORY_MINUTES, "min": 1, "max": 1440}, # Range from manual check
         "graph_opacity": {"type": (int, float), "default": DEFAULT_GRAPH_OPACITY, "min": ui_constants.sliders.OPACITY_MIN, "max": ui_constants.sliders.OPACITY_MAX},
+        "graph_fixed_scale": {"type": bool, "default": DEFAULT_GRAPH_FIXED_SCALE},
+        "graph_scale_headroom": {"type": int, "default": DEFAULT_GRAPH_SCALE_HEADROOM, "choices": GRAPH_SCALE_HEADROOM_CHOICES},
+        "graph_show_ceiling": {"type": bool, "default": DEFAULT_GRAPH_SHOW_CEILING},
         "interface_mode": {"type": str, "default": DEFAULT_INTERFACE_MODE, "choices": list(network.interface.VALID_INTERFACE_MODES)},
         "selected_interfaces": {"type": list, "default": [], "item_type": str},
         "excluded_interfaces": {"type": list, "default": network.interface.DEFAULT_EXCLUSIONS, "item_type": str},

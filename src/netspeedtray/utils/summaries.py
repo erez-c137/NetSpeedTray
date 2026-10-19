@@ -85,8 +85,10 @@ def summarize_rollup(avgs: Sequence[float], maxes: Sequence[float],
         p50=None, p95=None, p99=None, stddev=None, note=_UNAVAILABLE)
 
 
-def loss_pct(timeouts: int, total_probes: int) -> Optional[float]:
-    """Latency probe loss% = timed-out probes / total - the packet-loss proxy for an ISP dispute."""
+def loss_pct(timeouts: float, total_probes: int) -> Optional[float]:
+    """Latency probe loss% = timed-out probes / total - the packet-loss proxy for an ISP dispute.
+    Also takes the persisted loss series directly: ``timeouts`` = the sum of per-cycle loss fractions
+    (old rows 0/1, burst rows 0-1 in quarter steps) and ``total_probes`` = the number of cycles."""
     if total_probes <= 0:
         return None
     return round((timeouts / total_probes) * 100.0, 2)
@@ -147,7 +149,9 @@ def event_runs(pairs: Sequence, is_bad) -> List[tuple]:
 
 
 def outage_summary(timeout_pairs: Sequence) -> Dict[str, object]:
-    """Connection-drop events from the gateway-timeout series (value >= 0.5 == a lost ping). Returns
+    """Connection-drop events from the gateway-timeout series. A row >= 0.5 is a drop: half or more of
+    that cycle's burst lost (2.2+ rows are the lost fraction, 0-1 in quarter steps), or the single lost
+    ping of an older 0/1 row - so one unlucky packet in a burst (0.25) is not an outage. Returns
     {count, last_start, total_down_seconds, runs} - an honest outage log, not a fabricated SLA."""
     runs = event_runs(timeout_pairs, lambda v: v is not None and float(v) >= 0.5)
     total = 0.0

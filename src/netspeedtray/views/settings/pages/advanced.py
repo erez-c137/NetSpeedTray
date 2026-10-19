@@ -2,12 +2,12 @@
 Advanced Settings Page (2.0 IA) - data history, app-behavior flags, and a fresh start.
 
 The progressive-disclosure valve for genuinely low-frequency / destructive items:
-data retention, the app-wide reduce-motion flag (also read by the Monitor window's
-hold-still logic), and reset affordances.
+data retention, hardware-history recording, "Delete all history", the app-wide reduce-motion
+flag (also read by the Monitor window's hold-still logic), and reset affordances.
 """
 from typing import Dict, Any, Callable, Optional
 
-from PyQt6.QtWidgets import QWidget, QHBoxLayout, QLabel, QPushButton
+from PyQt6.QtWidgets import QWidget, QHBoxLayout, QLabel, QPushButton, QGraphicsOpacityEffect
 
 from netspeedtray import constants
 from netspeedtray.utils.components import Win11Toggle, SettingCard, Win11ComboBox
@@ -21,12 +21,14 @@ class AdvancedPage(QWidget):
 
     def __init__(self, i18n, on_change: Callable[[], None],
                  reset_page_callback: Optional[Callable[[], None]] = None,
-                 reset_all_callback: Optional[Callable[[], None]] = None):
+                 reset_all_callback: Optional[Callable[[], None]] = None,
+                 delete_history_callback: Optional[Callable[[], None]] = None):
         super().__init__()
         self.i18n = i18n
         self.on_change = on_change
         self._reset_page_cb = reset_page_callback
         self._reset_all_cb = reset_all_callback
+        self._delete_history_cb = delete_history_callback
         self._days_map = constants.data.retention.DAYS_MAP  # {0:1, ..., 6:365}
         self._setup_ui()
 
@@ -44,6 +46,25 @@ class AdvancedPage(QWidget):
         self.keep_data.setMinimumWidth(180)
         self.keep_data.currentIndexChanged.connect(self.on_change)
         layout.addWidget(SettingCard(self.i18n.ADVANCED_KEEP_HISTORY_LABEL, control=self.keep_data))
+
+        # Privacy (2.2 item C): what gets recorded, and a way to erase it. Recording follows the
+        # Hardware page's monitoring switches - this toggle can only narrow it, never widen it.
+        self.record_hardware = Win11Toggle(label_text="")
+        self.record_hardware.toggled.connect(self.on_change)
+        self._record_card = SettingCard(self.i18n.RECORD_HARDWARE_HISTORY_LABEL,
+                                        description=self.i18n.RECORD_HARDWARE_HISTORY_SUB,
+                                        control=self.record_hardware)
+        layout.addWidget(self._record_card)
+
+        # An action, not a setting: runs right after its own confirmation (the dialog's Cancel does
+        # not undo it), so it is not part of load/get_settings.
+        self.delete_history_btn = QPushButton(self.i18n.DELETE_HISTORY_BUTTON)
+        self.delete_history_btn.setStyleSheet(style_utils.button_style())
+        if self._delete_history_cb:
+            self.delete_history_btn.clicked.connect(self._delete_history_cb)
+        layout.addWidget(SettingCard(self.i18n.DELETE_HISTORY_LABEL,
+                                     description=self.i18n.DELETE_HISTORY_SUB,
+                                     control=self.delete_history_btn))
 
         # --- Behavior ---
         layout.addWidget(section_header(self.i18n.BEHAVIOR_GROUP_TITLE))
@@ -93,6 +114,19 @@ class AdvancedPage(QWidget):
 
         layout.addStretch()
 
+    def set_hardware_monitoring_active(self, active: bool) -> None:
+        """Grey the Record-hardware-history card out while neither CPU nor GPU is monitored (it would
+        show On while recording nothing). The user's choice is kept - only shown as unavailable, the
+        same Win11 dependent-control look the Hardware page uses."""
+        self._record_card.setEnabled(active)
+        eff = self._record_card.graphicsEffect()
+        if not isinstance(eff, QGraphicsOpacityEffect):
+            eff = QGraphicsOpacityEffect(self._record_card)
+            self._record_card.setGraphicsEffect(eff)
+        eff.setOpacity(1.0 if active else 0.4)
+        self._record_card.set_description(self.i18n.RECORD_HARDWARE_HISTORY_SUB if active
+                                          else self.i18n.RECORD_HARDWARE_HISTORY_INACTIVE_SUB)
+
     def _retention_label(self, days: int) -> str:
         return helpers.format_retention_label(days, self.i18n)
 
@@ -104,6 +138,9 @@ class AdvancedPage(QWidget):
             idx = min(range(self.keep_data.count()),
                       key=lambda i: abs(int(self.keep_data.itemData(i)) - days))
         self.keep_data.setCurrentIndex(idx)
+        self.record_hardware.setChecked(bool(config.get("record_hardware_history", True)))
+        self.set_hardware_monitoring_active(bool(config.get("monitor_cpu_enabled", False))
+                                            or bool(config.get("monitor_gpu_enabled", False)))
         self.reduce_motion.setChecked(bool(config.get("reduce_motion", False)))
         self.keep_windows_on_top.setChecked(bool(config.get("keep_windows_on_top", False)))
         self.show_usage_hover.setChecked(bool(config.get("show_usage_on_hover", True)))
@@ -113,6 +150,7 @@ class AdvancedPage(QWidget):
     def get_settings(self) -> Dict[str, Any]:
         return {
             "keep_data": int(self.keep_data.currentData()),
+            "record_hardware_history": self.record_hardware.isChecked(),
             "reduce_motion": self.reduce_motion.isChecked(),
             "keep_windows_on_top": self.keep_windows_on_top.isChecked(),
             "show_usage_on_hover": self.show_usage_hover.isChecked(),

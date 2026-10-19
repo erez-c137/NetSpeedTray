@@ -68,7 +68,7 @@ The widget lives on your taskbar - at its simplest, just your up &amp; down spee
 
 <div align="center">
   <img src="screenshots/monitor_overview_2.0.png" alt="NetSpeedTray Monitor - Overview tab" width="860" />
-  <p><sub><b>Overview.</b> Live tiles + adaptive sparklines, a network hero with inline latency, a data-usage card, and top talkers - every card drills into detail.</sub></p>
+  <p><sub><b>Overview.</b> Live tiles + adaptive sparklines, a network hero with inline latency, a data-usage card, and the apps with the most connections - every card drills into detail.</sub></p>
 </div>
 
 <p align="center"><i>↓ Click to explore the rest ↓</i></p>
@@ -115,7 +115,7 @@ So I built NetSpeedTray: live up/down speeds, CPU and GPU utilization, temperatu
 
 ## What You Get
 
-🌐 **Network on your taskbar.** Live upload and download speeds with sub-second updates. Auto-detects your primary internet connection or lets you pick specific adapters. Color-code thresholds so heavy traffic stands out at a glance. In 2.0 the readout sits *inside* the taskbar's layer - it stays put through the Start menu, Quick Settings, and the tray overflow instead of disappearing.
+🌐 **Network on your taskbar.** Live upload and download speeds, updated every second by default. Auto-detects your primary internet connection or lets you pick specific adapters. Color-code thresholds so heavy traffic stands out at a glance. In 2.0 the readout sits *inside* the taskbar's layer - it stays put through the Start menu, Quick Settings, and the tray overflow instead of disappearing.
 
 🖥️ **Hardware stats too.** CPU and GPU utilization beside your network speeds, with optional temperature, power (Watts), RAM, and VRAM. Vendor-agnostic GPU support - NVIDIA, AMD, and Intel. ([When do temps need a helper? →](#hardware-monitoring---do-i-need-librehardwaremonitor))
 
@@ -135,7 +135,7 @@ So I built NetSpeedTray: live up/down speeds, CPU and GPU utilization, temperatu
 
 Double-click the widget (or pick **Monitor** from the right-click menu) to open it. One window replaces the two older, separate Graph and App Activity windows. Three tabs share a single graph engine and timeline - and the Overview is intentionally chart-free, so a quick glance never loads the heavy plotting libraries.
 
-- **🏠 Overview - the at-a-glance control center.** Live tiles for network, CPU, GPU, RAM, and VRAM, each with a sparkline that adapts its scale so low-but-varying activity reads in detail. A network "hero" card shows download and upload as co-equal headline numbers with an inline latency read, a context strip across the top (session uptime, period totals, CPU + GPU power), a **Data usage** card, and a **Top talkers** list. Every card is clickable and drills into detail.
+- **🏠 Overview - the at-a-glance control center.** Live tiles for network, CPU, GPU, RAM, and VRAM, each with a sparkline that adapts its scale so low-but-varying activity reads in detail. A network "hero" card shows download and upload as co-equal headline numbers with an inline latency read, a context strip across the top (session uptime, period totals, CPU + GPU power), a **Data usage** card, and a **Most connections** list (apps ranked by live connections - Windows can't attribute bandwidth to an app without admin). Every card is clickable and drills into detail.
 
 - **🌐 Network - history + who's actually talking.** The history graph over a per-app **connection** list: how many live connections each program holds, how many are active, and the distinct remote hosts it's reaching. Honest by design - Windows can't attribute network bytes per app without a kernel driver, so nothing is dressed up as a per-app "speed." A per-NIC filter scopes both the graph and the totals.
 
@@ -184,7 +184,7 @@ Double-click the widget (or pick **Monitor** from the right-click menu) to open 
 ## FAQ
 
 **How is this different from Task Manager?**
-Task Manager shows network speed too - but you have to *open* it, and it disappears the moment you click away. NetSpeedTray lives permanently on your taskbar with sub-second updates, in the corner of your eye while you work.
+Task Manager shows network speed too - but you have to *open* it, and it disappears the moment you click away. NetSpeedTray lives permanently on your taskbar, live every second, in the corner of your eye while you work.
 
 **Will it slow down my PC?**
 Idle RAM is about **50 MB** - that's the number Windows Task Manager shows you (its *full* working set, which counts the shared Windows/Qt DLLs it maps, is ~90 MB), and CPU sits near zero between polls (~0.1%). The Monitor's Overview tab is deliberately chart-free, so glancing at it stays light; opening the Network or Hardware **charts** loads the plotting library for the session, which adds roughly **50-60 MB** while the Monitor is open - close the Monitor and it eases back down. The widget polls every ~1 second using the same Windows APIs Task Manager uses.
@@ -196,7 +196,7 @@ Often no - see the [hardware table above](#hardware-monitoring---do-i-need-libre
 Yes - **Settings → Network → Data usage**, or the tray's **Data cap…**. Set a monthly cap, a billing reset day, and opt-in 80% / 100% alerts. The alert is a quiet flyout above the widget; the tray shows live progress.
 
 **Does the latency check phone home?**
-Only if you ask it to. The default target is your own **gateway**, which never leaves your LAN. Pinging a public host is a separate, explicit opt-in where *you* choose the host. Nothing else about your network is sent anywhere - there's no telemetry of any kind.
+Only if you ask it to. The default target is your own **gateway**, which never leaves your LAN - a burst of four small pings every 3 seconds, about 1.3 packets a second. Pinging a public host is a separate, explicit opt-in where *you* choose the host. The Monitor's **Check connection** button sends 20 pings to your router, and to the public host only if that opt-in is on or you tick the box that names it, just for that check. Nothing else about your network is sent anywhere - there's no telemetry of any kind.
 
 <a id="why-does-the-network-name-need-location-access"></a>
 **Why does the network name need "Location" access?**
@@ -217,7 +217,7 @@ You probably grabbed an unsigned dev build. The official releases ([Setup.exe / 
 <summary><b>📋 Full Feature List</b> (click to expand)</summary>
 
 ### Network Monitoring
-- **Live upload/download** on the taskbar with sub-second updates
+- **Live upload/download** on the taskbar, live every second
 - **Auto-primary mode** - finds your main internet connection, ignoring VPNs and virtual adapters
 - **Interface filtering** - all hardware, specific adapters, or include virtual interfaces
 - **Color coding** - custom speed thresholds and colors to read load at a glance
@@ -232,7 +232,7 @@ You probably grabbed an unsigned dev build. The official releases ([Setup.exe / 
 - **LibreHardwareMonitor auto-detection** - if LHM/OHM is running as admin, it's picked up automatically for temps/power across all vendors
 
 ### The Monitor
-- **Overview** - at-a-glance tiles + adaptive sparklines, a network hero card, a context strip, a Data-usage card, and Top talkers
+- **Overview** - at-a-glance tiles + adaptive sparklines, a network hero card, a context strip, a Data-usage card, and Most connections
 - **Network** - history graph + per-app connection list + per-NIC filter + detail panel
 - **Hardware** - combined CPU+GPU graph (modes/smoothing/axis) + per-process CPU/RAM/GPU% + telemetry band
 - **Statistics & export** - honest distributions (exact percentiles only where the data supports them), Copy/Export to CSV + JSON, and a headless `--export-csv` CLI
@@ -241,7 +241,7 @@ You probably grabbed an unsigned dev build. The official releases ([Setup.exe / 
 
 ### Widget Layout & Customization
 - **Layout modes** - Side-by-Side, Stacked, or Auto-Cycle (rotates Network / CPU / GPU); per-segment ordering
-- **Mini-graph overlay** with adjustable opacity and gradient fill
+- **Mini-graph overlay** with adjustable opacity and gradient fill, auto-scaled or **fixed to your plan speed** (+0/10/20/30% headroom, optional dotted plan-speed line)
 - **Arrow styles** - Classic ↑↓, Solid ▲▼, Compact ▴▾, Outline △▽, Outline Compact ▵▿, Double ⇑⇓, or Custom
 - **Live settings preview** - see the exact widget effect (font/color/arrows/layout/mode) before you commit
 - **Configurable click actions** - reassign double-click / middle-click on the widget (Open Monitor, Settings, Pause/Resume, or nothing)
