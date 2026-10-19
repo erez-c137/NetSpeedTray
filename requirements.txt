@@ -41,11 +41,11 @@ python-bidi==0.6.11
     # via -r requirements.in
 python-dateutil==2.9.0.post0
     # via matplotlib
-pywin32==311
+pywin32==311 ; sys_platform == "win32"
     # via
     #   -r requirements.in
     #   wmi
 six==1.17.0
     # via python-dateutil
-wmi==1.5.1
+wmi==1.5.1 ; sys_platform == "win32"
     # via -r requirements.in

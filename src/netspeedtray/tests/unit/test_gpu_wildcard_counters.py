@@ -133,3 +133,118 @@ class TestFailuresDegrade:
             "pid_2_luid_0x0_0xA_phys_0_eng_1_engtype_Copy": 33.0,
         })
         assert result.util == 33.0
+
+
+class TestPerEngineAggregation:
+    """#328: each instance is ONE process on ONE engine. Task Manager's GPU figure is the busiest
+    engine with its processes SUMMED; the old max() reported the busiest single process instead."""
+
+    def test_two_processes_on_one_engine_add_up(self, thread):
+        result = _poll(thread, {
+            "pid_100_luid_0x00000000_0x0000A1B2_phys_0_eng_0_engtype_3D": 40.0,
+            "pid_200_luid_0x00000000_0x0000A1B2_phys_0_eng_0_engtype_3D": 40.0,
+        })
+        assert result.util == 80.0
+
+    def test_the_reporters_three_processes(self, thread):
+        """Browser 44 + VM 34 + dwm 13 on one 3D engine: Task Manager read ~91, we read 44."""
+        result = _poll(thread, {
+            "pid_100_luid_0x0_0xA_phys_0_eng_0_engtype_3D": 44.0,
+            "pid_200_luid_0x0_0xA_phys_0_eng_0_engtype_3D": 34.0,
+            "pid_300_luid_0x0_0xA_phys_0_eng_0_engtype_3D": 13.0,
+        })
+        assert result.util == pytest.approx(91.0)
+
+    def test_different_engines_are_not_added(self, thread):
+        result = _poll(thread, {
+            "pid_100_luid_0x0_0xA_phys_0_eng_0_engtype_3D": 30.0,
+            "pid_100_luid_0x0_0xA_phys_0_eng_3_engtype_VideoDecode": 50.0,
+        })
+        assert result.util == 50.0
+
+    def test_busiest_engine_sum_beats_a_bigger_single_process_elsewhere(self, thread):
+        result = _poll(thread, {
+            "pid_100_luid_0x0_0xA_phys_0_eng_0_engtype_3D": 35.0,
+            "pid_200_luid_0x0_0xA_phys_0_eng_0_engtype_3D": 35.0,
+            "pid_300_luid_0x0_0xA_phys_0_eng_1_engtype_Copy": 50.0,
+        })
+        assert result.util == 70.0
+
+    def test_engtype_label_does_not_split_an_engine(self, thread):
+        """The engine is (luid, phys, eng); engtype is only a label and is often blank."""
+        result = _poll(thread, {
+            "pid_100_luid_0x0_0xA_phys_0_eng_0_engtype_3D": 30.0,
+            "pid_200_luid_0x0_0xA_phys_0_eng_0_engtype_": 25.0,
+        })
+        assert result.util == 55.0
+
+    def test_sum_over_100_clamps(self, thread):
+        result = _poll(thread, {
+            "pid_100_luid_0x0_0xA_phys_0_eng_0_engtype_3D": 70.0,
+            "pid_200_luid_0x0_0xA_phys_0_eng_0_engtype_3D": 60.0,
+        })
+        assert result.util == 100.0
+
+    def test_two_adapters_are_not_added_busiest_engine_wins(self, thread):
+        """dGPU + iGPU. Nothing in the app picks an adapter (VRAM sums all of them), so the figure
+        is the busiest engine on ANY adapter - never a cross-adapter sum."""
+        result = _poll(thread, {
+            "pid_100_luid_0x00000000_0x0000AAAA_phys_0_eng_0_engtype_3D": 30.0,   # iGPU
+            "pid_200_luid_0x00000000_0x0000AAAA_phys_0_eng_0_engtype_3D": 30.0,   # iGPU
+            "pid_300_luid_0x00000000_0x0000BBBB_phys_0_eng_0_engtype_3D": 45.0,   # dGPU
+            "pid_400_luid_0x00000000_0x0000BBBB_phys_0_eng_0_engtype_3D": 25.0,   # dGPU
+        })
+        assert result.util == 70.0
+
+    def test_same_low_luid_different_high_luid_is_a_different_adapter(self, thread):
+        result = _poll(thread, {
+            "pid_100_luid_0x00000000_0x0000AAAA_phys_0_eng_0_engtype_3D": 40.0,
+            "pid_200_luid_0x00000001_0x0000AAAA_phys_0_eng_0_engtype_3D": 40.0,
+        })
+        assert result.util == 40.0
+
+    def test_hex_case_and_padding_do_not_split_an_engine(self, thread):
+        result = _poll(thread, {
+            "pid_100_luid_0x00000000_0x0000aaaa_phys_0_eng_0_engtype_3D": 20.0,
+            "pid_200_LUID_0X0_0XAAAA_PHYS_0_ENG_0_ENGTYPE_3D": 20.0,
+        })
+        assert result.util == 40.0
+
+    @pytest.mark.parametrize("bad_name", [
+        "", "garbage", "pid_100", "pid_x_luid_0x0_0xA_phys_0_eng_0_engtype_3D",
+        "pid_100_luid_zz_0xA_phys_0_eng_0_engtype_3D", "luid_0x0_0xA_phys_0_eng_0",
+    ])
+    def test_a_malformed_name_counts_as_its_own_engine(self, thread, bad_name):
+        """An unparseable instance cannot be attributed to an engine: it is neither dropped nor
+        summed into one. It counts alone, and the poll does not crash."""
+        result = _poll(thread, {
+            bad_name: 60.0,
+            "pid_100_luid_0x0_0xA_phys_0_eng_0_engtype_3D": 20.0,
+            "pid_200_luid_0x0_0xA_phys_0_eng_0_engtype_3D": 15.0,
+        })
+        assert result.util == 60.0
+
+    def test_malformed_names_do_not_absorb_or_hide_parsed_engines(self, thread):
+        result = _poll(thread, {
+            "garbage_a": 30.0,
+            "garbage_b": 30.0,
+            "pid_100_luid_0x0_0xA_phys_0_eng_0_engtype_3D": 40.0,
+            "pid_200_luid_0x0_0xA_phys_0_eng_0_engtype_3D": 30.0,
+        })
+        assert result.util == 70.0
+
+    @pytest.mark.parametrize("bad_value", [None, "50", True, -30.0, float("nan"), float("inf")])
+    def test_invalid_values_do_not_poison_an_engine_sum(self, thread, bad_value):
+        result = _poll(thread, {
+            "pid_100_luid_0x0_0xA_phys_0_eng_0_engtype_3D": 40.0,
+            "pid_200_luid_0x0_0xA_phys_0_eng_0_engtype_3D": bad_value,
+            "pid_300_luid_0x0_0xA_phys_0_eng_0_engtype_3D": 30.0,
+        })
+        assert result.util == 70.0
+
+    def test_a_non_string_instance_key_does_not_crash(self, thread):
+        result = _poll(thread, {
+            None: 10.0,
+            "pid_100_luid_0x0_0xA_phys_0_eng_0_engtype_3D": 40.0,
+        })
+        assert result.util == 40.0

@@ -90,10 +90,18 @@ echo Ensuring UPX is available for compression...
 "%ROOT_DIR%\.venv\Scripts\python.exe" fetch_upx.py >> "%LOG_FILE%" 2>&1
 
 :: PyInstaller needs --upx-dir explicitly; the .spec's upx=True alone isn't enough.
-set "UPX_DIR_ARG="
-if exist "%BUILD_DIR%tools\upx-5.0.2-win64\upx.exe" set "UPX_DIR_ARG=--upx-dir %BUILD_DIR%tools\upx-5.0.2-win64"
+set "UPX_DIR=%BUILD_DIR%tools\upx-5.0.2-win64"
 
-pyinstaller --noconfirm --distpath "%DIST_DIR%" %UPX_DIR_ARG% NetSpeedTray.spec >> "%LOG_FILE%" 2>&1
+if exist "%UPX_DIR%\upx.exe" (
+    pyinstaller --noconfirm --distpath "%DIST_DIR%" --upx-dir "%UPX_DIR%" NetSpeedTray.spec >> "%LOG_FILE%" 2>&1
+) else (
+    pyinstaller --noconfirm --distpath "%DIST_DIR%" NetSpeedTray.spec >> "%LOG_FILE%" 2>&1
+)
+
+if errorlevel 1 (
+    echo ERROR: PyInstaller build failed. Check !LOG_FILE!
+    exit /b 1
+)
 
 :: Stage 4: Generate Installer
 echo.
@@ -103,7 +111,7 @@ set "start_time=%TIME%"
 :: UPDATED: Pass the display version (/DAppVersion) and the numeric quad ISCC's
 :: VersionInfoVersion requires (/DAppVersionNumeric) to Inno Setup separately.
 "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DAppVersion="%VERSION%" /DAppVersionNumeric="%VERSION_NUMERIC%" "%BUILD_DIR%setup.iss" >> "%LOG_FILE%" 2>&1
-if errorlevel 1 (echo ERROR: Installer creation failed. Check %LOG_FILE% & exit /b 1)
+if errorlevel 1 (echo ERROR: Installer creation failed. Check !LOG_FILE! & exit /b 1)
 if not exist "%INSTALLER_DIR%\NetSpeedTray-%VERSION%-x64-Setup.exe" (echo ERROR: Setup file not found after compilation & exit /b 1)
 set "end_time=%TIME%"
 call :log_elapsed "Generating installer" "%start_time%" "%end_time%"
