@@ -218,3 +218,35 @@ def test_monitor_main_routes_shutdown_headless(monkeypatch):
     monkeypatch.setattr("netspeedtray.core.update_installer.sweep_stale_update_dirs", sweep)
     assert monitor.main() == 0
     sweep.assert_not_called()   # the installer runs us mid-update: never sweep its temp dir
+
+
+# --- the quit path runs its (bounded, possibly long) cleanup once ---------------------------------
+
+def test_widget_cleanup_runs_once():
+    """closeEvent and aboutToQuit both call cleanup(); the second call must be a no-op, or a quit whose
+    DB thread outlived DB_SHUTDOWN_WAIT_MS would wait that long twice and overrun --shutdown's timeout."""
+    from netspeedtray.views.widget.main import NetworkSpeedWidget
+    fake = types.SimpleNamespace(logger=MagicMock(), _hover_card_timer=MagicMock(),
+                                 _hide_usage_hover_card=MagicMock())
+    # Stop right after the first real step; we only count how often cleanup starts.
+    fake._hide_usage_hover_card.side_effect = RuntimeError("stop here")
+    NetworkSpeedWidget.cleanup(fake)
+    NetworkSpeedWidget.cleanup(fake)
+    assert fake._hover_card_timer.stop.call_count == 1
+
+
+def test_shutdown_timeout_outlasts_the_db_quit_wait():
+    """The app may legitimately take DB_SHUTDOWN_WAIT_MS (+ the 1.5 s latency-probe join) to quit
+    mid-migration; --shutdown must wait longer than that, or Setup taskkills a clean quit."""
+    wait_ms = getattr(constants.timeouts, "DB_SHUTDOWN_WAIT_MS", 2000)
+    assert constants.app.SHUTDOWN_DEFAULT_TIMEOUT_S * 1000 >= wait_ms + 1500 + 5000
+
+
+def test_installer_passes_the_same_timeout():
+    """setup.iss hands --timeout to the installed exe; it must not drift below the app's constant."""
+    import re
+    from pathlib import Path
+    iss = (Path(__file__).resolve().parents[4] / "build" / "setup.iss").read_text(encoding="utf-8")
+    m = re.search(r'#define ShutdownTimeoutSec "(\d+)"', iss)
+    assert m and float(m.group(1)) == constants.app.SHUTDOWN_DEFAULT_TIMEOUT_S
+    assert "--shutdown --timeout {#ShutdownTimeoutSec}" in iss

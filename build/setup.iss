@@ -9,8 +9,10 @@
 ; Registry key of the installed copy ("{{" is Inno's escaped "{"; the stored AppId keeps the "}}").
 #define MyAppUninstallKey "Software\Microsoft\Windows\CurrentVersion\Uninstall\" + StringChange(MyAppId, "{{", "{") + "_is1"
 ; Seconds `--shutdown` waits for the running app to exit before Setup falls back to taskkill.
-; Mirrors constants.app.SHUTDOWN_DEFAULT_TIMEOUT_S.
-#define ShutdownTimeoutSec "15"
+; Mirrors constants.app.SHUTDOWN_DEFAULT_TIMEOUT_S: must outlast the app's own worst clean quit
+; (1.5 s latency-probe join + the 15 s DB_SHUTDOWN_WAIT_MS bound when quit lands mid-migration, after
+; which the app exits hard by itself). A normal quit returns in ~1 s; this is only the ceiling.
+#define ShutdownTimeoutSec "30"
 
 ; --- DYNAMIC VERSIONING ---
 ; If AppVersion is NOT defined (e.g., manual compile without build.bat), use a default.

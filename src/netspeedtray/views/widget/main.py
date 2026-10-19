@@ -1860,7 +1860,16 @@ class NetworkSpeedWidget(QWidget):
 
 
     def cleanup(self) -> None:
-        """Performs necessary cleanup and a single, final save of the configuration."""
+        """Performs necessary cleanup and a single, final save of the configuration.
+
+        Runs once. An exit reaches it twice - closeEvent calls it, then app.quit() fires aboutToQuit,
+        which is connected here too - and a second pass would repeat the bounded waits (latency probe,
+        and the database thread's DB_SHUTDOWN_WAIT_MS when a migration outlived the first one),
+        doubling a slow quit past the installer's --shutdown timeout.
+        """
+        if getattr(self, "_cleanup_done", False):
+            return
+        self._cleanup_done = True
         self.logger.debug("Performing widget cleanup...")
         try:
             # Tear down the hover usage card + its armed timer first, before the data layer
