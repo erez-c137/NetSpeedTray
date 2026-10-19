@@ -129,11 +129,16 @@ def test_odometer_counts_bytes_even_when_all_rates_exceed_ceiling(controller_ins
     controller.last_interface_counters = {"Wi-Fi": MockNetIO(bytes_sent=0, bytes_recv=0)}
     controller.primary_interface = None
     controller.set_view(MagicMock())
+    # #13's real mechanism: the previous sample was HANDLED late, so this one arrives 1 s after it
+    # although the counters were SAMPLED 3 s apart. (A literal 30 GiB in 1 s of sampling would be
+    # 240 Gbps - a counter glitch, which the odometer's sanity cap now clips; see
+    # test_odometer_accuracy.py.)
+    controller._last_sample_time = (controller.last_check_time - 2.0, 10_000.0)
 
-    huge = 30 * 1024**3  # 30 GiB in 1s -> ~30 GB/s, far above the ~12.5 GB/s ceiling -> display-dropped
+    huge = 30 * 1024**3  # 30 GiB over a 1 s handling span -> ~30 GB/s, above the ceiling -> display-dropped
     second = {"Wi-Fi": MockNetIO(bytes_sent=huge, bytes_recv=0)}
     with patch('time.monotonic', return_value=controller.last_check_time + 1.0):
-        controller._handle_network_counters(second)
+        controller._handle_network_counters(second, sample_time=(controller.last_check_time + 1.0, 10_003.0))
 
     mock_widget_state.add_speed_data.assert_not_called()       # over-ceiling rate -> dropped from display
     mock_widget_state.add_usage_bytes.assert_called_once()     # ...but the real bytes WERE counted

@@ -121,10 +121,22 @@ CREATE TABLE usage_counter (
 Usage this period is `cumulative - anchor`. The anchor only ever advances on a genuine **forward**
 period rollover, so a clock change or DST shift cannot wipe your running total.
 
+The odometer counts every poll's exact counter delta, including across long gaps such as standby
+(only the speed display re-primes), capped per direction at 100 Gbps x the time elapsed so one
+counter glitch cannot add phantom gigabytes. Each write also stores, in `metadata`, the network
+counters that total was counted up to (`usage_counter_snapshot`, below); a later launch **in the
+same boot** adds what moved while the app was closed. After a reboot, or if an adapter's counters
+went backwards, nothing is added.
+
 ### `metadata` — bookkeeping
 
 `key`/`value` text pairs: `db_version`, `created_at`, `current_retention_days`,
 `last_maintenance_at`, `last_vacuum_at`, and the pending-retention keys used to schedule a prune.
+
+`usage_counter_snapshot` is JSON, written in the same transaction as the `usage_counter` row:
+`{"v": 1, "boot_time": <psutil.boot_time()>, "ts": <epoch s the counters were read>,
+"counters": {"<adapter name>": [bytes_sent, bytes_recv], ...}}`. Two boot times within 30 s are the
+same boot session.
 
 ### `bandwidth_history` — **not used**
 

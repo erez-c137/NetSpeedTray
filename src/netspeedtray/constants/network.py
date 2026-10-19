@@ -103,6 +103,12 @@ class InterfaceConstants:
     # Absolute fallback ceiling (100 Gbps) for when physical link speeds cannot be determined (e.g. virtual adapters) 
     MAX_REASONABLE_SPEED_BPS: Final[int] = 12_500_000_000
 
+    # Primary-interface resolution: a UDP connect() (no packet is sent) to a public address makes
+    # the OS pick the default-route source address. IPv4 first; the IPv6 probe makes an IPv6-only
+    # network resolve too (otherwise auto mode meters nothing there - data-usage audit, finding 2).
+    ROUTE_PROBE_V4: Final[tuple] = ("8.8.8.8", 80)
+    ROUTE_PROBE_V6: Final[tuple] = ("2001:4860:4860::8888", 80)
+
     def __init__(self) -> None:
         self.validate()
 
@@ -132,6 +138,20 @@ class LatencyConstants:
     }
 
 
+class UsageOdometerConstants:
+    """The data-usage odometer's launch reconciliation (counter snapshot persisted with the total)."""
+    # metadata-table key holding the JSON counter snapshot written in the same transaction as the
+    # usage_counter row. A key/value row, not a column: no schema change, no migration.
+    SNAPSHOT_METADATA_KEY: Final[str] = "usage_counter_snapshot"
+    SNAPSHOT_FORMAT_VERSION: Final[int] = 1
+    # Two psutil.boot_time() readings belong to the same boot session when they agree within this.
+    # On Windows boot_time() is wall-clock now minus uptime, so it jitters (~1 s, psutil #1007) and
+    # follows wall-clock corrections; two different boots are always at least one whole session
+    # apart. Erring wide only risks treating a sub-30 s session as "same boot", and the
+    # counters-went-backwards guard still catches a reboot (its counters restart from zero).
+    BOOT_TIME_TOLERANCE_SEC: Final[float] = 30.0
+
+
 class NetworkConstants:
     """Container for network-related constant groups."""
     def __init__(self) -> None:
@@ -139,6 +159,7 @@ class NetworkConstants:
         self.speed = NetworkSpeedConstants()
         self.interface = InterfaceConstants()
         self.latency = LatencyConstants()
+        self.usage = UsageOdometerConstants()
 
 # Singleton instance for easy access
 network = NetworkConstants()
