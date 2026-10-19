@@ -184,6 +184,7 @@ class NetworkSpeedWidget(QWidget):
         self.cpu_power: Optional[float] = None
         self.gpu_power: Optional[float] = None
         self.system_power: Optional[float] = None   # true whole-system W (RAPL PSYS / battery), if available
+        self.battery_power: Optional[float] = None  # signed battery draw: discharge +, charge - (display only)
         self.latency_probe = None                    # apply_latency_probe owns it (startup + every apply)
         self.latency_gw: Optional[float] = None      # gateway RTT ms (LAN latency); None = timeout
         self.latency_anchor: Optional[float] = None  # public-anchor RTT ms (internet latency); opt-in
@@ -239,6 +240,8 @@ class NetworkSpeedWidget(QWidget):
         self._hover_card_timer.timeout.connect(self._show_usage_hover_card)
         self._hover_usage_cache: Optional[Tuple[Tuple[float, float], Tuple[float, float]]] = None
         self._hover_usage_cache_ts: float = 0.0
+        self._hover_battery_avg_cache: Optional[float] = None
+        self._hover_battery_avg_cache_ts: float = 0.0
         self._hover_usage_period_start: Optional[datetime] = None   # set by _hover_usage_totals
 
         self.setVisible(False)
@@ -1135,12 +1138,23 @@ class NetworkSpeedWidget(QWidget):
         self._hover_usage_cache = None
         self._hover_usage_cache_ts = 0.0
 
+    @staticmethod
+    def _hover_card_enabled(config: Dict[str, Any]) -> bool:
+        """Whether ANY section of the hover card can render - enterEvent's arm gate.
+
+        Must stay in sync with _show_usage_hover_card, which decides what actually
+        shows: the usage rows, the gesture hint, the battery section
+        (power_display_enabled - the General tab's battery display) and the hardware
+        section."""
+        return (bool(config.get("show_usage_on_hover", True))
+                or bool(config.get("show_hover_tips", True))
+                or bool(config.get("power_display_enabled", False)))
+
     def enterEvent(self, event) -> None:
         """On hover, arm the usage card (shown after a short rest, positioned above the taskbar).
-        Skipped entirely when the user has turned the hover card off in Settings."""
+        Skipped entirely when the user has turned every hover section off in Settings."""
         try:
-            hover_enabled = (self.config.get("show_usage_on_hover", True)
-                             or self.config.get("show_hover_tips", True)
+            hover_enabled = (self._hover_card_enabled(self.config)
                              or self._hover_hardware_wanted())
             if hover_enabled and self._hover_card is None and not self._hover_card_timer.isActive():
                 self._hover_card_timer.start(self._HOVER_CARD_DELAY_MS)
@@ -1170,20 +1184,22 @@ class NetworkSpeedWidget(QWidget):
             from netspeedtray.views.usage_flyout import UsageFlyout
             show_data = bool(self.config.get("show_usage_on_hover", True))
             show_tips = bool(self.config.get("show_hover_tips", True))
+            show_power = bool(self.config.get("power_display_enabled", False))
             hint = self._hover_hint_text() if show_tips else None
             today, month = self._hover_usage_totals() if show_data else (None, None)
             cap = self._hover_cap_info() if show_data else None
+            power = self._hover_power_summary() if show_power else None
             hardware = self._hover_hardware_snapshot() if self._hover_hardware_wanted() else None
-            if hint is None and today is None and not hardware:
-                return  # nothing to show (both toggles off, or tips graduated while data is off)
+            if hint is None and today is None and power is None and not hardware:
+                return  # nothing to show (all toggles off, or tips graduated while data is off)
             self._hide_usage_hover_card()  # never stack two cards
             note = (self.i18n.USAGE_RECORDED_HISTORY_NOTE
                     if today is not None and getattr(self, "_hover_usage_reconstructed", False) else None)
             month_label = (self.i18n.USAGE_THIS_PERIOD_LABEL
                            if today is not None and getattr(self, "_hover_usage_period_start", None)
                            else None)
-            self._hover_card = UsageFlyout(self.i18n, today, month, hint=hint, cap=cap, history_note=note,
-                                           hardware=hardware, month_label=month_label)
+            self._hover_card = UsageFlyout(self.i18n, today, month, hint=hint, cap=cap, power=power,
+                                           history_note=note, hardware=hardware, month_label=month_label)
             self._hover_hw_refreshed = time.monotonic()
             screen = self.screen() or QApplication.primaryScreen()
             avail = screen.availableGeometry() if screen else self.frameGeometry()
@@ -1246,6 +1262,72 @@ class NetworkSpeedWidget(QWidget):
         self._hover_usage_cache = (today, month)
         self._hover_usage_cache_ts = now
         return self._hover_usage_cache
+
+    def _hover_power_summary(self) -> Optional[dict]:
+        """Everything the hover card's battery section needs, in one dict.
+
+        The live watts come from the monitor thread's battery poll (``self.system_power``
+        while discharging, the signed ``self.battery_power`` while charging), the mode and
+        charge percent from one GetSystemPowerStatus syscall, and today's average from the
+        system_power stat history via the 30-second TTL cache below. None (section omitted)
+        when the machine reports no battery or the state read failed - battery data is a
+        nice-to-have, never worth an error card."""
+        from netspeedtray.utils import power_utils
+        try:
+            state = power_utils.read_power_state()
+            if state.mode == power_utils.MODE_NONE:
+                return None
+            mode = state.mode
+            # Signed poll value: negative while charging (the card renders it as "+X W").
+            live_w = self.battery_power if self.battery_power is not None else self.system_power
+            # The signed watts outrank the ctypes mode when they disagree: this machine's
+            # firmware reports flag=9 ("no battery") while actually charging, and the flag's
+            # charging bit lags the real flow. Watts are the ground truth for the state.
+            if live_w is not None and live_w < 0:
+                mode = power_utils.MODE_CHARGE
+            elif live_w:
+                mode = power_utils.MODE_DISCHARGE
+            else:
+                mode = state.mode
+            projected = None
+            if mode == power_utils.MODE_DISCHARGE and live_w:
+                projected = power_utils.projected_runtime_hours(
+                    live_w, state.charge_pct, power_utils.read_design_capacity_mwh())
+            return {
+                "mode": mode,
+                "live_w": live_w,
+                "today_avg_w": self._hover_battery_today_avg(),
+                "projected_hours": projected,
+                "charge_pct": state.charge_pct,
+            }
+        except Exception as e:
+            self.logger.debug("hover power summary failed: %s", e)
+            return None
+
+    def _hover_battery_today_avg(self) -> Optional[float]:
+        """Today's average discharge in watts, from the system_power stat history.
+
+        Cached with a short TTL like the bandwidth totals: rapid hovers shouldn't
+        re-run the DB summary, but the figure only changes minute-to-minute."""
+        now = time.monotonic()
+        if self._hover_battery_avg_cache is not None and \
+                (now - self._hover_battery_avg_cache_ts) < self._HOVER_USAGE_TTL_SEC:
+            return self._hover_battery_avg_cache
+        avg: Optional[float] = None
+        try:
+            now_dt = datetime.now()
+            midnight = now_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+            summary = self.widget_state.summarize_hardware('system_power', midnight, now_dt,
+                                                            poll_interval=8.0)
+            # Only claim an average once real history exists - a fresh install (or the
+            # first hours after the battery section was enabled) has no samples yet.
+            if summary and summary.avg and summary.count:
+                avg = float(summary.avg)
+        except Exception as e:
+            self.logger.debug("hover battery average fetch failed: %s", e)
+        self._hover_battery_avg_cache = avg
+        self._hover_battery_avg_cache_ts = now
+        return avg
 
     def _hover_hint_text(self) -> Optional[str]:
         """The fading gesture hint - shown for the first few app runs, then retired. Counted at
