@@ -62,6 +62,20 @@ FLAG_GAP = 2             # interval longer than the poll rate (missed polls, sle
 FLAG_RESUMED = 4         # the system resumed from sleep inside the interval
 FLAG_FIRST_SAMPLE = 8    # first sample of a session; its delta is not trustworthy
 
+# Tier watermarks (metadata keys, value = unix epoch seconds as text). "Every row of this tier older
+# than the watermark has been rolled up into the next-coarser tier", written in the SAME transaction
+# as the roll-up that moves the rows. Readers answer a range with exactly one tier per sub-range:
+# hour for [.., minute watermark), minute for [minute watermark, raw watermark), raw from the raw
+# watermark on - never MIN(ts) guesses. The network and hardware families roll up independently
+# (the v7 -> v8 migration folds the network raw tier but leaves hardware raw rows in place), so each
+# family has its own pair. Always: raw watermark >= minute watermark; the minute watermark is hour
+# aligned and the raw watermark minute aligned.
+WATERMARK_RAW_KEY = "tier_watermark_raw"            # network: raw -> minute
+WATERMARK_MINUTE_KEY = "tier_watermark_minute"      # network: minute -> hour
+HW_WATERMARK_RAW_KEY = "hw_tier_watermark_raw"      # hardware: raw -> minute
+HW_WATERMARK_MINUTE_KEY = "hw_tier_watermark_minute"  # hardware: minute -> hour
+WATERMARK_KEYS = (WATERMARK_RAW_KEY, WATERMARK_MINUTE_KEY, HW_WATERMARK_RAW_KEY, HW_WATERMARK_MINUTE_KEY)
+
 # The tables a v8 file is DEFINED to have. The per-version registry is
 # DatabaseWorker.EXPECTED_TABLES in core/database.py (used by _verify_backup); its v8 entry is this
 # tuple, imported from here. The dependency runs database.py -> schema_v8 only: this module stays
