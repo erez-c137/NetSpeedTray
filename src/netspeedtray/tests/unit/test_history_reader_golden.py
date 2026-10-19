@@ -270,3 +270,34 @@ def test_distinct_interfaces_matches_legacy(ws):
     old = Legacy.get_distinct_interfaces(ws)
     assert old == ["Ethernet", "Tailscale", "Wi-Fi", "vEthernet (WSL)"]   # hour-only + raw-only NICs present
     _same(ws.get_distinct_interfaces(), old)
+
+
+# --- 7. get_earliest_data_timestamp -----------------------------------------------------------------
+
+def test_earliest_timestamp_matches_legacy(ws):
+    old = Legacy.get_earliest_data_timestamp(ws)
+    assert old is not None and old < datetime.now() - timedelta(days=39)   # comes from the hour tier
+    _same(ws.get_earliest_data_timestamp(), old)
+
+
+def test_readers_on_an_empty_history_match_legacy(q_app, tmp_path):
+    """A fresh install: schema present, no rows anywhere - every reader's empty answer is unchanged."""
+    w = DatabaseWorker(tmp_path / "speed_history.db")
+    w._initialize_connection()
+    w._check_and_create_schema()
+    w._close_connection()
+    state = _make_state(tmp_path)
+    try:
+        now = datetime.now()
+        _same(state.get_earliest_data_timestamp(), Legacy.get_earliest_data_timestamp(state))
+        _same(state.get_distinct_interfaces(), Legacy.get_distinct_interfaces(state))
+        for start, end in ((now - timedelta(hours=1), now), (now - timedelta(days=40), now)):
+            _same(state.get_speed_history(start, end, wait_for_flush=False),
+                  Legacy.get_speed_history(state, start, end, wait_for_flush=False))
+            _same(state.get_hardware_history("cpu", start, end), Legacy.get_hardware_history(state, "cpu", start, end))
+            _same(state.summarize_network("download", start, end), Legacy.summarize_network(state, "download", start, end))
+            _same(state.summarize_hardware("cpu", start, end), Legacy.summarize_hardware(state, "cpu", start, end))
+            _same(state.get_total_bandwidth_for_period(start, end),
+                  Legacy.get_total_bandwidth_for_period(state, start, end))
+    finally:
+        state.cleanup()

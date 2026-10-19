@@ -713,31 +713,7 @@ class WidgetState(QObject):
         """
         self.flush_batch()
         # time.sleep(0.1)  # REMOVED: This was causing a 100ms freeze on the UI thread.
-        
-        try:
-            conn = self._get_read_conn()
-            cursor = conn.cursor()
-
-            query = """
-                SELECT MIN(earliest_ts) FROM (
-                    SELECT MIN(timestamp) as earliest_ts FROM speed_history_raw
-                    UNION ALL
-                    SELECT MIN(timestamp) as earliest_ts FROM speed_history_minute
-                    UNION ALL
-                    SELECT MIN(timestamp) as earliest_ts FROM speed_history_hour
-                ) WHERE earliest_ts IS NOT NULL;
-            """
-            cursor.execute(query)
-            result = cursor.fetchone()
-            
-            if result and result[0] is not None:
-                earliest_ts = int(result[0])
-                return datetime.fromtimestamp(earliest_ts)
-
-        except sqlite3.Error as e:
-            self.logger.error("Failed to retrieve the earliest timestamp from database: %s", e, exc_info=True)
-
-        return None
+        return self.history_reader.earliest_timestamp()
 
 
     def cleanup(self) -> None:
