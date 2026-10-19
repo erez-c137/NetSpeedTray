@@ -22,14 +22,27 @@ the odometer's in-memory state.
 import logging
 import sqlite3
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Callable, List, Literal, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, Union
 
 from netspeedtray import constants
+from netspeedtray.core import usage_snapshot
 
 Resolution = Literal['auto', 'raw', 'minute', 'hour', 'day']
 SpeedPoint = Tuple[Union[datetime, float], float, float]
+
+
+@dataclass(frozen=True)
+class UsageRecord:
+    """The persisted data-usage odometer, exactly as stored - validation is the caller's job.
+
+    ``counter_row`` is (cumulative_up, cumulative_down, anchor_up, anchor_down, period_key), or None
+    when the table exists but holds no row yet. ``snapshot`` is the previous session's decoded NIC
+    counter snapshot, {} when there is none or it is unreadable."""
+    counter_row: Optional[Tuple[Any, ...]]
+    snapshot: Dict[str, Any] = field(default_factory=dict)
 
 
 class HistoryReader(ABC):
@@ -71,6 +84,11 @@ class HistoryReader(ABC):
     @abstractmethod
     def earliest_timestamp(self) -> Optional[datetime]:
         """The oldest speed sample in any tier, or None for an empty history."""
+
+    @abstractmethod
+    def load_usage(self) -> Optional[UsageRecord]:
+        """The odometer row + counter snapshot, or None while the table does not exist yet (the
+        caller defers). Storage errors propagate; a bad snapshot only empties ``snapshot``."""
 
 
 class V7HistoryReader(HistoryReader):
@@ -516,3 +534,30 @@ class V7HistoryReader(HistoryReader):
         except Exception as e:
             self.logger.error("summarize_hardware failed: %s", e, exc_info=True)
             return S.summarize_raw([])
+
+    # --- data-usage odometer ------------------------------------------------------------------
+
+    def load_usage(self) -> Optional[UsageRecord]:
+        conn = self._conn()
+        cur = conn.cursor()
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                    (constants.data.USAGE_COUNTER_TABLE,))
+        if cur.fetchone() is None:
+            return None
+        cur.execute(
+            f"SELECT cumulative_up, cumulative_down, anchor_up, anchor_down, period_key "
+            f"FROM {constants.data.USAGE_COUNTER_TABLE} WHERE id = 1")
+        row = cur.fetchone()
+        return UsageRecord(tuple(row) if row else None, self._read_usage_snapshot(cur))
+
+    def _read_usage_snapshot(self, cur: sqlite3.Cursor) -> Dict[str, Any]:
+        """The previous session's counter snapshot (metadata row), or {} - never raises, so a
+        missing/garbled snapshot can only cost the reconciliation, never the odometer load."""
+        try:
+            cur.execute("SELECT value FROM metadata WHERE key = ?",
+                        (constants.network.usage.SNAPSHOT_METADATA_KEY,))
+            row = cur.fetchone()
+            return usage_snapshot.decode_snapshot(row[0] if row else None)
+        except Exception as e:
+            self.logger.debug("No usage counter snapshot readable: %s", e)
+            return {}

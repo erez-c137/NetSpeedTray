@@ -310,16 +310,10 @@ class WidgetState(QObject):
         Returns False (so the caller defers) if the table isn't ready yet - never
         overwrites a real persisted counter with a fresh zero one."""
         try:
-            conn = self._get_read_conn()
-            cur = conn.cursor()
-            cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?",
-                        (constants.data.USAGE_COUNTER_TABLE,))
-            if cur.fetchone() is None:
+            rec = self.history_reader.load_usage()
+            if rec is None:
                 return False
-            cur.execute(
-                f"SELECT cumulative_up, cumulative_down, anchor_up, anchor_down, period_key "
-                f"FROM {constants.data.USAGE_COUNTER_TABLE} WHERE id = 1")
-            row = cur.fetchone()
+            row = rec.counter_row
             if row:
                 # Validate the persisted row - a corrupt/negative/NaN value flowing into the cap
                 # math could trigger a false 100% alert. Coerce to a finite, non-negative float
@@ -336,24 +330,12 @@ class WidgetState(QObject):
                 au, ad = min(_f(row[2]), cu), min(_f(row[3]), cd)
                 self._usage = {"cumulative_up": cu, "cumulative_down": cd,
                                "anchor_up": au, "anchor_down": ad, "period_key": str(row[4] or "")}
-            self._usage_launch_snapshot = self._read_usage_snapshot(cur)
+            self._usage_launch_snapshot = rec.snapshot
             self._usage_loaded = True
             return True
         except Exception as e:
             self.logger.debug("Usage counter not ready yet: %s", e)
             return False
-
-    def _read_usage_snapshot(self, cur: sqlite3.Cursor) -> Dict[str, Any]:
-        """The previous session's counter snapshot (metadata row), or {} - never raises, so a
-        missing/garbled snapshot can only cost the reconciliation, never the odometer load."""
-        try:
-            cur.execute("SELECT value FROM metadata WHERE key = ?",
-                        (constants.network.usage.SNAPSHOT_METADATA_KEY,))
-            row = cur.fetchone()
-            return usage_snapshot.decode_snapshot(row[0] if row else None)
-        except Exception as e:
-            self.logger.debug("No usage counter snapshot readable: %s", e)
-            return {}
 
     def get_usage_launch_snapshot(self) -> Optional[Dict[str, Any]]:
         """The counter snapshot persisted by the PREVIOUS session ({} when there is none), or None

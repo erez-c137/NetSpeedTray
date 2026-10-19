@@ -15,6 +15,7 @@ usage_counter row with its counter snapshot.
 """
 import math
 import random
+import sqlite3
 import types
 from dataclasses import astuple, is_dataclass
 from datetime import datetime, timedelta
@@ -301,3 +302,60 @@ def test_readers_on_an_empty_history_match_legacy(q_app, tmp_path):
                   Legacy.get_total_bandwidth_for_period(state, start, end))
     finally:
         state.cleanup()
+
+
+# --- 8. _try_load_usage (the odometer load: usage_counter + metadata snapshot) -----------------------
+
+_USAGE_FIELDS = ("_usage", "_usage_loaded", "_usage_launch_snapshot")
+
+
+def _usage_load_both(db_dir: Path):
+    """Run the legacy load on one WidgetState and the facade load on another, same DB file."""
+    a, b = _make_state(db_dir), _make_state(db_dir)
+    try:
+        ok_old = Legacy._try_load_usage(a)
+        ok_new = b._try_load_usage()
+        return ((ok_old, {f: getattr(a, f) for f in _USAGE_FIELDS}),
+                (ok_new, {f: getattr(b, f) for f in _USAGE_FIELDS}))
+    finally:
+        a.cleanup()
+        b.cleanup()
+
+
+def test_usage_load_matches_legacy_on_fixture(ws):
+    old, new = _usage_load_both(ws._db_path.parent)
+    assert old[0] is True and old[1]["_usage"]["cumulative_down"] == 4.25e10
+    assert old[1]["_usage_launch_snapshot"]["counters"] == {"Ethernet": [123456789, 987654321]}
+    _same(new, old)
+
+
+def _fresh_db(db_dir: Path) -> DatabaseWorker:
+    w = DatabaseWorker(db_dir / "speed_history.db")
+    w._initialize_connection()
+    w._check_and_create_schema()
+    return w
+
+
+def test_usage_load_matches_legacy_with_no_row(q_app, tmp_path):
+    _fresh_db(tmp_path)._close_connection()
+    old, new = _usage_load_both(tmp_path)
+    assert old[0] is True and old[1]["_usage_launch_snapshot"] == {}
+    _same(new, old)
+
+
+def test_usage_load_matches_legacy_on_corrupt_row_and_snapshot(q_app, tmp_path):
+    w = _fresh_db(tmp_path)
+    # Negative cumulative, anchors above cumulative, empty period key, a snapshot that is not JSON.
+    w._persist_usage((-5.0, 1e9, 1e12, 2e9, "", 1, "{not json"))
+    w._close_connection()
+    old, new = _usage_load_both(tmp_path)
+    assert old[1]["_usage"] == {"cumulative_up": 0.0, "cumulative_down": 1e9,
+                                "anchor_up": 0.0, "anchor_down": 1e9, "period_key": ""}
+    _same(new, old)
+
+
+def test_usage_load_matches_legacy_before_the_table_exists(q_app, tmp_path):
+    sqlite3.connect(tmp_path / "speed_history.db").close()     # a file with no schema yet
+    old, new = _usage_load_both(tmp_path)
+    assert old[0] is False and old[1]["_usage_loaded"] is False
+    _same(new, old)
