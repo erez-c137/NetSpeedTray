@@ -8,9 +8,15 @@ a Python tuple literal, so `2.2.0-beta.1` produced `filevers=(2, 2, 0-beta, 1)` 
 `ast.parse` alone would NOT have caught that (`0-beta` parses fine as a BinOp), which is why the
 assertions below insist every element of the quad survives `ast.literal_eval` as an `int`.
 
-The contract pinned here (v2.1.5 action plan, item 6):
-- The numeric quad comes from the release core only; a prerelease's trailing number becomes the
-  4th (build) field: `2.2.0-beta.1` -> (2, 2, 0, 1); plain `2.1.5` -> (2, 1, 5, 0).
+The contract pinned here (v2.1.5 action plan, item 6; ordering fixed for the 2.2.0 beta):
+- The numeric quad comes from the release core; the 4th (build) field encodes the prerelease
+  ordering the in-app updater uses, `is_final*10000 + stage_rank*1000 + N`, so a FINAL release
+  outranks every prerelease of it numerically too: `2.2.0-beta.1` -> (2, 2, 0, 1001),
+  `2.2.0-rc.2` -> (2, 2, 0, 2002), plain `2.2.0` -> (2, 2, 0, 10000). Until this was fixed the
+  final got (2, 2, 0, 0) and sorted BELOW its own betas (2, 2, 0, 1) - harmless while nothing
+  compared the quad, a trap for anything that does (a file-version installer check, an Intune or
+  SCCM "file version >=" detection rule).
+- Prereleases set VS_FF_PRERELEASE in the fixed flags, so `FileVersionInfo.IsPreRelease` is true.
 - `FileVersion`/`ProductVersion` *string* fields keep the FULL display string (Windows allows
   free text there), so the beta exe is identifiable as a beta in Properties > Details.
 - `--numeric` prints the dotted quad for ISCC's `VersionInfoVersion` (which rejects any
@@ -45,9 +51,11 @@ cvi = _load_module()
 
 # (display version, expected numeric quad, expected dotted numeric string)
 _CASES = [
-    ("2.1.5", (2, 1, 5, 0), "2.1.5.0"),
-    ("2.2.0-beta.1", (2, 2, 0, 1), "2.2.0.1"),
-    ("2.2.0-rc.2", (2, 2, 0, 2), "2.2.0.2"),
+    ("2.1.5", (2, 1, 5, 10000), "2.1.5.10000"),
+    ("2.1.7", (2, 1, 7, 10000), "2.1.7.10000"),
+    ("2.2.0", (2, 2, 0, 10000), "2.2.0.10000"),
+    ("2.2.0-beta.1", (2, 2, 0, 1001), "2.2.0.1001"),
+    ("2.2.0-rc.2", (2, 2, 0, 2002), "2.2.0.2002"),
 ]
 
 
@@ -127,8 +135,13 @@ def test_numeric_version_string_is_what_iscc_accepts(version, quad, numeric):
 @pytest.mark.parametrize(
     "version, quad",
     [
-        ("2.2.0-beta", (2, 2, 0, 0)),  # unnumbered prerelease: build field falls back to 0
-        ("2.2.0-beta.10", (2, 2, 0, 10)),
+        ("2.2.0-beta", (2, 2, 0, 1000)),  # unnumbered prerelease: N falls back to 0
+        ("2.2.0-beta.10", (2, 2, 0, 1010)),
+        ("2.2.0-beta2", (2, 2, 0, 1002)),  # digits glued to the stage, as the updater accepts
+        ("2.2.0-alpha.3", (2, 2, 0, 3)),
+        ("2.2.0-rc.1", (2, 2, 0, 2001)),
+        ("2.2.0-preview.1", (2, 2, 0, 3001)),  # unknown stage: above rc, below final
+        ("v2.2.0-beta.1", (2, 2, 0, 1001)),  # a raw tag's leading v is tolerated
         ("2.1.4.7", (2, 1, 4, 7)),  # an explicit 4-part core still round-trips
     ],
 )
@@ -168,7 +181,7 @@ def test_cli_default_mode_writes_a_parseable_file_to_output(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     quads, strings, _key, _translation = _parse_version_info(out.read_text(encoding="utf-8"))
-    assert quads["filevers"] == (2, 2, 0, 1)
+    assert quads["filevers"] == (2, 2, 0, 1001)
     assert strings["ProductVersion"] == "2.2.0-beta.1"
 
 
@@ -186,3 +199,68 @@ def test_quad_field_over_65535_fails_loudly():
     import pytest as _pytest
     with _pytest.raises(ValueError):
         cvi.version_quad("2.2.0-beta.99999")
+
+
+@pytest.mark.parametrize("version", ["2.2.0-beta.1000", "2.2.0-rc.4242"])
+def test_a_prerelease_number_that_would_spill_into_the_next_stage_fails_loudly(version):
+    """N owns three digits of the build field; beta.1000 would read as rc.0 (2000), so refuse."""
+    with pytest.raises(ValueError):
+        cvi.version_quad(version)
+
+
+# The order a tester actually moves through, oldest first. Every consumer that compares the
+# numeric quad (Explorer, a file-version installer check, Intune/SCCM detection rules) must
+# agree with the in-app updater, which compares the display strings.
+_RELEASE_SEQUENCE = [
+    "2.1.7",
+    "2.1.8",
+    "2.2.0-alpha.1",
+    "2.2.0-beta",
+    "2.2.0-beta.1",
+    "2.2.0-beta.2",
+    "2.2.0-beta.10",
+    "2.2.0-rc.1",
+    "2.2.0-rc.2",
+    "2.2.0-preview.1",
+    "2.2.0",
+    "2.2.1-beta.1",
+    "2.2.1",
+    "3.0.0-beta.1",
+    "3.0.0",
+]
+
+
+def test_the_final_release_outranks_every_prerelease_of_it():
+    finals = cvi.version_quad("2.2.0")
+    for pre in ("2.2.0-alpha.1", "2.2.0-beta.1", "2.2.0-beta.999", "2.2.0-rc.2", "2.2.0-preview.9"):
+        assert cvi.version_quad(pre) < finals, pre
+
+
+def test_the_quad_orders_releases_exactly_as_the_in_app_updater_does():
+    from netspeedtray.core.update_checker import _parse_version
+
+    by_quad = sorted(_RELEASE_SEQUENCE, key=cvi.version_quad)
+    by_updater = sorted(_RELEASE_SEQUENCE, key=_parse_version)
+    assert by_quad == _RELEASE_SEQUENCE
+    assert by_updater == _RELEASE_SEQUENCE
+    # strictly increasing: no two distinct releases may share a quad
+    quads = [cvi.version_quad(v) for v in _RELEASE_SEQUENCE]
+    assert len(set(quads)) == len(quads)
+
+
+def _fixed_flags(text):
+    tree = ast.parse(text, mode="eval")
+    for node in ast.walk(tree.body):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "FixedFileInfo":
+            for kw in node.keywords:
+                if kw.arg == "flags":
+                    return ast.literal_eval(kw.value)
+    raise AssertionError("no flags= in FixedFileInfo")
+
+
+@pytest.mark.parametrize("version, prerelease", [("2.2.0-beta.1", True), ("2.2.0-rc.2", True), ("2.2.0", False), ("2.1.7", False)])
+def test_prerelease_flag_marks_only_prereleases(version, prerelease, tmp_path):
+    """VS_FF_PRERELEASE (0x2) is what FileVersionInfo.IsPreRelease reads."""
+    out = tmp_path / "version_info.txt"
+    cvi.create_version_file(version, output_path=str(out))
+    assert bool(_fixed_flags(out.read_text(encoding="utf-8")) & 0x2) is prerelease
