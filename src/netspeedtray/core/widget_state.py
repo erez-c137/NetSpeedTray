@@ -848,9 +848,18 @@ class WidgetState(QObject):
             self._read_conns.clear()
 
         self.db_worker.stop()
-        # Only wait for the thread if it was actually running
+        # Only wait for the thread if it was actually running. Usually it drains in well under a
+        # second, but a quit right after start can land inside the v7 -> v8 migration or the first
+        # maintenance pass; the worker skips what it can once stop is set, and the wait is bounded.
+        # Never let the QThread be destroyed while it runs (Qt aborts the process): past the bound it
+        # is detached, and monitor.py exits hard - a kill the migration and the writer are tested for.
         if self.db_worker.isRunning():
-            self.db_worker.wait(2000) # Wait up to 2 seconds for the thread to finish
+            if not self.db_worker.wait(int(constants.timeouts.DB_SHUTDOWN_WAIT_MS)):
+                from netspeedtray.core.database import detach_running_worker
+                self.logger.warning("The database thread is still busy after %d ms; exiting without "
+                                    "waiting for it (an interrupted upgrade resumes at the next start).",
+                                    int(constants.timeouts.DB_SHUTDOWN_WAIT_MS))
+                detach_running_worker(self.db_worker)
 
 
     def _get_max_history_points(self) -> int:

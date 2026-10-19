@@ -58,6 +58,22 @@ class MigrationAborted(Exception):
     """A schema migration refused to start (no verified pre-migration backup). Nothing was changed."""
 
 
+# Database threads still running when quit gave up waiting (WidgetState.cleanup, DB_SHUTDOWN_WAIT_MS):
+# kept referenced so nothing destroys a running QThread (Qt aborts the process - a crash dialog -
+# when a QThread is destroyed while running). monitor.py then exits the process hard, which is the
+# termination the v8 migration journal and the writer's transactions are kill-tested against.
+_DETACHED_WORKERS: List["DatabaseWorker"] = []
+
+
+def detach_running_worker(worker: "DatabaseWorker") -> None:
+    if worker not in _DETACHED_WORKERS:
+        _DETACHED_WORKERS.append(worker)
+
+
+def detached_workers_running() -> bool:
+    return any(w.isRunning() for w in _DETACHED_WORKERS)
+
+
 @contextmanager
 def explicit_txn(conn: sqlite3.Connection, log: logging.Logger) -> Iterator[sqlite3.Cursor]:
     """One explicit ``BEGIN IMMEDIATE .. COMMIT`` on the worker connection, for every write that is NOT
@@ -118,6 +134,8 @@ class DatabaseWorker(QThread):
     MIGRATION_RECOVERY = "recovery"                 # recover() refused (RecoveryError) or failed
     MIGRATION_FAILED = "failed"                     # verification failed / any other migration error
     MIGRATION_UNREADABLE = "unreadable"             # the version of the file could not be read
+    DB_UNAVAILABLE = "unavailable"                  # the file would not open for writing (read-only
+    #                                                 file, a lock held elsewhere, an OSError)
 
     _DB_VERSION = 8   # v8: bytes at capture, dimension tables, watermarked tiers (core/db/schema_v8.py)
     # Files older than v7 are first brought to v7 by the in-place chain below, then migrated to v8.
@@ -160,35 +178,55 @@ class DatabaseWorker(QThread):
         self.logger = logging.getLogger(f"NetSpeedTray.{self.__class__.__name__}")
 
 
-    def run(self) -> None:
-        """The main event loop for the database thread with retry logic."""
-        max_retries = 5
-        base_delay = constants.timers.MINIMUM_INTERVAL_MS / 1000.0 # Use sane base
-        max_delay = 30.0
+    _INIT_ATTEMPTS = 5
 
-        initialized = False
-        try:
-            for attempt in range(max_retries):
-                try:
-                    self._prepare_storage()
-                    initialized = True
+    def _start_storage(self) -> bool:
+        """``_prepare_storage`` with retries. True when this session may write; otherwise it is
+        READ-ONLY with the flyout raised - never a half-built writer, never an exception out of run().
+
+        A failure on an EXISTING file (read-only file, a write lock another process holds, an OSError
+        on the way) is retried with backoff; each attempt waits at most DB_INIT_LOCK_TIMEOUT_MS for a
+        lock, so a held lock costs ~12 s, not ~30. After the last attempt the session reads whatever
+        a read-only probe can open (so history and the odometer still show) and says so."""
+        base_delay = constants.timers.MINIMUM_INTERVAL_MS / 1000.0
+        last: Optional[BaseException] = None
+        for attempt in range(self._INIT_ATTEMPTS):
+            try:
+                self._prepare_storage()
+                return self._writer is not None
+            except Exception as e:   # sqlite3.Error, OSError (mkdir / stat / a rename), anything
+                last = e
+                self._writer = None
+                self._abandon_connection()
+                delay = min(30.0, base_delay * (2 ** attempt))
+                self.logger.error("Database initialization attempt %d failed: %s. Retrying in %.2fs...",
+                                  attempt + 1, e, delay)
+                if attempt < self._INIT_ATTEMPTS - 1 and not self._stop_event.is_set():
+                    self.msleep(int(delay * 1000))
+                elif self._stop_event.is_set():
                     break
-                except sqlite3.Error as e:
-                    self._abandon_connection()
-                    delay = min(max_delay, base_delay * (2 ** attempt))
-                    self.logger.error("Database initialization attempt %d failed: %s. Retrying in %.2fs...", attempt + 1, e, delay)
-                    if attempt < max_retries - 1:
-                        self.msleep(int(delay * 1000))
+        try:
+            readable = self._probe_version()
+        except Exception:
+            readable = None
+        if readable is not None and readable < migrate_v8.V7:
+            readable = None
+        self._enter_read_only(self.DB_UNAVAILABLE, f"{type(last).__name__}: {last}", readable)
+        return False
+
+    def run(self) -> None:
+        """The database thread: open the history file (``_start_storage``), then serve the queue."""
+        try:
+            self._start_storage()
+        except Exception as e:   # belt and braces: _start_storage already catches everything
+            self.logger.critical("Database initialization failed: %s", e, exc_info=True)
+            self._writer = None
+            self._schema_incompatible = True
         finally:
             # Readers wait for this; set it whatever happened (they then read reader_version).
             self.ready.set()
 
-        if not initialized:
-            self.logger.critical("Database initialization failed after %d attempts.", max_retries)
-            self.error.emit(f"Critical: Database initialization failed.")
-            return
-
-        self.logger.debug("Database worker thread started successfully.")
+        self.logger.debug("Database worker thread started (writable: %s).", self._writer is not None)
         # Drain fully before exiting: tasks already enqueued (incl. the final flush/odometer
         # tail) are processed before we honor the stop flag - we only break when the queue is
         # empty AND stop is set. The blocking get() replaces the old 100ms busy-poll.
@@ -293,10 +331,13 @@ class DatabaseWorker(QThread):
         that write into whatever WriterV8 commits next. Here every unit of work is an explicit
         ``BEGIN IMMEDIATE .. COMMIT`` - WriterV8's own, and :meth:`_txn` for the odometer / metadata."""
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(self.db_path, timeout=10, isolation_level=None)
+        # Startup waits only DB_INIT_LOCK_TIMEOUT_MS for a lock (_start_storage retries); the normal
+        # 5 s busy timeout is set once the writer is up (_prepare_storage).
+        init_wait = int(constants.timeouts.DB_INIT_LOCK_TIMEOUT_MS)
+        self.conn = sqlite3.connect(self.db_path, timeout=init_wait / 1000.0, isolation_level=None)
+        self.conn.execute(f"PRAGMA busy_timeout = {init_wait};")
         self.conn.execute("PRAGMA journal_mode = WAL;")
         self.conn.execute("PRAGMA foreign_keys = ON;")
-        self.conn.execute("PRAGMA busy_timeout = 5000;")
         # WAL alone leaves synchronous=FULL (an fsync per commit). NORMAL is the documented,
         # crash-safe pairing for WAL and is much cheaper for our 10 s commits. A larger
         # negative cache_size = ~8 MB page cache keeps the hot tiers in memory.
@@ -822,6 +863,8 @@ class DatabaseWorker(QThread):
         mode=ro connections - or none at all when ``reader_version`` is None (the live name is absent
         or unsafe) - and the view is told (migration_deferred -> flyout). The next launch retries:
         recover() and migrate() are idempotent and pick up exactly where this one stopped."""
+        self._writer = None            # never a half-built writer on a connection that is gone
+        self._abandon_connection()
         self._schema_incompatible = True
         self._migration_deferred = reason
         self.reader_version = reader_version
@@ -839,7 +882,12 @@ class DatabaseWorker(QThread):
         create an empty database there and J5 recovery would then have to move it aside."""
         if isinstance(e, migrate_v8.SwapIncomplete):
             return self.MIGRATION_SWAP_INCOMPLETE, None
-        if isinstance(e, migrate_v8.SwapDeferred):
+        if isinstance(e, (migrate_v8.SwapDeferred, migrate_v8.FileInUse)):
+            return self.MIGRATION_FILE_IN_USE, 7
+        if isinstance(e, PermissionError) or getattr(e, "winerror", None) in (5, 32):
+            # Another program holds a file of ours (an AV scanner, a SQLite tool on the -wal): the v7
+            # file is still live and untouched (a journal written before the error is J1: the next
+            # launch finishes or rolls back the swap).
             return self.MIGRATION_FILE_IN_USE, 7
         if isinstance(e, migrate_v8.InsufficientSpace):
             return self.MIGRATION_NO_SPACE, 7
@@ -934,9 +982,15 @@ class DatabaseWorker(QThread):
         self._writer.bind_to_current_thread()   # step-7 note 7: every writer call on this thread
         if self._post_migration_maintenance:
             self._post_migration_maintenance = False
-            out = self._writer.run_maintenance()   # step-7 note 5: right after migrate()
-            self.logger.info("Post-upgrade maintenance: %s", {k: v for k, v in out.items() if "moved" in k})
+            if self._stop_event.is_set():
+                # Quitting already: the migration is complete and durable; the merge of the first polls
+                # into the folded minute waits for the next start's maintenance. Reach the safe point.
+                self.logger.info("Quit requested: post-upgrade maintenance deferred to the next start.")
+            else:
+                out = self._writer.run_maintenance()   # step-7 note 5: right after migrate()
+                self.logger.info("Post-upgrade maintenance: %s", {k: v for k, v in out.items() if "moved" in k})
         self._writer.start_session()
+        self.conn.execute("PRAGMA busy_timeout = 5000;")
         self._resume_pending_compaction()
         self.reader_version = self._DB_VERSION
         self.readers_read_only = False

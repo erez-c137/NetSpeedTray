@@ -474,9 +474,15 @@ recorded since is only in the v8 file.
 ### Going back to 2.1.x without restoring
 
 A 2.1.5-2.1.7 NetSpeedTray that finds a v8 file shows a "History recording is paused" notice, keeps
-**showing** your history through the v7-named views, and writes nothing (2.1.5 added the notice; 2.1.4
-and older also refuse to write but say so only in their log - restore the backup before running
-those). Two things look different there, and neither is damage:
+**showing** your history through the v7-named views, and writes nothing. 2.1.4 refuses to write too,
+but says so only in its log.
+
+**Restore the backup BEFORE running 2.1.3 or older.** Those versions have no downgrade guard: on a v8
+file they make a full copy of the database (`.bak.v8_*`) on every launch and never delete one, log an
+error every 10 seconds (they try to write into the read-only views), and their data-usage counter
+writes go into the v8 file.
+
+Two things look different in 2.1.4-2.1.7, and neither is damage:
 
 - **The last 24 hours before the upgrade show empty in 2.1.x's per-second views.** The upgrade folded
   them into minute rows; 2.1.x reads its last day from the per-second tier.

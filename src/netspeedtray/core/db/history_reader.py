@@ -947,12 +947,18 @@ class V8HistoryReader(_ReaderBase):
             def raw_rows():
                 # (rate, seconds) per raw timestamp: the rate summed across interfaces, so an "all"
                 # summary matches the widget aggregate; the seconds the row stands for are its MEASURED
-                # interval (dt_ms - the longest of the interfaces' at that instant, which share one poll).
-                cur.execute(f"SELECT SUM({self._RAW_RATE.format(d=d)}), MAX(n.dt_ms) / 1000.0 "
+                # interval (dt_ms - the longest of the interfaces' at that instant, which share one poll),
+                # clipped to the window (a row is the END of its interval: [ts - dt, ts]).
+                # FLAG_GAP rows (an interval spanning standby / a stall, far past the poll rate) are not
+                # samples: their bytes are real and count in volume(), but their bytes/dt is an average
+                # over hours, and their dt would claim coverage for time nobody measured - excluded here.
+                cur.execute(f"SELECT n.ts, SUM({self._RAW_RATE.format(d=d)}), MAX(n.dt_ms) / 1000.0 "
                             f"FROM {S8.NET_RAW} n {self._IFACE_JOIN} "
-                            f"WHERE n.ts BETWEEN ? AND ?{bounds[0][0]}{iface_sql} GROUP BY n.ts",
+                            f"WHERE n.ts BETWEEN ? AND ? AND (n.flags & {S8.FLAG_GAP}) = 0"
+                            f"{bounds[0][0]}{iface_sql} GROUP BY n.ts",
                             (st, et) + bounds[0][1] + iface_p)
-                return [(r[0], float(r[1] or 0.0)) for r in cur.fetchall() if r[0] is not None]
+                return [(r[1], max(0.0, min(float(r[2] or 0.0), float(r[0] - st))))
+                        for r in cur.fetchall() if r[1] is not None]
 
             def pct(seconds: float) -> float:
                 return min(100.0, seconds / win * 100.0) if win > 0 else 0.0

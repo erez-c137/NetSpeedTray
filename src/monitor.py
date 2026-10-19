@@ -257,5 +257,17 @@ def main() -> int:
         QMessageBox.critical(None, title, f"A critical error occurred and NetSpeedTray must close:\n\n{e}")
         return 1
 
+def _finish(code: int) -> int:
+    """The exit code to leave with - or, while a database thread quit gave up waiting for is still
+    running (a long v7 -> v8 migration), a hard exit: letting interpreter shutdown destroy a running
+    QThread aborts the process with a crash dialog. A hard exit mid-migration is safe by design (the
+    journal + recover() at the next start; kill-tested)."""
+    from netspeedtray.core.database import detached_workers_running
+    if detached_workers_running():
+        logging.shutdown()
+        os._exit(code)
+    return code
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(_finish(main()))

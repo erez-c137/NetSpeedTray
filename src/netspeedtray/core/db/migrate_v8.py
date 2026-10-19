@@ -133,6 +133,11 @@ class InsufficientSpace(MigrationError):
     """Not enough free disk to build the v8 file aside."""
 
 
+class FileInUse(MigrationError):
+    """Another connection / program holds the v7 file (its WAL could not be checkpointed away). Nothing
+    was swapped; the v7 file is untouched and still live."""
+
+
 class VerificationFailed(MigrationError):
     """The built v8 file does not hold what the v7 file holds. It was deleted; v7 stays live."""
 
@@ -973,7 +978,7 @@ def _checkpoint_away(db_path: Path) -> None:
     try:
         busy, _log, _done = c.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
         if busy:
-            raise MigrationError("the v7 WAL could not be checkpointed (another connection is open)")
+            raise FileInUse("the v7 WAL could not be checkpointed (another connection is open)")
     finally:
         c.close()
     if _size(_sidecars(db_path)[0]):
