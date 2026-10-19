@@ -773,14 +773,21 @@ class DatabaseWorker(QThread):
             self.conn.rollback()
 
 
-    def _persist_usage(self, data: Tuple[float, float, float, float, str, int]) -> None:
+    def _persist_usage(self, data: Tuple[Any, ...]) -> None:
         """
         Upsert the single-row data-usage odometer. `data` is
-        (cumulative_up, cumulative_down, anchor_up, anchor_down, period_key, updated_ts).
+        (cumulative_up, cumulative_down, anchor_up, anchor_down, period_key, updated_ts[, snapshot_json]).
+
+        The optional snapshot_json (the NIC counters the cumulative accounts up to, for same-boot
+        launch reconciliation) goes to the existing `metadata` key/value table in the SAME
+        transaction, so total and snapshot can never disagree. No schema change: metadata has
+        existed since v3. None leaves the stored snapshot untouched; "" (usage_snapshot.
+        CLEAR_SNAPSHOT) deletes it.
         """
         if data is None or self.conn is None:
             return
-        cumulative_up, cumulative_down, anchor_up, anchor_down, period_key, updated_ts = data
+        cumulative_up, cumulative_down, anchor_up, anchor_down, period_key, updated_ts = data[:6]
+        snapshot_json = data[6] if len(data) > 6 else None
         cursor = self.conn.cursor()
         try:
             cursor.execute(
@@ -796,6 +803,14 @@ class DatabaseWorker(QThread):
                         updated_ts=excluded.updated_ts""",
                 (cumulative_up, cumulative_down, anchor_up, anchor_down, period_key, updated_ts),
             )
+            if snapshot_json == "":
+                # CLEAR_SNAPSHOT: counters were seen but no snapshot could be encoded - a stale one
+                # left next to this advanced total would be re-added at the next same-boot launch.
+                cursor.execute("DELETE FROM metadata WHERE key = ?",
+                               (constants.network.usage.SNAPSHOT_METADATA_KEY,))
+            elif snapshot_json is not None:
+                cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+                               (constants.network.usage.SNAPSHOT_METADATA_KEY, snapshot_json))
             self.conn.commit()
         except sqlite3.Error as e:
             self.logger.error("Failed to persist usage counter: %s", e)

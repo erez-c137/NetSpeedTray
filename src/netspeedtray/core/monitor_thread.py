@@ -991,6 +991,10 @@ class StatsMonitorThread(QThread):
                 network_counters = psutil.net_io_counters(pernic=True)
                 if network_counters:
                     stats['network'] = network_counters
+                    # When the counters were SAMPLED (monotonic, wall). The GUI thread may handle two
+                    # samples closer together than they were taken; the odometer's sanity cap must be
+                    # measured over the real sampling span, not the handling span (#13).
+                    stats['network_sampled_at'] = (time.monotonic(), time.time())
 
                 # 1b. Network identity (Wi-Fi band / SSID) - only when the widget wants it, and only
                 # on the slow sub-cadence. get_connected_network_identity() never raises. Emitting on

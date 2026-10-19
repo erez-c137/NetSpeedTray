@@ -13,6 +13,7 @@ from PyQt6.QtCore import pyqtSignal, QObject
 import psutil
 
 from netspeedtray import constants
+from netspeedtray.core import usage_snapshot
 from netspeedtray.utils.config import stable_pseudonym
 from netspeedtray.utils.network_utils import get_primary_interface_name
 
@@ -60,6 +61,14 @@ class StatsController(QObject):
         self.primary_interface: Optional[str] = None
         self.last_primary_check_time: float = 0.0
         self.repriming_needed: int = 0
+        # (monotonic, wall) at which last_interface_counters were SAMPLED - the odometer cap's clock.
+        self._last_sample_time: Optional[Tuple[float, float]] = None
+        self._odometer_cap_warned: bool = False
+        # Launch reconciliation (once per session): the first counters seen, until reconciled.
+        self._launch_counters: Optional[Tuple[Dict[str, Any], float]] = None
+        self._launch_reconciled: bool = False
+        # Auto mode: the last primary the routing lookup actually found (see _aggregate_for_odometer).
+        self._last_known_primary: Optional[str] = None
         
         from collections import deque
         self.recent_speeds: Dict[str, deque] = {}
@@ -107,7 +116,7 @@ class StatsController(QObject):
         """
         # 1. Handle Network
         if 'network' in stats:
-            self._handle_network_counters(stats['network'])
+            self._handle_network_counters(stats['network'], stats.get('network_sampled_at'))
 
         # Forward the network identity (band/SSID) whenever the thread sub-polled it (present-key
         # emits, like temp/power). The payload is a NetworkIdentity or None.
@@ -186,10 +195,21 @@ class StatsController(QObject):
                 self.vram_info_updated.emit(stats['vram_used'], v_total_val)
 
 
-    def _handle_network_counters(self, current_counters: Dict[str, Any]) -> None:
-        """Processes raw network counters (logic moved from handle_network_counters)."""
+    def _handle_network_counters(self, current_counters: Dict[str, Any],
+                                 sample_time: Optional[Tuple[float, float]] = None) -> None:
+        """Processes raw network counters: the data-usage odometer first, then the rate display.
+
+        `sample_time` is (time.monotonic(), time.time()) taken by the monitor thread right after it
+        read the counters; it falls back to the handling time (direct callers, tests).
+
+        Order matters. The odometer counts the exact counter delta of EVERY poll, BEFORE the gap /
+        re-prime gate: a long gap (Modern Standby, the app suspended) used to discard the whole gap
+        plus two more polls (data-usage accuracy audit, finding 1). Only the rate display re-primes -
+        a rate averaged over a gap is meaningless, the bytes are not.
+        """
         current_time = time.monotonic()
-        
+        sample_mono, sample_wall = sample_time if sample_time else (current_time, time.time())
+
         if not current_counters:
             self.display_speed_updated.emit(0.0, 0.0)
             return
@@ -197,6 +217,10 @@ class StatsController(QObject):
         if not self.last_interface_counters:
             self.last_check_time = current_time
             self.last_interface_counters = current_counters
+            self._last_sample_time = (sample_mono, sample_wall)
+            if self._launch_counters is None and not self._launch_reconciled:
+                self._launch_counters = (current_counters, sample_wall)
+                self._maybe_reconcile_launch()
             return
 
         time_diff = current_time - self.last_check_time
@@ -204,7 +228,30 @@ class StatsController(QObject):
 
         if time_diff < (update_interval * 0.5):
             return
-            
+
+        # Resolve the primary (auto mode; cached, at most every 15 s) once for both aggregations.
+        if self.config.get("interface_mode", "auto") == "auto":
+            self._update_primary_interface_name()
+
+        # --- 1. The odometer: exact bytes, every poll, gap or not -------------------------------
+        self._maybe_reconcile_launch()   # no-op unless launch had to wait for the odometer to load
+        last_mono, last_wall = self._last_sample_time or (self.last_check_time, sample_wall)
+        # The cap's elapsed is the SAMPLING span, and the longer of the two clocks: the monotonic
+        # clock need not advance across sleep, the wall clock can jump - either alone could clip
+        # real bytes. A too-generous span only loosens the cap for that one poll.
+        sample_elapsed = max(sample_mono - last_mono, sample_wall - last_wall, 0.0)
+        byte_deltas = self._odometer_byte_deltas(current_counters, sample_elapsed)
+        # Same interface selection as the display, but raw deltas, not rates. Gated on byte_deltas,
+        # NOT on the display data: a rate over the ceiling is display-dropped, its bytes are real (#13).
+        if byte_deltas and self.widget_state:
+            agg_up_bytes, agg_down_bytes = self._aggregate_for_odometer(byte_deltas)
+            # The window began at the previous sample: bytes are charged to the period it began in.
+            self.widget_state.add_usage_bytes(agg_up_bytes, agg_down_bytes,
+                                              counters=current_counters, sampled_at=sample_wall,
+                                              window_start=last_wall, primary=self._odometer_primary())
+        self._last_sample_time = (sample_mono, sample_wall)
+
+        # --- 2. The rate display: re-prime across gaps ------------------------------------------
         validity_threshold = max(10.0, update_interval * 5.0)
 
         if time_diff > validity_threshold:
@@ -222,33 +269,21 @@ class StatsController(QObject):
             return
 
         self.current_speed_data.clear()
-        # Exact per-interface byte deltas (pre-spike-filter) for the usage odometer -
-        # the spike filter caps bursts for *display*, but a data cap must count them.
-        byte_deltas: Dict[str, Tuple[float, float]] = {}
 
         for name, current in current_counters.items():
             last = self.last_interface_counters.get(name)
             if last:
                 # Per-direction counter-reset/wrap guard: a reset in ONE direction must not
                 # discard the OTHER direction's real bytes - they're independent counters.
-                up_diff = current.bytes_sent - last.bytes_sent
-                down_diff = current.bytes_recv - last.bytes_recv
-                if up_diff < 0:
-                    up_diff = 0
-                if down_diff < 0:
-                    down_diff = 0
-
-                # The data-cap odometer counts REAL bytes transferred (post reset-clamp). The
-                # rate ceiling + spike filter below are DISPLAY-only and must not drop them: a
-                # small time_diff can inflate the *rate* past the ceiling while the bytes are real.
-                byte_deltas[name] = (float(up_diff), float(down_diff))
+                up_diff = max(0, current.bytes_sent - last.bytes_sent)
+                down_diff = max(0, current.bytes_recv - last.bytes_recv)
 
                 safe_time_diff = max(time_diff, constants.network.speed.MIN_TIME_DIFF)
                 up_speed_bps = int(up_diff / safe_time_diff)
                 down_speed_bps = int(down_diff / safe_time_diff)
-                
+
                 max_speed_bps = constants.network.interface.MAX_REASONABLE_SPEED_BPS
-                
+
                 # NOTE: rely ONLY on this absolute ceiling; do not cap by
                 # psutil.net_if_stats()[name].speed. On Windows that per-interface
                 # link speed is unreliable for multi-gigabit / 10GbE adapters (often a
@@ -260,19 +295,19 @@ class StatsController(QObject):
 
                 final_up_speed_bps = up_speed_bps
                 final_down_speed_bps = down_speed_bps
-                
+
                 if name not in self.recent_speeds:
                     from collections import deque
                     self.recent_speeds[name] = deque(maxlen=20)
-                
+
                 recent_history = self.recent_speeds[name]
                 if recent_history and len(recent_history) >= 5:
                     recent_ups = [s[0] for s in recent_history]
                     recent_downs = [s[1] for s in recent_history]
-                    
+
                     recent_up_avg = sum(sorted(recent_ups)[1:-1]) / max(1, len(recent_ups) - 2) if len(recent_ups) > 2 else sum(recent_ups) / len(recent_ups)
                     recent_down_avg = sum(sorted(recent_downs)[1:-1]) / max(1, len(recent_downs) - 2) if len(recent_downs) > 2 else sum(recent_downs) / len(recent_downs)
-                    
+
                     # Cap an ISOLATED over-threshold sample (a likely counter glitch), but let a
                     # SUSTAINED jump through after one poll - a 2nd consecutive over-threshold sample is
                     # a real ramp, not a glitch, and must not stay pinned at 2x baseline (#5).
@@ -294,27 +329,115 @@ class StatsController(QObject):
                 self.current_speed_data[name] = (final_up_speed_bps, final_down_speed_bps)
                 self.recent_speeds[name].append((up_speed_bps, down_speed_bps))
 
-        agg_upload, agg_download = self._aggregate_for_display(self.current_speed_data)
+        agg_upload, agg_download = self._aggregate_for_display(self.current_speed_data, resolve_primary=False)
 
         if self.current_speed_data and self.widget_state:
             self.widget_state.add_speed_data(self.current_speed_data, aggregated_up=agg_upload, aggregated_down=agg_download)
 
-        # Feed the odometer the exact aggregated bytes transferred this poll (same interface selection
-        # as the display, but raw deltas not rates). Gated on byte_deltas, NOT current_speed_data: when
-        # every interface's *rate* exceeds the ceiling it is display-dropped (continue above) and
-        # current_speed_data is empty, but the bytes are real and must still be counted (#13).
-        # resolve_primary=False reuses the primary already resolved by _aggregate_for_display above.
-        if byte_deltas and self.widget_state:
-            agg_up_bytes, agg_down_bytes = self._aggregate_for_display(byte_deltas, resolve_primary=False)
-            self.widget_state.add_usage_bytes(agg_up_bytes, agg_down_bytes)
-
         upload_mbps = (agg_upload * 8) / 1_000_000
         download_mbps = (agg_download * 8) / 1_000_000
-        
+
         self.display_speed_updated.emit(upload_mbps, download_mbps)
 
         self.last_check_time = current_time
         self.last_interface_counters = current_counters
+
+
+    def _odometer_byte_deltas(self, current_counters: Dict[str, Any],
+                              elapsed_s: float) -> Dict[str, Tuple[float, float]]:
+        """Exact per-interface byte deltas since the previous sample, for the usage odometer.
+
+        Pre-spike-filter (the filter caps bursts for DISPLAY; a data cap must count them), with two
+        guards: the per-direction negative-diff clamp (NICs restart their counters without a
+        reboot - finding 6) and a ceiling of MAX_REASONABLE_SPEED_BPS x elapsed per direction, so
+        one garbage counter jump cannot add unbounded phantom gigabytes (finding 4).
+        """
+        elapsed = max(elapsed_s, constants.network.speed.MIN_TIME_DIFF)
+        deltas: Dict[str, Tuple[float, float]] = {}
+        clipped = False
+        for name, current in current_counters.items():
+            last = self.last_interface_counters.get(name)
+            if not last:
+                continue
+            up, c1 = usage_snapshot.cap_delta(float(max(0, current.bytes_sent - last.bytes_sent)), elapsed)
+            down, c2 = usage_snapshot.cap_delta(float(max(0, current.bytes_recv - last.bytes_recv)), elapsed)
+            clipped = clipped or c1 or c2
+            deltas[name] = (up, down)
+        if clipped:
+            if not self._odometer_cap_warned:
+                self._odometer_cap_warned = True
+                self.logger.warning(
+                    "Odometer sanity cap: a counter jump implied more than %.0f Gbps over %.1f s and "
+                    "was clipped (a driver counter glitch). Logged once per session.",
+                    constants.network.interface.MAX_REASONABLE_SPEED_BPS * 8 / 1e9, elapsed)
+            else:
+                self.logger.debug("Odometer sanity cap clipped another counter jump (%.1f s).", elapsed)
+        return deltas
+
+
+    def _odometer_primary(self) -> Optional[str]:
+        """Auto mode: the interface the odometer meters this poll (persisted in the launch snapshot,
+        so the next launch only recovers a window metered on the same adapter). None otherwise."""
+        if self.config.get("interface_mode", "auto") != "auto":
+            return None
+        return self.primary_interface or self._last_known_primary
+
+
+    def _aggregate_for_odometer(self, byte_deltas: Dict[str, Tuple[float, float]]) -> Tuple[float, float]:
+        """The display's interface selection, with one difference in auto mode: when the routing
+        lookup currently finds NO primary, fall back to the last one it did find. Waking from
+        standby is exactly when the lookup fails (the route is not back yet) and exactly when the
+        poll carries the whole standby window's bytes; attributing them to nothing would discard
+        what the count-across-gaps fix just recovered. With truly no route, that adapter's delta is
+        whatever it really moved - still this PC's traffic on the interface auto mode meters."""
+        if (self.config.get("interface_mode", "auto") == "auto" and self.primary_interface is None
+                and self._last_known_primary):
+            return byte_deltas.get(self._last_known_primary, (0.0, 0.0))
+        return self._aggregate_for_display(byte_deltas, resolve_primary=False)
+
+
+    def _maybe_reconcile_launch(self) -> None:
+        """Same-boot launch reconciliation (audit item 2), at most once per session.
+
+        Adds the bytes that moved between the persisted counter snapshot and this session's FIRST
+        counters - the traffic that happened while the app was not running. If the odometer has not
+        loaded yet it keeps the launch counters and retries next poll: the live polls count from the
+        launch counters onward, so reconciling against them later neither gaps nor double-counts.
+        """
+        if self._launch_reconciled or self._launch_counters is None or not self.widget_state:
+            return
+        snapshot = self.widget_state.get_usage_launch_snapshot()
+        if snapshot is None:
+            return  # odometer not loaded yet - retry next poll
+        counters, sampled_at = self._launch_counters
+        self._launch_reconciled = True
+        self._launch_counters = None
+        if not isinstance(snapshot, dict):
+            return
+        deltas, reason = usage_snapshot.reconcile_deltas(
+            snapshot, counters, usage_snapshot.current_boot_time(), sampled_at)
+        # Scope: only what the CURRENT interface mode meters, aggregated exactly like a live poll.
+        if self.config.get("interface_mode", "auto") == "auto":
+            self._update_primary_interface_name()
+            current_primary = self._odometer_primary()
+            if deltas and snapshot.get("primary") != current_primary:
+                # Auto meters ONE interface. If it is not the one the snapshot was metered on, the
+                # closed window's traffic may have gone over the old one - charging this adapter's
+                # whole counter delta could overcount (traffic auto would never have metered).
+                self.logger.info("Launch reconciliation skipped: the primary interface changed while "
+                                 "the app was not running (%s -> %s).",
+                                 stable_pseudonym(snapshot.get("primary")), stable_pseudonym(current_primary))
+                deltas, reason = {}, "primary interface changed"
+        up, down = self._aggregate_for_odometer(deltas) if deltas else (0.0, 0.0)
+        # Always hand over the launch counters, even when nothing is recovered, so the snapshot the
+        # odometer persists next matches the total it holds. The window began at the snapshot.
+        self.widget_state.add_usage_bytes(up, down, counters=counters, sampled_at=sampled_at,
+                                          window_start=snapshot.get("ts"), primary=self._odometer_primary())
+        if up or down:
+            self.logger.info("Launch reconciliation (%s): recovered %.1f MB up / %.1f MB down that "
+                             "moved while the app was not running.", reason, up / 1e6, down / 1e6)
+        elif snapshot:
+            self.logger.info("Launch reconciliation: nothing recovered (%s).", reason)
 
 
     def get_active_interfaces(self) -> List[str]:
@@ -388,6 +511,8 @@ class StatsController(QObject):
             self.primary_interface = get_primary_interface_name()
         except Exception:
             self.primary_interface = None
+        if self.primary_interface is not None:
+            self._last_known_primary = self.primary_interface
         if previous != self.primary_interface:
             # Log a STABLE pseudonym, never the raw friendly name: users rename
             # adapters to personal/site labels and this INFO line ships in support

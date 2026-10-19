@@ -33,6 +33,7 @@ from PyQt6.QtCore import QObject, QThread, pyqtSignal, QTimer
 
 from netspeedtray import constants
 from netspeedtray.constants import network, timeouts
+from netspeedtray.core import usage_snapshot
 from netspeedtray.utils.helpers import get_app_data_path
 from netspeedtray.utils.timer_utils import resolve_poll_interval_seconds
 
@@ -143,6 +144,13 @@ class WidgetState(QObject):
         }
         self._usage_loaded: bool = False
         self._usage_last_persist: float = 0.0
+        # Launch reconciliation (audit item 2): the NIC counters the cumulative has been counted UP
+        # TO (persisted with it, in the same transaction), and the snapshot loaded from the previous
+        # session - read once at load, so this session's own persists can never feed it back.
+        self._usage_live_counters: Optional[Dict[str, Any]] = None
+        self._usage_live_sampled_at: Optional[float] = None
+        self._usage_live_primary: Optional[str] = None
+        self._usage_launch_snapshot: Dict[str, Any] = {}
 
         self.logger.debug("WidgetState initialized with threaded database worker.")
 
@@ -296,11 +304,31 @@ class WidgetState(QObject):
                 au, ad = min(_f(row[2]), cu), min(_f(row[3]), cd)
                 self._usage = {"cumulative_up": cu, "cumulative_down": cd,
                                "anchor_up": au, "anchor_down": ad, "period_key": str(row[4] or "")}
+            self._usage_launch_snapshot = self._read_usage_snapshot(cur)
             self._usage_loaded = True
             return True
         except Exception as e:
             self.logger.debug("Usage counter not ready yet: %s", e)
             return False
+
+    def _read_usage_snapshot(self, cur: sqlite3.Cursor) -> Dict[str, Any]:
+        """The previous session's counter snapshot (metadata row), or {} - never raises, so a
+        missing/garbled snapshot can only cost the reconciliation, never the odometer load."""
+        try:
+            cur.execute("SELECT value FROM metadata WHERE key = ?",
+                        (constants.network.usage.SNAPSHOT_METADATA_KEY,))
+            row = cur.fetchone()
+            return usage_snapshot.decode_snapshot(row[0] if row else None)
+        except Exception as e:
+            self.logger.debug("No usage counter snapshot readable: %s", e)
+            return {}
+
+    def get_usage_launch_snapshot(self) -> Optional[Dict[str, Any]]:
+        """The counter snapshot persisted by the PREVIOUS session ({} when there is none), or None
+        while the odometer has not loaded yet (the caller retries)."""
+        if not self._usage_loaded and not self._try_load_usage():
+            return None
+        return self._usage_launch_snapshot
 
     def _maybe_reanchor(self) -> bool:
         """
@@ -323,17 +351,50 @@ class WidgetState(QObject):
             return True
         return False
 
-    def add_usage_bytes(self, up_bytes: float, down_bytes: float) -> None:
+    def add_usage_bytes(self, up_bytes: float, down_bytes: float,
+                        counters: Optional[Dict[str, Any]] = None,
+                        sampled_at: Optional[float] = None,
+                        window_start: Optional[float] = None,
+                        primary: Optional[str] = None) -> None:
         """Accumulate exact transferred bytes into the odometer, re-anchoring on a new
-        billing period, and persist on a throttle. Called every poll; cheap."""
+        billing period, and persist on a throttle. Called every poll; cheap.
+
+        `counters` are the raw NIC counters the total now accounts up to (sampled at wall time
+        `sampled_at`; `primary` is the auto-mode interface they were metered on); they are persisted
+        with the total so the next launch in the same boot can recover what moves while the app is
+        closed. Kept by reference - serialized only on persist.
+
+        `window_start` is the wall time the measurement window began (the previous sample, or the
+        launch snapshot). Bytes are charged to the period in which their window BEGAN: a standby
+        gap or a closed-app window spanning the reset day lands in the period it started in, never
+        all in the new one (which could fire an early overage alert)."""
         if not self._usage_loaded and not self._try_load_usage():
             return  # defer until the table exists, so we don't clobber the saved total
         u = self._usage
         # Roll the period over BEFORE adding this poll, so a boundary-crossing poll's bytes
         # count toward the NEW period rather than being stranded at the anchor (audit #15).
+        # (This may persist - with the PREVIOUS counters, which is what the total still matches.)
         rolled = self._maybe_reanchor()
-        u["cumulative_up"] += max(0.0, up_bytes)
-        u["cumulative_down"] += max(0.0, down_bytes)
+        up, down = max(0.0, up_bytes), max(0.0, down_bytes)
+        u["cumulative_up"] += up
+        u["cumulative_down"] += down
+        if window_start is not None and (up or down):
+            try:
+                start_pk = self._compute_period_key(self.config.get("data_cap_reset_day", 1),
+                                                    date.fromtimestamp(window_start))
+            except (OverflowError, OSError, ValueError):
+                start_pk = u["period_key"]
+            if start_pk < u["period_key"]:
+                # The window began in an already-closed period: lifetime total yes, this period no.
+                # Moving the anchor with it works whether the rollover happened just now or earlier
+                # (e.g. on a read) - the anchor never exceeds the cumulative.
+                u["anchor_up"] += up
+                u["anchor_down"] += down
+        if counters is not None:
+            # Only now does the total include these counters' bytes - pair them from here on.
+            self._usage_live_counters = counters
+            self._usage_live_sampled_at = sampled_at if sampled_at is not None else time.time()
+            self._usage_live_primary = primary
         if rolled:
             self._persist_usage_now()  # capture this poll's bytes into the fresh period now
             self._usage_last_persist = time.time()
@@ -348,9 +409,23 @@ class WidgetState(QObject):
         if not self._usage_loaded:
             return
         u = self._usage
+        snapshot_json = None
+        if self._usage_live_counters is not None:
+            # Fresh boot id at every persist (not cached at start): boot_time() follows wall-clock
+            # corrections, so the latest reading is the one the next launch will compare against.
+            snapshot_json = usage_snapshot.encode_snapshot(
+                self._usage_live_counters, self._usage_live_sampled_at or time.time(),
+                usage_snapshot.current_boot_time(), primary=self._usage_live_primary)
+            if snapshot_json is None:
+                # Counters seen but no trustworthy snapshot (boot id unreadable): the total is about
+                # to advance past the STORED snapshot, so it must go - leaving it would make the next
+                # same-boot launch re-add bytes this total already holds.
+                snapshot_json = usage_snapshot.CLEAR_SNAPSHOT
+        # 7th element: the counter snapshot, written in the SAME transaction as the total;
+        # CLEAR_SNAPSHOT deletes the stored one; None (no counters seen yet) leaves it untouched.
         self.db_worker.enqueue_task("persist_usage", (
             u["cumulative_up"], u["cumulative_down"], u["anchor_up"], u["anchor_down"],
-            u["period_key"], int(time.time())))
+            u["period_key"], int(time.time()), snapshot_json))
 
     def get_usage_this_period(self) -> Tuple[float, float]:
         """(upload_bytes, download_bytes) used since the current period's reset day."""
