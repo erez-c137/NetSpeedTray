@@ -27,7 +27,7 @@ from pathlib import Path
 import pytest
 
 sys.path.append(os.path.abspath("src"))
-from netspeedtray.core.widget_state import DatabaseWorker
+from netspeedtray.tests.legacy_v7_worker import LegacyV7Worker as DatabaseWorker  # a v7 file; _backup_database is the production one (inherited)
 
 
 @pytest.fixture

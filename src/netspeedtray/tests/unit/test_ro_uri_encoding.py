@@ -14,7 +14,7 @@ import sys
 import pytest
 
 sys.path.append(os.path.abspath("src"))
-from netspeedtray.core.database import DatabaseWorker
+from netspeedtray.tests.legacy_v7_worker import LegacyV7Worker
 from netspeedtray.core.db.sqlite_uri import sqlite_ro_uri
 
 AWKWARD = ("Bob#2", "pct%41x", "space and#hash", "dollar$sign", "café")
@@ -24,7 +24,7 @@ AWKWARD = ("Bob#2", "pct%41x", "space and#hash", "dollar$sign", "café")
 def test_verify_backup_works_under_an_awkward_profile_path(tmp_path, name):
     d = tmp_path / name / "NetSpeedTray"
     d.mkdir(parents=True)
-    w = DatabaseWorker(d / "speed_history.db")
+    w = LegacyV7Worker(d / "speed_history.db")
     w._initialize_connection()
     w._check_and_create_schema()
     try:

@@ -26,7 +26,7 @@ import pytest
 
 from netspeedtray import constants
 from netspeedtray.core import usage_snapshot
-from netspeedtray.core.database import DatabaseWorker
+from netspeedtray.tests.legacy_v7_worker import LegacyV7Worker
 from netspeedtray.core.widget_state import WidgetState
 from netspeedtray.tests.unit.legacy_v7_reader_oracle import LegacyV7Readers as Legacy
 
@@ -37,7 +37,7 @@ IFACES_ALL = (None, "all", "Ethernet", "Wi-Fi", "vEthernet (WSL)", "Tailscale", 
 def _build_fixture_db(db_dir: Path, now: datetime) -> None:
     rng = random.Random(20261019)
     now_ts = int(now.timestamp())
-    w = DatabaseWorker(db_dir / "speed_history.db")
+    w = LegacyV7Worker(db_dir / "speed_history.db")
     w._initialize_connection()
     w._check_and_create_schema()
 
@@ -283,7 +283,7 @@ def test_earliest_timestamp_matches_legacy(ws):
 
 def test_readers_on_an_empty_history_match_legacy(q_app, tmp_path):
     """A fresh install: schema present, no rows anywhere - every reader's empty answer is unchanged."""
-    w = DatabaseWorker(tmp_path / "speed_history.db")
+    w = LegacyV7Worker(tmp_path / "speed_history.db")
     w._initialize_connection()
     w._check_and_create_schema()
     w._close_connection()
@@ -329,8 +329,8 @@ def test_usage_load_matches_legacy_on_fixture(ws):
     _same(new, old)
 
 
-def _fresh_db(db_dir: Path) -> DatabaseWorker:
-    w = DatabaseWorker(db_dir / "speed_history.db")
+def _fresh_db(db_dir: Path) -> LegacyV7Worker:
+    w = LegacyV7Worker(db_dir / "speed_history.db")
     w._initialize_connection()
     w._check_and_create_schema()
     return w

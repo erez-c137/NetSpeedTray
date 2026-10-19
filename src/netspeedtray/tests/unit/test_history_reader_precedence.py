@@ -21,7 +21,7 @@ from unittest.mock import patch
 import pytest
 
 from netspeedtray import constants
-from netspeedtray.core.database import DatabaseWorker
+from netspeedtray.tests.legacy_v7_worker import LegacyV7Worker
 from netspeedtray.core.widget_state import WidgetState
 from netspeedtray.tests.unit.legacy_v7_reader_oracle import LegacyV7Readers as Legacy
 
@@ -47,7 +47,7 @@ def _now_parts():
 def _build(db_dir: Path, overlap: bool) -> None:
     """The same history either move-only (overlap=False) or with copies left in the coarser tier."""
     _now, raw_minute, old_minute, old_hour = _now_parts()
-    w = DatabaseWorker(db_dir / "speed_history.db")
+    w = LegacyV7Worker(db_dir / "speed_history.db")
     w._initialize_connection()
     w._check_and_create_schema()
     c = w.conn.cursor()

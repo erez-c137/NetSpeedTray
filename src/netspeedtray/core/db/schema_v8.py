@@ -1,7 +1,7 @@
 """
-The v8 database schema - DORMANT. Nothing in the app calls this module yet (``core/database.py``
-imports only ``EXPECTED_TABLES_V8`` for its per-version registry); ``_DB_VERSION`` in
-``core/database.py`` stays 7 until the switch-over (implementation step 7).
+The v8 database schema - the app's schema since the switch-over (step 7, ``_DB_VERSION = 8`` in
+``core/database.py``): a fresh install is created by :func:`create_v8_schema`, a v7 file is rebuilt
+into it by ``migrate_v8``.
 
 Design authority: ``Docs/reference/database-v8-final.md``. In short:
 
@@ -126,7 +126,8 @@ COMPAT_VIEWS_V8: Tuple[str, ...] = (
     _D.HARDWARE_STATS_TABLE_RAW, _D.HARDWARE_STATS_TABLE_MINUTE, _D.HARDWARE_STATS_TABLE_HOUR,
 )
 
-# What "Delete all history" empties on a v8 file (the v8 counterpart of constants.data.HISTORY_TABLES).
+# What "Delete all history" empties on a v8 file - equal to constants.data.HISTORY_TABLES (pinned by a
+# test; that module cannot import this one).
 # Facts first, then the dimensions: adapter friendly names are identifying (privacy.md), so a delete
 # that kept `interfaces` would not delete everything it promised. Emptying the dimensions under a
 # running writer is safe for readers (the views LEFT JOIN), but the writer must drop its cached ids.

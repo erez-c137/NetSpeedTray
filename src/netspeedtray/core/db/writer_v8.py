@@ -1,8 +1,8 @@
 """
-The v8 history writer - DORMANT. Nothing in the live app calls this module yet; ``_DB_VERSION`` in
-``core/database.py`` stays 7. At the switch-over (implementation step 7) the ``DatabaseWorker``
-builds one :class:`WriterV8` on its own write connection, right after ``migrate_v8.recover()`` /
-``migrate()``, and routes its persist / maintenance / delete-history tasks through it. All SQLite
+The v8 history writer - LIVE since the switch-over (step 7, ``_DB_VERSION = 8``). The
+``DatabaseWorker`` builds one :class:`WriterV8` on its own write connection, on its own thread, right
+after ``migrate_v8.recover()`` / ``migrate()``, and routes its persist / maintenance / delete-history
+tasks through it (``DatabaseWorker._persist_v8`` / ``_run_maintenance`` / ``_delete_history``). All SQLite
 writes therefore still happen on the worker thread (CLAUDE.md). The class is Qt-free and thread
 agnostic, but NOT thread-safe: the worker thread is its only caller.
 

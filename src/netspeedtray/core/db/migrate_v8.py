@@ -1,7 +1,7 @@
 """
-The v7 -> v8 database migration - DORMANT. Nothing in the app calls this module yet;
-``_DB_VERSION`` in ``core/database.py`` stays 7 until the switch-over (implementation step 7), when
-the database worker calls :func:`recover` and then :func:`migrate` before it opens its connection.
+The v7 -> v8 database migration - LIVE since the switch-over (step 7, ``_DB_VERSION = 8``): the
+database worker calls :func:`recover` on every launch before any connection to the live name, and
+:func:`migrate` on a v7 file before it opens its own connection (``DatabaseWorker._prepare_storage``).
 
 Design authority: ``Docs/reference/database-v8-final.md`` section 5; the execution order is step 4
 of ``Docs/reference/database-v8-implementation-steps.md``; the checklist is Gate 2 of the 2.2

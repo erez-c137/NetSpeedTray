@@ -581,6 +581,21 @@ class NetworkSpeedWidget(QWidget):
         except Exception as e:
             self.logger.error("Error showing database read-only notice: %s", e, exc_info=True)
 
+    def _on_db_migration_deferred(self, reason: str) -> None:
+        """
+        The v7 -> v8 history upgrade could not finish this launch (low disk, the file held by
+        another program, an interrupted earlier attempt), so the worker records nothing until the
+        next start, when it retries. Same calm flyout as the downgrade notice - the title is shared,
+        the body says what happens next; the worker's ERROR log carries the technical reason.
+        """
+        try:
+            self.logger.info("Surfacing deferred database upgrade notice (reason: %s).", reason)
+            body = (self.i18n.DB_UPGRADE_PAUSED_NO_SPACE_FLYOUT_BODY if reason == "no_space"
+                    else self.i18n.DB_UPGRADE_PAUSED_FLYOUT_BODY)
+            self._show_usage_alert(self.i18n.DB_READONLY_FLYOUT_TITLE, body)
+        except Exception as e:
+            self.logger.error("Error showing deferred database upgrade notice: %s", e, exc_info=True)
+
     def _show_usage_alert(self, title: str, message: str) -> None:
         """Show a data-cap usage alert via the flyout (no system-tray icon needed)."""
         try:
@@ -825,6 +840,7 @@ class NetworkSpeedWidget(QWidget):
             # a guard tripped during startup arrives once the event loop spins - after this
             # connect has run.
             self.widget_state.db_schema_incompatible.connect(self._on_db_schema_incompatible)
+            self.widget_state.db_migration_deferred.connect(self._on_db_migration_deferred)
 
             # Start the monitoring thread
             self.monitor_thread.start()
@@ -1048,7 +1064,9 @@ class NetworkSpeedWidget(QWidget):
             if hint is None and today is None:
                 return  # nothing to show (both toggles off, or tips graduated while data is off)
             self._hide_usage_hover_card()  # never stack two cards
-            self._hover_card = UsageFlyout(self.i18n, today, month, hint=hint, cap=cap)
+            note = (self.i18n.USAGE_RECORDED_HISTORY_NOTE
+                    if today is not None and getattr(self, "_hover_usage_reconstructed", False) else None)
+            self._hover_card = UsageFlyout(self.i18n, today, month, hint=hint, cap=cap, history_note=note)
             screen = self.screen() or QApplication.primaryScreen()
             avail = screen.availableGeometry() if screen else self.frameGeometry()
             self._hover_card.show_for(self.frameGeometry(), avail)
@@ -1072,14 +1090,19 @@ class NetworkSpeedWidget(QWidget):
             return self._hover_usage_cache
         today: Tuple[float, float] = (0.0, 0.0)
         month: Tuple[float, float] = (0.0, 0.0)
+        reconstructed = False
         try:
             now_dt = datetime.now()
             midnight = now_dt.replace(hour=0, minute=0, second=0, microsecond=0)
             month_start = midnight.replace(day=1)
-            today = self.widget_state.get_total_bandwidth_for_period(midnight, now_dt)
-            month = self.widget_state.get_total_bandwidth_for_period(month_start, now_dt)
+            vt = self.widget_state.get_history_volume_for_period(midnight, now_dt)
+            vm = self.widget_state.get_history_volume_for_period(month_start, now_dt)
+            today, month = (vt.up_bytes, vt.down_bytes), (vm.up_bytes, vm.down_bytes)
+            # D5: part of the month was estimated from speeds recorded before 2.2 -> label it.
+            reconstructed = bool(vt.reconstructed or vm.reconstructed)
         except Exception as e:
             self.logger.debug("hover usage fetch failed: %s", e)
+        self._hover_usage_reconstructed = reconstructed
         self._hover_usage_cache = (today, month)
         self._hover_usage_cache_ts = now
         return self._hover_usage_cache

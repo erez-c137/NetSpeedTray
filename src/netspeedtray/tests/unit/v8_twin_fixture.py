@@ -97,8 +97,8 @@ def make_history(now: datetime, seed: int = 3) -> History:
 # --- writers ---------------------------------------------------------------------------------------
 
 def write_v7(path: Path, h: History) -> None:
-    from netspeedtray.core.database import DatabaseWorker
-    w = DatabaseWorker(path)
+    from netspeedtray.tests.legacy_v7_worker import LegacyV7Worker
+    w = LegacyV7Worker(path)
     w._initialize_connection()
     w._check_and_create_schema()
     c = w.conn.cursor()

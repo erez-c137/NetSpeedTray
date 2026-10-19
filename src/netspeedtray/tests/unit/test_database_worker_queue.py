@@ -46,9 +46,12 @@ def test_flush_and_wait_short_circuits_when_worker_not_running(tmp_path):
     # Minimal stand-in: a WidgetState-like object exercising the real method.
     from netspeedtray.core.widget_state import WidgetState
 
+    import threading
     ws = WidgetState.__new__(WidgetState)
     ws.logger = MagicMock()
-    ws._db_batch = []
+    ws._read_only = False
+    ws._batch_lock = threading.Lock()
+    ws._net_batch = []
     ws._hw_batch = []
     ws.db_worker = MagicMock()
     ws.db_worker.isRunning.return_value = False
@@ -57,7 +60,8 @@ def test_flush_and_wait_short_circuits_when_worker_not_running(tmp_path):
     ws.flush_and_wait(timeout=2.0)
     elapsed = time.monotonic() - start
     assert elapsed < 0.5, "must return immediately when the worker isn't running"
-    ws.db_worker.enqueue_task.assert_not_called()
+    # The flush itself is handed over (v8: always, it carries the heartbeat); the barrier is not.
+    ws.db_worker.enqueue_task.assert_called_once_with("persist_v8", ([], []))
 
 
 def test_retention_cutoff_never_crashes_on_keep_forever():
@@ -87,7 +91,7 @@ def test_maintenance_survives_keep_forever_and_keeps_writing(tmp_path):
         worker.enqueue_task("__signal__", done)
         assert done.wait(5.0), "worker failed to initialize"
         worker.enqueue_task("maintenance", {"keep_data": 36500})    # would crash the thread pre-fix
-        worker.enqueue_task("persist_hardware", [(int(time.time()), "ram", 47.5)])
+        worker.enqueue_task("persist_v8", ([], [(int(time.time()), "ram", 47.5)]))
         flushed = threading.Event()
         worker.enqueue_task("__signal__", flushed)
         assert flushed.wait(5.0), "worker died during maintenance (the OSError-22 crash)"

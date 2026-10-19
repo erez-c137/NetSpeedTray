@@ -121,13 +121,13 @@ def v7_rolled(migrated):
     """The ORIGINAL v7 file after v7's own maintenance rolled every network raw row into minutes - what
     the fold does, done by the code that defined the minute tier. (Hardware raw is left alone, as the
     migrator leaves it.)"""
-    from netspeedtray.core.database import DatabaseWorker
+    from netspeedtray.tests.legacy_v7_worker import LegacyV7Worker
     from netspeedtray.core.db.history_reader import V7HistoryReader
     h, _, _, d, _ = migrated
     path = d / "rolled" / "speed_history.db"
     path.parent.mkdir()
     shutil.copy2(d / "orig" / "speed_history.db", path)
-    w = DatabaseWorker(path)
+    w = LegacyV7Worker(path)
     w._initialize_connection()
     w._aggregate_raw_to_minute(w.conn.cursor(), datetime.now() + timedelta(days=2))
     w.conn.commit()

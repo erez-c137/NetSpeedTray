@@ -357,9 +357,9 @@ def test_database_md_documents_the_anchor_timeout_series():
 
 
 def test_database_md_loss_query_runs_on_a_populated_db(tmp_path):
-    from netspeedtray.core.database import DatabaseWorker
+    from netspeedtray.tests.legacy_v7_worker import LegacyV7Worker
 
-    w = DatabaseWorker(tmp_path / "loss.db")
+    w = LegacyV7Worker(tmp_path / "loss.db")
     w._initialize_connection()
     w._check_and_create_schema()
 
@@ -388,6 +388,9 @@ def test_database_md_loss_query_runs_on_a_populated_db(tmp_path):
              for t in ("hardware_stats_raw", "hardware_stats_minute")}
     assert tiers["hardware_stats_raw"] > 0 and tiers["hardware_stats_minute"] > 0, tiers
     w.conn.close()
+    # The documented recipe reads the v8 tables: run it on this v7 history as 2.2 sees it, migrated.
+    from netspeedtray.core.db import migrate_v8
+    assert migrate_v8.migrate(tmp_path / "loss.db").status == "migrated"
 
     ro = sqlite3.connect(f"file:{tmp_path / 'loss.db'}?mode=ro", uri=True)
     ro.row_factory = sqlite3.Row

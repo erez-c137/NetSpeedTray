@@ -82,6 +82,10 @@ class NetworkSpeedConstants:
     # (schema_v8.FLAG_GAP) so the bytes are kept but never drawn as a spike.
     RATE_VALIDITY_MIN_SECONDS: Final[float] = 10.0
     RATE_VALIDITY_POLL_MULTIPLE: Final[float] = 5.0
+    # psutil.net_if_stats() (link up/down, negotiated speed, duplex) for the v8 history's link_events
+    # and link_speed / link_duplex metrics: sampled on this slow sub-cadence by the monitor thread,
+    # not every poll - link state changes rarely, and the writer rate-limits the metrics anyway.
+    LINK_STATS_POLL_INTERVAL_SEC: Final[float] = 5.0
     
     # These are now i18n keys
     DEFAULT_UNIT_BITS: Final[str] = "BITS_LABEL"

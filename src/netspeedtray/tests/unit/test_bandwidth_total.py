@@ -22,10 +22,8 @@ def state_with_db(tmp_path: Path) -> Iterator[WidgetState]:
     with patch.object(QThread, "start", lambda self: None), \
          patch("netspeedtray.core.widget_state.get_app_data_path", return_value=tmp_path):
         state = WidgetState(cfg)
-    w = state.db_worker
-    w.db_path = tmp_path / "speed_history.db"
-    w._initialize_connection()
-    w._check_and_create_schema()
+    from netspeedtray.tests.state_helpers import attach_v7
+    w = attach_v7(state, tmp_path / "speed_history.db")   # v7 raw rows: the v7 backend's poll-rate rule
     # Insert 3 raw samples (rate 100 up / 200 down each) → rate-sum 300 / 600.
     now = int(datetime.now().timestamp())
     cur = w.conn.cursor()

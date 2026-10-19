@@ -193,11 +193,20 @@ class DataConstants:
     # with a per-period anchor so usage_this_period = cumulative - anchor.
     USAGE_COUNTER_TABLE: Final[str] = "usage_counter"
 
-    # Every table "Delete all history" empties (only those present in the file are touched). The
-    # odometer (USAGE_COUNTER_TABLE) is deliberately NOT here: it is the data-cap's billing source of
-    # truth (decision D5) and is only cleared when the user ticks the separate opt-in. `metadata`
-    # (db_version, maintenance stamps) is schema bookkeeping, not history, and is never deleted.
+    # Every table "Delete all history" empties on the v8 schema (2.2+): the facts first, then the
+    # `interfaces` / `metrics` dimension tables - adapter friendly names are identifying (privacy.md),
+    # so a delete that kept them would not delete everything it promised. Must equal
+    # core/db/schema_v8.HISTORY_TABLES_V8 (a unit test pins it; listed here as literals because
+    # schema_v8 imports this module). The odometer (USAGE_COUNTER_TABLE) is deliberately NOT here: it
+    # is the data-cap's billing source of truth (decision D5) and is only cleared when the user ticks
+    # the separate opt-in. `metadata` (db_version, watermarks, maintenance stamps) is schema
+    # bookkeeping, not history, and is never deleted.
     HISTORY_TABLES: Final[tuple] = (
+        "net_raw", "net_minute", "net_hour", "hw_raw", "hw_minute", "hw_hour",
+        "link_events", "app_sessions", "interfaces", "metrics",
+    )
+    # The v7 set (2.1.x), kept only so tests that build a v7 file can delete from it like 2.1.x did.
+    HISTORY_TABLES_V7: Final[tuple] = (
         SPEED_TABLE_RAW, SPEED_TABLE_MINUTE, SPEED_TABLE_HOUR,
         HARDWARE_STATS_TABLE_RAW, HARDWARE_STATS_TABLE_MINUTE, HARDWARE_STATS_TABLE_HOUR,
         BANDWIDTH_TABLE, APP_BANDWIDTH_TABLE, SPEED_TABLE, AGGREGATED_TABLE,

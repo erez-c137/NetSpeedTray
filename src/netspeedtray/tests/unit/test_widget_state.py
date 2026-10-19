@@ -3,86 +3,11 @@ Unit tests for the WidgetState and its associated DatabaseWorker.
 
 These tests verify the correctness of the data layer, including database schema
 creation, data ingestion, aggregation, pruning, and maintenance logic.
-"""
 
-import pytest
-import sqlite3
-import time
-from pathlib import Path
-from unittest.mock import patch
-from datetime import datetime, timedelta
-from typing import Iterator
-
-from PyQt6.QtCore import QThread
-
-from netspeedtray.core.widget_state import WidgetState
-from netspeedtray import constants
-
-
-@pytest.fixture
-def mock_config() -> dict:
-    """Provides a default configuration dictionary for tests."""
-    return constants.config.defaults.DEFAULT_CONFIG.copy()
-
-
-@pytest.fixture
-def managed_widget_state(tmp_path: Path, mock_config: dict) -> Iterator[tuple[WidgetState, Path]]:
-    """
-    Provides a WidgetState instance with a temporary DB for SYNCHRONOUS testing.
-    It PREVENTS the DatabaseWorker QThread from starting and initializes the DB directly.
-    """
-    db_path = tmp_path / "speed_history.db"
-    
-    with patch.object(QThread, 'start', lambda self: None):
-        # Patch the helper function to ensure WidgetState uses our temporary path.
-        with patch('netspeedtray.core.widget_state.get_app_data_path', return_value=tmp_path):
-            state = WidgetState(mock_config)
-        
-        # Get the worker instance *after* WidgetState has created it.
-        worker = state.db_worker
-        
-        # Manually ensure its db_path is set to our temporary path. This is crucial.
-        worker.db_path = db_path
-        
-        # Now, call the setup methods synchronously.
-        worker._initialize_connection() 
-        worker._check_and_create_schema()
-        
-        # The connection IS LEFT OPEN for the duration of the test.
-        # This is necessary for the test functions to write data to it.
-        
-        yield state, db_path # Hand over the ready-to-use state object
-        
-        # Teardown: close the connection we manually opened.
-        worker._close_connection()
-        state.cleanup()
-
-
-def test_database_initialization_creates_correct_schema(managed_widget_state):
-    """
-    Tests if the DatabaseWorker correctly creates all required tables and metadata
-    on its first run with a non-existent database file.
-    """
-    # ARRANGE
-    state, db_path = managed_widget_state
-    
-    # ACT
-    # The fixture already initializes the worker. We just need to give it a moment
-    # to create the database file and schema. 200ms is more than enough time.
-    time.sleep(0.2) 
-
-    # ASSERT
-    assert db_path.exists(), "Database file was not created."
-
-    # Connect directly to the database to inspect its schema
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-
-"""
-Unit tests for the WidgetState and its associated DatabaseWorker.
-
-These tests verify the correctness of the data layer, including database schema
-creation, data ingestion, aggregation, pruning, and maintenance logic.
+Since the v8 switch-over (2.2) the app writes schema v8 only: ``v8_widget_state`` runs the real
+worker's startup synchronously on a fresh file. The tests further down still drive a v7 file through
+``managed_widget_state`` - written by 2.1.x's worker (``tests/legacy_v7_worker``) and read through the
+v7 backend, which 2.2 uses while an upgrade is deferred.
 """
 
 import pytest
@@ -98,6 +23,8 @@ from PyQt6.QtCore import QThread
 from netspeedtray.core.widget_state import WidgetState
 from netspeedtray import constants
 from netspeedtray.core.database import DatabaseWorker
+from netspeedtray.core.db import schema_v8 as S8
+from netspeedtray.tests.state_helpers import attach_v7, prepare_v8
 
 
 @pytest.fixture
@@ -106,220 +33,132 @@ def mock_config() -> dict:
     return constants.config.defaults.DEFAULT_CONFIG.copy()
 
 
+def _unstarted_state(tmp_path: Path, config: dict) -> WidgetState:
+    with patch.object(QThread, 'start', lambda self: None):
+        with patch('netspeedtray.core.widget_state.get_app_data_path', return_value=tmp_path):
+            return WidgetState(config)
+
+
+@pytest.fixture
+def v8_widget_state(tmp_path: Path, mock_config: dict) -> Iterator[tuple[WidgetState, Path]]:
+    """A WidgetState whose worker ran its real startup (fresh install -> v8) on THIS thread."""
+    db_path = tmp_path / "speed_history.db"
+    state = _unstarted_state(tmp_path, mock_config)
+    worker = prepare_v8(state, db_path)
+    yield state, db_path
+    worker._close_connection()
+    state.cleanup()
+
+
 @pytest.fixture
 def managed_widget_state(tmp_path: Path, mock_config: dict) -> Iterator[tuple[WidgetState, Path]]:
     """
-    Provides a WidgetState instance with a temporary DB for SYNCHRONOUS testing.
-    It PREVENTS the DatabaseWorker QThread from starting and initializes the DB directly.
+    A WidgetState over a v7 file for SYNCHRONOUS testing of the v7 backend: written by 2.1.x's
+    worker (its connection LEFT OPEN for the test to write through), read as a deferred-upgrade 2.2
+    session reads it.
     """
     db_path = tmp_path / "speed_history.db"
-    
-    with patch.object(QThread, 'start', lambda self: None):
-        # Patch the helper function to ensure WidgetState uses our temporary path.
-        with patch('netspeedtray.core.widget_state.get_app_data_path', return_value=tmp_path):
-            state = WidgetState(mock_config)
-        
-        # Get the worker instance *after* WidgetState has created it.
-        worker = state.db_worker
-        
-        # Manually ensure its db_path is set to our temporary path. This is crucial.
-        worker.db_path = db_path
-        
-        # Now, call the setup methods synchronously.
-        worker._initialize_connection() 
-        worker._check_and_create_schema()
-        
-        # The connection IS LEFT OPEN for the duration of the test.
-        # This is necessary for the test functions to write data to it.
-        
-        yield state, db_path # Hand over the ready-to-use state object
-        
-        # Teardown: close the connection we manually opened.
-        worker._close_connection()
-        state.cleanup()
+    state = _unstarted_state(tmp_path, mock_config)
+    worker = attach_v7(state, db_path)
+    yield state, db_path
+    worker._close_connection()
+    state.cleanup()
 
 
-def test_database_initialization_creates_correct_schema(managed_widget_state):
-    """
-    Tests if the DatabaseWorker correctly creates all required tables and metadata
-    on its first run with a non-existent database file.
-    """
-    # ARRANGE
-    state, db_path = managed_widget_state
-    
-    # ACT
-    # The fixture already initializes the worker. We just need to give it a moment
-    # to create the database file and schema. 200ms is more than enough time.
-    time.sleep(0.2) 
-
-    # ASSERT
+def test_database_initialization_creates_correct_schema(v8_widget_state):
+    """A first run on a non-existent file creates the complete v8 schema (fresh install -> v8)."""
+    state, db_path = v8_widget_state
     assert db_path.exists(), "Database file was not created."
-
-    # Connect directly to the database to inspect its schema
     conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
+    try:
+        cursor = conn.cursor()
+        # 1. Every v8 table, and nothing else (bandwidth_history is gone).
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+        tables = {row[0] for row in cursor.fetchall()} - {"sqlite_stat1"}
+        expected_tables = {'metadata', 'usage_counter', 'interfaces', 'metrics', 'net_raw', 'net_minute',
+                           'net_hour', 'hw_raw', 'hw_minute', 'hw_hour', 'app_sessions', 'link_events'}
+        assert tables == expected_tables == set(S8.EXPECTED_TABLES_V8), "Incorrect set of tables were created."
+        assert constants.data.BANDWIDTH_TABLE not in tables
+        # 2. The v7 names exist only as read-only compatibility views.
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='view';")
+        assert {row[0] for row in cursor.fetchall()} == set(S8.COMPAT_VIEWS_V8)
+        # 3. Version, page size and incremental auto-vacuum (only settable on the empty file).
+        cursor.execute("SELECT value FROM metadata WHERE key = 'db_version'")
+        assert int(cursor.fetchone()[0]) == DatabaseWorker._DB_VERSION == 8
+        assert cursor.execute("PRAGMA page_size").fetchone()[0] == S8.PAGE_SIZE
+        assert cursor.execute("PRAGMA auto_vacuum").fetchone()[0] == 2
+        assert cursor.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
+        # 4. net_raw stores bytes over a measured interval, never a rate.
+        cols = {row[1]: (row[2], row[5]) for row in cursor.execute("PRAGMA table_info('net_raw')")}
+        assert cols == {'ts': ('INTEGER', 1), 'iface_id': ('INTEGER', 2), 'up_bytes': ('INTEGER', 0),
+                        'down_bytes': ('INTEGER', 0), 'dt_ms': ('INTEGER', 0), 'flags': ('INTEGER', 0)}
+        # 5. The running app is a session.
+        assert cursor.execute("SELECT COUNT(*) FROM app_sessions WHERE ended_ts IS NULL").fetchone()[0] == 1
+    finally:
+        conn.close()
+    assert state.history_schema_version() == 8
 
-    # 1. Check if all tables were created
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
-    tables = {row[0] for row in cursor.fetchall()}
-    expected_tables = {'metadata', 'speed_history_raw', 'speed_history_minute', 'speed_history_hour', 'bandwidth_history', 'hardware_stats_raw', 'hardware_stats_minute', 'hardware_stats_hour', 'usage_counter'}
-    assert tables == expected_tables, "Incorrect set of tables were created."
 
-    # 2. Check the database version in the metadata table
-    cursor.execute("SELECT value FROM metadata WHERE key = 'db_version'")
-    # The DatabaseWorker._DB_VERSION is the source of truth.
-    assert int(cursor.fetchone()[0]) == DatabaseWorker._DB_VERSION, "Database version is incorrect."
+def test_add_speed_data_feeds_memory_only(v8_widget_state):
+    """add_speed_data is the DISPLAY path: the in-memory series get the (filtered) rates; nothing is
+    batched for the DB - v8 history is fed bytes by add_net_sample."""
+    state, _ = v8_widget_state
+    test_speed_data = {"Wi-Fi": (1250000.0, 2500000.0), "Ethernet": (1000.0, 2000.0)}
+    state.add_speed_data(test_speed_data, persist_data={"Wi-Fi": (9e6, 9e6)})
+    assert len(state.in_memory_history) == 1
+    assert state.in_memory_history[0].speeds == test_speed_data
+    assert state._net_batch == [] and not hasattr(state, "_db_batch")
 
 
-    # 3. Check the schema of the 'speed_history_raw' table
-    cursor.execute("PRAGMA table_info('speed_history_raw');")
-    columns_raw = {row[1]: (row[2], row[5]) for row in cursor.fetchall()} # name -> (type, pk_index)
-    expected_raw = {
-        'timestamp': ('INTEGER', 1),
-        'interface_name': ('TEXT', 2),
-        'upload_bytes_sec': ('REAL', 0),
-        'download_bytes_sec': ('REAL', 0),
-    }
-    assert columns_raw == expected_raw, "Schema for 'speed_history_raw' is incorrect."
+def test_add_net_sample_and_flush_batch_send_one_v8_task(v8_widget_state):
+    """flush_batch hands the worker ONE persist_v8 task: every buffered poll (bytes over dt_ms) plus the
+    hardware samples, then clears both buffers."""
+    state, _ = v8_widget_state
+    now = time.time()
+    state.add_net_sample(now - 1, 1000, {})                                   # primes only
+    state.add_net_sample(now, 1003.4, {"Wi-Fi": (100.0, 200.0), "Ethernet": (0.0, 5.0)})
+    state.add_hardware_stat('cpu', 12.5)
+    assert len(state._net_batch) == 2 and state._net_batch[1].dt_ms == 1003
+    net, hw = list(state._net_batch), list(state._hw_batch)
+    with patch.object(state.db_worker, 'enqueue_task') as mock_enqueue_task:
+        state.flush_batch()
+        mock_enqueue_task.assert_called_once()
+        task, data = mock_enqueue_task.call_args[0]
+        assert task == "persist_v8"
+        assert data == (net, hw)
+    assert state._net_batch == [] and state._hw_batch == []
 
-    # 4. Check the schema of the 'speed_history_minute' table
-    cursor.execute("PRAGMA table_info('speed_history_minute');")
-    columns_minute = {row[1]: (row[2], row[5]) for row in cursor.fetchall()}
-    expected_minute_hour = {
-        'timestamp': ('INTEGER', 1),
-        'interface_name': ('TEXT', 2),
-        'upload_avg': ('REAL', 0),
-        'download_avg': ('REAL', 0),
-        'upload_max': ('REAL', 0),
-        'download_max': ('REAL', 0),
-        'sample_count': ('INTEGER', 0),
-    }
-    assert columns_minute == expected_minute_hour, "Schema for 'speed_history_minute' is incorrect."
-    
-    # 5. Check the schema of the 'speed_history_hour' table (should be same as minute)
-    cursor.execute("PRAGMA table_info('speed_history_hour');")
-    columns_hour = {row[1]: (row[2], row[5]) for row in cursor.fetchall()}
-    assert columns_hour == expected_minute_hour, "Schema for 'speed_history_hour' is incorrect."
 
-    # 6. Check that indexes were created
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='index';")
-    indexes = {row[0] for row in cursor.fetchall()}
-    expected_indexes = {'idx_raw_timestamp', 'idx_minute_covering', 'idx_hour_covering'}
-    assert expected_indexes.issubset(indexes), f"Required indexes were not created. Found: {indexes}"
-
+def test_flush_batch_sends_the_heartbeat_even_when_empty(v8_widget_state):
+    """An empty flush still reaches the worker: its flush writes the app_sessions heartbeat, the
+    coverage record of an idle machine (v7 skipped empty flushes - and had no coverage record)."""
+    state, db_path = v8_widget_state
+    w = state.db_worker
+    with patch.object(w, 'enqueue_task') as mock_enqueue_task:
+        state.flush_batch()
+        mock_enqueue_task.assert_called_once_with("persist_v8", ([], []))
+    conn = sqlite3.connect(db_path)
+    before = conn.execute("SELECT last_seen_ts FROM app_sessions").fetchone()[0]
+    conn.close()
+    with patch("netspeedtray.core.db.writer_v8.time.time", return_value=before + 10):
+        w._execute_task("persist_v8", ([], []))
+    conn = sqlite3.connect(db_path)
+    assert conn.execute("SELECT last_seen_ts FROM app_sessions").fetchone()[0] == before + 10
     conn.close()
 
 
-def test_add_speed_data_queues_data_for_worker(managed_widget_state):
-    """
-    Tests that add_speed_data correctly processes per-interface data,
-    adds it to the internal batch for the DB worker, and updates the
-    in-memory deque for the mini-graph. It also tests that negligible
-    speeds are ignored.
-    """
-    # ARRANGE
-    state, _ = managed_widget_state
-    
-    # Define sample data from the controller
-    # Speeds are in Bytes per second
-    test_speed_data = {
-        "Wi-Fi": (1250000.0, 2500000.0),      # 10 Mbps Up, 20 Mbps Down
-        "Ethernet": (1000.0, 2000.0),         # Meaningful but small traffic
-        "vEthernet (WSL)": (0.5, 0.8),        # Negligible traffic, should be ignored
-        "Bluetooth PAN": (0.0, 0.0)           # Zero traffic, should be ignored
-    }
-    
-    # ACT
-    state.add_speed_data(test_speed_data)
-    
-    # ASSERT
-    
-    # 1. Assert the in-memory deque (for live graph) was updated correctly.
-    # It should contain the full dictionary of speeds.
-    assert len(state.in_memory_history) == 1
-    in_memory_snapshot = state.in_memory_history[0]
-    
-    assert in_memory_snapshot.speeds == test_speed_data
-
-    # 2. Assert the internal database batch (`_db_batch`) was populated correctly.
-    # It should contain only the per-interface data for *non-negligible* speeds.
-    assert len(state._db_batch) == 2, "Batch should only contain 2 records with significant speed."
-    
-    # Find the Wi-Fi data in the batch
-    wifi_data = next((item for item in state._db_batch if item[1] == "Wi-Fi"), None)
-    assert wifi_data is not None, "Wi-Fi data not found in batch."
-    # wifi_data is a tuple: (timestamp, interface_name, upload_bytes_sec, download_bytes_sec)
-    assert wifi_data[2] == 1250000.0
-    assert wifi_data[3] == 2500000.0
-    
-    # Find the Ethernet data in the batch
-    ethernet_data = next((item for item in state._db_batch if item[1] == "Ethernet"), None)
-    assert ethernet_data is not None, "Ethernet data not found in batch."
-    assert ethernet_data[2] == 1000.0
-    assert ethernet_data[3] == 2000.0
-    
-    # 3. Assert that negligible/zero speed interfaces were NOT added to the batch
-    assert "vEthernet (WSL)" not in [item[1] for item in state._db_batch]
-    assert "Bluetooth PAN" not in [item[1] for item in state._db_batch]
-
-
-def test_flush_batch_sends_data_to_worker(managed_widget_state):
-    """
-    Tests that calling flush_batch on the WidgetState correctly calls the
-    enqueue_task method on the DatabaseWorker with the batched data.
-    """
-    # ARRANGE
-    state, _ = managed_widget_state
-    
-    # Use the public API to populate the batch, just like the real application.
-    snapshot1 = (int(time.time()), "Wi-Fi", 100.0, 200.0)
-    snapshot2 = (int(time.time()), "Ethernet", 300.0, 400.0)
-    
-    # Simulate the controller sending data to the state object.
-    # We must create a dictionary, as this is what add_speed_data expects.
-    state.add_speed_data({"Wi-Fi": (snapshot1[2], snapshot1[3])})
-    state.add_speed_data({"Ethernet": (snapshot2[2], snapshot2[3])})
-
-    # The internal batch will have timestamps generated by add_speed_data.
-    # We can retrieve the batch to create our "expected" data for the assertion.
-    expected_batch = state._db_batch.copy() # It's okay to read it for assertion setup.
-    assert len(expected_batch) == 2
-
-    # Spy on the db_worker's enqueue_task method
-    with patch.object(state.db_worker, 'enqueue_task') as mock_enqueue_task:
-        # ACT
-        state.flush_batch()
-        
-        # ASSERT
-        # 1. Assert that the enqueue_task method was called exactly once.
-        mock_enqueue_task.assert_called_once()
-        
-        # 2. Assert that it was called with the correct arguments.
-        #    call_args[0] is the tuple of positional arguments.
-        call_args = mock_enqueue_task.call_args[0]
-        assert call_args[0] == "persist_speed", "The task name should be 'persist_speed'."
-        assert call_args[1] == expected_batch, "The data passed to the worker does not match the batch."
-
-        # 3. Assert that the internal batch was cleared after flushing.
-        assert len(state._db_batch) == 0, "The internal batch should be empty after flushing."
-
-def test_flush_batch_does_nothing_if_batch_is_empty(managed_widget_state):
-    """
-    Tests that flush_batch does not interact with the worker thread
-    if there is no data to be persisted.
-    """
-    # ARRANGE
-    state, _ = managed_widget_state
-    assert len(state._db_batch) == 0 # Pre-condition
-
-    # Spy on the db_worker's enqueue_task method
-    with patch.object(state.db_worker, 'enqueue_task') as mock_enqueue_task:
-        # ACT
-        state.flush_batch()
-        
-        # ASSERT
-        # Assert that the enqueue_task method was NOT called.
-        mock_enqueue_task.assert_not_called()
+def test_add_hardware_stat_clamps_pct_not_physical(v8_widget_state):
+    """Utilization stats clamp 0-100; physical stats (power W / temp °C / latency ms) store unclamped
+    so a 180 W draw or 200 ms ping isn't corrupted to 100."""
+    state, _ = v8_widget_state
+    state._hw_batch.clear()
+    state.add_hardware_stat('cpu', 150.0)        # util -> clamped
+    state.add_hardware_stat('cpu_power', 180.0)  # power -> unclamped
+    state.add_hardware_stat('gpu_temp', 105.0)   # temp -> unclamped
+    state.add_hardware_stat('latency_gw', 240.0) # latency -> unclamped
+    vals = {b[1]: b[2] for b in state._hw_batch}
+    assert vals['cpu'] == 100.0
+    assert vals['cpu_power'] == 180.0 and vals['gpu_temp'] == 105.0 and vals['latency_gw'] == 240.0
 
 
 def test_aggregation_raw_to_minute(managed_widget_state, mock_config):
@@ -732,20 +571,6 @@ def test_hardware_history_raw_fallback_for_recent_long_window(managed_widget_sta
     # 24h duration -> minute tier (empty) -> raw fallback returns the recent rows.
     got = state.get_hardware_history("ram", now - timedelta(hours=24), now + timedelta(minutes=1))
     assert len(got) == 5, "raw fallback should surface recent rows the empty minute tier lacks"
-
-
-def test_add_hardware_stat_clamps_pct_not_physical(managed_widget_state):
-    """Utilization stats clamp 0-100; physical stats (power W / temp °C / latency ms) store unclamped
-    so a 180 W draw or 200 ms ping isn't corrupted to 100."""
-    state, _ = managed_widget_state
-    state._hw_batch.clear()
-    state.add_hardware_stat('cpu', 150.0)        # util -> clamped
-    state.add_hardware_stat('cpu_power', 180.0)  # power -> unclamped
-    state.add_hardware_stat('gpu_temp', 105.0)   # temp -> unclamped
-    state.add_hardware_stat('latency_gw', 240.0) # latency -> unclamped
-    vals = {b[1]: b[2] for b in state._hw_batch}
-    assert vals['cpu'] == 100.0
-    assert vals['cpu_power'] == 180.0 and vals['gpu_temp'] == 105.0 and vals['latency_gw'] == 240.0
 
 
 def test_summarize_hardware_exact_unclamped(managed_widget_state):

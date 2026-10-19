@@ -159,7 +159,8 @@ class StatsController(QObject):
         """
         # 1. Handle Network
         if 'network' in stats:
-            self._handle_network_counters(stats['network'], stats.get('network_sampled_at'))
+            self._handle_network_counters(stats['network'], stats.get('network_sampled_at'),
+                                          stats.get('network_if_stats'))
 
         # Forward the network identity (band/SSID) whenever the thread sub-polled it (present-key
         # emits, like temp/power). The payload is a NetworkIdentity or None.
@@ -249,11 +250,18 @@ class StatsController(QObject):
 
 
     def _handle_network_counters(self, current_counters: Dict[str, Any],
-                                 sample_time: Optional[Tuple[float, float]] = None) -> None:
-        """Processes raw network counters: the data-usage odometer first, then the rate display.
+                                 sample_time: Optional[Tuple[float, float]] = None,
+                                 if_stats: Optional[Dict[str, Any]] = None) -> None:
+        """Processes raw network counters: the data-usage odometer and the v8 history first, then
+        the rate display.
 
         `sample_time` is (time.monotonic(), time.time()) taken by the monitor thread right after it
-        read the counters; it falls back to the handling time (direct callers, tests).
+        read the counters; it falls back to the handling time (direct callers, tests). `if_stats` is
+        psutil.net_if_stats() when the monitor thread sampled it this poll (a slow sub-cadence).
+
+        History (schema v8) stores the SAME exact byte deltas the odometer counts, per interface, over
+        the measured sampling span - never a rate, so neither the spike filter nor the poll rate can
+        reach it, and a gap's bytes are kept (the writer flags the row FLAG_GAP).
 
         Order matters. The odometer counts the exact counter delta of EVERY poll, BEFORE the gap /
         re-prime gate: a long gap (Modern Standby, the app suspended) used to discard the whole gap
@@ -272,6 +280,10 @@ class StatsController(QObject):
             self.last_check_time = current_time
             self.last_interface_counters = current_counters
             self._last_sample_time = (sample_mono, sample_wall)
+            if self.widget_state:
+                # No interval yet: this only primes the history writer's counter baselines.
+                self.widget_state.add_net_sample(sample_wall, 1, {}, counters=current_counters,
+                                                 if_stats=if_stats)
             if self._launch_counters is None and not self._launch_reconciled:
                 self._launch_counters = (current_counters, sample_wall)
                 self._maybe_reconcile_launch()
@@ -303,6 +315,11 @@ class StatsController(QObject):
             self.widget_state.add_usage_bytes(agg_up_bytes, agg_down_bytes,
                                               counters=current_counters, sampled_at=sample_wall,
                                               window_start=last_wall, primary=self._odometer_primary())
+        if self.widget_state:
+            # v8 history: every interface's exact delta over the measured span (ending at this sample),
+            # gap or not - the writer flags a long interval rather than dropping its bytes.
+            self.widget_state.add_net_sample(sample_wall, sample_elapsed * 1000.0, byte_deltas,
+                                             counters=current_counters, if_stats=if_stats)
         self._last_sample_time = (sample_mono, sample_wall)
 
         # --- 2. The rate display: re-prime across gaps ------------------------------------------

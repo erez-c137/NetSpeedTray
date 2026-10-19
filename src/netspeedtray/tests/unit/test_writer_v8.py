@@ -564,20 +564,22 @@ def test_incremental_vacuum_returns_pages_without_a_full_vacuum(conn):
 
 
 # --------------------------------------------------------------------------------------------
-# dormancy
+# the switch-over: one writer, owned by the worker
 # --------------------------------------------------------------------------------------------
 
-def test_dormant_nothing_in_the_app_imports_the_writer():
-    assert DatabaseWorker._DB_VERSION == 7
+def test_only_the_database_worker_constructs_the_writer():
+    """Step 7: _DB_VERSION is 8 and the DatabaseWorker - on its own thread - is the ONLY place in the app
+    that builds a WriterV8 (step-7 note 7). WidgetState may import the NetSample value type to buffer
+    polls on the GUI thread; it never touches the writer."""
+    assert DatabaseWorker._DB_VERSION == 8
     import re
     root = Path(__file__).resolve().parents[2]
-    # Any reference in code (an import, import_module("...writer_v8"), WriterV8(...)) - comments in
-    # schema_v8 that point at the writer are not uses.
-    use = re.compile(r"^(?!\s*#).*(\bimport\b.*\bwriter_v8\b|\bwriter_v8\b.*\bimport\b|['\"][\w.]*writer_v8['\"]"
-                     r"|\bWriterV8\s*\()", re.M)
-    users = [p for p in root.rglob("*.py") if "tests" not in p.parts and p.name != "writer_v8.py"
-             and use.search(p.read_text(encoding="utf-8", errors="replace"))]
-    assert users == []
+    build = re.compile(r"^(?!\s*#).*\bWriterV8\s*\(", re.M)
+    imp = re.compile(r"^(?!\s*#).*\bimport\b.*\bWriterV8\b", re.M)
+    files = [p for p in root.rglob("*.py") if "tests" not in p.parts and p.name != "writer_v8.py"]
+    builders = sorted(p.name for p in files if build.search(p.read_text(encoding="utf-8", errors="replace")))
+    importers = sorted(p.name for p in files if imp.search(p.read_text(encoding="utf-8", errors="replace")))
+    assert builders == ["database.py"] and importers == ["database.py"]
 
 
 # --------------------------------------------------------------------------------------------
@@ -604,7 +606,8 @@ def test_rows_in_the_migration_minute_merge_into_the_folded_minute(tmp_path):
     from netspeedtray.core.db import migrate_v8 as M
     from netspeedtray.tests.integration import v7_fixture as F
     db = tmp_path / "speed_history.db"
-    v7 = DatabaseWorker(db)
+    from netspeedtray.tests.legacy_v7_worker import LegacyV7Worker
+    v7 = LegacyV7Worker(db)
     v7._initialize_connection()
     v7._check_and_create_schema()
     F.populate(v7.conn)

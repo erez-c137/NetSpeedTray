@@ -2,7 +2,7 @@
 A populated v7 database with a HOT WAL, and the manifest of what it holds - for the v8 migration
 kill test (``test_migration_kill.py``) and the migrator's unit tests.
 
-``child_main`` runs in its own process: it builds the file with the app's own ``DatabaseWorker``
+``child_main`` runs in its own process: it builds the file with 2.1.x's own ``DatabaseWorker`` (``tests/legacy_v7_worker.LegacyV7Worker``)
 (so the schema, PRAGMAs and indexes are exactly what 2.1.x creates), commits every manifest row
 with ``wal_autocheckpoint=0`` so all of it sits in ``-wal``, opens one more transaction that is
 never committed, and then ``TerminateProcess``es itself - the state ``taskkill /F`` (setup.iss)
@@ -178,8 +178,8 @@ def _terminate_self(code: int = 137) -> None:
 def child_main(directory: str) -> None:
     """Build <directory>/speed_history.db with the app's worker, leave the WAL hot, die."""
     from pathlib import Path
-    from netspeedtray.core.database import DatabaseWorker
-    w = DatabaseWorker(Path(directory) / "speed_history.db")
+    from netspeedtray.tests.legacy_v7_worker import LegacyV7Worker
+    w = LegacyV7Worker(Path(directory) / "speed_history.db")
     w._initialize_connection()
     w._check_and_create_schema()
     w._ensure_indexes()
