@@ -21,6 +21,7 @@ from netspeedtray.constants.renderer import RendererConstants
 from netspeedtray.utils.helpers import calculate_monotone_cubic_interpolation, format_decimal
 from netspeedtray.utils.mpl_fonts import configure_cjk_font
 from netspeedtray.views.graph.time_axis import apply_time_axis
+from netspeedtray.views.graph.value_axis import ValueAxisFormatter
 import matplotlib.colors as mcolors
 from matplotlib.patches import PathPatch
 from matplotlib.path import Path
@@ -1345,9 +1346,10 @@ class GraphRenderer(QObject):
         self._set_smart_y_ticks(self.ax_upload, y_top_up)
         self._set_smart_y_ticks(self.ax_download, y_top_down)
         
-        # Formatters for clean labels (no decimals for large ranges)
-        self.ax_upload.yaxis.set_major_formatter(lambda x, pos: f"{int(x)}" if x >= 1 else format_decimal(x, self.i18n, 1))
-        self.ax_download.yaxis.set_major_formatter(lambda x, pos: f"{int(x)}" if x >= 1 else format_decimal(x, self.i18n, 1))
+        # Labels carry exactly the precision the tick step needs ("0.5, 1, 1.5"), in the locale's
+        # decimal separator - the old int(x) for x >= 1 printed 1.5 as "1" ("0.0, 0.5, 1, 1, 2").
+        self.ax_upload.yaxis.set_major_formatter(ValueAxisFormatter(self.i18n))
+        self.ax_download.yaxis.set_major_formatter(ValueAxisFormatter(self.i18n))
 
         self.ax_upload.set_ylim(bottom=0, top=y_top_up)
         self.ax_download.set_ylim(bottom=0, top=y_top_down)
