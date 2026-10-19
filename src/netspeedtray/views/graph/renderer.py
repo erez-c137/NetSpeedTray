@@ -20,6 +20,7 @@ from netspeedtray.constants import styles as style_constants
 from netspeedtray.constants.renderer import RendererConstants
 from netspeedtray.utils.helpers import calculate_monotone_cubic_interpolation, format_decimal
 from netspeedtray.utils.mpl_fonts import configure_cjk_font
+from netspeedtray.views.graph.time_axis import apply_time_axis
 import matplotlib.colors as mcolors
 from matplotlib.patches import PathPatch
 from matplotlib.path import Path
@@ -771,31 +772,7 @@ class GraphRenderer(QObject):
         # Apply period-aware formatting to the bottom axis (GPU row).
         # Overview uses 4 stacked axes; we keep x labels only on the last one.
         try:
-            axis = self.ax_gpu
-            major_locator = mdates.AutoDateLocator(maxticks=8)
-            major_formatter = mdates.DateFormatter('%H:%M')
-
-            xlim = axis.get_xlim()
-            if xlim[0] < xlim[1]:
-                duration_days = xlim[1] - xlim[0]
-                duration_sec = duration_days * 86400
-                if duration_sec < 120:
-                    major_formatter = mdates.DateFormatter('%H:%M:%S')
-
-            if period_key == "TIMELINE_WEEK":
-                major_formatter = mdates.DateFormatter('%a %d')
-            elif period_key == "TIMELINE_MONTH":
-                major_formatter = mdates.DateFormatter('%b %d')
-            elif period_key == "TIMELINE_ALL":
-                major_formatter = mdates.DateFormatter('%Y-%m-%d')
-            elif period_key == "TIMELINE_SYSTEM_UPTIME":
-                major_formatter = mdates.ConciseDateFormatter(major_locator)
-
-            axis.xaxis.set_major_locator(major_locator)
-            axis.xaxis.set_major_formatter(major_formatter)
-
-            if "HOURS" in (period_key or ""):
-                axis.xaxis.set_minor_locator(NullLocator())
+            self._configure_xaxis_format(period_key, axis=self.ax_gpu)
         except Exception:
             pass
         
@@ -1451,32 +1428,12 @@ class GraphRenderer(QObject):
         """
         if axis is None:
             axis = self.ax_upload
-        
-        # Default for most views
-        major_locator = mdates.AutoDateLocator(maxticks=8)
-        major_formatter = mdates.DateFormatter('%H:%M') 
 
-        # For extremely short views (e.g. freshly started Session), show seconds
-        # This prevents repeating labels like "19:27, 19:27, 19:27"
-        xlim = axis.get_xlim()
-        if xlim[0] < xlim[1]:
-            duration_days = xlim[1] - xlim[0]
-            duration_sec = duration_days * 86400
-            if duration_sec < 120: # Less than 2 minutes
-                major_formatter = mdates.DateFormatter('%H:%M:%S')
-        if period_key == "TIMELINE_WEEK":
-            major_formatter = mdates.DateFormatter('%a %d')
-        elif period_key == "TIMELINE_MONTH":
-            major_formatter = mdates.DateFormatter('%b %d')
-        elif period_key == "TIMELINE_ALL":
-            major_formatter = mdates.DateFormatter('%Y-%m-%d')
-        elif period_key == "TIMELINE_SYSTEM_UPTIME":
-             # Uptime can be minutes or days; Concise is best here
-             major_formatter = mdates.ConciseDateFormatter(major_locator)
-        
-        axis.xaxis.set_major_locator(major_locator)
-        axis.xaxis.set_major_formatter(major_formatter)
-        
+        # One locator + formatter for every period: the tick step follows the visible span and the
+        # axis width, and the label format follows the step, so no two ticks ever print the same text
+        # (the old fixed per-period formats printed "18:12, 18:12, 18:13" under 30 s ticks).
+        apply_time_axis(axis)
+
         if "HOURS" in (period_key or ""):
             axis.xaxis.set_minor_locator(NullLocator())
 
