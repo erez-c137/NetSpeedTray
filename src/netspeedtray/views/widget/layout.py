@@ -210,11 +210,12 @@ class WidgetLayoutManager:
 
                 # Separate upload/download graphs: the readout becomes two panels side by side, each one
                 # network block wide (_network_width keeps meaning one block - the renderer sizes each
-                # panel from it). Auto-Cycle rotates upload and download as single-panel phases instead,
+                # panel from it). Only the last panel carries the identity badge, so its reserve is
+                # counted once. Auto-Cycle rotates upload and download as single-panel phases instead,
                 # so its network width stays one block.
                 if self._split_graphs() and self.widget.config.get("widget_display_mode", "network_only") in (
                         "network_only", "side_by_side"):
-                    calculated_width = 2 * calculated_width + constants.renderer.GRAPH_SPLIT_GAP
+                    calculated_width = 2 * calculated_width - _identity_reserve + constants.renderer.GRAPH_SPLIT_GAP
 
                 # --- SIDE-BY-SIDE MODE ADJUSTMENT ---
                 display_mode = self.widget.config.get("widget_display_mode", "network_only")

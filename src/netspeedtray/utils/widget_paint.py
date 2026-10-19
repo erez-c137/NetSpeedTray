@@ -112,13 +112,28 @@ def split_network_phases(swap_upload_download: bool) -> List[str]:
     return list(reversed(SPLIT_PHASES)) if swap_upload_download else list(SPLIT_PHASES)
 
 
-def _split_rects(x: int, width: int, height: int, layout: str, panel_width: int) -> List[QRect]:
-    """The two panels of the split view: stacked on a side (vertical) taskbar, side by side otherwise."""
+def _split_geometry(renderer: WidgetRenderer, config: RenderConfig, metrics: WidgetMetrics,
+                    network_width: Optional[int]) -> Tuple[int, int]:
+    """(panel width, badge reserve) of the side-by-side split view. A panel is one network block - the
+    layout manager's network width, which includes the identity badge's reserve - and only the LAST
+    panel draws the badge, so the first one is that much narrower (no badge-wide blank in it)."""
+    reserve = renderer.identity_reserve(metrics.identity_band, metrics.identity_ssid)
+    if network_width is not None:
+        return network_width, reserve
+    up_bytes, dw_bytes = metrics.net_bytes()
+    return renderer.network_panel_width(up_bytes, dw_bytes, config) + reserve, reserve
+
+
+def _split_rects(x: int, width: int, height: int, layout: str, panel_width: int,
+                 badge_reserve: int) -> List[QRect]:
+    """The two panels of the split view: stacked on a side (vertical) taskbar, side by side otherwise
+    (the first one without the badge reserve - see _split_geometry)."""
     gap = constants.renderer.GRAPH_SPLIT_GAP
     if layout == "vertical":
         top = (height - gap) // 2
         return [QRect(x, 0, width, top), QRect(x, top + gap, width, height - top - gap)]
-    return [QRect(x, 0, panel_width, height), QRect(x + panel_width + gap, 0, panel_width, height)]
+    first = panel_width - badge_reserve
+    return [QRect(x, 0, first, height), QRect(x + first + gap, 0, panel_width, height)]
 
 
 def _resolve_mode(config: RenderConfig, cycle_mode: str) -> str:
@@ -188,16 +203,15 @@ def _draw_side_by_side(painter: QPainter, renderer: WidgetRenderer, width: int, 
     for key in active_keys:
         if key == "network" and split:
             up_bytes, dw_bytes = metrics.net_bytes()
-            panel_w = network_width if network_width is not None else \
-                renderer.network_panel_width(up_bytes, dw_bytes, config)
+            panel_w, reserve = _split_geometry(renderer, config, metrics, network_width)
             renderer.draw_network_split(painter, up_bytes, dw_bytes,
-                                        _split_rects(current_x, width, height, layout, panel_w),
+                                        _split_rects(current_x, width, height, layout, panel_w, reserve),
                                         config, list(metrics.net_history), layout,
                                         identity_text=metrics.identity_band,
                                         identity_color=metrics.identity_band_color,
                                         identity_solid=metrics.identity_band_solid,
                                         identity_ssid=metrics.identity_ssid)
-            split_width = 2 * panel_w + constants.renderer.GRAPH_SPLIT_GAP
+            split_width = 2 * panel_w - reserve + constants.renderer.GRAPH_SPLIT_GAP
         elif key == "network":
             if config.graph_enabled:
                 painter.save()
@@ -247,9 +261,9 @@ def _draw_foreground(painter: QPainter, renderer: WidgetRenderer, width: int, he
         _draw_side_by_side(painter, renderer, width, height, config, metrics, layout, network_width)
     elif mode == "network_only" and split_active(config):
         up_bytes, dw_bytes = metrics.net_bytes()
-        panel_w = network_width if network_width is not None else \
-            renderer.network_panel_width(up_bytes, dw_bytes, config)
-        renderer.draw_network_split(painter, up_bytes, dw_bytes, _split_rects(0, width, height, layout, panel_w),
+        panel_w, reserve = _split_geometry(renderer, config, metrics, network_width)
+        renderer.draw_network_split(painter, up_bytes, dw_bytes,
+                                    _split_rects(0, width, height, layout, panel_w, reserve),
                                     config, list(metrics.net_history), layout,
                                     identity_text=metrics.identity_band,
                                     identity_color=metrics.identity_band_color,

@@ -49,10 +49,10 @@ def _config(**overrides):
     return cfg
 
 
-def _metrics():
+def _metrics(**extra):
     last = HISTORY[-1]
     return WidgetMetrics(upload_mbps=last.upload / MBPS_IN_BYTES, download_mbps=last.download / MBPS_IN_BYTES,
-                         cpu_usage=35.0, gpu_usage=50.0, net_history=HISTORY)
+                         cpu_usage=35.0, gpu_usage=50.0, net_history=HISTORY, **extra)
 
 
 def _panel_width(cfg):
@@ -62,13 +62,13 @@ def _panel_width(cfg):
     return r.network_panel_width(up, dw, r.config)
 
 
-def _render(cfg, w, h, layout_mode="horizontal", cycle_mode="network_only", network_width=None):
+def _render(cfg, w, h, layout_mode="horizontal", cycle_mode="network_only", network_width=None, metrics=None):
     renderer = WidgetRenderer(cfg, I18nStrings("en_US"))
     img = QImage(w, h, QImage.Format.Format_ARGB32)
     img.fill(QColor(0, 0, 0, 0))
     painter = QPainter(img)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    render_widget(painter, QRect(0, 0, w, h), renderer, renderer.config, _metrics(), layout_mode=layout_mode,
+    render_widget(painter, QRect(0, 0, w, h), renderer, renderer.config, metrics or _metrics(), layout_mode=layout_mode,
                   cycle_mode=cycle_mode, network_width=network_width, font=font_from_config(cfg))
     painter.end()
     img = img.convertToFormat(QImage.Format.Format_RGBA8888)
@@ -146,6 +146,23 @@ def test_the_upload_panel_uses_its_whole_height(q_app):
     combined, _ = _render(_config(), pw, 48, network_width=pw)
     assert _where(split, UP_RGB)[0].min() < 12
     assert _where(combined, UP_RGB)[0].min() > 36
+
+
+def test_the_wifi_badge_widens_only_the_last_panel(q_app):
+    """Review on #336: the badge is drawn once, in the last panel, so only that panel reserves its width -
+    the first panel's graph runs right up to the divider instead of leaving a badge-wide blank."""
+    cfg = _config(graph_split_directions=True)
+    renderer = WidgetRenderer(cfg, I18nStrings("en_US"))
+    reserve = renderer.identity_reserve("5G", None)
+    assert reserve > 20   # well above the tolerances below, so a badge-wide blank would show
+    block = _panel_width(cfg) + reserve            # the layout's network width, badge included
+    width = 2 * block - reserve + GAP
+    arr, _ = _render(cfg, width, 48, network_width=block, metrics=_metrics(identity_band="5G"))
+    _, up_x = _where(arr, UP_RGB)
+    _, down_x = _where(arr, DOWN_RGB)
+    first = block - reserve
+    assert first - 8 <= up_x.max() < first          # the upload graph reaches the end of its panel
+    assert down_x.min() >= first + GAP and down_x.max() >= width - 8
 
 
 def test_split_needs_the_mini_graph(q_app):
@@ -235,12 +252,12 @@ def test_cycle_rotation_unchanged_without_split():
 
 # --- Layout sizing --------------------------------------------------------------------------------------
 
-def _size(edge, **config):
+def _size(edge, badge=0, **config):
     """Size WidgetLayoutManager gives the widget on a 1440p screen with a 48 px taskbar on ``edge``."""
     widget = MagicMock()
     widget.config = {**constants.config.defaults.DEFAULT_CONFIG, **config}
     widget.i18n = I18nStrings("en_US")
-    widget._identity_reserve_px = lambda fm: 0
+    widget._identity_reserve_px = lambda fm: badge
     lm = WidgetLayoutManager(widget)
     lm.metrics = QFontMetrics(QFont("Segoe UI", 9))
     lm.arrow_metrics = lm.metrics
@@ -273,6 +290,12 @@ def test_layout_horizontal_network_only_is_two_blocks_wide(q_app):
     ws, hs, block_s = _size(BOTTOM, widget_display_mode="network_only", **SPLIT)
     assert block_s == block                    # _network_width still means one block
     assert ws == 2 * block + GAP and hs == h
+
+
+def test_layout_counts_the_wifi_badge_once(q_app):
+    _, _, block = _size(BOTTOM, badge=30, widget_display_mode="network_only", graph_enabled=True)
+    ws, _, _ = _size(BOTTOM, badge=30, widget_display_mode="network_only", **SPLIT)
+    assert ws == 2 * block - 30 + GAP
 
 
 def test_layout_horizontal_side_by_side_grows_by_one_block(q_app):
@@ -315,3 +338,24 @@ def test_settings_preview_grows_to_fit_the_split_side_by_side(q_app):
     assert split.width() > today.width() >= 300
     small = PreviewWidget(_config(graph_split_directions=True), I18nStrings("en_US"), width=300, height=40)
     assert small.width() == 300   # never shrinks below the requested width
+
+
+def test_settings_preview_refits_only_when_something_changed(q_app):
+    """Review on #336: the fit paints a probe, so it runs on a real change - not on every update."""
+    cfg = _config(graph_split_directions=True)
+    with patch("netspeedtray.views.widget.preview.render_widget") as rw:
+        preview = PreviewWidget(cfg, I18nStrings("en_US"), width=300, height=40)
+        assert rw.call_count == 1
+        preview.set_config(dict(cfg))
+        assert rw.call_count == 1
+        preview.set_config({**cfg, "widget_display_mode": "side_by_side"})
+        assert rw.call_count == 2
+
+
+def test_settings_preview_logs_a_failed_fit(q_app, caplog):
+    """Review on #336: a failed fit keeps the current size but is logged, not swallowed."""
+    with patch("netspeedtray.views.widget.preview.render_widget", side_effect=RuntimeError("boom")):
+        with caplog.at_level("WARNING", logger="NetSpeedTray.PreviewWidget"):
+            preview = PreviewWidget(_config(), I18nStrings("en_US"), width=300, height=40)
+    assert preview.width() == 300
+    assert any("boom" in r.getMessage() for r in caplog.records)

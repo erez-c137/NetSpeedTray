@@ -453,9 +453,16 @@ class WidgetRenderer:
         return _SpeedColumns(up_val, up_unit, dw_val, dw_unit, number_area_width, max_arrow_width,
                              arrow_gap, unit_gap, max_unit_width)
 
+    def identity_reserve(self, identity_text: Optional[str], identity_ssid: Optional[str]) -> int:
+        """Width the identity badge adds after the unit column (0 without one) - the same geometry
+        draw_network_speeds and NetworkSpeedWidget._identity_reserve_px use."""
+        badge_w, _parts = identity_layout(self.metrics, identity_ssid, identity_text)
+        return (IDENTITY_BAND_GAP_PX + badge_w) if badge_w else 0
+
     def network_panel_width(self, upload: float, download: float, config: RenderConfig) -> int:
-        """Width of one split panel measured from the live values - for callers without the layout
-        manager's reserved width (the Settings preview). Same span the two-row readout occupies."""
+        """Width of one split panel, without the identity badge, measured from the live values - for
+        callers without the layout manager's reserved width (the Settings preview). Same span the
+        two-row readout occupies."""
         cols = self._speed_columns(upload, download, config)
         return (2 * constants.renderer.TEXT_MARGIN + cols.max_arrow_width + cols.arrow_gap
                 + cols.number_area_width + cols.unit_gap + cols.max_unit_width)
