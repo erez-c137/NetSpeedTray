@@ -559,10 +559,12 @@ class WidgetRenderer:
                            vram_info: Optional[Tuple[float, float]] = None,
                            layout_mode: str = 'vertical', x_offset: int = 0, fixed_width: Optional[int] = None,
                            cpu_power: Optional[float] = None, gpu_power: Optional[float] = None,
-                           y_offset: int = 0) -> None:
+                           y_offset: int = 0, memory_below: bool = False) -> None:
         """Draws CPU and/or GPU utilization statistics with optional temperature, power, and memory.
 
-        y_offset: top of the band (`height` tall) the rows are centered in (see draw_network_speeds)."""
+        y_offset: top of the band (`height` tall) the rows are centered in (see draw_network_speeds).
+        memory_below: give each RAM/VRAM value a row of its own under its stat even when CPU and GPU
+            share the segment (where it is otherwise inline); a side taskbar is too narrow for it inline."""
         try:
             order = getattr(config, 'widget_display_order', ["network", "cpu", "gpu"])
             cpu_idx = order.index("cpu") if "cpu" in order else 999
@@ -650,7 +652,7 @@ class WidgetRenderer:
             # so the numbers stay aligned across rows. Zero when off: the widget keeps its width.
             show_mem_labels = bool(getattr(config, 'show_memory_labels', False))
             mem_label_col = memory_label_width(self.metrics) if (show_mem_labels and any_mem) else 0
-            inline_mem = is_compact
+            inline_mem = is_compact and not memory_below
             mem_col = (sep_col + mem_label_col + mem_num_col) if (any_mem and inline_mem) else 0
 
             extra_rows = 0 if inline_mem else sum(1 for r in rows if r['mem'])

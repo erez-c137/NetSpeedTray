@@ -4,7 +4,7 @@ Side (LEFT/RIGHT) taskbar + side_by_side + CPU/GPU.
 On a side taskbar the widget is only as wide as the taskbar and two text rows tall, but side_by_side
 still laid its segments out left-to-right, so the CPU/GPU stats were painted past the widget's right
 edge and cut off. On a side taskbar the segments now stack top-to-bottom (network over CPU/GPU) and the
-layout reserves the summed height.
+layout reserves the summed height; stacked CPU+GPU put their RAM/VRAM on rows of their own, not inline.
 
 The widget is sized by the real WidgetLayoutManager (taskbar mocked on the RIGHT edge) and painted by
 the real render_widget, onto a canvas larger than the widget, so anything painted outside it shows up.
@@ -36,6 +36,7 @@ CASES = {
     "cpu_and_gpu": dict(stack_hardware_stats=False),
     "stacked_hardware": dict(stack_hardware_stats=True),
     "with_memory": dict(stack_hardware_stats=False, monitor_ram_enabled=True, monitor_vram_enabled=True),
+    "stacked_with_memory": dict(stack_hardware_stats=True, monitor_ram_enabled=True, monitor_vram_enabled=True),
 }
 
 
@@ -129,7 +130,7 @@ def test_side_taskbar_reserves_the_height_of_every_stacked_segment(q_app):
     network = 2 * line + 1   # draw_network_speeds: two rows + 1px
 
     # One band per segment: a lone CPU/GPU is one row (two with its memory on a row of its own),
-    # the stacked hardware segment is two rows (memory inline). Same 4*margin padding as before.
+    # the stacked hardware segment is two rows, plus a row per memory value. Same 4*margin padding.
     assert _side_taskbar_size(_config(stack_hardware_stats=False))[1] == \
         network + line + line + 2 * gap + 4 * margin
     assert _side_taskbar_size(_config(stack_hardware_stats=True))[1] == \
@@ -137,6 +138,38 @@ def test_side_taskbar_reserves_the_height_of_every_stacked_segment(q_app):
     assert _side_taskbar_size(_config(stack_hardware_stats=False, monitor_ram_enabled=True,
                                       monitor_vram_enabled=True))[1] == \
         network + 2 * line + 2 * line + 2 * gap + 4 * margin
+    assert _side_taskbar_size(_config(stack_hardware_stats=True, monitor_ram_enabled=True))[1] == \
+        network + 3 * line + gap + 4 * margin
+    assert _side_taskbar_size(_config(stack_hardware_stats=True, monitor_ram_enabled=True,
+                                      monitor_vram_enabled=True))[1] == \
+        network + 4 * line + gap + 4 * margin
+
+
+def test_side_taskbar_puts_stacked_memory_on_rows_of_its_own(q_app):
+    """Stacked CPU+GPU shows the memory inline ("37% (58°C) 9.2/16.0G"), a row wider than a side
+    taskbar. There each value gets a row of its own under its stat instead, as it does when CPU and GPU
+    are separate segments, so stacking them no longer widens the readout."""
+    memory = dict(monitor_ram_enabled=True, monitor_vram_enabled=True, show_hardware_temps=True)
+
+    cfg = _config(stack_hardware_stats=True, **memory)
+    width, height, line = _side_taskbar_size(cfg)
+    arr = _paint(cfg, width, height)
+    cpu_ys, _ = _pixels_of(arr, CPU)
+    gpu_ys, _ = _pixels_of(arr, GPU)
+    # The RAM row sits between the CPU and GPU rows.
+    assert abs(gpu_ys.min() - cpu_ys.min() - 2 * line) <= 1, (cpu_ys.min(), gpu_ys.min(), line)
+
+    # The hardware rows (from the CPU row down; the network readout is above) reach no further right
+    # stacked than as separate segments. Icons, so both have the same fixed label column; solid glyph
+    # pixels only, as the background is not quite transparent.
+    top = cpu_ys.min()
+    right_edge = {}
+    for stack in (True, False):
+        cfg = _config(stack_hardware_stats=stack, hardware_label_style="icons_colored", **memory)
+        width, height, _ = _side_taskbar_size(cfg)
+        arr = _paint(cfg, width, height)
+        right_edge[stack] = np.nonzero((arr[top:, :, 3] >= 250).any(axis=0))[0].max()
+    assert right_edge[True] <= right_edge[False], right_edge
 
 
 def test_side_taskbar_places_a_tall_stacked_widget_above_the_tray(q_app):

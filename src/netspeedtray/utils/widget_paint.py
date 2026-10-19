@@ -145,20 +145,20 @@ def stacked_segment_height(key: str, line_height: int, ram_enabled: bool, vram_e
     """Height of one side_by_side segment when a side taskbar stacks the segments top-to-bottom.
 
     Matches what the renderer paints: the network readout is two rows + 1px (draw_network_speeds);
-    stacked CPU+GPU is two rows with the memory inline; a lone CPU or GPU is one row, plus a row of its
-    own for the RAM/VRAM (draw_hardware_stats). Worst case, so a reading that arrives later never clips.
+    CPU and GPU are one row each, plus a row of its own for the RAM/VRAM, stacked CPU+GPU included
+    (draw_hardware_stats, memory_below). Worst case, so a reading that arrives later never clips.
     """
     if key == "network":
         return line_height * 2 + 1
     if key == "hardware":
-        return line_height * 2
+        return line_height * (2 + (1 if ram_enabled else 0) + (1 if vram_enabled else 0))
     has_memory = ram_enabled if key == "cpu" else vram_enabled
     return line_height * (2 if has_memory else 1)
 
 
 def _draw_segment(painter: QPainter, renderer: WidgetRenderer, key: str, width: int, height: int,
                   config: RenderConfig, metrics: WidgetMetrics, layout: str, x_offset: int = 0,
-                  y_offset: int = 0, slot_width: Optional[int] = None) -> None:
+                  y_offset: int = 0, slot_width: Optional[int] = None, memory_below: bool = False) -> None:
     """Paint the text/stats of one side_by_side segment (the network graph is the caller's)."""
     if key == "network":
         up_bytes, dw_bytes = metrics.net_bytes()
@@ -184,13 +184,14 @@ def _draw_segment(painter: QPainter, renderer: WidgetRenderer, key: str, width: 
         renderer.draw_hardware_stats(painter, metrics.cpu_usage, metrics.gpu_usage, width, height, config,
                                      metrics.cpu_temp, metrics.gpu_temp, ram, vram, layout,
                                      x_offset=x_offset, cpu_power=metrics.cpu_power, gpu_power=metrics.gpu_power,
-                                     y_offset=y_offset)
+                                     y_offset=y_offset, memory_below=memory_below)
 
 
 def _draw_stacked(painter: QPainter, renderer: WidgetRenderer, width: int, height: int,
                   config: RenderConfig, metrics: WidgetMetrics, layout: str, keys: List[str]) -> None:
     """Side taskbar: the widget is only as wide as the taskbar, so the segments stack top-to-bottom
-    (network over CPU/GPU), each centered in the band the layout reserved for it."""
+    (network over CPU/GPU), each centered in the band the layout reserved for it. For the same reason
+    the RAM/VRAM goes on a row of its own instead of inline after stacked CPU+GPU."""
     line_height = renderer.metrics.height()
     bands = [stacked_segment_height(k, line_height, config.monitor_ram_enabled, config.monitor_vram_enabled)
              for k in keys]
@@ -202,7 +203,8 @@ def _draw_stacked(painter: QPainter, renderer: WidgetRenderer, width: int, heigh
             painter.translate(0, y)
             renderer.draw_mini_graph(painter, width, band, config, list(metrics.net_history), layout)
             painter.restore()
-        _draw_segment(painter, renderer, key, width, band, config, metrics, layout, y_offset=y)
+        _draw_segment(painter, renderer, key, width, band, config, metrics, layout, y_offset=y,
+                      memory_below=True)
         y += band + gap
 
 
