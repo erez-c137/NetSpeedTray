@@ -100,7 +100,7 @@ class InterfaceConstants:
         "loopback", "teredo", "isatap", "bluetooth", "vpn", "virtual", "vmware", "vbox"
     ]
     
-    # Absolute fallback ceiling (100 Gbps) for when physical link speeds cannot be determined (e.g. virtual adapters) 
+    # Absolute fallback ceiling (100 Gbps) for when physical link speeds cannot be determined (e.g. virtual adapters)
     MAX_REASONABLE_SPEED_BPS: Final[int] = 12_500_000_000
 
     # Primary-interface resolution: a UDP connect() (no packet is sent) to a public address makes
@@ -108,6 +108,44 @@ class InterfaceConstants:
     # network resolve too (otherwise auto mode meters nothing there - data-usage audit, finding 2).
     ROUTE_PROBE_V4: Final[tuple] = ("8.8.8.8", 80)
     ROUTE_PROBE_V6: Final[tuple] = ("2001:4860:4860::8888", 80)
+
+    # --- Adapter classification (utils/interface_classifier.py) ---------------------------------
+    # One classifier decides "is this a real adapter?" for both the Settings picker's grouping and
+    # the all_physical aggregation. Kinds:
+    KIND_PHYSICAL: Final[str] = "physical"
+    KIND_VIRTUAL: Final[str] = "virtual"   # VPN / tunnel / VM / container / Wi-Fi Direct / PAN
+    KIND_PSEUDO: Final[str] = "pseudo"     # loopback + the IPv6 transition shims; never a connection
+    # IANA ifType values as reported by GetIfTable2 (MIB_IF_ROW2.Type).
+    IF_TYPE_ETHERNET: Final[int] = 6
+    IF_TYPE_PPP: Final[int] = 23
+    IF_TYPE_SOFTWARE_LOOPBACK: Final[int] = 24
+    IF_TYPE_PROP_VIRTUAL: Final[int] = 53      # Tailscale, WireGuard, NordLynx, Wintun
+    IF_TYPE_IEEE80211: Final[int] = 71
+    IF_TYPE_TUNNEL: Final[int] = 131           # Teredo, 6to4, IP-HTTPS, WAN Miniport (SSTP/L2TP/...)
+    # Types that are virtual whatever the hardware flag says (a PPPoE session rides on a real NIC
+    # whose bytes are already counted, so counting it too would double-count).
+    VIRTUAL_IF_TYPES: Final[frozenset] = frozenset({IF_TYPE_PPP, IF_TYPE_PROP_VIRTUAL, IF_TYPE_TUNNEL})
+    # Friendly-name keywords (lower-case substrings) for pseudo-interfaces.
+    PSEUDO_NAME_KEYWORDS: Final[tuple] = ("loopback", "teredo", "isatap", "6to4", "ip-https")
+    # Friendly-name keywords that mark a virtual adapter. Applied on top of the user's
+    # `excluded_interfaces` (whose defaults are the 2.1 list) and used alone when the OS can't be
+    # asked (off Windows, a name only seen in history). "local area connection*" is how Windows
+    # names hidden miniports and Wi-Fi Direct adapters - the asterisk is part of the name.
+    VIRTUAL_NAME_KEYWORDS: Final[tuple] = (
+        "vethernet", "vswitch", "wsl", "hyper-v", "tailscale", "wireguard", "nordlynx", "zerotier",
+        "openvpn", "wintun", "tap-windows", "vpn", "virtual", "vmware", "vmnet", "vbox", "virtualbox",
+        "docker", "hamachi", "radmin", "mullvad", "bluetooth", "local area connection*",
+    )
+    # Adapter-description keywords (lower-case substrings). Narrower than the name list on purpose:
+    # a Hyper-V *guest* NIC is "Microsoft Hyper-V Network Adapter" and is the VM's real connection,
+    # so match "hyper-v virtual", never bare "hyper-v".
+    VIRTUAL_DESCRIPTION_KEYWORDS: Final[tuple] = (
+        "virtual", "tunnel", "host-only", "tap-windows", "wintun", "wireguard", "nordlynx",
+        "zerotier", "tailscale", "wan miniport", "kernel debug", "vpn", "loopback",
+        "personal area network", "npcap",
+    )
+    # How often an unknown name may trigger a fresh GetIfTable2 read (a new VPN coming up).
+    CLASSIFIER_REFRESH_SEC: Final[float] = 30.0
 
     def __init__(self) -> None:
         self.validate()

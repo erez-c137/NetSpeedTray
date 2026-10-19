@@ -16,6 +16,7 @@ from netspeedtray import constants
 from netspeedtray.core import usage_snapshot
 from netspeedtray.utils.config import stable_pseudonym
 from netspeedtray.utils.network_utils import get_primary_interface_name
+from netspeedtray.utils.interface_classifier import InterfaceClassifier, get_classifier
 
 if TYPE_CHECKING:
     from netspeedtray.views.widget import NetworkSpeedWidget
@@ -80,11 +81,14 @@ class StatsController(QObject):
     network_identity_updated = pyqtSignal(object)
 
 
-    def __init__(self, config: Dict[str, Any], widget_state: 'WidgetState') -> None:
+    def __init__(self, config: Dict[str, Any], widget_state: 'WidgetState',
+                 interface_classifier: Optional[InterfaceClassifier] = None) -> None:
         super().__init__()
         self.logger = logger
         self.config = config
         self.widget_state = widget_state
+        # The ONE physical-vs-virtual answer, shared with the Settings picker (2.2 scope C).
+        self.interface_classifier = interface_classifier or get_classifier()
         self.view: Optional['NetworkSpeedWidget'] = None
         
         # Network specific state
@@ -509,9 +513,9 @@ class StatsController(QObject):
             return per_interface_speeds.get(self.primary_interface, (0.0, 0.0)) if self.primary_interface else (0.0, 0.0)
 
         elif mode == "all_physical":
-            exclusions = self.config.get("excluded_interfaces", constants.network.interface.DEFAULT_EXCLUSIONS)
-            total_up = sum(up for name, (up, down) in per_interface_speeds.items() if not any(kw in name.lower() for kw in exclusions))
-            total_down = sum(down for name, (up, down) in per_interface_speeds.items() if not any(kw in name.lower() for kw in exclusions))
+            names = self._physical_names(per_interface_speeds)
+            total_up = sum(up for name, (up, down) in per_interface_speeds.items() if name in names)
+            total_down = sum(down for name, (up, down) in per_interface_speeds.items() if name in names)
             return total_up, total_down
 
         elif mode in ("all_virtual", "virtual"):
@@ -523,6 +527,25 @@ class StatsController(QObject):
             self.logger.warning("Unknown interface_mode %r; summing all interfaces as a fallback.", mode)
             return self._sum_all(per_interface_speeds)
 
+
+    def _interface_kind(self, name: str) -> str:
+        exclusions = self.config.get("excluded_interfaces", constants.network.interface.DEFAULT_EXCLUSIONS)
+        return self.interface_classifier.kind(name, exclusions)
+
+    def _physical_names(self, per_interface: Dict[str, Any]) -> set:
+        """The interfaces all_physical sums. Classified by the shared adapter classifier (OS
+        hardware flag + ifType, then names) - so a VPN / vEthernet / host-only adapter whose bytes
+        already ride the real NIC is no longer counted twice. If NOTHING on the machine is physical
+        (a VM guest NIC the OS doesn't flag as hardware) it falls back to every non-pseudo adapter,
+        so the mode never reads zero forever. The fallback looks at all live counters, so the
+        display and the odometer aggregation of the same poll pick the same set."""
+        iface = constants.network.interface
+        live = set(per_interface) | set(self.last_interface_counters)
+        kinds = {n: self._interface_kind(n) for n in live}
+        physical = {n for n, k in kinds.items() if k == iface.KIND_PHYSICAL}
+        if physical:
+            return physical
+        return {n for n, k in kinds.items() if k != iface.KIND_PSEUDO}
 
     def _sum_all(self, per_interface_speeds: Dict[str, Tuple[float, float]]) -> Tuple[float, float]:
         """Sums all speeds."""
@@ -567,12 +590,20 @@ class StatsController(QObject):
             )
 
 
+    def current_primary_interface(self) -> Optional[str]:
+        """The routing (internet-facing) interface, through the same 15 s cache auto mode uses.
+        Resolves on first call in any mode, so the Settings picker can mark it."""
+        self._update_primary_interface_name()
+        return self.primary_interface
+
     def get_available_interfaces(self) -> List[str]:
         """Returns available interfaces for UI."""
         try:
+            # Every live adapter except loopback / the IPv6 shims. VPNs and virtual adapters are
+            # listed (the picker groups them under their own header) so selected mode can pick them.
             all_if = psutil.net_io_counters(pernic=True).keys()
-            exclusions = self.config.get("excluded_interfaces", constants.network.interface.DEFAULT_EXCLUSIONS)
-            return sorted([n for n in all_if if not any(kw in n.lower() for kw in exclusions)])
+            pseudo = constants.network.interface.KIND_PSEUDO
+            return sorted([n for n in all_if if self._interface_kind(n) != pseudo])
         except Exception:
             return []
 
