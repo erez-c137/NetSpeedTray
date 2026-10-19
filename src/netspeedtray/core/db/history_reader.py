@@ -14,6 +14,14 @@ Threading: the reader owns no connection. It asks ``conn_provider`` (``WidgetSta
 for one on every call, so each calling thread keeps its own thread-local read connection exactly as
 before - the Monitor's graph worker never shares a cursor with the GUI thread.
 
+**Tier precedence.** The tiers are query-precedence layers, not additive: each tier answers only
+``[its floor, the finer tiers' MIN(timestamp))`` - raw wherever raw has data, else minute, else hour.
+v7 MOVES rows down the chain, so the tiers never overlap and the rule is a no-op on every real v7
+database (the golden test proves it). It is here because v8 keeps independent per-tier retention, and
+the design review measured an unguarded fan-out at exactly **2.00x** the true data-cap total
+(database-v8-final.md 4.1) - every reader used to SUM every tier with no mutual exclusion.
+``tests/unit/test_history_reader_precedence.py`` pins the 1.00x.
+
 The side effects that belong to the app rather than to storage stay in ``WidgetState``: the
 flush-before-read barrier, the ``db_worker`` presence guard, the poll-interval lookup from config, and
 the odometer's in-memory state.
@@ -103,6 +111,36 @@ class V7HistoryReader(HistoryReader):
         # The owner's logger, so every message keeps the name and wording it had inside WidgetState.
         self.logger = logger or logging.getLogger("NetSpeedTray.HistoryReader")
 
+    # --- tier precedence ----------------------------------------------------------------------
+
+    @staticmethod
+    def _tier_ceilings(cursor: sqlite3.Cursor, tables: Tuple[str, ...]) -> List[Optional[int]]:
+        """Exclusive upper bound per tier, ``tables`` ordered finest first: each tier may answer only
+        timestamps below the earliest row of every FINER tier (None = no finer data, unbounded).
+
+        Whole-table MIN, not per-window or per-interface: v7 rolls a time range down for every
+        interface and stat at once, so a tier's floor is a property of the table. Each MIN is a single
+        seek on the (timestamp, ...) primary key."""
+        ceilings: List[Optional[int]] = []
+        bound: Optional[int] = None
+        for i, table in enumerate(tables):
+            ceilings.append(bound)
+            if i < len(tables) - 1:   # the coarsest tier's own floor bounds nothing
+                row = cursor.execute(f"SELECT MIN(timestamp) FROM {table}").fetchone()
+                if row and row[0] is not None:
+                    bound = int(row[0]) if bound is None else min(bound, int(row[0]))
+        return ceilings
+
+    @staticmethod
+    def _below(ceiling: Optional[int]) -> Tuple[str, tuple]:
+        """The SQL clause + params that confine a tier under its precedence ceiling."""
+        return ("", ()) if ceiling is None else (" AND timestamp < ?", (ceiling,))
+
+    _SPEED_TIERS = (constants.data.SPEED_TABLE_RAW, constants.data.SPEED_TABLE_MINUTE,
+                    constants.data.SPEED_TABLE_HOUR)
+    _HW_TIERS = (constants.data.HARDWARE_STATS_TABLE_RAW, constants.data.HARDWARE_STATS_TABLE_MINUTE,
+                 constants.data.HARDWARE_STATS_TABLE_HOUR)
+
     # The raw tier retains ~24h; windows within it summarize exactly (pro-stats: tier-aware honest
     # window summaries - exact <=24h raw, avg+max beyond).
     _RAW_SUMMARY_SECONDS = 24 * 3600
@@ -156,8 +194,10 @@ class V7HistoryReader(HistoryReader):
                 # Multi-tier merge with explicit peak-preserving logic.
                 tier_queries = []
                 params = []
+                ceiling = dict(zip(self._SPEED_TIERS, self._tier_ceilings(cursor, self._SPEED_TIERS)))
 
                 def add_tier_query(table_name: str, up_expr: str, down_expr: str) -> None:
+                    below_sql, below_params = self._below(ceiling[table_name])
                     q = f"""
                         SELECT
                             {time_calc} as bin_ts,
@@ -165,9 +205,9 @@ class V7HistoryReader(HistoryReader):
                             {up_expr} as up,
                             {down_expr} as down
                         FROM {table_name}
-                        WHERE timestamp BETWEEN ? AND ?
+                        WHERE timestamp BETWEEN ? AND ?{below_sql}
                     """
-                    tier_params = [_start_ts, _end_ts]
+                    tier_params = [_start_ts, _end_ts, *below_params]
                     if not is_all_ifaces:
                         q += " AND interface_name = ?"
                         tier_params.append(interface_name)
@@ -331,13 +371,15 @@ class V7HistoryReader(HistoryReader):
             covered_seconds = 0.0   # for coverage: count distinct TIME buckets x their duration, NOT
             #                         SUM(sample_count) - which, for an "all" aggregate, double-counts by
             #                         NIC and inflates the evidence-admissibility figure past 100%.
-            for table, bucket_secs in ((constants.data.SPEED_TABLE_MINUTE, 60.0),
-                                       (constants.data.SPEED_TABLE_HOUR, 3600.0)):
+            _, min_ceil, hour_ceil = self._tier_ceilings(cur, self._SPEED_TIERS)
+            for table, bucket_secs, ceil in ((constants.data.SPEED_TABLE_MINUTE, 60.0, min_ceil),
+                                             (constants.data.SPEED_TABLE_HOUR, 3600.0, hour_ceil)):
+                below_sql, below_params = self._below(ceil)
                 cur.execute(
                     f"SELECT SUM({col}_avg), MAX(t.mx), SUM(sample_count) FROM "
                     f"(SELECT timestamp, {col}_avg, {col}_max AS mx, sample_count FROM {table} "
-                    f" WHERE timestamp BETWEEN ? AND ?{wh}) t GROUP BY t.timestamp",
-                    (st, et) + params_tail)
+                    f" WHERE timestamp BETWEEN ? AND ?{below_sql}{wh}) t GROUP BY t.timestamp",
+                    (st, et) + below_params + params_tail)
                 for r in cur.fetchall():
                     if r[0] is None:
                         continue
@@ -388,9 +430,14 @@ class V7HistoryReader(HistoryReader):
             if start_ts < (now_ts - 30 * 86400):    # hour: SUM(avg) x 3600
                 tiers.append(("speed_history_hour", "upload_avg", "download_avg", 3600.0))
 
+            # Precedence: a tier is summed only below every finer tier's earliest row, so a range two
+            # tiers both hold is billed once (raw where present, else minute, else hour).
+            ceiling = dict(zip(self._SPEED_TIERS, self._tier_ceilings(cursor, self._SPEED_TIERS)))
             for table, up_expr, down_expr, secs in tiers:
-                query = f"SELECT SUM({up_expr}), SUM({down_expr}) FROM {table} WHERE timestamp BETWEEN ? AND ?"
-                params = [start_ts, end_ts]
+                below_sql, below_params = self._below(ceiling[table])
+                query = (f"SELECT SUM({up_expr}), SUM({down_expr}) FROM {table} "
+                         f"WHERE timestamp BETWEEN ? AND ?{below_sql}")
+                params = [start_ts, end_ts, *below_params]
                 if interface_name and str(interface_name).lower() != "all":
                     query += " AND interface_name = ?"
                     params.append(interface_name)
@@ -479,18 +526,22 @@ class V7HistoryReader(HistoryReader):
             HMIN = constants.data.HARDWARE_STATS_TABLE_MINUTE
             HHOUR = constants.data.HARDWARE_STATS_TABLE_HOUR
             bin_ts = f"CAST(timestamp / {interval} AS INTEGER) * {interval}"
+            _, min_ceil, hour_ceil = self._tier_ceilings(cursor, self._HW_TIERS)
+            min_sql, min_params = self._below(min_ceil)
+            hour_sql, hour_params = self._below(hour_ceil)
             cursor.execute(f"""
                 SELECT b, AVG(v) FROM (
                     SELECT {bin_ts} AS b, value AS v FROM {HRAW}
                         WHERE stat_type = ? AND timestamp BETWEEN ? AND ?
                     UNION ALL
                     SELECT {bin_ts} AS b, avg_value AS v FROM {HMIN}
-                        WHERE stat_type = ? AND timestamp BETWEEN ? AND ?
+                        WHERE stat_type = ? AND timestamp BETWEEN ? AND ?{min_sql}
                     UNION ALL
                     SELECT {bin_ts} AS b, avg_value AS v FROM {HHOUR}
-                        WHERE stat_type = ? AND timestamp BETWEEN ? AND ?
+                        WHERE stat_type = ? AND timestamp BETWEEN ? AND ?{hour_sql}
                 ) GROUP BY b ORDER BY b ASC
-            """, (stat_type, start_ts, end_ts) * 3)
+            """, (stat_type, start_ts, end_ts) + (stat_type, start_ts, end_ts) + min_params
+                 + (stat_type, start_ts, end_ts) + hour_params)
             rows = cursor.fetchall()
 
             return [(datetime.fromtimestamp(row[0]), row[1]) for row in rows]
@@ -515,9 +566,13 @@ class V7HistoryReader(HistoryReader):
             # rolled-up older half, which silently dropped the most recent ~24h and disagreed with the
             # graph.
             avgs, maxes, counts = [], [], []
-            for table in (constants.data.HARDWARE_STATS_TABLE_MINUTE, constants.data.HARDWARE_STATS_TABLE_HOUR):
+            _, min_ceil, hour_ceil = self._tier_ceilings(cur, self._HW_TIERS)
+            for table, ceil in ((constants.data.HARDWARE_STATS_TABLE_MINUTE, min_ceil),
+                                (constants.data.HARDWARE_STATS_TABLE_HOUR, hour_ceil)):
+                below_sql, below_params = self._below(ceil)
                 cur.execute(f"SELECT avg_value, max_value, sample_count FROM {table} "
-                            f"WHERE stat_type=? AND timestamp BETWEEN ? AND ?", (stat_type, st, et))
+                            f"WHERE stat_type=? AND timestamp BETWEEN ? AND ?{below_sql}",
+                            (stat_type, st, et) + below_params)
                 for r in cur.fetchall():
                     if r[0] is None:
                         continue
