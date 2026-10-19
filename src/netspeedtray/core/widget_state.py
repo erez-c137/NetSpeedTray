@@ -602,47 +602,7 @@ class WidgetState(QObject):
         if not hasattr(self, 'db_worker') or not self.db_worker:
             return []
 
-        try:
-            conn = self._get_read_conn()
-            cursor = conn.cursor()
-            
-            _end = end_time or datetime.now()
-            _start = start_time or (_end - timedelta(hours=24))
-            
-            start_ts = int(_start.timestamp())
-            end_ts = int(_end.timestamp())
-            
-            # Target resolution by window length: raw (≤6h), minute (≤30d), hour (>30d).
-            duration = end_ts - start_ts
-            interval = 1 if duration <= 6 * 3600 else (60 if duration <= 30 * 86400 else 3600)
-
-            # Union ALL tiers (non-overlapping - data is moved, not copied) and bin to the target
-            # interval, mirroring get_speed_history. A recent-but-long window (e.g. 48h or a week) has
-            # its most-recent <24h only in the RAW tier and the older portion in minute/hour; reading a
-            # single tier silently dropped the recent half (and the old fallback only fired when the tier
-            # was TOTALLY empty). Binning keeps the point count bounded by window/interval regardless.
-            HRAW = constants.data.HARDWARE_STATS_TABLE_RAW
-            HMIN = constants.data.HARDWARE_STATS_TABLE_MINUTE
-            HHOUR = constants.data.HARDWARE_STATS_TABLE_HOUR
-            bin_ts = f"CAST(timestamp / {interval} AS INTEGER) * {interval}"
-            cursor.execute(f"""
-                SELECT b, AVG(v) FROM (
-                    SELECT {bin_ts} AS b, value AS v FROM {HRAW}
-                        WHERE stat_type = ? AND timestamp BETWEEN ? AND ?
-                    UNION ALL
-                    SELECT {bin_ts} AS b, avg_value AS v FROM {HMIN}
-                        WHERE stat_type = ? AND timestamp BETWEEN ? AND ?
-                    UNION ALL
-                    SELECT {bin_ts} AS b, avg_value AS v FROM {HHOUR}
-                        WHERE stat_type = ? AND timestamp BETWEEN ? AND ?
-                ) GROUP BY b ORDER BY b ASC
-            """, (stat_type, start_ts, end_ts) * 3)
-            rows = cursor.fetchall()
-
-            return [(datetime.fromtimestamp(row[0]), row[1]) for row in rows]
-        except Exception as e:
-            self.logger.error("Error fetching hardware history: %s", e, exc_info=True)
-            return []
+        return self.history_reader.hardware_history(stat_type, start_time, end_time)
 
     # --- pro-stats: tier-aware honest window summaries (exact ≤24h raw, avg+max beyond) ----------
     _RAW_SUMMARY_SECONDS = 24 * 3600   # the raw tier retains ~24h; windows within it summarize exactly

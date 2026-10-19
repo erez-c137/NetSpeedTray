@@ -193,3 +193,20 @@ def test_speed_history_matches_legacy(ws, resolution, return_raw):
             _same(new, old, f"speed_history({start},{end},{iface},{resolution},{return_raw})")
             checked += len(old)
     assert checked > 1000
+
+
+# --- 2. get_hardware_history ------------------------------------------------------------------------
+
+HW_STATS = ("cpu", "gpu", "ram", "vram", "cpu_temp", "latency_gw", "latency_gw_timeout",
+            "latency_anchor", "latency_anchor_timeout", "never_recorded")
+
+
+def test_hardware_history_matches_legacy(ws):
+    checked = 0
+    for start, end in WINDOWS:
+        for stat in HW_STATS:
+            old = Legacy.get_hardware_history(ws, stat, start, end)
+            new = ws.get_hardware_history(stat, start, end)
+            _same(new, old, f"hardware_history({stat},{start},{end})")
+            checked += len(old)
+    assert checked > 1000

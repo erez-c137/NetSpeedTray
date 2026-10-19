@@ -22,7 +22,7 @@ the odometer's in-memory state.
 import logging
 import sqlite3
 from abc import ABC, abstractmethod
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable, List, Literal, Optional, Tuple, Union
 
@@ -41,6 +41,11 @@ class HistoryReader(ABC):
                       resolution: Resolution) -> List[SpeedPoint]:
         """(timestamp, up B/s, down B/s) binned to ``resolution``, edges zero-padded when the window
         is bounded. ``timestamp`` is a datetime, or epoch seconds when ``return_raw``."""
+
+    @abstractmethod
+    def hardware_history(self, stat_type: str, start_time: Optional[datetime],
+                         end_time: Optional[datetime]) -> List[Tuple[datetime, float]]:
+        """(timestamp, value) for one hardware stat, binned by window length (1 s / 60 s / 3600 s)."""
 
 
 class V7HistoryReader(HistoryReader):
@@ -245,4 +250,50 @@ class V7HistoryReader(HistoryReader):
 
         except sqlite3.Error as e:
             self.logger.error("Unified graph query failed: %s", e, exc_info=True)
+            return []
+
+    # --- hardware -----------------------------------------------------------------------------
+
+    def hardware_history(self, stat_type: str, start_time: Optional[datetime] = None,
+                         end_time: Optional[datetime] = None) -> List[Tuple[datetime, float]]:
+        try:
+            conn = self._conn()
+            cursor = conn.cursor()
+
+            _end = end_time or datetime.now()
+            _start = start_time or (_end - timedelta(hours=24))
+
+            start_ts = int(_start.timestamp())
+            end_ts = int(_end.timestamp())
+
+            # Target resolution by window length: raw (<=6h), minute (<=30d), hour (>30d).
+            duration = end_ts - start_ts
+            interval = 1 if duration <= 6 * 3600 else (60 if duration <= 30 * 86400 else 3600)
+
+            # Union ALL tiers and bin to the target interval, mirroring speed_history. A
+            # recent-but-long window (e.g. 48h or a week) has its most-recent <24h only in the RAW tier
+            # and the older portion in minute/hour; reading a single tier silently dropped the recent
+            # half (and the old fallback only fired when the tier was TOTALLY empty). Binning keeps the
+            # point count bounded by window/interval regardless.
+            HRAW = constants.data.HARDWARE_STATS_TABLE_RAW
+            HMIN = constants.data.HARDWARE_STATS_TABLE_MINUTE
+            HHOUR = constants.data.HARDWARE_STATS_TABLE_HOUR
+            bin_ts = f"CAST(timestamp / {interval} AS INTEGER) * {interval}"
+            cursor.execute(f"""
+                SELECT b, AVG(v) FROM (
+                    SELECT {bin_ts} AS b, value AS v FROM {HRAW}
+                        WHERE stat_type = ? AND timestamp BETWEEN ? AND ?
+                    UNION ALL
+                    SELECT {bin_ts} AS b, avg_value AS v FROM {HMIN}
+                        WHERE stat_type = ? AND timestamp BETWEEN ? AND ?
+                    UNION ALL
+                    SELECT {bin_ts} AS b, avg_value AS v FROM {HHOUR}
+                        WHERE stat_type = ? AND timestamp BETWEEN ? AND ?
+                ) GROUP BY b ORDER BY b ASC
+            """, (stat_type, start_ts, end_ts) * 3)
+            rows = cursor.fetchall()
+
+            return [(datetime.fromtimestamp(row[0]), row[1]) for row in rows]
+        except Exception as e:
+            self.logger.error("Error fetching hardware history: %s", e, exc_info=True)
             return []
