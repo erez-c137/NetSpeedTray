@@ -31,6 +31,9 @@ class GraphConstants:
     GRID_ALPHA: Final[float] = 0.5
     GRID_LINESTYLE: Final[str] = ":"
     ERROR_MESSAGE_FONTSIZE: Final[int] = 12
+    # Value (y) axis labels show as many decimals as the tick step needs (0.5 -> 1, 0.02 -> 2), up to
+    # this many, with trailing zeros dropped ("1.5", "2", never "1.50" or "1" for 1.5).
+    VALUE_AXIS_MAX_DECIMALS: Final[int] = 3
 
     # --- Time (x) axis ticks (views/graph/time_axis.py) ---
     # The tick count follows the axis width: one label per this many points, clamped to [MIN, MAX].
