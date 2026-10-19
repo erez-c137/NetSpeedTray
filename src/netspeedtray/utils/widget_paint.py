@@ -118,63 +118,120 @@ def _draw_graph(painter: QPainter, renderer: WidgetRenderer, width: int, height:
         renderer.draw_mini_graph(painter, width, height, config, list(metrics.net_history), layout)
 
 
+def side_by_side_keys(display_order: List[str], cpu_enabled: bool, gpu_enabled: bool,
+                      stack_hw: bool) -> List[str]:
+    """The side_by_side segments in display order: 'network', 'cpu', 'gpu', or one 'hardware' segment
+    when CPU and GPU are stacked together. Shared by the paint path and the layout's size reservation."""
+    keys: List[str] = []
+    for k in display_order:
+        if k == "network":
+            keys.append(k)
+        elif k == "cpu" and cpu_enabled:
+            if stack_hw and gpu_enabled:
+                if "hardware" not in keys:
+                    keys.append("hardware")
+            else:
+                keys.append("cpu")
+        elif k == "gpu" and gpu_enabled:
+            if stack_hw and cpu_enabled:
+                if "hardware" not in keys:
+                    keys.append("hardware")
+            else:
+                keys.append("gpu")
+    return keys
+
+
+def stacked_segment_height(key: str, line_height: int, ram_enabled: bool, vram_enabled: bool) -> int:
+    """Height of one side_by_side segment when a side taskbar stacks the segments top-to-bottom.
+
+    Matches what the renderer paints: the network readout is two rows + 1px (draw_network_speeds);
+    CPU and GPU are one row each, plus a row of its own for the RAM/VRAM, stacked CPU+GPU included
+    (draw_hardware_stats, memory_below). Worst case, so a reading that arrives later never clips.
+    """
+    if key == "network":
+        return line_height * 2 + 1
+    if key == "hardware":
+        return line_height * (2 + (1 if ram_enabled else 0) + (1 if vram_enabled else 0))
+    has_memory = ram_enabled if key == "cpu" else vram_enabled
+    return line_height * (2 if has_memory else 1)
+
+
+def _draw_segment(painter: QPainter, renderer: WidgetRenderer, key: str, width: int, height: int,
+                  config: RenderConfig, metrics: WidgetMetrics, layout: str, x_offset: int = 0,
+                  y_offset: int = 0, slot_width: Optional[int] = None, memory_below: bool = False) -> None:
+    """Paint the text/stats of one side_by_side segment (the network graph is the caller's)."""
+    if key == "network":
+        up_bytes, dw_bytes = metrics.net_bytes()
+        renderer.draw_network_speeds(painter, up_bytes, dw_bytes, width, height, config, layout,
+                                     x_offset=x_offset, slot_width=slot_width,
+                                     identity_text=metrics.identity_band,
+                                     identity_color=metrics.identity_band_color,
+                                     identity_solid=metrics.identity_band_solid,
+                                     identity_ssid=metrics.identity_ssid, y_offset=y_offset)
+    elif key == "cpu" and config.monitor_cpu_enabled:
+        ram = (metrics.ram_used, metrics.ram_total) if config.monitor_ram_enabled else None
+        renderer.draw_hardware_stats(painter, metrics.cpu_usage, None, width, height, config,
+                                     metrics.cpu_temp, None, ram, None, layout,
+                                     x_offset=x_offset, cpu_power=metrics.cpu_power, y_offset=y_offset)
+    elif key == "gpu" and config.monitor_gpu_enabled:
+        vram = (metrics.vram_used, metrics.vram_total) if config.monitor_vram_enabled else None
+        renderer.draw_hardware_stats(painter, None, metrics.gpu_usage, width, height, config,
+                                     None, metrics.gpu_temp, None, vram, layout,
+                                     x_offset=x_offset, gpu_power=metrics.gpu_power, y_offset=y_offset)
+    elif key == "hardware":
+        ram = (metrics.ram_used, metrics.ram_total) if config.monitor_ram_enabled else None
+        vram = (metrics.vram_used, metrics.vram_total) if config.monitor_vram_enabled else None
+        renderer.draw_hardware_stats(painter, metrics.cpu_usage, metrics.gpu_usage, width, height, config,
+                                     metrics.cpu_temp, metrics.gpu_temp, ram, vram, layout,
+                                     x_offset=x_offset, cpu_power=metrics.cpu_power, gpu_power=metrics.gpu_power,
+                                     y_offset=y_offset, memory_below=memory_below)
+
+
+def _draw_stacked(painter: QPainter, renderer: WidgetRenderer, width: int, height: int,
+                  config: RenderConfig, metrics: WidgetMetrics, layout: str, keys: List[str]) -> None:
+    """Side taskbar: the widget is only as wide as the taskbar, so the segments stack top-to-bottom
+    (network over CPU/GPU), each centered in the band the layout reserved for it. For the same reason
+    the RAM/VRAM goes on a row of its own instead of inline after stacked CPU+GPU."""
+    line_height = renderer.metrics.height()
+    bands = [stacked_segment_height(k, line_height, config.monitor_ram_enabled, config.monitor_vram_enabled)
+             for k in keys]
+    gap = constants.layout.WIDGET_SEGMENT_GAP_STACKED_PX
+    y = max(0, (height - sum(bands) - gap * (len(bands) - 1)) // 2)
+    for key, band in zip(keys, bands):
+        if key == "network" and config.graph_enabled:
+            painter.save()
+            painter.translate(0, y)
+            renderer.draw_mini_graph(painter, width, band, config, list(metrics.net_history), layout)
+            painter.restore()
+        _draw_segment(painter, renderer, key, width, band, config, metrics, layout, y_offset=y,
+                      memory_below=True)
+        y += band + gap
+
+
 def _draw_side_by_side(painter: QPainter, renderer: WidgetRenderer, width: int, height: int,
                        config: RenderConfig, metrics: WidgetMetrics, layout: str,
                        network_width: Optional[int]) -> None:
-    """Multi-segment side-by-side painting (network + cpu/gpu/combined laid out in a row)."""
-    active_keys: List[str] = []
-    stack_hw = getattr(config, "stack_hardware_stats", False)
-
-    for k in config.widget_display_order:
-        if k == "network":
-            active_keys.append(k)
-        elif k == "cpu" and config.monitor_cpu_enabled:
-            if stack_hw and config.monitor_gpu_enabled:
-                if "hardware" not in active_keys:
-                    active_keys.append("hardware")
-            else:
-                active_keys.append("cpu")
-        elif k == "gpu" and config.monitor_gpu_enabled:
-            if stack_hw and config.monitor_cpu_enabled:
-                if "hardware" not in active_keys:
-                    active_keys.append("hardware")
-            else:
-                active_keys.append("gpu")
+    """Multi-segment side-by-side painting (network + cpu/gpu/combined laid out in a row, or stacked
+    on a side taskbar)."""
+    active_keys = side_by_side_keys(config.widget_display_order, config.monitor_cpu_enabled,
+                                    config.monitor_gpu_enabled, getattr(config, "stack_hardware_stats", False))
     if not active_keys:
         active_keys = ["network"]
+
+    if layout == "vertical" and len(active_keys) > 1:
+        _draw_stacked(painter, renderer, width, height, config, metrics, layout, active_keys)
+        return
 
     net_w = network_width if network_width is not None else width
     current_x = 0
     for key in active_keys:
-        if key == "network":
-            if config.graph_enabled:
-                painter.save()
-                painter.translate(current_x, 0)
-                renderer.draw_mini_graph(painter, net_w, height, config, list(metrics.net_history), layout)
-                painter.restore()
-            up_bytes, dw_bytes = metrics.net_bytes()
-            renderer.draw_network_speeds(painter, up_bytes, dw_bytes, width, height, config, layout,
-                                         x_offset=current_x, slot_width=network_width,
-                                         identity_text=metrics.identity_band,
-                                         identity_color=metrics.identity_band_color,
-                                         identity_solid=metrics.identity_band_solid,
-                                         identity_ssid=metrics.identity_ssid)
-        elif key == "cpu" and config.monitor_cpu_enabled:
-            ram = (metrics.ram_used, metrics.ram_total) if config.monitor_ram_enabled else None
-            renderer.draw_hardware_stats(painter, metrics.cpu_usage, None, width, height, config,
-                                         metrics.cpu_temp, None, ram, None, layout,
-                                         x_offset=current_x, cpu_power=metrics.cpu_power)
-        elif key == "gpu" and config.monitor_gpu_enabled:
-            vram = (metrics.vram_used, metrics.vram_total) if config.monitor_vram_enabled else None
-            renderer.draw_hardware_stats(painter, None, metrics.gpu_usage, width, height, config,
-                                         None, metrics.gpu_temp, None, vram, layout,
-                                         x_offset=current_x, gpu_power=metrics.gpu_power)
-        elif key == "hardware":
-            ram = (metrics.ram_used, metrics.ram_total) if config.monitor_ram_enabled else None
-            vram = (metrics.vram_used, metrics.vram_total) if config.monitor_vram_enabled else None
-            renderer.draw_hardware_stats(painter, metrics.cpu_usage, metrics.gpu_usage, width, height, config,
-                                         metrics.cpu_temp, metrics.gpu_temp, ram, vram, layout,
-                                         x_offset=current_x, cpu_power=metrics.cpu_power, gpu_power=metrics.gpu_power)
+        if key == "network" and config.graph_enabled:
+            painter.save()
+            painter.translate(current_x, 0)
+            renderer.draw_mini_graph(painter, net_w, height, config, list(metrics.net_history), layout)
+            painter.restore()
+        _draw_segment(painter, renderer, key, width, height, config, metrics, layout,
+                      x_offset=current_x, slot_width=network_width)
 
         if key == "network":
             # Advance by the explicit network width if given (live widget), else by the
@@ -230,8 +287,8 @@ def render_widget(painter: QPainter, rect: QRect, renderer: WidgetRenderer, conf
         renderer: a `WidgetRenderer` bound to `config`'s i18n/theme.
         metrics: the frame snapshot to draw.
         layout_mode: 'horizontal' for a TOP/BOTTOM taskbar, 'vertical' for a LEFT/RIGHT (side) taskbar
-            (per NetworkSpeedWidget._layout_mode_for_edge). NOTE: the renderer does not currently branch
-            on this - it always draws the two-row stack - so the value is informational today.
+            (per NetworkSpeedWidget._layout_mode_for_edge). 'vertical' stacks the side_by_side segments
+            top-to-bottom instead of in a row; every other mode draws the same either way.
         cycle_mode: which single metric to show when `config.widget_display_mode == 'cycle'`.
         network_width: width of the network segment for side_by_side graph scoping.
         font: font to apply before drawing foreground text.

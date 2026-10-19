@@ -315,13 +315,15 @@ class WidgetRenderer:
             
         painter.fillRect(rect, self._cached_bg_color)
 
-    def draw_network_speeds(self, painter: QPainter, upload: float, download: float, width: int, height: int, config: RenderConfig, layout_mode: str = 'vertical', x_offset: int = 0, slot_width: Optional[int] = None, fixed_width: Optional[int] = None, identity_text: Optional[str] = None, identity_color: Optional[str] = None, identity_solid: bool = False, identity_ssid: Optional[str] = None) -> None:
+    def draw_network_speeds(self, painter: QPainter, upload: float, download: float, width: int, height: int, config: RenderConfig, layout_mode: str = 'vertical', x_offset: int = 0, slot_width: Optional[int] = None, fixed_width: Optional[int] = None, identity_text: Optional[str] = None, identity_color: Optional[str] = None, identity_solid: bool = False, identity_ssid: Optional[str] = None, y_offset: int = 0) -> None:
         """Draws current upload and download speeds.
 
         identity_text: optional network-identity band tag (e.g. "5G") drawn to the right of the unit
         column, vertically centered. When present it participates in the block width (so side_by_side
         right-align accounts for it) and the content bounds. Reserved width is the fixed worst-case
         (IDENTITY_BAND_REFERENCE), so a 2.4G<->5G change never shifts the layout.
+        y_offset: top of the band (`height` tall) the readout is centered in; side_by_side on a side
+        taskbar stacks its segments in bands down the widget.
         """
         try:
             # Format speeds
@@ -393,7 +395,7 @@ class WidgetRenderer:
             
             # Default Vertical Layout (Stack UP over DW)
             total_height = (line_height * 2) + vertical_gap
-            top_y = int((height - total_height) / 2 + ascent)
+            top_y = y_offset + int((height - total_height) / 2 + ascent)
             
             # Draw top line (upload by default, download when swapped).
             # Pass the canonical bytes/sec value (not the formatted string) so color
@@ -411,7 +413,7 @@ class WidgetRenderer:
             # v2.1: draw the network-identity badge to the right of the unit column, vertically centered.
             if identity_badge_w:
                 badge_x = unit_x + max_unit_width + IDENTITY_BAND_GAP_PX
-                badge_y = (height - identity_parts["h"]) / 2.0
+                badge_y = y_offset + (height - identity_parts["h"]) / 2.0
                 self._draw_identity_badge(painter, badge_x, badge_y, identity_parts,
                                           identity_ssid, identity_text, identity_color, identity_solid)
 
@@ -572,8 +574,13 @@ class WidgetRenderer:
                            ram_info: Optional[Tuple[float, float]] = None,
                            vram_info: Optional[Tuple[float, float]] = None,
                            layout_mode: str = 'vertical', x_offset: int = 0, fixed_width: Optional[int] = None,
-                           cpu_power: Optional[float] = None, gpu_power: Optional[float] = None) -> None:
-        """Draws CPU and/or GPU utilization statistics with optional temperature, power, and memory."""
+                           cpu_power: Optional[float] = None, gpu_power: Optional[float] = None,
+                           y_offset: int = 0, memory_below: bool = False) -> None:
+        """Draws CPU and/or GPU utilization statistics with optional temperature, power, and memory.
+
+        y_offset: top of the band (`height` tall) the rows are centered in (see draw_network_speeds).
+        memory_below: give each RAM/VRAM value a row of its own under its stat even when CPU and GPU
+            share the segment (where it is otherwise inline); a side taskbar is too narrow for it inline."""
         try:
             order = getattr(config, 'widget_display_order', ["network", "cpu", "gpu"])
             cpu_idx = order.index("cpu") if "cpu" in order else 999
@@ -661,12 +668,12 @@ class WidgetRenderer:
             # so the numbers stay aligned across rows. Zero when off: the widget keeps its width.
             show_mem_labels = bool(getattr(config, 'show_memory_labels', False))
             mem_label_col = memory_label_width(self.metrics) if (show_mem_labels and any_mem) else 0
-            inline_mem = is_compact
+            inline_mem = is_compact and not memory_below
             mem_col = (sep_col + mem_label_col + mem_num_col) if (any_mem and inline_mem) else 0
 
             extra_rows = 0 if inline_mem else sum(1 for r in rows if r['mem'])
             total_height = line_height * (len(rows) + extra_rows)
-            top_y = int((height - total_height) / 2 + ascent)
+            top_y = y_offset + int((height - total_height) / 2 + ascent)
             current_x = x_offset + margin
 
             stat_col = label_col + pct_col + suffix_col + mem_col

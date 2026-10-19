@@ -62,8 +62,8 @@ class PreviewWidget(QWidget):
         self.update()
 
     def set_layout_mode(self, mode: str) -> None:
-        """'horizontal' (TOP/BOTTOM taskbar) or 'vertical' (LEFT/RIGHT side taskbar) - informational;
-        the shared paint path always draws the two-row stack today."""
+        """'horizontal' (TOP/BOTTOM taskbar) or 'vertical' (LEFT/RIGHT side taskbar) - 'vertical' stacks
+        the side_by_side segments top-to-bottom; every other mode draws the same either way."""
         self._layout_mode = mode
         self.update()
 
