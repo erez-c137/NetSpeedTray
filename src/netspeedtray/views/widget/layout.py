@@ -8,7 +8,7 @@ from PyQt6.QtGui import QFont, QFontMetrics
 from PyQt6.QtWidgets import QWidget
 
 from netspeedtray import constants
-from netspeedtray.utils.taskbar_utils import is_small_taskbar, get_taskbar_info
+from netspeedtray.utils.taskbar_utils import is_small_taskbar, get_taskbar_info, horizontal_taskbar_strip
 from netspeedtray.utils.helpers import memory_label_width
 from netspeedtray.utils.widget_paint import side_by_side_keys, stacked_segment_height
 
@@ -456,19 +456,17 @@ class WidgetLayoutManager:
           ``total_height = 2*line_height + 1``), so any docked height below that crops the glyphs.
           Floor to the two-row content (+1px for the ``int()`` rounding in ``top_y``) so text can
           never crop, without the generous margin pad the free-float/side branches use.
-        """
-        screen = taskbar_info.get_screen()
-        full_geom = screen.geometry()
-        avail_geom = screen.availableGeometry()
 
-        if edge == constants.TaskbarEdge.BOTTOM:
-            visible_tb_height = full_geom.bottom() - avail_geom.bottom()
-        elif edge == constants.TaskbarEdge.TOP:
-            visible_tb_height = avail_geom.top() - full_geom.top()
+        #322: the strip comes from ``horizontal_taskbar_strip`` - the work-area inset capped by the
+        taskbar window's height, the same value the position code centres in. When the floor makes
+        the widget taller than a thin strip, ``PositionCalculator._clamp_into_strip`` sits it flush
+        with the screen edge the bar is on, so the overhang is the minimum and faces the desktop.
+        """
+        if edge in (constants.TaskbarEdge.TOP, constants.TaskbarEdge.BOTTOM):
+            _, visible_tb_height = horizontal_taskbar_strip(taskbar_info, edge, dpi_scale)
         else:
             visible_tb_height = (taskbar_info.rect[3] - taskbar_info.rect[1]) / dpi_scale
 
         if visible_tb_height <= 0:                      # Part A (#221)
             visible_tb_height = taskbar_info.height
-
         return max(visible_tb_height, self.metrics.height() * 2 + 2)   # Part B (#221)

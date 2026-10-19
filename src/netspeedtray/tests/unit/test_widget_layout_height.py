@@ -74,7 +74,8 @@ def test_normal_bottom_taskbar_uses_work_area_inset_unchanged():
 def test_top_taskbar_workarea_not_inset_falls_back():
     full = QRect(0, 0, 2560, 1440)
     lm = _lm()
-    tb = _taskbar(_screen(full, full), height=44)
+    # rect matches height, as on a real TaskbarInfo (height = rect height / dpi).
+    tb = _taskbar(_screen(full, full), height=44, rect=(0, 0, 2560, 44))
     h = lm._horizontal_dock_height(constants.TaskbarEdge.TOP, tb, 1.0)
     assert h == 44
     assert h >= _two_row_min(lm)
