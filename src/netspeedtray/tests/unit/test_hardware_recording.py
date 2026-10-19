@@ -1,4 +1,4 @@
-"""
+﻿"""
 Hardware history recording follows the user's choice (2.2 scope item C).
 
 Before: `record_hardware_history` (default True, no UI) was OR-ed into the collection gate, so CPU/GPU/RAM
@@ -8,7 +8,7 @@ forced collection persisted temps/power the user never enabled. Now:
   * the in-memory live series still fill (mini graph, Monitor live tiles) - display is not persistence;
   * the thread collects hardware only for monitoring the user turned on, or while the Monitor forces it.
 """
-from datetime import datetime
+from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -65,9 +65,19 @@ def test_temps_and_power_need_their_metric_and_their_own_switch():
     assert hardware_persist_allowed("system_power", p) is True
 
 
-def test_latency_is_not_governed_by_the_hardware_toggle():
+def test_lat_and_battery_drain_are_not_governed_by_the_hardware_toggle():
     # The latency series have their own switch (latency_enabled); this policy never blocks them.
     assert hardware_persist_allowed("latency_gw", _cfg(record_hardware_history=False)) is True
+
+
+def test_battery_drain_follows_the_power_display_switch():
+    """The hover's "Today avg" source (#323) has its own consent switch: it fills under
+    the PR's own defaults (CPU/GPU/power-stats off) and is NOT held hostage by
+    show_hardware_power, which system_power still requires."""
+    assert hardware_persist_allowed("battery_drain", _cfg(power_display_enabled=True)) is True
+    assert hardware_persist_allowed("battery_drain", _cfg()) is False
+    r = _cfg(power_display_enabled=True, record_hardware_history=False)
+    assert hardware_persist_allowed("battery_drain", r) is False
 
 
 def test_default_config_keeps_recording_for_monitored_stats():
@@ -156,3 +166,90 @@ def test_record_hardware_history_schema_rejects_non_bool(tmp_path):
     assert out["record_hardware_history"] is True    # coerced back to the default
     out = cm._validate_config({"record_hardware_history": False})
     assert out["record_hardware_history"] is False
+
+
+# --- the battery-only poll reaches history through the REAL write path (3rd #323 review) -----------
+
+def _live_state(tmp_path):
+    """A real WidgetState on a throwaway DB (worker thread never started; its
+    connection/schema are initialized directly like the summary-tier tests do)."""
+    from PyQt6.QtCore import QThread
+    with patch.object(QThread, "start", lambda self: None), \
+            patch("netspeedtray.core.widget_state.get_app_data_path", return_value=tmp_path):
+        s = WidgetState(constants.config.defaults.DEFAULT_CONFIG.copy())
+    w = s.db_worker
+    w.db_path = tmp_path / "speed_history.db"
+    w._initialize_connection()
+    w._check_and_create_schema()
+    return s
+
+
+def test_battery_only_poll_reaches_history_through_the_real_write_path(q_app, tmp_path, monkeypatch):
+    """With the PR's own defaults (power display on, CPU/GPU/power-stats off) a battery-only
+    handle_stats poll must land in the history DB, and the hover's "Today avg" must read it
+    back from disk - no summarize_hardware mock, no add_hardware_stat stub: the real write
+    (the worker's persist handler, exactly what the thread runs) and the real summary."""
+    from datetime import datetime, timedelta
+    from netspeedtray.utils import power_utils
+    import netspeedtray.core.widget_state as wsm
+
+    state = _live_state(tmp_path)
+    try:
+        state.config["power_display_enabled"] = True
+        ctl = StatsController(_cfg(power_display_enabled=True), state)
+        ctl.set_view(MagicMock())
+        monkeypatch.setattr(power_utils, "read_power_state",
+                            lambda: power_utils.PowerState(power_utils.MODE_DISCHARGE, 63))
+
+        # Two real polls a few "seconds" apart - same-second samples collapse into one
+        # raw row (INSERT OR IGNORE on the timestamp), like they do at a real cadence.
+        base = datetime.now() - timedelta(minutes=1)
+        tick = {"n": 0}
+        def _fake_now():
+            tick["n"] += 1
+            return base if tick["n"] <= 2 else base + timedelta(seconds=3)
+        monkeypatch.setattr(wsm, "datetime", type("_DT", (), {"now": staticmethod(_fake_now)}))
+        ctl.handle_stats({"system_power": 12.0})
+        ctl.handle_stats({"system_power": 18.0})
+        assert state._hw_batch, "battery-only poll produced no history batch"
+        # The real persist path, thread or no thread: the same handler the worker drains
+        # its queue with on a live machine, through the real on-disk schema.
+        state.db_worker._persist_hardware_batch(list(state._hw_batch))
+        state._hw_batch = []
+
+        monkeypatch.undo()
+        now = datetime.now()
+        midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        summary = state.summarize_hardware('battery_drain', midnight, now,
+                                           poll_interval=1.0)
+        assert summary is not None and summary.count == 2, "no battery_drain history on disk"
+        assert summary.avg == pytest.approx(15.0)   # (12 + 18) / 2 - exactly the hover's read
+    finally:
+        state.db_worker._close_connection()
+        state.cleanup()
+
+
+def test_battery_only_poll_records_nothing_with_power_display_off(q_app, tmp_path, monkeypatch):
+    """And the consent gate works in the same real path: power_display off -> no rows."""
+    from netspeedtray.utils import power_utils
+
+    state = _live_state(tmp_path)
+    try:
+        ctl = StatsController(_cfg(), state)
+        ctl.set_view(MagicMock())
+        monkeypatch.setattr(power_utils, "read_power_state",
+                            lambda: power_utils.PowerState(power_utils.MODE_DISCHARGE, 63))
+
+        ctl.handle_stats({"system_power": 12.0})
+        types = [b[1] for b in state._hw_batch]
+        assert 'battery_drain' not in types
+        sys_rows = [b for b in state._hw_batch if b[1] == 'system_power']
+        state.db_worker._persist_hardware_batch(sys_rows)
+        state._hw_batch = []
+        now = datetime.now()
+        summary = state.summarize_hardware('battery_drain',
+                                           now - timedelta(minutes=5), now, poll_interval=1.0)
+        assert not summary or not summary.count
+    finally:
+        state.db_worker._close_connection()
+        state.cleanup()

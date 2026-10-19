@@ -74,3 +74,63 @@ def test_discharge_still_serves_the_battery_fallback(monkeypatch):
     t = _thread()
     monkeypatch.setattr(t, "_poll_battery_power", lambda: 9.4)
     assert t._poll_system_power() == pytest.approx(9.4)
+
+
+# --- _collect_power_stats: the split between the two power features -----------------
+
+def test_charge_rate_reaches_battery_power_with_power_tiles_on(monkeypatch):
+    """#323 review 3: with show_hardware_power on, a charging machine used to leave the
+    hover's charge rate (+X W) blank forever - _poll_system_power is discharge-only, so
+    the signed reading never reach battery_power. It rides along under its own switch."""
+    t = _thread()
+    t.config = {"show_hardware_power": True, "power_display_enabled": True}
+    monkeypatch.setattr(t, "_poll_system_power", lambda: None)   # no PSYS; charge flow → None
+    monkeypatch.setattr(t, "_poll_battery_power", lambda: -38.2)
+    stats = {}
+    t._collect_power_stats(stats, force_hw=False)
+    assert stats["battery_power"] == pytest.approx(-38.2)
+    assert "system_power" not in stats
+
+
+def test_discharge_with_power_tiles_on_uses_system_power_only(monkeypatch):
+    """Discharging under the power tiles: the battery fallback already lives in
+    system_power; the duplicate battery poll must NOT add a battery_power flow."""
+    t = _thread()
+    t.config = {"show_hardware_power": True, "power_display_enabled": True}
+    monkeypatch.setattr(t, "_poll_system_power", lambda: 43.5)
+    monkeypatch.setattr(t, "_poll_battery_power", lambda: 43.5)   # cache: same positive reading
+    stats = {}
+    t._collect_power_stats(stats, force_hw=False)
+    assert stats["system_power"] == pytest.approx(43.5)
+    assert "battery_power" not in stats
+
+
+def test_charge_rate_poll_skipped_when_power_display_off(monkeypatch):
+    """The hover's consent switch governs its own extra poll: with the power tiles on but
+    the hover off, no battery_power (and nothing) is written from a charge flow."""
+    t = _thread()
+    t.config = {"show_hardware_power": True}
+    monkeypatch.setattr(t, "_poll_system_power", lambda: None)
+    monkeypatch.setattr(t, "_poll_battery_power", lambda: -38.2)
+    stats = {}
+    t._collect_power_stats(stats, force_hw=False)
+    assert stats == {}
+
+
+def test_battery_only_split_discharge_to_system_charge_to_battery(monkeypatch):
+    """The hover-only branch (power tiles off) keeps its contract: discharge is a
+    system_power sample, charge rides battery_power."""
+    t = _thread()
+    t.config = {"power_display_enabled": True}
+    monkeypatch.setattr(t, "_poll_battery_power", lambda: 12.7)
+    stats = {}
+    t._collect_power_stats(stats, force_hw=False)
+    assert stats["system_power"] == pytest.approx(12.7)
+
+    t2 = _thread()
+    t2.config = {"power_display_enabled": True}
+    monkeypatch.setattr(t2, "_poll_battery_power", lambda: -38.2)
+    stats2 = {}
+    t2._collect_power_stats(stats2, force_hw=False)
+    assert stats2["battery_power"] == pytest.approx(-38.2)
+    assert "system_power" not in stats2

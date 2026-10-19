@@ -269,6 +269,114 @@ def test_absent_temp_power_key_emits_nothing(controller_instance):
     mock_view.update_gpu_power.assert_not_called()
 
 
+# --- Battery-view stash handling (#323 review) --------------------------------
+
+
+def test_absent_power_keys_clear_stale_values(controller_instance):
+    """Neither power key this poll -> the stale discharge/charge stashes must be
+    cleared, so the hover card cannot keep saying "discharging" after the user
+    plugs the charger back in, nor keep a "+X W" after charging to full."""
+    controller = controller_instance
+    mock_view = MagicMock()
+    controller.set_view(mock_view)
+
+    controller.handle_stats({"cpu": 50.0})  # no system_power, no battery_power
+
+    assert mock_view.system_power is None
+    assert mock_view.battery_power is None
+
+
+def test_battery_power_clears_system_power_stash(controller_instance):
+    """The signed-flow branch is mutually exclusive: battery_power set this poll
+    must overwrite any stale system_power on the view."""
+    controller = controller_instance
+    mock_view = MagicMock()
+    controller.set_view(mock_view)
+
+    controller.handle_stats({"cpu": 50.0, "battery_power": -38.2})
+
+    assert mock_view.system_power is None
+    assert mock_view.battery_power == -38.2
+
+
+def test_system_power_history_universal_battery_drain_discharge_only(controller_instance, monkeypatch):
+    """system_power keeps the stat history it always had (every real reading, AC
+    included - the Stats-export "System power" column must stay meaningful on a
+    desktop with RAPL), while the mirrored battery_drain stat_type only records
+    samples while the machine is actually discharging - "not on AC" would also
+    count MODE_NONE, which is how a battery-less desktop with a RAPL PSYS sensor
+    reads (the hover omits its battery section there, so rows it can never
+    display must not be written either, 3rd #323 review)."""
+    from netspeedtray.utils import power_utils
+
+    controller = controller_instance
+    controller.set_view(MagicMock())
+
+    for mode in (power_utils.MODE_AC, power_utils.MODE_CHARGE, power_utils.MODE_NONE):
+        monkeypatch.setattr(power_utils, "read_power_state",
+                            lambda m=mode: power_utils.PowerState(m, 100 if m != power_utils.MODE_NONE else None))
+        controller.widget_state.add_hardware_stat.reset_mock()
+        controller.handle_stats({"cpu": 50.0, "system_power": 12.0})
+        keys = [c.args[0] for c in controller.widget_state.add_hardware_stat.call_args_list]
+        assert 'system_power' in keys, f"real reading dropped from system_power history under mode={mode}"
+        assert 'battery_drain' not in keys, f"battery_drain recorded while mode={mode}"
+
+    monkeypatch.setattr(power_utils, "read_power_state",
+                        lambda: power_utils.PowerState(power_utils.MODE_DISCHARGE, 63))
+    controller.widget_state.add_hardware_stat.reset_mock()
+    controller.handle_stats({"cpu": 50.0, "system_power": 12.0})
+    keys = [c.args[0] for c in controller.widget_state.add_hardware_stat.call_args_list]
+    assert 'system_power' in keys
+    assert 'battery_drain' in keys
+    drain_calls = [c for c in controller.widget_state.add_hardware_stat.call_args_list
+                   if c.args[0] == 'battery_drain']
+    assert drain_calls[0].args[1] == 12.0
+
+    # A failed (MODE_NONE) power-state read must NOT mirror: the hover omits its
+    # battery section on an unreadable state, so the mirror would be rows it
+    # never shows. system_power's own history still records every real reading.
+    controller.widget_state.add_hardware_stat.reset_mock()
+    monkeypatch.setattr(power_utils, "read_power_state",
+                        lambda: (_ for _ in ()).throw(RuntimeError("wmi exploded")))
+    controller.handle_stats({"cpu": 50.0, "system_power": 12.0})
+    keys = [c.args[0] for c in controller.widget_state.add_hardware_stat.call_args_list]
+    assert 'system_power' in keys
+    assert 'battery_drain' not in keys
+
+
+def test_power_slots_reach_the_view_without_cpu_stats(controller_instance):
+    """A battery-only poll still updates the hover slots when CPU history recording is off."""
+    controller = controller_instance
+    view = MagicMock()
+    controller.set_view(view)
+
+    controller.handle_stats({"battery_power": -38.2})
+
+    assert view.battery_power == -38.2
+    assert view.system_power is None
+
+
+def test_battery_only_poll_writes_history_under_power_display_only(controller_instance, monkeypatch):
+    """The 3rd-review blocker: with CPU/GPU/power-stats off (the defaults) a battery-only
+    poll wrote NOTHING to history - the write sat inside the CPU/GPU gate, and the mirror
+    rode system_power's persist policy (show_hardware_power). The hover's "Today avg"
+    must fill from the power-display feature's own poll, out of anyone else's gate."""
+    from netspeedtray.utils import power_utils
+
+    controller = controller_instance
+    controller.config["power_display_enabled"] = True
+    controller.set_view(MagicMock())
+    monkeypatch.setattr(power_utils, "read_power_state",
+                        lambda: power_utils.PowerState(power_utils.MODE_DISCHARGE, 63))
+
+    controller.handle_stats({"system_power": 12.0})
+    persist = {c.args[0]: c.kwargs.get("persist", True)
+               for c in controller.widget_state.add_hardware_stat.call_args_list}
+    assert 'system_power' in persist
+    assert persist['system_power'] is False   # legacy policy unchanged (needs the power tiles + a CPU/GPU)
+    assert persist['battery_drain'] is True   # the hover stat, on its own power-display switch
+
+
 # --- all_physical uses the shared adapter classifier (2.2 scope C, accuracy audit finding 5) -------
 
 def _classifier_for(table):
@@ -362,85 +470,3 @@ def test_current_primary_interface_resolves_in_any_mode(mock_config, mock_widget
         assert controller.current_primary_interface() == "Wi-Fi 3"
         assert controller.current_primary_interface() == "Wi-Fi 3"
     assert g.call_count == 1   # the 15 s cache applies
-# --- Battery-view stash handling (#323 review) --------------------------------
-
-
-def test_absent_power_keys_clear_stale_values(controller_instance):
-    """Neither power key this poll -> the stale discharge/charge stashes must be
-    cleared, so the hover card cannot keep saying "discharging" after the user
-    plugs the charger back in, nor keep a "+X W" after charging to full."""
-    controller = controller_instance
-    mock_view = MagicMock()
-    controller.set_view(mock_view)
-
-    controller.handle_stats({"cpu": 50.0})  # no system_power, no battery_power
-
-    assert mock_view.system_power is None
-    assert mock_view.battery_power is None
-
-
-def test_battery_power_clears_system_power_stash(controller_instance):
-    """The signed-flow branch is mutually exclusive: battery_power set this poll
-    must overwrite any stale system_power on the view."""
-    controller = controller_instance
-    mock_view = MagicMock()
-    controller.set_view(mock_view)
-
-    controller.handle_stats({"cpu": 50.0, "battery_power": -38.2})
-
-    assert mock_view.system_power is None
-    assert mock_view.battery_power == -38.2
-
-
-def test_system_power_history_universal_battery_drain_discharge_only(controller_instance, monkeypatch):
-    """system_power keeps the stat history it always had (every real reading, AC
-    included - the Stats-export "System power" column must stay meaningful on a
-    desktop with RAPL), while the mirrored battery_drain stat_type only records
-    samples while the machine is actually discharging, so the hover "Today avg"
-    can never average an AC-side PSYS reading."""
-    from netspeedtray.utils import power_utils
-
-    controller = controller_instance
-    controller.set_view(MagicMock())
-
-    for mode in (power_utils.MODE_AC, power_utils.MODE_CHARGE):
-        monkeypatch.setattr(power_utils, "read_power_state",
-                            lambda m=mode: power_utils.PowerState(m, 100))
-        controller.widget_state.add_hardware_stat.reset_mock()
-        controller.handle_stats({"cpu": 50.0, "system_power": 12.0})
-        keys = [c.args[0] for c in controller.widget_state.add_hardware_stat.call_args_list]
-        assert 'system_power' in keys, f"AC-side reading dropped from history under mode={mode}"
-        assert 'battery_drain' not in keys, f"battery_drain recorded while mode={mode}"
-
-    monkeypatch.setattr(power_utils, "read_power_state",
-                        lambda: power_utils.PowerState(power_utils.MODE_DISCHARGE, 63))
-    controller.widget_state.add_hardware_stat.reset_mock()
-    controller.handle_stats({"cpu": 50.0, "system_power": 12.0})
-    keys = [c.args[0] for c in controller.widget_state.add_hardware_stat.call_args_list]
-    assert 'system_power' in keys
-    assert 'battery_drain' in keys
-    drain_calls = [c for c in controller.widget_state.add_hardware_stat.call_args_list
-                   if c.args[0] == 'battery_drain']
-    assert drain_calls[0].args[1] == 12.0
-
-    # A failed power-state read keeps the historical behaviour (persist; the
-    # failsafe treats the state as unknown, not as AC).
-    controller.widget_state.add_hardware_stat.reset_mock()
-    monkeypatch.setattr(power_utils, "read_power_state",
-                        lambda: (_ for _ in ()).throw(RuntimeError("wmi exploded")))
-    controller.handle_stats({"cpu": 50.0, "system_power": 12.0})
-    keys = [c.args[0] for c in controller.widget_state.add_hardware_stat.call_args_list]
-    assert 'system_power' in keys
-    assert 'battery_drain' in keys
-
-
-def test_power_slots_reach_the_view_without_cpu_stats(controller_instance):
-    """A battery-only poll still updates the hover slots when CPU history recording is off."""
-    controller = controller_instance
-    view = MagicMock()
-    controller.set_view(view)
-
-    controller.handle_stats({"battery_power": -38.2})
-
-    assert view.battery_power == -38.2
-    assert view.system_power is None

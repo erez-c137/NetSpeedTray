@@ -703,6 +703,37 @@ class StatsMonitorThread(QThread):
         self._battery_cache = (now, watts)
         return watts
 
+    def _collect_power_stats(self, stats: Dict[str, Any], force_hw: bool) -> None:
+        """Whole-system / battery power for one poll, into ``stats``.
+
+        When the power tiles are on (or the Monitor forces collection): a true whole-system
+        reading (RAPL PSYS, else the battery DischargeRate) goes to ``system_power`` - distinct
+        from the CPU+GPU sum; emitted only when a real source is found. When only the hover's
+        power display is on, battery-only polling is enough - skip RAPL, whose PDH handles
+        exist for the Monitor's power tiles, not for a hover glance. The signed battery poll
+        (negative while charging) still rides along on AC so the hover's charge rate (+X W)
+        keeps working with the power tiles on too (#323 review 3): ``_poll_system_power`` is
+        discharge-only (a charge flow yields None), and the poll is cached on a slow cadence,
+        so the follow-up call is nearly free.
+        """
+        if self.config.get('show_hardware_power', False) or force_hw:
+            sysp = self._poll_system_power()
+            if sysp is not None:
+                stats['system_power'] = sysp
+            if self.config.get('power_display_enabled', False):
+                bp = self._poll_battery_power()
+                if bp is not None and bp < 0:
+                    stats['battery_power'] = bp
+        elif self.config.get('power_display_enabled', False):
+            # Discharge lands in system_power (stat history + Monitor tile); the signed
+            # charge value rides battery_power.
+            sysp = self._poll_battery_power()
+            if sysp is not None:
+                if sysp < 0:
+                    stats['battery_power'] = sysp
+                else:
+                    stats['system_power'] = sysp
+
     def _poll_cpu_power(self) -> Optional[float]:
         """
         Polls CPU power draw in watts, trying sources in order:
@@ -1114,24 +1145,8 @@ class StatsMonitorThread(QThread):
                     except Exception as gpu_err:
                         self.logger.warning("GPU polling error (skipped, not counted against circuit breaker): %s", gpu_err)
 
-                # Whole-system power, when the platform actually exposes it (RAPL PSYS / battery
-                # discharge) - distinct from the CPU+GPU sum; emitted only when a real source is found.
-                if self.config.get('show_hardware_power', False) or _force_hw:
-                    sysp = self._poll_system_power()
-                    if sysp is not None:
-                        stats['system_power'] = sysp
-                elif self.config.get('power_display_enabled', False):
-                    # The hover card's battery section reuses this poll as its live reading.
-                    # Battery-only polling is enough for that - skip RAPL, whose PDH handles
-                    # exist for the Monitor's power tiles, not for a hover glance. Discharge
-                    # lands in system_power (stat history + Monitor tile); the signed charge
-                    # value rides battery_power.
-                    sysp = self._poll_battery_power()
-                    if sysp is not None:
-                        if sysp < 0:
-                            stats['battery_power'] = sysp
-                        else:
-                            stats['system_power'] = sysp
+                # Whole-system / battery power (see _collect_power_stats).
+                self._collect_power_stats(stats, _force_hw)
 
                 if stats:
                     self.stats_ready.emit(stats)
