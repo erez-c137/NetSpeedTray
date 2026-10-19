@@ -35,6 +35,22 @@ class GraphConstants:
     # this many, with trailing zeros dropped ("1.5", "2", never "1.50" or "1" for 1.5).
     VALUE_AXIS_MAX_DECIMALS: Final[int] = 3
 
+    # --- Percentile-clipped speed axis on long windows (views/graph/value_axis.py) ---
+    # A month of ordinary traffic plus two speed tests used to scale to the speed tests, squashing the
+    # month into ~3% of the height. On these windows the speed axis scales to the 99th percentile of
+    # the plotted points instead, but only when the max exceeds it by TRIGGER x - otherwise the max
+    # still sets the axis. Short and live windows always scale to the max. % axes (0-100) never clip.
+    VALUE_AXIS_CLIP_PERIODS: Final[Tuple[str, ...]] = ("TIMELINE_WEEK", "TIMELINE_MONTH", "TIMELINE_ALL")
+    VALUE_AXIS_CLIP_PERCENTILE: Final[float] = 99.0
+    VALUE_AXIS_CLIP_TRIGGER: Final[float] = 3.0     # clip only if max > percentile x this
+    VALUE_AXIS_CLIP_HEADROOM: Final[float] = 1.25   # axis scales to percentile x this (then nice-rounds up)
+    VALUE_AXIS_CLIP_MIN_POINTS: Final[int] = 100    # below this a 99th percentile is just the max
+    # Points above the clipped top get one caret per run on the top edge, and the axis states the peak.
+    VALUE_AXIS_CLIP_MARKER: Final[str] = "^"
+    VALUE_AXIS_CLIP_MARKER_SIZE: Final[float] = 22.0   # scatter area, points^2
+    VALUE_AXIS_CLIP_PEAK_FONTSIZE: Final[float] = 8.0
+    VALUE_AXIS_CLIP_PEAK_ALPHA: Final[float] = 0.75
+
     # --- Time (x) axis ticks (views/graph/time_axis.py) ---
     # The tick count follows the axis width: one label per this many points, clamped to [MIN, MAX].
     TIME_AXIS_LABEL_SPACING_PT: Final[float] = 60.0
