@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
 from netspeedtray import constants
+from netspeedtray.core.db.schema_v8 import EXPECTED_TABLES_V8
 
 # Logger Setup
 logger = logging.getLogger("NetSpeedTray.Core.Database")
@@ -330,6 +331,9 @@ class DatabaseWorker(QThread):
         5: _V5_TABLES,
         6: _V6_TABLES,
         7: _V6_TABLES + (constants.data.USAGE_COUNTER_TABLE,),
+        # Defined with the v8 DDL so the set cannot drift from it. Dormant until _DB_VERSION
+        # becomes 8: _verify_backup only ever asks for the version being migrated FROM.
+        8: EXPECTED_TABLES_V8,
     }
 
     def _backup_database(self) -> bool:
