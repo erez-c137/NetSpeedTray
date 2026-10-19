@@ -1344,7 +1344,8 @@ class NetworkSpeedWidget(QWidget):
                     version=constants.app.VERSION,
                     i18n=self.i18n,
                     available_interfaces=self.get_unified_interface_list(),
-                    is_startup_enabled=self.is_startup_enabled()
+                    is_startup_enabled=self.is_startup_enabled(),
+                    primary_interface=self._primary_interface_for_picker(),
                 )
                 # Connect signal for live preview updates (don't save to disk during preview)
                 self.settings_dialog.settings_changed.connect(
@@ -1353,7 +1354,8 @@ class NetworkSpeedWidget(QWidget):
 
             if not self.settings_dialog.isVisible():
                 # Also update the interface list when showing an existing dialog
-                self.settings_dialog.update_interface_list(self.get_unified_interface_list())
+                self.settings_dialog.update_interface_list(
+                    self.get_unified_interface_list(), self._primary_interface_for_picker())
                 self.settings_dialog.reset_with_config(
                     config=self.config.copy(),
                     is_startup_enabled=self.is_startup_enabled()
@@ -1362,7 +1364,8 @@ class NetworkSpeedWidget(QWidget):
             else:
                 self.logger.debug("Settings dialog already visible. Activating.")
                 # Also update the interface list when re-activating the dialog
-                self.settings_dialog.update_interface_list(self.get_unified_interface_list())
+                self.settings_dialog.update_interface_list(
+                    self.get_unified_interface_list(), self._primary_interface_for_picker())
                 self.settings_dialog.raise_()
                 self.settings_dialog.activateWindow()
 
@@ -1738,6 +1741,17 @@ class NetworkSpeedWidget(QWidget):
             self.logger.error(f"Error creating unified interface list: {e}", exc_info=True)
             return [] # Return an empty list on error
         
+
+    def _primary_interface_for_picker(self) -> Optional[str]:
+        """The routing interface, marked "Active connection" in the Settings picker. None if the
+        controller isn't up or there is no route."""
+        if not self.controller:
+            return None
+        try:
+            return self.controller.current_primary_interface()
+        except Exception as e:
+            self.logger.debug("Primary interface lookup for the picker failed: %s", e)
+            return None
 
     def get_active_interfaces(self) -> List[str]:
         """

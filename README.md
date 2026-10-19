@@ -68,7 +68,7 @@ The widget lives on your taskbar - at its simplest, just your up &amp; down spee
 
 <div align="center">
   <img src="screenshots/monitor_overview_2.0.png" alt="NetSpeedTray Monitor - Overview tab" width="860" />
-  <p><sub><b>Overview.</b> Live tiles + adaptive sparklines, a network hero with inline latency, a data-usage card, and top talkers - every card drills into detail.</sub></p>
+  <p><sub><b>Overview.</b> Live tiles + adaptive sparklines, a network hero with inline latency, a data-usage card, and the apps with the most connections - every card drills into detail.</sub></p>
 </div>
 
 <p align="center"><i>↓ Click to explore the rest ↓</i></p>
@@ -135,7 +135,7 @@ So I built NetSpeedTray: live up/down speeds, CPU and GPU utilization, temperatu
 
 Double-click the widget (or pick **Monitor** from the right-click menu) to open it. One window replaces the two older, separate Graph and App Activity windows. Three tabs share a single graph engine and timeline - and the Overview is intentionally chart-free, so a quick glance never loads the heavy plotting libraries.
 
-- **🏠 Overview - the at-a-glance control center.** Live tiles for network, CPU, GPU, RAM, and VRAM, each with a sparkline that adapts its scale so low-but-varying activity reads in detail. A network "hero" card shows download and upload as co-equal headline numbers with an inline latency read, a context strip across the top (session uptime, period totals, CPU + GPU power), a **Data usage** card, and a **Top talkers** list. Every card is clickable and drills into detail.
+- **🏠 Overview - the at-a-glance control center.** Live tiles for network, CPU, GPU, RAM, and VRAM, each with a sparkline that adapts its scale so low-but-varying activity reads in detail. A network "hero" card shows download and upload as co-equal headline numbers with an inline latency read, a context strip across the top (session uptime, period totals, CPU + GPU power), a **Data usage** card, and a **Most connections** list (apps ranked by live connections - Windows can't attribute bandwidth to an app without admin). Every card is clickable and drills into detail.
 
 - **🌐 Network - history + who's actually talking.** The history graph over a per-app **connection** list: how many live connections each program holds, how many are active, and the distinct remote hosts it's reaching. Honest by design - Windows can't attribute network bytes per app without a kernel driver, so nothing is dressed up as a per-app "speed." A per-NIC filter scopes both the graph and the totals.
 
@@ -232,7 +232,7 @@ You probably grabbed an unsigned dev build. The official releases ([Setup.exe / 
 - **LibreHardwareMonitor auto-detection** - if LHM/OHM is running as admin, it's picked up automatically for temps/power across all vendors
 
 ### The Monitor
-- **Overview** - at-a-glance tiles + adaptive sparklines, a network hero card, a context strip, a Data-usage card, and Top talkers
+- **Overview** - at-a-glance tiles + adaptive sparklines, a network hero card, a context strip, a Data-usage card, and Most connections
 - **Network** - history graph + per-app connection list + per-NIC filter + detail panel
 - **Hardware** - combined CPU+GPU graph (modes/smoothing/axis) + per-process CPU/RAM/GPU% + telemetry band
 - **Statistics & export** - honest distributions (exact percentiles only where the data supports them), Copy/Export to CSV + JSON, and a headless `--export-csv` CLI
