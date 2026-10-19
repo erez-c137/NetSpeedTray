@@ -204,7 +204,15 @@ class DataConstants:
     )
 
     AGGREGATION_CUTOFF_DAYS: Final[int] = 2  # Days before data is aggregated
-    
+
+    # How long each finer tier holds rows before maintenance rolls them down (raw -> minute after 24 h,
+    # minute -> hour after 30 days). The history reader bounds each coarser tier by the earliest finer
+    # row INSIDE this horizon (+ slack for the hourly maintenance cadence and the bucket floor), so one
+    # row stamped far in the past by a clock set back cannot hide days of coarser history.
+    RAW_TIER_RETENTION_SECONDS: Final[int] = 24 * 3600
+    MINUTE_TIER_RETENTION_SECONDS: Final[int] = 30 * 86400
+    TIER_BOUNDARY_SLACK_SECONDS: Final[int] = 2 * 3600
+
     def __init__(self) -> None:
         self.legend_position = LegendPositionConstants()
         self.retention = DataRetentionConstants()
