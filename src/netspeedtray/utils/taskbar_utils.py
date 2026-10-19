@@ -972,3 +972,41 @@ def is_small_taskbar(taskbar_info: Optional[TaskbarInfo]) -> bool:
     if not taskbar_info:
         return False
     return 0 < taskbar_info.height <= constants.layout.SMALL_TASKBAR_HEIGHT_THRESHOLD
+
+def horizontal_taskbar_strip(taskbar_info: TaskbarInfo, edge: constants.TaskbarEdge,
+                             dpi_scale: float) -> Tuple[float, float]:
+    """The visible strip a TOP/BOTTOM taskbar occupies, as ``(top, height)`` in logical px.
+
+    One source of truth for the widget's size (``layout._horizontal_dock_height``), its position
+    (``PositionCalculator._calculate_horizontal_position``) and the drag constraint, so the three
+    can't disagree about where the strip is.
+
+    - Height: the work-area inset (``geometry()`` minus ``availableGeometry()``, #104/PR #110),
+      capped by the taskbar WINDOW's own height. The cap is new in #322: a third-party tool that
+      moves the taskbar, or a second appbar on the same edge, can reserve more work area than the
+      taskbar covers, and sizing to the inset then hung the widget off the bar. A widget can never
+      usefully be taller than the taskbar window, so the cap only ever tightens. When the work area
+      isn't inset at all (auto-hide, or the Win11 26200 quirk - #135/#221) the window height is used.
+    - Top: anchored to the STABLE screen edge, never ``taskbar_info.rect[1]``, which slides while an
+      auto-hide taskbar animates (#135). A docked bar always covers the edge-most ``height`` px.
+    """
+    screen = taskbar_info.get_screen()
+    full_geom = screen.geometry()
+    avail_geom = screen.availableGeometry()
+    if not isinstance(avail_geom, QRect):
+        avail_geom = full_geom
+    scale = dpi_scale if dpi_scale and dpi_scale > 0 else 1.0
+    window_h = (taskbar_info.rect[3] - taskbar_info.rect[1]) / scale
+
+    if edge == constants.TaskbarEdge.TOP:
+        inset = avail_geom.top() - full_geom.top()
+    else:
+        inset = full_geom.bottom() - avail_geom.bottom()
+
+    if inset > 0 and window_h > 0:
+        height = min(inset, window_h)
+    else:
+        height = inset if inset > 0 else window_h
+
+    top = full_geom.top() if edge == constants.TaskbarEdge.TOP else (full_geom.bottom() + 1) - height
+    return top, height

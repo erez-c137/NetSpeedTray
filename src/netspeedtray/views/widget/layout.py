@@ -8,7 +8,7 @@ from PyQt6.QtGui import QFont, QFontMetrics
 from PyQt6.QtWidgets import QWidget
 
 from netspeedtray import constants
-from netspeedtray.utils.taskbar_utils import is_small_taskbar, get_taskbar_info
+from netspeedtray.utils.taskbar_utils import is_small_taskbar, get_taskbar_info, horizontal_taskbar_strip
 from netspeedtray.utils.helpers import memory_label_width
 
 if TYPE_CHECKING:
@@ -435,22 +435,28 @@ class WidgetLayoutManager:
           trusts, and the same ``<= 0`` guard ``position_manager`` already uses to POSITION the
           widget. This only brings the sizing into line with the positioning already happening.
         - Part B (floor): the renderer always stacks two rows (``draw_network_speeds``:
-          ``total_height = 2*line_height + 1``), so any docked height below that crops the glyphs.
-          Floor to the two-row content (+1px for the ``int()`` rounding in ``top_y``) so text can
-          never crop, without the generous margin pad the free-float/side branches use.
-        """
-        screen = taskbar_info.get_screen()
-        full_geom = screen.geometry()
-        avail_geom = screen.availableGeometry()
+          ``total_height = 2*line_height + 1``), so a docked height below that crops the glyphs.
+          This used to floor the height to the two-row content. SUPERSEDED by #322 below; the
+          floor now applies only when there is no strip height at all.
 
-        if edge == constants.TaskbarEdge.BOTTOM:
-            visible_tb_height = full_geom.bottom() - avail_geom.bottom()
-        elif edge == constants.TaskbarEdge.TOP:
-            visible_tb_height = avail_geom.top() - full_geom.top()
+        #322 (a docked widget stays inside its taskbar strip): the strip comes from
+        ``horizontal_taskbar_strip`` - the work-area inset capped by the taskbar window's height, the
+        same value the position code centres in - and the widget is never taller than it. The floor
+        made it taller whenever the strip was shorter than two rows (a small bar plus a big font, or
+        a third-party bar), and the overflow - the mini graph, on a TOP bar - hung onto the desktop.
+        There is no single-row layout to fall back to: the renderer centres the same two rows in
+        whatever height it gets (as it already does on a small taskbar), so a too-short strip trims
+        the glyph edges evenly inside the bar instead of spilling past it.
+        """
+        if edge in (constants.TaskbarEdge.TOP, constants.TaskbarEdge.BOTTOM):
+            _, visible_tb_height = horizontal_taskbar_strip(taskbar_info, edge, dpi_scale)
         else:
             visible_tb_height = (taskbar_info.rect[3] - taskbar_info.rect[1]) / dpi_scale
 
         if visible_tb_height <= 0:                      # Part A (#221)
             visible_tb_height = taskbar_info.height
+        if visible_tb_height <= 0:
+            # No strip height at all (degenerate rect): Part B's two-row floor keeps it legible.
+            return self.metrics.height() * 2 + 2
 
-        return max(visible_tb_height, self.metrics.height() * 2 + 2)   # Part B (#221)
+        return visible_tb_height                        # never taller than the strip (#322)
