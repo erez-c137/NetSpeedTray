@@ -148,10 +148,14 @@ class NetworkSpeedWidget(QWidget):
         self.latency_anchor: Optional[float] = None  # public-anchor RTT ms (internet latency); opt-in
         # Live loss% (~2 min) per hop, and the HEADLINE loss: the anchor's when the public probe is on,
         # the gateway's otherwise (latency_probe.headline_hop) - the figure the Overview pill shows.
-        self.latency_loss: float = 0.0
-        self.latency_loss_gw: float = 0.0
-        self.latency_loss_anchor: float = 0.0
+        # Loss values are None until the hop's window holds constants.network.latency.LOSS_MIN_SAMPLES.
+        self.latency_loss: Optional[float] = None
+        self.latency_loss_gw: Optional[float] = None
+        self.latency_loss_anchor: Optional[float] = None
         self.latency_headline_hop: Optional[str] = None   # "anchor" / "gateway"; None before a sample
+        # Most recent successful RTT of the headline hop within its live window - the pill's ms, so one
+        # lost ping does not blank it (and the router's ms never stands in for the internet's).
+        self.latency_headline_ms: Optional[float] = None
         from netspeedtray.core.latency_probe import LatencyLossWindows
         self._latency_loss_windows = LatencyLossWindows()
         self.ram_used: Optional[float] = None
@@ -511,6 +515,7 @@ class NetworkSpeedWidget(QWidget):
         self.latency_headline_hop = headline_hop(sample.anchor_enabled)
         self.latency_loss = (self.latency_loss_anchor if self.latency_headline_hop == HOP_ANCHOR
                              else self.latency_loss_gw)
+        self.latency_headline_ms = windows.last_ms(self.latency_headline_hop)
         ws = getattr(self, "widget_state", None)
         if ws is not None:
             try:

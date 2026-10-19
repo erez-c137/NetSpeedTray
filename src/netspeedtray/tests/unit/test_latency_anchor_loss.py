@@ -18,6 +18,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from netspeedtray import constants
 from netspeedtray.core import latency_probe as LP
 
 
@@ -31,30 +32,39 @@ def q_app():
     return QApplication.instance() or QApplication([])
 
 
-def _one_cycle(monkeypatch, config, replies, gateway=GW_IP):
-    """Drive the REAL _run_loop for exactly one cycle. `replies` maps ip -> ms (None = timeout).
-    Returns (the emitted sample, the list of IPs actually pinged)."""
-    pinged = []
+def _cycles(monkeypatch, config, reply, n, gateway=GW_IP):
+    """Drive the REAL _run_loop for `n` cycles. `reply(ip, cycle)` -> ms or None (timeout).
+    Returns (the emitted samples, per-cycle lists of the IPs actually pinged)."""
+    pinged = [[]]
+    got = []
 
     def fake_ping(ip, timeout_ms=1000):
-        pinged.append(ip)
-        return replies.get(ip)
+        pinged[-1].append(ip)
+        return reply(ip, len(got))
 
     monkeypatch.setattr(LP, "default_gateway_ip", lambda: gateway)
     monkeypatch.setattr(LP, "icmp_ping_ms", fake_ping)
     monkeypatch.setattr(LP.time, "sleep", lambda s: None)
     p = LP.LatencyProbe(config)
-    got = []
 
     def on_ready(sample):
         got.append(sample)
-        p._running = False
+        if len(got) >= n:
+            p._running = False
+        else:
+            pinged.append([])
 
     p.latency_ready.connect(on_ready)
     p._running = True
     p._run_loop()
-    assert len(got) == 1
-    return got[0], pinged
+    assert len(got) == n
+    return got, pinged
+
+
+def _one_cycle(monkeypatch, config, replies, gateway=GW_IP):
+    """One cycle; `replies` maps ip -> ms (None = timeout)."""
+    got, pinged = _cycles(monkeypatch, config, lambda ip, c: replies.get(ip), 1, gateway)
+    return got[0], pinged[0]
 
 
 _PUBLIC_ON = {"latency_public_enabled": True, "latency_public_host": ANCHOR}
@@ -77,10 +87,41 @@ def test_probe_clean_anchor_is_not_a_timeout(monkeypatch):
 
 
 def test_gateway_timeout_skips_the_anchor_and_records_it_lost(monkeypatch):
-    s, pinged = _one_cycle(monkeypatch, _PUBLIC_ON, {GW_IP: None, ANCHOR: 14.0})
-    assert pinged == [GW_IP], "the anchor must not be probed when the gateway is down"
+    # The router answered on cycle 0, then drops: the link is down, the anchor is skipped + lost.
+    got, pinged = _cycles(monkeypatch, _PUBLIC_ON,
+                          lambda ip, c: 14.0 if ip == ANCHOR else (3.0 if c == 0 else None), 2)
+    assert pinged[1] == [GW_IP], "the anchor must not be probed when a responsive gateway goes down"
+    s = got[1]
     assert s.gw_timed_out is True
     assert s.anchor_skipped is True and s.anchor_timed_out is True and s.anchor_ms is None
+
+
+def test_silent_gateway_never_skips_the_anchor(monkeypatch):
+    """A gateway that never answers ICMP (firewalled CPE, some mesh systems, a full-tunnel VPN's
+    virtual gateway) must not pin internet loss at 100%: the anchor is probed normally every cycle."""
+    got, pinged = _cycles(monkeypatch, _PUBLIC_ON,
+                          lambda ip, c: (None if c in (2, 5) else 14.0) if ip == ANCHOR else None, 8)
+    assert all(p == [GW_IP, ANCHOR] for p in pinged), pinged
+    assert not any(s.anchor_skipped for s in got)
+    assert [s.anchor_ms for s in got] == [14.0, 14.0, None, 14.0, 14.0, None, 14.0, 14.0]
+
+    w = _fake_widget()
+    _feed(w, got)
+    assert [v for k, v in w.widget_state.stats if k == "latency_anchor"] == [14.0] * 6
+    assert w.latency_loss_anchor == 25.0, "anchor loss reflects only the anchor's own timeouts"
+
+
+def test_skip_stops_once_the_gateway_has_been_silent_a_whole_window(monkeypatch):
+    """The skip needs a RECENT gateway reply: a router that answered once and then went ICMP-silent
+    (a VPN came up) must not suppress the anchor forever."""
+    n = constants.network.latency.GATEWAY_REPLY_RECENT_CYCLES
+    total = n + 3
+    got, pinged = _cycles(monkeypatch, _PUBLIC_ON,
+                          lambda ip, c: 14.0 if ip == ANCHOR else (3.0 if c == 0 else None), total)
+    skipped = [s.anchor_skipped for s in got]
+    assert skipped[1:n + 1] == [True] * n            # within the window after the last reply: skipped
+    assert skipped[n + 1:] == [False] * (total - n - 1)
+    assert pinged[-1] == [GW_IP, ANCHOR] and got[-1].anchor_ms == 14.0
 
 
 def test_unknown_gateway_still_probes_the_anchor(monkeypatch):
@@ -122,8 +163,9 @@ class _RecWS:
 
 
 def _fake_widget():
-    return SimpleNamespace(latency_gw=None, latency_anchor=None, latency_loss=0.0,
-                           latency_loss_gw=0.0, latency_loss_anchor=0.0, latency_headline_hop=None,
+    return SimpleNamespace(latency_gw=None, latency_anchor=None, latency_loss=None,
+                           latency_loss_gw=None, latency_loss_anchor=None, latency_headline_hop=None,
+                           latency_headline_ms=None,
                            _latency_loss_windows=LP.LatencyLossWindows(),
                            widget_state=_RecWS())
 
@@ -143,24 +185,37 @@ def _s(gw_ms, anchor_ms, *, public=True, skipped=False):
 
 def test_two_live_windows_are_independent():
     w = _fake_widget()
-    # 4 cycles: the router answers every time, the anchor loses 2 of 4 (an ISP problem).
-    _feed(w, [_s(3.0, 14.0), _s(3.0, None), _s(3.0, None), _s(3.0, 15.0)])
+    # 5 cycles: the router answers every time, the anchor loses 2 of 5 (an ISP problem).
+    _feed(w, [_s(3.0, 14.0), _s(3.0, None), _s(3.0, None), _s(3.0, 15.0), _s(3.0, 16.0)])
     assert w.latency_loss_gw == 0.0
-    assert w.latency_loss_anchor == 50.0
-    assert w.latency_loss == 50.0, "with the public probe on, the headline loss is the internet's"
+    assert w.latency_loss_anchor == 40.0
+    assert w.latency_loss == 40.0, "with the public probe on, the headline loss is the internet's"
 
     # Then a Wi-Fi drop: gateway lost -> anchor skipped and counted lost too.
     _feed(w, [_s(None, None, skipped=True)])
-    assert w.latency_loss_gw == 20.0
-    assert w.latency_loss_anchor == 60.0
+    assert w.latency_loss_gw == pytest.approx(16.7)
+    assert w.latency_loss_anchor == 50.0
 
 
 def test_headline_loss_is_the_gateway_when_public_probe_is_off():
     w = _fake_widget()
-    _feed(w, [_s(3.0, None, public=False), _s(None, None, public=False)])
-    assert w.latency_loss_gw == 50.0
-    assert w.latency_loss_anchor == 0.0
-    assert w.latency_loss == 50.0
+    _feed(w, [_s(3.0, None, public=False)] * 3 + [_s(None, None, public=False)] * 2)
+    assert w.latency_loss_gw == 40.0
+    assert w.latency_loss_anchor is None
+    assert w.latency_loss == 40.0
+
+
+def test_no_loss_figure_until_a_window_has_enough_samples():
+    """Right after the public probe is switched on, one timeout must not read as 100% loss."""
+    need = constants.network.latency.LOSS_MIN_SAMPLES
+    w = _fake_widget()
+    _feed(w, [_s(3.0, 14.0, public=False)] * 10)
+    _feed(w, [_s(3.0, None)])                                    # public just turned on, first ping lost
+    assert w.latency_loss_anchor is None and w.latency_loss is None
+    _feed(w, [_s(3.0, 14.0)] * (need - 2))
+    assert w.latency_loss_anchor is None
+    _feed(w, [_s(3.0, 14.0)])
+    assert w.latency_loss_anchor == pytest.approx(100.0 / need, abs=0.1)
 
 
 def test_anchor_timeouts_are_persisted_as_their_own_series():
@@ -190,24 +245,40 @@ def _pill(q_app, w):
 
 def test_pill_shows_internet_loss_behind_a_healthy_router(q_app):
     w = _fake_widget()
-    _feed(w, [_s(3.0, 14.0), _s(3.0, None), _s(3.0, None), _s(3.0, 15.0)])
+    _feed(w, [_s(3.0, 14.0), _s(3.0, None), _s(3.0, None), _s(3.0, 15.0), _s(3.0, 16.0)])
     html = _pill(q_app, w)
-    assert "50% loss" in html, html     # was "0% loss" (router-only) before D1
+    assert "40% loss" in html, html     # was "0% loss" (router-only) before D1
     assert "Slow" in html
 
 
 def test_pill_never_shows_router_ms_as_internet_ms(q_app):
-    """Public probe on, anchor just timed out: the pill must not fall back to the router's 3 ms."""
+    """Public probe on and the anchor has not answered yet: no router 3 ms under "Internet"."""
     w = _fake_widget()
-    _feed(w, [_s(3.0, 14.0), _s(3.0, None)])
+    _feed(w, [_s(3.0, None)] * 5)
     html = _pill(q_app, w)
     assert "3 ms" not in html and "Slow" in html, html
 
 
+def test_pill_does_not_flicker_on_one_lost_anchor_ping(q_app):
+    """One lost ping in a healthy window keeps the last good internet RTT; it is not a red 'Slow'."""
+    w = _fake_widget()
+    _feed(w, [_s(3.0, 14.0)] * 39 + [_s(3.0, None)])
+    html = _pill(q_app, w)
+    assert "14 ms" in html and "Slow" not in html, html
+    assert "3 ms" not in html
+
+
+def test_pill_shows_no_loss_until_the_window_has_enough_samples(q_app):
+    w = _fake_widget()
+    _feed(w, [_s(3.0, 14.0, public=False)] * 10 + [_s(3.0, None)])
+    html = _pill(q_app, w)
+    assert "loss" not in html and "100%" not in html, html
+
+
 def test_pill_shows_router_loss_when_public_probe_is_off(q_app):
     w = _fake_widget()
-    _feed(w, [_s(3.0, None, public=False)] * 3 + [_s(None, None, public=False)])
-    assert "25% loss" in _pill(q_app, w)
+    _feed(w, [_s(3.0, None, public=False)] * 4 + [_s(None, None, public=False)])
+    assert "20% loss" in _pill(q_app, w)
 
 
 # --- the exporter ------------------------------------------------------------------------------------

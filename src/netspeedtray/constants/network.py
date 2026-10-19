@@ -114,6 +114,14 @@ class LatencyConstants:
     """The latency probe's live loss windows and persisted loss series."""
     # Cycles kept in each hop's live loss window (~2 min at the probe's 3 s cadence).
     LIVE_LOSS_WINDOW: Final[int] = 40
+    # A hop's live loss % is shown only once its window holds this many cycles (~15 s); before that
+    # one timeout right after the public probe is switched on would read as 100% loss.
+    LOSS_MIN_SAMPLES: Final[int] = 5
+    # The skip-and-record-lost rule (gateway timed out -> anchor not probed, counted lost) applies only
+    # while the gateway has answered within this many cycles - one live window. A gateway that never
+    # answers ICMP (firewalled CPE, some mesh systems, a full-tunnel VPN's virtual gateway) or has been
+    # silent a whole window tells us nothing about the link, so the anchor is probed normally.
+    GATEWAY_REPLY_RECENT_CYCLES: Final[int] = LIVE_LOSS_WINDOW
     # Persisted per-cycle loss series (0/1 per probe; the rollups average them into a 0-1 rate).
     STAT_GW_TIMEOUT: Final[str] = "latency_gw_timeout"
     STAT_ANCHOR_TIMEOUT: Final[str] = "latency_anchor_timeout"

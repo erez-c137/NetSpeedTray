@@ -15,7 +15,9 @@ by every reader that explains a loss (the on-demand connection check, 2.2 D3):
   * loss at the gateway  = your Wi-Fi / LAN;
   * loss on the anchor with a clean gateway = beyond your router (ISP or path);
   * a gateway timeout means the anchor cannot be reached either, so that cycle's anchor probe is
-    SKIPPED and recorded as lost. Anchor loss >= gateway loss by construction.
+    SKIPPED and recorded as lost. Anchor loss >= gateway loss by construction - but only while the
+    gateway has answered within the last GATEWAY_REPLY_RECENT_CYCLES cycles. A gateway that never
+    answers ICMP proves nothing about the link, so the anchor is then probed (and attributed) normally.
 """
 from __future__ import annotations
 
@@ -26,7 +28,7 @@ import time
 from collections import deque
 from ctypes import wintypes
 from dataclasses import dataclass
-from typing import Any, Deque, Dict, Optional
+from typing import Any, Deque, Dict, Optional, Tuple
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
@@ -78,32 +80,47 @@ def attribute_loss(gw_loss_pct: float, anchor_loss_pct: Optional[float]) -> str:
 
 
 class LatencyLossWindows:
-    """The live (~2 min) loss window per hop. Independent deques: the gateway window takes every cycle,
-    the anchor window only cycles where the anchor was part of the probe (and is reset when the user
-    turns the public probe off, so a re-enable starts clean instead of reviving stale flags)."""
+    """The live (~2 min) window per hop: (timed_out, rtt_ms) per cycle. Independent deques: the gateway
+    window takes every cycle, the anchor window only cycles where the anchor was part of the probe (and
+    is reset when the user turns the public probe off, so a re-enable starts clean instead of reviving
+    stale flags). Loss % is None until a window holds LOSS_MIN_SAMPLES cycles."""
 
-    def __init__(self, maxlen: int = constants.network.latency.LIVE_LOSS_WINDOW) -> None:
-        self.gw: Deque[bool] = deque(maxlen=maxlen)
-        self.anchor: Deque[bool] = deque(maxlen=maxlen)
+    def __init__(self, maxlen: int = constants.network.latency.LIVE_LOSS_WINDOW,
+                 min_samples: int = constants.network.latency.LOSS_MIN_SAMPLES) -> None:
+        self.gw: Deque[Tuple[bool, Optional[float]]] = deque(maxlen=maxlen)
+        self.anchor: Deque[Tuple[bool, Optional[float]]] = deque(maxlen=maxlen)
+        self._min = max(1, int(min_samples))
 
     def add(self, sample: LatencySample) -> None:
-        self.gw.append(bool(sample.gw_timed_out))
+        self.gw.append((bool(sample.gw_timed_out), sample.gw_ms))
         if sample.anchor_enabled:
-            self.anchor.append(bool(sample.anchor_timed_out))
+            self.anchor.append((bool(sample.anchor_timed_out), sample.anchor_ms))
         else:
             self.anchor.clear()
 
+    def _pct(self, window) -> Optional[float]:
+        if len(window) < self._min:
+            return None
+        return round(sum(1 for lost, _ in window if lost) / len(window) * 100.0, 1)
+
     @staticmethod
-    def _pct(window: Deque[bool]) -> float:
-        return round(sum(window) / len(window) * 100.0, 1) if window else 0.0
+    def _last_ms(window) -> Optional[float]:
+        for _, ms in reversed(window):
+            if ms is not None:
+                return ms
+        return None
 
     @property
-    def gw_loss(self) -> float:
+    def gw_loss(self) -> Optional[float]:
         return self._pct(self.gw)
 
     @property
-    def anchor_loss(self) -> float:
+    def anchor_loss(self) -> Optional[float]:
         return self._pct(self.anchor)
+
+    def last_ms(self, hop: str) -> Optional[float]:
+        """The most recent successful RTT of `hop` still inside its live window (None if none)."""
+        return self._last_ms(self.anchor if hop == HOP_ANCHOR else self.gw)
 
 
 # --- Windows ICMP helper (no admin, no subprocess) -------------------------------------------------
@@ -196,6 +213,8 @@ class LatencyProbe(QThread):
         self._running = True
         self._gateway: Optional[str] = None
         self._gateway_ts = 0.0
+        # Cycles since the gateway last answered; None = it has not answered (since it last changed).
+        self._gw_cycles_since_reply: Optional[int] = None
 
     def stop(self) -> None:
         self._running = False
@@ -203,7 +222,10 @@ class LatencyProbe(QThread):
     def _gateway_ip(self) -> Optional[str]:
         now = time.monotonic()
         if self._gateway is None or (now - self._gateway_ts) > self._GATEWAY_REFRESH_SEC:
-            self._gateway = default_gateway_ip()
+            gw = default_gateway_ip()
+            if gw != self._gateway:
+                self._gw_cycles_since_reply = None   # a new router has proven nothing yet
+            self._gateway = gw
             self._gateway_ts = now
         return self._gateway
 
@@ -232,15 +254,23 @@ class LatencyProbe(QThread):
                 gw_ip = self._gateway_ip()
                 gw = icmp_ping_ms(gw_ip, self._TIMEOUT_MS) if gw_ip else None
                 gw_timed_out = bool(gw_ip) and gw is None
+                if gw is not None:
+                    self._gw_cycles_since_reply = 0
+                elif self._gw_cycles_since_reply is not None:
+                    self._gw_cycles_since_reply += 1
+                gw_recently_answered = (
+                    self._gw_cycles_since_reply is not None
+                    and self._gw_cycles_since_reply <= constants.network.latency.GATEWAY_REPLY_RECENT_CYCLES)
 
                 anchor = None
                 anchor_enabled = bool(self._config.get("latency_public_enabled", False))
                 anchor_skipped = False
                 if anchor_enabled:
-                    if gw_timed_out:
+                    if gw_timed_out and gw_recently_answered:
                         # The link is down at the first hop: the anchor cannot answer either. Skip it
                         # (probing on only stretches the cycle) and record it lost - the attribution
-                        # rule, so anchor loss >= gateway loss.
+                        # rule, so anchor loss >= gateway loss. Only for a gateway that has been
+                        # answering: an ICMP-silent one says nothing about the link.
                         anchor_skipped = True
                     else:
                         host = str(self._config.get("latency_public_host", "1.1.1.1") or "1.1.1.1")
