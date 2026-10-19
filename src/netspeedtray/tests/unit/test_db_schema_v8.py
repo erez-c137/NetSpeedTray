@@ -111,7 +111,7 @@ def test_creates_exactly_the_expected_tables_and_views(tmp_path):
     tables = {r[0] for r in conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")}
     views = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='view'")}
-    assert tables == set(S.EXPECTED_TABLES[8])
+    assert tables == set(S.EXPECTED_TABLES_V8)
     assert views == set(S.COMPAT_VIEWS_V8)
     # The views carry the v7 history-table names, so a 2.1.x reader finds every name it queries.
     assert set(S.COMPAT_VIEWS_V8) == {
@@ -122,19 +122,17 @@ def test_creates_exactly_the_expected_tables_and_views(tmp_path):
     assert D.BANDWIDTH_TABLE not in tables  # never written to; not carried into v8
 
 
-def test_expected_tables_v7_matches_what_the_v7_builder_creates(tmp_path):
+def test_the_worker_registry_holds_this_v8_set_not_a_copy():
+    """One home for the per-version table sets: DatabaseWorker.EXPECTED_TABLES (step 0). Its v8
+    entry must BE this module's tuple, so the two can never drift. (The v7 entry is pinned to a
+    fresh v7 build by test_v7_hardening.)"""
     from netspeedtray.core.database import DatabaseWorker
-    w = DatabaseWorker(tmp_path / "v7.db")
-    w._initialize_connection()
-    w._check_and_create_schema()
-    tables = {r[0] for r in w.conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")}
-    w._close_connection()
-    assert tables == set(S.EXPECTED_TABLES[7])
+    assert DatabaseWorker.EXPECTED_TABLES[8] is S.EXPECTED_TABLES_V8
+    assert len(set(S.EXPECTED_TABLES_V8)) == len(S.EXPECTED_TABLES_V8)
 
 
 def test_history_tables_v8_are_tables_and_keep_odometer_and_metadata(tmp_path):
-    assert set(S.HISTORY_TABLES_V8) <= set(S.EXPECTED_TABLES[8])
+    assert set(S.HISTORY_TABLES_V8) <= set(S.EXPECTED_TABLES_V8)
     assert "metadata" not in S.HISTORY_TABLES_V8
     assert D.USAGE_COUNTER_TABLE not in S.HISTORY_TABLES_V8
     # Adapter friendly names are history too (privacy.md treats them as identifying).
@@ -146,7 +144,7 @@ WITHOUT_ROWID = {S.NET_RAW, S.NET_MINUTE, S.NET_HOUR, S.HW_RAW, S.HW_MINUTE, S.H
 
 def test_every_history_table_is_without_rowid_as_designed(tmp_path):
     conn = _fresh(tmp_path)
-    for t in S.EXPECTED_TABLES[8]:
+    for t in S.EXPECTED_TABLES_V8:
         with_rowid = True
         try:
             conn.execute(f"SELECT rowid FROM {t} LIMIT 0")

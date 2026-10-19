@@ -1,5 +1,6 @@
 """
-The v8 database schema - DORMANT. Nothing in the app calls this module yet; ``_DB_VERSION`` in
+The v8 database schema - DORMANT. Nothing in the app calls this module yet (``core/database.py``
+imports only ``EXPECTED_TABLES_V8`` for its per-version registry); ``_DB_VERSION`` in
 ``core/database.py`` stays 7 until the switch-over (implementation step 7).
 
 Design authority: ``Docs/reference/database-v8-final.md``. In short:
@@ -31,7 +32,7 @@ the bar is "3.8.2-era features only", far below what the app itself ships.
 """
 
 import sqlite3
-from typing import Dict, FrozenSet, Tuple
+from typing import Tuple
 
 from netspeedtray import constants
 
@@ -61,20 +62,15 @@ FLAG_GAP = 2             # interval longer than the poll rate (missed polls, sle
 FLAG_RESUMED = 4         # the system resumed from sleep inside the interval
 FLAG_FIRST_SAMPLE = 8    # first sample of a session; its delta is not trustworthy
 
-# Tables each schema version must contain (minimum set; a v7 file migrated from v1 may also hold the
-# legacy speed_history / speed_history_aggregated tables). Used to verify a backup or a migration
-# against the version it CLAIMS, never against the live source's table list.
-EXPECTED_TABLES: Dict[int, FrozenSet[str]] = {
-    7: frozenset({
-        METADATA, _D.SPEED_TABLE_RAW, _D.SPEED_TABLE_MINUTE, _D.SPEED_TABLE_HOUR, _D.BANDWIDTH_TABLE,
-        _D.USAGE_COUNTER_TABLE, _D.HARDWARE_STATS_TABLE_RAW, _D.HARDWARE_STATS_TABLE_MINUTE,
-        _D.HARDWARE_STATS_TABLE_HOUR,
-    }),
-    8: frozenset({
-        METADATA, _D.USAGE_COUNTER_TABLE, INTERFACES, METRICS, NET_RAW, NET_MINUTE, NET_HOUR,
-        HW_RAW, HW_MINUTE, HW_HOUR, APP_SESSIONS, LINK_EVENTS,
-    }),
-}
+# The tables a v8 file is DEFINED to have. The per-version registry is
+# DatabaseWorker.EXPECTED_TABLES in core/database.py (used by _verify_backup); its v8 entry is this
+# tuple, imported from here. The dependency runs database.py -> schema_v8 only: this module stays
+# free of Qt and of database.py, so it never forms an import cycle when the worker starts calling
+# create_v8_schema (step 7).
+EXPECTED_TABLES_V8: Tuple[str, ...] = (
+    METADATA, _D.USAGE_COUNTER_TABLE, INTERFACES, METRICS, NET_RAW, NET_MINUTE, NET_HOUR,
+    HW_RAW, HW_MINUTE, HW_HOUR, APP_SESSIONS, LINK_EVENTS,
+)
 
 # The v7-named read-only views a rolled-back 2.1.x build reads through.
 COMPAT_VIEWS_V8: Tuple[str, ...] = (
