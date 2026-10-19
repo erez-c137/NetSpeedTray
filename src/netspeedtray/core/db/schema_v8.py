@@ -12,7 +12,8 @@ Design authority: ``Docs/reference/database-v8-final.md``. In short:
   history carries over untouched, plus ``up_bytes`` / ``down_bytes`` / ``covered_ms`` which are
   **NULL for every pre-v8 row** - converting v7 rates to bytes would bake in a measured x1.53
   over-count, and backfilling coverage would invent data.
-* Tiers are query-precedence layers, never additive: each sub-range is answered by exactly one tier.
+* Tiers are query-precedence layers, never additive: each sub-range is answered by exactly one tier,
+  and the tier boundaries are WATERMARKS in ``metadata`` (``WATERMARK_KEYS`` below), not MIN(ts).
 * ``usage_counter`` and ``metadata`` are byte-for-byte the v7 tables. ``bandwidth_history`` (never
   written to) is not carried over. The throughput histogram / ``ms_above`` tables were cut from 2.2.
 
@@ -75,6 +76,28 @@ WATERMARK_MINUTE_KEY = "tier_watermark_minute"      # network: minute -> hour
 HW_WATERMARK_RAW_KEY = "hw_tier_watermark_raw"      # hardware: raw -> minute
 HW_WATERMARK_MINUTE_KEY = "hw_tier_watermark_minute"  # hardware: minute -> hour
 WATERMARK_KEYS = (WATERMARK_RAW_KEY, WATERMARK_MINUTE_KEY, HW_WATERMARK_RAW_KEY, HW_WATERMARK_MINUTE_KEY)
+
+# The rest of the contract, as the reader (core/db/history_reader.V8HistoryReader) applies it.
+# Per family, W_r = its raw watermark and W_m = its minute watermark:
+#
+# * Ranges: raw answers [W_r, inf), minute [W_m, W_r), hour (-inf, min(W_r, W_m)). On overlap the
+#   coarser tier wins: a finer row below its watermark (left behind, or stamped there by a clock set
+#   back after the pass) is ignored until the next pass rolls it up; a coarser row at/above the finer
+#   watermark (a copy) is ignored.
+# * Value: a base-10 integer string and nothing else ('1760000000'). The reader treats a value that is
+#   not all digits, is <= 0, or more than WATERMARK_MAX_LEAD_SECONDS past its clock as ABSENT - a
+#   watermark from a clock that ran ahead would declare every live raw row "already rolled up" and
+#   blank the graph until the clock caught up. The lead exists because the migrator stamps the raw
+#   watermark at the END of the newest minute bucket (the one the migration ran in), clamped at
+#   now + the migrator's FUTURE_SLACK_SECONDS, then floored to a minute and +60: at most now + 360 s.
+# * Atomicity: INSERT the coarser rows, DELETE (or keep) the finer ones, set the watermark, COMMIT - one
+#   transaction, so a reader that sees the new rows sees the new watermark and vice versa.
+# * The value is the cutoff of the LATEST pass, not a running max: it may move backwards (clock set
+#   back) and is still a true statement.
+# * Absent = no claim. The reader then falls back, for that boundary only, to the step-2 rule: the
+#   finer tier's MIN(ts) inside its retention horizon (+ slack). The migrator writes all four in its
+#   migration transaction; maintenance writes a family's pair in the same transaction as each roll-up.
+WATERMARK_MAX_LEAD_SECONDS = 360   # >= the migrator's FUTURE_SLACK_SECONDS + 60 (pinned by a test)
 
 # The tables a v8 file is DEFINED to have. The per-version registry is
 # DatabaseWorker.EXPECTED_TABLES in core/database.py (used by _verify_backup); its v8 entry is this
