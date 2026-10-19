@@ -76,8 +76,9 @@ class WidgetState(QObject):
     # finished construction and connected (main.py wires the flyout there) - so the
     # notification cannot be emitted before anyone is listening.
     db_schema_incompatible = pyqtSignal(int, int, str)
-    # Re-emitted from DatabaseWorker.history_deleted (True = deleted), queued onto the GUI thread.
-    history_deleted = pyqtSignal(bool)
+    # Re-emitted from DatabaseWorker.history_deleted (a DatabaseWorker.DELETE_* status), queued onto
+    # the GUI thread.
+    history_deleted = pyqtSignal(str)
 
     def __init__(self, config: Dict[str, Any], read_only: bool = False) -> None:
         super().__init__()
@@ -401,6 +402,13 @@ class WidgetState(QObject):
                 self.db_worker.enqueue_task("persist_speed", db_batch)
             if hw_batch:
                 self.db_worker.enqueue_task("persist_hardware", hw_batch)
+
+    def can_delete_history(self) -> bool:
+        """Whether a delete request would be answered: a live (not read-only) instance whose write
+        thread is running and accepting writes. Checked up front so Settings never waits forever."""
+        w = self.db_worker
+        return (not self._read_only and w.isRunning()
+                and not getattr(w, "_schema_incompatible", False))
 
     def delete_all_history(self, include_usage: bool = False) -> None:
         """

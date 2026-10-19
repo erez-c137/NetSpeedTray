@@ -96,7 +96,7 @@ def test_delete_history_emits_completion(tmp_path):
     got = []
     w.history_deleted.connect(got.append)   # same thread -> direct delivery
     w._execute_task("delete_history", {"include_usage": False})
-    assert got == [True]
+    assert got == [DatabaseWorker.DELETE_DONE]
 
 
 def test_next_samples_are_written_after_delete(tmp_path):
@@ -117,6 +117,141 @@ def test_delete_history_refused_on_a_newer_schema(tmp_path):
     w._execute_task("delete_history", {"include_usage": True})
     assert _count(w.conn, D.SPEED_TABLE_RAW) > 0
     assert _count(w.conn, D.USAGE_COUNTER_TABLE) == 1
+
+
+# --- Honest completion: the bytes must actually leave the files -----------------------------------
+
+MARKER = "SECRETNIC7f3a"
+
+
+def _seed_marker(w: DatabaseWorker, n: int = 3000) -> None:
+    w.conn.executemany(f"INSERT INTO {D.SPEED_TABLE_RAW} VALUES (?, '{MARKER}', 1, 2)",
+                       [(1_700_000_000 + i,) for i in range(n)])
+    w.conn.commit()
+    w.conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")   # the marker now lives in the .db file
+
+
+def _marker_on_disk(tmp_path: Path) -> bool:
+    found = False
+    for name in ("speed_history.db", "speed_history.db-wal"):
+        f = tmp_path / name
+        if f.exists() and MARKER.encode() in f.read_bytes():
+            found = True
+    return found
+
+
+@pytest.fixture
+def no_retry_sleep(monkeypatch):
+    monkeypatch.setattr(constants.timeouts, "DB_CHECKPOINT_RETRY_SLEEP", 0.0)
+
+
+def test_clean_delete_leaves_no_trace_in_db_or_wal(tmp_path, no_retry_sleep):
+    w = _fresh_worker(tmp_path)
+    _seed_marker(w)
+    assert _marker_on_disk(tmp_path)
+    got = []
+    w.history_deleted.connect(got.append)
+    w._execute_task("delete_history", {"include_usage": False})
+    assert got == [DatabaseWorker.DELETE_DONE]
+    assert not _marker_on_disk(tmp_path)
+
+
+def test_busy_checkpoint_is_reported_pending_then_compacted_when_idle(tmp_path, no_retry_sleep, caplog):
+    """A reader mid-query (the Monitor's graph worker) makes wal_checkpoint(TRUNCATE) return busy -
+    the old pages then still sit in the .db / -wal. That must not be reported as done."""
+    w = _fresh_worker(tmp_path)
+    _seed_marker(w)
+    reader = sqlite3.connect(tmp_path / "speed_history.db")
+    cur = reader.execute(f"SELECT * FROM {D.SPEED_TABLE_RAW}")
+    cur.fetchone()                                   # read transaction held open
+    got = []
+    w.history_deleted.connect(got.append)
+    with caplog.at_level("WARNING"):
+        w._execute_task("delete_history", {"include_usage": False})
+    assert got == [DatabaseWorker.DELETE_COMPACT_PENDING]
+    assert any(r.levelname == "WARNING" for r in caplog.records)
+    assert _count(w.conn, D.SPEED_TABLE_RAW) == 0     # the rows are deleted either way
+    assert w._compact_pending
+    # The short checkpoint busy_timeout must not leak into normal writes.
+    assert w.conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
+
+    cur.close()
+    reader.close()
+    w._retry_pending_compaction(force=True)          # what the idle tick does
+    assert not w._compact_pending
+    assert not _marker_on_disk(tmp_path)
+
+
+class _VacuumFails:
+    """Connection proxy whose VACUUM raises (sqlite3.Connection attributes are read-only)."""
+    def __init__(self, conn):
+        self._c = conn
+
+    def execute(self, sql, *a):
+        if sql.strip().upper().startswith("VACUUM"):
+            raise sqlite3.OperationalError("database is locked")
+        return self._c.execute(sql, *a)
+
+    def __getattr__(self, name):
+        return getattr(self._c, name)
+
+
+def test_failed_vacuum_is_not_full_success(tmp_path, no_retry_sleep, caplog):
+    w = _fresh_worker(tmp_path)
+    _seed_marker(w)
+    real = w.conn
+    w.conn = _VacuumFails(real)
+    got = []
+    w.history_deleted.connect(got.append)
+    with caplog.at_level("WARNING"):
+        w._execute_task("delete_history", {"include_usage": False})
+    assert got == [DatabaseWorker.DELETE_COMPACT_PENDING]
+    assert any("VACUUM" in r.getMessage() and r.levelname == "WARNING" for r in caplog.records)
+    assert w._compact_pending
+
+    w.conn = real
+    w._retry_pending_compaction(force=True)
+    assert not w._compact_pending
+    assert w.conn.execute("PRAGMA freelist_count").fetchone()[0] == 0
+    assert not _marker_on_disk(tmp_path)
+
+
+def test_pending_compaction_survives_a_quit(tmp_path, no_retry_sleep):
+    """Quit before the idle retry lands -> the next start finishes the job. (A busy checkpoint alone
+    heals on a clean quit - the last connection's close checkpoints the WAL - but a failed VACUUM
+    leaves the deleted rows on the freelist, readable in the file, across restarts.)"""
+    w = _fresh_worker(tmp_path)
+    _seed_marker(w)
+    real = w.conn
+    w.conn = _VacuumFails(real)
+    w._execute_task("delete_history", {"include_usage": False})
+    assert w._compact_pending
+    real.close()                                     # the app quits
+    assert _marker_on_disk(tmp_path)                 # the old rows are still in the file
+
+    w2 = _fresh_worker(tmp_path)                     # next start
+    w2._resume_pending_compaction()
+    assert not w2._compact_pending
+    assert w2.conn.execute("SELECT 1 FROM metadata WHERE key=?",
+                           (DatabaseWorker._COMPACT_MARKER_KEY,)).fetchone() is None
+    assert not _marker_on_disk(tmp_path)
+
+
+def test_idle_retry_is_throttled(tmp_path, no_retry_sleep):
+    w = _fresh_worker(tmp_path)
+    w._compact_pending = True
+    w._vacuum_pending = False
+    w._last_compact_attempt = time.monotonic()        # just tried
+    w._retry_pending_compaction()                     # not forced -> waits for the interval
+    assert w._compact_pending
+    w._retry_pending_compaction(force=True)
+    assert not w._compact_pending
+
+
+def test_widget_state_can_delete_history_reflects_worker_state(sync_state):
+    # The worker thread isn't started in this fixture - Delete must say so up front instead of
+    # leaving the button disabled forever waiting for an answer that never comes.
+    assert sync_state.can_delete_history() is False
 
 
 # --- WidgetState (synchronous: worker thread not started) ---------------------------------------

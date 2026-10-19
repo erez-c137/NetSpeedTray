@@ -7,7 +7,7 @@ flag (also read by the Monitor window's hold-still logic), and reset affordances
 """
 from typing import Dict, Any, Callable, Optional
 
-from PyQt6.QtWidgets import QWidget, QHBoxLayout, QLabel, QPushButton
+from PyQt6.QtWidgets import QWidget, QHBoxLayout, QLabel, QPushButton, QGraphicsOpacityEffect
 
 from netspeedtray import constants
 from netspeedtray.utils.components import Win11Toggle, SettingCard, Win11ComboBox
@@ -51,9 +51,10 @@ class AdvancedPage(QWidget):
         # Hardware page's monitoring switches - this toggle can only narrow it, never widen it.
         self.record_hardware = Win11Toggle(label_text="")
         self.record_hardware.toggled.connect(self.on_change)
-        layout.addWidget(SettingCard(self.i18n.RECORD_HARDWARE_HISTORY_LABEL,
-                                     description=self.i18n.RECORD_HARDWARE_HISTORY_SUB,
-                                     control=self.record_hardware))
+        self._record_card = SettingCard(self.i18n.RECORD_HARDWARE_HISTORY_LABEL,
+                                        description=self.i18n.RECORD_HARDWARE_HISTORY_SUB,
+                                        control=self.record_hardware)
+        layout.addWidget(self._record_card)
 
         # An action, not a setting: runs right after its own confirmation (the dialog's Cancel does
         # not undo it), so it is not part of load/get_settings.
@@ -113,6 +114,19 @@ class AdvancedPage(QWidget):
 
         layout.addStretch()
 
+    def set_hardware_monitoring_active(self, active: bool) -> None:
+        """Grey the Record-hardware-history card out while neither CPU nor GPU is monitored (it would
+        show On while recording nothing). The user's choice is kept - only shown as unavailable, the
+        same Win11 dependent-control look the Hardware page uses."""
+        self._record_card.setEnabled(active)
+        eff = self._record_card.graphicsEffect()
+        if not isinstance(eff, QGraphicsOpacityEffect):
+            eff = QGraphicsOpacityEffect(self._record_card)
+            self._record_card.setGraphicsEffect(eff)
+        eff.setOpacity(1.0 if active else 0.4)
+        self._record_card.set_description(self.i18n.RECORD_HARDWARE_HISTORY_SUB if active
+                                          else self.i18n.RECORD_HARDWARE_HISTORY_INACTIVE_SUB)
+
     def _retention_label(self, days: int) -> str:
         return helpers.format_retention_label(days, self.i18n)
 
@@ -125,6 +139,8 @@ class AdvancedPage(QWidget):
                       key=lambda i: abs(int(self.keep_data.itemData(i)) - days))
         self.keep_data.setCurrentIndex(idx)
         self.record_hardware.setChecked(bool(config.get("record_hardware_history", True)))
+        self.set_hardware_monitoring_active(bool(config.get("monitor_cpu_enabled", False))
+                                            or bool(config.get("monitor_gpu_enabled", False)))
         self.reduce_motion.setChecked(bool(config.get("reduce_motion", False)))
         self.keep_windows_on_top.setChecked(bool(config.get("keep_windows_on_top", False)))
         self.show_usage_hover.setChecked(bool(config.get("show_usage_on_hover", True)))

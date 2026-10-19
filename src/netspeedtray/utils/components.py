@@ -677,6 +677,12 @@ class SettingCard(QFrame):
     def control(self) -> Optional[QWidget]:
         return self._control
 
+    def set_description(self, text: str) -> None:
+        """Swap the muted description (only for a card built with one)."""
+        label = getattr(self, "_desc_label", None)
+        if label is not None:
+            label.setText(text)
+
 
 class SettingExpander(QWidget):
     """

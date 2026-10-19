@@ -319,8 +319,11 @@ reclaim. Rolling data up deletes rows, and deleted rows leave free pages behind;
 VACUUM the file keeps its high-water mark forever.
 
 **Settings → Advanced → Delete all history** empties every history table (all speed and hardware
-tiers, latency included) and then runs `VACUUM` straight away, so the deleted rows are gone from the
-file rather than left in free pages. `metadata` is kept, and so is `usage_counter` unless you tick
+tiers, latency included), then runs `VACUUM` and a `wal_checkpoint(TRUNCATE)` straight away, so the
+deleted rows are gone from both `speed_history.db` and `speed_history.db-wal` rather than left in free
+pages. If a reader is mid-query (the Monitor's graphs) the checkpoint reports busy; the app then says
+the file is still being cleaned up and retries every few seconds while idle until it completes.
+`metadata` is kept, and so is `usage_counter` unless you tick
 "Also reset this period's data usage" in the confirmation. Recording carries on into the emptied
 tables.
 

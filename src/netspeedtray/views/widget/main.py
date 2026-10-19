@@ -982,6 +982,12 @@ class NetworkSpeedWidget(QWidget):
     # Cache window for the (today, this-month) DB totals so rapid hovers don't hammer the DB.
     _HOVER_USAGE_TTL_SEC = 30.0
 
+    def invalidate_usage_cache(self) -> None:
+        """Drop the hover card's cached today/this-month totals so the next hover re-reads them
+        (after Delete all history - otherwise it shows deleted usage for up to the TTL)."""
+        self._hover_usage_cache = None
+        self._hover_usage_cache_ts = 0.0
+
     def enterEvent(self, event) -> None:
         """On hover, arm the usage card (shown after a short rest, positioned above the taskbar).
         Skipped entirely when the user has turned the hover card off in Settings."""

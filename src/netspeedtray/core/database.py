@@ -36,9 +36,17 @@ class DatabaseWorker(QThread):
     # view surfaces it as a flyout - a log line alone leaves a rolled-back install
     # looking perfectly healthy while recording nothing, forever.
     schema_incompatible = pyqtSignal(int, int, str)
-    # Result of a user-requested "Delete all history" (True = deleted). Emitted from this thread;
-    # WidgetState re-emits it so the Settings dialog hears it on the GUI thread.
-    history_deleted = pyqtSignal(bool)
+    # Result of a user-requested "Delete all history" - one of the DELETE_* statuses below. Emitted
+    # from this thread; WidgetState re-emits it so the Settings dialog hears it on the GUI thread.
+    history_deleted = pyqtSignal(str)
+    # DELETE_DONE: rows deleted AND scrubbed from the .db and -wal files.
+    # DELETE_COMPACT_PENDING: rows deleted (gone from every query) but the VACUUM or the WAL checkpoint
+    #   couldn't finish yet (a reader mid-query), so old pages may still sit in the files; the worker
+    #   keeps retrying on its idle tick (_retry_pending_compaction).
+    # DELETE_FAILED: nothing was deleted.
+    DELETE_DONE = "done"
+    DELETE_COMPACT_PENDING = "compact_pending"
+    DELETE_FAILED = "failed"
 
     _DB_VERSION = 7  # Covering indexes, metadata, eager aggregation, sample_count, hardware stats, hardware hourly, usage_counter (data-cap odometer)
 
@@ -65,6 +73,10 @@ class DatabaseWorker(QThread):
         # path is then refused - see _check_and_create_schema for why silence is not an option.
         self._schema_incompatible = False
         self._downgrade_warned = False
+        # Compaction owed after a "Delete all history" whose VACUUM / WAL checkpoint couldn't finish.
+        self._compact_pending = False
+        self._vacuum_pending = False
+        self._last_compact_attempt = 0.0
         self.logger = logging.getLogger(f"NetSpeedTray.{self.__class__.__name__}")
 
 
@@ -84,6 +96,7 @@ class DatabaseWorker(QThread):
                     # (a compatibility view cannot be indexed) or writes to a file this build
                     # does not understand. Both are exactly what the guard exists to prevent.
                     self._ensure_indexes()  # idempotent; runs regardless of schema version
+                    self._resume_pending_compaction()
                 initialized = True
                 break
             except sqlite3.Error as e:
@@ -107,6 +120,8 @@ class DatabaseWorker(QThread):
             except queue.Empty:
                 if self._stop_event.is_set():
                     break
+                if self._compact_pending:
+                    self._retry_pending_compaction()   # throttled; idle ticks only
                 continue
             if item is None:
                 continue  # wake-up sentinel from stop(); re-check the loop condition
@@ -158,7 +173,7 @@ class DatabaseWorker(QThread):
                     "newer version of NetSpeedTray. This is logged once per session.", task,
                 )
             if task == "delete_history":
-                self.history_deleted.emit(False)   # the user is waiting on an answer
+                self.history_deleted.emit(self.DELETE_FAILED)   # the user is waiting on an answer
             return
 
         handlers = {
@@ -903,7 +918,7 @@ class DatabaseWorker(QThread):
         """
         include_usage = bool((data or {}).get("include_usage", False))
         if self.conn is None:
-            self.history_deleted.emit(False)
+            self.history_deleted.emit(self.DELETE_FAILED)
             return
         cursor = self.conn.cursor()
         try:
@@ -918,26 +933,121 @@ class DatabaseWorker(QThread):
         except sqlite3.Error as e:
             self.logger.error("Delete all history failed: %s", e)
             self.conn.rollback()
-            self.history_deleted.emit(False)
+            self.history_deleted.emit(self.DELETE_FAILED)
             return
         self.logger.info("History deleted (%d tables%s).", len(tables),
                          ", incl. data-usage counter" if include_usage else "")
+        vacuum_ok = self._vacuum_now()
+        # Only a COMPLETED truncate checkpoint moves the rewritten file out of -wal and over the old
+        # pages in the .db. It does not raise when a reader is mid-query - it returns busy=1 - so the
+        # result row has to be read, or the old samples silently stay in both files.
+        checkpoint_ok = vacuum_ok and self._checkpoint_truncate(constants.timeouts.DB_CHECKPOINT_RETRIES)
+        self.database_updated.emit()
+        if vacuum_ok and checkpoint_ok:
+            self.history_deleted.emit(self.DELETE_DONE)
+            return
+        self._compact_pending = True
+        self._vacuum_pending = not vacuum_ok
+        self._last_compact_attempt = time.monotonic()
+        self._set_compaction_marker(True)   # survives a quit before the retry lands
+        self.logger.warning(
+            "History rows deleted, but the file is not compacted yet (%s); old pages may remain in "
+            "the database file until it is. Retrying while idle.",
+            "VACUUM failed" if not vacuum_ok else "WAL checkpoint busy")
+        self.history_deleted.emit(self.DELETE_COMPACT_PENDING)
+
+    def _vacuum_now(self) -> bool:
+        """Ungated VACUUM for Delete all history. True on success; a failure is a WARNING."""
         try:
             self.conn.execute("VACUUM;")
             self.conn.execute(
                 "INSERT OR REPLACE INTO metadata (key, value) VALUES ('last_vacuum_at', ?)",
                 (str(int(time.time())),))
             self.conn.commit()
+            return True
         except sqlite3.Error as e:
-            # The rows are already deleted and committed; a failed rewrite only leaves free pages.
+            # The rows are already deleted and committed; until a VACUUM succeeds their pages sit
+            # on the freelist, still readable in the file.
             self.logger.warning("VACUUM after history delete failed: %s", e)
+            return False
+
+    def _checkpoint_truncate(self, attempts: int) -> bool:
+        """PRAGMA wal_checkpoint(TRUNCATE), retried up to ``attempts`` times. True only when the row
+        reports busy == 0 (the whole WAL was copied back and the file truncated).
+
+        The connection's 5 s busy_timeout is lowered for these attempts: a checkpoint blocked by a
+        reader would otherwise park this thread (and every queued write) for 5 s per attempt - and
+        the idle retry would do it again every few seconds while the Monitor stays open."""
         try:
-            # VACUUM in WAL mode writes the whole rewritten file into -wal; fold it back now.
-            self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+            prev = self.conn.execute("PRAGMA busy_timeout;").fetchone()[0]
+        except (sqlite3.Error, TypeError):
+            prev = 5000
+        try:
+            self.conn.execute(f"PRAGMA busy_timeout = {int(constants.timeouts.DB_BUSY_TIMEOUT_MS)};")
+            for i in range(max(1, attempts)):
+                try:
+                    row = self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE);").fetchone()
+                    if row is not None and int(row[0]) == 0:
+                        return True
+                except sqlite3.Error as e:
+                    self.logger.debug("WAL checkpoint attempt %d failed: %s", i + 1, e)
+                if i + 1 < attempts:
+                    time.sleep(constants.timeouts.DB_CHECKPOINT_RETRY_SLEEP)
+            return False
+        finally:
+            try:
+                self.conn.execute(f"PRAGMA busy_timeout = {int(prev)};")
+            except sqlite3.Error:
+                pass
+
+    def _retry_pending_compaction(self, force: bool = False) -> None:
+        """Finish a compaction a Delete all history couldn't (run from the idle tick, throttled)."""
+        if not self._compact_pending or self.conn is None:
+            return
+        now = time.monotonic()
+        if not force and now - self._last_compact_attempt < constants.timeouts.DB_COMPACT_RETRY_INTERVAL_SEC:
+            return
+        self._last_compact_attempt = now
+        if self._vacuum_pending:
+            if not self._vacuum_now():
+                return
+            self._vacuum_pending = False
+        # Clear the restart marker BEFORE the checkpoint, so the checkpoint also folds that write in.
+        self._set_compaction_marker(False)
+        if self._checkpoint_truncate(1):
+            self._compact_pending = False
+            self.logger.info("Deferred compaction after history delete completed.")
+            self.database_updated.emit()
+        else:
+            self._set_compaction_marker(True)
+
+    _COMPACT_MARKER_KEY = "pending_history_compaction"
+
+    def _set_compaction_marker(self, on: bool) -> None:
+        """Persist 'a history delete still owes a VACUUM + checkpoint' in metadata, so a quit before
+        the idle retry lands is picked up at the next start (_resume_pending_compaction)."""
+        try:
+            if on:
+                self.conn.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, '1')",
+                                  (self._COMPACT_MARKER_KEY,))
+            else:
+                self.conn.execute("DELETE FROM metadata WHERE key = ?", (self._COMPACT_MARKER_KEY,))
+            self.conn.commit()
         except sqlite3.Error as e:
-            self.logger.debug("WAL checkpoint after history delete skipped: %s", e)
-        self.database_updated.emit()
-        self.history_deleted.emit(True)
+            self.logger.debug("Compaction marker not updated: %s", e)
+
+    def _resume_pending_compaction(self) -> None:
+        """At startup: a previous session deleted history but quit before the file was compacted."""
+        try:
+            row = self.conn.execute("SELECT value FROM metadata WHERE key = ?",
+                                    (self._COMPACT_MARKER_KEY,)).fetchone()
+        except sqlite3.Error:
+            return
+        if row:
+            self.logger.info("Resuming the file compaction a previous history delete could not finish.")
+            self._compact_pending = True
+            self._vacuum_pending = True    # cheap insurance: the old pages may also be on the freelist
+            self._retry_pending_compaction(force=True)
 
 
     def _vacuum_warranted(self, free_pages: int, page_count: int) -> bool:
