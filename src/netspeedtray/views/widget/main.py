@@ -9,8 +9,7 @@ import sys
 import time
 from ctypes import wintypes
 from datetime import datetime
-from collections import deque
-from typing import Any, Deque, Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 # --- Third-Party Imports ---
 import win32api
@@ -147,8 +146,14 @@ class NetworkSpeedWidget(QWidget):
         self.system_power: Optional[float] = None   # true whole-system W (RAPL PSYS / battery), if available
         self.latency_gw: Optional[float] = None      # gateway RTT ms (LAN latency); None = timeout
         self.latency_anchor: Optional[float] = None  # public-anchor RTT ms (internet latency); opt-in
-        self.latency_loss: float = 0.0               # rolling gateway loss% over recent probes
-        self._latency_window: Deque[bool] = deque(maxlen=40)   # recent timed-out flags for live loss%
+        # Live loss% (~2 min) per hop, and the HEADLINE loss: the anchor's when the public probe is on,
+        # the gateway's otherwise (latency_probe.headline_hop) - the figure the Overview pill shows.
+        self.latency_loss: float = 0.0
+        self.latency_loss_gw: float = 0.0
+        self.latency_loss_anchor: float = 0.0
+        self.latency_headline_hop: Optional[str] = None   # "anchor" / "gateway"; None before a sample
+        from netspeedtray.core.latency_probe import LatencyLossWindows
+        self._latency_loss_windows = LatencyLossWindows()
         self.ram_used: Optional[float] = None
         self.ram_total: Optional[float] = None
         self.vram_used: Optional[float] = None
@@ -491,23 +496,31 @@ class NetworkSpeedWidget(QWidget):
         except Exception as e:
             self.logger.error(f"Error showing unfold flyout: {e}", exc_info=True)
 
-    def _on_latency(self, gw_ms, anchor_ms, gw_timed_out: bool) -> None:
-        """A latency sample arrived (main thread, queued from the probe thread). Update the live
-        attributes + rolling loss%, and persist gateway/anchor RTT + the timeout flag so the Monitor's
-        window loss% (the ISP-dispute figure) is honest."""
-        self.latency_gw = gw_ms
-        self.latency_anchor = anchor_ms
-        self._latency_window.append(bool(gw_timed_out))
-        if self._latency_window:
-            self.latency_loss = round(sum(self._latency_window) / len(self._latency_window) * 100.0, 1)
+    def _on_latency(self, sample) -> None:
+        """A LatencySample arrived (main thread, queued from the probe thread). Update the live
+        attributes + each hop's rolling loss%, and persist both RTTs and both hops' timeout flags so the
+        Monitor's window loss% (the ISP-dispute figure) is honest for the internet, not just the router."""
+        from netspeedtray.core.latency_probe import HOP_ANCHOR, headline_hop
+        lat = constants.network.latency
+        self.latency_gw = sample.gw_ms
+        self.latency_anchor = sample.anchor_ms
+        windows = self._latency_loss_windows
+        windows.add(sample)
+        self.latency_loss_gw = windows.gw_loss
+        self.latency_loss_anchor = windows.anchor_loss
+        self.latency_headline_hop = headline_hop(sample.anchor_enabled)
+        self.latency_loss = (self.latency_loss_anchor if self.latency_headline_hop == HOP_ANCHOR
+                             else self.latency_loss_gw)
         ws = getattr(self, "widget_state", None)
         if ws is not None:
             try:
-                if gw_ms is not None:
-                    ws.add_hardware_stat("latency_gw", float(gw_ms))
-                if anchor_ms is not None:
-                    ws.add_hardware_stat("latency_anchor", float(anchor_ms))
-                ws.add_hardware_stat("latency_gw_timeout", 1.0 if gw_timed_out else 0.0)
+                if sample.gw_ms is not None:
+                    ws.add_hardware_stat("latency_gw", float(sample.gw_ms))
+                if sample.anchor_ms is not None:
+                    ws.add_hardware_stat("latency_anchor", float(sample.anchor_ms))
+                ws.add_hardware_stat(lat.STAT_GW_TIMEOUT, 1.0 if sample.gw_timed_out else 0.0)
+                if sample.anchor_enabled:
+                    ws.add_hardware_stat(lat.STAT_ANCHOR_TIMEOUT, 1.0 if sample.anchor_timed_out else 0.0)
             except Exception:
                 pass
 

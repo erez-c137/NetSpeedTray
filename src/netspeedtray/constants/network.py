@@ -1,7 +1,7 @@
 """
 Constants related to network speeds, units, and interfaces.
 """
-from typing import Final, Set, List
+from typing import Dict, Final, Set, List
 
 class UnitConstants:
     """Constants for unit conversions and i18n keys for labels."""
@@ -110,12 +110,27 @@ class InterfaceConstants:
         if self.DEFAULT_MODE not in self.VALID_INTERFACE_MODES:
             raise ValueError(f"DEFAULT_MODE '{self.DEFAULT_MODE}' must be in VALID_INTERFACE_MODES")
 
+class LatencyConstants:
+    """The latency probe's live loss windows and persisted loss series."""
+    # Cycles kept in each hop's live loss window (~2 min at the probe's 3 s cadence).
+    LIVE_LOSS_WINDOW: Final[int] = 40
+    # Persisted per-cycle loss series (0/1 per probe; the rollups average them into a 0-1 rate).
+    STAT_GW_TIMEOUT: Final[str] = "latency_gw_timeout"
+    STAT_ANCHOR_TIMEOUT: Final[str] = "latency_anchor_timeout"
+    # RTT series -> the loss series of the same hop (the exporter's loss_pct).
+    LOSS_SERIES_FOR: Final[Dict[str, str]] = {
+        "latency_gw": STAT_GW_TIMEOUT,
+        "latency_anchor": STAT_ANCHOR_TIMEOUT,
+    }
+
+
 class NetworkConstants:
     """Container for network-related constant groups."""
     def __init__(self) -> None:
         self.units = UnitConstants()
         self.speed = NetworkSpeedConstants()
         self.interface = InterfaceConstants()
+        self.latency = LatencyConstants()
 
 # Singleton instance for easy access
 network = NetworkConstants()

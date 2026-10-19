@@ -96,6 +96,7 @@ CREATE TABLE hardware_stats_raw (
 | `latency_gw` | milliseconds | ping to your router — your LAN |
 | `latency_anchor` | milliseconds | ping to a public anchor — true internet latency |
 | `latency_gw_timeout` | 0 or 1 | 1 = that probe timed out. **Averaged in the rollups, so in `_minute`/`_hour` this is a packet-loss *rate* between 0 and 1.** |
+| `latency_anchor_timeout` | 0 or 1 | The same for the public anchor - *internet* loss. Recorded only while the public probe is on. When the router probe times out, the anchor is not pinged that cycle and is recorded as lost, so internet loss is always at least router loss. Averaged into a rate exactly like `latency_gw_timeout`. |
 
 Because this table is generic, **adding a new metric needs no schema change** — a new `stat_type`
 flows through aggregation and retention automatically.
@@ -207,18 +208,30 @@ LIMIT 10;
 **Internet latency and packet loss over the last week**
 
 ```sql
-SELECT datetime(timestamp, 'unixepoch', 'localtime') AS hour,
-       ROUND(MAX(CASE WHEN stat_type='latency_anchor' THEN avg_value END), 1) AS latency_ms,
-       ROUND(MAX(CASE WHEN stat_type='latency_gw_timeout' THEN avg_value END) * 100, 1) AS loss_pct
-FROM hardware_stats_hour
+WITH samples AS (                        -- the last week spans two tiers: raw (24h) + minute
+    SELECT timestamp, stat_type, value AS v, 1 AS n FROM hardware_stats_raw
+    UNION ALL
+    SELECT timestamp, stat_type, avg_value, sample_count FROM hardware_stats_minute
+)
+SELECT datetime(timestamp / 3600 * 3600, 'unixepoch', 'localtime') AS hour,
+       ROUND(SUM(CASE WHEN stat_type='latency_anchor' THEN v * n END)
+           / SUM(CASE WHEN stat_type='latency_anchor' THEN n END), 1) AS internet_ms,
+       ROUND(100.0 * SUM(CASE WHEN stat_type='latency_gw_timeout' THEN v * n END)
+           / SUM(CASE WHEN stat_type='latency_gw_timeout' THEN n END), 1) AS router_loss_pct,
+       ROUND(100.0 * SUM(CASE WHEN stat_type='latency_anchor_timeout' THEN v * n END)
+           / SUM(CASE WHEN stat_type='latency_anchor_timeout' THEN n END), 1) AS internet_loss_pct
+FROM samples
 WHERE timestamp > strftime('%s','now','-7 days')
-GROUP BY timestamp
-HAVING latency_ms IS NOT NULL
-ORDER BY hour;
+  AND stat_type IN ('latency_anchor', 'latency_gw_timeout', 'latency_anchor_timeout')
+GROUP BY timestamp / 3600
+ORDER BY timestamp / 3600;
 ```
 
-Empty result? The hourly tier only fills once data is older than 30 days, so on a young install
-widen the window or query `hardware_stats_minute` instead.
+Each minute row is weighted by its `sample_count`, so a minute the app was only partly running
+counts for what it measured. `internet_ms` and `internet_loss_pct` stay empty unless **Also measure
+true internet latency** is on. Read the two loss columns together: router loss is your Wi-Fi or LAN;
+internet loss *above* router loss is beyond your router (ISP or path). For data older than 30 days,
+swap `hardware_stats_minute` for `hardware_stats_hour`, which has the same columns.
 
 **Percentiles — but only over the last 24 hours**, where per-second data still exists:
 

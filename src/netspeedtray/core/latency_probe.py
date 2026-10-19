@@ -6,8 +6,16 @@ never leaves your network - and ONLY pings a public anchor (e.g. 1.1.1.1, for tr
 when the user explicitly opts in. ICMP uses the Windows ICMP helper API (IcmpSendEcho) via ctypes, so
 it needs NO admin and spawns no subprocess. It records a timed-out flag per probe so loss% / p99 are
 real for the ISP-dispute use-case. Runs on its OWN QThread so a 1 s timeout never blocks the stats
-poll. Emits `latency_ready(gw_ms|None, anchor_ms|None, gw_timed_out)`; the controller persists it
-(latency_gw / latency_anchor stat_types) and stashes it on the widget for the Monitor's latency pill.
+poll. Emits `latency_ready(LatencySample)`; the widget persists it (latency_gw / latency_anchor RTTs plus
+the latency_gw_timeout / latency_anchor_timeout loss series) and keeps one live loss window per hop for
+the Monitor's latency pill.
+
+The attribution rule - which hop a loss belongs to - is written ONCE here (`attribute_loss`) and reused
+by every reader that explains a loss (the on-demand connection check, 2.2 D3):
+  * loss at the gateway  = your Wi-Fi / LAN;
+  * loss on the anchor with a clean gateway = beyond your router (ISP or path);
+  * a gateway timeout means the anchor cannot be reached either, so that cycle's anchor probe is
+    SKIPPED and recorded as lost. Anchor loss >= gateway loss by construction.
 """
 from __future__ import annotations
 
@@ -15,10 +23,87 @@ import ctypes
 import socket
 import struct
 import time
+from collections import deque
 from ctypes import wintypes
-from typing import Any, Dict, Optional
+from dataclasses import dataclass
+from typing import Any, Deque, Dict, Optional
 
 from PyQt6.QtCore import QThread, pyqtSignal
+
+from netspeedtray import constants
+
+
+# --- the sample, the hops, and the attribution rule ------------------------------------------------
+HOP_GATEWAY = "gateway"
+HOP_ANCHOR = "anchor"
+
+LOSS_NONE = "none"                          # neither hop lost anything
+LOSS_LOCAL = "local"                        # the gateway lost it: Wi-Fi / LAN
+LOSS_BEYOND_ROUTER = "beyond_router"        # clean gateway, lossy anchor: ISP or path
+LOSS_LOCAL_AND_BEYOND = "local_and_beyond"  # both, and the anchor lost more than the gateway explains
+
+
+@dataclass(frozen=True)
+class LatencySample:
+    """One probe cycle. RTTs are ms (None = no reply). `anchor_enabled` says whether the public anchor
+    was part of this cycle (the opt-in); when it was not, the anchor fields are None/False and carry no
+    loss. `anchor_skipped` marks the attribution rule's skip: the gateway timed out, so the anchor was
+    not probed and counts as lost (`anchor_timed_out` is True too). 2.2 D2 adds per-hop sent/lost
+    counts to this shape for the burst probe."""
+    gw_ms: Optional[float]
+    anchor_ms: Optional[float]
+    gw_timed_out: bool
+    anchor_timed_out: bool = False
+    anchor_enabled: bool = False
+    anchor_skipped: bool = False
+
+
+def headline_hop(anchor_enabled: bool) -> str:
+    """The hop a single headline figure describes: the internet anchor when the user opted into the
+    public probe, the gateway otherwise."""
+    return HOP_ANCHOR if anchor_enabled else HOP_GATEWAY
+
+
+def attribute_loss(gw_loss_pct: float, anchor_loss_pct: Optional[float]) -> str:
+    """Where the loss happened, from each hop's loss % (anchor None = not probed). Reads the GATEWAY
+    first so the internet is never blamed for loss the router already explains (anchor loss includes
+    every gateway loss by construction - see the module docstring)."""
+    gw = float(gw_loss_pct or 0.0)
+    an = None if anchor_loss_pct is None else float(anchor_loss_pct)
+    if gw > 0:
+        return LOSS_LOCAL_AND_BEYOND if an is not None and an > gw else LOSS_LOCAL
+    if an is not None and an > 0:
+        return LOSS_BEYOND_ROUTER
+    return LOSS_NONE
+
+
+class LatencyLossWindows:
+    """The live (~2 min) loss window per hop. Independent deques: the gateway window takes every cycle,
+    the anchor window only cycles where the anchor was part of the probe (and is reset when the user
+    turns the public probe off, so a re-enable starts clean instead of reviving stale flags)."""
+
+    def __init__(self, maxlen: int = constants.network.latency.LIVE_LOSS_WINDOW) -> None:
+        self.gw: Deque[bool] = deque(maxlen=maxlen)
+        self.anchor: Deque[bool] = deque(maxlen=maxlen)
+
+    def add(self, sample: LatencySample) -> None:
+        self.gw.append(bool(sample.gw_timed_out))
+        if sample.anchor_enabled:
+            self.anchor.append(bool(sample.anchor_timed_out))
+        else:
+            self.anchor.clear()
+
+    @staticmethod
+    def _pct(window: Deque[bool]) -> float:
+        return round(sum(window) / len(window) * 100.0, 1) if window else 0.0
+
+    @property
+    def gw_loss(self) -> float:
+        return self._pct(self.gw)
+
+    @property
+    def anchor_loss(self) -> float:
+        return self._pct(self.anchor)
 
 
 # --- Windows ICMP helper (no admin, no subprocess) -------------------------------------------------
@@ -97,9 +182,9 @@ def default_gateway_ip() -> Optional[str]:
 
 
 class LatencyProbe(QThread):
-    """Background latency sampler. gw_ms / anchor_ms are ms (None = timeout); gw_timed_out flags loss."""
+    """Background latency sampler. Emits one `LatencySample` per cycle."""
 
-    latency_ready = pyqtSignal(object, object, bool)
+    latency_ready = pyqtSignal(object)   # LatencySample
 
     _CADENCE_SEC = 3.0
     _TIMEOUT_MS = 1000
@@ -149,11 +234,22 @@ class LatencyProbe(QThread):
                 gw_timed_out = bool(gw_ip) and gw is None
 
                 anchor = None
-                if self._config.get("latency_public_enabled", False):
-                    host = str(self._config.get("latency_public_host", "1.1.1.1") or "1.1.1.1")
-                    anchor = icmp_ping_ms(host, self._TIMEOUT_MS)
+                anchor_enabled = bool(self._config.get("latency_public_enabled", False))
+                anchor_skipped = False
+                if anchor_enabled:
+                    if gw_timed_out:
+                        # The link is down at the first hop: the anchor cannot answer either. Skip it
+                        # (probing on only stretches the cycle) and record it lost - the attribution
+                        # rule, so anchor loss >= gateway loss.
+                        anchor_skipped = True
+                    else:
+                        host = str(self._config.get("latency_public_host", "1.1.1.1") or "1.1.1.1")
+                        anchor = icmp_ping_ms(host, self._TIMEOUT_MS)
 
-                self.latency_ready.emit(gw, anchor, gw_timed_out)
+                self.latency_ready.emit(LatencySample(
+                    gw_ms=gw, anchor_ms=anchor, gw_timed_out=gw_timed_out,
+                    anchor_timed_out=anchor_enabled and anchor is None,
+                    anchor_enabled=anchor_enabled, anchor_skipped=anchor_skipped))
             except Exception:
                 pass
             # Sleep in small slices so stop() is responsive.

@@ -587,12 +587,19 @@ class OverviewTab(QWidget):
 
     def _latency_html(self, mw) -> str:
         """Latency pill: a color-coded plain word (Good/OK/Slow - the panel insisted avg-ms is a bad
-        headline) with the ms + loss% as quiet subtext. Internet (public anchor) latency wins over the
-        gateway when the user opted into the public probe."""
+        headline) with the ms + loss% as quiet subtext. Both follow the widget's HEADLINE hop: the
+        internet anchor when the user opted into the public probe, the gateway otherwise
+        (`latency_loss` is already that hop's loss; latency_probe.headline_hop is the rule)."""
         gw = getattr(mw, "latency_gw", None)
         anchor = getattr(mw, "latency_anchor", None)
         loss = float(getattr(mw, "latency_loss", 0.0) or 0.0)
-        ms = anchor if anchor is not None else gw
+        hop = getattr(mw, "latency_headline_hop", None)
+        if hop == "anchor":
+            ms = anchor          # an anchor timeout is no reply - never the router's ms under "Internet"
+        elif hop == "gateway":
+            ms = gw
+        else:
+            ms = anchor if anchor is not None else gw   # no hop reported (no sample yet / old caller)
         if ms is None and loss <= 0:
             return ""   # no probe data yet
         if ms is None or loss >= 5 or (ms is not None and ms >= 150):
