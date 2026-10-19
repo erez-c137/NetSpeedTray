@@ -452,6 +452,15 @@ class WidgetState(QObject):
         return (max(0.0, u["cumulative_up"] - u["anchor_up"]),
                 max(0.0, u["cumulative_down"] - u["anchor_down"]))
 
+    def get_usage_lifetime(self) -> Optional[Tuple[float, float]]:
+        """(upload_bytes, download_bytes) the odometer has counted since it began (never reset by a
+        period rollover; only "Delete all history" with the usage option zeroes it). None until the
+        odometer has loaded."""
+        if not self._usage_loaded and not self._try_load_usage():
+            return None
+        u = self._usage
+        return (max(0.0, u["cumulative_up"]), max(0.0, u["cumulative_down"]))
+
     def get_usage_period_key(self) -> str:
         """
         The current billing-period key (for the alert controller's restart-safe state).

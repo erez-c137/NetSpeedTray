@@ -503,5 +503,16 @@
     "LOCATION_ONBOARDING_OPEN_BUTTON": "Konum ayarlarını aç",
     "LOCATION_ONBOARDING_BAND_BUTTON": "Yalnızca bandı göster",
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray Widget'lar panelinin üzerine geliyor",
-    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray, görev çubuğundaki Windows Widget'ları/hava durumu panelinin üzerine geliyor. İstediğiniz yere sürükleyebilirsiniz; konumu hatırlanır. (Bu mesaj bir daha gösterilmeyecek.)"
+    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray, görev çubuğundaki Windows Widget'ları/hava durumu panelinin üzerine geliyor. İstediğiniz yere sürükleyebilirsiniz; konumu hatırlanır. (Bu mesaj bir daha gösterilmeyecek.)",
+    "INTEGRATIONS_GROUP": "Entegrasyonlar",
+    "METRICS_ENDPOINT_LABEL": "Yerel metrik uç noktası",
+    "METRICS_ENDPOINT_SUB": "Bu bilgisayardaki Prometheus veya Grafana'nın anlık hızları ve veri kullanımını okumasını sağlar. Yalnızca bu bilgisayar bağlanabilir; hiçbir yere bir şey gönderilmez.",
+    "METRICS_PORT_LABEL": "Bağlantı noktası",
+    "METRICS_URL_LABEL": "Adres",
+    "METRICS_COPY_BUTTON": "Kopyala",
+    "METRICS_COPIED": "Kopyalandı",
+    "METRICS_STATUS_RUNNING": "Dinleniyor. Ağ bağdaştırıcılarınızın adlarını içerir.",
+    "METRICS_STATUS_IN_USE": "{port} numaralı bağlantı noktası başka bir uygulama tarafından kullanılıyor. Başka bir bağlantı noktası seçin.",
+    "METRICS_STATUS_DENIED": "Windows {port} numaralı bağlantı noktasını ayırmış. Başka bir bağlantı noktası seçin.",
+    "METRICS_STATUS_ERROR": "{port} numaralı bağlantı noktasında başlatılamadı. Başka bir bağlantı noktası seçin."
 }

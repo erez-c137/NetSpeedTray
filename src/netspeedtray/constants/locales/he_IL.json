@@ -503,5 +503,16 @@
     "LOCATION_ONBOARDING_OPEN_BUTTON": "פתח הגדרות מיקום",
     "LOCATION_ONBOARDING_BAND_BUTTON": "הצג רק את התדר",
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray חופף ללוח הווידג'טים",
-    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray יושב מעל לוח הווידג'טים/מזג האוויר של Windows בשורת המשימות שלך. אפשר לגרור אותו לכל מקום שתרצה - הוא יזכור את המיקום. (הודעה זו לא תוצג שוב.)"
+    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray יושב מעל לוח הווידג'טים/מזג האוויר של Windows בשורת המשימות שלך. אפשר לגרור אותו לכל מקום שתרצה - הוא יזכור את המיקום. (הודעה זו לא תוצג שוב.)",
+    "INTEGRATIONS_GROUP": "שילובים",
+    "METRICS_ENDPOINT_LABEL": "נקודת קצה מקומית למדדים",
+    "METRICS_ENDPOINT_SUB": "מאפשר ל-Prometheus או ל-Grafana במחשב הזה לקרוא מהירויות חיות ושימוש בנתונים. רק המחשב הזה יכול להתחבר; שום דבר לא נשלח לשום מקום.",
+    "METRICS_PORT_LABEL": "פורט",
+    "METRICS_URL_LABEL": "כתובת",
+    "METRICS_COPY_BUTTON": "העתק",
+    "METRICS_COPIED": "הועתק",
+    "METRICS_STATUS_RUNNING": "מאזין. כולל את שמות מתאמי הרשת שלך.",
+    "METRICS_STATUS_IN_USE": "פורט {port} כבר נמצא בשימוש של אפליקציה אחרת. בחר פורט אחר.",
+    "METRICS_STATUS_DENIED": "Windows שומרת את פורט {port}. בחר פורט אחר.",
+    "METRICS_STATUS_ERROR": "לא ניתן להפעיל בפורט {port}. בחר פורט אחר."
 }

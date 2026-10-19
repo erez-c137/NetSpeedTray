@@ -154,6 +154,8 @@ class NetworkSpeedWidget(QWidget):
         self.latency_headline_ms: Optional[float] = None
         from netspeedtray.core.latency_probe import LatencyLossWindows
         self._latency_loss_windows = LatencyLossWindows()
+        # Local metrics endpoint (2.2 scope B) - created on first enable, None while never enabled.
+        self.metrics_endpoint = None
         self.ram_used: Optional[float] = None
         self.ram_total: Optional[float] = None
         self.vram_used: Optional[float] = None
@@ -208,6 +210,7 @@ class NetworkSpeedWidget(QWidget):
             self._setup_timers()
             self.position_manager.update_position()
             self._synchronize_startup_task()
+            self.apply_metrics_endpoint()   # opt-in, off by default: a no-op unless the user enabled it
             
             QTimer.singleShot(0, self._delayed_initial_show)
 
@@ -511,6 +514,38 @@ class NetworkSpeedWidget(QWidget):
             except Exception:
                 pass
 
+    def apply_metrics_endpoint(self) -> None:
+        """Start / stop / move the local metrics endpoint to match the config (2.2 scope B). Called at
+        startup and from every settings apply; idempotent, so a live-preview tick that did not touch
+        the endpoint keys costs nothing. A port that cannot be bound is reported via
+        metrics_endpoint.status (Settings shows it), never raised."""
+        enabled = bool(self.config.get("metrics_endpoint_enabled", False))
+        if self.metrics_endpoint is None and not enabled:
+            return   # never enabled: not even the object exists
+        try:
+            if self.metrics_endpoint is None:
+                from netspeedtray.core.metrics_endpoint import MetricsEndpoint
+                self.metrics_endpoint = MetricsEndpoint()
+            was_running = self.metrics_endpoint.running
+            self.metrics_endpoint.apply(enabled, int(self.config.get(
+                "metrics_endpoint_port", constants.network.metrics.DEFAULT_PORT)))
+            if self.metrics_endpoint.running and not was_running:
+                self._publish_metrics_snapshot()   # the first scrape should not wait for a tick
+        except Exception as e:
+            self.logger.error("Could not apply the metrics endpoint setting: %s", e, exc_info=True)
+
+    def _publish_metrics_snapshot(self, _stats: object = None) -> None:
+        """GUI thread: freeze the live values into the endpoint's snapshot. The server thread only
+        ever reads that frozen object - it never touches the widget, controller or WidgetState."""
+        ep = self.metrics_endpoint
+        if ep is None or not ep.running:
+            return
+        try:
+            from netspeedtray.core.metrics_snapshot import build_snapshot
+            ep.publish(build_snapshot(self))
+        except Exception as e:
+            self.logger.debug("metrics snapshot not published: %s", e)
+
     def _on_monitor_error(self, message: str) -> None:
         """
         The monitor thread crossed its error threshold (now recoverable - it keeps retrying
@@ -767,6 +802,9 @@ class NetworkSpeedWidget(QWidget):
         try:
             # Connect core component signals
             self.monitor_thread.stats_ready.connect(self.controller.handle_stats)
+            # AFTER the controller (queued slots run in connection order): the metrics endpoint's
+            # snapshot is built from what the controller just computed. No-op while it is off.
+            self.monitor_thread.stats_ready.connect(self._publish_metrics_snapshot)
             
             # NOTE: the display/cpu/gpu/temp/power/ram/vram slots are wired exactly
             # once in StatsController.set_view() (called at construction). Wiring any
@@ -1797,6 +1835,13 @@ class NetworkSpeedWidget(QWidget):
                 try:
                     self.latency_probe.stop()
                     self.latency_probe.wait(1500)
+                except Exception:
+                    pass
+
+            # --- Stop the local metrics endpoint (joins its threads; nothing is left listening) ---
+            if getattr(self, 'metrics_endpoint', None):
+                try:
+                    self.metrics_endpoint.stop()
                 except Exception:
                     pass
 

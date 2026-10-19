@@ -504,5 +504,16 @@
     "LOCATION_ONBOARDING_BAND_BUTTON": "仅显示频段",
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray 遮挡了系统小组件",
     "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray 遮挡了任务栏上的小组件/天气。你可以拖动它到喜欢的位置，设置会自动保存。（此消息仅显示一次）",
-    "//TRANSLATION_VERSION": "2.2.0-zh_CN-260921"
+    "//TRANSLATION_VERSION": "2.2.0-zh_CN-260921",
+    "INTEGRATIONS_GROUP": "集成",
+    "METRICS_ENDPOINT_LABEL": "本地指标端点",
+    "METRICS_ENDPOINT_SUB": "允许本机上的 Prometheus 或 Grafana 读取实时网速和数据用量。仅本机可以连接，不会向任何地方发送数据。",
+    "METRICS_PORT_LABEL": "端口",
+    "METRICS_URL_LABEL": "地址",
+    "METRICS_COPY_BUTTON": "复制",
+    "METRICS_COPIED": "已复制",
+    "METRICS_STATUS_RUNNING": "正在监听。包含您的网络适配器名称。",
+    "METRICS_STATUS_IN_USE": "端口 {port} 已被其他应用占用。请选择其他端口。",
+    "METRICS_STATUS_DENIED": "端口 {port} 已被 Windows 保留。请选择其他端口。",
+    "METRICS_STATUS_ERROR": "无法在端口 {port} 上启动。请选择其他端口。"
 }

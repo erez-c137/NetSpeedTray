@@ -503,5 +503,16 @@
     "LOCATION_ONBOARDING_OPEN_BUTTON": "Locatie-instellingen openen",
     "LOCATION_ONBOARDING_BAND_BUTTON": "Alleen de band tonen",
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray overlapt het Widgets-paneel",
-    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray staat over het Widgets-/weerpaneel van Windows op je taakbalk. Je kunt het overal naartoe slepen - de plek wordt onthouden. (Dit bericht verschijnt niet meer.)"
+    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray staat over het Widgets-/weerpaneel van Windows op je taakbalk. Je kunt het overal naartoe slepen - de plek wordt onthouden. (Dit bericht verschijnt niet meer.)",
+    "INTEGRATIONS_GROUP": "Integraties",
+    "METRICS_ENDPOINT_LABEL": "Lokaal metrics-eindpunt",
+    "METRICS_ENDPOINT_SUB": "Laat Prometheus of Grafana op deze pc live snelheden en dataverbruik uitlezen. Alleen deze pc kan verbinden; er wordt niets verstuurd.",
+    "METRICS_PORT_LABEL": "Poort",
+    "METRICS_URL_LABEL": "Adres",
+    "METRICS_COPY_BUTTON": "Kopiëren",
+    "METRICS_COPIED": "Gekopieerd",
+    "METRICS_STATUS_RUNNING": "Actief. Bevat de namen van je netwerkadapters.",
+    "METRICS_STATUS_IN_USE": "Poort {port} wordt al door een andere app gebruikt. Kies een andere poort.",
+    "METRICS_STATUS_DENIED": "Windows reserveert poort {port}. Kies een andere poort.",
+    "METRICS_STATUS_ERROR": "Kan niet starten op poort {port}. Kies een andere poort."
 }
