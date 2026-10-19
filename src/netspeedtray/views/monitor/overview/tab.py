@@ -587,12 +587,21 @@ class OverviewTab(QWidget):
 
     def _latency_html(self, mw) -> str:
         """Latency pill: a color-coded plain word (Good/OK/Slow - the panel insisted avg-ms is a bad
-        headline) with the ms + loss% as quiet subtext. Internet (public anchor) latency wins over the
-        gateway when the user opted into the public probe."""
+        headline) with the ms + loss% as quiet subtext. Both follow the widget's HEADLINE hop: the
+        internet anchor when the user opted into the public probe, the gateway otherwise
+        (`latency_loss` is already that hop's loss; latency_probe.headline_hop is the rule).
+        The ms is the hop's most recent successful RTT within its live window, so one lost ping does
+        not flip the pill to "Slow"; the loss is None (no subtext) until the window is long enough."""
         gw = getattr(mw, "latency_gw", None)
         anchor = getattr(mw, "latency_anchor", None)
-        loss = float(getattr(mw, "latency_loss", 0.0) or 0.0)
-        ms = anchor if anchor is not None else gw
+        raw_loss = getattr(mw, "latency_loss", None)
+        loss_known = raw_loss is not None
+        loss = float(raw_loss or 0.0)
+        if getattr(mw, "latency_headline_hop", None) in ("anchor", "gateway"):
+            # Never the router's ms under "Internet": this is the headline hop's own last good RTT.
+            ms = getattr(mw, "latency_headline_ms", None)
+        else:
+            ms = anchor if anchor is not None else gw   # no hop reported (no sample yet / old caller)
         if ms is None and loss <= 0:
             return ""   # no probe data yet
         if ms is None or loss >= 5 or (ms is not None and ms >= 150):
@@ -606,7 +615,7 @@ class OverviewTab(QWidget):
         detail = []
         if ms is not None:
             detail.append(f"{ms:.0f} ms")
-        if loss > 0:
+        if loss_known and loss > 0:
             detail.append(self._tr("MONITOR_LATENCY_LOSS_FMT", "{pct}% loss").format(pct=f"{loss:.0f}"))
         if detail:
             out += f"  <span style='color:{sub};'>· {' · '.join(detail)}</span>"
