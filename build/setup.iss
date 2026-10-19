@@ -17,9 +17,11 @@
 ; VersionInfoVersion only accepts dot-separated integers, so a prerelease AppVersion like
 ; "2.2.0-beta.1" aborts the compile ("Value of [Setup] section directive VersionInfoVersion is
 ; invalid"). build.bat passes /DAppVersionNumeric with the numeric quad derived by
-; create_version_info.py --numeric ("2.2.0-beta.1" -> "2.2.0.1"); AppVersion keeps the display
+; create_version_info.py --numeric ("2.2.0-beta.1" -> "2.2.0.1001", final "2.2.0" -> "2.2.0.10000",
+; so a final outranks its betas numerically too - see that script); AppVersion keeps the display
 ; string for filenames and the free-text version fields. On a manual compile without the define,
-; fall back to AppVersion itself when it is numeric-only, else to a recognisable placeholder.
+; fall back to AppVersion itself when it is numeric-only (Inno pads it to x.y.z.0, which does NOT
+; follow that ordering - a manual compile is for local testing only), else to a recognisable placeholder.
 #ifndef AppVersionNumeric
   #if Pos("-", AppVersion) == 0
     #define AppVersionNumeric AppVersion

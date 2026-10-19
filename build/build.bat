@@ -76,7 +76,8 @@ echo Generating version info for v%VERSION%...
 if errorlevel 1 (echo ERROR: Failed to generate version info & exit /b 1)
 
 :: Derive the numeric-only quad for ISCC's VersionInfoVersion, which rejects prerelease
-:: suffixes ("2.2.0-beta.1" -> "2.2.0.1"). AppVersion keeps the display string.
+:: suffixes ("2.2.0-beta.1" -> "2.2.0.1001", final "2.2.0" -> "2.2.0.10000"). AppVersion keeps the
+:: display string.
 "%ROOT_DIR%\.venv\Scripts\python.exe" create_version_info.py "%VERSION%" --numeric > "%BUILD_DIR%version_numeric.tmp" 2>>"%LOG_FILE%"
 if errorlevel 1 (echo ERROR: Failed to derive numeric version & exit /b 1)
 set /p VERSION_NUMERIC=<"%BUILD_DIR%version_numeric.tmp"
