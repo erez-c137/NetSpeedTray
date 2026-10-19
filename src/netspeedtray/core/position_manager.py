@@ -198,8 +198,11 @@ class PositionCalculator:
                         widget_width, max_width
                     )
                     widget_width = max_width
-                # Clamp height
-                if widget_height > max_height:
+                # Clamp height - but not on a side taskbar, where side_by_side stacks its segments into a
+                # widget taller than the cap, and positioning it by the clamped height would sink it over
+                # the tray. There the real height is bounded by the taskbar icons and validate_position.
+                if widget_height > max_height and edge not in (constants.taskbar.edge.LEFT,
+                                                               constants.taskbar.edge.RIGHT):
                     logger.warning(
                         "Widget height %s exceeds max %spx (DPI-scaled). Clamping to prevent off-screen positioning.",
                         widget_height, max_height

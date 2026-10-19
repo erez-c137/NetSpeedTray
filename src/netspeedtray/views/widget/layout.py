@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import QWidget
 from netspeedtray import constants
 from netspeedtray.utils.taskbar_utils import is_small_taskbar, get_taskbar_info
 from netspeedtray.utils.helpers import memory_label_width
+from netspeedtray.utils.widget_paint import side_by_side_keys, stacked_segment_height
 
 if TYPE_CHECKING:
     from netspeedtray.views.widget.main import NetworkSpeedWidget
@@ -405,6 +406,23 @@ class WidgetLayoutManager:
                 # Height is calculated to fit exactly two lines of text + small padding
                 # This prevents the widget from stretching the full length of the screen.
                 calculated_height = self.metrics.height() * 2 + (margin * 4)
+
+                # side_by_side has no room for its segments in a row on a widget only as wide as the
+                # taskbar, so the paint path stacks them top-to-bottom (widget_paint._draw_stacked):
+                # reserve every segment's band, with the same padding.
+                config = self.widget.config
+                if config.get("widget_display_mode", "network_only") == "side_by_side":
+                    keys = side_by_side_keys(config.get("widget_display_order", ["network", "cpu", "gpu"]),
+                                             config.get("monitor_cpu_enabled", False),
+                                             config.get("monitor_gpu_enabled", False),
+                                             config.get("stack_hardware_stats", False))
+                    if len(keys) > 1:
+                        ram = config.get("monitor_ram_enabled", False)
+                        vram = config.get("monitor_vram_enabled", False)
+                        calculated_height = (
+                            sum(stacked_segment_height(k, self.metrics.height(), ram, vram) for k in keys)
+                            + constants.layout.WIDGET_SEGMENT_GAP_STACKED_PX * (len(keys) - 1)
+                            + (margin * 4))
 
             # FIX for #88: Ensure minimum size to prevents widget from disappearing
             final_width = max(calculated_width, 50) 
