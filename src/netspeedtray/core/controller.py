@@ -312,6 +312,11 @@ class StatsController(QObject):
             return
 
         self.current_speed_data.clear()
+        # The MEASURED per-interface rates, before the spike filter. History stores these: the
+        # filter's substitute (2x the rolling baseline) is a number nobody measured, and it fires
+        # on exactly the bursts a user would later dispute (database-v8-final.md 0.1). The display
+        # (current_speed_data -> widget text, mini graph, in-memory session deques) stays smoothed.
+        measured_speed_data: Dict[str, Tuple[float, float]] = {}
 
         for name, current in current_counters.items():
             last = self.last_interface_counters.get(name)
@@ -370,12 +375,14 @@ class StatsController(QObject):
                         streak[1] = 0
 
                 self.current_speed_data[name] = (final_up_speed_bps, final_down_speed_bps)
+                measured_speed_data[name] = (up_speed_bps, down_speed_bps)
                 self.recent_speeds[name].append((up_speed_bps, down_speed_bps))
 
         agg_upload, agg_download = self._aggregate_for_display(self.current_speed_data, resolve_primary=False)
 
         if self.current_speed_data and self.widget_state:
-            self.widget_state.add_speed_data(self.current_speed_data, aggregated_up=agg_upload, aggregated_down=agg_download)
+            self.widget_state.add_speed_data(self.current_speed_data, aggregated_up=agg_upload,
+                                             aggregated_down=agg_download, persist_data=measured_speed_data)
 
         upload_mbps = (agg_upload * 8) / 1_000_000
         download_mbps = (agg_download * 8) / 1_000_000

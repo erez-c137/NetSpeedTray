@@ -217,8 +217,16 @@ class WidgetState(QObject):
             self._read_conns[thread_id] = (conn, now)   # touch: this thread is demonstrably alive
             return conn
 
-    def add_speed_data(self, speed_data: Dict[str, Tuple[float, float]], now: Optional[datetime] = None, aggregated_up: Optional[float] = None, aggregated_down: Optional[float] = None) -> None:
-        """Adds new per-interface speed data."""
+    def add_speed_data(self, speed_data: Dict[str, Tuple[float, float]], now: Optional[datetime] = None,
+                       aggregated_up: Optional[float] = None, aggregated_down: Optional[float] = None,
+                       persist_data: Optional[Dict[str, Tuple[float, float]]] = None) -> None:
+        """Adds new per-interface speed data.
+
+        ``speed_data`` feeds the in-memory live series (mini graph, Monitor session view) and is
+        what the user sees - the controller passes its spike-FILTERED rates. ``persist_data``, when
+        given, is what goes to the DB batch instead: the MEASURED rates, so history holds
+        measurements rather than the filter's substitute values (v8 step 0). Omitted, the DB gets
+        ``speed_data`` (direct callers, tests)."""
         _now = now or datetime.now()
         self.in_memory_history.append(SpeedDataSnapshot(speeds=speed_data.copy(), timestamp=_now))
 
@@ -233,8 +241,9 @@ class WidgetState(QObject):
         timestamp = int(_now.timestamp())
         max_speed = network.interface.MAX_REASONABLE_SPEED_BPS
         
+        to_persist = speed_data if persist_data is None else persist_data
         with self._batch_lock:
-            for interface, (up_speed, down_speed) in speed_data.items():
+            for interface, (up_speed, down_speed) in to_persist.items():
                 if up_speed >= network.speed.MIN_RECORDABLE_SPEED_BPS or down_speed >= network.speed.MIN_RECORDABLE_SPEED_BPS:
                     self._db_batch.append((timestamp, interface, min(up_speed, max_speed), min(down_speed, max_speed)))
 
