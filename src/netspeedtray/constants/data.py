@@ -192,7 +192,17 @@ class DataConstants:
     # Accumulates exact byte deltas (gap-free, unlike the sampled speed history),
     # with a per-period anchor so usage_this_period = cumulative - anchor.
     USAGE_COUNTER_TABLE: Final[str] = "usage_counter"
-    
+
+    # Every table "Delete all history" empties (only those present in the file are touched). The
+    # odometer (USAGE_COUNTER_TABLE) is deliberately NOT here: it is the data-cap's billing source of
+    # truth (decision D5) and is only cleared when the user ticks the separate opt-in. `metadata`
+    # (db_version, maintenance stamps) is schema bookkeeping, not history, and is never deleted.
+    HISTORY_TABLES: Final[tuple] = (
+        SPEED_TABLE_RAW, SPEED_TABLE_MINUTE, SPEED_TABLE_HOUR,
+        HARDWARE_STATS_TABLE_RAW, HARDWARE_STATS_TABLE_MINUTE, HARDWARE_STATS_TABLE_HOUR,
+        BANDWIDTH_TABLE, APP_BANDWIDTH_TABLE, SPEED_TABLE, AGGREGATED_TABLE,
+    )
+
     AGGREGATION_CUTOFF_DAYS: Final[int] = 2  # Days before data is aggregated
     
     def __init__(self) -> None:

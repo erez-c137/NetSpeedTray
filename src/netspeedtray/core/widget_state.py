@@ -76,6 +76,8 @@ class WidgetState(QObject):
     # finished construction and connected (main.py wires the flyout there) - so the
     # notification cannot be emitted before anyone is listening.
     db_schema_incompatible = pyqtSignal(int, int, str)
+    # Re-emitted from DatabaseWorker.history_deleted (True = deleted), queued onto the GUI thread.
+    history_deleted = pyqtSignal(bool)
 
     def __init__(self, config: Dict[str, Any], read_only: bool = False) -> None:
         super().__init__()
@@ -118,6 +120,7 @@ class WidgetState(QObject):
         # Surface the downgrade guard (v2.1.5, action-plan item 1). Connected BEFORE
         # start() so the worker can never trip the guard while nothing is wired.
         self.db_worker.schema_incompatible.connect(self.db_schema_incompatible)
+        self.db_worker.history_deleted.connect(self.history_deleted)
         if not read_only:
             self.db_worker.start()
 
@@ -231,9 +234,14 @@ class WidgetState(QObject):
     # are NOT percentages and must be stored unclamped - a 200 ms ping or 180 W draw must not become 100.
     _PCT_STATS = frozenset({'cpu', 'gpu', 'ram', 'vram'})
 
-    def add_hardware_stat(self, stat_type: str, value: float, now: Optional[datetime] = None) -> None:
+    def add_hardware_stat(self, stat_type: str, value: float, now: Optional[datetime] = None,
+                          persist: bool = True) -> None:
         """Record a hardware sample (utilization %, power W, temperature °C, or latency ms) to the
-        in-memory deque (for graphed util stats) + the DB batch (for all, via the 3-tier rollups)."""
+        in-memory deque (for graphed util stats) + the DB batch (for all, via the 3-tier rollups).
+
+        ``persist=False`` feeds only the in-memory live series (mini graph, Monitor live tiles) and
+        writes nothing to disk - the caller (StatsController, via hardware_persist_allowed) passes it
+        when the user has hardware recording off or isn't monitoring that metric."""
         _now = now or datetime.now()
         snapshot = HardwareStatSnapshot(value=value, timestamp=_now)
 
@@ -244,6 +252,8 @@ class WidgetState(QObject):
         elif stat_type == 'ram':
             self.ram_history.append(snapshot)
 
+        if not persist:
+            return
         # Clamp only the percentage stats; store physical stats unclamped (just floor at 0).
         v = max(0.0, min(100.0, value)) if stat_type in self._PCT_STATS else max(0.0, float(value))
         with self._batch_lock:
@@ -384,10 +394,55 @@ class WidgetState(QObject):
         with self._batch_lock:
             db_batch, self._db_batch = self._db_batch, []
             hw_batch, self._hw_batch = self._hw_batch, []
-        if db_batch:
-            self.db_worker.enqueue_task("persist_speed", db_batch)
-        if hw_batch:
-            self.db_worker.enqueue_task("persist_hardware", hw_batch)
+            # Enqueued INSIDE the lock (queue.put on the unbounded worker queue never blocks), so a
+            # flush from the graph-worker thread can't slip a pre-delete batch in behind a
+            # delete_all_history() that ran between the snapshot and the enqueue.
+            if db_batch:
+                self.db_worker.enqueue_task("persist_speed", db_batch)
+            if hw_batch:
+                self.db_worker.enqueue_task("persist_hardware", hw_batch)
+
+    def delete_all_history(self, include_usage: bool = False) -> None:
+        """
+        "Delete all history" (Settings > Advanced): wipe every recorded speed/hardware/latency sample,
+        on disk (via the DatabaseWorker, then VACUUM) and in memory, and keep recording.
+
+        Order matters, and all of it is on the GUI thread, which is where samples are appended:
+          1. under the batch lock, drop the not-yet-flushed batches and enqueue the delete - so a
+             sample taken before the request can never be written after it (flush_batch also
+             enqueues under this lock);
+          2. clear the in-memory series IN PLACE (readers take list() copies; reassigning would
+             strand a reference held elsewhere), so the mini graph and the Monitor's live windows
+             stop showing deleted data right away;
+          3. only if the user opted in, zero the data-usage odometer and persist the zeros AFTER the
+             delete (FIFO), so the next throttled persist can't resurrect the old totals.
+
+        Not touched: settings, the latency probe's short live window (~2 min, never on disk on its
+        own), and - unless ``include_usage`` - the odometer (D5: the data cap's billing source).
+        Completion is reported by ``history_deleted``.
+        """
+        if self._read_only:
+            return
+        with self._batch_lock:
+            self._db_batch = []
+            self._hw_batch = []
+            self.db_worker.enqueue_task("delete_history", {"include_usage": bool(include_usage)})
+        for series in (self.in_memory_history, self.aggregated_history,
+                       self.cpu_history, self.gpu_history, self.ram_history):
+            series.clear()
+        if include_usage:
+            self._usage = {
+                "cumulative_up": 0.0, "cumulative_down": 0.0,
+                "anchor_up": 0.0, "anchor_down": 0.0,
+                "period_key": self._compute_period_key(self.config.get("data_cap_reset_day", 1)),
+            }
+            # Treat the zeros as loaded even if the lazy load hadn't run yet: the worker creates the
+            # table before it drains its queue, so this persist lands, and a later lazy load must not
+            # read back the pre-delete row.
+            self._usage_loaded = True
+            self._persist_usage_now()
+            self._usage_last_persist = time.time()
+        self.logger.info("Delete all history requested (include_usage=%s).", bool(include_usage))
 
     def flush_and_wait(self, timeout: float = 2.0) -> None:
         """

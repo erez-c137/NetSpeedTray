@@ -36,6 +36,9 @@ class DatabaseWorker(QThread):
     # view surfaces it as a flyout - a log line alone leaves a rolled-back install
     # looking perfectly healthy while recording nothing, forever.
     schema_incompatible = pyqtSignal(int, int, str)
+    # Result of a user-requested "Delete all history" (True = deleted). Emitted from this thread;
+    # WidgetState re-emits it so the Settings dialog hears it on the GUI thread.
+    history_deleted = pyqtSignal(bool)
 
     _DB_VERSION = 7  # Covering indexes, metadata, eager aggregation, sample_count, hardware stats, hardware hourly, usage_counter (data-cap odometer)
 
@@ -154,6 +157,8 @@ class DatabaseWorker(QThread):
                     "Refusing database task '%s' and all further writes: the file was written by a "
                     "newer version of NetSpeedTray. This is logged once per session.", task,
                 )
+            if task == "delete_history":
+                self.history_deleted.emit(False)   # the user is waiting on an answer
             return
 
         handlers = {
@@ -161,6 +166,7 @@ class DatabaseWorker(QThread):
             "persist_hardware": self._persist_hardware_batch,
             "persist_usage": self._persist_usage,
             "maintenance": self._run_maintenance,
+            "delete_history": self._delete_history,
         }
         handler = handlers.get(task)
         if handler:
@@ -878,6 +884,60 @@ class DatabaseWorker(QThread):
         except sqlite3.Error as e:
             self.logger.error("Maintenance failed: %s", e)
             self.conn.rollback()
+
+
+    def _delete_history(self, data: Optional[Dict[str, Any]] = None) -> None:
+        """
+        User-requested "Delete all history": empty every history tier, then VACUUM.
+
+        Runs on this thread like every other write, so it is serialized with the persist batches -
+        WidgetState drops its pending batches and enqueues this under the batch lock, so nothing
+        recorded before the request can be written after it, and samples enqueued after it land in
+        the emptied tables as normal (the app keeps recording).
+
+        The VACUUM is not optional here: a DELETE only moves pages to the freelist, where the old
+        samples stay readable in the file. It bypasses the daily/slack gates of the maintenance
+        VACUUM because the user asked for the data to be gone, not for the file to be tidied.
+
+        ``data["include_usage"]`` also clears the data-usage odometer (opt-in; see HISTORY_TABLES).
+        """
+        include_usage = bool((data or {}).get("include_usage", False))
+        if self.conn is None:
+            self.history_deleted.emit(False)
+            return
+        cursor = self.conn.cursor()
+        try:
+            present = {r[0] for r in cursor.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+            tables = [t for t in constants.data.HISTORY_TABLES if t in present]
+            if include_usage and constants.data.USAGE_COUNTER_TABLE in present:
+                tables.append(constants.data.USAGE_COUNTER_TABLE)
+            for table in tables:
+                cursor.execute(f"DELETE FROM {table}")
+            self.conn.commit()
+        except sqlite3.Error as e:
+            self.logger.error("Delete all history failed: %s", e)
+            self.conn.rollback()
+            self.history_deleted.emit(False)
+            return
+        self.logger.info("History deleted (%d tables%s).", len(tables),
+                         ", incl. data-usage counter" if include_usage else "")
+        try:
+            self.conn.execute("VACUUM;")
+            self.conn.execute(
+                "INSERT OR REPLACE INTO metadata (key, value) VALUES ('last_vacuum_at', ?)",
+                (str(int(time.time())),))
+            self.conn.commit()
+        except sqlite3.Error as e:
+            # The rows are already deleted and committed; a failed rewrite only leaves free pages.
+            self.logger.warning("VACUUM after history delete failed: %s", e)
+        try:
+            # VACUUM in WAL mode writes the whole rewritten file into -wal; fold it back now.
+            self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+        except sqlite3.Error as e:
+            self.logger.debug("WAL checkpoint after history delete skipped: %s", e)
+        self.database_updated.emit()
+        self.history_deleted.emit(True)
 
 
     def _vacuum_warranted(self, free_pages: int, page_count: int) -> bool:

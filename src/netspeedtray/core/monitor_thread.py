@@ -72,6 +72,14 @@ _NON_CPU_SENSOR_IDENTS: tuple = (
 )
 
 
+def hardware_collection_gates(config: Dict[str, Any], force: bool) -> Tuple[bool, bool]:
+    """(collect_cpu_ram, collect_gpu_vram) for one poll: the user's monitoring switches, or everything
+    while the Monitor window forces collection for its live tiles. Recording is NOT a reason to poll -
+    persistence is decided downstream (controller.hardware_persist_allowed)."""
+    return (bool(config.get('monitor_cpu_enabled', False)) or force,
+            bool(config.get('monitor_gpu_enabled', False)) or force)
+
+
 def aggregate_gpu_engine_utilization(samples: Dict[Any, Any]) -> float:
     """Busiest-engine GPU utilization from a `\\GPU Engine(*)\\Utilization Percentage` array.
 
@@ -1003,12 +1011,13 @@ class StatsMonitorThread(QThread):
 
                 # Monitor-window override forces hardware collection even with the widget's flags off.
                 _force_hw = self._force_hardware_collection
-                # Always-on history recording: collect cheap CPU/GPU/RAM utilization so the Monitor's
-                # graphs have real past data. Temps/power stay on their own (heavier) gates below.
-                _record = self.config.get('record_hardware_history', True)
+                # Collect only what the user monitors (or the open Monitor window shows). This used to
+                # OR in record_hardware_history, polling + recording CPU/GPU/RAM with monitoring off;
+                # whether a sample is persisted is now the controller's call (hardware_persist_allowed).
+                _collect_cpu, _collect_gpu = hardware_collection_gates(self.config, _force_hw)
 
                 # 2. CPU / RAM (Optional)
-                if self.config.get('monitor_cpu_enabled', False) or _force_hw or _record:
+                if _collect_cpu:
                     # non-blocking (percpu=False)
                     stats['cpu'] = psutil.cpu_percent(interval=None)
                     if self.config.get('show_hardware_temps', False) or _force_hw:
@@ -1022,7 +1031,7 @@ class StatsMonitorThread(QThread):
                     stats['ram_total'] = mem.total / (1024**3) # GB
 
                 # 3. GPU / VRAM (Optional - skipped entirely in RDP sessions)
-                if (self.config.get('monitor_gpu_enabled', False) or _force_hw or _record) and not _in_rdp:
+                if _collect_gpu and not _in_rdp:
                     try:
                         include_temp = bool(self.config.get('show_hardware_temps', False)) or _force_hw
                         include_power = bool(self.config.get('show_hardware_power', False)) or _force_hw
