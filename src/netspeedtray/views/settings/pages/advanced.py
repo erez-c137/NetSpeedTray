@@ -7,10 +7,10 @@ flag (also read by the Monitor window's hold-still logic), and reset affordances
 """
 from typing import Dict, Any, Callable, Optional
 
-from PyQt6.QtWidgets import QWidget, QHBoxLayout, QLabel, QPushButton, QGraphicsOpacityEffect
+from PyQt6.QtWidgets import QWidget, QLabel, QPushButton, QGraphicsOpacityEffect
 
 from netspeedtray import constants
-from netspeedtray.utils.components import Win11Toggle, SettingCard, Win11ComboBox
+from netspeedtray.utils.components import Win11Toggle, SettingCard, Win11ComboBox, ReflowRow
 from netspeedtray.utils import styles as style_utils
 from netspeedtray.utils import helpers
 from netspeedtray.views.settings.pages._fluent import section_header, page_layout
@@ -98,7 +98,6 @@ class AdvancedPage(QWidget):
             f"color: {style_utils.semantic_colors()['text_secondary']};"
             f" background: transparent; padding: 0 2px;")
         layout.addWidget(note)
-        btn_row = QHBoxLayout()
         self.reset_page_btn = QPushButton(self.i18n.ADVANCED_RESET_PAGE_BUTTON)
         self.reset_all_btn = QPushButton(self.i18n.ADVANCED_RESET_ALL_BUTTON)
         self.reset_page_btn.setStyleSheet(style_utils.button_style())
@@ -107,10 +106,8 @@ class AdvancedPage(QWidget):
             self.reset_page_btn.clicked.connect(self._reset_page_cb)
         if self._reset_all_cb:
             self.reset_all_btn.clicked.connect(self._reset_all_cb)
-        btn_row.addWidget(self.reset_page_btn)
-        btn_row.addWidget(self.reset_all_btn)
-        btn_row.addStretch()
-        layout.addLayout(btn_row)
+        # Stacks the two buttons when the window is too narrow for both (es_ES needs ~500 px).
+        layout.addWidget(ReflowRow([self.reset_page_btn, self.reset_all_btn]))
 
         layout.addStretch()
 
