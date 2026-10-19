@@ -228,3 +228,18 @@ def test_summarize_hardware_matches_legacy(ws, poll):
             _same(new, old, f"summarize_hardware({stat},{start},{end},{poll})")
             nonempty += old.count > 0
     assert nonempty > 50
+
+
+# --- 4. summarize_network ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("poll", [1.0, 2.0])
+@pytest.mark.parametrize("direction", ["download", "upload"])
+def test_summarize_network_matches_legacy(ws, direction, poll):
+    nonempty = 0
+    for start, end in _bounded_windows():
+        for iface in IFACES_ALL:
+            old = Legacy.summarize_network(ws, direction, start, end, iface, poll)
+            new = ws.summarize_network(direction, start, end, iface, poll)
+            _same(new, old, f"summarize_network({direction},{start},{end},{iface},{poll})")
+            nonempty += old.count > 0
+    assert nonempty > 50

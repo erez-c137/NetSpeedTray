@@ -605,7 +605,7 @@ class WidgetState(QObject):
         return self.history_reader.hardware_history(stat_type, start_time, end_time)
 
     # --- pro-stats: tier-aware honest window summaries (exact ≤24h raw, avg+max beyond) ----------
-    _RAW_SUMMARY_SECONDS = 24 * 3600   # the raw tier retains ~24h; windows within it summarize exactly
+    # The SQL lives in core/db/history_reader.py (V7HistoryReader.summarize_*).
 
     def summarize_hardware(self, stat_type: str, start_time: datetime, end_time: datetime,
                            poll_interval: float = 1.0):
@@ -622,58 +622,8 @@ class WidgetState(QObject):
         from netspeedtray.utils import summaries as S
         if not getattr(self, 'db_worker', None):
             return S.summarize_raw([])
-        col = "download" if direction == "download" else "upload"
-        win = max(0.0, (end_time - start_time).total_seconds())
-        st, et = int(start_time.timestamp()), int(end_time.timestamp())
-        iface = None if interface_name in (None, "all") else interface_name
-        wh = "" if iface is None else " AND interface_name=?"
-        params_tail = () if iface is None else (iface,)
-        try:
-            cur = self._get_read_conn().cursor()
-
-            def _raw_vals():
-                # Sum per-timestamp across interfaces when aggregating, so an "all" summary matches the
-                # widget's aggregate rather than mixing per-NIC samples.
-                cur.execute(
-                    f"SELECT SUM({col}_bytes_sec) FROM {constants.data.SPEED_TABLE_RAW} "
-                    f"WHERE timestamp BETWEEN ? AND ?{wh} GROUP BY timestamp", (st, et) + params_tail)
-                return [r[0] for r in cur.fetchall() if r[0] is not None]
-
-            if win <= self._RAW_SUMMARY_SECONDS:
-                vals = _raw_vals()
-                return S.summarize_raw(vals, S.coverage_pct(len(vals), win, poll_interval))
-
-            # Beyond the raw horizon the window spans tiers: the recent <24h is still in RAW, older data
-            # in minute/hour. Union all three (non-overlapping, like get_speed_history) so the summary
-            # covers the WHOLE window instead of only the rolled-up older half (which dropped the most
-            # recent ~24h and disagreed with the graph for the same window).
-            avgs, maxes, counts = [], [], []
-            covered_seconds = 0.0   # for coverage: count distinct TIME buckets × their duration, NOT
-            #                         SUM(sample_count) - which, for an "all" aggregate, double-counts by
-            #                         NIC and inflates the evidence-admissibility figure past 100%.
-            for table, bucket_secs in ((constants.data.SPEED_TABLE_MINUTE, 60.0),
-                                       (constants.data.SPEED_TABLE_HOUR, 3600.0)):
-                cur.execute(
-                    f"SELECT SUM({col}_avg), MAX(t.mx), SUM(sample_count) FROM "
-                    f"(SELECT timestamp, {col}_avg, {col}_max AS mx, sample_count FROM {table} "
-                    f" WHERE timestamp BETWEEN ? AND ?{wh}) t GROUP BY t.timestamp",
-                    (st, et) + params_tail)
-                for r in cur.fetchall():
-                    if r[0] is None:
-                        continue
-                    avgs.append(r[0]); maxes.append(r[1]); counts.append(r[2] or 1)
-                    covered_seconds += bucket_secs   # one distinct timestamp bucket of this tier
-            raw_vals = _raw_vals()
-            if not avgs:   # the whole window still fits the raw tier -> exact percentiles
-                return S.summarize_raw(raw_vals, S.coverage_pct(len(raw_vals), win, poll_interval))
-            avgs += raw_vals; maxes += raw_vals; counts += [1] * len(raw_vals)   # raw samples = count-1 buckets
-            covered_seconds += len(raw_vals) * poll_interval
-            coverage = min(100.0, (covered_seconds / win * 100.0)) if win > 0 else 0.0
-            tier = "minute" if win <= 30 * 86400 else "hour"
-            return S.summarize_rollup(avgs, maxes, counts, tier, coverage)
-        except Exception as e:
-            self.logger.error("summarize_network failed: %s", e, exc_info=True)
-            return S.summarize_raw([])
+        return self.history_reader.summarize_network(direction, start_time, end_time, interface_name,
+                                                     poll_interval)
 
 
     def get_total_bandwidth_for_period(self, start_time: Optional[datetime], end_time: Optional[datetime], interface_name: Optional[str] = None) -> Tuple[float, float]:
