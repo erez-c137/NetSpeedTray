@@ -86,6 +86,13 @@ class RenderConfig:
     hide_unit_suffix: bool = constants.config.defaults.DEFAULT_HIDE_UNIT_SUFFIX
     short_unit_labels: bool = constants.config.defaults.DEFAULT_SHORT_UNIT_LABELS
     max_samples: int = 1800 # Default 30 mins * 60s
+    # Fixed mini-graph y-axis. graph_scale_ceiling is the advertised plan speed in bytes/sec - the larger
+    # of down/up, since both series share one axis - and 0 means no plan is set, which keeps the graph
+    # automatic even with graph_fixed_scale on. graph_scale_headroom is a fraction (0.10 == 10%).
+    graph_fixed_scale: bool = constants.config.defaults.DEFAULT_GRAPH_FIXED_SCALE
+    graph_scale_ceiling: float = 0.0
+    graph_scale_headroom: float = constants.config.defaults.DEFAULT_GRAPH_SCALE_HEADROOM / 100.0
+    graph_show_ceiling: bool = constants.config.defaults.DEFAULT_GRAPH_SHOW_CEILING
     use_separate_arrow_font: bool = False
     arrow_font_family: str = constants.config.defaults.DEFAULT_FONT_FAMILY
     arrow_font_size: int = 9
@@ -133,6 +140,10 @@ class RenderConfig:
                 try: weight_val = int(weight_raw)
                 except: weight_val = constants.fonts.WEIGHT_DEMIBOLD
 
+            plan_mbps = max(float(config.get('plan_down_mbps', 0) or 0), float(config.get('plan_up_mbps', 0) or 0))
+            scale_ceiling = (plan_mbps * constants.network.units.MEGA_DIVISOR) / constants.network.units.BITS_PER_BYTE
+            headroom_pct = config.get('graph_scale_headroom', constants.config.defaults.DEFAULT_GRAPH_SCALE_HEADROOM)
+
             return cls(
                 color_coding=bool(config.get('color_coding', constants.config.defaults.DEFAULT_COLOR_CODING)),
                 graph_enabled=bool(config.get('graph_enabled', constants.config.defaults.DEFAULT_GRAPH_ENABLED)),
@@ -159,6 +170,10 @@ class RenderConfig:
                 hardware_label_style=str(config.get('hardware_label_style', 'icons_colored')),
                 short_unit_labels=bool(config.get('short_unit_labels', constants.config.defaults.DEFAULT_SHORT_UNIT_LABELS)),
                 max_samples=max_samples,
+                graph_fixed_scale=bool(config.get('graph_fixed_scale', constants.config.defaults.DEFAULT_GRAPH_FIXED_SCALE)),
+                graph_scale_ceiling=max(0.0, scale_ceiling),
+                graph_scale_headroom=max(0.0, float(headroom_pct or 0)) / 100.0,
+                graph_show_ceiling=bool(config.get('graph_show_ceiling', constants.config.defaults.DEFAULT_GRAPH_SHOW_CEILING)),
                 use_custom_arrow_colors=bool(config.get(
                     'use_custom_arrow_colors', constants.config.defaults.DEFAULT_USE_CUSTOM_ARROW_COLORS)),
                 arrow_up_color=str(config.get(
@@ -221,6 +236,7 @@ class WidgetRenderer:
                 self._last_history_hash = 0
                 self._cached_upload_points = []
                 self._cached_download_points = []
+                self._cached_ceiling_y: Optional[float] = None   # plan-speed line row; None = no line
                 
                 # Caching for high-frequency paint events
                 self._cached_pens = {}
@@ -841,23 +857,13 @@ class WidgetRenderer:
             if self._last_widget_size != (width, height) or self._last_history_hash != current_hash:
                 if is_hardware:
                     # Hardware is 0-100%
-                    max_y = 100.0
+                    max_y, ceiling = 100.0, None
                 else:
-                    # Speed history (history is non-empty here: len >= MIN_GRAPH_POINTS)
-                    max_speed_val = max(
-                        max(d.upload for d in history),
-                        max(d.download for d in history)
-                    )
-                    
-                    if len(history) > 10:
-                        all_speeds = [d.upload for d in history] + [d.download for d in history]
-                        all_speeds_sorted = sorted(all_speeds)
-                        percentile_95 = all_speeds_sorted[int(len(all_speeds_sorted) * 0.95)]
-                        if percentile_95 > 0 and max_speed_val > percentile_95 * 3.0:
-                            max_speed_val = percentile_95
-
-                    padded_max_speed = max_speed_val * constants.renderer.GRAPH_Y_AXIS_PADDING_FACTOR
-                    max_y = max(padded_max_speed, constants.renderer.MIN_Y_SCALE)
+                    max_y, ceiling = self._network_graph_scale(history, config)
+                # A fixed axis can be outrun (a burst above plan + headroom), so the curve is capped at its
+                # top edge instead of running off the top of the graph. The auto-fit is sized to the data,
+                # so it is left exactly as before.
+                y_cap = max_y if ceiling is not None else math.inf
                 
                 num_points = len(history)
                 step_x = graph_rect.width() / (num_points - 1) if num_points > 1 else graph_rect.width()
@@ -870,8 +876,16 @@ class WidgetRenderer:
                 def make_smooth_polyline(accessor):
                     raw_y = [accessor(d) for d in history]
                     cx, cy = calculate_monotone_cubic_interpolation(raw_x, raw_y, density=5)
-                    points = [QPointF(x, base_y - (max(0, y) / max_y) * h) for x, y in zip(cx, cy)]
+                    points = [QPointF(x, base_y - (min(max(0, y), y_cap) / max_y) * h) for x, y in zip(cx, cy)]
                     return points
+
+                # Dotted line at the plan speed - only with headroom above 0%: at 0% the plan speed IS the
+                # graph's top edge, so a line there would add nothing. Snapped to a pixel center so the
+                # antialiased 1px dots stay crisp instead of smearing across two rows.
+                if ceiling is not None and config.graph_show_ceiling and config.graph_scale_headroom > 0:
+                    self._cached_ceiling_y = math.floor(base_y - (ceiling / max_y) * h) + 0.5
+                else:
+                    self._cached_ceiling_y = None
 
                 if is_hardware:
                     self._cached_upload_points = make_smooth_polyline(lambda d: d.value)
@@ -885,6 +899,15 @@ class WidgetRenderer:
 
             painter.save()
             painter.setOpacity(config.graph_opacity)
+
+            # Behind the data, in the text color (theme-aware, so it reads on light and dark taskbars).
+            if self._cached_ceiling_y is not None:
+                ceiling_pen = QPen(QColor(config.default_color), 1)
+                ceiling_pen.setStyle(Qt.PenStyle.DotLine)
+                painter.setPen(ceiling_pen)
+                painter.drawLine(QPointF(float(graph_rect.left()), self._cached_ceiling_y),
+                                 QPointF(float(graph_rect.right()), self._cached_ceiling_y))
+
             painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Plus)
 
             from PyQt6.QtGui import QLinearGradient, QBrush, QPolygonF
@@ -937,6 +960,35 @@ class WidgetRenderer:
         except Exception as e:
             self.logger.error("Failed to draw mini graph: %s", e)
 
+    @staticmethod
+    def _network_graph_scale(history: List[Any], config: RenderConfig) -> Tuple[float, Optional[float]]:
+        """Top of the network mini graph's y-axis in bytes/sec, plus the fixed ceiling it was built from
+        (None while auto-scaling).
+
+        Auto-scaling re-fits the axis to the busiest sample in the window, so once a download scrolls out
+        the axis shrinks and idle background traffic fills the graph as tall as the download did - the two
+        are only told apart by reading the numbers. A fixed scale (graph_fixed_scale with a plan speed
+        set) tops out at the plan speed plus the headroom instead, so a given height always means the
+        same speed. History is non-empty here (len >= MIN_GRAPH_POINTS)."""
+        if config.graph_fixed_scale and config.graph_scale_ceiling > 0:
+            ceiling = config.graph_scale_ceiling
+            return max(ceiling * (1.0 + config.graph_scale_headroom), constants.renderer.MIN_Y_SCALE), ceiling
+
+        max_speed_val = max(
+            max(d.upload for d in history),
+            max(d.download for d in history)
+        )
+
+        if len(history) > 10:
+            all_speeds = [d.upload for d in history] + [d.download for d in history]
+            all_speeds_sorted = sorted(all_speeds)
+            percentile_95 = all_speeds_sorted[int(len(all_speeds_sorted) * 0.95)]
+            if percentile_95 > 0 and max_speed_val > percentile_95 * 3.0:
+                max_speed_val = percentile_95
+
+        padded_max_speed = max_speed_val * constants.renderer.GRAPH_Y_AXIS_PADDING_FACTOR
+        return max(padded_max_speed, constants.renderer.MIN_Y_SCALE), None
+
 
     def update_config(self, config_dict: Dict[str, Any]) -> None:
         """Updates rendering configuration."""
@@ -952,6 +1004,7 @@ class WidgetRenderer:
 
             self._cached_upload_points = []
             self._cached_download_points = []
+            self._cached_ceiling_y = None
             self._last_history_hash = 0
             self.logger.debug("Renderer config updated.")
         except Exception as e:

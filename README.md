@@ -241,7 +241,7 @@ You probably grabbed an unsigned dev build. The official releases ([Setup.exe / 
 
 ### Widget Layout & Customization
 - **Layout modes** - Side-by-Side, Stacked, or Auto-Cycle (rotates Network / CPU / GPU); per-segment ordering
-- **Mini-graph overlay** with adjustable opacity and gradient fill
+- **Mini-graph overlay** with adjustable opacity and gradient fill, auto-scaled or **fixed to your plan speed** (+0/10/20/30% headroom, optional dotted plan-speed line)
 - **Arrow styles** - Classic ↑↓, Solid ▲▼, Compact ▴▾, Outline △▽, Outline Compact ▵▿, Double ⇑⇓, or Custom
 - **Live settings preview** - see the exact widget effect (font/color/arrows/layout/mode) before you commit
 - **Configurable click actions** - reassign double-click / middle-click on the widget (Open Monitor, Settings, Pause/Resume, or nothing)
