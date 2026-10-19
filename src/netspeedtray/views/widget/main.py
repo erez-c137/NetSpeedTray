@@ -502,7 +502,7 @@ class NetworkSpeedWidget(QWidget):
 
     def _on_latency(self, sample) -> None:
         """A LatencySample arrived (main thread, queued from the probe thread). Update the live
-        attributes + each hop's rolling loss%, and persist both RTTs and both hops' timeout flags so the
+        attributes + each hop's rolling loss%, and persist both RTTs and both hops' loss fractions so the
         Monitor's window loss% (the ISP-dispute figure) is honest for the internet, not just the router."""
         from netspeedtray.core.latency_probe import HOP_ANCHOR, headline_hop
         lat = constants.network.latency
@@ -523,9 +523,12 @@ class NetworkSpeedWidget(QWidget):
                     ws.add_hardware_stat("latency_gw", float(sample.gw_ms))
                 if sample.anchor_ms is not None:
                     ws.add_hardware_stat("latency_anchor", float(sample.anchor_ms))
-                ws.add_hardware_stat(lat.STAT_GW_TIMEOUT, 1.0 if sample.gw_timed_out else 0.0)
+                # The loss series: lost / sent of this cycle's burst (0, .25, .5, .75, 1). Old 0/1 rows
+                # (one echo per cycle) mean the same thing - the share of that cycle's probes lost - so
+                # every reader (rollup AVG, outage_summary's >= 0.5, the exporter) takes both unchanged.
+                ws.add_hardware_stat(lat.STAT_GW_TIMEOUT, float(sample.gw_loss_fraction))
                 if sample.anchor_enabled:
-                    ws.add_hardware_stat(lat.STAT_ANCHOR_TIMEOUT, 1.0 if sample.anchor_timed_out else 0.0)
+                    ws.add_hardware_stat(lat.STAT_ANCHOR_TIMEOUT, float(sample.anchor_loss_fraction))
             except Exception:
                 pass
 

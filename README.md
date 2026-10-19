@@ -196,7 +196,7 @@ Often no - see the [hardware table above](#hardware-monitoring---do-i-need-libre
 Yes - **Settings → Network → Data usage**, or the tray's **Data cap…**. Set a monthly cap, a billing reset day, and opt-in 80% / 100% alerts. The alert is a quiet flyout above the widget; the tray shows live progress.
 
 **Does the latency check phone home?**
-Only if you ask it to. The default target is your own **gateway**, which never leaves your LAN. Pinging a public host is a separate, explicit opt-in where *you* choose the host. Nothing else about your network is sent anywhere - there's no telemetry of any kind.
+Only if you ask it to. The default target is your own **gateway**, which never leaves your LAN - a burst of four small pings every 3 seconds, about 1.3 packets a second. Pinging a public host is a separate, explicit opt-in where *you* choose the host. Nothing else about your network is sent anywhere - there's no telemetry of any kind.
 
 <a id="why-does-the-network-name-need-location-access"></a>
 **Why does the network name need "Location" access?**
