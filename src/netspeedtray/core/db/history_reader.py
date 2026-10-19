@@ -64,6 +64,14 @@ class HistoryReader(ABC):
         """(upload_bytes, download_bytes) moved in [start, end]. ``poll_interval`` is the seconds one
         raw row stands for (the caller resolves it from config)."""
 
+    @abstractmethod
+    def distinct_interfaces(self) -> List[str]:
+        """Every interface name in any speed tier, sorted."""
+
+    @abstractmethod
+    def earliest_timestamp(self) -> Optional[datetime]:
+        """The oldest speed sample in any tier, or None for an empty history."""
+
 
 class V7HistoryReader(HistoryReader):
     """The v7 schema: speed_history_{raw,minute,hour} + hardware_stats_{raw,minute,hour} +
@@ -379,6 +387,52 @@ class V7HistoryReader(HistoryReader):
         except Exception as e:
             self.logger.error("Error calculating total bandwidth: %s", e, exc_info=True)
             return 0.0, 0.0
+
+    def distinct_interfaces(self) -> List[str]:
+        try:
+            conn = self._conn()
+            cursor = conn.cursor()
+
+            # Query all three tables to be comprehensive
+            cursor.execute("""
+                SELECT DISTINCT interface_name FROM speed_history_raw
+                UNION
+                SELECT DISTINCT interface_name FROM speed_history_minute
+                UNION
+                SELECT DISTINCT interface_name FROM speed_history_hour
+                ORDER BY interface_name
+            """)
+            interfaces = [row[0] for row in cursor.fetchall()]
+            return interfaces
+        except sqlite3.Error as e:
+            self.logger.error("Error fetching distinct interfaces: %s", e, exc_info=True)
+            return []
+
+    def earliest_timestamp(self) -> Optional[datetime]:
+        try:
+            conn = self._conn()
+            cursor = conn.cursor()
+
+            query = """
+                SELECT MIN(earliest_ts) FROM (
+                    SELECT MIN(timestamp) as earliest_ts FROM speed_history_raw
+                    UNION ALL
+                    SELECT MIN(timestamp) as earliest_ts FROM speed_history_minute
+                    UNION ALL
+                    SELECT MIN(timestamp) as earliest_ts FROM speed_history_hour
+                ) WHERE earliest_ts IS NOT NULL;
+            """
+            cursor.execute(query)
+            result = cursor.fetchone()
+
+            if result and result[0] is not None:
+                earliest_ts = int(result[0])
+                return datetime.fromtimestamp(earliest_ts)
+
+        except sqlite3.Error as e:
+            self.logger.error("Failed to retrieve the earliest timestamp from database: %s", e, exc_info=True)
+
+        return None
 
     # --- hardware -----------------------------------------------------------------------------
 

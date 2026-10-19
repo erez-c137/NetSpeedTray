@@ -704,24 +704,7 @@ class WidgetState(QObject):
 
     def get_distinct_interfaces(self) -> List[str]:
         """Returns a sorted list of all unique interface names from the database."""
-        try:
-            conn = self._get_read_conn()
-            cursor = conn.cursor()
-
-            # Query all three tables to be comprehensive
-            cursor.execute("""
-                SELECT DISTINCT interface_name FROM speed_history_raw
-                UNION
-                SELECT DISTINCT interface_name FROM speed_history_minute
-                UNION
-                SELECT DISTINCT interface_name FROM speed_history_hour
-                ORDER BY interface_name
-            """)
-            interfaces = [row[0] for row in cursor.fetchall()]
-            return interfaces
-        except sqlite3.Error as e:
-            self.logger.error("Error fetching distinct interfaces: %s", e, exc_info=True)
-            return []
+        return self.history_reader.distinct_interfaces()
 
 
     def get_earliest_data_timestamp(self) -> Optional[datetime]:

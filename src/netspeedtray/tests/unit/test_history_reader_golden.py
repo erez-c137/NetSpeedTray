@@ -262,3 +262,11 @@ def test_total_bandwidth_matches_legacy(ws, update_rate):
         assert nonzero > 50
     finally:
         ws.config["update_rate"] = constants.config.defaults.DEFAULT_CONFIG["update_rate"]
+
+
+# --- 6. get_distinct_interfaces ---------------------------------------------------------------------
+
+def test_distinct_interfaces_matches_legacy(ws):
+    old = Legacy.get_distinct_interfaces(ws)
+    assert old == ["Ethernet", "Tailscale", "Wi-Fi", "vEthernet (WSL)"]   # hour-only + raw-only NICs present
+    _same(ws.get_distinct_interfaces(), old)
