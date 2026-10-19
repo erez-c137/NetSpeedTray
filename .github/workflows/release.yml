@@ -66,7 +66,7 @@ jobs:
 
       - name: Submit Portable ZIP to SignPath (approval 1 of 2)
         id: sign_portable
-        uses: signpath/github-action-submit-signing-request@v2
+        uses: signpath/github-action-submit-signing-request@v3
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
           organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
@@ -102,7 +102,7 @@ jobs:
 
       - name: Submit Installer to SignPath (approval 2 of 2)
         id: sign_installer
-        uses: signpath/github-action-submit-signing-request@v2
+        uses: signpath/github-action-submit-signing-request@v3
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
           organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
