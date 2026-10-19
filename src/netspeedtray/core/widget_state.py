@@ -634,53 +634,9 @@ class WidgetState(QObject):
         if not hasattr(self, 'db_worker') or not self.db_worker:
             return 0.0, 0.0
 
-        try:
-            conn = self._get_read_conn()
-            cursor = conn.cursor()
-            
-            start_ts = int(start_time.timestamp()) if start_time else 0
-            end_ts = int(end_time.timestamp())
-
-            total_up, total_down = 0.0, 0.0
-            
-            # Optimization: Only query tiers that could potentially have data for this range.
-            # Raw: last 2 days. Minute: last 32 days. Hour: all.
-            now_ts = int(datetime.now().timestamp())
-            
-            # Bytes per tier = (sum of per-sample RATES) × (the seconds that sum represents). For the
-            # MINUTE and HOUR rollups that span is the FIXED bucket duration (60 / 3600 s) - NOT
-            # sample_count × the LIVE poll interval, which silently rescales ALL historical data when the
-            # user changes the poll rate (1s→5s would 5×-over-report months of minute/hour history). When
-            # the poll rate is unchanged the two agree (sample_count × poll ≈ bucket duration); the fix
-            # only changes the rate-changed case. The raw tier has no stored capture interval, so it uses
-            # the current poll interval (it's ≤24h, where the rate rarely changes). Per the db_utils model.
-            poll_interval = resolve_poll_interval_seconds(self.config.get("update_rate", 1.0))
-
-            tiers = []
-            if start_ts <= now_ts:                  # raw: SUM(bytes_sec) × poll_interval
-                tiers.append(("speed_history_raw", "upload_bytes_sec", "download_bytes_sec", poll_interval))
-            if start_ts < (now_ts - 24 * 3600):     # minute: SUM(avg) × 60
-                tiers.append(("speed_history_minute", "upload_avg", "download_avg", 60.0))
-            if start_ts < (now_ts - 30 * 86400):    # hour: SUM(avg) × 3600
-                tiers.append(("speed_history_hour", "upload_avg", "download_avg", 3600.0))
-
-            for table, up_expr, down_expr, secs in tiers:
-                query = f"SELECT SUM({up_expr}), SUM({down_expr}) FROM {table} WHERE timestamp BETWEEN ? AND ?"
-                params = [start_ts, end_ts]
-                if interface_name and str(interface_name).lower() != "all":
-                    query += " AND interface_name = ?"
-                    params.append(interface_name)
-                cursor.execute(query, params)
-                row = cursor.fetchone()
-                if row:
-                    total_up += (row[0] or 0.0) * secs
-                    total_down += (row[1] or 0.0) * secs
-
-            return total_up, total_down
-
-        except Exception as e:
-            self.logger.error("Error calculating total bandwidth: %s", e, exc_info=True)
-            return 0.0, 0.0
+        # The raw tier has no stored capture interval: the reader scales it by the current poll rate.
+        poll_interval = resolve_poll_interval_seconds(self.config.get("update_rate", 1.0))
+        return self.history_reader.total_bandwidth(start_time, end_time, interface_name, poll_interval)
 
 
     def get_in_memory_speed_history(self) -> List[SpeedDataSnapshot]:

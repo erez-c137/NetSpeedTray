@@ -58,6 +58,12 @@ class HistoryReader(ABC):
         """Honest WindowSummary for 'download' or 'upload' B/s over [start, end], per interface or
         aggregated across interfaces when ``interface_name`` is None/'all'."""
 
+    @abstractmethod
+    def total_bandwidth(self, start_time: Optional[datetime], end_time: datetime,
+                        interface_name: Optional[str], poll_interval: float) -> Tuple[float, float]:
+        """(upload_bytes, download_bytes) moved in [start, end]. ``poll_interval`` is the seconds one
+        raw row stands for (the caller resolves it from config)."""
+
 
 class V7HistoryReader(HistoryReader):
     """The v7 schema: speed_history_{raw,minute,hour} + hardware_stats_{raw,minute,hour} +
@@ -322,6 +328,57 @@ class V7HistoryReader(HistoryReader):
         except Exception as e:
             self.logger.error("summarize_network failed: %s", e, exc_info=True)
             return S.summarize_raw([])
+
+    def total_bandwidth(self, start_time: Optional[datetime], end_time: datetime,
+                        interface_name: Optional[str], poll_interval: float) -> Tuple[float, float]:
+        try:
+            conn = self._conn()
+            cursor = conn.cursor()
+
+            start_ts = int(start_time.timestamp()) if start_time else 0
+            end_ts = int(end_time.timestamp())
+
+            total_up, total_down = 0.0, 0.0
+
+            # Optimization: Only query tiers that could potentially have data for this range.
+            now_ts = int(datetime.now().timestamp())
+
+            # Bytes per tier = (sum of per-sample RATES) x (the seconds that sum represents). For the
+            # MINUTE and HOUR rollups that span is the FIXED bucket duration (60 / 3600 s) - NOT
+            # sample_count x the LIVE poll interval, which silently rescales ALL historical data when the
+            # user changes the poll rate (1s->5s would 5x-over-report months of minute/hour history). The
+            # raw tier has no stored capture interval, so it uses the current poll interval (it's <=24h,
+            # where the rate rarely changes).
+            #
+            # KNOWN OVER-COUNT, deliberately kept (v8 step 2 is behaviour-identical): avg x 60 assumes
+            # every second of the bucket was sampled, but the writer only stores a raw row when the NIC
+            # moved >= 1 B/s, so avg is the mean over ACTIVE seconds and avg x 60 over-states a partly
+            # idle minute. The v8 backend fixes it by storing bytes (SUM(bytes)), not by patching this.
+            tiers = []
+            if start_ts <= now_ts:                  # raw: SUM(bytes_sec) x poll_interval
+                tiers.append(("speed_history_raw", "upload_bytes_sec", "download_bytes_sec", poll_interval))
+            if start_ts < (now_ts - 24 * 3600):     # minute: SUM(avg) x 60
+                tiers.append(("speed_history_minute", "upload_avg", "download_avg", 60.0))
+            if start_ts < (now_ts - 30 * 86400):    # hour: SUM(avg) x 3600
+                tiers.append(("speed_history_hour", "upload_avg", "download_avg", 3600.0))
+
+            for table, up_expr, down_expr, secs in tiers:
+                query = f"SELECT SUM({up_expr}), SUM({down_expr}) FROM {table} WHERE timestamp BETWEEN ? AND ?"
+                params = [start_ts, end_ts]
+                if interface_name and str(interface_name).lower() != "all":
+                    query += " AND interface_name = ?"
+                    params.append(interface_name)
+                cursor.execute(query, params)
+                row = cursor.fetchone()
+                if row:
+                    total_up += (row[0] or 0.0) * secs
+                    total_down += (row[1] or 0.0) * secs
+
+            return total_up, total_down
+
+        except Exception as e:
+            self.logger.error("Error calculating total bandwidth: %s", e, exc_info=True)
+            return 0.0, 0.0
 
     # --- hardware -----------------------------------------------------------------------------
 

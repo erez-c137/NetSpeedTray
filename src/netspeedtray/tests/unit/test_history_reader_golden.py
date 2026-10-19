@@ -243,3 +243,22 @@ def test_summarize_network_matches_legacy(ws, direction, poll):
             _same(new, old, f"summarize_network({direction},{start},{end},{iface},{poll})")
             nonempty += old.count > 0
     assert nonempty > 50
+
+
+# --- 5. get_total_bandwidth_for_period (the data-cap / "data used" totals) ---------------------------
+
+@pytest.mark.parametrize("update_rate", [1.0, 2.0, 10.0, -1.0])   # -1.0: a legacy SMART config value
+def test_total_bandwidth_matches_legacy(ws, update_rate):
+    ws.config["update_rate"] = update_rate
+    try:
+        nonzero = 0
+        for start, end in WINDOWS:
+            end = end or datetime.now()          # callers always pass an end
+            for iface in IFACES_ALL:
+                old = Legacy.get_total_bandwidth_for_period(ws, start, end, iface)
+                new = ws.get_total_bandwidth_for_period(start, end, iface)
+                _same(new, old, f"total_bandwidth({start},{end},{iface},{update_rate})")
+                nonzero += old[1] > 0
+        assert nonzero > 50
+    finally:
+        ws.config["update_rate"] = constants.config.defaults.DEFAULT_CONFIG["update_rate"]
