@@ -284,6 +284,11 @@ class ConfigConstants:
         "data_cap_count": "total",         # total | download | upload
         "data_cap_alert_enabled": True,    # opt-in toast at 80% / 100%
         "usage_alert_state": "",           # internal: "<period_key>:<levels>" for restart-safe alerts
+        # --- Local metrics endpoint (2.2 scope B) ---
+        # OFF by default: an always-listening socket in a zero-telemetry app has to be the user's
+        # deliberate act. When on, it binds 127.0.0.1 only - nothing leaves the machine.
+        "metrics_endpoint_enabled": False,
+        "metrics_endpoint_port": network.metrics.DEFAULT_PORT,
     }
     
     # --- Schema Definition for Modern Config Validation ---
@@ -422,6 +427,9 @@ class ConfigConstants:
         "data_cap_count": {"type": str, "default": "total", "choices": ["total", "download", "upload"]},
         "data_cap_alert_enabled": {"type": bool, "default": True},
         "usage_alert_state": {"type": str, "default": ""},
+        "metrics_endpoint_enabled": {"type": bool, "default": False},
+        "metrics_endpoint_port": {"type": int, "default": network.metrics.DEFAULT_PORT,
+                                  "min": network.metrics.MIN_PORT, "max": network.metrics.MAX_PORT},
     }
 
 

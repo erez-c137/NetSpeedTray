@@ -408,6 +408,7 @@ class SettingsDialog(QDialog):
             self.hardware_page.load_settings(self.config)
             self.interfaces_page.load_settings(self.config)
             self.advanced_page.load_settings(self.config)
+            self._refresh_metrics_status()
 
             # Seed the live preview from the loaded config.
             self._update_preview(self.config)
@@ -491,6 +492,20 @@ class SettingsDialog(QDialog):
         current_settings = self.get_settings()
         self._update_preview(current_settings)
         self.settings_changed.emit(current_settings)
+        # The emit applied the settings synchronously (incl. starting/stopping the metrics endpoint),
+        # so the endpoint's status now describes what the user just chose.
+        self._refresh_metrics_status()
+
+    def _refresh_metrics_status(self) -> None:
+        """Show the local metrics endpoint's live status (listening / port in use) under its address."""
+        try:
+            from netspeedtray.core.metrics_endpoint import EndpointStatus
+            ep = getattr(self.parent_widget, "metrics_endpoint", None)
+            status = getattr(ep, "status", None) if ep is not None else None
+            self.advanced_page.set_metrics_endpoint_status(
+                status if isinstance(status, EndpointStatus) else None)
+        except Exception as e:
+            self.logger.debug("metrics endpoint status unavailable: %s", e)
 
     def _update_preview(self, settings: Dict[str, Any]) -> None:
         """Refresh the live-preview strip to reflect the current (merged) settings."""
@@ -774,6 +789,7 @@ class SettingsDialog(QDialog):
             # Apply settings to the main widget/application
             if hasattr(self.parent_widget, 'handle_settings_changed'):
                 self.parent_widget.handle_settings_changed(final_settings, save_to_disk=True)
+            self._refresh_metrics_status()
             
             # Determine startup change
             requested_startup = final_settings.get("start_with_windows", False)

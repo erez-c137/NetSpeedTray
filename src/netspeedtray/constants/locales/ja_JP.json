@@ -503,5 +503,16 @@
     "LOCATION_ONBOARDING_OPEN_BUTTON": "位置情報の設定を開く",
     "LOCATION_ONBOARDING_BAND_BUTTON": "バンドを表示するだけ",
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray がウィジェット パネルに重なっています",
-    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray がタスクバーの Windows ウィジェット (天気) パネルの上に表示されています。好きな場所へドラッグして移動でき、その位置は記憶されます。(このメッセージは次回以降表示されません。)"
+    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray がタスクバーの Windows ウィジェット (天気) パネルの上に表示されています。好きな場所へドラッグして移動でき、その位置は記憶されます。(このメッセージは次回以降表示されません。)",
+    "INTEGRATIONS_GROUP": "連携",
+    "METRICS_ENDPOINT_LABEL": "ローカル メトリック エンドポイント",
+    "METRICS_ENDPOINT_SUB": "この PC 上の Prometheus や Grafana が、現在の速度とデータ使用量を読み取れるようにします。接続できるのはこの PC だけで、外部には何も送信されません。",
+    "METRICS_PORT_LABEL": "ポート",
+    "METRICS_URL_LABEL": "アドレス",
+    "METRICS_COPY_BUTTON": "コピー",
+    "METRICS_COPIED": "コピーしました",
+    "METRICS_STATUS_RUNNING": "待ち受け中です。ネットワーク アダプター名が含まれます。",
+    "METRICS_STATUS_IN_USE": "ポート {port} は別のアプリが使用中です。別のポートを選んでください。",
+    "METRICS_STATUS_DENIED": "ポート {port} は Windows によって予約されています。別のポートを選んでください。",
+    "METRICS_STATUS_ERROR": "ポート {port} で開始できませんでした。別のポートを選んでください。"
 }

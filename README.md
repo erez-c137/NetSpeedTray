@@ -171,6 +171,42 @@ Double-click the widget (or pick **Monitor** from the right-click menu) to open 
 
 ---
 
+## Local metrics endpoint (Prometheus / Grafana)
+
+Off by default. Turn it on in **Settings → Advanced → Integrations**, and NetSpeedTray serves
+[Prometheus text format](https://prometheus.io/docs/instrumenting/exposition_formats/) at
+`http://127.0.0.1:9184/metrics` (the port is configurable). It answers **this PC only** - it binds the
+loopback address and refuses everything else - and it never sends anything anywhere.
+
+What's in it: live download/upload rates (the widget's numbers and the raw measured ones, total and per
+monitored adapter), the data-usage odometer for the current period and since it began, the data cap if
+you set one, router (and, if you enabled it, internet) latency and loss, and CPU/GPU/RAM/VRAM use for
+whatever you already monitor. Names follow Prometheus conventions (`netspeedtray_*`, bytes, seconds,
+`_total` counters).
+
+```yaml
+# prometheus.yml - Prometheus running on the same PC
+scrape_configs:
+  - job_name: netspeedtray
+    scrape_interval: 15s
+    static_configs:
+      - targets: ["127.0.0.1:9184"]
+```
+
+```promql
+rate(netspeedtray_period_receive_bytes_total[5m]) * 8   # download, bits/s, from the odometer
+netspeedtray_period_receive_bytes_total / netspeedtray_data_cap_bytes   # share of your cap used
+```
+
+**Grafana** reads it through that Prometheus data source. **Home Assistant, or a Prometheus/Grafana on
+another machine,** can't reach `127.0.0.1` on this PC - by design. Run a small agent here (Prometheus
+in agent mode, or Grafana Alloy) that scrapes the endpoint and `remote_write`s to your server.
+
+The response includes your network adapter names as labels, so anything running on this PC can read
+them while it's on - see the [Privacy Policy](privacy.md).
+
+---
+
 ## Quick Start
 
 1. **Install** with the Winget command [above](#install) (or the installer).
@@ -265,6 +301,7 @@ You probably grabbed an unsigned dev build. The official releases ([Setup.exe / 
 - **Your history is a plain SQLite file you can query yourself** - schema, units and example queries in [DATABASE.md](DATABASE.md)
 - **PII obfuscation** - logs auto-redact paths, IPs (incl. IPv6), MACs, hostnames, and interface GUIDs - and network-adapter names are replaced with **stable pseudonyms**, so repeated log lines still correlate for debugging without carrying the labels you gave your adapters
 - **Latency boundary** - off by default; gateway-only unless you explicitly opt in to a public host you name
+- **Local metrics endpoint** - off by default; when on, it answers this PC only (loopback-bound, non-local peers and foreign `Host` headers refused) and sends nothing
 - **Verified updates** - the in-app updater authenticates every download (Windows `WinVerifyTrust` + a publisher pin) before running it, with a GitHub fallback. Since 2.1.4 the **portable build updates itself in place**, and the updater never offers a prerelease - trying a beta is always a deliberate download
 - **Support Bundle** - one-click sanitized zip of logs + config + system info for bug reports
 
