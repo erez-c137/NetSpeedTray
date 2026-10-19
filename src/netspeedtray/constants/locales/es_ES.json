@@ -103,7 +103,6 @@
     "MONITORING_MODE_LABEL": "Modo de supervisión",
     "NO_INTERFACES_FOUND": "No se encontraron interfaces de red.",
     "ALL_INTERFACES_AGGREGATED_LABEL": "Todas (Agregadas)",
-    "SMART_MODE_LABEL": "Modo inteligente",
     "UPLOAD_ARROW": "↑",
     "DOWNLOAD_ARROW": "↓",
     "MONITORING_MODE_AUTO": "Auto (interfaz principal)",

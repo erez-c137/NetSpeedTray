@@ -47,7 +47,6 @@ from netspeedtray.views.settings.pages.advanced import AdvancedPage
 # units.py + colors.py are now embedded inside AppearancePage (the dialog reaches them via
 # appearance_page.units_section / .colors_section for the Force-MB rule + color-picker routing).
 from netspeedtray.views.widget.preview import PreviewWidget
-from netspeedtray.constants.update_mode import UpdateMode
 
 
 class SettingsDialog(QDialog):
@@ -412,33 +411,6 @@ class SettingsDialog(QDialog):
             self.hardware_page.hardware_enabled.connect(self.widget_page.ensure_hardware_visible)
         except Exception:
             pass
-        # When Force MB toggle is changed, ensure SMART update_rate is not selected.
-        try:
-            self.units_page.speed_display_mode.toggled.connect(self._on_force_mb_toggled)
-        except Exception:
-            # Defensive: if widget API differs, ignore
-            pass
-
-    def _on_force_mb_toggled(self, checked: bool) -> None:
-        """When Force MB is toggled, ensure update_rate SMART is not selected when Force MB is OFF.
-
-        If the toggle is turned OFF (auto mode) and the update rate slider is on SMART (position 0),
-        move it to AGGRESSIVE (1s) to prevent jitter. This enforces the UI-level rule immediately
-        so users can't save an incompatible combination.
-        """
-        try:
-            # If turned off, ensure GeneralPage slider isn't set to SMART
-            if not checked and hasattr(self, 'general_page'):
-                try:
-                    if self.general_page.update_rate.value() == 0:
-                        self.general_page.update_rate.setValue(1)
-                        self.general_page.update_rate.setValueText(self.general_page._format_update_rate_label(1))
-                        # Propagate change immediately
-                        self._schedule_settings_update()
-                except Exception:
-                    pass
-        except Exception:
-            pass
 
     def _on_sidebar_selection_changed(self, row: int) -> None:
         """Handles sidebar row changes to switch the stacked page + retitle the page header."""
@@ -526,13 +498,6 @@ class SettingsDialog(QDialog):
             else:
                  settings["color_is_automatic"] = self.original_config.get("color_is_automatic", True)
                  
-            # UI-level rule: if Force MB is OFF (speed_display_mode == 'auto') then SMART
-            # adaptive update mode is not allowed because it causes rapid unit flips.
-            # Enforce at UI collection time by forcing to 1s (AGGRESSIVE) when needed.
-            if settings.get("speed_display_mode") == "auto" and float(settings.get("update_rate", 1.0)) <= 0:
-                self.logger.info("Force MB is off and SMART was selected; forcing update_rate to %ss", UpdateMode.AGGRESSIVE)
-                settings["update_rate"] = float(UpdateMode.AGGRESSIVE)
-
             return settings
         except Exception as e:
             self.logger.error(f"Error collecting settings: {e}", exc_info=True)

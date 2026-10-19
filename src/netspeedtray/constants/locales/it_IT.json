@@ -103,7 +103,6 @@
     "MONITORING_MODE_LABEL": "Modalità di monitoraggio",
     "NO_INTERFACES_FOUND": "Nessuna interfaccia di rete rilevata.",
     "ALL_INTERFACES_AGGREGATED_LABEL": "Tutte (aggregate)",
-    "SMART_MODE_LABEL": "Modalità intelligente",
     "UPLOAD_ARROW": "↑",
     "DOWNLOAD_ARROW": "↓",
     "MONITORING_MODE_AUTO": "Automatico (interfaccia principale)",

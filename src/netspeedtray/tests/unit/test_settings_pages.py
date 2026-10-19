@@ -139,7 +139,6 @@ def mock_i18n():
     i18n.MONITORING_MODE_SELECTED_SUBTITLE = "Choose specific interfaces from the list below"
 
     # For GeneralPage update rate slider
-    i18n.SMART_MODE_LABEL = "Smart"
     i18n.UPDATE_MODE_AGGRESSIVE_LABEL = "Aggressive"
     i18n.UPDATE_MODE_BALANCED_LABEL = "Balanced"
     i18n.UPDATE_MODE_EFFICIENT_LABEL = "Efficient"
@@ -182,16 +181,11 @@ def test_general_page(q_app, mock_i18n, mock_callback):
     assert "free_move" not in settings
     assert "tray_offset_x" not in settings
 
-    # Test with Smart mode (update_rate = -1.0)
-    config_smart = {
-        "language": "en_US",
-        "update_rate": -1.0,  # SMART sentinel
-    }
-
-    page.load_settings(config_smart, is_startup_enabled=False)
-    settings_smart = page.get_settings()
-    assert settings_smart["update_rate"] == -1.0  # Smart mode
-    assert settings_smart["language"] == "en_US"
+    # The slowest preset round-trips too (10 s must not clamp to 5 s on a renumbered slider).
+    page.load_settings({"language": "en_US", "update_rate": 10.0}, is_startup_enabled=False)
+    settings_slow = page.get_settings()
+    assert settings_slow["update_rate"] == 10.0
+    assert settings_slow["language"] == "en_US"
 
 
 def test_language_none_round_trips_as_auto_detect(q_app, mock_i18n, mock_callback):

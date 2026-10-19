@@ -22,11 +22,11 @@ def test_load_creates_default_config_if_missing(config_manager):
             assert config == constants.config.defaults.DEFAULT_CONFIG
 
 def test_load_valid_config_merges_with_defaults(config_manager):
-    mock_content = json.dumps({"update_rate": 0.5, "font_size": 10})
+    mock_content = json.dumps({"update_rate": 5.0, "font_size": 10})
     with patch.object(Path, "exists", return_value=True):
         with patch.object(Path, "open", mock_open(read_data=mock_content)):
             config = config_manager.load()
-    assert config["update_rate"] == 0.5
+    assert config["update_rate"] == 5.0
     assert config["font_size"] == 10
     assert config["font_weight"] == constants.config.defaults.DEFAULT_CONFIG["font_weight"]
 
@@ -138,14 +138,14 @@ def test_config_migration_with_corrupted_version(config_manager):
     """
     corrupted_config = {
         "config_version": "INVALID_VERSION",
-        "update_rate": 1.5,
+        "update_rate": 5.0,
         "font_size": 12,
     }
 
     # Should not raise, and must NOT reset to defaults
     result = config_manager._migrate_config(corrupted_config)
 
-    assert result["update_rate"] == 1.5
+    assert result["update_rate"] == 5.0
     assert result["font_size"] == 12
     # The unparseable version string is left as-is, never stamped over.
     assert result["config_version"] == "INVALID_VERSION"
@@ -156,7 +156,7 @@ def test_config_migration_with_valid_version(config_manager):
     current_version = constants.config.defaults.CONFIG_SCHEMA_VERSION
     valid_config = {
         "config_version": "1.0",
-        "update_rate": 1.5,
+        "update_rate": 5.0,
         "font_size": 12,
     }
     
@@ -192,19 +192,19 @@ def test_config_migration_with_non_string_version(config_manager):
     """
     invalid_config = {
         "config_version": 123,  # Integer instead of string
-        "update_rate": 1.5,
+        "update_rate": 5.0,
     }
 
     # Should handle gracefully, preserving user values
     result = config_manager._migrate_config(invalid_config)
-    assert result["update_rate"] == 1.5
+    assert result["update_rate"] == 5.0
     assert result["config_version"] == 123
 
 
 def test_config_migration_missing_version_defaults_to_1_0(config_manager):
     """Verify migration defaults to version 1.0 if config_version is missing."""
     config_without_version = {
-        "update_rate": 1.5,
+        "update_rate": 5.0,
         "font_size": 12,
     }
 

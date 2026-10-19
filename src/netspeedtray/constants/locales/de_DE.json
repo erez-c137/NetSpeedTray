@@ -103,7 +103,6 @@
     "MONITORING_MODE_LABEL": "Überwachungsmodus",
     "NO_INTERFACES_FOUND": "Keine Netzwerkschnittstellen gefunden.",
     "ALL_INTERFACES_AGGREGATED_LABEL": "Alle (Aggregiert)",
-    "SMART_MODE_LABEL": "Smart-Modus",
     "UPLOAD_ARROW": "↑",
     "DOWNLOAD_ARROW": "↓",
     "MONITORING_MODE_AUTO": "Auto (Primäre Schnittstelle)",

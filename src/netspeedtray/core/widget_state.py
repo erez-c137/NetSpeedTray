@@ -755,8 +755,6 @@ class WidgetState(QObject):
             # the poll rate is unchanged the two agree (sample_count × poll ≈ bucket duration); the fix
             # only changes the rate-changed case. The raw tier has no stored capture interval, so it uses
             # the current poll interval (it's ≤24h, where the rate rarely changes). Per the db_utils model.
-            # SMART (-1.0) / the historical 0 sentinel actually sample every 2.0 s, not 1.0 s -
-            # resolve through the shared helper so raw-tier volume is not under-reported 2x.
             poll_interval = resolve_poll_interval_seconds(self.config.get("update_rate", 1.0))
 
             tiers = []
@@ -997,7 +995,7 @@ class WidgetState(QObject):
                 except Exception:
                     self.logger.exception("Fallback unified DB query failed.")
 
-            # --- SMART Edge Padding (Zero-Fill) ---
+            # --- Edge Padding (Zero-Fill) ---
             # If no real data, create evenly-spaced zeros across the timeline.
             # This prevents gap detection from splitting into single-point segments.
             if start_time and end_time:
@@ -1116,9 +1114,7 @@ class WidgetState(QObject):
         """Calculates max points for the in-memory deque based on config."""
         try:
             history_minutes = self.config.get("history_minutes", 30)
-            update_rate_sec = self.config.get("update_rate", 1.0)
-            if update_rate_sec <= 0: update_rate_sec = 1.0
-
+            update_rate_sec = resolve_poll_interval_seconds(self.config.get("update_rate", 1.0))
             points = int(round((history_minutes * 60) / update_rate_sec))
             return max(10, min(points, 5000))
 
@@ -1134,8 +1130,7 @@ class WidgetState(QObject):
         try:
             from netspeedtray import constants
             _, max_minutes = constants.ui.history.HISTORY_MINUTES_RANGE
-            update_rate_sec = self.config.get("update_rate", 1.0)
-            if update_rate_sec <= 0: update_rate_sec = 1.0
+            update_rate_sec = resolve_poll_interval_seconds(self.config.get("update_rate", 1.0))
             points = int(round((max_minutes * 60) / update_rate_sec))
             return max(10, min(points, 5000))
         except Exception as e:

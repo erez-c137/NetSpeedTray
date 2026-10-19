@@ -103,7 +103,6 @@
     "MONITORING_MODE_LABEL": "İzleme Modu",
     "NO_INTERFACES_FOUND": "Ağ arayüzü bulunamadı.",
     "ALL_INTERFACES_AGGREGATED_LABEL": "Tümü (Birleştirilmiş)",
-    "SMART_MODE_LABEL": "Akıllı Mod",
     "UPLOAD_ARROW": "↑",
     "DOWNLOAD_ARROW": "↓",
     "MONITORING_MODE_AUTO": "Otomatik (Birincil Arayüz)",

@@ -103,7 +103,6 @@
     "MONITORING_MODE_LABEL": "모니터링 모드:",
     "NO_INTERFACES_FOUND": "네트워크 인터페이스가 감지되지 않습니다.",
     "ALL_INTERFACES_AGGREGATED_LABEL": "모두 (집계)",
-    "SMART_MODE_LABEL": "스마트 모드",
     "UPLOAD_ARROW": "↑",
     "DOWNLOAD_ARROW": "↓",
     "MONITORING_MODE_AUTO": "자동 (기본 인터페이스)",

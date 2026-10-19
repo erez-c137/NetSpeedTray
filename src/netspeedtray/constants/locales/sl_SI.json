@@ -103,7 +103,6 @@
     "MONITORING_MODE_LABEL": "Način nadzora",
     "NO_INTERFACES_FOUND": "Ni zaznanih omrežnih vmesnikov.",
     "ALL_INTERFACES_AGGREGATED_LABEL": "Vse (združeno)",
-    "SMART_MODE_LABEL": "Pametni način",
     "UPLOAD_ARROW": "↑",
     "DOWNLOAD_ARROW": "↓",
     "MONITORING_MODE_AUTO": "Samodejno (primarni vmesnik)",

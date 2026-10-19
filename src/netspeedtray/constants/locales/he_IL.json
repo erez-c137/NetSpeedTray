@@ -103,7 +103,6 @@
     "MONITORING_MODE_LABEL": "מצב ניטור",
     "NO_INTERFACES_FOUND": "לא זוהו ממשקי רשת.",
     "ALL_INTERFACES_AGGREGATED_LABEL": "הכל (מצטבר)",
-    "SMART_MODE_LABEL": "מצב חכם",
     "UPLOAD_ARROW": "↑",
     "DOWNLOAD_ARROW": "↓",
     "MONITORING_MODE_AUTO": "אוטומטי (ממשק ראשי)",
