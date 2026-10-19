@@ -167,7 +167,8 @@ class InterfacesPage(QWidget):
         lbl.setProperty("pickerRole", "header")
         lbl.setFont(style_utils.font(tokens.TYPE_CAPTION))
         top = 0 if first else tokens.SPACE_S
-        lbl.setStyleSheet(f"color: {c['text_secondary']}; background: transparent; padding-top: {top}px;")
+        lbl.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;"
+                          f" padding: {top}px 0px 0px 0px; margin: 0px;")
         return lbl
 
     def _interface_row(self, iface: str, is_primary: bool) -> QWidget:
