@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional, Union
 
 from netspeedtray.utils.helpers import get_app_data_path
 from netspeedtray.utils.styles import is_dark_mode
+from netspeedtray.utils.timer_utils import snap_update_rate
 from netspeedtray import constants
 
 
@@ -414,6 +415,22 @@ class ConfigManager:
                 changes_made = True
         except Exception as e:
             self.logger.debug("keep_data migration skipped: %s", e)
+
+        # update_rate (2.2): SMART mode is gone and the slider offers exactly 1/2/5/10 s. SMART was
+        # persisted as the sentinel -1.0 (and, before that, 0) and sampled at a fixed 2.0 s, so any
+        # non-positive rate becomes 2.0 - the cadence that user actually had, not the 1 s default.
+        # Every other value snaps to the nearest preset (10 s stays 10 s; ties go to the faster one,
+        # as keep_data's do); garbage becomes the default. Idempotent, version-independent, and runs
+        # before _validate_config, whose `choices` rule would otherwise reset -1.0 to 1 s. A missing
+        # key is left for validation to fill.
+        if "update_rate" in migrated:
+            old_rate = migrated["update_rate"]
+            new_rate = snap_update_rate(old_rate)
+            if type(old_rate) is not float or old_rate != new_rate:   # NaN != NaN: rewritten too
+                migrated["update_rate"] = new_rate
+                self.logger.info("Migrated update_rate %r -> %s s (the 1/2/5/10 s presets)",
+                                 old_rate, new_rate)
+                changes_made = True
 
         # Version-based migrations (applied if loaded_version < target version)
         # Example structure for future versions:

@@ -4,7 +4,6 @@ Constants for application configuration defaults and constraints.
 from typing import Final, Dict, Any, List
 
 # --- IMPORT OTHER CONSTANTS TO CREATE A SINGLE SOURCE OF TRUTH ---
-from netspeedtray.constants.timers import timers
 from netspeedtray.constants.data import data
 from netspeedtray.constants.network import network
 from netspeedtray.constants.app import app
@@ -41,7 +40,6 @@ class ConfigConstants:
     
     # --- Default Values for Individual Settings (referencing other constants) ---
     DEFAULT_UPDATE_RATE: Final[float] = 1.0
-    MINIMUM_UPDATE_RATE: Final[float] = timers.MINIMUM_INTERVAL_MS / 1000.0
     DEFAULT_FONT_FAMILY: Final[str] = fonts.DEFAULT_FONT
     DEFAULT_FONT_SIZE: Final[int] = 9
     DEFAULT_FONT_WEIGHT: Final[int] = fonts.WEIGHT_NORMAL
@@ -292,8 +290,9 @@ class ConfigConstants:
         "config_version": {"type": str, "default": CONFIG_SCHEMA_VERSION},
         "start_with_windows": {"type": bool, "default": DEFAULT_START_WITH_WINDOWS},
         "language": {"type": (str, type(None)), "default": None, "choices": list(I18nStrings.LANGUAGE_MAP.keys()) + [None]},
-        # Allow -1.0 sentinel for SMART/adaptive mode in addition to positive intervals
-        "update_rate": {"type": (int, float), "default": DEFAULT_UPDATE_RATE, "min": -1.0, "max": timers.MAXIMUM_UPDATE_RATE_SECONDS},
+        # Seconds between samples: one of the four slider presets (1/2/5/10). `_migrate_config` snaps
+        # any other persisted value onto the ladder first, so this only catches a bad in-memory value.
+        "update_rate": {"type": (int, float), "default": DEFAULT_UPDATE_RATE, "choices": list(UpdateMode.PRESETS)},
         "font_family": {"type": str, "default": DEFAULT_FONT_FAMILY},
         "font_size": {"type": int, "default": DEFAULT_FONT_SIZE, "min": fonts.FONT_SIZE_MIN, "max": fonts.FONT_SIZE_MAX},
         "font_weight": {"type": int, "default": DEFAULT_FONT_WEIGHT, "min": 1, "max": 1000},

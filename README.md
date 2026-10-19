@@ -115,7 +115,7 @@ So I built NetSpeedTray: live up/down speeds, CPU and GPU utilization, temperatu
 
 ## What You Get
 
-🌐 **Network on your taskbar.** Live upload and download speeds with sub-second updates. Auto-detects your primary internet connection or lets you pick specific adapters. Color-code thresholds so heavy traffic stands out at a glance. In 2.0 the readout sits *inside* the taskbar's layer - it stays put through the Start menu, Quick Settings, and the tray overflow instead of disappearing.
+🌐 **Network on your taskbar.** Live upload and download speeds, updated every second by default. Auto-detects your primary internet connection or lets you pick specific adapters. Color-code thresholds so heavy traffic stands out at a glance. In 2.0 the readout sits *inside* the taskbar's layer - it stays put through the Start menu, Quick Settings, and the tray overflow instead of disappearing.
 
 🖥️ **Hardware stats too.** CPU and GPU utilization beside your network speeds, with optional temperature, power (Watts), RAM, and VRAM. Vendor-agnostic GPU support - NVIDIA, AMD, and Intel. ([When do temps need a helper? →](#hardware-monitoring---do-i-need-librehardwaremonitor))
 
@@ -184,7 +184,7 @@ Double-click the widget (or pick **Monitor** from the right-click menu) to open 
 ## FAQ
 
 **How is this different from Task Manager?**
-Task Manager shows network speed too - but you have to *open* it, and it disappears the moment you click away. NetSpeedTray lives permanently on your taskbar with sub-second updates, in the corner of your eye while you work.
+Task Manager shows network speed too - but you have to *open* it, and it disappears the moment you click away. NetSpeedTray lives permanently on your taskbar, live every second, in the corner of your eye while you work.
 
 **Will it slow down my PC?**
 Idle RAM is about **50 MB** - that's the number Windows Task Manager shows you (its *full* working set, which counts the shared Windows/Qt DLLs it maps, is ~90 MB), and CPU sits near zero between polls (~0.1%). The Monitor's Overview tab is deliberately chart-free, so glancing at it stays light; opening the Network or Hardware **charts** loads the plotting library for the session, which adds roughly **50-60 MB** while the Monitor is open - close the Monitor and it eases back down. The widget polls every ~1 second using the same Windows APIs Task Manager uses.
@@ -217,7 +217,7 @@ You probably grabbed an unsigned dev build. The official releases ([Setup.exe / 
 <summary><b>📋 Full Feature List</b> (click to expand)</summary>
 
 ### Network Monitoring
-- **Live upload/download** on the taskbar with sub-second updates
+- **Live upload/download** on the taskbar, live every second
 - **Auto-primary mode** - finds your main internet connection, ignoring VPNs and virtual adapters
 - **Interface filtering** - all hardware, specific adapters, or include virtual interfaces
 - **Color coding** - custom speed thresholds and colors to read load at a glance

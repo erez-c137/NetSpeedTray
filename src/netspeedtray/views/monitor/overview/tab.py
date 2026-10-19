@@ -348,8 +348,7 @@ class OverviewTab(QWidget):
             self._render()
             return
         start, end, is_session = self._window()
-        # NOT `or 1.0`: the SMART sentinel (-1.0) is truthy and samples at 2.0 s; leaking it
-        # zeroed coverage_pct on every Overview summary (2.1.5 item 9).
+        # Seconds per sample for coverage / volume math: the shared resolver, never a local `or 1.0`.
         poll = resolve_poll_interval_seconds(self._config.get("update_rate", 1.0))
         try:
             if is_session:

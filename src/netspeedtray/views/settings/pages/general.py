@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import QWidget, QComboBox
 
 from netspeedtray import constants
 from netspeedtray.constants.update_mode import UpdateMode
+from netspeedtray.utils.timer_utils import snap_update_rate
 from netspeedtray.utils.components import Win11Slider, Win11Toggle, SettingCard, Win11ComboBox
 from netspeedtray.views.settings.pages._fluent import section_header, page_layout
 
@@ -64,9 +65,9 @@ class GeneralPage(QWidget):
 
         # --- Update Rate ---
         layout.addWidget(section_header(self.i18n.UPDATE_RATE_GROUP_TITLE))
-        # Slider range 0-4 = 5 discrete presets (0=SMART,1=FAST,2=BALANCED,3=EFFICIENT,4=POWER_SAVER).
+        # One slider position per preset: 0..3 = 1 / 2 / 5 / 10 s (UpdateMode.PRESETS order).
         self.update_rate = Win11Slider(editable=False)
-        self.update_rate.setRange(0, 4)
+        self.update_rate.setRange(0, len(UpdateMode.PRESETS) - 1)
         self.update_rate.setSingleStep(1)
         self.update_rate.setMinimumWidth(260)
         self.update_rate.valueChanged.connect(self._on_update_rate_changed)
@@ -191,11 +192,10 @@ class GeneralPage(QWidget):
             if index >= 0:
                 self.language_combo.setCurrentIndex(index)
 
-        # Update Rate - Map config value to slider position (0-4)
-        raw_rate = float(config.get("update_rate", constants.config.defaults.DEFAULT_UPDATE_RATE))
-        
-        # Convert to slider position
-        slider_position = self._rate_to_slider_position(raw_rate)
+        # Update Rate - map the config value to its slider position (an off-preset value snaps to
+        # the nearest preset, the same rule the config migration applies).
+        slider_position = self._rate_to_slider_position(
+            config.get("update_rate", constants.config.defaults.DEFAULT_UPDATE_RATE))
         self.update_rate.setValue(slider_position)
         self.update_rate.setValueText(self._format_update_rate_label(slider_position))
         
@@ -251,41 +251,18 @@ class GeneralPage(QWidget):
     
     def _format_update_rate_label(self, slider_position: int) -> str:
         """Format slider position as a human-readable label."""
-        # Map slider position (0-4) to update mode label
-        position_to_mode = {
-            0: self.i18n.SMART_MODE_LABEL,
-            1: f"{int(UpdateMode.AGGRESSIVE)}s" if not hasattr(self.i18n, 'UPDATE_MODE_AGGRESSIVE_LABEL') else self.i18n.UPDATE_MODE_AGGRESSIVE_LABEL,
-            2: f"{int(UpdateMode.BALANCED)}s" if not hasattr(self.i18n, 'UPDATE_MODE_BALANCED_LABEL') else self.i18n.UPDATE_MODE_BALANCED_LABEL,
-            3: f"{int(UpdateMode.EFFICIENT)}s" if not hasattr(self.i18n, 'UPDATE_MODE_EFFICIENT_LABEL') else self.i18n.UPDATE_MODE_EFFICIENT_LABEL,
-            4: f"{int(UpdateMode.POWER_SAVER)}s" if not hasattr(self.i18n, 'UPDATE_MODE_POWER_SAVER_LABEL') else self.i18n.UPDATE_MODE_POWER_SAVER_LABEL,
-        }
-        return position_to_mode.get(slider_position, "Unknown")
+        keys = ("UPDATE_MODE_AGGRESSIVE_LABEL", "UPDATE_MODE_BALANCED_LABEL",
+                "UPDATE_MODE_EFFICIENT_LABEL", "UPDATE_MODE_POWER_SAVER_LABEL")
+        if not 0 <= slider_position < len(UpdateMode.PRESETS):
+            return "Unknown"
+        return getattr(self.i18n, keys[slider_position], f"{int(UpdateMode.PRESETS[slider_position])}s")
 
-    def _rate_to_slider_position(self, update_rate: float) -> int:
-        """Convert update_rate value to slider position (0-4)."""
-        # Map update rates to slider positions
-        if update_rate < 0:  # SMART sentinel
-            return 0
-        elif abs(update_rate - UpdateMode.AGGRESSIVE) < 0.1:
-            return 1
-        elif abs(update_rate - UpdateMode.BALANCED) < 0.1:
-            return 2
-        elif abs(update_rate - UpdateMode.EFFICIENT) < 0.1:
-            return 3
-        elif abs(update_rate - UpdateMode.POWER_SAVER) < 0.1:
-            return 4
-        else:
-            # Default to BALANCED if unrecognized
-            return 2
+    def _rate_to_slider_position(self, update_rate: object) -> int:
+        """Convert an update_rate value to its slider position (0-3), snapping to the nearest preset."""
+        return UpdateMode.PRESETS.index(snap_update_rate(update_rate))
 
     def _slider_position_to_rate(self, slider_position: int) -> float:
-        """Convert slider position (0-4) to update_rate value."""
-        position_to_rate = {
-            0: UpdateMode.SMART,        # -1.0
-            1: UpdateMode.AGGRESSIVE,   # 1.0
-            2: UpdateMode.BALANCED,     # 2.0
-            3: UpdateMode.EFFICIENT,    # 5.0
-            4: UpdateMode.POWER_SAVER,  # 10.0
-        }
-        return position_to_rate.get(slider_position, UpdateMode.BALANCED)
-
+        """Convert a slider position (0-3) to its update_rate preset in seconds."""
+        if 0 <= slider_position < len(UpdateMode.PRESETS):
+            return UpdateMode.PRESETS[slider_position]
+        return constants.config.defaults.DEFAULT_UPDATE_RATE

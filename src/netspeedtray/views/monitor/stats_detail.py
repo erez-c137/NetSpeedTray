@@ -57,7 +57,7 @@ def run_interactive_export(parent, widget_state, start: datetime, end: datetime,
         return
     if not zip_path.lower().endswith(".zip"):
         zip_path += ".zip"
-    # NOT `or 1.0`: the SMART sentinel (-1.0) is truthy and samples at 2.0 s (2.1.5 item 9).
+    # Seconds per sample for coverage / volume math: the shared resolver, never a local `or 1.0`.
     poll = resolve_poll_interval_seconds(config.get("update_rate", 1.0))
     try:
         zip_path = stats_exporter.export_window_zip(
@@ -101,8 +101,7 @@ class StatsDetailSheet(QDialog):
         self._i18n = i18n
         self._app_version = app_version
         self.logger = logging.getLogger("NetSpeedTray.StatsDetailSheet")
-        # NOT `or 1.0`: the SMART sentinel (-1.0) is truthy and samples at 2.0 s; leaking it
-        # zeroed coverage_pct on every stats sheet (2.1.5 item 9).
+        # Seconds per sample for coverage / volume math: the shared resolver, never a local `or 1.0`.
         self._poll = resolve_poll_interval_seconds(config.get("update_rate", 1.0))
         self._copy_text_parts: List[str] = []
 

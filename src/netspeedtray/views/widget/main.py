@@ -26,7 +26,6 @@ from PyQt6.QtWidgets import QApplication, QMenu, QMessageBox, QWidget
 # --- First-Party (Local) Imports ---
 from netspeedtray import constants
 from netspeedtray.core.controller import StatsController as CoreController
-from netspeedtray.core.timer_manager import SpeedTimerManager
 from netspeedtray.core.monitor_thread import StatsMonitorThread
 from netspeedtray.core.tray_manager import TrayIconManager
 from netspeedtray.core.widget_state import WidgetState as CoreWidgetState
@@ -72,8 +71,6 @@ _PBT_APMRESUMEAUTOMATIC = 0x0012
 class NetworkSpeedWidget(QWidget):
     """Main widget for displaying network speeds near the Windows system tray."""
 
-    MIN_UPDATE_INTERVAL = constants.config.defaults.MINIMUM_UPDATE_RATE
-
 
     def __init__(self, taskbar_height: int = constants.taskbar.taskbar.DEFAULT_HEIGHT, config: Optional[Dict[str, Any]] = None, i18n: Optional[constants.i18n.I18nStrings] = None, parent: QObject | None = None) -> None:
         """Initialize the NetworkSpeedTray with core components and UI setup."""
@@ -106,7 +103,6 @@ class NetworkSpeedWidget(QWidget):
 
         # --- Declare all instance attributes for clarity ---
         self.widget_state: CoreWidgetState
-        self.timer_manager: SpeedTimerManager
         self.controller: CoreController
         self.renderer: CoreWidgetRenderer
         self.position_manager: PositionManager
@@ -269,43 +265,26 @@ class NetworkSpeedWidget(QWidget):
         """
         Initialize non-UI core logic components.
 
-        Sets up WidgetState, SpeedTimerManager, StatsController, and WidgetRenderer.
+        Sets up WidgetState, the stats monitor thread, StatsController, and WidgetRenderer.
         """
         self.logger.debug("Initializing core components...")
         if not self.config:
             raise RuntimeError("Cannot initialize core: Config missing")
         try:
             self.widget_state = CoreWidgetState(self.config)
-            self.timer_manager = SpeedTimerManager(self.config, parent=self)
             
             # Background Monitoring Thread
-            # One shared resolver decides the sampling interval for SMART (-1.0) and the legacy
-            # 0 sentinel, so the sampler, the exports and the raw-tier volume math can never
-            # disagree (review C6/C7). The old speed_display_mode=='auto' fallback is gone: the
-            # Settings dialog already refuses to save that combination, so it only ever fired on
-            # hand-edited configs - and silently sampled at 1.0 s while every seconds-per-sample
-            # computation assumed 2.0 s, doubling raw-tier volume. The 0 sentinel previously fell
-            # into the fixed-rate clamp and sampled at 0.1 s - the #273 bug shape, at startup.
-            cfg_rate = self.config.get("update_rate", constants.config.defaults.DEFAULT_UPDATE_RATE)
-            try:
-                cfg_rate = float(cfg_rate)
-            except (TypeError, ValueError):
-                cfg_rate = float(constants.config.defaults.DEFAULT_UPDATE_RATE)
-            if cfg_rate <= 0:
-                effective_interval = resolve_poll_interval_seconds(cfg_rate)
-            else:
-                # Fixed interval: Clamp to allowed min/max
-                effective_interval = max(constants.config.defaults.MINIMUM_UPDATE_RATE,
-                                         min(cfg_rate, constants.timers.MAXIMUM_UPDATE_RATE_SECONDS))
-
+            # The monitor thread's sleep loop is the only sampling pacer. The rate is one of the
+            # 1/2/5/10 s presets (the config migration put it there); the shared resolver is the same
+            # clamp every seconds-per-sample computation uses, so they can never disagree.
+            effective_interval = resolve_poll_interval_seconds(
+                self.config.get("update_rate", constants.config.defaults.DEFAULT_UPDATE_RATE))
             self.monitor_thread = StatsMonitorThread(interval=effective_interval, config=self.config)
             
             self.controller = CoreController(config=self.config, widget_state=self.widget_state)
             self.controller.set_view(self)
             self.renderer = CoreWidgetRenderer(self.config, self.i18n)
             
-            # Note: We no longer start timer_manager for speeds; monitor_thread drives them.
-            # self.timer_manager.start_timer() 
             self.logger.debug("Core components initialized; monitor thread ready.")
         except Exception as e:
             self.logger.error("Failed to initialize core components: %s", e, exc_info=True)
@@ -783,7 +762,7 @@ class NetworkSpeedWidget(QWidget):
         stable, debounced visibility management.
         """
         self.logger.debug("Setting up signal connections and WinEventHooks...")
-        if not all([self.widget_state, self.timer_manager, self.controller]):
+        if not all([self.widget_state, self.controller]):
             raise RuntimeError("Core components missing during signal connection setup.")
         try:
             # Connect core component signals
@@ -1802,7 +1781,6 @@ class NetworkSpeedWidget(QWidget):
                     pass
 
             # --- Clean up core components ---
-            if self.timer_manager: self.timer_manager.cleanup()
             if self.controller: self.controller.cleanup()
             if self.widget_state: self.widget_state.cleanup()
 

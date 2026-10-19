@@ -103,7 +103,6 @@
     "MONITORING_MODE_LABEL": "监控模式",
     "NO_INTERFACES_FOUND": "未检测到任何网络接口。",
     "ALL_INTERFACES_AGGREGATED_LABEL": "全部 (合计)",
-    "SMART_MODE_LABEL": "智能模式",
     "UPLOAD_ARROW": "↑",
     "DOWNLOAD_ARROW": "↓",
     "MONITORING_MODE_AUTO": "自动（主接口）",

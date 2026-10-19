@@ -1,173 +1,66 @@
 """
-Timer utilities for NetSpeedTray.
+Update-rate helpers for NetSpeedTray.
 
-Provides reusable functions for timer management, including interval calculations,
-timer creation, and cleanup. These utilities are used across the application to ensure
-consistent timer handling with proper error management and logging.
+The config persists the sampling interval (`update_rate`) in seconds, and since 2.2 the only
+valid values are the four slider presets in `constants.update_mode.UpdateMode.PRESETS`
+(1 / 2 / 5 / 10 s). Two helpers, deliberately separate:
 
-Key features:
-- Calculates timer intervals from update rates with smart mode support.
-- Creates and configures QTimer instances with callbacks.
-- Safely cleans up timers to prevent resource leaks.
-
-This module is intended for low-level timer operations and can be used by any component
-in the application that needs to create or manage timers. For managing the speed update
-timer specifically, use the `SpeedTimerManager` class in `timer_manager.py`.
+- `snap_update_rate()` maps any persisted value onto the preset ladder. The config migration and
+  the Settings slider both use it, so the file and the slider can never disagree.
+- `resolve_poll_interval_seconds()` turns a live config value into the interval the sampler and
+  every seconds-per-sample computation (coverage %, bytes-from-rates totals, buffer sizing) use.
+  It is a pure clamp: after load the value is already a preset, so it only guards against garbage.
 """
 
-import math
-from typing import Optional, Callable
 import logging
-from PyQt6.QtCore import QTimer, QObject
+import math
 
 from netspeedtray import constants
+from netspeedtray.constants.update_mode import UpdateMode
 
 logger = logging.getLogger("NetSpeedTray.TimerUtils")
 
 
-def calculate_timer_interval(update_rate: float) -> int:
+def _finite_number(value: object):
+    """`value` as a float if it is a real, finite number (bools excluded), else None."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    value = float(value)
+    return value if math.isfinite(value) else None
+
+
+def snap_update_rate(update_rate: object) -> float:
     """
-    Calculate a timer interval in milliseconds based on the desired update rate.
+    Map a persisted `update_rate` onto the preset ladder (1 / 2 / 5 / 10 s).
 
-    The update rate is converted to milliseconds, ensuring it meets the minimum interval
-    defined in `constants.timers.MINIMUM_INTERVAL_MS`. If the update rate is 0, the function
-    returns the smart mode interval defined in `constants.timers.SMART_MODE_INTERVAL_MS`.
+    - Non-positive (the retired adaptive preset's -1.0 sentinel, and the older 0 sentinel): **2.0 s**,
+      the fixed cadence those users actually sampled at - not the 1 s default.
+    - Any other finite number: the nearest preset; a tie goes to the faster (smaller) preset, the
+      same rule as the keep_data ladder snap. 10 s stays 10 s.
+    - Anything else (non-finite, non-numeric, bool, None): the default.
 
-    Args:
-        update_rate: The desired update frequency in seconds. Use 0 to enable smart mode.
-
-    Returns:
-        int: The calculated interval in milliseconds, capped at the minimum value.
-
-    Raises:
-        ValueError: If `update_rate` is negative.
-
-    Examples:
-        >>> calculate_timer_interval(1.0)
-        1000
-        >>> calculate_timer_interval(0)
-        500  # Assuming SMART_MODE_INTERVAL_MS is 500
+    Idempotent: a preset maps to itself.
     """
-    # Treat non-positive values as the "smart" signal. This accepts both the
-    # historical sentinel of 0 and the explicit UpdateMode.SMART (-1.0).
-    if update_rate <= 0:
-        interval = constants.timers.SMART_MODE_INTERVAL_MS
-        logger.debug("Using smart mode interval: %dms (update_rate=%s)", interval, update_rate)
-        return interval
-
-    # Positive values are interpreted as seconds and converted to milliseconds,
-    # but must respect the global MINIMUM_INTERVAL_MS bound.
-    interval = max(constants.timers.MINIMUM_INTERVAL_MS, int(update_rate * 1000))
-    logger.debug("Calculated timer interval: %dms from update_rate %.2fs", interval, update_rate)
-    return interval
+    rate = _finite_number(update_rate)
+    if rate is None:
+        return float(constants.config.defaults.DEFAULT_UPDATE_RATE)
+    if rate <= 0:
+        return float(UpdateMode.BALANCED)
+    return float(min(UpdateMode.PRESETS, key=lambda preset: abs(preset - rate)))
 
 
 def resolve_poll_interval_seconds(update_rate: object) -> float:
     """
-    Normalize a configured update rate into the EFFECTIVE sampling interval in seconds.
-
-    The config persists the poll rate in seconds, with non-positive values meaning
-    "smart mode" (0 is the historical sentinel, -1.0 is UpdateMode.SMART). Smart mode
-    actually samples every ``SMART_MODE_INTERVAL_MS`` (2.0 s), NOT 1.0 s - so any
-    seconds-per-sample math (coverage %, bytes-from-rates totals, time-above windows)
-    must come through here rather than the ``or 1.0`` idiom, which lets the *truthy*
-    ``-1.0`` sentinel straight through - and normalizing it to 1.0 would still be
-    wrong by 2x (2.1.5 item 9).
-
-    Unparseable or non-finite input is treated like the historical ``0`` sentinel
-    (smart mode) rather than raising: this is called with raw config values.
+    The EFFECTIVE sampling interval in seconds for a live config value: the value clamped into
+    [fastest preset, slowest preset]. Garbage (non-numeric, non-finite, bool) is the default.
 
     Examples:
-        >>> resolve_poll_interval_seconds(1.0)
-        1.0
-        >>> resolve_poll_interval_seconds(-1.0)   # SMART -> SMART_MODE_INTERVAL_MS
-        2.0
+        >>> resolve_poll_interval_seconds(5.0)
+        5.0
+        >>> resolve_poll_interval_seconds(30)
+        10.0
     """
-    try:
-        rate = float(update_rate)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        rate = 0.0
-    if not math.isfinite(rate):
-        rate = 0.0
-    return calculate_timer_interval(rate) / 1000.0
-
-
-def create_timer(parent: QObject, callback: Callable[[], None], interval: int, single_shot: bool = False) -> QTimer:
-    """
-    Create and configure a QTimer instance with the specified callback and interval.
-
-    The timer is configured to emit its `timeout` signal to the provided callback. The
-    interval is set in milliseconds, and the timer can be configured as single-shot or
-    repeating.
-
-    Args:
-        parent: The parent QObject for the timer, ensuring proper memory management.
-        callback: The function to call when the timer triggers.
-        interval: The timer interval in milliseconds (must be non-negative).
-        single_shot: If True, the timer runs once; if False, it repeats indefinitely.
-
-    Returns:
-        QTimer: The configured timer instance, ready to be started.
-
-    Raises:
-        ValueError: If `interval` is negative or `callback` is not callable.
-        RuntimeError: If timer creation or configuration fails due to Qt or system issues.
-
-    Examples:
-        >>> parent = QObject()
-        >>> def callback(): print("Tick")
-        >>> timer = create_timer(parent, callback, 1000)
-        >>> timer.interval()
-        1000
-    """
-    if not callable(callback):
-        logger.error("Callback must be callable, got %s", type(callback))
-        raise ValueError(f"Callback must be callable, got {type(callback)}")
-    if interval < 0:
-        logger.error("Interval cannot be negative: %d", interval)
-        raise ValueError(f"Interval cannot be negative: {interval}")
-
-    try:
-        timer = QTimer(parent)
-        timer.timeout.connect(callback)
-        timer.setInterval(interval)
-        timer.setSingleShot(single_shot)
-        logger.debug("Timer created with interval %dms, single_shot=%s", interval, single_shot)
-        return timer
-    except Exception as e:
-        logger.error("Failed to create timer: %s", e)
-        raise RuntimeError(f"Failed to create timer: {e}")
-
-
-def cleanup_timer(timer: Optional[QTimer]) -> None:
-    """
-    Safely clean up a QTimer by stopping it, disconnecting its signals, and scheduling it for deletion.
-
-    This function ensures that the timer is stopped, all slots are disconnected from its `timeout`
-    signal, and the timer is scheduled for deletion using `deleteLater()` to prevent memory leaks
-    and dangling connections.
-
-    Args:
-        timer: The QTimer to stop and delete. If None, the function does nothing.
-
-    Raises:
-        RuntimeError: If timer cleanup fails unexpectedly (e.g., due to Qt or system issues).
-    """
-    if timer is None:
-        logger.debug("No timer provided for cleanup")
-        return
-
-    try:
-        if timer.isActive():
-            timer.stop()
-            logger.debug("Stopped timer")
-        try:
-            timer.timeout.disconnect()
-            logger.debug("Disconnected all slots from timer")
-        except TypeError:
-            logger.debug("No slots were connected to timer")
-        timer.deleteLater()
-        logger.debug("Timer scheduled for deletion")
-    except Exception as e:
-        logger.error("Failed to clean up timer: %s", e, exc_info=True)
-        raise RuntimeError(f"Failed to clean up timer: {e}")
+    rate = _finite_number(update_rate)
+    if rate is None:
+        return float(constants.config.defaults.DEFAULT_UPDATE_RATE)
+    return max(UpdateMode.PRESETS[0], min(rate, UpdateMode.PRESETS[-1]))

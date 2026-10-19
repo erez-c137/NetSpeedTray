@@ -103,7 +103,6 @@
     "MONITORING_MODE_LABEL": "Figyelési mód",
     "NO_INTERFACES_FOUND": "Nem található hálózati interfész.",
     "ALL_INTERFACES_AGGREGATED_LABEL": "Mind (összesítve)",
-    "SMART_MODE_LABEL": "Intelligens mód",
     "UPLOAD_ARROW": "↑",
     "DOWNLOAD_ARROW": "↓",
     "MONITORING_MODE_AUTO": "Automatikus (elsődleges interfész)",

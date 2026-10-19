@@ -103,7 +103,6 @@
     "MONITORING_MODE_LABEL": "監控模式",
     "NO_INTERFACES_FOUND": "未偵測到任何網路介面。",
     "ALL_INTERFACES_AGGREGATED_LABEL": "全部 (合計)",
-    "SMART_MODE_LABEL": "智慧模式",
     "UPLOAD_ARROW": "↑",
     "DOWNLOAD_ARROW": "↓",
     "MONITORING_MODE_AUTO": "自動 (主要介面)",

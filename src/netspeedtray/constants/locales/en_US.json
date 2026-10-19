@@ -103,7 +103,6 @@
     "MONITORING_MODE_LABEL": "Monitoring Mode",
     "NO_INTERFACES_FOUND": "No network interfaces detected.",
     "ALL_INTERFACES_AGGREGATED_LABEL": "All (Aggregated)",
-    "SMART_MODE_LABEL": "Smart Mode",
     "UPLOAD_ARROW": "↑",
     "DOWNLOAD_ARROW": "↓",
     "MONITORING_MODE_AUTO": "Auto (Primary Interface)",

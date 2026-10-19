@@ -53,7 +53,7 @@ def test_get_settings_translates_ui_state_to_config(settings_dialog):
     """
     # Arrange: Simulate user interaction
     # Access widgets via the page objects
-    settings_dialog.general_page.update_rate.setValue(2) # Set to BALANCED mode
+    settings_dialog.general_page.update_rate.setValue(1)  # BALANCED (2 s): slider 0..3 = 1/2/5/10 s
     
     # Simulate the user choosing to select specific interfaces
     # Interface controls are now on interfaces_page

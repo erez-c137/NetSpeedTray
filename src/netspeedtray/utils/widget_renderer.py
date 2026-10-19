@@ -17,6 +17,7 @@ from netspeedtray.utils.helpers import (has_dedicated_vram, format_speed, calcul
 from PyQt6.QtGui import QPainter, QColor, QFont, QFontMetrics, QPen, QPainterPath
 from PyQt6.QtCore import Qt, QPointF, QRect, QRectF
 from netspeedtray import constants
+from netspeedtray.utils.timer_utils import resolve_poll_interval_seconds
 
 # v2.1 network-identity band tag, drawn as a rounded pill/badge. The layout RESERVES the fixed
 # worst-case slot and the renderer DRAWS the actual (usually narrower) tag in it - both MUST use these
@@ -126,8 +127,8 @@ class RenderConfig:
             opacity = float(opacity_raw) / 100.0 if opacity_raw is not None else (constants.config.defaults.DEFAULT_GRAPH_OPACITY / 100.0)
             
             hist_mins = int(config.get('history_minutes', constants.config.defaults.DEFAULT_HISTORY_MINUTES))
-            rate = float(config.get('update_rate', constants.config.defaults.DEFAULT_UPDATE_RATE))
-            if rate <= 0: rate = 1.0
+            rate = resolve_poll_interval_seconds(
+                config.get('update_rate', constants.config.defaults.DEFAULT_UPDATE_RATE))
             max_samples = int((hist_mins * 60) / rate)
 
             weight_raw = config.get('font_weight', constants.fonts.WEIGHT_DEMIBOLD)

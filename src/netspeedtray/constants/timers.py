@@ -6,7 +6,6 @@ from typing import Final
 
 class TimerConstants:
     """Defines all timer intervals used for updates and checks."""
-    SMART_MODE_INTERVAL_MS: Final[int] = 2000
     MINIMUM_INTERVAL_MS: Final[int] = 100
     CSV_FLUSH_INTERVAL_MS: Final[int] = 5000
     POSITION_CHECK_INTERVAL_MS: Final[int] = 500
