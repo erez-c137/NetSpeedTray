@@ -34,6 +34,7 @@ from PyQt6.QtCore import QObject, QThread, pyqtSignal, QTimer
 from netspeedtray import constants
 from netspeedtray.constants import network, timeouts
 from netspeedtray.core import usage_snapshot
+from netspeedtray.core.db.history_reader import HistoryReader, V7HistoryReader
 from netspeedtray.utils.helpers import get_app_data_path
 from netspeedtray.utils.timer_utils import resolve_poll_interval_seconds
 
@@ -216,6 +217,17 @@ class WidgetState(QObject):
             conn, _seen = self._read_conns[thread_id]
             self._read_conns[thread_id] = (conn, now)   # touch: this thread is demonstrably alive
             return conn
+
+    @property
+    def history_reader(self) -> HistoryReader:
+        """The storage backend every history read goes through (v8 step 2). Built on first use rather
+        than in __init__ so a WidgetState assembled by hand in tests still reads; it holds no connection
+        of its own - each call fetches this thread's via _get_read_conn()."""
+        reader = getattr(self, "_history_reader", None)
+        if reader is None:
+            reader = V7HistoryReader(self._get_read_conn, lambda: self.db_worker.db_path, self.logger)
+            self._history_reader = reader
+        return reader
 
     def add_speed_data(self, speed_data: Dict[str, Tuple[float, float]], now: Optional[datetime] = None,
                        aggregated_up: Optional[float] = None, aggregated_down: Optional[float] = None,
@@ -853,190 +865,7 @@ class WidgetState(QObject):
         if _visited_resolutions is None and wait_for_flush:
             self.flush_and_wait()
 
-        # 1. Timeline Setup
-        _now_ts = int(datetime.now().timestamp())
-        _start_ts = int(start_time.timestamp()) if start_time else 0
-        _end_ts = int(end_time.timestamp()) if end_time else _now_ts
-        
-        # 2. Determine Resolution
-        target_res = resolution
-        if target_res == 'auto':
-            target_res = constants.data.history_period.get_target_resolution(start_time, end_time)
-
-        # Resolution -> Interval (seconds) mapping
-        # 'day' maps to 86400, others to their standard seconds
-        res_map = {'raw': 1, 'minute': 60, 'hour': 3600, 'day': 86400}
-        target_interval = res_map.get(target_res, 60)
-        
-        # 3. Build TARGETED Query (Single Table based on Resolution)
-        # For multi-tier queries (minute/hour), we query both the aggregated table AND raw table
-        # to ensure we capture recent data that hasn't been moved to aggregates yet.
-        is_all_ifaces = not interface_name or str(interface_name).lower() == "all"
-        
-        # Map resolution to primary table and columns
-        table_map = {
-            'raw': ("speed_history_raw", "upload_bytes_sec", "download_bytes_sec"),
-            'minute': ("speed_history_minute", "upload_avg", "download_avg"),
-            'hour': ("speed_history_hour", "upload_avg", "download_avg"),
-            'day': ("speed_history_hour", "upload_avg", "download_avg"),
-        }
-        
-        table, up_col, down_col = table_map.get(target_res, table_map['minute'])
-        
-        try:
-            conn = self._get_read_conn()
-            cursor = conn.cursor()
-            
-            # Time binning calculation
-            time_calc = f"CAST(timestamp / {target_interval} AS INTEGER) * {target_interval}"
-            
-            # Build inner query. For aggregated resolutions, construct a UNION
-            # and keep peak speed semantics (MAX) across tiers so timeline
-            # changes do not dilute/reshape the same event differently.
-            if target_res in ('minute', 'hour', 'day'):
-                # Multi-tier merge with explicit peak-preserving logic.
-                tier_queries = []
-                params = []
-
-                def add_tier_query(table_name: str, up_expr: str, down_expr: str) -> None:
-                    q = f"""
-                        SELECT
-                            {time_calc} as bin_ts,
-                            interface_name,
-                            {up_expr} as up,
-                            {down_expr} as down
-                        FROM {table_name}
-                        WHERE timestamp BETWEEN ? AND ?
-                    """
-                    tier_params = [_start_ts, _end_ts]
-                    if not is_all_ifaces:
-                        q += " AND interface_name = ?"
-                        tier_params.append(interface_name)
-                    tier_queries.append(q)
-                    params.extend(tier_params)
-
-                # Raw keeps exact per-second peaks.
-                add_tier_query(constants.data.SPEED_TABLE_RAW, "upload_bytes_sec", "download_bytes_sec")
-                # Aggregated tiers use preserved per-bucket maxima.
-                add_tier_query(constants.data.SPEED_TABLE_MINUTE, "upload_max", "download_max")
-
-                if target_res in ('hour', 'day'):
-                    add_tier_query(constants.data.SPEED_TABLE_HOUR, "upload_max", "download_max")
-
-                union_query = " UNION ALL ".join(tier_queries)
-                inner_query = f"""
-                    SELECT
-                        bin_ts,
-                        interface_name,
-                        MAX(up) as up,
-                        MAX(down) as down
-                    FROM ({union_query})
-                    GROUP BY bin_ts, interface_name
-                """
-            else:
-                # Raw resolution: single table query
-                inner_query = f"""
-                    SELECT 
-                        {time_calc} as bin_ts, 
-                        interface_name, 
-                        AVG({up_col}) as up, 
-                        AVG({down_col}) as down
-                    FROM {table}
-                    WHERE timestamp BETWEEN ? AND ?
-                """
-                params = [_start_ts, _end_ts]
-                if not is_all_ifaces:
-                    inner_query += " AND interface_name = ?"
-                    params.append(interface_name)
-                inner_query += " GROUP BY bin_ts, interface_name"
-                
-            # Outer query: aggregate bins
-            if is_all_ifaces:
-                outer_query = f"""
-                    SELECT bin_ts, COALESCE(SUM(up), 0), COALESCE(SUM(down), 0)
-                    FROM ({inner_query})
-                    GROUP BY bin_ts
-                    ORDER BY bin_ts
-                """
-            else:
-                outer_query = f"""
-                    SELECT bin_ts, COALESCE(AVG(up), 0), COALESCE(AVG(down), 0)
-                    FROM ({inner_query})
-                    GROUP BY bin_ts
-                    ORDER BY bin_ts
-                """
-            
-            cursor.execute(outer_query, tuple(params))
-            rows = cursor.fetchall()
-            self.logger.debug("History query: target_res=%s fetched_rows=%d", target_res, len(rows))
-            
-            # Convert rows to standard format (Timestamp, Up, Down)
-            valid_rows = [row for row in rows if row and row[0] is not None]
-            if len(valid_rows) != len(rows):
-                self.logger.warning(
-                    "Dropping %d invalid graph rows with NULL timestamp (resolution=%s).",
-                    len(rows) - len(valid_rows),
-                    target_res
-                )
-
-            data_points = []
-            if return_raw:
-                 data_points = [(int(row[0]), float(row[1] or 0.0), float(row[2] or 0.0)) for row in valid_rows]
-            else:
-                 data_points = [(datetime.fromtimestamp(int(row[0])), float(row[1] or 0.0), float(row[2] or 0.0)) for row in valid_rows]
-
-            # If targeted-table query returned no rows and we targeted an aggregated
-            # table (minute/hour/day), fall back to the more comprehensive
-            # optimized query in utils.db_utils which unions tiers. This allows
-            # freshly-started apps (with only raw data present) to still show
-            # historical ranges by reading directly from raw where appropriate.
-            if not data_points and target_res != 'raw':
-                try:
-                    from netspeedtray.utils.db_utils import get_speed_history as util_get_speed_history
-                    self.logger.debug("Targeted query returned no rows; falling back to unified DB query.")
-                    fallback = util_get_speed_history(self.db_worker.db_path, start_time=start_time, end_time=end_time, interface_name=interface_name)
-                    self.logger.debug("Fallback unified DB query returned %d rows", len(fallback) if fallback else 0)
-                    if fallback:
-                        if return_raw:
-                            data_points = [(int(dt.timestamp()), up, down) for dt, up, down in fallback]
-                        else:
-                            data_points = [(dt, up, down) for dt, up, down in fallback]
-                except Exception:
-                    self.logger.exception("Fallback unified DB query failed.")
-
-            # --- Edge Padding (Zero-Fill) ---
-            # If no real data, create evenly-spaced zeros across the timeline.
-            # This prevents gap detection from splitting into single-point segments.
-            if start_time and end_time:
-                duration = (_end_ts - _start_ts)  # seconds
-                
-                if not data_points:
-                    # No real data: Generate synthetic flat baseline
-                    # 1 point per hour, min 10, max 100 for performance
-                    num_points = min(100, max(10, int(duration / 3600)))
-                    interval = duration / max(1, num_points - 1)
-                    
-                    for i in range(num_points):
-                        pt_ts = _start_ts + (i * interval)
-                        if return_raw:
-                            data_points.append((pt_ts, 0.0, 0.0))
-                        else:
-                            data_points.append((datetime.fromtimestamp(pt_ts), 0.0, 0.0))
-                else:
-                    # Has real data: Just ensure edges are covered
-                    s_pt = _start_ts if return_raw else start_time
-                    e_pt = _end_ts if return_raw else end_time
-                    
-                    if data_points[0][0] > s_pt:
-                        data_points.insert(0, (s_pt, 0.0, 0.0))
-                    if data_points[-1][0] < e_pt:
-                        data_points.append((e_pt, 0.0, 0.0))
-            
-            return data_points
-
-        except sqlite3.Error as e:
-            self.logger.error("Unified graph query failed: %s", e, exc_info=True)
-            return []
+        return self.history_reader.speed_history(start_time, end_time, interface_name, return_raw, resolution)
 
 
     def get_distinct_interfaces(self) -> List[str]:
