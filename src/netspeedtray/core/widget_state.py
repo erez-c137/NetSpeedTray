@@ -613,39 +613,7 @@ class WidgetState(QObject):
         from netspeedtray.utils import summaries as S
         if not getattr(self, 'db_worker', None):
             return S.summarize_raw([])
-        win = max(0.0, (end_time - start_time).total_seconds())
-        st, et = int(start_time.timestamp()), int(end_time.timestamp())
-        try:
-            cur = self._get_read_conn().cursor()
-            if win <= self._RAW_SUMMARY_SECONDS:
-                cur.execute(f"SELECT value FROM {constants.data.HARDWARE_STATS_TABLE_RAW} "
-                            f"WHERE stat_type=? AND timestamp BETWEEN ? AND ?", (stat_type, st, et))
-                vals = [r[0] for r in cur.fetchall()]
-                return S.summarize_raw(vals, S.coverage_pct(len(vals), win, poll_interval))
-            # Beyond the raw horizon the window spans tiers: the recent <24h is still in RAW, older data
-            # in minute/hour. Union all three (non-overlapping - data is moved, not copied - exactly like
-            # get_speed_history) so the summary covers the WHOLE window instead of only the rolled-up
-            # older half, which silently dropped the most recent ~24h and disagreed with the graph.
-            avgs, maxes, counts = [], [], []
-            for table in (constants.data.HARDWARE_STATS_TABLE_MINUTE, constants.data.HARDWARE_STATS_TABLE_HOUR):
-                cur.execute(f"SELECT avg_value, max_value, sample_count FROM {table} "
-                            f"WHERE stat_type=? AND timestamp BETWEEN ? AND ?", (stat_type, st, et))
-                for r in cur.fetchall():
-                    if r[0] is None:
-                        continue
-                    avgs.append(r[0]); maxes.append(r[1]); counts.append(r[2] or 1)
-            cur.execute(f"SELECT value FROM {constants.data.HARDWARE_STATS_TABLE_RAW} "
-                        f"WHERE stat_type=? AND timestamp BETWEEN ? AND ?", (stat_type, st, et))
-            raw_vals = [r[0] for r in cur.fetchall() if r[0] is not None]
-            if not avgs:   # the whole window still fits the raw tier (e.g. a <24h-old install) -> exact
-                return S.summarize_raw(raw_vals, S.coverage_pct(len(raw_vals), win, poll_interval))
-            avgs += raw_vals; maxes += raw_vals; counts += [1] * len(raw_vals)   # raw samples = count-1 buckets
-            tier = "minute" if win <= 30 * 86400 else "hour"
-            return S.summarize_rollup(avgs, maxes, counts, tier,
-                                      S.coverage_pct(sum(counts), win, poll_interval))
-        except Exception as e:
-            self.logger.error("summarize_hardware failed: %s", e, exc_info=True)
-            return S.summarize_raw([])
+        return self.history_reader.summarize_hardware(stat_type, start_time, end_time, poll_interval)
 
     def summarize_network(self, direction: str, start_time: datetime, end_time: datetime,
                           interface_name: Optional[str] = None, poll_interval: float = 1.0):

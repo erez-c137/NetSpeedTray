@@ -210,3 +210,21 @@ def test_hardware_history_matches_legacy(ws):
             _same(new, old, f"hardware_history({stat},{start},{end})")
             checked += len(old)
     assert checked > 1000
+
+
+# --- 3. summarize_hardware --------------------------------------------------------------------------
+
+def _bounded_windows():
+    return [(s, e) for s, e in WINDOWS if s is not None and e is not None]
+
+
+@pytest.mark.parametrize("poll", [1.0, 2.0, 5.0])
+def test_summarize_hardware_matches_legacy(ws, poll):
+    nonempty = 0
+    for start, end in _bounded_windows():
+        for stat in HW_STATS:
+            old = Legacy.summarize_hardware(ws, stat, start, end, poll)
+            new = ws.summarize_hardware(stat, start, end, poll)
+            _same(new, old, f"summarize_hardware({stat},{start},{end},{poll})")
+            nonempty += old.count > 0
+    assert nonempty > 50
