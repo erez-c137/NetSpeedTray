@@ -17,15 +17,19 @@ is a VirtualBox host-only adapter on the dev machine - so the OS is asked first:
 
 Rules, in order:
   1. Loopback and the IPv6 transition shims (Teredo, ISATAP, 6to4, IP-HTTPS) are ``pseudo``.
-  2. A hit in the user's ``excluded_interfaces`` (the 2.1 list, matched on the friendly name) or in
-     the built-in name / description keyword lists is ``virtual``. Keywords veto the hardware flag:
-     a Bluetooth PAN adapter is a hardware device, but it's a tether, not the line.
-  3. With OS data: a tunnel / virtual / PPP ifType is ``virtual``; otherwise the hardware flag
-     decides. This is what catches a VPN client whose name and description match no keyword.
+  2. A hit in the user's ``excluded_interfaces`` (the 2.1 list, matched on the friendly name), the
+     built-in name keywords, or the strong description keywords is ``virtual``. These veto the
+     hardware flag: a Bluetooth PAN adapter is a hardware device, but it's a tether, not the line.
+  3. With OS data: a tunnel / virtual / PPP ifType is ``virtual``; a hardware interface is
+     ``physical`` - even if its description says "Virtual" (an SR-IOV virtual function, e.g. Azure's
+     "Mellanox ConnectX-4 Lx Virtual Ethernet Adapter", is the VM's real path); otherwise a soft
+     description keyword or a cleared hardware flag makes it ``virtual``. This is what catches a VPN
+     client whose name and description match no keyword.
   4. Without OS data (off Windows, or a name only seen in the history DB): ``physical``.
 
-The table is read once and cached; a name it doesn't know (a VPN that came up later) triggers a
-re-read, at most every ``CLASSIFIER_REFRESH_SEC``.
+The table is read once and cached. A name it doesn't know (a VPN that just came up) re-reads it at
+once, throttled to one read per ``CLASSIFIER_UNKNOWN_REREAD_SEC``; an answer made without OS data is
+never cached, so a new tunnel can't be pinned as physical by its first poll.
 """
 from __future__ import annotations
 
@@ -34,7 +38,7 @@ import logging
 import sys
 import time
 from dataclasses import dataclass, field
-from typing import Callable, Dict, Iterable, List, Optional
+from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 from netspeedtray import constants
 
@@ -56,32 +60,51 @@ def _any_in(text: str, keywords: Iterable[str]) -> bool:
     return any(kw and kw in text for kw in keywords)
 
 
-def classify_interface(name: str, info: Optional[AdapterInfo],
-                       exclusions: Iterable[str] = ()) -> str:
-    """Pure classification of one interface. Returns a ``constants.network.interface.KIND_*``."""
+# Why an adapter got its kind. KEYWORD and TYPE are positive evidence of a VPN / tunnel; HARDWARE
+# (the OS flag) and DEFAULT are not, which is what all_physical's "nothing physical" fallback needs.
+REASON_PSEUDO = "pseudo"
+REASON_KEYWORD = "keyword"
+REASON_TYPE = "type"
+REASON_HARDWARE = "hardware"
+REASON_DEFAULT = "default"
+
+
+def classify_interface_detailed(name: str, info: Optional[AdapterInfo],
+                                exclusions: Iterable[str] = ()) -> Tuple[str, str]:
+    """Pure classification of one interface: ``(kind, reason)``."""
     lname = (name or "").lower()
     desc = (info.description if info else "").lower()
     if_type = info.if_type if info else None
 
     # 1. pseudo-interfaces
     if if_type == _IF.IF_TYPE_SOFTWARE_LOOPBACK or _any_in(lname, _IF.PSEUDO_NAME_KEYWORDS):
-        return _IF.KIND_PSEUDO
+        return _IF.KIND_PSEUDO, REASON_PSEUDO
 
-    # 2. keyword vetoes: the user's list + ours, on the name; ours on the description
+    # 2. keyword vetoes: the user's list + ours, on the name; the strong list on the description
     user = [str(k).lower() for k in (exclusions or ())]
     if (_any_in(lname, user) or _any_in(lname, _IF.VIRTUAL_NAME_KEYWORDS)
             or _any_in(desc, _IF.VIRTUAL_DESCRIPTION_KEYWORDS)):
-        return _IF.KIND_VIRTUAL
+        return _IF.KIND_VIRTUAL, REASON_KEYWORD
 
     # 3. the OS signals
     if info is not None:
         if if_type in _IF.VIRTUAL_IF_TYPES:
-            return _IF.KIND_VIRTUAL
-        if info.hardware is not None:
-            return _IF.KIND_PHYSICAL if info.hardware else _IF.KIND_VIRTUAL
+            return _IF.KIND_VIRTUAL, REASON_TYPE
+        if info.hardware is True:
+            return _IF.KIND_PHYSICAL, REASON_HARDWARE
+        if _any_in(desc, _IF.VIRTUAL_DESCRIPTION_SOFT_KEYWORDS):
+            return _IF.KIND_VIRTUAL, REASON_KEYWORD
+        if info.hardware is False:
+            return _IF.KIND_VIRTUAL, REASON_HARDWARE
 
     # 4. nothing says otherwise
-    return _IF.KIND_PHYSICAL
+    return _IF.KIND_PHYSICAL, REASON_DEFAULT
+
+
+def classify_interface(name: str, info: Optional[AdapterInfo],
+                       exclusions: Iterable[str] = ()) -> str:
+    """Pure classification of one interface. Returns a ``constants.network.interface.KIND_*``."""
+    return classify_interface_detailed(name, info, exclusions)[0]
 
 
 # --- the OS read (GetIfTable2) ------------------------------------------------------------------
@@ -169,22 +192,38 @@ class InterfaceClassifier:
         self._loaded_at = self._clock()
         self._cache.clear()
 
-    def kind(self, name: str, exclusions: Iterable[str] = ()) -> str:
+    def _detailed(self, name: str, exclusions: Iterable[str]) -> Tuple[str, str]:
         if self._table is None:
             self._load()
         elif (name not in self._table
-              and self._clock() - self._loaded_at >= _IF.CLASSIFIER_REFRESH_SEC):
+              and self._clock() - self._loaded_at >= _IF.CLASSIFIER_UNKNOWN_REREAD_SEC):
+            # A name the table doesn't know: most likely an adapter that just came up (a VPN
+            # connecting). Re-read now rather than guess from its name for a long window.
             self._load()
         excl = tuple(exclusions or ())
         key = (name, excl)
         hit = self._cache.get(key)
         if hit is None:
-            hit = classify_interface(name, self._table.get(name), excl)
-            self._cache[key] = hit
+            info = self._table.get(name)
+            hit = classify_interface_detailed(name, info, excl)
+            if info is not None:
+                # Only an answer backed by OS data is cached. A name-only guess ("home" looks
+                # physical) is recomputed, so the next table read can correct it.
+                self._cache[key] = hit
         return hit
+
+    def kind(self, name: str, exclusions: Iterable[str] = ()) -> str:
+        return self._detailed(name, exclusions)[0]
 
     def is_physical(self, name: str, exclusions: Iterable[str] = ()) -> bool:
         return self.kind(name, exclusions) == _IF.KIND_PHYSICAL
+
+    def fallback_eligible(self, name: str, exclusions: Iterable[str] = ()) -> bool:
+        """May all_physical's "nothing is physical" fallback sum this adapter? Only if it is not
+        pseudo and not KNOWN to be a VPN/tunnel (keyword or tunnel/PPP/virtual ifType) - i.e. it is
+        virtual only because the OS doesn't flag it as hardware (a VM guest NIC, say)."""
+        kind, reason = self._detailed(name, exclusions)
+        return kind != _IF.KIND_PSEUDO and reason not in (REASON_KEYWORD, REASON_TYPE)
 
 
 _default: Optional[InterfaceClassifier] = None

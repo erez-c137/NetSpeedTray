@@ -199,8 +199,8 @@ class InterfacesPage(QWidget):
     def update_interface_list(self, new_interfaces: List[str],
                               primary_interface: Optional[str] = None):
         self.available_interfaces = new_interfaces or []
-        if primary_interface is not None:
-            self.primary_interface = primary_interface
+        # None means "no route right now": clear the mark rather than leave it on a stale adapter.
+        self.primary_interface = primary_interface
         self._populate_interface_list()
         # Note: calling code needs to re-apply selection state (load_settings) after update if needed
 

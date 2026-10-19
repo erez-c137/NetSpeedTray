@@ -100,7 +100,7 @@ class InterfaceConstants:
         "loopback", "teredo", "isatap", "bluetooth", "vpn", "virtual", "vmware", "vbox"
     ]
     
-    # Absolute fallback ceiling (100 Gbps) for when physical link speeds cannot be determined (e.g. virtual adapters)
+    # Absolute fallback ceiling (100 Gbps) for when physical link speeds cannot be determined (e.g. virtual adapters) 
     MAX_REASONABLE_SPEED_BPS: Final[int] = 12_500_000_000
 
     # Primary-interface resolution: a UDP connect() (no packet is sent) to a public address makes
@@ -138,14 +138,20 @@ class InterfaceConstants:
     )
     # Adapter-description keywords (lower-case substrings). Narrower than the name list on purpose:
     # a Hyper-V *guest* NIC is "Microsoft Hyper-V Network Adapter" and is the VM's real connection,
-    # so match "hyper-v virtual", never bare "hyper-v".
+    # so there is no bare "hyper-v" here. These veto even an adapter the OS calls hardware.
     VIRTUAL_DESCRIPTION_KEYWORDS: Final[tuple] = (
-        "virtual", "tunnel", "host-only", "tap-windows", "wintun", "wireguard", "nordlynx",
+        "tunnel", "host-only", "tap-windows", "wintun", "wireguard", "nordlynx",
         "zerotier", "tailscale", "wan miniport", "kernel debug", "vpn", "loopback",
         "personal area network", "npcap",
     )
-    # How often an unknown name may trigger a fresh GetIfTable2 read (a new VPN coming up).
-    CLASSIFIER_REFRESH_SEC: Final[float] = 30.0
+    # Soft description keywords: they mark an adapter virtual only when the OS does NOT say it is a
+    # hardware interface. An SR-IOV virtual function (Azure accelerated networking: "Mellanox
+    # ConnectX-4 Lx Virtual Ethernet Adapter") is hardware and can be the VM's real data path.
+    VIRTUAL_DESCRIPTION_SOFT_KEYWORDS: Final[tuple] = ("virtual",)
+    # A name the cached GetIfTable2 table doesn't know (a VPN that just came up) re-reads it at once,
+    # throttled to one read per this many seconds. A name-only answer is never cached, so the first
+    # read after the throttle corrects it.
+    CLASSIFIER_UNKNOWN_REREAD_SEC: Final[float] = 2.0
 
     def __init__(self) -> None:
         self.validate()

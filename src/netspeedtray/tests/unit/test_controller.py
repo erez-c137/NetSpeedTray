@@ -329,6 +329,19 @@ def test_all_physical_with_no_physical_adapter_counts_the_rest(mock_config, mock
     assert tuple(usage) == (125_000, 125_000)
 
 
+def test_all_physical_fallback_never_reintroduces_a_vpn(mock_config, mock_widget_state):
+    """No physical adapter (a VM NIC the OS doesn't flag) while a WireGuard tunnel and Tailscale are
+    up: the fallback must sum the NIC only - the tunnels' bytes already ride it."""
+    table = {"Ethernet 8": ("Acme Network Adapter", 6, False),
+             "home": ("WireGuard Tunnel", 53, False),
+             "Tailscale": ("Tailscale Tunnel", 53, False)}
+    first = {n: (0, 0) for n in table}
+    second = {"Ethernet 8": (125_000, 125_000), "home": (100_000, 100_000), "Tailscale": (100_000, 100_000)}
+    display, usage = _run_all_physical(mock_config, mock_widget_state, table, first, second)
+    assert display[0] == pytest.approx(1.0)
+    assert tuple(usage) == (125_000, 125_000)
+
+
 def test_available_interfaces_lists_vpns_but_not_pseudo(mock_config, mock_widget_state):
     """The picker now SHOWS VPNs (grouped as virtual) - selected mode can pick a tunnel - but still
     hides loopback / Teredo like 2.1 did."""

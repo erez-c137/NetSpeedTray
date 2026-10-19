@@ -53,6 +53,11 @@ REAL_ADAPTERS = [
     ("Ethernet0", "vmxnet3 Ethernet Adapter", 6, True, PHYS),                     # inside a VMware VM
     ("Ethernet 2", "Realtek USB GbE Family Controller", 6, True, PHYS),
     ("Wi-Fi", "Intel(R) Wi-Fi 6E AX211 160MHz", 71, True, PHYS),
+    # SR-IOV VF in an Azure VM (accelerated networking): "Virtual" in the description, but it is a
+    # hardware interface and can be the real data path. The OS flag beats a bare "virtual".
+    ("Ethernet 2", "Mellanox ConnectX-4 Lx Virtual Ethernet Adapter", 6, True, PHYS),
+    # ...but "virtual" still counts when the OS does NOT call it hardware (Wi-Fi Direct, AnyConnect).
+    ("Ethernet 10", "Acme Virtual Adapter", 6, None, VIRT),
     # --- no keyword anywhere: only the OS signals know ---
     ("Ethernet 7", "Acme SecureLink Adapter", 53, True, VIRT),      # ifType 53 beats the flag
     ("Ethernet 8", "Acme Network Adapter", 6, False, VIRT),         # not a hardware interface
@@ -117,11 +122,14 @@ def test_classifier_reads_os_once_and_caches():
     assert len(calls) == 1
 
 
-def test_unknown_name_refreshes_but_rate_limited():
-    """A VPN that comes up after launch is a new name; the table is re-read for it, at most every
-    CLASSIFIER_REFRESH_SEC so a name the OS never reports can't cause a read per poll."""
+def test_unknown_name_rereads_the_table_at_once():
+    """A WireGuard tunnel named "home" comes up a few seconds after the last read. Its name matches
+    no keyword, so without OS data it would look physical and be summed into all_physical (and the
+    odometer). An unknown name must re-read the table right away, not wait out a long window."""
     clock = _Clock()
-    tables = [_table(), _table(AdapterInfo("Acme Link", "Acme Adapter", 53, False))]
+    tables = [_table(AdapterInfo("Wi-Fi", "Intel(R) Wi-Fi 6E AX211", 71, True)),
+              _table(AdapterInfo("Wi-Fi", "Intel(R) Wi-Fi 6E AX211", 71, True),
+                     AdapterInfo("home", "WireGuard Tunnel", 53, False))]
     calls = []
 
     def loader():
@@ -129,12 +137,50 @@ def test_unknown_name_refreshes_but_rate_limited():
         return tables[min(len(calls) - 1, 1)]
 
     c = InterfaceClassifier(loader=loader, clock=clock)
-    assert c.kind("Acme Link") == PHYS          # first table doesn't know it; the name looks physical
-    assert c.kind("Acme Link") == PHYS          # inside the window: no re-read
-    assert len(calls) == 1
-    clock.t += constants.network.interface.CLASSIFIER_REFRESH_SEC + 1
-    assert c.kind("Acme Link") == VIRT          # re-read finds it: ifType 53
+    assert c.kind("Wi-Fi") == PHYS
+    clock.t += constants.network.interface.CLASSIFIER_UNKNOWN_REREAD_SEC + 0.5
+    assert c.kind("home") == VIRT
     assert len(calls) == 2
+
+
+def test_unknown_name_reread_is_throttled_and_never_cached():
+    """Inside the throttle window an unknown name gets the name-only answer, but that answer is NOT
+    cached: the next call after the window re-reads and gets the OS answer."""
+    clock = _Clock()
+    tables = [_table(), _table(AdapterInfo("home", "Acme Adapter", 53, False))]
+    calls = []
+
+    def loader():
+        calls.append(1)
+        return tables[min(len(calls) - 1, 1)]
+
+    c = InterfaceClassifier(loader=loader, clock=clock)
+    assert c.kind("home") == PHYS          # first read doesn't know it; the name looks physical
+    assert c.kind("home") == PHYS          # inside the throttle: no re-read (a read per poll is wrong)
+    assert len(calls) == 1
+    clock.t += constants.network.interface.CLASSIFIER_UNKNOWN_REREAD_SEC + 0.1
+    assert c.kind("home") == VIRT          # not cached as physical: re-read finds ifType 53
+    assert len(calls) == 2
+    assert c.kind("home") == VIRT          # an answer WITH OS data is cached
+    assert len(calls) == 2
+
+
+def test_fallback_eligibility_excludes_keyword_and_tunnel_virtuals():
+    """When nothing is physical, all_physical falls back to the non-pseudo adapters - but only those
+    that are virtual merely because the OS doesn't flag them as hardware. A keyword or a
+    tunnel/PPP type is positive evidence of a VPN, and those must never be summed."""
+    t = _table(AdapterInfo("Ethernet 8", "Acme Network Adapter", 6, False),
+               AdapterInfo("home", "WireGuard Tunnel", 53, False),
+               AdapterInfo("Ethernet 9", "Acme Secure Thing", 131, True),
+               AdapterInfo("Tailscale", "Tailscale Tunnel", 53, False),
+               AdapterInfo("Loopback Pseudo-Interface 1", "Software Loopback Interface 1", 24, False))
+    c = InterfaceClassifier(loader=lambda: t, clock=_Clock())
+    assert c.fallback_eligible("Ethernet 8")
+    assert not c.fallback_eligible("home")
+    assert not c.fallback_eligible("Ethernet 9")
+    assert not c.fallback_eligible("Tailscale")
+    assert not c.fallback_eligible("Loopback Pseudo-Interface 1")
+    assert not c.fallback_eligible("Office NIC", exclusions=["office"])
 
 
 def test_loader_failure_falls_back_to_names():

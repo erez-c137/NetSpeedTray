@@ -537,15 +537,17 @@ class StatsController(QObject):
         hardware flag + ifType, then names) - so a VPN / vEthernet / host-only adapter whose bytes
         already ride the real NIC is no longer counted twice. If NOTHING on the machine is physical
         (a VM guest NIC the OS doesn't flag as hardware) it falls back to every non-pseudo adapter,
-        so the mode never reads zero forever. The fallback looks at all live counters, so the
-        display and the odometer aggregation of the same poll pick the same set."""
+        so the mode never reads zero forever - but never one KNOWN to be a VPN or tunnel (keyword,
+        or tunnel/PPP/virtual ifType), so the fallback can't bring the double count back. The
+        fallback looks at all live counters, so the display and the odometer aggregation of the
+        same poll pick the same set."""
         iface = constants.network.interface
         live = set(per_interface) | set(self.last_interface_counters)
-        kinds = {n: self._interface_kind(n) for n in live}
-        physical = {n for n, k in kinds.items() if k == iface.KIND_PHYSICAL}
+        physical = {n for n in live if self._interface_kind(n) == iface.KIND_PHYSICAL}
         if physical:
             return physical
-        return {n for n, k in kinds.items() if k != iface.KIND_PSEUDO}
+        exclusions = self.config.get("excluded_interfaces", iface.DEFAULT_EXCLUSIONS)
+        return {n for n in live if self.interface_classifier.fallback_eligible(n, exclusions)}
 
     def _sum_all(self, per_interface_speeds: Dict[str, Tuple[float, float]]) -> Tuple[float, float]:
         """Sums all speeds."""

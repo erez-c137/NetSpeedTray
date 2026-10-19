@@ -91,6 +91,15 @@ def test_update_interface_list_regroups_with_new_primary(q_app, i18n):
     assert items[virt + 1] == ("iface", "Tailscale", True)
 
 
+def test_no_primary_on_update_clears_the_mark(q_app, i18n):
+    """The lookup found no route this time (offline, VPN reconnecting): the old mark must go, not
+    linger on an adapter that is no longer the active connection."""
+    page = _page(i18n)                      # Wi-Fi 3 marked
+    page.update_interface_list(list(_TABLE), primary_interface=None)
+    assert page.primary_interface is None
+    assert not any(it[0] == "iface" and it[2] for it in _layout_items(page))
+
+
 def test_empty_list_still_says_none_found(q_app, i18n):
     page = _page(i18n, names=[])
     page.interfaces_container_layout.count()
@@ -110,5 +119,8 @@ def test_settings_dialog_passes_the_primary_to_the_picker(q_app, i18n):
         assert d.interfaces_page.primary_interface == "Ethernet"
         d.update_interface_list(["Wi-Fi 3", "Ethernet"], "Wi-Fi 3")
         assert d.interfaces_page.primary_interface == "Wi-Fi 3"
+        d.update_interface_list(["Wi-Fi 3", "Ethernet"], None)     # no route now: mark cleared
+        assert d.primary_interface is None
+        assert d.interfaces_page.primary_interface is None
     finally:
         d.deleteLater()

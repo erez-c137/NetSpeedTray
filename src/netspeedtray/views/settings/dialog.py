@@ -579,10 +579,10 @@ class SettingsDialog(QDialog):
 
     def update_interface_list(self, new_interfaces: List[str],
                               primary_interface: Optional[str] = None) -> None:
-        """Updates the list of available network interfaces (and the marked primary one)."""
+        """Updates the list of available network interfaces and the marked primary one (None
+        clears the mark - no route right now)."""
         self.available_interfaces = new_interfaces
-        if primary_interface is not None:
-            self.primary_interface = primary_interface
+        self.primary_interface = primary_interface
         if hasattr(self, 'interfaces_page'):
             self.interfaces_page.update_interface_list(new_interfaces, primary_interface)
             # Re-apply current selection
