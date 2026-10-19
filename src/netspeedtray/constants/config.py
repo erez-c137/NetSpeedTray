@@ -67,6 +67,14 @@ class ConfigConstants:
     DEFAULT_GRAPH_ENABLED: Final[bool] = False
     DEFAULT_HISTORY_MINUTES: Final[int] = 3
     DEFAULT_GRAPH_OPACITY: Final[int] = 66
+    # Fixed y-axis for the taskbar mini graph (DU Meter-style). Off by default: the graph keeps
+    # auto-fitting to the busiest recent sample, so nobody's graph changes on upgrade. When on, the
+    # axis tops out at the advertised plan speed (plan_down_mbps / plan_up_mbps) plus the headroom,
+    # with an optional dotted line at the plan speed itself. No plan set = stays automatic.
+    DEFAULT_GRAPH_FIXED_SCALE: Final[bool] = False
+    DEFAULT_GRAPH_SCALE_HEADROOM: Final[int] = 10   # percent above the plan speed
+    GRAPH_SCALE_HEADROOM_CHOICES: Final[List[int]] = [0, 10, 20, 30]
+    DEFAULT_GRAPH_SHOW_CEILING: Final[bool] = True  # only drawn when the headroom is above 0%
     DEFAULT_INTERFACE_MODE: Final[str] = network.interface.DEFAULT_MODE
     DEFAULT_KEEP_DATA_DAYS: Final[int] = data.retention.DEFAULT_DAYS # 365 days (1 Year) default
     DEFAULT_DARK_MODE: Final[bool] = True
@@ -158,6 +166,9 @@ class ConfigConstants:
         "graph_enabled": DEFAULT_GRAPH_ENABLED,
         "history_minutes": DEFAULT_HISTORY_MINUTES,
         "graph_opacity": DEFAULT_GRAPH_OPACITY,
+        "graph_fixed_scale": DEFAULT_GRAPH_FIXED_SCALE,
+        "graph_scale_headroom": DEFAULT_GRAPH_SCALE_HEADROOM,
+        "graph_show_ceiling": DEFAULT_GRAPH_SHOW_CEILING,
         "interface_mode": DEFAULT_INTERFACE_MODE,
         "selected_interfaces": [],
         "excluded_interfaces": network.interface.DEFAULT_EXCLUSIONS,
@@ -296,6 +307,9 @@ class ConfigConstants:
         "graph_enabled": {"type": bool, "default": DEFAULT_GRAPH_ENABLED},
         "history_minutes": {"type": int, "default": DEFAULT_HISTORY_MINUTES, "min": 1, "max": 1440}, # Range from manual check
         "graph_opacity": {"type": (int, float), "default": DEFAULT_GRAPH_OPACITY, "min": ui_constants.sliders.OPACITY_MIN, "max": ui_constants.sliders.OPACITY_MAX},
+        "graph_fixed_scale": {"type": bool, "default": DEFAULT_GRAPH_FIXED_SCALE},
+        "graph_scale_headroom": {"type": int, "default": DEFAULT_GRAPH_SCALE_HEADROOM, "choices": GRAPH_SCALE_HEADROOM_CHOICES},
+        "graph_show_ceiling": {"type": bool, "default": DEFAULT_GRAPH_SHOW_CEILING},
         "interface_mode": {"type": str, "default": DEFAULT_INTERFACE_MODE, "choices": list(network.interface.VALID_INTERFACE_MODES)},
         "selected_interfaces": {"type": list, "default": [], "item_type": str},
         "excluded_interfaces": {"type": list, "default": network.interface.DEFAULT_EXCLUSIONS, "item_type": str},
