@@ -21,7 +21,7 @@ from netspeedtray.constants.renderer import RendererConstants
 from netspeedtray.utils.helpers import calculate_monotone_cubic_interpolation, format_decimal
 from netspeedtray.utils.mpl_fonts import configure_cjk_font
 from netspeedtray.views.graph.time_axis import apply_time_axis
-from netspeedtray.views.graph.value_axis import ValueAxisFormatter
+from netspeedtray.views.graph.value_axis import ValueAxisFormatter, clipped_axis_max, clipped_runs
 import matplotlib.colors as mcolors
 from matplotlib.patches import PathPatch
 from matplotlib.path import Path
@@ -78,6 +78,7 @@ class GraphRenderer(QObject):
 
         self._current_ylim_up = constants.graph.MINIMUM_Y_AXIS_MBPS
         self._current_ylim_down = constants.graph.MINIMUM_Y_AXIS_MBPS
+        self._clip_artists = {}   # id(axes) -> the clipped-outlier marks drawn on it
         
         self._last_render_mode = None  # 'high_res' or aggregate modes
         self._last_period_key = None
@@ -631,7 +632,8 @@ class GraphRenderer(QObject):
             download_mbps = (raw_data[:, 2] * constants.network.units.BITS_PER_BYTE) / constants.network.units.MEGA_DIVISOR
             
             plotted_ts, plotted_up, plotted_down = self._plot_high_res(plot_datetimes_array, upload_mbps, download_mbps, target_end_time=end_time)
-            self._configure_axes(start_time, end_time, period_key, timestamps, plotted_up, plotted_down)
+            self._configure_axes(start_time, end_time, period_key, timestamps, plotted_up, plotted_down,
+                                 plotted_ts=plotted_ts)
         elif stat_type in ("cpu", "gpu") and hw_styles is not None:
             # Monitor's "toggle" layout: a single CPU- or GPU-only line that must honor the same
             # display settings as combined/separate (per-role color, Smooth, fixed/auto y-axis). The
@@ -1301,11 +1303,18 @@ class GraphRenderer(QObject):
 
 
 
-    def _configure_axes(self, start_time, end_time, period_key, timestamps, upload_mbps, download_mbps):
-        """Sets limits and Formatters with sticky behavior to prevent jitter."""
+    def _configure_axes(self, start_time, end_time, period_key, timestamps, upload_mbps, download_mbps,
+                        plotted_ts=None):
+        """Sets limits and Formatters with sticky behavior to prevent jitter.
+
+        On long windows (VALUE_AXIS_CLIP_PERIODS) each speed axis may scale to the 99th percentile of
+        its plotted points instead of the max, so a couple of speed tests stop squashing a month into
+        the bottom few percent; the points above the edge are then marked (``_mark_clipped``).
+        ``plotted_ts`` (the x of ``upload_mbps``/``download_mbps``) is needed only for those marks.
+        """
         # Y-Axis Scaling (Sticky Logic with smart rounding)
-        max_up = np.max(upload_mbps) if len(upload_mbps) > 0 else 0
-        max_down = np.max(download_mbps) if len(download_mbps) > 0 else 0
+        max_up, _ = clipped_axis_max(upload_mbps if upload_mbps is not None else [], period_key)
+        max_down, _ = clipped_axis_max(download_mbps if download_mbps is not None else [], period_key)
         
         y_top_up = self._get_sticky_y_top(max_up, self._current_ylim_up)
         y_top_down = self._get_sticky_y_top(max_down, self._current_ylim_down)
@@ -1354,8 +1363,57 @@ class GraphRenderer(QObject):
         self.ax_upload.set_ylim(bottom=0, top=y_top_up)
         self.ax_download.set_ylim(bottom=0, top=y_top_down)
 
+        # Points the axis no longer reaches stay on the line (the hover reads their true value); mark
+        # them so they never silently vanish. A no-op off the long windows, where nothing is clipped.
+        self._mark_clipped(self.ax_download, plotted_ts, download_mbps, y_top_down,
+                           constants.graph.DOWNLOAD_LINE_COLOR)
+        self._mark_clipped(self.ax_upload, plotted_ts, upload_mbps, y_top_up,
+                           constants.graph.UPLOAD_LINE_COLOR)
+
         # X-Axis Formatting
         self._configure_xaxis_format(period_key)
+
+    def _mark_clipped(self, ax, xs, ys, top: float, color_hex: str) -> None:
+        """Caret markers on the top edge for each run of points above ``top``, plus the true peak.
+
+        Called on every axis configuration, so it first removes its previous marks (a re-render of
+        the same period does not rebuild the axes). The markers are a scatter collection, not a
+        Line2D, and carry no label, so the hover tooltip - which reads only labelled lines - never
+        mistakes them for data.
+        """
+        store = getattr(self, "_clip_artists", None)
+        if store is None:
+            store = self._clip_artists = {}
+        for artist in store.pop(id(ax), []):
+            try:
+                artist.remove()
+            except Exception:
+                pass
+        if xs is None or ys is None or len(xs) == 0 or len(xs) != len(ys):
+            return
+        try:
+            x = np.asarray(xs)
+            if x.dtype == object or np.issubdtype(x.dtype, np.datetime64):
+                x = mdates.date2num(list(x))
+            runs = clipped_runs(np.asarray(x, dtype=float), ys, top)
+            if not runs:
+                return
+            g = constants.graph
+            artists = [ax.scatter(
+                [rx for rx, _ in runs], [1.0] * len(runs), transform=ax.get_xaxis_transform(),
+                marker=g.VALUE_AXIS_CLIP_MARKER, s=g.VALUE_AXIS_CLIP_MARKER_SIZE, color=color_hex,
+                linewidths=0, clip_on=False, zorder=12, label="_value_axis_clip_markers",
+                gid="value_axis_clip_markers")]
+            peak = max(ry for _, ry in runs)
+            text = f"{self.i18n.GRAPH_PEAK_SHORT} {format_decimal(peak, self.i18n, 1)} {self.i18n.MBITS_UNIT}"
+            artists.append(ax.text(
+                1.0, 1.0, text, transform=ax.transAxes, ha="right", va="bottom",
+                fontsize=g.VALUE_AXIS_CLIP_PEAK_FONTSIZE, alpha=g.VALUE_AXIS_CLIP_PEAK_ALPHA,
+                color=getattr(self, "_current_text_color", style_constants.DARK_MODE_TEXT_COLOR),
+                clip_on=False, gid="value_axis_clip_peak"))
+            store[id(ax)] = artists
+        except Exception as e:
+            self.logger.debug("clip markers skipped: %s", e)
 
     def _set_smart_y_ticks(self, ax, y_max: float):
         """

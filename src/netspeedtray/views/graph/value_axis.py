@@ -9,8 +9,9 @@ drawn, so distinct ticks always get distinct, truthful labels, in the locale's d
 from __future__ import annotations
 
 import math
-from typing import Iterable, Optional, Sequence
+from typing import Iterable, List, Optional, Sequence, Tuple
 
+import numpy as np
 from matplotlib.ticker import Formatter
 
 from netspeedtray import constants
@@ -69,3 +70,54 @@ class ValueAxisFormatter(Formatter):
         vals = sorted(getattr(self, "locs", None) or [])
         d = decimals_for_step(_tick_step(vals)) if len(vals) > 1 else decimals_for_step(x)
         return format_axis_value(x, d, self._sep()) + self.suffix
+
+
+# ----------------------------------------------------------------------------- long-window clipping
+# 2.2 scope C: two speed tests in a month scaled the axis to ~950 Mbps and squashed a month of 5-25
+# Mbps traffic into the bottom 3%. On long windows the axis may instead scale to a high percentile of
+# the points actually plotted (there is no throughput histogram; plan scope A defers it). The clipped
+# points stay on the line - matplotlib only clips the drawing, so the hover still reads their true
+# value - and the renderer marks them on the top edge and states the true peak.
+
+def clipped_axis_max(values: Iterable[float], period_key: Optional[str]) -> Tuple[float, bool]:
+    """The value the speed axis should scale to, and whether that is a percentile clip.
+
+    Returns ``(max, False)`` unless ``period_key`` is a long window, there are enough points for a
+    percentile to mean something, the percentile is above zero, and the max exceeds it by
+    ``VALUE_AXIS_CLIP_TRIGGER`` x. Then ``(percentile x VALUE_AXIS_CLIP_HEADROOM, True)`` - never
+    below the percentile itself.
+    """
+    g = constants.graph
+    arr = np.asarray(list(values) if not isinstance(values, np.ndarray) else values, dtype=float).ravel()
+    arr = arr[np.isfinite(arr)]
+    if arr.size == 0:
+        return 0.0, False
+    peak = float(arr.max())
+    if period_key not in g.VALUE_AXIS_CLIP_PERIODS or arr.size < g.VALUE_AXIS_CLIP_MIN_POINTS:
+        return peak, False
+    pct = float(np.percentile(arr, g.VALUE_AXIS_CLIP_PERCENTILE))
+    if pct <= 0 or peak <= pct * g.VALUE_AXIS_CLIP_TRIGGER:
+        return peak, False
+    return pct * max(1.0, g.VALUE_AXIS_CLIP_HEADROOM), True
+
+
+def clipped_runs(xs: Sequence[float], ys: Sequence[float], top: float) -> List[Tuple[float, float]]:
+    """``(x, y)`` of the highest point in each contiguous run of points above ``top``.
+
+    One marker per run, not per point: an interpolated spike is several points above the edge, and
+    a row of carets for one event would read as several events.
+    """
+    x = np.asarray(xs, dtype=float)
+    y = np.asarray(ys, dtype=float)
+    if x.size == 0 or x.size != y.size:
+        return []
+    above = np.isfinite(y) & (y > top)
+    if not above.any():
+        return []
+    idx = np.flatnonzero(above)
+    runs = np.split(idx, np.flatnonzero(np.diff(idx) > 1) + 1)
+    out = []
+    for run in runs:
+        i = int(run[np.argmax(y[run])])
+        out.append((float(x[i]), float(y[i])))
+    return out
