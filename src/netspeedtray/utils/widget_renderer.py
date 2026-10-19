@@ -703,19 +703,26 @@ class WidgetRenderer:
                     painter.drawText(vx + pct_col + sp, y, r['suffix'])  # live suffix in its worst-case column
                 if inline_mem and mem_col and r['mem']:
                     mx = vx + pct_col + suffix_col
-                    # right-align the number in its column so the trailing 'G' lines up across rows
-                    num_x = mx + mem_col - self.metrics.horizontalAdvance(r['mem'])
+                    label_x = mx + sep_col
+                    number_col_x = label_x + mem_label_col
+                    # Right-align the number in its fixed-width column so the trailing 'G'
+                    # lines up across rows while RAM/VRAM stay anchored in their own cell.
+                    num_x = number_col_x + mem_num_col - self.metrics.horizontalAdvance(r['mem'])
                     if mem_label_col:
-                        self._draw_memory_label(painter, num_x, y, r)
+                        self._draw_memory_label(painter, label_x, y, r)
                     painter.drawText(num_x, y, r['mem'])
                 y += line_height
                 if not inline_mem and r['mem']:
-                    # right-align memory to the segment's right edge, so its right bound lines up with the
-                    # %/temp above it (per #179 feedback) instead of floating left under the value column
+                    # Right-align memory to the segment's right edge while keeping the
+                    # RAM/VRAM label anchored in its fixed-width label cell.
                     mem_right = current_x + seg_w
+                    number_col_x = mem_right - mem_num_col
+                    label_x = number_col_x - mem_label_col
                     num_x = mem_right - self.metrics.horizontalAdvance(r['mem'])
+
                     if mem_label_col:
-                        self._draw_memory_label(painter, num_x, y, r)
+                        self._draw_memory_label(painter, label_x, y, r)
+
                     painter.drawText(num_x, y, r['mem'])
                     y += line_height
 
@@ -726,13 +733,11 @@ class WidgetRenderer:
             self.logger.error("Failed to draw hardware stats: %s", e)
 
 
-    def _draw_memory_label(self, painter: QPainter, number_x: int, y: int, row: Dict[str, Any]) -> None:
-        """Paint a row's RAM/VRAM label immediately before its number (which starts at `number_x`),
-        in the row's CPU/GPU colour (white in monochrome style), then restore the value pen. Hugging
-        the number reads as one value; the reserved cell (memory_label_width) is always wide enough."""
+    def _draw_memory_label(self, painter: QPainter, label_x: int, y: int, row: Dict[str, Any]) -> None:
+        """Paint a row's RAM/VRAM label at the fixed start of its reserved label cell,
+        in the row's CPU/GPU colour, then restore the value pen."""
         painter.setPen(QPen(QColor(row['color'])))
-        label = row['mem_label']
-        painter.drawText(number_x - self.metrics.horizontalAdvance(label + " "), y, label)
+        painter.drawText(label_x, y, row['mem_label'])
         painter.setPen(self.default_color)
 
     def _draw_icon(self, painter: QPainter, icon_type: str, x: int, y_ascent: int, color: Optional[QColor] = None) -> None:
