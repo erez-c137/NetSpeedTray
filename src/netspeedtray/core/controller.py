@@ -306,7 +306,8 @@ class StatsController(QObject):
         self._last_sample_time = (sample_mono, sample_wall)
 
         # --- 2. The rate display: re-prime across gaps ------------------------------------------
-        validity_threshold = max(10.0, update_interval * 5.0)
+        _spd = constants.network.speed
+        validity_threshold = max(_spd.RATE_VALIDITY_MIN_SECONDS, update_interval * _spd.RATE_VALIDITY_POLL_MULTIPLE)
 
         if time_diff > validity_threshold:
             self.repriming_needed = 2

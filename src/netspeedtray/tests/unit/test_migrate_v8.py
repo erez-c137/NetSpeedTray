@@ -528,8 +528,10 @@ def test_migrator_never_uses_executescript():
 def test_dormant_nothing_in_the_app_calls_the_migrator():
     assert DatabaseWorker._DB_VERSION == 7
     root = Path(M.__file__).resolve().parents[2]          # src/netspeedtray
+    # writer_v8 (step 6) shares the migrator's kill hook and clamps; it is dormant itself
+    # (test_writer_v8.test_dormant_nothing_in_the_app_imports_the_writer), so still nothing live.
     callers = [p for p in root.rglob("*.py")
-               if "tests" not in p.parts and p.name != "migrate_v8.py"
+               if "tests" not in p.parts and p.name not in ("migrate_v8.py", "writer_v8.py")
                and "migrate_v8" in p.read_text(encoding="utf-8", errors="ignore")]
     assert callers == []
 
