@@ -103,6 +103,20 @@ if errorlevel 1 (
     exit /b 1
 )
 
+:: NST_SKIP_INSTALLER=1 is the release CI's mode (release.yml): build the exe and the portable zip
+:: only, and KEEP dist\NetSpeedTray (without portable.marker). CI sends the zip to SignPath, copies
+:: the signed NetSpeedTray.exe back over dist\NetSpeedTray\NetSpeedTray.exe and compiles the
+:: installer itself, so the exe the installer puts in Program Files is signed too. Unset (any local
+:: build), every stage below runs exactly as before.
+set "SKIP_INSTALLER="
+if "%NST_SKIP_INSTALLER%"=="1" set "SKIP_INSTALLER=1"
+if defined SKIP_INSTALLER (
+    echo.
+    echo NST_SKIP_INSTALLER=1: skipping the installer - CI compiles it from the signed exe.
+    echo NST_SKIP_INSTALLER=1: skipping the installer >> "%LOG_FILE%"
+    goto :package_release
+)
+
 :: Stage 4: Generate Installer
 echo.
 echo Generating installer...
@@ -117,6 +131,7 @@ set "end_time=%TIME%"
 call :log_elapsed "Generating installer" "%start_time%" "%end_time%"
 
 :: Stage 5: Package Final Release Files
+:package_release
 echo.
 echo Packaging release files...
 echo Packaging release files... >> "%LOG_FILE%"
@@ -128,7 +143,7 @@ set "PORTABLE_DIR_NAME=NetSpeedTray-Portable"
 if not exist "!RELEASE_DIR!" mkdir "!RELEASE_DIR!"
 
 :: Move the installer into the release directory
-move "%INSTALLER_DIR%\NetSpeedTray-%VERSION%-x64-Setup.exe" "!RELEASE_DIR!\" > NUL
+if not defined SKIP_INSTALLER move "%INSTALLER_DIR%\NetSpeedTray-%VERSION%-x64-Setup.exe" "!RELEASE_DIR!\" > NUL
 
 :: Mark this as the portable build so it uses the guided folder-copy update flow at runtime (#195).
 :: The Inno installer was already built above (Stage 4), so this file lands ONLY inside the zip, never
@@ -139,6 +154,11 @@ echo portable> "%DIST_DIR%\NetSpeedTray\portable.marker"
 echo Creating portable zip file...
 powershell -Command "Compress-Archive -Path '%DIST_DIR%\NetSpeedTray' -DestinationPath '!RELEASE_DIR!\%PORTABLE_DIR_NAME%-%VERSION%.zip' -Force" >> "%LOG_FILE%" 2>&1
 if errorlevel 1 (echo ERROR: Failed to create portable zip file. & exit /b 1)
+
+:: CI compiles the installer from dist\NetSpeedTray AFTER this, so the marker must not stay behind:
+:: an installed copy that carried it would take the portable update path.
+if defined SKIP_INSTALLER del /f /q "%DIST_DIR%\NetSpeedTray\portable.marker"
+if defined SKIP_INSTALLER if exist "%DIST_DIR%\NetSpeedTray\portable.marker" (echo ERROR: Could not remove portable.marker & exit /b 1)
 
 set "end_time=%TIME%"
 call :log_elapsed "Packaging release files" "%start_time%" "%end_time%"
@@ -154,10 +174,12 @@ set "CHECKSUM_FILE=%RELEASE_DIR%\checksums.txt"
     echo.
     echo ### %PORTABLE_DIR_NAME%-%VERSION%.zip
     certutil -hashfile "!RELEASE_DIR!\%PORTABLE_DIR_NAME%-%VERSION%.zip" SHA256 | findstr /v "hash"
+) > "!CHECKSUM_FILE!"
+if not defined SKIP_INSTALLER (
     echo.
     echo ### NetSpeedTray-%VERSION%-x64-Setup.exe
     certutil -hashfile "!RELEASE_DIR!\NetSpeedTray-%VERSION%-x64-Setup.exe" SHA256 | findstr /v "hash"
-) > "!CHECKSUM_FILE!"
+) >> "!CHECKSUM_FILE!"
 set "end_time=%TIME%"
 call :log_elapsed "Computing checksums" "%start_time%" "%end_time%"
 
@@ -171,8 +193,12 @@ cd /d "%ROOT_DIR%"
 echo Removing intermediate PyInstaller build folder...
 if exist "%BUILD_DIR%build" rmdir /s /q "%BUILD_DIR%build" 2>nul
 
-echo Removing raw PyInstaller output folder from dist...
-if exist "%DIST_DIR%\NetSpeedTray" rmdir /s /q "%DIST_DIR%\NetSpeedTray" 2>nul
+if defined SKIP_INSTALLER (
+    echo Keeping dist\NetSpeedTray for the CI installer compile.
+) else (
+    echo Removing raw PyInstaller output folder from dist...
+    if exist "%DIST_DIR%\NetSpeedTray" rmdir /s /q "%DIST_DIR%\NetSpeedTray" 2>nul
+)
 
 echo Removing leftover EXE from dist folder (if any)...
 if exist "%DIST_DIR%\NetSpeedTray.exe" del /f /q "%DIST_DIR%\NetSpeedTray.exe" 2>nul
