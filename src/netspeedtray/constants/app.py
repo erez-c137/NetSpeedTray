@@ -18,6 +18,16 @@ class AppConstants:
     # use the guided (folder-copy) update flow instead of the Inno installer flow (#195). The installer
     # copy never contains it. NOTE: build.bat writes this literal name - keep the two in sync.
     PORTABLE_MARKER_FILENAME: Final[str] = "portable.marker"
+    # Graceful-shutdown channel (core/shutdown_channel.py). The running app registers this window
+    # message and quits through the same clean path as tray Exit when it arrives; `--shutdown` (run by
+    # the installer/uninstaller before any taskkill) posts it. The window property marks the one HWND
+    # that listens, so the sender targets it instead of broadcasting. Both strings are a wire protocol
+    # between two installed versions - bump the _vN suffix rather than editing them in place.
+    SHUTDOWN_MESSAGE_NAME: Final[str] = "NetSpeedTray_Shutdown_v1"
+    SHUTDOWN_WINDOW_PROP: Final[str] = "NetSpeedTray_ShutdownTarget_v1"
+    # How long `--shutdown` waits for the app to exit (seconds) unless `--timeout N` overrides it.
+    # The clean quit is ~1-3 s (latency probe join is capped at 1.5 s, then the DB flush).
+    SHUTDOWN_DEFAULT_TIMEOUT_S: Final[float] = 15.0
 
     def __init__(self) -> None:
         self.validate()

@@ -46,6 +46,7 @@ from netspeedtray.views.widget.theme import WidgetThemeManager
 from netspeedtray.core.startup_manager import StartupManager
 from netspeedtray.core.config_controller import ConfigController
 from netspeedtray.core.update_checker import UpdateChecker
+from netspeedtray.core import shutdown_channel
 
 # --- Type Checking ---
 if TYPE_CHECKING:
@@ -66,6 +67,14 @@ class _NativeMSG(ctypes.Structure):
 _WM_POWERBROADCAST = 0x0218
 _PBT_APMRESUMESUSPEND = 0x0007
 _PBT_APMRESUMEAUTOMATIC = 0x0012
+
+# The installer's graceful-close request (`--shutdown`, core/shutdown_channel.py). A registered
+# message: one system-wide atom per string, so resolving it once at import is correct. 0 = failed,
+# and nativeEvent then never matches (WM_NULL is 0, so the guard matters).
+try:
+    _WM_NST_SHUTDOWN = shutdown_channel.shutdown_message_id()
+except Exception:
+    _WM_NST_SHUTDOWN = 0
 
 
 class NetworkSpeedWidget(QWidget):
@@ -176,6 +185,7 @@ class NetworkSpeedWidget(QWidget):
         self.last_tray_rect: Optional[Tuple[int, int, int, int]] = None
         self._taskbar_lost_count: int = 0
         self._will_quit_app: bool = False # Flag to distinguish hide vs exit
+        self._shutdown_armed_hwnd: int = 0  # HWND the --shutdown channel was armed on
         
         # Hooks for system events
         self.system_event_handler: SystemEventHandler
@@ -1236,6 +1246,22 @@ class NetworkSpeedWidget(QWidget):
     def showEvent(self, event: QShowEvent) -> None:
         self.logger.debug(f"Widget showEvent triggered. New visibility: {self.isVisible()}")
         super().showEvent(event)
+        self._arm_shutdown_channel()
+
+    def _arm_shutdown_channel(self) -> None:
+        """
+        Make this window the target of `NetSpeedTray.exe --shutdown` (the installer's graceful close):
+        mark it and let the message through UIPI, so an unelevated sender reaches an elevated app.
+        Idempotent per native window; re-armed when Qt hands us a new HWND.
+        """
+        try:
+            hwnd = int(self.winId())
+            if not hwnd or hwnd == self._shutdown_armed_hwnd:
+                return
+            if shutdown_channel.arm_window(hwnd):
+                self._shutdown_armed_hwnd = hwnd
+        except Exception as e:
+            self.logger.debug("Arming the shutdown channel failed: %s", e)
 
 
     def hideEvent(self, event: QHideEvent) -> None:
@@ -1326,6 +1352,10 @@ class NetworkSpeedWidget(QWidget):
         (monitors and the taskbar are often re-arranged across a suspend cycle). We only watch
         the message - we never consume it.
 
+        The one message we DO consume is our own registered shutdown message (``--shutdown``, sent
+        by the installer): it schedules ``fully_exit_application`` - the tray Exit path - and
+        returns ``(True, 0)``. Nothing else ever carries that atom.
+
         CRITICAL: do NOT call ``super().nativeEvent(eventType, message)`` here. Re-dispatching the
         native message through the base implementation from a Python override access-violates
         inside Qt during window creation - it crashed the widget on its very first show() (a hard
@@ -1336,6 +1366,11 @@ class NetworkSpeedWidget(QWidget):
         try:
             if eventType == b"windows_generic_MSG" and message is not None:
                 msg = _NativeMSG.from_address(int(message))
+                if _WM_NST_SHUTDOWN and msg.message == _WM_NST_SHUTDOWN:
+                    # Deferred out of the native dispatch, then exactly the tray Exit path.
+                    self.logger.info("Shutdown requested by another process (installer/--shutdown) - exiting cleanly.")
+                    QTimer.singleShot(0, self.fully_exit_application)
+                    return True, 0
                 if msg.message == _WM_POWERBROADCAST and msg.wParam in (
                     _PBT_APMRESUMESUSPEND, _PBT_APMRESUMEAUTOMATIC
                 ):
