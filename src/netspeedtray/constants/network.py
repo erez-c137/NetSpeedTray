@@ -122,7 +122,13 @@ class LatencyConstants:
     # answers ICMP (firewalled CPE, some mesh systems, a full-tunnel VPN's virtual gateway) or has been
     # silent a whole window tells us nothing about the link, so the anchor is probed normally.
     GATEWAY_REPLY_RECENT_CYCLES: Final[int] = LIVE_LOSS_WINDOW
-    # Persisted per-cycle loss series (0/1 per probe; the rollups average them into a 0-1 rate).
+    # Each cycle sends a burst of this many echoes per hop (gateway; and the anchor when opted in), so a
+    # 40-cycle window holds 160 probes and resolves 0.6% loss steps. ~1.3 packets/s per hop at 3 s.
+    BURST_SIZE: Final[int] = 4
+    # Gap between the echoes of one burst. Far below any ICMP rate limit seen on consumer routers.
+    BURST_SPACING_MS: Final[int] = 100
+    # Persisted per-cycle loss series: lost / sent of that cycle's burst (0, .25, .5, .75, 1; rows from
+    # before 2.2 are 0/1 for a single echo). The rollups average either shape into a 0-1 rate.
     STAT_GW_TIMEOUT: Final[str] = "latency_gw_timeout"
     STAT_ANCHOR_TIMEOUT: Final[str] = "latency_anchor_timeout"
     # RTT series -> the loss series of the same hop (the exporter's loss_pct).

@@ -93,10 +93,13 @@ CREATE TABLE hardware_stats_raw (
 | `cpu`, `gpu`, `ram` | percent | 0–100 |
 | `cpu_temp` | °C | needs LibreHardwareMonitor on most systems |
 | `cpu_power`, `gpu_power`, `total_power` | watts | |
-| `latency_gw` | milliseconds | ping to your router — your LAN |
-| `latency_anchor` | milliseconds | ping to a public anchor — true internet latency |
-| `latency_gw_timeout` | 0 or 1 | 1 = that probe timed out. **Averaged in the rollups, so in `_minute`/`_hour` this is a packet-loss *rate* between 0 and 1.** |
-| `latency_anchor_timeout` | 0 or 1 | The same for the public anchor - *internet* loss. Recorded only while the public probe is on. When the router probe times out, the anchor is not pinged that cycle and is recorded as lost, so internet loss is always at least router loss. Averaged into a rate exactly like `latency_gw_timeout`. |
+| `latency_gw` | milliseconds | ping to your router — your LAN. Median of the cycle's burst of 4 pings |
+| `latency_anchor` | milliseconds | ping to a public anchor — true internet latency. Median of its burst of 4 |
+| `latency_gw_timeout` | 0 to 1 | The share of that cycle's ping burst that was lost: 0, 0.25, 0.5, 0.75 or 1 (4 pings per cycle since 2.2). Rows from before 2.2 are 0 or 1 for a single ping - the same meaning, so both shapes mix without conversion. **Averaged in the rollups, so in `_minute`/`_hour` this is a packet-loss *rate* between 0 and 1.** |
+| `latency_anchor_timeout` | 0 to 1 | The same for the public anchor - *internet* loss. Recorded only while the public probe is on. When the router loses its whole burst, the anchor is not pinged that cycle and is recorded as fully lost, so internet loss is always at least router loss. Averaged into a rate exactly like `latency_gw_timeout`. |
+
+The probe runs every 3 seconds: a burst of 4 pings, 100 ms apart, to your router - about 1.3 packets
+a second of ~80 bytes - and the same to the public anchor only while that probe is on.
 
 Because this table is generic, **adding a new metric needs no schema change** — a new `stat_type`
 flows through aggregation and retention automatically.
@@ -228,7 +231,8 @@ ORDER BY timestamp / 3600;
 ```
 
 Each minute row is weighted by its `sample_count`, so a minute the app was only partly running
-counts for what it measured. `internet_ms` and `internet_loss_pct` stay empty unless **Also measure
+counts for what it measured. The loss columns average per probe *cycle*, so they read the same
+across the 2.2 change from one ping per cycle (0/1 rows) to a burst of four (quarter steps). `internet_ms` and `internet_loss_pct` stay empty unless **Also measure
 true internet latency** is on. Read the two loss columns together: router loss is your Wi-Fi or LAN;
 internet loss *above* router loss is beyond your router (ISP or path). For data older than 30 days,
 swap `hardware_stats_minute` for `hardware_stats_hour`, which has the same columns.
@@ -331,4 +335,5 @@ NetSpeedTray does not record what it cannot measure honestly:
 - **Which traffic was LAN and which was internet.** Adapter byte counters carry no addresses, ports
   or routes — the information simply is not there to filter on.
 - **Anything that leaves your machine.** No telemetry, no accounts, no uploads. The latency probe
-  pings your own gateway by default; pinging a public host is opt-in and you name the host.
+  pings your own gateway by default (about 1.3 small packets a second); pinging a public host is
+  opt-in and you name the host.

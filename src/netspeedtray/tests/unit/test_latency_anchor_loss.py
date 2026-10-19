@@ -24,6 +24,7 @@ from netspeedtray.core import latency_probe as LP
 
 GW_IP = "192.168.1.1"
 ANCHOR = "1.1.1.1"
+_B = constants.network.latency.BURST_SIZE   # echoes per hop per cycle (2.2 D2)
 
 
 @pytest.fixture(scope="session")
@@ -45,6 +46,7 @@ def _cycles(monkeypatch, config, reply, n, gateway=GW_IP):
     monkeypatch.setattr(LP, "default_gateway_ip", lambda: gateway)
     monkeypatch.setattr(LP, "icmp_ping_ms", fake_ping)
     monkeypatch.setattr(LP.time, "sleep", lambda s: None)
+    monkeypatch.setattr(LP.LatencyProbe, "_pause", lambda self, s: self._running)   # no real waits
     p = LP.LatencyProbe(config)
 
     def on_ready(sample):
@@ -78,7 +80,7 @@ def test_probe_emits_the_anchor_timeout_flag(monkeypatch):
     assert (s.gw_ms, s.gw_timed_out) == (3.0, False)
     assert s.anchor_enabled is True
     assert s.anchor_ms is None and s.anchor_timed_out is True and s.anchor_skipped is False
-    assert pinged == [GW_IP, ANCHOR]
+    assert pinged == [GW_IP] * _B + [ANCHOR] * _B
 
 
 def test_probe_clean_anchor_is_not_a_timeout(monkeypatch):
@@ -90,7 +92,7 @@ def test_gateway_timeout_skips_the_anchor_and_records_it_lost(monkeypatch):
     # The router answered on cycle 0, then drops: the link is down, the anchor is skipped + lost.
     got, pinged = _cycles(monkeypatch, _PUBLIC_ON,
                           lambda ip, c: 14.0 if ip == ANCHOR else (3.0 if c == 0 else None), 2)
-    assert pinged[1] == [GW_IP], "the anchor must not be probed when a responsive gateway goes down"
+    assert pinged[1] == [GW_IP] * _B, "the anchor must not be probed when a responsive gateway goes down"
     s = got[1]
     assert s.gw_timed_out is True
     assert s.anchor_skipped is True and s.anchor_timed_out is True and s.anchor_ms is None
@@ -101,7 +103,7 @@ def test_silent_gateway_never_skips_the_anchor(monkeypatch):
     virtual gateway) must not pin internet loss at 100%: the anchor is probed normally every cycle."""
     got, pinged = _cycles(monkeypatch, _PUBLIC_ON,
                           lambda ip, c: (None if c in (2, 5) else 14.0) if ip == ANCHOR else None, 8)
-    assert all(p == [GW_IP, ANCHOR] for p in pinged), pinged
+    assert all(p == [GW_IP] * _B + [ANCHOR] * _B for p in pinged), pinged
     assert not any(s.anchor_skipped for s in got)
     assert [s.anchor_ms for s in got] == [14.0, 14.0, None, 14.0, 14.0, None, 14.0, 14.0]
 
@@ -121,18 +123,18 @@ def test_skip_stops_once_the_gateway_has_been_silent_a_whole_window(monkeypatch)
     skipped = [s.anchor_skipped for s in got]
     assert skipped[1:n + 1] == [True] * n            # within the window after the last reply: skipped
     assert skipped[n + 1:] == [False] * (total - n - 1)
-    assert pinged[-1] == [GW_IP, ANCHOR] and got[-1].anchor_ms == 14.0
+    assert pinged[-1] == [GW_IP] * _B + [ANCHOR] * _B and got[-1].anchor_ms == 14.0
 
 
 def test_unknown_gateway_still_probes_the_anchor(monkeypatch):
     s, pinged = _one_cycle(monkeypatch, _PUBLIC_ON, {ANCHOR: 14.0}, gateway=None)
-    assert pinged == [ANCHOR]
+    assert pinged == [ANCHOR] * _B
     assert s.gw_timed_out is False and s.anchor_ms == 14.0 and s.anchor_timed_out is False
 
 
 def test_public_probe_off_never_touches_the_anchor(monkeypatch):
     s, pinged = _one_cycle(monkeypatch, {"latency_public_enabled": False}, {GW_IP: None, ANCHOR: 14.0})
-    assert pinged == [GW_IP]
+    assert pinged == [GW_IP] * _B
     assert s.anchor_enabled is False and s.anchor_timed_out is False and s.anchor_skipped is False
 
 

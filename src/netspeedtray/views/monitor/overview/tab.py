@@ -616,7 +616,10 @@ class OverviewTab(QWidget):
         if ms is not None:
             detail.append(f"{ms:.0f} ms")
         if loss_known and loss > 0:
-            detail.append(self._tr("MONITOR_LATENCY_LOSS_FMT", "{pct}% loss").format(pct=f"{loss:.0f}"))
+            # Bursts resolve 0.6% steps: below 1% keep the decimal, or a "Good" verdict would read
+            # "1% loss" - the very figure that makes it "OK".
+            pct = self._num(loss) if loss < 1 else f"{loss:.0f}"   # _num: the locale's separator
+            detail.append(self._tr("MONITOR_LATENCY_LOSS_FMT", "{pct}% loss").format(pct=pct))
         if detail:
             out += f"  <span style='color:{sub};'>· {' · '.join(detail)}</span>"
         return out
