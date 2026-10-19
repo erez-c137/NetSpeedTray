@@ -56,7 +56,8 @@ MANAGED_KEYS = {
     # Appearance - fixed arrow weight (constant, but must survive the load/get chain)
     "arrow_font_weight",
     # Advanced
-    "keep_data", "reduce_motion", "show_usage_on_hover", "show_hover_tips", "pause_in_menu",
+    "keep_data", "record_hardware_history", "reduce_motion", "show_usage_on_hover", "show_hover_tips",
+    "pause_in_menu",
 }
 
 # High-risk keys for the reshuffle: the ones that MOVE pages, the segmented enums (int/string

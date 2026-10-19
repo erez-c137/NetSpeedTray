@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QSize
 from PyQt6.QtGui import QColor, QFont, QIcon, QCloseEvent, QShowEvent
 from PyQt6.QtWidgets import (
-    QApplication, QColorDialog, QDialog, QFileDialog, QFontDialog,
+    QApplication, QCheckBox, QColorDialog, QDialog, QFileDialog, QFontDialog,
     QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMessageBox, QPushButton, QScrollArea,
     QStackedWidget, QVBoxLayout, QWidget
 )
@@ -262,7 +262,19 @@ class SettingsDialog(QDialog):
                 self._schedule_settings_update,
                 reset_page_callback=self._reset_advanced_page,
                 reset_all_callback=self._reset_all_to_defaults,
+                delete_history_callback=self._delete_all_history,
             )
+            # The Record-hardware-history card greys out live as CPU/GPU monitoring is switched.
+            def _sync_record_card(_on: bool = False) -> None:
+                self.advanced_page.set_hardware_monitoring_active(
+                    self.hardware_page.monitor_cpu.isChecked() or self.hardware_page.monitor_gpu.isChecked())
+            self.hardware_page.monitor_cpu.toggled.connect(_sync_record_card)
+            self.hardware_page.monitor_gpu.toggled.connect(_sync_record_card)
+            # Safety net for Delete all history: if the worker never answers, give the button back.
+            self._delete_timeout = QTimer(self)
+            self._delete_timeout.setSingleShot(True)
+            self._delete_timeout.setInterval(constants.timeouts.DB_DELETE_HISTORY_UI_TIMEOUT_MS)
+            self._delete_timeout.timeout.connect(self._on_delete_timeout)
 
             # Add pages wrapped in scroll areas (order matches sidebar)
             for page in [
@@ -643,6 +655,98 @@ class SettingsDialog(QDialog):
                 defaults[k] = self.config[k]
         self.reset_with_config(defaults, self.startup_enabled_initial_state)
         self._schedule_settings_update()
+
+    def _confirm_delete_history(self) -> Optional[bool]:
+        """The destructive-action confirmation. Returns None if cancelled, else whether the user also
+        ticked "reset this period's data usage" (unchecked by default: the odometer is the data cap's
+        billing source, D5, and is the one thing here that history retention never touches)."""
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle(self.i18n.DELETE_HISTORY_CONFIRM_TITLE)
+        box.setText(self.i18n.DELETE_HISTORY_CONFIRM_TEXT)
+        # Said plainly: after a delete the cap still reads e.g. "120 of 200 GB" while "This month"
+        # (computed from the now-empty speed history) drops to ~0 - by design, not a bug.
+        box.setInformativeText(self.i18n.DELETE_HISTORY_USAGE_NOTE)
+        usage = QCheckBox(self.i18n.DELETE_HISTORY_INCLUDE_USAGE)
+        usage.setChecked(False)
+        box.setCheckBox(usage)
+        delete_btn = box.addButton(self.i18n.DELETE_HISTORY_CONFIRM_BUTTON,
+                                   QMessageBox.ButtonRole.DestructiveRole)
+        cancel_btn = box.addButton(self.i18n.CANCEL_BUTTON, QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(cancel_btn)
+        box.setEscapeButton(cancel_btn)
+        box.exec()
+        if box.clickedButton() is not delete_btn:
+            return None
+        return usage.isChecked()
+
+    def _delete_all_history(self) -> None:
+        """Settings > Advanced > Delete all history (2.2 item C). Immediate - not deferred to Save."""
+        ws = getattr(self.parent_widget, "widget_state", None)
+        if ws is None or not hasattr(ws, "delete_all_history") or not ws.can_delete_history():
+            # Checked BEFORE asking: no point confirming a delete nobody will carry out, and the
+            # button must never sit disabled waiting for a worker that isn't there.
+            self.logger.error("Delete all history: the history database is not available for writing.")
+            QMessageBox.critical(self, self.i18n.ERROR_TITLE, self.i18n.DELETE_HISTORY_FAILED)
+            return
+        include_usage = self._confirm_delete_history()
+        if include_usage is None:
+            return
+        if not getattr(self, "_history_deleted_connected", False):
+            try:
+                ws.history_deleted.connect(self._on_history_deleted)
+                self._history_deleted_connected = True
+            except Exception as e:
+                self.logger.debug("history_deleted not connectable: %s", e)
+        self.advanced_page.delete_history_btn.setEnabled(False)   # re-enabled on completion/timeout
+        self._delete_timeout.start()
+        ws.delete_all_history(include_usage=include_usage)
+        if include_usage:
+            # The odometer restarts at 0, so re-arm the 80%/100% cap alerts for this period. Write it
+            # into BOTH dialog snapshots too - Save writes self.config back, Cancel original_config,
+            # and either would otherwise restore the stale "already alerted" state.
+            self.config["usage_alert_state"] = ""
+            self.original_config["usage_alert_state"] = ""
+            if hasattr(self.parent_widget, "update_config"):
+                self.parent_widget.update_config({"usage_alert_state": ""})
+        try:
+            self.parent_widget.update()   # repaint the mini graph from the now-empty series
+        except Exception:
+            pass
+
+    def _on_history_deleted(self, status: str) -> None:
+        """The worker's answer - a DatabaseWorker.DELETE_* status - reported as it is: 'compact_pending'
+        means the rows are gone but the file is still being cleaned (the worker keeps retrying)."""
+        from netspeedtray.core.database import DatabaseWorker
+        self._delete_timeout.stop()
+        try:
+            self.advanced_page.delete_history_btn.setEnabled(True)
+        except Exception:
+            pass
+        if status != DatabaseWorker.DELETE_FAILED:
+            # The hover card caches its today/this-month totals; they were computed from the
+            # history that is now gone.
+            if hasattr(self.parent_widget, "invalidate_usage_cache"):
+                try:
+                    self.parent_widget.invalidate_usage_cache()
+                except Exception as e:
+                    self.logger.debug("hover usage cache not invalidated: %s", e)
+        if status == DatabaseWorker.DELETE_DONE:
+            QMessageBox.information(self, self.i18n.SUCCESS_TITLE, self.i18n.DELETE_HISTORY_DONE)
+        elif status == DatabaseWorker.DELETE_COMPACT_PENDING:
+            QMessageBox.information(self, self.i18n.SUCCESS_TITLE, self.i18n.DELETE_HISTORY_DONE_COMPACTING)
+        else:
+            QMessageBox.critical(self, self.i18n.ERROR_TITLE, self.i18n.DELETE_HISTORY_FAILED)
+
+    def _on_delete_timeout(self) -> None:
+        """No answer from the write thread in DB_DELETE_HISTORY_UI_TIMEOUT_MS: give the button back
+        and say so, rather than leaving Delete disabled for the rest of the session."""
+        self.logger.warning("Delete all history: no answer from the database worker; giving up waiting.")
+        try:
+            self.advanced_page.delete_history_btn.setEnabled(True)
+        except Exception:
+            pass
+        QMessageBox.critical(self, self.i18n.ERROR_TITLE, self.i18n.DELETE_HISTORY_FAILED)
 
     def _save_and_close(self) -> None:
         """Saves settings and closes."""

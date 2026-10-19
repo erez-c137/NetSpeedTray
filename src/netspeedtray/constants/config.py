@@ -239,9 +239,10 @@ class ConfigConstants:
         "show_memory_labels": DEFAULT_SHOW_MEMORY_LABELS,
         "show_hardware_temps": DEFAULT_SHOW_HARDWARE_TEMPS,
         "show_hardware_power": DEFAULT_SHOW_HARDWARE_POWER,
-        # Record cheap CPU/GPU/RAM utilization to the DB always (not just while the widget displays it),
-        # so the Monitor's history graphs have real data to show for past periods. Cheap (psutil +
-        # one PDH read); temps/power are NOT recorded here (those stay gated/forced-only).
+        # Settings > Advanced > "Record hardware history". Persists hardware samples to the history DB,
+        # but ONLY for metrics the user monitors (CPU/GPU/RAM switches, temps/power switches) - see
+        # controller.hardware_persist_allowed. Off = nothing hardware is written; live display (widget,
+        # mini graph, Monitor tiles) is unaffected. Latency has its own switch (latency_enabled).
         "record_hardware_history": True,
         # Latency: ping the default GATEWAY (LAN-only, never leaves the network) so the Monitor shows
         # connection latency + loss history. The public anchor (true internet latency) is STRICTLY

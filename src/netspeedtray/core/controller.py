@@ -24,6 +24,39 @@ if TYPE_CHECKING:
 logger = logging.getLogger("NetSpeedTray.StatsController")
 
 
+# Which monitoring switches a persisted hardware stat_type depends on. A stat is written to the history
+# DB only when the user's "Record hardware history" toggle is on AND every switch listed here is on -
+# i.e. only for metrics the user actually chose to monitor. The Monitor window forces collection of
+# everything while it is open (live tiles); that is display, not consent to record. RAM rides the CPU
+# line (Settings greys RAM out with CPU off), hence both. Stats not listed here (the latency series)
+# are not hardware and have their own switch, latency_enabled.
+_HW_PERSIST_REQUIRES: Dict[str, Tuple[str, ...]] = {
+    "cpu": ("monitor_cpu_enabled",),
+    "gpu": ("monitor_gpu_enabled",),
+    "ram": ("monitor_cpu_enabled", "monitor_ram_enabled"),
+    "cpu_temp": ("monitor_cpu_enabled", "show_hardware_temps"),
+    "gpu_temp": ("monitor_gpu_enabled", "show_hardware_temps"),
+    "cpu_power": ("monitor_cpu_enabled", "show_hardware_power"),
+    "gpu_power": ("monitor_gpu_enabled", "show_hardware_power"),
+}
+_HW_POWER_TOTALS = ("system_power", "total_power")
+
+
+def hardware_persist_allowed(stat_type: str, config: Dict[str, Any]) -> bool:
+    """Whether a hardware sample of ``stat_type`` may be written to the history DB (2.2 item C).
+
+    ``system_power`` / ``total_power`` need the power switch and at least one of CPU/GPU on; the
+    caller additionally checks ``total_power``'s contributors (see handle_stats)."""
+    if stat_type not in _HW_PERSIST_REQUIRES and stat_type not in _HW_POWER_TOTALS:
+        return True
+    if not config.get("record_hardware_history", True):
+        return False
+    if stat_type in _HW_POWER_TOTALS:
+        return bool(config.get("show_hardware_power", False)) and bool(
+            config.get("monitor_cpu_enabled", False) or config.get("monitor_gpu_enabled", False))
+    return all(bool(config.get(k, False)) for k in _HW_PERSIST_REQUIRES[stat_type])
+
+
 class StatsController(QObject):
     """
     Manages hardware data processing and UI dispatching.
@@ -132,14 +165,17 @@ class StatsController(QObject):
             vram_total = stats.get('vram_total')
 
             # Emit signals for UI components
+            def _keep(stat_type: str) -> bool:
+                return hardware_persist_allowed(stat_type, self.config)
+
             if cpu is not None:
                 self.cpu_usage_updated.emit(cpu)
                 if self.widget_state:
-                    self.widget_state.add_hardware_stat('cpu', cpu)
+                    self.widget_state.add_hardware_stat('cpu', cpu, persist=_keep('cpu'))
             if gpu is not None:
                 self.gpu_usage_updated.emit(gpu)
                 if self.widget_state:
-                    self.widget_state.add_hardware_stat('gpu', gpu)
+                    self.widget_state.add_hardware_stat('gpu', gpu, persist=_keep('gpu'))
             # GPU presence (no-GPU boxes enumerate zero Engine counters): let the Monitor's at-a-glance
             # tiles hide the GPU rather than show a permanent 0%. LATCH it - only ever set True, never
             # back to False - so a transient empty-counter poll (re-init, driver hiccup) can't flicker
@@ -176,10 +212,16 @@ class StatsController(QObject):
                 for key in ('cpu_temp', 'gpu_temp', 'cpu_power', 'gpu_power', 'system_power'):
                     v = stats.get(key)
                     if v is not None and v > 0:
-                        self.widget_state.add_hardware_stat(key, float(v))
+                        self.widget_state.add_hardware_stat(key, float(v), persist=_keep(key))
                 cp, gp = stats.get('cpu_power'), stats.get('gpu_power')
-                if (cp is not None and cp > 0) or (gp is not None and gp > 0):
-                    self.widget_state.add_hardware_stat('total_power', float(cp or 0.0) + float(gp or 0.0))
+                cp_on, gp_on = cp is not None and cp > 0, gp is not None and gp > 0
+                if cp_on or gp_on:
+                    # The sum may only be recorded when every reading IN it may be - otherwise a
+                    # Monitor-forced GPU watt reading would leak into history through the total.
+                    keep_total = (_keep('total_power') and (not cp_on or _keep('cpu_power'))
+                                  and (not gp_on or _keep('gpu_power')))
+                    self.widget_state.add_hardware_stat('total_power', float(cp or 0.0) + float(gp or 0.0),
+                                                        persist=keep_total)
 
             # 4. Handle RAM / VRAM Info
             if stats.get('ram_used') is not None and stats.get('ram_total') is not None:
@@ -187,7 +229,8 @@ class StatsController(QObject):
                 # Persist RAM% to the same 3-tier history as cpu/gpu (the pipeline is stat_type-generic)
                 # so the Monitor can graph RAM over time and the Overview RAM sparkline is DB-backed.
                 if self.widget_state and ram_total and ram_total > 0:
-                    self.widget_state.add_hardware_stat('ram', (ram_used / ram_total) * 100.0)
+                    self.widget_state.add_hardware_stat('ram', (ram_used / ram_total) * 100.0,
+                                                        persist=_keep('ram'))
                 
             if stats.get('vram_used') is not None:
                 v_total = stats.get('vram_total')

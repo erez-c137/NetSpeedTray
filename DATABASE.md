@@ -104,6 +104,11 @@ a second of ~80 bytes - and the same to the public anchor only while that probe 
 Because this table is generic, **adding a new metric needs no schema change** — a new `stat_type`
 flows through aggregation and retention automatically.
 
+The hardware rows (everything above except `latency_*`) are written only for metrics you monitor in
+Settings → Hardware, and only while **Settings → Advanced → Record hardware history** is on. The open
+Monitor window reads every metric live, but does not record the ones you are not monitoring. The
+`latency_*` rows follow the Connection settings instead.
+
 ### `usage_counter` — the data-cap odometer
 
 One row, always `id = 1`. Separate from the history tables because a data cap must survive retention
@@ -335,6 +340,15 @@ data past your retention setting, and truncate the write-ahead log.
 It also runs `VACUUM` to reclaim space, at most once a day and only when there is real slack to
 reclaim. Rolling data up deletes rows, and deleted rows leave free pages behind; without a periodic
 VACUUM the file keeps its high-water mark forever.
+
+**Settings → Advanced → Delete all history** empties every history table (all speed and hardware
+tiers, latency included), then runs `VACUUM` and a `wal_checkpoint(TRUNCATE)` straight away, so the
+deleted rows are gone from both `speed_history.db` and `speed_history.db-wal` rather than left in free
+pages. If a reader is mid-query (the Monitor's graphs) the checkpoint reports busy; the app then says
+the file is still being cleaned up and retries every few seconds while idle until it completes.
+`metadata` is kept, and so is `usage_counter` unless you tick
+"Also reset this period's data usage" in the confirmation. Recording carries on into the emptied
+tables.
 
 If you ever want to reclaim space by hand — with NetSpeedTray closed:
 
