@@ -56,6 +56,8 @@ _ACCENTS = {
 _REFRESH_MS = 1000        # live current-value tick
 _HISTORY_MS = 6000        # DB window reload (sparklines + avg/peak) - cheap, off the 1 Hz path
 _NARROW_BP = 760          # below this content width: reflow to the compact layout (2×2 tiles, stacked cards)
+# latency_probe.latency_verdict code -> (i18n key, English fallback)
+_VERDICT_KEYS = {"good": ("LATENCY_GOOD", "Good"), "ok": ("LATENCY_OK", "OK"), "slow": ("LATENCY_SLOW", "Slow")}
 
 
 class OverviewTab(QWidget):
@@ -141,6 +143,7 @@ class OverviewTab(QWidget):
         # --- Network hero (the headline) ---
         self._hero = NetworkHero(i18n, accent("down"), accent("up"))
         self._hero.clicked.connect(lambda: self._open_detail("network"))
+        self._hero.check_connection_requested.connect(self._open_connection_check)
         root.addWidget(self._hero)
 
         # --- Thin context strip: session uptime + totals (left), and on the right the one thing you
@@ -603,12 +606,10 @@ class OverviewTab(QWidget):
             ms = anchor if anchor is not None else gw   # no hop reported (no sample yet / old caller)
         if ms is None and loss <= 0:
             return ""   # no probe data yet
-        if ms is None or loss >= 5 or (ms is not None and ms >= 150):
-            word, color = self._tr("LATENCY_SLOW", "Slow"), "#E81123"
-        elif (ms is not None and ms >= 50) or loss >= 1:
-            word, color = self._tr("LATENCY_OK", "OK"), "#FFB900"
-        else:
-            word, color = self._tr("LATENCY_GOOD", "Good"), "#3FB950"
+        from netspeedtray.core.latency_probe import latency_verdict   # the rule the check reuses
+        verdict = latency_verdict(ms, loss)
+        word = self._tr(_VERDICT_KEYS[verdict][0], _VERDICT_KEYS[verdict][1])
+        color = constants.network.latency.VERDICT_COLORS[verdict]
         sub = su.semantic_colors()["text_secondary"]
         out = f"<span style='color:{color};'>{self._tr('LATENCY_LABEL', 'Internet')}: {word}</span>"
         detail = []
@@ -623,10 +624,17 @@ class OverviewTab(QWidget):
             out += f"  <span style='color:{sub};'>· {' · '.join(detail)}</span>"
         return out
 
+    def _latency_detail_key(self) -> str:
+        """The latency series the "Internet" block describes - the HEADLINE hop, like the pill: the
+        public anchor when the user opted into it, the gateway otherwise (latency_probe.headline_hop)."""
+        from netspeedtray.core.latency_probe import HOP_ANCHOR, headline_hop
+        hop = headline_hop(bool(self._config.get("latency_public_enabled", False)))
+        return "latency_anchor" if hop == HOP_ANCHOR else "latency_gw"
+
     def _detail_subjects(self, metric: str):
         """The subject list a card opens its Stats-detail sheet with. Hardware cards lead with their
         utilization and add temperature/power when a sensor reported them; network leads with both
-        directions plus gateway latency. (Empty secondary blocks drop out inside the sheet.)"""
+        directions plus the headline hop's latency. (Empty secondary blocks drop out inside the sheet.)"""
         cpu = self._tr("ORDER_TYPE_CPU", "CPU")
         gpu = self._tr("ORDER_TYPE_GPU", "GPU")
         if metric == "network":
@@ -635,7 +643,7 @@ class OverviewTab(QWidget):
                  "unit": "Mbps", "kind": "net_down", "primary": True},
                 {"key": "upload", "label": self._tr("UPLOAD_LABEL", "Upload"),
                  "unit": "Mbps", "kind": "net_up", "primary": True},
-                {"key": "latency_gw", "label": self._tr("LATENCY_LABEL", "Internet"),
+                {"key": self._latency_detail_key(), "label": self._tr("LATENCY_LABEL", "Internet"),
                  "unit": "ms", "kind": "hw"},
             ]
         if metric == "cpu":
@@ -681,6 +689,11 @@ class OverviewTab(QWidget):
             sheet.exec()
         except Exception as e:
             self.logger.error("Could not open stats detail: %s", e, exc_info=True)
+
+    def _open_connection_check(self) -> None:
+        """The hero's "Check connection" action - the one-shot report sheet (2.2 D3)."""
+        from netspeedtray.views.monitor.connection_check import open_connection_check
+        open_connection_check(self._main_widget, self._config, self._i18n, parent=self.window())
 
     def _hw_sub(self, temp: Optional[float], power: Optional[float]) -> str:
         """CPU/GPU sub-line: temperature and (when collected) power, e.g. "62°C  ·  35 W"."""

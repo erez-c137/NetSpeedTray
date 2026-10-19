@@ -350,4 +350,11 @@ class MonitorWindow(QWidget):
                 self._graph_host.teardown()
             except Exception:
                 pass
+        # A Check-connection sheet is our child: close it and stop + wait its worker before
+        # WA_DeleteOnClose takes the sheet down with us (a running QThread must never be destroyed).
+        try:
+            from netspeedtray.views.monitor.connection_check import stop_all_checks
+            stop_all_checks()
+        except Exception:
+            pass
         event.accept()

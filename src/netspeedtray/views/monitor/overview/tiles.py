@@ -304,6 +304,8 @@ class NetworkHero(ClickableCard):
     dual-trace sparkline (download filled, upload a thinner line), plus a peak/session context line.
     Clickable - selecting it opens the network Stats-detail sheet (download/upload distributions)."""
 
+    check_connection_requested = pyqtSignal()   #: the "Check connection" action was clicked
+
     def __init__(self, i18n, down_color: str, up_color: str, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self._i18n = i18n
@@ -336,6 +338,14 @@ class NetworkHero(ClickableCard):
             f"background: {c['card_bg']}; border: 1px solid {c['card_stroke']};"
             f" border-radius: 10px; padding: 2px 10px;")
         self._latency.setTextFormat(Qt.TextFormat.RichText)
+        # "Check connection" (2.2 D3) sits beside the pill: the moment a call stutters, the question
+        # "is it dropping packets right now?" has a button. A child button takes its own click, so it
+        # never also opens the hero's Stats-detail sheet.
+        from netspeedtray.views.monitor.connection_check import make_check_button
+        self._check_btn = make_check_button(i18n)
+        self._check_btn.clicked.connect(self.check_connection_requested)
+        title_row.addWidget(self._check_btn, 0, Qt.AlignmentFlag.AlignVCenter)
+        title_row.addSpacing(8)
         title_row.addWidget(self._latency, 0, Qt.AlignmentFlag.AlignVCenter)
         lay.addLayout(title_row)
 

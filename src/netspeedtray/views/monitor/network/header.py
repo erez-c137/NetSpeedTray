@@ -89,6 +89,7 @@ class NetworkHeader(QWidget):
 
     period_changed = pyqtSignal(int)     #: re-emits the pills' PERIOD_MAP index
     interface_changed = pyqtSignal(str)  #: NIC name, or "all"
+    check_connection_requested = pyqtSignal()   #: the "Check connection" action (2.2 D3)
 
     def __init__(self, i18n, initial_key: str = _DEFAULT_KEY, parent: Optional[QWidget] = None,
                  graph_host=None) -> None:
@@ -120,6 +121,13 @@ class NetworkHeader(QWidget):
         controls.setContentsMargins(0, 0, 0, 0)
         controls.setSpacing(constants.layout.MONITOR_CONTROL_SPACING)
         root.addLayout(controls)
+
+        # "Check connection" (2.2 D3) - the same action as on the Overview's network hero, leading the
+        # right-hand cluster so it reads as a command, not a filter.
+        from netspeedtray.views.monitor.connection_check import make_check_button
+        self._check_btn = make_check_button(i18n)
+        self._check_btn.clicked.connect(self.check_connection_requested)
+        controls.addWidget(self._check_btn, 0, Qt.AlignmentFlag.AlignVCenter)
 
         # Per-NIC filter - scopes both the graph and these totals to one interface (or all). Built as a
         # QToolButton + menu styled IDENTICALLY to the TimelineSelector (a QComboBox loses its native
