@@ -538,6 +538,16 @@ class DatabaseWorker(QThread):
                 check.close()
 
 
+    _SIDECARS = ("-wal", "-shm", "-journal")
+
+    def _backup_files(self, pattern: str) -> List[Path]:
+        """``speed_history.db.bak.<pattern>`` files that ARE backups - never their SQLite sidecars.
+        Anything that opens a backup (DB Browser, a read-only check) leaves ``<backup>-wal`` / ``-shm``
+        beside it, newer than the backup and matching the same ``.db.bak.v{N}_`` pattern: found live
+        (step 7), 2.1.7 named such a -shm as the file to restore."""
+        return [p for p in self.db_path.parent.glob(f"{self.db_path.stem}.db.bak.{pattern}")
+                if not p.name.endswith(self._SIDECARS)]
+
     def _prune_old_backups(self) -> None:
         """Keep the newest `_BACKUP_RETENTION` backups overall PLUS the newest backup of each
         schema version (the version is the one the backup holds: ``.db.bak.v{N}_...``).
@@ -547,7 +557,7 @@ class DatabaseWorker(QThread):
         whose name carries no version is kept only while it is among the newest overall."""
         try:
             backups = sorted(
-                self.db_path.parent.glob(f"{self.db_path.stem}.db.bak.*"),
+                self._backup_files("*"),
                 key=lambda p: (p.stat().st_mtime, p.name),
                 reverse=True,
             )
@@ -562,6 +572,8 @@ class DatabaseWorker(QThread):
                 if stale in keep:
                     continue
                 stale.unlink(missing_ok=True)
+                for side in self._SIDECARS:   # a backup someone opened has sidecars: they go with it
+                    Path(str(stale) + side).unlink(missing_ok=True)
                 self.logger.debug("Pruned old database backup: %s", stale.name)
         except Exception as e:
             self.logger.warning("Could not prune old database backups: %s", e)
@@ -581,7 +593,7 @@ class DatabaseWorker(QThread):
         """
         try:
             backups = sorted(
-                self.db_path.parent.glob(f"{self.db_path.stem}.db.bak.v*"),
+                self._backup_files("v*"),
                 key=lambda p: p.stat().st_mtime,
                 reverse=True,
             )

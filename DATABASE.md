@@ -454,7 +454,10 @@ fully closed**, in `%APPDATA%\NetSpeedTray`:
    - `speed_history.db`
    - `speed_history.db-wal`
    - `speed_history.db-shm`
-2. Copy the `.bak.v7_...` file and rename the copy to `speed_history.db`.
+2. Copy the `.bak.v7_...` file and rename the copy to `speed_history.db`. Use the file whose name
+   ends in the date and time, never one ending in `-wal` or `-shm`: opening a backup in any SQLite
+   tool leaves those beside it, and NetSpeedTray 2.1.5-2.1.7 can name one of them in its log by
+   mistake.
 3. Start NetSpeedTray 2.1.x.
 
 **Step 1 is not optional, and the `-wal`/`-shm` files are the dangerous part.** They are the

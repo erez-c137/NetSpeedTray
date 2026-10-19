@@ -306,6 +306,27 @@ def test_retention_keeps_newest_per_version_and_newest_two(tmp_path):
     assert not any(p.exists() for p in (old6, old7, a8))
 
 
+def test_a_backups_sidecars_are_never_mistaken_for_backups(tmp_path):
+    """Found live (step 7): anything that opens a backup - DB Browser, a read-only check - leaves
+    `<backup>-wal` / `-shm` beside it, and both match `.db.bak.v{N}_`. 2.1.7 then named the -shm as the
+    file to restore. Pruning must likewise never keep a sidecar in place of its backup, and must take a
+    pruned backup's sidecars with it."""
+    w = DatabaseWorker(tmp_path / "speed_history.db")
+    v7 = _fake_bak(tmp_path, 7, "20261101_000000", age_s=5000)
+    for side in ("-wal", "-shm"):
+        p = tmp_path / (v7.name + side)
+        p.write_bytes(b"s")                         # NEWER than the backup, as an open leaves them
+    old6 = _fake_bak(tmp_path, 6, "20260101_000000", age_s=9000)
+    new6 = _fake_bak(tmp_path, 6, "20260201_000000", age_s=8000)
+    (tmp_path / (old6.name + "-shm")).write_bytes(b"s")
+    assert w._find_newest_backup() == v7
+    w._prune_old_backups()
+    left = {p.name for p in tmp_path.glob("*.bak.*")}
+    assert v7.name in left and new6.name in left and old6.name not in left
+    assert old6.name + "-shm" not in left, "a pruned backup's sidecar was left behind"
+    assert w._find_newest_backup() == v7
+
+
 def test_rollback_still_finds_the_v7_backup_after_v8_pruning(tmp_path):
     """_find_newest_backup of a ROLLED-BACK 2.1.x (the downgrade flyout's restore target) must name the
     survivor after 2.2-era pruning."""
