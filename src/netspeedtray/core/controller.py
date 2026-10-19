@@ -172,6 +172,20 @@ class StatsController(QObject):
         if 'network_identity' in stats:
             self.network_identity_updated.emit(stats['network_identity'])
 
+        # A whole-system reading (RAPL PSYS etc.) is an AC-side figure unless the machine is
+        # actually discharging (#323 review): resolved ONCE per poll, only when such a reading
+        # exists, and shared by the history write below and the hover-card mirror further down.
+        # A failed state read keeps the record-everything behaviour so a WMI hiccup can never
+        # silently drop real discharge history, and neither AC state is mistaken for discharge.
+        system_power_on_ac = False
+        if stats.get('system_power') is not None:
+            try:
+                from netspeedtray.utils import power_utils
+                system_power_on_ac = power_utils.read_power_state().mode in (
+                    power_utils.MODE_AC, power_utils.MODE_CHARGE)
+            except Exception:
+                system_power_on_ac = False
+
         if 'cpu' in stats or 'gpu' in stats:
             cpu = stats.get('cpu')
             gpu = stats.get('gpu')
@@ -217,29 +231,20 @@ class StatsController(QObject):
             # Persist temperature + power as their own (unclamped) hardware stat_types so the Monitor's
             # pro-stats (avg/max/p95, the Stats-detail sheet, export, throttle-time) have real history.
             # Total power = CPU + GPU watts (a "CPU+GPU power" figure, not whole-system draw).
-            # Whole-system power (RAPL PSYS / battery) - a real source when present; stash it on the
-            # widget so the Monitor can show a true "System N W" distinct from the CPU+GPU sum.
-            if 'system_power' in stats and self.view is not None:
-                try:
-                    self.view.system_power = stats['system_power']
-                    # Discharge and charge are mutually exclusive states; without this a
-                    # charging-period value would linger on the view after unplugging.
-                    self.view.battery_power = None
-                except Exception:
-                    pass
-            # Signed battery draw (discharge +, charge -) for the widget's power display:
-            # stashed on the view only, never persisted - charge rates must not land in a
-            # drain history, and discharge is already recorded via system_power above.
-            if 'battery_power' in stats and self.view is not None:
-                try:
-                    self.view.battery_power = stats['battery_power']
-                except Exception:
-                    pass
             if self.widget_state:
+                # system_power keeps the stat history it has always had - every real sensor
+                # reading lands there, on AC included, so the Stats-export "System power"
+                # column and any pro-stats consumer stay meaningful on desktops with RAPL.
+                # The hover's "Today avg" needs discharge-only samples though (#323 review):
+                # a whole-system reading is battery drain only while the machine is actually
+                # discharging, so a mirrored battery_drain stat_type is written from the same
+                # reading and the hover averages that instead. See system_power_on_ac above.
                 for key in ('cpu_temp', 'gpu_temp', 'cpu_power', 'gpu_power', 'system_power'):
                     v = stats.get(key)
                     if v is not None and v > 0:
                         self.widget_state.add_hardware_stat(key, float(v), persist=_keep(key))
+                        if key == 'system_power' and not system_power_on_ac:
+                            self.widget_state.add_hardware_stat('battery_drain', float(v))
                 cp, gp = stats.get('cpu_power'), stats.get('gpu_power')
                 cp_on, gp_on = cp is not None and cp > 0, gp is not None and gp > 0
                 if cp_on or gp_on:
@@ -263,6 +268,26 @@ class StatsController(QObject):
                 v_total = stats.get('vram_total')
                 v_total_val = float(v_total) if v_total is not None else -1.0
                 self.vram_info_updated.emit(stats['vram_used'], v_total_val)
+
+        # Whole-system / battery power, mirrored from THIS poll (#323 review). The hover card
+        # treats both slots as current truth, so each is set from the current stats and cleared
+        # when its key is absent: a stale "discharging 12 W" on AC, or a lingering "+38 W" after
+        # charging to full, is worse than no value. Charge and discharge are mutually exclusive,
+        # so a new value for one leaves the other cleared. Kept outside the cpu/gpu gate above:
+        # battery-only polls must reach the view even when CPU history recording is off.
+        if self.view is not None:
+            try:
+                # On AC (or charging) a whole-system reading is not battery draw, so the slot
+                # is cleared rather than shown (#323 review); see system_power_on_ac above.
+                if 'system_power' in stats and not system_power_on_ac:
+                    self.view.system_power = stats['system_power']
+                else:
+                    self.view.system_power = None
+
+                self.view.battery_power = (
+                    stats['battery_power'] if 'battery_power' in stats else None)
+            except Exception:
+                pass
 
 
     def _handle_network_counters(self, current_counters: Dict[str, Any],

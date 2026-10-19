@@ -1279,7 +1279,15 @@ class NetworkSpeedWidget(QWidget):
                 return None
             mode = state.mode
             # Signed poll value: negative while charging (the card renders it as "+X W").
-            live_w = self.battery_power if self.battery_power is not None else self.system_power
+            # system_power is only a battery draw while the state says discharging: on
+            # AC a whole-system reading (e.g. RAPL PSYS) must never be shown as drain
+            # (#323 review). Charge detection still wins via the signed battery_power.
+            if self.battery_power is not None:
+                live_w = self.battery_power
+            elif state.mode == power_utils.MODE_DISCHARGE:
+                live_w = self.system_power
+            else:
+                live_w = None
             # The signed watts outrank the ctypes mode when they disagree: this machine's
             # firmware reports flag=9 ("no battery") while actually charging, and the flag's
             # charging bit lags the real flow. Watts are the ground truth for the state.
@@ -1305,7 +1313,9 @@ class NetworkSpeedWidget(QWidget):
             return None
 
     def _hover_battery_today_avg(self) -> Optional[float]:
-        """Today's average discharge in watts, from the system_power stat history.
+        """Today's average discharge in watts, from the battery_drain stat history
+        (mirror of system_power written only while the machine is actually
+        discharging, so an AC-side RAPL PSYS reading can never creep in).
 
         Cached with a short TTL like the bandwidth totals: rapid hovers shouldn't
         re-run the DB summary, but the figure only changes minute-to-minute."""
@@ -1317,8 +1327,9 @@ class NetworkSpeedWidget(QWidget):
         try:
             now_dt = datetime.now()
             midnight = now_dt.replace(hour=0, minute=0, second=0, microsecond=0)
-            summary = self.widget_state.summarize_hardware('system_power', midnight, now_dt,
-                                                            poll_interval=8.0)
+            summary = self.widget_state.summarize_hardware('battery_drain', midnight, now_dt,
+                                                            poll_interval=resolve_poll_interval_seconds(
+                                                                self.config.get("update_rate", 1.0)))
             # Only claim an average once real history exists - a fresh install (or the
             # first hours after the battery section was enabled) has no samples yet.
             if summary and summary.avg and summary.count:
