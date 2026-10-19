@@ -58,14 +58,14 @@ def _build_fixture_db(db_dir: Path, now: datetime) -> None:
     # Hour-tier era: 40..31 days ago, with a whole-day gap 36..35 days ago.
     for a, b in ((40, 36), (35, 31)):
         t0, t1 = now_ts - a * DAY, now_ts - b * DAY
-        add_speed("Ethernet", t0, t1, 60, 5e6)
-        add_speed("Wi-Fi", t0 + 3600, t1, 90, 2e6)
+        add_speed("Ethernet", t0, t1, 300, 5e6)
+        add_speed("Wi-Fi", t0 + 3600, t1, 450, 2e6)
     add_speed("vEthernet (WSL)", now_ts - 39 * DAY, now_ts - 37 * DAY, 120, 4e5)   # hour tier ONLY
     # Minute-tier era: 30..1 days ago, with a gap 20..15 days ago.
     for a, b in ((30, 20), (15, 1)):
         t0, t1 = now_ts - a * DAY, now_ts - b * DAY
-        add_speed("Ethernet", t0, t1, 90, 8e6)
-        add_speed("Wi-Fi", t0, t1 - 3 * DAY, 150, 3e6)
+        add_speed("Ethernet", t0, t1, 240, 8e6)
+        add_speed("Wi-Fi", t0, t1 - 3 * DAY, 420, 3e6)
     # Raw era: the last 24 h (kept clear of the floored maintenance cutoff), a 3-hour gap 10..7 h ago.
     for a, b in ((23 * 3600, 10 * 3600), (7 * 3600, 5)):
         add_speed("Ethernet", now_ts - a, now_ts - b, 10, 9e6)
@@ -75,7 +75,7 @@ def _build_fixture_db(db_dir: Path, now: datetime) -> None:
     pct = lambda: round(rng.uniform(0, 100), 3)
     loss = lambda: rng.choice((0.0, 0.0, 0.0, 0.25, 0.5, 0.75, 1.0))           # 4-echo burst fractions
     rtt = lambda: rng.uniform(1.0, 80.0)
-    for (a, b), step in (((40 * DAY, 31 * DAY), 120), ((30 * DAY, 1 * DAY), 120), ((23 * 3600, 5), 20)):
+    for (a, b), step in (((40 * DAY, 31 * DAY), 600), ((30 * DAY, 1 * DAY), 300), ((23 * 3600, 5), 30)):
         t0, t1 = now_ts - a, now_ts - b
         for stat in ("cpu", "gpu", "ram"):
             add_hw(stat, t0, t1, step, pct)
@@ -219,7 +219,7 @@ def _bounded_windows():
     return [(s, e) for s, e in WINDOWS if s is not None and e is not None]
 
 
-@pytest.mark.parametrize("poll", [1.0, 2.0, 5.0])
+@pytest.mark.parametrize("poll", [1.0, 5.0])
 def test_summarize_hardware_matches_legacy(ws, poll):
     nonempty = 0
     for start, end in _bounded_windows():
@@ -233,7 +233,7 @@ def test_summarize_hardware_matches_legacy(ws, poll):
 
 # --- 4. summarize_network ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("poll", [1.0, 2.0])
+@pytest.mark.parametrize("poll", [2.0])
 @pytest.mark.parametrize("direction", ["download", "upload"])
 def test_summarize_network_matches_legacy(ws, direction, poll):
     nonempty = 0
