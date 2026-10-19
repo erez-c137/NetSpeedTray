@@ -210,6 +210,19 @@ def test_odometer_counters_are_monotonic_within_a_period(monkeypatch):
     assert seen == sorted(seen) and seen[-1][0] == 15_000.0
 
 
+def test_period_series_absent_until_the_odometer_loads():
+    """get_usage_this_period answers (0, 0) before the DB load; exporting that 0 makes increase()
+    count the whole period as new traffic the moment the real total appears."""
+    w = _fake_widget()
+    ws = w.widget_state
+    ws._usage_loaded = False
+    ws._try_load_usage = lambda: False
+    snap = build_snapshot(w)
+    assert snap.period_bytes is None and snap.lifetime_bytes is None and snap.period_start is None
+    text = render_metrics(snap)
+    assert "netspeedtray_period_" not in text and "netspeedtray_receive_bytes_total" not in text
+
+
 def test_period_start_is_the_period_key_local_midnight():
     from datetime import date, datetime
     w = _fake_widget()
@@ -315,10 +328,12 @@ def endpoint():
     ep.stop()
 
 
-def get(port, path="/metrics", method="GET", host=None):
+def get(port, path="/metrics", method="GET", host=None, headers=None):
     conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
     try:
-        headers = {"Host": host} if host else {}
+        headers = dict(headers or {})
+        if host:
+            headers["Host"] = host
         conn.request(method, path, headers=headers)
         r = conn.getresponse()
         return r.status, dict(r.getheaders()), r.read().decode("utf-8")
@@ -363,6 +378,30 @@ def test_foreign_host_header_is_refused(endpoint):
     assert get(port, host=f"evil.example:{port}")[0] == 403
     assert get(port, host=f"localhost:{port}")[0] == 200
     assert get(port, host=f"127.0.0.1:{port}")[0] == 200
+
+
+def test_responses_carry_nosniff(endpoint):
+    port = free_port()
+    endpoint.apply(True, port)
+    for path in ("/metrics", "/nope"):
+        _, headers, _ = get(port, path)
+        assert headers.get("X-Content-Type-Options") == "nosniff", path
+
+
+@pytest.mark.parametrize("hdrs", [
+    {"Origin": "https://evil.example"},
+    {"Sec-Fetch-Site": "cross-site", "Sec-Fetch-Mode": "no-cors"},
+    {"Host": "evil.example"},
+])
+def test_web_page_requests_are_refused_without_spending_the_rate_limit(endpoint, hdrs):
+    """A web page can fire blind no-cors fetches at 127.0.0.1. It can't read the answer (CORS), but
+    if those requests counted toward the bucket it could starve a real scraper. Refused first."""
+    port = free_port()
+    endpoint.apply(True, port)
+    for _ in range(M.RATE_LIMIT_BURST * 2):
+        assert get(port, headers=hdrs)[0] == 403
+    assert get(port)[0] == 200     # the scraper's request still has its whole burst
+    assert get(port, headers={"Sec-Fetch-Site": "none"})[0] == 200   # typed in the address bar
 
 
 def test_overlong_request_line_is_refused(endpoint):
@@ -464,6 +503,72 @@ def test_shutdown_leaves_no_thread():
         idle.close()
     with pytest.raises(OSError):
         get(port)
+
+
+class _Drip:
+    """A local client that trickles its request one byte at a time, forever (slowloris)."""
+
+    def __init__(self, port, interval=0.3):
+        self.sock = socket.create_connection(("127.0.0.1", port))
+        self._stop = threading.Event()
+        self._t = threading.Thread(target=self._run, args=(interval,), daemon=True)
+        self._t.start()
+
+    def _run(self, interval):
+        payload = b"GET /metrics HTTP/1.1\r\nHost: 127.0.0.1\r\nX-Pad: " + b"a" * 10_000
+        for b in payload:
+            if self._stop.wait(interval):
+                return
+            try:
+                self.sock.send(bytes([b]))
+            except OSError:
+                return
+
+    def close(self):
+        self._stop.set()
+        self.sock.close()
+
+
+def _settle(ep, n, before, timeout=2.0):
+    deadline = time.time() + timeout
+    while time.time() < deadline and len(set(threading.enumerate()) - before - {ep._thread}) < n:
+        time.sleep(0.01)
+
+
+def test_stop_does_not_wait_for_trickling_clients():
+    """Five slowloris clients: stop() (quit / toggle off / port change, on the GUI thread) must still
+    return promptly - the request deadline and the stop flag are checked on EVERY read."""
+    before = set(threading.enumerate())
+    ep = MetricsEndpoint()
+    port = free_port()
+    ep.apply(True, port)
+    drips = [_Drip(port, interval=0.2) for _ in range(5)]
+    try:
+        _settle(ep, M.MAX_CONCURRENT * 2, before)   # handler threads + the drip threads
+        time.sleep(0.5)                             # every handler is now mid-request
+        srv = ep._server
+        assert len(srv.handler_threads) == M.MAX_CONCURRENT   # the 5th drip got no slot
+        t0 = time.monotonic()
+        ep.stop()
+        assert time.monotonic() - t0 < 1.0
+        # ...and the handlers really ended (the stop flag), not merely abandoned as daemons.
+        assert not [t for t in srv.handler_threads if t.is_alive()]
+    finally:
+        for d in drips:
+            d.close()
+
+
+def test_trickling_client_loses_its_slot_at_the_request_deadline(endpoint):
+    """A drip holds a concurrency slot for at most REQUEST_TIMEOUT_SEC, not per byte forever."""
+    port = free_port()
+    endpoint.apply(True, port)
+    drips = [_Drip(port, interval=0.2) for _ in range(M.MAX_CONCURRENT)]
+    try:
+        time.sleep(M.REQUEST_TIMEOUT_SEC + 0.8)
+        assert get(port)[0] == 200   # the slots were freed
+    finally:
+        for d in drips:
+            d.close()
 
 
 def test_running_port_cannot_be_hijacked(endpoint):

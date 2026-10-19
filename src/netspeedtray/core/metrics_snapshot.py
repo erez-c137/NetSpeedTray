@@ -101,12 +101,15 @@ def build_snapshot(widget: Any, now: Optional[float] = None) -> MetricsSnapshot:
 
     if ws is not None:
         try:
-            up, down = ws.get_usage_this_period()
-            fields["period_bytes"] = (float(down), float(up))
+            # get_usage_lifetime is None until the odometer has loaded from the DB, while
+            # get_usage_this_period returns (0, 0) then: exporting that 0 would make Prometheus'
+            # increase()/rate() count the whole period as new traffic once the real total arrives.
             lifetime = ws.get_usage_lifetime()
             if lifetime is not None:
                 fields["lifetime_bytes"] = (float(lifetime[1]), float(lifetime[0]))
-            fields["period_start"] = _period_start_ts(ws.get_usage_period_key())
+                up, down = ws.get_usage_this_period()
+                fields["period_bytes"] = (float(down), float(up))
+                fields["period_start"] = _period_start_ts(ws.get_usage_period_key())
         except Exception as e:
             logger.debug("metrics snapshot: odometer unavailable: %s", e)
 

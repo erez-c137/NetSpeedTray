@@ -203,7 +203,9 @@ another machine,** can't reach `127.0.0.1` on this PC - by design. Run a small a
 in agent mode, or Grafana Alloy) that scrapes the endpoint and `remote_write`s to your server.
 
 The response includes your network adapter names as labels, so anything running on this PC can read
-them while it's on - see the [Privacy Policy](privacy.md).
+them while it's on. Any local program, or a web page by probing, can also tell the port is open; web
+pages are refused before they count against the request limit, but a local program could use it up.
+See the [Privacy Policy](privacy.md).
 
 ---
 

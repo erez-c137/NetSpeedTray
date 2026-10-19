@@ -20,6 +20,7 @@ This module imports no Qt at all, which is what makes that boundary checkable.
 from __future__ import annotations
 
 import errno
+import io
 import ipaddress
 import logging
 import math
@@ -278,6 +279,35 @@ class _TokenBucket:
             return False
 
 
+class _DeadlineReader(io.RawIOBase):
+    """The handler's socket reads, bounded by ONE deadline for the whole request and woken every
+    POLL_INTERVAL_SEC to re-check the server's stop flag.
+
+    A plain socket timeout restarts on every byte, so a local client trickling one byte per second
+    held a handler (and a concurrency slot) indefinitely, and stop() - which runs on the GUI thread on
+    quit / toggle-off / port change - waited for it (security review of #360: 17.5 s with 5 drips).
+    On Windows neither shutdown() nor close() from another thread wakes a blocked recv(), so the
+    wait must be select() slices, not a blocking read."""
+
+    def __init__(self, sock: socket.socket, deadline: float, stopping: threading.Event) -> None:
+        super().__init__()
+        self._sock, self._deadline, self._stopping = sock, deadline, stopping
+
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, buf) -> int:
+        while True:
+            if self._stopping.is_set():
+                raise TimeoutError("metrics endpoint stopping")
+            remaining = self._deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("metrics request deadline")
+            ready, _, _ = select.select([self._sock], [], [], min(_M.POLL_INTERVAL_SEC, remaining))
+            if ready:
+                return self._sock.recv_into(buf)
+
+
 class _Handler(BaseHTTPRequestHandler):
     server_version = "NetSpeedTray"
     sys_version = ""
@@ -290,30 +320,14 @@ class _Handler(BaseHTTPRequestHandler):
     def setup(self) -> None:
         super().setup()
         self.raw_requestline = b""
+        srv: "_LoopbackHTTPServer" = self.server  # type: ignore[assignment]
+        self.rfile.close()   # replace the makefile() reader with the deadline-bounded one
+        self.rfile = io.BufferedReader(_DeadlineReader(
+            self.connection, time.monotonic() + _M.REQUEST_TIMEOUT_SEC, srv.stopping))
 
     # BaseHTTPRequestHandler reads up to 64 KB for the request line; refuse anything longer than a
-    # real scrape's well before parsing.
-    def _wait_for_request(self) -> bool:
-        """Wait until the client has sent something, in POLL_INTERVAL_SEC slices, giving up on the
-        request timeout or as soon as the server is stopping. A local scraper sends its whole
-        request at once, so after this the reads below do not block."""
-        srv: "_LoopbackHTTPServer" = self.server  # type: ignore[assignment]
-        deadline = time.monotonic() + _M.REQUEST_TIMEOUT_SEC
-        while not srv.stopping.is_set():
-            try:
-                ready, _, _ = select.select([self.connection], [], [], _M.POLL_INTERVAL_SEC)
-            except (OSError, ValueError):
-                return False
-            if ready:
-                return True
-            if time.monotonic() >= deadline:
-                return False
-        return False
-
+    # real scrape's well before parsing. Every read below goes through _DeadlineReader.
     def handle_one_request(self) -> None:
-        if not self._wait_for_request():
-            self.close_connection = True
-            return
         try:
             self.raw_requestline = self.rfile.readline(_M.MAX_REQUEST_LINE + 1)
             if len(self.raw_requestline) > _M.MAX_REQUEST_LINE:
@@ -335,15 +349,28 @@ class _Handler(BaseHTTPRequestHandler):
                 self.send_header("Content-Length", "0")
                 self.end_headers()
             self.wfile.flush()
-        except (socket.timeout, TimeoutError):
+        except (socket.timeout, TimeoutError, OSError, ValueError):
             self.close_connection = True
 
     def do_GET(self) -> None:  # noqa: N802 - http.server naming
         self._serve(head=False)
 
+    def end_headers(self) -> None:
+        self.send_header("X-Content-Type-Options", "nosniff")
+        super().end_headers()
+
+    def _from_a_web_page(self) -> bool:
+        """A browser request made by a web page (fetch / img / form): it carries Origin or a
+        Sec-Fetch-Site other than "none" (typed in the address bar). Scrapers send neither."""
+        site = (self.headers.get("Sec-Fetch-Site") or "").strip().lower()
+        return bool(self.headers.get("Origin")) or site not in ("", "none")
+
     def _serve(self, head: bool) -> None:
         srv: "_LoopbackHTTPServer" = self.server  # type: ignore[assignment]
-        if not _host_allowed(self.headers.get("Host"), srv.server_address[1]):
+        # Both checks come BEFORE the rate limit, so neither a rebinding page nor a blind no-cors
+        # fetch from any web page can spend the bucket a real scraper needs.
+        if (not _host_allowed(self.headers.get("Host"), srv.server_address[1])
+                or self._from_a_web_page()):
             self._plain(403, "Forbidden\n")
             return
         if self.path.split("?", 1)[0] != _M.PATH:
@@ -380,8 +407,10 @@ class _LoopbackHTTPServer(ThreadingHTTPServer):
     # in use (port hijacking both ways). Never: we want a clean "port in use" error instead.
     allow_reuse_address = False
     allow_reuse_port = False
-    daemon_threads = False
-    block_on_close = True   # server_close() joins every handler thread - nothing is left running
+    # Handler threads are daemons and server_close() does NOT join them: stop() runs on the GUI thread,
+    # so it joins them itself with a bounded budget (they exit within POLL_INTERVAL_SEC of `stopping`).
+    daemon_threads = True
+    block_on_close = False
 
     def __init__(self, port: int, store: SnapshotStore) -> None:
         self.store = store
@@ -391,6 +420,8 @@ class _LoopbackHTTPServer(ThreadingHTTPServer):
         # within POLL_INTERVAL_SEC instead of sitting out REQUEST_TIMEOUT_SEC. (On Windows neither
         # shutdown() nor close() from another thread wakes a recv() blocked on a socket - measured.)
         self.stopping = threading.Event()
+        self.handler_threads: set = set()
+        self._handlers_lock = threading.Lock()
         super().__init__((_M.HOST, int(port)), _Handler)
 
     def server_bind(self) -> None:
@@ -417,11 +448,23 @@ class _LoopbackHTTPServer(ThreadingHTTPServer):
             raise
 
     def process_request_thread(self, request, client_address) -> None:
+        me = threading.current_thread()
+        with self._handlers_lock:
+            self.handler_threads.add(me)
         try:
-            request.settimeout(_M.REQUEST_TIMEOUT_SEC)
+            request.settimeout(_M.REQUEST_TIMEOUT_SEC)   # bounds writes; reads use _DeadlineReader
             super().process_request_thread(request, client_address)
         finally:
             self._slots.release()
+            with self._handlers_lock:
+                self.handler_threads.discard(me)
+
+    def join_handlers(self, budget: float) -> None:
+        end = time.monotonic() + budget
+        with self._handlers_lock:
+            threads = list(self.handler_threads)
+        for t in threads:
+            t.join(max(0.0, end - time.monotonic()))
 
     def handle_error(self, request, client_address) -> None:
         # socketserver's default prints a traceback to stderr; a dropped scrape is not an app error.
@@ -514,12 +557,13 @@ class MetricsEndpoint:
         self._server = self._thread = None
         if server is not None:
             try:
-                server.stopping.set()    # idle handlers give up within POLL_INTERVAL_SEC
+                server.stopping.set()    # every handler gives up within POLL_INTERVAL_SEC
                 server.shutdown()        # returns once serve_forever has exited
             finally:
-                server.server_close()    # closes the socket and joins handler threads
+                server.server_close()    # closes the listening socket (handlers are joined below)
             if thread is not None:
                 thread.join(_M.STOP_JOIN_TIMEOUT_SEC)
+            server.join_handlers(_M.HANDLER_JOIN_BUDGET_SEC)
             logger.info("Local metrics endpoint stopped.")
         self._status = EndpointStatus(_M.STATE_OFF)
 

@@ -240,7 +240,7 @@ class MetricsEndpointConstants:
     ALLOWED_HOST_NAMES: Final[Set[str]] = {"127.0.0.1", "localhost", "[::1]"}
     # At most this many connections are served at once; extras are closed unanswered.
     MAX_CONCURRENT: Final[int] = 4
-    # A connection that sends nothing (or trickles) is dropped after this long.
+    # The WHOLE request (line + headers) must arrive within this long, however it is trickled.
     REQUEST_TIMEOUT_SEC: Final[float] = 2.0
     # Token bucket: sustained requests per second, and the burst on top. A scraper asks every 5-60 s.
     RATE_LIMIT_PER_SEC: Final[float] = 5.0
@@ -249,6 +249,9 @@ class MetricsEndpointConstants:
     POLL_INTERVAL_SEC: Final[float] = 0.2
     # How long stop() waits for the serving thread to end.
     STOP_JOIN_TIMEOUT_SEC: Final[float] = 3.0
+    # Total time stop() waits for in-flight handler threads (daemons, so one that overstays never
+    # blocks quitting). They see the stop flag within POLL_INTERVAL_SEC, so this is ample.
+    HANDLER_JOIN_BUDGET_SEC: Final[float] = 0.5
     # Request line longer than this is refused (414) - the only valid one is "GET /metrics HTTP/1.1".
     MAX_REQUEST_LINE: Final[int] = 512
     # Status values the manager reports to Settings.
