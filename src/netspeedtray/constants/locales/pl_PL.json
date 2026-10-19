@@ -94,6 +94,8 @@
     "GRAPH_NOTE_TEXT": "Uwaga: Pokazuje mały wykres w czasie rzeczywistym w obszarze widgetu.",
     "HISTORY_DURATION_LABEL": "Przedział czasu wykresu:",
     "GRAPH_OPACITY_LABEL": "Przezroczystość wykresu:",
+    "GRAPH_SPLIT_LABEL": "Oddzielne wykresy wysyłania i pobierania",
+    "GRAPH_SPLIT_DESC": "Każdy z własną skalą: obok siebie na poziomym pasku zadań, jeden nad drugim na pionowym. W trybie Cyklicznie wszystko wysyłanie i pobieranie pokazują się na zmianę.",
     "GRAPH_FIXED_SCALE_LABEL": "Stała skala wykresu",
     "GRAPH_FIXED_SCALE_DESC": "Skaluje wykres do prędkości z oferty operatora (strona Interfejsy sieciowe) zamiast do ostatniego ruchu. Pozostaje automatyczna, dopóki nie ustawisz prędkości z oferty.",
     "GRAPH_SCALE_HEADROOM_LABEL": "Zapas ponad prędkość z oferty",

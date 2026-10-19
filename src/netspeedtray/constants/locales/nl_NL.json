@@ -94,6 +94,8 @@
     "GRAPH_NOTE_TEXT": "Opmerking: toont een kleine real-time grafiek in het widgetgebied.",
     "HISTORY_DURATION_LABEL": "Grafiek tijdsduur:",
     "GRAPH_OPACITY_LABEL": "Grafiek doorzichtigheid:",
+    "GRAPH_SPLIT_LABEL": "Upload- en downloadgrafiek scheiden",
+    "GRAPH_SPLIT_DESC": "Elk met een eigen schaal: naast elkaar op een horizontale taakbalk, onder elkaar op een verticale. Bij Alles roteren wisselen upload en download elkaar af.",
     "GRAPH_FIXED_SCALE_LABEL": "Vaste grafiekschaal",
     "GRAPH_FIXED_SCALE_DESC": "Schaalt naar je geadverteerde abonnementssnelheid (pagina Netwerkinterfaces) in plaats van naar recent verkeer. Blijft automatisch tot er een abonnementssnelheid is ingesteld.",
     "GRAPH_SCALE_HEADROOM_LABEL": "Marge boven abonnementssnelheid",

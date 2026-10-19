@@ -189,6 +189,15 @@ class AppearancePage(QWidget):
         self.graph_opacity.valueChanged.connect(self.on_change)
         layout.addWidget(SettingCard(self.i18n.GRAPH_OPACITY_LABEL, control=self.graph_opacity))
 
+        # Separate upload/download graphs (DU Meter-style), each on its own scale. It splits the mini
+        # graph, so it grays out while the graph itself is off. Off by default.
+        self.graph_split = Win11Toggle(label_text="")
+        self.graph_split.toggled.connect(self.on_change)
+        self._split_card = SettingCard(self.i18n.GRAPH_SPLIT_LABEL, self.i18n.GRAPH_SPLIT_DESC,
+                                       control=self.graph_split)
+        layout.addWidget(self._split_card)
+        self.enable_graph.toggled.connect(lambda _on: self._sync_split_card())
+
         # Fixed scale (DU Meter-style): the axis tops out at the advertised plan speed instead of re-fitting
         # to the busiest recent sample. The plan speed is the one already set on the Network page, so there
         # is no second "how fast is my line" number to keep in sync. Off by default.
@@ -289,6 +298,8 @@ class AppearancePage(QWidget):
         self.graph_show_ceiling.setChecked(bool(config.get("graph_show_ceiling", d.DEFAULT_GRAPH_SHOW_CEILING)))
         self.graph_scale_container.setVisible(self.graph_fixed_scale.isChecked())
         self._sync_ceiling_card()
+        self.graph_split.setChecked(bool(config.get("graph_split_directions", d.DEFAULT_GRAPH_SPLIT_DIRECTIONS)))
+        self._sync_split_card()
 
         # Absorbed sections (units / color coding).
         self.units_section.load_settings(config)
@@ -319,6 +330,7 @@ class AppearancePage(QWidget):
             "graph_fixed_scale": self.graph_fixed_scale.isChecked(),
             "graph_scale_headroom": int(self.graph_scale_headroom.currentData()),
             "graph_show_ceiling": self.graph_show_ceiling.isChecked(),
+            "graph_split_directions": self.graph_split.isChecked(),
         }
         # Merge the absorbed sections' keys (units / color coding).
         settings.update(self.units_section.get_settings())
@@ -366,14 +378,22 @@ class AppearancePage(QWidget):
 
     def _sync_ceiling_card(self) -> None:
         """At 0% headroom the plan speed is the graph's top edge and no line is drawn, so gray the
-        plan-speed-line toggle out (the Win11 dependent-control look HardwarePage uses: setEnabled alone
-        won't dim our fixed-color toggle, hence the opacity effect)."""
-        enabled = bool(self.graph_scale_headroom.currentData())
-        self._ceiling_card.setEnabled(enabled)
-        eff = self._ceiling_card.graphicsEffect()
+        plan-speed-line toggle out."""
+        self._set_card_enabled(self._ceiling_card, bool(self.graph_scale_headroom.currentData()))
+
+    def _sync_split_card(self) -> None:
+        """Separate upload/download graphs split the mini graph, so gray the toggle out while it's off."""
+        self._set_card_enabled(self._split_card, self.enable_graph.isChecked())
+
+    @staticmethod
+    def _set_card_enabled(card: SettingCard, enabled: bool) -> None:
+        """The Win11 dependent-control look HardwarePage uses: setEnabled alone won't dim our fixed-color
+        toggle, hence the opacity effect."""
+        card.setEnabled(enabled)
+        eff = card.graphicsEffect()
         if not isinstance(eff, QGraphicsOpacityEffect):
-            eff = QGraphicsOpacityEffect(self._ceiling_card)
-            self._ceiling_card.setGraphicsEffect(eff)
+            eff = QGraphicsOpacityEffect(card)
+            card.setGraphicsEffect(eff)
         eff.setOpacity(1.0 if enabled else 0.4)
 
     def _on_arrow_font_toggle(self, checked: bool):

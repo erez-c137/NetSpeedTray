@@ -94,6 +94,8 @@
     "GRAPH_NOTE_TEXT": "Megjegyzés: kis, valós idejű grafikont jelenít meg a widget területén.",
     "HISTORY_DURATION_LABEL": "Grafikon időtartománya:",
     "GRAPH_OPACITY_LABEL": "Grafikon átlátszatlansága:",
+    "GRAPH_SPLIT_LABEL": "Külön feltöltési és letöltési grafikon",
+    "GRAPH_SPLIT_DESC": "Mindegyik saját skálával: vízszintes tálcán egymás mellett, függőlegesen egymás alatt. Automatikus váltásnál a feltöltés és a letöltés felváltva látszik.",
     "GRAPH_FIXED_SCALE_LABEL": "Rögzített grafikonskála",
     "GRAPH_FIXED_SCALE_DESC": "A névleges csomagsebességhez skáláz (Hálózati interfészek oldal) a legutóbbi forgalom helyett. Amíg nincs megadva csomagsebesség, automatikus marad.",
     "GRAPH_SCALE_HEADROOM_LABEL": "Tartalék a csomagsebesség felett",

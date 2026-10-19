@@ -94,6 +94,8 @@
     "GRAPH_NOTE_TEXT": "Note: Shows a small real-time graph inside the widget area.",
     "HISTORY_DURATION_LABEL": "Graph Timespan:",
     "GRAPH_OPACITY_LABEL": "Graph Opacity:",
+    "GRAPH_SPLIT_LABEL": "Separate Upload and Download Graphs",
+    "GRAPH_SPLIT_DESC": "Each with its own scale: side by side on a horizontal taskbar, stacked on a vertical one. In Auto-Cycle, upload and download take turns.",
     "GRAPH_FIXED_SCALE_LABEL": "Fixed Graph Scale",
     "GRAPH_FIXED_SCALE_DESC": "Scale to your advertised plan speed (Network Interfaces page) instead of recent traffic. Stays automatic until a plan speed is set.",
     "GRAPH_SCALE_HEADROOM_LABEL": "Headroom Above Plan Speed",

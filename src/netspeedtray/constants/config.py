@@ -75,6 +75,10 @@ class ConfigConstants:
     DEFAULT_GRAPH_SCALE_HEADROOM: Final[int] = 10   # percent above the plan speed
     GRAPH_SCALE_HEADROOM_CHOICES: Final[List[int]] = [0, 10, 20, 30]
     DEFAULT_GRAPH_SHOW_CEILING: Final[bool] = True  # only drawn when the headroom is above 0%
+    # Separate upload/download graphs (DU Meter-style), each with its own scale. Off by default so no
+    # widget changes size on upgrade. Side by side on a horizontal taskbar, stacked on a vertical one;
+    # Auto-Cycle rotates upload and download as their own phases instead, so it keeps its size.
+    DEFAULT_GRAPH_SPLIT_DIRECTIONS: Final[bool] = False
     DEFAULT_INTERFACE_MODE: Final[str] = network.interface.DEFAULT_MODE
     DEFAULT_KEEP_DATA_DAYS: Final[int] = data.retention.DEFAULT_DAYS # 365 days (1 Year) default
     DEFAULT_DARK_MODE: Final[bool] = True
@@ -169,6 +173,7 @@ class ConfigConstants:
         "graph_fixed_scale": DEFAULT_GRAPH_FIXED_SCALE,
         "graph_scale_headroom": DEFAULT_GRAPH_SCALE_HEADROOM,
         "graph_show_ceiling": DEFAULT_GRAPH_SHOW_CEILING,
+        "graph_split_directions": DEFAULT_GRAPH_SPLIT_DIRECTIONS,
         "interface_mode": DEFAULT_INTERFACE_MODE,
         "selected_interfaces": [],
         "excluded_interfaces": network.interface.DEFAULT_EXCLUSIONS,
@@ -310,6 +315,7 @@ class ConfigConstants:
         "graph_fixed_scale": {"type": bool, "default": DEFAULT_GRAPH_FIXED_SCALE},
         "graph_scale_headroom": {"type": int, "default": DEFAULT_GRAPH_SCALE_HEADROOM, "choices": GRAPH_SCALE_HEADROOM_CHOICES},
         "graph_show_ceiling": {"type": bool, "default": DEFAULT_GRAPH_SHOW_CEILING},
+        "graph_split_directions": {"type": bool, "default": DEFAULT_GRAPH_SPLIT_DIRECTIONS},
         "interface_mode": {"type": str, "default": DEFAULT_INTERFACE_MODE, "choices": list(network.interface.VALID_INTERFACE_MODES)},
         "selected_interfaces": {"type": list, "default": [], "item_type": str},
         "excluded_interfaces": {"type": list, "default": network.interface.DEFAULT_EXCLUSIONS, "item_type": str},

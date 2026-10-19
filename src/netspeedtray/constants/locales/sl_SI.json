@@ -94,6 +94,8 @@
     "GRAPH_NOTE_TEXT": "Opomba: Prikazuje majhen graf v realnem času v območju gradnika.",
     "HISTORY_DURATION_LABEL": "Obdobje grafa:",
     "GRAPH_OPACITY_LABEL": "Prosojnost grafa:",
+    "GRAPH_SPLIT_LABEL": "Ločena grafa za nalaganje in prenos",
+    "GRAPH_SPLIT_DESC": "Vsak s svojo lestvico: drug ob drugem na vodoravni opravilni vrstici, drug nad drugim na navpični. Pri samodejnem kroženju se nalaganje in prenos izmenjujeta.",
     "GRAPH_FIXED_SCALE_LABEL": "Fiksna lestvica grafa",
     "GRAPH_FIXED_SCALE_DESC": "Prilagodi graf oglaševani hitrosti naročnine (stran Omrežni vmesniki) namesto nedavnemu prometu. Ostane samodejna, dokler ne nastavite hitrosti naročnine.",
     "GRAPH_SCALE_HEADROOM_LABEL": "Rezerva nad hitrostjo naročnine",

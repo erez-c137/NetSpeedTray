@@ -14,10 +14,11 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QPainter, QPaintEvent
+from PyQt6.QtCore import Qt, QRect
+from PyQt6.QtGui import QImage, QPainter, QPaintEvent
 from PyQt6.QtWidgets import QWidget
 
+from netspeedtray import constants
 from netspeedtray.utils.widget_renderer import WidgetRenderer
 from netspeedtray.utils.widget_paint import (
     WidgetMetrics, render_widget, font_from_config, demo_metrics,
@@ -41,7 +42,9 @@ class PreviewWidget(QWidget):
         self._layout_mode: str = "horizontal"
         self._font = font_from_config(self._config)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self._min_width = width
         self.setFixedSize(width, height)
+        self._fit_to_content()
 
     # --- inputs -----------------------------------------------------------------
     def set_config(self, config: Dict[str, Any]) -> None:
@@ -49,6 +52,7 @@ class PreviewWidget(QWidget):
         self._config = dict(config)
         self._renderer.update_config(self._config)
         self._font = font_from_config(self._config)
+        self._fit_to_content()
         self.update()
 
     def set_metrics(self, metrics: WidgetMetrics) -> None:
@@ -66,6 +70,24 @@ class PreviewWidget(QWidget):
         the shared paint path always draws the two-row stack today."""
         self._layout_mode = mode
         self.update()
+
+    def _fit_to_content(self) -> None:
+        """Grow to the readout's measured width (never below the requested width), so a wider layout -
+        side-by-side with separate upload/download graphs - shows whole instead of clipped. Measured
+        through the same paint path on a throwaway surface."""
+        try:
+            probe_w, h = 2000, max(1, self.height())
+            probe = QImage(probe_w, h, QImage.Format.Format_ARGB32_Premultiplied)
+            painter = QPainter(probe)
+            render_widget(painter, QRect(0, 0, probe_w, h), self._renderer, self._renderer.config, self._metrics,
+                          layout_mode=self._layout_mode, cycle_mode=self._cycle_mode,
+                          network_width=None, font=self._font)
+            painter.end()
+            content = self._renderer.get_content_bounds().width()
+            needed = content + constants.renderer.TEXT_MARGIN + constants.renderer.RIGHT_ANCHOR_PADDING
+            self.setFixedWidth(max(self._min_width, needed))
+        except Exception:
+            pass  # a preview must never break its host dialog; keep the current size
 
     @property
     def config(self) -> Dict[str, Any]:

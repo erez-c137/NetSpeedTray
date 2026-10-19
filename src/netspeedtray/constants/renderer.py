@@ -29,6 +29,8 @@ class RendererConstants:
     # Min speed for y-axis scale, in bytes/sec (100 Kbps)
     MIN_Y_SCALE: Final[int] = 12500
     GRAPH_Y_AXIS_PADDING_FACTOR: Final[float] = 1.15 # Add 15% headroom
+    # Gap between the upload and download panels when the graphs are split (a faint divider sits in it).
+    GRAPH_SPLIT_GAP: Final[int] = 4
     
     # --- Display Cycling ---
     CYCLE_INTERVAL_MS: Final[int] = 5000 # 5 seconds per metric
