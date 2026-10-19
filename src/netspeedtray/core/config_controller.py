@@ -225,6 +225,10 @@ class ConfigController:
             # _last_keep_on_top - this method runs on every throttled live-preview tick.
             self._apply_keep_on_top(w.config.get("keep_windows_on_top", False))
 
+            # 5b. Local metrics endpoint (2.2 scope B): start / stop / re-port live with the toggle.
+            if hasattr(w, "apply_metrics_endpoint"):
+                w.apply_metrics_endpoint()
+
             # 6. Schedule a repaint to reflect all changes.
             w.update()
             

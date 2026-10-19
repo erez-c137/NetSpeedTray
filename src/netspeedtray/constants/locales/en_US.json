@@ -503,5 +503,16 @@
     "LOCATION_ONBOARDING_OPEN_BUTTON": "Open Location settings",
     "LOCATION_ONBOARDING_BAND_BUTTON": "Just show the band",
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray overlaps the Widgets panel",
-    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray is sitting over the Windows Widgets/weather panel on your taskbar. You can drag it anywhere you like - it'll remember the spot. (This message won't show again.)"
+    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray is sitting over the Windows Widgets/weather panel on your taskbar. You can drag it anywhere you like - it'll remember the spot. (This message won't show again.)",
+    "INTEGRATIONS_GROUP": "Integrations",
+    "METRICS_ENDPOINT_LABEL": "Local metrics endpoint",
+    "METRICS_ENDPOINT_SUB": "Lets Prometheus or Grafana on this PC read live speeds and data usage. Only this PC can connect; nothing is sent anywhere.",
+    "METRICS_PORT_LABEL": "Port",
+    "METRICS_URL_LABEL": "Address",
+    "METRICS_COPY_BUTTON": "Copy",
+    "METRICS_COPIED": "Copied",
+    "METRICS_STATUS_RUNNING": "Listening. Includes your network adapter names.",
+    "METRICS_STATUS_IN_USE": "Port {port} is already in use by another app. Choose another port.",
+    "METRICS_STATUS_DENIED": "Windows reserves port {port}. Choose another port.",
+    "METRICS_STATUS_ERROR": "Couldn't start on port {port}. Choose another port."
 }

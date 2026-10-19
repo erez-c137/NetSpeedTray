@@ -3,11 +3,14 @@ Advanced Settings Page (2.0 IA) - data history, app-behavior flags, and a fresh 
 
 The progressive-disclosure valve for genuinely low-frequency / destructive items:
 data retention, hardware-history recording, "Delete all history", the app-wide reduce-motion
-flag (also read by the Monitor window's hold-still logic), and reset affordances.
+flag (also read by the Monitor window's hold-still logic), the opt-in local metrics endpoint
+(Integrations, 2.2 scope B), and reset affordances.
 """
 from typing import Dict, Any, Callable, Optional
 
-from PyQt6.QtWidgets import QWidget, QLabel, QPushButton, QGraphicsOpacityEffect
+from PyQt6.QtCore import QTimer
+from PyQt6.QtWidgets import (QWidget, QLabel, QPushButton, QGraphicsOpacityEffect, QSpinBox, QLineEdit,
+                             QApplication)
 
 from netspeedtray import constants
 from netspeedtray.utils.components import Win11Toggle, SettingCard, Win11ComboBox, ReflowRow
@@ -90,6 +93,9 @@ class AdvancedPage(QWidget):
         self.pause_in_menu.toggled.connect(self.on_change)
         layout.addWidget(SettingCard(self.i18n.PAUSE_IN_MENU_LABEL, control=self.pause_in_menu))
 
+        # --- Integrations (2.2 scope B): the opt-in local metrics endpoint ---
+        self._build_integrations(layout)
+
         # --- Reset ---
         layout.addWidget(section_header(self.i18n.ADVANCED_RESET_GROUP))
         note = QLabel(self.i18n.ADVANCED_RESET_NOTE)
@@ -110,6 +116,94 @@ class AdvancedPage(QWidget):
         layout.addWidget(ReflowRow([self.reset_page_btn, self.reset_all_btn]))
 
         layout.addStretch()
+
+    def _build_integrations(self, layout) -> None:
+        """Tier 1: the toggle (its description is the one-line privacy note). Tier 2, shown only while
+        it is on: the port and the address to point a scraper at, with a copy button and the live
+        status (listening, or why it could not start)."""
+        m = constants.network.metrics
+        layout.addWidget(section_header(self.i18n.INTEGRATIONS_GROUP))
+        self.metrics_enabled = Win11Toggle(label_text="")
+        self.metrics_enabled.toggled.connect(self._on_metrics_toggled)
+        layout.addWidget(SettingCard(self.i18n.METRICS_ENDPOINT_LABEL,
+                                     description=self.i18n.METRICS_ENDPOINT_SUB,
+                                     control=self.metrics_enabled))
+
+        self.metrics_port = QSpinBox()
+        self.metrics_port.setRange(m.MIN_PORT, m.MAX_PORT)
+        self.metrics_port.setValue(m.DEFAULT_PORT)
+        self.metrics_port.setKeyboardTracking(False)   # apply on Enter / focus-out, not per keystroke
+        self.metrics_port.setMinimumWidth(110)
+        self.metrics_port.valueChanged.connect(self._on_metrics_port_changed)
+        self._metrics_port_card = SettingCard(self.i18n.METRICS_PORT_LABEL, control=self.metrics_port)
+        layout.addWidget(self._metrics_port_card)
+
+        self.metrics_url = QLineEdit()
+        self.metrics_url.setReadOnly(True)
+        # Wide enough for "http://127.0.0.1:65535/metrics"; ReflowRow stacks the Copy button under it
+        # when the window is too narrow (no sideways scroll in any locale, #356).
+        self.metrics_url.setMinimumWidth(self.metrics_url.fontMetrics().horizontalAdvance(
+            "http://127.0.0.1:65535/metrics") + 24)
+        self.metrics_copy_btn = QPushButton(self.i18n.METRICS_COPY_BUTTON)
+        self.metrics_copy_btn.setStyleSheet(style_utils.button_style())
+        self.metrics_copy_btn.clicked.connect(self._copy_metrics_url)
+        url_row = ReflowRow([self.metrics_url, self.metrics_copy_btn])
+        self._metrics_url_card = SettingCard(self.i18n.METRICS_URL_LABEL, description=" ", control=url_row)
+        layout.addWidget(self._metrics_url_card)
+        self._metrics_status = None
+        self._copied_timer = QTimer(self)
+        self._copied_timer.setSingleShot(True)
+        self._copied_timer.setInterval(1500)
+        self._copied_timer.timeout.connect(
+            lambda: self.metrics_copy_btn.setText(self.i18n.METRICS_COPY_BUTTON))
+        self._refresh_metrics_rows()
+
+    def metrics_url_text(self) -> str:
+        m = constants.network.metrics
+        return f"http://{m.HOST}:{int(self.metrics_port.value())}{m.PATH}"
+
+    def _on_metrics_toggled(self, _on: bool = False) -> None:
+        self._refresh_metrics_rows()
+        self.on_change()
+
+    def _on_metrics_port_changed(self, _v: int = 0) -> None:
+        self._refresh_metrics_rows()
+        self.on_change()
+
+    def _copy_metrics_url(self) -> None:
+        try:
+            QApplication.clipboard().setText(self.metrics_url_text())
+            self.metrics_copy_btn.setText(self.i18n.METRICS_COPIED)
+            self._copied_timer.start()
+        except Exception:
+            pass
+
+    def set_metrics_endpoint_status(self, status) -> None:
+        """The running endpoint's status (core.metrics_endpoint.EndpointStatus) or None. Shown under
+        the address only when it describes the port currently in the field."""
+        self._metrics_status = status
+        self._refresh_metrics_rows()
+
+    def metrics_status_text(self) -> str:
+        m = constants.network.metrics
+        st = self._metrics_status
+        port = int(self.metrics_port.value())
+        if not self.metrics_enabled.isChecked() or st is None or getattr(st, "port", None) != port:
+            return ""
+        if st.state == m.STATE_RUNNING:
+            return self.i18n.METRICS_STATUS_RUNNING
+        if st.state == m.STATE_ERROR:
+            key = {"in_use": "METRICS_STATUS_IN_USE", "denied": "METRICS_STATUS_DENIED"}.get(
+                st.error, "METRICS_STATUS_ERROR")
+            return getattr(self.i18n, key).format(port=port)
+        return ""
+
+    def _refresh_metrics_rows(self) -> None:
+        on = self.metrics_enabled.isChecked()
+        self._metrics_port_card.setVisible(on)
+        self._metrics_url_card.setVisible(on)
+        self.metrics_url.setText(self.metrics_url_text())
+        self._metrics_url_card.set_description(self.metrics_status_text() or " ")
 
     def set_hardware_monitoring_active(self, active: bool) -> None:
         """Grey the Record-hardware-history card out while neither CPU nor GPU is monitored (it would
@@ -143,6 +237,16 @@ class AdvancedPage(QWidget):
         self.show_usage_hover.setChecked(bool(config.get("show_usage_on_hover", True)))
         self.show_hover_tips.setChecked(bool(config.get("show_hover_tips", True)))
         self.pause_in_menu.setChecked(bool(config.get("pause_in_menu", False)))
+        m = constants.network.metrics
+        try:
+            port = int(config.get("metrics_endpoint_port", m.DEFAULT_PORT))
+        except (TypeError, ValueError):
+            port = m.DEFAULT_PORT
+        self.metrics_port.blockSignals(True)
+        self.metrics_port.setValue(port if m.MIN_PORT <= port <= m.MAX_PORT else m.DEFAULT_PORT)
+        self.metrics_port.blockSignals(False)
+        self.metrics_enabled.setChecked(bool(config.get("metrics_endpoint_enabled", False)))
+        self._refresh_metrics_rows()
 
     def get_settings(self) -> Dict[str, Any]:
         return {
@@ -153,4 +257,6 @@ class AdvancedPage(QWidget):
             "show_usage_on_hover": self.show_usage_hover.isChecked(),
             "show_hover_tips": self.show_hover_tips.isChecked(),
             "pause_in_menu": self.pause_in_menu.isChecked(),
+            "metrics_endpoint_enabled": self.metrics_enabled.isChecked(),
+            "metrics_endpoint_port": int(self.metrics_port.value()),
         }

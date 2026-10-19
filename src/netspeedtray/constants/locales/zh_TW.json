@@ -503,5 +503,16 @@
     "LOCATION_ONBOARDING_OPEN_BUTTON": "開啟定位設定",
     "LOCATION_ONBOARDING_BAND_BUTTON": "只有顯示頻段",
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray 與小工具面板重疊",
-    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray 目前壓在工作列上的 Windows 小工具/天氣面板上方。您可以將它拖曳到任何喜歡的位置，它會記住這個位置。（此訊息不會再次顯示。）"
+    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray 目前壓在工作列上的 Windows 小工具/天氣面板上方。您可以將它拖曳到任何喜歡的位置，它會記住這個位置。（此訊息不會再次顯示。）",
+    "INTEGRATIONS_GROUP": "整合",
+    "METRICS_ENDPOINT_LABEL": "本機指標端點",
+    "METRICS_ENDPOINT_SUB": "讓這台電腦上的 Prometheus 或 Grafana 讀取即時網速與數據用量。只有這台電腦能連線，不會傳送到任何地方。",
+    "METRICS_PORT_LABEL": "連接埠",
+    "METRICS_URL_LABEL": "位址",
+    "METRICS_COPY_BUTTON": "複製",
+    "METRICS_COPIED": "已複製",
+    "METRICS_STATUS_RUNNING": "正在接聽。包含您的網路介面卡名稱。",
+    "METRICS_STATUS_IN_USE": "連接埠 {port} 已被其他應用程式使用。請選擇其他連接埠。",
+    "METRICS_STATUS_DENIED": "連接埠 {port} 已被 Windows 保留。請選擇其他連接埠。",
+    "METRICS_STATUS_ERROR": "無法在連接埠 {port} 上啟動。請選擇其他連接埠。"
 }

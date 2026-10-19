@@ -503,5 +503,16 @@
     "LOCATION_ONBOARDING_OPEN_BUTTON": "위치 설정 열기",
     "LOCATION_ONBOARDING_BAND_BUTTON": "대역만 표시",
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray가 위젯 패널과 겹칩니다",
-    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray가 작업 표시줄의 Windows 위젯/날씨 패널 위에 겹쳐 있습니다. 원하는 위치로 자유롭게 드래그할 수 있으며, 위치는 자동으로 기억됩니다. (이 메시지는 다시 표시되지 않습니다.)"
+    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray가 작업 표시줄의 Windows 위젯/날씨 패널 위에 겹쳐 있습니다. 원하는 위치로 자유롭게 드래그할 수 있으며, 위치는 자동으로 기억됩니다. (이 메시지는 다시 표시되지 않습니다.)",
+    "INTEGRATIONS_GROUP": "통합",
+    "METRICS_ENDPOINT_LABEL": "로컬 메트릭 엔드포인트",
+    "METRICS_ENDPOINT_SUB": "이 PC의 Prometheus 또는 Grafana가 실시간 속도와 데이터 사용량을 읽을 수 있습니다. 이 PC만 연결할 수 있으며 어디로도 전송되지 않습니다.",
+    "METRICS_PORT_LABEL": "포트",
+    "METRICS_URL_LABEL": "주소",
+    "METRICS_COPY_BUTTON": "복사",
+    "METRICS_COPIED": "복사됨",
+    "METRICS_STATUS_RUNNING": "수신 대기 중입니다. 네트워크 어댑터 이름이 포함됩니다.",
+    "METRICS_STATUS_IN_USE": "포트 {port}을(를) 다른 앱이 이미 사용 중입니다. 다른 포트를 선택하세요.",
+    "METRICS_STATUS_DENIED": "Windows에서 포트 {port}을(를) 예약해 두었습니다. 다른 포트를 선택하세요.",
+    "METRICS_STATUS_ERROR": "포트 {port}에서 시작할 수 없습니다. 다른 포트를 선택하세요."
 }

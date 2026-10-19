@@ -503,5 +503,16 @@
     "LOCATION_ONBOARDING_OPEN_BUTTON": "Standorteinstellungen öffnen",
     "LOCATION_ONBOARDING_BAND_BUTTON": "Nur das Band anzeigen",
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray überdeckt das Widgets-Panel",
-    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray liegt in Ihrer Taskleiste über den Windows-Widgets bzw. der Wetteranzeige. Sie können es an eine beliebige Stelle ziehen – die Position wird gemerkt. (Diese Meldung wird nicht mehr angezeigt.)"
+    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray liegt in Ihrer Taskleiste über den Windows-Widgets bzw. der Wetteranzeige. Sie können es an eine beliebige Stelle ziehen – die Position wird gemerkt. (Diese Meldung wird nicht mehr angezeigt.)",
+    "INTEGRATIONS_GROUP": "Integrationen",
+    "METRICS_ENDPOINT_LABEL": "Lokaler Metrik-Endpunkt",
+    "METRICS_ENDPOINT_SUB": "Lässt Prometheus oder Grafana auf diesem PC Live-Geschwindigkeiten und Datenverbrauch auslesen. Nur dieser PC kann sich verbinden; es wird nichts gesendet.",
+    "METRICS_PORT_LABEL": "Port",
+    "METRICS_URL_LABEL": "Adresse",
+    "METRICS_COPY_BUTTON": "Kopieren",
+    "METRICS_COPIED": "Kopiert",
+    "METRICS_STATUS_RUNNING": "Aktiv. Enthält die Namen deiner Netzwerkadapter.",
+    "METRICS_STATUS_IN_USE": "Port {port} wird bereits von einer anderen App verwendet. Wähle einen anderen Port.",
+    "METRICS_STATUS_DENIED": "Windows reserviert Port {port}. Wähle einen anderen Port.",
+    "METRICS_STATUS_ERROR": "Start auf Port {port} nicht möglich. Wähle einen anderen Port."
 }

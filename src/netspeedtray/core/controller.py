@@ -95,6 +95,12 @@ class StatsController(QObject):
         self.last_check_time: float = 0.0
         self.last_interface_counters: Dict[str, Any] = {}
         self.current_speed_data: Dict[str, Tuple[float, float]] = {}
+        # The last poll's rates as ONE immutable value (the metrics endpoint's source, read on the GUI
+        # thread): (display per-interface, measured per-interface, display aggregate (up, down),
+        # measured aggregate (up, down)), bytes/s. Replaced whole, never mutated; None before the first
+        # rate. Zeroed whenever the widget is shown 0 (re-prime / gap), so it never outlives the display.
+        self.live_rates: Optional[Tuple[Dict[str, Tuple[float, float]], Dict[str, Tuple[float, float]],
+                                        Tuple[float, float], Tuple[float, float]]] = None
         self.primary_interface: Optional[str] = None
         self.last_primary_check_time: float = 0.0
         self.repriming_needed: int = 0
@@ -258,6 +264,7 @@ class StatsController(QObject):
         sample_mono, sample_wall = sample_time if sample_time else (current_time, time.time())
 
         if not current_counters:
+            self._set_live_rates_zero()
             self.display_speed_updated.emit(0.0, 0.0)
             return
 
@@ -305,12 +312,14 @@ class StatsController(QObject):
             self.repriming_needed = 2
             self.last_check_time = current_time
             self.last_interface_counters = current_counters
+            self._set_live_rates_zero()
             self.display_speed_updated.emit(0.0, 0.0)
             return
 
         if self.repriming_needed > 0:
             self.last_check_time = current_time
             self.last_interface_counters = current_counters
+            self._set_live_rates_zero()
             self.display_speed_updated.emit(0.0, 0.0)
             self.repriming_needed -= 1
             return
@@ -383,6 +392,8 @@ class StatsController(QObject):
                 self.recent_speeds[name].append((up_speed_bps, down_speed_bps))
 
         agg_upload, agg_download = self._aggregate_for_display(self.current_speed_data, resolve_primary=False)
+        self.live_rates = (dict(self.current_speed_data), measured_speed_data, (agg_upload, agg_download),
+                           self._aggregate_for_display(measured_speed_data, resolve_primary=False))
 
         if self.current_speed_data and self.widget_state:
             self.widget_state.add_speed_data(self.current_speed_data, aggregated_up=agg_upload,
@@ -395,6 +406,25 @@ class StatsController(QObject):
 
         self.last_check_time = current_time
         self.last_interface_counters = current_counters
+
+
+    def _set_live_rates_zero(self) -> None:
+        """The widget is about to show 0 (re-prime / gap / no counters): so does the endpoint."""
+        self.live_rates = ({}, {}, (0.0, 0.0), (0.0, 0.0))
+
+
+    def monitored_interface_names(self, per_interface: Dict[str, Any]) -> set:
+        """The interfaces of ``per_interface`` the current mode aggregates - the same selection as
+        _aggregate_for_display, as names (the metrics endpoint's per-interface series)."""
+        mode = self.config.get("interface_mode", "auto")
+        names = set(per_interface)
+        if mode == "selected":
+            return names & set(self.config.get("selected_interfaces", []))
+        if mode == "auto":
+            return names & {self.primary_interface} if self.primary_interface else set()
+        if mode == "all_physical":
+            return names & self._physical_names(per_interface)
+        return names
 
 
     def _odometer_byte_deltas(self, current_counters: Dict[str, Any],

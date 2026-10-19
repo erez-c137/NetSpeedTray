@@ -503,5 +503,16 @@
     "LOCATION_ONBOARDING_OPEN_BUTTON": "Abrir configuración de Ubicación",
     "LOCATION_ONBOARDING_BAND_BUTTON": "Mostrar solo la banda",
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray se superpone al panel de widgets",
-    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray está encima del panel de widgets o de El tiempo de Windows en la barra de tareas. Puedes arrastrarlo a donde quieras y recordará la posición. (Este mensaje no volverá a aparecer.)"
+    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray está encima del panel de widgets o de El tiempo de Windows en la barra de tareas. Puedes arrastrarlo a donde quieras y recordará la posición. (Este mensaje no volverá a aparecer.)",
+    "INTEGRATIONS_GROUP": "Integraciones",
+    "METRICS_ENDPOINT_LABEL": "Punto de conexión local de métricas",
+    "METRICS_ENDPOINT_SUB": "Permite que Prometheus o Grafana en este PC lean las velocidades en directo y el uso de datos. Solo este PC puede conectarse; no se envía nada a ningún sitio.",
+    "METRICS_PORT_LABEL": "Puerto",
+    "METRICS_URL_LABEL": "Dirección",
+    "METRICS_COPY_BUTTON": "Copiar",
+    "METRICS_COPIED": "Copiado",
+    "METRICS_STATUS_RUNNING": "Escuchando. Incluye los nombres de tus adaptadores de red.",
+    "METRICS_STATUS_IN_USE": "Otra aplicación ya está usando el puerto {port}. Elige otro puerto.",
+    "METRICS_STATUS_DENIED": "Windows reserva el puerto {port}. Elige otro puerto.",
+    "METRICS_STATUS_ERROR": "No se pudo iniciar en el puerto {port}. Elige otro puerto."
 }

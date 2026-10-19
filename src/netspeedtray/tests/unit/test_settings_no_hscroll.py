@@ -57,9 +57,16 @@ _PROBE = textwrap.dedent(r"""
     for lang in sys.argv[1].split(","):
         cfg = dict(constants.config.defaults.DEFAULT_CONFIG)
         cfg["language"] = lang
+        # The Integrations rows (port, URL + Copy, status) only show while the endpoint is on.
+        cfg["metrics_endpoint_enabled"] = True
         parent = MagicMock(); parent.config = {}; parent.config_manager = MagicMock()
         dlg = SettingsDialog(main_widget=parent, config=cfg, version="0", i18n=I18nStrings(lang),
                              available_interfaces=["Ethernet", "Wi-Fi"], is_startup_enabled=False)
+        # ...and the longest status line it can show (a port-in-use error).
+        from netspeedtray.core.metrics_endpoint import EndpointStatus
+        dlg.advanced_page.set_metrics_endpoint_status(EndpointStatus(
+            constants.network.metrics.STATE_ERROR, constants.network.metrics.DEFAULT_PORT, "in_use"))
+        assert dlg.advanced_page._metrics_url_card.isVisibleTo(dlg.advanced_page)
         dlg.show()
         for label, width in (("default", dlg.width()), ("minimum", dlg.minimumWidth())):
             dlg.resize(width, dlg.height())

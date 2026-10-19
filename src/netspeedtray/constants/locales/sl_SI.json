@@ -503,5 +503,16 @@
     "LOCATION_ONBOARDING_OPEN_BUTTON": "Odpri nastavitve lokacije",
     "LOCATION_ONBOARDING_BAND_BUTTON": "Pokaži samo frekvenčni pas",
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray prekriva ploščo s pripomočki",
-    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray je na vaši opravilni vrstici postavljen čez ploščo s pripomočki/vremenom sistema Windows. Povlečete ga lahko kamor koli želite – zapomnil si bo mesto. (To sporočilo se ne bo več prikazalo.)"
+    "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray je na vaši opravilni vrstici postavljen čez ploščo s pripomočki/vremenom sistema Windows. Povlečete ga lahko kamor koli želite – zapomnil si bo mesto. (To sporočilo se ne bo več prikazalo.)",
+    "INTEGRATIONS_GROUP": "Integracije",
+    "METRICS_ENDPOINT_LABEL": "Lokalna končna točka metrik",
+    "METRICS_ENDPOINT_SUB": "Prometheusu ali Grafani na tem računalniku omogoča branje trenutnih hitrosti in porabe podatkov. Poveže se lahko le ta računalnik; nič se ne pošlje nikamor.",
+    "METRICS_PORT_LABEL": "Vrata",
+    "METRICS_URL_LABEL": "Naslov",
+    "METRICS_COPY_BUTTON": "Kopiraj",
+    "METRICS_COPIED": "Kopirano",
+    "METRICS_STATUS_RUNNING": "Posluša. Vključuje imena vaših omrežnih kartic.",
+    "METRICS_STATUS_IN_USE": "Vrata {port} že uporablja druga aplikacija. Izberite druga vrata.",
+    "METRICS_STATUS_DENIED": "Windows rezervira vrata {port}. Izberite druga vrata.",
+    "METRICS_STATUS_ERROR": "Zagon na vratih {port} ni uspel. Izberite druga vrata."
 }

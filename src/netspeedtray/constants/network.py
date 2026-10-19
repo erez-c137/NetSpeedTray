@@ -220,6 +220,46 @@ class UsageOdometerConstants:
     BOOT_TIME_TOLERANCE_SEC: Final[float] = 30.0
 
 
+class MetricsEndpointConstants:
+    """The opt-in localhost metrics endpoint (2.2 scope B): Prometheus text exposition at GET /metrics.
+
+    Loopback-only by construction - HOST is the only address the server ever binds, and a peer that is
+    not loopback is refused anyway. Off by default (config ``metrics_endpoint_enabled``)."""
+    HOST: Final[str] = "127.0.0.1"
+    # 9184 - in the Prometheus default-port wiki it belongs to the Twitch exporter, which is very
+    # unlikely to run on the same Windows desktop (the whole 9100-9999 block is allocated; 9182, the
+    # Windows exporter, is the one neighbour that WOULD clash, so it is avoided). Configurable.
+    DEFAULT_PORT: Final[int] = 9184
+    MIN_PORT: Final[int] = 1024     # no privileged / well-known ports
+    MAX_PORT: Final[int] = 65535
+    PATH: Final[str] = "/metrics"
+    # Prometheus text exposition format 0.0.4 (what Prometheus, Grafana Alloy, vmagent and Telegraf read).
+    CONTENT_TYPE: Final[str] = "text/plain; version=0.0.4; charset=utf-8"
+    # Hosts a legitimate local scraper sends in its Host header. Anything else (a DNS-rebinding web page
+    # that resolved its own name to 127.0.0.1) is refused, so a browser tab cannot read the metrics.
+    ALLOWED_HOST_NAMES: Final[Set[str]] = {"127.0.0.1", "localhost", "[::1]"}
+    # At most this many connections are served at once; extras are closed unanswered.
+    MAX_CONCURRENT: Final[int] = 4
+    # The WHOLE request (line + headers) must arrive within this long, however it is trickled.
+    REQUEST_TIMEOUT_SEC: Final[float] = 2.0
+    # Token bucket: sustained requests per second, and the burst on top. A scraper asks every 5-60 s.
+    RATE_LIMIT_PER_SEC: Final[float] = 5.0
+    RATE_LIMIT_BURST: Final[int] = 10
+    # How often serve_forever() checks for shutdown - bounds how long stop() blocks the caller.
+    POLL_INTERVAL_SEC: Final[float] = 0.2
+    # How long stop() waits for the serving thread to end.
+    STOP_JOIN_TIMEOUT_SEC: Final[float] = 3.0
+    # Total time stop() waits for in-flight handler threads (daemons, so one that overstays never
+    # blocks quitting). They see the stop flag within POLL_INTERVAL_SEC, so this is ample.
+    HANDLER_JOIN_BUDGET_SEC: Final[float] = 0.5
+    # Request line longer than this is refused (414) - the only valid one is "GET /metrics HTTP/1.1".
+    MAX_REQUEST_LINE: Final[int] = 512
+    # Status values the manager reports to Settings.
+    STATE_OFF: Final[str] = "off"
+    STATE_RUNNING: Final[str] = "running"
+    STATE_ERROR: Final[str] = "error"
+
+
 class NetworkConstants:
     """Container for network-related constant groups."""
     def __init__(self) -> None:
@@ -228,6 +268,7 @@ class NetworkConstants:
         self.interface = InterfaceConstants()
         self.latency = LatencyConstants()
         self.usage = UsageOdometerConstants()
+        self.metrics = MetricsEndpointConstants()
 
 # Singleton instance for easy access
 network = NetworkConstants()

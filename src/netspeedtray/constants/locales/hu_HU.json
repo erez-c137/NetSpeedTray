@@ -503,5 +503,16 @@
     "LOCATION_ONBOARDING_OPEN_BUTTON": "Helymeghatározási beállítások megnyitása",
     "LOCATION_ONBOARDING_BAND_BUTTON": "Csak a sáv megjelenítése",
     "WIDGETS_OVERLAP_NUDGE_TITLE": "A NetSpeedTray átfedi a Widgetek panelt",
-    "WIDGETS_OVERLAP_NUDGE_BODY": "A NetSpeedTray a Windows Widgetek/időjárás panelje fölött helyezkedik el a tálcán. Bárhová áthúzhatod – megjegyzi a helyét. (Ez az üzenet nem jelenik meg újra.)"
+    "WIDGETS_OVERLAP_NUDGE_BODY": "A NetSpeedTray a Windows Widgetek/időjárás panelje fölött helyezkedik el a tálcán. Bárhová áthúzhatod – megjegyzi a helyét. (Ez az üzenet nem jelenik meg újra.)",
+    "INTEGRATIONS_GROUP": "Integrációk",
+    "METRICS_ENDPOINT_LABEL": "Helyi metrikavégpont",
+    "METRICS_ENDPOINT_SUB": "Lehetővé teszi, hogy a gépen futó Prometheus vagy Grafana kiolvassa az aktuális sebességeket és az adatforgalmat. Csak ez a gép csatlakozhat; semmi nem kerül elküldésre.",
+    "METRICS_PORT_LABEL": "Port",
+    "METRICS_URL_LABEL": "Cím",
+    "METRICS_COPY_BUTTON": "Másolás",
+    "METRICS_COPIED": "Másolva",
+    "METRICS_STATUS_RUNNING": "Figyel. Tartalmazza a hálózati adapterek nevét.",
+    "METRICS_STATUS_IN_USE": "A(z) {port} portot már egy másik alkalmazás használja. Válassz másik portot.",
+    "METRICS_STATUS_DENIED": "A(z) {port} portot a Windows lefoglalta. Válassz másik portot.",
+    "METRICS_STATUS_ERROR": "Nem sikerült elindítani a(z) {port} porton. Válassz másik portot."
 }
