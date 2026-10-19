@@ -36,7 +36,11 @@ def _now_parts():
     now_ts = int(now.timestamp())
     raw_minute = (now_ts - 2 * 3600) // 60 * 60                 # a minute still in raw (2 h ago)
     old_minute = (now_ts - 30 * 3600) // 60 * 60                 # a minute already rolled up (30 h ago)
-    old_hour = (now_ts - 40 * 86400) // 3600 * 3600              # an hour already rolled up (40 d ago)
+    # An hour-tier bucket 10 days back. v7 would never hold an hour row that recent; the v8 fan-out
+    # (raw -> minute AND raw -> hour) would, with the same span still in minute - the overlap this file
+    # is about. It must sit inside the minute tier's retention horizon, because only minute rows inside
+    # it bound the hour tier (an older minute row is a stray, see test_history_reader_boundary.py).
+    old_hour = (now_ts - 10 * 86400) // 3600 * 3600
     return now, raw_minute, old_minute, old_hour
 
 

@@ -16,6 +16,11 @@ before - the Monitor's graph worker never shares a cursor with the GUI thread.
 
 **Tier precedence.** The tiers are query-precedence layers, not additive: each tier answers only
 ``[its floor, the finer tiers' MIN(timestamp))`` - raw wherever raw has data, else minute, else hour.
+The finer MIN only looks inside that tier's retention horizon (+ slack), so a row stamped far in the
+past by a clock set back costs its own seconds and never hides the coarser history above it; and it
+is a subquery of the statement it bounds, so boundary and data come from one snapshot. Readers that
+need several statements run them in one read transaction (``_snapshot``), so an hourly roll-up that
+commits mid-read can neither drop nor double-count the slice it moved.
 v7 MOVES rows down the chain, so the tiers never overlap and the rule is a no-op on every real v7
 database (the golden test proves it). It is here because v8 keeps independent per-tier retention, and
 the design review measured an unguarded fan-out at exactly **2.00x** the true data-cap total
@@ -113,28 +118,48 @@ class V7HistoryReader(HistoryReader):
 
     # --- tier precedence ----------------------------------------------------------------------
 
-    @staticmethod
-    def _tier_ceilings(cursor: sqlite3.Cursor, tables: Tuple[str, ...]) -> List[Optional[int]]:
-        """Exclusive upper bound per tier, ``tables`` ordered finest first: each tier may answer only
-        timestamps below the earliest row of every FINER tier (None = no finer data, unbounded).
+    _NO_BOUND = "9e18"   # past any epoch second: "no finer data inside the horizon" bounds nothing
 
-        Whole-table MIN, not per-window or per-interface: v7 rolls a time range down for every
-        interface and stat at once, so a tier's floor is a property of the table. Each MIN is a single
+    @staticmethod
+    def _horizons(now_ts: int) -> Tuple[int, int]:
+        """Oldest timestamp a legitimately-unrolled raw / minute row can have: the tier's retention,
+        plus slack for the hourly maintenance cadence and the bucket floor. A finer row older than
+        this is a stray (clock set back, VM snapshot, dead CMOS) and must not set a tier boundary."""
+        d = constants.data
+        slack = d.TIER_BOUNDARY_SLACK_SECONDS
+        return (now_ts - d.RAW_TIER_RETENTION_SECONDS - slack,
+                now_ts - d.MINUTE_TIER_RETENTION_SECONDS - slack)
+
+    def _bounds(self, tables: Tuple[str, ...]) -> List[Tuple[str, tuple]]:
+        """Per tier (``tables`` finest first), the SQL clause + params confining it under every FINER
+        tier's earliest in-horizon row. The finest tier is unbounded. The MIN is an uncorrelated
+        scalar subquery - evaluated once, inside the bounded statement's own snapshot - and a single
         seek on the (timestamp, ...) primary key."""
-        ceilings: List[Optional[int]] = []
-        bound: Optional[int] = None
-        for i, table in enumerate(tables):
-            ceilings.append(bound)
-            if i < len(tables) - 1:   # the coarsest tier's own floor bounds nothing
-                row = cursor.execute(f"SELECT MIN(timestamp) FROM {table}").fetchone()
-                if row and row[0] is not None:
-                    bound = int(row[0]) if bound is None else min(bound, int(row[0]))
-        return ceilings
+        horizons = self._horizons(int(datetime.now().timestamp()))
+        out: List[Tuple[str, tuple]] = [("", ())]
+        for i in range(1, len(tables)):
+            parts = [f"COALESCE((SELECT MIN(timestamp) FROM {tables[j]} WHERE timestamp >= ?), {self._NO_BOUND})"
+                     for j in range(i)]
+            expr = parts[0] if len(parts) == 1 else f"MIN({', '.join(parts)})"
+            out.append((f" AND timestamp < {expr}", tuple(horizons[:i])))
+        return out
 
     @staticmethod
-    def _below(ceiling: Optional[int]) -> Tuple[str, tuple]:
-        """The SQL clause + params that confine a tier under its precedence ceiling."""
-        return ("", ()) if ceiling is None else (" AND timestamp < ?", (ceiling,))
+    def _begin_snapshot(conn: sqlite3.Connection) -> bool:
+        """Open a read transaction so every statement of one read sees the same snapshot (WAL). Returns
+        whether this call opened it (and so must end it). Read connections never write."""
+        if getattr(conn, "in_transaction", False):
+            return False
+        conn.execute("BEGIN")
+        return True
+
+    @staticmethod
+    def _end_snapshot(conn: sqlite3.Connection, began: bool) -> None:
+        if began:
+            try:
+                conn.execute("COMMIT")   # nothing written - just releases the snapshot
+            except sqlite3.Error:
+                pass
 
     _SPEED_TIERS = (constants.data.SPEED_TABLE_RAW, constants.data.SPEED_TABLE_MINUTE,
                     constants.data.SPEED_TABLE_HOUR)
@@ -194,10 +219,10 @@ class V7HistoryReader(HistoryReader):
                 # Multi-tier merge with explicit peak-preserving logic.
                 tier_queries = []
                 params = []
-                ceiling = dict(zip(self._SPEED_TIERS, self._tier_ceilings(cursor, self._SPEED_TIERS)))
+                bound = dict(zip(self._SPEED_TIERS, self._bounds(self._SPEED_TIERS)))
 
                 def add_tier_query(table_name: str, up_expr: str, down_expr: str) -> None:
-                    below_sql, below_params = self._below(ceiling[table_name])
+                    below_sql, below_params = bound[table_name]
                     q = f"""
                         SELECT
                             {time_calc} as bin_ts,
@@ -348,8 +373,11 @@ class V7HistoryReader(HistoryReader):
         iface = None if interface_name in (None, "all") else interface_name
         wh = "" if iface is None else " AND interface_name=?"
         params_tail = () if iface is None else (iface,)
+        conn, began = None, False
         try:
-            cur = self._conn().cursor()
+            conn = self._conn()
+            began = self._begin_snapshot(conn)
+            cur = conn.cursor()
 
             def _raw_vals():
                 # Sum per-timestamp across interfaces when aggregating, so an "all" summary matches the
@@ -371,10 +399,10 @@ class V7HistoryReader(HistoryReader):
             covered_seconds = 0.0   # for coverage: count distinct TIME buckets x their duration, NOT
             #                         SUM(sample_count) - which, for an "all" aggregate, double-counts by
             #                         NIC and inflates the evidence-admissibility figure past 100%.
-            _, min_ceil, hour_ceil = self._tier_ceilings(cur, self._SPEED_TIERS)
-            for table, bucket_secs, ceil in ((constants.data.SPEED_TABLE_MINUTE, 60.0, min_ceil),
-                                             (constants.data.SPEED_TABLE_HOUR, 3600.0, hour_ceil)):
-                below_sql, below_params = self._below(ceil)
+            _, min_bound, hour_bound = self._bounds(self._SPEED_TIERS)
+            for table, bucket_secs, (below_sql, below_params) in (
+                    (constants.data.SPEED_TABLE_MINUTE, 60.0, min_bound),
+                    (constants.data.SPEED_TABLE_HOUR, 3600.0, hour_bound)):
                 cur.execute(
                     f"SELECT SUM({col}_avg), MAX(t.mx), SUM(sample_count) FROM "
                     f"(SELECT timestamp, {col}_avg, {col}_max AS mx, sample_count FROM {table} "
@@ -396,11 +424,16 @@ class V7HistoryReader(HistoryReader):
         except Exception as e:
             self.logger.error("summarize_network failed: %s", e, exc_info=True)
             return S.summarize_raw([])
+        finally:
+            if conn is not None:
+                self._end_snapshot(conn, began)
 
     def total_bandwidth(self, start_time: Optional[datetime], end_time: datetime,
                         interface_name: Optional[str], poll_interval: float) -> Tuple[float, float]:
+        conn, began = None, False
         try:
             conn = self._conn()
+            began = self._begin_snapshot(conn)
             cursor = conn.cursor()
 
             start_ts = int(start_time.timestamp()) if start_time else 0
@@ -432,9 +465,9 @@ class V7HistoryReader(HistoryReader):
 
             # Precedence: a tier is summed only below every finer tier's earliest row, so a range two
             # tiers both hold is billed once (raw where present, else minute, else hour).
-            ceiling = dict(zip(self._SPEED_TIERS, self._tier_ceilings(cursor, self._SPEED_TIERS)))
+            bound = dict(zip(self._SPEED_TIERS, self._bounds(self._SPEED_TIERS)))
             for table, up_expr, down_expr, secs in tiers:
-                below_sql, below_params = self._below(ceiling[table])
+                below_sql, below_params = bound[table]
                 query = (f"SELECT SUM({up_expr}), SUM({down_expr}) FROM {table} "
                          f"WHERE timestamp BETWEEN ? AND ?{below_sql}")
                 params = [start_ts, end_ts, *below_params]
@@ -452,6 +485,9 @@ class V7HistoryReader(HistoryReader):
         except Exception as e:
             self.logger.error("Error calculating total bandwidth: %s", e, exc_info=True)
             return 0.0, 0.0
+        finally:
+            if conn is not None:
+                self._end_snapshot(conn, began)
 
     def distinct_interfaces(self) -> List[str]:
         try:
@@ -526,9 +562,7 @@ class V7HistoryReader(HistoryReader):
             HMIN = constants.data.HARDWARE_STATS_TABLE_MINUTE
             HHOUR = constants.data.HARDWARE_STATS_TABLE_HOUR
             bin_ts = f"CAST(timestamp / {interval} AS INTEGER) * {interval}"
-            _, min_ceil, hour_ceil = self._tier_ceilings(cursor, self._HW_TIERS)
-            min_sql, min_params = self._below(min_ceil)
-            hour_sql, hour_params = self._below(hour_ceil)
+            _, (min_sql, min_params), (hour_sql, hour_params) = self._bounds(self._HW_TIERS)
             cursor.execute(f"""
                 SELECT b, AVG(v) FROM (
                     SELECT {bin_ts} AS b, value AS v FROM {HRAW}
@@ -554,8 +588,11 @@ class V7HistoryReader(HistoryReader):
         from netspeedtray.utils import summaries as S
         win = max(0.0, (end_time - start_time).total_seconds())
         st, et = int(start_time.timestamp()), int(end_time.timestamp())
+        conn, began = None, False
         try:
-            cur = self._conn().cursor()
+            conn = self._conn()
+            began = self._begin_snapshot(conn)
+            cur = conn.cursor()
             if win <= self._RAW_SUMMARY_SECONDS:
                 cur.execute(f"SELECT value FROM {constants.data.HARDWARE_STATS_TABLE_RAW} "
                             f"WHERE stat_type=? AND timestamp BETWEEN ? AND ?", (stat_type, st, et))
@@ -566,10 +603,9 @@ class V7HistoryReader(HistoryReader):
             # rolled-up older half, which silently dropped the most recent ~24h and disagreed with the
             # graph.
             avgs, maxes, counts = [], [], []
-            _, min_ceil, hour_ceil = self._tier_ceilings(cur, self._HW_TIERS)
-            for table, ceil in ((constants.data.HARDWARE_STATS_TABLE_MINUTE, min_ceil),
-                                (constants.data.HARDWARE_STATS_TABLE_HOUR, hour_ceil)):
-                below_sql, below_params = self._below(ceil)
+            _, min_bound, hour_bound = self._bounds(self._HW_TIERS)
+            for table, (below_sql, below_params) in ((constants.data.HARDWARE_STATS_TABLE_MINUTE, min_bound),
+                                                     (constants.data.HARDWARE_STATS_TABLE_HOUR, hour_bound)):
                 cur.execute(f"SELECT avg_value, max_value, sample_count FROM {table} "
                             f"WHERE stat_type=? AND timestamp BETWEEN ? AND ?{below_sql}",
                             (stat_type, st, et) + below_params)
@@ -589,6 +625,9 @@ class V7HistoryReader(HistoryReader):
         except Exception as e:
             self.logger.error("summarize_hardware failed: %s", e, exc_info=True)
             return S.summarize_raw([])
+        finally:
+            if conn is not None:
+                self._end_snapshot(conn, began)
 
     # --- data-usage odometer ------------------------------------------------------------------
 
