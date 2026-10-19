@@ -14,10 +14,12 @@ Nothing the sheet measures is persisted; the standing probe is the record.
 from __future__ import annotations
 
 import logging
+import weakref
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-from PyQt6.QtCore import Qt
+from PyQt6 import sip
+from PyQt6.QtCore import QCoreApplication, QObject, Qt, pyqtSlot
 from PyQt6.QtWidgets import (
     QApplication, QCheckBox, QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton,
     QToolButton, QVBoxLayout,
@@ -60,6 +62,77 @@ _CELLS = [
     ("max_ms", "CHECK_CONN_MAX", "Max"),
     ("jitter_ms", "CHECK_CONN_JITTER", "Jitter"),
 ]
+
+
+class _CheckRegistry(QObject):
+    """Owns every ConnectionCheck worker until its thread has really ended, and every open sheet.
+
+    A QThread destroyed while still running aborts the process ("QThread: Destroyed while thread is
+    still running"), and a check on a dead link can run ~24 s. So a worker's lifetime is never tied to
+    its sheet's: the registry keeps it until `finished`, then waits (already ended - instant) and
+    deleteLater()s it. On application quit (tray Exit while the modal sheet is open: exec() returns
+    without done()) and on the Monitor window's close, `stop_all()` closes the open sheets and stops
+    + waits every live worker. Lives in the GUI thread, parented to the application."""
+
+    def __init__(self, app: QCoreApplication) -> None:
+        super().__init__(app)
+        self._live: set = set()
+        self._sheets: "weakref.WeakSet" = weakref.WeakSet()
+        app.aboutToQuit.connect(self.stop_all)
+
+    def track(self, worker) -> None:
+        self._live.add(worker)
+        worker.finished.connect(self._reap)   # queued: runs here, in the GUI thread
+
+    def add_sheet(self, sheet) -> None:
+        self._sheets.add(sheet)
+
+    @pyqtSlot()
+    def _reap(self) -> None:
+        w = self.sender()
+        for live in list(self._live):
+            if live is w:
+                live.wait(constants.network.latency.CHECK_STOP_WAIT_MS)   # emitted just before the end
+                if not live.isRunning():
+                    self._live.discard(live)
+                    live.deleteLater()
+
+    def live_workers(self) -> list:
+        return [w for w in self._live if w.isRunning()]
+
+    @pyqtSlot()
+    def stop_all(self) -> None:
+        for sheet in list(self._sheets):
+            try:
+                sheet.reject()
+            except RuntimeError:
+                pass   # its C++ side is already gone
+        for w in list(self._live):
+            w.stop()
+        for w in list(self._live):
+            w.wait(constants.network.latency.CHECK_STOP_WAIT_MS)
+            if not w.isRunning():
+                self._live.discard(w)
+
+
+_registry: Optional[_CheckRegistry] = None
+
+
+def _check_registry() -> Optional[_CheckRegistry]:
+    global _registry
+    app = QCoreApplication.instance()
+    if app is None:
+        return None
+    if _registry is None:
+        _registry = _CheckRegistry(app)
+    return _registry
+
+
+def stop_all_checks() -> None:
+    """Close every open check sheet and stop + wait every running check (app quit, Monitor close)."""
+    reg = _registry
+    if reg is not None:
+        reg.stop_all()
 
 
 def _tr(i18n, key: str, default: str) -> str:
@@ -149,7 +222,6 @@ class ConnectionCheckSheet(QDialog):
         self._gateway_ip = gateway_ip
         self._include_internet = False          # the one-off tick; never written to config
         self._worker: Optional[CC.ConnectionCheck] = None
-        self._old_workers: List[CC.ConnectionCheck] = []
         self._echoes: Dict[str, List[Optional[float]]] = {}
         self._stats: Dict[str, CC.HopStats] = {}
         self._state = "idle"                    # idle / running / done / stopped
@@ -161,6 +233,11 @@ class ConnectionCheckSheet(QDialog):
         self._total = lat.CHECK_ECHOES
 
         self.setModal(True)
+        # Release the sheet once closed (workers are owned by the registry, not by the sheet).
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        reg = _check_registry()
+        if reg is not None:
+            reg.add_sheet(self)
         self.setWindowTitle(self._tr("CHECK_CONN_TITLE", "Connection check"))
         self.setStyleSheet(su.dialog_style())
         self.setMinimumWidth(440)
@@ -249,6 +326,9 @@ class ConnectionCheckSheet(QDialog):
         w.echo_done.connect(self._on_echo)
         w.check_finished.connect(self._on_finished)
         self._worker = w
+        reg = _check_registry()
+        if reg is not None:
+            reg.track(w)   # outlives the sheet until the thread has ended
         w.start()
 
     def stop_check(self) -> None:
@@ -262,17 +342,17 @@ class ConnectionCheckSheet(QDialog):
         if w is None:
             return
         self._worker = None
+        if sip.isdeleted(w):
+            return   # finished and already released by the registry
         for sig, slot in ((w.gateway_resolved, self._on_gateway), (w.echo_done, self._on_echo),
                           (w.check_finished, self._on_finished)):
             try:
                 sig.disconnect(slot)
             except Exception:
                 pass
-        w.stop()
-        self._old_workers.append(w)   # keep a reference until the thread has really ended
+        w.stop()   # the registry keeps the thread alive until it has really ended
         if wait:
             w.wait(constants.network.latency.CHECK_STOP_WAIT_MS)
-        self._old_workers = [o for o in self._old_workers if o.isRunning()]
 
     def _on_run_clicked(self) -> None:
         if self._state == "running":
@@ -295,6 +375,7 @@ class ConnectionCheckSheet(QDialog):
             self._refresh()
 
     def _on_finished(self, stats) -> None:
+        self._worker = None   # done; the registry deleteLater()s it once its thread has ended
         self._stats = dict(stats or {})
         self._state = "done"
         self._refresh()
@@ -438,10 +519,8 @@ class ConnectionCheckSheet(QDialog):
 
     # ------------------------------------------------------------------ lifecycle
     def done(self, result: int) -> None:  # noqa: D401 (Qt override: accept/reject/close all land here)
-        self._stop_worker(wait=True)
-        for o in list(self._old_workers):
-            o.wait(constants.network.latency.CHECK_STOP_WAIT_MS)
-        super().done(result)
+        self._stop_worker(wait=True)   # any earlier (restarted) worker is already stopped; the
+        super().done(result)           # registry holds it until its one in-flight echo returns
 
     def _tr(self, key: str, default: str) -> str:
         return _tr(self._i18n, key, default)

@@ -463,3 +463,140 @@ def test_privacy_md_has_a_latency_probe_paragraph():
     para = m.group(0)
     for must in ("gateway", "1.3", "Check connection", "not saved", "netspeedtray"):
         assert must in para, must
+
+
+# --- review follow-ups: a blocked anchor keeps its block; quit/close stop the worker; sheets are freed --
+
+class _BlockedAnchorWS(_HopWS):
+    """The anchor never answered: loss rows (every burst lost) but NO RTT rows. The gateway is fine."""
+    def __init__(self, anchor_loss=True, gw=True):
+        super().__init__()
+        self._anchor_loss, self._gw = anchor_loss, gw
+
+    def summarize_hardware(self, stat, start, end, poll):
+        from netspeedtray.utils.summaries import summarize_raw
+        self.asked.append(stat)
+        return summarize_raw({
+            "latency_gw": [3.0, 4.0] if self._gw else [],
+            "latency_gw_timeout": [0.0, 0.0] if self._gw else [],
+            "latency_anchor": [],
+            "latency_anchor_timeout": [1.0, 1.0] if self._anchor_loss else [],
+        }.get(stat, []))
+
+    def get_hardware_history(self, stat, start, end):
+        self.asked.append(stat)
+        if stat == "latency_anchor_timeout" and self._anchor_loss:
+            return [(self._t0, 1.0), (self._t0 + timedelta(seconds=3), 1.0)]
+        if stat == "latency_gw_timeout" and self._gw:
+            return [(self._t0, 0.0), (self._t0 + timedelta(seconds=3), 0.0)]
+        return []
+
+
+def _detail_with(q_app, ws):
+    from netspeedtray.views.monitor.overview.tab import OverviewTab
+    from netspeedtray.views.monitor.stats_detail import StatsDetailSheet
+    from netspeedtray.tests.unit.test_overview_tiles import _MW, _cfg
+    cfg = _cfg(latency_public_enabled=True, update_rate=1.0)
+    subjects = OverviewTab(_MW(), cfg, I18nStrings("en_US"))._detail_subjects("network")
+    sheet = StatsDetailSheet(ws, subjects, (datetime(2026, 10, 19), datetime(2026, 10, 20), "24 Hours"),
+                             cfg, I18nStrings("en_US"))
+    return "\n".join(sheet._copy_text_parts)
+
+
+def test_stats_detail_keeps_a_fully_blocked_anchor_block(q_app):
+    text = _detail_with(q_app, _BlockedAnchorWS())
+    assert "Internet - 24 Hours" in text, text                 # the block is there, under its own name
+    assert "100.0% packet loss" in text and "1 connection drops" in text, text
+    assert "Average: -" in text and "Peak: -" in text           # no RTT: cells read "-"
+    assert "Router - " not in text                              # no silent switch to the gateway
+
+
+def test_stats_detail_falls_back_to_the_router_only_when_the_anchor_has_no_rows(q_app):
+    text = _detail_with(q_app, _BlockedAnchorWS(anchor_loss=False))
+    assert "Router - 24 Hours" in text and "Internet - " not in text, text
+    assert "Average: 4 ms" in text or "Average: 3 ms" in text, text
+
+
+def test_stats_detail_drops_the_latency_block_when_no_hop_has_rows(q_app):
+    text = _detail_with(q_app, _BlockedAnchorWS(anchor_loss=False, gw=False))
+    assert "Internet - " not in text and "Router - " not in text, text
+
+
+def _drain_deletes():
+    from PyQt6.QtCore import QEvent
+    from PyQt6.QtWidgets import QApplication
+    QApplication.processEvents()
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    QApplication.processEvents()
+
+
+def test_app_quit_with_the_sheet_open_stops_and_waits_the_worker(q_app, monkeypatch):
+    """Tray Exit while the modal sheet runs: exec() returns without done(). aboutToQuit must stop and
+    wait the worker - a QThread destroyed while running aborts the whole process."""
+    from PyQt6.QtWidgets import QApplication
+    from netspeedtray.views.monitor.connection_check import ConnectionCheckSheet
+    log = _PingLog(delay=0.3)                       # a slow echo, like a dead link's 1 s timeouts
+    monkeypatch.setattr(LP, "icmp_ping_ms", log)
+    sheet = ConnectionCheckSheet({"latency_public_enabled": True, "latency_public_host": ANCHOR},
+                                 I18nStrings("en_US"), gateway_ip=GW)
+    w = sheet._worker
+    time.sleep(0.1)
+    assert w.isRunning()
+    t_quit = time.monotonic()
+    QApplication.instance().aboutToQuit.emit()
+    assert not w.isRunning(), "aboutToQuit must stop and wait the check"
+    assert time.monotonic() - t_quit < 0.3 + 0.3
+    with log.lock:
+        assert not [ip for t, ip in log.log if t >= t_quit]
+    _drain_deletes()
+
+
+def test_a_running_worker_outlives_its_dropped_sheet(q_app, monkeypatch):
+    """The sheet's Python wrapper going away mid-check must not destroy the running QThread."""
+    import gc
+    from netspeedtray.views.monitor import connection_check as V
+    log = _PingLog(delay=0.05)
+    monkeypatch.setattr(LP, "icmp_ping_ms", log)
+    sheet = V.ConnectionCheckSheet({}, I18nStrings("en_US"), gateway_ip=GW)
+    w = sheet._worker
+    time.sleep(0.1)
+    del sheet
+    gc.collect()
+    _drain_deletes()
+    assert w.isRunning()                             # still alive, owned by the registry
+    V.stop_all_checks()
+    assert not w.isRunning()
+
+
+def test_monitor_close_stops_the_checks():
+    import inspect
+    from netspeedtray.views.monitor.window import MonitorWindow
+    assert "stop_all_checks()" in inspect.getsource(MonitorWindow.closeEvent)
+
+
+def test_stop_all_checks_closes_open_sheets(q_app, monkeypatch):
+    from netspeedtray.views.monitor import connection_check as V
+    log = _PingLog(delay=0.05)
+    monkeypatch.setattr(LP, "icmp_ping_ms", log)
+    sheet = V.ConnectionCheckSheet({}, I18nStrings("en_US"), gateway_ip=GW)
+    sheet.show()
+    w = sheet._worker
+    V.stop_all_checks()
+    assert not w.isRunning() and not sheet.isVisible()
+    _drain_deletes()
+
+
+def test_closed_sheets_and_finished_workers_are_released(q_app, fast_pings):
+    from PyQt6 import sip
+    from PyQt6.QtCore import Qt as _Qt
+    from netspeedtray.views.monitor import connection_check as V
+    sheet = V.ConnectionCheckSheet({}, I18nStrings("en_US"), gateway_ip=GW)
+    assert sheet.testAttribute(_Qt.WidgetAttribute.WA_DeleteOnClose)
+    w = sheet._worker
+    assert w.wait(5000)
+    _drain_deletes()
+    assert sip.isdeleted(w), "a finished worker must be deleteLater()'d"
+    sheet.show()
+    sheet.done(0)
+    _drain_deletes()
+    assert sip.isdeleted(sheet), "a closed sheet must be deleted (WA_DeleteOnClose)"
