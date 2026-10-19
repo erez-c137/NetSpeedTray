@@ -32,6 +32,31 @@ class GraphConstants:
     GRID_LINESTYLE: Final[str] = ":"
     ERROR_MESSAGE_FONTSIZE: Final[int] = 12
 
+    # --- Time (x) axis ticks (views/graph/time_axis.py) ---
+    # The tick count follows the axis width: one label per this many points, clamped to [MIN, MAX].
+    TIME_AXIS_LABEL_SPACING_PT: Final[float] = 60.0
+    TIME_AXIS_MIN_TICKS: Final[int] = 4
+    TIME_AXIS_MAX_TICKS: Final[int] = 8
+    # Candidate tick steps, finest first: (unit, count). Every second/minute/hour/month count divides
+    # its parent unit evenly, so ticks land on round clock times ("18:15", never "18:13:20").
+    TIME_AXIS_STEPS: Final[Tuple[Tuple[str, int], ...]] = (
+        ("second", 1), ("second", 2), ("second", 5), ("second", 10), ("second", 15), ("second", 30),
+        ("minute", 1), ("minute", 2), ("minute", 5), ("minute", 10), ("minute", 15), ("minute", 30),
+        ("hour", 1), ("hour", 2), ("hour", 3), ("hour", 4), ("hour", 6), ("hour", 12),
+        ("day", 1), ("day", 2), ("day", 3), ("day", 4), ("week", 1), ("week", 2),
+        ("month", 1), ("month", 2), ("month", 3), ("month", 6),
+        ("year", 1), ("year", 2), ("year", 5), ("year", 10), ("year", 25), ("year", 50),
+    )
+    # Label formats, chosen from the tick step (and the span) so two ticks never print the same text.
+    TIME_AXIS_FMT_SECONDS: Final[str] = "%H:%M:%S"     # sub-minute steps
+    TIME_AXIS_FMT_MINUTES: Final[str] = "%H:%M"        # minute/hour steps within one day
+    TIME_AXIS_FMT_HOURS_MULTIDAY: Final[str] = "%a %H:%M"  # hour steps on a span of a day or more
+    TIME_AXIS_FMT_DAYS_SHORT: Final[str] = "%a %d"     # day/week steps on a span under four weeks
+    TIME_AXIS_FMT_DAYS: Final[str] = "%b %d"           # day/week steps within a year
+    TIME_AXIS_FMT_DAYS_LONG: Final[str] = "%Y-%m-%d"   # day/week steps on a span over a year
+    TIME_AXIS_FMT_MONTHS: Final[str] = "%b %Y"
+    TIME_AXIS_FMT_YEARS: Final[str] = "%Y"
+
     # --- Text and Labels ---
     WINDOW_TITLE: Final[str] = f"{app.APP_NAME} - Network Speed Graph"
     INITIAL_STATS_TEXT: Final[str] = "..." # Placeholder text for stats bar
