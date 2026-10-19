@@ -182,5 +182,7 @@ def test_position_memory_persists_a_user_move(qtbot, monkeypatch):
 
     # A move after arming should debounce-save exactly once.
     w.move(300, 220)
+    # Wait on the condition, not a fixed sleep: a slow CI runner can overrun debounce + slack.
+    qtbot.waitUntil(lambda: saved == ["test_window_pos"], timeout=window_state._MOVE_SAVE_DEBOUNCE_MS + 3000)
     qtbot.wait(window_state._MOVE_SAVE_DEBOUNCE_MS + 150)
-    assert saved == ["test_window_pos"], f"expected one debounced save, got {saved}"
+    assert saved == ["test_window_pos"], f"expected exactly one debounced save, got {saved}"
