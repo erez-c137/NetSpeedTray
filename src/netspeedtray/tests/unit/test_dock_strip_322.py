@@ -1,20 +1,18 @@
-"""#322 - a docked widget must stay inside its horizontal taskbar strip.
+"""#322 - keep a docked widget inside its horizontal taskbar strip, measured one way.
 
-Reported with the taskbar moved to the TOP by a third-party tool on Win11: the widget's mini graph
-hung below the taskbar onto the desktop. Two mechanisms put a docked widget outside its strip:
+Reported with the taskbar moved to the TOP by a third-party tool on Win11: the mini graph hung below
+the bar onto the desktop. The trigger is not confirmed yet (a live 48 px Windhawk top bar had window,
+work-area inset and painted bar all equal), so this is defensive:
 
-- Size: ``WidgetLayoutManager._horizontal_dock_height`` floored the height to two text rows even
-  when the strip was shorter, so the widget became taller than the taskbar.
-- Position: ``PositionCalculator._calculate_horizontal_position`` centred that over-tall widget in
-  the strip (a negative y for a TOP bar), then ``ScreenUtils.validate_position`` only clamped it to
-  the SCREEN - which pushes all the overflow down onto the desktop.
+- One strip measurement (``horizontal_taskbar_strip``) for size, placement and drag: the work-area
+  inset capped by the taskbar window's own height, so a tool or second appbar that reserves more
+  work area than the bar covers can't size/centre the widget off the bar.
+- ``PositionCalculator._clamp_into_strip``: y stays inside the strip, top and bottom edge. When the
+  #221 two-row floor makes the widget taller than a thin strip, it sits flush with the screen edge
+  the bar is on - exactly where ``validate_position`` used to push it, so BOTTOM thin bars are
+  pixel-identical to before.
 
-Also, the strip was taken from the work-area inset alone. A third-party tool (or another appbar on
-the same edge) can reserve more work area than the taskbar window actually covers, so the strip is
-now the inset capped by the taskbar window's own height.
-
-These cover TOP and BOTTOM, each with a strip shorter than the two-row minimum, and with an inset
-taller than the taskbar window.
+The #221 two-row floor itself is unchanged (removing it re-crops the glyphs on every thin bar).
 """
 from unittest.mock import MagicMock
 
@@ -86,13 +84,14 @@ def _lm(font_size: int = 9) -> WidgetLayoutManager:
 # --- 1. Size: never taller than the strip ------------------------------------------------------
 
 @pytest.mark.parametrize("edge", [TOP, BOTTOM])
-def test_dock_height_never_exceeds_a_strip_shorter_than_two_rows(edge):
+def test_two_row_floor_kept_on_a_thin_strip(edge):
+    # #221 Part B is deliberately unchanged: a strip shorter than two rows still gets two rows.
     lm = _lm()
     two_rows = lm.metrics.height() * 2 + 2
     strip = 24
     assert strip < two_rows, "precondition: the strip must be shorter than the two-row minimum"
     tb = _taskbar(edge, inset=strip, window_h=strip)
-    assert lm._horizontal_dock_height(edge, tb, 1.0) <= strip
+    assert lm._horizontal_dock_height(edge, tb, 1.0) == two_rows
 
 
 @pytest.mark.parametrize("edge", [TOP, BOTTOM])
@@ -150,10 +149,10 @@ def test_drag_constraint_stays_inside_strip(edge):
     assert top <= p.y() and p.y() + 40 <= bottom, (p.y(), (top, bottom))
 
 
-# --- Size + position together: the widget rect lies inside the strip ---------------------------
+# --- Size + position together -------------------------------------------------------------------
 
 @pytest.mark.parametrize("edge", [TOP, BOTTOM])
-@pytest.mark.parametrize("inset,window_h", [(24, 24), (60, 40), (30, 30)])
+@pytest.mark.parametrize("inset,window_h", [(60, 40), (48, 48), (40, 40)])
 def test_docked_widget_rect_inside_strip(edge, inset, window_h):
     lm = _lm()
     tb = _taskbar(edge, inset=inset, window_h=window_h)
@@ -161,3 +160,26 @@ def test_docked_widget_rect_inside_strip(edge, inset, window_h):
     pos = PositionCalculator().calculate_position(tb, (100, h), {"tray_offset_x": 10})
     top, bottom = _strip(edge, window_h)
     assert top <= pos.y and pos.y + h <= bottom, (h, pos.y, (top, bottom))
+
+
+def _origin_main_y(edge, strip: int, h: int) -> int:
+    """origin/main's placement for a stock taskbar (inset == window): centre in the strip, then
+    ScreenUtils.validate_position clamps to the screen."""
+    origin = 0 if edge == TOP else SCREEN_H - strip
+    y = round(origin + (strip - h) / 2.0)
+    return max(0, min(y, SCREEN_H - h))
+
+
+@pytest.mark.parametrize("edge", [TOP, BOTTOM])
+@pytest.mark.parametrize("strip,font_size", [(24, 9), (30, 9), (30, 14), (34, 16), (40, 9), (48, 9)])
+def test_thin_bar_placement_identical_to_origin_main(edge, strip, font_size):
+    """With the floor making the widget taller than a thin strip, it sits flush with the screen edge
+    the bar is on (overhang = h - strip, onto the desktop side) - pixel-for-pixel what origin/main
+    did. Strips that fit the widget are centred exactly as before."""
+    lm = _lm(font_size)
+    tb = _taskbar(edge, inset=strip, window_h=strip)
+    h = int(lm._horizontal_dock_height(edge, tb, 1.0) + 0.999)
+    pos = PositionCalculator().calculate_position(tb, (100, h), {"tray_offset_x": 10})
+    assert pos.y == _origin_main_y(edge, strip, h), (h, pos.y)
+    if h > strip:
+        assert pos.y == (0 if edge == TOP else SCREEN_H - h)
