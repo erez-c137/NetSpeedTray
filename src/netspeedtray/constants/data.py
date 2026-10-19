@@ -213,6 +213,10 @@ class DataConstants:
     MINUTE_TIER_RETENTION_SECONDS: Final[int] = 30 * 86400
     TIER_BOUNDARY_SLACK_SECONDS: Final[int] = 2 * 3600
 
+    # v8 (auto_vacuum=INCREMENTAL): free pages handed back to the OS per maintenance pass, instead of a
+    # full-file VACUUM. ~8 MB at the 4096-byte page; bounded so one pass never holds the write lock long.
+    V8_INCREMENTAL_VACUUM_PAGES: Final[int] = 2048
+
     def __init__(self) -> None:
         self.legend_position = LegendPositionConstants()
         self.retention = DataRetentionConstants()

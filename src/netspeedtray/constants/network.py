@@ -76,6 +76,12 @@ class NetworkSpeedConstants:
     # 10ms (0.01s) is conservative but significantly reduces false positives from OS scheduling artifacts.
     MIN_TIME_DIFF: Final[float] = 0.01
     MIN_RECORDABLE_SPEED_BPS: Final[float] = 1.0
+    # A poll interval longer than max(RATE_VALIDITY_MIN_SECONDS, RATE_VALIDITY_POLL_MULTIPLE x the
+    # configured update rate) is a GAP (missed polls, sleep, app stall): the controller re-primes the
+    # rate display instead of drawing the averaged-out burst, and the v8 writer flags the stored row
+    # (schema_v8.FLAG_GAP) so the bytes are kept but never drawn as a spike.
+    RATE_VALIDITY_MIN_SECONDS: Final[float] = 10.0
+    RATE_VALIDITY_POLL_MULTIPLE: Final[float] = 5.0
     
     # These are now i18n keys
     DEFAULT_UNIT_BITS: Final[str] = "BITS_LABEL"

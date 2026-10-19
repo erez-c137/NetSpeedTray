@@ -99,6 +99,17 @@ WATERMARK_KEYS = (WATERMARK_RAW_KEY, WATERMARK_MINUTE_KEY, HW_WATERMARK_RAW_KEY,
 #   migration transaction; maintenance writes a family's pair in the same transaction as each roll-up.
 WATERMARK_MAX_LEAD_SECONDS = 360   # >= the migrator's FUTURE_SLACK_SECONDS + 60 (pinned by a test)
 
+# NET_TIER_UNITS - what net_minute / net_hour numbers mean (writer_v8 writes them; the reader's legacy
+# estimate relies on them):
+# * ``sample_count`` = the measured SECONDS the row stands for, capped at the bucket length (60 / 3600):
+#   ROUND(SUM(dt_ms) / 1000) of its raw rows for a v8 row; v7's per-second sample count for a migrated
+#   row (the unit LEGACY_SAMPLE_SECONDS = 1 already assumes). ``*_avg`` = the time-weighted rate over
+#   those seconds, bytes/s. Hardware tiers are unaffected: there sample_count is a sample count.
+# * Volume: SUM(bytes) where bytes is NOT NULL; else (legacy) ``avg x MIN(sample_count, bucket)`` -
+#   the same capped expression in the reader and in every roll-up / merge of the writer, so a row's
+#   estimate never changes when it is merged or rolled up: a merge (or a roll-up group) that includes a
+#   legacy row stays legacy and stores avg = (sum of its parts' estimates) / MIN(n_total, bucket).
+
 # The tables a v8 file is DEFINED to have. The per-version registry is
 # DatabaseWorker.EXPECTED_TABLES in core/database.py (used by _verify_backup); its v8 entry is this
 # tuple, imported from here. The dependency runs database.py -> schema_v8 only: this module stays
@@ -138,7 +149,7 @@ def _net_tier(name: str) -> str:
     down_avg     REAL    NOT NULL,
     up_max       REAL    NOT NULL,          -- peak sample rate, bytes/s
     down_max     REAL    NOT NULL,
-    sample_count INTEGER NOT NULL DEFAULT 1,
+    sample_count INTEGER NOT NULL DEFAULT 1,  -- SECONDS the row stands for (see NET_TIER_UNITS)
     covered_ms   INTEGER CHECK (covered_ms >= 0),  -- ms the app was running; NULL = unknown (pre-v8)
     flags        INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (ts, iface_id)
