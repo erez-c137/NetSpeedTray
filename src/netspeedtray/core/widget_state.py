@@ -149,6 +149,7 @@ class WidgetState(QObject):
         # session - read once at load, so this session's own persists can never feed it back.
         self._usage_live_counters: Optional[Dict[str, Any]] = None
         self._usage_live_sampled_at: Optional[float] = None
+        self._usage_live_primary: Optional[str] = None
         self._usage_launch_snapshot: Dict[str, Any] = {}
 
         self.logger.debug("WidgetState initialized with threaded database worker.")
@@ -352,24 +353,48 @@ class WidgetState(QObject):
 
     def add_usage_bytes(self, up_bytes: float, down_bytes: float,
                         counters: Optional[Dict[str, Any]] = None,
-                        sampled_at: Optional[float] = None) -> None:
+                        sampled_at: Optional[float] = None,
+                        window_start: Optional[float] = None,
+                        primary: Optional[str] = None) -> None:
         """Accumulate exact transferred bytes into the odometer, re-anchoring on a new
         billing period, and persist on a throttle. Called every poll; cheap.
 
         `counters` are the raw NIC counters the total now accounts up to (sampled at wall time
-        `sampled_at`); they are persisted with the total so the next launch in the same boot can
-        recover what moves while the app is closed. Kept by reference - serialized only on persist."""
+        `sampled_at`; `primary` is the auto-mode interface they were metered on); they are persisted
+        with the total so the next launch in the same boot can recover what moves while the app is
+        closed. Kept by reference - serialized only on persist.
+
+        `window_start` is the wall time the measurement window began (the previous sample, or the
+        launch snapshot). Bytes are charged to the period in which their window BEGAN: a standby
+        gap or a closed-app window spanning the reset day lands in the period it started in, never
+        all in the new one (which could fire an early overage alert)."""
         if not self._usage_loaded and not self._try_load_usage():
             return  # defer until the table exists, so we don't clobber the saved total
-        if counters is not None:
-            self._usage_live_counters = counters
-            self._usage_live_sampled_at = sampled_at if sampled_at is not None else time.time()
         u = self._usage
         # Roll the period over BEFORE adding this poll, so a boundary-crossing poll's bytes
         # count toward the NEW period rather than being stranded at the anchor (audit #15).
+        # (This may persist - with the PREVIOUS counters, which is what the total still matches.)
         rolled = self._maybe_reanchor()
-        u["cumulative_up"] += max(0.0, up_bytes)
-        u["cumulative_down"] += max(0.0, down_bytes)
+        up, down = max(0.0, up_bytes), max(0.0, down_bytes)
+        u["cumulative_up"] += up
+        u["cumulative_down"] += down
+        if window_start is not None and (up or down):
+            try:
+                start_pk = self._compute_period_key(self.config.get("data_cap_reset_day", 1),
+                                                    date.fromtimestamp(window_start))
+            except (OverflowError, OSError, ValueError):
+                start_pk = u["period_key"]
+            if start_pk < u["period_key"]:
+                # The window began in an already-closed period: lifetime total yes, this period no.
+                # Moving the anchor with it works whether the rollover happened just now or earlier
+                # (e.g. on a read) - the anchor never exceeds the cumulative.
+                u["anchor_up"] += up
+                u["anchor_down"] += down
+        if counters is not None:
+            # Only now does the total include these counters' bytes - pair them from here on.
+            self._usage_live_counters = counters
+            self._usage_live_sampled_at = sampled_at if sampled_at is not None else time.time()
+            self._usage_live_primary = primary
         if rolled:
             self._persist_usage_now()  # capture this poll's bytes into the fresh period now
             self._usage_last_persist = time.time()
@@ -390,9 +415,14 @@ class WidgetState(QObject):
             # corrections, so the latest reading is the one the next launch will compare against.
             snapshot_json = usage_snapshot.encode_snapshot(
                 self._usage_live_counters, self._usage_live_sampled_at or time.time(),
-                usage_snapshot.current_boot_time())
-        # 7th element: the counter snapshot, written in the SAME transaction as the total (or None
-        # to leave the stored one untouched).
+                usage_snapshot.current_boot_time(), primary=self._usage_live_primary)
+            if snapshot_json is None:
+                # Counters seen but no trustworthy snapshot (boot id unreadable): the total is about
+                # to advance past the STORED snapshot, so it must go - leaving it would make the next
+                # same-boot launch re-add bytes this total already holds.
+                snapshot_json = usage_snapshot.CLEAR_SNAPSHOT
+        # 7th element: the counter snapshot, written in the SAME transaction as the total;
+        # CLEAR_SNAPSHOT deletes the stored one; None (no counters seen yet) leaves it untouched.
         self.db_worker.enqueue_task("persist_usage", (
             u["cumulative_up"], u["cumulative_down"], u["anchor_up"], u["anchor_down"],
             u["period_key"], int(time.time()), snapshot_json))

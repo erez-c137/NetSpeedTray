@@ -126,7 +126,12 @@ The odometer counts every poll's exact counter delta, including across long gaps
 counter glitch cannot add phantom gigabytes. Each write also stores, in `metadata`, the network
 counters that total was counted up to (`usage_counter_snapshot`, below); a later launch **in the
 same boot** adds what moved while the app was closed. After a reboot, or if an adapter's counters
-went backwards, nothing is added.
+went backwards, nothing is added; in auto mode, nothing is added either when the primary interface
+is not the one the snapshot was metered on.
+
+Bytes are charged to the period in which their measurement window **began**: a standby gap or a
+closed-app window that spans the reset day counts toward the period it started in (the lifetime
+`cumulative` and the `anchor` both advance), never all toward the new one.
 
 ### `metadata` — bookkeeping
 
@@ -135,8 +140,10 @@ went backwards, nothing is added.
 
 `usage_counter_snapshot` is JSON, written in the same transaction as the `usage_counter` row:
 `{"v": 1, "boot_time": <psutil.boot_time()>, "ts": <epoch s the counters were read>,
-"counters": {"<adapter name>": [bytes_sent, bytes_recv], ...}}`. Two boot times within 30 s are the
-same boot session.
+"counters": {"<adapter name>": [bytes_sent, bytes_recv], ...}, "primary": "<adapter name>"}`
+(`primary` only in auto mode). Two boot times within 30 s are the same boot session. If counters were
+read but no snapshot could be written (boot time unreadable), the key is deleted in the same
+transaction, so a stale snapshot can never be re-added against a newer total.
 
 ### `bandwidth_history` — **not used**
 

@@ -29,6 +29,10 @@ logger = logging.getLogger("NetSpeedTray.UsageSnapshot")
 
 _C = constants.network.usage
 
+# persist_usage payload value meaning "delete the stored snapshot" (vs None = leave it untouched).
+# Never valid JSON for a snapshot, so it cannot collide with a real one.
+CLEAR_SNAPSHOT = ""
+
 
 def current_boot_time() -> Optional[float]:
     """The boot-session id: psutil.boot_time() (epoch seconds), or None if unreadable."""
@@ -54,8 +58,10 @@ def cap_delta(delta: float, elapsed_s: float) -> Tuple[float, bool]:
     return delta, False
 
 
-def encode_snapshot(counters: Mapping[str, Any], sampled_at: float, boot_time: Optional[float]) -> Optional[str]:
-    """Serialize psutil-style counters ({name: obj with bytes_sent/bytes_recv}) to the stored JSON.
+def encode_snapshot(counters: Mapping[str, Any], sampled_at: float, boot_time: Optional[float],
+                    primary: Optional[str] = None) -> Optional[str]:
+    """Serialize psutil-style counters ({name: obj with bytes_sent/bytes_recv}) to the stored JSON,
+    with the auto-mode primary they were metered on (None outside auto mode).
     None when there is nothing trustworthy to store (no boot id)."""
     if boot_time is None:
         return None
@@ -65,8 +71,11 @@ def encode_snapshot(counters: Mapping[str, Any], sampled_at: float, boot_time: O
             rows[str(name)] = [int(c.bytes_sent), int(c.bytes_recv)]
         except (AttributeError, TypeError, ValueError):
             continue
-    return json.dumps({"v": _C.SNAPSHOT_FORMAT_VERSION, "boot_time": float(boot_time),
-                       "ts": float(sampled_at), "counters": rows}, separators=(",", ":"))
+    data: Dict[str, Any] = {"v": _C.SNAPSHOT_FORMAT_VERSION, "boot_time": float(boot_time),
+                            "ts": float(sampled_at), "counters": rows}
+    if primary:
+        data["primary"] = str(primary)
+    return json.dumps(data, separators=(",", ":"))
 
 
 def decode_snapshot(raw: Optional[str]) -> Dict[str, Any]:
@@ -86,7 +95,9 @@ def decode_snapshot(raw: Optional[str]) -> Dict[str, Any]:
             sent, recv = int(pair[0]), int(pair[1])
             if sent >= 0 and recv >= 0:
                 counters[str(name)] = [sent, recv]
-        return {"v": data["v"], "boot_time": boot, "ts": ts, "counters": counters}
+        primary = data.get("primary")
+        return {"v": data["v"], "boot_time": boot, "ts": ts, "counters": counters,
+                "primary": str(primary) if primary else None}
     except (ValueError, TypeError, KeyError, IndexError):
         return {}
 

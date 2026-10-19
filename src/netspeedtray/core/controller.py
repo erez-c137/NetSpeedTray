@@ -245,8 +245,10 @@ class StatsController(QObject):
         # NOT on the display data: a rate over the ceiling is display-dropped, its bytes are real (#13).
         if byte_deltas and self.widget_state:
             agg_up_bytes, agg_down_bytes = self._aggregate_for_odometer(byte_deltas)
+            # The window began at the previous sample: bytes are charged to the period it began in.
             self.widget_state.add_usage_bytes(agg_up_bytes, agg_down_bytes,
-                                              counters=current_counters, sampled_at=sample_wall)
+                                              counters=current_counters, sampled_at=sample_wall,
+                                              window_start=last_wall, primary=self._odometer_primary())
         self._last_sample_time = (sample_mono, sample_wall)
 
         # --- 2. The rate display: re-prime across gaps ------------------------------------------
@@ -373,6 +375,14 @@ class StatsController(QObject):
         return deltas
 
 
+    def _odometer_primary(self) -> Optional[str]:
+        """Auto mode: the interface the odometer meters this poll (persisted in the launch snapshot,
+        so the next launch only recovers a window metered on the same adapter). None otherwise."""
+        if self.config.get("interface_mode", "auto") != "auto":
+            return None
+        return self.primary_interface or self._last_known_primary
+
+
     def _aggregate_for_odometer(self, byte_deltas: Dict[str, Tuple[float, float]]) -> Tuple[float, float]:
         """The display's interface selection, with one difference in auto mode: when the routing
         lookup currently finds NO primary, fall back to the last one it did find. Waking from
@@ -407,12 +417,22 @@ class StatsController(QObject):
         deltas, reason = usage_snapshot.reconcile_deltas(
             snapshot, counters, usage_snapshot.current_boot_time(), sampled_at)
         # Scope: only what the CURRENT interface mode meters, aggregated exactly like a live poll.
-        if deltas and self.config.get("interface_mode", "auto") == "auto":
+        if self.config.get("interface_mode", "auto") == "auto":
             self._update_primary_interface_name()
+            current_primary = self._odometer_primary()
+            if deltas and snapshot.get("primary") != current_primary:
+                # Auto meters ONE interface. If it is not the one the snapshot was metered on, the
+                # closed window's traffic may have gone over the old one - charging this adapter's
+                # whole counter delta could overcount (traffic auto would never have metered).
+                self.logger.info("Launch reconciliation skipped: the primary interface changed while "
+                                 "the app was not running (%s -> %s).",
+                                 stable_pseudonym(snapshot.get("primary")), stable_pseudonym(current_primary))
+                deltas, reason = {}, "primary interface changed"
         up, down = self._aggregate_for_odometer(deltas) if deltas else (0.0, 0.0)
         # Always hand over the launch counters, even when nothing is recovered, so the snapshot the
-        # odometer persists next matches the total it holds.
-        self.widget_state.add_usage_bytes(up, down, counters=counters, sampled_at=sampled_at)
+        # odometer persists next matches the total it holds. The window began at the snapshot.
+        self.widget_state.add_usage_bytes(up, down, counters=counters, sampled_at=sampled_at,
+                                          window_start=snapshot.get("ts"), primary=self._odometer_primary())
         if up or down:
             self.logger.info("Launch reconciliation (%s): recovered %.1f MB up / %.1f MB down that "
                              "moved while the app was not running.", reason, up / 1e6, down / 1e6)

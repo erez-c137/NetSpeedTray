@@ -52,6 +52,7 @@ def _fake_state(reset_day=1, period_key="2026-06-01"):
     s._usage_last_persist = 1e18  # far future -> no persist during the test
     s._usage_live_counters = None      # launch-reconciliation snapshot (none fed in these tests)
     s._usage_live_sampled_at = None
+    s._usage_live_primary = None
     s._persist_usage_now = WidgetState._persist_usage_now.__get__(s)
     s._maybe_reanchor = WidgetState._maybe_reanchor.__get__(s)
     return s

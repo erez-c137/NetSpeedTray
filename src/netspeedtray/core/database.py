@@ -781,7 +781,8 @@ class DatabaseWorker(QThread):
         The optional snapshot_json (the NIC counters the cumulative accounts up to, for same-boot
         launch reconciliation) goes to the existing `metadata` key/value table in the SAME
         transaction, so total and snapshot can never disagree. No schema change: metadata has
-        existed since v3. None leaves the stored snapshot untouched.
+        existed since v3. None leaves the stored snapshot untouched; "" (usage_snapshot.
+        CLEAR_SNAPSHOT) deletes it.
         """
         if data is None or self.conn is None:
             return
@@ -802,7 +803,12 @@ class DatabaseWorker(QThread):
                         updated_ts=excluded.updated_ts""",
                 (cumulative_up, cumulative_down, anchor_up, anchor_down, period_key, updated_ts),
             )
-            if snapshot_json is not None:
+            if snapshot_json == "":
+                # CLEAR_SNAPSHOT: counters were seen but no snapshot could be encoded - a stale one
+                # left next to this advanced total would be re-added at the next same-boot launch.
+                cursor.execute("DELETE FROM metadata WHERE key = ?",
+                               (constants.network.usage.SNAPSHOT_METADATA_KEY,))
+            elif snapshot_json is not None:
                 cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
                                (constants.network.usage.SNAPSHOT_METADATA_KEY, snapshot_json))
             self.conn.commit()
