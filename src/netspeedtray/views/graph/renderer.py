@@ -6,6 +6,7 @@ import threading
 
 import numpy as np
 from PyQt6.QtCore import QObject, Qt, pyqtSignal
+from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QSizePolicy
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
@@ -129,6 +130,10 @@ class GraphRenderer(QObject):
         self.canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.canvas.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         self.canvas.setMouseTracking(True)
+        # matplotlib marks the canvas opaque, so Qt never paints its background; let it, so the edge
+        # sliver the buffer doesn't cover takes the graph color set in apply_theme.
+        self.canvas.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, False)
+        self.canvas.setAutoFillBackground(True)
         
         existing_layout = self.parent_widget.layout()
         if existing_layout is not None:
@@ -197,7 +202,13 @@ class GraphRenderer(QObject):
         self._current_grid_color = style_constants.GRID_COLOR_DARK if is_dark_mode else style_constants.GRID_COLOR_LIGHT
         
         self.figure.patch.set_facecolor(graph_bg)
-        
+        # The rendered buffer can fall a pixel short of the widget at fractional DPI scaling; fill the
+        # widget itself with the graph color so that sliver isn't left white.
+        if self.canvas is not None:
+            pal = self.canvas.palette()
+            pal.setColor(QPalette.ColorRole.Window, QColor(graph_bg))
+            self.canvas.setPalette(pal)
+
         for ax in self.axes:
             ax.set_facecolor(graph_bg)
             
