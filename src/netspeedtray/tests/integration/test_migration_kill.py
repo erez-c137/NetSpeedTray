@@ -268,19 +268,40 @@ def test_kill_at_every_point_then_relaunch(point, hot_db, tmp_path):
 
 
 @pytest.mark.parametrize("seed", range(5))
-def test_kill_at_a_random_moment_then_relaunch(seed, hot_db, tmp_path):
-    # Calibrated against an unkilled run on an identical copy, so the delays land inside it.
+def test_kill_at_a_random_moment_then_relaunch(seed, hot_db, hot_template, tmp_path):
+    # Calibrated on identical copies: `start` = interpreter + imports + recover() (a --recover-only
+    # run), `full` = a whole unkilled migration. Delays land between the two, i.e. inside migrate().
     cal = tmp_path / "calibrate"
+    shutil.copytree(hot_db, cal)
+    t = time.perf_counter()
+    assert _migrator(cal, "--recover-only").returncode == 0
+    start = time.perf_counter() - t
+    shutil.rmtree(cal)
     shutil.copytree(hot_db, cal)
     t = time.perf_counter()
     assert _migrator(cal).returncode == 0
     full = time.perf_counter() - t
-    delay = random.Random(1000 + seed).uniform(0.05, full)
-    proc = subprocess.Popen([sys.executable, "-I", "-c", _BOOT.format(src=SRC), str(hot_db)],
-                            env=_env(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    time.sleep(delay)
-    proc.kill()                       # Popen.kill on Windows IS TerminateProcess
-    proc.wait(timeout=60)
+    rng = random.Random(1000 + seed)
+    delay = rng.uniform(start, max(start, 0.8 * full))
+    for attempt in range(4):
+        proc = subprocess.Popen([sys.executable, "-I", "-c", _BOOT.format(src=SRC), str(hot_db)],
+                                env=_env(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(delay)
+        proc.kill()                   # Popen.kill on Windows IS TerminateProcess(handle, 1)
+        rc = proc.wait(timeout=60)
+        if rc == 1:
+            break
+        # The child finished before the kill landed - this run tested nothing. Start over from the
+        # hot template with a shorter delay; never count it as a pass.
+        assert rc == 0, f"migrator failed on its own (rc={rc})"
+        shutil.rmtree(hot_db)
+        hot_db.mkdir()
+        for f in hot_template.iterdir():
+            shutil.copy2(f, hot_db / f.name)
+        delay = start + (delay - start) * 0.5
+    else:
+        pytest.fail(f"seed {seed}: the kill never landed before the migrator finished "
+                    f"(start={start:.2f}s full={full:.2f}s last delay={delay:.2f}s)")
     _assert_full_cycle(hot_db, tmp_path, f"random{seed}")
 
 

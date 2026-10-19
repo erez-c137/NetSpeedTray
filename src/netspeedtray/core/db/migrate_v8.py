@@ -63,6 +63,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from netspeedtray import constants
 from netspeedtray.core.db import schema_v8 as S
+from netspeedtray.core.db.sqlite_uri import sqlite_ro_uri
 
 logger = logging.getLogger("NetSpeedTray.Core.MigrateV8")
 
@@ -77,10 +78,26 @@ TMP_SUFFIX = ".v8tmp"
 BAK_INFIX = ".bak.v7_"          # speed_history.db.bak.v7_<ts>: DatabaseWorker's .db.bak.v{N}_ pattern
 JOURNAL_FORMAT = 1
 
-# Free space needed before starting: the measured peak is ~1.62x the starting file (design s5);
-# the v8 file is the only large new write, but the build's rollback journal and SQLite's temp
-# B-trees ride on top. Checked against db + wal, because the hot WAL's content is also copied.
+# Free space needed before starting, as a multiple of db + wal (the hot WAL's content is copied
+# too). Build-aside-and-swap writes only the new v8 file (plus its small rollback journal), so the
+# peak is v7 + v8: measured 1.23x on the owner's 80 MB database (2026-10-19). The design's 1.62x
+# (s5) was the IN-PLACE rebuild of revision 1, which this does not do; 1.5x keeps headroom for a
+# database whose rows compress less well than that one's.
 FREE_SPACE_FACTOR = 1.5
+
+# A rename that hits a sharing violation (an AV scanner or the indexer holding the file) or access
+# denied is retried with backoff for this long before the swap is deferred to the next launch.
+RENAME_RETRY_SECONDS = 5.0
+_ERROR_ACCESS_DENIED = 5
+_ERROR_SHARING_VIOLATION = 32
+_RETRYABLE_WINERRORS = (_ERROR_ACCESS_DENIED, _ERROR_SHARING_VIOLATION)
+
+# Rows dated more than this past the migration's clock are a wrong clock, not data: they never move
+# a tier watermark (one row from 2030 would otherwise hide every new raw row until 2030).
+FUTURE_SLACK_SECONDS = 300
+
+# A file found under the live name that recover() must move out of the way (never delete).
+STRAY_INFIX = ".stray_"
 
 # The v7 tables the migrator reads. Must equal DatabaseWorker.EXPECTED_TABLES[7] (a unit test pins
 # it); kept here so this module stays importable without Qt.
@@ -108,7 +125,8 @@ KILLPOINTS: Tuple[str, ...] = (
 
 
 class MigrationError(RuntimeError):
-    """The migration did not happen. The v7 file is untouched and still live."""
+    """The migration did not happen. The v7 file is untouched and still live - except for
+    SwapIncomplete, which says otherwise and must be read."""
 
 
 class InsufficientSpace(MigrationError):
@@ -117,6 +135,26 @@ class InsufficientSpace(MigrationError):
 
 class VerificationFailed(MigrationError):
     """The built v8 file does not hold what the v7 file holds. It was deleted; v7 stays live."""
+
+
+class SwapError(MigrationError):
+    """A rename of the swap failed after retries. ``winerror`` is the Windows error code (0 if none)."""
+
+    def __init__(self, msg: str, winerror: int = 0) -> None:
+        super().__init__(msg)
+        self.winerror = winerror
+
+
+class SwapDeferred(SwapError):
+    """The FIRST rename (live -> backup) failed. The v7 file is untouched and still live; the
+    verified ``.v8tmp`` and the journal are KEPT (state J1), so the next launch's recover() finishes
+    the swap without rebuilding - provided the v7 file has not changed in the meantime."""
+
+
+class SwapIncomplete(SwapError):
+    """The SECOND rename (``.v8tmp`` -> live) failed: the v7 file is already the backup and the live
+    name is EMPTY (state J2). The caller must not open ``db_path`` (a plain connect would create an
+    empty database there); the next launch's recover() completes the swap."""
 
 
 class RecoveryError(RuntimeError):
@@ -193,19 +231,43 @@ def _killpoint(name: str) -> None:
 _MOVEFILE_WRITE_THROUGH = 0x8
 
 
-def _rename(src: Path, dst: Path) -> None:
-    """Rename that FAILS if ``dst`` exists, and on Windows returns only once the move is on disk."""
+def _try_rename(src: Path, dst: Path) -> int:
+    """One attempt. 0 on success, else the Windows error code (errno elsewhere). Never overwrites."""
     if sys.platform == "win32":
         k32 = ctypes.WinDLL("kernel32", use_last_error=True)
         k32.MoveFileExW.argtypes = (ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint)
         k32.MoveFileExW.restype = ctypes.c_int
-        if not k32.MoveFileExW(str(src), str(dst), _MOVEFILE_WRITE_THROUGH):
-            err = ctypes.get_last_error()
-            raise OSError(err, f"MoveFileExW({src.name} -> {dst.name}) failed: {ctypes.FormatError(err)}")
-        return
+        if k32.MoveFileExW(str(src), str(dst), _MOVEFILE_WRITE_THROUGH):
+            return 0
+        return ctypes.get_last_error() or -1
     if dst.exists():
-        raise FileExistsError(str(dst))
-    os.rename(src, dst)
+        return 17   # EEXIST
+    try:
+        os.rename(src, dst)
+        return 0
+    except OSError as e:
+        return e.errno or -1
+
+
+def _rename(src: Path, dst: Path) -> None:
+    """Rename that FAILS if ``dst`` exists and, on Windows, returns only once the move is on disk.
+
+    A sharing violation / access denied (an AV scanner or the search indexer briefly holding the
+    file) is retried with backoff for RENAME_RETRY_SECONDS. Then - or at once for any other error -
+    SwapError (a MigrationError) is raised: never a raw OSError, which Windows reports for code 32 as
+    BrokenPipeError (errno EPIPE) and which a caller handling MigrationError would miss."""
+    deadline = time.monotonic() + RENAME_RETRY_SECONDS
+    delay = 0.05
+    while True:
+        err = _try_rename(src, dst)
+        if err == 0:
+            return
+        left = deadline - time.monotonic()
+        if err not in _RETRYABLE_WINERRORS or left <= 0:
+            detail = ctypes.FormatError(err) if sys.platform == "win32" and err > 0 else os.strerror(err) if err > 0 else "unknown error"
+            raise SwapError(f"rename {src.name} -> {dst.name} failed (error {err}: {detail})", winerror=err)
+        time.sleep(min(delay, left))
+        delay = min(delay * 2, 0.5)
 
 
 def _unlink_db_files(p: Path) -> None:
@@ -228,7 +290,7 @@ def _read_version(path: Path) -> Optional[int]:
     """db_version of a file without changing it (a read-only open; None if unreadable)."""
     conn = None
     try:
-        conn = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
+        conn = sqlite3.connect(sqlite_ro_uri(path), uri=True)
         row = conn.execute("SELECT value FROM metadata WHERE key = 'db_version'").fetchone()
         return int(row[0]) if row else None
     except Exception:
@@ -236,6 +298,49 @@ def _read_version(path: Path) -> Optional[int]:
     finally:
         if conn is not None:
             conn.close()
+
+
+def _live_is_disposable(path: Path) -> bool:
+    """True when the file under the live name holds nothing a migration could lose: empty, not a
+    database, no ``metadata`` table, or a db_version other than 7. A valid v7 file is NOT disposable
+    (it may be a rolled-back 2.1.x that has been recording into a fresh file) - recover() then
+    refuses to guess. Opened read-only; a -wal with content means "not disposable" outright."""
+    if _size(_sidecars(path)[0]) > 0:
+        return False
+    if _size(path) == 0:
+        return True
+    conn = None
+    try:
+        conn = sqlite3.connect(sqlite_ro_uri(path), uri=True)
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='metadata'").fetchone() is None:
+            return True
+        row = conn.execute("SELECT value FROM metadata WHERE key='db_version'").fetchone()
+        return row is None or str(row[0]) != str(V7)
+    except sqlite3.DatabaseError:
+        return True          # not a database at all
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _move_aside(path: Path) -> Path:
+    """Rename ``path`` and its sidecars to ``<name>.stray_<ts>`` (never delete what we did not make)."""
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    dest = path.with_name(f"{path.name}{STRAY_INFIX}{stamp}")
+    n = 0
+    while dest.exists():
+        n += 1
+        dest = path.with_name(f"{path.name}{STRAY_INFIX}{stamp}_{n}")
+    _rename(path, dest)
+    for side, dside in zip(_sidecars(path), _sidecars(dest)):
+        if side.exists():
+            _rename(side, dside)
+    return dest
+
+
+def _fingerprint(path: Path) -> Dict[str, int]:
+    st = path.stat()
+    return {"live_size": st.st_size, "live_mtime_ns": st.st_mtime_ns}
 
 
 def _unique_backup_path(db_path: Path, now: datetime) -> Path:
@@ -265,15 +370,19 @@ def recover(db_path: Path) -> str:
     ``.v8tmp`` was committed, verified, and the v7 WAL checkpointed away). With L = live file,
     T = ``.v8tmp``, B = the journal's backup name:
 
-    * ``J1`` L, T, not B - killed before the first rename. Roll FORWARD (both renames) when L has no
-      WAL content and T still reads as v8; otherwise roll BACK (delete T). -> ``"completed"`` /
-      ``"rolled_back"``
+    * ``J1`` L, T, not B - killed (or SwapDeferred) before the first rename. Roll FORWARD (both
+      renames) when L has no WAL content, L's size + mtime still match the fingerprint the journal
+      took after the checkpoint, and T still reads as v8; otherwise L has changed since T was
+      verified, so roll BACK (delete T - it is stale). -> ``"completed"`` / ``"rolled_back"``
     * ``J2`` not L, T, B - killed between the renames: rename T -> L. -> ``"completed"``
     * ``J3`` L, not T, B - killed after the swap: delete the journal. -> ``"completed"``
     * ``J4`` not L, not T, B - the built file is gone: put the v7 backup back (B -> L).
       -> ``"restored_v7"``
-    * ``J5`` L, T, B - a backup of that name already exists, so the first rename cannot have been
-      ours: roll back (delete T). -> ``"rolled_back"``
+    * ``J5`` L, T, B - B's name was unique when the journal was written, so B existing PROVES our
+      first rename happened; L appeared afterwards (J2, then something plain-connected the live
+      name and SQLite created a file). T is never deleted here. If L is disposable (empty, not a
+      database, no metadata, not v7) it is moved aside to ``.stray_<ts>`` and T renamed in
+      -> ``"completed"``; a valid v7 L raises RecoveryError and changes nothing.
     * ``J6`` not L, T, not B - the live file vanished before the first rename: T is verified and
       complete, rename it in. -> ``"completed"``
     * ``J7`` L, not T, not B - the journal outlived its migration: delete it. -> ``"stale_journal"``
@@ -282,6 +391,9 @@ def recover(db_path: Path) -> str:
 
     Before any rename INTO the live name, the live name's ``-wal`` / ``-shm`` are removed: a v7 WAL
     left beside the v8 file would be replayed into it (Gate 2's "quick_check: ok, tables missing").
+
+    A rename that keeps failing raises SwapError (a MigrationError) and leaves the state as it was
+    found, so the next call retries.
     """
     db_path = Path(db_path)
     tmp = tmp_path_for(db_path)
@@ -317,7 +429,8 @@ def recover(db_path: Path) -> str:
         return "completed"
 
     if L and T and not B:                                            # J1
-        if _size(live_wal) == 0 and _read_version(tmp) == V8:
+        fp = {k: j.get(k) for k in ("live_size", "live_mtime_ns")}
+        if _size(live_wal) == 0 and fp == _fingerprint(db_path) and _read_version(tmp) == V8:
             _clear_live_sidecars(db_path)
             _rename(db_path, bak)
             logger.warning("v8 migration: finishing a swap killed before it started (%s).", bak.name)
@@ -339,9 +452,15 @@ def recover(db_path: Path) -> str:
         jpath.unlink(missing_ok=True)
         return "restored_v7"
     if L and T and B:                                                # J5
-        _unlink_db_files(tmp)
-        jpath.unlink(missing_ok=True)
-        return "rolled_back"
+        if not _live_is_disposable(db_path):
+            raise RecoveryError(
+                f"{db_path.name} is a v7 database that appeared after the swap began ({bak.name} "
+                f"is the migrated-from backup, {tmp.name} the verified v8 build); not guessing "
+                "which one is the user's history")
+        aside = _move_aside(db_path)
+        logger.warning("v8 migration: moved a file created under the live name aside (%s) and "
+                       "finished the swap.", aside.name)
+        return _finish()
     if not L and T and not B:                                        # J6
         return _finish()
     if L and not T and not B:                                        # J7
@@ -426,13 +545,20 @@ def _wm_rule(hour_max: Optional[int], min_min: Optional[int], min_max: Optional[
         wm_raw = int(min_max) // 60 * 60 + 60
     else:
         wm_raw = int(raw_min if raw_min is not None else now_ts) // 60 * 60
+    # Never past the clock (callers already ignore rows beyond the horizon; this is the backstop).
+    horizon = int(now_ts) + FUTURE_SLACK_SECONDS
+    wm_min = min(wm_min, horizon // 3600 * 3600)
+    wm_raw = min(wm_raw, horizon // 60 * 60 + 60)
     return max(wm_raw, wm_min), wm_min
 
 
 def _watermarks_v8(c: sqlite3.Connection, now_ts: int, schema: str = "main") -> Dict[str, int]:
-    """The four watermarks of a v8 file, from its own tiers (what _build stamps)."""
+    """The four watermarks of a v8 file, from its own tiers (what _build stamps). Rows dated past
+    now + FUTURE_SLACK_SECONDS do not count (see _wm_rule)."""
+    horizon = now_ts + FUTURE_SLACK_SECONDS
+
     def one(sql: str) -> Optional[int]:
-        return c.execute(sql).fetchone()[0]
+        return c.execute(sql + f" WHERE ts <= {int(horizon)}").fetchone()[0]
     out: Dict[str, int] = {}
     for (raw, minute, hour), (k_raw, k_min) in (
             ((S.NET_RAW, S.NET_MINUTE, S.NET_HOUR), (S.WATERMARK_RAW_KEY, S.WATERMARK_MINUTE_KEY)),
@@ -447,22 +573,33 @@ def _watermarks_v8(c: sqlite3.Connection, now_ts: int, schema: str = "main") -> 
 def _watermarks_from_v7(c: sqlite3.Connection, now_ts: int) -> Dict[str, int]:
     """The same four, derived independently from the v7 SOURCE (verify's reference): the network
     minute tier there is v7 minute UNION the raw buckets the fold produces; v8 raw is empty."""
+    horizon = int(now_ts + FUTURE_SLACK_SECONDS)
+
     def one(sql: str) -> Optional[int]:
         return c.execute(sql).fetchone()[0]
     sm, sr, sh = (f"v7.{_D.SPEED_TABLE_MINUTE}", f"v7.{_D.SPEED_TABLE_RAW}", f"v7.{_D.SPEED_TABLE_HOUR}")
     hm, hr, hh = (f"v7.{_D.HARDWARE_STATS_TABLE_MINUTE}", f"v7.{_D.HARDWARE_STATS_TABLE_RAW}",
                   f"v7.{_D.HARDWARE_STATS_TABLE_HOUR}")
-    net_min_min = one(f"SELECT MIN(t) FROM (SELECT MIN(timestamp) AS t FROM {sm} "
-                      f"UNION ALL SELECT MIN(timestamp) / 60 * 60 FROM {sr})")
-    net_min_max = one(f"SELECT MAX(t) FROM (SELECT MAX(timestamp) AS t FROM {sm} "
-                      f"UNION ALL SELECT MAX(timestamp) / 60 * 60 FROM {sr})")
+    h = f" WHERE timestamp <= {horizon}"
+    hr_ = f" WHERE timestamp / 60 * 60 <= {horizon}"     # a folded raw row's bucket
+    net_min_min = one(f"SELECT MIN(t) FROM (SELECT MIN(timestamp) AS t FROM {sm}{h} "
+                      f"UNION ALL SELECT MIN(timestamp) / 60 * 60 FROM {sr}{hr_})")
+    net_min_max = one(f"SELECT MAX(t) FROM (SELECT MAX(timestamp) AS t FROM {sm}{h} "
+                      f"UNION ALL SELECT MAX(timestamp) / 60 * 60 FROM {sr}{hr_})")
     out: Dict[str, int] = {}
     out[S.WATERMARK_RAW_KEY], out[S.WATERMARK_MINUTE_KEY] = _wm_rule(
-        one(f"SELECT MAX(timestamp) FROM {sh}"), net_min_min, net_min_max, None, now_ts)
+        one(f"SELECT MAX(timestamp) FROM {sh}{h}"), net_min_min, net_min_max, None, now_ts)
     out[S.HW_WATERMARK_RAW_KEY], out[S.HW_WATERMARK_MINUTE_KEY] = _wm_rule(
-        one(f"SELECT MAX(timestamp) FROM {hh}"), one(f"SELECT MIN(timestamp) FROM {hm}"),
-        one(f"SELECT MAX(timestamp) FROM {hm}"), one(f"SELECT MIN(timestamp) FROM {hr}"), now_ts)
+        one(f"SELECT MAX(timestamp) FROM {hh}{h}"), one(f"SELECT MIN(timestamp) FROM {hm}{h}"),
+        one(f"SELECT MAX(timestamp) FROM {hm}{h}"), one(f"SELECT MIN(timestamp) FROM {hr}{h}"), now_ts)
     return out
+
+
+def _future_rows(c: sqlite3.Connection, now_ts: int, schema: str = "main") -> int:
+    """Rows dated past the clock + slack (a wrong clock): carried over, but they move no watermark."""
+    horizon = int(now_ts + FUTURE_SLACK_SECONDS)
+    return sum(c.execute(f"SELECT COUNT(*) FROM {schema}.{t} WHERE ts > ?", (horizon,)).fetchone()[0]
+               for t in (S.NET_RAW, S.NET_MINUTE, S.NET_HOUR, S.HW_RAW, S.HW_MINUTE, S.HW_HOUR))
 
 
 def _shadowed(c: sqlite3.Connection, wm: Dict[str, int], schema: str = "main") -> Dict[str, int]:
@@ -541,6 +678,7 @@ def _build(c: sqlite3.Connection, now_ts: Optional[int] = None) -> Dict[str, int
     c.execute("ANALYZE main")
 
     counts = _shadowed(c, wm)
+    counts["future_rows"] = _future_rows(c, now_ts)
     counts.update(wm)
     counts.update({t: c.execute(f"SELECT COUNT(*) FROM main.{t}").fetchone()[0]
                    for t in (S.INTERFACES, S.METRICS, S.NET_MINUTE, S.NET_HOUR, S.HW_RAW, S.HW_MINUTE,
@@ -565,9 +703,9 @@ def verify(tmp: Path, v7_path: Path, now_ts: Optional[int] = None) -> Dict[str, 
     tier, and - stronger than any sum - row-for-row equality between every v7 table and the v8
     compatibility view of the same name, except the minute buckets the fold created or merged.
     """
-    c = sqlite3.connect(f"file:{tmp.as_posix()}?mode=ro", uri=True, isolation_level=None)
+    c = sqlite3.connect(sqlite_ro_uri(tmp), uri=True, isolation_level=None)
     try:
-        c.execute("ATTACH DATABASE ? AS v7", (f"file:{v7_path.as_posix()}?mode=ro",))
+        c.execute("ATTACH DATABASE ? AS v7", (sqlite_ro_uri(v7_path),))
         problems: List[str] = []
 
         def one(sql: str, *a: Any) -> Any:
@@ -666,14 +804,15 @@ def verify(tmp: Path, v7_path: Path, now_ts: Optional[int] = None) -> Dict[str, 
                                     + "', '".join(S.WATERMARK_KEYS) + "')"))
             if got_wm != {k: str(v) for k, v in want_wm.items()}:
                 problems.append(f"watermarks {got_wm} != expected {want_wm}")
+            horizon = now_ts + FUTURE_SLACK_SECONDS     # wrong-clock rows are exempt (counted)
             if one(f"SELECT COUNT(*) FROM main.{S.NET_RAW}") or one(
-                    f"SELECT COUNT(*) FROM main.{S.NET_MINUTE} WHERE ts + 60 > ?",
-                    want_wm[S.WATERMARK_RAW_KEY]):
+                    f"SELECT COUNT(*) FROM main.{S.NET_MINUTE} WHERE ts + 60 > ? AND ts <= ?",
+                    want_wm[S.WATERMARK_RAW_KEY], horizon):
                 problems.append("folded network rows lie above the raw watermark")
-            if one(f"SELECT COUNT(*) FROM main.{S.NET_HOUR} WHERE ts + 3600 > ?",
-                   want_wm[S.WATERMARK_MINUTE_KEY]) or one(
-                    f"SELECT COUNT(*) FROM main.{S.HW_HOUR} WHERE ts + 3600 > ?",
-                    want_wm[S.HW_WATERMARK_MINUTE_KEY]):
+            if one(f"SELECT COUNT(*) FROM main.{S.NET_HOUR} WHERE ts + 3600 > ? AND ts <= ?",
+                   want_wm[S.WATERMARK_MINUTE_KEY], horizon) or one(
+                    f"SELECT COUNT(*) FROM main.{S.HW_HOUR} WHERE ts + 3600 > ? AND ts <= ?",
+                    want_wm[S.HW_WATERMARK_MINUTE_KEY], horizon):
                 problems.append("hour rows lie above the minute watermark")
 
         if problems:
@@ -770,7 +909,7 @@ def migrate(db_path: Path, now: Optional[datetime] = None) -> MigrationResult:
         _unlink_db_files(tmp)
         raise
 
-    probe = sqlite3.connect(f"file:{tmp.as_posix()}?mode=ro", uri=True)
+    probe = sqlite3.connect(sqlite_ro_uri(tmp), uri=True)
     try:
         res.v8_page_count = probe.execute("PRAGMA page_count").fetchone()[0]
         res.v8_freelist_count = probe.execute("PRAGMA freelist_count").fetchone()[0]
@@ -782,18 +921,23 @@ def migrate(db_path: Path, now: Optional[datetime] = None) -> MigrationResult:
     bak = _unique_backup_path(db_path, now or datetime.now())
     jpath = journal_path_for(db_path)
     _write_journal(jpath, {"format": JOURNAL_FORMAT, "state": "swapping", "live": db_path.name,
-                           "tmp": tmp.name, "backup": bak.name, "written_at": int(time.time())})
+                           "tmp": tmp.name, "backup": bak.name, "written_at": int(time.time()),
+                           **_fingerprint(db_path)})
     _killpoint("after_journal_pre_rename")
     try:
         _clear_live_sidecars(db_path)     # zero-length after _checkpoint_away; must not follow v8
         _rename(db_path, bak)
-    except BaseException:
-        # Nothing renamed: undo the journal and the build so the next launch starts clean.
-        _unlink_db_files(tmp)
-        jpath.unlink(missing_ok=True)
-        raise
+    except SwapError as e:
+        # Nothing renamed. The verified build and the journal stay (state J1): the next launch's
+        # recover() finishes the swap if the v7 file is still exactly what was verified.
+        raise SwapDeferred(f"v8 swap deferred to the next launch: {e}", e.winerror) from e
     _killpoint("after_bak_rename_pre_swap")
-    _rename(tmp, db_path)                 # a failure here leaves journal state J2 for recover()
+    try:
+        _rename(tmp, db_path)
+    except SwapError as e:
+        raise SwapIncomplete(
+            f"v8 swap half done - {db_path.name} is absent until the next launch's recover(): {e}",
+            e.winerror) from e
     _killpoint("after_swap_pre_journal_delete")
     jpath.unlink(missing_ok=True)
 

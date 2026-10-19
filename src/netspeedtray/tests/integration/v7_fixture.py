@@ -17,6 +17,8 @@ import sqlite3
 import sys
 from typing import Dict, List, Tuple
 
+from netspeedtray.core.db.sqlite_uri import sqlite_ro_uri
+
 # Fixed epoch (2026-08-25 00:00 UTC-ish), minute and hour aligned.
 T0 = 1_787_616_000
 IFACES = ("Wi-Fi 3", "Tailscale", "Ethernet")
@@ -140,7 +142,7 @@ V7_TABLES = (SPEED_RAW, SPEED_MIN, SPEED_HOUR, HW_RAW, HW_MIN, HW_HOUR, "usage_c
 
 def manifest_from_db(path: str) -> Dict[str, List[Tuple]]:
     """The same shape as manifest(), read (read-only) from a real v7 file - the owner-copy run."""
-    c = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    c = sqlite3.connect(sqlite_ro_uri(path), uri=True)
     try:
         return {t: sorted(tuple(r) for r in c.execute(f"SELECT * FROM {t}")) for t in V7_TABLES}
     finally:
@@ -195,7 +197,7 @@ def hot_copy_main(args: str) -> None:
     (the backup API writes through the pager, so every page lands in -wal), then die - a hot WAL
     holding real data, without writing a single row that was not in the source."""
     src, dest_dir = args.split("|")
-    s = sqlite3.connect(f"file:{src}?mode=ro", uri=True)
+    s = sqlite3.connect(sqlite_ro_uri(src), uri=True)
     d = sqlite3.connect(os.path.join(dest_dir, "speed_history.db"))
     d.execute("PRAGMA journal_mode = WAL")
     d.execute("PRAGMA wal_autocheckpoint = 0")

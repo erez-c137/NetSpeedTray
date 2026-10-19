@@ -20,6 +20,7 @@ sys.path.append(os.path.abspath("src"))
 from netspeedtray.core.database import DatabaseWorker
 from netspeedtray.core.db import migrate_v8 as M
 from netspeedtray.core.db import schema_v8 as S
+from netspeedtray.core.db.sqlite_uri import sqlite_ro_uri
 from netspeedtray.tests.integration import v7_fixture as F
 
 DB = "speed_history.db"
@@ -78,7 +79,7 @@ def test_migrates_build_aside_and_swaps(v7, tmp_path):
         c.close()
 
     # The backup IS the untouched v7 file.
-    b = sqlite3.connect(f"file:{bak.as_posix()}?mode=ro", uri=True)
+    b = sqlite3.connect(sqlite_ro_uri(bak), uri=True)
     try:
         for table, want in F.manifest().items():
             assert _rows(b, table) == want, table
@@ -177,10 +178,11 @@ def test_tier_watermarks_are_stamped_with_no_gap_and_no_overlap(v7):
 
 @pytest.mark.parametrize("args, want", [
     ((None, None, None, None, 1_000_000_123), (1_000_000_080, 999_997_200)),   # empty -> now, floored
-    ((7200, 9000, 12000, None, 0), (12060, 10800)),                             # hour end; minute end
-    ((None, 9000, 12000, 20000, 0), (12060, 7200)),                             # no hour tier
-    ((None, None, None, 20000, 0), (19980, 18000)),                             # raw only
-    ((36000, None, None, 1000, 0), (39600, 39600)),                             # raw clamped >= minute
+    ((7200, 9000, 12000, None, 10**9), (12060, 10800)),                             # hour end; minute end
+    ((None, 9000, 12000, 20000, 10**9), (12060, 7200)),                             # no hour tier
+    ((None, None, None, 20000, 10**9), (19980, 18000)),                             # raw only
+    ((36000, None, None, 1000, 10**9), (39600, 39600)),
+    ((4 * 10**9, None, 5 * 10**9, None, 10**9), (1_000_000_320, 999_997_200)),  # clamped to the clock                             # raw clamped >= minute
 ])
 def test_watermark_rule_edges(args, want):
     assert M._wm_rule(*args) == want
@@ -359,8 +361,11 @@ def built(tmp_path):
 
 
 def _journal(d: Path, backup=f"{DB}.bak.v7_20261019_120000"):
+    st = (d / DB).stat()
     M._write_journal(M.journal_path_for(d / DB), {"format": 1, "state": "swapping", "live": DB,
-                                                   "tmp": DB + M.TMP_SUFFIX, "backup": backup})
+                                                   "tmp": DB + M.TMP_SUFFIX, "backup": backup,
+                                                   "live_size": st.st_size,
+                                                   "live_mtime_ns": st.st_mtime_ns})
 
 
 def _ver(p: Path):
@@ -378,6 +383,17 @@ def test_recover_N1_discards_an_unjournaled_tmp(built):
     (built / (DB + M.TMP_SUFFIX + "-journal")).write_bytes(b"hot rollback journal")
     assert M.recover(built / DB) == "discarded_tmp"
     assert _files(built) == [DB] and _ver(built / DB) == 7
+
+
+def test_recover_J1_rolls_back_when_the_live_file_changed_since_the_journal(built):
+    _journal(built)
+    c = sqlite3.connect(built / DB)
+    c.execute("PRAGMA journal_mode = DELETE")         # a write that reaches the main file directly
+    c.execute("INSERT INTO metadata VALUES ('written_after', '1')")
+    c.commit()
+    c.close()
+    assert M.recover(built / DB) == "rolled_back"
+    assert _ver(built / DB) == 7 and not (built / (DB + M.TMP_SUFFIX)).exists()
 
 
 def test_recover_J1_rolls_forward(built):
@@ -422,11 +438,40 @@ def test_recover_J4_restores_the_v7_backup(built):
     assert _files(built) == [DB] and _ver(built / DB) == 7
 
 
-def test_recover_J5_rolls_back_when_the_backup_name_is_taken(built):
+def _j2(built):
+    """Journal state J2: the first rename happened, the second did not."""
     _journal(built)
-    (built / BAK).write_bytes(b"someone else's")
-    assert M.recover(built / DB) == "rolled_back"
-    assert _files(built) == sorted([DB, BAK]) and _ver(built / DB) == 7
+    os.rename(built / DB, built / BAK)
+
+
+def test_recover_J5_finishes_when_a_plain_open_recreated_an_empty_live_file(built):
+    """Review #359 bug 1: the 2nd rename failed (J2), then something plain-connected the live name
+    and SQLite created an EMPTY file there. B exists, which proves our first rename happened (its
+    name was unique when the journal was written) - so the verified v8 build must be swapped in,
+    never deleted, and the empty file moved aside, not deleted."""
+    _j2(built)
+    c = sqlite3.connect(built / DB)                                   # a plain open ...
+    c.execute("SELECT 1").fetchone()
+    c.close()                                                         # ... leaves an empty live file
+    assert (built / DB).exists()
+    assert M.recover(built / DB) == "completed"
+    assert _ver(built / DB) == 8 and _ver(built / BAK) == 7
+    assert not (built / (DB + M.TMP_SUFFIX)).exists() and not M.journal_path_for(built / DB).exists()
+    aside = [p for p in built.iterdir() if p.name.startswith(DB + M.STRAY_INFIX)]
+    assert len(aside) == 1, _files(built)
+
+
+def test_recover_J5_refuses_to_guess_when_the_live_file_holds_data(built):
+    _j2(built)
+    c = sqlite3.connect(built / DB)                                   # a real database appeared
+    c.execute("CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    c.execute("INSERT INTO metadata VALUES ('db_version', '7')")
+    c.commit()
+    c.close()
+    with pytest.raises(M.RecoveryError):
+        M.recover(built / DB)
+    assert (built / (DB + M.TMP_SUFFIX)).exists(), "the verified v8 build must never be deleted"
+    assert M.journal_path_for(built / DB).exists() and (built / BAK).exists()
 
 
 def test_recover_J6_renames_the_tmp_in_when_live_vanished(built):
@@ -487,3 +532,100 @@ def test_dormant_nothing_in_the_app_calls_the_migrator():
                if "tests" not in p.parts and p.name != "migrate_v8.py"
                and "migrate_v8" in p.read_text(encoding="utf-8", errors="ignore")]
     assert callers == []
+
+
+# --------------------------------------------------------------------------------------------
+# review #359: renames that fail, future-dated rows, awkward paths
+# --------------------------------------------------------------------------------------------
+
+class _Hold:
+    """An open handle WITHOUT FILE_SHARE_DELETE (what Python's open() makes): MoveFileEx on the
+    file then fails with ERROR_SHARING_VIOLATION (32), as it does under an AV scanner."""
+    def __init__(self, path):
+        self.fh = open(path, "rb")
+
+    def release(self):
+        if self.fh:
+            self.fh.close()
+            self.fh = None
+
+
+def test_a_briefly_held_live_file_is_retried_not_fatal(v7, monkeypatch):
+    import threading
+    monkeypatch.setattr(M, "RENAME_RETRY_SECONDS", 5.0)
+    held = {}
+
+    def hook(name):
+        if name == "after_journal_pre_rename":
+            held["h"] = _Hold(v7)
+            threading.Timer(0.6, held["h"].release).start()
+    monkeypatch.setattr(M, "_killpoint", hook)
+    res = M.migrate(v7, now=NOW)
+    assert res.status == "migrated" and _ver(v7) == 8
+
+
+def test_a_held_live_file_defers_the_swap_and_keeps_the_verified_build(v7, tmp_path, monkeypatch):
+    monkeypatch.setattr(M, "RENAME_RETRY_SECONDS", 0.5)
+    held = {}
+    monkeypatch.setattr(M, "_killpoint",
+                        lambda n: held.setdefault("h", _Hold(v7)) if n == "after_journal_pre_rename" else None)
+    try:
+        with pytest.raises(M.SwapDeferred) as ei:
+            M.migrate(v7, now=NOW)
+        assert isinstance(ei.value, M.MigrationError) and ei.value.winerror == 32
+        assert _ver(v7) == 7, "v7 stays live"
+        assert (tmp_path / (DB + M.TMP_SUFFIX)).exists() and M.journal_path_for(v7).exists()
+    finally:
+        held["h"].release()
+    assert M.recover(v7) == "completed"                       # the next launch finishes the swap
+    assert _ver(v7) == 8
+
+
+def test_a_held_build_file_leaves_J2_and_the_next_launch_finishes(v7, tmp_path, monkeypatch):
+    monkeypatch.setattr(M, "RENAME_RETRY_SECONDS", 0.5)
+    tmp = M.tmp_path_for(v7)
+    held = {}
+    monkeypatch.setattr(M, "_killpoint",
+                        lambda n: held.setdefault("h", _Hold(tmp)) if n == "after_bak_rename_pre_swap" else None)
+    try:
+        with pytest.raises(M.SwapIncomplete) as ei:
+            M.migrate(v7, now=NOW)
+        assert isinstance(ei.value, M.MigrationError)
+        assert not v7.exists() and tmp.exists() and M.journal_path_for(v7).exists()
+    finally:
+        held["h"].release()
+    assert M.recover(v7) == "completed"
+    assert _ver(v7) == 8
+
+
+@pytest.mark.parametrize("ts_offset", [4 * 365 * 86400, -1])     # 4 years ahead / 2000-01-01
+def test_watermarks_ignore_rows_dated_outside_now(v7, ts_offset):
+    """Review #359 bug 3: one raw row from a wrong clock must not push tier_watermark_raw years
+    ahead (every new v8 raw row would be invisible until then), nor drag anything to 2000."""
+    now_ts = int(NOW.timestamp())
+    ts = now_ts + ts_offset if ts_offset > 0 else 946_684_800
+    c = sqlite3.connect(v7)
+    c.execute("INSERT INTO speed_history_raw VALUES (?, 'Wi-Fi 3', 1.0, 1.0)", (ts,))
+    c.execute("INSERT INTO hardware_stats_raw VALUES (?, 'cpu', 1.0)", (ts,))
+    c.execute("INSERT INTO hardware_stats_hour VALUES (?, 'cpu', 1.0, 1.0, 1)", (ts,))
+    c.commit()
+    c.close()
+    res = M.migrate(v7, now=NOW)
+    assert res.status == "migrated"
+    for k in S.WATERMARK_KEYS:
+        assert res.counts[k] <= now_ts + M.FUTURE_SLACK_SECONDS, (k, res.counts[k])
+    if ts_offset > 0:
+        assert res.counts == {**res.counts, **{k: v for k, v in F.expected_watermarks().items()}}
+        assert res.counts["future_rows"] == 3
+    else:
+        assert res.counts[S.WATERMARK_RAW_KEY] == F.expected_watermarks()[S.WATERMARK_RAW_KEY]
+
+
+@pytest.mark.parametrize("name", ["Bob#2", "pct%41x", "q a#b%20c"])
+def test_migrates_under_an_awkward_profile_path(tmp_path, name):
+    d = tmp_path / name
+    d.mkdir()
+    db = _make_v7(d)
+    assert M.migrate(db, now=NOW).status == "migrated"
+    assert _ver(db) == 8
+    assert sorted(p.name for p in tmp_path.iterdir()) == [name], "a truncated URI created a stray file"
