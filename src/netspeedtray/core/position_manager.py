@@ -12,6 +12,7 @@ import logging
 from dataclasses import dataclass
 from typing import Optional, Tuple, List, Protocol, runtime_checkable, Dict, Any, TYPE_CHECKING
 import math
+import time
 import ctypes
 from ctypes import wintypes
 import win32con
@@ -68,6 +69,21 @@ _GetAncestor.restype = wintypes.HWND
 _GetClassNameW = _user32.GetClassNameW
 _GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
 _GetClassNameW.restype = ctypes.c_int
+
+# Shell menus (#32768) gate the re-seat: see PositionManager._open_shell_menu_on_monitor.
+_MENU_CLASS = "#32768"
+_MONITOR_DEFAULTTONEAREST = 2
+_MonitorFromWindow = _user32.MonitorFromWindow
+_MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
+_MonitorFromWindow.restype = ctypes.c_void_p
+
+# Re-seat backoff: the first recovery fires immediately, then the delay doubles up to
+# the cap, so a shell that keeps re-burying the widget can never camp on the 1 Hz
+# refresh cadence (that would be the periodic re-assert #200 removed, back again
+# through the recovery door).
+_RESEAT_BACKOFF_BASE_S = 1.0
+_RESEAT_BACKOFF_MAX_S = 60.0
+_RESEAT_BACKOFF_EXP_CAP = 6
 
 
 # Protocols
@@ -506,6 +522,11 @@ class PositionManager(QObject):
         # display we should float on instead of docking to the primary taskbar.
         self._free_float_active: bool = False
         self._free_float_screen: Optional[QScreen] = None
+        # Re-seat backoff state (see reseat_topmost): consecutive acted re-seats grow
+        # the delay; steady-state health retires the escalation between episodes.
+        self._reseat_attempts: int = 0
+        self._last_reseat_ts: float = 0.0
+        self._first_recovery_logged: bool = False
         
         # Timers
         self._tray_watcher_timer = QTimer(self)
@@ -873,17 +894,84 @@ class PositionManager(QObject):
         when the widget is known to be buried (is_buried_behind_taskbar) or to have
         lost WS_EX_TOPMOST outright - states in which no shell menu can be clipped
         by raising the widget.
+
+        Two guards keep this from becoming the #200 re-assert through the back door:
+
+        - A visible shell menu (#32768) anywhere on the widget's monitor defers the
+          re-seat - even one that never overlaps the widget's center hit-test, since
+          the taskbar's owner-cluster rise can still end up above a menu elsewhere
+          on the strip. The caller's cadence retries while the menu is open.
+        - A backoff (see _reseat_delay) keeps a shell that re-buries the widget from
+          riding the 1 Hz refresh; healthy steady state retires the escalation.
         """
         try:
             hwnd = int(self._state.widget.winId())
-            if win32gui.IsWindow(hwnd):
-                win32gui.SetWindowPos(
-                    hwnd, win32con.HWND_TOPMOST, 0, 0, 0, 0,
-                    win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE
-                )
+            if not win32gui.IsWindow(hwnd):
+                return
+            if self._open_shell_menu_on_monitor(hwnd):
+                logger.debug("Re-seat deferred: a shell menu (#32768) is open on this monitor.")
+                return
+            now = time.monotonic()
+            delay = self._reseat_delay()
+            if self._last_reseat_ts and (now - self._last_reseat_ts) < delay:
+                logger.debug("Re-seat deferred: backoff (%.0fs window).", delay)
+                return
+            self._last_reseat_ts = now
+            self._reseat_attempts = min(self._reseat_attempts + 1, _RESEAT_BACKOFF_EXP_CAP + 1)
+            win32gui.SetWindowPos(
+                hwnd, win32con.HWND_TOPMOST, 0, 0, 0, 0,
+                win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE
+            )
+            if self._first_recovery_logged:
                 logger.debug("Widget re-seated at the top of the topmost band.")
+            else:
+                logger.info("Widget recovered from taskbar burial - re-seated topmost.")
+                self._first_recovery_logged = True
         except Exception as e:
             logger.error("Failed to re-seat topmost: %s", e)
+
+    def _reseat_delay(self) -> float:
+        """Seconds of quiet required before the next re-seat: 0 first, then doubling, capped."""
+        if not self._last_reseat_ts:
+            return 0.0
+        return min(_RESEAT_BACKOFF_BASE_S * (2 ** min(self._reseat_attempts, _RESEAT_BACKOFF_EXP_CAP)),
+                   _RESEAT_BACKOFF_MAX_S)
+
+    def _open_shell_menu_on_monitor(self, hwnd: int) -> bool:
+        """
+        True when any visible shell menu (#32768) is on the monitor that contains hwnd.
+
+        The widget's center hit-test is not enough alone (#327 review): a taskbar
+        context menu opened elsewhere on the strip never overlaps the widget, yet a
+        re-seat raises the taskbar's whole owner cluster above it. Fails safe
+        (True = defer) so a broken helper can never turn the recovery into the
+        #200 re-assert.
+        """
+        try:
+            target = _MonitorFromWindow(hwnd, _MONITOR_DEFAULTTONEAREST) or 0
+        except Exception:
+            return True
+        found = False
+
+        def _scan(menu_hwnd, _ctx):
+            nonlocal found
+            try:
+                if (found or not win32gui.IsWindowVisible(menu_hwnd)
+                        or win32gui.GetClassName(menu_hwnd) != _MENU_CLASS):
+                    return True
+                other = _MonitorFromWindow(menu_hwnd, _MONITOR_DEFAULTTONEAREST) or 0
+                if not target or not other or other == target:
+                    found = True
+            except Exception:
+                pass
+            return True
+
+        try:
+            win32gui.EnumWindows(_scan, None)
+            return found
+        except Exception as e:
+            logger.debug("Shell-menu scan failed (%s) - deferring re-seat.", e)
+            return True
 
     def is_buried_behind_taskbar(self) -> bool:
         """
@@ -919,6 +1007,11 @@ class PositionManager(QObject):
                 return False
             root = int(_GetAncestor(hit, _GA_ROOT) or hit)
             if root == hwnd:
+                # We are on top: retire the re-seat backoff so a fresh burial episode
+                # later starts its escalation from scratch and logs once at INFO again.
+                self._reseat_attempts = 0
+                self._last_reseat_ts = 0.0
+                self._first_recovery_logged = False
                 return False  # the point hits us (or one of our children) - we are on top
             buf = ctypes.create_unicode_buffer(64)
             _GetClassNameW(root, buf, 64)

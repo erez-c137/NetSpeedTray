@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 
 from netspeedtray import constants
 from netspeedtray.views.widget.main import (
-    NetworkSpeedWidget, _NativeMSG, _WM_TASKBARCREATED,
+    NetworkSpeedWidget, _NativeMSG, _WM_TASKBARCREATED, _MSGFLT_ALLOW,
 )
 
 
@@ -86,3 +86,62 @@ def test_recover_schedules_staggered_refreshes(monkeypatch):
     # Firing the first (immediate) pass runs a refresh
     calls[0][1]()
     fake._execute_refresh.assert_called_once_with()
+
+
+# --- UIPI filter (ChangeWindowMessageFilterEx) --------------------------------
+
+
+def _fake_uipi():
+    """A fake widget with only the attributes _allow_taskbar_created touches."""
+    return types.SimpleNamespace(
+        logger=MagicMock(), winId=MagicMock(return_value=0x101), _taskbar_created_allowed=0,
+    )
+
+
+def test_change_message_filter_applies_once_per_hwnd(monkeypatch):
+    calls = []
+    monkeypatch.setattr("netspeedtray.views.widget.main._WM_TASKBARCREATED", 0x4A5B)
+    monkeypatch.setattr(
+        "netspeedtray.views.widget.main._ChangeWindowMessageFilterEx",
+        lambda *args: calls.append(args) or 1,
+    )
+    fake = _fake_uipi()
+    NetworkSpeedWidget._allow_taskbar_created(fake)
+    NetworkSpeedWidget._allow_taskbar_created(fake)
+    assert calls == [(0x101, 0x4A5B, _MSGFLT_ALLOW)]  # idempotent: remembered HWND skips
+
+
+def test_change_message_filter_reapplied_on_fresh_hwnd(monkeypatch):
+    """Qt can recreate the native window; the filter must follow."""
+    calls = []
+    monkeypatch.setattr("netspeedtray.views.widget.main._WM_TASKBARCREATED", 0x4A5B)
+    monkeypatch.setattr(
+        "netspeedtray.views.widget.main._ChangeWindowMessageFilterEx",
+        lambda *args: calls.append(args) or 1,
+    )
+    fake = _fake_uipi()
+    fake._taskbar_created_allowed = 0x101   # as if already applied to that HWND
+    NetworkSpeedWidget._allow_taskbar_created(fake)
+    assert calls == []                       # same HWND -> no-op
+    fake.winId = MagicMock(return_value=0x202)
+    NetworkSpeedWidget._allow_taskbar_created(fake)
+    assert [c[0] for c in calls] == [0x202]
+
+
+def test_change_message_filter_skipped_when_not_registered(monkeypatch):
+    calls = []
+    monkeypatch.setattr("netspeedtray.views.widget.main._WM_TASKBARCREATED", 0)
+    monkeypatch.setattr(
+        "netspeedtray.views.widget.main._ChangeWindowMessageFilterEx",
+        lambda *args: calls.append(args) or 1,
+    )
+    fake = _fake_uipi()
+    NetworkSpeedWidget._allow_taskbar_created(fake)   # no raise, no call
+    assert calls == []
+
+
+def test_change_message_filter_survives_winid_failure(monkeypatch):
+    monkeypatch.setattr("netspeedtray.views.widget.main._WM_TASKBARCREATED", 0x4A5B)
+    fake = _fake_uipi()
+    fake.winId = MagicMock(side_effect=RuntimeError("not realized yet"))
+    NetworkSpeedWidget._allow_taskbar_created(fake)   # must not raise

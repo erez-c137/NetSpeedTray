@@ -81,6 +81,17 @@ try:
 except Exception:
     _WM_TASKBARCREATED = 0
 
+# UIPI: a process running elevated silently drops messages broadcast by the
+# non-elevated shell, so without MSGFLT_ALLOW on our window the TaskbarCreated
+# re-dock never fires there. Per-window API, resolved once at import.
+_MSGFLT_ALLOW = 1
+try:
+    _ChangeWindowMessageFilterEx = ctypes.windll.user32.ChangeWindowMessageFilterEx
+    _ChangeWindowMessageFilterEx.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.DWORD, ctypes.c_void_p]
+    _ChangeWindowMessageFilterEx.restype = wintypes.BOOL
+except AttributeError:  # pre-Win7, unlikely
+    _ChangeWindowMessageFilterEx = None
+
 
 class NetworkSpeedWidget(QWidget):
     """Main widget for displaying network speeds near the Windows system tray."""
@@ -198,6 +209,8 @@ class NetworkSpeedWidget(QWidget):
         self._hover_card_timer.timeout.connect(self._show_usage_hover_card)
         self._hover_usage_cache: Optional[Tuple[Tuple[float, float], Tuple[float, float]]] = None
         self._hover_usage_cache_ts: float = 0.0
+        # HWND the TaskbarCreated UIPI filter was last applied to (see _allow_taskbar_created).
+        self._taskbar_created_allowed: int = 0
 
         self.setVisible(False)
         self.logger.debug("Widget initially hidden to stabilize position and size.")
@@ -435,7 +448,6 @@ class NetworkSpeedWidget(QWidget):
                 # exactly that state - the taskbar itself covering the widget - and re-seat
                 # once. Menus/flyouts covering us must NOT trigger this (#200).
                 if self.position_manager.is_buried_behind_taskbar():
-                    self.logger.info("Widget buried behind the taskbar - re-seating topmost.")
                     self.position_manager.reseat_topmost()
 
                 # One-time heads-up if we're sitting over the Win11 Widgets/weather panel (#200).
@@ -1251,7 +1263,32 @@ class NetworkSpeedWidget(QWidget):
         """Delegates to PositionManager. No-op while hidden (e.g. over a fullscreen app)."""
         if not self.isVisible():
             return
+        self._allow_taskbar_created()
         self.position_manager.ensure_topmost()
+
+    def _allow_taskbar_created(self) -> None:
+        """
+        Allow "TaskbarCreated" through UIPI on our native window (ChangeWindowMessageFilterEx).
+
+        Without this, a process running elevated silences the shell's broadcast and the
+        instant re-dock only ever fires from the 3 s validity poll (the insta-recover
+        from TaskbarCreated goes off). Idempotent per native window: re-applied when Qt
+        hands us a fresh HWND after a native-window recreation.
+        """
+        if not _WM_TASKBARCREATED or _ChangeWindowMessageFilterEx is None:
+            return
+        try:
+            hwnd = int(self.winId())
+        except Exception:
+            return
+        if not hwnd or hwnd == getattr(self, "_taskbar_created_allowed", 0):
+            return
+        try:
+            _ChangeWindowMessageFilterEx(hwnd, _WM_TASKBARCREATED, _MSGFLT_ALLOW)
+            self._taskbar_created_allowed = hwnd
+            self.logger.debug("TaskbarCreated allowed through UIPI on HWND %s (elevated).", hwnd)
+        except Exception as e:
+            self.logger.debug("ChangeWindowMessageFilterEx(TaskbarCreated) failed: %s", e)
 
     def _on_environment_changed(self, reason: str = "") -> None:
         """

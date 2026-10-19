@@ -13,6 +13,7 @@ window (live-observed on a 1920x1200/125% machine: the widget sat behind the tas
 while the logical-space check reported "not buried").
 """
 from contextlib import contextmanager
+import logging
 from unittest.mock import MagicMock, patch
 
 from netspeedtray.core.position_manager import PositionManager, WindowState
@@ -25,6 +26,16 @@ WIDGET_HWND = 0x1000
 MENU_HWND = 0x2000      # a shell menu / foreign window
 # Physical-pixel rect over the taskbar (matches a live Win11 125% capture)
 WIDGET_RECT = (1167, 912, 1252, 960)
+MON_A = 0xE001
+MON_B = 0xE002
+
+
+class _Clock:
+    def __init__(self, t: float = 1000.0):
+        self.t = t
+
+    def monotonic(self):
+        return self.t
 
 
 def _manager(visible=True):
@@ -141,5 +152,131 @@ def test_ensure_topmost_leaves_intact_topmost_alone():
          patch("netspeedtray.core.position_manager._SetWindowLongPtr"):
         win32.IsWindow.return_value = True
         win32.GetWindowLong.return_value = win32con.WS_EX_TOPMOST
+        m.ensure_topmost()
+        win32.SetWindowPos.assert_not_called()
+
+
+# --- Re-seat guards (#327 review): backoff + shell-menu monitor check --------
+
+
+def test_reseat_deferred_for_menu_on_same_monitor():
+    """A visible #32768 anywhere on the widget's monitor defers, not just one over the center."""
+    m = _manager()
+    with patch("netspeedtray.core.position_manager.win32gui") as win32, \
+         patch("netspeedtray.core.position_manager._MonitorFromWindow", side_effect=[MON_A, MON_A]):
+        win32.IsWindow.return_value = True
+        win32.IsWindowVisible.side_effect = lambda h: h == MENU_HWND
+        win32.GetClassName.side_effect = lambda h: {MENU_HWND: "#32768"}.get(h, "Other")
+        win32.EnumWindows.side_effect = lambda cb, ctx: cb(MENU_HWND, ctx) or cb(0x777, ctx)
+        m.reseat_topmost()
+        win32.SetWindowPos.assert_not_called()
+
+
+def test_reseat_proceeds_when_menu_on_other_monitor():
+    """A #32768 on another monitor must not hold the widget buried on this one."""
+    m = _manager()
+    with patch("netspeedtray.core.position_manager.win32gui") as win32, \
+         patch("netspeedtray.core.position_manager._MonitorFromWindow", side_effect=[MON_A, MON_B]):
+        win32.IsWindow.return_value = True
+        win32.IsWindowVisible.side_effect = lambda h: h == MENU_HWND
+        win32.GetClassName.side_effect = lambda h: {MENU_HWND: "#32768"}.get(h, "Other")
+        win32.EnumWindows.side_effect = lambda cb, ctx: cb(MENU_HWND, ctx) or cb(0x777, ctx)
+        m.reseat_topmost()
+        assert win32.SetWindowPos.call_count == 1
+
+
+def test_reseat_defers_when_menu_scan_fails():
+    """A broken scan fails safe (defer). It can never turn recovery into the #200 re-assert."""
+    m = _manager()
+    with patch("netspeedtray.core.position_manager.win32gui") as win32, \
+         patch("netspeedtray.core.position_manager._MonitorFromWindow", return_value=MON_A):
+        win32.IsWindow.return_value = True
+        win32.EnumWindows.side_effect = RuntimeError("enum blew up")
+        m.reseat_topmost()
+        win32.SetWindowPos.assert_not_called()
+
+
+def test_reseat_backoff_escalates_when_reburying():
+    """First recovery immediate, then 2 s -> 4 s windows; a persistent burial cannot ride 1 Hz."""
+    m = _manager()
+    clock = _Clock()
+    with patch("netspeedtray.core.position_manager.win32gui") as win32, \
+         patch("netspeedtray.core.position_manager._MonitorFromWindow", return_value=MON_A), \
+         patch("netspeedtray.core.position_manager.time", clock):
+        win32.IsWindow.return_value = True
+        m.reseat_topmost()
+        first = win32.SetWindowPos.call_count
+        clock.t += 0.9              # inside the first (2 s) window -> deferred
+        m.reseat_topmost()
+        assert win32.SetWindowPos.call_count == first
+        clock.t += 5.0              # past that window -> acts again
+        m.reseat_topmost()
+        assert win32.SetWindowPos.call_count == first + 1
+        clock.t += 3.9              # inside the next (4 s) window -> deferred
+        m.reseat_topmost()
+        assert win32.SetWindowPos.call_count == first + 1
+        clock.t += 2.0
+        m.reseat_topmost()
+        assert win32.SetWindowPos.call_count == first + 2
+
+
+def test_reseat_delay_saturates_at_cap():
+    m = _manager()
+    assert m._reseat_delay() == 0.0
+    m._last_reseat_ts = 1000.0
+    m._reseat_attempts = 999
+    assert m._reseat_delay() == 60.0
+
+
+def test_on_top_retires_backoff_for_next_episode():
+    """Proof we are not buried resets the escalation, so the next burial recovers instantly."""
+    with _hit_env(WIDGET_HWND, WIDGET_HWND) as (m, win32, _):
+        m._reseat_attempts = 5
+        m._last_reseat_ts = 900.0
+        m._first_recovery_logged = True
+        assert m.is_buried_behind_taskbar() is False
+        assert (m._reseat_attempts, m._last_reseat_ts, m._first_recovery_logged) == (0, 0.0, False)
+
+
+def test_burial_keeps_backoff_running():
+    """A persistent burial must not reset its own backoff (that is the 1 Hz re-assert again)."""
+    with _hit_env(0x50, TB_HWND, "Shell_TrayWnd") as (m, _, _):
+        m._reseat_attempts = 5
+        m._last_reseat_ts = 900.0
+        m._first_recovery_logged = True
+        assert m.is_buried_behind_taskbar() is True
+        assert m._reseat_attempts == 5 and m._first_recovery_logged is True
+
+
+def test_reseat_logs_info_once_per_episode(caplog):
+    caplog.set_level(logging.DEBUG)
+    m = _manager()
+    clock = _Clock()
+    with patch("netspeedtray.core.position_manager.win32gui") as win32, \
+         patch("netspeedtray.core.position_manager._MonitorFromWindow", return_value=MON_A), \
+         patch("netspeedtray.core.position_manager.time", clock):
+        win32.IsWindow.return_value = True
+        m.reseat_topmost()
+        clock.t += 60.0
+        m.reseat_topmost()
+        clock.t += 60.0
+        m.reseat_topmost()
+        recovery_logs = [r.levelno for r in caplog.records
+                         if "re-seated" in r.getMessage() or "recovered" in r.getMessage()]
+        assert recovery_logs == [logging.INFO, logging.DEBUG, logging.DEBUG]
+
+
+def test_style_restore_defers_for_open_menu():
+    """The WS_EX_TOPMOST restore path rides the same menu guard."""
+    m = _manager()
+    with patch("netspeedtray.core.position_manager.win32gui") as win32, \
+         patch("netspeedtray.core.position_manager._GetWindowLongPtr", return_value=TB_HWND), \
+         patch("netspeedtray.core.position_manager._SetWindowLongPtr"), \
+         patch("netspeedtray.core.position_manager._MonitorFromWindow", side_effect=[MON_A, MON_A]):
+        win32.IsWindow.return_value = True
+        win32.GetWindowLong.return_value = 0          # WS_EX_TOPMOST gone
+        win32.IsWindowVisible.side_effect = lambda h: h == MENU_HWND
+        win32.GetClassName.side_effect = lambda h: {MENU_HWND: "#32768"}.get(h, "Other")
+        win32.EnumWindows.side_effect = lambda cb, ctx: cb(MENU_HWND, ctx)
         m.ensure_topmost()
         win32.SetWindowPos.assert_not_called()
