@@ -108,7 +108,28 @@ def test_change_message_filter_applies_once_per_hwnd(monkeypatch):
     fake = _fake_uipi()
     NetworkSpeedWidget._allow_taskbar_created(fake)
     NetworkSpeedWidget._allow_taskbar_created(fake)
-    assert calls == [(0x101, 0x4A5B, _MSGFLT_ALLOW)]  # idempotent: remembered HWND skips
+    # 4-arg call (NULL FILTER_STATUS pointer) and idempotent: remembered HWND skips.
+    assert calls == [(0x101, 0x4A5B, _MSGFLT_ALLOW, None)]
+
+
+def test_change_message_filter_false_not_cached_and_retried(monkeypatch):
+    """A FALSE return must not cache the HWND, so a later call retries (#327 review)."""
+    results = iter([0, 1])
+    calls = []
+    monkeypatch.setattr("netspeedtray.views.widget.main._WM_TASKBARCREATED", 0x4A5B)
+    monkeypatch.setattr(
+        "netspeedtray.views.widget.main._ChangeWindowMessageFilterEx",
+        lambda *args: calls.append(args) or next(results),
+    )
+    fake = _fake_uipi()
+    NetworkSpeedWidget._allow_taskbar_created(fake)   # FALSE: not cached
+    assert fake._taskbar_created_allowed == 0
+    NetworkSpeedWidget._allow_taskbar_created(fake)   # retry succeeds
+    assert fake._taskbar_created_allowed == 0x101
+    assert calls == [
+        (0x101, 0x4A5B, _MSGFLT_ALLOW, None),
+        (0x101, 0x4A5B, _MSGFLT_ALLOW, None),
+    ]
 
 
 def test_change_message_filter_reapplied_on_fresh_hwnd(monkeypatch):

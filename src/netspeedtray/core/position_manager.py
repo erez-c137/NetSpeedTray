@@ -70,8 +70,12 @@ _GetClassNameW = _user32.GetClassNameW
 _GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
 _GetClassNameW.restype = ctypes.c_int
 
-# Shell menus (#32768) gate the re-seat: see PositionManager._open_shell_menu_on_monitor.
+# A visible shell menu/popup gates the re-seat: see PositionManager._open_shell_menu_on_monitor.
+# #32768 is the classic Win32 menu; on Win11 the shell's popup host - Start/flyouts, and on
+# some builds taskbar menus/jump lists - surfaces as Xaml_WindowedPopupClass instead, so the
+# guard must recognize both (#327 review).
 _MENU_CLASS = "#32768"
+_SHELL_MENU_CLASSES = (_MENU_CLASS, "Xaml_WindowedPopupClass")
 _MONITOR_DEFAULTTONEAREST = 2
 _MonitorFromWindow = _user32.MonitorFromWindow
 _MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
@@ -84,6 +88,11 @@ _MonitorFromWindow.restype = ctypes.c_void_p
 _RESEAT_BACKOFF_BASE_S = 1.0
 _RESEAT_BACKOFF_MAX_S = 60.0
 _RESEAT_BACKOFF_EXP_CAP = 6
+# Retirement of the backoff requires a sustained on-top stretch (#327 review): a
+# single on-top tick is not proof the burial episode is over, so retiring on the
+# first tick would hand a shell that re-buries every other second the same
+# near-free re-seat cadence the backoff exists to prevent.
+_RESEAT_HEALTHY_S = 60.0
 
 
 # Protocols
@@ -527,6 +536,12 @@ class PositionManager(QObject):
         self._reseat_attempts: int = 0
         self._last_reseat_ts: float = 0.0
         self._first_recovery_logged: bool = False
+        # Start of the current continuous on-top stretch (is_buried_behind_taskbar);
+        # None while we have not verified we are on top. Gates backoff retirement.
+        self._on_top_since: Optional[float] = None
+        # One-time-per-class census of visible window classes seen while scanning
+        # for shell menus (#327 review): logs what the #32768 guard actually sees.
+        self._menu_census_logged: set = set()
         
         # Timers
         self._tray_watcher_timer = QTimer(self)
@@ -897,24 +912,32 @@ class PositionManager(QObject):
 
         Two guards keep this from becoming the #200 re-assert through the back door:
 
-        - A visible shell menu (#32768) anywhere on the widget's monitor defers the
-          re-seat - even one that never overlaps the widget's center hit-test, since
-          the taskbar's owner-cluster rise can still end up above a menu elsewhere
-          on the strip. The caller's cadence retries while the menu is open.
+        - A visible shell menu/popup (#32768, or Win11's Xaml_WindowedPopupClass)
+          anywhere on the widget's monitor defers the re-seat - even one that never
+          overlaps the widget's center hit-test, since the taskbar's owner-cluster
+          rise can still end up above a menu elsewhere on the strip. The caller's
+          cadence retries while the menu is open.
         - A backoff (see _reseat_delay) keeps a shell that re-buries the widget from
-          riding the 1 Hz refresh; healthy steady state retires the escalation.
+          riding the 1 Hz refresh; sustained on-top health retires the escalation.
+
+        The backoff is checked first (#327 review): while an escalation is cooling
+        down the menu scan must not run every tick, so the timeliness sacrifice of
+        skipping the scan inside the backoff window is made up by the caller retrying
+        once the window lapses - well before the user could re-open a menu.
         """
         try:
             hwnd = int(self._state.widget.winId())
             if not win32gui.IsWindow(hwnd):
                 return
-            if self._open_shell_menu_on_monitor(hwnd):
-                logger.debug("Re-seat deferred: a shell menu (#32768) is open on this monitor.")
-                return
             now = time.monotonic()
             delay = self._reseat_delay()
             if self._last_reseat_ts and (now - self._last_reseat_ts) < delay:
                 logger.debug("Re-seat deferred: backoff (%.0fs window).", delay)
+                return
+            if self._open_shell_menu_on_monitor(hwnd):
+                # DEBUG, not INFO: Erez asked for INFO only on the first recovery, and a
+                # long burial would otherwise log this on every backoff tick.
+                logger.debug("Re-seat deferred: a shell menu/popup is open on this monitor.")
                 return
             self._last_reseat_ts = now
             self._reseat_attempts = min(self._reseat_attempts + 1, _RESEAT_BACKOFF_EXP_CAP + 1)
@@ -956,12 +979,29 @@ class PositionManager(QObject):
         def _scan(menu_hwnd, _ctx):
             nonlocal found
             try:
-                if (found or not win32gui.IsWindowVisible(menu_hwnd)
-                        or win32gui.GetClassName(menu_hwnd) != _MENU_CLASS):
+                if found or not win32gui.IsWindowVisible(menu_hwnd):
                     return True
+                cls = win32gui.GetClassName(menu_hwnd)
                 other = _MonitorFromWindow(menu_hwnd, _MONITOR_DEFAULTTONEAREST) or 0
-                if not target or not other or other == target:
+                on_target = not target or not other or other == target
+                if cls not in _SHELL_MENU_CLASSES:
+                    # Census (#327 review): a live session's log then shows every
+                    # visible class on this monitor, so we learn whether a build's
+                    # taskbar menu/jump list is served by a class the guard misses.
+                    # Once per class per run, DEBUG only.
+                    if on_target and cls and cls not in self._menu_census_logged:
+                        self._menu_census_logged.add(cls)
+                        logger.debug(
+                            "Shell-menu scan census: visible class %r (no guard match) on the widget's monitor.",
+                            cls)
+                    return True
+                if on_target:
                     found = True
+                    if cls not in self._menu_census_logged:
+                        self._menu_census_logged.add(cls)
+                        logger.debug(
+                            "Shell-menu scan: matched visible class %r on this monitor - deferring.",
+                            cls)
             except Exception:
                 pass
             return True
@@ -985,9 +1025,10 @@ class PositionManager(QObject):
         deliberately never re-seats (#200). This is the detector for exactly that
         state, so the 1 Hz refresh can reseat_topmost() as a one-shot fix.
 
-        Only the taskbar itself counts as burial. An open shell menu (#32768) or a
-        Win11 flyout covering the widget is the #200 case and must NOT trigger a
-        re-seat, or the widget would raise the taskbar over the open menu.
+        Only the taskbar itself counts as burial. An open shell menu (#32768 /
+        Xaml_WindowedPopupClass) or a Win11 flyout covering the widget is the #200
+        case and must NOT trigger a re-seat, or the widget would raise the taskbar
+        over the open menu.
         """
         try:
             widget = self._state.widget
@@ -1007,15 +1048,37 @@ class PositionManager(QObject):
                 return False
             root = int(_GetAncestor(hit, _GA_ROOT) or hit)
             if root == hwnd:
-                # We are on top: retire the re-seat backoff so a fresh burial episode
-                # later starts its escalation from scratch and logs once at INFO again.
-                self._reseat_attempts = 0
-                self._last_reseat_ts = 0.0
-                self._first_recovery_logged = False
+                now = time.monotonic()
+                if self._on_top_since is None:
+                    # Start (restart) the clock on the current on-top stretch.
+                    self._on_top_since = now
+                elif self._reseat_attempts or self._last_reseat_ts:
+                    if now - self._on_top_since >= _RESEAT_HEALTHY_S:
+                        # A sustained stretch on top is real recovery, not a
+                        # transient flip (#327 review): retire the backoff so a
+                        # fresh burial episode starts its escalation from scratch
+                        # and logs once at INFO again. A single on-top tick must
+                        # NOT retire it, or a shell that re-buries every other
+                        # second keeps riding the near-free cadence.
+                        self._reseat_attempts = 0
+                        self._last_reseat_ts = 0.0
+                        self._first_recovery_logged = False
                 return False  # the point hits us (or one of our children) - we are on top
+            # Any tick where we are not verifiably on top breaks the "continuous"
+            # stretch, including non-taskbar coverage (menus/flyouts).
+            self._on_top_since = None
             buf = ctypes.create_unicode_buffer(64)
             _GetClassNameW(root, buf, 64)
-            return buf.value in _SHELL_TASKBAR_CLASSES
+            covering = buf.value
+            if covering and covering not in self._menu_census_logged:
+                # Census (#327 review): name whatever actually covers the widget's
+                # center, and whether the shell-menu guard recognizes it - so a live
+                # session with a taskbar menu or jump list open gets direct evidence.
+                self._menu_census_logged.add(covering)
+                logger.debug(
+                    "Widget center covered by visible class %r (shell-menu guard match: %s).",
+                    covering, covering in _SHELL_MENU_CLASSES)
+            return covering in _SHELL_TASKBAR_CLASSES
         except Exception as e:
             logger.debug("Buried-behind-taskbar check failed: %s", e)
             return False

@@ -228,14 +228,119 @@ def test_reseat_delay_saturates_at_cap():
     assert m._reseat_delay() == 60.0
 
 
-def test_on_top_retires_backoff_for_next_episode():
-    """Proof we are not buried resets the escalation, so the next burial recovers instantly."""
-    with _hit_env(WIDGET_HWND, WIDGET_HWND) as (m, win32, _):
+def test_on_top_single_tick_does_not_retire_backoff():
+    """A single on-top tick is NOT proof of recovery (#327 review): backoff must survive it."""
+    with _hit_env(WIDGET_HWND, WIDGET_HWND) as (m, _, _):
         m._reseat_attempts = 5
         m._last_reseat_ts = 900.0
         m._first_recovery_logged = True
         assert m.is_buried_behind_taskbar() is False
-        assert (m._reseat_attempts, m._last_reseat_ts, m._first_recovery_logged) == (0, 0.0, False)
+        assert m._reseat_attempts == 5 and m._last_reseat_ts == 900.0
+        assert m._first_recovery_logged is True
+
+
+def test_on_top_sustained_stretch_retires_backoff():
+    """~60 s CONTINUOUSLY on top retires the escalation for the next episode."""
+    clock = _Clock()
+    with patch("netspeedtray.core.position_manager.time", clock):
+        with _hit_env(WIDGET_HWND, WIDGET_HWND) as (m, _, _):
+            m._reseat_attempts = 5
+            m._last_reseat_ts = 900.0
+            m._first_recovery_logged = True
+            m.is_buried_behind_taskbar()          # arm the stretch at t=1000
+            clock.t += 59.0
+            m.is_buried_behind_taskbar()          # still inside the stretch
+            assert m._reseat_attempts == 5
+            clock.t += 2.0                        # past _RESEAT_HEALTHY_S
+            m.is_buried_behind_taskbar()
+            assert (m._reseat_attempts, m._last_reseat_ts, m._first_recovery_logged) == (0, 0.0, False)
+
+
+def test_on_top_stretch_broken_by_burial_restarts():
+    """A burial voids the continuous stretch; the clock restarts from the next on-top tick."""
+    clock = _Clock()
+    with patch("netspeedtray.core.position_manager.time", clock):
+        with _hit_env(WIDGET_HWND, WIDGET_HWND) as (m, win32, from_point):
+            m._reseat_attempts = 5
+            m._last_reseat_ts = 900.0
+            m.is_buried_behind_taskbar()          # verified on top: arm the stretch
+            clock.t += 30.0
+            from_point.return_value = 0x50        # flip to a burial tick
+            with patch("netspeedtray.core.position_manager._GetAncestor", return_value=TB_HWND), \
+                 patch("netspeedtray.core.position_manager._GetClassNameW",
+                       side_effect=_fake_class_name("Shell_TrayWnd")):
+                assert m.is_buried_behind_taskbar() is True
+            assert m._on_top_since is None        # stretch broken
+            from_point.return_value = WIDGET_HWND
+            clock.t += 200.0                      # long on-top time, fresh stretch
+            m.is_buried_behind_taskbar()
+            assert m._reseat_attempts == 5        # stretched far, but stretch is young: no retire
+            clock.t += 61.0
+            m.is_buried_behind_taskbar()
+            assert (m._reseat_attempts, m._last_reseat_ts, m._first_recovery_logged) == (0, 0.0, False)
+
+
+def test_backoff_defers_before_menu_scan():
+    """While a backoff window is open the EnumWindows scan must not run every tick."""
+    m = _manager()
+    clock = _Clock()
+    with patch("netspeedtray.core.position_manager.win32gui") as win32, \
+         patch("netspeedtray.core.position_manager.time", clock):
+        win32.IsWindow.return_value = True
+        m.reseat_topmost()                        # acts; scan ran once, backoff started
+        assert win32.SetWindowPos.call_count == 1
+        assert win32.EnumWindows.call_count == 1
+        clock.t += 0.5                            # inside the 2 s window -> deferred
+        m.reseat_topmost()
+        assert win32.SetWindowPos.call_count == 1
+        assert win32.EnumWindows.call_count == 1  # scan skipped inside the backoff
+
+
+def test_menu_scan_logs_census_once_per_class(caplog):
+    """Visible non-guard classes are logged once each, at DEBUG (the #327 research hook)."""
+    caplog.set_level(logging.DEBUG)
+    m = _manager()
+    with patch("netspeedtray.core.position_manager.win32gui") as win32, \
+         patch("netspeedtray.core.position_manager._MonitorFromWindow", return_value=MON_A):
+        win32.IsWindow.return_value = True
+        win32.IsWindowVisible.return_value = True
+        win32.GetClassName.side_effect = lambda h: {
+            0x77A: "ApplicationFrameWindow", 0x77B: "CabinetWClass"}.get(h, "#32768")
+        win32.EnumWindows.side_effect = lambda cb, ctx: all(
+            [cb(h, ctx) for h in (0x77A, 0x77B, WIDGET_HWND)])
+        m.reseat_topmost()
+        census = [r.getMessage() for r in caplog.records
+                  if r.getMessage().startswith("Shell-menu scan census")]
+        assert len(census) == 2                   # one line per foreign class
+        m.reseat_topmost()                        # repeat scan: memoized, no new lines
+        census2 = [r.getMessage() for r in caplog.records
+                   if r.getMessage().startswith("Shell-menu scan census")]
+        assert census2 == census
+
+
+def test_reseat_deferred_for_win11_xaml_popup_on_same_monitor():
+    """#327 review: on Win11 the shell's popup host is Xaml_WindowedPopupClass, not #32768."""
+    m = _manager()
+    with patch("netspeedtray.core.position_manager.win32gui") as win32, \
+         patch("netspeedtray.core.position_manager._MonitorFromWindow", return_value=MON_A):
+        win32.IsWindow.return_value = True
+        win32.IsWindowVisible.side_effect = lambda h: h == MENU_HWND
+        win32.GetClassName.side_effect = lambda h: {
+            MENU_HWND: "Xaml_WindowedPopupClass"}.get(h, "Other")
+        win32.EnumWindows.side_effect = lambda cb, ctx: cb(MENU_HWND, ctx)
+        m.reseat_topmost()
+        win32.SetWindowPos.assert_not_called()
+
+
+def test_covering_window_class_is_censused(caplog):
+    """#327 review: name what covers the widget and whether the guard matches it."""
+    caplog.set_level(logging.DEBUG)
+    with _hit_env(MENU_HWND, MENU_HWND, "XamlExplorerHostIslandWindow") as (m, _, _):
+        assert m.is_buried_behind_taskbar() is False
+    lines = [r.getMessage() for r in caplog.records if "covered by visible class" in r.getMessage()]
+    assert len(lines) == 1
+    assert "XamlExplorerHostIslandWindow" in lines[0]
+    assert "guard match: False" in lines[0]
 
 
 def test_burial_keeps_backoff_running():
