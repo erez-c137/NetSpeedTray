@@ -1636,8 +1636,8 @@ class NetworkSpeedWidget(QWidget):
         so it passes 'horizontal') - otherwise the live widget and the Settings/Overview preview of the
         same config diverge. In particular the side-by-side right-align probe only fires for 'horizontal'
         (the over-reserved, right-anchored-to-the-tray case); a side taskbar is docked differently and is
-        left as-is. (The renderer's draw methods accept layout_mode but don't branch on it today, so this
-        only drives the right-align decision and the live/preview parity.)
+        left as-is. (Beyond the right-align decision and the live/preview parity, 'vertical' only stacks
+        the side_by_side segments top-to-bottom, since a side taskbar has no room for them in a row.)
         """
         try:
             # A free-floating widget on a taskbar-less display has no taskbar edge; render it as a
