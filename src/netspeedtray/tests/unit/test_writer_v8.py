@@ -30,11 +30,12 @@ from netspeedtray.core.db import schema_v8 as S
 from netspeedtray.core.db import writer_v8 as W
 
 from netspeedtray.core.db.history_reader import V8HistoryReader
+from netspeedtray.tests.unit.v8_twin_fixture import fixed_now
 
 Ctr = namedtuple("Ctr", "bytes_sent bytes_recv packets_sent packets_recv errin errout dropin dropout")
 Nic = namedtuple("Nic", "isup duplex speed mtu flags")
 
-NOW = int(time.time())   # the reader judges watermarks against the real clock
+NOW = int(fixed_now().timestamp())   # readers below get this as their clock (no wall-clock reads)
 
 
 def _ctr(sent, recv, errin=0, errout=0, dropin=0, dropout=0):
@@ -92,7 +93,7 @@ def _all_rows_volume(c):
 
 def _reader_volume(db_path, conn_factory):
     rc = conn_factory()
-    r = V8HistoryReader(lambda: rc, lambda: db_path, logging.getLogger("t"))
+    r = V8HistoryReader(lambda: rc, lambda: db_path, logging.getLogger("t"), clock=lambda: NOW)
     v = r.volume(None, datetime.fromtimestamp(NOW + 3600), None, 1.0)
     rc.close()
     assert not v.reconstructed
@@ -309,7 +310,7 @@ def test_heartbeat_on_every_flush_and_crash_is_bounded_by_the_last_one(conn, tmp
                         (t0, t0, sid2)).fetchone() == (150, 150, 1)
     db = tmp_path / "speed_history.db"
     rc = sqlite3.connect(db)
-    cov = V8HistoryReader(lambda: rc, lambda: db, logging.getLogger("t")).coverage(
+    cov = V8HistoryReader(lambda: rc, lambda: db, logging.getLogger("t"), clock=lambda: NOW).coverage(
         datetime.fromtimestamp(t0), datetime.fromtimestamp(t0 + 200))
     rc.close()
     assert cov.sessions == ((t0, t0 + 30), (t0 + 100, t0 + 150))
@@ -484,7 +485,7 @@ def test_gate5_fractional_loss_is_carried_exactly_through_rollups(conn, tmp_path
     assert {v for (v,) in conn.execute("SELECT value FROM hw_raw")} >= {0.25, 0.125, 0.75}
     db = tmp_path / "speed_history.db"
     rc = sqlite3.connect(db)
-    r = V8HistoryReader(lambda: rc, lambda: db, logging.getLogger("t"))
+    r = V8HistoryReader(lambda: rc, lambda: db, logging.getLogger("t"), clock=lambda: NOW)
     pts = r.hardware_history(name, datetime.fromtimestamp(base - 1), datetime.fromtimestamp(base + 3600))
     rc.close()
     assert [v for _, v in pts] == [avg]
@@ -648,7 +649,7 @@ def test_rows_in_the_migration_minute_merge_into_the_folded_minute(tmp_path):
     assert c.execute("SELECT COUNT(*) FROM net_raw WHERE ts < ?", (wr,)).fetchone()[0] == 0
     c.close()
     rc = sqlite3.connect(db)
-    r = V8HistoryReader(lambda: rc, lambda: db, logging.getLogger("t"))
+    r = V8HistoryReader(lambda: rc, lambda: db, logging.getLogger("t"), clock=lambda: mig_now + 20)
     v = r.volume(datetime.fromtimestamp(bucket), datetime.fromtimestamp(wr + 59), "Wi-Fi 3", 1.0)
     assert v.reconstructed
     assert v.up_bytes == pytest.approx(old[1] * old[3] + sum(b for _, b in new) + 77, rel=1e-12)

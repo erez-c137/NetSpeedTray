@@ -40,6 +40,7 @@ the odometer's in-memory state.
 
 import logging
 import sqlite3
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -170,11 +171,21 @@ class _ReaderBase(HistoryReader):
 
     def __init__(self, conn_provider: Callable[[], sqlite3.Connection],
                  db_path_provider: Callable[[], Path],
-                 logger: Optional[logging.Logger] = None) -> None:
+                 logger: Optional[logging.Logger] = None,
+                 clock: Optional[Callable[[], float]] = None) -> None:
         self._conn = conn_provider
         self._db_path = db_path_provider
+        # Epoch seconds "now" for the horizon / watermark-lead / open-ended-window rules. The app always
+        # uses the wall clock; tests inject a fixed one so no result depends on when the suite runs.
+        self._clock = clock or time.time
         # The owner's logger, so every message keeps the name and wording it had inside WidgetState.
         self.logger = logger or logging.getLogger("NetSpeedTray.HistoryReader")
+
+    def _now_ts(self) -> int:
+        return int(self._clock())
+
+    def _now(self) -> datetime:
+        return datetime.fromtimestamp(self._clock())
 
     def _log_read_failure(self, what: str, e: BaseException) -> None:
         """A read that failed and will return empty. Not-ready-yet is expected (INFO, no traceback);
@@ -258,7 +269,7 @@ class V7HistoryReader(_ReaderBase):
         tier's earliest in-horizon row. The finest tier is unbounded. The MIN is an uncorrelated
         scalar subquery - evaluated once, inside the bounded statement's own snapshot - and a single
         seek on the (timestamp, ...) primary key."""
-        horizons = self._horizons(int(datetime.now().timestamp()))
+        horizons = self._horizons(self._now_ts())
         out: List[Tuple[str, tuple]] = [("", ())]
         for i in range(1, len(tables)):
             parts = [f"COALESCE((SELECT MIN(timestamp) FROM {tables[j]} WHERE timestamp >= ?), {self._NO_BOUND})"
@@ -282,7 +293,7 @@ class V7HistoryReader(_ReaderBase):
                       interface_name: Optional[str] = None, return_raw: bool = False,
                       resolution: Resolution = 'auto') -> List[SpeedPoint]:
         # 1. Timeline Setup
-        _now_ts = int(datetime.now().timestamp())
+        _now_ts = self._now_ts()
         _start_ts = int(start_time.timestamp()) if start_time else 0
         _end_ts = int(end_time.timestamp()) if end_time else _now_ts
 
@@ -548,7 +559,7 @@ class V7HistoryReader(_ReaderBase):
             total_up, total_down = 0.0, 0.0
 
             # Optimization: Only query tiers that could potentially have data for this range.
-            now_ts = int(datetime.now().timestamp())
+            now_ts = self._now_ts()
 
             # Bytes per tier = (sum of per-sample RATES) x (the seconds that sum represents). For the
             # MINUTE and HOUR rollups that span is the FIXED bucket duration (60 / 3600 s) - NOT
@@ -658,7 +669,7 @@ class V7HistoryReader(_ReaderBase):
             conn = self._conn()
             cursor = conn.cursor()
 
-            _end = end_time or datetime.now()
+            _end = end_time or self._now()
             _start = start_time or (_end - timedelta(hours=24))
 
             start_ts = int(_start.timestamp())
@@ -830,7 +841,7 @@ class V8HistoryReader(_ReaderBase):
         Lower bound (raw, minute): the tier's own watermark - rows below it were rolled up already.
         Upper bound (minute, hour): every finer tier's ceiling, which is that tier's watermark, or - only
         when it has none - the step-2 rule: its earliest row inside its retention horizon."""
-        now_ts = int(datetime.now().timestamp())
+        now_ts = self._now_ts()
         horizons = self._horizons(now_ts)
         keys = self._WM_KEYS[tables]
 
@@ -879,7 +890,7 @@ class V8HistoryReader(_ReaderBase):
     def speed_history(self, start_time: Optional[datetime] = None, end_time: Optional[datetime] = None,
                       interface_name: Optional[str] = None, return_raw: bool = False,
                       resolution: Resolution = 'auto') -> List[SpeedPoint]:
-        _now_ts = int(datetime.now().timestamp())
+        _now_ts = self._now_ts()
         _start_ts = int(start_time.timestamp()) if start_time else 0
         _end_ts = int(end_time.timestamp()) if end_time else _now_ts
         target_res = resolution
@@ -1050,7 +1061,7 @@ class V8HistoryReader(_ReaderBase):
         return v.up_bytes, v.down_bytes
 
     def coverage(self, start_time: datetime, end_time: datetime) -> Optional[Coverage]:
-        now_ts = int(datetime.now().timestamp())
+        now_ts = self._now_ts()
         st = int(start_time.timestamp())
         et = max(st, min(int(end_time.timestamp()), now_ts))
 
@@ -1104,7 +1115,7 @@ class V8HistoryReader(_ReaderBase):
 
     def hardware_history(self, stat_type: str, start_time: Optional[datetime] = None,
                          end_time: Optional[datetime] = None) -> List[Tuple[datetime, float]]:
-        _end = end_time or datetime.now()
+        _end = end_time or self._now()
         _start = start_time or (_end - timedelta(hours=24))
         start_ts, end_ts = int(_start.timestamp()), int(_end.timestamp())
         duration = end_ts - start_ts
