@@ -14,7 +14,7 @@ blindness. The GPU shades are theme-aware (the dark hues fail WCAG contrast on t
 background, so light mode gets darker siblings). Smart defaults only - Monitor settings expose color
 pickers that override.
 
-On a HYBRID laptop (Intel iGPU + a discrete Nvidia/AMD) the graphed value is max-across-adapters
+On a HYBRID laptop (an Intel or Ryzen iGPU + a discrete Nvidia/AMD) the graphed value is max-across-adapters
 (usually the idle-busy iGPU), so asserting the discrete brand would be a lie - we return 'unknown'
 (neutral) in that case so color + legend never claim a GPU the data isn't about.
 """
@@ -66,22 +66,18 @@ def cpu_vendor() -> str:
 def gpu_vendor() -> str:
     """'nvidia' | 'amd' | 'intel' | 'unknown'.
 
-    Enumerates real (PCI) display adapters and decides deterministically: a hybrid box (a discrete
-    GPU *and* an Intel iGPU) returns 'unknown' (the graphed util is max-across-adapters, so no single
-    brand is honest); otherwise the discrete vendor wins, else Intel, else unknown.
+    Enumerates real (PCI) display adapters. Exactly one vendor among them -> that vendor; two or more
+    DIFFERENT vendors -> 'unknown'. The graphed util is max-across-adapters, so on a mixed box no single
+    brand is honest. That covers Intel iGPU + NVIDIA/AMD laptops AND Ryzen iGPU + NVIDIA ones - the Ryzen
+    iGPU's DriverDesc ("AMD Radeon(TM) Graphics") is indistinguishable from a discrete Radeon by name,
+    so any vendor mix is treated as hybrid rather than guessing which adapter is integrated.
     """
-    adapters = _enumerate_gpu_adapters()
-    discrete = sorted({v for v in adapters if v in ("nvidia", "amd")})
-    has_intel = "intel" in adapters
-    if discrete and has_intel:
-        _logger.debug("Hybrid GPU detected (%s + intel) - using neutral color.", discrete)
+    vendors = sorted(set(_enumerate_gpu_adapters()))
+    if len(vendors) > 1:
+        _logger.debug("Mixed GPU vendors %s (hybrid) - using neutral color.", vendors)
         return "unknown"
-    if discrete:
-        if len(discrete) > 1:
-            _logger.debug("Multiple discrete GPUs %s - picking %s deterministically.", discrete, discrete[0])
-        return discrete[0]
-    if has_intel:
-        return "intel"
+    if vendors:
+        return vendors[0]
     return "unknown"
 
 
@@ -146,10 +142,13 @@ def graph_line_style(role: str, override_color: Optional[str] = None,
 
 
 # --- The taskbar widget's CPU/GPU labels ("Brand" label colour) ---------------------------------
-# Small glyphs and 9 pt text on the taskbar, so every shade clears WCAG's 4.5:1 TEXT contrast on the
-# taskbar it is meant for (reference backgrounds #202020 / #2B2B2B dark, #EEEEEE / #E8E8E8 light; the
-# figures are pinned by test_hardware_label_colors.py). The pure brand hexes (#0071C5, #E2231A) are
-# only ~3:1 on a dark taskbar, hence the lifted dark-taskbar shades and the deepened light ones.
+# Small glyphs and 9 pt text on the taskbar, so every brand / sibling shade, and every light-taskbar
+# shade, clears WCAG's 4.5:1 TEXT contrast on the taskbar it is meant for (reference backgrounds
+# #202020 / #2B2B2B / #1C1C1C dark, #EEEEEE / #E8E8E8 / #F3F3F3 light; pinned by
+# test_hardware_label_colors.py). The ONE exception is the dark-taskbar neutral pair, kept as the exact
+# pre-2.2 colours so unknown-vendor dark-taskbar widgets do not change: CPU #3498DB is 4.5-5.4:1 but
+# GPU #E74C3C only 3.7-4.5:1 (4.26:1 on #202020). The pure brand hexes (#0071C5, #E2231A) are only
+# ~3:1 on a dark taskbar, hence the lifted dark-taskbar shades and the deepened light ones.
 # The GPU wears its OWN brand hue (NVIDIA green, AMD red, Intel blue); only when CPU and GPU share a
 # vendor does it switch to a sibling shade (AMD orange, Intel teal) so the two stay apart at a glance.
 # Unknown (incl. hybrid laptops, see gpu_vendor) keeps the pre-2.2 neutral blue/red, deepened on a

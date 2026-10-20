@@ -102,6 +102,42 @@ def test_hybrid_laptop_gpu_falls_back_to_neutral(monkeypatch):
         hv.gpu_vendor.cache_clear()
 
 
+@pytest.mark.parametrize("adapters", [
+    ["amd", "nvidia"],             # Ryzen iGPU ("AMD Radeon(TM) Graphics") + discrete NVIDIA
+    ["nvidia", "amd"],
+    ["intel", "amd"],
+    ["intel", "nvidia", "nvidia"],
+])
+def test_any_mix_of_gpu_vendors_is_hybrid(monkeypatch, adapters):
+    """The Ryzen iGPU's name reads like a discrete Radeon, so a Ryzen + NVIDIA laptop used to come out
+    as 'amd' (an orange/red GPU label for a GPU % that is max-across-adapters). Any vendor mix is
+    'unknown', which is what the Brand tooltip promises for hybrids."""
+    hv.gpu_vendor.cache_clear()
+    monkeypatch.setattr(hv, "_enumerate_gpu_adapters", lambda: list(adapters))
+    try:
+        assert hv.gpu_vendor() == "unknown"
+    finally:
+        hv.gpu_vendor.cache_clear()
+
+
+@pytest.mark.parametrize("adapters,expected", [
+    (["nvidia"], "nvidia"), (["amd"], "amd"), (["intel"], "intel"),
+    (["nvidia", "nvidia"], "nvidia"), ([], "unknown"),
+])
+def test_a_single_gpu_vendor_is_reported(monkeypatch, adapters, expected):
+    hv.gpu_vendor.cache_clear()
+    monkeypatch.setattr(hv, "_enumerate_gpu_adapters", lambda: list(adapters))
+    try:
+        assert hv.gpu_vendor() == expected
+    finally:
+        hv.gpu_vendor.cache_clear()
+
+
+def test_ryzen_igpu_name_classifies_as_amd():
+    """Pins the premise of the hybrid rule above: by name alone the iGPU is just 'amd'."""
+    assert hv._classify_gpu("AMD Radeon(TM) Graphics") == "amd"
+
+
 def _palette(light: bool):
     i = 1 if light else 0
     return ([v[i] for v in hv._LABEL_BRAND.values()] + [v[i] for v in hv._LABEL_GPU_SIBLING.values()]
@@ -242,16 +278,20 @@ def test_old_styles_survive_a_full_load(tmp_path, old, style, color):
     assert (loaded["hardware_label_style"], loaded["hardware_label_color"]) == (style, color)
 
 
-def test_a_colour_already_on_file_wins_over_the_implied_one(manager):
-    """A 2.2 config read back after a rollback: the old build reset the style, kept the new key."""
-    out = manager._migrate_config({"hardware_label_style": "icons_colored",
-                                   "hardware_label_color": "custom"})
-    assert (out["hardware_label_style"], out["hardware_label_color"]) == ("icons", "custom")
-
-
-def test_monochrome_always_means_match_text(manager):
+@pytest.mark.parametrize("color", ["brand", "custom", "match_text"])
+def test_a_colour_already_on_file_wins_over_the_implied_one(manager, color):
+    """Rollback round trip: 2.1.x / 2.2 beta.2 reset the unknown style "icons" to THEIR default,
+    icons_monochrome, but keep the unknown hardware_label_color. Back on this build the colour on
+    file is the user's real choice; monochrome must not turn Brand/Custom into Match text."""
     out = manager._migrate_config({"hardware_label_style": "icons_monochrome",
-                                   "hardware_label_color": "brand"})
+                                   "hardware_label_color": color, "cpu_label_color": "#00FF00"})
+    assert (out["hardware_label_style"], out["hardware_label_color"]) == ("icons", color)
+    assert out["cpu_label_color"] == "#00FF00"
+
+
+def test_monochrome_without_a_colour_means_match_text(manager):
+    """A genuine pre-2.2 monochrome config has no colour key: it keeps its look as Match text."""
+    out = manager._migrate_config({"hardware_label_style": "icons_monochrome"})
     assert out["hardware_label_color"] == "match_text"
 
 
@@ -262,7 +302,7 @@ def test_new_text_style_is_left_alone(manager):
 
 def test_fresh_defaults():
     assert D.DEFAULT_CONFIG["hardware_label_style"] == "icons"
-    assert D.DEFAULT_CONFIG["hardware_label_color"] == "match_text"
+    assert D.DEFAULT_CONFIG["hardware_label_color"] == "brand"   # owner call: new installs get Brand
     # Custom starts at the pre-2.2 neutral colours.
     assert D.DEFAULT_CPU_LABEL_COLOR.upper() == constants.renderer.CPU_LINE_COLOR.upper()
     assert D.DEFAULT_GPU_LABEL_COLOR.upper() == constants.renderer.GPU_LINE_COLOR.upper()
@@ -317,10 +357,22 @@ def test_page_colour_dialog_result_lands_in_the_field(page):
     assert page.get_settings()["gpu_label_color"] == "#ABCDEF"
 
 
-def test_page_half_typed_hex_saves_the_default(page):
-    page.load_settings({"hardware_label_color": "custom"})
+def test_page_half_typed_hex_keeps_the_last_valid_colour(q_app):
+    """Saving (or the live preview firing) mid-edit must keep the colour the user had, not reset it
+    to the default - and partial keystrokes must not push a settings update at all."""
+    from netspeedtray.views.settings.pages.hardware import HardwarePage
+    calls = []
+    page = HardwarePage(I18nStrings("en_US"), lambda: calls.append(1))
+    page.load_settings({"hardware_label_color": "custom", "cpu_label_color": "#112233"})
+    calls.clear()
     page.cpu_label_color_input.setText("#12")
-    assert page.get_settings()["cpu_label_color"] == D.DEFAULT_CPU_LABEL_COLOR
+    assert page.get_settings()["cpu_label_color"] == "#112233"
+    assert not calls, "a half-typed hex pushed a settings update"
+    page.cpu_label_color_input.setText("#123456")
+    assert page.get_settings()["cpu_label_color"] == "#123456"
+    assert calls, "a complete hex did not update the settings"
+    page.cpu_label_color_input.setText("#1234")
+    assert page.get_settings()["cpu_label_color"] == "#123456"
 
 
 def test_preview_mirrors_the_label_colour(q_app):

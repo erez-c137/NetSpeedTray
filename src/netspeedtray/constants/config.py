@@ -145,9 +145,10 @@ class ConfigConstants:
     HARDWARE_LABEL_STYLE_CHOICES: Final[List[str]] = ["icons", "text"]
     DEFAULT_HARDWARE_LABEL_STYLE: Final[str] = "icons"
     HARDWARE_LABEL_COLOR_CHOICES: Final[List[str]] = ["brand", "match_text", "custom"]
-    # match_text keeps the old default (monochrome) look and follows the widget's text colour, so the
-    # labels stay visible on a LIGHT taskbar - the old hard-coded white vanished there.
-    DEFAULT_HARDWARE_LABEL_COLOR: Final[str] = "match_text"
+    # New installs get Brand (owner call, 2.2). Existing configs are migrated by their old style instead:
+    # icons_monochrome users keep their look as match_text (which, unlike the old hard-coded white,
+    # stays visible on a LIGHT taskbar); the coloured styles become brand.
+    DEFAULT_HARDWARE_LABEL_COLOR: Final[str] = "brand"
     # Custom picks start at the pre-2.2 neutral label colours (== constants.renderer.CPU/GPU_LINE_COLOR).
     DEFAULT_CPU_LABEL_COLOR: Final[str] = "#3498DB"
     DEFAULT_GPU_LABEL_COLOR: Final[str] = "#E74C3C"

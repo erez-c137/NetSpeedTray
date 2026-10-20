@@ -30,6 +30,9 @@ class HardwarePage(QWidget):
         self.on_change = on_change
         # SettingsDialog._open_color_dialog(key) - the same QColorDialog flow the Appearance colours use.
         self.open_color_dialog = color_dialog_callback or (lambda _key: None)
+        # Last complete #RRGGBB per custom label colour - what get_settings reports while a field is mid-edit.
+        self._last_valid_hex = {k: getattr(constants.config.defaults, f"DEFAULT_{k.upper()}")
+                                for k in self.LABEL_COLOR_KEYS}
         self._setup_ui()
 
     def _setup_ui(self):
@@ -228,9 +231,12 @@ class HardwarePage(QWidget):
         return len(t) == 7 and t.startswith("#") and all(c in "0123456789abcdefABCDEF" for c in t[1:])
 
     def _label_hex(self, key: str) -> str:
-        """The hex field's value, or the default while it is half-typed (validation would reset it anyway)."""
+        """The last COMPLETE #RRGGBB in the field. A half-typed value never reaches the config - saving
+        mid-edit keeps the colour the user had, not the default (validation would reset a partial one)."""
         text = getattr(self, f"{key}_input").text().strip()
-        return text.upper() if self._is_hex(text) else getattr(constants.config.defaults, f"DEFAULT_{key.upper()}")
+        if self._is_hex(text):
+            self._last_valid_hex[key] = text.upper()
+        return self._last_valid_hex[key]
 
     def _paint_swatch(self, key: str, hex_code: str) -> None:
         if self._is_hex(hex_code):
@@ -245,11 +251,19 @@ class HardwarePage(QWidget):
         line.blockSignals(True)
         line.setText(QColor(hex_code).name().upper() if QColor.isValidColorName(hex_code) else hex_code)
         line.blockSignals(False)
+        if self._is_hex(line.text()):
+            self._last_valid_hex[key] = line.text().upper()
         self._paint_swatch(key, line.text())
         self.on_change()
 
     def _on_label_hex_edited(self, key: str) -> None:
-        self._paint_swatch(key, getattr(self, f"{key}_input").text().strip())
+        """Typing in a hex field: only a complete #RRGGBB updates the swatch, the stored colour and the
+        live preview; keystrokes in between change nothing."""
+        text = getattr(self, f"{key}_input").text().strip()
+        if not self._is_hex(text):
+            return
+        self._last_valid_hex[key] = text.upper()
+        self._paint_swatch(key, text)
         self.on_change()
 
     def _on_label_color_changed(self, _index: int) -> None:
