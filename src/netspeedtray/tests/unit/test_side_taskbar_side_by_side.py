@@ -48,7 +48,8 @@ def _config(**overrides):
         "monitor_cpu_enabled": True,
         "monitor_gpu_enabled": True,
         "show_hardware_temps": False,
-        "hardware_label_style": "text",   # coloured CPU/GPU labels, no icon assets
+        "hardware_label_style": "text",   # CPU/GPU text labels, no icon assets
+        "hardware_label_color": "custom",  # at its defaults == the CPU/GPU colours probed below
         "graph_enabled": False,
         "background_opacity": 0,
     })
@@ -165,7 +166,7 @@ def test_side_taskbar_puts_stacked_memory_on_rows_of_its_own(q_app):
     top = cpu_ys.min()
     right_edge = {}
     for stack in (True, False):
-        cfg = _config(stack_hardware_stats=stack, hardware_label_style="icons_colored", **memory)
+        cfg = _config(stack_hardware_stats=stack, hardware_label_style="icons", **memory)
         width, height, _ = _side_taskbar_size(cfg)
         arr = _paint(cfg, width, height)
         right_edge[stack] = np.nonzero((arr[top:, :, 3] >= 250).any(axis=0))[0].max()

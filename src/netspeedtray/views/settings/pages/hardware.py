@@ -1,10 +1,12 @@
 """
 Hardware Monitoring Settings Page.
 """
-from typing import Dict, Any, Callable
+from typing import Dict, Any, Callable, Optional
 
 from PyQt6.QtCore import pyqtSignal
-from PyQt6.QtWidgets import QWidget, QLabel, QGraphicsOpacityEffect
+from PyQt6.QtGui import QColor
+from PyQt6.QtWidgets import (QWidget, QLabel, QGraphicsOpacityEffect, QHBoxLayout, QVBoxLayout,
+                             QLineEdit, QPushButton)
 
 from netspeedtray import constants
 from netspeedtray.utils import styles as su
@@ -18,10 +20,19 @@ class HardwarePage(QWidget):
     # enabled stat is actually visible - the convenience this page used to do itself.
     hardware_enabled = pyqtSignal()
 
-    def __init__(self, i18n, on_change: Callable[[], None]):
+    # Config keys of the two custom label colours; each has a "<key>_button" swatch and "<key>_input" hex.
+    LABEL_COLOR_KEYS = ("cpu_label_color", "gpu_label_color")
+
+    def __init__(self, i18n, on_change: Callable[[], None],
+                 color_dialog_callback: Optional[Callable[[str], None]] = None):
         super().__init__()
         self.i18n = i18n
         self.on_change = on_change
+        # SettingsDialog._open_color_dialog(key) - the same QColorDialog flow the Appearance colours use.
+        self.open_color_dialog = color_dialog_callback or (lambda _key: None)
+        # Last complete #RRGGBB per custom label colour - what get_settings reports while a field is mid-edit.
+        self._last_valid_hex = {k: getattr(constants.config.defaults, f"DEFAULT_{k.upper()}")
+                                for k in self.LABEL_COLOR_KEYS}
         self._setup_ui()
 
     def _setup_ui(self):
@@ -75,13 +86,50 @@ class HardwarePage(QWidget):
             f"color: {su.semantic_colors()['text_secondary']}; background: transparent; padding: 0 2px;")
         layout.addWidget(temps_note)
 
+        # Indicator SHAPE (icons / text) and COLOUR (brand / match text / custom) are separate choices;
+        # pre-2.2 configs carried both in one three-way style and are split by the config migration.
         self.label_style = Win11ComboBox()
-        self.label_style.addItem(self.i18n.HARDWARE_LABEL_STYLE_COLORED_ICONS, userData="icons_colored")
-        self.label_style.addItem(self.i18n.HARDWARE_LABEL_STYLE_MONOCHROME_ICONS, userData="icons_monochrome")
+        self.label_style.addItem(self.i18n.HARDWARE_LABEL_STYLE_ICONS, userData="icons")
         self.label_style.addItem(self.i18n.HARDWARE_LABEL_STYLE_TEXT_LABELS, userData="text")
         self.label_style.setMinimumWidth(200)
         self.label_style.currentIndexChanged.connect(self.on_change)
         layout.addWidget(SettingCard(self.i18n.HARDWARE_INDICATOR_STYLE_LABEL, control=self.label_style))
+
+        self.label_color = Win11ComboBox()
+        self.label_color.addItem(self.i18n.HARDWARE_LABEL_COLOR_BRAND, userData="brand")
+        self.label_color.addItem(self.i18n.HARDWARE_LABEL_COLOR_MATCH_TEXT, userData="match_text")
+        self.label_color.addItem(self.i18n.HARDWARE_LABEL_COLOR_CUSTOM, userData="custom")
+        self.label_color.setMinimumWidth(200)
+        self.label_color.setToolTip(self.i18n.HARDWARE_LABEL_COLOR_TOOLTIP)
+        self.label_color.currentIndexChanged.connect(self._on_label_color_changed)
+        layout.addWidget(SettingCard(self.i18n.HARDWARE_LABEL_COLOR_LABEL, control=self.label_color))
+
+        # Custom: a swatch (opens the colour dialog) + hex field per label, like the arrow colours.
+        self.label_colors_container = QWidget()
+        lc_layout = QVBoxLayout(self.label_colors_container)
+        lc_layout.setContentsMargins(0, 0, 0, 0)
+        lc_layout.setSpacing(4)
+        for key, label in (("cpu_label_color", self.i18n.CPU_LABEL_COLOR_LABEL),
+                           ("gpu_label_color", self.i18n.GPU_LABEL_COLOR_LABEL)):
+            button = QPushButton()
+            button.setObjectName(key)
+            button.setFixedSize(36, 26)
+            button.clicked.connect(lambda _=False, k=key: self.open_color_dialog(k))
+            line = QLineEdit()
+            line.setMaxLength(7)
+            line.setFixedWidth(90)
+            line.textChanged.connect(lambda _text, k=key: self._on_label_hex_edited(k))
+            setattr(self, f"{key}_button", button)
+            setattr(self, f"{key}_input", line)
+            row = QWidget()
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(8)
+            row_layout.addWidget(button)
+            row_layout.addWidget(line)
+            lc_layout.addWidget(SettingCard(label, control=row))
+        layout.addWidget(self.label_colors_container)
+        self.label_colors_container.setVisible(False)
 
         # Throttle temperature (Statistics): flags time spent at/above this temp in the Stats-detail
         # sheet so thermal throttling is provable (0 = off). Only meaningful when temps are collected.
@@ -143,10 +191,18 @@ class HardwarePage(QWidget):
         self.show_power.setChecked(config.get("show_hardware_power", False))
         self.show_memory_labels.setChecked(config.get("show_memory_labels", False))
 
-        style_val = config.get("hardware_label_style", "icons_colored")
-        style_idx = self.label_style.findData(style_val)
-        if style_idx >= 0:
-            self.label_style.setCurrentIndex(style_idx)
+        d = constants.config.defaults
+        style_idx = self.label_style.findData(config.get("hardware_label_style", d.DEFAULT_HARDWARE_LABEL_STYLE))
+        self.label_style.setCurrentIndex(max(0, style_idx))
+        self.label_color.blockSignals(True)
+        color_idx = self.label_color.findData(config.get("hardware_label_color", d.DEFAULT_HARDWARE_LABEL_COLOR))
+        if color_idx < 0:
+            color_idx = self.label_color.findData(d.DEFAULT_HARDWARE_LABEL_COLOR)
+        self.label_color.setCurrentIndex(color_idx)
+        self.label_color.blockSignals(False)
+        self.label_colors_container.setVisible(self.label_color.currentData() == "custom")
+        for key in self.LABEL_COLOR_KEYS:
+            self.set_color_input(key, str(config.get(key, getattr(d, f"DEFAULT_{key.upper()}"))))
 
         self.throttle_temp.setValue(int(config.get("throttle_temp_c", 0) or 0))
 
@@ -167,6 +223,53 @@ class HardwarePage(QWidget):
         self.cpu_load_low.setValue(int(config.get("cpu_load_low_threshold", d.DEFAULT_CPU_LOAD_LOW_THRESHOLD)))
         self.gpu_load_high.setValue(int(config.get("gpu_load_high_threshold", d.DEFAULT_GPU_LOAD_HIGH_THRESHOLD)))
         self.gpu_load_low.setValue(int(config.get("gpu_load_low_threshold", d.DEFAULT_GPU_LOAD_LOW_THRESHOLD)))
+
+    # --- CPU/GPU label colour -------------------------------------------------------------------
+    @staticmethod
+    def _is_hex(text: str) -> bool:
+        t = (text or "").strip()
+        return len(t) == 7 and t.startswith("#") and all(c in "0123456789abcdefABCDEF" for c in t[1:])
+
+    def _label_hex(self, key: str) -> str:
+        """The last COMPLETE #RRGGBB in the field. A half-typed value never reaches the config - saving
+        mid-edit keeps the colour the user had, not the default (validation would reset a partial one)."""
+        text = getattr(self, f"{key}_input").text().strip()
+        if self._is_hex(text):
+            self._last_valid_hex[key] = text.upper()
+        return self._last_valid_hex[key]
+
+    def _paint_swatch(self, key: str, hex_code: str) -> None:
+        if self._is_hex(hex_code):
+            getattr(self, f"{key}_button").setStyleSheet(
+                f"background-color: {hex_code}; border: 1px solid #5A5A5A; border-radius: 4px;")
+
+    def set_color_input(self, key: str, hex_code: str) -> None:
+        """Set a custom label colour (from load_settings or the colour dialog); key is a config key."""
+        if key not in self.LABEL_COLOR_KEYS:
+            return
+        line = getattr(self, f"{key}_input")
+        line.blockSignals(True)
+        line.setText(QColor(hex_code).name().upper() if QColor.isValidColorName(hex_code) else hex_code)
+        line.blockSignals(False)
+        if self._is_hex(line.text()):
+            self._last_valid_hex[key] = line.text().upper()
+        self._paint_swatch(key, line.text())
+        self.on_change()
+
+    def _on_label_hex_edited(self, key: str) -> None:
+        """Typing in a hex field: only a complete #RRGGBB updates the swatch, the stored colour and the
+        live preview; keystrokes in between change nothing."""
+        text = getattr(self, f"{key}_input").text().strip()
+        if not self._is_hex(text):
+            return
+        self._last_valid_hex[key] = text.upper()
+        self._paint_swatch(key, text)
+        self.on_change()
+
+    def _on_label_color_changed(self, _index: int) -> None:
+        self.label_colors_container.setVisible(self.label_color.currentData() == "custom")
+        self.layout_changed.emit()
+        self.on_change()
 
     def _on_monitor_toggled(self, checked: bool):
         """A monitor was toggled. When turned ON, ask the Widget page (via the dialog) to make sure the
@@ -212,6 +315,9 @@ class HardwarePage(QWidget):
             "show_hardware_temps": self.show_temps.isChecked(),
             "show_hardware_power": self.show_power.isChecked(),
             "hardware_label_style": self.label_style.currentData(),
+            "hardware_label_color": self.label_color.currentData(),
+            "cpu_label_color": self._label_hex("cpu_label_color"),
+            "gpu_label_color": self._label_hex("gpu_label_color"),
             "cpu_load_high_threshold": float(self.cpu_load_high.value()),
             "cpu_load_low_threshold": float(self.cpu_load_low.value()),
             "gpu_load_high_threshold": float(self.gpu_load_high.value()),

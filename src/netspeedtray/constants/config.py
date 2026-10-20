@@ -139,7 +139,19 @@ class ConfigConstants:
     DEFAULT_SHOW_HARDWARE_TEMPS: Final[bool] = True
     DEFAULT_SHOW_HARDWARE_POWER: Final[bool] = False
     DEFAULT_STACK_HARDWARE_STATS: Final[bool] = True
-    DEFAULT_HARDWARE_LABEL_STYLE: Final[str] = "icons_monochrome"
+    # CPU/GPU label SHAPE and COLOUR are two settings (2.2): the style is "icons" | "text", the
+    # colour "brand" | "match_text" | "custom". The pre-2.2 three-way style (icons_colored /
+    # icons_monochrome / text) is split in two by ConfigManager._migrate_config.
+    HARDWARE_LABEL_STYLE_CHOICES: Final[List[str]] = ["icons", "text"]
+    DEFAULT_HARDWARE_LABEL_STYLE: Final[str] = "icons"
+    HARDWARE_LABEL_COLOR_CHOICES: Final[List[str]] = ["brand", "match_text", "custom"]
+    # New installs get Brand (owner call, 2.2). Existing configs are migrated by their old style instead:
+    # icons_monochrome users keep their look as match_text (which, unlike the old hard-coded white,
+    # stays visible on a LIGHT taskbar); the coloured styles become brand.
+    DEFAULT_HARDWARE_LABEL_COLOR: Final[str] = "brand"
+    # Custom picks start at the pre-2.2 neutral label colours (== constants.renderer.CPU/GPU_LINE_COLOR).
+    DEFAULT_CPU_LABEL_COLOR: Final[str] = "#3498DB"
+    DEFAULT_GPU_LABEL_COLOR: Final[str] = "#E74C3C"
     DEFAULT_WIDGET_DISPLAY_MODE: Final[str] = "side_by_side" # Choices: network_only, cycle, side_by_side
     DEFAULT_WIDGET_DISPLAY_ORDER: Final[List[str]] = ["network", "cpu", "gpu"]
     DEFAULT_WIDGET_CYCLE_INTERVAL: Final[int] = 3 # Seconds
@@ -199,6 +211,9 @@ class ConfigConstants:
         "double_click_action": DEFAULT_DOUBLE_CLICK_ACTION,
         "middle_click_action": DEFAULT_MIDDLE_CLICK_ACTION,
         "hardware_label_style": DEFAULT_HARDWARE_LABEL_STYLE,
+        "hardware_label_color": DEFAULT_HARDWARE_LABEL_COLOR,
+        "cpu_label_color": DEFAULT_CPU_LABEL_COLOR,
+        "gpu_label_color": DEFAULT_GPU_LABEL_COLOR,
         "keep_visible_fullscreen": DEFAULT_KEEP_VISIBLE_FULLSCREEN,
         "force_decimals": DEFAULT_FORCE_DECIMALS,
         "unit_type": DEFAULT_UNIT_TYPE,
@@ -354,7 +369,10 @@ class ConfigConstants:
         "free_float": {"type": bool, "default": DEFAULT_FREE_FLOAT},
         "double_click_action": {"type": str, "default": DEFAULT_DOUBLE_CLICK_ACTION, "choices": CLICK_ACTION_CHOICES},
         "middle_click_action": {"type": str, "default": DEFAULT_MIDDLE_CLICK_ACTION, "choices": CLICK_ACTION_CHOICES},
-        "hardware_label_style": {"type": str, "default": DEFAULT_HARDWARE_LABEL_STYLE, "choices": ["icons_colored", "icons_monochrome", "text"]},
+        "hardware_label_style": {"type": str, "default": DEFAULT_HARDWARE_LABEL_STYLE, "choices": HARDWARE_LABEL_STYLE_CHOICES},
+        "hardware_label_color": {"type": str, "default": DEFAULT_HARDWARE_LABEL_COLOR, "choices": HARDWARE_LABEL_COLOR_CHOICES},
+        "cpu_label_color": {"type": str, "default": DEFAULT_CPU_LABEL_COLOR, "regex": r"#[0-9a-fA-F]{6}"},
+        "gpu_label_color": {"type": str, "default": DEFAULT_GPU_LABEL_COLOR, "regex": r"#[0-9a-fA-F]{6}"},
         "keep_visible_fullscreen": {"type": bool, "default": DEFAULT_KEEP_VISIBLE_FULLSCREEN},
         "force_decimals": {"type": bool, "default": DEFAULT_FORCE_DECIMALS},
         "unit_type": {"type": str, "default": DEFAULT_UNIT_TYPE, "choices": ["bits_decimal", "bits_binary", "bytes_decimal", "bytes_binary"]},

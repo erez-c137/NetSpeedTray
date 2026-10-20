@@ -18,6 +18,7 @@ from PyQt6.QtGui import QPainter, QColor, QFont, QFontMetrics, QPen, QPainterPat
 from PyQt6.QtCore import Qt, QPointF, QRect, QRectF
 from netspeedtray import constants
 from netspeedtray.utils.timer_utils import resolve_poll_interval_seconds
+from netspeedtray.utils import hardware_vendors
 
 # v2.1 network-identity band tag, drawn as a rounded pill/badge. The layout RESERVES the fixed
 # worst-case slot and the renderer DRAWS the actual (usually narrower) tag in it - both MUST use these
@@ -130,7 +131,10 @@ class RenderConfig:
     monitor_vram_enabled: bool = False
     show_memory_labels: bool = False
     stack_hardware_stats: bool = False
-    hardware_label_style: str = "icons_colored"
+    hardware_label_style: str = constants.config.defaults.DEFAULT_HARDWARE_LABEL_STYLE
+    hardware_label_color: str = constants.config.defaults.DEFAULT_HARDWARE_LABEL_COLOR
+    cpu_label_color: str = constants.config.defaults.DEFAULT_CPU_LABEL_COLOR
+    gpu_label_color: str = constants.config.defaults.DEFAULT_GPU_LABEL_COLOR
     widget_display_mode: str = "network_only"
     widget_display_order: List[str] = field(default_factory=lambda: ["network", "cpu", "gpu"])
     show_hardware_temps: bool = False
@@ -188,7 +192,14 @@ class RenderConfig:
                 swap_upload_download=bool(config.get('swap_upload_download', constants.config.defaults.DEFAULT_SWAP_UPLOAD_DOWNLOAD)),
                 hide_arrows=bool(config.get('hide_arrows', constants.config.defaults.DEFAULT_HIDE_ARROWS)),
                 hide_unit_suffix=bool(config.get('hide_unit_suffix', constants.config.defaults.DEFAULT_HIDE_UNIT_SUFFIX)),
-                hardware_label_style=str(config.get('hardware_label_style', 'icons_colored')),
+                hardware_label_style=str(config.get(
+                    'hardware_label_style', constants.config.defaults.DEFAULT_HARDWARE_LABEL_STYLE)),
+                hardware_label_color=str(config.get(
+                    'hardware_label_color', constants.config.defaults.DEFAULT_HARDWARE_LABEL_COLOR)),
+                cpu_label_color=str(config.get(
+                    'cpu_label_color', constants.config.defaults.DEFAULT_CPU_LABEL_COLOR)),
+                gpu_label_color=str(config.get(
+                    'gpu_label_color', constants.config.defaults.DEFAULT_GPU_LABEL_COLOR)),
                 short_unit_labels=bool(config.get('short_unit_labels', constants.config.defaults.DEFAULT_SHORT_UNIT_LABELS)),
                 max_samples=max_samples,
                 graph_fixed_scale=bool(config.get('graph_fixed_scale', constants.config.defaults.DEFAULT_GRAPH_FIXED_SCALE)),
@@ -712,9 +723,7 @@ class WidgetRenderer:
             cpu_idx = order.index("cpu") if "cpu" in order else 999
             gpu_idx = order.index("gpu") if "gpu" in order else 999
 
-            style = getattr(config, 'hardware_label_style', 'icons_colored')
-            cpu_color = "#FFFFFF" if style == "icons_monochrome" else constants.renderer.CPU_LINE_COLOR
-            gpu_color = "#FFFFFF" if style == "icons_monochrome" else constants.renderer.GPU_LINE_COLOR
+            cpu_color, gpu_color = self.hardware_label_colors(config)
 
             items = []
             if cpu_usage is not None:
@@ -742,8 +751,8 @@ class WidgetRenderer:
             show_temps = getattr(config, "show_hardware_temps", False)
             show_power = getattr(config, "show_hardware_power", False)
 
-            style = getattr(config, 'hardware_label_style', 'icons_colored')
-            sp = self.metrics.horizontalAdvance(" ")
+            style = getattr(config, 'hardware_label_style', constants.config.defaults.DEFAULT_HARDWARE_LABEL_STYLE)
+            sp =self.metrics.horizontalAdvance(" ")
 
             # Keep percent / suffix / memory as SEPARATE cells (not one concatenated string) so each sits
             # in its own fixed-width column. That lines the rows up (the memory values align across CPU
@@ -859,6 +868,33 @@ class WidgetRenderer:
             self.logger.error("Failed to draw hardware stats: %s", e)
 
 
+    @staticmethod
+    def hardware_label_colors(config: RenderConfig) -> Tuple[str, str]:
+        """(cpu_hex, gpu_hex) for the CPU/GPU labels - icons, text labels and the RAM/VRAM tags alike.
+
+        - match_text: the widget's text colour, so the labels follow it onto a light taskbar (it turns
+          black there) instead of the hard-coded white that pre-2.2 "monochrome" painted, invisibly.
+        - custom: the two picked colours (an unparsable one falls back to the text colour).
+        - brand (default branch): the vendor palette in hardware_vendors. The taskbar is judged light
+          or dark from the text colour - the widget background is usually transparent, and the text
+          colour is exactly what the theme manager flips per taskbar theme (or what the user chose to
+          be legible on theirs), so it is the honest proxy and costs no registry read per paint.
+        """
+        text = str(getattr(config, 'default_color', constants.config.defaults.DEFAULT_COLOR))
+        mode = getattr(config, 'hardware_label_color', constants.config.defaults.DEFAULT_HARDWARE_LABEL_COLOR)
+        if mode == "match_text":
+            return text, text
+        if mode == "custom":
+            pair = []
+            for key in ('cpu_label_color', 'gpu_label_color'):
+                value = str(getattr(config, key, '') or '')
+                pair.append(value if QColor.isValidColorName(value) else text)
+            return pair[0], pair[1]
+        text_qc = QColor(text)
+        light_taskbar = text_qc.isValid() and text_qc.lightnessF() < 0.5
+        return (hardware_vendors.widget_label_color("cpu", light_taskbar),
+                hardware_vendors.widget_label_color("gpu", light_taskbar))
+
     def _draw_memory_label(self, painter: QPainter, label_x: int, y: int, row: Dict[str, Any]) -> None:
         """Paint a row's RAM/VRAM label at the fixed start of its reserved label cell,
         in the row's CPU/GPU colour, then restore the value pen."""
@@ -899,7 +935,9 @@ class WidgetRenderer:
             
             # Silicon Die Core (Inner dark center)
             core_rect = rect.adjusted(4, 4, -4, -4) 
-            painter.fillRect(core_rect, QColor("#121212")) 
+            # The die is a contrasting dot: near-black inside a light package, near-white inside a dark
+            # one - a black (match-text, light taskbar) icon would otherwise lose it entirely.
+            painter.fillRect(core_rect, QColor("#121212" if draw_color.lightnessF() >= 0.5 else "#F0F0F0"))
 
         elif icon_type == 'GPU':
             # Graphics card with 'G' and Fan

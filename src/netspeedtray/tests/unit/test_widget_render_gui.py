@@ -203,7 +203,7 @@ def test_memory_is_not_introduced_by_a_pipe(renderer):
     Asserted on the painted strings rather than pixels, because a glyph's pixels are a fragile thing
     to test and its presence in the draw calls is not.
     """
-    renderer.config.hardware_label_style = "icons_colored"
+    renderer.config.hardware_label_style = "icons"
     drawn = _drawn_strings(renderer, cpu_usage=8.0, gpu_usage=3.0,
                            ram_info=(11.8, 15.7), vram_info=(2.1, 8.0), layout_mode="horizontal")
 
@@ -214,7 +214,7 @@ def test_memory_is_not_introduced_by_a_pipe(renderer):
 
 def test_the_memory_value_is_still_painted(renderer):
     """Guard the obvious regression: removing the separator must not remove the number with it."""
-    renderer.config.hardware_label_style = "icons_colored"
+    renderer.config.hardware_label_style = "icons"
     drawn = _drawn_strings(renderer, cpu_usage=8.0, gpu_usage=3.0,
                            ram_info=(11.8, 15.7), vram_info=(2.1, 8.0), layout_mode="horizontal")
     assert any("15.7" in d for d in drawn), "the RAM total vanished along with the separator"
@@ -229,7 +229,7 @@ def test_igpu_vram_is_blank_not_zero(renderer):
     absence. The Monitor's Overview tile has always hidden itself in this case; the widget and the
     Hardware telemetry strip had not, which is the drift this closes.
     """
-    renderer.config.hardware_label_style = "icons_colored"
+    renderer.config.hardware_label_style = "icons"
     drawn = _drawn_strings(renderer, cpu_usage=8.0, gpu_usage=3.0,
                            ram_info=(9.2, 15.7),      # real RAM: total known
                            vram_info=(0.0, 0.0),      # iGPU: nothing dedicated, no total
@@ -242,7 +242,7 @@ def test_igpu_vram_is_blank_not_zero(renderer):
 
 def test_a_real_gpu_with_vram_still_shows_it(renderer):
     """The guard must not swallow a genuine reading."""
-    renderer.config.hardware_label_style = "icons_colored"
+    renderer.config.hardware_label_style = "icons"
     drawn = _drawn_strings(renderer, cpu_usage=8.0, gpu_usage=30.0,
                            ram_info=(9.2, 15.7), vram_info=(2.1, 8.0),
                            layout_mode="horizontal")
@@ -251,7 +251,7 @@ def test_a_real_gpu_with_vram_still_shows_it(renderer):
 
 def test_a_gpu_with_no_total_but_real_usage_still_shows_it(renderer):
     """AMD/Intel dGPUs have no nvidia-smi, so no total - but their usage is still worth showing."""
-    renderer.config.hardware_label_style = "icons_colored"
+    renderer.config.hardware_label_style = "icons"
     drawn = _drawn_strings(renderer, cpu_usage=8.0, gpu_usage=30.0,
                            ram_info=(9.2, 15.7), vram_info=(2.5, 0.0),
                            layout_mode="horizontal")

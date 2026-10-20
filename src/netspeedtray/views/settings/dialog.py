@@ -273,7 +273,8 @@ class SettingsDialog(QDialog):
             self.colors_page = self.appearance_page.colors_section
             self.units_page = self.appearance_page.units_section
 
-            self.hardware_page = HardwarePage(self.i18n, self._schedule_settings_update)
+            self.hardware_page = HardwarePage(self.i18n, self._schedule_settings_update,
+                                              self._open_color_dialog)
             self.interfaces_page = InterfacesPage(
                 self.i18n,
                 self.available_interfaces,
@@ -556,6 +557,8 @@ class SettingsDialog(QDialog):
         # Get current color from the correct page to set initial state
         if key_name in ["high_speed_color", "low_speed_color"]:
             current_settings = self.colors_page.get_settings()
+        elif key_name in HardwarePage.LABEL_COLOR_KEYS:
+            current_settings = self.hardware_page.get_settings()
         else:
             current_settings = self.appearance_page.get_settings()
             
@@ -566,6 +569,8 @@ class SettingsDialog(QDialog):
             new_hex = color.name().upper()
             if key_name in ["high_speed_color", "low_speed_color"]:
                 self.colors_page.set_color_input(key_name.replace("_color", ""), new_hex)
+            elif key_name in HardwarePage.LABEL_COLOR_KEYS:
+                self.hardware_page.set_color_input(key_name, new_hex)
             else:
                 self.appearance_page.set_color_input(key_name.replace("_color", ""), new_hex)
             
