@@ -120,12 +120,18 @@ def test_database_thread_exits_promptly_on_quit(tmp_path):
     with patch("netspeedtray.core.widget_state.get_app_data_path", return_value=Path(tmp_path)):
         ws = WidgetState(dict(constants.config.defaults.DEFAULT_CONFIG))
     assert ws.db_worker.ready.wait(10)
-    time.sleep(0.1)
+    # Make every idle get() wait 5 s instead of 0.5 s, so the regression (one more idle get after
+    # the stop sentinel) costs >= 5 s while the fix exits at once - a margin no slow CI runner can
+    # blur. (A fixed 0.4 s bound failed at 0.68 s on a shared runner.)
+    queue = ws.db_worker._queue
+    real_get = queue.get
+    queue.get = lambda *a, **k: real_get(*a, **({**k, "timeout": 5.0} if "timeout" in k else k))
+    time.sleep(0.7)                                   # let the in-flight 0.5 s get expire
     t0 = time.perf_counter()
     ws.cleanup()
     took = time.perf_counter() - t0
     assert not ws.db_worker.isRunning()
-    assert took < 0.4, f"quit waited {took:.2f} s for an idle database thread"
+    assert took < 2.5, f"quit waited {took:.2f} s for an idle database thread"
 
 
 def test_widget_state_persist_essentials_is_bounded(tmp_path):
