@@ -28,14 +28,17 @@ class ConnectionSettings(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
 
         # --- Latency (header toggle == latency_enabled; the public anchor is a nested opt-in) ---
+        # Titled for both hops; the description names the one actually measured (the router by
+        # default, the internet test server once the public probe is on - see _sync_description).
         self._lat = SettingExpander(
-            self._tr("CONN_LATENCY_TITLE", "Internet latency"),
-            self._tr("CONN_LATENCY_SUB", "Ping + packet loss to your router, and connection drops over time"),
+            self._tr("CONN_LATENCY_TITLE", "Connection latency"),
+            self._latency_description(False),
             header_toggle=True, initial_on=True)
         self._lat.toggled.connect(lambda _on: self.on_change())
         body = self._lat.contentLayout()
 
         self._public = Win11Toggle(initial_state=False)
+        self._public.toggled.connect(lambda _v: self._sync_description())
         self._public.toggled.connect(lambda _v: self.on_change())
         body.addWidget(SettingCard(
             self._tr("CONN_PUBLIC_LABEL", "Also measure true internet latency"),
@@ -75,9 +78,19 @@ class ConnectionSettings(QWidget):
     def _tr(self, key: str, default: str) -> str:
         return str(getattr(self._i18n, key, default)) if self._i18n is not None else default
 
+    def _latency_description(self, public: bool) -> str:
+        if public:
+            return self._tr("CONN_LATENCY_SUB_PUBLIC", "Ping + packet loss to the internet test server "
+                                                       "(and your router), and connection drops over time")
+        return self._tr("CONN_LATENCY_SUB", "Ping + packet loss to your router, and connection drops over time")
+
+    def _sync_description(self) -> None:
+        self._lat.set_description(self._latency_description(self._public.isChecked()))
+
     def load_settings(self, config: Dict[str, Any]) -> None:
         self._lat.setChecked(bool(config.get("latency_enabled", True)))
         self._public.setChecked(bool(config.get("latency_public_enabled", False)))
+        self._sync_description()   # setChecked does not emit when the state is unchanged
         self._host.setCurrentText(str(config.get("latency_public_host", "1.1.1.1")))
         self._down.setValue(int(config.get("plan_down_mbps", 0) or 0))
         self._up.setValue(int(config.get("plan_up_mbps", 0) or 0))

@@ -48,6 +48,13 @@ class TimeoutConstants:
     # Thread / App Lifecycle (milliseconds/seconds)
     APP_CLOSE_WAIT_MS: Final[int] = 2000
     MONITOR_THREAD_STOP_WAIT_MS: Final[int] = 1000
+    # Closing the Monitor (or quitting with it open): how long to wait for the graph worker thread.
+    # It first gets GRAPH_THREAD_QUIT_WAIT_MS to finish on its own; then its in-flight SQLite query is
+    # interrupted and it gets GRAPH_THREAD_STOP_WAIT_MS more. Past that it is detached (kept
+    # referenced, never destroyed while running) instead of blocking the UI - this wait used to be
+    # unbounded.
+    GRAPH_THREAD_QUIT_WAIT_MS: Final[int] = 700
+    GRAPH_THREAD_STOP_WAIT_MS: Final[int] = 2000
     DB_INITIALIZATION_RETRY_DELAY_SEC: Final[float] = 2.0
 
     # Hardware monitoring subprocess timeouts (seconds). 0.5s was too tight -

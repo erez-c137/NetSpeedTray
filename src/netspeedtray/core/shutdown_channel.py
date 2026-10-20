@@ -5,9 +5,14 @@ Receiver: the widget marks its native window with a property (``SHUTDOWN_WINDOW_
 registered ``SHUTDOWN_MESSAGE_NAME`` message through UIPI, and on receipt runs the same clean quit as
 tray Exit (stop threads, flush the DB, save config) - see ``NetworkSpeedWidget.nativeEvent``.
 
-Sender: ``NetSpeedTray.exe --shutdown [--timeout N]`` - headless, no QApplication, no mutex. It
-enumerates top-level windows for the marked one (targeted, never HWND_BROADCAST), posts the message
-and waits for that process to exit. setup.iss runs it before falling back to ``taskkill /F``.
+Senders: setup.iss's [Code] speaks the protocol itself (RegisterWindowMessageW, EnumWindows +
+GetPropW, PostMessageW, wait for the process) before falling back to ``taskkill /F`` - it deliberately
+does NOT run the installed exe: Setup is elevated and a custom install folder may be user-writable,
+so executing ``{app}\\NetSpeedTray.exe`` there would hand admin to whoever replaced it. Keep its
+``ShutdownMessageName`` / ``ShutdownWindowProp`` defines in step with the constants (a test pins them).
+``NetSpeedTray.exe --shutdown [--timeout N]`` stays for manual and scripted use - headless, no
+QApplication, no mutex. It enumerates top-level windows for the marked one (targeted, never
+HWND_BROADCAST), posts the message and waits for that process to exit.
 
 Exit codes: 0 = nothing running, or every instance exited in time; 1 = an instance is still running
 (post refused or timed out - the caller should fall back); 2 = unexpected error.

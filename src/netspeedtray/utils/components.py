@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QBoxLayout, QCheckBox, QLabel, QSlider,
     QSizePolicy, QStyleOption, QLineEdit, QFrame, QToolButton, QButtonGroup,
     QPushButton, QColorDialog, QComboBox,
-    QApplication, QScrollArea, QAbstractSlider, QAbstractSpinBox
+    QApplication, QScrollArea, QAbstractSlider, QAbstractSpinBox, QAbstractButton
 )
 from PyQt6.QtCore import Qt, QSize, pyqtSignal, QPropertyAnimation, QEasingCurve, QPoint, QTimer, QObject, QEvent
 from PyQt6.QtGui import QFont, QPaintEvent, QPainter, QColor
@@ -186,6 +186,9 @@ class Win11Toggle(QWidget):
         checkbox_qss = toggle_style(self._OUTER_TRACK_WIDTH, self._OUTER_TRACK_HEIGHT) 
         checkbox_qss += " QCheckBox { background-color: transparent; border: none; outline: none; padding: 0px; margin: 0px; }"
         self.checkbox.setStyleSheet(checkbox_qss)
+        if self.label_text.strip():
+            # The visible label is a separate QLabel; the focusable checkbox carries the name.
+            self.checkbox.setAccessibleName(self.label_text.strip())
 
         # The checkbox is now added to the container's layout.
         container_layout.addWidget(self.checkbox)
@@ -624,6 +627,35 @@ class CollapsibleSection(QWidget):
 # Settings dialog and the future Monitor window share one visual language.
 # =============================================================================
 
+def name_controls(control: Optional[QWidget], name: str, description: str = "") -> list:
+    """Give ``control`` - and every keyboard-focusable widget inside it that has no name of its own -
+    the card's title as its accessible name (and the description as its accessible description).
+
+    A setting's title is a separate QLabel, so without this a screen reader landing on the toggle,
+    slider or spin box announced only "check box" / "slider". A button that shows its own text (Copy,
+    a segment of a segmented control) is already named by that text and is left alone, as is any
+    widget that was named explicitly. Returns the widgets it named."""
+    if control is None:
+        return []
+    name = str(name or "").strip().rstrip(":：").strip()
+    description = str(description or "").strip()
+    if not name:
+        return []
+    named = []
+    for w in [control] + control.findChildren(QWidget):
+        if isinstance(w, QAbstractButton) and w.text().strip():
+            continue
+        if w.accessibleName():
+            continue
+        if w is not control and not (w.focusPolicy().value & Qt.FocusPolicy.TabFocus.value):
+            continue
+        w.setAccessibleName(name)
+        if description:
+            w.setAccessibleDescription(description)
+        named.append(w)
+    return named
+
+
 class SettingCard(QFrame):
     """
     A Fluent "setting card" row: a title with an optional muted description on the
@@ -685,6 +717,8 @@ class SettingCard(QFrame):
 
         if control is not None:
             layout.addWidget(control, 0, Qt.AlignmentFlag.AlignVCenter)
+        # The title is a separate QLabel, so a screen reader landing on the control heard nothing.
+        self._named = name_controls(control, title, description)
 
     def control(self) -> Optional[QWidget]:
         return self._control
@@ -711,6 +745,12 @@ class SettingCard(QFrame):
         desc = getattr(self, "_desc_label", None)
         if desc is not None:
             need = max(need, desc.minimumSizeHint().width())
+            if side_by_side:
+                # The same rule for the description: beside the control it keeps a readable column
+                # (or its one-line width, if shorter). A long live status (the metrics endpoint's
+                # "port in use") once wrapped 8-10 lines in a 60-100 px column at the minimum width.
+                one_line = desc.fontMetrics().horizontalAdvance(desc.text().strip()) + 2
+                need = max(need, min(one_line, constants.layout.SETTING_CARD_MIN_DESC_WIDTH))
         if self._glyph is not None:
             need += self._glyph.width() + tokens.SPACE_M
         return need
@@ -719,6 +759,11 @@ class SettingCard(QFrame):
         """The card width below which title + control no longer fit on one row."""
         m = self._row.contentsMargins()
         ctl = self._control_min_width()
+        one_row = getattr(self._control, "_one_row_width", None)
+        if ctl and callable(one_row):
+            # A ReflowRow beside the title lays out on one row (it only stacks under a stacked
+            # title), so that - not its stacked floor - is what the side-by-side layout needs.
+            ctl = max(ctl, one_row())
         gap = self._row.spacing() if ctl else 0
         return m.left() + m.right() + self._head_min_width(True) + gap + ctl
 
@@ -753,6 +798,10 @@ class SettingCard(QFrame):
         label = getattr(self, "_desc_label", None)
         if label is not None:
             label.setText(text)
+        for w in self._named:
+            w.setAccessibleDescription(str(text or "").strip())
+        if self._control is not None:
+            self._reflow(self.width())   # a longer description may need the stacked layout
 
 
 class ReflowRow(QWidget):
@@ -836,19 +885,25 @@ class SettingExpander(QWidget):
         title_label.setStyleSheet(f"color: {c['text_primary']}; background: transparent;")
         title_label.setWordWrap(True)   # a long translation wraps instead of widening the whole page
         text_col.addWidget(title_label)
+        self._title_label = title_label
+        self._desc_label: Optional[QLabel] = None
         if description:
             d = QLabel(description)
             d.setFont(token_font(tokens.TYPE_CAPTION))
             d.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
             d.setWordWrap(True)
             text_col.addWidget(d)
+            self._desc_label = d
         hl.addLayout(text_col, 1)
 
         self._toggle: Optional["Win11Toggle"] = None
+        self._named: list = []
         if header_toggle:
             self._toggle = Win11Toggle(initial_state=initial_on)
             self._toggle.toggled.connect(self._on_toggle)
             hl.addWidget(self._toggle, 0, Qt.AlignmentFlag.AlignVCenter)
+            # The header toggle is the expander's only focusable control: it carries the title.
+            self._named = name_controls(self._toggle, title, description)
 
         self._chevron = QLabel()
         self._chevron.setFixedWidth(16)
@@ -906,6 +961,13 @@ class SettingExpander(QWidget):
 
     def contentLayout(self) -> QVBoxLayout:
         return self._content_layout
+
+    def set_description(self, text: str) -> None:
+        """Swap the muted header description (only for an expander built with one)."""
+        if self._desc_label is not None:
+            self._desc_label.setText(text)
+        for w in self._named:
+            w.setAccessibleDescription(str(text or "").strip())
 
 
 class Win11Segmented(QWidget):
@@ -1162,6 +1224,7 @@ class ArrowStylePicker(QWidget):
                 name = next((n for (n, _u, _d) in self._presets if n == value), value)
                 key = "ARROW_PRESET_" + str(name).upper().replace(" ", "_")
                 btn.setToolTip(self._tr(key, name))
+                btn.setAccessibleName(self._tr(key, name))   # the visible text is just two glyphs
         root.addWidget(self._seg)
 
         self._custom_row = QWidget()
@@ -1178,11 +1241,15 @@ class ArrowStylePicker(QWidget):
         self._down_edit.setPlaceholderText("↓")
         self._up_edit.textChanged.connect(lambda _t: self.changed.emit())
         self._down_edit.textChanged.connect(lambda _t: self.changed.emit())
-        crow.addWidget(QLabel(self._tr("ARROW_CUSTOM_UP_LABEL", "Up")))
-        crow.addWidget(self._up_edit)
-        crow.addSpacing(tokens.SPACE_M)
-        crow.addWidget(QLabel(self._tr("ARROW_CUSTOM_DOWN_LABEL", "Down")))
-        crow.addWidget(self._down_edit)
+        for text, edit in ((self._tr("ARROW_CUSTOM_UP_LABEL", "Up"), self._up_edit),
+                           (self._tr("ARROW_CUSTOM_DOWN_LABEL", "Down"), self._down_edit)):
+            lbl = QLabel(text)
+            lbl.setBuddy(edit)
+            edit.setAccessibleName(text)
+            if edit is self._down_edit:
+                crow.addSpacing(tokens.SPACE_M)
+            crow.addWidget(lbl)
+            crow.addWidget(edit)
         crow.addStretch(0)
         self._custom_row.setVisible(False)
         root.addWidget(self._custom_row)   # was orphaned after `return` in _tr (dead code) - the custom

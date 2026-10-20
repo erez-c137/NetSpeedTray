@@ -29,9 +29,9 @@ _SHUTDOWN_DEADLINE_GRACE_S = 5.0
 def _arm_shutdown_deadline(argv: List[str],
                            exit_fn: Callable[[int], None] = os._exit) -> Optional[threading.Timer]:
     """For `--shutdown [--timeout N]`, arm a hard process deadline of N + 5 s before anything else
-    runs. Setup waits for this process with Inno's Exec, which has no timeout of its own, so a wedge
-    anywhere - an import, a DLL load, the log file, the wait itself - must never hang the installer.
-    Past the deadline the process exits 1 ("still running"), and Setup falls back to taskkill."""
+    runs. A caller waiting on this process (a script; 2.2.0-beta.1's installer also ran it, via
+    Inno's Exec with no timeout of its own) must never hang on a wedge anywhere - an import, a DLL
+    load, the log file, the wait itself. Past the deadline the process exits 1 ("still running")."""
     if "--shutdown" not in argv:
         return None
     timeout = _SHUTDOWN_DEFAULT_TIMEOUT_S
@@ -170,10 +170,11 @@ def main() -> int:
     
     sys.excepthook = excepthook
 
-    # Graceful-close path: `--shutdown [--timeout N]`, run by the installer/uninstaller before any
-    # taskkill. Asks the running instance to quit through its tray-Exit path and waits for it to exit.
-    # Headless and first: no QApplication, no mutex, and none of the update sweeps below - the
-    # installer that runs this may itself be executing from an update temp dir.
+    # Graceful-close path: `--shutdown [--timeout N]`, for manual / scripted use (setup.iss now posts
+    # the same message from its own [Code] and never runs this exe - see core/shutdown_channel.py).
+    # Asks the running instance to quit through its tray-Exit path and waits for it to exit.
+    # Headless and first: no QApplication, no mutex, and none of the update sweeps below - whatever
+    # runs this may itself be executing from an update temp dir.
     try:
         from netspeedtray.core.shutdown_channel import run_shutdown_cli
         shutdown_code = run_shutdown_cli()

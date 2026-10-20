@@ -115,6 +115,9 @@ class DatabaseWorker(QThread):
     # could not complete this launch, so this session runs READ-ONLY and retries at the next start.
     # The argument is one of the MIGRATION_* reason codes below. Same flyout machinery as above.
     migration_deferred = pyqtSignal(str)
+    # Emitted once, when THIS launch upgraded a v7 history file to v8 and the session is writing it.
+    # The view shows one calm "history upgraded" flyout (its own persisted flag keeps it to once).
+    history_upgraded = pyqtSignal()
     # Result of a user-requested "Delete all history" - one of the DELETE_* statuses below. Emitted
     # from this thread; WidgetState re-emits it so the Settings dialog hears it on the GUI thread.
     history_deleted = pyqtSignal(str)
@@ -240,7 +243,12 @@ class DatabaseWorker(QThread):
                     self._retry_pending_compaction()   # throttled; idle ticks only
                 continue
             if item is None:
-                continue  # wake-up sentinel from stop(); re-check the loop condition
+                # Wake-up sentinel from stop(). Everything enqueued before it is done; with the queue
+                # empty, exit now rather than idling out one more 0.5 s get() (that was 0.5 s on
+                # every quit).
+                if self._stop_event.is_set() and self._queue.empty():
+                    break
+                continue
             task, data = item
             try:
                 self._execute_task(task, data)
@@ -994,6 +1002,10 @@ class DatabaseWorker(QThread):
         self._resume_pending_compaction()
         self.reader_version = self._DB_VERSION
         self.readers_read_only = False
+        if self.migration_result is not None and self.migration_result.status == "migrated":
+            # Only now: the upgrade completed AND this session writes the new file (a later refusal
+            # above returns read-only with the "paused" flyout instead).
+            self.history_upgraded.emit()
 
     def _run_legacy_chain(self, version: int) -> None:
         """v2-v6 -> v7 in place, exactly as 2.1.x did it (verified backup, then the per-step

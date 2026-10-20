@@ -19,13 +19,66 @@ graph import is lazy (inside ensure_loaded / the refresh methods).
 from __future__ import annotations
 
 import logging
+import threading
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-from PyQt6.QtCore import QObject, QThread, pyqtSignal
+from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import QWidget, QVBoxLayout
 
 from netspeedtray.utils import styles as su   # matplotlib-free; OK at module scope under the firewall
+
+
+def bind_reader_thread(thread: QThread, widget_state, on_ident=None) -> None:
+    """Tie a history-reading worker thread's read connection to the thread's own lifetime.
+
+    ``finished`` is emitted ON the worker thread just before it exits; with a DirectConnection the
+    slot runs there too, so the connection is closed by the thread that used it - never from the UI
+    thread while it might be mid-query (2.2.0-beta.1 lifecycle review). ``on_ident`` receives the
+    thread's ``threading.get_ident()`` (from ``started``, also on that thread) so a caller can target
+    ``WidgetState.interrupt_reads`` at it."""
+    direct = Qt.ConnectionType.DirectConnection
+    if on_ident is not None:
+        thread.started.connect(lambda: on_ident(threading.get_ident()), direct)
+    release = getattr(widget_state, "release_read_conn", None)
+    if release is not None:
+        thread.finished.connect(release, direct)
+
+
+def stop_reader_thread(thread: QThread, worker, widget_state, thread_ident: Optional[int],
+                       logger: logging.Logger) -> bool:
+    """Quit + join a history-reading worker thread, bounded. True when it stopped.
+
+    First the thread gets GRAPH_THREAD_QUIT_WAIT_MS to finish its current request; then the SQLite
+    statement it is running is interrupted (thread-safe) and it gets GRAPH_THREAD_STOP_WAIT_MS more.
+    If it is STILL running, it is detached: kept referenced so nothing destroys a running QThread (Qt
+    aborts the process), and monitor.py exits hard at quit while a detached thread runs. The caller
+    must then not deleteLater() it; it frees itself when it finally finishes."""
+    from netspeedtray import constants
+    t = constants.timeouts
+    thread.quit()
+    if thread.wait(int(t.GRAPH_THREAD_QUIT_WAIT_MS)):
+        return True
+    interrupt = getattr(widget_state, "interrupt_reads", None)
+    if interrupt is not None and thread_ident is not None:
+        interrupt(thread_id=thread_ident)
+    if thread.wait(int(t.GRAPH_THREAD_STOP_WAIT_MS)):
+        return True
+    logger.warning("Graph worker thread still busy %d ms after close; detaching it instead of "
+                   "blocking the UI.", int(t.GRAPH_THREAD_QUIT_WAIT_MS + t.GRAPH_THREAD_STOP_WAIT_MS))
+    from netspeedtray.core.database import detach_running_worker
+    try:
+        thread._nst_worker = worker            # the worker must outlive its running slot too
+    except Exception:
+        pass
+    try:
+        if worker is not None:
+            thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+    except Exception:
+        pass
+    detach_running_worker(thread)
+    return False
 
 
 # --- Minimal stand-ins for the host surface GraphCoordinator pokes at -------------------------
@@ -75,8 +128,9 @@ class GraphHost(QObject):
     request_data_processing = pyqtSignal(object)
 
     #: machine-wide totals for the active period, emitted after a network render: (up_bytes,
-    #: down_bytes, period_key). The Network header band subscribes to show period totals.
-    network_totals_ready = pyqtSignal(float, float, str)
+    #: down_bytes, period_key, reconstructed). The Network header band subscribes to show period
+    #: totals; ``reconstructed`` (D5) = part of them was estimated from speeds saved before 2.2.
+    network_totals_ready = pyqtSignal(float, float, str, bool)
 
     #: live updates were turned on/off. Both tab headers' Live/Pause pills bind to this so the shared
     #: engine's one canonical state stays in sync no matter which tab toggled it.
@@ -98,6 +152,7 @@ class GraphHost(QObject):
         self._history_period_value = int(config.get("history_period_slider_value", 2))
         self._current_request_id = 0
         self._last_processed_id = -1
+        self._totals_reconstructed: Dict[int, bool] = {}   # sequence_id -> D5 flag (worker provenance)
         self.interface_filter = None          # None / "all" -> every interface
         self._show_loading_status = bool(config.get("show_loading", False))
         self._current_stat = "network"        # set per active tab via attach_to()
@@ -117,6 +172,7 @@ class GraphHost(QObject):
         self.coordinator = None
         self._hover = None
         self._thread: Optional[QThread] = None
+        self._thread_ident: Optional[int] = None   # the worker thread's get_ident(), set as it starts
         self._canvas_container: Optional[QWidget] = None
 
     # ------------------------------------------------------------------ lazy load
@@ -143,9 +199,12 @@ class GraphHost(QObject):
         self._thread = QThread()
         self.worker = GraphDataWorker(self._main_widget.widget_state)
         self.worker.moveToThread(self._thread)
+        self.worker.totals_provenance.connect(self._on_totals_provenance)
         self.worker.data_ready.connect(self._on_data_ready)
         self.worker.error.connect(lambda msg: self.logger.debug("graph worker error: %s", msg))
         self.request_data_processing.connect(self.worker.process_data)
+        # The worker's read connection is opened, and closed, on its own thread.
+        bind_reader_thread(self._thread, self._main_widget.widget_state, self._set_thread_ident)
         self._thread.start()
 
         # Coordinator drives THIS object as its host (unchanged coordinator.py).
@@ -159,6 +218,9 @@ class GraphHost(QObject):
         self._hover.attach()
 
         self._loaded = True
+
+    def _set_thread_ident(self, ident: int) -> None:
+        self._thread_ident = ident   # runs on the worker thread (started, DirectConnection)
 
     # ------------------------------------------------------------------ canvas hosting
 
@@ -351,9 +413,19 @@ class GraphHost(QObject):
             # machine-wide (interface filter None sums every NIC); for SESSION they reflect the active
             # interface mode (auto/selected/...), mirroring the standalone graph's session aggregation.
             if self._current_stat == "network":
-                self.network_totals_ready.emit(float(total_up or 0.0), float(total_down or 0.0), period_key)
+                recon = bool(self._totals_reconstructed.pop(sequence_id, False))
+                self.network_totals_ready.emit(float(total_up or 0.0), float(total_down or 0.0),
+                                               period_key, recon)
         except Exception as e:
             self.logger.error("GraphHost render error: %s", e, exc_info=True)
+
+    def _on_totals_provenance(self, sequence_id: int, reconstructed: bool) -> None:
+        """Remember whether the totals of reply ``sequence_id`` are partly estimated (D5) until its
+        data_ready arrives (the worker emits this first, from the same thread)."""
+        store = self._totals_reconstructed
+        store[int(sequence_id)] = bool(reconstructed)
+        for old in [k for k in store if k < sequence_id - 16]:   # replies that were dropped
+            store.pop(old, None)
 
     # ------------------------------------------------------------------ teardown
 
@@ -384,17 +456,21 @@ class GraphHost(QObject):
         try:
             if self.worker is not None:
                 self.worker.data_ready.disconnect(self._on_data_ready)
+                self.worker.totals_provenance.disconnect(self._on_totals_provenance)
                 self.request_data_processing.disconnect(self.worker.process_data)
         except Exception:
             pass
 
-        # The thread MUST actually finish before we free the figure/canvas - a process_data() can be
-        # mid-SQLite-query for longer than 700ms on a big DB. Never proceed on a still-running thread.
+        # A process_data() can be mid-SQLite-query for well over 700 ms on a big DB. Bounded: past the
+        # quit wait its query is interrupted, and past that the thread is detached rather than blocking
+        # the UI (this wait used to be unbounded). The figure/canvas below are GUI-thread objects the
+        # worker never touches (its signals are disconnected above), so freeing them is safe either way.
+        stopped = True
         try:
             if self._thread is not None:
-                self._thread.quit()
-                if not self._thread.wait(700):
-                    self._thread.wait()  # unbounded fallback: wait out the in-flight query
+                stopped = stop_reader_thread(self._thread, self.worker,
+                                             getattr(self._main_widget, "widget_state", None),
+                                             getattr(self, "_thread_ident", None), self.logger)
         except Exception:
             pass
 
@@ -412,12 +488,14 @@ class GraphHost(QObject):
         except Exception:
             pass
 
-        # Release the worker + thread (only after wait() confirmed the thread stopped).
+        # Release the worker + thread - only once wait() confirmed the thread stopped. A detached one
+        # deletes itself on finished (stop_reader_thread).
         try:
-            if self.worker is not None:
-                self.worker.deleteLater()
-            if self._thread is not None:
-                self._thread.deleteLater()
+            if stopped:
+                if self.worker is not None:
+                    self.worker.deleteLater()
+                if self._thread is not None:
+                    self._thread.deleteLater()
         except Exception:
             pass
         self.worker = None

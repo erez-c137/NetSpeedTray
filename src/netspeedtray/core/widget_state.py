@@ -86,6 +86,9 @@ class WidgetState(QObject):
     # could not complete this launch, so nothing is recorded until the next start. Same queued
     # delivery as above, so the flyout is wired before it can fire.
     db_migration_deferred = pyqtSignal(str)
+    # Re-emitted from DatabaseWorker.history_upgraded: this launch upgraded the history to v8 (the
+    # one-time "history upgraded" flyout). Same queued delivery as above.
+    db_history_upgraded = pyqtSignal()
     # Re-emitted from DatabaseWorker.history_deleted (a DatabaseWorker.DELETE_* status), queued onto
     # the GUI thread.
     history_deleted = pyqtSignal(str)
@@ -134,6 +137,7 @@ class WidgetState(QObject):
         # Connected BEFORE start() so the worker can never trip either while nothing is wired.
         self.db_worker.schema_incompatible.connect(self.db_schema_incompatible)
         self.db_worker.migration_deferred.connect(self.db_migration_deferred)
+        self.db_worker.history_upgraded.connect(self.db_history_upgraded)
         self.db_worker.history_deleted.connect(self.history_deleted)
         if not read_only:
             self.db_worker.start()
@@ -151,6 +155,13 @@ class WidgetState(QObject):
 
         self._read_conns: Dict[int, Tuple[sqlite3.Connection, float]] = {}   # tid -> (conn, last_used)
         self._read_conns_lock = threading.Lock()
+        # Set by cleanup(): from then on _get_read_conn refuses (readers read empty) instead of opening
+        # a fresh read-write connection that nothing would ever close.
+        self._reads_closed = False
+        # Threads whose reads were interrupted for a stop (interrupt_reads(thread_id=...)): their
+        # further reads are refused too, so the rest of an in-flight Monitor refresh fails fast
+        # instead of running its next query. Cleared when the thread releases its connection.
+        self._reads_refused: set = set()
 
         # Data-usage odometer (data-cap feature). Lazily loaded from the DB on first
         # use (the worker thread may not have created the table yet at construction).
@@ -224,7 +235,8 @@ class WidgetState(QObject):
         """Returns a thread-local read connection, pruning ones left behind by dead threads.
 
         Each worker thread (notably the Monitor's GraphDataWorker, recreated on every Monitor open) opens
-        its own read connection here, removed otherwise only in cleanup() at exit. Without pruning, every
+        its own read connection here, and closes it itself as it exits (release_read_conn, wired by
+        GraphHost) - pruning is the safety net for a thread that never does. Without pruning, every
         Monitor open/close leaked a connection (a file handle + a WAL reader slot) for the whole session,
         and a recycled thread id could even hand a new worker a dead thread's stale connection. So evict
         entries whose owning thread has stopped using them.
@@ -247,6 +259,8 @@ class WidgetState(QObject):
         thread_id = threading.get_ident()
         now = time.monotonic()
         with self._read_conns_lock:
+            if self._reads_closed or thread_id in self._reads_refused:
+                raise HistoryNotReadyError("history reads are closed (shutting down)")
             if self._read_conns:
                 for stale in [tid for tid, (_c, seen) in self._read_conns.items()
                               if tid != thread_id and (now - seen) > self._READ_CONN_IDLE_SEC]:
@@ -282,6 +296,38 @@ class WidgetState(QObject):
             conn, _seen = self._read_conns[thread_id]
             self._read_conns[thread_id] = (conn, now)   # touch: this thread is demonstrably alive
             return conn
+
+    def release_read_conn(self) -> None:
+        """Close the CALLING thread's read connection, if it has one. A worker thread that reads
+        history calls this as it exits (GraphHost wires it to its QThread's ``finished``, run on that
+        thread), so every connection is closed by the thread that used it - never from under it."""
+        with self._read_conns_lock:
+            self._reads_refused.discard(threading.get_ident())
+            entry = self._read_conns.pop(threading.get_ident(), None)
+        if entry is not None:
+            try:
+                entry[0].close()
+            except Exception:
+                pass
+
+    def interrupt_reads(self, thread_id: Optional[int] = None) -> None:
+        """Abort the statement running on another thread's read connection (all other threads' when
+        ``thread_id`` is None) - ``sqlite3_interrupt``, the one call SQLite documents as safe from a
+        different thread. The query raises ``OperationalError('interrupted')`` on its own thread,
+        which the readers catch (they read empty). The connection stays open; its owner still closes
+        it. Held under the lock, so it can never race that close. A targeted ``thread_id`` is being
+        stopped: its later reads are refused until it releases its connection."""
+        me = threading.get_ident()
+        with self._read_conns_lock:
+            if thread_id is not None:
+                self._reads_refused.add(thread_id)
+            for tid, (conn, _seen) in self._read_conns.items():
+                if tid == me or (thread_id is not None and tid != thread_id):
+                    continue
+                try:
+                    conn.interrupt()
+                except Exception:
+                    pass
 
     @property
     def history_reader(self) -> HistoryReader:
@@ -830,6 +876,14 @@ class WidgetState(QObject):
         return self.history_reader.earliest_timestamp()
 
 
+    def persist_essentials(self, timeout: float = 2.0) -> None:
+        """Windows is ending the session: queue the last history batch and the odometer tail, and wait
+        (bounded by ``timeout``) for the database thread to write them. Stops nothing - the full
+        cleanup() may never get to run before the process is ended."""
+        self.flush_batch()
+        self._persist_usage_now()
+        self.flush_and_wait(timeout=timeout)
+
     def cleanup(self) -> None:
         """Flushes final data and cleanly stops the database worker thread."""
         self.logger.info("Cleaning up WidgetState...")
@@ -840,14 +894,22 @@ class WidgetState(QObject):
         # (no-op if the counter was never loaded). The worker drains this before stopping.
         self._persist_usage_now()
 
-        # Close persistent read connections
+        # Read connections. Never close another thread's connection from here: closing a sqlite3
+        # connection while its thread is mid-query is undefined behaviour (segfaulted 4/4 in a plain
+        # 3.13 repro; the lucky outcome was "Cannot operate on a closed database"), and quitting with
+        # the Monitor open hit exactly that. So: refuse new reads, close this thread's own connection,
+        # interrupt any statement still running elsewhere, and leave those connections to their owners
+        # (a worker closes its own as it exits - release_read_conn). The widget closes the Monitor and
+        # joins its graph worker before calling this; anything still registered is reclaimed at exit.
         with self._read_conns_lock:
-            for tid, (conn, _seen) in self._read_conns.items():
-                try:
-                    conn.close()
-                except:
-                    pass
-            self._read_conns.clear()
+            self._reads_closed = True
+            own = self._read_conns.pop(threading.get_ident(), None)
+        if own is not None:
+            try:
+                own[0].close()
+            except Exception:
+                pass
+        self.interrupt_reads()
 
         self.db_worker.stop()
         # Only wait for the thread if it was actually running. Usually it drains in well under a

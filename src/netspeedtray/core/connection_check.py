@@ -32,6 +32,11 @@ from netspeedtray.core import latency_probe as LP
 HOP_GATEWAY = LP.HOP_GATEWAY
 HOP_ANCHOR = LP.HOP_ANCHOR
 
+# HopStats.loss_level - keys of constants.network.latency.CHECK_LOSS_COLORS (none has no colour).
+LOSS_LEVEL_NONE = "none"
+LOSS_LEVEL_SOME = "some"
+LOSS_LEVEL_HIGH = "high"
+
 
 @dataclass(frozen=True)
 class HopStats:
@@ -52,11 +57,25 @@ class HopStats:
 
     @property
     def verdict(self) -> Optional[str]:
-        """The pill's Good / OK / Slow (latency_probe.latency_verdict); None when no echo came back -
-        the sheet says "No reply" instead of passing a judgement on silence."""
+        """The pill's Good / OK / Slow (latency_probe.latency_verdict) on the median RTT alone - loss is
+        reported separately (``loss_level``): over 20 echoes one lost ping is 5%, which the pill's rule
+        reads as "Slow" for a 2 ms router. None when no echo came back - the sheet says "No reply"
+        instead of passing a judgement on silence."""
         if not self.answered:
             return None
-        return LP.latency_verdict(self.median_ms, self.loss_pct)
+        return LP.latency_verdict(self.median_ms, 0.0)
+
+    @property
+    def loss_level(self) -> Optional[str]:
+        """LOSS_LEVEL_NONE / _SOME (amber) / _HIGH (red, from CHECK_LOSS_HIGH_MIN_LOST lost echoes);
+        None when nothing answered."""
+        if not self.answered:
+            return None
+        if self.lost <= 0:
+            return LOSS_LEVEL_NONE
+        if self.lost >= constants.network.latency.CHECK_LOSS_HIGH_MIN_LOST:
+            return LOSS_LEVEL_HIGH
+        return LOSS_LEVEL_SOME
 
 
 def percentile(values: Sequence[float], q: float) -> Optional[float]:
