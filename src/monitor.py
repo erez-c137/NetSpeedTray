@@ -44,7 +44,8 @@ class SingleInstanceChecker:
     This class is designed to be used as a context manager.
 
     Raises:
-        AlreadyRunningError: If another instance is already running (caller exits silently).
+        AlreadyRunningError: If another instance is already running (caller exits silently) - including
+            one we may not open (an elevated or other-user instance: ERROR_ACCESS_DENIED).
         RuntimeError: If the mutex itself cannot be created.
     """
     def __init__(self):
@@ -58,6 +59,15 @@ class SingleInstanceChecker:
                 self.logger.info("NetSpeedTray is already running; this duplicate launch will exit quietly.")
                 raise AlreadyRunningError("Application is already running.")
         except win32api.error as e:
+            if e.winerror == winerror.ERROR_ACCESS_DENIED:
+                # The mutex exists but we may not open it: it was created by an ELEVATED instance (its
+                # default DACL admits only Administrators/SYSTEM and its High integrity label blocks a
+                # Medium-IL caller), or by another user's session (the name is Global\). CreateMutexW
+                # can only be denied on an object that already exists, so this is the same fact as
+                # ERROR_ALREADY_EXISTS - another instance is running - and gets the same quiet exit.
+                self.logger.info("NetSpeedTray is already running (mutex held by an elevated or other-user "
+                                 "instance); this duplicate launch will exit quietly.")
+                raise AlreadyRunningError("Application is already running.") from e
             self.logger.error("Failed to create mutex: %s", e)
             raise RuntimeError(f"Failed to create mutex: {e}") from e
 
