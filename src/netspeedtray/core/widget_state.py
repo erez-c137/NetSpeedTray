@@ -34,7 +34,9 @@ from PyQt6.QtCore import QObject, QThread, pyqtSignal, QTimer
 from netspeedtray import constants
 from netspeedtray.constants import network, timeouts
 from netspeedtray.core import usage_snapshot
-from netspeedtray.core.db.history_reader import HistoryReader, V7HistoryReader, V8HistoryReader, VolumeResult
+from netspeedtray.core.db.history_reader import (
+    HistoryNotReadyError, HistoryReader, V7HistoryReader, V8HistoryReader, VolumeResult,
+)
 from netspeedtray.core.db.sqlite_uri import sqlite_ro_uri
 from netspeedtray.core.db.writer_v8 import NetSample
 from netspeedtray.utils.helpers import get_app_data_path
@@ -257,7 +259,7 @@ class WidgetState(QObject):
                 if ver is None:
                     # Nothing safe to open yet (the worker is still migrating), or ever (the live name
                     # is absent until the next launch's recover()). Readers catch this and read empty.
-                    raise sqlite3.OperationalError("history database not available for reading")
+                    raise HistoryNotReadyError("history database not available for reading")
                 if ro:
                     # Read-only session (deferred upgrade / downgrade / export): never a read-write
                     # handle on a file this build must not touch - not even the checkpoint SQLite runs

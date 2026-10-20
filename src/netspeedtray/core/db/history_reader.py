@@ -40,6 +40,7 @@ the odometer's in-memory state.
 
 import logging
 import sqlite3
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -157,17 +158,42 @@ class HistoryReader(ABC):
         caller defers). Storage errors propagate; a bad snapshot only empties ``snapshot``."""
 
 
+class HistoryNotReadyError(sqlite3.OperationalError):
+    """The history file cannot be opened for reading YET (the worker is still creating/migrating it -
+    a v7 -> v8 upgrade on the first 2.2 launch) or at all this session. Reads issued in that window
+    return empty by design, so it is logged at INFO without a traceback, never as a failure. A
+    subclass of OperationalError so every ``except sqlite3.Error`` still catches it."""
+
+
 class _ReaderBase(HistoryReader):
     """What both backends share: connection/logger plumbing, the read snapshot, the retention
     horizons, and the odometer read (``usage_counter`` + ``metadata`` are identical in v7 and v8)."""
 
     def __init__(self, conn_provider: Callable[[], sqlite3.Connection],
                  db_path_provider: Callable[[], Path],
-                 logger: Optional[logging.Logger] = None) -> None:
+                 logger: Optional[logging.Logger] = None,
+                 clock: Optional[Callable[[], float]] = None) -> None:
         self._conn = conn_provider
         self._db_path = db_path_provider
+        # Epoch seconds "now" for the horizon / watermark-lead / open-ended-window rules. The app always
+        # uses the wall clock; tests inject a fixed one so no result depends on when the suite runs.
+        self._clock = clock or time.time
         # The owner's logger, so every message keeps the name and wording it had inside WidgetState.
         self.logger = logger or logging.getLogger("NetSpeedTray.HistoryReader")
+
+    def _now_ts(self) -> int:
+        return int(self._clock())
+
+    def _now(self) -> datetime:
+        return datetime.fromtimestamp(self._clock())
+
+    def _log_read_failure(self, what: str, e: BaseException) -> None:
+        """A read that failed and will return empty. Not-ready-yet is expected (INFO, no traceback);
+        anything else is a real failure (ERROR, with traceback)."""
+        if isinstance(e, HistoryNotReadyError):
+            self.logger.info("%s skipped, returning empty: %s", what, e)
+        else:
+            self.logger.error("%s: %s", what, e, exc_info=True)
 
     _NO_BOUND = "9e18"   # past any epoch second: "no finer data inside the horizon" bounds nothing
 
@@ -243,7 +269,7 @@ class V7HistoryReader(_ReaderBase):
         tier's earliest in-horizon row. The finest tier is unbounded. The MIN is an uncorrelated
         scalar subquery - evaluated once, inside the bounded statement's own snapshot - and a single
         seek on the (timestamp, ...) primary key."""
-        horizons = self._horizons(int(datetime.now().timestamp()))
+        horizons = self._horizons(self._now_ts())
         out: List[Tuple[str, tuple]] = [("", ())]
         for i in range(1, len(tables)):
             parts = [f"COALESCE((SELECT MIN(timestamp) FROM {tables[j]} WHERE timestamp >= ?), {self._NO_BOUND})"
@@ -267,7 +293,7 @@ class V7HistoryReader(_ReaderBase):
                       interface_name: Optional[str] = None, return_raw: bool = False,
                       resolution: Resolution = 'auto') -> List[SpeedPoint]:
         # 1. Timeline Setup
-        _now_ts = int(datetime.now().timestamp())
+        _now_ts = self._now_ts()
         _start_ts = int(start_time.timestamp()) if start_time else 0
         _end_ts = int(end_time.timestamp()) if end_time else _now_ts
 
@@ -452,7 +478,7 @@ class V7HistoryReader(_ReaderBase):
             return data_points
 
         except sqlite3.Error as e:
-            self.logger.error("Unified graph query failed: %s", e, exc_info=True)
+            self._log_read_failure("Unified graph query failed", e)
             return []
 
     def summarize_network(self, direction: str, start_time: datetime, end_time: datetime,
@@ -513,7 +539,7 @@ class V7HistoryReader(_ReaderBase):
             tier = "minute" if win <= 30 * 86400 else "hour"
             return S.summarize_rollup(avgs, maxes, counts, tier, coverage)
         except Exception as e:
-            self.logger.error("summarize_network failed: %s", e, exc_info=True)
+            self._log_read_failure("summarize_network failed", e)
             return S.summarize_raw([])
         finally:
             if conn is not None:
@@ -533,7 +559,7 @@ class V7HistoryReader(_ReaderBase):
             total_up, total_down = 0.0, 0.0
 
             # Optimization: Only query tiers that could potentially have data for this range.
-            now_ts = int(datetime.now().timestamp())
+            now_ts = self._now_ts()
 
             # Bytes per tier = (sum of per-sample RATES) x (the seconds that sum represents). For the
             # MINUTE and HOUR rollups that span is the FIXED bucket duration (60 / 3600 s) - NOT
@@ -574,7 +600,7 @@ class V7HistoryReader(_ReaderBase):
             return total_up, total_down
 
         except Exception as e:
-            self.logger.error("Error calculating total bandwidth: %s", e, exc_info=True)
+            self._log_read_failure("Error calculating total bandwidth", e)
             return 0.0, 0.0
         finally:
             if conn is not None:
@@ -606,7 +632,7 @@ class V7HistoryReader(_ReaderBase):
             interfaces = [row[0] for row in cursor.fetchall()]
             return interfaces
         except sqlite3.Error as e:
-            self.logger.error("Error fetching distinct interfaces: %s", e, exc_info=True)
+            self._log_read_failure("Error fetching distinct interfaces", e)
             return []
 
     def earliest_timestamp(self) -> Optional[datetime]:
@@ -631,7 +657,7 @@ class V7HistoryReader(_ReaderBase):
                 return datetime.fromtimestamp(earliest_ts)
 
         except sqlite3.Error as e:
-            self.logger.error("Failed to retrieve the earliest timestamp from database: %s", e, exc_info=True)
+            self._log_read_failure("Failed to retrieve the earliest timestamp from database", e)
 
         return None
 
@@ -643,7 +669,7 @@ class V7HistoryReader(_ReaderBase):
             conn = self._conn()
             cursor = conn.cursor()
 
-            _end = end_time or datetime.now()
+            _end = end_time or self._now()
             _start = start_time or (_end - timedelta(hours=24))
 
             start_ts = int(_start.timestamp())
@@ -680,7 +706,7 @@ class V7HistoryReader(_ReaderBase):
 
             return [(datetime.fromtimestamp(row[0]), row[1]) for row in rows]
         except Exception as e:
-            self.logger.error("Error fetching hardware history: %s", e, exc_info=True)
+            self._log_read_failure("Error fetching hardware history", e)
             return []
 
     def summarize_hardware(self, stat_type: str, start_time: datetime, end_time: datetime,
@@ -723,7 +749,7 @@ class V7HistoryReader(_ReaderBase):
             return S.summarize_rollup(avgs, maxes, counts, tier,
                                       S.coverage_pct(sum(counts), win, poll_interval))
         except Exception as e:
-            self.logger.error("summarize_hardware failed: %s", e, exc_info=True)
+            self._log_read_failure("summarize_hardware failed", e)
             return S.summarize_raw([])
         finally:
             if conn is not None:
@@ -815,7 +841,7 @@ class V8HistoryReader(_ReaderBase):
         Lower bound (raw, minute): the tier's own watermark - rows below it were rolled up already.
         Upper bound (minute, hour): every finer tier's ceiling, which is that tier's watermark, or - only
         when it has none - the step-2 rule: its earliest row inside its retention horizon."""
-        now_ts = int(datetime.now().timestamp())
+        now_ts = self._now_ts()
         horizons = self._horizons(now_ts)
         keys = self._WM_KEYS[tables]
 
@@ -848,7 +874,7 @@ class V8HistoryReader(_ReaderBase):
             began = self._begin_snapshot(conn)
             return fn(conn.cursor())
         except Exception as e:
-            self.logger.error("v8 history read failed: %s", e, exc_info=True)
+            self._log_read_failure("v8 history read failed", e)
             return on_error()
         finally:
             if conn is not None:
@@ -864,7 +890,7 @@ class V8HistoryReader(_ReaderBase):
     def speed_history(self, start_time: Optional[datetime] = None, end_time: Optional[datetime] = None,
                       interface_name: Optional[str] = None, return_raw: bool = False,
                       resolution: Resolution = 'auto') -> List[SpeedPoint]:
-        _now_ts = int(datetime.now().timestamp())
+        _now_ts = self._now_ts()
         _start_ts = int(start_time.timestamp()) if start_time else 0
         _end_ts = int(end_time.timestamp()) if end_time else _now_ts
         target_res = resolution
@@ -902,7 +928,7 @@ class V8HistoryReader(_ReaderBase):
         try:
             rows = self._conn().execute(query, params).fetchall()
         except sqlite3.Error as e:
-            self.logger.error("Unified graph query failed: %s", e, exc_info=True)
+            self._log_read_failure("Unified graph query failed", e)
             return []
         self.logger.debug("History query: target_res=%s fetched_rows=%d", target_res, len(rows))
 
@@ -1035,7 +1061,7 @@ class V8HistoryReader(_ReaderBase):
         return v.up_bytes, v.down_bytes
 
     def coverage(self, start_time: datetime, end_time: datetime) -> Optional[Coverage]:
-        now_ts = int(datetime.now().timestamp())
+        now_ts = self._now_ts()
         st = int(start_time.timestamp())
         et = max(st, min(int(end_time.timestamp()), now_ts))
 
@@ -1070,7 +1096,7 @@ class V8HistoryReader(_ReaderBase):
                 f"ORDER BY interface_name").fetchall()
             return [r[0] for r in rows]
         except sqlite3.Error as e:
-            self.logger.error("Error fetching distinct interfaces: %s", e, exc_info=True)
+            self._log_read_failure("Error fetching distinct interfaces", e)
             return []
 
     def earliest_timestamp(self) -> Optional[datetime]:
@@ -1082,14 +1108,14 @@ class V8HistoryReader(_ReaderBase):
             if row and row[0] is not None:
                 return datetime.fromtimestamp(int(row[0]))
         except sqlite3.Error as e:
-            self.logger.error("Failed to retrieve the earliest timestamp from database: %s", e, exc_info=True)
+            self._log_read_failure("Failed to retrieve the earliest timestamp from database", e)
         return None
 
     # --- hardware -----------------------------------------------------------------------------------
 
     def hardware_history(self, stat_type: str, start_time: Optional[datetime] = None,
                          end_time: Optional[datetime] = None) -> List[Tuple[datetime, float]]:
-        _end = end_time or datetime.now()
+        _end = end_time or self._now()
         _start = start_time or (_end - timedelta(hours=24))
         start_ts, end_ts = int(_start.timestamp()), int(_end.timestamp())
         duration = end_ts - start_ts
@@ -1105,7 +1131,7 @@ class V8HistoryReader(_ReaderBase):
                 f"SELECT b, AVG(v) FROM ({' UNION ALL '.join(parts)}) GROUP BY b ORDER BY b ASC", params).fetchall()
             return [(datetime.fromtimestamp(r[0]), r[1]) for r in rows]
         except Exception as e:
-            self.logger.error("Error fetching hardware history: %s", e, exc_info=True)
+            self._log_read_failure("Error fetching hardware history", e)
             return []
 
     def summarize_hardware(self, stat_type: str, start_time: datetime, end_time: datetime,

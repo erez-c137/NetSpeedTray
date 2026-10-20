@@ -14,7 +14,6 @@ not "not running".
 """
 import re
 import sqlite3
-import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -28,6 +27,9 @@ from netspeedtray.utils import summaries as S
 
 LAT = constants.network.latency
 _REPO_ROOT = Path(__file__).resolve().parents[4]
+# One clock for the data, the windows and the readers (v8_twin_fixture.fixed_now). The DATABASE.md
+# recipe reads SQLite's own 'now' (-7 days), so an NST_TEST_NOW override must stay within ~3 days.
+NOW = F.fixed_now()
 
 
 def _build_v7(path: Path) -> None:
@@ -37,7 +39,7 @@ def _build_v7(path: Path) -> None:
     w = LegacyV7Worker(path)
     w._initialize_connection()
     w._check_and_create_schema()
-    now = int(time.time())
+    now = int(NOW.timestamp())
     batch = []
     for h in (((now - 3 * 86400) // 3600) * 3600, ((now - 2 * 3600) // 3600) * 3600):
         for i in range(20):
@@ -54,7 +56,7 @@ def _build_v7(path: Path) -> None:
             batch.append((ts, LAT.STAT_GW_TIMEOUT, g))
             batch.append((ts, LAT.STAT_ANCHOR_TIMEOUT, a))
     w._persist_hardware_batch(batch)
-    w._aggregate_hardware_raw_to_minute(w.conn.cursor(), datetime.now())
+    w._aggregate_hardware_raw_to_minute(w.conn.cursor(), NOW)
     w.conn.commit()
     w._close_connection()
 
@@ -69,7 +71,7 @@ def _carry_to_v8(v7: Path, v8: Path) -> None:
         w.hw_tier(v8t, src.execute(f"SELECT timestamp, stat_type, avg_value, max_value, sample_count FROM {v7t}").fetchall())
     # Hardware raw rows are not folded at migration: only the hw pair describes them. The network pair is
     # set somewhere that would hide the last day if a hardware reader ever read it (#359 review).
-    now = int(time.time())
+    now = int(NOW.timestamp())
     w.watermarks(now // 60 * 60, now // 3600 * 3600,
                  hw_raw=(now - 24 * 3600) // 60 * 60, hw_minute=(now - 30 * 86400) // 3600 * 3600)
     w.close()
@@ -100,7 +102,7 @@ def test_loss_pct_is_the_same_rate_on_both_backends(pair, hours, gw, anchor):
     """6 h = the new hour, raw (exact path); 4 days = both hours, one of them rolled into minute rows
     (rollup path) - the mixed shapes average to the same per-cycle rate either way."""
     _, r7, r8 = pair
-    now = datetime.now()
+    now = NOW
     start = now - timedelta(hours=hours)
     for series, want in ((LAT.STAT_GW_TIMEOUT, gw), (LAT.STAT_ANCHOR_TIMEOUT, anchor)):
         l7, s7 = _loss(r7, series, start, now)
@@ -111,7 +113,7 @@ def test_loss_pct_is_the_same_rate_on_both_backends(pair, hours, gw, anchor):
 
 def test_outage_summary_is_the_same_and_0_25_is_not_a_drop(pair):
     _, r7, r8 = pair
-    now = datetime.now()
+    now = NOW
     start = now - timedelta(hours=6)
     for series, want in ((LAT.STAT_GW_TIMEOUT, 2), (LAT.STAT_ANCHOR_TIMEOUT, 3)):
         o7 = S.outage_summary(r7.hardware_history(series, start, now))
@@ -147,7 +149,7 @@ class _WS:
 def test_exporter_files_are_byte_identical(pair, tmp_path, days):
     from netspeedtray.utils.stats_exporter import export_window
     _, r7, r8 = pair
-    end = datetime.now()
+    end = NOW
     start = end - timedelta(days=days)
     p7 = export_window(_WS(r7), start, end, "w", str(tmp_path / "v7"), "x", poll_interval=3.0)
     p8 = export_window(_WS(r8), start, end, "w", str(tmp_path / "v8"), "x", poll_interval=3.0)
@@ -220,7 +222,7 @@ def _sessions_db(tmp_path, sessions):
 
 
 def test_coverage_is_a_fact_from_sessions_never_backfilled(tmp_path):
-    now = int(time.time())
+    now = int(NOW.timestamp())
     T = now - 10 * 3600
     r8, conns = _sessions_db(tmp_path, [
         (T, T + 3595, T + 3600, 1),            # clean exit: ended_ts wins
@@ -248,7 +250,7 @@ def test_coverage_is_a_fact_from_sessions_never_backfilled(tmp_path):
 
 def test_coverage_with_no_sessions_is_all_unknown_and_v7_has_none(tmp_path, q_app):
     r8, conns = _sessions_db(tmp_path, [])
-    now = datetime.now()
+    now = NOW
     cov = r8.coverage(now - timedelta(days=1), now)
     assert (cov.running_seconds, cov.not_running_seconds) == (0, 0) and cov.unknown_seconds > 86000
     F.write_v7(tmp_path / "v7.db", F.History(now_ts=int(now.timestamp())))
@@ -260,7 +262,7 @@ def test_coverage_with_no_sessions_is_all_unknown_and_v7_has_none(tmp_path, q_ap
 
 def test_coverage_ignores_a_garbled_session(tmp_path):
     """last_seen before start (a clock step mid-session) contributes nothing rather than negative time."""
-    now = int(time.time())
+    now = int(NOW.timestamp())
     r8, conns = _sessions_db(tmp_path, [(now - 7200, now - 7200, None, 0), (now - 3600, now - 4000, None, 0)])
     cov = r8.coverage(datetime.fromtimestamp(now - 7200), datetime.fromtimestamp(now))
     assert cov.running_seconds == 0 and cov.not_running_seconds == 7200
