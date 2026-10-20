@@ -31,6 +31,7 @@ calm flyout. Nothing is retried in-session; the next launch tries again. There i
 """
 
 import logging
+import os
 import queue
 import re
 import sqlite3
@@ -162,6 +163,7 @@ class DatabaseWorker(QThread):
         # Compaction owed after a "Delete all history" whose WAL checkpoint couldn't finish.
         self._compact_pending = False
         self._vacuum_pending = False
+        self._backups_pending = False   # Delete all history could not remove a backup yet (retried)
         self._last_compact_attempt = 0.0
         # The v8 writer (built on this thread in run()) and its settings.
         self._writer = None
@@ -1130,6 +1132,7 @@ class DatabaseWorker(QThread):
             with self._txn() as cursor:
                 retention = self._resolve_retention_days(cursor, config, _now)
             out = self._writer.run_maintenance(now_ts=now_ts, retention_days=retention)
+            self._age_out_backups(retention, _now)
             with self._txn() as cursor:
                 cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES ('last_maintenance_at', ?)",
                                (str(now_ts),))
@@ -1207,25 +1210,103 @@ class DatabaseWorker(QThread):
             return
         try:
             self._writer.delete_history(include_usage=include_usage)
-        except sqlite3.Error as e:
+        except Exception as e:
+            # ANY failure is an answer the user (and WidgetState's pending odometer reset) waits on:
+            # _execute_task would swallow a non-sqlite3 exception and leave both hanging.
             self.logger.error("Delete all history failed: %s", e)
             self.history_deleted.emit(self.DELETE_FAILED)
             return
         self.logger.info("History deleted (%d tables%s).", len(constants.data.HISTORY_TABLES),
                          ", incl. data-usage counter" if include_usage else "")
+        # The pre-upgrade backups hold the same history (the whole 2.1 file, for the v7 one): a delete
+        # that kept them would not have deleted it.
+        backups_ok = self._remove_history_backups()
         checkpoint_ok = self._checkpoint_truncate(constants.timeouts.DB_CHECKPOINT_RETRIES)
         self.database_updated.emit()
-        if checkpoint_ok:
+        if checkpoint_ok and backups_ok:
             self.history_deleted.emit(self.DELETE_DONE)
             return
         self._compact_pending = True
         self._vacuum_pending = False
+        self._backups_pending = not backups_ok
         self._last_compact_attempt = time.monotonic()
-        self._set_compaction_marker(True)   # survives a quit before the retry lands
+        self._set_compaction_marker(True, backups=self._backups_pending)   # survives a quit
         self.logger.warning(
-            "History rows deleted, but the WAL checkpoint is busy; old page images may remain in the "
-            "-wal file until it completes. Retrying while idle.")
+            "History rows deleted, but %s. Retrying while idle.",
+            "the WAL checkpoint is busy; old page images may remain in the -wal file until it completes"
+            if not checkpoint_ok else "a database backup could not be removed yet")
         self.history_deleted.emit(self.DELETE_COMPACT_PENDING)
+
+    def _history_backup_files(self) -> List[Path]:
+        """Every ``speed_history.db.bak*`` file in the data folder - the backups AND their -wal / -shm /
+        -journal sidecars (a backup someone opened has them, and they can hold its pages)."""
+        try:
+            return sorted(p for p in self.db_path.parent.glob(f"{self.db_path.name}.bak*") if p.is_file())
+        except OSError:
+            return []
+
+    def _remove_history_backups(self) -> bool:
+        """Delete all history, part 2: overwrite every database backup with zeros, then delete it. The
+        overwrite is best effort (an SSD or a file-system snapshot may still keep old blocks - the same
+        limit as secure_delete inside the database); deleting is what makes it unrecoverable through
+        NetSpeedTray. Never while a v8 migration journal exists: recover() needs the v7 backup to undo
+        or finish a swap (in practice the journal is gone before any delete can run). True when no
+        backup is left."""
+        if migrate_v8.journal_path_for(self.db_path).exists():
+            self.logger.warning("Delete all history: a migration journal exists; database backups kept "
+                                "until the migration has been finished or undone.")
+            return False
+        ok = True
+        for path in self._history_backup_files():
+            if not self._scrub_and_unlink(path):
+                ok = False
+        return ok
+
+    def _scrub_and_unlink(self, path: Path) -> bool:
+        """Zero ``path`` in place (best effort), fsync, delete. True when it is gone."""
+        try:
+            size = path.stat().st_size
+            with open(path, "r+b", buffering=0) as f:
+                chunk = bytes(1 << 20)
+                left = size
+                while left > 0:
+                    n = min(left, len(chunk))
+                    f.write(chunk[:n])
+                    left -= n
+                os.fsync(f.fileno())
+            path.unlink()
+            self.logger.info("Removed database backup %s.", path.name)
+            return True
+        except FileNotFoundError:
+            return True
+        except OSError as e:
+            self.logger.warning("Could not remove database backup %s: %s", path.name, e)
+            return False
+
+    def _age_out_backups(self, retention_days: float, now: datetime) -> None:
+        """Maintenance: a pre-migration backup ages out with "Keep history for" - deleted (with its
+        sidecars) once older than the retention window, never sooner than BACKUP_MIN_KEEP_DAYS after
+        it was made (the 2.1.x rollback window). Its age is the time in its name
+        (``.db.bak.v{N}_YYYYmmdd_HHMMSS``: when the upgrade ran), else the file's mtime."""
+        R = constants.data.retention
+        keep_days = max(float(retention_days), float(R.BACKUP_MIN_KEEP_DAYS))
+        if keep_days >= R.UNLIMITED_DAYS or migrate_v8.journal_path_for(self.db_path).exists():
+            return
+        cutoff = now.timestamp() - keep_days * 86400.0
+        for path in self._backup_files("*"):
+            m = re.search(r"\.db\.bak\.v\d+_(\d{8}_\d{6})", path.name)
+            try:
+                made = (datetime.strptime(m.group(1), "%Y%m%d_%H%M%S").timestamp() if m
+                        else path.stat().st_mtime)
+            except (ValueError, OSError, OverflowError):
+                continue
+            if made >= cutoff:
+                continue
+            for p in [path] + [Path(str(path) + side) for side in self._SIDECARS]:
+                if p.exists():
+                    self._scrub_and_unlink(p)
+            self.logger.info("Database backup %s is older than the history retention (%d days); removed.",
+                             path.name, int(keep_days))
 
     def _vacuum_now(self) -> bool:
         """Hand every free page back (v8: ``incremental_vacuum``, never a full-file VACUUM). True on
@@ -1278,6 +1359,10 @@ class DatabaseWorker(QThread):
             if not self._vacuum_now():
                 return
             self._vacuum_pending = False
+        if getattr(self, "_backups_pending", False):
+            if not self._remove_history_backups():
+                return
+            self._backups_pending = False
         # Clear the restart marker BEFORE the checkpoint, so the checkpoint also folds that write in.
         self._set_compaction_marker(False)
         if self._checkpoint_truncate(1):
@@ -1285,18 +1370,23 @@ class DatabaseWorker(QThread):
             self.logger.info("Deferred compaction after history delete completed.")
             self.database_updated.emit()
         else:
-            self._set_compaction_marker(True)
+            self._set_compaction_marker(True, backups=self._backups_pending)
 
     _COMPACT_MARKER_KEY = "pending_history_compaction"
+    # Marker values: "1" = a checkpoint is owed (2.1.x writes this one too, and the migration carries
+    # it over); "2" = a checkpoint AND backup removal are owed. Only a "2" ever removes a backup at
+    # startup - a "1" from a 2.1.x file must never take the upgrade's own v7 backup with it.
+    _MARKER_BACKUPS = "2"
 
-    def _set_compaction_marker(self, on: bool) -> None:
-        """Persist 'a history delete still owes a checkpoint' in metadata, so a quit before the idle
-        retry lands is picked up at the next start (_resume_pending_compaction)."""
+    def _set_compaction_marker(self, on: bool, backups: bool = False) -> None:
+        """Persist 'a history delete still owes a checkpoint' (and, with ``backups``, 'still owes
+        removing a database backup') in metadata, so a quit before the idle retry lands is picked up
+        at the next start (_resume_pending_compaction)."""
         try:
             with self._txn() as cur:
                 if on:
-                    cur.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, '1')",
-                                (self._COMPACT_MARKER_KEY,))
+                    cur.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+                                (self._COMPACT_MARKER_KEY, self._MARKER_BACKUPS if backups else "1"))
                 else:
                     cur.execute("DELETE FROM metadata WHERE key = ?", (self._COMPACT_MARKER_KEY,))
         except sqlite3.Error as e:
@@ -1314,6 +1404,8 @@ class DatabaseWorker(QThread):
             self.logger.info("Resuming the file compaction a previous history delete could not finish.")
             self._compact_pending = True
             self._vacuum_pending = True    # cheap insurance: the old pages may also be on the freelist
+            # Only a 2.2 delete that could not remove a backup (locked) asks for that here.
+            self._backups_pending = str(row[0]) == self._MARKER_BACKUPS
             self._retry_pending_compaction(force=True)
 
     @staticmethod

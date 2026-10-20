@@ -155,6 +155,7 @@ class NetworkSpeedWidget(QWidget):
         self.cpu_power: Optional[float] = None
         self.gpu_power: Optional[float] = None
         self.system_power: Optional[float] = None   # true whole-system W (RAPL PSYS / battery), if available
+        self.latency_probe = None                    # apply_latency_probe owns it (startup + every apply)
         self.latency_gw: Optional[float] = None      # gateway RTT ms (LAN latency); None = timeout
         self.latency_anchor: Optional[float] = None  # public-anchor RTT ms (internet latency); opt-in
         # Live loss% (~2 min) per hop, and the HEADLINE loss: the anchor's when the public probe is on,
@@ -532,6 +533,69 @@ class NetworkSpeedWidget(QWidget):
             except Exception:
                 pass
 
+    def apply_latency_probe(self) -> None:
+        """Start / stop the latency probe to match ``latency_enabled``. Called at startup and from every
+        settings apply; idempotent. Switching it off stops the probe at once (the probe also reads the
+        switch before every echo, so not even the rest of a burst goes out - to the router or the public
+        host) and clears the live figures; switching it back on starts a fresh probe. Never blocks the
+        GUI thread: a stopped probe finishes its in-flight echo (<= 1 s) on its own and is joined at
+        shutdown if it has not by then."""
+        enabled = bool(self.config.get("latency_enabled", True))
+        probe = getattr(self, "latency_probe", None)
+        if probe is not None:
+            probe.set_config(self.config)   # a settings rollback replaces the dict
+            if enabled and probe.isRunning() and probe._running:
+                return
+            self._retire_latency_probe(probe)
+            self.latency_probe = None
+        if not enabled:
+            if probe is not None:
+                self._clear_live_latency()
+            return
+        try:
+            from netspeedtray.core.latency_probe import LatencyProbe
+            self.latency_probe = LatencyProbe(self.config)
+            self.latency_probe.latency_ready.connect(self._on_latency)
+            self.latency_probe.start()
+        except Exception as e:
+            self.latency_probe = None
+            self.logger.debug("LatencyProbe not started: %s", e)
+
+    def invalidate_latency_gateway(self) -> None:
+        """Resume from sleep / a new primary route: the probe looks its default gateway up again before
+        the next burst (it would otherwise ping the cached one for up to a minute and record that
+        router's silence as loss)."""
+        probe = getattr(self, "latency_probe", None)
+        if probe is not None:
+            try:
+                probe.invalidate_gateway()
+            except Exception as e:
+                self.logger.debug("latency gateway not invalidated: %s", e)
+
+    def _retire_latency_probe(self, probe) -> None:
+        """Stop ``probe`` without waiting; keep a reference until its thread has ended (a QThread
+        destroyed while running aborts the process). Shutdown joins whatever is still here."""
+        try:
+            probe.stop()
+            probe.latency_ready.disconnect(self._on_latency)   # a sample already in flight is dropped
+        except Exception:
+            pass
+        retiring = getattr(self, "_retired_latency_probes", None)
+        if retiring is None:
+            retiring = self._retired_latency_probes = []
+        retiring[:] = [p for p in retiring if p.isRunning()]
+        if probe.isRunning():
+            retiring.append(probe)
+
+    def _clear_live_latency(self) -> None:
+        """Latency switched off: nothing on screen may keep showing the last reading."""
+        from netspeedtray.core.latency_probe import LatencyLossWindows
+        self.latency_gw = self.latency_anchor = None
+        self.latency_loss = self.latency_loss_gw = self.latency_loss_anchor = None
+        self.latency_headline_hop = None
+        self.latency_headline_ms = None
+        self._latency_loss_windows = LatencyLossWindows()
+
     def apply_metrics_endpoint(self) -> None:
         """Start / stop / move the local metrics endpoint to match the config (2.2 scope B). Called at
         startup and from every settings apply; idempotent, so a live-preview tick that did not touch
@@ -885,15 +949,8 @@ class NetworkSpeedWidget(QWidget):
 
             # Latency probe on its own thread (gateway by default; public anchor opt-in). A 1 s ICMP
             # timeout must never sit on the stats poll, so it's a separate QThread.
-            self.latency_probe = None
-            if self.config.get("latency_enabled", True):
-                try:
-                    from netspeedtray.core.latency_probe import LatencyProbe
-                    self.latency_probe = LatencyProbe(self.config)
-                    self.latency_probe.latency_ready.connect(self._on_latency)
-                    self.latency_probe.start()
-                except Exception as e:
-                    self.logger.debug("LatencyProbe not started: %s", e)
+            # Started / stopped live with Settings > Connection > Latency (apply_latency_probe).
+            self.apply_latency_probe()
 
             # 1. System Event Handler (replaces manual WinEventHooks)
             self.system_event_handler.foreground_app_changed.connect(self._execute_refresh)
@@ -1425,6 +1482,9 @@ class NetworkSpeedWidget(QWidget):
                     self.logger.info("Resume from sleep detected - re-asserting widget.")
                     QTimer.singleShot(constants.timeouts.TASKBAR_RESTART_RECOVERY_DELAY_MS,
                                       lambda: self._on_environment_changed("resume"))
+                    invalidate = getattr(self, "invalidate_latency_gateway", None)
+                    if invalidate is not None:
+                        invalidate()   # the router may differ after sleep
         except Exception as e:
             self.logger.debug("nativeEvent power handling failed: %s", e)
         return False, 0
@@ -1999,9 +2059,13 @@ class NetworkSpeedWidget(QWidget):
                 self.monitor_thread.stop()
 
         def _latency_probe() -> None:
+            probes = list(getattr(self, '_retired_latency_probes', None) or [])
             if getattr(self, 'latency_probe', None):
-                self.latency_probe.stop()
-                self.latency_probe.wait(1500)
+                probes.append(self.latency_probe)
+            for p in probes:
+                p.stop()
+            for p in probes:   # all stopped first, so the waits overlap (one in-flight echo each)
+                p.wait(1500)
 
         def _metrics_endpoint() -> None:
             # Joins its threads; nothing is left listening.

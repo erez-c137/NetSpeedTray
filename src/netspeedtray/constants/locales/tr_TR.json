@@ -278,7 +278,7 @@
     "DELETE_HISTORY_SUB": "Hız, donanım ve bağlantı geçmişi. Ayarlar korunur.",
     "DELETE_HISTORY_BUTTON": "Sil…",
     "DELETE_HISTORY_CONFIRM_TITLE": "Tüm geçmiş silinsin mi?",
-    "DELETE_HISTORY_CONFIRM_TEXT": "Kaydedilmiş hız, donanım ve bağlantı geçmişiniz kalıcı olarak silinir. Bu işlem geri alınamaz. Kayıt şu andan itibaren devam eder.",
+    "DELETE_HISTORY_CONFIRM_TEXT": "Kaydedilmiş hız, donanım ve bağlantı geçmişiniz, 2.2 yükseltmesinde saklanan yedek de dahil olmak üzere kalıcı olarak silinir; daha eski geçmiş artık geri yüklenemez. Bu işlem geri alınamaz. Kayıt şu andan itibaren devam eder.",
     "DELETE_HISTORY_INCLUDE_USAGE": "Bu dönemin veri kullanımını da sıfırla",
     "DELETE_HISTORY_USAGE_NOTE": "Aşağıdaki kutuyu işaretlemediğiniz sürece bu dönemin veri sınırı kullanımı korunur.",
     "DELETE_HISTORY_CONFIRM_BUTTON": "Sil",

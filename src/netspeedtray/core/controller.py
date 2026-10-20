@@ -79,6 +79,9 @@ class StatsController(QObject):
     # Network identity (Wi-Fi band / SSID). object carries a NetworkIdentity (or None) so the widget
     # can render the band tag and detect the Location-gated SSID case. Sub-polled ~5s, not per tick.
     network_identity_updated = pyqtSignal(object)
+    # The routing (primary) interface changed - a network switch. The latency probe re-resolves its
+    # cached default gateway on it.
+    primary_interface_changed = pyqtSignal()
 
 
     def __init__(self, config: Dict[str, Any], widget_state: 'WidgetState',
@@ -149,6 +152,8 @@ class StatsController(QObject):
             self.vram_info_updated.connect(self.view.update_vram_info)
         if hasattr(self.view, 'update_network_identity'):
             self.network_identity_updated.connect(self.view.update_network_identity)
+        if hasattr(self.view, 'invalidate_latency_gateway'):
+            self.primary_interface_changed.connect(self.view.invalidate_latency_gateway)
 
         self.logger.debug("View set and signals connected.")
 
@@ -645,6 +650,10 @@ class StatsController(QObject):
                 "Primary network interface changed: %s -> %s",
                 stable_pseudonym(previous), stable_pseudonym(self.primary_interface),
             )
+            try:
+                self.primary_interface_changed.emit()
+            except Exception:
+                pass
 
 
     def current_primary_interface(self) -> Optional[str]:
@@ -685,6 +694,7 @@ class StatsController(QObject):
                     (self.ram_info_updated, 'update_ram_info'),
                     (self.vram_info_updated, 'update_vram_info'),
                     (self.network_identity_updated, 'update_network_identity'),
+                    (self.primary_interface_changed, 'invalidate_latency_gateway'),
                 ):
                     if hasattr(self.view, slot):
                         sig.disconnect(getattr(self.view, slot))

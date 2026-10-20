@@ -278,7 +278,7 @@
     "DELETE_HISTORY_SUB": "Cronologia di velocità, hardware e connessione. Le impostazioni vengono mantenute.",
     "DELETE_HISTORY_BUTTON": "Elimina…",
     "DELETE_HISTORY_CONFIRM_TITLE": "Eliminare tutta la cronologia?",
-    "DELETE_HISTORY_CONFIRM_TEXT": "Elimina definitivamente la cronologia salvata di velocità, hardware e connessione. L'operazione non può essere annullata. La registrazione continua da adesso.",
+    "DELETE_HISTORY_CONFIRM_TEXT": "Elimina definitivamente la cronologia salvata di velocità, hardware e connessione, incluso il backup conservato con l'aggiornamento alla 2.2, quindi la cronologia precedente non potrà più essere ripristinata. L'operazione non può essere annullata. La registrazione continua da adesso.",
     "DELETE_HISTORY_INCLUDE_USAGE": "Azzera anche l'utilizzo dati di questo periodo",
     "DELETE_HISTORY_USAGE_NOTE": "L'utilizzo dati di questo periodo per il limite dati viene mantenuto, a meno che non selezioni la casella qui sotto.",
     "DELETE_HISTORY_CONFIRM_BUTTON": "Elimina",

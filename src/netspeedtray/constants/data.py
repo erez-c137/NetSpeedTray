@@ -46,6 +46,12 @@ class DataRetentionConstants:
     UNLIMITED_DAYS: Final[int] = 36500          # "Keep everything" - 100 years; prune never fires
     MAX_RETENTION_DAYS: Final[int] = UNLIMITED_DAYS
     DEFAULT_DAYS: Final[int] = 365               # 1 year
+    # Pre-migration backups (speed_history.db.bak.v*) age out with "Keep history for": maintenance
+    # deletes one once it is older than the retention window - by then every row in it is older than
+    # the window too. Never sooner than this many days after it was made, so a 2.2 -> 2.1.x rollback
+    # always has its backup for a month (every DAYS_MAP choice is >= 31 days, so this floor only
+    # matters for a hand-edited keep_data). "Keep everything" keeps backups forever (still count-capped).
+    BACKUP_MIN_KEEP_DAYS: Final[int] = 30
     DAYS_MAP: Final[Dict[int, int]] = {
         0: 31,             # 1 month - covers a full calendar month so "this month" is always whole
         1: 90,             # 3 months

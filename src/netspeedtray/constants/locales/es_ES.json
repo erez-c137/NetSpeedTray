@@ -278,7 +278,7 @@
     "DELETE_HISTORY_SUB": "Historial de velocidad, hardware y conexión. Los ajustes se conservan.",
     "DELETE_HISTORY_BUTTON": "Eliminar…",
     "DELETE_HISTORY_CONFIRM_TITLE": "¿Eliminar todo el historial?",
-    "DELETE_HISTORY_CONFIRM_TEXT": "Esto elimina de forma permanente tu historial guardado de velocidad, hardware y conexión. No se puede deshacer. El registro continúa desde ahora.",
+    "DELETE_HISTORY_CONFIRM_TEXT": "Esto elimina de forma permanente tu historial guardado de velocidad, hardware y conexión, incluida la copia de seguridad que se conservó al actualizar a la 2.2, así que el historial anterior ya no se podrá restaurar. No se puede deshacer. El registro continúa desde ahora.",
     "DELETE_HISTORY_INCLUDE_USAGE": "Restablecer también el uso de datos de este periodo",
     "DELETE_HISTORY_USAGE_NOTE": "El uso de datos de este periodo para tu límite de datos se conserva, salvo que marques la casilla de abajo.",
     "DELETE_HISTORY_CONFIRM_BUTTON": "Eliminar",

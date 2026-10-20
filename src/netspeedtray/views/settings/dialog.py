@@ -707,15 +707,10 @@ class SettingsDialog(QDialog):
                 self.logger.debug("history_deleted not connectable: %s", e)
         self.advanced_page.delete_history_btn.setEnabled(False)   # re-enabled on completion/timeout
         self._delete_timeout.start()
+        # The cap alerts are re-armed only once the delete has SUCCEEDED (_on_history_deleted): a
+        # failed delete leaves the odometer as it was, so its alert state must stay too.
+        self._delete_include_usage = bool(include_usage)
         ws.delete_all_history(include_usage=include_usage)
-        if include_usage:
-            # The odometer restarts at 0, so re-arm the 80%/100% cap alerts for this period. Write it
-            # into BOTH dialog snapshots too - Save writes self.config back, Cancel original_config,
-            # and either would otherwise restore the stale "already alerted" state.
-            self.config["usage_alert_state"] = ""
-            self.original_config["usage_alert_state"] = ""
-            if hasattr(self.parent_widget, "update_config"):
-                self.parent_widget.update_config({"usage_alert_state": ""})
         try:
             self.parent_widget.update()   # repaint the mini graph from the now-empty series
         except Exception:
@@ -730,6 +725,16 @@ class SettingsDialog(QDialog):
             self.advanced_page.delete_history_btn.setEnabled(True)
         except Exception:
             pass
+        include_usage = getattr(self, "_delete_include_usage", False)
+        self._delete_include_usage = False
+        if status != DatabaseWorker.DELETE_FAILED and include_usage:
+            # The odometer restarted at 0, so re-arm the 80%/100% cap alerts for this period. Written
+            # into BOTH dialog snapshots too - Save writes self.config back, Cancel original_config,
+            # and either would otherwise restore the stale "already alerted" state.
+            self.config["usage_alert_state"] = ""
+            self.original_config["usage_alert_state"] = ""
+            if hasattr(self.parent_widget, "update_config"):
+                self.parent_widget.update_config({"usage_alert_state": ""})
         if status != DatabaseWorker.DELETE_FAILED:
             # The hover card caches its today/this-month totals; they were computed from the
             # history that is now gone.

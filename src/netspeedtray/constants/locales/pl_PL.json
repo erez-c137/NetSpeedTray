@@ -278,7 +278,7 @@
     "DELETE_HISTORY_SUB": "Historia prędkości, sprzętu i połączenia. Ustawienia zostaną zachowane.",
     "DELETE_HISTORY_BUTTON": "Usuń…",
     "DELETE_HISTORY_CONFIRM_TITLE": "Usunąć całą historię?",
-    "DELETE_HISTORY_CONFIRM_TEXT": "Spowoduje to trwałe usunięcie zapisanej historii prędkości, sprzętu i połączenia. Tej operacji nie można cofnąć. Zapisywanie będzie kontynuowane od teraz.",
+    "DELETE_HISTORY_CONFIRM_TEXT": "Spowoduje to trwałe usunięcie zapisanej historii prędkości, sprzętu i połączenia, łącznie z kopią zapasową zachowaną przy aktualizacji do wersji 2.2, więc starszej historii nie będzie można już przywrócić. Tej operacji nie można cofnąć. Zapisywanie będzie kontynuowane od teraz.",
     "DELETE_HISTORY_INCLUDE_USAGE": "Wyzeruj też zużycie danych w tym okresie",
     "DELETE_HISTORY_USAGE_NOTE": "Zużycie danych w tym okresie dla limitu danych zostanie zachowane, chyba że zaznaczysz pole poniżej.",
     "DELETE_HISTORY_CONFIRM_BUTTON": "Usuń",

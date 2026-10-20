@@ -278,7 +278,7 @@
     "DELETE_HISTORY_SUB": "速度・ハードウェア・接続の履歴。設定は保持されます。",
     "DELETE_HISTORY_BUTTON": "削除…",
     "DELETE_HISTORY_CONFIRM_TITLE": "すべての履歴を削除しますか？",
-    "DELETE_HISTORY_CONFIRM_TEXT": "保存された速度・ハードウェア・接続の履歴を完全に削除します。この操作は取り消せません。記録はこのまま続きます。",
+    "DELETE_HISTORY_CONFIRM_TEXT": "保存された速度・ハードウェア・接続の履歴を完全に削除します。2.2 へのアップグレード時に保持されたバックアップも削除されるため、以前の履歴は復元できなくなります。この操作は取り消せません。記録はこのまま続きます。",
     "DELETE_HISTORY_INCLUDE_USAGE": "今期のデータ使用量もリセットする",
     "DELETE_HISTORY_USAGE_NOTE": "下のチェックボックスをオンにしない限り、データ上限の今期のデータ使用量は保持されます。",
     "DELETE_HISTORY_CONFIRM_BUTTON": "削除",

@@ -229,6 +229,11 @@ class ConfigController:
             if hasattr(w, "apply_metrics_endpoint"):
                 w.apply_metrics_endpoint()
 
+            # 5c. Latency probe: follows the Latency switch live (privacy review 2.2 - turning it off
+            # used to keep pinging until the next restart).
+            if hasattr(w, "apply_latency_probe"):
+                w.apply_latency_probe()
+
             # 6. Schedule a repaint to reflect all changes.
             w.update()
             

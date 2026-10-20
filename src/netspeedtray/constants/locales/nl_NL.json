@@ -278,7 +278,7 @@
     "DELETE_HISTORY_SUB": "Snelheids-, hardware- en verbindingsgeschiedenis. Instellingen blijven behouden.",
     "DELETE_HISTORY_BUTTON": "Verwijderen…",
     "DELETE_HISTORY_CONFIRM_TITLE": "Alle geschiedenis verwijderen?",
-    "DELETE_HISTORY_CONFIRM_TEXT": "Hiermee wordt je opgeslagen snelheids-, hardware- en verbindingsgeschiedenis definitief verwijderd. Dit kan niet ongedaan worden gemaakt. Het opslaan gaat vanaf nu gewoon door.",
+    "DELETE_HISTORY_CONFIRM_TEXT": "Hiermee wordt je opgeslagen snelheids-, hardware- en verbindingsgeschiedenis definitief verwijderd, inclusief de back-up die bij de upgrade naar 2.2 is bewaard, zodat oudere geschiedenis niet meer kan worden hersteld. Dit kan niet ongedaan worden gemaakt. Het opslaan gaat vanaf nu gewoon door.",
     "DELETE_HISTORY_INCLUDE_USAGE": "Ook het datagebruik van deze periode resetten",
     "DELETE_HISTORY_USAGE_NOTE": "Het datagebruik van deze periode voor je datalimiet blijft behouden, tenzij je het vakje hieronder aanvinkt.",
     "DELETE_HISTORY_CONFIRM_BUTTON": "Verwijderen",

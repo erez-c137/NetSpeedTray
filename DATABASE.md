@@ -247,8 +247,11 @@ closed-app window that spans the reset day counts toward the period it started i
 
 `key`/`value` text pairs: `db_version` (8), `created_at`, the four tier watermarks above,
 `current_retention_days`, `last_maintenance_at`, the pending-retention keys used to schedule a prune,
-and `pending_history_compaction` while a "Delete all history" still owes a WAL checkpoint. Every key a
-2.1 database had is carried over unchanged by the upgrade.
+and `pending_history_compaction` while a "Delete all history" still owes a WAL checkpoint (`1`) or a
+checkpoint plus removing a backup that was locked (`2` - only a `2` ever deletes a backup at startup;
+2.1.x writes `1`, and the upgrade carries it over). `usage_counter_snapshot` holds the NIC counters,
+by adapter name, that `usage_counter`'s total was counted up to (same-boot launch reconciliation).
+Every key a 2.1 database had is carried over unchanged by the upgrade.
 
 `usage_counter_snapshot` is JSON, written in the same transaction as the `usage_counter` row:
 `{"v": 1, "boot_time": <psutil.boot_time()>, "ts": <epoch s the counters were read>,
@@ -446,6 +449,17 @@ The upgrade to v8 keeps your 2.1 database, unchanged, next to the new one:
 v7) write a verified copy with the same naming. NetSpeedTray keeps the newest two backups plus the
 newest one of every schema version, so the v7 backup is never pushed out by later ones.
 
+A backup holds history too, so it follows the same rules as the live file:
+
+- **It ages out with "Keep history for".** The hourly maintenance deletes a backup once it is older
+  than the retention period (its age is the date in its name - when the upgrade ran), but never
+  sooner than 30 days after the upgrade (`BACKUP_MIN_KEEP_DAYS`), so a rollback to 2.1.x always has
+  a month. "Keep everything" keeps backups forever.
+- **"Delete all history" deletes every backup**, `-wal`/`-shm` sidecars included (each file is
+  overwritten with zeros first), so after a delete there is nothing to restore. A backup another
+  program holds open is retried while idle and at the next start, like a busy checkpoint. Nothing
+  is removed while `migrate_v8.journal` exists - an unfinished upgrade still needs its backup.
+
 You need it if you go back to NetSpeedTray 2.1.x after 2.2 upgraded your database. (Going back
 without restoring is safe too - see the next section - it just doesn't record.) **With NetSpeedTray
 fully closed**, in `%APPDATA%\NetSpeedTray`:
@@ -530,8 +544,13 @@ are identifying) - with `secure_delete` on, so the freed pages are overwritten w
 free space back, and runs `wal_checkpoint(TRUNCATE)` so the old pages are gone from
 `speed_history.db-wal` too. If a reader is mid-query (the Monitor's graphs) the checkpoint reports
 busy; the app then says the file is still being cleaned up and retries every few seconds while idle
-until it completes. `metadata` is kept, and so is `usage_counter` unless you tick "Also reset this
-period's data usage" in the confirmation. Recording carries on into the emptied tables.
+until it completes. Every `speed_history.db.bak*` backup is then removed (see
+[Restoring a backup](#restoring-a-backup)). `metadata` is kept, and so is `usage_counter` unless you
+tick "Also reset this period's data usage" in the confirmation - which, in the same transaction,
+also deletes `usage_counter_snapshot`, so the next launch reconciles nothing from before the reset.
+The app resets its in-memory counter (and re-arms the data-cap alerts) only once the delete has
+reported success; a failed delete leaves the counter exactly as it was. Recording carries on into
+the emptied tables.
 
 ---
 
@@ -545,7 +564,8 @@ NetSpeedTray does not record what it cannot measure honestly:
 - **Which traffic was LAN and which was internet.** Adapter byte counters carry no addresses, ports
   or routes — the information simply is not there to filter on.
 - **Wi-Fi network names, MAC addresses, IP addresses.** Adapter friendly names are the only
-  identifying text in the file, and "Delete all history" removes them.
+  identifying text in the file (in `interfaces`, and in `usage_counter_snapshot`), and "Delete all
+  history" removes them - the snapshot's copy only when you also reset the data-usage counter.
 - **Anything that leaves your machine.** No telemetry, no accounts, no uploads. The latency probe
   pings your own gateway by default (about 1.3 small packets a second); pinging a public host is
   opt-in and you name the host.

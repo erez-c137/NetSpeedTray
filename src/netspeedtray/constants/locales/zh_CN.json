@@ -278,7 +278,7 @@
     "DELETE_HISTORY_SUB": "包括速度、硬件和连接历史记录。设置会保留。",
     "DELETE_HISTORY_BUTTON": "删除…",
     "DELETE_HISTORY_CONFIRM_TITLE": "删除所有历史记录？",
-    "DELETE_HISTORY_CONFIRM_TEXT": "这将永久删除已保存的速度、硬件和连接历史记录，此操作无法撤销。记录将从现在起继续。",
+    "DELETE_HISTORY_CONFIRM_TEXT": "这将永久删除已保存的速度、硬件和连接历史记录，包括升级到 2.2 时保留的备份，因此更早的历史记录将无法再恢复。此操作无法撤销。记录将从现在起继续。",
     "DELETE_HISTORY_INCLUDE_USAGE": "同时重置本周期的流量用量",
     "DELETE_HISTORY_USAGE_NOTE": "除非勾选下方的复选框，否则本周期的流量限额用量会保留。",
     "DELETE_HISTORY_CONFIRM_BUTTON": "删除",
