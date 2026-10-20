@@ -87,6 +87,8 @@ class HardwarePage(QWidget):
         # sheet so thermal throttling is provable (0 = off). Only meaningful when temps are collected.
         self.throttle_temp = Win11Slider(editable=True, suffix="°C")
         self.throttle_temp.setRange(0, 130)
+        # 0 turns the feature off: say "Off", not "0°C" (same word as the plan-speed spinbox's 0).
+        self.throttle_temp.setSpecialValueText(str(getattr(self.i18n, "CONN_PLAN_OFF", "Off")))
         self.throttle_temp.setMinimumWidth(260)
         self.throttle_temp.valueChanged.connect(self.on_change)
         layout.addWidget(SettingCard(str(getattr(self.i18n, "HW_THROTTLE_LABEL", "Throttle temp (stats)")),

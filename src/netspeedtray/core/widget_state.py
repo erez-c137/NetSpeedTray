@@ -773,6 +773,14 @@ class WidgetState(QObject):
         return self.history_reader.summarize_network(direction, start_time, end_time, interface_name,
                                                      poll_interval)
 
+    def get_network_hourly_profile(self, direction: str, start_time: datetime, end_time: datetime,
+                                   interface_name: Optional[str] = None) -> Dict[int, float]:
+        """{local hour: average B/s} for 'download' or 'upload' over [start,end] - the basis for the
+        Stats sheet's busiest / quietest hour (averages, never the graph's per-bucket peaks)."""
+        if not getattr(self, 'db_worker', None):
+            return {}
+        return self.history_reader.network_hourly_profile(direction, start_time, end_time, interface_name)
+
 
     def get_total_bandwidth_for_period(self, start_time: Optional[datetime], end_time: Optional[datetime], interface_name: Optional[str] = None) -> Tuple[float, float]:
         """
