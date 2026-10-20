@@ -28,7 +28,7 @@ winget install --id erez-c137.NetSpeedTray
 ```
 
 > 🧪 **Trying the 2.2 beta?** It's a manual download by design - the in-app updater, WinGet and the
-> Store never offer prereleases. Follow [the pinned issue](https://github.com/erez-c137/NetSpeedTray/issues/BETA_ISSUE)
+> Store never offer prereleases. Follow [the pinned issue](https://github.com/erez-c137/NetSpeedTray/issues/373)
 > for beta builds and how to go back.
 
 Or grab the latest [**Setup.exe** or **Portable.zip**](https://github.com/erez-c137/NetSpeedTray/releases/latest) directly. Both are digitally signed - no SmartScreen warnings.
