@@ -489,4 +489,58 @@ class WidgetLayoutManager:
 
         if visible_tb_height <= 0:                      # Part A (#221)
             visible_tb_height = taskbar_info.height
-        return max(visible_tb_height, self.metrics.height() * 2 + 2)   # Part B (#221)
+        return max(visible_tb_height, self._two_row_floor(visible_tb_height))   # Part B (#221/#322)
+
+    def _ink_extents(self) -> "tuple[int, int]":
+        """(pixels above, pixels below) the baseline that any docked readout glyph can paint.
+
+        Measured from the actual font (``tightBoundingRect``) over every glyph family the readout
+        draws, plus the arrow glyphs in the arrow font and the CPU/GPU icon box - not the font's
+        ``ascent``/``descent``, which include empty internal leading above the capitals.
+        """
+        r = self.metrics.tightBoundingRect(constants.renderer.INK_REFERENCE_TEXT)
+        above, below = -r.top(), r.bottom()
+        try:
+            cfg = self.widget.config
+            arrows = ((cfg.get("arrow_up_symbol") or self.widget.i18n.UPLOAD_ARROW)
+                      + (cfg.get("arrow_down_symbol") or self.widget.i18n.DOWNLOAD_ARROW))
+            if not isinstance(arrows, str):
+                raise TypeError("arrow glyphs unavailable")
+        except Exception:
+            arrows = "↑↓▲▼"
+        a = (self.arrow_metrics or self.metrics).tightBoundingRect(arrows)
+        above, below = max(above, -a.top()), max(below, a.bottom())
+        # The CPU/GPU icon box spans baseline-(size-1)..baseline, stroked 1 px wider.
+        icon = constants.renderer.HW_ICON_SIZE_PX
+        return max(above, icon - 1), max(below, 1)
+
+    def _two_rows_fit(self, height: int, ink_above: int, ink_below: int) -> bool:
+        """Would the renderer's two-row readout keep every glyph inside ``height`` px?
+
+        Mirrors ``draw_network_speeds`` exactly (box ``2*line_height + gap`` centred, baselines at
+        ``top_y`` and ``top_y + line_height + gap``). The hardware rows (no gap) sit inside that.
+        """
+        line_h, gap = self.metrics.height(), constants.renderer.TWO_ROW_GAP_PX
+        top_y = int((height - (2 * line_h + gap)) / 2 + self.metrics.ascent())
+        return top_y - ink_above >= 0 and top_y + line_h + gap + ink_below <= height - 1
+
+    def _two_row_floor(self, strip: float) -> int:
+        """The smallest docked height (>= the strip) at which both rows paint uncropped (#221/#322).
+
+        #221 floored at ``metrics.height()*2 + 2`` - the font's line boxes - which on Win11's 32 px
+        "Small" taskbar made a 9 pt widget 34 px and hung 2 px off the bar, although the INK of the two
+        rows fits in 32. So: the strip itself when the ink fits; else the first height above it that
+        fits; never more than the old floor (unchanged for any strip that already met it).
+        """
+        old_floor = self.metrics.height() * 2 + 2
+        start = max(1, math.ceil(strip))
+        if start >= old_floor:
+            return old_floor
+        try:
+            ink_above, ink_below = self._ink_extents()
+        except Exception:
+            return old_floor
+        for h in range(start, old_floor):
+            if self._two_rows_fit(h, ink_above, ink_below):
+                return h
+        return old_floor

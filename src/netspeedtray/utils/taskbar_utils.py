@@ -1018,3 +1018,31 @@ def horizontal_taskbar_strip(taskbar_info: TaskbarInfo, edge: constants.TaskbarE
 
     top = full_geom.top() if edge == constants.TaskbarEdge.TOP else (full_geom.bottom() + 1) - height
     return top, height
+
+
+def dock_signature(taskbar_info: Optional[TaskbarInfo]) -> Optional[tuple]:
+    """What the docked widget's SIZE depends on: ``(edge, thickness, dpi_scale, small)``, or None
+    for a fallback/unknown taskbar.
+
+    Compared on every taskbar change so the widget is re-sized only when its dock geometry changed -
+    e.g. Win11's native taskbar size switched Default (48 px) <-> Small (32 px) while running, or the
+    bar moved to another edge (#322) - and not on a plain move, which only needs a reposition.
+
+    Built from the STABLE values ``WidgetLayoutManager`` sizes from, never the window's position:
+    a horizontal bar's thickness is ``horizontal_taskbar_strip`` (work-area inset, else the window
+    HEIGHT), a side bar's is the work-area inset; neither changes while an auto-hide bar slides (#135).
+    """
+    if taskbar_info is None or taskbar_info.hwnd == 0:
+        return None
+    edge = taskbar_info.get_edge_position()
+    dpi = taskbar_info.dpi_scale if taskbar_info.dpi_scale > 0 else 1.0
+    if edge in (constants.TaskbarEdge.TOP, constants.TaskbarEdge.BOTTOM):
+        _, thickness = horizontal_taskbar_strip(taskbar_info, edge, dpi)
+    else:
+        screen = taskbar_info.get_screen()
+        full_geom, avail_geom = screen.geometry(), screen.availableGeometry()
+        if edge == constants.TaskbarEdge.RIGHT:
+            thickness = full_geom.right() - avail_geom.right()
+        else:
+            thickness = avail_geom.left() - full_geom.left()
+    return (edge, round(thickness), round(dpi, 3), is_small_taskbar(taskbar_info))

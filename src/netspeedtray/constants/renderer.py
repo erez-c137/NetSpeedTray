@@ -31,7 +31,14 @@ class RendererConstants:
     GRAPH_Y_AXIS_PADDING_FACTOR: Final[float] = 1.15 # Add 15% headroom
     # Gap between the upload and download panels when the graphs are split (a faint divider sits in it).
     GRAPH_SPLIT_GAP: Final[int] = 4
-    
+    # Two-row readout geometry, shared by the renderer and the layout's fit check (#322): the gap
+    # between the upload and download rows, and the CPU/GPU icon box (drawn up from the baseline).
+    TWO_ROW_GAP_PX: Final[int] = 1
+    HW_ICON_SIZE_PX: Final[int] = 11
+    # Every glyph family the docked readout can paint, for the ink-extent fit check (#322): digits,
+    # units, hardware labels/suffixes, accented capitals (tallest) and descenders (deepest).
+    INK_REFERENCE_TEXT: Final[str] = "0123456789.,%/()°CPUGRAMVWKMTBbitpsKiB ÉÅÄÖgjpqy|"
+
     # --- Display Cycling ---
     CYCLE_INTERVAL_MS: Final[int] = 5000 # 5 seconds per metric
     

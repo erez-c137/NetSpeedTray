@@ -356,7 +356,7 @@ class WidgetRenderer:
             painter.setFont(self.font)
             line_height = self.metrics.height()
             ascent = self.metrics.ascent()
-            vertical_gap = 1
+            vertical_gap = constants.renderer.TWO_ROW_GAP_PX
             margin = constants.renderer.TEXT_MARGIN
 
             # Right-align the whole readout inside its reserved slot (side_by_side) so the network hugs
@@ -871,7 +871,7 @@ class WidgetRenderer:
         painter.save()
 
         # Icon box size
-        size = 11
+        size = constants.renderer.HW_ICON_SIZE_PX
         rect = QRect(x, y_ascent - size + 1, size, size)
         
         draw_color = color if color else self.default_color
