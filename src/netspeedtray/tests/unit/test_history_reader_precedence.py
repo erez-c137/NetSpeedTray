@@ -44,9 +44,11 @@ def _now_parts():
     return now, raw_minute, old_minute, old_hour
 
 
-def _build(db_dir: Path, overlap: bool) -> None:
-    """The same history either move-only (overlap=False) or with copies left in the coarser tier."""
-    _now, raw_minute, old_minute, old_hour = _now_parts()
+def _build(db_dir: Path, overlap: bool, parts) -> None:
+    """The same history either move-only (overlap=False) or with copies left in the coarser tier.
+    Both files take ONE clock reading (``parts``): built a second apart across a minute boundary,
+    their buckets used to differ by a minute and the comparisons flaked (CI, PR #388)."""
+    _now, raw_minute, old_minute, old_hour = parts
     w = LegacyV7Worker(db_dir / "speed_history.db")
     w._initialize_connection()
     w._check_and_create_schema()
@@ -89,8 +91,9 @@ def _state(db_dir: Path) -> WidgetState:
 def pair(q_app, tmp_path):
     (tmp_path / "moved").mkdir()
     (tmp_path / "overlap").mkdir()
-    _build(tmp_path / "moved", overlap=False)
-    _build(tmp_path / "overlap", overlap=True)
+    parts = _now_parts()
+    _build(tmp_path / "moved", overlap=False, parts=parts)
+    _build(tmp_path / "overlap", overlap=True, parts=parts)
     moved, overlap = _state(tmp_path / "moved"), _state(tmp_path / "overlap")
     yield moved, overlap
     moved.cleanup()
