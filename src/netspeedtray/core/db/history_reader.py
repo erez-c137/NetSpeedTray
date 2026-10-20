@@ -189,9 +189,15 @@ class _ReaderBase(HistoryReader):
 
     def _log_read_failure(self, what: str, e: BaseException) -> None:
         """A read that failed and will return empty. Not-ready-yet is expected (INFO, no traceback);
-        anything else is a real failure (ERROR, with traceback)."""
+        anything else is a real failure (ERROR, with traceback).
+
+        ``OperationalError('interrupted')`` is expected too: the only sqlite3_interrupt in the app is
+        WidgetState.interrupt_reads(), which stops a reader on purpose (Monitor close / quit while a
+        graph query runs). Logging that as an ERROR with a traceback would read as a crash."""
         if isinstance(e, HistoryNotReadyError):
             self.logger.info("%s skipped, returning empty: %s", what, e)
+        elif isinstance(e, sqlite3.OperationalError) and str(e).strip().lower() == "interrupted":
+            self.logger.info("%s stopped (reader interrupted for close/quit), returning empty", what)
         else:
             self.logger.error("%s: %s", what, e, exc_info=True)
 

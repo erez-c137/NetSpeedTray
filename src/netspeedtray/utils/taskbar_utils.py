@@ -141,7 +141,7 @@ def set_widgets_probe_enabled(enabled: bool) -> None:
 
 
 def _widgets_button_enabled() -> bool:
-    """Taskbar settings > Widgets: HKCU\...\Explorer\Advanced\TaskbarDa, 0 = off; absent = the Win11
+    r"""Taskbar settings > Widgets: HKCU\...\Explorer\Advanced\TaskbarDa, 0 = off; absent = the Win11
     default, on. Any read problem counts as on (the UIA probe then decides)."""
     try:
         import winreg
