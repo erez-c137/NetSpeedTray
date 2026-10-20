@@ -242,14 +242,50 @@ def test_shutdown_timeout_outlasts_the_db_quit_wait():
     assert constants.app.SHUTDOWN_DEFAULT_TIMEOUT_S * 1000 >= wait_ms + 1500 + 5000
 
 
-def test_installer_passes_the_same_timeout():
-    """setup.iss hands --timeout to the installed exe; it must not drift below the app's constant."""
-    import re
+def _setup_iss() -> str:
     from pathlib import Path
-    iss = (Path(__file__).resolve().parents[4] / "build" / "setup.iss").read_text(encoding="utf-8")
+    return (Path(__file__).resolve().parents[4] / "build" / "setup.iss").read_text(encoding="utf-8")
+
+
+def _iss_code_section(iss: str) -> str:
+    return iss[iss.index("[Code]"):]
+
+
+def test_installer_waits_the_same_timeout():
+    """setup.iss waits ShutdownTimeoutSec for the app to exit; it must not drift from the app's constant."""
+    import re
+    iss = _setup_iss()
     m = re.search(r'#define ShutdownTimeoutSec "(\d+)"', iss)
     assert m and float(m.group(1)) == constants.app.SHUTDOWN_DEFAULT_TIMEOUT_S
-    assert "--shutdown --timeout {#ShutdownTimeoutSec}" in iss
+    assert "{#ShutdownTimeoutSec} * 1000" in _iss_code_section(iss)
+
+
+def test_installer_speaks_the_same_wire_protocol():
+    """Setup posts the shutdown message itself, so its copies of the two channel names must match
+    the app's - a drift silently turns every upgrade back into taskkill /F."""
+    import re
+    iss = _setup_iss()
+    msg = re.search(r'#define ShutdownMessageName "([^"]+)"', iss)
+    prop = re.search(r'#define ShutdownWindowProp "([^"]+)"', iss)
+    assert msg and msg.group(1) == constants.app.SHUTDOWN_MESSAGE_NAME
+    assert prop and prop.group(1) == constants.app.SHUTDOWN_WINDOW_PROP
+    code = _iss_code_section(iss)
+    assert "WinRegisterWindowMessage('{#ShutdownMessageName}')" in code
+    assert "WinGetProp(Wnd, '{#ShutdownWindowProp}')" in code
+
+
+def test_installer_never_executes_the_installed_exe():
+    """Setup runs elevated and the install folder is only as safe as its ACL (a custom folder under C:\\
+    inherits Authenticated Users Modify), so Setup / the uninstaller must never run {app}'s exe or a
+    path read from the registry. The only Exec allowed in [Code] is the system taskkill fallback."""
+    import re
+    code = _iss_code_section(_setup_iss())
+    code = "\n".join(line for line in code.splitlines() if not line.lstrip().startswith("//"))
+    assert "--shutdown" not in code
+    assert "App Path" not in code
+    execs = re.findall(r"\bExec(?:AsOriginalUser)?\s*\(([^,]+),", code)
+    assert execs, "expected the taskkill fallback Exec"
+    assert all(arg.strip() == "ExpandConstant('{sys}\\taskkill.exe')" for arg in execs), execs
 
 
 # --- review fixes ---------------------------------------------------------------------------------
