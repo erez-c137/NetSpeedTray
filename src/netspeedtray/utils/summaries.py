@@ -170,8 +170,14 @@ def outage_summary(timeout_pairs: Sequence) -> Dict[str, object]:
 def peak_offpeak(pairs: Sequence) -> Optional[Dict[str, float]]:
     """Busiest vs quietest clock-hour by mean value. Returns {peak_hour, peak_avg, offpeak_hour,
     offpeak_avg} or None if fewer than two distinct hours have data (a split would be meaningless)."""
-    prof = hourly_profile(pairs)
-    if len(prof) < 2:
+    return peak_offpeak_from_profile(hourly_profile(pairs))
+
+
+def peak_offpeak_from_profile(prof: Optional[Dict[int, float]]) -> Optional[Dict[str, float]]:
+    """``peak_offpeak`` from a ready {hour: mean} profile - e.g. the reader's time-weighted
+    ``network_hourly_profile``, which averages real samples. Never feed it graph points: those are
+    per-bucket peaks, and a peak profile names a busiest hour 1000x the window's average."""
+    if not prof or len(prof) < 2:
         return None
     peak_h = max(prof, key=prof.get)
     off_h = min(prof, key=prof.get)

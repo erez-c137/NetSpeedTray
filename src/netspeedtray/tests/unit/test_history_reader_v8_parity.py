@@ -15,12 +15,14 @@ in **volume**, where v8 is more exact. Every difference is asserted explicitly, 
 Then the watermark contract (``schema_v8.WATERMARK_KEYS``): boundaries, stray rows, copies, missing
 and invalid watermarks, and one consistent snapshot per read.
 """
+import copy
 import math
 from dataclasses import astuple, is_dataclass, replace
 from datetime import datetime, timedelta
 
 import pytest
 
+from netspeedtray import constants
 from netspeedtray.core.db import schema_v8 as S8
 from netspeedtray.tests.unit import v8_twin_fixture as F
 
@@ -88,11 +90,17 @@ IFACES = [None, "all", "Ethernet", "Wi-Fi 3", "no such adapter"]
 @pytest.mark.parametrize("resolution", ["auto", "raw", "minute", "hour", "day"])
 @pytest.mark.parametrize("iface", IFACES)
 def test_speed_history_agrees(twin, resolution, iface):
-    _, r7, r8 = twin
+    h, r7, r8 = twin
     nonempty = 0
     for s, e in WINDOWS:
+        # 'auto' picks raw resolution for <= 6 h, and raw resolution reads the raw tier only: a window
+        # reaching below the raw watermark (here: inside the minutes) is drawn at minute resolution on v8.
+        res7 = resolution
+        if (resolution == "auto" and s is not None and e is not None and s.timestamp() < h.wm_raw
+                and (e - s).total_seconds() <= constants.data.history_period.RES_RAW_THRESHOLD):
+            res7 = "minute"
         for return_raw in (False, True):
-            a = r7.speed_history(s, e, iface, return_raw, resolution)
+            a = r7.speed_history(s, e, iface, return_raw, res7)
             b = r8.speed_history(s, e, iface, return_raw, resolution)
             _same(a, b, f"{s}..{e} {resolution} {iface} raw={return_raw}")
             nonempty += any(p[1] or p[2] for p in a)
@@ -118,9 +126,21 @@ def _clipped_seconds(h, st, et, nic):
     return sum(1 - min(1, t - st) for t in stamps)
 
 
+def _all_tiers(r7):
+    """``r7`` without v7's "<= 24 h reads the raw tier only" shortcut, which v8 does not have: on v8 the
+    watermarks pick the tier for every window length (2.2.0-beta.1 smoke test - after the upgrade the
+    last day is folded minutes). On a real v7 file the raw tier holds the whole last day, so the shortcut
+    and v7's all-tier path agree there; they differ only on windows below the raw tier, like the twin's
+    1 h window inside the minutes."""
+    r = copy.copy(r7)
+    r._RAW_SUMMARY_SECONDS = 0
+    return r
+
+
 def _assert_summaries_agree(h, r7, r8, windows, direction, iface, poll):
     """v8 == v7 read at the capture interval (1 s rows), value by value - except, exactly, the start-edge
     clip. Returns how many windows the clip applied to (so a caller can prove it exercised both cases)."""
+    r7 = _all_tiers(r7)
     nic = None if iface in (None, "all") else iface
     clipped = 0
     for s, e in windows:
@@ -195,6 +215,7 @@ def test_network_summary_agrees_at_fixed_clocks(tmp_path, q_app, clock):
 @pytest.mark.parametrize("poll", [1.0, 5.0])
 def test_hardware_summary_agrees(twin, poll):
     _, r7, r8 = twin
+    r7 = _all_tiers(r7)
     for s, e in WINDOWS[2:]:
         _same(r7.summarize_hardware("cpu", s, e, poll), r8.summarize_hardware("cpu", s, e, poll), f"cpu {s}..{e}")
 

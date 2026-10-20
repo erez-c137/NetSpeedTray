@@ -6,8 +6,9 @@ reads them the way the migrator means them.
 They must agree everywhere except the two documented differences, each asserted explicitly:
 
 1. **The last-24 h fold** (owner default 2): the network raw tier is folded into minute rows, so
-   per-second network detail is gone - raw-resolution graphs and <= 24 h network summaries are empty
-   on v8, and summaries read exactly like the original after v7's OWN raw -> minute roll-up (per
+   per-second network detail is gone - an explicit raw-resolution graph is empty on v8 ('auto' draws
+   such a window at minute resolution), <= 24 h network summaries are per-minute (avg + max, no
+   percentiles), and summaries read exactly like the original after v7's OWN raw -> minute roll-up (per
    interface: same avg / max / count, coverage counted in minute buckets; the all-interfaces aggregate
    takes v7's minute-tier weighting). A window opening mid-minute loses that minute's folded seconds
    (the bucket is stamped at its start). Graphs at minute / hour / day resolution are unchanged from
@@ -17,6 +18,7 @@ They must agree everywhere except the two documented differences, each asserted 
 
 Hardware raw rows are not folded, so every hardware read agrees exactly.
 """
+import copy
 import shutil
 import sqlite3
 from dataclasses import replace
@@ -102,7 +104,26 @@ def test_raw_resolution_network_detail_is_folded_away(migrated):
     s = now - timedelta(hours=6)
     assert any(p[2] for p in r7.speed_history(s, now, None, True, "raw"))
     assert not any(p[1] or p[2] for p in r8.speed_history(s, now, None, True, "raw"))
-    assert r7.summarize_network("download", s, now).count > 0 and r8.summarize_network("download", s, now).count == 0
+
+
+def test_short_windows_read_the_folded_minutes(migrated):
+    """...but a <= 24 h SUMMARY and an 'auto' graph still read them, from the minute tier (2.2.0-beta.1
+    smoke test: both used to read the raw tier only, so the day before the upgrade summarized as
+    nothing beside a graph full of traffic). Minute-aligned window: the peak is v7's raw peak."""
+    h, r7, r8, _, _ = migrated
+    now = datetime.fromtimestamp(h.now_ts)
+    s = datetime.fromtimestamp((h.now_ts - 6 * 3600) // 60 * 60)
+    for direction, col in (("download", 2), ("upload", 1)):
+        for iface in ("Ethernet", "Wi-Fi 3"):
+            a, b = r7.summarize_network(direction, s, now, iface), r8.summarize_network(direction, s, now, iface)
+            assert a.tier == "raw" and b.tier == "minute" and not b.exact
+            assert b.max == a.max == max(p[col] for p in r8.speed_history(s, now, iface, True, "auto"))
+            assert b.avg == pytest.approx(a.avg, rel=1e-9)
+        # All interfaces: a minute row keeps only its own adapter's peak, so the aggregate peak is the
+        # largest per-adapter peak (as for every > 24 h window), at most the graph's sum of them.
+        b = r8.summarize_network(direction, s, now)
+        assert b.count > 0 and b.max == max(r8.summarize_network(direction, s, now, i).max for i in F.NICS)
+        assert b.max <= max(p[col] for p in r8.speed_history(s, now, None, True, "auto"))
 
 
 def test_a_mid_minute_window_start_loses_only_that_minutes_folded_seconds(migrated):
@@ -147,10 +168,17 @@ def test_network_summaries_read_like_v7_after_its_own_rollup(migrated, v7_rolled
     of samples x poll); the all-interfaces aggregate also takes v7's minute-tier sample weighting
     (per-adapter sample counts summed per bucket) - max is unchanged."""
     h, r7, r8, _, _ = migrated
+    # v7 summarizes <= 24 h from its raw tier alone (on a v7 file the raw tier always holds the last
+    # day); v8 lets the watermarks pick the tier. The rolled file's <= 24 h windows are therefore read
+    # through v7's own all-tier path - what v7 does for every longer window.
+    v7_all_tiers = copy.copy(v7_rolled)
+    v7_all_tiers._RAW_SUMMARY_SECONDS = 0
     for s, e in _windows(h):
         b = r8.summarize_network(direction, s, e, iface)
-        _same(v7_rolled.summarize_network(direction, s, e, iface), b, f"rolled {s}..{e}")
-        if (e - s).total_seconds() <= 24 * 3600:
+        short = (e - s).total_seconds() <= 24 * 3600
+        _same((v7_all_tiers if short else v7_rolled).summarize_network(direction, s, e, iface), b,
+              f"rolled {s}..{e}")
+        if short:
             continue
         a = r7.summarize_network(direction, s, e, iface)
         if iface is None:
