@@ -118,11 +118,13 @@ class UsageFlyout(QWidget):
             cap_row.addWidget(self._label(cap_label, tokens.TYPE_BODY_STRONG, self._c["text_primary"]))
             cap_row.addStretch(1)
             gb = self._tr("GB_UNIT", "GB")
-            cap_row.addWidget(self._label(f"{used_gb:.1f} / {cap_gb:g} {gb}",
+            cap_txt = helpers.format_decimal(cap_gb, self._i18n, 1).rstrip("0").rstrip(".,")   # 500 / 2,5
+            cap_row.addWidget(self._label(f"{helpers.format_decimal(used_gb, self._i18n, 1)} / {cap_txt} {gb}",
                                           tokens.TYPE_BODY, self._c["text_secondary"],
                                           Qt.AlignmentFlag.AlignRight))
             pct_color = _OVER_CAP_COLOR if over else self._c["accent"]
-            cap_row.addWidget(self._label(f"  {pct:.0f}%", tokens.TYPE_BODY_STRONG, pct_color,
+            cap_row.addWidget(self._label("  " + helpers.format_percent(f"{pct:.0f}", self._i18n),
+                                          tokens.TYPE_BODY_STRONG, pct_color,
                                           Qt.AlignmentFlag.AlignRight))
             body.addLayout(cap_row)
 
@@ -160,7 +162,7 @@ class UsageFlyout(QWidget):
 
     def _fmt(self, data_bytes: float) -> str:
         value, unit = helpers.format_data_size(data_bytes, self._i18n, precision=1)
-        return f"{value:.1f} {unit}"
+        return f"{helpers.format_decimal(value, self._i18n, 1)} {unit}"   # "8,4 GB" in de_DE
 
     def _usage_row(self, grid: QGridLayout, row: int, label: str, totals: Totals) -> None:
         up_bytes, down_bytes = totals

@@ -74,12 +74,47 @@ def test_single_reply_has_no_jitter():
     assert st.jitter_ms is None and st.p95_ms == 7.0
 
 
-def test_verdict_reuses_the_pill_rule():
+def test_verdict_reuses_the_pill_rule_on_rtt_only():
+    """The check's Good / OK / Slow is the pill's RTT rule; loss is reported on its own (below). With
+    20 samples one lost ping is 5%, which used to turn a 2 ms router red "Slow"."""
     assert CC.hop_stats([5.0] * 20, 20).verdict == LP.VERDICT_GOOD
     assert CC.hop_stats([60.0] * 20, 20).verdict == LP.VERDICT_OK
-    assert CC.hop_stats([5.0] * 19, 20).verdict == LP.VERDICT_SLOW      # 5% loss
+    assert CC.hop_stats([5.0] * 19, 20).verdict == LP.VERDICT_GOOD      # 5% loss is not "Slow"
+    assert CC.hop_stats([2.0] * 10, 20).verdict == LP.VERDICT_GOOD      # nor is 50%: loss has its own line
     assert CC.hop_stats([200.0] * 20, 20).verdict == LP.VERDICT_SLOW
     assert LP.latency_verdict(None, 0.0) == LP.VERDICT_SLOW
+
+
+def test_the_pills_long_window_thresholds_are_unchanged():
+    assert LP.latency_verdict(5.0, LAT.VERDICT_SLOW_LOSS_PCT) == LP.VERDICT_SLOW
+    assert LP.latency_verdict(5.0, LAT.VERDICT_OK_LOSS_PCT) == LP.VERDICT_OK
+
+
+def test_loss_level_needs_two_lost_pings_for_red():
+    assert CC.hop_stats([2.0] * 20, 20).loss_level == CC.LOSS_LEVEL_NONE
+    assert CC.hop_stats([2.0] * 19, 20).loss_level == CC.LOSS_LEVEL_SOME     # 1 of 20: amber
+    assert CC.hop_stats([2.0] * (20 - LAT.CHECK_LOSS_HIGH_MIN_LOST), 20).loss_level == CC.LOSS_LEVEL_HIGH
+    assert LAT.CHECK_LOSS_HIGH_MIN_LOST == 2
+    assert CC.hop_stats([], 20).loss_level is None                          # silence: "No reply"
+
+
+def test_sheet_one_lost_ping_on_a_fast_router_is_good_with_amber_loss(q_app):
+    sheet = _finished_sheet(q_app, CC.hop_stats([2.0] * 19, 20))
+    status = sheet._cards[CC.HOP_GATEWAY].status.text()
+    assert "Good" in status and "Slow" not in status, status
+    assert "5% loss" in status, status
+    assert LAT.VERDICT_COLORS["slow"] not in status, status                  # nothing red
+    assert LAT.CHECK_LOSS_COLORS[CC.LOSS_LEVEL_SOME] in status
+    sheet.done(0)
+
+
+def test_sheet_two_lost_pings_turn_the_loss_red_not_the_verdict(q_app):
+    sheet = _finished_sheet(q_app, CC.hop_stats([2.0] * 18, 20))
+    status = sheet._cards[CC.HOP_GATEWAY].status.text()
+    assert "Good" in status and "10% loss" in status, status
+    assert LAT.CHECK_LOSS_COLORS[CC.LOSS_LEVEL_HIGH] in status
+    assert f"color:{LAT.VERDICT_COLORS['good']};'>Good" in status.replace(" ", ""), status
+    sheet.done(0)
 
 
 # --- attribution: the four combinations + a router that never answers ---------------------------------
@@ -280,7 +315,7 @@ def test_copy_text_contains_every_row(q_app):
         label = getattr(I18nStrings("en_US"), key)
         assert text.count(f"{label}: ") == 2, (label, text)
     assert "Sent: 20" in text and "Received: 18" in text and "Lost: 2" in text and "Loss: 10%" in text
-    assert "[Good]" in text and "[Slow]" in text
+    assert "[Good]" in text and "[Good, 10% loss]" in text, text   # loss is its own word, not "Slow"
     assert I18nStrings("en_US").CHECK_CONN_VERDICT_BEYOND in text
 
 

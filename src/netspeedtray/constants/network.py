@@ -212,6 +212,14 @@ class LatencyConstants:
     CHECK_ECHOES: Final[int] = 20
     CHECK_SPACING_MS: Final[int] = 200
     CHECK_TIMEOUT_MS: Final[int] = 1000
+    # The check judges RTT with the pill's Good / OK / Slow and reports loss on its own. Over only 20
+    # echoes one lost ping is 5% (the pill's "Slow" over its ~160-probe window), so the check's loss
+    # turns red only from this many lost; one lost reads amber.
+    CHECK_LOSS_HIGH_MIN_LOST: Final[int] = 2
+    CHECK_LOSS_COLORS: Final[Dict[str, str]] = {
+        "some": "#FFB900",
+        "high": "#E81123",
+    }
     # How long closing the sheet waits for the worker: one in-flight echo plus slack.
     CHECK_STOP_WAIT_MS: Final[int] = 1500
 

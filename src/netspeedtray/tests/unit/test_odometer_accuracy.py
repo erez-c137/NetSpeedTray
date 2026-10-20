@@ -12,6 +12,7 @@ claims, so every byte the NIC counters carry must reach it - and nothing they do
 5b. An IPv6-only primary must resolve, or auto mode meters zero forever.
 """
 import json
+from netspeedtray.core.db.sqlite_uri import sqlite_ro_uri
 import logging
 import socket
 import sqlite3
@@ -332,9 +333,12 @@ def test_restart_recovery_through_the_real_database_worker(tmp_path, q_app):
     with patch("netspeedtray.core.usage_snapshot.psutil.boot_time", return_value=BOOT):
         s1 = _session(tmp_path, config)
         try:
-            for _ in range(100):                      # wait for the worker to create the schema
-                if s1._try_load_usage():
-                    break
+            # Wait for the worker to open the file, then for the odometer to load - a fixed 2 s
+            # poll loop was overrun on a slow CI runner, leaving the polls buffered and unpersisted.
+            assert s1.db_worker.ready.wait(10)
+            deadline = time.monotonic() + 10
+            while not s1._try_load_usage():
+                assert time.monotonic() < deadline, "odometer never loaded"
                 time.sleep(0.02)
             c1 = StatsController(config=config, widget_state=s1)
             _poll(c1, {"Wi-Fi": NetIO(1_000, 1_000)}, 1000.0)
@@ -342,7 +346,7 @@ def test_restart_recovery_through_the_real_database_worker(tmp_path, q_app):
         finally:
             s1.cleanup()                              # final persist drains on the worker thread
 
-        ro = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        ro = sqlite3.connect(sqlite_ro_uri(db), uri=True)
         try:
             row = ro.execute("SELECT value FROM metadata WHERE key = ?",
                              (constants.network.usage.SNAPSHOT_METADATA_KEY,)).fetchone()

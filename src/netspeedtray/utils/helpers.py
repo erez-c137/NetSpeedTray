@@ -354,6 +354,15 @@ def format_decimal(value: float, i18n, places: int = 1) -> str:
     return s.replace(".", sep) if sep and sep != "." else s
 
 
+def format_percent(value, i18n) -> str:
+    """``value`` as a percentage in the locale's form (PERCENT_TEMPLATE): "10%", "10 %" (fr/de, a
+    non-breaking space), "%10" (tr). ``value`` is shown as given - pass an int or a formatted string."""
+    template = str(getattr(i18n, "PERCENT_TEMPLATE", "") or "") if i18n is not None else ""
+    if "{value}" not in template:
+        template = "{value}%"
+    return template.format(value=value)
+
+
 def format_data_size(data_bytes: int | float, i18n, precision: int = 2) -> Tuple[float, str]:
     """
     Formats a byte count into a human-readable string with units (B, KB, MB, GB, etc.).

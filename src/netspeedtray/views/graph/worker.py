@@ -18,6 +18,9 @@ class GraphDataWorker(QObject):
     # NOTE: Overview emits a dict payload (multi-dataset), while other tabs emit a list of tuples.
     # Using `object` avoids PyQt type coercion issues that can silently break live updates on Overview.
     data_ready = pyqtSignal(object, float, float, int) # history_data, total_up, total_down, sequence_id
+    # (sequence_id, reconstructed): emitted just before a single-stat data_ready - True when part of
+    # its totals was estimated from speeds recorded before 2.2 (D5), so the Network header can say so.
+    totals_provenance = pyqtSignal(int, bool)
     error = pyqtSignal(str)
 
     # Maximum data points to return (prevents excessive rendering time)
@@ -60,6 +63,23 @@ class GraphDataWorker(QObject):
         self._cache: Dict[str, tuple] = {}
         self._cache_ttl = 30.0  # seconds
 
+
+    def _period_totals(self, request: DataRequest) -> Tuple[float, float, bool]:
+        """(up_bytes, down_bytes, reconstructed) for the request's window from the database.
+        ``reconstructed`` (decision D5) is True when any part was estimated from stored rates."""
+        from netspeedtray.core.db.history_reader import VolumeResult
+        volume = getattr(self.widget_state, "get_history_volume_for_period", None)
+        if volume is not None:
+            try:
+                v = volume(request.start_time, request.end_time, request.interface_name)
+                if isinstance(v, VolumeResult):
+                    return float(v.up_bytes), float(v.down_bytes), bool(v.reconstructed)
+            except Exception as e:
+                self.logger.debug("volume with provenance failed, plain totals instead: %s", e)
+        up, down = self.widget_state.get_total_bandwidth_for_period(
+            start_time=request.start_time, end_time=request.end_time,
+            interface_name=request.interface_name)
+        return up, down, False
 
     def process_data(self, request: DataRequest):
         """
@@ -158,6 +178,7 @@ class GraphDataWorker(QObject):
 
             total_up = 0.0
             total_down = 0.0
+            reconstructed = False   # live (in-memory) totals are measured, never estimated
 
             if request.stat_type in ("cpu", "gpu"):
                 if request.is_session_view:
@@ -210,12 +231,9 @@ class GraphDataWorker(QObject):
                     return_raw=True
                 )
 
-                # Fetch totals from DB as well (DURING the worker thread to avoid UI freeze)
-                total_up, total_down = self.widget_state.get_total_bandwidth_for_period(
-                    start_time=request.start_time,
-                    end_time=request.end_time,
-                    interface_name=request.interface_name
-                )
+                # Fetch totals from DB as well (DURING the worker thread to avoid UI freeze), with
+                # their provenance: part of them may be estimated from pre-2.2 speeds (D5).
+                total_up, total_down, reconstructed = self._period_totals(request)
 
             # Smart Downsampling: Cap at MAX_DATA_POINTS for rendering performance
             if len(history_data) > self.MAX_DATA_POINTS:
@@ -227,8 +245,12 @@ class GraphDataWorker(QObject):
                     history_data = downsampled
 
             if not history_data or len(history_data) < 2:
+                self.totals_provenance.emit(request.sequence_id, False)
                 self.data_ready.emit([], 0.0, 0.0, request.sequence_id)
                 return
+
+            # Ahead of data_ready (same thread, same receiver: delivered in order).
+            self.totals_provenance.emit(request.sequence_id, bool(reconstructed))
 
             # Pass the processed data and pre-calculated totals back to the UI.
             self.logger.debug(f"DataWorker emitting data. StatType: {request.stat_type}, IsSession: {request.is_session_view}, Items: {len(history_data) if not isinstance(history_data, dict) else {k: len(v) for k,v in history_data.items()}}")

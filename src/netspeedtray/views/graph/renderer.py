@@ -1405,7 +1405,9 @@ class GraphRenderer(QObject):
                 linewidths=0, clip_on=False, zorder=12, label="_value_axis_clip_markers",
                 gid="value_axis_clip_markers")]
             peak = max(ry for _, ry in runs)
-            text = f"{self.i18n.GRAPH_PEAK_SHORT} {format_decimal(peak, self.i18n, 1)} {self.i18n.MBITS_UNIT}"
+            # Through _lbl like every axis label: matplotlib does no bidi, so Hebrew would read reversed.
+            text = self._lbl(f"{self.i18n.GRAPH_PEAK_SHORT} {format_decimal(peak, self.i18n, 1)} "
+                             f"{self.i18n.MBITS_UNIT}")
             artists.append(ax.text(
                 1.0, 1.0, text, transform=ax.transAxes, ha="right", va="bottom",
                 fontsize=g.VALUE_AXIS_CLIP_PEAK_FONTSIZE, alpha=g.VALUE_AXIS_CLIP_PEAK_ALPHA,
@@ -1492,7 +1494,7 @@ class GraphRenderer(QObject):
         # One locator + formatter for every period: the tick step follows the visible span and the
         # axis width, and the label format follows the step, so no two ticks ever print the same text
         # (the old fixed per-period formats printed "18:12, 18:12, 18:13" under 30 s ticks).
-        apply_time_axis(axis)
+        apply_time_axis(axis, getattr(getattr(self, "i18n", None), "language", None))
 
         if "HOURS" in (period_key or ""):
             axis.xaxis.set_minor_locator(NullLocator())
