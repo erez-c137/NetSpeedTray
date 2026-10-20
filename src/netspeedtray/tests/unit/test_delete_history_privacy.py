@@ -6,7 +6,9 @@ Privacy review 2.2 (finding 1) and data-integrity review (A, B): what "Delete al
     every adapter name) next to it. Now the delete zeroes and removes every ``speed_history.db.bak*``
     file (sidecars included); a backup it cannot remove yet (locked) is retried like a busy checkpoint.
     Harness: v7 fixture -> migrate -> delete -> no .bak file and no adapter name in ANY file's bytes.
-  * Backups also age out with "Keep history for": maintenance removes one older than the retention
+  * The same goes for ``speed_history.db.stray_*`` (+ sidecars): files migrate_v8.recover() moved off
+    the live name, which can be a whole 2.1.x-recorded history file.
+  * Backups (and strays) also age out with "Keep history for": maintenance removes one older than the retention
     window, never sooner than BACKUP_MIN_KEEP_DAYS after it was made; "Keep everything" keeps them.
   * The odometer's counter snapshot (``usage_counter_snapshot``: adapter names + NIC counters) goes
     with the usage reset, in the delete's own transaction - the next same-boot launch then simply
@@ -74,7 +76,18 @@ def _migrated_worker(d: Path) -> DatabaseWorker:
 
 
 def _bak_files(d: Path):
-    return sorted(p.name for p in d.glob(f"{DB}.bak*"))
+    """Every file that can hold an old history copy: backups AND recover()'s moved-aside strays."""
+    return sorted(p.name for p in list(d.glob(f"{DB}.bak*")) + list(d.glob(f"{DB}{M.STRAY_INFIX}*")))
+
+
+def _add_stray(d: Path, stamp: str = "20261019_120000") -> Path:
+    """What migrate_v8.recover() leaves when it moves a file off the live name (_move_aside): here a
+    2.1.x-recorded history file (a copy of the v7 backup) with a hot -wal beside it."""
+    bak = next(d.glob(f"{DB}.bak.v7_*"))
+    stray = d / f"{DB}{M.STRAY_INFIX}{stamp}"
+    stray.write_bytes(bak.read_bytes())
+    Path(str(stray) + "-wal").write_bytes(b"Tailscale" * 50)
+    return stray
 
 
 def _names_on_disk(d: Path):
@@ -91,12 +104,13 @@ def _names_on_disk(d: Path):
 
 def test_delete_with_usage_reset_leaves_no_backup_and_no_adapter_name_anywhere(tmp_path, no_retry_sleep):
     w = _migrated_worker(tmp_path)
+    _add_stray(tmp_path)
     assert _names_on_disk(tmp_path), "the fixture must carry adapter names before the delete"
     got = []
     w.history_deleted.connect(got.append)
     w._execute_task("delete_history", {"include_usage": True})
     assert got == [DatabaseWorker.DELETE_DONE]
-    assert _bak_files(tmp_path) == [], "Delete all history left a database backup behind"
+    assert _bak_files(tmp_path) == [], "Delete all history left a database backup / stray file behind"
     w._close_connection()
     assert _names_on_disk(tmp_path) == []
 
@@ -158,8 +172,22 @@ def test_a_2_1_compaction_marker_never_removes_the_upgrade_backup(tmp_path):
     w._close_connection()
 
 
+def test_a_locked_stray_file_is_retried_like_a_backup(tmp_path, no_retry_sleep):
+    w = _migrated_worker(tmp_path)
+    stray = _add_stray(tmp_path)
+    got = []
+    w.history_deleted.connect(got.append)
+    with open(stray, "rb"):
+        w._execute_task("delete_history", {"include_usage": False})
+        assert stray.exists() and got == [DatabaseWorker.DELETE_COMPACT_PENDING]
+    w._retry_pending_compaction(force=True)
+    assert _bak_files(tmp_path) == []
+    w._close_connection()
+
+
 def test_backups_are_kept_while_a_migration_journal_exists(tmp_path, no_retry_sleep):
     w = _migrated_worker(tmp_path)
+    _add_stray(tmp_path)
     before = _bak_files(tmp_path)
     M.journal_path_for(tmp_path / DB).write_text("{}")
     w._execute_task("delete_history", {"include_usage": False})
@@ -182,9 +210,16 @@ def test_backups_age_out_with_the_retention_window(tmp_path):
     old = _fake_bak(tmp_path, 7, now - timedelta(days=400))
     Path(str(old) + "-wal").write_bytes(b"x")
     young = _fake_bak(tmp_path, 6, now - timedelta(days=100))
+    old_stray = tmp_path / f"{DB}{M.STRAY_INFIX}{now - timedelta(days=400):%Y%m%d_%H%M%S}"
+    old_stray.write_bytes(b"x")
+    Path(str(old_stray) + "-shm").write_bytes(b"x")
+    young_stray = tmp_path / f"{DB}{M.STRAY_INFIX}{now - timedelta(days=100):%Y%m%d_%H%M%S}_1"
+    young_stray.write_bytes(b"x")
     w._age_out_backups(365, now)
     assert not old.exists() and not Path(str(old) + "-wal").exists()
     assert young.exists()
+    assert not old_stray.exists() and not Path(str(old_stray) + "-shm").exists(), "strays age out too"
+    assert young_stray.exists()
     w._close_connection()
 
 
@@ -205,8 +240,10 @@ def test_keep_everything_keeps_every_backup(tmp_path):
     w._prepare_storage()
     now = datetime(2026, 10, 20, 12, 0, 0)
     ancient = _fake_bak(tmp_path, 7, now - timedelta(days=3000))
+    stray = tmp_path / f"{DB}{M.STRAY_INFIX}{now - timedelta(days=3000):%Y%m%d_%H%M%S}"
+    stray.write_bytes(b"x")
     w._age_out_backups(D.retention.UNLIMITED_DAYS, now)
-    assert ancient.exists()
+    assert ancient.exists() and stray.exists()
     w._close_connection()
 
 

@@ -456,7 +456,10 @@ A backup holds history too, so it follows the same rules as the live file:
   sooner than 30 days after the upgrade (`BACKUP_MIN_KEEP_DAYS`), so a rollback to 2.1.x always has
   a month. "Keep everything" keeps backups forever.
 - **"Delete all history" deletes every backup**, `-wal`/`-shm` sidecars included (each file is
-  overwritten with zeros first), so after a delete there is nothing to restore. A backup another
+  overwritten with zeros first), so after a delete there is nothing to restore. The same goes for
+  `speed_history.db.stray_<date>` files - whatever an interrupted upgrade's recovery found under the
+  live name and moved aside rather than delete (it can be a whole 2.1-recorded history file); they
+  also age out by the rule above. A backup another
   program holds open is retried while idle and at the next start, like a busy checkpoint. Nothing
   is removed while `migrate_v8.journal` exists - an unfinished upgrade still needs its backup.
 
@@ -544,7 +547,8 @@ are identifying) - with `secure_delete` on, so the freed pages are overwritten w
 free space back, and runs `wal_checkpoint(TRUNCATE)` so the old pages are gone from
 `speed_history.db-wal` too. If a reader is mid-query (the Monitor's graphs) the checkpoint reports
 busy; the app then says the file is still being cleaned up and retries every few seconds while idle
-until it completes. Every `speed_history.db.bak*` backup is then removed (see
+until it completes. Every `speed_history.db.bak*` backup and `speed_history.db.stray_*` file is then
+removed (see
 [Restoring a backup](#restoring-a-backup)). `metadata` is kept, and so is `usage_counter` unless you
 tick "Also reset this period's data usage" in the confirmation - which, in the same transaction,
 also deletes `usage_counter_snapshot`, so the next launch reconciles nothing from before the reset.

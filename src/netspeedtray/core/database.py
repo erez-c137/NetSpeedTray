@@ -1238,12 +1238,17 @@ class DatabaseWorker(QThread):
         self.history_deleted.emit(self.DELETE_COMPACT_PENDING)
 
     def _history_backup_files(self) -> List[Path]:
-        """Every ``speed_history.db.bak*`` file in the data folder - the backups AND their -wal / -shm /
-        -journal sidecars (a backup someone opened has them, and they can hold its pages)."""
-        try:
-            return sorted(p for p in self.db_path.parent.glob(f"{self.db_path.name}.bak*") if p.is_file())
-        except OSError:
-            return []
+        """Every file in the data folder that can hold an old copy of the history: the backups
+        (``speed_history.db.bak*``) and the files migrate_v8.recover() moved aside from the live name
+        (``speed_history.db.stray_*`` - e.g. a 2.1.x-recorded file found there mid-swap), each WITH its
+        -wal / -shm / -journal sidecars (they can hold its pages)."""
+        out: List[Path] = []
+        for pattern in (f"{self.db_path.name}.bak*", f"{self.db_path.name}{migrate_v8.STRAY_INFIX}*"):
+            try:
+                out += [p for p in self.db_path.parent.glob(pattern) if p.is_file()]
+            except OSError:
+                pass
+        return sorted(set(out))
 
     def _remove_history_backups(self) -> bool:
         """Delete all history, part 2: overwrite every database backup with zeros, then delete it. The
@@ -1284,7 +1289,8 @@ class DatabaseWorker(QThread):
             return False
 
     def _age_out_backups(self, retention_days: float, now: datetime) -> None:
-        """Maintenance: a pre-migration backup ages out with "Keep history for" - deleted (with its
+        """Maintenance: a pre-migration backup (or a file recover() moved aside, ``.stray_<ts>``) ages
+        out with "Keep history for" - deleted (with its
         sidecars) once older than the retention window, never sooner than BACKUP_MIN_KEEP_DAYS after
         it was made (the 2.1.x rollback window). Its age is the time in its name
         (``.db.bak.v{N}_YYYYmmdd_HHMMSS``: when the upgrade ran), else the file's mtime."""
@@ -1293,8 +1299,10 @@ class DatabaseWorker(QThread):
         if keep_days >= R.UNLIMITED_DAYS or migrate_v8.journal_path_for(self.db_path).exists():
             return
         cutoff = now.timestamp() - keep_days * 86400.0
-        for path in self._backup_files("*"):
-            m = re.search(r"\.db\.bak\.v\d+_(\d{8}_\d{6})", path.name)
+        strays = [p for p in self.db_path.parent.glob(f"{self.db_path.name}{migrate_v8.STRAY_INFIX}*")
+                  if not p.name.endswith(self._SIDECARS)]
+        for path in self._backup_files("*") + strays:
+            m = re.search(r"(?:\.db\.bak\.v\d+_|\.stray_)(\d{8}_\d{6})", path.name)
             try:
                 made = (datetime.strptime(m.group(1), "%Y%m%d_%H%M%S").timestamp() if m
                         else path.stat().st_mtime)
