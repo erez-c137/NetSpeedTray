@@ -444,9 +444,23 @@ class ConnectionCheckSheet(QDialog):
             return ""
         if st.verdict is None:
             return f"<span style='color:{sub};'>{self._tr('CHECK_CONN_NO_REPLY', 'No reply')}</span>"
+        lat = constants.network.latency
         key, default = _VERDICT_KEYS[st.verdict]
-        color = constants.network.latency.VERDICT_COLORS[st.verdict]
-        return f"<span style='color:{color};'>{self._tr(key, default)}</span>"
+        color = lat.VERDICT_COLORS[st.verdict]
+        out = f"<span style='color:{color};'>{self._tr(key, default)}</span>"
+        loss = self._loss_text(st)
+        if loss:
+            # Loss is its own word in its own colour: amber for one lost echo, red from two.
+            out += (f"<span style='color:{sub};'> · </span>"
+                    f"<span style='color:{lat.CHECK_LOSS_COLORS[st.loss_level]};'>{loss}</span>")
+        return out
+
+    def _loss_text(self, st: CC.HopStats) -> str:
+        """ "5% loss" for an answering hop that lost echoes, else "" (the Lost cell has the count)."""
+        if st.loss_level not in (CC.LOSS_LEVEL_SOME, CC.LOSS_LEVEL_HIGH):
+            return ""
+        pct = self._fmt_cell("loss_pct", st.loss_pct).rstrip("%")
+        return self._tr("MONITOR_LATENCY_LOSS_FMT", "{pct}% loss").format(pct=pct)
 
     def attribution_code(self) -> Optional[str]:
         if self._state != "done" or CC.HOP_GATEWAY not in self._stats:
@@ -507,7 +521,8 @@ class ConnectionCheckSheet(QDialog):
                     verdict = f"  [{self._tr('CHECK_CONN_NO_REPLY', 'No reply')}]"
                 else:
                     k, d = _VERDICT_KEYS[st.verdict]
-                    verdict = f"  [{self._tr(k, d)}]"
+                    loss = self._loss_text(st)
+                    verdict = f"  [{self._tr(k, d)}{', ' + loss if loss else ''}]"
             lines.append(f"{head}{verdict}\n  {cells}")
         sentence = self._attribution_text()
         if sentence:
