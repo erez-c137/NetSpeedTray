@@ -145,6 +145,39 @@ def graph_line_style(role: str, override_color: Optional[str] = None,
     return color, _CPU_SOLID
 
 
+# --- The taskbar widget's CPU/GPU labels ("Brand" label colour) ---------------------------------
+# Small glyphs and 9 pt text on the taskbar, so every shade clears WCAG's 4.5:1 TEXT contrast on the
+# taskbar it is meant for (reference backgrounds #202020 / #2B2B2B dark, #EEEEEE / #E8E8E8 light; the
+# figures are pinned by test_hardware_label_colors.py). The pure brand hexes (#0071C5, #E2231A) are
+# only ~3:1 on a dark taskbar, hence the lifted dark-taskbar shades and the deepened light ones.
+# The GPU wears its OWN brand hue (NVIDIA green, AMD red, Intel blue); only when CPU and GPU share a
+# vendor does it switch to a sibling shade (AMD orange, Intel teal) so the two stay apart at a glance.
+# Unknown (incl. hybrid laptops, see gpu_vendor) keeps the pre-2.2 neutral blue/red, deepened on a
+# light taskbar where the originals measured 2.6-3.4:1.
+_LABEL_BRAND = {
+    # vendor: (on a dark taskbar, on a light taskbar)
+    "intel": ("#4FA8F0", "#0062AD"),
+    "amd": ("#FF5A4F", "#C41E1E"),
+    "nvidia": ("#76B900", "#447300"),
+}
+_LABEL_GPU_SIBLING = {"intel": ("#33C3D6", "#00727F"), "amd": ("#FF9A5C", "#A84300")}
+_LABEL_NEUTRAL = {"cpu": ("#3498DB", "#1F6AA5"), "gpu": ("#E74C3C", "#B83227")}
+
+
+def widget_label_color(role: str, light_taskbar: bool = False) -> str:
+    """Brand hex for the widget's 'cpu' / 'gpu' label on a dark (default) or light taskbar."""
+    idx = 1 if light_taskbar else 0
+    cpu = cpu_vendor()
+    if role == "gpu":
+        gpu = gpu_vendor()
+        if gpu == cpu and gpu in _LABEL_GPU_SIBLING:
+            return _LABEL_GPU_SIBLING[gpu][idx]
+        return _LABEL_BRAND.get(gpu, _LABEL_NEUTRAL["gpu"])[idx]
+    if cpu in ("intel", "amd"):
+        return _LABEL_BRAND[cpu][idx]
+    return _LABEL_NEUTRAL["cpu"][idx]
+
+
 def default_color(role: str, is_dark: bool = True) -> str:
     """The vendor-default hex for 'cpu' / 'gpu' (for pre-filling the settings color pickers)."""
     if role == "gpu":

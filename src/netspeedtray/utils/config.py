@@ -432,6 +432,33 @@ class ConfigManager:
                                  old_rate, new_rate)
                 changes_made = True
 
+        # hardware_label_style (2.2): the old three-way style mixed shape and colour. It is now a shape
+        # ("icons" | "text") plus hardware_label_color ("brand" | "match_text" | "custom"):
+        #   icons_monochrome -> icons + match_text. The same look on a dark taskbar (white text there),
+        #                       and no longer invisible on a light one. Always applied: choosing
+        #                       monochrome is an explicit "no colour".
+        #   icons_colored    -> icons + brand   } both painted the fixed blue/red, which meant nothing;
+        #   text             -> text  + brand   } Brand gives the colour a meaning and falls back to
+        #                                         exactly that blue/red when the vendor is unknown.
+        # A colour already on file (a 2.2 config read back after a rollback) wins over the colour the
+        # old coloured styles imply. Idempotent: the new values are not in the map. Runs before
+        # _validate_config, whose `choices` rule would otherwise reset the old values to the default.
+        legacy_style = migrated.get("hardware_label_style")
+        legacy_map = {
+            "icons_colored": ("icons", "brand"),
+            "icons_monochrome": ("icons", "match_text"),
+            "text": ("text", "brand"),
+        }
+        if isinstance(legacy_style, str) and legacy_style in legacy_map and (
+                legacy_style != "text" or "hardware_label_color" not in migrated):
+            new_style, implied_color = legacy_map[legacy_style]
+            migrated["hardware_label_style"] = new_style
+            if legacy_style == "icons_monochrome" or "hardware_label_color" not in migrated:
+                migrated["hardware_label_color"] = implied_color
+            self.logger.info("Migrated hardware_label_style %r -> %r + hardware_label_color %r",
+                             legacy_style, new_style, migrated["hardware_label_color"])
+            changes_made = True
+
         # Version-based migrations (applied if loaded_version < target version)
         # Example structure for future versions:
         # if self._version_less_than(loaded_version, "2.0"):
