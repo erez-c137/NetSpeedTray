@@ -17,10 +17,40 @@ import logging
 import signal
 import sys
 import os
-from typing import Optional
+import threading
+from typing import Callable, List, Optional
 
-import win32gui
-import win32con
+# `--shutdown` hard deadline. Must stay the same as constants.app.SHUTDOWN_DEFAULT_TIMEOUT_S (a unit
+# test pins it); duplicated as a literal because this runs before anything from netspeedtray loads.
+_SHUTDOWN_DEFAULT_TIMEOUT_S = 30.0
+_SHUTDOWN_DEADLINE_GRACE_S = 5.0
+
+
+def _arm_shutdown_deadline(argv: List[str],
+                           exit_fn: Callable[[int], None] = os._exit) -> Optional[threading.Timer]:
+    """For `--shutdown [--timeout N]`, arm a hard process deadline of N + 5 s before anything else
+    runs. Setup waits for this process with Inno's Exec, which has no timeout of its own, so a wedge
+    anywhere - an import, a DLL load, the log file, the wait itself - must never hang the installer.
+    Past the deadline the process exits 1 ("still running"), and Setup falls back to taskkill."""
+    if "--shutdown" not in argv:
+        return None
+    timeout = _SHUTDOWN_DEFAULT_TIMEOUT_S
+    if "--timeout" in argv:
+        try:
+            value = float(argv[argv.index("--timeout") + 1])
+            if value > 0:
+                timeout = value
+        except (IndexError, ValueError):
+            pass
+    timer = threading.Timer(timeout + _SHUTDOWN_DEADLINE_GRACE_S, exit_fn, args=(1,))
+    timer.daemon = True
+    timer.start()
+    return timer
+
+
+# Armed at import, ahead of the Qt / pywin32 / app imports below.
+_shutdown_deadline = _arm_shutdown_deadline(sys.argv[1:]) if __name__ == "__main__" else None
+
 import win32api
 import win32event
 import winerror
@@ -140,6 +170,19 @@ def main() -> int:
     
     sys.excepthook = excepthook
 
+    # Graceful-close path: `--shutdown [--timeout N]`, run by the installer/uninstaller before any
+    # taskkill. Asks the running instance to quit through its tray-Exit path and waits for it to exit.
+    # Headless and first: no QApplication, no mutex, and none of the update sweeps below - the
+    # installer that runs this may itself be executing from an update temp dir.
+    try:
+        from netspeedtray.core.shutdown_channel import run_shutdown_cli
+        shutdown_code = run_shutdown_cli()
+        if shutdown_code is not None:
+            return shutdown_code
+    except Exception as e:
+        logger.error("Shutdown command errored: %s", e, exc_info=True)
+        return 2
+
     # Clear any orphaned update temp dir left by a past in-app update - its installer ran from the dir,
     # so the success path couldn't delete it; sweep it here so they don't pile up in %TEMP% (#19).
     try:
@@ -175,23 +218,6 @@ def main() -> int:
 
     # The QApplication must be created before any UI elements.
     app = QApplication(sys.argv)
-
-    if "--shutdown" in sys.argv:
-        # This is a special mode triggered by the installer.
-        # We broadcast a custom Windows message that only our running application will understand.
-        logger.info("Shutdown command received. Broadcasting WM_USER_SHUTDOWN.")
-        try:
-            # Register a custom Windows message. The name must be unique.
-            WM_USER_SHUTDOWN = win32gui.RegisterWindowMessageW("NetSpeedTray_WM_SHUTDOWN")
-            
-            # Broadcast this message to all top-level windows. Our app will be listening.
-            win32gui.PostMessage(win32con.HWND_BROADCAST, WM_USER_SHUTDOWN, 0, 0)
-            
-            logger.info("Broadcast message sent. Exiting shutdown command.")
-            return 0  # Exit successfully
-        except Exception as e:
-            logger.error(f"Error during shutdown command: {e}", exc_info=True)
-            return 1  # Return an error code
 
     i18n_strings: Optional[constants.i18n.I18nStrings] = None 
 

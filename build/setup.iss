@@ -6,6 +6,13 @@
 #define MyAppExeName "NetSpeedTray.exe"
 #define MyAppMutex "Global\NetSpeedTray_SingleInstanceMutex"
 #define MyAppId "{{D3A32B89-C533-4F2C-9F87-23B2395B5B89}}"
+; Registry key of the installed copy ("{{" is Inno's escaped "{"; the stored AppId keeps the "}}").
+#define MyAppUninstallKey "Software\Microsoft\Windows\CurrentVersion\Uninstall\" + StringChange(MyAppId, "{{", "{") + "_is1"
+; Seconds `--shutdown` waits for the running app to exit before Setup falls back to taskkill.
+; Mirrors constants.app.SHUTDOWN_DEFAULT_TIMEOUT_S: must outlast the app's own worst clean quit
+; (1.5 s latency-probe join + the 15 s DB_SHUTDOWN_WAIT_MS bound when quit lands mid-migration, after
+; which the app exits hard by itself). A normal quit returns in ~1 s; this is only the ceiling.
+#define ShutdownTimeoutSec "30"
 
 ; --- DYNAMIC VERSIONING ---
 ; If AppVersion is NOT defined (e.g., manual compile without build.bat), use a default.
@@ -127,12 +134,6 @@ function OpenMutex(dwDesiredAccess: LongWord; bInheritHandle: Boolean; lpName: s
   external 'OpenMutexW@kernel32.dll stdcall';
 function CloseHandle(hObject: THandle): Boolean;
   external 'CloseHandle@kernel32.dll stdcall';
-function FindWindow(lpClassName, lpWindowName: string): HWND;
-  external 'FindWindowW@user32.dll stdcall';
-function PostMessage(hWnd: HWND; Msg: Cardinal; wParam, lParam: Longint): BOOL;
-  external 'PostMessageW@user32.dll stdcall';
-const
-  WM_CLOSE = $0010;  
 
 // --- Helper Functions ---
 function ShellIsRunning(): Boolean;
@@ -178,100 +179,108 @@ begin
   end;
 end;
 
+// The installed exe, which is what `--shutdown` is run from. In the uninstaller that is simply {app};
+// in Setup {app} cannot be expanded yet during InitializeSetup, so read the previous install's
+// location from its uninstall key (Inno writes "Inno Setup: App Path" there). Empty = not found.
+function InstalledExePath(): string;
+var
+  AppDir: string;
+begin
+  Result := '';
+  if IsUninstaller() then
+    AppDir := ExpandConstant('{app}')
+  else if not RegQueryStringValue(HKLM64, '{#MyAppUninstallKey}', 'Inno Setup: App Path', AppDir) then
+    if not RegQueryStringValue(HKLM32, '{#MyAppUninstallKey}', 'Inno Setup: App Path', AppDir) then
+      AppDir := '';
+  if (AppDir <> '') and FileExists(AddBackslash(AppDir) + '{#MyAppExeName}') then
+    Result := AddBackslash(AppDir) + '{#MyAppExeName}';
+end;
+
+// Graceful close: `NetSpeedTray.exe --shutdown` asks the running app to quit through its own tray-Exit
+// path (threads stopped, history DB flushed, config saved) and exits 0 once it is gone, 1 if it is
+// still running after --timeout seconds. It bounds its own wait, so ewWaitUntilTerminated cannot hang
+// Setup on a stuck app. Versions before the channel existed (<= 2.1.7) exit 1 in under a second
+// (measured 0.5 s) and the taskkill fallback below behaves exactly as before. No message boxes here:
+// this runs under /VERYSILENT for every Store and winget upgrade.
+function TryGracefulClose(): Boolean;
+var
+  ExePath: string;
+  ResultCode: Integer;
+  WaitCount: Integer;
+begin
+  Result := False;
+  ExePath := InstalledExePath();
+  if ExePath = '' then
+  begin
+    Log('Graceful close: installed {#MyAppExeName} not found, skipping --shutdown.');
+    Exit;
+  end;
+  Log('Graceful close: running "' + ExePath + '" --shutdown --timeout {#ShutdownTimeoutSec}');
+  if not Exec(ExePath, '--shutdown --timeout {#ShutdownTimeoutSec}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+  begin
+    Log('Graceful close: could not run --shutdown: ' + SysErrorMessage(ResultCode));
+    Exit;
+  end;
+  Log('Graceful close: --shutdown exited with code ' + IntToStr(ResultCode));
+  // Non-zero = still running after its wait, or a version without the channel: straight to taskkill.
+  if ResultCode <> 0 then
+    Exit;
+  // 0 = the app's process has ended; the mutex goes with it, so this loop is only a safety margin.
+  WaitCount := 0;
+  while IsAppRunning() and (WaitCount < 10) do
+  begin
+    Sleep(300);
+    WaitCount := WaitCount + 1;
+  end;
+  Result := not IsAppRunning();
+end;
+
 function CloseNetSpeedTray(): Boolean;
 var
   ResultCode: Integer;
-  Hwnd: HWND;
-  WaitCount: Integer;
   KillAttempts: Integer;
 begin
   Result := True;
-  
+
   if not IsAppRunning() then
     Exit;
-    
-  Log('NetSpeedTray is running (likely two processes), attempting to close gracefully...');
-  
-  Hwnd := FindWindow('', 'NetSpeedTrayHidden');
-  if Hwnd <> 0 then
+
+  Log('NetSpeedTray is running, asking it to close gracefully...');
+  if TryGracefulClose() then
   begin
-    Log('Found NetSpeedTray window (child process), sending WM_CLOSE...');
-    PostMessage(Hwnd, WM_CLOSE, 0, 0);
-    
-    WaitCount := 0;
-    while (WaitCount < 10) and (FindWindow('', 'NetSpeedTrayHidden') <> 0) do
+    Log('NetSpeedTray closed gracefully');
+    Exit;
+  end;
+
+  // No /T: it kills the whole process TREE, and when the in-app updater starts this installer the
+  // installer can be a descendant of the app - so /T made it kill itself mid-install. /IM alone
+  // already ends every process with that name, which is all this ever needed.
+  Log('Graceful close did not finish, falling back to taskkill on the EXE...');
+  KillAttempts := 0;
+  while (KillAttempts < 3) and IsAppRunning() do
+  begin
+    if Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM "{#MyAppExeName}"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
     begin
-      Sleep(500);
-      WaitCount := WaitCount + 1;
-    end;
-    
-    if IsAppRunning() or (FindWindow('', 'NetSpeedTrayHidden') <> 0) then
-    begin
-      // No /T: it kills the whole process TREE, and when the in-app updater starts this installer
-      // the installer is a descendant of the app - so /T made it kill itself mid-install. /IM alone
-      // already ends every process with that name, which is all this ever needed.
-      Log('Graceful close incomplete (parent/child lingering), using taskkill on the EXE...');
-      KillAttempts := 0;
-      while (KillAttempts < 3) and IsAppRunning() do
-      begin
-        if Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM "{#MyAppExeName}"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
-        begin
-          Log('taskkill (attempt ' + IntToStr(KillAttempts + 1) + ') executed with exit code: ' + IntToStr(ResultCode));
-          Sleep(2000); 
-        end
-        else
-        begin
-          Log('Failed to execute taskkill (attempt ' + IntToStr(KillAttempts + 1) + ')');
-          Result := False;
-          Exit;
-        end;
-        KillAttempts := KillAttempts + 1;
-      end;
-      
-      if IsAppRunning() then
-      begin
-        Log('NetSpeedTray still running after max taskkill attempts');
-        Result := False;
-      end
-      else
-      begin
-        Log('All NetSpeedTray processes closed');
-      end;
+      Log('taskkill (attempt ' + IntToStr(KillAttempts + 1) + ') executed with exit code: ' + IntToStr(ResultCode));
+      Sleep(2000);
     end
     else
     begin
-      Log('NetSpeedTray closed gracefully');
+      Log('Failed to execute taskkill (attempt ' + IntToStr(KillAttempts + 1) + ')');
+      Result := False;
+      Exit;
     end;
+    KillAttempts := KillAttempts + 1;
+  end;
+
+  if IsAppRunning() then
+  begin
+    Log('NetSpeedTray still running after max taskkill attempts');
+    Result := False;
   end
   else
   begin
-    Log('Could not find NetSpeedTray window, falling back to taskkill on the EXE...');
-    KillAttempts := 0;
-    while (KillAttempts < 3) and IsAppRunning() do
-    begin
-      if Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM "{#MyAppExeName}"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
-      begin
-        Log('taskkill (attempt ' + IntToStr(KillAttempts + 1) + ') executed with exit code: ' + IntToStr(ResultCode));
-        Sleep(2000);
-      end
-      else
-      begin
-        Log('Failed to execute taskkill (attempt ' + IntToStr(KillAttempts + 1) + ')');
-        Result := False;
-        Exit;
-      end;
-      KillAttempts := KillAttempts + 1;
-    end;
-    
-    if IsAppRunning() then
-    begin
-      Log('NetSpeedTray still running after max taskkill attempts');
-      Result := False;
-    end
-    else
-    begin
-      Log('All NetSpeedTray processes closed');
-    end;
+    Log('All NetSpeedTray processes closed');
   end;
 end;
 

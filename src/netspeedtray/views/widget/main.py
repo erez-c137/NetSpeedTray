@@ -46,6 +46,7 @@ from netspeedtray.views.widget.theme import WidgetThemeManager
 from netspeedtray.core.startup_manager import StartupManager
 from netspeedtray.core.config_controller import ConfigController
 from netspeedtray.core.update_checker import UpdateChecker
+from netspeedtray.core import shutdown_channel
 
 # --- Type Checking ---
 if TYPE_CHECKING:
@@ -66,6 +67,14 @@ class _NativeMSG(ctypes.Structure):
 _WM_POWERBROADCAST = 0x0218
 _PBT_APMRESUMESUSPEND = 0x0007
 _PBT_APMRESUMEAUTOMATIC = 0x0012
+
+# The installer's graceful-close request (`--shutdown`, core/shutdown_channel.py). A registered
+# message: one system-wide atom per string, so resolving it once at import is correct. 0 = failed,
+# and nativeEvent then never matches (WM_NULL is 0, so the guard matters).
+try:
+    _WM_NST_SHUTDOWN = shutdown_channel.shutdown_message_id()
+except Exception:
+    _WM_NST_SHUTDOWN = 0
 
 
 class NetworkSpeedWidget(QWidget):
@@ -176,6 +185,7 @@ class NetworkSpeedWidget(QWidget):
         self.last_tray_rect: Optional[Tuple[int, int, int, int]] = None
         self._taskbar_lost_count: int = 0
         self._will_quit_app: bool = False # Flag to distinguish hide vs exit
+        self._shutdown_armed_hwnd: int = 0  # HWND the --shutdown channel was armed on
         
         # Hooks for system events
         self.system_event_handler: SystemEventHandler
@@ -211,7 +221,9 @@ class NetworkSpeedWidget(QWidget):
             self.position_manager.update_position()
             self._synchronize_startup_task()
             self.apply_metrics_endpoint()   # opt-in, off by default: a no-op unless the user enabled it
-            
+            # Reachable by the installer's --shutdown from here on, not only once first shown.
+            self._arm_shutdown_channel()
+
             QTimer.singleShot(0, self._delayed_initial_show)
 
             self.logger.debug("NetworkSpeedWidget initialized successfully.")
@@ -1236,6 +1248,33 @@ class NetworkSpeedWidget(QWidget):
     def showEvent(self, event: QShowEvent) -> None:
         self.logger.debug(f"Widget showEvent triggered. New visibility: {self.isVisible()}")
         super().showEvent(event)
+        self._arm_shutdown_channel()
+
+    def event(self, event: QEvent) -> bool:
+        # Qt sends WinIdChange whenever the native window is created or recreated (a window-flag
+        # change, a re-parent, #327's re-dock after an explorer restart) - re-arm on the new HWND, so
+        # --shutdown can always find us. internalWinId() never creates a window (it is 0 while the
+        # HWND is being torn down, and arming is then skipped).
+        if event.type() == QEvent.Type.WinIdChange:
+            self._arm_shutdown_channel(create=False)
+        return super().event(event)
+
+    def _arm_shutdown_channel(self, create: bool = True) -> None:
+        """
+        Make this window the target of `NetSpeedTray.exe --shutdown` (the installer's graceful close):
+        mark it and let the message through UIPI, so an unelevated sender reaches an elevated app.
+        Idempotent per native window; re-armed when Qt hands us a new HWND. Called at the end of
+        __init__ (create=True realizes the HWND, so a starting, not-yet-shown instance is already
+        reachable), on every WinIdChange, and on show.
+        """
+        try:
+            hwnd = int(self.winId() if create else (self.internalWinId() or 0))
+            if not hwnd or hwnd == self._shutdown_armed_hwnd:
+                return
+            if shutdown_channel.arm_window(hwnd):
+                self._shutdown_armed_hwnd = hwnd
+        except Exception as e:
+            self.logger.debug("Arming the shutdown channel failed: %s", e)
 
 
     def hideEvent(self, event: QHideEvent) -> None:
@@ -1326,6 +1365,10 @@ class NetworkSpeedWidget(QWidget):
         (monitors and the taskbar are often re-arranged across a suspend cycle). We only watch
         the message - we never consume it.
 
+        The one message we DO consume is our own registered shutdown message (``--shutdown``, sent
+        by the installer): it schedules ``fully_exit_application`` - the tray Exit path - and
+        returns ``(True, 0)``. Nothing else ever carries that atom.
+
         CRITICAL: do NOT call ``super().nativeEvent(eventType, message)`` here. Re-dispatching the
         native message through the base implementation from a Python override access-violates
         inside Qt during window creation - it crashed the widget on its very first show() (a hard
@@ -1336,6 +1379,11 @@ class NetworkSpeedWidget(QWidget):
         try:
             if eventType == b"windows_generic_MSG" and message is not None:
                 msg = _NativeMSG.from_address(int(message))
+                if _WM_NST_SHUTDOWN and msg.message == _WM_NST_SHUTDOWN:
+                    # Deferred out of the native dispatch, then exactly the tray Exit path.
+                    self.logger.info("Shutdown requested by another process (installer/--shutdown) - exiting cleanly.")
+                    QTimer.singleShot(0, self.fully_exit_application)
+                    return True, 0
                 if msg.message == _WM_POWERBROADCAST and msg.wParam in (
                     _PBT_APMRESUMESUSPEND, _PBT_APMRESUMEAUTOMATIC
                 ):
@@ -1825,9 +1873,25 @@ class NetworkSpeedWidget(QWidget):
 
 
     def cleanup(self) -> None:
-        """Performs necessary cleanup and a single, final save of the configuration."""
+        """Performs necessary cleanup and a single, final save of the configuration.
+
+        Runs once. An exit reaches it twice - closeEvent calls it, then app.quit() fires aboutToQuit,
+        which is connected here too - and a second pass would repeat the bounded waits (latency probe,
+        and the database thread's DB_SHUTDOWN_WAIT_MS when a migration outlived the first one),
+        doubling a slow quit past the installer's --shutdown timeout. The done-flag is set only after
+        every step has had its turn; the running-flag stops a re-entrant call meanwhile.
+
+        Every step runs in its own guard (log and continue), so one failing teardown - an event hook
+        that will not unhook, a thread that raises on stop - can never skip the history flush or the
+        final config save that come after it.
+        """
+        if getattr(self, "_cleanup_done", False) or getattr(self, "_cleanup_running", False):
+            return
+        self._cleanup_running = True
         self.logger.debug("Performing widget cleanup...")
-        try:
+        failed: List[str] = []
+
+        def _hover_card() -> None:
             # Tear down the hover usage card + its armed timer first, before the data layer
             # (widget_state / monitor thread) goes away - otherwise a pending 350ms singleShot
             # could fire _show_usage_hover_card into half-torn-down state, or leave an orphan
@@ -1835,51 +1899,55 @@ class NetworkSpeedWidget(QWidget):
             self._hover_card_timer.stop()
             self._hide_usage_hover_card()
 
-            # --- Stop all external event listeners and timers ---
-            # self.foreground_hook and movesize_hook are likely legacy, but keeping check is harmless
-            if hasattr(self, 'system_event_handler') and self.system_event_handler:
+        def _event_hooks() -> None:
+            # self.foreground_hook is likely legacy, but keeping the check is harmless
+            if getattr(self, 'system_event_handler', None):
                 self.system_event_handler.stop()
-            elif hasattr(self, 'foreground_hook') and self.foreground_hook: 
+            elif getattr(self, 'foreground_hook', None):
                 self.foreground_hook.stop()
-            
-            # Stop PositionManager monitoring
-            if self.position_manager:
+
+        def _position_manager() -> None:
+            if getattr(self, 'position_manager', None):
                 self.position_manager.stop_monitoring()
-            
-            if self._state_watcher_timer.isActive(): self._state_watcher_timer.stop()
-            
-            # --- Stop the background monitor thread ---
-            if hasattr(self, 'monitor_thread') and self.monitor_thread:
+
+        def _state_watcher() -> None:
+            timer = getattr(self, '_state_watcher_timer', None)
+            if timer is not None and timer.isActive():
+                timer.stop()
+
+        def _monitor_thread() -> None:
+            if getattr(self, 'monitor_thread', None):
                 self.logger.debug("Stopping StatsMonitorThread...")
                 self.monitor_thread.stop()
 
-            # --- Stop the latency probe thread ---
+        def _latency_probe() -> None:
             if getattr(self, 'latency_probe', None):
-                try:
-                    self.latency_probe.stop()
-                    self.latency_probe.wait(1500)
-                except Exception:
-                    pass
+                self.latency_probe.stop()
+                self.latency_probe.wait(1500)
 
-            # --- Stop the local metrics endpoint (joins its threads; nothing is left listening) ---
+        def _metrics_endpoint() -> None:
+            # Joins its threads; nothing is left listening.
             if getattr(self, 'metrics_endpoint', None):
-                try:
-                    self.metrics_endpoint.stop()
-                except Exception:
-                    pass
+                self.metrics_endpoint.stop()
 
-            # --- Clean up core components ---
-            if self.controller: self.controller.cleanup()
-            if self.widget_state: self.widget_state.cleanup()
+        def _controller() -> None:
+            if getattr(self, 'controller', None):
+                self.controller.cleanup()
 
+        def _history_flush() -> None:
+            # The final batch is written and the DB thread stopped (bounded by DB_SHUTDOWN_WAIT_MS).
+            if getattr(self, 'widget_state', None):
+                self.widget_state.cleanup()
+
+        def _monitor_window() -> None:
             # Close the Monitor if it's open (it persists its own geometry + active tab on close).
-            if self.monitor_window:
+            if getattr(self, 'monitor_window', None):
                 try:
                     self.monitor_window.close()
-                except Exception:
-                    pass
-                self.monitor_window = None
+                finally:
+                    self.monitor_window = None
 
+        def _position_config() -> None:
             # Persist the widget's absolute spot when it's actively floating (Free Move or #188
             # free-float). Only CLEAR the saved coords when the widget is genuinely docked - i.e. BOTH
             # free_move and free_float are OFF in config. Crucially we do NOT clear just because the
@@ -1892,10 +1960,30 @@ class NetworkSpeedWidget(QWidget):
             elif not self.config.get("free_move", False) and not self.config.get("free_float", True):
                 self.update_config({"position_x": None, "position_y": None}, save_to_disk=False)
             # else: free-float-capable but the display is temporarily absent -> keep the saved spot.
-            
+
+        def _config_save() -> None:
             self.logger.debug("Performing final configuration save...")
             self.config_manager.save(self.config)
 
+        steps = (
+            ("hover card", _hover_card), ("event hooks", _event_hooks),
+            ("position manager", _position_manager), ("state watcher", _state_watcher),
+            ("monitor thread", _monitor_thread), ("latency probe", _latency_probe),
+            ("metrics endpoint", _metrics_endpoint), ("controller", _controller),
+            ("history flush", _history_flush), ("monitor window", _monitor_window),
+            ("position config", _position_config), ("config save", _config_save),
+        )
+        try:
+            for name, fn in steps:
+                try:
+                    fn()
+                except Exception as e:
+                    failed.append(name)
+                    self.logger.error("Cleanup step '%s' failed: %s", name, e, exc_info=True)
+        finally:
+            self._cleanup_running = False
+            self._cleanup_done = True
+        if failed:
+            self.logger.warning("Widget cleanup finished; failed steps: %s", ", ".join(failed))
+        else:
             self.logger.debug("Widget cleanup finished successfully.")
-        except Exception as e:
-            self.logger.error(f"Unexpected error during cleanup: %s", e, exc_info=True)
