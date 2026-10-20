@@ -75,6 +75,103 @@ ALSO
 
 ---
 
+## [2.2.0-beta.2] - October 20, 2026
+
+*A beta, for testers. It's a manual download from the release page - the in-app updater, WinGet
+and the Store never offer prereleases.*
+
+The checkup release: after beta.1 shipped, four independent reviews and a live test on real data
+went over the whole of 2.2, and this is what they found.
+
+> **Upgrading:** from beta.1, just install over it - your history is already on the new database.
+> From 2.1.x, the same first-launch rebuild as beta.1 applies, and a one-time notice now explains
+> why older totals read lower.
+>
+> - **Delete all history now also removes the backup** the 2.2 upgrade keeps
+>   (`speed_history.db.bak.v7_*`), so older history can no longer be restored after a delete. The
+>   confirmation says so.
+> - **Backups now age out** with "Keep history for", but never sooner than 30 days of the app
+>   actually running after the upgrade, and never on a clock that looks wrong.
+
+### Added
+
+- **Separate upload and download mini graphs, each on its own scale.** Opt-in, in Settings -
+  off by default, and the widget looks exactly as before when it's off. ([#336], thanks [@Zogar89])
+- **A one-time notice after the history upgrade** explains that totals for earlier days are
+  estimates and can read lower than 2.1 showed. ([#378])
+
+### Changed
+
+- **The latency pill and stats sheet say "Router" or "Internet" for the hop they actually
+  measure.** By default that's your router; the Settings card is now "Connection latency". ([#378])
+- **Check connection judges speed and loss separately.** One lost ping in 20 no longer turns a
+  2 ms router red "Slow"; loss gets its own amber/red note. ([#378])
+- **"Busiest hour" is now the hour with the highest average**, not the hour that held the single
+  biggest spike. ([#379])
+- **Graph day and month names follow your language** instead of always showing English. ([#378])
+
+### Fixed
+
+- **Short windows ignored history from before the upgrade.** For a day after updating, the 12-hour
+  view showed a peak of 2 Mbps next to an 87 Mbps spike on the same graph. ([#379])
+- **Turning Latency off in Settings now stops the pings immediately**, to your router and to any
+  public host - before, they continued until the app restarted. ([#376])
+- **A network change or wake from sleep no longer records up to a minute of false outage.**
+  ([#376])
+- **A failed "Delete all history" no longer resets your data-cap counter**, and a reset during
+  the first-launch upgrade no longer brings back the bytes it was meant to clear. ([#376])
+- **Quitting with the Monitor open is quick and safe.** It could block for several seconds and
+  close the database under a running graph query. ([#377])
+- **No more hidden PowerShell every 30 seconds.** The Widgets-button check now runs in-process -
+  it cost more CPU than the rest of the app. ([#377])
+- **The Statistics sheet no longer freezes the window** while the database is busy. ([#377])
+- **Settings and your data-usage count are saved when Windows signs out or shuts down.** ([#377])
+- **Hebrew:** the "peak" label on graphs read backwards. ([#378])
+- **Graphs:** hardware lines no longer cross months with no data, the network fill covers the whole
+  range, and the throttle-temperature slider reads "Off" at zero. ([#379])
+- **Settings:** the port-in-use message no longer squeezes into a narrow column, and the hover card
+  uses your language's decimal separator. ([#378])
+
+### Security
+
+- **The installer no longer runs the installed app with admin rights to close it.** With a custom
+  install folder under `C:\`, any program could have replaced that exe beforehand. Setup now asks
+  the app to close itself. ([#375])
+
+  *Under the hood: Setup posts the registered shutdown message from Pascal (`EnumWindows` +
+  `GetPropW`) and only falls back to `{sys}\taskkill.exe`; nothing in the install folder is ever
+  executed by the elevated installer.*
+
+- **Delete all history removes every file that could hold your history** - the live database, the
+  upgrade backup and any file the upgrade set aside - and only those, by exact name; it never follows
+  a link out of the folder. ([#376])
+
+### Localization
+
+- Dutch reviewed by a native speaker. ([#374], thanks [@boonstraworks])
+- 13 new or changed strings are AI-drafted in every language and listed for review in [#364].
+- Every Settings control now has a screen-reader name: 138, up from 23. ([#378])
+
+### Developer notes
+
+- Two flaky tests fixed: a fixed 2 s wait in the odometer restart test ([#380]) and a clock read
+  twice in the v8 reader parity tests.
+- 2,752 tests.
+
+[#336]: https://github.com/erez-c137/NetSpeedTray/pull/336
+[#364]: https://github.com/erez-c137/NetSpeedTray/issues/364
+[#374]: https://github.com/erez-c137/NetSpeedTray/pull/374
+[#375]: https://github.com/erez-c137/NetSpeedTray/pull/375
+[#376]: https://github.com/erez-c137/NetSpeedTray/pull/376
+[#377]: https://github.com/erez-c137/NetSpeedTray/pull/377
+[#378]: https://github.com/erez-c137/NetSpeedTray/pull/378
+[#379]: https://github.com/erez-c137/NetSpeedTray/pull/379
+[#380]: https://github.com/erez-c137/NetSpeedTray/pull/380
+[@Zogar89]: https://github.com/Zogar89
+[@boonstraworks]: https://github.com/boonstraworks
+
+---
+
 ## [2.2.0-beta.1] - October 20, 2026
 
 *A beta, for testers. It's a manual download from the release page - the in-app updater, WinGet
