@@ -527,7 +527,8 @@ class NetworkSpeedWidget(QWidget):
                 # The loss series: lost / sent of this cycle's burst (0, .25, .5, .75, 1). Old 0/1 rows
                 # (one echo per cycle) mean the same thing - the share of that cycle's probes lost - so
                 # every reader (rollup AVG, outage_summary's >= 0.5, the exporter) takes both unchanged.
-                ws.add_hardware_stat(lat.STAT_GW_TIMEOUT, float(sample.gw_loss_fraction))
+                if not getattr(sample, "gw_excluded", False):   # gateway changed mid-cycle: not measured
+                    ws.add_hardware_stat(lat.STAT_GW_TIMEOUT, float(sample.gw_loss_fraction))
                 if sample.anchor_enabled:
                     ws.add_hardware_stat(lat.STAT_ANCHOR_TIMEOUT, float(sample.anchor_loss_fraction))
             except Exception:

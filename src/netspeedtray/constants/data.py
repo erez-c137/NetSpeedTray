@@ -52,6 +52,13 @@ class DataRetentionConstants:
     # always has its backup for a month (every DAYS_MAP choice is >= 31 days, so this floor only
     # matters for a hand-edited keep_data). "Keep everything" keeps backups forever (still count-capped).
     BACKUP_MIN_KEEP_DAYS: Final[int] = 30
+    # A wrong clock must never age a backup out (a clock set to 2030 would make a day-old backup look
+    # years old - on the same pass that prunes the live rows, so the backup is the only copy left).
+    # Ageing out only runs once the clock has been CONTINUOUS for BACKUP_CLOCK_CONTINUITY_DAYS: every
+    # maintenance pass within BACKUP_CLOCK_MAX_GAP_DAYS of the previous one (a jump, either way,
+    # restarts that count). Intermittent use only delays an age-out - the safe direction.
+    BACKUP_CLOCK_MAX_GAP_DAYS: Final[int] = 14
+    BACKUP_CLOCK_CONTINUITY_DAYS: Final[int] = 7
     DAYS_MAP: Final[Dict[int, int]] = {
         0: 31,             # 1 month - covers a full calendar month so "this month" is always whole
         1: 90,             # 3 months

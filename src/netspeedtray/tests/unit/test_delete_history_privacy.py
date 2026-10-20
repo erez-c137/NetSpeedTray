@@ -20,6 +20,7 @@ Privacy review 2.2 (finding 1) and data-integrity review (A, B): what "Delete al
 """
 import os
 import sqlite3
+import stat
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -197,64 +198,317 @@ def test_backups_are_kept_while_a_migration_journal_exists(tmp_path, no_retry_sl
 
 # --- backups age out with "Keep history for" -------------------------------------------------------------
 
-def _fake_bak(d: Path, version: int, when: datetime) -> Path:
-    p = d / f"{DB}.bak.v{version}_{when:%Y%m%d_%H%M%S}"
-    p.write_bytes(b"x")
+def _touch(p: Path, when: datetime, data: bytes = b"x") -> Path:
+    p.write_bytes(data)
+    os.utime(p, (when.timestamp(), when.timestamp()))
     return p
 
 
-def test_backups_age_out_with_the_retention_window(tmp_path):
-    w = DatabaseWorker(tmp_path / DB)
+def _fake_bak(d: Path, version: int, when: datetime) -> Path:
+    return _touch(d / f"{DB}.bak.v{version}_{when:%Y%m%d_%H%M%S}", when)
+
+
+def _fake_stray(d: Path, when: datetime, suffix: str = "") -> Path:
+    return _touch(d / f"{DB}{M.STRAY_INFIX}{when:%Y%m%d_%H%M%S}{suffix}", when)
+
+
+def _aging_worker(d: Path, now: datetime, migrated: bool = True) -> DatabaseWorker:
+    """A v8 worker whose clock has run steadily (so age-out is armed) and - unless ``migrated`` is
+    False - whose live file is a completed v7 -> v8 migration."""
+    w = DatabaseWorker(d / DB)
     w._prepare_storage()
+    c = w.conn
+    c.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES ('backup_clock_continuous_since', ?)",
+              (str(int(now.timestamp()) - 30 * 86400),))
+    if migrated:
+        c.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+                  (DatabaseWorker.MIGRATED_FROM_V7_KEY, str(int(now.timestamp()) - 400 * 86400)))
+    return w
+
+
+def _steady(now: datetime) -> int:
+    """The previous maintenance pass, an hour before ``now``."""
+    return int(now.timestamp()) - 3600
+
+
+def test_backups_age_out_with_the_retention_window(tmp_path):
     now = datetime(2026, 10, 20, 12, 0, 0)
+    w = _aging_worker(tmp_path, now)
     old = _fake_bak(tmp_path, 7, now - timedelta(days=400))
-    Path(str(old) + "-wal").write_bytes(b"x")
+    _touch(Path(str(old) + "-wal"), now - timedelta(days=400))
     young = _fake_bak(tmp_path, 6, now - timedelta(days=100))
-    old_stray = tmp_path / f"{DB}{M.STRAY_INFIX}{now - timedelta(days=400):%Y%m%d_%H%M%S}"
-    old_stray.write_bytes(b"x")
-    Path(str(old_stray) + "-shm").write_bytes(b"x")
-    young_stray = tmp_path / f"{DB}{M.STRAY_INFIX}{now - timedelta(days=100):%Y%m%d_%H%M%S}_1"
-    young_stray.write_bytes(b"x")
-    w._age_out_backups(365, now)
+    old_stray = _fake_stray(tmp_path, now - timedelta(days=400))
+    _touch(Path(str(old_stray) + "-shm"), now - timedelta(days=400))
+    young_stray = _fake_stray(tmp_path, now - timedelta(days=100), "_1")
+    legacy = _touch(tmp_path / f"{DB}.bak", now - timedelta(days=400))      # 2.0-era bare .bak
+    w._age_out_backups(365, now, _steady(now))
     assert not old.exists() and not Path(str(old) + "-wal").exists()
     assert young.exists()
     assert not old_stray.exists() and not Path(str(old_stray) + "-shm").exists(), "strays age out too"
     assert young_stray.exists()
+    assert not legacy.exists(), "the legacy bare .bak ages out too"
     w._close_connection()
 
 
 def test_a_fresh_backup_survives_a_short_retention_for_the_rollback_window(tmp_path):
-    w = DatabaseWorker(tmp_path / DB)
-    w._prepare_storage()
     now = datetime(2026, 10, 20, 12, 0, 0)
+    w = _aging_worker(tmp_path, now)
     recent = _fake_bak(tmp_path, 7, now - timedelta(days=D.retention.BACKUP_MIN_KEEP_DAYS - 5))
     stale = _fake_bak(tmp_path, 6, now - timedelta(days=D.retention.BACKUP_MIN_KEEP_DAYS + 5))
-    w._age_out_backups(1, now)      # a hand-edited 1-day retention
+    w._age_out_backups(1, now, _steady(now))      # a hand-edited 1-day retention
     assert recent.exists(), "never removed sooner than BACKUP_MIN_KEEP_DAYS after the upgrade"
     assert not stale.exists()
     w._close_connection()
 
 
 def test_keep_everything_keeps_every_backup(tmp_path):
-    w = DatabaseWorker(tmp_path / DB)
-    w._prepare_storage()
     now = datetime(2026, 10, 20, 12, 0, 0)
+    w = _aging_worker(tmp_path, now)
     ancient = _fake_bak(tmp_path, 7, now - timedelta(days=3000))
-    stray = tmp_path / f"{DB}{M.STRAY_INFIX}{now - timedelta(days=3000):%Y%m%d_%H%M%S}"
-    stray.write_bytes(b"x")
-    w._age_out_backups(D.retention.UNLIMITED_DAYS, now)
+    stray = _fake_stray(tmp_path, now - timedelta(days=3000))
+    w._age_out_backups(D.retention.UNLIMITED_DAYS, now, _steady(now))
     assert ancient.exists() and stray.exists()
     w._close_connection()
 
 
 def test_the_hourly_maintenance_ages_backups_out(tmp_path):
-    w = DatabaseWorker(tmp_path / DB)
-    w._prepare_storage()
     now = datetime.now()
+    w = _aging_worker(tmp_path, now)
+    w.conn.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES ('last_maintenance_at', ?)",
+                   (str(_steady(now)),))
     old = _fake_bak(tmp_path, 7, now - timedelta(days=500))
     w._run_maintenance({"keep_data": 365}, now=now)
     assert not old.exists()
     w._close_connection()
+
+
+# --- review #376 item 1: a wrong clock / a stuck upgrade never costs the only copy -----------------------
+
+def test_a_clock_jump_to_2030_keeps_a_day_old_backup(tmp_path, no_retry_sleep):
+    """Harness rr376/scope.py AGE365_CLOCK2030: the pass that prunes the live rows with a clock set to
+    2030 used to scrub a 1-day-old .bak.v7 too - the one copy left."""
+    w = _migrated_worker(tmp_path)
+    real = datetime.now()
+    w.conn.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES ('last_maintenance_at', ?)",
+                   (str(int(real.timestamp())),))
+    # The fixture keeps everything; a 1-year retention already in force (no 48 h grace in the way).
+    w.conn.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES ('current_retention_days', '365')")
+    w.conn.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES ('backup_clock_continuous_since', ?)",
+                   (str(int(real.timestamp()) - 30 * 86400),))   # it HAD been running steadily
+    bak = next(tmp_path.glob(f"{DB}.bak.v7_*"))
+    stray = _fake_stray(tmp_path, real - timedelta(days=1))
+    wrong = datetime(2030, 1, 1, 12, 0, 0)
+    w._run_maintenance({"keep_data": 365}, now=wrong)
+    for h in range(1, 48):              # two days of hourly passes on the wrong clock
+        w._run_maintenance({"keep_data": 365}, now=wrong + timedelta(hours=h))
+    assert bak.exists() and stray.exists(), "a clock jump aged out a day-old backup"
+    w._close_connection()
+
+
+def test_age_out_resumes_once_the_clock_has_run_steadily(tmp_path):
+    now = datetime(2026, 10, 20, 12, 0, 0)
+    w = DatabaseWorker(tmp_path / DB)
+    w._prepare_storage()
+    w.conn.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, '1')", (DatabaseWorker.MIGRATED_FROM_V7_KEY,))
+    old = _fake_bak(tmp_path, 7, now - timedelta(days=400))
+    w._age_out_backups(365, now, None)                       # first pass ever: not armed yet
+    assert old.exists()
+    ts = int(now.timestamp())          # stepped in epoch seconds: a naive +1 h skips an hour at DST
+    for _ in range(D.retention.BACKUP_CLOCK_CONTINUITY_DAYS * 24 - 1):
+        w._age_out_backups(365, datetime.fromtimestamp(ts + 3600), ts)
+        ts += 3600
+    assert old.exists(), "armed only after BACKUP_CLOCK_CONTINUITY_DAYS of steady running"
+    w._age_out_backups(365, datetime.fromtimestamp(ts + 7200), ts)
+    assert not old.exists()
+    w._close_connection()
+
+
+def test_a_backup_dated_in_the_future_is_kept(tmp_path):
+    now = datetime(2026, 10, 20, 12, 0, 0)
+    w = _aging_worker(tmp_path, now)
+    future = _fake_bak(tmp_path, 7, now + timedelta(days=30))
+    w._age_out_backups(31, now + timedelta(days=0), _steady(now))
+    assert future.exists()
+    w._close_connection()
+
+
+def test_age_is_from_the_later_of_name_date_and_mtime(tmp_path):
+    now = datetime(2026, 10, 20, 12, 0, 0)
+    w = _aging_worker(tmp_path, now)
+    p = tmp_path / f"{DB}.bak.v7_{now - timedelta(days=400):%Y%m%d_%H%M%S}"
+    _touch(p, now - timedelta(days=2))            # old name, recent file: not old
+    q = _touch(tmp_path / f"{DB}.bak.v6_{now - timedelta(days=2):%Y%m%d_%H%M%S}", now - timedelta(days=400))
+    w._age_out_backups(365, now, _steady(now))
+    assert p.exists() and q.exists()
+    w._close_connection()
+
+
+def test_a_stuck_upgrade_keeps_its_v7_backup(tmp_path):
+    """Reviewer's case: the journal was deleted by hand, a FRESH v8 file was created, and the
+    .bak.v7 is the only full history. Not a completed migration -> never aged out."""
+    now = datetime(2026, 10, 20, 12, 0, 0)
+    w = _aging_worker(tmp_path, now, migrated=False)
+    bak = _fake_bak(tmp_path, 7, now - timedelta(days=400))
+    stray = _fake_stray(tmp_path, now - timedelta(days=400))
+    legacy = _touch(tmp_path / f"{DB}.bak", now - timedelta(days=400))
+    w._age_out_backups(31, now, _steady(now))
+    assert bak.exists() and stray.exists() and legacy.exists()
+    w._close_connection()
+
+
+def test_a_completed_migration_is_stamped(tmp_path):
+    w = _migrated_worker(tmp_path)
+    rows = dict(w.conn.execute("SELECT key, value FROM metadata WHERE key IN (?, ?)",
+                               (DatabaseWorker.MIGRATED_FROM_V7_KEY, DatabaseWorker.MIGRATED_FROM_V7_BACKUP_KEY)))
+    assert rows[DatabaseWorker.MIGRATED_FROM_V7_KEY].isdigit()
+    assert rows[DatabaseWorker.MIGRATED_FROM_V7_BACKUP_KEY] == next(tmp_path.glob(f"{DB}.bak.v7_*")).name
+    w._close_connection()
+    fresh = tmp_path / "fresh"
+    fresh.mkdir()
+    w2 = DatabaseWorker(fresh / DB)
+    w2._prepare_storage()
+    assert w2.conn.execute("SELECT 1 FROM metadata WHERE key = ?",
+                           (DatabaseWorker.MIGRATED_FROM_V7_KEY,)).fetchone() is None
+    w2._close_connection()
+
+
+def test_a_bad_file_does_not_stop_the_pass_or_get_logged_as_removed(tmp_path, caplog):
+    now = datetime(2026, 10, 20, 12, 0, 0)
+    w = _aging_worker(tmp_path, now)
+    d = tmp_path / f"{DB}.bak.v7_{now - timedelta(days=500):%Y%m%d_%H%M%S}_9"
+    d.mkdir()                                     # a directory with an app-like name
+    old = _fake_bak(tmp_path, 6, now - timedelta(days=500))
+    held = _fake_bak(tmp_path, 5, now - timedelta(days=500))
+    with open(held, "rb"), caplog.at_level("INFO"):
+        w._age_out_backups(365, now, _steady(now))
+    assert d.is_dir() and not old.exists() and held.exists()
+    removed = [r.getMessage() for r in caplog.records if "removed." in r.getMessage()]
+    assert len(removed) == 1 and old.name in removed[0]
+    w._close_connection()
+
+
+# --- review #376 item 5: only the app's own file names ----------------------------------------------------
+
+USER_FILES = ["speed_history.db.backup", "speed_history.db.bak_mine.zip", "speed_history.db.bak.handmade",
+              "SPEED_HISTORY.DB.BAK.V7_20200101_000000", "Speed_History.db.Stray_20200101_000000",
+              "speed_history (copy).db", "speed_history.db.bak.v7_x", "speed_history.db.bak.v7_20261019_120000.zip",
+              "netspeedtray.conf", "migrate_v8.journal.keep"]
+APP_FILES = ["speed_history.db.bak", "speed_history.db.bak-wal",
+             "speed_history.db.bak.v7_20261019_120000", "speed_history.db.bak.v7_20261019_120000-wal",
+             "speed_history.db.bak.v7_20261019_120000-shm", "speed_history.db.bak.v7_20261019_120000_1",
+             "speed_history.db.bak.v6_20250101_000000-journal", "speed_history.db.stray_20260101_000000",
+             "speed_history.db.stray_20260101_000000_2-wal"]
+
+
+def test_delete_all_history_removes_only_the_apps_own_backup_names(tmp_path):
+    for n in USER_FILES + APP_FILES:
+        (tmp_path / n).write_bytes(b"DATA" * 100)
+    w = DatabaseWorker(tmp_path / DB)
+    assert sorted(p.name for p in w._history_backup_files()) == sorted(APP_FILES)
+    assert w._remove_history_backups()
+    assert sorted(p.name for p in tmp_path.iterdir()) == sorted(USER_FILES)
+    assert all((tmp_path / n).read_bytes() == b"DATA" * 100 for n in USER_FILES), "a user file was zeroed"
+
+
+# --- review #376 item 3: never write through a link -------------------------------------------------------
+
+def test_a_hard_linked_backup_is_unlinked_but_its_target_never_zeroed(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    precious = outside / "precious.txt"
+    precious.write_bytes(b"PRECIOUS" * 10)
+    data = tmp_path / "data"
+    data.mkdir()
+    link = data / f"{DB}.bak.v7_20261019_120000"
+    try:
+        os.link(precious, link)
+    except OSError as e:
+        pytest.skip(f"no hard links here: {e}")
+    w = DatabaseWorker(data / DB)
+    assert w._remove_history_backups()
+    assert not link.exists()
+    assert precious.read_bytes() == b"PRECIOUS" * 10
+
+
+def test_a_symlinked_backup_is_unlinked_but_its_target_never_zeroed(tmp_path):
+    precious = tmp_path / "precious.txt"
+    precious.write_bytes(b"PRECIOUS" * 10)
+    data = tmp_path / "data"
+    data.mkdir()
+    link = data / f"{DB}.stray_20261019_120000"
+    try:
+        os.symlink(precious, link)
+    except (OSError, NotImplementedError) as e:
+        pytest.skip(f"no symlinks without privilege here: {e}")
+    w = DatabaseWorker(data / DB)
+    assert w._remove_history_backups()
+    assert not os.path.lexists(link)
+    assert precious.read_bytes() == b"PRECIOUS" * 10
+
+
+# --- review #376 item 2: an unremovable backup is retried with backoff, never re-zeroed ------------------
+
+def test_a_read_only_backup_is_removed(tmp_path):
+    p = tmp_path / f"{DB}.bak.v7_20261019_120000"
+    p.write_bytes(b"Tailscale" * 100)
+    os.chmod(p, stat.S_IREAD)
+    w = DatabaseWorker(tmp_path / DB)
+    assert w._remove_history_backups()
+    assert not p.exists()
+
+
+def test_a_held_backup_backs_off_warns_once_never_rezeroes_and_still_checkpoints(tmp_path, no_retry_sleep,
+                                                                                    monkeypatch, caplog):
+    """Harness rr376/stuck.py: a held backup used to be re-zeroed + fsynced every 5 s (~720 WARNINGs
+    an hour), and the early return meant a busy WAL checkpoint was never retried either."""
+    import netspeedtray.core.database as dbm
+    w = _migrated_worker(tmp_path)
+    bak = next(tmp_path.glob(f"{DB}.bak.v7_*"))
+    writes = []
+    real_open = open
+
+    def spy_open(f, mode="r", *a, **k):
+        if "+" in mode:
+            writes.append(str(f))
+        return real_open(f, mode, *a, **k)
+    monkeypatch.setattr(dbm, "open", spy_open, raising=False)
+    clock = [1000.0]
+    monkeypatch.setattr(dbm.time, "monotonic", lambda: clock[0])
+    reader = sqlite3.connect(tmp_path / DB)
+    cur = reader.execute(f"SELECT * FROM {S8.NET_MINUTE}")
+    cur.fetchone()                                   # the WAL checkpoint is busy too
+    T = constants.timeouts
+    held = real_open(bak, "rb")
+    try:
+        with caplog.at_level("DEBUG"):
+            w._execute_task("delete_history", {"include_usage": False})
+            assert w._backups_pending and w._wal_pending
+            cur.close()
+            reader.close()                           # the reader goes away; the backup stays held
+            attempts_at = []
+            for _ in range(2000):                    # ~2.8 h of 5 s idle ticks
+                clock[0] += T.DB_COMPACT_RETRY_INTERVAL_SEC
+                before = w._backup_attempts
+                w._retry_pending_compaction()
+                if w._backup_attempts != before:
+                    attempts_at.append(clock[0])
+        assert not w._wal_pending, "the WAL checkpoint must be retried even while a backup is held"
+        assert w._backup_attempts == T.DB_BACKUP_RETRY_MAX_ATTEMPTS
+        gaps = [b - a for a, b in zip(attempts_at, attempts_at[1:])]
+        assert gaps == sorted(gaps) and max(gaps) <= T.DB_BACKUP_RETRY_MAX_SEC + T.DB_COMPACT_RETRY_INTERVAL_SEC
+        assert not w._compact_pending, "given up for the session: no more idle ticks"
+        assert writes.count(str(bak)) == 1, f"backup re-zeroed {writes.count(str(bak))} times"
+        warns = [r for r in caplog.records if r.levelname == "WARNING" and bak.name in r.getMessage()]
+        assert len(warns) == 1, [r.getMessage() for r in warns]
+        assert w.conn.execute("SELECT value FROM metadata WHERE key = ?",
+                              (DatabaseWorker._COMPACT_MARKER_KEY,)).fetchone() == ("2",)
+    finally:
+        held.close()
+    w._close_connection()
+    w2 = DatabaseWorker(tmp_path / DB)               # the next start finishes it
+    w2._prepare_storage()
+    assert _bak_files(tmp_path) == []
+    w2._close_connection()
 
 
 # --- the counter snapshot goes with the usage reset --------------------------------------------------------
@@ -397,6 +651,36 @@ def test_a_failed_reset_while_opening_keeps_the_buffered_polls(tmp_path, q_app, 
             _drain(s)
         s.add_usage_bytes(1.0, 1.0)
         assert s.get_usage_this_period() == (4e9 + 3e8 + 1.0, 7e9 + 3e8 + 1.0)
+    finally:
+        s.db_worker._close_connection()
+        s.cleanup()
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_quitting_with_a_reset_unanswered_persists_the_matching_odometer(tmp_path, q_app, no_retry_sleep, fails):
+    """Review #376 item 6: at session end the GUI may not have heard the delete's answer yet, and the
+    pending reset made the final persist a no-op - the traffic since the request was lost. Now the
+    write thread (which ran the delete first) persists the outcome that matches."""
+    _make_v7(tmp_path, usage=(5e9, 9e9, 1e9, 2e9))
+    s = _state(tmp_path)
+    try:
+        prepare_v8(s)
+        _drain(s)
+        assert s.get_usage_this_period() == (4e9, 7e9)
+        s.db_worker.history_deleted.disconnect(s._on_worker_history_deleted)   # the answer never lands
+        s.delete_all_history(include_usage=True)
+        s.add_usage_bytes(10.0, 20.0)
+        s.persist_usage_final()                       # what cleanup() calls at quit
+
+        def boom(self, include_usage=False, now_ts=None):
+            raise sqlite3.OperationalError("database is locked")
+        if fails:
+            with patch.object(writer_v8.WriterV8, "delete_history", boom):
+                _drain(s)
+        else:
+            _drain(s)
+        want = (5e9 + 10.0, 9e9 + 20.0) if fails else (10.0, 20.0)
+        assert _usage_on_disk(tmp_path)[0] == want
     finally:
         s.db_worker._close_connection()
         s.cleanup()

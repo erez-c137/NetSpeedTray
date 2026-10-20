@@ -82,6 +82,10 @@ class LatencySample:
     gw_lost: Optional[int] = None
     anchor_sent: Optional[int] = None
     anchor_lost: Optional[int] = None
+    # The gateway changed during this cycle and its burst lost echoes: those say nothing about the
+    # link, so the gateway hop is NOT measured this cycle (no loss recorded, not a window cycle). The
+    # anchor burst - when enabled - is still probed and recorded as usual.
+    gw_excluded: bool = False
 
     def __post_init__(self) -> None:
         if self.gw_sent is None:
@@ -156,7 +160,8 @@ class LatencyLossWindows:
         self._min = max(1, int(min_samples))
 
     def add(self, sample: LatencySample) -> None:
-        self.gw.append((int(sample.gw_sent), int(sample.gw_lost), sample.gw_ms))
+        if not sample.gw_excluded:
+            self.gw.append((int(sample.gw_sent), int(sample.gw_lost), sample.gw_ms))
         if sample.anchor_enabled:
             self.anchor.append((int(sample.anchor_sent), int(sample.anchor_lost), sample.anchor_ms))
         else:
@@ -404,17 +409,16 @@ class LatencyProbe(QThread):
 
     def _gateway_ip(self, force: bool = False) -> Optional[str]:
         now = time.monotonic()
-        invalidated = self._gateway_stale.is_set()
-        if invalidated:
+        if self._gateway_stale.is_set():
             self._gateway_stale.clear()
             force = True
         if force or self._gateway is None or (now - self._gateway_ts) > self._GATEWAY_REFRESH_SEC:
             gw = default_gateway_ip()
             if gw != self._gateway:
                 self._gw_cycles_since_reply = None   # a new router has proven nothing yet
-            # "Changing": a different gateway than one already in use, or a re-resolve the network
-            # asked for (resume / new route) - not the probe's very first lookup.
-            if invalidated or (self._gateway_ts > 0 and gw != self._gateway):
+            # "Changing" = a DIFFERENT gateway than the one in use (not the probe's very first lookup).
+            # A re-resolve that finds the same router changes nothing: its loss is real loss.
+            if self._gateway_ts > 0 and gw != self._gateway:
                 self._gateway_changed = True
             self._gateway = gw
             self._gateway_ts = now
@@ -444,6 +448,7 @@ class LatencyProbe(QThread):
         burst short (a partial burst is not a sample)."""
         lat = constants.network.latency
         self._gateway_changed = False
+        gw_excluded = False
         gw_ip = self._gateway_ip()
         if gw_ip:
             gw = icmp_burst(gw_ip, lat.BURST_SIZE, lat.BURST_SPACING_MS, self._TIMEOUT_MS, self._pause)
@@ -453,9 +458,11 @@ class LatencyProbe(QThread):
                     and time.monotonic() - self._gateway_ts >= self._GATEWAY_RECHECK_ON_LOSS_SEC):
                 self._gateway_ip(force=True)   # is the router we pinged still the gateway?
             if gw.lost and self._gateway_changed:
-                # Loss measured while the gateway was changing (a network switch, waking up) says
-                # nothing about the link: not recorded. Clean bursts to a new gateway still count.
-                return None
+                # Loss measured against a gateway that turned out to be the OLD one (a network switch,
+                # waking up) says nothing about the link: the gateway hop is not measured this cycle.
+                # The anchor still is. Clean bursts to a new gateway count as usual.
+                gw_excluded = True
+                gw = BurstResult((), 0)
         else:
             gw = BurstResult((), 0)   # no gateway known: nothing sent, nothing lost (as before bursts)
         gw_timed_out = gw.sent > 0 and not gw.rtts
@@ -492,7 +499,8 @@ class LatencyProbe(QThread):
             anchor_timed_out=anchor is not None and not anchor.rtts,
             anchor_enabled=anchor_enabled, anchor_skipped=anchor_skipped,
             gw_sent=gw.sent, gw_lost=gw.lost,
-            anchor_sent=anchor.sent if anchor else 0, anchor_lost=anchor.lost if anchor else 0)
+            anchor_sent=anchor.sent if anchor else 0, anchor_lost=anchor.lost if anchor else 0,
+            gw_excluded=gw_excluded)
 
     def _log_cycle_error(self, e: BaseException) -> None:
         """A failing cycle is never silent: WARNING (with the traceback) the first time, then DEBUG at

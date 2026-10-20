@@ -33,6 +33,7 @@ calm flyout. Nothing is retried in-session; the next launch tries again. There i
 import logging
 import os
 import queue
+import stat
 import re
 import sqlite3
 import threading
@@ -164,6 +165,12 @@ class DatabaseWorker(QThread):
         self._compact_pending = False
         self._vacuum_pending = False
         self._backups_pending = False   # Delete all history could not remove a backup yet (retried)
+        self._wal_pending = False       # ... or could not checkpoint the WAL yet
+        self._backup_attempts = 0       # backup-removal retries this session (exponential backoff)
+        self._backup_retry_at = 0.0     # monotonic time of the next backup-removal retry
+        self._zeroed: set = set()       # backup files already overwritten this session (never re-zero)
+        self._backup_warned: set = set()  # files whose removal failure was already logged at WARNING
+        self._last_delete_outcome: Optional[str] = None   # "usage_reset" / "kept_usage" / "failed"
         self._last_compact_attempt = 0.0
         # The v8 writer (built on this thread in run()) and its settings.
         self._writer = None
@@ -308,6 +315,7 @@ class DatabaseWorker(QThread):
         handlers = {
             "persist_v8": self._persist_v8,
             "persist_usage": self._persist_usage,
+            "persist_usage_after_delete": self._persist_usage_after_delete,
             "maintenance": self._run_maintenance,
             "delete_history": self._delete_history,
             "set_poll_ms": self._set_poll_ms,
@@ -992,6 +1000,7 @@ class DatabaseWorker(QThread):
         self._writer.bind_to_current_thread()   # step-7 note 7: every writer call on this thread
         if self._post_migration_maintenance:
             self._post_migration_maintenance = False
+            self._stamp_v7_migration()
             if self._stop_event.is_set():
                 # Quitting already: the migration is complete and durable; the merge of the first polls
                 # into the folded minute waits for the next start's maintenance. Reach the safe point.
@@ -1008,6 +1017,24 @@ class DatabaseWorker(QThread):
             # Only now: the upgrade completed AND this session writes the new file (a later refusal
             # above returns read-only with the "paused" flyout instead).
             self.history_upgraded.emit()
+
+    MIGRATED_FROM_V7_KEY = "migrated_from_v7_at"
+    MIGRATED_FROM_V7_BACKUP_KEY = "migrated_from_v7_backup"
+
+    def _stamp_v7_migration(self) -> None:
+        """Record that THIS live file is a completed v7 -> v8 migration (and which backup it left).
+        Only a stamped file lets maintenance age a pre-v8 backup out: a fresh v8 file (e.g. a stuck
+        upgrade whose journal was deleted by hand) has none, and its v7 backup is the only full history."""
+        res = self.migration_result
+        try:
+            with self._txn() as cur:
+                cur.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+                            (self.MIGRATED_FROM_V7_KEY, str(int(time.time()))))
+                if res is not None and res.backup_path:
+                    cur.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+                                (self.MIGRATED_FROM_V7_BACKUP_KEY, Path(res.backup_path).name))
+        except sqlite3.Error as e:
+            self.logger.warning("Could not record the completed upgrade (%s); its backup will be kept.", e)
 
     def _run_legacy_chain(self, version: int) -> None:
         """v2-v6 -> v7 in place, exactly as 2.1.x did it (verified backup, then the per-step
@@ -1077,6 +1104,14 @@ class DatabaseWorker(QThread):
         self._poll_ms = max(1, int(poll_ms))
         self._writer.set_poll_ms(self._poll_ms)
 
+    def _persist_usage_after_delete(self, data: Dict[str, Any]) -> None:
+        """Session end with a usage reset still unanswered on the GUI side: the delete itself already
+        ran (FIFO), so persist whichever odometer matches its outcome - the post-request traffic if the
+        reset committed, the unchanged-plus-traffic total if it failed."""
+        payload = (data or {}).get("if_reset" if self._last_delete_outcome == "usage_reset" else "if_failed")
+        if payload is not None:
+            self._persist_usage(payload)
+
     def _persist_usage(self, data: Tuple[Any, ...]) -> None:
         """
         Upsert the single-row data-usage odometer. `data` is
@@ -1131,8 +1166,9 @@ class DatabaseWorker(QThread):
         try:
             with self._txn() as cursor:
                 retention = self._resolve_retention_days(cursor, config, _now)
+                row = cursor.execute("SELECT value FROM metadata WHERE key = 'last_maintenance_at'").fetchone()
+                prev_maintenance = int(row[0]) if row and str(row[0]).isdigit() else None
             out = self._writer.run_maintenance(now_ts=now_ts, retention_days=retention)
-            self._age_out_backups(retention, _now)
             with self._txn() as cursor:
                 cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES ('last_maintenance_at', ?)",
                                (str(now_ts),))
@@ -1140,6 +1176,10 @@ class DatabaseWorker(QThread):
         except sqlite3.Error as e:
             self.logger.error("Maintenance failed: %s", e)
             return
+        try:
+            self._age_out_backups(retention, _now, prev_maintenance)
+        except Exception as e:   # never fatal to maintenance (the stamp above is already written)
+            self.logger.warning("Backup age-out skipped: %s", e)
         # Bound the WAL: long-lived reader connections (the Monitor's graph worker) can hold back the
         # automatic checkpoint. A busy checkpoint is harmless and must not undo the maintenance.
         try:
@@ -1214,8 +1254,10 @@ class DatabaseWorker(QThread):
             # ANY failure is an answer the user (and WidgetState's pending odometer reset) waits on:
             # _execute_task would swallow a non-sqlite3 exception and leave both hanging.
             self.logger.error("Delete all history failed: %s", e)
+            self._last_delete_outcome = "failed"
             self.history_deleted.emit(self.DELETE_FAILED)
             return
+        self._last_delete_outcome = "usage_reset" if include_usage else "kept_usage"
         self.logger.info("History deleted (%d tables%s).", len(constants.data.HISTORY_TABLES),
                          ", incl. data-usage counter" if include_usage else "")
         # The pre-upgrade backups hold the same history (the whole 2.1 file, for the v7 one): a delete
@@ -1228,8 +1270,11 @@ class DatabaseWorker(QThread):
             return
         self._compact_pending = True
         self._vacuum_pending = False
+        self._wal_pending = not checkpoint_ok
         self._backups_pending = not backups_ok
+        self._backup_attempts = 0
         self._last_compact_attempt = time.monotonic()
+        self._backup_retry_at = self._last_compact_attempt + constants.timeouts.DB_COMPACT_RETRY_INTERVAL_SEC
         self._set_compaction_marker(True, backups=self._backups_pending)   # survives a quit
         self.logger.warning(
             "History rows deleted, but %s. Retrying while idle.",
@@ -1237,26 +1282,52 @@ class DatabaseWorker(QThread):
             if not checkpoint_ok else "a database backup could not be removed yet")
         self.history_deleted.emit(self.DELETE_COMPACT_PENDING)
 
+    # Exactly the names this app (and 2.1.x) writes - never a user's own file that merely starts the
+    # same way (speed_history.db.backup, speed_history.db.bak_mine.zip, ...). Case-sensitive on purpose.
+    _SIDE_RE = r"(?:-wal|-shm|-journal)?"
+
+    def _history_file_kind(self, name: str) -> Optional[Tuple[str, Optional[int], Optional[str], bool]]:
+        """(kind, schema version, name timestamp, is_sidecar) for an app-made history copy, else None.
+        kind: "bak" = ``<db>.bak.v<N>_<YYYYmmdd>_<HHMMSS>[_n]``, "legacy" = bare ``<db>.bak``,
+        "stray" = ``<db>.stray_<YYYYmmdd>_<HHMMSS>[_n]`` (migrate_v8.recover() moved it off the live
+        name); each with an optional -wal / -shm / -journal suffix."""
+        db = re.escape(self.db_path.name)
+        side = self._SIDE_RE
+        m = re.fullmatch(rf"{db}\.bak\.v(\d+)_(\d{{8}}_\d{{6}})(?:_\d+)?({side})", name)
+        if m:
+            return "bak", int(m.group(1)), m.group(2), bool(m.group(3))
+        m = re.fullmatch(rf"{db}\.bak({side})", name)
+        if m:
+            return "legacy", None, None, bool(m.group(1))
+        m = re.fullmatch(rf"{db}{re.escape(migrate_v8.STRAY_INFIX)}(\d{{8}}_\d{{6}})(?:_\d+)?({side})", name)
+        if m:
+            return "stray", None, m.group(1), bool(m.group(2))
+        return None
+
     def _history_backup_files(self) -> List[Path]:
-        """Every file in the data folder that can hold an old copy of the history: the backups
-        (``speed_history.db.bak*``) and the files migrate_v8.recover() moved aside from the live name
-        (``speed_history.db.stray_*`` - e.g. a 2.1.x-recorded file found there mid-swap), each WITH its
-        -wal / -shm / -journal sidecars (they can hold its pages)."""
+        """Every app-made file in the data folder that can hold an old copy of the history - backups,
+        the legacy bare ``.bak`` and recover()'s ``.stray_<ts>`` files, each with its sidecars - by
+        exact name (see _history_file_kind). Directories are never included."""
         out: List[Path] = []
-        for pattern in (f"{self.db_path.name}.bak*", f"{self.db_path.name}{migrate_v8.STRAY_INFIX}*"):
+        try:
+            entries = list(os.scandir(self.db_path.parent))
+        except OSError:
+            return []
+        for e in entries:
             try:
-                out += [p for p in self.db_path.parent.glob(pattern) if p.is_file()]
+                if self._history_file_kind(e.name) is None or e.is_dir(follow_symlinks=False):
+                    continue
             except OSError:
-                pass
-        return sorted(set(out))
+                continue
+            out.append(Path(e.path))
+        return sorted(out)
 
     def _remove_history_backups(self) -> bool:
-        """Delete all history, part 2: overwrite every database backup with zeros, then delete it. The
-        overwrite is best effort (an SSD or a file-system snapshot may still keep old blocks - the same
-        limit as secure_delete inside the database); deleting is what makes it unrecoverable through
-        NetSpeedTray. Never while a v8 migration journal exists: recover() needs the v7 backup to undo
-        or finish a swap (in practice the journal is gone before any delete can run). True when no
-        backup is left."""
+        """Delete all history, part 2: overwrite every app-made history copy with zeros, then delete it.
+        The overwrite is best effort (an SSD or a file-system snapshot may still keep old blocks - the
+        same limit as secure_delete inside the database); deleting is what makes it unrecoverable
+        through NetSpeedTray. Never while a v8 migration journal exists: recover() needs the v7 backup
+        to undo or finish a swap. True when none is left."""
         if migrate_v8.journal_path_for(self.db_path).exists():
             self.logger.warning("Delete all history: a migration journal exists; database backups kept "
                                 "until the migration has been finished or undone.")
@@ -1267,54 +1338,128 @@ class DatabaseWorker(QThread):
                 ok = False
         return ok
 
+    _FILE_ATTRIBUTE_REPARSE_POINT = 0x400
+
+    @staticmethod
+    def _is_all_zero(path: Path) -> bool:
+        with open(path, "rb") as f:
+            while True:
+                block = f.read(1 << 20)
+                if not block:
+                    return True
+                if block.count(0) != len(block):
+                    return False
+
     def _scrub_and_unlink(self, path: Path) -> bool:
-        """Zero ``path`` in place (best effort), fsync, delete. True when it is gone."""
+        """Zero ``path`` in place (best effort), fsync, delete. True when it is gone.
+
+        * Never follows a link out of the data folder: a symlink / junction / other reparse point, or a
+          file with more than one hard link, is only UNLINKED (its own name goes; the data it points at,
+          which may be anything anywhere, is never written).
+        * Never re-zeroes: a file already zeroed this session (or found all-zero) is only unlinked on a
+          retry - a reader holding it open must not see it rewritten every few seconds.
+        * A read-only app file (it carries our exact name, in our folder) is made writable first.
+        * A failure is a WARNING once per file per session, then DEBUG (a held file is retried)."""
+        key = str(path)
         try:
-            size = path.stat().st_size
-            with open(path, "r+b", buffering=0) as f:
-                chunk = bytes(1 << 20)
-                left = size
-                while left > 0:
-                    n = min(left, len(chunk))
-                    f.write(chunk[:n])
-                    left -= n
-                os.fsync(f.fileno())
-            path.unlink()
-            self.logger.info("Removed database backup %s.", path.name)
+            st = os.lstat(path)
+            if stat.S_ISDIR(st.st_mode):
+                return True   # never ours to delete; not counted as left behind
+            linked = (stat.S_ISLNK(st.st_mode)
+                      or bool(getattr(st, "st_file_attributes", 0) & self._FILE_ATTRIBUTE_REPARSE_POINT)
+                      or st.st_nlink > 1)
+            if not linked:
+                if not st.st_mode & stat.S_IWRITE:
+                    os.chmod(path, stat.S_IREAD | stat.S_IWRITE)
+                if key not in self._zeroed and st.st_size and not self._is_all_zero(path):
+                    with open(path, "r+b", buffering=0) as f:
+                        chunk = bytes(1 << 20)
+                        left = st.st_size
+                        while left > 0:
+                            n = min(left, len(chunk))
+                            f.write(chunk[:n])
+                            left -= n
+                        os.fsync(f.fileno())
+                self._zeroed.add(key)
+            os.unlink(path)
+            self._zeroed.discard(key)
+            self.logger.info("Removed database backup %s%s.", path.name, " (a link: unlinked only)" if linked else "")
             return True
         except FileNotFoundError:
             return True
         except OSError as e:
-            self.logger.warning("Could not remove database backup %s: %s", path.name, e)
+            if key in self._backup_warned:
+                self.logger.debug("Database backup %s still could not be removed: %s", path.name, e)
+            else:
+                self._backup_warned.add(key)
+                self.logger.warning("Could not remove database backup %s (will retry): %s", path.name, e)
             return False
 
-    def _age_out_backups(self, retention_days: float, now: datetime) -> None:
-        """Maintenance: a pre-migration backup (or a file recover() moved aside, ``.stray_<ts>``) ages
-        out with "Keep history for" - deleted (with its
-        sidecars) once older than the retention window, never sooner than BACKUP_MIN_KEEP_DAYS after
-        it was made (the 2.1.x rollback window). Its age is the time in its name
-        (``.db.bak.v{N}_YYYYmmdd_HHMMSS``: when the upgrade ran), else the file's mtime."""
+    def _clock_is_continuous(self, now_ts: int, prev_maintenance: Optional[int]) -> bool:
+        """Whether the clock has run without a jump for BACKUP_CLOCK_CONTINUITY_DAYS (see the constant).
+        Keeps ``backup_clock_continuous_since`` in metadata."""
+        R = constants.data.retention
+        key = "backup_clock_continuous_since"
+        row = self.conn.execute("SELECT value FROM metadata WHERE key = ?", (key,)).fetchone()
+        since = int(row[0]) if row and str(row[0]).lstrip("-").isdigit() else None
+        gap = None if prev_maintenance is None else now_ts - prev_maintenance
+        if gap is None or gap < -3600 or gap > R.BACKUP_CLOCK_MAX_GAP_DAYS * 86400 or since is None or since > now_ts:
+            if gap is not None and (gap < -3600 or gap > R.BACKUP_CLOCK_MAX_GAP_DAYS * 86400):
+                self.logger.info("Clock moved %+.1f days since the last maintenance; database backups are "
+                                 "not aged out until it has run steadily for %d days.",
+                                 gap / 86400.0, R.BACKUP_CLOCK_CONTINUITY_DAYS)
+            since = now_ts
+            with self._txn() as cur:
+                cur.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)", (key, str(since)))
+        return now_ts - since >= R.BACKUP_CLOCK_CONTINUITY_DAYS * 86400
+
+    def _age_out_backups(self, retention_days: float, now: datetime,
+                         prev_maintenance: Optional[int] = None) -> None:
+        """Maintenance: an app-made history copy (backup, legacy ``.bak``, ``.stray_<ts>``) ages out with
+        "Keep history for" - deleted with its sidecars once older than the retention window, never
+        sooner than BACKUP_MIN_KEEP_DAYS. Guarded three ways, because a wrong deletion is unrecoverable:
+          * the clock must have been continuous for BACKUP_CLOCK_CONTINUITY_DAYS (a jump to 2030 would
+            otherwise make a day-old backup look years old, on the pass that prunes the live rows);
+          * a file's age is from the LATER of its name date and its mtime (never 'now' alone), and a
+            file dated in the future is kept;
+          * anything older than a v8 file (a ``.bak.v<N>`` with N < 8, the bare ``.bak``, a stray) is
+            only aged out when this live file is a COMPLETED v7 -> v8 migration (migrated_from_v7_at) -
+            a fresh v8 file next to a v7 backup (a stuck upgrade) means that backup is the only history.
+        Never while migrate_v8.journal exists."""
         R = constants.data.retention
         keep_days = max(float(retention_days), float(R.BACKUP_MIN_KEEP_DAYS))
-        if keep_days >= R.UNLIMITED_DAYS or migrate_v8.journal_path_for(self.db_path).exists():
+        if keep_days >= R.UNLIMITED_DAYS or self.conn is None:
             return
-        cutoff = now.timestamp() - keep_days * 86400.0
-        strays = [p for p in self.db_path.parent.glob(f"{self.db_path.name}{migrate_v8.STRAY_INFIX}*")
-                  if not p.name.endswith(self._SIDECARS)]
-        for path in self._backup_files("*") + strays:
-            m = re.search(r"(?:\.db\.bak\.v\d+_|\.stray_)(\d{8}_\d{6})", path.name)
+        if migrate_v8.journal_path_for(self.db_path).exists():
+            return
+        now_ts = int(now.timestamp())
+        if not self._clock_is_continuous(now_ts, prev_maintenance):
+            return
+        row = self.conn.execute("SELECT value FROM metadata WHERE key = ?",
+                                (self.MIGRATED_FROM_V7_KEY,)).fetchone()
+        migrated = row is not None
+        cutoff = now_ts - keep_days * 86400.0
+        for path in self._history_backup_files():
             try:
-                made = (datetime.strptime(m.group(1), "%Y%m%d_%H%M%S").timestamp() if m
-                        else path.stat().st_mtime)
-            except (ValueError, OSError, OverflowError):
-                continue
-            if made >= cutoff:
-                continue
-            for p in [path] + [Path(str(path) + side) for side in self._SIDECARS]:
-                if p.exists():
-                    self._scrub_and_unlink(p)
-            self.logger.info("Database backup %s is older than the history retention (%d days); removed.",
-                             path.name, int(keep_days))
+                kind, version, stamp, is_side = self._history_file_kind(path.name)
+                if is_side:
+                    continue   # goes with its main file
+                if (kind != "bak" or version < 8) and not migrated:
+                    continue
+                st = os.lstat(path)
+                made = st.st_mtime
+                if stamp:
+                    made = max(made, datetime.strptime(stamp, "%Y%m%d_%H%M%S").timestamp())
+                if made > now_ts + 86400 or made >= cutoff:
+                    continue
+                gone = all(self._scrub_and_unlink(p)
+                           for p in [path] + [Path(str(path) + side) for side in self._SIDECARS]
+                           if os.path.lexists(p))
+                if gone:
+                    self.logger.info("Database backup %s is older than the history retention (%d days); "
+                                     "removed.", path.name, int(keep_days))
+            except Exception as e:   # one bad file never stops the others
+                self.logger.debug("Backup age-out skipped %s: %s", path.name, e)
 
     def _vacuum_now(self) -> bool:
         """Hand every free page back (v8: ``incremental_vacuum``, never a full-file VACUUM). True on
@@ -1367,18 +1512,36 @@ class DatabaseWorker(QThread):
             if not self._vacuum_now():
                 return
             self._vacuum_pending = False
-        if getattr(self, "_backups_pending", False):
-            if not self._remove_history_backups():
-                return
-            self._backups_pending = False
-        # Clear the restart marker BEFORE the checkpoint, so the checkpoint also folds that write in.
-        self._set_compaction_marker(False)
-        if self._checkpoint_truncate(1):
+        T = constants.timeouts
+        if self._backups_pending and (force or now >= self._backup_retry_at) \
+                and self._backup_attempts < T.DB_BACKUP_RETRY_MAX_ATTEMPTS:
+            if self._remove_history_backups():
+                self._backups_pending = False
+            else:
+                self._backup_attempts += 1
+                self._backup_retry_at = now + min(
+                    T.DB_COMPACT_RETRY_INTERVAL_SEC * (2 ** self._backup_attempts), T.DB_BACKUP_RETRY_MAX_SEC)
+                if self._backup_attempts >= T.DB_BACKUP_RETRY_MAX_ATTEMPTS:
+                    self.logger.warning("A database backup still could not be removed after %d attempts; "
+                                        "trying again at the next start.", self._backup_attempts)
+        backups_owed = self._backups_pending
+        if self._wal_pending:
+            # The restart marker is written to its final state BEFORE the checkpoint, so the
+            # checkpoint also folds that write in; a failed checkpoint re-arms it.
+            self._set_compaction_marker(backups_owed, backups=backups_owed)
+            if self._checkpoint_truncate(1):
+                self._wal_pending = False
+            else:
+                self._set_compaction_marker(True, backups=backups_owed)
+        elif not backups_owed:
+            self._set_compaction_marker(False)
+        if not self._wal_pending and (not backups_owed
+                                      or self._backup_attempts >= T.DB_BACKUP_RETRY_MAX_ATTEMPTS):
+            # Done - or only a backup is left, given up for this session (the "2" marker carries it).
             self._compact_pending = False
-            self.logger.info("Deferred compaction after history delete completed.")
+            if not backups_owed:
+                self.logger.info("Deferred compaction after history delete completed.")
             self.database_updated.emit()
-        else:
-            self._set_compaction_marker(True, backups=self._backups_pending)
 
     _COMPACT_MARKER_KEY = "pending_history_compaction"
     # Marker values: "1" = a checkpoint is owed (2.1.x writes this one too, and the migration carries
@@ -1412,6 +1575,8 @@ class DatabaseWorker(QThread):
             self.logger.info("Resuming the file compaction a previous history delete could not finish.")
             self._compact_pending = True
             self._vacuum_pending = True    # cheap insurance: the old pages may also be on the freelist
+            self._wal_pending = True
+            self._backup_attempts = 0
             # Only a 2.2 delete that could not remove a backup (locked) asks for that here.
             self._backups_pending = str(row[0]) == self._MARKER_BACKUPS
             self._retry_pending_compaction(force=True)

@@ -71,10 +71,10 @@ def test_a_switch_without_an_event_records_no_false_outage(monkeypatch):
     assert _cycle(p, net, advance=LP.LatencyProbe._GATEWAY_RECHECK_ON_LOSS_SEC).gw_lost == 0
     net.gateway, net.answering = NEW_GW, {NEW_GW}
     samples = [_cycle(p, net) for _ in range(5)]
-    lossy = [s for s in samples if s is not None and s.gw_lost]
+    lossy = [s for s in samples if s.gw_lost]
     assert lossy == [], f"recorded {len(lossy)} cycle(s) of loss from the old router"
-    assert samples[0] is None, "the cycle that pinged the old router is not a sample"
-    assert all(s is not None and s.gw_lost == 0 for s in samples[1:])
+    assert samples[0].gw_excluded, "the cycle that pinged the old router does not measure the gateway"
+    assert all(not s.gw_excluded and s.gw_sent == 4 and s.gw_lost == 0 for s in samples[1:])
 
 
 def test_a_real_outage_on_the_same_gateway_is_still_recorded(monkeypatch):
@@ -88,14 +88,37 @@ def test_a_real_outage_on_the_same_gateway_is_still_recorded(monkeypatch):
     assert net.lookups <= 3
 
 
-def test_loss_during_an_invalidated_re_resolve_is_not_recorded(monkeypatch):
-    net = _Net(monkeypatch)
-    p = LP.LatencyProbe({})
+def test_an_invalidation_that_finds_the_same_router_records_real_loss(monkeypatch):
+    """Review #376 item 4: a route flapping every 2 s during an outage invalidated the gateway each
+    time; treating every re-resolve as a change dropped ~3 of 4 cycles - gateway AND anchor loss."""
+    net = _Net(monkeypatch, answering=(OLD_GW,))
+    p = LP.LatencyProbe({"latency_public_enabled": True, "latency_public_host": "1.1.1.1"})
     _cycle(p, net)
-    net.answering = set()                               # waking up: the link is not back yet
-    p.invalidate_gateway()
-    assert _cycle(p, net) is None
-    assert _cycle(p, net) is not None                  # afterwards loss counts again
+    net.answering = set()                               # the outage: same router, nothing answers
+    samples = []
+    for _ in range(4):
+        p.invalidate_gateway()                          # the route flaps
+        samples.append(_cycle(p, net))
+    assert all(s is not None and not s.gw_excluded for s in samples)
+    assert [s.gw_lost for s in samples] == [4] * 4
+    assert [s.anchor_lost for s in samples] == [4] * 4, "anchor loss must always be recorded"
+
+
+def test_a_gateway_change_still_records_the_anchor(monkeypatch):
+    net = _Net(monkeypatch, answering=(OLD_GW, "1.1.1.1"))
+    p = LP.LatencyProbe({"latency_public_enabled": True, "latency_public_host": "1.1.1.1"})
+    _cycle(p, net, advance=LP.LatencyProbe._GATEWAY_RECHECK_ON_LOSS_SEC)
+    net.gateway, net.answering = NEW_GW, {NEW_GW}      # switched; the anchor is unreachable for now
+    s = _cycle(p, net)
+    assert s.gw_excluded and s.gw_sent == 0 and s.gw_lost == 0
+    assert s.anchor_enabled and s.anchor_sent == 4 and s.anchor_lost == 4
+
+
+def test_an_excluded_gateway_cycle_is_not_persisted_or_windowed():
+    w = LP.LatencyLossWindows(min_samples=1)
+    w.add(LP.LatencySample(gw_ms=None, anchor_ms=None, gw_timed_out=False, gw_sent=0, gw_lost=0,
+                           gw_excluded=True))
+    assert len(w.gw) == 0
 
 
 def test_the_first_lookup_is_not_a_change(monkeypatch):
@@ -159,3 +182,19 @@ def test_a_failing_cycle_is_logged_once_then_rate_limited_and_the_thread_survive
     debugs = [r for r in recs if r.levelno == logging.DEBUG]
     # 30 cycles x 3 s = ~90 s: at most one DEBUG per minute after the warning.
     assert 1 <= len(debugs) <= 2
+
+
+def test_the_widget_persists_anchor_loss_but_no_gateway_loss_for_an_excluded_cycle():
+    from netspeedtray.core.latency_probe import LatencyLossWindows
+    from netspeedtray.views.widget.main import NetworkSpeedWidget
+    from netspeedtray import constants
+    lat = constants.network.latency
+    stats = []
+    w = types.SimpleNamespace(_latency_loss_windows=LatencyLossWindows(),
+                              widget_state=types.SimpleNamespace(add_hardware_stat=lambda k, v: stats.append((k, v))))
+    s = LP.LatencySample(gw_ms=None, anchor_ms=None, gw_timed_out=False, anchor_timed_out=True,
+                         anchor_enabled=True, gw_sent=0, gw_lost=0, anchor_sent=4, anchor_lost=4,
+                         gw_excluded=True)
+    NetworkSpeedWidget._on_latency(w, s)
+    assert (lat.STAT_ANCHOR_TIMEOUT, 1.0) in stats
+    assert not [k for k, _ in stats if k == lat.STAT_GW_TIMEOUT]
