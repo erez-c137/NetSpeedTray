@@ -10,16 +10,24 @@ the hardware tiles show real data even when the taskbar widget has hardware moni
 The tiles refresh on a 1 Hz timer that only runs while the tab is actually visible. All data is read
 defensively from the main widget and its WidgetState, so a missing field or a teardown race degrades
 to a dash (or a hidden tile), never a crash.
+
+The window's history reads (sparklines, avg/peak, drops) run on the tab's own long-lived reader
+thread - the Monitor graph worker's bind_reader_thread/stop_reader_thread lifecycle - because on a big
+database they froze the UI for up to ~1.3 s every few seconds. Reloads are coalesced (one in flight,
+at most one queued behind it), and a result for an old range, a hidden tab or a closed Monitor is
+dropped.
 """
 from __future__ import annotations
 
 import logging
 from collections import deque
+from functools import partial
 from typing import Any, Deque, Dict, Optional
 
 from datetime import datetime, timedelta
 
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6 import sip
+from PyQt6.QtCore import QObject, Qt, QThread, QTimer, pyqtSignal, pyqtSlot
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QToolButton, QScrollArea, QFrame,
 )
@@ -32,10 +40,11 @@ from netspeedtray.utils.timer_utils import resolve_poll_interval_seconds
 from netspeedtray.utils.widget_paint import WidgetMetrics   # reuse its Mbps→bytes/sec converter (DRY)
 # NOTE: `summaries` imports numpy at module scope. To honor the Monitor's import firewall (a glance at
 # the default Overview must not eagerly pull the heavy compute deps), it is imported LAZILY inside
-# _reload_window - the one place it's used - NOT here. Keep it that way.
+# _read_window - the one place it's used - NOT here. Keep it that way.
 from netspeedtray.views.monitor.overview.tiles import StatTile, UsageTile, NetworkHero, dynamic_range
 from netspeedtray.views.monitor.overview.busiest_apps import BusiestAppsCard
 from netspeedtray.views.monitor.timeline_selector import TimelineSelector
+from netspeedtray.views.monitor.graph_host import bind_reader_thread, stop_reader_thread
 # stats_detail imports `summaries` (-> numpy). It's only needed when the user opens the detail sheet or
 # exports, so it is imported LAZILY in those handlers - keeping numpy off the Overview's import path.
 
@@ -54,16 +63,63 @@ _ACCENTS = {
 }
 
 _REFRESH_MS = 1000        # live current-value tick
-_HISTORY_MS = 6000        # DB window reload (sparklines + avg/peak) - cheap, off the 1 Hz path
+_HISTORY_MS = 6000        # DB window reload (sparklines + avg/peak) - on the reader thread, off the 1 Hz path
 _NARROW_BP = 760          # below this content width: reflow to the compact layout (2×2 tiles, stacked cards)
 # latency_probe.latency_verdict code -> (i18n key, English fallback)
 _VERDICT_KEYS = {"good": ("LATENCY_GOOD", "Good"), "ok": ("LATENCY_OK", "OK"), "slow": ("LATENCY_SLOW", "Slow")}
+
+
+def _read_window(ws, start: datetime, end: datetime, series: Optional[Dict[str, list]], poll: float,
+                 latency_enabled: bool):
+    """The window's DB reads - (series, summaries, drop events). Runs on the reader thread. ``series``
+    is the Session window's, already copied from the in-memory deques on the GUI thread (they are
+    appended there); None means read the sparklines from the DB."""
+    if series is None:
+        # wait_for_flush=False: never hold a refresh on the DB-worker drain for a last second that's
+        # invisible at multi-hour resolution.
+        net = ws.get_speed_history(start, end, None, resolution='auto', wait_for_flush=False)
+        series = {
+            "down": [r[2] for r in net], "up": [r[1] for r in net],
+            "cpu": [v for _, v in ws.get_hardware_history("cpu", start, end)],
+            "gpu": [v for _, v in ws.get_hardware_history("gpu", start, end)],
+            "ram": [v for _, v in ws.get_hardware_history("ram", start, end)],
+        }
+    summ = {
+        "down": ws.summarize_network("download", start, end, None, poll),
+        "up": ws.summarize_network("upload", start, end, None, poll),
+        "cpu": ws.summarize_hardware("cpu", start, end, poll),
+        "gpu": ws.summarize_hardware("gpu", start, end, poll),
+        "ram": ws.summarize_hardware("ram", start, end, poll),
+    }
+    # Connection-drop events over the window (from the persisted gateway-timeout series), so a
+    # latency blip you missed live is still counted.
+    events: Dict[str, Any] = {}
+    if latency_enabled:
+        from netspeedtray.utils import summaries as S   # lazy: keeps numpy off the import path
+        events = S.outage_summary(ws.get_hardware_history("latency_gw_timeout", start, end))
+    return series, summ, events
+
+
+class _WindowLoader(QObject):
+    """Lives on the Overview's reader thread and runs one window read per request."""
+
+    loaded = pyqtSignal(int, object)   # (load sequence, _read_window result - or the exception)
+
+    @pyqtSlot(int, object)
+    def run(self, seq: int, fn) -> None:
+        try:
+            result = fn()
+        except Exception as e:   # handed back so the GUI thread logs it (rate-limited) as before
+            result = e
+        self.loaded.emit(seq, result)
 
 
 class OverviewTab(QWidget):
     """Overview tab content - the control center. Matplotlib-free by contract."""
 
     stat_type = "overview"
+
+    _load_requested = pyqtSignal(int, object)   # -> _WindowLoader.run on the reader thread
 
     def __init__(self, main_widget, config: Dict[str, Any], i18n, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -86,7 +142,19 @@ class OverviewTab(QWidget):
         # if unset), so the control center opens on history, not "since the page opened".
         self._period_index = int(config.get("history_period_slider_value", 2) or 2)
         self._series: Dict[str, Any] = {}     # latest per-metric sparkline series for the active window
-        self._win_summ: Dict[str, Any] = {}   # latest per-metric WindowSummary for the active window
+        # Latest per-metric WindowSummary / drop events for the active window; None = not read yet
+        # (the hero says "Reading history…" and the strip claims nothing, rather than showing zeros).
+        self._win_summ: Optional[Dict[str, Any]] = None
+        # The window reads run on a reader thread (started on the first reload, stopped in teardown).
+        # _load_seq stamps each request; bumping it (range change, hide, close) makes the result in
+        # flight stale. One request at a time: a reload asked for meanwhile only sets _load_dirty.
+        self._reader_thread: Optional[QThread] = None
+        self._reader: Optional[_WindowLoader] = None
+        self._reader_ident: Optional[int] = None
+        self._load_seq = 0
+        self._load_busy = False
+        self._load_dirty = False
+        self._closed = False
 
         # The tab itself holds ONLY a scroll area; all cards live in an inner content widget. When the
         # window is shorter than the content needs, it scrolls instead of squeezing widgets past their
@@ -163,7 +231,7 @@ class OverviewTab(QWidget):
         strip.addStretch(1)
         strip.addWidget(self._context_r_lbl, 0, Qt.AlignmentFlag.AlignVCenter)
         root.addLayout(strip)
-        self._latency_events: Dict[str, Any] = {}   # outage_summary for the active window
+        self._latency_events: Optional[Dict[str, Any]] = None   # outage_summary; None = not read yet
 
         # --- Hardware tiles: CPU / GPU / RAM / VRAM. Always built (the Monitor forces collection);
         # VRAM hides itself when there's no dedicated-VRAM reading (integrated GPUs, etc). Laid out in a
@@ -278,7 +346,17 @@ class OverviewTab(QWidget):
                 {"history_period_slider_value": self._period_index}, apply_and_repaint=False)
         except Exception:
             pass
+        self._invalidate_window()
+        self._render()          # the placeholder now, not the old range's figures under the new label
         self._reload_window()
+
+    def _invalidate_window(self) -> None:
+        """The cached window figures no longer match the selected range: drop them (back to the
+        placeholder) and make any read in flight stale."""
+        self._load_seq += 1
+        self._series = {}
+        self._win_summ = None
+        self._latency_events = None
 
     def _period_key(self) -> str:
         return constants.data.history_period.PERIOD_MAP.get(self._period_index, "TIMELINE_24_HOURS")
@@ -313,9 +391,11 @@ class OverviewTab(QWidget):
             if idx != self._period_index:
                 self._period_index = idx
                 self._timeline.set_period_index(idx, emit=False)
+                self._invalidate_window()
         except Exception:
             pass
-        self._reload_window()   # load the window's DB series + summaries, then paint immediately
+        self._render()          # live values now; the window's figures follow from the reader thread
+        self._reload_window()
         self._timer.start()
         self._hist_timer.start()
         self._busiest.start()   # start the per-app connection sampler (idles again on hide)
@@ -324,6 +404,9 @@ class OverviewTab(QWidget):
         self._timer.stop()
         self._hist_timer.stop()
         self._busiest.stop()
+        # A read still in flight lands while hidden: drop it (showEvent reloads anyway).
+        self._load_seq += 1
+        self._load_dirty = False
         super().hideEvent(event)
 
     def teardown(self) -> None:
@@ -337,65 +420,123 @@ class OverviewTab(QWidget):
             self._busiest.teardown()
         except Exception:
             pass
+        self._closed = True
+        self._load_seq += 1     # anything still in flight is now stale
+        self._load_dirty = False
+        self._stop_reader()
+
+    # ----------------------------------------------------------------- reader thread
+    def _ensure_reader(self) -> None:
+        if self._reader_thread is not None:
+            return
+        self._reader_thread = QThread()
+        self._reader = _WindowLoader()
+        self._reader.moveToThread(self._reader_thread)
+        self._reader.loaded.connect(self._on_window_loaded)    # queued: lands on the GUI thread
+        self._load_requested.connect(self._reader.run)         # queued: runs on the reader thread
+        # The reader thread's read connection is opened, and closed, on that thread.
+        bind_reader_thread(self._reader_thread, getattr(self._main_widget, "widget_state", None),
+                           self._set_reader_ident)
+        self._reader_thread.start()
+
+    def _set_reader_ident(self, ident: int) -> None:
+        self._reader_ident = ident   # runs on the reader thread (started, DirectConnection)
+
+    def _stop_reader(self) -> None:
+        """Stop + release the reader thread (bounded; see stop_reader_thread). Idempotent. The Monitor
+        is closing, so a read in flight is unwanted: interrupt its query first instead of giving it
+        GRAPH_THREAD_QUIT_WAIT_MS to finish (the Stats-detail sheet's close does the same)."""
+        thread, reader = self._reader_thread, self._reader
+        self._reader_thread = self._reader = None
+        if thread is None:
+            return
+        try:
+            reader.loaded.disconnect(self._on_window_loaded)
+            self._load_requested.disconnect(reader.run)
+        except (TypeError, RuntimeError):
+            pass
+        ws = getattr(self._main_widget, "widget_state", None)
+        if self._load_busy:
+            interrupt = getattr(ws, "interrupt_reads", None)
+            if interrupt is not None and self._reader_ident is not None:
+                try:
+                    interrupt(thread_id=self._reader_ident)
+                except Exception:
+                    pass
+        self._load_busy = False
+        if stop_reader_thread(thread, reader, ws, self._reader_ident, self.logger):
+            reader.deleteLater()
+            thread.deleteLater()
 
     # ----------------------------------------------------------------- refresh
 
     def _reload_window(self) -> None:
         """Load the selected window's series (sparklines) + honest summaries (avg/peak) from the DB -
         or the live in-memory deques for the Session window - then repaint. Runs every few seconds and
-        on a period change, NOT on the 1 Hz tick, so the DB read never touches the current-value path."""
-        if not self.isVisible():
+        on a period change, NOT on the 1 Hz tick, so the DB read never touches the current-value path.
+
+        The DB reads run on the reader thread (_read_window); _on_window_loaded stores and paints the
+        result. While one is in flight, a further reload is coalesced into one rerun after it."""
+        if not self.isVisible() or self._closed:
             return
         ws = getattr(self._main_widget, "widget_state", None)
         if ws is None:
+            if self._win_summ is None:      # nothing will ever load: no "Reading history…" forever
+                self._win_summ, self._latency_events = {}, {}
             self._render()
+            return
+        if self._load_busy:
+            self._load_dirty = True
             return
         start, end, is_session = self._window()
         # Seconds per sample for coverage / volume math: the shared resolver, never a local `or 1.0`.
         poll = resolve_poll_interval_seconds(self._config.get("update_rate", 1.0))
-        try:
-            if is_session:
+        series = None
+        if is_session:
+            try:   # the in-memory deques are appended on this thread: copy them here, not off-thread
                 agg = ws.get_aggregated_speed_history()
-                self._series = {
+                series = {
                     "down": [a.download for a in agg], "up": [a.upload for a in agg],
                     "cpu": [s.value for s in ws.get_cpu_history()],
                     "gpu": [s.value for s in ws.get_gpu_history()],
                     "ram": [s.value for s in ws.get_ram_history()],
                 }
+            except Exception as e:
+                self._log_reload_error(e)
+                self._render()
+                return
+        self._ensure_reader()
+        self._load_busy = True
+        self._load_requested.emit(self._load_seq, partial(
+            _read_window, ws, start, end, series, poll, bool(self._config.get("latency_enabled", True))))
+
+    @pyqtSlot(int, object)
+    def _on_window_loaded(self, seq: int, result) -> None:
+        self._load_busy = False
+        if self._closed or sip.isdeleted(self):
+            return
+        # Stale: the range changed, or the tab was hidden, after this read began - drop it.
+        if seq == self._load_seq:
+            if isinstance(result, Exception):
+                self._log_reload_error(result)
+                if self._win_summ is None:
+                    self._win_summ = {}     # stop saying "Reading history…"; the strip stays quiet
             else:
-                # wait_for_flush=False: this runs on the GUI thread on a periodic timer - never block the
-                # UI on the DB-worker drain for a last second that's invisible at multi-hour resolution.
-                net = ws.get_speed_history(start, end, None, resolution='auto', wait_for_flush=False)
-                self._series = {
-                    "down": [r[2] for r in net], "up": [r[1] for r in net],
-                    "cpu": [v for _, v in ws.get_hardware_history("cpu", start, end)],
-                    "gpu": [v for _, v in ws.get_hardware_history("gpu", start, end)],
-                    "ram": [v for _, v in ws.get_hardware_history("ram", start, end)],
-                }
-            self._win_summ = {
-                "down": ws.summarize_network("download", start, end, None, poll),
-                "up": ws.summarize_network("upload", start, end, None, poll),
-                "cpu": ws.summarize_hardware("cpu", start, end, poll),
-                "gpu": ws.summarize_hardware("gpu", start, end, poll),
-                "ram": ws.summarize_hardware("ram", start, end, poll),
-            }
-            # Connection-drop events over the window (from the persisted gateway-timeout series), so a
-            # latency blip you missed live is still counted. Cheap; off the 1 Hz path.
-            if self._config.get("latency_enabled", True):
-                from netspeedtray.utils import summaries as S   # lazy: keeps numpy off the import path
-                self._latency_events = S.outage_summary(
-                    ws.get_hardware_history("latency_gw_timeout", start, end))
-            else:
-                self._latency_events = {}
-        except Exception as e:
-            # Log the FIRST failure loudly (with traceback) so a broken Overview leaves a diagnostic in
-            # the support bundle; rate-limit the rest to DEBUG so the few-second timer doesn't spam.
-            if not getattr(self, "_reload_err_logged", False):
-                self._reload_err_logged = True
-                self.logger.warning("Overview window reload failed (further at DEBUG): %s", e, exc_info=True)
-            else:
-                self.logger.debug("Overview window reload skipped: %s", e)
-        self._render()
+                self._series, self._win_summ, self._latency_events = result
+            self._render()
+        if self._load_dirty:
+            self._load_dirty = False
+            self._reload_window()
+
+    def _log_reload_error(self, e: BaseException) -> None:
+        # Log the FIRST failure loudly (with traceback) so a broken Overview leaves a diagnostic in
+        # the support bundle; rate-limit the rest to DEBUG so the few-second timer doesn't spam.
+        if not getattr(self, "_reload_err_logged", False):
+            self._reload_err_logged = True
+            self.logger.warning("Overview window reload failed (further at DEBUG): %s", e,
+                                exc_info=(type(e), e, e.__traceback__))
+        else:
+            self.logger.debug("Overview window reload skipped: %s", e)
 
     def _tick(self) -> None:
         # hideEvent stops the timer when we leave Overview or the window minimizes; this guard is
@@ -423,9 +564,11 @@ class OverviewTab(QWidget):
                 download_mbps=float(getattr(mw, "download_speed", 0.0) or 0.0)).net_bytes()
             down_series, up_series = ser.get("down", []), ser.get("up", [])
             peak_v = max(max(down_series, default=0.0), max(up_series, default=0.0))
-            sd, su_ = summ.get("down"), summ.get("up")
+            sd, su_ = (summ.get("down"), summ.get("up")) if summ is not None else (None, None)
             sub = ""
-            if sd is not None and su_ is not None and sd.count:
+            if summ is None:   # the window's figures are still being read: say so, never a fake 0
+                sub = self._tr("STATS_DETAIL_LOADING", "Reading history…")
+            elif sd is not None and su_ is not None and sd.count:
                 sub = (f"{self._tr('STAT_AVG_SHORT', 'avg')}  ↓ {self._fmt_speed(sd.avg or 0)}"
                        f"  ↑ {self._fmt_speed(su_.avg or 0)}      "
                        f"{self._tr('GRAPH_PEAK_SHORT', 'Peak')}  ↓ {self._fmt_speed(sd.max or 0)}"
@@ -541,7 +684,9 @@ class OverviewTab(QWidget):
         Empty when latency monitoring is off or no probe has run yet."""
         if not self._config.get("latency_enabled", True):
             return ""
-        ev = self._latency_events or {}
+        ev = self._latency_events
+        if ev is None:
+            return ""   # the window's drops are still being read: claim neither "steady" nor a count
         count = int(ev.get("count", 0) or 0)
         # Only claim "no drops" once we actually have latency history; otherwise stay quiet.
         gw = getattr(mw, "latency_gw", None)
