@@ -431,6 +431,7 @@
     "//_2": "--- Monitor: Stats Detail ---",
     "STATS_DETAIL_TITLE": "İstatistikler",
     "STATS_DETAIL_NO_DATA": "Bu dönem için henüz yeterli geçmiş verisi yok",
+    "STATS_DETAIL_LOADING": "Geçmiş okunuyor…",
     "STAT_CELL_AVG": "Ortalama",
     "STAT_CELL_PEAK": "Tepe",
     "STAT_CELL_MEDIAN": "Medyan",

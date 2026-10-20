@@ -431,6 +431,7 @@
     "//_2": "--- Monitor: Stats Detail ---",
     "STATS_DETAIL_TITLE": "統計",
     "STATS_DETAIL_NO_DATA": "この期間の履歴がまだ十分にありません。",
+    "STATS_DETAIL_LOADING": "履歴を読み取り中…",
     "STAT_CELL_AVG": "平均",
     "STAT_CELL_PEAK": "ピーク",
     "STAT_CELL_MEDIAN": "中央値",

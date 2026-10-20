@@ -11,6 +11,11 @@ The honesty spine is enforced here too: percentiles render only when the WindowS
 tier, <=24h); beyond that the rollup cells show an em-dash and a one-line note saying exact percentiles
 need the last 24 hours. Every block carries the tier + coverage% + sample count, so a figure pasted into
 an ISP ticket is always qualified by how much data backs it.
+
+Its history reads (summaries, graph points, the hourly profile, drops) run on a reader thread, the same
+QThread + bind_reader_thread/stop_reader_thread lifecycle as the Monitor's graph worker: on a big
+database they took long enough to freeze the UI on every open. The sheet opens with a loading line and
+fills in when the result lands; a result for a sheet that has since closed is dropped.
 """
 from __future__ import annotations
 
@@ -19,9 +24,11 @@ import os
 import re
 import subprocess
 from datetime import datetime
+from functools import partial
 from typing import Any, Dict, List, Optional, Tuple
 
-from PyQt6.QtCore import Qt
+from PyQt6 import sip
+from PyQt6.QtCore import QObject, QThread, Qt, pyqtSignal, pyqtSlot
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
     QFrame, QFileDialog, QMessageBox, QApplication,
@@ -34,6 +41,7 @@ from netspeedtray.utils.helpers import format_speed, get_machine_id, format_dura
 from netspeedtray.utils.timer_utils import resolve_poll_interval_seconds
 from netspeedtray.utils import summaries as S
 from netspeedtray.utils import stats_exporter
+from netspeedtray.views.monitor.graph_host import bind_reader_thread, stop_reader_thread
 
 
 # latency RTT series -> the loss series of the same hop (latency_gw -> latency_gw_timeout, ...)
@@ -94,8 +102,110 @@ def run_interactive_export(parent, widget_state, start: datetime, end: datetime,
             pass
 
 
+def _summarize(ws, key: str, kind: str, start: datetime, end: datetime, poll: float, logger):
+    """(WindowSummary, raw (ts,value) pairs for context, loss_pct or None, loss WindowSummary or None,
+    hourly {hour: average B/s} or None) for one series. Runs on the sheet's reader thread."""
+    loss = None
+    loss_summ = None
+    hourly = None
+    # Never wait on the DB write thread's flush barrier (up to 2 s per call - the download+upload sheet
+    # froze the UI 2-4 s in 2.2.0-beta.1). The summaries above each series read without waiting too, so
+    # the figures and the context line stay consistent; at most the last ~10 s batch is missing from a
+    # window of hours.
+    try:
+        if kind == "net_down":
+            summ = ws.summarize_network("download", start, end, None, poll)
+            # Same no-wait read path as the summary (never the flush barrier).
+            hourly = ws.get_network_hourly_profile("download", start, end)
+            pairs = [(r[0], r[2]) for r in ws.get_speed_history(start, end, None, resolution='auto', wait_for_flush=False)]
+        elif kind == "net_up":
+            summ = ws.summarize_network("upload", start, end, None, poll)
+            hourly = ws.get_network_hourly_profile("upload", start, end)
+            pairs = [(r[0], r[1]) for r in ws.get_speed_history(start, end, None, resolution='auto', wait_for_flush=False)]
+        else:
+            summ = ws.summarize_hardware(key, start, end, poll)
+            pairs = ws.get_hardware_history(key, start, end)
+            if key in _LOSS_SERIES_FOR:
+                loss_summ = ws.summarize_hardware(_LOSS_SERIES_FOR[key], start, end, poll)
+                loss = round((loss_summ.avg or 0.0) * 100.0, 1) if loss_summ.count else None
+    except Exception as e:
+        logger.debug("summarize(%s) failed: %s", key, e)
+        return S.summarize_raw([]), [], None, None, None
+    return summ, pairs, loss, loss_summ, hourly
+
+
+def _load_subjects(ws, subjects: List[Dict[str, Any]], start: datetime, end: datetime, poll: float,
+                   logger) -> List[Dict[str, Any]]:
+    """Every history read the sheet needs, one entry per subject (in order). Runs on the reader thread;
+    the GUI thread only builds widgets from the result."""
+    out = []
+    for subj in subjects:
+        key, kind = subj["key"], subj["kind"]
+        summ, pairs, loss, loss_summ, hourly = _summarize(ws, key, kind, start, end, poll, logger)
+        label = None   # None = the subject's own label
+        # The internet anchor's RTT series only gets a row on a successful echo, so a fully blocked or
+        # just-enabled anchor has loss rows and no RTT rows - keep that block (loss and drops, RTT cells
+        # "-") instead of dropping it while the pill says 100% loss. Only when the anchor has neither
+        # series does the block fall back to the router, under the router's own label.
+        if key == _ANCHOR_KEY and summ.count == 0 and loss is None:
+            g = _summarize(ws, _GATEWAY_KEY, kind, start, end, poll, logger)
+            if g[0].count or g[2] is not None:
+                key, (summ, pairs, loss, loss_summ, hourly) = _GATEWAY_KEY, g
+                label = "router"
+        # Drops come from the SAME hop as the block's RTTs; read only for a block that will show them.
+        outage = None
+        if key in _LOSS_SERIES_FOR and (summ.count or loss is not None):
+            try:
+                outage = S.outage_summary(ws.get_hardware_history(_LOSS_SERIES_FOR[key], start, end))
+            except Exception:
+                outage = None
+        out.append({"key": key, "label": label, "summ": summ, "pairs": pairs, "loss": loss,
+                    "loss_summ": loss_summ, "hourly": hourly, "outage": outage})
+    return out
+
+
+class _SheetLoader(QObject):
+    """Runs one sheet's history reads on its own QThread, then ends that thread (one shot)."""
+
+    loaded = pyqtSignal(int, object)   # (load sequence, _load_subjects result)
+
+    def __init__(self, fn) -> None:
+        super().__init__()
+        self._fn = fn
+
+    @pyqtSlot(int)
+    def run(self, seq: int) -> None:
+        try:
+            result = self._fn()
+        except Exception as e:   # _load_subjects already reads empty on failure; belt and braces
+            logging.getLogger("NetSpeedTray.StatsDetailSheet").debug("load failed: %s", e)
+            result = []
+        self.loaded.emit(seq, result)
+        thread = QThread.currentThread()
+        if thread is not None:
+            thread.quit()
+
+
+# Every reader thread a sheet started, kept referenced until it has ended: a QThread destroyed while
+# running aborts the process, and a sheet's Python wrapper can be collected mid-read (it is not always
+# held by exec()). Finished entries are dropped on the next start.
+_live_readers: List[Tuple[QThread, _SheetLoader]] = []
+
+
+def _keep_reader(thread: QThread, loader: _SheetLoader) -> None:
+    def running(t: QThread) -> bool:
+        try:
+            return not sip.isdeleted(t) and t.isRunning()
+        except RuntimeError:
+            return False
+    _live_readers[:] = [(t, w) for t, w in _live_readers if running(t)]
+    _live_readers.append((thread, loader))
+
+
 class StatsDetailSheet(QDialog):
     """A modal sheet of honest distribution stats for one or more metrics over the selected window."""
+
+    _load_requested = pyqtSignal(int)   # -> _SheetLoader.run on the reader thread
 
     def __init__(self, widget_state, subjects: List[Dict[str, Any]],
                  window: Tuple[datetime, datetime, str], config: Dict[str, Any], i18n,
@@ -111,8 +221,12 @@ class StatsDetailSheet(QDialog):
         # Seconds per sample for coverage / volume math: the shared resolver, never a local `or 1.0`.
         self._poll = resolve_poll_interval_seconds(config.get("update_rate", 1.0))
         self._copy_text_parts: List[str] = []
-        self._loss_summ: Dict[str, Any] = {}   # latency key -> WindowSummary of its loss series
-        self._hourly: Dict[str, Dict[int, float]] = {}   # net kind -> {hour: average B/s} (reader)
+        self._thread: Optional[QThread] = None
+        self._loader: Optional[_SheetLoader] = None
+        self._thread_ident: Optional[int] = None
+        self._load_seq = 0          # bumped on close: a result carrying an older number is dropped
+        self._loaded = False
+        self._closed = False
 
         self.setModal(True)
         self.setWindowTitle(self._tr("STATS_DETAIL_TITLE", "Statistics"))
@@ -130,28 +244,129 @@ class StatsDetailSheet(QDialog):
         title.setStyleSheet(f"color: {c['text_primary']}; background: transparent;")
         root.addWidget(title)
 
-        for subj in subjects:
-            block = self._build_block(subj, c)
-            if block is not None:
-                root.addWidget(block)
+        # Loading state: the blocks replace this line when the reader thread's result lands.
+        self._c = c
+        self._loading = QLabel(self._tr("STATS_DETAIL_LOADING", "Reading history…"))
+        self._loading.setFont(su.font(tokens.TYPE_BODY))
+        self._loading.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
+        root.addWidget(self._loading)
 
         root.addSpacing(2)
         root.addLayout(self._build_footer(c))
+        self._start_load()
+
+    # ------------------------------------------------------------------ loading (reader thread)
+    def _start_load(self) -> None:
+        self._load_seq += 1
+        fn = partial(_load_subjects, self._ws, list(self._subjects), self._start, self._end,
+                     self._poll, self.logger)
+        self._thread = QThread()
+        self._loader = _SheetLoader(fn)
+        self._loader.moveToThread(self._thread)
+        self._loader.loaded.connect(self._on_loaded)          # queued: lands on the GUI thread
+        self._load_requested.connect(self._loader.run)        # queued: runs on the reader thread
+        # The reader thread's read connection is opened, and closed, on that thread.
+        bind_reader_thread(self._thread, self._ws, self._set_thread_ident)
+        _keep_reader(self._thread, self._loader)
+        self._thread.start()
+        self._load_requested.emit(self._load_seq)
+
+    def _set_thread_ident(self, ident: int) -> None:
+        self._thread_ident = ident   # runs on the reader thread (started, DirectConnection)
+
+    def is_loaded(self) -> bool:
+        return self._loaded
+
+    @pyqtSlot(int, object)
+    def _on_loaded(self, seq: int, results) -> None:
+        # Stale: the sheet closed after this read began - never touch its widgets.
+        if self._closed or seq != self._load_seq or sip.isdeleted(self):
+            return
+        self._stop_loader()
+        root = self.layout()
+        at = root.indexOf(self._loading)
+        self._loading.hide()
+        root.removeWidget(self._loading)
+        self._loading.deleteLater()
+        for subj, data in zip(self._subjects, results):
+            block = self._build_block(subj, self._c, data)
+            if block is not None:
+                root.insertWidget(at, block)
+                block.show()   # a layout only queues the show for a visible parent: size it now
+                at += 1
+        self._loaded = True
+        self._copy_btn.setEnabled(True)
+        root.activate()        # the new blocks' size now, not at the next LayoutRequest
+        self.adjustSize()
+        self._recentre()
+
+    def _recentre(self) -> None:
+        """The sheet was shown (and centred) at its small loading size and then grew downward from the
+        same top-left - with three blocks its footer ended up below the screen. Re-centre it on its
+        parent and keep it inside that screen's available area (top edge wins if it is taller)."""
+        if not self.isVisible():
+            return
+        par = self.parentWidget()
+        screen = (par.screen() if par is not None else None) or self.screen()
+        if screen is None:
+            return
+        avail = screen.availableGeometry()
+        frame = self.frameGeometry()
+        fw, fh = frame.width(), frame.height()
+        centre = par.window().frameGeometry().center() if par is not None else avail.center()
+        x = max(avail.left(), min(centre.x() - fw // 2, avail.right() + 1 - fw))
+        y = max(avail.top(), min(centre.y() - fh // 2, avail.bottom() + 1 - fh))
+        self.move(x, y)
+
+    def _stop_loader(self, interrupt_first: bool = False) -> None:
+        """Stop + release the reader thread (bounded; see stop_reader_thread). Idempotent.
+        ``interrupt_first``: the result is unwanted (the sheet is closing), so abort a running query
+        straight away instead of first giving it GRAPH_THREAD_QUIT_WAIT_MS to finish."""
+        thread, loader = self._thread, self._loader
+        self._thread = self._loader = None
+        if thread is None:
+            return
+        try:
+            loader.loaded.disconnect(self._on_loaded)
+            self._load_requested.disconnect(loader.run)
+        except (TypeError, RuntimeError):
+            pass
+        if interrupt_first and thread.isRunning():
+            interrupt = getattr(self._ws, "interrupt_reads", None)
+            if interrupt is not None and self._thread_ident is not None:
+                try:
+                    interrupt(thread_id=self._thread_ident)
+                except Exception:
+                    pass
+        if stop_reader_thread(thread, loader, self._ws, self._thread_ident, self.logger):
+            loader.deleteLater()
+            thread.deleteLater()
+
+    def _close_loader(self) -> None:
+        self._closed = True
+        self._load_seq += 1   # anything still in flight is now stale
+        self._stop_loader(interrupt_first=True)
+
+    def done(self, r: int) -> None:  # Qt override
+        self._close_loader()
+        super().done(r)
+
+    def exec(self) -> int:
+        # exec() can return without done() (app quit while the modal sheet runs): stop the reader thread
+        # either way, so no running QThread outlives the sheet.
+        try:
+            return super().exec()
+        finally:
+            self._close_loader()
 
     # ------------------------------------------------------------------ blocks
-    def _build_block(self, subj: Dict[str, Any], c: Dict[str, str]) -> Optional[QFrame]:
-        key, label, unit, kind = subj["key"], subj["label"], subj["unit"], subj["kind"]
-        summ, pairs, loss = self._summarize(key, kind)
-
-        # The internet anchor's RTT series only gets a row on a successful echo, so a fully blocked or
-        # just-enabled anchor has loss rows and no RTT rows - keep that block (loss and drops, RTT cells
-        # "-") instead of dropping it while the pill says 100% loss. Only when the anchor has neither
-        # series does the block fall back to the router, under the router's own label.
-        if key == _ANCHOR_KEY and summ.count == 0 and loss is None:
-            g_summ, g_pairs, g_loss = self._summarize(_GATEWAY_KEY, kind)
-            if g_summ.count or g_loss is not None:
-                key, summ, pairs, loss = _GATEWAY_KEY, g_summ, g_pairs, g_loss
-                label = self._tr("CHECK_CONN_ROUTER", "Router")
+    def _build_block(self, subj: Dict[str, Any], c: Dict[str, str],
+                     data: Dict[str, Any]) -> Optional[QFrame]:
+        """One subject's card from its _load_subjects entry (no DB access here: GUI thread)."""
+        label, unit, kind = subj["label"], subj["unit"], subj["kind"]
+        key, summ, pairs, loss = data["key"], data["summ"], data["pairs"], data["loss"]
+        if data["label"] == "router":   # the anchor fell back to the gateway (see _load_subjects)
+            label = self._tr("CHECK_CONN_ROUTER", "Router")
         loss_only = summ.count == 0 and key in _LOSS_SERIES_FOR and loss is not None
 
         # A secondary subject (e.g. CPU temperature when there's no sensor) is dropped when it has no
@@ -175,7 +390,7 @@ class StatsDetailSheet(QDialog):
             ml.setStyleSheet(f"color: {c['text_primary']}; background: transparent;")
             head.addWidget(ml)
         head.addStretch(1)
-        badge = QLabel(self._coverage_text(self._loss_summ.get(key, summ) if loss_only else summ))
+        badge = QLabel(self._coverage_text((data["loss_summ"] or summ) if loss_only else summ))
         badge.setFont(su.font(tokens.TYPE_CAPTION))
         badge.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
         head.addWidget(badge)
@@ -218,7 +433,7 @@ class StatsDetailSheet(QDialog):
             note.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
             box.addWidget(note)
 
-        ctx = self._context_line(key, kind, unit, pairs, loss, c)
+        ctx = self._context_line(key, kind, unit, pairs, loss, c, data)
         if ctx is not None:
             box.addWidget(ctx)
         return card
@@ -239,13 +454,14 @@ class StatsDetailSheet(QDialog):
         v.addWidget(cap)
         return cell
 
-    def _context_line(self, key: str, kind: str, unit: str, pairs, loss, c) -> Optional[QLabel]:
+    def _context_line(self, key: str, kind: str, unit: str, pairs, loss, c,
+                      data: Dict[str, Any]) -> Optional[QLabel]:
         """Metric-specific extra: peak/off-peak (network), throttle-time (temp), packet-loss (latency)."""
         text = ""
         fmt = self._formatter(kind, unit)
         if kind in ("net_down", "net_up") and pairs:
             # The hourly AVERAGES from the reader - not ``pairs``, the graph's per-bucket peaks.
-            po = S.peak_offpeak_from_profile(self._hourly.get(kind))
+            po = S.peak_offpeak_from_profile(data["hourly"])
             # Only show the split when it's actually informative: a different busiest vs quietest hour
             # AND a meaningful spread (>15%). A flat metric shouldn't claim a "busiest hour".
             if (po and po["peak_hour"] != po["offpeak_hour"]
@@ -269,9 +485,8 @@ class StatsDetailSheet(QDialog):
             if loss is not None and loss > 0:
                 bits.append(f"{loss:.1f}% {self._tr('STATS_DETAIL_LOSS', 'packet loss')}")
             try:
-                o = S.outage_summary(self._ws.get_hardware_history(_LOSS_SERIES_FOR[key],
-                                                                   self._start, self._end))
-                if o["count"]:
+                o = data["outage"]   # read on the reader thread (_load_subjects)
+                if o and o["count"]:
                     last = o["last_start"]
                     lt = last.strftime("%H:%M") if hasattr(last, "strftime") else ""
                     drops = (f"{o['count']} {self._tr('STATS_DETAIL_DROPS', 'connection drops')}")
@@ -318,6 +533,8 @@ class StatsDetailSheet(QDialog):
         copy_btn.setStyleSheet(su.button_style(accent=False))
         copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         copy_btn.clicked.connect(self._copy)
+        copy_btn.setEnabled(False)   # nothing to copy until the figures have loaded
+        self._copy_btn = copy_btn
         export_btn = QPushButton(self._tr("STATS_DETAIL_EXPORT", "Export period (CSV)…"))
         export_btn.setStyleSheet(su.button_style(accent=True))
         export_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -333,37 +550,6 @@ class StatsDetailSheet(QDialog):
     def _export(self) -> None:
         run_interactive_export(self, self._ws, self._start, self._end, self._win_label,
                                self._config, self._i18n, self._app_version)
-
-    # ------------------------------------------------------------------ data
-    def _summarize(self, key: str, kind: str):
-        """(WindowSummary, raw (ts,value) pairs for context, loss_pct or None)."""
-        ws = self._ws
-        loss = None
-        # Built on the GUI thread: never wait on the DB write thread's flush barrier (up to 2 s per
-        # call - the download+upload sheet froze the UI 2-4 s in 2.2.0-beta.1). The summaries above
-        # each series read without waiting too, so the figures and the context line stay consistent;
-        # at most the last ~10 s batch is missing from a window of hours.
-        try:
-            if kind == "net_down":
-                summ = ws.summarize_network("download", self._start, self._end, None, self._poll)
-                # Same no-wait read path as the summary (never the flush barrier on the GUI thread).
-                self._hourly[kind] = ws.get_network_hourly_profile("download", self._start, self._end)
-                pairs = [(r[0], r[2]) for r in ws.get_speed_history(self._start, self._end, None, resolution='auto', wait_for_flush=False)]
-            elif kind == "net_up":
-                summ = ws.summarize_network("upload", self._start, self._end, None, self._poll)
-                self._hourly[kind] = ws.get_network_hourly_profile("upload", self._start, self._end)
-                pairs = [(r[0], r[1]) for r in ws.get_speed_history(self._start, self._end, None, resolution='auto', wait_for_flush=False)]
-            else:
-                summ = ws.summarize_hardware(key, self._start, self._end, self._poll)
-                pairs = ws.get_hardware_history(key, self._start, self._end)
-                if key in _LOSS_SERIES_FOR:
-                    ls = ws.summarize_hardware(_LOSS_SERIES_FOR[key], self._start, self._end, self._poll)
-                    self._loss_summ[key] = ls
-                    loss = round((ls.avg or 0.0) * 100.0, 1) if ls.count else None
-        except Exception as e:
-            self.logger.debug("summarize(%s) failed: %s", key, e)
-            return S.summarize_raw([]), [], None
-        return summ, pairs, loss
 
     # ------------------------------------------------------------------ formatting
     def _formatter(self, kind: str, unit: str):

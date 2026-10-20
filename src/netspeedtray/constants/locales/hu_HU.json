@@ -431,6 +431,7 @@
     "//_2": "--- Monitor: Statisztikai részletek ---",
     "STATS_DETAIL_TITLE": "Statisztikák",
     "STATS_DETAIL_NO_DATA": "Ehhez az időszakhoz még nincs elegendő előzmény.",
+    "STATS_DETAIL_LOADING": "Előzmények beolvasása…",
     "STAT_CELL_AVG": "Átlag",
     "STAT_CELL_PEAK": "Csúcs",
     "STAT_CELL_MEDIAN": "Medián",

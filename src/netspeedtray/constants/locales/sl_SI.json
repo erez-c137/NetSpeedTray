@@ -431,6 +431,7 @@
     "//_2": "--- Monitor: Stats Detail ---",
     "STATS_DETAIL_TITLE": "Statistika",
     "STATS_DETAIL_NO_DATA": "Za to obdobje še ni dovolj zgodovine.",
+    "STATS_DETAIL_LOADING": "Branje zgodovine…",
     "STAT_CELL_AVG": "Povprečje",
     "STAT_CELL_PEAK": "Vrh",
     "STAT_CELL_MEDIAN": "Mediana",

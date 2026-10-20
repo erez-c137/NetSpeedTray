@@ -431,6 +431,7 @@
     "//_2": "--- Monitor: Stats Detail ---",
     "STATS_DETAIL_TITLE": "Statistiken",
     "STATS_DETAIL_NO_DATA": "Noch nicht genügend Verlauf für diesen Zeitraum.",
+    "STATS_DETAIL_LOADING": "Verlauf wird gelesen…",
     "STAT_CELL_AVG": "Durchschnitt",
     "STAT_CELL_PEAK": "Spitze",
     "STAT_CELL_MEDIAN": "Median",

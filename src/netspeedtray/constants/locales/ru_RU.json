@@ -431,6 +431,7 @@
     "//_2": "--- Монитор: Подробная статистика ---",
     "STATS_DETAIL_TITLE": "Статистика",
     "STATS_DETAIL_NO_DATA": "Пока недостаточно истории за этот период.",
+    "STATS_DETAIL_LOADING": "Чтение истории…",
     "STAT_CELL_AVG": "Среднее",
     "STAT_CELL_PEAK": "Пик",
     "STAT_CELL_MEDIAN": "Медиана",

@@ -431,6 +431,7 @@
     "//_2": "--- Monitor: Stats Detail ---",
     "STATS_DETAIL_TITLE": "Statistieken",
     "STATS_DETAIL_NO_DATA": "Nog niet genoeg geschiedenis voor deze periode.",
+    "STATS_DETAIL_LOADING": "Geschiedenis lezen…",
     "STAT_CELL_AVG": "Gemiddelde",
     "STAT_CELL_PEAK": "Piek",
     "STAT_CELL_MEDIAN": "Mediaan",
