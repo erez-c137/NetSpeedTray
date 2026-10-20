@@ -27,6 +27,10 @@ Open source, signed, no ads, no telemetry. The feature Windows forgot.
 winget install --id erez-c137.NetSpeedTray
 ```
 
+> 🧪 **Trying the 2.2 beta?** It's a manual download by design - the in-app updater, WinGet and the
+> Store never offer prereleases. Follow [the pinned issue](https://github.com/erez-c137/NetSpeedTray/issues/373)
+> for beta builds and how to go back.
+
 Or grab the latest [**Setup.exe** or **Portable.zip**](https://github.com/erez-c137/NetSpeedTray/releases/latest) directly. Both are digitally signed - no SmartScreen warnings.
 
 Also on the [**Microsoft Store**](https://apps.microsoft.com/detail/XP9MHWQZJPLQM8) - the same signed installer and the same free, open-source app, one click from the Store. It's the *only* NetSpeedTray on the Store; anything with a similar name isn't this project.
