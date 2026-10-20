@@ -31,6 +31,7 @@ from netspeedtray.tests.unit import v8_twin_fixture as F
 from netspeedtray.tests.unit.test_history_reader_v8_parity import _same
 
 DAY = 86400
+NOW = F.fixed_now()   # one clock for the history, the migration and the readers (v8_twin_fixture)
 
 
 @pytest.fixture(scope="module")
@@ -38,7 +39,7 @@ def migrated(tmp_path_factory, q_app):
     d = tmp_path_factory.mktemp("e2e")
     (d / "orig").mkdir()
     (d / "live").mkdir()
-    h = F.make_history(datetime.now())
+    h = F.make_history(NOW)
     # A v7 file never holds bytes: the v8-native minutes of the twin fixture are plain v7 rows here.
     h.minute = [r[:7] + (None, None) for r in h.minute]
     # One raw row 2 minutes ahead of the clock (inside migrate_v8.FUTURE_SLACK_SECONDS, so it moves the
@@ -47,7 +48,7 @@ def migrated(tmp_path_factory, q_app):
     h.raw.append((h.now_ts + 120, "Ethernet", 3, 4))
     F.write_v7(d / "orig" / "speed_history.db", h)
     shutil.copy2(d / "orig" / "speed_history.db", d / "live" / "speed_history.db")
-    res = M.migrate(d / "live" / "speed_history.db", now=datetime.now())
+    res = M.migrate(d / "live" / "speed_history.db", now=NOW)
     assert res.status == "migrated", res
     r7, r8, conns = F.readers(d / "orig" / "speed_history.db", d / "live" / "speed_history.db")
     yield h, r7, r8, d, res
@@ -82,7 +83,7 @@ def test_the_migrator_stamps_watermarks_the_reader_accepts(migrated):
     assert wm[S8.HW_WATERMARK_RAW_KEY] == max(r[0] for r in h.hw_minute) // 60 * 60 + 60
     assert wm[S8.WATERMARK_MINUTE_KEY] == wm[S8.HW_WATERMARK_MINUTE_KEY] == max(r[0] for r in h.hour) // 3600 * 3600 + 3600
     for v in wm.values():
-        assert 0 < v <= int(datetime.now().timestamp()) + S8.WATERMARK_MAX_LEAD_SECONDS
+        assert 0 < v <= int(NOW.timestamp()) + S8.WATERMARK_MAX_LEAD_SECONDS
 
 
 @pytest.mark.parametrize("resolution", ["minute", "hour", "day"])
@@ -129,11 +130,11 @@ def v7_rolled(migrated):
     shutil.copy2(d / "orig" / "speed_history.db", path)
     w = LegacyV7Worker(path)
     w._initialize_connection()
-    w._aggregate_raw_to_minute(w.conn.cursor(), datetime.now() + timedelta(days=2))
+    w._aggregate_raw_to_minute(w.conn.cursor(), NOW + timedelta(days=2))
     w.conn.commit()
     w._close_connection()
     conn = sqlite3.connect(sqlite_ro_uri(path), uri=True, check_same_thread=False)
-    yield V7HistoryReader(lambda: conn, lambda: path)
+    yield V7HistoryReader(lambda: conn, lambda: path, clock=F.clock_at(NOW))
     conn.close()
 
 
