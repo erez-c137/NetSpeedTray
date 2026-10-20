@@ -103,7 +103,7 @@ def export_window(widget_state, start: datetime, end: datetime, window_label: st
 
         # Raw series (long format) for the same window.
         if kind in ("net_down", "net_up"):
-            net = widget_state.get_speed_history(start, end, interface, resolution='auto')
+            net = widget_state.get_speed_history(start, end, interface, resolution='auto', wait_for_flush=False)
             idx = 2 if kind == "net_down" else 1   # (ts, up, dn)
             for row in net:
                 ts = row[0]

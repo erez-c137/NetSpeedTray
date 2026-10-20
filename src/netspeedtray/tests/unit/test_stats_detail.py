@@ -37,9 +37,14 @@ class _WS:
             return summarize_raw([0.0, 1.0, 0.0])
         return summarize_raw([])   # cpu_temp / cpu_power / etc -> empty
 
-    def get_speed_history(self, start, end, iface, resolution='auto'):
+    def get_speed_history(self, start, end, iface, resolution='auto', **_kw):
         return [(self._t0, 1_000_000.0, 10_000_000.0),
                 (self._t0 + timedelta(hours=8), 2_000_000.0, 5_000_000.0)]
+
+    def get_network_hourly_profile(self, direction, start, end, iface=None):
+        # Hourly AVERAGES (the reader's): 03:00 is busiest on average, although the peak points above
+        # (get_speed_history) are highest at 20:00.
+        return {3: 4_000_000.0, 20: 1_000_000.0, 12: 500_000.0}
 
     def get_hardware_history(self, stat, start, end):
         if stat == "cpu":
@@ -97,7 +102,10 @@ def test_network_peak_offpeak_context(q_app):
     subjects = [{"key": "download", "label": "Download", "unit": "Mbps", "kind": "net_down", "primary": True}]
     sheet = StatsDetailSheet(_WS(), subjects, _window(), _cfg(), I18nStrings("en_US"))
     text = "\n".join(sheet._copy_text_parts)
-    assert "Busiest hour" in text            # 20:00 vs 04:00 split present
+    # From the reader's hourly AVERAGES, labelled as such - never the graph's per-bucket peaks (the
+    # 2.2.0-beta.1 smoke test: "Busiest hour 03:00 - 80.4 Mbps" beside "Average 0.1 Mbps").
+    assert "Busiest hour 03:00 · avg 32.0 Mbps" in text
+    assert "Quietest 12:00 · avg 4.0 Mbps" in text
 
 
 def test_latency_loss_context(q_app):
@@ -155,3 +163,50 @@ def test_interactive_export_passes_the_configured_poll(q_app, monkeypatch, tmp_p
     SD.run_interactive_export(None, _WS(), start, end, label,
                               _cfg(update_rate=5.0), I18nStrings("en_US"))
     assert captured["poll"] == 5.0
+
+
+class _BlockingFlushWS(_WS):
+    """Mimics WidgetState.get_speed_history: the default (wait_for_flush=True) blocks on the DB write
+    thread's flush barrier - up to 2 s each. The sheet is built on the GUI thread, so it must opt out."""
+    def __init__(self):
+        super().__init__()
+        self.waits = 0
+
+    def get_speed_history(self, start, end, iface, resolution='auto', wait_for_flush=True, **_kw):
+        if wait_for_flush:
+            self.waits += 1
+            import time
+            time.sleep(1.0)
+        return super().get_speed_history(start, end, iface, resolution)
+
+
+def test_sheet_never_waits_for_the_db_flush_on_the_gui_thread(q_app):
+    """2.2.0-beta.1 review: opening the download/upload sheet froze the UI 2-4 s - two flush waits."""
+    import time
+    subjects = [{"key": "download", "label": "Download", "unit": "Mbps", "kind": "net_down", "primary": True},
+                {"key": "upload", "label": "Upload", "unit": "Mbps", "kind": "net_up"}]
+    ws = _BlockingFlushWS()
+    t0 = time.perf_counter()
+    StatsDetailSheet(ws, subjects, _window(), _cfg(), I18nStrings("en_US"))
+    assert ws.waits == 0
+    assert time.perf_counter() - t0 < 0.9
+
+
+def test_hourly_profile_read_never_takes_the_flush_barrier():
+    """The busiest-hour profile is read inside the sheet's _summarize, on the same no-wait path as the
+    summaries: WidgetState.get_network_hourly_profile goes straight to the reader, never flush_and_wait."""
+    from netspeedtray.core.widget_state import WidgetState
+
+    class _Reader:
+        def network_hourly_profile(self, d, s, e, iface=None):
+            return {3: 1.0}
+
+    def _no_wait(*_a, **_k):
+        raise AssertionError("flush barrier taken on the GUI thread")
+
+    ws = WidgetState.__new__(WidgetState)
+    ws.db_worker = object()
+    ws._history_reader = _Reader()
+    ws.flush_and_wait = _no_wait
+    start, end, _ = _window()
+    assert ws.get_network_hourly_profile("download", start, end) == {3: 1.0}

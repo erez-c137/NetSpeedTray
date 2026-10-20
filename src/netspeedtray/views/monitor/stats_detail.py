@@ -112,6 +112,7 @@ class StatsDetailSheet(QDialog):
         self._poll = resolve_poll_interval_seconds(config.get("update_rate", 1.0))
         self._copy_text_parts: List[str] = []
         self._loss_summ: Dict[str, Any] = {}   # latency key -> WindowSummary of its loss series
+        self._hourly: Dict[str, Dict[int, float]] = {}   # net kind -> {hour: average B/s} (reader)
 
         self.setModal(True)
         self.setWindowTitle(self._tr("STATS_DETAIL_TITLE", "Statistics"))
@@ -243,15 +244,17 @@ class StatsDetailSheet(QDialog):
         text = ""
         fmt = self._formatter(kind, unit)
         if kind in ("net_down", "net_up") and pairs:
-            po = S.peak_offpeak(pairs)
+            # The hourly AVERAGES from the reader - not ``pairs``, the graph's per-bucket peaks.
+            po = S.peak_offpeak_from_profile(self._hourly.get(kind))
             # Only show the split when it's actually informative: a different busiest vs quietest hour
             # AND a meaningful spread (>15%). A flat metric shouldn't claim a "busiest hour".
             if (po and po["peak_hour"] != po["offpeak_hour"]
                     and po["peak_avg"] > po["offpeak_avg"] * 1.15):
+                avg = self._tr('STAT_AVG_SHORT', 'avg')
                 text = (f"{self._tr('STATS_DETAIL_BUSIEST', 'Busiest hour')} "
-                        f"{int(po['peak_hour']):02d}:00 · {fmt(po['peak_avg'])}   "
+                        f"{int(po['peak_hour']):02d}:00 · {avg} {fmt(po['peak_avg'])}   "
                         f"{self._tr('STATS_DETAIL_QUIETEST', 'Quietest')} "
-                        f"{int(po['offpeak_hour']):02d}:00 · {fmt(po['offpeak_avg'])}")
+                        f"{int(po['offpeak_hour']):02d}:00 · {avg} {fmt(po['offpeak_avg'])}")
         elif key in ("cpu_temp", "gpu_temp"):
             thr = float(self._config.get("throttle_temp_c", 0) or 0)
             if thr > 0 and pairs:
@@ -336,13 +339,20 @@ class StatsDetailSheet(QDialog):
         """(WindowSummary, raw (ts,value) pairs for context, loss_pct or None)."""
         ws = self._ws
         loss = None
+        # Built on the GUI thread: never wait on the DB write thread's flush barrier (up to 2 s per
+        # call - the download+upload sheet froze the UI 2-4 s in 2.2.0-beta.1). The summaries above
+        # each series read without waiting too, so the figures and the context line stay consistent;
+        # at most the last ~10 s batch is missing from a window of hours.
         try:
             if kind == "net_down":
                 summ = ws.summarize_network("download", self._start, self._end, None, self._poll)
-                pairs = [(r[0], r[2]) for r in ws.get_speed_history(self._start, self._end, None, resolution='auto')]
+                # Same no-wait read path as the summary (never the flush barrier on the GUI thread).
+                self._hourly[kind] = ws.get_network_hourly_profile("download", self._start, self._end)
+                pairs = [(r[0], r[2]) for r in ws.get_speed_history(self._start, self._end, None, resolution='auto', wait_for_flush=False)]
             elif kind == "net_up":
                 summ = ws.summarize_network("upload", self._start, self._end, None, self._poll)
-                pairs = [(r[0], r[1]) for r in ws.get_speed_history(self._start, self._end, None, resolution='auto')]
+                self._hourly[kind] = ws.get_network_hourly_profile("upload", self._start, self._end)
+                pairs = [(r[0], r[1]) for r in ws.get_speed_history(self._start, self._end, None, resolution='auto', wait_for_flush=False)]
             else:
                 summ = ws.summarize_hardware(key, self._start, self._end, self._poll)
                 pairs = ws.get_hardware_history(key, self._start, self._end)

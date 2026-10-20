@@ -337,8 +337,9 @@ class Win11Slider(QWidget):
         self._value_label_text_color: Optional[str] = value_label_text_color
         self._editable: bool = editable
         self._suffix: str = suffix
+        self._special_value_text: str = ""
         self._auto_update_label: bool = auto_update_label
-        
+
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         # Explicitly set border and outline to none for the QWidget container
         self.setStyleSheet("background:transparent; border: none; outline: none;")
@@ -395,12 +396,12 @@ class Win11Slider(QWidget):
             self._value_input.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
             
             self._update_input_style()
-            self._value_input.setText(f"{initial_val}{self._suffix}")
+            self._value_input.setText(self._format_value(initial_val, min_val))
             
             layout.addWidget(self._value_input)
             self._value_input.editingFinished.connect(self._on_input_editing_finished)
         else:
-            self._value_label = QLabel(f"{initial_val}{self._suffix}", self)
+            self._value_label = QLabel(self._format_value(initial_val, min_val), self)
             self._value_label.setFont(label_font)
             # Allow label to grow if needed, but keeping a minimum prevents jumping
             self._value_label.setMinimumWidth(50) 
@@ -448,9 +449,23 @@ class Win11Slider(QWidget):
         self._value_input.setStyleSheet(base_style)
 
 
+    def _format_value(self, value: int, minimum: Optional[int] = None) -> str:
+        """``value`` + suffix, or the special-value text at the minimum (QSpinBox semantics)."""
+        floor = self.slider.minimum() if minimum is None else minimum
+        if self._special_value_text and value == floor:
+            return self._special_value_text
+        return f"{value}{self._suffix}"
+
+    def setSpecialValueText(self, text: str) -> None:
+        """Show ``text`` instead of the number at the minimum - e.g. "Off" for a 0 that disables the
+        feature, rather than a misleading "0°C". Same contract as QAbstractSpinBox.setSpecialValueText."""
+        self._special_value_text = text or ""
+        if self._auto_update_label:
+            self.setValueText(self._format_value(self.slider.value()))
+
     def _on_internal_slider_value_changed(self, value: int) -> None:
         if self._auto_update_label:
-            self.setValueText(f"{value}{self._suffix}")
+            self.setValueText(self._format_value(value))
         self.valueChanged.emit(value)
 
 
@@ -474,7 +489,7 @@ class Win11Slider(QWidget):
                     self.slider.setValue(new_val)
                 else:
                      # Even if value is same, format it back (e.g. user typed "50" -> "50%")
-                     self.setValueText(f"{new_val}{self._suffix}")
+                     self.setValueText(self._format_value(new_val))
             except ValueError:
                 pass 
 

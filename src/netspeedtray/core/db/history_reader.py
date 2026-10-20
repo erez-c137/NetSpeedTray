@@ -128,6 +128,13 @@ class HistoryReader(ABC):
         aggregated across interfaces when ``interface_name`` is None/'all'."""
 
     @abstractmethod
+    def network_hourly_profile(self, direction: str, start_time: datetime, end_time: datetime,
+                               interface_name: Optional[str] = None) -> Dict[int, float]:
+        """{local clock-hour 0-23: time-weighted AVERAGE B/s} over [start, end], from the same samples and
+        weights as ``summarize_network`` - the basis for "busiest hour". Never from graph points: those
+        are per-bucket PEAKS, which made a 0.1 Mbps-average window claim an 80 Mbps busiest hour."""
+
+    @abstractmethod
     def total_bandwidth(self, start_time: Optional[datetime], end_time: datetime,
                         interface_name: Optional[str], poll_interval: float) -> Tuple[float, float]:
         """(upload_bytes, download_bytes) moved in [start, end]. ``poll_interval`` is the seconds one
@@ -156,6 +163,16 @@ class HistoryReader(ABC):
     def load_usage(self) -> Optional[UsageRecord]:
         """The odometer row + counter snapshot, or None while the table does not exist yet (the
         caller defers). Storage errors propagate; a bad snapshot only empties ``snapshot``."""
+
+
+# network_hourly_profile: (ts, rate, weight) rows from every tier -> weighted mean rate per LOCAL clock
+# hour. SQLite's 'localtime' is the C runtime's, the same conversion datetime.fromtimestamp() makes.
+_HOURLY_PROFILE_SQL = ("SELECT CAST(strftime('%H', ts, 'unixepoch', 'localtime') AS INTEGER) AS h, "
+                       "SUM(v * w), SUM(w) FROM ({union}) WHERE v IS NOT NULL AND w > 0 GROUP BY h")
+
+
+def _hourly_rows(rows) -> Dict[int, float]:
+    return {int(h): float(vw) / float(w) for h, vw, w in rows if h is not None and w}
 
 
 class HistoryNotReadyError(sqlite3.OperationalError):
@@ -189,9 +206,15 @@ class _ReaderBase(HistoryReader):
 
     def _log_read_failure(self, what: str, e: BaseException) -> None:
         """A read that failed and will return empty. Not-ready-yet is expected (INFO, no traceback);
-        anything else is a real failure (ERROR, with traceback)."""
+        anything else is a real failure (ERROR, with traceback).
+
+        ``OperationalError('interrupted')`` is expected too: the only sqlite3_interrupt in the app is
+        WidgetState.interrupt_reads(), which stops a reader on purpose (Monitor close / quit while a
+        graph query runs). Logging that as an ERROR with a traceback would read as a crash."""
         if isinstance(e, HistoryNotReadyError):
             self.logger.info("%s skipped, returning empty: %s", what, e)
+        elif isinstance(e, sqlite3.OperationalError) and str(e).strip().lower() == "interrupted":
+            self.logger.info("%s stopped (reader interrupted for close/quit), returning empty", what)
         else:
             self.logger.error("%s: %s", what, e, exc_info=True)
 
@@ -545,6 +568,38 @@ class V7HistoryReader(_ReaderBase):
             if conn is not None:
                 self._end_snapshot(conn, began)
 
+    def network_hourly_profile(self, direction: str, start_time: datetime, end_time: datetime,
+                               interface_name: Optional[str] = None) -> Dict[int, float]:
+        """summarize_network's samples and weights, per local clock-hour: raw rows weigh one sample;
+        beyond 24 h the bounded minute / hour rows weigh their sample_count."""
+        col = "download" if direction == "download" else "upload"
+        st, et = int(start_time.timestamp()), int(end_time.timestamp())
+        iface = None if interface_name in (None, "all") else interface_name
+        wh = "" if iface is None else " AND interface_name=?"
+        tail = () if iface is None else (iface,)
+        parts = [f"SELECT timestamp AS ts, SUM({col}_bytes_sec) AS v, 1 AS w FROM {constants.data.SPEED_TABLE_RAW} "
+                 f"WHERE timestamp BETWEEN ? AND ?{wh} GROUP BY timestamp"]
+        params: List[Any] = [st, et, *tail]
+        if (end_time - start_time).total_seconds() > self._RAW_SUMMARY_SECONDS:
+            _, min_bound, hour_bound = self._bounds(self._SPEED_TIERS)
+            for table, (below_sql, below_params) in ((constants.data.SPEED_TABLE_MINUTE, min_bound),
+                                                     (constants.data.SPEED_TABLE_HOUR, hour_bound)):
+                parts.append(f"SELECT timestamp AS ts, SUM({col}_avg) AS v, COALESCE(SUM(sample_count), 1) AS w "
+                             f"FROM {table} WHERE timestamp BETWEEN ? AND ?{below_sql}{wh} GROUP BY timestamp")
+                params += [st, et, *below_params, *tail]
+        query = _HOURLY_PROFILE_SQL.format(union=" UNION ALL ".join(parts))
+        conn, began = None, False
+        try:
+            conn = self._conn()
+            began = self._begin_snapshot(conn)
+            return _hourly_rows(conn.execute(query, params).fetchall())
+        except Exception as e:
+            self._log_read_failure("network_hourly_profile failed", e)
+            return {}
+        finally:
+            if conn is not None:
+                self._end_snapshot(conn, began)
+
     def total_bandwidth(self, start_time: Optional[datetime], end_time: datetime,
                         interface_name: Optional[str], poll_interval: float) -> Tuple[float, float]:
         conn, began = None, False
@@ -894,12 +949,26 @@ class V8HistoryReader(_ReaderBase):
         _start_ts = int(start_time.timestamp()) if start_time else 0
         _end_ts = int(end_time.timestamp()) if end_time else _now_ts
         target_res = resolution
-        if target_res == 'auto':
-            target_res = constants.data.history_period.get_target_resolution(start_time, end_time)
-        interval = {'raw': 1, 'minute': 60, 'hour': 3600, 'day': 86400}.get(target_res, 60)
         is_all = not interface_name or str(interface_name).lower() == "all"
         iface_sql, iface_p = self._iface_filter(interface_name)
         bounds = self._tier_bounds(self._NET, "n")
+        if target_res == 'auto':
+            target_res = constants.data.history_period.get_target_resolution(start_time, end_time)
+            # A short window that reaches below the raw watermark (the hours just before the v7 -> v8
+            # upgrade, folded into minute rows) is drawn at minute resolution: raw resolution reads only
+            # the raw tier and drew those hours empty, while the window's summary (which reads every tier)
+            # showed their traffic. Steady state never takes this branch (raw keeps >= 24 h).
+            if target_res == 'raw':
+                try:
+                    if self._conn().execute(
+                            f"SELECT 1 FROM {self._NET[1]} n {self._IFACE_JOIN} "
+                            f"WHERE n.ts BETWEEN ? AND ?{bounds[1][0]}{iface_sql} LIMIT 1",
+                            (_start_ts, _end_ts, *bounds[1][1], *iface_p)).fetchone():
+                        target_res = 'minute'
+                except sqlite3.Error as e:
+                    self._log_read_failure("Unified graph query failed", e)
+                    return []
+        interval = {'raw': 1, 'minute': 60, 'hour': 3600, 'day': 86400}.get(target_res, 60)
         raw_up, raw_down = self._RAW_RATE.format(d="up"), self._RAW_RATE.format(d="down")
 
         def tier(k: int, up: str, down: str) -> Tuple[str, list]:
@@ -989,11 +1058,13 @@ class V8HistoryReader(_ReaderBase):
             def pct(seconds: float) -> float:
                 return min(100.0, seconds / win * 100.0) if win > 0 else 0.0
 
-            if win <= self._RAW_SUMMARY_SECONDS:
-                rr = raw_rows()
-                # Coverage from the measured intervals, not row count x the live poll rate (a 2/5/10 s
-                # preset row stands for 2/5/10 s; the poll rate in force today is not evidence).
-                return S.summarize_raw([v for v, _ in rr], pct(sum(s for _, s in rr)))
+            # No "<= 24 h reads raw only" shortcut (v7 has one): on v8 the tier answering a range is set
+            # by the WATERMARKS, not by the window's length. Right after the v7 -> v8 upgrade the last
+            # 24 h are folded minute rows below the raw watermark, so a raw-only 12 h summary read only
+            # the seconds recorded since the upgrade (2.2.0-beta.1 smoke test: peak 2.3 Mbps beside an
+            # 87 Mbps graph spike, 2% coverage). Every window reads every tier through its bounds; when
+            # no rollup row falls inside it - the steady state for <= 24 h, the raw watermark trailing
+            # now by >= 24 h - the result is the exact raw summary, as before.
             avgs, maxes, counts = [], [], []
             covered_seconds = 0.0   # distinct time buckets x their duration (see V7HistoryReader)
             for k in (1, 2):
@@ -1009,6 +1080,8 @@ class V8HistoryReader(_ReaderBase):
                     covered_seconds += float(self._BUCKET_SECONDS[k])
             rr = raw_rows()
             if not avgs:
+                # Coverage from the measured intervals, not row count x the live poll rate (a 2/5/10 s
+                # preset row stands for 2/5/10 s; the poll rate in force today is not evidence).
                 return S.summarize_raw([v for v, _ in rr], pct(sum(s for _, s in rr)))
             # Step-7 note 8: one unit for every weight. A rollup row weighs its sample_count, which on
             # the net tiers is SECONDS (schema_v8.NET_TIER_UNITS); a raw row therefore weighs the
@@ -1020,6 +1093,29 @@ class V8HistoryReader(_ReaderBase):
             return S.summarize_rollup(avgs, maxes, counts, "minute" if win <= 30 * 86400 else "hour", coverage)
 
         return self._snapshot_call(run, lambda: S.summarize_raw([]))
+
+    def network_hourly_profile(self, direction: str, start_time: datetime, end_time: datetime,
+                               interface_name: Optional[str] = None) -> Dict[int, float]:
+        """Exactly summarize_network's samples and weights (raw: measured seconds clipped to the window,
+        gap rows excluded; rollups: per-bucket avg weighted by sample_count, which is SECONDS on the
+        net tiers), grouped by local clock-hour - so the hours average back to the summary's avg."""
+        d = "down" if direction == "download" else "up"
+        st, et = int(start_time.timestamp()), int(end_time.timestamp())
+        iface_sql, iface_p = self._iface_filter(interface_name)
+        bounds = self._tier_bounds(self._NET, "n")
+        parts = [f"SELECT n.ts AS ts, SUM({self._RAW_RATE.format(d=d)}) AS v, "
+                 f"MAX(0.0, MIN(MAX(n.dt_ms) / 1000.0, n.ts - ?)) AS w "
+                 f"FROM {S8.NET_RAW} n {self._IFACE_JOIN} "
+                 f"WHERE n.ts BETWEEN ? AND ? AND (n.flags & {S8.FLAG_GAP}) = 0"
+                 f"{bounds[0][0]}{iface_sql} GROUP BY n.ts"]
+        params: List[Any] = [st, st, et, *bounds[0][1], *iface_p]
+        for k in (1, 2):
+            parts.append(f"SELECT n.ts AS ts, SUM(n.{d}_avg) AS v, COALESCE(SUM(n.sample_count), 1) AS w "
+                         f"FROM {self._NET[k]} n {self._IFACE_JOIN} "
+                         f"WHERE n.ts BETWEEN ? AND ?{bounds[k][0]}{iface_sql} GROUP BY n.ts")
+            params += [st, et, *bounds[k][1], *iface_p]
+        query = _HOURLY_PROFILE_SQL.format(union=" UNION ALL ".join(parts))
+        return self._snapshot_call(lambda cur: _hourly_rows(cur.execute(query, params).fetchall()), dict)
 
     def volume(self, start_time: Optional[datetime], end_time: datetime,
                interface_name: Optional[str], poll_interval: float) -> VolumeResult:
@@ -1147,9 +1243,8 @@ class V8HistoryReader(_ReaderBase):
                             f"AND h.ts BETWEEN ? AND ?{bounds[0][0]}", (stat_type, st, et) + bounds[0][1])
                 return [r[0] for r in cur.fetchall() if r[0] is not None]
 
-            if win <= self._RAW_SUMMARY_SECONDS:
-                vals = raw_vals()
-                return S.summarize_raw(vals, S.coverage_pct(len(vals), win, poll_interval))
+            # Watermark-bounded tiers for every window length, as summarize_network (no raw-only
+            # shortcut): exact from raw whenever no rollup row falls inside the window.
             avgs, maxes, counts = [], [], []
             for k in (1, 2):
                 cur.execute(f"SELECT h.avg_value, h.max_value, h.sample_count FROM {self._HW[k]} h "

@@ -508,9 +508,10 @@ class WriterV8:
 
     # ---- delete all history ------------------------------------------------------------------
 
-    def delete_history(self, include_usage: bool = False, now_ts: Optional[float] = None) -> None:
+    def delete_history(self, include_usage: bool = False, now_ts: Optional[float] = None) -> bool:
         """Empty every v8 history table (``schema_v8.HISTORY_TABLES_V8``, dimensions included - adapter
-        names are identifying) in one transaction, with ``secure_delete`` on so the freed pages are
+        names are identifying) - plus, with ``include_usage``, the odometer row AND its counter snapshot
+        (metadata ``usage_counter_snapshot``) - in one transaction, with ``secure_delete`` on so the freed pages are
         zeroed, then hand the free pages back (``incremental_vacuum``). Everything buffered before the
         request is discarded, every cached id is dropped, and the running app becomes a new session
         (inside the same transaction, so coverage resumes from the delete). Checkpointing the WAL stays
@@ -522,21 +523,40 @@ class WriterV8:
         self._link_metric_last.clear()
         prev_secure = self.conn.execute("PRAGMA secure_delete").fetchone()[0]
         self.conn.execute("PRAGMA secure_delete = ON")
+        committed = False
         try:
             self._begin()
             tables = list(S.HISTORY_TABLES_V8) + ([_D.USAGE_COUNTER_TABLE] if include_usage else [])
             for t in tables:
                 self.conn.execute(f"DELETE FROM {t}")
+            if include_usage:
+                # The odometer's NIC-counter snapshot (adapter names + counters) belongs to the total
+                # it is paired with: left next to a zeroed odometer, the next same-boot launch would
+                # re-add pre-reset traffic, and it is the one place adapter names would survive.
+                self.conn.execute(f"DELETE FROM {S.METADATA} WHERE key = ?",
+                                  (constants.network.usage.SNAPSHOT_METADATA_KEY,))
             self.invalidate_caches()
             self.session_id = self._insert_session(now)
             self.conn.commit()
+            committed = True
         except BaseException:
             self._rollback()
             raise
         finally:
             self.invalidate_caches()
-            self.conn.execute(f"PRAGMA secure_delete = {int(prev_secure)}")
-        self.incremental_vacuum(None)
+            try:
+                self.conn.execute(f"PRAGMA secure_delete = {int(prev_secure)}")
+            except sqlite3.Error as e:
+                if committed:   # after the commit nothing may turn a done delete into a "failed" one
+                    self.logger.warning("delete_history: could not restore secure_delete: %s", e)
+        # The delete is COMMITTED from here on: a failure below only leaves free pages behind (the
+        # worker retries the vacuum) - it must never be reported as a failed delete.
+        try:
+            self.incremental_vacuum(None)
+            return True
+        except sqlite3.Error as e:
+            self.logger.warning("delete_history: rows deleted; returning the free pages failed: %s", e)
+            return False
 
     # ---- maintenance -------------------------------------------------------------------------
 

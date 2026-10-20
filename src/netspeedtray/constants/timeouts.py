@@ -19,6 +19,11 @@ class TimeoutConstants:
     DB_CHECKPOINT_RETRIES: Final[int] = 5
     DB_CHECKPOINT_RETRY_SLEEP: Final[float] = 0.2
     DB_COMPACT_RETRY_INTERVAL_SEC: Final[float] = 5.0
+    # A database backup "Delete all history" could not remove (held open, read-only, AV): retried with
+    # exponential backoff from DB_COMPACT_RETRY_INTERVAL_SEC up to this cap, at most
+    # DB_BACKUP_RETRY_MAX_ATTEMPTS times a session; after that, at the next start (the "2" marker).
+    DB_BACKUP_RETRY_MAX_SEC: Final[float] = 3600.0
+    DB_BACKUP_RETRY_MAX_ATTEMPTS: Final[int] = 8
     # How long Settings waits for the worker's answer before giving the Delete button back.
     DB_DELETE_HISTORY_UI_TIMEOUT_MS: Final[int] = 120000
     # Opening the history file at startup: how long one attempt waits for a write lock another process
@@ -48,6 +53,13 @@ class TimeoutConstants:
     # Thread / App Lifecycle (milliseconds/seconds)
     APP_CLOSE_WAIT_MS: Final[int] = 2000
     MONITOR_THREAD_STOP_WAIT_MS: Final[int] = 1000
+    # Closing the Monitor (or quitting with it open): how long to wait for the graph worker thread.
+    # It first gets GRAPH_THREAD_QUIT_WAIT_MS to finish on its own; then its in-flight SQLite query is
+    # interrupted and it gets GRAPH_THREAD_STOP_WAIT_MS more. Past that it is detached (kept
+    # referenced, never destroyed while running) instead of blocking the UI - this wait used to be
+    # unbounded.
+    GRAPH_THREAD_QUIT_WAIT_MS: Final[int] = 700
+    GRAPH_THREAD_STOP_WAIT_MS: Final[int] = 2000
     DB_INITIALIZATION_RETRY_DELAY_SEC: Final[float] = 2.0
 
     # Hardware monitoring subprocess timeouts (seconds). 0.5s was too tight -

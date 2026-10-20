@@ -297,6 +297,11 @@ def test_widget_state_delete_with_usage_resets_odometer(sync_state):
                 "anchor_up": 100.0, "anchor_down": 100.0, "period_key": "2026-10-01"}
     s._usage_loaded = True
     s.delete_all_history(include_usage=True)
+    # Nothing changes - and nothing about the odometer is queued - until the delete has answered: a
+    # failed delete must leave it as it was (test_delete_history_privacy covers that path).
+    assert s.get_usage_this_period() == (400.0, 800.0)
+    assert [t for t, _ in list(s.db_worker._queue.queue)] == ["delete_history"]
+    s._on_worker_history_deleted(DatabaseWorker.DELETE_DONE)
     assert s.get_usage_this_period() == (0.0, 0.0)
     tasks = [t for t, _ in list(s.db_worker._queue.queue)]
     # delete first, then the zeroed odometer is persisted (FIFO), so it can't be resurrected.

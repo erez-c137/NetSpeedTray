@@ -123,10 +123,25 @@ def test_delete_history_with_usage_rearms_cap_alerts(dialog, monkeypatch):
     dialog.original_config["usage_alert_state"] = "2026-10-01|100|total::80"
     dialog._delete_all_history()
     dialog.parent_widget.widget_state.delete_all_history.assert_called_once_with(include_usage=True)
+    # Re-armed only once the delete has succeeded (a failed delete keeps the counter, so its alerts).
+    dialog.parent_widget.update_config.assert_not_called()
+    assert dialog.get_settings()["usage_alert_state"] == "2026-10-01|100|total::80"
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: None)
+    dialog._on_history_deleted("done")
     dialog.parent_widget.update_config.assert_called_with({"usage_alert_state": ""})
     # Neither Save (config) nor Cancel (original_config) may restore the stale alert state.
     assert dialog.get_settings()["usage_alert_state"] == ""
     assert dialog.original_config["usage_alert_state"] == ""
+
+
+def test_a_failed_delete_with_usage_keeps_the_cap_alert_state(dialog, monkeypatch):
+    monkeypatch.setattr(dialog, "_confirm_delete_history", lambda: True)
+    dialog.config["usage_alert_state"] = "2026-10-01|100|total::80"
+    dialog._delete_all_history()
+    monkeypatch.setattr(QMessageBox, "critical", lambda *a, **k: None)
+    dialog._on_history_deleted("failed")
+    dialog.parent_widget.update_config.assert_not_called()
+    assert dialog.get_settings()["usage_alert_state"] == "2026-10-01|100|total::80"
 
 
 def test_delete_confirmation_defaults_to_safe_choices(dialog, monkeypatch):

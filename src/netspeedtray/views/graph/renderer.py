@@ -265,17 +265,21 @@ class GraphRenderer(QObject):
                 cls._GRADIENT_CACHE[color_hex] = gradient
             return cls._GRADIENT_CACHE[color_hex]
 
-    def _apply_gradient_fill(self, ax, x_data, y_data, color_hex: str, artist_prefix: str):
+    def _apply_gradient_fill(self, ax, x_data, y_data, color_hex: str, artist_prefix: str,
+                             reuse: bool = True):
         """
         Creates or updates a gradient-filled area under a line plot.
         Uses the 'Reuse, Don't Recreate' pattern for live update performance.
-        
+
         Args:
             ax: The matplotlib axes
             x_data: X coordinates (datetime objects or matplotlib float days)
             y_data: Y coordinates (speed values in Mbps)
             color_hex: Hex color string (e.g., '#00ff00')
             artist_prefix: 'download' or 'upload' - used to store artist references
+            reuse: False for one SEGMENT of a gapped series - a fresh, uncached fill per segment. The
+                cached pair is one fill per axis, so reusing it moved the fill on to each next segment
+                and only the LAST segment kept one (the Network 'All' view filled from Sep 6 on).
         """
         if len(x_data) == 0 or len(y_data) == 0:
             return
@@ -315,7 +319,7 @@ class GraphRenderer(QObject):
         existing_patch = getattr(self, patch_attr, None)
         
         # FAST PATH: Update existing artists
-        if existing_im is not None and existing_im.axes is not None:
+        if reuse and existing_im is not None and existing_im.axes is not None:
             try:
                 # Update extent (changes position/scale)
                 existing_im.set_extent(extent)
@@ -347,10 +351,11 @@ class GraphRenderer(QObject):
             interpolation='bilinear'
         )
         im.set_clip_path(patch)
-        
+
         # Store references for future updates
-        setattr(self, im_attr, im)
-        setattr(self, patch_attr, patch)
+        if reuse:
+            setattr(self, im_attr, im)
+            setattr(self, patch_attr, patch)
 
     # ========== PHASE 3: ANALYTICAL INTELLIGENCE ==========
     def _get_peak_label_placement(self, ax, peak_x: float, peak_y: float) -> Tuple[Tuple[int, int], str, str]:
@@ -713,6 +718,46 @@ class GraphRenderer(QObject):
         self.ax_gpu.set_ylabel(self._lbl(self.i18n.ORDER_TYPE_GPU), fontsize=8, color=text_color)
 
     @staticmethod
+    def _gap_threshold(timestamps) -> float:
+        """Seconds between two points beyond which the series has a GAP (no data), from the data's own
+        spacing: the median interval x GAP_DETECTION_MULTIPLIER, at least MIN_GAP_THRESHOLD_SEC. One
+        rule for the network and the hardware graphs."""
+        intervals = np.diff(np.asarray(timestamps, dtype=float))
+        if len(intervals) == 0:
+            return RendererConstants.MIN_GAP_THRESHOLD_SEC
+        return max(float(np.median(intervals)) * RendererConstants.GAP_DETECTION_MULTIPLIER,
+                   RendererConstants.MIN_GAP_THRESHOLD_SEC)
+
+    @classmethod
+    def _gap_segments(cls, timestamps) -> List[slice]:
+        """``timestamps`` (epoch seconds, ascending) split at every gap (``_gap_threshold``)."""
+        ts = np.asarray(timestamps, dtype=float)
+        if ts.size == 0:
+            return []
+        cuts = (np.flatnonzero(np.diff(ts) > cls._gap_threshold(ts)) + 1).tolist()
+        bounds = [0] + cuts + [ts.size]
+        return [slice(a, b) for a, b in zip(bounds[:-1], bounds[1:])]
+
+    def _plot_hw_series(self, ax, ts, values, color, linestyle, label, smooth: bool = False,
+                        smooth_window: int = 5):
+        """One hardware series as one line PER GAP-FREE SEGMENT (the network graph's gap rule), so a
+        month without data is a break, not a straight line drawn across it. Segments share ``label``
+        (the hover tooltip collapses them to one row); smoothing runs per segment, never across a gap.
+        Returns the first segment's Line2D (the legend handle), or None for an empty series."""
+        first = None
+        for seg in self._gap_segments(ts):
+            ys = np.asarray(values[seg], dtype=float)
+            if smooth:
+                ys = self._smooth_series(ys, smooth_window)
+            dts = [datetime.fromtimestamp(t) for t in ts[seg]]
+            # A lone sample is a point, not a zero-length (invisible) line.
+            marker = "o" if len(dts) == 1 else None
+            line, = ax.plot(dts, ys, color=color, linestyle=linestyle, linewidth=1.5, zorder=10,
+                            label=label, marker=marker, markersize=2)
+            first = first or line
+        return first
+
+    @staticmethod
     def _rows_as_floats(series) -> np.ndarray:
         """(timestamp, value, ...) rows as a float array, accepting datetime OR epoch timestamps.
 
@@ -846,11 +891,9 @@ class GraphRenderer(QObject):
                 continue
             arr = self._rows_as_floats(series)
             ts = arr[:, 0]
-            dts = [datetime.fromtimestamp(t) for t in ts]
-            ys = self._smooth_series(arr[:, 1], styles.get("smooth_window", 5)) if smooth else arr[:, 1]
             color, ls = styles.get(role) or hv.graph_line_style(role)
-            line, = ax.plot(dts, ys, color=color, linestyle=ls, linewidth=1.5,
-                            zorder=10, label=label)
+            line = self._plot_hw_series(ax, ts, arr[:, 1], color, ls, label, smooth,
+                                        styles.get("smooth_window", 5))
             handles.append(line)
             all_ts.append(ts)
             data_max = max(data_max, float(arr[:, 1].max()))
@@ -964,10 +1007,9 @@ class GraphRenderer(QObject):
                 continue
             arr = self._rows_as_floats(series)
             ts = arr[:, 0]
-            dts = [datetime.fromtimestamp(t) for t in ts]
-            ys = self._smooth_series(arr[:, 1], styles.get("smooth_window", 5)) if smooth else arr[:, 1]
             color, _ls = styles.get(role) or hv.graph_line_style(role)
-            ax.plot(dts, ys, color=color, linewidth=1.5, zorder=10, label=self._hw_role_label(role))
+            self._plot_hw_series(ax, ts, arr[:, 1], color, "-", self._hw_role_label(role), smooth,
+                                 styles.get("smooth_window", 5))
             self._apply_hw_ylim(ax, fixed, float(arr[:, 1].max()))
             any_data = True
             all_ts.append(ts)
@@ -997,11 +1039,10 @@ class GraphRenderer(QObject):
 
         raw = self._rows_as_floats(history_data)
         timestamps = raw[:, 0]
-        dts = [datetime.fromtimestamp(t) for t in timestamps]
         values = raw[:, 1]
-        ys = self._smooth_series(values, styles.get("smooth_window", 5)) if smooth else values
         color, _ls = styles.get(stat_type) or hv.graph_line_style(stat_type)   # solid for a lone line
-        ax.plot(dts, ys, color=color, linewidth=1.5, zorder=10, label=self._hw_role_label(stat_type))
+        self._plot_hw_series(ax, timestamps, values, color, "-", self._hw_role_label(stat_type), smooth,
+                             styles.get("smooth_window", 5))
 
         xs, xe = self._hw_xlim(period_key, start_time, end_time, timestamps.min(), timestamps.max())
         ax.set_xlim(xs, xe)
@@ -1119,14 +1160,7 @@ class GraphRenderer(QObject):
         # A "gap" is when time between points is significantly larger than normal
         timestamps_float = np.array([dt.timestamp() for dt in plot_datetimes])
         intervals = np.diff(timestamps_float)
-        
-        if len(intervals) > 0:
-            median_interval = np.median(intervals)
-            # Gap = any interval > 2x the median (accounts for jitter + actual gaps)
-            gap_threshold = max(median_interval * RendererConstants.GAP_DETECTION_MULTIPLIER, RendererConstants.MIN_GAP_THRESHOLD_SEC)
-        else:
-            gap_threshold = RendererConstants.MIN_GAP_THRESHOLD_SEC
-            
+        gap_threshold = self._gap_threshold(timestamps_float)
         gaps = intervals > gap_threshold
         
         # Prepare lists for collecting interpolated segments
@@ -1185,8 +1219,10 @@ class GraphRenderer(QObject):
                                     label=self.i18n.UPLOAD_LABEL)
                 
                 # Add Gradient (per segment)
-                self._apply_gradient_fill(self.ax_download, np.array(seg_ts), seg_down, color_down, 'download')
-                self._apply_gradient_fill(self.ax_upload, np.array(seg_ts), seg_up, color_up, 'upload')
+                self._apply_gradient_fill(self.ax_download, np.array(seg_ts), seg_down, color_down, 'download',
+                                          reuse=False)
+                self._apply_gradient_fill(self.ax_upload, np.array(seg_ts), seg_up, color_up, 'upload',
+                                          reuse=False)
                 
                 # Accrue for return (just raw or interpolated? detailed return allows tooltips to snap to curve)
                 final_ts.extend(seg_ts)

@@ -65,6 +65,12 @@ class _NativeMSG(ctypes.Structure):
     ]
 
 _WM_POWERBROADCAST = 0x0218
+_WM_QUERYENDSESSION = 0x0011
+_WM_ENDSESSION = 0x0016
+# Inside WM_QUERYENDSESSION / WM_ENDSESSION, how long the odometer + last history batch may wait for
+# the database thread. Windows ends a logging-off app ~5 s after asking; the config save (an atomic
+# file write, milliseconds) runs first, so this bounded wait is all that can use the budget.
+_SESSION_END_DB_WAIT_S = 2.0
 _PBT_APMRESUMESUSPEND = 0x0007
 _PBT_APMRESUMEAUTOMATIC = 0x0012
 
@@ -149,6 +155,7 @@ class NetworkSpeedWidget(QWidget):
         self.cpu_power: Optional[float] = None
         self.gpu_power: Optional[float] = None
         self.system_power: Optional[float] = None   # true whole-system W (RAPL PSYS / battery), if available
+        self.latency_probe = None                    # apply_latency_probe owns it (startup + every apply)
         self.latency_gw: Optional[float] = None      # gateway RTT ms (LAN latency); None = timeout
         self.latency_anchor: Optional[float] = None  # public-anchor RTT ms (internet latency); opt-in
         # Live loss% (~2 min) per hop, and the HEADLINE loss: the anchor's when the public probe is on,
@@ -520,11 +527,75 @@ class NetworkSpeedWidget(QWidget):
                 # The loss series: lost / sent of this cycle's burst (0, .25, .5, .75, 1). Old 0/1 rows
                 # (one echo per cycle) mean the same thing - the share of that cycle's probes lost - so
                 # every reader (rollup AVG, outage_summary's >= 0.5, the exporter) takes both unchanged.
-                ws.add_hardware_stat(lat.STAT_GW_TIMEOUT, float(sample.gw_loss_fraction))
+                if not getattr(sample, "gw_excluded", False):   # gateway changed mid-cycle: not measured
+                    ws.add_hardware_stat(lat.STAT_GW_TIMEOUT, float(sample.gw_loss_fraction))
                 if sample.anchor_enabled:
                     ws.add_hardware_stat(lat.STAT_ANCHOR_TIMEOUT, float(sample.anchor_loss_fraction))
             except Exception:
                 pass
+
+    def apply_latency_probe(self) -> None:
+        """Start / stop the latency probe to match ``latency_enabled``. Called at startup and from every
+        settings apply; idempotent. Switching it off stops the probe at once (the probe also reads the
+        switch before every echo, so not even the rest of a burst goes out - to the router or the public
+        host) and clears the live figures; switching it back on starts a fresh probe. Never blocks the
+        GUI thread: a stopped probe finishes its in-flight echo (<= 1 s) on its own and is joined at
+        shutdown if it has not by then."""
+        enabled = bool(self.config.get("latency_enabled", True))
+        probe = getattr(self, "latency_probe", None)
+        if probe is not None:
+            probe.set_config(self.config)   # a settings rollback replaces the dict
+            if enabled and probe.isRunning() and probe._running:
+                return
+            self._retire_latency_probe(probe)
+            self.latency_probe = None
+        if not enabled:
+            if probe is not None:
+                self._clear_live_latency()
+            return
+        try:
+            from netspeedtray.core.latency_probe import LatencyProbe
+            self.latency_probe = LatencyProbe(self.config)
+            self.latency_probe.latency_ready.connect(self._on_latency)
+            self.latency_probe.start()
+        except Exception as e:
+            self.latency_probe = None
+            self.logger.debug("LatencyProbe not started: %s", e)
+
+    def invalidate_latency_gateway(self) -> None:
+        """Resume from sleep / a new primary route: the probe looks its default gateway up again before
+        the next burst (it would otherwise ping the cached one for up to a minute and record that
+        router's silence as loss)."""
+        probe = getattr(self, "latency_probe", None)
+        if probe is not None:
+            try:
+                probe.invalidate_gateway()
+            except Exception as e:
+                self.logger.debug("latency gateway not invalidated: %s", e)
+
+    def _retire_latency_probe(self, probe) -> None:
+        """Stop ``probe`` without waiting; keep a reference until its thread has ended (a QThread
+        destroyed while running aborts the process). Shutdown joins whatever is still here."""
+        try:
+            probe.stop()
+            probe.latency_ready.disconnect(self._on_latency)   # a sample already in flight is dropped
+        except Exception:
+            pass
+        retiring = getattr(self, "_retired_latency_probes", None)
+        if retiring is None:
+            retiring = self._retired_latency_probes = []
+        retiring[:] = [p for p in retiring if p.isRunning()]
+        if probe.isRunning():
+            retiring.append(probe)
+
+    def _clear_live_latency(self) -> None:
+        """Latency switched off: nothing on screen may keep showing the last reading."""
+        from netspeedtray.core.latency_probe import LatencyLossWindows
+        self.latency_gw = self.latency_anchor = None
+        self.latency_loss = self.latency_loss_gw = self.latency_loss_anchor = None
+        self.latency_headline_hop = None
+        self.latency_headline_ms = None
+        self._latency_loss_windows = LatencyLossWindows()
 
     def apply_metrics_endpoint(self) -> None:
         """Start / stop / move the local metrics endpoint to match the config (2.2 scope B). Called at
@@ -883,15 +954,8 @@ class NetworkSpeedWidget(QWidget):
 
             # Latency probe on its own thread (gateway by default; public anchor opt-in). A 1 s ICMP
             # timeout must never sit on the stats poll, so it's a separate QThread.
-            self.latency_probe = None
-            if self.config.get("latency_enabled", True):
-                try:
-                    from netspeedtray.core.latency_probe import LatencyProbe
-                    self.latency_probe = LatencyProbe(self.config)
-                    self.latency_probe.latency_ready.connect(self._on_latency)
-                    self.latency_probe.start()
-                except Exception as e:
-                    self.logger.debug("LatencyProbe not started: %s", e)
+            # Started / stopped live with Settings > Connection > Latency (apply_latency_probe).
+            self.apply_latency_probe()
 
             # 1. System Event Handler (replaces manual WinEventHooks)
             self.system_event_handler.foreground_app_changed.connect(self._execute_refresh)
@@ -1408,12 +1472,24 @@ class NetworkSpeedWidget(QWidget):
                     self.logger.info("Shutdown requested by another process (installer/--shutdown) - exiting cleanly.")
                     QTimer.singleShot(0, self.fully_exit_application)
                     return True, 0
+                if msg.message == _WM_QUERYENDSESSION or (msg.message == _WM_ENDSESSION and msg.wParam):
+                    # Logoff / shutdown / restart. The normal quit path (closeEvent -> cleanup) never
+                    # runs: Windows terminates us soon after WM_ENDSESSION returns, so the essential
+                    # saves happen HERE, synchronously, inside its ~5 s budget. Observe only - Qt
+                    # still answers (TRUE: never veto the logoff). Repeating it on ENDSESSION is
+                    # cheap and catches anything changed in between.
+                    self._save_session_essentials(
+                        "query-end-session" if msg.message == _WM_QUERYENDSESSION else "end-session")
+                    return False, 0
                 if msg.message == _WM_POWERBROADCAST and msg.wParam in (
                     _PBT_APMRESUMESUSPEND, _PBT_APMRESUMEAUTOMATIC
                 ):
                     self.logger.info("Resume from sleep detected - re-asserting widget.")
                     QTimer.singleShot(constants.timeouts.TASKBAR_RESTART_RECOVERY_DELAY_MS,
                                       lambda: self._on_environment_changed("resume"))
+                    invalidate = getattr(self, "invalidate_latency_gateway", None)
+                    if invalidate is not None:
+                        invalidate()   # the router may differ after sleep
         except Exception as e:
             self.logger.debug("nativeEvent power handling failed: %s", e)
         return False, 0
@@ -1714,6 +1790,9 @@ class NetworkSpeedWidget(QWidget):
         most once, ever (session flag + persisted config flag)."""
         try:
             if self._widgets_nudge_shown or self.config.get("widgets_overlap_nudge_shown", False):
+                # Nothing else reads the Widgets rect: stop probing for it (taskbar_utils).
+                from netspeedtray.utils.taskbar_utils import set_widgets_probe_enabled
+                set_widgets_probe_enabled(False)
                 return
             widgets_rect = getattr(taskbar_info, "widgets_rect", None)
             if not widgets_rect:
@@ -1725,6 +1804,8 @@ class NetworkSpeedWidget(QWidget):
             # Latch immediately so a re-entrant refresh (or the deferred call below) can't double-fire.
             self._widgets_nudge_shown = True
             self.update_config({"widgets_overlap_nudge_shown": True})
+            from netspeedtray.utils.taskbar_utils import set_widgets_probe_enabled
+            set_widgets_probe_enabled(False)
             title = getattr(self.i18n, "WIDGETS_OVERLAP_NUDGE_TITLE", "NetSpeedTray overlaps the Widgets panel")
             body = getattr(
                 self.i18n, "WIDGETS_OVERLAP_NUDGE_BODY",
@@ -1896,6 +1977,44 @@ class NetworkSpeedWidget(QWidget):
         return []
 
 
+    def _capture_position_config(self) -> None:
+        """Put the widget's current spot into self.config (not saved here).
+
+        Persist the absolute spot when it's actively floating (Free Move or #188 free-float). Only CLEAR
+        the saved coords when the widget is genuinely docked - i.e. BOTH free_move and free_float are
+        OFF in config. Crucially we do NOT clear just because the free-float display is currently
+        absent (asleep/unplugged): is_floating() is runtime state, so gating the clear on it would wipe
+        a user's dragged spot every time the accessory panel sleeps. (config_controller clears on an
+        explicit switch to docked.) (#188)"""
+        if self.position_manager and self.position_manager.is_floating():
+            pos = self.pos()
+            self.update_config({"position_x": pos.x(), "position_y": pos.y()}, save_to_disk=False)
+        elif not self.config.get("free_move", False) and not self.config.get("free_float", True):
+            self.update_config({"position_x": None, "position_y": None}, save_to_disk=False)
+        # else: free-float-capable but the display is temporarily absent -> keep the saved spot.
+
+    def _save_session_essentials(self, reason: str) -> None:
+        """The saves that must survive a logoff/shutdown, inside Windows' ~5 s WM_ENDSESSION budget:
+        the widget position + config (an atomic file write) first, then the odometer tail and the
+        last history batch, waited for at most _SESSION_END_DB_WAIT_S. Nothing here stops a thread or
+        waits DB_SHUTDOWN_WAIT_MS; the database thread keeps draining best-effort until the process
+        ends. Each step is guarded, so a failing one never skips the next."""
+        self.logger.info("Windows session ending (%s): saving settings and the usage counter.", reason)
+
+        def _odometer() -> None:
+            if getattr(self, "widget_state", None):
+                self.widget_state.persist_essentials(timeout=_SESSION_END_DB_WAIT_S)
+
+        for name, fn in (
+            ("position config", self._capture_position_config),
+            ("config save", lambda: self.config_manager.save(self.config)),
+            ("odometer + history", _odometer),
+        ):
+            try:
+                fn()
+            except Exception as e:
+                self.logger.error("Session-end step '%s' failed: %s", name, e, exc_info=True)
+
     def cleanup(self) -> None:
         """Performs necessary cleanup and a single, final save of the configuration.
 
@@ -1945,9 +2064,13 @@ class NetworkSpeedWidget(QWidget):
                 self.monitor_thread.stop()
 
         def _latency_probe() -> None:
+            probes = list(getattr(self, '_retired_latency_probes', None) or [])
             if getattr(self, 'latency_probe', None):
-                self.latency_probe.stop()
-                self.latency_probe.wait(1500)
+                probes.append(self.latency_probe)
+            for p in probes:
+                p.stop()
+            for p in probes:   # all stopped first, so the waits overlap (one in-flight echo each)
+                p.wait(1500)
 
         def _metrics_endpoint() -> None:
             # Joins its threads; nothing is left listening.
@@ -1972,30 +2095,26 @@ class NetworkSpeedWidget(QWidget):
                     self.monitor_window = None
 
         def _position_config() -> None:
-            # Persist the widget's absolute spot when it's actively floating (Free Move or #188
-            # free-float). Only CLEAR the saved coords when the widget is genuinely docked - i.e. BOTH
-            # free_move and free_float are OFF in config. Crucially we do NOT clear just because the
-            # free-float display is currently absent (asleep/unplugged): is_floating() is runtime state,
-            # so gating the clear on it would wipe a user's dragged spot every time the accessory panel
-            # sleeps. (config_controller clears on an explicit switch to docked.) (#188)
-            if self.position_manager and self.position_manager.is_floating():
-                pos = self.pos()
-                self.update_config({"position_x": pos.x(), "position_y": pos.y()}, save_to_disk=False)
-            elif not self.config.get("free_move", False) and not self.config.get("free_float", True):
-                self.update_config({"position_x": None, "position_y": None}, save_to_disk=False)
-            # else: free-float-capable but the display is temporarily absent -> keep the saved spot.
+            self._capture_position_config()
 
         def _config_save() -> None:
             self.logger.debug("Performing final configuration save...")
             self.config_manager.save(self.config)
 
+        # Order matters (2.2.0-beta.1 lifecycle review):
+        # * "monitor window" before "history flush": closing the Monitor stops + joins its graph worker
+        #   (bounded), which closes its own read connection - WidgetState.cleanup() must never find a
+        #   reader mid-query. It also persists the Monitor's geometry into self.config.
+        # * "config save" before "history flush": the DB step can wait DB_SHUTDOWN_WAIT_MS (15 s) for a
+        #   busy database thread, and a logoff ends the process ~5 s in - the save must already be done.
         steps = (
             ("hover card", _hover_card), ("event hooks", _event_hooks),
             ("position manager", _position_manager), ("state watcher", _state_watcher),
+            ("monitor window", _monitor_window),
             ("monitor thread", _monitor_thread), ("latency probe", _latency_probe),
             ("metrics endpoint", _metrics_endpoint), ("controller", _controller),
-            ("history flush", _history_flush), ("monitor window", _monitor_window),
             ("position config", _position_config), ("config save", _config_save),
+            ("history flush", _history_flush),
         )
         try:
             for name, fn in steps:
