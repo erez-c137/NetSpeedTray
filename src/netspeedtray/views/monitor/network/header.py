@@ -113,6 +113,17 @@ class NetworkHeader(QWidget):
         self._up = self._stat_block(self._tr("UPLOAD_LABEL", "Upload"), "↑", c)
         root.addLayout(self._down[0])
         root.addLayout(self._up[0])
+        # D5: shown only while part of the totals was estimated from speeds saved before 2.2 - the
+        # same note the hover card and the Overview usage card carry.
+        self._history_note = QLabel(self._tr("USAGE_RECORDED_HISTORY_NOTE", ""))
+        self._history_note.setFont(su.font(tokens.TYPE_CAPTION))
+        self._history_note.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
+        self._history_note.setWordWrap(True)
+        self._history_note.setMinimumWidth(constants.layout.MONITOR_HISTORY_NOTE_MIN_WIDTH)
+        self._history_note.setMaximumWidth(constants.layout.MONITOR_HISTORY_NOTE_MAX_WIDTH)
+        self._history_note.setToolTip(self._history_note.text())
+        self._history_note.setVisible(False)
+        root.addWidget(self._history_note, 1, Qt.AlignmentFlag.AlignVCenter)
         root.addStretch(1)
 
         # Right-cluster controls live in their own sub-layout with the SHARED control spacing, so the
@@ -189,11 +200,13 @@ class NetworkHeader(QWidget):
         return self._tr(period_key, period_key.replace("TIMELINE_", "").replace("_", " ").title())
 
     # --- inputs -----------------------------------------------------------------
-    def set_totals(self, up_bytes: float, down_bytes: float, period_key: Optional[str] = None) -> None:
+    def set_totals(self, up_bytes: float, down_bytes: float, period_key: Optional[str] = None,
+                   reconstructed: bool = False) -> None:
         dv, du = format_data_size(down_bytes, self._i18n, precision=1)
         uv, uu = format_data_size(up_bytes, self._i18n, precision=1)
         self._down[1].setText(f"↓ {self._fmt(dv)} {du}")
         self._up[1].setText(f"↑ {self._fmt(uv)} {uu}")
+        self._history_note.setVisible(bool(reconstructed) and bool(self._history_note.text()))
         # The timeline dropdown already names the window, so the totals no longer need a separate caption.
 
     def set_period_key(self, period_key: str) -> None:

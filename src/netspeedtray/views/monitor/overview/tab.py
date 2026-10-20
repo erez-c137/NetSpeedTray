@@ -512,10 +512,16 @@ class OverviewTab(QWidget):
         ws = getattr(mw, "widget_state", None)
         if ws is not None:
             try:
-                u, d = ws.get_total_bandwidth_for_period(start, datetime.now())
-                dv, du = format_data_size(d, self._i18n, precision=1)
-                uv, uu = format_data_size(u, self._i18n, precision=1)
+                v = ws.get_history_volume_for_period(start, datetime.now())
+                dv, du = format_data_size(v.down_bytes, self._i18n, precision=1)
+                uv, uu = format_data_size(v.up_bytes, self._i18n, precision=1)
                 parts.append(f"↓ {self._num(dv)} {du}  ↑ {self._num(uv)} {uu}")
+                if v.reconstructed:
+                    # D5 - a session normally postdates the 2.2 upgrade (exact bytes), but a session
+                    # whose upgrade is deferred reads the old file: say the total is estimated.
+                    note = self._tr("USAGE_RECORDED_HISTORY_NOTE", "")
+                    if note:
+                        parts.append(note)
             except Exception:
                 pass
         return "    ·    ".join(parts)

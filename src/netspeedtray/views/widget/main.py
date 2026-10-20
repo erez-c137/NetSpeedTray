@@ -608,11 +608,30 @@ class NetworkSpeedWidget(QWidget):
         except Exception as e:
             self.logger.error("Error showing deferred database upgrade notice: %s", e, exc_info=True)
 
-    def _show_usage_alert(self, title: str, message: str) -> None:
+    def _on_db_history_upgraded(self) -> None:
+        """
+        This launch upgraded the history to v8 (2.2). Say so once, calmly: older days now read as
+        estimates and can total LESS than 2.1 showed - 2.1 over-counted quiet minutes - and the
+        data-cap count (the odometer) is unaffected. Without it the drop looks like lost history.
+        The persisted flag keeps it to one showing even if a v7 file is ever upgraded again.
+        """
+        try:
+            if self.config.get("history_upgrade_notice_shown", False):
+                return
+            self.logger.info("Surfacing the one-time history-upgraded notice.")
+            self._show_usage_alert(self.i18n.DB_UPGRADE_DONE_FLYOUT_TITLE,
+                                   self.i18n.DB_UPGRADE_DONE_FLYOUT_BODY,
+                                   auto_dismiss_ms=constants.timers.HISTORY_UPGRADE_NOTICE_MS)
+            self.config_controller.update_config({"history_upgrade_notice_shown": True},
+                                                 apply_and_repaint=False)
+        except Exception as e:
+            self.logger.error("Error showing the history-upgraded notice: %s", e, exc_info=True)
+
+    def _show_usage_alert(self, title: str, message: str, auto_dismiss_ms: int = 15000) -> None:
         """Show a data-cap usage alert via the flyout (no system-tray icon needed)."""
         try:
             from netspeedtray.views.flyout import Flyout
-            self._usage_alert_flyout = Flyout(title, message, auto_dismiss_ms=15000)
+            self._usage_alert_flyout = Flyout(title, message, auto_dismiss_ms=auto_dismiss_ms)
             geo = self.frameGeometry()
             self._usage_alert_flyout.show_at(QPoint(geo.left(), geo.top()))
         except Exception as e:
@@ -853,6 +872,7 @@ class NetworkSpeedWidget(QWidget):
             # connect has run.
             self.widget_state.db_schema_incompatible.connect(self._on_db_schema_incompatible)
             self.widget_state.db_migration_deferred.connect(self._on_db_migration_deferred)
+            self.widget_state.db_history_upgraded.connect(self._on_db_history_upgraded)
 
             # Start the monitoring thread
             self.monitor_thread.start()

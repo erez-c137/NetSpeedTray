@@ -75,8 +75,9 @@ class GraphHost(QObject):
     request_data_processing = pyqtSignal(object)
 
     #: machine-wide totals for the active period, emitted after a network render: (up_bytes,
-    #: down_bytes, period_key). The Network header band subscribes to show period totals.
-    network_totals_ready = pyqtSignal(float, float, str)
+    #: down_bytes, period_key, reconstructed). The Network header band subscribes to show period
+    #: totals; ``reconstructed`` (D5) = part of them was estimated from speeds saved before 2.2.
+    network_totals_ready = pyqtSignal(float, float, str, bool)
 
     #: live updates were turned on/off. Both tab headers' Live/Pause pills bind to this so the shared
     #: engine's one canonical state stays in sync no matter which tab toggled it.
@@ -98,6 +99,7 @@ class GraphHost(QObject):
         self._history_period_value = int(config.get("history_period_slider_value", 2))
         self._current_request_id = 0
         self._last_processed_id = -1
+        self._totals_reconstructed: Dict[int, bool] = {}   # sequence_id -> D5 flag (worker provenance)
         self.interface_filter = None          # None / "all" -> every interface
         self._show_loading_status = bool(config.get("show_loading", False))
         self._current_stat = "network"        # set per active tab via attach_to()
@@ -143,6 +145,7 @@ class GraphHost(QObject):
         self._thread = QThread()
         self.worker = GraphDataWorker(self._main_widget.widget_state)
         self.worker.moveToThread(self._thread)
+        self.worker.totals_provenance.connect(self._on_totals_provenance)
         self.worker.data_ready.connect(self._on_data_ready)
         self.worker.error.connect(lambda msg: self.logger.debug("graph worker error: %s", msg))
         self.request_data_processing.connect(self.worker.process_data)
@@ -351,9 +354,19 @@ class GraphHost(QObject):
             # machine-wide (interface filter None sums every NIC); for SESSION they reflect the active
             # interface mode (auto/selected/...), mirroring the standalone graph's session aggregation.
             if self._current_stat == "network":
-                self.network_totals_ready.emit(float(total_up or 0.0), float(total_down or 0.0), period_key)
+                recon = bool(self._totals_reconstructed.pop(sequence_id, False))
+                self.network_totals_ready.emit(float(total_up or 0.0), float(total_down or 0.0),
+                                               period_key, recon)
         except Exception as e:
             self.logger.error("GraphHost render error: %s", e, exc_info=True)
+
+    def _on_totals_provenance(self, sequence_id: int, reconstructed: bool) -> None:
+        """Remember whether the totals of reply ``sequence_id`` are partly estimated (D5) until its
+        data_ready arrives (the worker emits this first, from the same thread)."""
+        store = self._totals_reconstructed
+        store[int(sequence_id)] = bool(reconstructed)
+        for old in [k for k in store if k < sequence_id - 16]:   # replies that were dropped
+            store.pop(old, None)
 
     # ------------------------------------------------------------------ teardown
 
@@ -384,6 +397,7 @@ class GraphHost(QObject):
         try:
             if self.worker is not None:
                 self.worker.data_ready.disconnect(self._on_data_ready)
+                self.worker.totals_provenance.disconnect(self._on_totals_provenance)
                 self.request_data_processing.disconnect(self.worker.process_data)
         except Exception:
             pass

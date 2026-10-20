@@ -45,6 +45,9 @@ class LayoutConstants:
     # from jumping vertically when the user switches tabs. Tab body content gets this side inset so it
     # lines up under the band's controls.
     MONITOR_HEADER_BAND_HEIGHT: Final[int] = 56
+    # The Network header's "From recorded history" note (D5): a wrapped caption beside the totals.
+    MONITOR_HISTORY_NOTE_MIN_WIDTH: Final[int] = 160
+    MONITOR_HISTORY_NOTE_MAX_WIDTH: Final[int] = 300
     MONITOR_BODY_MARGIN: Final[int] = 16
     # Gap between the right-cluster command-band controls (NIC / timeline / Live). Shared by every tab
     # so the spacing around the Live pill is identical on Network and Hardware.

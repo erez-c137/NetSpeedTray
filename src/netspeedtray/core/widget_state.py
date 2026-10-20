@@ -86,6 +86,9 @@ class WidgetState(QObject):
     # could not complete this launch, so nothing is recorded until the next start. Same queued
     # delivery as above, so the flyout is wired before it can fire.
     db_migration_deferred = pyqtSignal(str)
+    # Re-emitted from DatabaseWorker.history_upgraded: this launch upgraded the history to v8 (the
+    # one-time "history upgraded" flyout). Same queued delivery as above.
+    db_history_upgraded = pyqtSignal()
     # Re-emitted from DatabaseWorker.history_deleted (a DatabaseWorker.DELETE_* status), queued onto
     # the GUI thread.
     history_deleted = pyqtSignal(str)
@@ -134,6 +137,7 @@ class WidgetState(QObject):
         # Connected BEFORE start() so the worker can never trip either while nothing is wired.
         self.db_worker.schema_incompatible.connect(self.db_schema_incompatible)
         self.db_worker.migration_deferred.connect(self.db_migration_deferred)
+        self.db_worker.history_upgraded.connect(self.db_history_upgraded)
         self.db_worker.history_deleted.connect(self.history_deleted)
         if not read_only:
             self.db_worker.start()
