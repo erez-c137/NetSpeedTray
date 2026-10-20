@@ -250,3 +250,100 @@ def test_installer_passes_the_same_timeout():
     m = re.search(r'#define ShutdownTimeoutSec "(\d+)"', iss)
     assert m and float(m.group(1)) == constants.app.SHUTDOWN_DEFAULT_TIMEOUT_S
     assert "--shutdown --timeout {#ShutdownTimeoutSec}" in iss
+
+
+# --- review fixes ---------------------------------------------------------------------------------
+
+def _cleanup_fake():
+    fake = types.SimpleNamespace(
+        logger=MagicMock(), _hover_card_timer=MagicMock(), _hide_usage_hover_card=MagicMock(),
+        system_event_handler=MagicMock(), position_manager=MagicMock(), _state_watcher_timer=MagicMock(),
+        monitor_thread=MagicMock(), latency_probe=MagicMock(), metrics_endpoint=MagicMock(),
+        controller=MagicMock(), widget_state=MagicMock(), monitor_window=None,
+        config={"free_move": False, "free_float": True}, config_manager=MagicMock(),
+        update_config=MagicMock(), pos=MagicMock())
+    fake.position_manager.is_floating.return_value = False
+    return fake
+
+
+def test_cleanup_early_failure_still_flushes_db_and_saves_config():
+    """A teardown step that raises (here the event hooks) must not skip the history flush or the
+    final config save - and the aboutToQuit retry must not be what rescues them."""
+    from netspeedtray.views.widget.main import NetworkSpeedWidget
+    fake = _cleanup_fake()
+    fake.system_event_handler.stop.side_effect = RuntimeError("hook will not unhook")
+    NetworkSpeedWidget.cleanup(fake)
+    fake.widget_state.cleanup.assert_called_once_with()
+    fake.config_manager.save.assert_called_once_with(fake.config)
+    fake.monitor_thread.stop.assert_called_once_with()
+    fake.metrics_endpoint.stop.assert_called_once_with()
+    NetworkSpeedWidget.cleanup(fake)              # the aboutToQuit pass
+    fake.widget_state.cleanup.assert_called_once_with()
+    fake.config_manager.save.assert_called_once_with(fake.config)
+
+
+def test_widget_rearms_on_winid_change_without_creating_a_window(monkeypatch):
+    """WinIdChange (create / recreate, e.g. #327's re-dock) re-arms on the new HWND via
+    internalWinId(), which never creates a window - so a teardown (id 0) is skipped."""
+    from netspeedtray.views.widget.main import NetworkSpeedWidget
+    armed = []
+    monkeypatch.setattr("netspeedtray.views.widget.main.shutdown_channel.arm_window",
+                        lambda hwnd: armed.append(hwnd) or True)
+    fake = types.SimpleNamespace(logger=MagicMock(), winId=MagicMock(side_effect=AssertionError("creates")),
+                                 internalWinId=MagicMock(return_value=0x303), _shutdown_armed_hwnd=0)
+    NetworkSpeedWidget._arm_shutdown_channel(fake, create=False)
+    fake.internalWinId.return_value = 0           # being destroyed
+    NetworkSpeedWidget._arm_shutdown_channel(fake, create=False)
+    assert armed == [0x303]
+
+
+def test_widget_event_routes_winid_change_to_arming():
+    from PyQt6.QtCore import QEvent
+    from netspeedtray.views.widget.main import NetworkSpeedWidget
+    calls = []
+    fake = types.SimpleNamespace(_arm_shutdown_channel=lambda create=True: calls.append(create))
+    with pytest.raises(TypeError):
+        # super().event() on a non-QWidget fake raises after our branch has run - fine for this check.
+        NetworkSpeedWidget.event(fake, QEvent(QEvent.Type.WinIdChange))
+    assert calls == [False]
+
+
+def test_widget_arms_before_first_show():
+    """A starting instance must be reachable before its (500 ms delayed) first show: __init__ arms
+    the channel itself, ahead of scheduling the show."""
+    import inspect
+    from netspeedtray.views.widget.main import NetworkSpeedWidget
+    src = inspect.getsource(NetworkSpeedWidget.__init__)
+    assert "self._arm_shutdown_channel()" in src
+    assert src.index("self._arm_shutdown_channel()") < src.index("_delayed_initial_show")
+
+
+def test_shutdown_hard_deadline_is_armed_first_and_bounded():
+    import inspect
+    import monitor
+    fired = []
+    t = monitor._arm_shutdown_deadline(["--shutdown", "--timeout", "4"], exit_fn=fired.append)
+    try:
+        assert t.interval == 4 + monitor._SHUTDOWN_DEADLINE_GRACE_S
+        assert t.daemon and t.is_alive()
+    finally:
+        t.cancel()
+    t2 = monitor._arm_shutdown_deadline(["--shutdown"], exit_fn=fired.append)
+    t2.cancel()
+    assert t2.interval == constants.app.SHUTDOWN_DEFAULT_TIMEOUT_S + monitor._SHUTDOWN_DEADLINE_GRACE_S
+    assert monitor._arm_shutdown_deadline(["--export-csv"]) is None
+    assert fired == []
+    # Armed at import, before PyQt6 / pywin32 / the app load.
+    src = inspect.getsource(monitor)
+    call = src.index("_shutdown_deadline = _arm_shutdown_deadline(")
+    assert call < src.index("from PyQt6") and call < src.index("import win32api")
+
+
+def test_shutdown_hard_deadline_fires_exit_1(monkeypatch):
+    import time
+    import monitor
+    fired = []
+    monkeypatch.setattr(monitor, "_SHUTDOWN_DEADLINE_GRACE_S", 0.0)
+    monitor._arm_shutdown_deadline(["--shutdown", "--timeout", "0.05"], exit_fn=fired.append)
+    time.sleep(0.4)
+    assert fired == [1]

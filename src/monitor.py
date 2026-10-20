@@ -17,7 +17,39 @@ import logging
 import signal
 import sys
 import os
-from typing import Optional
+import threading
+from typing import Callable, List, Optional
+
+# `--shutdown` hard deadline. Must stay the same as constants.app.SHUTDOWN_DEFAULT_TIMEOUT_S (a unit
+# test pins it); duplicated as a literal because this runs before anything from netspeedtray loads.
+_SHUTDOWN_DEFAULT_TIMEOUT_S = 30.0
+_SHUTDOWN_DEADLINE_GRACE_S = 5.0
+
+
+def _arm_shutdown_deadline(argv: List[str],
+                           exit_fn: Callable[[int], None] = os._exit) -> Optional[threading.Timer]:
+    """For `--shutdown [--timeout N]`, arm a hard process deadline of N + 5 s before anything else
+    runs. Setup waits for this process with Inno's Exec, which has no timeout of its own, so a wedge
+    anywhere - an import, a DLL load, the log file, the wait itself - must never hang the installer.
+    Past the deadline the process exits 1 ("still running"), and Setup falls back to taskkill."""
+    if "--shutdown" not in argv:
+        return None
+    timeout = _SHUTDOWN_DEFAULT_TIMEOUT_S
+    if "--timeout" in argv:
+        try:
+            value = float(argv[argv.index("--timeout") + 1])
+            if value > 0:
+                timeout = value
+        except (IndexError, ValueError):
+            pass
+    timer = threading.Timer(timeout + _SHUTDOWN_DEADLINE_GRACE_S, exit_fn, args=(1,))
+    timer.daemon = True
+    timer.start()
+    return timer
+
+
+# Armed at import, ahead of the Qt / pywin32 / app imports below.
+_shutdown_deadline = _arm_shutdown_deadline(sys.argv[1:]) if __name__ == "__main__" else None
 
 import win32api
 import win32event

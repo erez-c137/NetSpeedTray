@@ -42,7 +42,6 @@ _MSGFLT_ALLOW = 1
 _SYNCHRONIZE = 0x00100000
 _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 _WAIT_OBJECT_0 = 0
-_STILL_ACTIVE = 259
 
 _user32 = ctypes.WinDLL("user32", use_last_error=True)
 _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -73,8 +72,6 @@ _kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
 _kernel32.OpenProcess.restype = wintypes.HANDLE
 _kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
 _kernel32.WaitForSingleObject.restype = wintypes.DWORD
-_kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
-_kernel32.GetExitCodeProcess.restype = wintypes.BOOL
 _kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
 _kernel32.CloseHandle.restype = wintypes.BOOL
 
