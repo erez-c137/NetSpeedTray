@@ -975,9 +975,10 @@ class WidgetState(QObject):
     def persist_essentials(self, timeout: float = 2.0) -> None:
         """Windows is ending the session: queue the last history batch and the odometer tail, and wait
         (bounded by ``timeout``) for the database thread to write them. Stops nothing - the full
-        cleanup() may never get to run before the process is ended."""
+        cleanup() may never get to run before the process is ended. A data-usage reset still waiting
+        for its delete's answer is settled by the write thread (persist_usage_final)."""
         self.flush_batch()
-        self._persist_usage_now()
+        self.persist_usage_final()
         self.flush_and_wait(timeout=timeout)
 
     def cleanup(self) -> None:

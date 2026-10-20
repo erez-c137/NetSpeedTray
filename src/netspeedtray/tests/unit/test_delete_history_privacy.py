@@ -656,8 +656,10 @@ def test_a_failed_reset_while_opening_keeps_the_buffered_polls(tmp_path, q_app, 
         s.cleanup()
 
 
+@pytest.mark.parametrize("path", ["quit", "logoff"])
 @pytest.mark.parametrize("fails", [False, True])
-def test_quitting_with_a_reset_unanswered_persists_the_matching_odometer(tmp_path, q_app, no_retry_sleep, fails):
+def test_quitting_with_a_reset_unanswered_persists_the_matching_odometer(tmp_path, q_app, no_retry_sleep, fails,
+                                                                          path):
     """Review #376 item 6: at session end the GUI may not have heard the delete's answer yet, and the
     pending reset made the final persist a no-op - the traffic since the request was lost. Now the
     write thread (which ran the delete first) persists the outcome that matches."""
@@ -670,7 +672,10 @@ def test_quitting_with_a_reset_unanswered_persists_the_matching_odometer(tmp_pat
         s.db_worker.history_deleted.disconnect(s._on_worker_history_deleted)   # the answer never lands
         s.delete_all_history(include_usage=True)
         s.add_usage_bytes(10.0, 20.0)
-        s.persist_usage_final()                       # what cleanup() calls at quit
+        if path == "quit":
+            s.persist_usage_final()                   # what cleanup() calls at quit
+        else:
+            s.persist_essentials(timeout=0.1)         # Windows ending the session (#377's logoff path)
 
         def boom(self, include_usage=False, now_ts=None):
             raise sqlite3.OperationalError("database is locked")
