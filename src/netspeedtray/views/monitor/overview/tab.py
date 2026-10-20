@@ -703,12 +703,18 @@ class OverviewTab(QWidget):
         start, end, _is_session = self._window()
         label = self._timeline.current_label() if hasattr(self._timeline, "current_label") \
             else self._period_key()
+        sheet = None
         try:
             sheet = StatsDetailSheet(ws, subjects, (start, end, label), self._config, self._i18n,
                                      app_version=__version__, parent=self.window())
             sheet.exec()
         except Exception as e:
             self.logger.error("Could not open stats detail: %s", e, exc_info=True)
+        finally:
+            # Parented to the Monitor window, so without this every opened sheet stayed alive as its
+            # child until the Monitor closed. exec() has stopped the sheet's reader thread by now.
+            if sheet is not None:
+                sheet.deleteLater()
 
     def _open_connection_check(self) -> None:
         """The hero's "Check connection" action - the one-shot report sheet (2.2 D3)."""

@@ -347,3 +347,83 @@ def test_a_late_result_never_touches_a_deleted_sheet(q_app):
         QApplication.processEvents()
         time.sleep(0.005)
     assert not sheet._loaded
+
+
+def test_the_loaded_sheet_stays_on_screen(q_app):
+    """Review: the sheet is shown (and centred) at its small loading size, then grows downward from
+    the same top-left - a 3-block network sheet ended with its footer below the screen. After loading
+    it must be re-centred on its parent and kept inside the screen's available area."""
+    from PyQt6.QtWidgets import QWidget
+    parent = QWidget()
+    avail = parent.screen().availableGeometry()
+    # A parent low on the screen: its centre is ~150 px above the bottom edge.
+    parent.setGeometry(avail.left() + 100, avail.bottom() - 350, 900, 300)
+    parent.show()
+    try:
+        # The network sheet's three blocks (download, upload, latency), as in the review.
+        sheet = StatsDetailSheet(_ThreadRecordingWS(), _ALL_KINDS[:3], _window(), _cfg(),
+                                 I18nStrings("en_US"), parent=parent)
+        sheet.show()
+        q_app.processEvents()
+        small = sheet.frameGeometry()
+        _wait_loaded(sheet)
+        q_app.processEvents()
+        fg = sheet.frameGeometry()
+        assert fg.height() > small.height()               # it really grew (blocks replaced the line)
+        if fg.height() > avail.height():
+            pytest.skip(f"this screen ({avail.height()} px) is shorter than the sheet ({fg.height()} px)")
+        assert avail.contains(fg), (fg, avail)
+        sheet.done(0)
+        sheet.deleteLater()
+    finally:
+        parent.close()
+        parent.deleteLater()
+
+
+class _InterruptibleWS(_ThreadRecordingWS):
+    """interrupt_reads aborts the held read at once, the way sqlite3_interrupt aborts a query."""
+    def __init__(self, gate):
+        super().__init__(gate=gate)
+        self.interrupted = []
+
+    def interrupt_reads(self, thread_id=None):
+        self.interrupted.append(thread_id)
+        self.gate.set()
+
+
+def test_closing_mid_load_interrupts_at_once(q_app):
+    """Review: closing during a load blocked the UI ~0.7 s (GRAPH_THREAD_QUIT_WAIT_MS) waiting for a
+    result that is thrown away anyway. Close interrupts the reader's query first."""
+    import threading
+    import time
+    from PyQt6.QtWidgets import QApplication
+    ws = _InterruptibleWS(threading.Event())
+    sheet = StatsDetailSheet(ws, _ALL_KINDS, _window(), _cfg(), I18nStrings("en_US"))
+    deadline = time.monotonic() + 5.0
+    while (sheet._thread_ident is None or not ws.threads) and time.monotonic() < deadline:
+        QApplication.processEvents()
+        time.sleep(0.005)
+    reader = sheet._thread_ident
+    assert reader is not None and ws.threads == [reader]   # the first read is in flight, held
+    t0 = time.perf_counter()
+    sheet.reject()
+    assert time.perf_counter() - t0 < 0.4, "close waited for a result it discards"
+    assert ws.interrupted and ws.interrupted[0] == reader
+    assert not sheet.is_loaded()
+
+
+def test_overview_frees_each_sheet_after_it_closes(q_app, monkeypatch):
+    """Review (pre-existing): the Overview parents each sheet to the Monitor window and exec()s it, but
+    never deleted it - every opened sheet stayed alive as a child until the Monitor closed."""
+    from PyQt6.QtCore import QEvent
+    from PyQt6.QtWidgets import QApplication, QDialog
+    from netspeedtray.views.monitor.overview.tab import OverviewTab
+    from netspeedtray.tests.unit.test_overview_tiles import _MW, _cfg as _ov_cfg
+    monkeypatch.setattr(QDialog, "exec", lambda self: 0)   # the user closes it straight away
+    ov = OverviewTab(_MW(), _ov_cfg(), I18nStrings("en_US"))
+    for _ in range(3):
+        ov._open_detail("network")
+    QApplication.processEvents()
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    assert ov.window().findChildren(StatsDetailSheet) == []
+    ov.deleteLater()

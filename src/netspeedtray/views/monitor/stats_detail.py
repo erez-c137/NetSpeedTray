@@ -292,13 +292,36 @@ class StatsDetailSheet(QDialog):
             block = self._build_block(subj, self._c, data)
             if block is not None:
                 root.insertWidget(at, block)
+                block.show()   # a layout only queues the show for a visible parent: size it now
                 at += 1
         self._loaded = True
         self._copy_btn.setEnabled(True)
+        root.activate()        # the new blocks' size now, not at the next LayoutRequest
         self.adjustSize()
+        self._recentre()
 
-    def _stop_loader(self) -> None:
-        """Stop + release the reader thread (bounded; see stop_reader_thread). Idempotent."""
+    def _recentre(self) -> None:
+        """The sheet was shown (and centred) at its small loading size and then grew downward from the
+        same top-left - with three blocks its footer ended up below the screen. Re-centre it on its
+        parent and keep it inside that screen's available area (top edge wins if it is taller)."""
+        if not self.isVisible():
+            return
+        par = self.parentWidget()
+        screen = (par.screen() if par is not None else None) or self.screen()
+        if screen is None:
+            return
+        avail = screen.availableGeometry()
+        frame = self.frameGeometry()
+        fw, fh = frame.width(), frame.height()
+        centre = par.window().frameGeometry().center() if par is not None else avail.center()
+        x = max(avail.left(), min(centre.x() - fw // 2, avail.right() + 1 - fw))
+        y = max(avail.top(), min(centre.y() - fh // 2, avail.bottom() + 1 - fh))
+        self.move(x, y)
+
+    def _stop_loader(self, interrupt_first: bool = False) -> None:
+        """Stop + release the reader thread (bounded; see stop_reader_thread). Idempotent.
+        ``interrupt_first``: the result is unwanted (the sheet is closing), so abort a running query
+        straight away instead of first giving it GRAPH_THREAD_QUIT_WAIT_MS to finish."""
         thread, loader = self._thread, self._loader
         self._thread = self._loader = None
         if thread is None:
@@ -308,6 +331,13 @@ class StatsDetailSheet(QDialog):
             self._load_requested.disconnect(loader.run)
         except (TypeError, RuntimeError):
             pass
+        if interrupt_first and thread.isRunning():
+            interrupt = getattr(self._ws, "interrupt_reads", None)
+            if interrupt is not None and self._thread_ident is not None:
+                try:
+                    interrupt(thread_id=self._thread_ident)
+                except Exception:
+                    pass
         if stop_reader_thread(thread, loader, self._ws, self._thread_ident, self.logger):
             loader.deleteLater()
             thread.deleteLater()
@@ -315,7 +345,7 @@ class StatsDetailSheet(QDialog):
     def _close_loader(self) -> None:
         self._closed = True
         self._load_seq += 1   # anything still in flight is now stale
-        self._stop_loader()
+        self._stop_loader(interrupt_first=True)
 
     def done(self, r: int) -> None:  # Qt override
         self._close_loader()
