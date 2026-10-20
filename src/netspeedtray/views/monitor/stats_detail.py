@@ -336,13 +336,17 @@ class StatsDetailSheet(QDialog):
         """(WindowSummary, raw (ts,value) pairs for context, loss_pct or None)."""
         ws = self._ws
         loss = None
+        # Built on the GUI thread: never wait on the DB write thread's flush barrier (up to 2 s per
+        # call - the download+upload sheet froze the UI 2-4 s in 2.2.0-beta.1). The summaries above
+        # each series read without waiting too, so the figures and the context line stay consistent;
+        # at most the last ~10 s batch is missing from a window of hours.
         try:
             if kind == "net_down":
                 summ = ws.summarize_network("download", self._start, self._end, None, self._poll)
-                pairs = [(r[0], r[2]) for r in ws.get_speed_history(self._start, self._end, None, resolution='auto')]
+                pairs = [(r[0], r[2]) for r in ws.get_speed_history(self._start, self._end, None, resolution='auto', wait_for_flush=False)]
             elif kind == "net_up":
                 summ = ws.summarize_network("upload", self._start, self._end, None, self._poll)
-                pairs = [(r[0], r[1]) for r in ws.get_speed_history(self._start, self._end, None, resolution='auto')]
+                pairs = [(r[0], r[1]) for r in ws.get_speed_history(self._start, self._end, None, resolution='auto', wait_for_flush=False)]
             else:
                 summ = ws.summarize_hardware(key, self._start, self._end, self._poll)
                 pairs = ws.get_hardware_history(key, self._start, self._end)

@@ -154,7 +154,7 @@ def _pdh_returning(raw_by_poll):
     import itertools
     pdh = MagicMock()
     pdh.OpenQuery.return_value = 7
-    pdh.EnumObjectItems.return_value = (None, ["\_TZ.TZ00"])
+    pdh.EnumObjectItems.return_value = (None, [r"\_TZ.TZ00"])
     handles = itertools.count(100)
     pdh.AddCounter.side_effect = lambda q, path: next(handles)   # 100 = HP, 101 = standard
     values = iter(raw_by_poll)

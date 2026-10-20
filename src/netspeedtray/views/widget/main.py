@@ -65,6 +65,12 @@ class _NativeMSG(ctypes.Structure):
     ]
 
 _WM_POWERBROADCAST = 0x0218
+_WM_QUERYENDSESSION = 0x0011
+_WM_ENDSESSION = 0x0016
+# Inside WM_QUERYENDSESSION / WM_ENDSESSION, how long the odometer + last history batch may wait for
+# the database thread. Windows ends a logging-off app ~5 s after asking; the config save (an atomic
+# file write, milliseconds) runs first, so this bounded wait is all that can use the budget.
+_SESSION_END_DB_WAIT_S = 2.0
 _PBT_APMRESUMESUSPEND = 0x0007
 _PBT_APMRESUMEAUTOMATIC = 0x0012
 
@@ -1404,6 +1410,15 @@ class NetworkSpeedWidget(QWidget):
                     self.logger.info("Shutdown requested by another process (installer/--shutdown) - exiting cleanly.")
                     QTimer.singleShot(0, self.fully_exit_application)
                     return True, 0
+                if msg.message == _WM_QUERYENDSESSION or (msg.message == _WM_ENDSESSION and msg.wParam):
+                    # Logoff / shutdown / restart. The normal quit path (closeEvent -> cleanup) never
+                    # runs: Windows terminates us soon after WM_ENDSESSION returns, so the essential
+                    # saves happen HERE, synchronously, inside its ~5 s budget. Observe only - Qt
+                    # still answers (TRUE: never veto the logoff). Repeating it on ENDSESSION is
+                    # cheap and catches anything changed in between.
+                    self._save_session_essentials(
+                        "query-end-session" if msg.message == _WM_QUERYENDSESSION else "end-session")
+                    return False, 0
                 if msg.message == _WM_POWERBROADCAST and msg.wParam in (
                     _PBT_APMRESUMESUSPEND, _PBT_APMRESUMEAUTOMATIC
                 ):
@@ -1710,6 +1725,9 @@ class NetworkSpeedWidget(QWidget):
         most once, ever (session flag + persisted config flag)."""
         try:
             if self._widgets_nudge_shown or self.config.get("widgets_overlap_nudge_shown", False):
+                # Nothing else reads the Widgets rect: stop probing for it (taskbar_utils).
+                from netspeedtray.utils.taskbar_utils import set_widgets_probe_enabled
+                set_widgets_probe_enabled(False)
                 return
             widgets_rect = getattr(taskbar_info, "widgets_rect", None)
             if not widgets_rect:
@@ -1721,6 +1739,8 @@ class NetworkSpeedWidget(QWidget):
             # Latch immediately so a re-entrant refresh (or the deferred call below) can't double-fire.
             self._widgets_nudge_shown = True
             self.update_config({"widgets_overlap_nudge_shown": True})
+            from netspeedtray.utils.taskbar_utils import set_widgets_probe_enabled
+            set_widgets_probe_enabled(False)
             title = getattr(self.i18n, "WIDGETS_OVERLAP_NUDGE_TITLE", "NetSpeedTray overlaps the Widgets panel")
             body = getattr(
                 self.i18n, "WIDGETS_OVERLAP_NUDGE_BODY",
@@ -1892,6 +1912,44 @@ class NetworkSpeedWidget(QWidget):
         return []
 
 
+    def _capture_position_config(self) -> None:
+        """Put the widget's current spot into self.config (not saved here).
+
+        Persist the absolute spot when it's actively floating (Free Move or #188 free-float). Only CLEAR
+        the saved coords when the widget is genuinely docked - i.e. BOTH free_move and free_float are
+        OFF in config. Crucially we do NOT clear just because the free-float display is currently
+        absent (asleep/unplugged): is_floating() is runtime state, so gating the clear on it would wipe
+        a user's dragged spot every time the accessory panel sleeps. (config_controller clears on an
+        explicit switch to docked.) (#188)"""
+        if self.position_manager and self.position_manager.is_floating():
+            pos = self.pos()
+            self.update_config({"position_x": pos.x(), "position_y": pos.y()}, save_to_disk=False)
+        elif not self.config.get("free_move", False) and not self.config.get("free_float", True):
+            self.update_config({"position_x": None, "position_y": None}, save_to_disk=False)
+        # else: free-float-capable but the display is temporarily absent -> keep the saved spot.
+
+    def _save_session_essentials(self, reason: str) -> None:
+        """The saves that must survive a logoff/shutdown, inside Windows' ~5 s WM_ENDSESSION budget:
+        the widget position + config (an atomic file write) first, then the odometer tail and the
+        last history batch, waited for at most _SESSION_END_DB_WAIT_S. Nothing here stops a thread or
+        waits DB_SHUTDOWN_WAIT_MS; the database thread keeps draining best-effort until the process
+        ends. Each step is guarded, so a failing one never skips the next."""
+        self.logger.info("Windows session ending (%s): saving settings and the usage counter.", reason)
+
+        def _odometer() -> None:
+            if getattr(self, "widget_state", None):
+                self.widget_state.persist_essentials(timeout=_SESSION_END_DB_WAIT_S)
+
+        for name, fn in (
+            ("position config", self._capture_position_config),
+            ("config save", lambda: self.config_manager.save(self.config)),
+            ("odometer + history", _odometer),
+        ):
+            try:
+                fn()
+            except Exception as e:
+                self.logger.error("Session-end step '%s' failed: %s", name, e, exc_info=True)
+
     def cleanup(self) -> None:
         """Performs necessary cleanup and a single, final save of the configuration.
 
@@ -1968,30 +2026,26 @@ class NetworkSpeedWidget(QWidget):
                     self.monitor_window = None
 
         def _position_config() -> None:
-            # Persist the widget's absolute spot when it's actively floating (Free Move or #188
-            # free-float). Only CLEAR the saved coords when the widget is genuinely docked - i.e. BOTH
-            # free_move and free_float are OFF in config. Crucially we do NOT clear just because the
-            # free-float display is currently absent (asleep/unplugged): is_floating() is runtime state,
-            # so gating the clear on it would wipe a user's dragged spot every time the accessory panel
-            # sleeps. (config_controller clears on an explicit switch to docked.) (#188)
-            if self.position_manager and self.position_manager.is_floating():
-                pos = self.pos()
-                self.update_config({"position_x": pos.x(), "position_y": pos.y()}, save_to_disk=False)
-            elif not self.config.get("free_move", False) and not self.config.get("free_float", True):
-                self.update_config({"position_x": None, "position_y": None}, save_to_disk=False)
-            # else: free-float-capable but the display is temporarily absent -> keep the saved spot.
+            self._capture_position_config()
 
         def _config_save() -> None:
             self.logger.debug("Performing final configuration save...")
             self.config_manager.save(self.config)
 
+        # Order matters (2.2.0-beta.1 lifecycle review):
+        # * "monitor window" before "history flush": closing the Monitor stops + joins its graph worker
+        #   (bounded), which closes its own read connection - WidgetState.cleanup() must never find a
+        #   reader mid-query. It also persists the Monitor's geometry into self.config.
+        # * "config save" before "history flush": the DB step can wait DB_SHUTDOWN_WAIT_MS (15 s) for a
+        #   busy database thread, and a logoff ends the process ~5 s in - the save must already be done.
         steps = (
             ("hover card", _hover_card), ("event hooks", _event_hooks),
             ("position manager", _position_manager), ("state watcher", _state_watcher),
+            ("monitor window", _monitor_window),
             ("monitor thread", _monitor_thread), ("latency probe", _latency_probe),
             ("metrics endpoint", _metrics_endpoint), ("controller", _controller),
-            ("history flush", _history_flush), ("monitor window", _monitor_window),
             ("position config", _position_config), ("config save", _config_save),
+            ("history flush", _history_flush),
         )
         try:
             for name, fn in steps:

@@ -243,7 +243,12 @@ class DatabaseWorker(QThread):
                     self._retry_pending_compaction()   # throttled; idle ticks only
                 continue
             if item is None:
-                continue  # wake-up sentinel from stop(); re-check the loop condition
+                # Wake-up sentinel from stop(). Everything enqueued before it is done; with the queue
+                # empty, exit now rather than idling out one more 0.5 s get() (that was 0.5 s on
+                # every quit).
+                if self._stop_event.is_set() and self._queue.empty():
+                    break
+                continue
             task, data = item
             try:
                 self._execute_task(task, data)
