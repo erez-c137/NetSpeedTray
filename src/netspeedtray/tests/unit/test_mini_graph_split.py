@@ -272,6 +272,9 @@ def _size(edge, badge=0, **config):
     tb.get_edge_position.return_value = edge
     tb.dpi_scale = 1.0
     tb.height = 48
+    # The taskbar window itself (#343 caps the docked height by it): 48 px along the bottom, or
+    # the 140 px side strip.
+    tb.rect = (0, 1392, 2560, 1440) if edge == constants.TaskbarEdge.BOTTOM else (0, 0, 140, 1440)
     with patch("netspeedtray.views.widget.layout.get_taskbar_info", return_value=tb), \
             patch("netspeedtray.views.widget.layout.is_small_taskbar", return_value=False), \
             patch("netspeedtray.utils.taskbar_utils.get_free_float_screen", return_value=None):
