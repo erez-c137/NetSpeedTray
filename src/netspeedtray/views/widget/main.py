@@ -68,7 +68,7 @@ _WM_POWERBROADCAST = 0x0218
 _PBT_APMRESUMESUSPEND = 0x0007
 _PBT_APMRESUMEAUTOMATIC = 0x0012
 
-# The installer's graceful-close request (`--shutdown`, core/shutdown_channel.py). A registered
+# The installer's graceful-close request (setup.iss [Code], or `--shutdown`; core/shutdown_channel.py). A registered
 # message: one system-wide atom per string, so resolving it once at import is correct. 0 = failed,
 # and nativeEvent then never matches (WM_NULL is 0, so the guard matters).
 try:
@@ -221,7 +221,7 @@ class NetworkSpeedWidget(QWidget):
             self.position_manager.update_position()
             self._synchronize_startup_task()
             self.apply_metrics_endpoint()   # opt-in, off by default: a no-op unless the user enabled it
-            # Reachable by the installer's --shutdown from here on, not only once first shown.
+            # Reachable by the installer's shutdown request from here on, not only once first shown.
             self._arm_shutdown_channel()
 
             QTimer.singleShot(0, self._delayed_initial_show)
@@ -1281,7 +1281,7 @@ class NetworkSpeedWidget(QWidget):
 
     def _arm_shutdown_channel(self, create: bool = True) -> None:
         """
-        Make this window the target of `NetSpeedTray.exe --shutdown` (the installer's graceful close):
+        Make this window the target of the installer's graceful close (setup.iss, or `--shutdown`):
         mark it and let the message through UIPI, so an unelevated sender reaches an elevated app.
         Idempotent per native window; re-armed when Qt hands us a new HWND. Called at the end of
         __init__ (create=True realizes the HWND, so a starting, not-yet-shown instance is already

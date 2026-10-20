@@ -6,9 +6,11 @@
 #define MyAppExeName "NetSpeedTray.exe"
 #define MyAppMutex "Global\NetSpeedTray_SingleInstanceMutex"
 #define MyAppId "{{D3A32B89-C533-4F2C-9F87-23B2395B5B89}}"
-; Registry key of the installed copy ("{{" is Inno's escaped "{"; the stored AppId keeps the "}}").
-#define MyAppUninstallKey "Software\Microsoft\Windows\CurrentVersion\Uninstall\" + StringChange(MyAppId, "{{", "{") + "_is1"
-; Seconds `--shutdown` waits for the running app to exit before Setup falls back to taskkill.
+; Graceful-shutdown channel - a wire protocol with the running app. Must match
+; constants.app.SHUTDOWN_MESSAGE_NAME / SHUTDOWN_WINDOW_PROP (a unit test pins both).
+#define ShutdownMessageName "NetSpeedTray_Shutdown_v1"
+#define ShutdownWindowProp "NetSpeedTray_ShutdownTarget_v1"
+; Seconds Setup waits for the running app to exit after asking it to quit, before taskkill.
 ; Mirrors constants.app.SHUTDOWN_DEFAULT_TIMEOUT_S: must outlast the app's own worst clean quit
 ; (1.5 s latency-probe join + the 15 s DB_SHUTDOWN_WAIT_MS bound when quit lands mid-migration, after
 ; which the app exits hard by itself). A normal quit returns in ~1 s; this is only the ceiling.
@@ -134,6 +136,26 @@ function OpenMutex(dwDesiredAccess: LongWord; bInheritHandle: Boolean; lpName: s
   external 'OpenMutexW@kernel32.dll stdcall';
 function CloseHandle(hObject: THandle): Boolean;
   external 'CloseHandle@kernel32.dll stdcall';
+// Graceful-shutdown channel (see TryGracefulClose). Win-prefixed so nothing clashes with Inno's own
+// support functions. Setup is a 32-bit process, so HWND / LPARAM fit in Longint.
+function WinRegisterWindowMessage(lpString: string): Cardinal;
+  external 'RegisterWindowMessageW@user32.dll stdcall';
+function WinEnumWindows(lpEnumFunc: Longword; lParam: Longint): Integer;
+  external 'EnumWindows@user32.dll stdcall';
+function WinGetProp(hWnd: HWND; lpString: string): THandle;
+  external 'GetPropW@user32.dll stdcall';
+function WinGetWindowThreadProcessId(hWnd: HWND; var lpdwProcessId: Longword): Longword;
+  external 'GetWindowThreadProcessId@user32.dll stdcall';
+function WinPostMessage(hWnd: HWND; Msg: Cardinal; wParam, lParam: Longint): Integer;
+  external 'PostMessageW@user32.dll stdcall';
+function WinIsWindow(hWnd: HWND): Integer;
+  external 'IsWindow@user32.dll stdcall';
+function WinOpenProcess(dwDesiredAccess: Longword; bInheritHandle: Integer; dwProcessId: Longword): THandle;
+  external 'OpenProcess@kernel32.dll stdcall';
+function WinWaitForSingleObject(hHandle: THandle; dwMilliseconds: Longword): Longword;
+  external 'WaitForSingleObject@kernel32.dll stdcall';
+function WinGetTickCount(): Longword;
+  external 'GetTickCount@kernel32.dll stdcall';
 
 // --- Helper Functions ---
 function ShellIsRunning(): Boolean;
@@ -179,53 +201,121 @@ begin
   end;
 end;
 
-// The installed exe, which is what `--shutdown` is run from. In the uninstaller that is simply {app};
-// in Setup {app} cannot be expanded yet during InitializeSetup, so read the previous install's
-// location from its uninstall key (Inno writes "Inno Setup: App Path" there). Empty = not found.
-function InstalledExePath(): string;
+// Windows marked by the running app as its shutdown target, filled by CollectShutdownTarget.
 var
-  AppDir: string;
+  ShutdownWnds: array of HWND;
+  ShutdownPids: array of Longword;
+
+// EnumWindows callback: record every top-level window carrying the app's shutdown property.
+function CollectShutdownTarget(Wnd: HWND; Param: Longint): Integer;
+var
+  Pid: Longword;
+  N: Integer;
 begin
-  Result := '';
-  if IsUninstaller() then
-    AppDir := ExpandConstant('{app}')
-  else if not RegQueryStringValue(HKLM64, '{#MyAppUninstallKey}', 'Inno Setup: App Path', AppDir) then
-    if not RegQueryStringValue(HKLM32, '{#MyAppUninstallKey}', 'Inno Setup: App Path', AppDir) then
-      AppDir := '';
-  if (AppDir <> '') and FileExists(AddBackslash(AppDir) + '{#MyAppExeName}') then
-    Result := AddBackslash(AppDir) + '{#MyAppExeName}';
+  Result := 1;  // keep enumerating
+  if WinGetProp(Wnd, '{#ShutdownWindowProp}') <> 0 then
+  begin
+    Pid := 0;
+    WinGetWindowThreadProcessId(Wnd, Pid);
+    N := GetArrayLength(ShutdownWnds);
+    SetArrayLength(ShutdownWnds, N + 1);
+    SetArrayLength(ShutdownPids, N + 1);
+    ShutdownWnds[N] := Wnd;
+    ShutdownPids[N] := Pid;
+  end;
 end;
 
-// Graceful close: `NetSpeedTray.exe --shutdown` asks the running app to quit through its own tray-Exit
-// path (threads stopped, history DB flushed, config saved) and exits 0 once it is gone, 1 if it is
-// still running after --timeout seconds. It bounds its own wait, so ewWaitUntilTerminated cannot hang
-// Setup on a stuck app. Versions before the channel existed (<= 2.1.7) exit 1 in under a second
-// (measured 0.5 s) and the taskkill fallback below behaves exactly as before. No message boxes here:
-// this runs under /VERYSILENT for every Store and winget upgrade.
+// Graceful close: post the app's registered shutdown message to the window it marked, so it quits
+// through its own tray-Exit path (threads stopped, history DB flushed, config saved), then wait up to
+// ShutdownTimeoutSec for each such process to exit.
+//
+// Setup sends the message itself and never runs the installed exe. Setup runs elevated (the in-app
+// updater even starts it elevated, so "the original user" is an admin token too), and the install
+// folder is only as safe as its ACL: with a custom directory - a new folder under C:\ inherits
+// Authenticated Users Modify - any non-admin process could replace NetSpeedTray.exe, and the next
+// silent upgrade would run it as admin. Posting a window message executes nothing.
+//
+// Versions before the channel (<= 2.1.7) mark no window, so nothing is found and the taskkill
+// fallback runs straight away, as it always did. No message boxes here: this runs under /VERYSILENT
+// for every in-app, Store and winget upgrade.
 function TryGracefulClose(): Boolean;
 var
-  ExePath: string;
-  ResultCode: Integer;
+  Msg: Cardinal;
+  I, Count, Posted: Integer;
+  Handles: array of THandle;
+  Started, ElapsedMs: Longword;
+  AllGone: Boolean;
   WaitCount: Integer;
 begin
   Result := False;
-  ExePath := InstalledExePath();
-  if ExePath = '' then
+  Msg := WinRegisterWindowMessage('{#ShutdownMessageName}');
+  if Msg = 0 then
   begin
-    Log('Graceful close: installed {#MyAppExeName} not found, skipping --shutdown.');
+    Log('Graceful close: RegisterWindowMessage failed (error ' + IntToStr(DLLGetLastError()) + ').');
     Exit;
   end;
-  Log('Graceful close: running "' + ExePath + '" --shutdown --timeout {#ShutdownTimeoutSec}');
-  if not Exec(ExePath, '--shutdown --timeout {#ShutdownTimeoutSec}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+
+  SetArrayLength(ShutdownWnds, 0);
+  SetArrayLength(ShutdownPids, 0);
+  WinEnumWindows(CreateCallback(@CollectShutdownTarget), 0);
+  Count := GetArrayLength(ShutdownWnds);
+  if Count = 0 then
   begin
-    Log('Graceful close: could not run --shutdown: ' + SysErrorMessage(ResultCode));
+    Log('Graceful close: no window marked for shutdown (a version without the channel, or not up yet).');
     Exit;
   end;
-  Log('Graceful close: --shutdown exited with code ' + IntToStr(ResultCode));
-  // Non-zero = still running after its wait, or a version without the channel: straight to taskkill.
-  if ResultCode <> 0 then
+
+  // Open each process BEFORE posting, so the handle is the instance we asked even if it exits at once.
+  SetArrayLength(Handles, Count);
+  Posted := 0;
+  for I := 0 to Count - 1 do
+  begin
+    Handles[I] := WinOpenProcess($00100000 {SYNCHRONIZE}, 0, ShutdownPids[I]);
+    if WinPostMessage(ShutdownWnds[I], Msg, 0, 0) <> 0 then
+    begin
+      Posted := Posted + 1;
+      Log('Graceful close: asked pid ' + IntToStr(ShutdownPids[I]) + ' (HWND ' + IntToStr(ShutdownWnds[I]) + ') to quit.');
+    end
+    else
+      Log('Graceful close: PostMessage to pid ' + IntToStr(ShutdownPids[I]) + ' failed (error ' + IntToStr(DLLGetLastError()) + ').');
+  end;
+
+  AllGone := False;
+  Started := WinGetTickCount();
+  if Posted > 0 then
+  begin
+    Log('Graceful close: waiting up to {#ShutdownTimeoutSec} s for the app to exit.');
+    repeat
+      AllGone := True;
+      for I := 0 to Count - 1 do
+      begin
+        if Handles[I] <> 0 then
+        begin
+          if WinWaitForSingleObject(Handles[I], 0) <> 0 {WAIT_OBJECT_0} then
+            AllGone := False;
+        end
+        else if WinIsWindow(ShutdownWnds[I]) <> 0 then
+          // Could not open the process: an exited process owns no windows, so watch the window.
+          AllGone := False;
+      end;
+      ElapsedMs := WinGetTickCount() - Started;
+      if not AllGone then
+        Sleep(200);
+    until AllGone or (ElapsedMs >= {#ShutdownTimeoutSec} * 1000);
+  end;
+
+  for I := 0 to Count - 1 do
+    if Handles[I] <> 0 then
+      CloseHandle(Handles[I]);
+
+  if not AllGone then
+  begin
+    Log('Graceful close: app still running after ' + IntToStr((WinGetTickCount() - Started) div 1000) + ' s.');
     Exit;
-  // 0 = the app's process has ended; the mutex goes with it, so this loop is only a safety margin.
+  end;
+  Log('Graceful close: app exited after ' + IntToStr(WinGetTickCount() - Started) + ' ms.');
+
+  // The process has ended; the mutex goes with it, so this loop is only a safety margin.
   WaitCount := 0;
   while IsAppRunning() and (WaitCount < 10) do
   begin
