@@ -56,7 +56,8 @@ MANAGED_KEYS = {
     # Appearance - fixed arrow weight (constant, but must survive the load/get chain)
     "arrow_font_weight",
     # Advanced
-    "keep_data", "reduce_motion", "show_usage_on_hover", "show_hover_tips", "pause_in_menu",
+    "keep_data", "record_hardware_history", "reduce_motion", "show_usage_on_hover", "show_hover_tips",
+    "pause_in_menu",
 }
 
 # High-risk keys for the reshuffle: the ones that MOVE pages, the segmented enums (int/string
@@ -159,15 +160,6 @@ def test_color_picker_routes_to_the_right_embedded_section(qtbot, monkeypatch):
     monkeypatch.setattr(QColorDialog, "getColor", lambda *a, **k: QColor("#ABCDEF"))
     dlg._open_color_dialog("default_color")
     assert dlg.appearance_page.default_color_input.text().upper() == "#ABCDEF"
-
-
-def test_force_mb_off_disallows_smart_update_rate(qtbot):
-    """UI rule: SMART (adaptive) update cadence isn't allowed when Force-MB is off (it causes unit
-    jitter). Loading SMART + auto must come back out of get_settings forced to >= AGGRESSIVE."""
-    cfg = dict(constants.config.defaults.DEFAULT_CONFIG)
-    cfg.update({"speed_display_mode": "auto", "update_rate": -1.0})  # -1 == SMART sentinel
-    dlg = _dialog(qtbot, cfg)
-    assert float(dlg.get_settings()["update_rate"]) >= 1.0
 
 
 def test_enabling_a_hardware_monitor_switches_widget_out_of_network_only(qtbot):

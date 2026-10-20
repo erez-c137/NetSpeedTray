@@ -13,6 +13,22 @@ class TimeoutConstants:
     # Database related timeouts (seconds)
     DB_FLUSH_BATCH_SYNC_SLEEP: Final[float] = 0.1
     DB_BUSY_TIMEOUT_MS: Final[int] = 250
+    # "Delete all history": the WAL checkpoint that moves the VACUUMed file back into the .db returns
+    # busy while a reader (the Monitor's graph worker) is mid-query. Retry briefly on the worker thread,
+    # then keep retrying on the worker's idle tick until it lands.
+    DB_CHECKPOINT_RETRIES: Final[int] = 5
+    DB_CHECKPOINT_RETRY_SLEEP: Final[float] = 0.2
+    DB_COMPACT_RETRY_INTERVAL_SEC: Final[float] = 5.0
+    # How long Settings waits for the worker's answer before giving the Delete button back.
+    DB_DELETE_HISTORY_UI_TIMEOUT_MS: Final[int] = 120000
+    # Opening the history file at startup: how long one attempt waits for a write lock another process
+    # holds. Five attempts (backing off) bound a held lock at ~12 s before the session goes read-only;
+    # once open, normal writes wait the usual 5 s.
+    DB_INIT_LOCK_TIMEOUT_MS: Final[int] = 2000
+    # How long quitting waits for the database thread (a v7 -> v8 migration or the first maintenance
+    # pass can still be running). Past it the thread is detached and the process exits without
+    # destroying it - a hard exit there is what the migration's journal and kill tests are built for.
+    DB_SHUTDOWN_WAIT_MS: Final[int] = 15000
 
     # System Event related intervals (milliseconds)
     TASKBAR_VALIDITY_CHECK_INTERVAL_MS: Final[int] = 3000

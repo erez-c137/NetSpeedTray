@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushBut
 from netspeedtray import constants
 from netspeedtray.constants.styles import styles as tokens
 from netspeedtray.utils import styles as style_utils
+from netspeedtray.utils.helpers import format_percent
 from netspeedtray.utils.components import (Win11Slider, Win11Toggle, Win11ComboBox, ArrowStylePicker,
                                            SettingCard)
 from netspeedtray.views.settings.pages._fluent import section_header, page_layout
@@ -214,7 +215,7 @@ class AppearancePage(QWidget):
         scale_layout.setSpacing(tokens.SPACE_XS)
         self.graph_scale_headroom = Win11ComboBox()
         for pct in constants.config.defaults.GRAPH_SCALE_HEADROOM_CHOICES:
-            self.graph_scale_headroom.addItem(f"{pct}%", pct)
+            self.graph_scale_headroom.addItem(format_percent(pct, self.i18n), pct)   # "%10" in tr_TR
         self.graph_scale_headroom.currentIndexChanged.connect(self._on_graph_headroom_changed)
         scale_layout.addWidget(SettingCard(self.i18n.GRAPH_SCALE_HEADROOM_LABEL, control=self.graph_scale_headroom))
         self.graph_show_ceiling = Win11Toggle(label_text="")

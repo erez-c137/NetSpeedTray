@@ -25,10 +25,8 @@ def state(tmp_path: Path) -> Iterator[WidgetState]:
     with patch.object(QThread, "start", lambda self: None):
         with patch("netspeedtray.core.widget_state.get_app_data_path", return_value=tmp_path):
             ws = WidgetState(cfg)
-    w = ws.db_worker
-    w.db_path = tmp_path / "speed_history.db"
-    w._initialize_connection()
-    w._check_and_create_schema()
+    from netspeedtray.tests.state_helpers import attach_v7
+    w = attach_v7(ws, tmp_path / "speed_history.db")   # the v7 backend, as a deferred-upgrade session reads
     yield ws
     w._close_connection()
     ws.cleanup()

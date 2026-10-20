@@ -27,6 +27,10 @@ Open source, signed, no ads, no telemetry. The feature Windows forgot.
 winget install --id erez-c137.NetSpeedTray
 ```
 
+> 🧪 **Trying the 2.2 beta?** It's a manual download by design - the in-app updater, WinGet and the
+> Store never offer prereleases. Follow [the pinned issue](https://github.com/erez-c137/NetSpeedTray/issues/373)
+> for beta builds and how to go back.
+
 Or grab the latest [**Setup.exe** or **Portable.zip**](https://github.com/erez-c137/NetSpeedTray/releases/latest) directly. Both are digitally signed - no SmartScreen warnings.
 
 Also on the [**Microsoft Store**](https://apps.microsoft.com/detail/XP9MHWQZJPLQM8) - the same signed installer and the same free, open-source app, one click from the Store. It's the *only* NetSpeedTray on the Store; anything with a similar name isn't this project.
@@ -68,7 +72,7 @@ The widget lives on your taskbar - at its simplest, just your up &amp; down spee
 
 <div align="center">
   <img src="screenshots/monitor_overview_2.0.png" alt="NetSpeedTray Monitor - Overview tab" width="860" />
-  <p><sub><b>Overview.</b> Live tiles + adaptive sparklines, a network hero with inline latency, a data-usage card, and top talkers - every card drills into detail.</sub></p>
+  <p><sub><b>Overview.</b> Live tiles + adaptive sparklines, a network hero with inline latency, a data-usage card, and the apps with the most connections - every card drills into detail.</sub></p>
 </div>
 
 <p align="center"><i>↓ Click to explore the rest ↓</i></p>
@@ -115,7 +119,7 @@ So I built NetSpeedTray: live up/down speeds, CPU and GPU utilization, temperatu
 
 ## What You Get
 
-🌐 **Network on your taskbar.** Live upload and download speeds with sub-second updates. Auto-detects your primary internet connection or lets you pick specific adapters. Color-code thresholds so heavy traffic stands out at a glance. In 2.0 the readout sits *inside* the taskbar's layer - it stays put through the Start menu, Quick Settings, and the tray overflow instead of disappearing.
+🌐 **Network on your taskbar.** Live upload and download speeds, updated every second by default. Auto-detects your primary internet connection or lets you pick specific adapters. Color-code thresholds so heavy traffic stands out at a glance. In 2.0 the readout sits *inside* the taskbar's layer - it stays put through the Start menu, Quick Settings, and the tray overflow instead of disappearing.
 
 🖥️ **Hardware stats too.** CPU and GPU utilization beside your network speeds, with optional temperature, power (Watts), RAM, and VRAM. Vendor-agnostic GPU support - NVIDIA, AMD, and Intel. ([When do temps need a helper? →](#hardware-monitoring---do-i-need-librehardwaremonitor))
 
@@ -135,7 +139,7 @@ So I built NetSpeedTray: live up/down speeds, CPU and GPU utilization, temperatu
 
 Double-click the widget (or pick **Monitor** from the right-click menu) to open it. One window replaces the two older, separate Graph and App Activity windows. Three tabs share a single graph engine and timeline - and the Overview is intentionally chart-free, so a quick glance never loads the heavy plotting libraries.
 
-- **🏠 Overview - the at-a-glance control center.** Live tiles for network, CPU, GPU, RAM, and VRAM, each with a sparkline that adapts its scale so low-but-varying activity reads in detail. A network "hero" card shows download and upload as co-equal headline numbers with an inline latency read, a context strip across the top (session uptime, period totals, CPU + GPU power), a **Data usage** card, and a **Top talkers** list. Every card is clickable and drills into detail.
+- **🏠 Overview - the at-a-glance control center.** Live tiles for network, CPU, GPU, RAM, and VRAM, each with a sparkline that adapts its scale so low-but-varying activity reads in detail. A network "hero" card shows download and upload as co-equal headline numbers with an inline latency read, a context strip across the top (session uptime, period totals, CPU + GPU power), a **Data usage** card, and a **Most connections** list (apps ranked by live connections - Windows can't attribute bandwidth to an app without admin). Every card is clickable and drills into detail.
 
 - **🌐 Network - history + who's actually talking.** The history graph over a per-app **connection** list: how many live connections each program holds, how many are active, and the distinct remote hosts it's reaching. Honest by design - Windows can't attribute network bytes per app without a kernel driver, so nothing is dressed up as a per-app "speed." A per-NIC filter scopes both the graph and the totals.
 
@@ -171,6 +175,44 @@ Double-click the widget (or pick **Monitor** from the right-click menu) to open 
 
 ---
 
+## Local metrics endpoint (Prometheus / Grafana)
+
+Off by default. Turn it on in **Settings → Advanced → Integrations**, and NetSpeedTray serves
+[Prometheus text format](https://prometheus.io/docs/instrumenting/exposition_formats/) at
+`http://127.0.0.1:9184/metrics` (the port is configurable). It answers **this PC only** - it binds the
+loopback address and refuses everything else - and it never sends anything anywhere.
+
+What's in it: live download/upload rates (the widget's numbers and the raw measured ones, total and per
+monitored adapter), the data-usage odometer for the current period and since it began, the data cap if
+you set one, router (and, if you enabled it, internet) latency and loss, and CPU/GPU/RAM/VRAM use for
+whatever you already monitor. Names follow Prometheus conventions (`netspeedtray_*`, bytes, seconds,
+`_total` counters).
+
+```yaml
+# prometheus.yml - Prometheus running on the same PC
+scrape_configs:
+  - job_name: netspeedtray
+    scrape_interval: 15s
+    static_configs:
+      - targets: ["127.0.0.1:9184"]
+```
+
+```promql
+rate(netspeedtray_period_receive_bytes_total[5m]) * 8   # download, bits/s, from the odometer
+netspeedtray_period_receive_bytes_total / netspeedtray_data_cap_bytes   # share of your cap used
+```
+
+**Grafana** reads it through that Prometheus data source. **Home Assistant, or a Prometheus/Grafana on
+another machine,** can't reach `127.0.0.1` on this PC - by design. Run a small agent here (Prometheus
+in agent mode, or Grafana Alloy) that scrapes the endpoint and `remote_write`s to your server.
+
+The response includes your network adapter names as labels, so anything running on this PC can read
+them while it's on. Any local program, or a web page by probing, can also tell the port is open; web
+pages are refused before they count against the request limit, but a local program could use it up.
+See the [Privacy Policy](privacy.md).
+
+---
+
 ## Quick Start
 
 1. **Install** with the Winget command [above](#install) (or the installer).
@@ -184,7 +226,7 @@ Double-click the widget (or pick **Monitor** from the right-click menu) to open 
 ## FAQ
 
 **How is this different from Task Manager?**
-Task Manager shows network speed too - but you have to *open* it, and it disappears the moment you click away. NetSpeedTray lives permanently on your taskbar with sub-second updates, in the corner of your eye while you work.
+Task Manager shows network speed too - but you have to *open* it, and it disappears the moment you click away. NetSpeedTray lives permanently on your taskbar, live every second, in the corner of your eye while you work.
 
 **Will it slow down my PC?**
 Idle RAM is about **50 MB** - that's the number Windows Task Manager shows you (its *full* working set, which counts the shared Windows/Qt DLLs it maps, is ~90 MB), and CPU sits near zero between polls (~0.1%). The Monitor's Overview tab is deliberately chart-free, so glancing at it stays light; opening the Network or Hardware **charts** loads the plotting library for the session, which adds roughly **50-60 MB** while the Monitor is open - close the Monitor and it eases back down. The widget polls every ~1 second using the same Windows APIs Task Manager uses.
@@ -196,7 +238,7 @@ Often no - see the [hardware table above](#hardware-monitoring---do-i-need-libre
 Yes - **Settings → Network → Data usage**, or the tray's **Data cap…**. Set a monthly cap, a billing reset day, and opt-in 80% / 100% alerts. The alert is a quiet flyout above the widget; the tray shows live progress.
 
 **Does the latency check phone home?**
-Only if you ask it to. The default target is your own **gateway**, which never leaves your LAN. Pinging a public host is a separate, explicit opt-in where *you* choose the host. Nothing else about your network is sent anywhere - there's no telemetry of any kind.
+Only if you ask it to. The default target is your own **gateway**, which never leaves your LAN - a burst of four small pings every 3 seconds, about 1.3 packets a second. Pinging a public host is a separate, explicit opt-in where *you* choose the host. The Monitor's **Check connection** button sends 20 pings to your router, and to the public host only if that opt-in is on or you tick the box that names it, just for that check. Nothing else about your network is sent anywhere - there's no telemetry of any kind.
 
 <a id="why-does-the-network-name-need-location-access"></a>
 **Why does the network name need "Location" access?**
@@ -217,7 +259,7 @@ You probably grabbed an unsigned dev build. The official releases ([Setup.exe / 
 <summary><b>📋 Full Feature List</b> (click to expand)</summary>
 
 ### Network Monitoring
-- **Live upload/download** on the taskbar with sub-second updates
+- **Live upload/download** on the taskbar, live every second
 - **Auto-primary mode** - finds your main internet connection, ignoring VPNs and virtual adapters
 - **Interface filtering** - all hardware, specific adapters, or include virtual interfaces
 - **Color coding** - custom speed thresholds and colors to read load at a glance
@@ -232,7 +274,7 @@ You probably grabbed an unsigned dev build. The official releases ([Setup.exe / 
 - **LibreHardwareMonitor auto-detection** - if LHM/OHM is running as admin, it's picked up automatically for temps/power across all vendors
 
 ### The Monitor
-- **Overview** - at-a-glance tiles + adaptive sparklines, a network hero card, a context strip, a Data-usage card, and Top talkers
+- **Overview** - at-a-glance tiles + adaptive sparklines, a network hero card, a context strip, a Data-usage card, and Most connections
 - **Network** - history graph + per-app connection list + per-NIC filter + detail panel
 - **Hardware** - combined CPU+GPU graph (modes/smoothing/axis) + per-process CPU/RAM/GPU% + telemetry band
 - **Statistics & export** - honest distributions (exact percentiles only where the data supports them), Copy/Export to CSV + JSON, and a headless `--export-csv` CLI
@@ -265,6 +307,7 @@ You probably grabbed an unsigned dev build. The official releases ([Setup.exe / 
 - **Your history is a plain SQLite file you can query yourself** - schema, units and example queries in [DATABASE.md](DATABASE.md)
 - **PII obfuscation** - logs auto-redact paths, IPs (incl. IPv6), MACs, hostnames, and interface GUIDs - and network-adapter names are replaced with **stable pseudonyms**, so repeated log lines still correlate for debugging without carrying the labels you gave your adapters
 - **Latency boundary** - off by default; gateway-only unless you explicitly opt in to a public host you name
+- **Local metrics endpoint** - off by default; when on, it answers this PC only (loopback-bound, non-local peers and foreign `Host` headers refused) and sends nothing
 - **Verified updates** - the in-app updater authenticates every download (Windows `WinVerifyTrust` + a publisher pin) before running it, with a GitHub fallback. Since 2.1.4 the **portable build updates itself in place**, and the updater never offers a prerelease - trying a beta is always a deliberate download
 - **Support Bundle** - one-click sanitized zip of logs + config + system info for bug reports
 

@@ -75,6 +75,337 @@ ALSO
 
 ---
 
+## [2.2.0-beta.1] - October 20, 2026
+
+*A beta, for testers. It's a manual download from the release page - the in-app updater, WinGet
+and the Store never offer prereleases.*
+
+Your history gets exact, exportable, and yours to delete. Under it is a rebuilt database that stores
+the bytes each poll actually measured. This release also carries everything that would have been
+2.1.8: a month of contributor work, a GPU reading that finally matches Task Manager, and an
+installed app that's signed.
+
+> **Upgrading:** a few things will look different, all on purpose.
+>
+> - **The first launch rebuilds your history database.** On a real 80 MB profile it took about 3
+>   seconds and came out at 18 MB. Your old file is kept, unchanged, as
+>   `speed_history.db.bak.v7_<date>_<time>` in `%APPDATA%\NetSpeedTray`. If the rebuild can't finish -
+>   not enough disk space (it needs 1.5× the file), or another program holding the file - nothing
+>   is changed: your history shows read-only, a notice says so, and it tries again next start.
+> - **History totals read lower than 2.1.x showed for the same days.** Nothing was lost; 2.1.x
+>   over-counted. On the maintainer's 30 days, download went from 9.0 GB to 7.2 GB and upload from
+>   4.2 GB to 2.9 GB. Your data-cap figure is a separate counter and doesn't change.
+> - **Going back to 2.1.x after upgrading:** 2.1.5-2.1.7 show your history with a "History
+>   recording is paused" notice and record nothing. The last day before the upgrade looks empty
+>   there, and their totals read high. To record on 2.1.x again, restore the backup as described in
+>   [DATABASE.md](DATABASE.md#restoring-a-backup). **On 2.1.3 or older, restore the backup first** -
+>   those versions have no guard against a newer database.
+> - **Hardware history is only recorded for what you monitor.** CPU/GPU monitoring is off by
+>   default, so a default install now records none. History you already have is kept. Turn on
+>   monitoring in Settings → Hardware to keep recording it.
+> - **The SMART update rate is gone.** If you had it, you're now on 2 s, which is what SMART
+>   actually did. Any other rate moves to the nearest of 1, 2, 5 or 10 s.
+> - **"All physical adapters" stops counting VPNs and virtual adapters.** With a VPN or WSL running,
+>   that mode reads lower now. The old number counted the same traffic twice.
+> - **Saved speed history keeps real one-second spikes.** Short Monitor windows can show peaks the
+>   widget smoothed away. The widget itself is unchanged.
+> - **The latency probe sends 4 small pings every 3 s instead of 1** (about 1.3 packets a second per
+>   hop), so loss is measured in 1% steps.
+
+### Added
+
+- **Delete all history.** Settings → Advanced → Data wipes your saved speed, hardware and connection
+  history, the adapter names stored with it, and overwrites the freed space in the file. Your
+  settings stay, and so does this period's data-cap usage unless you tick the box to reset it too.
+  ([#347], [#366])
+
+  *Under the hood: a `DELETE` only moves pages to SQLite's freelist, where the old samples stay
+  readable, so the delete runs with `secure_delete` on, hands the pages back with
+  `incremental_vacuum`, then `wal_checkpoint(TRUNCATE)`. A checkpoint that comes back busy (a
+  Monitor graph mid-read) is retried, and a pending clean-up survives a restart through a
+  `metadata` marker. Unflushed samples are dropped first, or they'd write pre-delete rows back.*
+
+- **Check connection.** A button next to the latency pill (and in the Network tab) pings your router
+  20 times, and the internet too if you choose, then shows loss, median, 95th percentile and jitter,
+  says where the loss starts, and copies a plain-text report you can paste. Nothing is saved.
+  ([#352])
+- **A localhost metrics endpoint for Prometheus, Grafana and friends.** Off by default. Settings →
+  Advanced → Integrations serves your speeds, data usage, latency and the hardware stats you monitor
+  at `http://127.0.0.1:9184/metrics`, to this PC only. ([#360])
+- **The taskbar mini graph can use a fixed scale.** It tops out at your plan speed plus 0-30%
+  headroom, with an optional dotted plan-speed line, so background traffic no longer looks like a
+  spike. Off by default. ([#335], thanks [@Zogar89])
+- **The interface picker sorts real adapters from virtual ones.** Two groups, "Physical adapters"
+  and "Virtual adapters and VPNs", with your active connection marked and listed first. VPNs can now
+  be picked in "Select specific interfaces". ([#350])
+- **The database now records when NetSpeedTray was running,** when adapters went up or down, their
+  link speed, and their error and drop counters. Nothing in the app shows these yet - they're in
+  the file for your own queries ([DATABASE.md](DATABASE.md) has recipes), and they're the groundwork
+  for telling "the app wasn't running" apart from "no traffic". ([#365], [#366])
+
+### Changed
+
+- **Your history stores exact bytes, in a file about a quarter the size.** Every poll now saves the
+  bytes each adapter moved and how long it took, instead of a rate times a guessed interval, so
+  volume no longer depends on your update rate. The 2.1 history is rebuilt into the new shape on
+  first launch. ([#366], [#359], [#365], [#363])
+
+  *Under the hood: `WITHOUT ROWID` tables keyed on small `interfaces`/`metrics` ids, bytes + `dt_ms`
+  at capture, and tiers that are query-precedence layers bounded by four watermarks written in the
+  same transaction as each roll-up. The first design summed the tiers and double-counted the
+  data-cap figure at exactly 2.00× on live data. The rebuild happens in a side file, is checked row
+  for row against the old one, then swapped in by two renames under a journal; `recover()` runs on
+  every launch, so a kill at any point leaves either the old database or the new one whole. The
+  renamed v7 file is the backup - no second copy is made.*
+
+- **Totals for days before the upgrade are now estimated honestly.** 2.1.x turned each saved minute
+  into bytes as its average rate × 60 s, but a second was only saved when the adapter moved data, so
+  a minute that was busy for 5 seconds counted as busy for 60 - the quieter the adapter, the bigger
+  the over-count (up to ~20× on idle virtual adapters). 2.2 counts only the seconds each minute
+  really stands for, and labels those days "From recorded history". ([#366], [#367])
+- **The last day of per-second detail becomes per-minute at the upgrade.** 2.1 never stored bytes or
+  intervals, so there was nothing exact to keep at second resolution. Totals, averages and peaks for
+  those minutes stay; nothing is invented. ([#359])
+- **Hardware history follows your monitoring switches.** CPU, GPU and RAM were recorded even with
+  monitoring off, and opening the Monitor saved temperatures and power you'd never turned on. Now
+  only what you monitor is saved, and a new **Record hardware history** switch turns it off
+  entirely. ([#347])
+
+  *Under the hood: `record_hardware_history` defaulted to `True`, had no UI, and was OR-ed into the
+  poll gate, so it also forced the polling. Collection and persistence are now separate decisions
+  (`hardware_collection_gates`, `hardware_persist_allowed`). The open Monitor window still forces
+  collection for its live tiles, but those readings are never written.*
+
+- **"All physical adapters" counts only real network hardware.** Tailscale, WireGuard, NordLynx,
+  ZeroTier, Hyper-V/WSL, VirtualBox/VMware host-only, Wi-Fi Direct and WAN Miniport adapters were
+  counted on top of the card that carried them - in the widget speed and in data usage. ([#350])
+
+  *Under the hood: the 2.1 rule was a keyword list matched on friendly names, and it missed all of
+  those. Adapters are now classified from Windows' own `GetIfTable2` data (the NDIS hardware flag
+  and the interface type) first, with keywords as a backstop. If nothing classifies as physical,
+  the mode falls back to non-tunnel adapters rather than reading zero forever.*
+
+- **Saved history stores what was measured.** The spike filter used to save its substitute value -
+  a number nobody measured - so graphs, summaries and exports from the database now show real
+  one-second peaks. The widget and mini graph still smooth them. ([#353], [#366])
+- **Packet loss is measured in 1% steps within a minute.** Each 3-second probe now sends a burst of
+  4 pings instead of one, and below 1% the pill shows a decimal ("0.6% loss"). ([#346])
+- **Week, Month and All graphs stay readable when one speed test towers over the rest.** The speed
+  axis scales to the 99th percentile, clipped points get a small marker, and the true peak sits in
+  the corner. Hovering still reads the real value. ([#349])
+- **"Top talkers" is now "Most connections"** - it always ranked apps by open connections, not by
+  bandwidth. Every language got the new name instead of keeping a bandwidth-flavoured translation.
+  ([#350])
+- **No more daily full-file rewrite.** Maintenance used to `VACUUM` the whole database; it now hands
+  back up to ~8 MB of free space per hourly pass, so the file stays small without being rewritten.
+  ([#365], [#366])
+
+### Fixed
+
+- **After an in-app update, NetSpeedTray comes back as you, not as administrator.** Since 2.1.6,
+  every in-app update left the app running elevated until the next sign-in. The 2.2.0 installer
+  does the relaunch, so updating from 2.1.7 is already fixed. ([#321])
+
+  *Under the hood: the updater starts Setup already elevated (so it survives the app quitting), and
+  Inno's `runasoriginaluser` means "as whoever started Setup" - the elevated token. The silent
+  relaunch now goes through `explorer.exe "<exe>"`, which starts it at medium integrity; the
+  original flag stays only as the fallback when no taskbar exists. An elevated app writing its own
+  config is also a plausible route to #307's admin-only settings file.*
+
+- **Updates and uninstalls close NetSpeedTray cleanly** instead of force-killing it. The graceful
+  close never worked in 2.x, so every upgrade ended in `taskkill /F` and skipped the final history
+  flush and config save. Upgrading *from* 2.1.7 still force-closes once - its copy of the close
+  command is the broken one. ([#368])
+
+  *Under the hood: `monitor.py --shutdown` called the non-existent
+  `win32gui.RegisterWindowMessageW`, nothing listened for the message, and setup.iss looked for a
+  `NetSpeedTrayHidden` window 2.x never creates. The widget's HWND now carries a window property;
+  `--shutdown` finds it with `EnumWindows` + `GetProp`, posts `NetSpeedTray_Shutdown_v1` to that
+  window only (allowed through UIPI), and waits up to 30 s - longer than the 15 s DB flush bound.
+  `taskkill /F` stays as the fallback.*
+
+- **Starting NetSpeedTray while an elevated copy is running no longer shows a "critical error"
+  dialog.** It exits quietly like any other second launch - also when another Windows user is
+  already running it. ([#369])
+
+- **GPU usage matches Task Manager.** We showed the busiest *process* on the GPU, not the busiest
+  engine, so three apps sharing one engine at 44%, 34% and 13% read 44% instead of ~91%. ([#328],
+  thanks [@ivLis-Studio] for the report and the diagnosis)
+
+  *Under the hood: each `\GPU Engine(*)\Utilization Percentage` instance is one process on one
+  engine. Values are now summed per `(luid, phys, eng)` across processes, the busiest engine wins,
+  and the result is clamped to 100. `engtype` is deliberately not part of the key - it's often blank,
+  and one engine can carry different labels.*
+
+- **The installed NetSpeedTray.exe is signed**, not just the installer and the portable exe. Smart
+  App Control blocked the installed copy for having no verified publisher, and it should accept
+  the signed exe - confirmation pending from testers. ([#333], thanks [@Keltian]; [#341])
+
+  *Under the hood: SignPath can't re-sign the payload inside an Inno Setup installer. The portable
+  zip carries the exact same `dist\NetSpeedTray\` bytes, so CI now signs the portable first, copies
+  its signed exe into the payload, compiles the installer from that, and signs the installer -
+  two approvals in sequence. A release gate silent-installs the result on the runner and requires a
+  valid signature on `{app}\NetSpeedTray.exe`. The uninstaller and the bundled Qt/Python DLLs are
+  still unsigned.*
+
+- **Data usage no longer loses what happened while your PC slept.** A gap longer than about 10 s -
+  every Modern Standby wake - threw away the whole gap and the next two polls. Bytes that moved while
+  the app was closed are now recovered too, as long as Windows wasn't restarted. ([#348])
+
+  *Under the hood: the odometer now runs before the gap gate; only the speed display re-primes. Each
+  persist also stores a snapshot (counters, `psutil.boot_time()`, sample time, auto-mode primary) as
+  one JSON row in `metadata` (`usage_counter_snapshot`), written in the same transaction as the
+  total. The next launch adds `now - snapshot` only on the same boot, the same adapter, and counters
+  that didn't go backwards. Each poll's delta is capped at 100 Gbps × elapsed, and bytes are charged
+  to the period their measurement window began in, so a gap across the reset day can't trip an early
+  overage alert.*
+
+- **Data usage counts on IPv6-only networks.** In automatic mode the active adapter was looked up
+  over IPv4 only, so an IPv6-only connection counted nothing. ([#348])
+- **The latency pill's loss is your internet's, not your router's.** With the public probe on, the
+  pill showed internet ms next to router loss, so a flaky ISP behind a healthy router read "0% loss".
+  The stats sheet's Internet figures now follow the same hop. ([#345], [#352])
+- **Side-by-Side fits on a left or right taskbar.** Network, CPU and GPU were laid out in a row and
+  clipped past the edge; on a side taskbar they now stack top to bottom. ([#337], thanks
+  [@Zogar89])
+- **RAM and VRAM labels stay put** instead of shifting sideways when a value goes from one digit to
+  two. ([#326], thanks [@ZeroFlagLabs])
+- **No white areas in the Monitor window on a dark theme** - the process lists, the splitter, the
+  scroll bars, a one-pixel graph edge at 125% scaling, and a white flash when the window opens.
+  ([#330], thanks [@pasharm])
+- **Monitor graph axes never repeat a label.** A short Session read `18:13, 18:13, 18:14`, 48 h read
+  `00:00, 12:00, 00:00`, and a 0-2 Mbps axis read `0.0, 0.5, 1, 1, 2`. ([#342], [#344])
+- **No Settings page scrolls sideways, in any language.** Titles now wrap and controls drop below
+  them in a narrow window, and the sidebar widens to fit long page names (German, Japanese,
+  Russian). ([#356])
+- **A docked widget stays inside its taskbar strip,** top or bottom, and dragging it along the bar
+  keeps it there - including on an auto-hide taskbar. This is defensive: the top-taskbar glitch in
+  [#322] isn't reproduced yet, so it may not be the fix for it. ([#343], thanks [@un99known99] for
+  the report)
+- **A database upgrade that can't finish no longer carries on silently.** Before, an upgrade that
+  stopped partway let the app carry on with no sign anything was wrong. Now your history stays
+  read-only with a notice (a separate one when the disk is full), and the next start tries again.
+  ([#366])
+- **A failed backup now stops a database upgrade** instead of carrying on without one, and backups
+  are checked against the tables that version should have, not the possibly-damaged file they were
+  copied from. ([#353])
+- **A backup's `-wal` or `-shm` file is never mistaken for the backup.** Opening a backup in any
+  SQLite tool leaves those beside it; 2.1.5-2.1.7 could then name one as the file to restore, and
+  backup pruning could keep it and delete the real one. ([#366])
+- **Pre-upgrade backups work when your Windows username contains `#` or `%`.** The backup check cut
+  the path at the `#`, opened the wrong file, and failed. ([#361])
+
+  *Under the hood: `sqlite3.connect(f"file:{path}?mode=ro", uri=True)` isn't encoded - a `#` starts
+  the URI fragment, so SQLite truncated the path, dropped `?mode=ro` with it, and created a stray
+  empty file read-write. Since #353 a failed check aborts the migration, so on such a profile every
+  future upgrade would have stopped. `core/db/sqlite_uri.sqlite_ro_uri()` percent-encodes the path,
+  and a source scan fails the suite if an unencoded `file:` URI comes back.*
+
+### Removed
+
+- **The SMART update rate.** It was never adaptive - just a fixed 2-second rate behind a special
+  value. The slider is now 1, 2, 5 or 10 s; SMART settings become 2 s, and 10 s stays 10 s.
+  ([#351])
+
+### Security
+
+- **The metrics endpoint is local and opt-in.** It listens on 127.0.0.1 only, refuses other hosts
+  and anything sent from a web page (so a site can't read it through DNS rebinding), and is
+  rate-limited. It does include your adapter names - Settings says so. ([#360])
+
+### Localization
+
+- Every new string in this release is in all 16 languages, as drafts based on each language's
+  existing wording. Native-speaker corrections are very welcome in [#364].
+- Hungarian and Korean: native-speaker corrections from [#202]. ([#340], thanks [@cscsanaki] and
+  [@doeil1614-ops])
+
+### Developer notes
+
+- **The v8 database** landed in eight steps, dormant until the switch-over: schema and v7-named
+  compatibility views ([#354]), one history-reader interface ([#357]), the v8 reader ([#363]), the
+  migrator with its crash-recovery journal ([#359]), the writer ([#365]), then the switch to
+  `_DB_VERSION = 8` ([#366]). Fresh installs create v8 directly. [DATABASE.md](DATABASE.md) is
+  rewritten around precedence and watermarks, with the restore steps and the 2.1.x rollback
+  caveats ([#367]).
+- **Rollback was verified with real binaries:** the signed 2.1.7 portable and a `2.2.0-beta.1`
+  build, in a scratch `APPDATA`. Upgrade 2.9 s, 80,273,408 → 18,104,320 bytes; history older than
+  24 h identical; kill + relaunch left every row intact; a rolled-back 2.1.7 showed the notice and
+  drew graphs through the views without changing the file; the DATABASE.md restore reproduced the
+  original file exactly and 2.1.7 recorded normally afterwards. The 2.1.7 → 2.2 *installer* path,
+  which force-closes 2.1.7 once ([#368]), is covered by the kill tests, not yet by a live run.
+- A new `tests/integration/` suite kills a real migration at 11 points plus random moments and
+  checks that either v7 or v8 is whole every time.
+- 2,590 tests (2,543 unit + 47 integration), up from 1,496 in 2.1.7. Each new test was seen
+  failing without its fix first; most PRs also ran a mutation pass. The v8 reader tests run on one fixed clock (`NST_TEST_NOW` overrides it), which
+  removed a 1-in-15 flake ([#370]).
+- Release signing ([#341]): two sequential SignPath approvals now (portable, then installer), each
+  polled every 20 s for up to 30 min. Proven end to end on a throwaway `v0.0.2-test` tag together
+  with SignPath's action v3 ([#325]). Both Store workflows now declare least-privilege tokens
+  ([#320]).
+- A final release now outranks its betas in the Windows file version: `2.2.0-beta.1` is
+  `2.2.0.1001`, `2.2.0` is `2.2.0.10000`, and prereleases set `VS_FF_PRERELEASE`. ([#362])
+- The build works from a folder with spaces or parentheses in its path, and stops when PyInstaller
+  fails instead of going on to a misleading installer error. ([#329], thanks [@ZeroFlagLabs])
+- Windows-only packages carry `sys_platform == "win32"` markers, so Dependabot's Linux pip job
+  resolves again. No pinned version changed. ([#339])
+- A CI flake in the window-position test was the 400 ms arm timer firing late on a loaded runner;
+  the test now waits for it. ([#358])
+
+[#202]: https://github.com/erez-c137/NetSpeedTray/issues/202
+[#320]: https://github.com/erez-c137/NetSpeedTray/pull/320
+[#321]: https://github.com/erez-c137/NetSpeedTray/pull/321
+[#322]: https://github.com/erez-c137/NetSpeedTray/issues/322
+[#325]: https://github.com/erez-c137/NetSpeedTray/pull/325
+[#326]: https://github.com/erez-c137/NetSpeedTray/pull/326
+[#328]: https://github.com/erez-c137/NetSpeedTray/issues/328
+[#329]: https://github.com/erez-c137/NetSpeedTray/pull/329
+[#330]: https://github.com/erez-c137/NetSpeedTray/pull/330
+[#333]: https://github.com/erez-c137/NetSpeedTray/issues/333
+[#335]: https://github.com/erez-c137/NetSpeedTray/pull/335
+[#337]: https://github.com/erez-c137/NetSpeedTray/pull/337
+[#339]: https://github.com/erez-c137/NetSpeedTray/pull/339
+[#340]: https://github.com/erez-c137/NetSpeedTray/pull/340
+[#341]: https://github.com/erez-c137/NetSpeedTray/pull/341
+[#342]: https://github.com/erez-c137/NetSpeedTray/pull/342
+[#343]: https://github.com/erez-c137/NetSpeedTray/pull/343
+[#344]: https://github.com/erez-c137/NetSpeedTray/pull/344
+[#345]: https://github.com/erez-c137/NetSpeedTray/pull/345
+[#346]: https://github.com/erez-c137/NetSpeedTray/pull/346
+[#347]: https://github.com/erez-c137/NetSpeedTray/pull/347
+[#348]: https://github.com/erez-c137/NetSpeedTray/pull/348
+[#349]: https://github.com/erez-c137/NetSpeedTray/pull/349
+[#350]: https://github.com/erez-c137/NetSpeedTray/pull/350
+[#351]: https://github.com/erez-c137/NetSpeedTray/pull/351
+[#352]: https://github.com/erez-c137/NetSpeedTray/pull/352
+[#353]: https://github.com/erez-c137/NetSpeedTray/pull/353
+[#354]: https://github.com/erez-c137/NetSpeedTray/pull/354
+[#356]: https://github.com/erez-c137/NetSpeedTray/pull/356
+[#357]: https://github.com/erez-c137/NetSpeedTray/pull/357
+[#358]: https://github.com/erez-c137/NetSpeedTray/pull/358
+[#359]: https://github.com/erez-c137/NetSpeedTray/pull/359
+[#360]: https://github.com/erez-c137/NetSpeedTray/pull/360
+[#361]: https://github.com/erez-c137/NetSpeedTray/pull/361
+[#362]: https://github.com/erez-c137/NetSpeedTray/pull/362
+[#363]: https://github.com/erez-c137/NetSpeedTray/pull/363
+[#364]: https://github.com/erez-c137/NetSpeedTray/issues/364
+[#365]: https://github.com/erez-c137/NetSpeedTray/pull/365
+[#366]: https://github.com/erez-c137/NetSpeedTray/pull/366
+[#367]: https://github.com/erez-c137/NetSpeedTray/pull/367
+[#368]: https://github.com/erez-c137/NetSpeedTray/pull/368
+[#369]: https://github.com/erez-c137/NetSpeedTray/pull/369
+[#370]: https://github.com/erez-c137/NetSpeedTray/pull/370
+[@Zogar89]: https://github.com/Zogar89
+[@ZeroFlagLabs]: https://github.com/ZeroFlagLabs
+[@pasharm]: https://github.com/pasharm
+[@ivLis-Studio]: https://github.com/ivLis-Studio
+[@Keltian]: https://github.com/Keltian
+[@un99known99]: https://github.com/un99known99
+[@cscsanaki]: https://github.com/cscsanaki
+[@doeil1614-ops]: https://github.com/doeil1614-ops
+
+---
+
 ## [2.1.7] - September 23, 2026
 
 Fixes for what 2.1.6 users reported in its first two weeks: a support bundle that could include your

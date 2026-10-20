@@ -41,7 +41,7 @@ class UsageFlyout(QWidget):
 
     def __init__(self, i18n, today: Optional[Totals] = None, month: Optional[Totals] = None,
                  hint: Optional[str] = None, cap: Optional[CapInfo] = None,
-                 parent: Optional[QWidget] = None) -> None:
+                 parent: Optional[QWidget] = None, history_note: Optional[str] = None) -> None:
         super().__init__(
             parent,
             Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool
@@ -97,6 +97,13 @@ class UsageFlyout(QWidget):
             self._usage_row(grid, 0, self._tr("USAGE_TODAY_LABEL", "Today"), today)
             self._usage_row(grid, 1, self._tr("USAGE_THIS_MONTH_LABEL", "This month"), month)
             body.addLayout(grid)
+            if history_note:
+                # D5: these totals come from recorded history, and part of them was estimated from
+                # speeds saved before 2.2 - the cap line below (the odometer) is the exact count.
+                note = self._label(history_note, tokens.TYPE_CAPTION, self._c["text_secondary"])
+                note.setWordWrap(True)
+                note.setMaximumWidth(300)
+                body.addWidget(note)
             sections += 1
 
         # --- Data-cap progress (only when a cap is actually set) ---
@@ -111,11 +118,13 @@ class UsageFlyout(QWidget):
             cap_row.addWidget(self._label(cap_label, tokens.TYPE_BODY_STRONG, self._c["text_primary"]))
             cap_row.addStretch(1)
             gb = self._tr("GB_UNIT", "GB")
-            cap_row.addWidget(self._label(f"{used_gb:.1f} / {cap_gb:g} {gb}",
+            cap_txt = helpers.format_decimal(cap_gb, self._i18n, 1).rstrip("0").rstrip(".,")   # 500 / 2,5
+            cap_row.addWidget(self._label(f"{helpers.format_decimal(used_gb, self._i18n, 1)} / {cap_txt} {gb}",
                                           tokens.TYPE_BODY, self._c["text_secondary"],
                                           Qt.AlignmentFlag.AlignRight))
             pct_color = _OVER_CAP_COLOR if over else self._c["accent"]
-            cap_row.addWidget(self._label(f"  {pct:.0f}%", tokens.TYPE_BODY_STRONG, pct_color,
+            cap_row.addWidget(self._label("  " + helpers.format_percent(f"{pct:.0f}", self._i18n),
+                                          tokens.TYPE_BODY_STRONG, pct_color,
                                           Qt.AlignmentFlag.AlignRight))
             body.addLayout(cap_row)
 
@@ -153,7 +162,7 @@ class UsageFlyout(QWidget):
 
     def _fmt(self, data_bytes: float) -> str:
         value, unit = helpers.format_data_size(data_bytes, self._i18n, precision=1)
-        return f"{value:.1f} {unit}"
+        return f"{helpers.format_decimal(value, self._i18n, 1)} {unit}"   # "8,4 GB" in de_DE
 
     def _usage_row(self, grid: QGridLayout, row: int, label: str, totals: Totals) -> None:
         up_bytes, down_bytes = totals

@@ -115,10 +115,9 @@ def test_below_plan_when_threshold_set(q_app):
     assert "100 Mbps" in text and "below" in text
 
 
-def test_smart_mode_poll_normalized_to_two_seconds(q_app):
-    """2.1.5 item 9: update_rate=-1.0 (SMART) must reach summarize_* as 2.0 s (SMART samples every
-    SMART_MODE_INTERVAL_MS), not leak through `or 1.0` as -1.0 (which zeroed coverage_pct on every
-    stats sheet) and not normalize to a wrong 1.0 s."""
+def test_configured_poll_reaches_the_summaries(q_app):
+    """2.1.5 item 9: the configured update_rate must reach summarize_* through the shared resolver
+    (a local `or 1.0` once leaked a sentinel and zeroed coverage_pct on every stats sheet)."""
     captured = []
 
     class _CapturingWS(_WS):
@@ -127,15 +126,15 @@ def test_smart_mode_poll_normalized_to_two_seconds(q_app):
             return super().summarize_network(direction, start, end, iface, poll)
 
     subjects = [{"key": "download", "label": "Download", "unit": "Mbps", "kind": "net_down", "primary": True}]
-    sheet = StatsDetailSheet(_CapturingWS(), subjects, _window(), _cfg(update_rate=-1.0),
+    sheet = StatsDetailSheet(_CapturingWS(), subjects, _window(), _cfg(update_rate=5.0),
                              I18nStrings("en_US"))
-    assert sheet._poll == 2.0
-    assert captured and all(p == 2.0 for p in captured)
+    assert sheet._poll == 5.0
+    assert captured and all(p == 5.0 for p in captured)
 
 
-def test_interactive_export_normalizes_smart_poll(q_app, monkeypatch, tmp_path):
-    """The Export path (stats_detail.run_interactive_export) is another of the four leak sites: a
-    SMART config must hand export_window_zip poll_interval=2.0, not -1.0."""
+def test_interactive_export_passes_the_configured_poll(q_app, monkeypatch, tmp_path):
+    """The Export path (stats_detail.run_interactive_export) is another of the four item-9 leak
+    sites: it must hand export_window_zip the configured interval."""
     from PyQt6.QtWidgets import QFileDialog, QMessageBox
     from netspeedtray.views.monitor import stats_detail as SD
 
@@ -154,5 +153,5 @@ def test_interactive_export_normalizes_smart_poll(q_app, monkeypatch, tmp_path):
 
     start, end, label = _window()
     SD.run_interactive_export(None, _WS(), start, end, label,
-                              _cfg(update_rate=-1.0), I18nStrings("en_US"))
-    assert captured["poll"] == 2.0
+                              _cfg(update_rate=5.0), I18nStrings("en_US"))
+    assert captured["poll"] == 5.0

@@ -88,3 +88,143 @@ def test_reset_advanced_page_only_resets_its_keys(qtbot, dialog):
     assert settings["reduce_motion"] == defaults["reduce_motion"]  # reset
     assert settings["keep_data"] == defaults["keep_data"]          # reset
     assert settings["monitor_cpu_enabled"] is True                 # untouched (other page)
+
+
+# --- 2.2 item C: hardware-recording toggle + Delete all history ------------------------------------
+
+def test_record_hardware_history_round_trips(page):
+    page.load_settings({"record_hardware_history": False})
+    assert page.get_settings()["record_hardware_history"] is False
+    page.load_settings({})                                  # absent -> the default (on)
+    assert page.get_settings()["record_hardware_history"] is True
+
+
+def test_delete_history_cancelled_deletes_nothing(dialog, monkeypatch):
+    monkeypatch.setattr(dialog, "_confirm_delete_history", lambda: None)
+    dialog._delete_all_history()
+    dialog.parent_widget.widget_state.delete_all_history.assert_not_called()
+
+
+def test_delete_history_keeps_usage_by_default(dialog, monkeypatch):
+    monkeypatch.setattr(dialog, "_confirm_delete_history", lambda: False)
+    dialog.config["usage_alert_state"] = "2026-10-01|100|total::80"
+    dialog._delete_all_history()
+    dialog.parent_widget.widget_state.delete_all_history.assert_called_once_with(include_usage=False)
+    assert dialog.get_settings()["usage_alert_state"] == "2026-10-01|100|total::80"
+    assert dialog.advanced_page.delete_history_btn.isEnabled() is False   # until the worker answers
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: None)
+    dialog._on_history_deleted("done")
+    assert dialog.advanced_page.delete_history_btn.isEnabled() is True
+
+
+def test_delete_history_with_usage_rearms_cap_alerts(dialog, monkeypatch):
+    monkeypatch.setattr(dialog, "_confirm_delete_history", lambda: True)
+    dialog.config["usage_alert_state"] = "2026-10-01|100|total::80"
+    dialog.original_config["usage_alert_state"] = "2026-10-01|100|total::80"
+    dialog._delete_all_history()
+    dialog.parent_widget.widget_state.delete_all_history.assert_called_once_with(include_usage=True)
+    dialog.parent_widget.update_config.assert_called_with({"usage_alert_state": ""})
+    # Neither Save (config) nor Cancel (original_config) may restore the stale alert state.
+    assert dialog.get_settings()["usage_alert_state"] == ""
+    assert dialog.original_config["usage_alert_state"] == ""
+
+
+def test_delete_confirmation_defaults_to_safe_choices(dialog, monkeypatch):
+    seen = {}
+
+    def fake_exec(box):
+        seen["usage_checked"] = box.checkBox().isChecked()
+        seen["default_is_cancel"] = box.defaultButton() is box.escapeButton()
+        return 0                                             # closed without clicking Delete
+
+    monkeypatch.setattr(QMessageBox, "exec", fake_exec)
+    assert dialog._confirm_delete_history() is None
+    assert seen == {"usage_checked": False, "default_is_cancel": True}
+
+
+
+# --- PR #347 review follow-ups ----------------------------------------------------------------------
+
+def test_record_toggle_greys_out_when_no_hardware_is_monitored(page):
+    i18n = page.i18n
+    page.load_settings({"monitor_cpu_enabled": False, "monitor_gpu_enabled": False})
+    assert page.record_hardware.isEnabled() is False
+    assert page._record_card._desc_label.text() == i18n.RECORD_HARDWARE_HISTORY_INACTIVE_SUB
+    page.load_settings({"monitor_cpu_enabled": False, "monitor_gpu_enabled": True})
+    assert page.record_hardware.isEnabled() is True
+    assert page._record_card._desc_label.text() == i18n.RECORD_HARDWARE_HISTORY_SUB
+
+
+def test_record_toggle_follows_the_hardware_page_live(dialog):
+    adv, hw = dialog.advanced_page, dialog.hardware_page
+    hw.monitor_cpu.setChecked(False)
+    hw.monitor_gpu.setChecked(False)
+    assert adv.record_hardware.isEnabled() is False
+    hw.monitor_gpu.setChecked(True)
+    assert adv.record_hardware.isEnabled() is True
+
+
+def test_delete_refused_up_front_when_the_worker_cannot_answer(dialog, monkeypatch):
+    shown = []
+    monkeypatch.setattr(QMessageBox, "critical", lambda *a, **k: shown.append(a[2]))
+    asked = []
+    monkeypatch.setattr(dialog, "_confirm_delete_history", lambda: asked.append(1) or False)
+    dialog.parent_widget.widget_state.can_delete_history.return_value = False
+    dialog._delete_all_history()
+    assert asked == []                                          # don't ask, then fail
+    dialog.parent_widget.widget_state.delete_all_history.assert_not_called()
+    assert shown == [dialog.i18n.DELETE_HISTORY_FAILED]
+    assert dialog.advanced_page.delete_history_btn.isEnabled() is True
+
+
+def test_delete_button_comes_back_if_the_worker_never_answers(dialog, monkeypatch):
+    shown = []
+    monkeypatch.setattr(QMessageBox, "critical", lambda *a, **k: shown.append(a[2]))
+    monkeypatch.setattr(dialog, "_confirm_delete_history", lambda: False)
+    dialog._delete_all_history()
+    assert dialog._delete_timeout.isActive()
+    assert dialog._delete_timeout.interval() == constants.timeouts.DB_DELETE_HISTORY_UI_TIMEOUT_MS
+    dialog._on_delete_timeout()
+    assert dialog.advanced_page.delete_history_btn.isEnabled() is True
+    assert shown == [dialog.i18n.DELETE_HISTORY_FAILED]
+
+
+@pytest.mark.parametrize("status, kind, key", [
+    ("done", "information", "DELETE_HISTORY_DONE"),
+    ("compact_pending", "information", "DELETE_HISTORY_DONE_COMPACTING"),
+    ("failed", "critical", "DELETE_HISTORY_FAILED"),
+])
+def test_delete_result_messages_are_honest(dialog, monkeypatch, status, kind, key):
+    shown = []
+    for k in ("information", "critical"):
+        monkeypatch.setattr(QMessageBox, k, lambda *a, _k=k, **kw: shown.append((_k, a[2])))
+    dialog._delete_timeout.start()
+    dialog._on_history_deleted(status)
+    assert shown == [(kind, getattr(dialog.i18n, key))]
+    assert not dialog._delete_timeout.isActive()
+
+
+def test_delete_refreshes_the_hover_usage_card(dialog, monkeypatch):
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: None)
+    dialog._on_history_deleted("done")
+    dialog.parent_widget.invalidate_usage_cache.assert_called_once_with()
+
+
+def test_invalidate_usage_cache_drops_the_hover_totals():
+    import types
+    from netspeedtray.views.widget.main import NetworkSpeedWidget
+    w = types.SimpleNamespace(_hover_usage_cache=((1.0, 2.0), (3.0, 4.0)), _hover_usage_cache_ts=99.0)
+    NetworkSpeedWidget.invalidate_usage_cache(w)
+    assert w._hover_usage_cache is None and w._hover_usage_cache_ts == 0.0
+
+
+def test_confirmation_says_the_cap_counter_is_kept(dialog, monkeypatch):
+    seen = {}
+
+    def fake_exec(box):
+        seen["info"] = box.informativeText()
+        return 0
+
+    monkeypatch.setattr(QMessageBox, "exec", fake_exec)
+    dialog._confirm_delete_history()
+    assert seen["info"] == dialog.i18n.DELETE_HISTORY_USAGE_NOTE

@@ -23,6 +23,10 @@ import zipfile
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
+from netspeedtray import constants
+
+_LOSS_SERIES_FOR: Dict[str, str] = dict(constants.network.latency.LOSS_SERIES_FOR)
+
 # (key, kind, unit, label). kind: "net_down"/"net_up" read via summarize_network; "hw" via summarize_hardware.
 _METRICS: List[Tuple[str, str, str, str]] = [
     ("download", "net_down", "Mbps", "Download"),
@@ -76,13 +80,17 @@ def export_window(widget_state, start: datetime, end: datetime, window_label: st
         else:
             s = widget_state.summarize_hardware(key, start, end, poll_interval)
             conv = _r
-        if s.count == 0:
-            continue   # nothing recorded for this metric in the window - omit, don't emit zeros
-
+        # A latency hop's loss comes from its own timeout series (gateway or internet anchor). It is
+        # read before the empty-row check: a hop that lost EVERY probe in the window has no RTT
+        # samples at all, and that is exactly the row an ISP complaint needs.
         loss = None
-        if key == "latency_gw":
-            ls = widget_state.summarize_hardware("latency_gw_timeout", start, end, poll_interval)
+        loss_series = _LOSS_SERIES_FOR.get(key)
+        if loss_series:
+            ls = widget_state.summarize_hardware(loss_series, start, end, poll_interval)
             loss = round((ls.avg or 0.0) * 100.0, 2) if ls.count else None
+
+        if s.count == 0 and loss is None:
+            continue   # nothing recorded for this metric in the window - omit, don't emit zeros
 
         summary_rows.append({
             "window_start_iso": start.isoformat(), "window_end_iso": end.isoformat(),

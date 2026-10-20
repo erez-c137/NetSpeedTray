@@ -50,6 +50,9 @@ def _fake_state(reset_day=1, period_key="2026-06-01"):
                 "anchor_up": 0.0, "anchor_down": 0.0, "period_key": period_key}
     s._usage_loaded = True
     s._usage_last_persist = 1e18  # far future -> no persist during the test
+    s._usage_live_counters = None      # launch-reconciliation snapshot (none fed in these tests)
+    s._usage_live_sampled_at = None
+    s._usage_live_primary = None
     s._persist_usage_now = WidgetState._persist_usage_now.__get__(s)
     s._maybe_reanchor = WidgetState._maybe_reanchor.__get__(s)
     return s
@@ -121,7 +124,8 @@ def test_persist_enqueues_when_due():
     assert s.db_worker.enqueue_task.called
     task, payload = s.db_worker.enqueue_task.call_args[0]
     assert task == "persist_usage"
-    assert len(payload) == 6  # cum_up, cum_down, anchor_up, anchor_down, period_key, ts
+    assert len(payload) == 7  # cum_up, cum_down, anchor_up, anchor_down, period_key, ts, counter snapshot
+    assert payload[6] is None  # no counters fed -> leave the stored snapshot untouched
 
 
 # --- DB persist round-trip ---------------------------------------------------

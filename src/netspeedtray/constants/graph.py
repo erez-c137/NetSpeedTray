@@ -31,6 +31,50 @@ class GraphConstants:
     GRID_ALPHA: Final[float] = 0.5
     GRID_LINESTYLE: Final[str] = ":"
     ERROR_MESSAGE_FONTSIZE: Final[int] = 12
+    # Value (y) axis labels show as many decimals as the tick step needs (0.5 -> 1, 0.02 -> 2), up to
+    # this many, with trailing zeros dropped ("1.5", "2", never "1.50" or "1" for 1.5).
+    VALUE_AXIS_MAX_DECIMALS: Final[int] = 3
+
+    # --- Percentile-clipped speed axis on long windows (views/graph/value_axis.py) ---
+    # A month of ordinary traffic plus two speed tests used to scale to the speed tests, squashing the
+    # month into ~3% of the height. On these windows the speed axis scales to the 99th percentile of
+    # the plotted points instead, but only when the max exceeds it by TRIGGER x - otherwise the max
+    # still sets the axis. Short and live windows always scale to the max. % axes (0-100) never clip.
+    VALUE_AXIS_CLIP_PERIODS: Final[Tuple[str, ...]] = ("TIMELINE_WEEK", "TIMELINE_MONTH", "TIMELINE_ALL")
+    VALUE_AXIS_CLIP_PERCENTILE: Final[float] = 99.0
+    VALUE_AXIS_CLIP_TRIGGER: Final[float] = 3.0     # clip only if max > percentile x this
+    VALUE_AXIS_CLIP_HEADROOM: Final[float] = 1.25   # axis scales to percentile x this (then nice-rounds up)
+    VALUE_AXIS_CLIP_MIN_POINTS: Final[int] = 100    # below this a 99th percentile is just the max
+    # Points above the clipped top get one caret per run on the top edge, and the axis states the peak.
+    VALUE_AXIS_CLIP_MARKER: Final[str] = "^"
+    VALUE_AXIS_CLIP_MARKER_SIZE: Final[float] = 22.0   # scatter area, points^2
+    VALUE_AXIS_CLIP_PEAK_FONTSIZE: Final[float] = 8.0
+    VALUE_AXIS_CLIP_PEAK_ALPHA: Final[float] = 0.75
+
+    # --- Time (x) axis ticks (views/graph/time_axis.py) ---
+    # The tick count follows the axis width: one label per this many points, clamped to [MIN, MAX].
+    TIME_AXIS_LABEL_SPACING_PT: Final[float] = 60.0
+    TIME_AXIS_MIN_TICKS: Final[int] = 4
+    TIME_AXIS_MAX_TICKS: Final[int] = 8
+    # Candidate tick steps, finest first: (unit, count). Every second/minute/hour/month count divides
+    # its parent unit evenly, so ticks land on round clock times ("18:15", never "18:13:20").
+    TIME_AXIS_STEPS: Final[Tuple[Tuple[str, int], ...]] = (
+        ("second", 1), ("second", 2), ("second", 5), ("second", 10), ("second", 15), ("second", 30),
+        ("minute", 1), ("minute", 2), ("minute", 5), ("minute", 10), ("minute", 15), ("minute", 30),
+        ("hour", 1), ("hour", 2), ("hour", 3), ("hour", 4), ("hour", 6), ("hour", 12),
+        ("day", 1), ("day", 2), ("day", 3), ("day", 4), ("week", 1), ("week", 2),
+        ("month", 1), ("month", 2), ("month", 3), ("month", 6),
+        ("year", 1), ("year", 2), ("year", 5), ("year", 10), ("year", 25), ("year", 50),
+    )
+    # Label formats, chosen from the tick step (and the span) so two ticks never print the same text.
+    TIME_AXIS_FMT_SECONDS: Final[str] = "%H:%M:%S"     # sub-minute steps
+    TIME_AXIS_FMT_MINUTES: Final[str] = "%H:%M"        # minute/hour steps within one day
+    TIME_AXIS_FMT_HOURS_MULTIDAY: Final[str] = "%a %H:%M"  # hour steps on a span of a day or more
+    TIME_AXIS_FMT_DAYS_SHORT: Final[str] = "%a %d"     # day/week steps on a span under four weeks
+    TIME_AXIS_FMT_DAYS: Final[str] = "%b %d"           # day/week steps within a year
+    TIME_AXIS_FMT_DAYS_LONG: Final[str] = "%Y-%m-%d"   # day/week steps on a span over a year
+    TIME_AXIS_FMT_MONTHS: Final[str] = "%b %Y"
+    TIME_AXIS_FMT_YEARS: Final[str] = "%Y"
 
     # --- Text and Labels ---
     WINDOW_TITLE: Final[str] = f"{app.APP_NAME} - Network Speed Graph"

@@ -41,14 +41,12 @@ def _make_newer_db(tmp_path: Path) -> tuple[Path, int]:
     """
     db_path = tmp_path / "speed_history.db"
     worker = DatabaseWorker(db_path)
-    worker._initialize_connection()
-    worker._check_and_create_schema()
+    worker._prepare_storage()                 # a fresh file at this build's version (v8)
     newer_version = DatabaseWorker._DB_VERSION + 1
     worker.conn.execute(
         "INSERT OR REPLACE INTO metadata (key, value) VALUES ('db_version', ?)",
         (str(newer_version),),
     )
-    worker.conn.commit()
     worker._close_connection()
     return db_path, newer_version
 
@@ -69,8 +67,7 @@ def _open_guarded(db_path: Path) -> tuple[DatabaseWorker, list]:
     worker = DatabaseWorker(db_path)
     received: list = []
     worker.schema_incompatible.connect(lambda *args: received.append(args))
-    worker._initialize_connection()
-    worker._check_and_create_schema()
+    worker._prepare_storage()
     return worker, received
 
 

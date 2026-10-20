@@ -298,8 +298,9 @@ def dialog_style() -> str:
             outline: none;
         }}
 
-        /* Comboboxes + spinboxes: native-looking inputs (were bare default Qt). */
-        QComboBox, QSpinBox, QDoubleSpinBox {{
+        /* Comboboxes + spinboxes: native-looking inputs (were bare default Qt). A QLineEdit opts in
+           with the fieldStyle="input" property (the metrics URL beside the port spin box). */
+        QComboBox, QSpinBox, QDoubleSpinBox, QLineEdit[fieldStyle="input"] {{
             background-color: {input_bg};
             border: 1px solid {border_color};
             border-radius: 4px;
@@ -307,12 +308,12 @@ def dialog_style() -> str:
             min-height: 22px;
             color: {text_color};
         }}
-        QComboBox:hover, QSpinBox:hover, QDoubleSpinBox:hover {{
+        QComboBox:hover, QSpinBox:hover, QDoubleSpinBox:hover, QLineEdit[fieldStyle="input"]:hover {{
             border-color: {accent_rgb};
         }}
         /* The single focus-ring style: a 2px accent border replaces the bare
            outline:none, restoring keyboard-nav visibility on the inputs. */
-        QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus {{
+        QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus, QLineEdit[fieldStyle="input"]:focus {{
             border: 2px solid {accent_rgb};
             padding: 3px 7px; /* keep total size stable when the border thickens */
         }}

@@ -22,10 +22,8 @@ def state_with_db(tmp_path: Path) -> Iterator[WidgetState]:
     with patch.object(QThread, "start", lambda self: None), \
          patch("netspeedtray.core.widget_state.get_app_data_path", return_value=tmp_path):
         state = WidgetState(cfg)
-    w = state.db_worker
-    w.db_path = tmp_path / "speed_history.db"
-    w._initialize_connection()
-    w._check_and_create_schema()
+    from netspeedtray.tests.state_helpers import attach_v7
+    w = attach_v7(state, tmp_path / "speed_history.db")   # v7 raw rows: the v7 backend's poll-rate rule
     # Insert 3 raw samples (rate 100 up / 200 down each) → rate-sum 300 / 600.
     now = int(datetime.now().timestamp())
     cur = w.conn.cursor()
@@ -56,16 +54,6 @@ def test_totals_scale_with_poll_interval(state_with_db):
     state_with_db.config["update_rate"] = 2.0
     up, down = _totals(state_with_db)
     assert up == pytest.approx(600.0)   # 3 × 100 × 2s  (was 300 before the fix - under-reported)
-    assert down == pytest.approx(1200.0)
-
-
-def test_smart_mode_uses_smart_interval_two_seconds(state_with_db):
-    """SMART (-1.0) samples every SMART_MODE_INTERVAL_MS = 2000 ms, NOT a nominal 1 s (2.1.5 item 9).
-    The old expectation (300.0, '# nominal 1s') pinned the wrong assumption as spec - totals must
-    scale by the interval the sampler actually runs at."""
-    state_with_db.config["update_rate"] = -1.0  # SMART/adaptive
-    up, down = _totals(state_with_db)
-    assert up == pytest.approx(600.0)   # 3 × 100 × 2s (SMART_MODE_INTERVAL_MS)
     assert down == pytest.approx(1200.0)
 
 

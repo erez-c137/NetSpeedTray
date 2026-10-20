@@ -44,10 +44,8 @@ def _make_state(tmp_path):
     cfg = dict(constants.config.defaults.DEFAULT_CONFIG)
     with patch.object(QThread, "start", lambda self: None),          patch("netspeedtray.core.widget_state.get_app_data_path", return_value=tmp_path):
         ws = WidgetState(cfg)
-    ws._db_path = tmp_path / "speed_history.db"
-    ws.db_worker.db_path = ws._db_path
-    ws.db_worker._initialize_connection()
-    ws.db_worker._check_and_create_schema()
+    from netspeedtray.tests.state_helpers import prepare_v8
+    prepare_v8(ws, tmp_path / "speed_history.db")
     return ws
 
 

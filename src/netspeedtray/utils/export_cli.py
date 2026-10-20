@@ -123,8 +123,7 @@ def run_export_cli(argv: Optional[List[str]] = None) -> Optional[int]:
         ts = now.strftime("%Y%m%d-%H%M%S")
         basename = ns.basename or f"nst_export_{machine}_{token}_{ts}"
         out_dir = os.path.abspath(ns.out)
-        # NOT `or 1.0`: the SMART sentinel (-1.0) is truthy and samples at 2.0 s, and letting it
-        # through stamped coverage 0.0% on every exported row (2.1.5 item 9).
+        # Seconds per sample for coverage / volume math: the shared resolver, never a local `or 1.0`.
         poll = resolve_poll_interval_seconds(config.get("update_rate", 1.0))
 
         paths = stats_exporter.export_window(

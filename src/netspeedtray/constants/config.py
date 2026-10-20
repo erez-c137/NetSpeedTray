@@ -4,7 +4,6 @@ Constants for application configuration defaults and constraints.
 from typing import Final, Dict, Any, List
 
 # --- IMPORT OTHER CONSTANTS TO CREATE A SINGLE SOURCE OF TRUTH ---
-from netspeedtray.constants.timers import timers
 from netspeedtray.constants.data import data
 from netspeedtray.constants.network import network
 from netspeedtray.constants.app import app
@@ -41,7 +40,6 @@ class ConfigConstants:
     
     # --- Default Values for Individual Settings (referencing other constants) ---
     DEFAULT_UPDATE_RATE: Final[float] = 1.0
-    MINIMUM_UPDATE_RATE: Final[float] = timers.MINIMUM_INTERVAL_MS / 1000.0
     DEFAULT_FONT_FAMILY: Final[str] = fonts.DEFAULT_FONT
     DEFAULT_FONT_SIZE: Final[int] = 9
     DEFAULT_FONT_WEIGHT: Final[int] = fonts.WEIGHT_NORMAL
@@ -244,9 +242,10 @@ class ConfigConstants:
         "show_memory_labels": DEFAULT_SHOW_MEMORY_LABELS,
         "show_hardware_temps": DEFAULT_SHOW_HARDWARE_TEMPS,
         "show_hardware_power": DEFAULT_SHOW_HARDWARE_POWER,
-        # Record cheap CPU/GPU/RAM utilization to the DB always (not just while the widget displays it),
-        # so the Monitor's history graphs have real data to show for past periods. Cheap (psutil +
-        # one PDH read); temps/power are NOT recorded here (those stay gated/forced-only).
+        # Settings > Advanced > "Record hardware history". Persists hardware samples to the history DB,
+        # but ONLY for metrics the user monitors (CPU/GPU/RAM switches, temps/power switches) - see
+        # controller.hardware_persist_allowed. Off = nothing hardware is written; live display (widget,
+        # mini graph, Monitor tiles) is unaffected. Latency has its own switch (latency_enabled).
         "record_hardware_history": True,
         # Latency: ping the default GATEWAY (LAN-only, never leaves the network) so the Monitor shows
         # connection latency + loss history. The public anchor (true internet latency) is STRICTLY
@@ -281,6 +280,7 @@ class ConfigConstants:
         "first_run_v2_seen": False,
         "first_run_ever": True,
         "tooltip_hint_shown_count": 0,     # gesture-hint tooltip fades after a few sessions
+        "history_upgrade_notice_shown": False,  # the one "history upgraded" flyout after v7 -> v8
         "temp_onboarding_dismissed": False,  # user opted out of the no-sensor temp explainer
         "preferred_monitor": None,
         # --- Data-usage / data-cap ---
@@ -290,6 +290,11 @@ class ConfigConstants:
         "data_cap_count": "total",         # total | download | upload
         "data_cap_alert_enabled": True,    # opt-in toast at 80% / 100%
         "usage_alert_state": "",           # internal: "<period_key>:<levels>" for restart-safe alerts
+        # --- Local metrics endpoint (2.2 scope B) ---
+        # OFF by default: an always-listening socket in a zero-telemetry app has to be the user's
+        # deliberate act. When on, it binds 127.0.0.1 only - nothing leaves the machine.
+        "metrics_endpoint_enabled": False,
+        "metrics_endpoint_port": network.metrics.DEFAULT_PORT,
     }
     
     # --- Schema Definition for Modern Config Validation ---
@@ -297,8 +302,9 @@ class ConfigConstants:
         "config_version": {"type": str, "default": CONFIG_SCHEMA_VERSION},
         "start_with_windows": {"type": bool, "default": DEFAULT_START_WITH_WINDOWS},
         "language": {"type": (str, type(None)), "default": None, "choices": list(I18nStrings.LANGUAGE_MAP.keys()) + [None]},
-        # Allow -1.0 sentinel for SMART/adaptive mode in addition to positive intervals
-        "update_rate": {"type": (int, float), "default": DEFAULT_UPDATE_RATE, "min": -1.0, "max": timers.MAXIMUM_UPDATE_RATE_SECONDS},
+        # Seconds between samples: one of the four slider presets (1/2/5/10). `_migrate_config` snaps
+        # any other persisted value onto the ladder first, so this only catches a bad in-memory value.
+        "update_rate": {"type": (int, float), "default": DEFAULT_UPDATE_RATE, "choices": list(UpdateMode.PRESETS)},
         "font_family": {"type": str, "default": DEFAULT_FONT_FAMILY},
         "font_size": {"type": int, "default": DEFAULT_FONT_SIZE, "min": fonts.FONT_SIZE_MIN, "max": fonts.FONT_SIZE_MAX},
         "font_weight": {"type": int, "default": DEFAULT_FONT_WEIGHT, "min": 1, "max": 1000},
@@ -417,6 +423,7 @@ class ConfigConstants:
         "first_run_v2_seen": {"type": bool, "default": False},
         "first_run_ever": {"type": bool, "default": True},
         "tooltip_hint_shown_count": {"type": int, "default": 0, "min": 0},
+        "history_upgrade_notice_shown": {"type": bool, "default": False},
         "temp_onboarding_dismissed": {"type": bool, "default": False},
         # QScreen.name() identifier (e.g. "\\.\DISPLAY1"). None = use primary.
         # If the saved screen isn't found at runtime, fall back to primary.
@@ -428,6 +435,9 @@ class ConfigConstants:
         "data_cap_count": {"type": str, "default": "total", "choices": ["total", "download", "upload"]},
         "data_cap_alert_enabled": {"type": bool, "default": True},
         "usage_alert_state": {"type": str, "default": ""},
+        "metrics_endpoint_enabled": {"type": bool, "default": False},
+        "metrics_endpoint_port": {"type": int, "default": network.metrics.DEFAULT_PORT,
+                                  "min": network.metrics.MIN_PORT, "max": network.metrics.MAX_PORT},
     }
 
 
