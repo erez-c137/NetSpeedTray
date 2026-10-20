@@ -14,7 +14,16 @@ The v8 file holds the two kinds of rollup row the reader must tell apart:
 
 Raw rows are 1 s samples (dt_ms = 1000) on both sides, so a raw rate and raw bytes are the same number.
 Watermarks sit in the gap between tiers, exactly where a move-only roll-up would put them.
+
+**One clock.** Everything a test derives "now" from - the history, its windows, and the readers' own
+horizon / watermark-lead rules - is ``fixed_now()``, read ONCE per process, and the readers are handed
+it as a fixed clock. Two independent ``datetime.now()`` reads (module import vs fixture build) used
+to decide, by the seconds that happened to pass between them mod the 15 s raw spacing, whether a
+window start landed exactly on a raw row - a 1-in-15 flake (and a near-certain failure when the file
+ran alone, where both reads share a second). Set ``NST_TEST_NOW`` (ISO-8601 local time, e.g.
+``2026-10-20T00:00:30``) to run every v8 reader test at a chosen instant.
 """
+import os
 import random
 import sqlite3
 from dataclasses import dataclass, field
@@ -29,6 +38,25 @@ from netspeedtray.core.db.sqlite_uri import sqlite_ro_uri
 
 D = constants.data
 DAY = 86400
+
+
+def _read_test_now() -> datetime:
+    env = os.environ.get("NST_TEST_NOW", "").strip()
+    return datetime.fromisoformat(env) if env else datetime.now()
+
+
+_TEST_NOW = _read_test_now()
+
+
+def fixed_now() -> datetime:
+    """The suite's single, fixed 'now' (see the module docstring)."""
+    return _TEST_NOW
+
+
+def clock_at(now: datetime):
+    """A reader clock frozen at ``now`` (epoch seconds, as ``time.time``)."""
+    ts = now.timestamp()
+    return lambda: ts
 NICS = ("Ethernet", "Wi-Fi 3")
 NATIVE_SAMPLES, NATIVE_SAMPLE_SECONDS = 20, 2      # a v8-native minute: 20 samples x 2 s
 
@@ -219,8 +247,11 @@ def ro_conn(path: Path) -> sqlite3.Connection:
     return sqlite3.connect(sqlite_ro_uri(path), uri=True, check_same_thread=False)
 
 
-def readers(v7_path: Path, v8_path: Path):
-    """(v7 reader, v8 reader, [connections to close])."""
+def readers(v7_path: Path, v8_path: Path, now: Optional[datetime] = None):
+    """(v7 reader, v8 reader, [connections to close]), both on a clock frozen at ``now``
+    (default ``fixed_now()``)."""
     from netspeedtray.core.db.history_reader import V7HistoryReader, V8HistoryReader
     c7, c8 = ro_conn(v7_path), ro_conn(v8_path)
-    return (V7HistoryReader(lambda: c7, lambda: v7_path), V8HistoryReader(lambda: c8, lambda: v8_path), [c7, c8])
+    clock = clock_at(now or fixed_now())
+    return (V7HistoryReader(lambda: c7, lambda: v7_path, clock=clock),
+            V8HistoryReader(lambda: c8, lambda: v8_path, clock=clock), [c7, c8])

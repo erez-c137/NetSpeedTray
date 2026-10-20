@@ -16,7 +16,7 @@ Then the watermark contract (``schema_v8.WATERMARK_KEYS``): boundaries, stray ro
 and invalid watermarks, and one consistent snapshot per read.
 """
 import math
-from dataclasses import astuple, is_dataclass
+from dataclasses import astuple, is_dataclass, replace
 from datetime import datetime, timedelta
 
 import pytest
@@ -25,6 +25,8 @@ from netspeedtray.core.db import schema_v8 as S8
 from netspeedtray.tests.unit import v8_twin_fixture as F
 
 DAY = 86400
+# The one clock every history, window and reader in this module derives from (v8_twin_fixture).
+NOW = F.fixed_now()
 
 
 def _same(a, b, path="result"):
@@ -54,7 +56,7 @@ def _same(a, b, path="result"):
 @pytest.fixture(scope="module")
 def twin(tmp_path_factory, q_app):
     d = tmp_path_factory.mktemp("twin")
-    h = F.make_history(datetime.now())
+    h = F.make_history(NOW)
     F.write_v7(d / "v7.db", h)
     F.write_v8(d / "v8.db", h).close()
     r7, r8, conns = F.readers(d / "v7.db", d / "v8.db")
@@ -63,8 +65,7 @@ def twin(tmp_path_factory, q_app):
         c.close()
 
 
-def _windows():
-    now = datetime.now()
+def _windows(now):
     out = [(None, None), (None, now)]
     for dl in (timedelta(minutes=5), timedelta(hours=6), timedelta(hours=20), timedelta(hours=26),
                timedelta(hours=30), timedelta(days=3), timedelta(days=7), timedelta(days=11),
@@ -78,7 +79,7 @@ def _windows():
     return out
 
 
-WINDOWS = _windows()
+WINDOWS = _windows(NOW)
 IFACES = [None, "all", "Ethernet", "Wi-Fi 3", "no such adapter"]
 
 
@@ -108,19 +109,87 @@ def test_hardware_history_agrees_and_ignores_per_entity_rows(twin):
     assert r8.hardware_history("gpu", None, None) == r7.hardware_history("gpu", None, None) == []
 
 
+def _clipped_seconds(h, st, et, nic):
+    """Seconds of the window's raw rows that lie BEFORE the window. A raw row is the END of its measured
+    interval ``[ts - dt, ts]`` (#366: v8 clips a raw row's weight to the window), so a 1 s row stamped
+    exactly at the window start measured nothing inside it: v8 gives it 0 s of coverage, v7 counts it as
+    one sample x the poll interval. Computed from the logical history, not from either reader."""
+    stamps = {t for t, n, _, _ in h.raw if st <= t <= et and (nic is None or n == nic)}
+    return sum(1 - min(1, t - st) for t in stamps)
+
+
+def _assert_summaries_agree(h, r7, r8, windows, direction, iface, poll):
+    """v8 == v7 read at the capture interval (1 s rows), value by value - except, exactly, the start-edge
+    clip. Returns how many windows the clip applied to (so a caller can prove it exercised both cases)."""
+    nic = None if iface in (None, "all") else iface
+    clipped = 0
+    for s, e in windows:
+        a, b = r7.summarize_network(direction, s, e, iface, 1.0), r8.summarize_network(direction, s, e, iface, poll)
+        win = (e - s).total_seconds()
+        clip = _clipped_seconds(h, int(s.timestamp()), int(e.timestamp()), nic)
+        if clip:
+            clipped += 1
+            # Only a raw-path window can reach a raw row at its start (the twin's raw tier is 20 h).
+            assert a.tier == b.tier == "raw", f"{s}..{e}"
+            assert a.coverage_pct == round(a.count / win * 100.0, 1), f"v7 coverage {s}..{e}"
+            a = replace(a, coverage_pct=round((a.count - clip) / win * 100.0, 1))
+        _same(a, b, f"{direction} {iface} {s}..{e} clip={clip}")
+    return clipped
+
+
 @pytest.mark.parametrize("direction", ["download", "upload"])
 @pytest.mark.parametrize("iface", [None, "Ethernet", "Wi-Fi 3"])
 @pytest.mark.parametrize("poll", [1.0, 2.0])
-def test_network_summary_agrees(twin, direction, iface, poll):
+@pytest.mark.parametrize("offset_s", [0, 7])
+def test_network_summary_agrees(twin, direction, iface, poll, offset_s):
     """v8 == v7 read at the interval the twin was actually captured at (1 s rows). v8 ignores the
     caller's ``poll``: a raw row's weight in a rollup summary, and its share of coverage, are its STORED
     measured seconds (dt_ms / 1000, step-7 note 8 - the unit net-tier sample_count already has), so a
     poll-rate change cannot rescale the summary of history captured at another rate. v7 can only
-    multiply its row count by the live rate."""
-    _, r7, r8 = twin
-    for s, e in WINDOWS[2:]:
-        _same(r7.summarize_network(direction, s, e, iface, 1.0), r8.summarize_network(direction, s, e, iface, poll),
-              f"{direction} {iface} {s}..{e}")
+    multiply its row count by the live rate.
+
+    The one other difference is the start-edge clip (``_clipped_seconds``). Both cases are pinned, not
+    left to the clock: at offset 0 the windows open exactly on the twin's 15 s raw grid (every raw-path
+    window has a row at its start), at +7 s none does. Before the shared clock (``F.fixed_now()``), the
+    seconds between this module's import and the fixture build chose the case - a 1-in-15 flake."""
+    h, r7, r8 = twin
+    shift = timedelta(seconds=offset_s)
+    clipped = _assert_summaries_agree(h, r7, r8, [(s + shift, e + shift) for s, e in WINDOWS[2:]],
+                                      direction, iface, poll)
+    assert (clipped > 0) is (offset_s == 0), clipped
+
+
+# Fixed instants, independent of when the suite runs: the windows (5 min .. 90 d back) cross midnight,
+# an hour boundary, and the October DST change (EU + Israel, 2026-10-25) in local time.
+_FIXED_CLOCKS = {
+    "23:21 (passed)": datetime(2026, 10, 19, 23, 21, 4, 329611),
+    "just after midnight": datetime(2026, 10, 20, 0, 0, 30, 500000),
+    "00:12 (failed)": datetime(2026, 10, 20, 0, 12, 7, 125000),
+    "hour boundary": datetime(2026, 10, 20, 14, 2, 11, 900000),
+    "after DST end": datetime(2026, 10, 25, 4, 30, 0),
+}
+
+
+@pytest.mark.parametrize("clock", sorted(_FIXED_CLOCKS))
+def test_network_summary_agrees_at_fixed_clocks(tmp_path, q_app, clock):
+    """The same contract on twins built (and read) at fixed instants either side of midnight and of an
+    hour: nothing in the summaries' window / tier / watermark arithmetic depends on the time of day."""
+    now = _FIXED_CLOCKS[clock]
+    h = F.make_history(now)
+    F.write_v7(tmp_path / "v7.db", h)
+    F.write_v8(tmp_path / "v8.db", h).close()
+    r7, r8, conns = F.readers(tmp_path / "v7.db", tmp_path / "v8.db", now=now)
+    try:
+        for offset_s in (0, 7):
+            shift = timedelta(seconds=offset_s)
+            windows = [(s + shift, e + shift) for s, e in _windows(now)[2:]]
+            for iface in (None, "Ethernet"):
+                for direction in ("download", "upload"):
+                    clipped = _assert_summaries_agree(h, r7, r8, windows, direction, iface, 2.0)
+                    assert (clipped > 0) is (offset_s == 0), (offset_s, clipped)
+    finally:
+        for c in conns:
+            c.close()
 
 
 @pytest.mark.parametrize("poll", [1.0, 5.0])
@@ -174,7 +243,7 @@ def _expected(h, start_ts, end_ts, nic=None):
 @pytest.mark.parametrize("iface", [None, "Ethernet", "Wi-Fi 3"])
 def test_volume_differs_only_where_v8_is_more_exact(twin, iface):
     h, r7, r8 = twin
-    now = datetime.now()
+    now = NOW
     nic = None if iface in (None, "all") else iface
     seen = set()
     for s, e in WINDOWS[1:]:
@@ -203,7 +272,7 @@ def test_volume_differs_only_where_v8_is_more_exact(twin, iface):
 def test_raw_only_window_is_identical_and_exact(twin):
     """<= 20 h: raw tier only - both backends report the same bytes, and v8 calls them exact."""
     h, r7, r8 = twin
-    now = datetime.now()
+    now = NOW
     s = datetime.fromtimestamp(h.now_ts) - timedelta(hours=20)
     assert r7.total_bandwidth(s, now, None, 1.0) == pytest.approx(r8.total_bandwidth(s, now, None, 1.0), rel=1e-12)
     vol = r8.volume(s, now, None, 1.0)
@@ -242,7 +311,7 @@ def test_migrated_minutes_use_the_legacy_estimate_not_avg_x_60(twin):
 def test_v8_raw_volume_ignores_the_live_poll_rate(tmp_path, q_app):
     """v7 scales raw rows by the CURRENT poll interval (a 2 s capture read at 1 s is half the bytes; the
     SMART-mode 2x under-report). v8 stores bytes over a measured dt_ms, so the caller's rate is moot."""
-    now = datetime.now()
+    now = NOW
     h = F.make_history(now)
     for name, dt in (("v8_1s.db", 1000), ("v8_2s.db", 2000)):
         w = F.V8Writer(tmp_path / name)
@@ -267,7 +336,7 @@ def test_v8_raw_volume_ignores_the_live_poll_rate(tmp_path, q_app):
 
 
 def test_empty_v8_file_reads_like_an_empty_v7_file(tmp_path, q_app):
-    h = F.History(now_ts=int(datetime.now().timestamp()))
+    h = F.History(now_ts=int(NOW.timestamp()))
     F.write_v7(tmp_path / "v7.db", h)
     F.V8Writer(tmp_path / "v8.db").close()
     # usage row identical on both (write_v7 inserts h.usage_row; mirror it)
@@ -278,7 +347,7 @@ def test_empty_v8_file_reads_like_an_empty_v7_file(tmp_path, q_app):
     c.commit()
     c.close()
     r7, r8, conns = F.readers(tmp_path / "v7.db", tmp_path / "v8.db")
-    now = datetime.now()
+    now = NOW
     for s, e in WINDOWS:
         for res in ("auto", "raw", "minute", "hour"):
             _same(r7.speed_history(s, e, None, False, res), r8.speed_history(s, e, None, False, res))
@@ -323,14 +392,14 @@ def _v8(tmp_path, name, h, watermarks=True, mutate=None):
 
 @pytest.fixture
 def hist():
-    return F.make_history(datetime.now())
+    return F.make_history(NOW)
 
 
 def test_missing_watermarks_fall_back_to_the_horizon_rule(tmp_path, hist):
     """No overlap and no strays: with or without watermarks, every read is the same."""
     a, ca = _v8(tmp_path, "wm.db", hist)
     b, cb = _v8(tmp_path, "nowm.db", hist, watermarks=False)
-    now = datetime.now()
+    now = NOW
     _same(_all_reads(a, now), _all_reads(b, now))
     for c in ca + cb:
         c.close()
@@ -343,7 +412,7 @@ def test_invalid_watermarks_are_ignored(tmp_path, hist, bad):
     val = str(hist.now_ts + 30 * DAY) if bad == "far_future" else bad
     ref, cr = _v8(tmp_path, "nowm.db", hist, watermarks=False)
     got, cg = _v8(tmp_path, "bad.db", hist, mutate=lambda w: w.watermarks(val, val))
-    now = datetime.now()
+    now = NOW
     _same(_all_reads(ref, now), _all_reads(got, now))
     for c in cr + cg:
         c.close()
@@ -364,7 +433,7 @@ def test_each_tier_answers_exactly_from_its_watermark(tmp_path, hist):
                                  (wm - 3600, nic, 1.0, 11.0, 1.0, 11.0, 100, None, None)])
     base, cb = _v8(tmp_path, "base.db", hist)
     got, cg = _v8(tmp_path, "edges.db", hist, mutate=edges)
-    now = datetime.now()
+    now = NOW
     s = now - timedelta(days=60)
     b, g = base.total_bandwidth(s, now, None, 1.0), got.total_bandwidth(s, now, None, 1.0)
     assert g[1] - b[1] == pytest.approx(1000 + 30 * 10 + 70 * 10 + 11 * 100)
@@ -384,7 +453,7 @@ def test_each_family_reads_only_its_own_watermarks(tmp_path, hist, moved):
         wm = dict(raw=hist.wm_raw, minute=hist.wm_minute, hw_raw=now_floor, hw_minute=hist.wm_minute)
     clean, c1 = _v8(tmp_path, "clean.db", hist)
     got, c2 = _v8(tmp_path, "moved.db", hist, mutate=lambda w: w.watermarks(**wm))
-    now = datetime.now()
+    now = NOW
     s = now - timedelta(hours=20)
     net = lambda r: (r.total_bandwidth(s, now, None, 1.0), r.speed_history(s, now, None, True, "raw"),
                      r.summarize_network("download", s, now, None, 1.0))
@@ -413,7 +482,7 @@ def test_a_stray_raw_row_below_the_watermark_hides_nothing(tmp_path, hist, stray
         w.hw_raw([(ts, "cpu", 50.0)])
     clean, c1 = _v8(tmp_path, "clean.db", hist)
     got, c2 = _v8(tmp_path, "stray.db", hist, mutate=stray)
-    now = datetime.now()
+    now = NOW
     _same(_all_reads(clean, now), _all_reads(got, now))
     if stray_at == "25.5h":
         fb, c3 = _v8(tmp_path, "stray_nowm.db", hist, watermarks=False, mutate=stray)
@@ -439,7 +508,7 @@ def test_copies_above_a_watermark_are_never_billed_twice(tmp_path, hist):
         w.hw_tier(S8.HW_HOUR, [(t2, "cpu", 50.0, 90.0, 3600)])
     clean, c1 = _v8(tmp_path, "clean.db", hist)
     got, c2 = _v8(tmp_path, "copies.db", hist, mutate=copies)
-    now = datetime.now()
+    now = NOW
     _same(_all_reads(clean, now), _all_reads(got, now))
     for c in c1 + c2:
         c.close()
@@ -463,7 +532,7 @@ class _RollupMidRead:
             self.fired = True
             import sqlite3
             w = sqlite3.connect(self._path, isolation_level=None)
-            cut = int(datetime.now().timestamp()) // 60 * 60
+            cut = int(NOW.timestamp()) // 60 * 60
             w.execute("BEGIN IMMEDIATE")
             w.execute(f"""INSERT OR IGNORE INTO {S8.NET_MINUTE} (ts, iface_id, up_bytes, down_bytes, up_avg,
                           down_avg, up_max, down_max, sample_count)
@@ -513,7 +582,7 @@ def test_a_rollup_commit_mid_read_changes_nothing(tmp_path, hist, call):
     from netspeedtray.core.db.history_reader import V8HistoryReader
     path = tmp_path / "v8.db"
     F.write_v8(path, hist).close()
-    now = datetime.now()
+    now = NOW
     start = now - timedelta(days=3)
     calls = {
         "total": lambda r: r.total_bandwidth(start, now, None, 1.0),
@@ -525,14 +594,14 @@ def test_a_rollup_commit_mid_read_changes_nothing(tmp_path, hist, call):
         "coverage": lambda r: r.coverage(start, now),
     }
     quiet = sqlite3.connect(path, check_same_thread=False)
-    expected = calls[call](V8HistoryReader(lambda: quiet, lambda: path))
+    expected = calls[call](V8HistoryReader(lambda: quiet, lambda: path, clock=F.clock_at(NOW)))
     quiet.close()
     raw_conn = sqlite3.connect(path, check_same_thread=False)
     noisy = _RollupMidRead(raw_conn, path)
-    got = calls[call](V8HistoryReader(lambda: noisy, lambda: path))
+    got = calls[call](V8HistoryReader(lambda: noisy, lambda: path, clock=F.clock_at(NOW)))
     assert noisy.fired
     raw_conn.close()
     _same(got, expected, call)
     if call == "total":   # and the roll-up really moved the data (the test would be vacuous otherwise)
-        r = V8HistoryReader(lambda: sqlite3.connect(path), lambda: path)
+        r = V8HistoryReader(lambda: sqlite3.connect(path), lambda: path, clock=F.clock_at(NOW))
         assert r.volume(start, now, None, 1.0).down_bytes == pytest.approx(expected[1])
