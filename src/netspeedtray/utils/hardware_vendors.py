@@ -20,6 +20,7 @@ On a HYBRID laptop (an Intel or Ryzen iGPU + a discrete Nvidia/AMD) the graphed 
 """
 from __future__ import annotations
 
+import colorsys
 import logging
 from functools import lru_cache
 from typing import List, Optional, Tuple
@@ -152,7 +153,9 @@ def graph_line_style(role: str, override_color: Optional[str] = None,
 # The GPU wears its OWN brand hue (NVIDIA green, AMD red, Intel blue); only when CPU and GPU share a
 # vendor does it switch to a sibling shade (AMD orange, Intel teal) so the two stay apart at a glance.
 # Unknown (incl. hybrid laptops, see gpu_vendor) keeps the pre-2.2 neutral blue/red, deepened on a
-# light taskbar where the originals measured 2.6-3.4:1.
+# light taskbar where the originals measured 2.6-3.4:1. When a neutral would land on the other label's
+# hue (AMD CPU + hybrid GPU: red beside red; unknown CPU + Intel GPU: blue beside blue) the GPU takes
+# the Monitor's neutral purple instead (6.3 / 5.5-6.0:1).
 _LABEL_BRAND = {
     # vendor: (on a dark taskbar, on a light taskbar)
     "intel": ("#4FA8F0", "#0062AD"),
@@ -161,20 +164,33 @@ _LABEL_BRAND = {
 }
 _LABEL_GPU_SIBLING = {"intel": ("#33C3D6", "#00727F"), "amd": ("#FF9A5C", "#A84300")}
 _LABEL_NEUTRAL = {"cpu": ("#3498DB", "#1F6AA5"), "gpu": ("#E74C3C", "#B83227")}
+_LABEL_NEUTRAL_GPU_ALT = ("#B58BFF", "#6A3FC6")
+_MIN_LABEL_HUE_GAP = 25   # degrees; below this CPU and GPU read as the same colour at 9 pt
+
+
+def _hue_gap(a: str, b: str) -> int:
+    def hue(h: str) -> int:
+        r, g, b_ = (int(h[i:i + 2], 16) / 255 for i in (1, 3, 5))
+        return round(colorsys.rgb_to_hsv(r, g, b_)[0] * 360)
+    d = abs(hue(a) - hue(b)) % 360
+    return min(d, 360 - d)
 
 
 def widget_label_color(role: str, light_taskbar: bool = False) -> str:
     """Brand hex for the widget's 'cpu' / 'gpu' label on a dark (default) or light taskbar."""
     idx = 1 if light_taskbar else 0
     cpu = cpu_vendor()
-    if role == "gpu":
-        gpu = gpu_vendor()
-        if gpu == cpu and gpu in _LABEL_GPU_SIBLING:
-            return _LABEL_GPU_SIBLING[gpu][idx]
-        return _LABEL_BRAND.get(gpu, _LABEL_NEUTRAL["gpu"])[idx]
-    if cpu in ("intel", "amd"):
-        return _LABEL_BRAND[cpu][idx]
-    return _LABEL_NEUTRAL["cpu"][idx]
+    cpu_color = _LABEL_BRAND[cpu][idx] if cpu in ("intel", "amd") else _LABEL_NEUTRAL["cpu"][idx]
+    if role != "gpu":
+        return cpu_color
+    gpu = gpu_vendor()
+    if gpu == cpu and gpu in _LABEL_GPU_SIBLING:
+        return _LABEL_GPU_SIBLING[gpu][idx]
+    gpu_color = _LABEL_BRAND.get(gpu, _LABEL_NEUTRAL["gpu"])[idx]
+    either_neutral = gpu not in _LABEL_BRAND or cpu not in ("intel", "amd")
+    if either_neutral and _hue_gap(cpu_color, gpu_color) < _MIN_LABEL_HUE_GAP:
+        return _LABEL_NEUTRAL_GPU_ALT[idx]
+    return gpu_color
 
 
 def default_color(role: str, is_dark: bool = True) -> str:

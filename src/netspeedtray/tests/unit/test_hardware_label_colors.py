@@ -138,10 +138,32 @@ def test_ryzen_igpu_name_classifies_as_amd():
     assert hv._classify_gpu("AMD Radeon(TM) Graphics") == "amd"
 
 
+VENDORS_CPU = ["intel", "amd", "unknown"]
+VENDORS_GPU = ["intel", "amd", "nvidia", "unknown"]
+
+
+@pytest.mark.parametrize("cpu", VENDORS_CPU)
+@pytest.mark.parametrize("gpu", VENDORS_GPU)
+@pytest.mark.parametrize("light", [False, True])
+def test_cpu_and_gpu_never_share_a_hue(vendors, cpu, gpu, light):
+    """Every vendor pair, incl. the neutral fallbacks: a Ryzen + NVIDIA hybrid painted AMD-red CPU
+    next to neutral-red GPU, and an unknown CPU + Intel GPU blue beside blue."""
+    vendors(cpu, gpu)
+    c, g = hv.widget_label_color("cpu", light), hv.widget_label_color("gpu", light)
+    gap = abs(_hue(c) - _hue(g)) % 360
+    assert min(gap, 360 - gap) >= 15, (cpu, gpu, c, g)
+
+
+def test_amd_cpu_with_a_hybrid_gpu_gets_the_purple_neutral(vendors):
+    vendors("amd", "unknown")
+    for light in (False, True):
+        assert 250 <= _hue(hv.widget_label_color("gpu", light)) <= 290, "not purple"
+
+
 def _palette(light: bool):
     i = 1 if light else 0
     return ([v[i] for v in hv._LABEL_BRAND.values()] + [v[i] for v in hv._LABEL_GPU_SIBLING.values()]
-            + [hv._LABEL_NEUTRAL["cpu"][i], hv._LABEL_NEUTRAL["gpu"][i]])
+            + [hv._LABEL_NEUTRAL["cpu"][i], hv._LABEL_NEUTRAL["gpu"][i], hv._LABEL_NEUTRAL_GPU_ALT[i]])
 
 
 @pytest.mark.parametrize("light,backdrops", [(False, DARK_TASKBARS), (True, LIGHT_TASKBARS)])
