@@ -94,6 +94,8 @@
     "GRAPH_NOTE_TEXT": "참고: 위젯 영역 내에 작은 실시간 그래프가 표시됩니다.",
     "HISTORY_DURATION_LABEL": "그래프 시간 범위:",
     "GRAPH_OPACITY_LABEL": "그래프 불투명도:",
+    "GRAPH_SPLIT_LABEL": "업로드와 다운로드 그래프 분리",
+    "GRAPH_SPLIT_DESC": "각각 자체 배율로 표시합니다. 가로 작업 표시줄에서는 나란히, 세로 작업 표시줄에서는 위아래로 배치합니다. 모두 순환에서는 업로드와 다운로드가 번갈아 표시됩니다.",
     "GRAPH_FIXED_SCALE_LABEL": "그래프 고정 배율",
     "GRAPH_FIXED_SCALE_DESC": "최근 트래픽 대신 가입 요금제 속도(네트워크 인터페이스 페이지)에 맞춰 그래프 배율을 고정합니다. 요금제 속도를 설정하기 전까지는 자동으로 유지됩니다.",
     "GRAPH_SCALE_HEADROOM_LABEL": "요금제 속도 위 여유 공간",

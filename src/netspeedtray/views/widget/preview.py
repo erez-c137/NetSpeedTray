@@ -12,16 +12,20 @@ Consumers:
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, Optional
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QPainter, QPaintEvent
+from PyQt6.QtCore import Qt, QRect
+from PyQt6.QtGui import QImage, QPainter, QPaintEvent
 from PyQt6.QtWidgets import QWidget
 
+from netspeedtray import constants
 from netspeedtray.utils.widget_renderer import WidgetRenderer
 from netspeedtray.utils.widget_paint import (
     WidgetMetrics, render_widget, font_from_config, demo_metrics,
 )
+
+logger = logging.getLogger("NetSpeedTray.PreviewWidget")
 
 
 class PreviewWidget(QWidget):
@@ -41,7 +45,10 @@ class PreviewWidget(QWidget):
         self._layout_mode: str = "horizontal"
         self._font = font_from_config(self._config)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self._min_width = width
+        self._fitted_for: Optional[tuple] = None   # what the current width was measured for
         self.setFixedSize(width, height)
+        self._fit_to_content()
 
     # --- inputs -----------------------------------------------------------------
     def set_config(self, config: Dict[str, Any]) -> None:
@@ -49,6 +56,7 @@ class PreviewWidget(QWidget):
         self._config = dict(config)
         self._renderer.update_config(self._config)
         self._font = font_from_config(self._config)
+        self._fit_to_content()
         self.update()
 
     def set_metrics(self, metrics: WidgetMetrics) -> None:
@@ -66,6 +74,33 @@ class PreviewWidget(QWidget):
         the side_by_side segments top-to-bottom; every other mode draws the same either way."""
         self._layout_mode = mode
         self.update()
+
+    def _fit_to_content(self) -> None:
+        """Grow to the readout's measured width (never below the requested width), so a wider layout -
+        side-by-side with separate upload/download graphs - shows whole instead of clipped. Measured
+        through the same paint path on a throwaway surface - only when the config, layout or cycle phase
+        changed since the last fit. The content bounds come from the segments' layout rects, not from
+        painted pixels, so the probe only needs the preview's own size even when the content is wider."""
+        fit_for = (dict(self._config), self._layout_mode, self._cycle_mode)
+        if fit_for == self._fitted_for:
+            return
+        try:
+            w, h = max(1, self._min_width), max(1, self.height())
+            probe = QImage(w, h, QImage.Format.Format_ARGB32_Premultiplied)
+            painter = QPainter(probe)
+            try:
+                render_widget(painter, QRect(0, 0, w, h), self._renderer, self._renderer.config, self._metrics,
+                              layout_mode=self._layout_mode, cycle_mode=self._cycle_mode,
+                              network_width=None, font=self._font)
+            finally:
+                painter.end()   # never leave the probe being painted - Qt aborts when it's freed mid-paint
+            content = self._renderer.get_content_bounds().width()
+            needed = content + constants.renderer.TEXT_MARGIN + constants.renderer.RIGHT_ANCHOR_PADDING
+            self.setFixedWidth(max(self._min_width, needed))
+            self._fitted_for = fit_for
+        except Exception as e:
+            # A preview must never break its host dialog: keep the current size, but say why.
+            logger.warning("Could not fit the settings preview to its content: %s", e, exc_info=True)
 
     @property
     def config(self) -> Dict[str, Any]:

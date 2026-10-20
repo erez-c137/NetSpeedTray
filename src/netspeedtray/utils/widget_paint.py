@@ -97,18 +97,69 @@ def demo_metrics() -> WidgetMetrics:
     )
 
 
+# Auto-Cycle phases of the separate upload/download graphs: with the split on, they replace the combined
+# "network_only" phase in the rotation, so each direction gets the whole widget and the widget keeps its size.
+SPLIT_PHASES: Tuple[str, str] = ("network_upload", "network_download")
+
+
+def split_active(config: RenderConfig) -> bool:
+    """Separate upload/download graphs are on - they need the mini graph itself to be on."""
+    return bool(config.graph_enabled and config.graph_split_directions)
+
+
+def split_network_phases(swap_upload_download: bool) -> List[str]:
+    """The two network phases of the Auto-Cycle rotation, in the readout's order (upload first unless swapped)."""
+    return list(reversed(SPLIT_PHASES)) if swap_upload_download else list(SPLIT_PHASES)
+
+
+def _split_geometry(renderer: WidgetRenderer, config: RenderConfig, metrics: WidgetMetrics,
+                    network_width: Optional[int]) -> Tuple[int, int]:
+    """(panel width, badge reserve) of the side-by-side split view. A panel is one network block - the
+    layout manager's network width, which includes the identity badge's reserve - and only the LAST
+    panel draws the badge, so the first one is that much narrower (no badge-wide blank in it)."""
+    reserve = renderer.identity_reserve(metrics.identity_band, metrics.identity_ssid)
+    if network_width is not None:
+        return network_width, reserve
+    up_bytes, dw_bytes = metrics.net_bytes()
+    return renderer.network_panel_width(up_bytes, dw_bytes, config) + reserve, reserve
+
+
+def _split_rects(x: int, width: int, height: int, layout: str, panel_width: int,
+                 badge_reserve: int) -> List[QRect]:
+    """The two panels of the split view: stacked on a side (vertical) taskbar, side by side otherwise
+    (the first one without the badge reserve - see _split_geometry)."""
+    gap = constants.renderer.GRAPH_SPLIT_GAP
+    if layout == "vertical":
+        top = (height - gap) // 2
+        return [QRect(x, 0, width, top), QRect(x, top + gap, width, height - top - gap)]
+    first = panel_width - badge_reserve
+    return [QRect(x, 0, first, height), QRect(x + first + gap, 0, panel_width, height)]
+
+
 def _resolve_mode(config: RenderConfig, cycle_mode: str) -> str:
-    """`cycle` resolves to whichever single metric is currently showing."""
+    """`cycle` resolves to whichever single metric is currently showing. The widget only rebuilds its
+    phase list on the next step, so a phase left over from before the split was toggled is mapped onto
+    the current set (the combined network phase <-> the first split phase)."""
     mode = config.widget_display_mode
-    return cycle_mode if mode == "cycle" else mode
+    if mode != "cycle":
+        return mode
+    if split_active(config):
+        return split_network_phases(config.swap_upload_download)[0] if cycle_mode == "network_only" else cycle_mode
+    return "network_only" if cycle_mode in SPLIT_PHASES else cycle_mode
 
 
 def _draw_graph(painter: QPainter, renderer: WidgetRenderer, width: int, height: int,
                 config: RenderConfig, metrics: WidgetMetrics, mode: str, layout: str) -> None:
-    """Mini-graph background layer (skipped in side_by_side - scoped per-segment there)."""
+    """Mini-graph background layer (skipped in side_by_side - scoped per-segment there - and for the
+    split network readout, whose panels each draw their own graph)."""
     if mode == "side_by_side":
         return
-    if mode == "cpu_only":
+    if mode == "network_only" and split_active(config):
+        return
+    if mode in SPLIT_PHASES:
+        renderer.draw_mini_graph(painter, width, height, config, list(metrics.net_history), layout,
+                                 series="upload" if mode == "network_upload" else "download")
+    elif mode == "cpu_only":
         renderer.draw_mini_graph(painter, width, height, config, list(metrics.cpu_history),
                                  layout, is_hardware=True, hardware_color=constants.graph.CPU_LINE_COLOR)
     elif mode == "gpu_only":
@@ -223,20 +274,38 @@ def _draw_side_by_side(painter: QPainter, renderer: WidgetRenderer, width: int, 
         return
 
     net_w = network_width if network_width is not None else width
+    # Split graphs only in a row (horizontal taskbar): a side taskbar stacks the segments above
+    # (_draw_stacked) with the network keeping its two-row band.
+    split = split_active(config) and layout != "vertical"
+    split_width = 0
     current_x = 0
     for key in active_keys:
-        if key == "network" and config.graph_enabled:
-            painter.save()
-            painter.translate(current_x, 0)
-            renderer.draw_mini_graph(painter, net_w, height, config, list(metrics.net_history), layout)
-            painter.restore()
-        _draw_segment(painter, renderer, key, width, height, config, metrics, layout,
-                      x_offset=current_x, slot_width=network_width)
+        if key == "network" and split:
+            up_bytes, dw_bytes = metrics.net_bytes()
+            panel_w, reserve = _split_geometry(renderer, config, metrics, network_width)
+            renderer.draw_network_split(painter, up_bytes, dw_bytes,
+                                        _split_rects(current_x, width, height, layout, panel_w, reserve),
+                                        config, list(metrics.net_history), layout,
+                                        identity_text=metrics.identity_band,
+                                        identity_color=metrics.identity_band_color,
+                                        identity_solid=metrics.identity_band_solid,
+                                        identity_ssid=metrics.identity_ssid)
+            split_width = 2 * panel_w - reserve + constants.renderer.GRAPH_SPLIT_GAP
+        else:
+            if key == "network" and config.graph_enabled:
+                painter.save()
+                painter.translate(current_x, 0)
+                renderer.draw_mini_graph(painter, net_w, height, config, list(metrics.net_history), layout)
+                painter.restore()
+            _draw_segment(painter, renderer, key, width, height, config, metrics, layout,
+                          x_offset=current_x, slot_width=network_width)
 
         if key == "network":
             # Advance by the explicit network width if given (live widget), else by the
             # width the renderer just measured (preview has no layout-manager width).
             advance = network_width if network_width is not None else renderer.get_last_text_rect().width()
+            if split:
+                advance = split_width
             current_x += advance + constants.layout.WIDGET_SEGMENT_GAP_AFTER_NETWORK_PX
         else:
             current_x += renderer.get_last_text_rect().width() + constants.layout.WIDGET_SEGMENT_GAP_BETWEEN_HARDWARE_PX
@@ -248,9 +317,26 @@ def _draw_foreground(painter: QPainter, renderer: WidgetRenderer, width: int, he
     """Text/stats foreground layer for the resolved single-metric or side-by-side mode."""
     if mode == "side_by_side":
         _draw_side_by_side(painter, renderer, width, height, config, metrics, layout, network_width)
+    elif mode == "network_only" and split_active(config):
+        up_bytes, dw_bytes = metrics.net_bytes()
+        panel_w, reserve = _split_geometry(renderer, config, metrics, network_width)
+        renderer.draw_network_split(painter, up_bytes, dw_bytes,
+                                    _split_rects(0, width, height, layout, panel_w, reserve),
+                                    config, list(metrics.net_history), layout,
+                                    identity_text=metrics.identity_band,
+                                    identity_color=metrics.identity_band_color,
+                                    identity_solid=metrics.identity_band_solid,
+                                    identity_ssid=metrics.identity_ssid)
     elif mode == "network_only":
         up_bytes, dw_bytes = metrics.net_bytes()
         renderer.draw_network_speeds(painter, up_bytes, dw_bytes, width, height, config, layout,
+                                     identity_text=metrics.identity_band,
+                                     identity_color=metrics.identity_band_color,
+                                     identity_solid=metrics.identity_band_solid,
+                                     identity_ssid=metrics.identity_ssid)
+    elif mode in SPLIT_PHASES:
+        up_bytes, dw_bytes = metrics.net_bytes()
+        renderer.draw_network_single(painter, up_bytes, dw_bytes, mode == "network_upload", width, height, config,
                                      identity_text=metrics.identity_band,
                                      identity_color=metrics.identity_band_color,
                                      identity_solid=metrics.identity_band_solid,

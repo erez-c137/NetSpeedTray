@@ -39,7 +39,7 @@ from netspeedtray.utils.taskbar_utils import (
 )
 
 from netspeedtray.utils.widget_renderer import WidgetRenderer as CoreWidgetRenderer, RenderConfig
-from netspeedtray.utils.widget_paint import WidgetMetrics, render_widget
+from netspeedtray.utils.widget_paint import WidgetMetrics, render_widget, split_network_phases
 from netspeedtray.core.system_events import SystemEventHandler
 from netspeedtray.views.widget.layout import WidgetLayoutManager
 from netspeedtray.views.widget.theme import WidgetThemeManager
@@ -863,6 +863,10 @@ class NetworkSpeedWidget(QWidget):
         only one metric is available (nothing to cycle through).
         """
         modes = ["network_only"]
+        if self.config.get("graph_enabled", False) and self.config.get("graph_split_directions", False):
+            # Separate upload/download graphs: each direction is a phase of its own, so the widget
+            # keeps its size instead of widening every phase to two panels.
+            modes = split_network_phases(bool(self.config.get("swap_upload_download", False)))
         if self.config.get("monitor_cpu_enabled", False): modes.append("cpu_only")
         if self.config.get("monitor_gpu_enabled", False): modes.append("gpu_only")
 

@@ -209,6 +209,15 @@ class WidgetLayoutManager:
                 # Save calculated network width for other layout consumers (e.g. mini-graph)
                 self._network_width = calculated_width
 
+                # Separate upload/download graphs: the readout becomes two panels side by side, each one
+                # network block wide (_network_width keeps meaning one block - the renderer sizes each
+                # panel from it). Only the last panel carries the identity badge, so its reserve is
+                # counted once. Auto-Cycle rotates upload and download as single-panel phases instead,
+                # so its network width stays one block.
+                if self._split_graphs() and self.widget.config.get("widget_display_mode", "network_only") in (
+                        "network_only", "side_by_side"):
+                    calculated_width = 2 * calculated_width - _identity_reserve + constants.renderer.GRAPH_SPLIT_GAP
+
                 # --- SIDE-BY-SIDE MODE ADJUSTMENT ---
                 display_mode = self.widget.config.get("widget_display_mode", "network_only")
                 monitor_ram = self.widget.config.get("monitor_ram_enabled", False)
@@ -406,6 +415,11 @@ class WidgetLayoutManager:
                 # Height is calculated to fit exactly two lines of text + small padding
                 # This prevents the widget from stretching the full length of the screen.
                 calculated_height = self.metrics.height() * 2 + (margin * 4)
+                # Separate upload/download graphs stack on a side taskbar: two panels, each as tall as
+                # today's readout. Only network_only - Auto-Cycle shows one direction per phase, and
+                # side_by_side stacks its segments below with the network's two-row band.
+                if self._split_graphs() and self.widget.config.get("widget_display_mode", "network_only") == "network_only":
+                    calculated_height = 2 * calculated_height + constants.renderer.GRAPH_SPLIT_GAP
 
                 # side_by_side has no room for its segments in a row on a widget only as wide as the
                 # taskbar, so the paint path stacks them top-to-bottom (widget_paint._draw_stacked):
@@ -438,6 +452,12 @@ class WidgetLayoutManager:
             self.logger.error(f"Failed to resize widget: {e}", exc_info=True)
             self.widget.setFixedSize(150, 40)
             self.logger.warning("Applied fallback widget size: 150x40px")
+
+    def _split_graphs(self) -> bool:
+        """Separate upload/download graphs are on (they need the mini graph itself on) - same rule as
+        widget_paint.split_active, read from the widget's config dict."""
+        cfg = self.widget.config
+        return bool(cfg.get("graph_enabled", False) and cfg.get("graph_split_directions", False))
 
     def _horizontal_dock_height(self, edge: "constants.TaskbarEdge", taskbar_info: Any, dpi_scale: float) -> float:
         """Visible taskbar height (logical px) to size a horizontal-taskbar widget to.

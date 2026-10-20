@@ -94,6 +94,8 @@
     "GRAPH_NOTE_TEXT": "提示：在小部件区域内显示实时迷你图表。",
     "HISTORY_DURATION_LABEL": "图表时间范围:",
     "GRAPH_OPACITY_LABEL": "图表不透明度:",
+    "GRAPH_SPLIT_LABEL": "分开显示上传和下载图表",
+    "GRAPH_SPLIT_DESC": "各自使用独立刻度：水平任务栏上并排显示，垂直任务栏上上下堆叠。在自动轮播中，上传和下载轮流显示。",
     "GRAPH_FIXED_SCALE_LABEL": "固定图表刻度",
     "GRAPH_FIXED_SCALE_DESC": "按套餐标称速率（网络接口页面）而非最近的流量缩放图表。在设置套餐速率之前保持自动。",
     "GRAPH_SCALE_HEADROOM_LABEL": "套餐速率之上的余量",

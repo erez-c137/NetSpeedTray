@@ -8,7 +8,7 @@ supports multiple layouts (e.g., vertical, horizontal) to adapt to different UI 
 
 import logging
 import math
-from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple, TYPE_CHECKING
 from dataclasses import dataclass, field
 
 from netspeedtray.core.widget_state import SpeedDataSnapshot, AggregatedSpeedData
@@ -59,6 +59,19 @@ def identity_layout(fm, ssid, band):
 logger = logging.getLogger("NetSpeedTray.WidgetRenderer")
 
 
+class _SpeedColumns(NamedTuple):
+    """Formatted speeds and the column geometry shared by every speed row (see _speed_columns)."""
+    up_val: str
+    up_unit: str
+    dw_val: str
+    dw_unit: str
+    number_area_width: int
+    max_arrow_width: int
+    arrow_gap: int
+    unit_gap: int
+    max_unit_width: int
+
+
 @dataclass
 class RenderConfig:
     """A data class holding a snapshot of all configuration relevant to rendering."""
@@ -94,6 +107,11 @@ class RenderConfig:
     graph_scale_ceiling: float = 0.0
     graph_scale_headroom: float = constants.config.defaults.DEFAULT_GRAPH_SCALE_HEADROOM / 100.0
     graph_show_ceiling: bool = constants.config.defaults.DEFAULT_GRAPH_SHOW_CEILING
+    # Separate upload/download graphs. Each panel scales to its own direction's plan speed (0 = not set,
+    # so that panel stays automatic); graph_scale_ceiling above is the shared axis of the combined graph.
+    graph_split_directions: bool = constants.config.defaults.DEFAULT_GRAPH_SPLIT_DIRECTIONS
+    graph_scale_ceiling_up: float = 0.0
+    graph_scale_ceiling_down: float = 0.0
     use_separate_arrow_font: bool = False
     arrow_font_family: str = constants.config.defaults.DEFAULT_FONT_FAMILY
     arrow_font_size: int = 9
@@ -141,8 +159,10 @@ class RenderConfig:
                 try: weight_val = int(weight_raw)
                 except: weight_val = constants.fonts.WEIGHT_DEMIBOLD
 
-            plan_mbps = max(float(config.get('plan_down_mbps', 0) or 0), float(config.get('plan_up_mbps', 0) or 0))
-            scale_ceiling = (plan_mbps * constants.network.units.MEGA_DIVISOR) / constants.network.units.BITS_PER_BYTE
+            mbps_to_bytes = constants.network.units.MEGA_DIVISOR / constants.network.units.BITS_PER_BYTE
+            plan_down = max(0.0, float(config.get('plan_down_mbps', 0) or 0)) * mbps_to_bytes
+            plan_up = max(0.0, float(config.get('plan_up_mbps', 0) or 0)) * mbps_to_bytes
+            scale_ceiling = max(plan_down, plan_up)
             headroom_pct = config.get('graph_scale_headroom', constants.config.defaults.DEFAULT_GRAPH_SCALE_HEADROOM)
 
             return cls(
@@ -175,6 +195,9 @@ class RenderConfig:
                 graph_scale_ceiling=max(0.0, scale_ceiling),
                 graph_scale_headroom=max(0.0, float(headroom_pct or 0)) / 100.0,
                 graph_show_ceiling=bool(config.get('graph_show_ceiling', constants.config.defaults.DEFAULT_GRAPH_SHOW_CEILING)),
+                graph_split_directions=bool(config.get('graph_split_directions', constants.config.defaults.DEFAULT_GRAPH_SPLIT_DIRECTIONS)),
+                graph_scale_ceiling_up=plan_up,
+                graph_scale_ceiling_down=plan_down,
                 use_custom_arrow_colors=bool(config.get(
                     'use_custom_arrow_colors', constants.config.defaults.DEFAULT_USE_CUSTOM_ARROW_COLORS)),
                 arrow_up_color=str(config.get(
@@ -232,13 +255,11 @@ class WidgetRenderer:
                 self._last_text_rect = QRect()
                 self._content_bounds = QRect()
 
-                # Mini graph state cache tracking
-                self._last_widget_size = (0, 0)
-                self._last_history_hash = 0
-                self._cached_upload_points = []
-                self._cached_download_points = []
-                self._cached_ceiling_y: Optional[float] = None   # plan-speed line row; None = no line
-                
+                # Mini graph polyline cache, one slot per graph kind - (is_hardware, series) - since the
+                # split view draws an upload and a download panel every paint, which would thrash a
+                # single slot. Value: (size, history key, upload points, download points, ceiling row).
+                self._graph_cache: Dict[Tuple[bool, str], Tuple[Any, ...]] = {}
+
                 # Caching for high-frequency paint events
                 self._cached_pens = {}
                 self._cached_bg_color = None
@@ -327,57 +348,20 @@ class WidgetRenderer:
         taskbar stacks its segments in bands down the widget.
         """
         try:
-            # Format speeds
-            up_val, up_unit = format_speed(
-                upload, self.i18n, force_mega_unit=(config.speed_display_mode == "always_mbps"),
-                decimal_places=config.decimal_places, unit_type=config.unit_type,
-                short_labels=config.short_unit_labels, split_unit=True
-            )
-            dw_val, dw_unit = format_speed(
-                download, self.i18n, force_mega_unit=(config.speed_display_mode == "always_mbps"),
-                decimal_places=config.decimal_places, unit_type=config.unit_type,
-                short_labels=config.short_unit_labels, split_unit=True
-            )
+            cols = self._speed_columns(upload, download, config)
+            up_val, up_unit, dw_val, dw_unit = cols.up_val, cols.up_unit, cols.dw_val, cols.dw_unit
+            number_area_width, max_arrow_width = cols.number_area_width, cols.max_arrow_width
+            arrow_gap, unit_gap, max_unit_width = cols.arrow_gap, cols.unit_gap, cols.max_unit_width
 
             painter.setFont(self.font)
             line_height = self.metrics.height()
             ascent = self.metrics.ascent()
-            
-            # --- FIXED/DYNAMIC WIDTH CALCULATIONS ---
-            # We want units to stay put for 3 digits, but move for 4.
-            from netspeedtray.utils.helpers import get_reference_value_string
-            
-            # 1. Base 3-digit width for alignment stability
-            # We use a 3-digit ref string to pin the "normal" unit position
-            ref_str_3 = get_reference_value_string(False, config.decimal_places, config.unit_type, min_digits=3)
-            base_number_width = self.metrics.horizontalAdvance(ref_str_3)
-            
-            # 2. Actual max width of currently displayed values
-            actual_up_width = self.metrics.horizontalAdvance(up_val)
-            actual_dw_width = self.metrics.horizontalAdvance(dw_val)
-            actual_max_width = max(actual_up_width, actual_dw_width)
-            
-            # The area width follows the baseline, but expands if actual values are wider (4 digits)
-            number_area_width = max(base_number_width, actual_max_width)
-
-            # 3. Arrow Width (use max of UP/DW arrows). Custom glyph or the native default.
-            arrow_up = self.config.arrow_up_symbol or self.i18n.UPLOAD_ARROW
-            arrow_dw = self.config.arrow_down_symbol or self.i18n.DOWNLOAD_ARROW
-            max_arrow_width = max(
-                self.arrow_metrics.horizontalAdvance(arrow_up),
-                self.arrow_metrics.horizontalAdvance(arrow_dw)
-            ) if not config.hide_arrows else 0
-            
-            # Constants for gaps
-            arrow_gap = constants.renderer.ARROW_NUMBER_GAP if not config.hide_arrows else 0
-            unit_gap = constants.renderer.VALUE_UNIT_GAP if not config.hide_unit_suffix else 0
             vertical_gap = 1
             margin = constants.renderer.TEXT_MARGIN
-            
+
             # Right-align the whole readout inside its reserved slot (side_by_side) so the network hugs
             # the hardware instead of floating left in the worst-case width. The slack lands on the left,
             # toward the app icons; both rows shift equally so the arrows stay mutually aligned.
-            max_unit_width = max(self.metrics.horizontalAdvance(up_unit), self.metrics.horizontalAdvance(dw_unit)) if not config.hide_unit_suffix else 0
             # v2.1: reserve the identity badge slot (SSID pill / band pill / compound capsule) so
             # right-align accounts for it and the layout reserves the same amount. Matches
             # NetworkSpeedWidget._identity_reserve_px (same identity_layout geometry).
@@ -425,6 +409,147 @@ class WidgetRenderer:
 
         except Exception as e:
             self.logger.error("Failed to draw network speeds: %s", e)
+
+    def _speed_columns(self, upload: float, download: float, config: RenderConfig) -> "_SpeedColumns":
+        """Formatted speeds plus the shared arrow / number / unit column geometry of the readout. Both
+        values feed it, so the two rows (or the two split panels, or the two cycle phases) line up."""
+        up_val, up_unit = format_speed(
+            upload, self.i18n, force_mega_unit=(config.speed_display_mode == "always_mbps"),
+            decimal_places=config.decimal_places, unit_type=config.unit_type,
+            short_labels=config.short_unit_labels, split_unit=True
+        )
+        dw_val, dw_unit = format_speed(
+            download, self.i18n, force_mega_unit=(config.speed_display_mode == "always_mbps"),
+            decimal_places=config.decimal_places, unit_type=config.unit_type,
+            short_labels=config.short_unit_labels, split_unit=True
+        )
+
+        # --- FIXED/DYNAMIC WIDTH CALCULATIONS ---
+        # We want units to stay put for 3 digits, but move for 4.
+        from netspeedtray.utils.helpers import get_reference_value_string
+
+        # 1. Base 3-digit width for alignment stability
+        # We use a 3-digit ref string to pin the "normal" unit position
+        ref_str_3 = get_reference_value_string(False, config.decimal_places, config.unit_type, min_digits=3)
+        base_number_width = self.metrics.horizontalAdvance(ref_str_3)
+
+        # 2. Actual max width of currently displayed values
+        actual_up_width = self.metrics.horizontalAdvance(up_val)
+        actual_dw_width = self.metrics.horizontalAdvance(dw_val)
+        actual_max_width = max(actual_up_width, actual_dw_width)
+
+        # The area width follows the baseline, but expands if actual values are wider (4 digits)
+        number_area_width = max(base_number_width, actual_max_width)
+
+        # 3. Arrow Width (use max of UP/DW arrows). Custom glyph or the native default.
+        arrow_up = self.config.arrow_up_symbol or self.i18n.UPLOAD_ARROW
+        arrow_dw = self.config.arrow_down_symbol or self.i18n.DOWNLOAD_ARROW
+        max_arrow_width = max(
+            self.arrow_metrics.horizontalAdvance(arrow_up),
+            self.arrow_metrics.horizontalAdvance(arrow_dw)
+        ) if not config.hide_arrows else 0
+
+        # Constants for gaps
+        arrow_gap = constants.renderer.ARROW_NUMBER_GAP if not config.hide_arrows else 0
+        unit_gap = constants.renderer.VALUE_UNIT_GAP if not config.hide_unit_suffix else 0
+        max_unit_width = max(self.metrics.horizontalAdvance(up_unit), self.metrics.horizontalAdvance(dw_unit)) if not config.hide_unit_suffix else 0
+        return _SpeedColumns(up_val, up_unit, dw_val, dw_unit, number_area_width, max_arrow_width,
+                             arrow_gap, unit_gap, max_unit_width)
+
+    def identity_reserve(self, identity_text: Optional[str], identity_ssid: Optional[str]) -> int:
+        """Width the identity badge adds after the unit column (0 without one) - the same geometry
+        draw_network_speeds and NetworkSpeedWidget._identity_reserve_px use."""
+        badge_w, _parts = identity_layout(self.metrics, identity_ssid, identity_text)
+        return (IDENTITY_BAND_GAP_PX + badge_w) if badge_w else 0
+
+    def network_panel_width(self, upload: float, download: float, config: RenderConfig) -> int:
+        """Width of one split panel, without the identity badge, measured from the live values - for
+        callers without the layout manager's reserved width (the Settings preview). Same span the
+        two-row readout occupies."""
+        cols = self._speed_columns(upload, download, config)
+        return (2 * constants.renderer.TEXT_MARGIN + cols.max_arrow_width + cols.arrow_gap
+                + cols.number_area_width + cols.unit_gap + cols.max_unit_width)
+
+    def draw_network_split(self, painter: QPainter, upload: float, download: float, rects: List[QRect],
+                           config: RenderConfig, history: List[Any], layout_mode: str = 'vertical',
+                           identity_text: Optional[str] = None, identity_color: Optional[str] = None,
+                           identity_solid: bool = False, identity_ssid: Optional[str] = None) -> None:
+        """Separate upload/download graphs: two panels (``rects``, in reading order), each with its own
+        graph - own scale, own plan-speed line - and its own speed row. Upload comes first unless
+        swap_upload_download is on, matching the stacked readout's top row. The identity badge goes in
+        the last panel, after its unit column."""
+        try:
+            cols = self._speed_columns(upload, download, config)
+            first_is_upload = not config.swap_upload_download
+            for i, (rect, is_upload) in enumerate(zip(rects, (first_is_upload, not first_is_upload))):
+                painter.save()
+                painter.translate(rect.x(), rect.y())
+                self.draw_mini_graph(painter, rect.width(), rect.height(), config, history, layout_mode,
+                                     series="upload" if is_upload else "download")
+                painter.restore()
+                last = i == len(rects) - 1
+                self._draw_speed_row(painter, is_upload, upload, download, cols, rect, config,
+                                     identity_text if last else None, identity_color,
+                                     identity_solid, identity_ssid if last else None)
+
+            # A faint divider in the gap, so the two graphs read as two charts.
+            if len(rects) == 2:
+                a, b = rects
+                inset = constants.renderer.GRAPH_MARGIN * 2
+                divider = QColor(config.default_color)
+                divider.setAlpha(60)
+                painter.save()
+                painter.setPen(QPen(divider, 1))
+                if b.x() > a.x():   # side by side
+                    x = (a.right() + b.left()) / 2.0 + 0.5
+                    painter.drawLine(QPointF(x, a.top() + inset), QPointF(x, a.bottom() - inset))
+                else:               # stacked
+                    y = (a.bottom() + b.top()) / 2.0 + 0.5
+                    painter.drawLine(QPointF(a.left() + inset, y), QPointF(a.right() - inset, y))
+                painter.restore()
+        except Exception as e:
+            self.logger.error("Failed to draw split network graphs: %s", e)
+
+    def draw_network_single(self, painter: QPainter, upload: float, download: float, is_upload: bool,
+                            width: int, height: int, config: RenderConfig,
+                            identity_text: Optional[str] = None, identity_color: Optional[str] = None,
+                            identity_solid: bool = False, identity_ssid: Optional[str] = None) -> None:
+        """One direction's speed row, vertically centered - the foreground of an Auto-Cycle upload or
+        download phase when the graphs are split (render_widget draws that phase's graph)."""
+        try:
+            cols = self._speed_columns(upload, download, config)
+            self._draw_speed_row(painter, is_upload, upload, download, cols, QRect(0, 0, width, height), config,
+                                 identity_text, identity_color, identity_solid, identity_ssid)
+        except Exception as e:
+            self.logger.error("Failed to draw network speed: %s", e)
+
+    def _draw_speed_row(self, painter: QPainter, is_upload: bool, upload: float, download: float,
+                        cols: "_SpeedColumns", rect: QRect, config: RenderConfig,
+                        identity_text: Optional[str], identity_color: Optional[str],
+                        identity_solid: bool, identity_ssid: Optional[str]) -> None:
+        """A single arrow + value + unit row, left-aligned at the margin of ``rect`` and vertically
+        centered in it (the split-panel counterpart of draw_network_speeds' two-row stack)."""
+        painter.setFont(self.font)
+        margin = constants.renderer.TEXT_MARGIN
+        arrow_x = rect.x() + margin
+        number_x = arrow_x + cols.max_arrow_width + cols.arrow_gap
+        unit_x = number_x + cols.number_area_width + cols.unit_gap
+        y = int(rect.y() + (rect.height() - self.metrics.height()) / 2 + self.metrics.ascent())
+        val, unit = (cols.up_val, cols.up_unit) if is_upload else (cols.dw_val, cols.dw_unit)
+        self._draw_speed_line(painter, is_upload, val, unit, upload if is_upload else download,
+                              arrow_x, number_x, unit_x, y, config, cols.number_area_width)
+
+        identity_badge_w, identity_parts = identity_layout(self.metrics, identity_ssid, identity_text)
+        if identity_badge_w:
+            badge_x = unit_x + cols.max_unit_width + IDENTITY_BAND_GAP_PX
+            badge_y = rect.y() + (rect.height() - identity_parts["h"]) / 2.0
+            self._draw_identity_badge(painter, badge_x, badge_y, identity_parts,
+                                      identity_ssid, identity_text, identity_color, identity_solid)
+        identity_reserve = (IDENTITY_BAND_GAP_PX + identity_badge_w) if identity_badge_w else 0
+
+        row_width = (unit_x - arrow_x) + cols.max_unit_width + identity_reserve
+        self._last_text_rect = QRect(arrow_x, y - self.metrics.ascent(), row_width, self.metrics.height())
+        self._extend_content_bounds(self._last_text_rect)
 
     def _draw_pill(self, painter: QPainter, rect: QRectF, accent: QColor, text: str, solid: bool, radius: float) -> None:
         """Draw one rounded pill: SOLID fills `accent` with white text; OUTLINE strokes `accent`, text in `accent`."""
@@ -840,9 +965,13 @@ class WidgetRenderer:
         return f"({', '.join(valid_parts)})"
 
     def draw_mini_graph(self, painter: QPainter, width: int, height: int, config: RenderConfig,
-                        history: List[Any], layout_mode: str = 'vertical', 
-                        is_hardware: bool = False, hardware_color: str = "#FFFFFF") -> None:
-        """Draws a mini graph of history (speed or hardware utilization)."""
+                        history: List[Any], layout_mode: str = 'vertical',
+                        is_hardware: bool = False, hardware_color: str = "#FFFFFF",
+                        series: str = "both") -> None:
+        """Draws a mini graph of history (speed or hardware utilization).
+
+        ``series`` picks the network line(s): "both" (one shared axis), or "upload" / "download" alone
+        on their own axis - the panels of the split view."""
         if not config.graph_enabled or len(history) < constants.renderer.MIN_GRAPH_POINTS:
             return
 
@@ -866,13 +995,15 @@ class WidgetRenderer:
             # identifies its contents - an O(1) key instead of hashing all ~N points every
             # paint. (len >= MIN_GRAPH_POINTS here, so [0]/[-1] are safe.)
             current_hash = hash((history[0], history[-1], len(history), is_hardware))
+            cache_key = (is_hardware, series)
+            cached = self._graph_cache.get(cache_key)
 
-            if self._last_widget_size != (width, height) or self._last_history_hash != current_hash:
+            if cached is None or cached[0] != (width, height) or cached[1] != current_hash:
                 if is_hardware:
                     # Hardware is 0-100%
                     max_y, ceiling = 100.0, None
                 else:
-                    max_y, ceiling = self._network_graph_scale(history, config)
+                    max_y, ceiling = self._network_graph_scale(history, config, series)
                 # A fixed axis can be outrun (a burst above plan + headroom), so the curve is capped at its
                 # top edge instead of running off the top of the graph. The auto-fit is sized to the data,
                 # so it is left exactly as before.
@@ -896,30 +1027,34 @@ class WidgetRenderer:
                 # graph's top edge, so a line there would add nothing. Snapped to a pixel center so the
                 # antialiased 1px dots stay crisp instead of smearing across two rows.
                 if ceiling is not None and config.graph_show_ceiling and config.graph_scale_headroom > 0:
-                    self._cached_ceiling_y = math.floor(base_y - (ceiling / max_y) * h) + 0.5
+                    ceiling_y = math.floor(base_y - (ceiling / max_y) * h) + 0.5
                 else:
-                    self._cached_ceiling_y = None
+                    ceiling_y = None
 
                 if is_hardware:
-                    self._cached_upload_points = make_smooth_polyline(lambda d: d.value)
-                    self._cached_download_points = []
+                    upload_points = make_smooth_polyline(lambda d: d.value)
+                    download_points = []
                 else:
-                    self._cached_upload_points = make_smooth_polyline(lambda d: d.upload)
-                    self._cached_download_points = make_smooth_polyline(lambda d: d.download)
+                    upload_points = (make_smooth_polyline(lambda d: d.upload)
+                                     if series in ("both", "upload") else [])
+                    download_points = (make_smooth_polyline(lambda d: d.download)
+                                       if series in ("both", "download") else [])
 
-                self._last_widget_size = (width, height)
-                self._last_history_hash = current_hash
+                cached = ((width, height), current_hash, upload_points, download_points, ceiling_y)
+                self._graph_cache[cache_key] = cached
+
+            _size, _key, upload_points, download_points, ceiling_y = cached
 
             painter.save()
             painter.setOpacity(config.graph_opacity)
 
             # Behind the data, in the text color (theme-aware, so it reads on light and dark taskbars).
-            if self._cached_ceiling_y is not None:
+            if ceiling_y is not None:
                 ceiling_pen = QPen(QColor(config.default_color), 1)
                 ceiling_pen.setStyle(Qt.PenStyle.DotLine)
                 painter.setPen(ceiling_pen)
-                painter.drawLine(QPointF(float(graph_rect.left()), self._cached_ceiling_y),
-                                 QPointF(float(graph_rect.right()), self._cached_ceiling_y))
+                painter.drawLine(QPointF(float(graph_rect.left()), ceiling_y),
+                                 QPointF(float(graph_rect.right()), ceiling_y))
 
             painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Plus)
 
@@ -943,38 +1078,41 @@ class WidgetRenderer:
                 painter.drawPolygon(QPolygonF(poly_points))
 
             if is_hardware:
-                draw_area(self._cached_upload_points, hardware_color)
+                draw_area(upload_points, hardware_color)
             else:
-                draw_area(self._cached_upload_points, constants.graph.UPLOAD_LINE_COLOR)
-                draw_area(self._cached_download_points, constants.graph.DOWNLOAD_LINE_COLOR)
-            
+                draw_area(upload_points, constants.graph.UPLOAD_LINE_COLOR)
+                draw_area(download_points, constants.graph.DOWNLOAD_LINE_COLOR)
+
             painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
-            stroke_width = 1.5 
+            stroke_width = 1.5
 
             if is_hardware:
                 hw_pen = QPen(QColor(hardware_color), stroke_width)
                 hw_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
                 painter.setPen(hw_pen)
                 painter.setBrush(Qt.BrushStyle.NoBrush)
-                painter.drawPolyline(self._cached_upload_points)
+                painter.drawPolyline(upload_points)
             else:
-                upload_pen = QPen(QColor(constants.graph.UPLOAD_LINE_COLOR), stroke_width)
-                upload_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-                painter.setPen(upload_pen)
                 painter.setBrush(Qt.BrushStyle.NoBrush)
-                painter.drawPolyline(self._cached_upload_points)
+                if upload_points:
+                    upload_pen = QPen(QColor(constants.graph.UPLOAD_LINE_COLOR), stroke_width)
+                    upload_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+                    painter.setPen(upload_pen)
+                    painter.drawPolyline(upload_points)
 
-                download_pen = QPen(QColor(constants.graph.DOWNLOAD_LINE_COLOR), stroke_width)
-                download_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-                painter.setPen(download_pen)
-                painter.drawPolyline(self._cached_download_points)
+                if download_points:
+                    download_pen = QPen(QColor(constants.graph.DOWNLOAD_LINE_COLOR), stroke_width)
+                    download_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+                    painter.setPen(download_pen)
+                    painter.drawPolyline(download_points)
 
             painter.restore()
         except Exception as e:
             self.logger.error("Failed to draw mini graph: %s", e)
 
     @staticmethod
-    def _network_graph_scale(history: List[Any], config: RenderConfig) -> Tuple[float, Optional[float]]:
+    def _network_graph_scale(history: List[Any], config: RenderConfig,
+                             series: str = "both") -> Tuple[float, Optional[float]]:
         """Top of the network mini graph's y-axis in bytes/sec, plus the fixed ceiling it was built from
         (None while auto-scaling).
 
@@ -982,18 +1120,20 @@ class WidgetRenderer:
         the axis shrinks and idle background traffic fills the graph as tall as the download did - the two
         are only told apart by reading the numbers. A fixed scale (graph_fixed_scale with a plan speed
         set) tops out at the plan speed plus the headroom instead, so a given height always means the
-        same speed. History is non-empty here (len >= MIN_GRAPH_POINTS)."""
-        if config.graph_fixed_scale and config.graph_scale_ceiling > 0:
-            ceiling = config.graph_scale_ceiling
+        same speed. A single-direction panel ("upload" / "download") scales to that direction's own
+        samples and plan speed, so a 30 Mbps upload isn't flattened by a 300 Mbps download.
+        History is non-empty here (len >= MIN_GRAPH_POINTS)."""
+        ceiling = {"upload": config.graph_scale_ceiling_up,
+                   "download": config.graph_scale_ceiling_down}.get(series, config.graph_scale_ceiling)
+        if config.graph_fixed_scale and ceiling > 0:
             return max(ceiling * (1.0 + config.graph_scale_headroom), constants.renderer.MIN_Y_SCALE), ceiling
 
-        max_speed_val = max(
-            max(d.upload for d in history),
-            max(d.download for d in history)
-        )
+        uploads = [d.upload for d in history] if series in ("both", "upload") else []
+        downloads = [d.download for d in history] if series in ("both", "download") else []
+        max_speed_val = max(uploads + downloads)
 
         if len(history) > 10:
-            all_speeds = [d.upload for d in history] + [d.download for d in history]
+            all_speeds = uploads + downloads
             all_speeds_sorted = sorted(all_speeds)
             percentile_95 = all_speeds_sorted[int(len(all_speeds_sorted) * 0.95)]
             if percentile_95 > 0 and max_speed_val > percentile_95 * 3.0:
@@ -1015,10 +1155,7 @@ class WidgetRenderer:
             # source of truth and makes edits apply live.
             self._refresh_resource_cache()
 
-            self._cached_upload_points = []
-            self._cached_download_points = []
-            self._cached_ceiling_y = None
-            self._last_history_hash = 0
+            self._graph_cache.clear()
             self.logger.debug("Renderer config updated.")
         except Exception as e:
             self.logger.error("Failed to update config: %s", e)

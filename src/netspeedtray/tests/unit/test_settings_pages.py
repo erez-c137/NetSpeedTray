@@ -83,6 +83,8 @@ def mock_i18n():
     i18n.GRAPH_SCALE_HEADROOM_LABEL = "Headroom"
     i18n.GRAPH_SHOW_CEILING_LABEL = "Show Plan Speed Line"
     i18n.GRAPH_SHOW_CEILING_DESC = "Needs headroom above 0%"
+    i18n.GRAPH_SPLIT_LABEL = "Separate Upload and Download Graphs"
+    i18n.GRAPH_SPLIT_DESC = "Side by side or stacked"
     i18n.UNIT_TYPE_LABEL = "Unit Type"
     i18n.UNIT_TYPE_BITS_DECIMAL = "Bits (Dec)"
     i18n.UNIT_TYPE_BITS_BINARY = "Bits (Bin)"
@@ -494,6 +496,26 @@ def test_graph_headroom_outside_the_choices_falls_back_to_default(q_app, mock_i1
     page = AppearancePage(mock_i18n, mock_callback, MagicMock(), MagicMock())
     page.load_settings({"graph_fixed_scale": True, "graph_scale_headroom": 25})
     assert page.get_settings()["graph_scale_headroom"] == constants.config.defaults.DEFAULT_GRAPH_SCALE_HEADROOM
+
+
+def test_graph_split_round_trip(q_app, mock_i18n, mock_callback):
+    """Separate upload/download graphs: off by default, persists when on."""
+    page = AppearancePage(mock_i18n, mock_callback, MagicMock(), MagicMock())
+    page.load_settings({"graph_enabled": True})
+    assert page.get_settings()["graph_split_directions"] is False
+    page.load_settings({"graph_enabled": True, "graph_split_directions": True})
+    assert page.graph_split.isChecked() is True
+    assert page.get_settings()["graph_split_directions"] is True
+
+
+def test_graph_split_grayed_out_without_the_mini_graph(q_app, mock_i18n, mock_callback):
+    """It splits the mini graph, so it is unavailable while the graph is off - and its stored value survives."""
+    page = AppearancePage(mock_i18n, mock_callback, MagicMock(), MagicMock())
+    page.load_settings({"graph_enabled": False, "graph_split_directions": True})
+    assert page._split_card.isEnabled() is False
+    assert page.get_settings()["graph_split_directions"] is True
+    page.enable_graph.setChecked(True)
+    assert page._split_card.isEnabled() is True
 
 
 def test_arrow_color_widgets_follow_the_dialog_naming_convention(q_app, mock_i18n, mock_callback):
