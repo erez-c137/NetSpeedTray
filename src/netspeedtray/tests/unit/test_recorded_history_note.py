@@ -66,11 +66,27 @@ def test_network_header_shows_the_note_only_for_estimated_totals(q_app):
     hdr = NetworkHeader(i18n)
     hdr.set_totals(3e9, 9e9, "TIMELINE_MONTH", reconstructed=True)
     assert not hdr._history_note.isHidden()
-    assert hdr._history_note.text() == i18n.USAGE_RECORDED_HISTORY_NOTE
+    assert hdr._history_note.full_text() == i18n.USAGE_RECORDED_HISTORY_NOTE
+    assert hdr._history_note.toolTip() == i18n.USAGE_RECORDED_HISTORY_NOTE
     hdr.set_totals(3e9, 9e9, "TIMELINE_24_HOURS", reconstructed=False)
     assert hdr._history_note.isHidden()
     hdr.set_totals(3e9, 9e9, "TIMELINE_24_HOURS")          # old callers: no note
     assert hdr._history_note.isHidden()
+
+
+def test_header_note_never_outgrows_the_band(q_app):
+    """The band is a fixed 56 px: the note is cut to MONITOR_HISTORY_NOTE_MAX_LINES with an ellipsis."""
+    from netspeedtray import constants
+    from netspeedtray.views.monitor.network.header import _ClampedNote
+    full = I18nStrings("de_DE").USAGE_RECORDED_HISTORY_NOTE
+    note = _ClampedNote(full, constants.layout.MONITOR_HISTORY_NOTE_MAX_LINES)
+    note.resize(160, 56)
+    note._clamp(160)
+    lines = note.heightForWidth(160) / note.fontMetrics().lineSpacing()
+    assert lines <= constants.layout.MONITOR_HISTORY_NOTE_MAX_LINES + 0.5, (lines, note.text())
+    assert note.text().endswith("…") and note.toolTip() == full
+    note._clamp(4000)                                       # room again: the whole note comes back
+    assert note.text() == full
 
 
 def test_network_tab_forwards_the_flag(q_app):
