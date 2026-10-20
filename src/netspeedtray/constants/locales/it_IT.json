@@ -431,6 +431,7 @@
     "//_2": "--- Monitor: dettagli statistiche ---",
     "STATS_DETAIL_TITLE": "Statistiche",
     "STATS_DETAIL_NO_DATA": "Non c'è ancora abbastanza cronologia per questo periodo.",
+    "STATS_DETAIL_LOADING": "Lettura cronologia…",
     "STAT_CELL_AVG": "Media",
     "STAT_CELL_PEAK": "Picco",
     "STAT_CELL_MEDIAN": "Mediana",

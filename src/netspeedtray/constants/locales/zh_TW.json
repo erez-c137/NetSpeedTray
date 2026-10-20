@@ -431,6 +431,7 @@
     "//_2": "--- 監控中心: 統計詳情 ---",
     "STATS_DETAIL_TITLE": "統計資料",
     "STATS_DETAIL_NO_DATA": "此期間的歷史資料尚不足夠。",
+    "STATS_DETAIL_LOADING": "正在讀取歷史記錄…",
     "STAT_CELL_AVG": "平均",
     "STAT_CELL_PEAK": "峰值",
     "STAT_CELL_MEDIAN": "中位數",

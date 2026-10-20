@@ -431,6 +431,7 @@
     "//_2": "--- Monitor: Stats Detail ---",
     "STATS_DETAIL_TITLE": "통계",
     "STATS_DETAIL_NO_DATA": "이 기간에 대한 기록이 아직 충분하지 않습니다.",
+    "STATS_DETAIL_LOADING": "기록 읽는 중…",
     "STAT_CELL_AVG": "평균",
     "STAT_CELL_PEAK": "정점",
     "STAT_CELL_MEDIAN": "중앙값",

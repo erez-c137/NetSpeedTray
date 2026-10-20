@@ -431,6 +431,7 @@
     "//_2": "--- 监控面板：统计详情 ---",
     "STATS_DETAIL_TITLE": "统计数据",
     "STATS_DETAIL_NO_DATA": "该时段历史数据不足。",
+    "STATS_DETAIL_LOADING": "正在读取历史记录…",
     "STAT_CELL_AVG": "平均值",
     "STAT_CELL_PEAK": "峰值",
     "STAT_CELL_MEDIAN": "中位数",

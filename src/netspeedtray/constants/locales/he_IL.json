@@ -431,6 +431,7 @@
     "//_2": "--- Monitor: Stats Detail ---",
     "STATS_DETAIL_TITLE": "סטטיסטיקה",
     "STATS_DETAIL_NO_DATA": "עדיין אין מספיק היסטוריה עבור תקופה זו.",
+    "STATS_DETAIL_LOADING": "קורא היסטוריה…",
     "STAT_CELL_AVG": "ממוצע",
     "STAT_CELL_PEAK": "שיא",
     "STAT_CELL_MEDIAN": "חציון",

@@ -431,6 +431,7 @@
     "//_2": "--- Monitor: Stats Detail ---",
     "STATS_DETAIL_TITLE": "Estadísticas",
     "STATS_DETAIL_NO_DATA": "Aún no hay suficiente historial para este período.",
+    "STATS_DETAIL_LOADING": "Leyendo historial…",
     "STAT_CELL_AVG": "Promedio",
     "STAT_CELL_PEAK": "Pico",
     "STAT_CELL_MEDIAN": "Mediana",

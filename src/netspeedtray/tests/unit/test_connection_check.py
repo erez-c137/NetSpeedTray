@@ -463,14 +463,14 @@ class _HopWS:
 
 def _detail_copy(q_app, public: bool):
     from netspeedtray.views.monitor.overview.tab import OverviewTab
-    from netspeedtray.views.monitor.stats_detail import StatsDetailSheet
+    from netspeedtray.tests.unit.test_stats_detail import _open   # builds + waits for the load
     from netspeedtray.tests.unit.test_overview_tiles import _MW, _cfg
     cfg = _cfg(latency_public_enabled=public, update_rate=1.0)
     ov = OverviewTab(_MW(), cfg, I18nStrings("en_US"))
     subjects = ov._detail_subjects("network")
     lat = [s for s in subjects if s["unit"] == "ms"][0]
     ws = _HopWS()
-    sheet = StatsDetailSheet(ws, subjects, (datetime(2026, 10, 19), datetime(2026, 10, 20), "24 Hours"),
+    sheet = _open(ws, subjects, (datetime(2026, 10, 19), datetime(2026, 10, 20), "24 Hours"),
                              cfg, I18nStrings("en_US"))
     return lat["key"], "\n".join(sheet._copy_text_parts), ws.asked
 
@@ -529,11 +529,11 @@ class _BlockedAnchorWS(_HopWS):
 
 def _detail_with(q_app, ws):
     from netspeedtray.views.monitor.overview.tab import OverviewTab
-    from netspeedtray.views.monitor.stats_detail import StatsDetailSheet
+    from netspeedtray.tests.unit.test_stats_detail import _open   # builds + waits for the load
     from netspeedtray.tests.unit.test_overview_tiles import _MW, _cfg
     cfg = _cfg(latency_public_enabled=True, update_rate=1.0)
     subjects = OverviewTab(_MW(), cfg, I18nStrings("en_US"))._detail_subjects("network")
-    sheet = StatsDetailSheet(ws, subjects, (datetime(2026, 10, 19), datetime(2026, 10, 20), "24 Hours"),
+    sheet = _open(ws, subjects, (datetime(2026, 10, 19), datetime(2026, 10, 20), "24 Hours"),
                              cfg, I18nStrings("en_US"))
     return "\n".join(sheet._copy_text_parts)
 
