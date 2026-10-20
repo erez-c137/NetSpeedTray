@@ -338,16 +338,33 @@ WHERE COALESCE(ended_ts, last_seen_ts) > strftime('%s', 'now', '-7 days')
 ORDER BY started_ts;
 ```
 
-**Your busiest hour**
+**Your busiest hours** (most data moved, all tiers, every adapter)
 
 ```sql
-SELECT datetime(ts, 'unixepoch', 'localtime') AS hour,
-       ROUND(MAX(down_max) * 8 / 1e6, 1) AS peak_down_mbps
-FROM net_hour
-GROUP BY ts
-ORDER BY peak_down_mbps DESC
+WITH wr AS (SELECT COALESCE((SELECT CAST(value AS INTEGER) FROM metadata WHERE key = 'tier_watermark_raw'), 0) AS v),
+     wm AS (SELECT COALESCE((SELECT CAST(value AS INTEGER) FROM metadata WHERE key = 'tier_watermark_minute'), 0) AS v),
+     parts AS (
+       SELECT ts, up_bytes, down_bytes, down_bytes * 1000.0 / dt_ms AS down_max FROM net_raw, wr WHERE ts >= wr.v
+       UNION ALL
+       SELECT ts, COALESCE(up_bytes,   up_avg   * MIN(sample_count, 60)),
+                  COALESCE(down_bytes, down_avg * MIN(sample_count, 60)), down_max
+       FROM net_minute, wr, wm WHERE ts >= wm.v AND ts < wr.v
+       UNION ALL
+       SELECT ts, COALESCE(up_bytes,   up_avg   * MIN(sample_count, 3600)),
+                  COALESCE(down_bytes, down_avg * MIN(sample_count, 3600)), down_max
+       FROM net_hour, wm WHERE ts < wm.v)
+SELECT datetime(ts / 3600 * 3600, 'unixepoch', 'localtime') AS hour,
+       ROUND(SUM(down_bytes + up_bytes) / 1e9, 2) AS total_gb,
+       ROUND(SUM(down_bytes) / 1e9, 2) AS down_gb,
+       ROUND(MAX(down_max) * 8 / 1e6, 1) AS peak_down_mbps   -- one adapter's fastest moment
+FROM parts
+GROUP BY ts / 3600
+ORDER BY total_gb DESC
 LIMIT 10;
 ```
+
+"Busiest" here means volume. Sort by `peak_down_mbps` instead for the hours with the fastest burst;
+the two lists rarely match (a ten-second speed test peaks high but moves little).
 
 **Internet latency and packet loss over the last week**
 
