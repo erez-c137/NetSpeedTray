@@ -3,12 +3,13 @@ import logging
 import math
 from typing import TYPE_CHECKING, Dict, Any, Optional
 
-from PyQt6.QtCore import Qt, QSize
-from PyQt6.QtGui import QFont, QFontMetrics
+from PyQt6.QtCore import Qt, QRect, QSize
+from PyQt6.QtGui import QColor, QFont, QFontMetrics, QImage, QPainter, QPen
 from PyQt6.QtWidgets import QWidget
 
 from netspeedtray import constants
-from netspeedtray.utils.taskbar_utils import is_small_taskbar, get_taskbar_info, horizontal_taskbar_strip
+from netspeedtray.utils.taskbar_utils import (is_small_taskbar, get_taskbar_info, horizontal_taskbar_strip,
+                                              dock_signature)
 from netspeedtray.utils.helpers import memory_label_width
 from netspeedtray.utils.widget_paint import side_by_side_keys, stacked_segment_height
 
@@ -26,6 +27,8 @@ class WidgetLayoutManager:
         self.logger = logging.getLogger(f"{constants.app.APP_NAME}.LayoutManager")
         self.metrics: Optional[QFontMetrics] = None
         self.arrow_metrics: Optional[QFontMetrics] = None
+        self._font: Optional[QFont] = None
+        self._arrow_font: Optional[QFont] = None
 
     def setup_window_properties(self) -> None:
         """Set Qt window flags and attributes for proper Windows integration."""
@@ -94,6 +97,8 @@ class WidgetLayoutManager:
             arrow_font = font
             
         self.arrow_metrics = QFontMetrics(arrow_font)
+        # Kept for the thin-strip fit check, which re-measures them at each display scale (#322).
+        self._font, self._arrow_font = font, arrow_font
         
         self.logger.debug(f"Font set: {font_family}, {font_size}px, Weight: {font_weight}")
         
@@ -116,7 +121,16 @@ class WidgetLayoutManager:
             float_screen = get_free_float_screen(self.widget.config.get("preferred_monitor")) \
                 if self.widget.config.get("free_float", True) else None
 
-            taskbar_info = get_taskbar_info()
+            # The widget's OWN taskbar (preferred monitor, #72) - the same one it is positioned on and
+            # the same one the taskbar-change check reads, so the two never disagree (#322).
+            taskbar_info = get_taskbar_info(preferred_screen_name=self.widget.config.get("preferred_monitor"))
+            # Record which dock this size is for; NetworkSpeedWidget._resize_if_dock_changed re-sizes
+            # when the live taskbar's signature differs. None (sized from a fallback taskbar or while
+            # free-floating) makes the first real taskbar count as a change.
+            try:
+                self.widget._dock_sig_seen = None if float_screen is not None else dock_signature(taskbar_info)
+            except Exception:
+                self.widget._dock_sig_seen = None
             dpi_scale = taskbar_info.dpi_scale if taskbar_info.dpi_scale > 0 else 1.0
             if float_screen is not None:
                 edge = constants.TaskbarEdge.BOTTOM   # nominal; free-float doesn't dock to an edge
@@ -491,38 +505,105 @@ class WidgetLayoutManager:
             visible_tb_height = taskbar_info.height
         return max(visible_tb_height, self._two_row_floor(visible_tb_height))   # Part B (#221/#322)
 
-    def _ink_extents(self) -> "tuple[int, int]":
-        """(pixels above, pixels below) the baseline that any docked readout glyph can paint.
-
-        Measured from the actual font (``tightBoundingRect``) over every glyph family the readout
-        draws, plus the arrow glyphs in the arrow font and the CPU/GPU icon box - not the font's
-        ``ascent``/``descent``, which include empty internal leading above the capitals.
-        """
-        r = self.metrics.tightBoundingRect(constants.renderer.INK_REFERENCE_TEXT)
-        above, below = -r.top(), r.bottom()
+    def _ink_reference(self) -> "tuple[list, list]":
+        """(text strings, arrow glyphs) the docked readout can paint: the fixed hardware/number
+        strings, the active locale's unit labels for the configured unit type (long and short; CJK
+        units come from a fallback font, and are measured through it), and the arrows."""
+        cfg = self.widget.config
+        strings = list(constants.renderer.INK_REFERENCE_STRINGS)
         try:
-            cfg = self.widget.config
-            arrows = ((cfg.get("arrow_up_symbol") or self.widget.i18n.UPLOAD_ARROW)
-                      + (cfg.get("arrow_down_symbol") or self.widget.i18n.DOWNLOAD_ARROW))
-            if not isinstance(arrows, str):
+            from netspeedtray.utils.helpers import get_unit_labels_for_type
+            unit_type = cfg.get("unit_type", constants.config.defaults.DEFAULT_UNIT_TYPE)
+            for short in (False, True):
+                strings += [u for u in get_unit_labels_for_type(self.widget.i18n, unit_type, short)
+                            if isinstance(u, str) and u]
+        except Exception:
+            strings.append("KB/s MB/s GB/s Kbps Mbps Gbps")
+        try:
+            arrows = [cfg.get("arrow_up_symbol") or self.widget.i18n.UPLOAD_ARROW,
+                      cfg.get("arrow_down_symbol") or self.widget.i18n.DOWNLOAD_ARROW]
+            if not all(isinstance(g, str) and g for g in arrows):
                 raise TypeError("arrow glyphs unavailable")
         except Exception:
-            arrows = "↑↓▲▼"
-        a = (self.arrow_metrics or self.metrics).tightBoundingRect(arrows)
-        above, below = max(above, -a.top()), max(below, a.bottom())
-        # The CPU/GPU icon box spans baseline-(size-1)..baseline, stroked 1 px wider.
-        icon = constants.renderer.HW_ICON_SIZE_PX
-        return max(above, icon - 1), max(below, 1)
+            arrows = ["↑", "↓", "▲", "▼"]
+        return strings, arrows
+
+    def _ink_extents(self) -> "tuple[int, int]":
+        """(pixels above, pixels below) the baseline that any docked readout glyph can paint at 100%,
+        from ``tightBoundingRect`` of each reference string as drawn (a string's rect is not the union
+        of its glyphs' rects), plus the CPU/GPU icon box. Not the font's ``ascent``/``descent``, which
+        include empty internal leading above the capitals. The no-font fallback of ``_two_row_floor``.
+        """
+        strings, arrows = self._ink_reference()
+        above = below = 0
+        for metrics, items in ((self.metrics, strings), (self.arrow_metrics or self.metrics, arrows)):
+            for s in items:
+                r = metrics.tightBoundingRect(s)
+                above, below = max(above, -r.top()), max(below, r.bottom())
+        # The icon box spans baseline-(size-1)..baseline; its antialiased stroke spills a row each way.
+        return max(above, constants.renderer.HW_ICON_SIZE_PX), max(below, 1)
+
+    def _row_baselines(self, height: int) -> "tuple[int, ...]":
+        """The baselines the renderer paints at in a ``height`` px widget: the network rows
+        (``draw_network_speeds``: box ``2*line_height + gap`` centred) and the hardware rows
+        (``draw_hardware_stats``: ``2*line_height``, no gap)."""
+        line_h, asc, gap = self.metrics.height(), self.metrics.ascent(), constants.renderer.TWO_ROW_GAP_PX
+        net = int((height - (2 * line_h + gap)) / 2 + asc)
+        hw = int((height - 2 * line_h) / 2 + asc)
+        return net, net + line_h + gap, hw, hw + line_h
 
     def _two_rows_fit(self, height: int, ink_above: int, ink_below: int) -> bool:
-        """Would the renderer's two-row readout keep every glyph inside ``height`` px?
+        """100% metrics model: would every glyph stay inside ``height`` px (1 px clear on top)?"""
+        b = self._row_baselines(height)
+        return (min(b) - ink_above >= constants.renderer.INK_FIT_TOP_MARGIN_PX
+                and max(b) + ink_below <= height - 1)
 
-        Mirrors ``draw_network_speeds`` exactly (box ``2*line_height + gap`` centred, baselines at
-        ``top_y`` and ``top_y + line_height + gap``). The hardware rows (no gap) sit inside that.
-        """
-        line_h, gap = self.metrics.height(), constants.renderer.TWO_ROW_GAP_PX
-        top_y = int((height - (2 * line_h + gap)) / 2 + self.metrics.ascent())
-        return top_y - ink_above >= 0 and top_y + line_h + gap + ink_below <= height - 1
+    def _paint_fits(self, height: int, scale: float, strings: list, arrows: list) -> bool:
+        """Paint every reference glyph at every row baseline into a ``height`` px band at device pixel
+        ratio ``scale`` - the same text engine and hinting the widget paints with - and check that no
+        pixel lands outside the band (1 device px clear on top). Exact where a metrics model is not:
+        at 125/150% hinting moves glyphs by a device row either way (#322 review)."""
+        pad = 8
+        font, arrow_font = self._font, (self._arrow_font or self._font)
+        fm, afm = self.metrics, (self.arrow_metrics or self.metrics)
+        icon = constants.renderer.HW_ICON_SIZE_PX
+        width = (sum(fm.horizontalAdvance(s) + 4 for s in strings)
+                 + sum(afm.horizontalAdvance(g) + 4 for g in arrows) + icon + 4)
+        img = QImage(math.ceil(width * scale), math.ceil((height + 2 * pad) * scale),
+                     QImage.Format.Format_ARGB32_Premultiplied)
+        img.setDevicePixelRatio(scale)
+        img.fill(0)
+        p = QPainter(img)
+        try:
+            p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            p.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+            p.setPen(QPen(QColor(255, 255, 255), 1))
+            p.translate(0, pad)
+            for y in self._row_baselines(height):
+                x = 0
+                p.setFont(font)
+                for s in strings:
+                    p.drawText(x, y, s)
+                    x += fm.horizontalAdvance(s) + 4
+                p.setFont(arrow_font)
+                for g in arrows:
+                    p.drawText(x, y, g)
+                    x += afm.horizontalAdvance(g) + 4
+                p.drawRect(QRect(x, y - icon + 1, icon, icon))     # the CPU/GPU icon box
+        finally:
+            p.end()
+        bpl = img.bytesPerLine()
+        ptr = img.constBits()
+        ptr.setsize(img.sizeInBytes())
+        data = bytes(ptr)
+        blank = bytes(bpl)
+        rows = [y for y in range(img.height()) if data[y * bpl:(y + 1) * bpl] != blank]
+        if not rows:
+            return True
+        band_top = round(pad * scale)
+        band_bottom = band_top + math.floor(height * scale) - 1
+        margin = constants.renderer.INK_FIT_TOP_MARGIN_PX
+        return rows[0] >= band_top + margin and rows[-1] <= band_bottom
 
     def _two_row_floor(self, strip: float) -> int:
         """The smallest docked height (>= the strip) at which both rows paint uncropped (#221/#322).
@@ -531,16 +612,36 @@ class WidgetLayoutManager:
         "Small" taskbar made a 9 pt widget 34 px and hung 2 px off the bar, although the INK of the two
         rows fits in 32. So: the strip itself when the ink fits; else the first height above it that
         fits; never more than the old floor (unchanged for any strip that already met it).
+
+        "Fits" is decided by painting the reference glyphs at every standard display scale
+        (``_paint_fits``), since hinting at 125/150% moves ink by a device row that a 96 DPI metrics
+        model can't see. Without the font object (unit tests that set only ``metrics``) the 100%
+        metrics model is used.
         """
         old_floor = self.metrics.height() * 2 + 2
         start = max(1, math.ceil(strip))
         if start >= old_floor:
             return old_floor
         try:
-            ink_above, ink_below = self._ink_extents()
+            if self._font is None:
+                above, below = self._ink_extents()
+                fits = lambda h: self._two_rows_fit(h, above, below)   # noqa: E731
+            else:
+                strings, arrows = self._ink_reference()
+                fits = lambda h: all(self._paint_fits(h, s, strings, arrows)   # noqa: E731
+                                     for s in constants.renderer.INK_FIT_SCALES)
+            for h in range(start, old_floor):
+                if fits(h):
+                    return h
+        except Exception as e:
+            self.logger.debug("Thin-strip fit check failed (%s); keeping the two-row floor.", e)
+        return old_floor
+        scales = constants.renderer.INK_FIT_SCALES if self._font is not None else (1.0,)
+        try:
+            extents = [(s, *self._ink_extents(s)) for s in scales]
         except Exception:
             return old_floor
         for h in range(start, old_floor):
-            if self._two_rows_fit(h, ink_above, ink_below):
+            if all(self._two_rows_fit(h, above, below, s) for s, above, below in extents):
                 return h
         return old_floor

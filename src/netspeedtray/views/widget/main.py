@@ -1860,18 +1860,19 @@ class NetworkSpeedWidget(QWidget):
         The widget is sized once at startup to the taskbar strip; a live switch of Win11's native
         taskbar size (Default 48 px <-> Small 32 px) or edge only fired a reposition, so the widget kept
         its old height and hung off a thinner bar. Cheap tuple compare on every taskbar change; a plain
-        move (same signature) resizes nothing. The first signature seen is only recorded. No loop: the
-        resize's own update_position() sees the signature it just recorded. Returns True if it resized.
+        move (same signature) resizes nothing. ``_dock_sig_seen`` is recorded by
+        ``resize_widget_for_font`` from the taskbar it actually sized against - the same preferred-monitor
+        taskbar read here - and is None when that was a fallback taskbar (Explorer not ready at logon)
+        or a free-float, so the first real taskbar after either re-sizes. No loop: the resize's own
+        update_position() sees the signature it just recorded. Returns True if it resized.
         """
         try:
             if self.position_manager is not None and self.position_manager.is_free_float_active():
                 return False   # a free-floating widget isn't sized to a taskbar (#188)
             sig = dock_signature(taskbar_info)
-            if sig is None:
-                return False   # fallback taskbar: keep the last real signature
-            prev, self._dock_sig_seen = self._dock_sig_seen, sig
-            if prev is None or prev == sig:
-                return False
+            if sig is None or sig == self._dock_sig_seen:
+                return False   # fallback taskbar now, or nothing changed
+            prev, self._dock_sig_seen = self._dock_sig_seen, sig   # a failed resize can't retry every tick
             self.logger.info("Taskbar dock geometry changed %s -> %s; re-sizing the widget.", prev, sig)
             self.layout_manager.resize_widget_for_font()   # ends with update_position()
             return True

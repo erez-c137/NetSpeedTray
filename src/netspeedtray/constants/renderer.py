@@ -35,9 +35,15 @@ class RendererConstants:
     # between the upload and download rows, and the CPU/GPU icon box (drawn up from the baseline).
     TWO_ROW_GAP_PX: Final[int] = 1
     HW_ICON_SIZE_PX: Final[int] = 11
-    # Every glyph family the docked readout can paint, for the ink-extent fit check (#322): digits,
-    # units, hardware labels/suffixes, accented capitals (tallest) and descenders (deepest).
-    INK_REFERENCE_TEXT: Final[str] = "0123456789.,%/()°CPUGRAMVWKMTBbitpsKiB ÉÅÄÖgjpqy|"
+    # Rows of clear space the fit check keeps above the measured ink (hinting at 125/150% DPI).
+    INK_FIT_TOP_MARGIN_PX: Final[int] = 1
+    # Display scales the fit check must hold at (Windows' standard 100-250% steps).
+    INK_FIT_SCALES: Final[tuple] = (1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5)
+    # The fixed strings the docked readout paints, for the ink-extent fit check (#322) - each measured
+    # on its own, as it is drawn. The unit labels are added from the active locale at runtime. Only
+    # glyphs the readout really draws: a generic "gjpqy|" sample measured 1 px deeper than any of them.
+    INK_REFERENCE_STRINGS: Final[tuple] = ("0123456789.,", "100%", "(99°C, 250.0W)", "(N/A)",
+                                           "CPU GPU", "RAM VRAM", "99.9/99.9G")
 
     # --- Display Cycling ---
     CYCLE_INTERVAL_MS: Final[int] = 5000 # 5 seconds per metric
