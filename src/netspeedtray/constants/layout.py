@@ -27,6 +27,9 @@ class LayoutConstants:
     # much width (or its whole one-line width, if shorter); below that the control drops under the
     # title - the Win11 Settings narrow-window reflow - so no card ever forces the page to scroll sideways.
     SETTING_CARD_MIN_TITLE_WIDTH: Final[int] = 120
+    # The same floor for a card's description (or its whole one-line width, if shorter): a long
+    # description never wraps into a thin column beside the control - the control drops under it.
+    SETTING_CARD_MIN_DESC_WIDTH: Final[int] = 200
 
     # --- Interface Page Specific ---
     INTERFACE_SCROLL_MAX_ITEMS: Final[int] = 7

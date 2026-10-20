@@ -613,7 +613,8 @@ class OverviewTab(QWidget):
         word = self._tr(_VERDICT_KEYS[verdict][0], _VERDICT_KEYS[verdict][1])
         color = constants.network.latency.VERDICT_COLORS[verdict]
         sub = su.semantic_colors()["text_secondary"]
-        out = f"<span style='color:{color};'>{self._tr('LATENCY_LABEL', 'Internet')}: {word}</span>"
+        label = self._latency_label(getattr(mw, "latency_headline_hop", None))
+        out = f"<span style='color:{color};'>{label}: {word}</span>"
         detail = []
         if ms is not None:
             detail.append(f"{ms:.0f} ms")
@@ -626,8 +627,19 @@ class OverviewTab(QWidget):
             out += f"  <span style='color:{sub};'>· {' · '.join(detail)}</span>"
         return out
 
+    def _latency_label(self, hop=None) -> str:
+        """The name of the hop a latency figure measures, in the Check-connection sheet's words:
+        "Router" for the gateway (the default - public probe off), "Internet" for the public anchor.
+        ``hop`` is the widget's reported headline hop; None falls back to the configured rule."""
+        from netspeedtray.core.latency_probe import HOP_ANCHOR, HOP_GATEWAY, headline_hop
+        if hop not in (HOP_ANCHOR, HOP_GATEWAY):
+            hop = headline_hop(bool(self._config.get("latency_public_enabled", False)))
+        if hop == HOP_ANCHOR:
+            return self._tr("LATENCY_LABEL", "Internet")
+        return self._tr("CHECK_CONN_ROUTER", "Router")
+
     def _latency_detail_key(self) -> str:
-        """The latency series the "Internet" block describes - the HEADLINE hop, like the pill: the
+        """The latency series the Router / Internet block describes - the HEADLINE hop, like the pill: the
         public anchor when the user opted into it, the gateway otherwise (latency_probe.headline_hop)."""
         from netspeedtray.core.latency_probe import HOP_ANCHOR, headline_hop
         hop = headline_hop(bool(self._config.get("latency_public_enabled", False)))
@@ -645,7 +657,7 @@ class OverviewTab(QWidget):
                  "unit": "Mbps", "kind": "net_down", "primary": True},
                 {"key": "upload", "label": self._tr("UPLOAD_LABEL", "Upload"),
                  "unit": "Mbps", "kind": "net_up", "primary": True},
-                {"key": self._latency_detail_key(), "label": self._tr("LATENCY_LABEL", "Internet"),
+                {"key": self._latency_detail_key(), "label": self._latency_label(),
                  "unit": "ms", "kind": "hw"},
             ]
         if metric == "cpu":
