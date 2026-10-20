@@ -391,12 +391,15 @@ class _InterruptibleWS(_ThreadRecordingWS):
         self.gate.set()
 
 
-def test_closing_mid_load_interrupts_at_once(q_app):
+def test_closing_mid_load_interrupts_at_once(q_app, monkeypatch):
     """Review: closing during a load blocked the UI ~0.7 s (GRAPH_THREAD_QUIT_WAIT_MS) waiting for a
-    result that is thrown away anyway. Close interrupts the reader's query first."""
+    result that is thrown away anyway. Close interrupts the reader's query first. The grace wait is
+    stretched to 5 s so the bound below is timing-proof on a slow runner (lesson of #382)."""
     import threading
     import time
     from PyQt6.QtWidgets import QApplication
+    from netspeedtray import constants
+    monkeypatch.setattr(constants.timeouts, "GRAPH_THREAD_QUIT_WAIT_MS", 5000)
     ws = _InterruptibleWS(threading.Event())
     sheet = StatsDetailSheet(ws, _ALL_KINDS, _window(), _cfg(), I18nStrings("en_US"))
     deadline = time.monotonic() + 5.0
@@ -407,7 +410,7 @@ def test_closing_mid_load_interrupts_at_once(q_app):
     assert reader is not None and ws.threads == [reader]   # the first read is in flight, held
     t0 = time.perf_counter()
     sheet.reject()
-    assert time.perf_counter() - t0 < 0.4, "close waited for a result it discards"
+    assert time.perf_counter() - t0 < 2.5, "close waited for a result it discards"
     assert ws.interrupted and ws.interrupted[0] == reader
     assert not sheet.is_loaded()
 
