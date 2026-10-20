@@ -32,6 +32,45 @@ _PILLS = [
 _DEFAULT_KEY = "TIMELINE_24_HOURS"
 
 
+class _ClampedNote(QLabel):
+    """A wrapped caption that never grows past ``max_lines``: the text is cut with an ellipsis to fit
+    the width it gets, and the tooltip carries all of it. The header band has a fixed height."""
+
+    def __init__(self, text: str, max_lines: int, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._full = text
+        self._max_lines = max(1, int(max_lines))
+        self.setWordWrap(True)
+        self.setToolTip(text)
+        self.setText(text)
+
+    def full_text(self) -> str:
+        return self._full
+
+    def _fits(self, text: str, width: int) -> bool:
+        flags = int(Qt.TextFlag.TextWordWrap.value)
+        rect = self.fontMetrics().boundingRect(0, 0, max(1, width), 10_000, flags, text)
+        return rect.height() <= self.fontMetrics().lineSpacing() * self._max_lines
+
+    def _clamp(self, width: int) -> None:
+        text = self._full
+        if width > 0 and not self._fits(text, width):
+            lo, hi = 0, len(text)
+            while lo < hi:                       # the longest prefix that fits with an ellipsis
+                mid = (lo + hi + 1) // 2
+                if self._fits(text[:mid].rstrip() + "…", width):
+                    lo = mid
+                else:
+                    hi = mid - 1
+            text = text[:lo].rstrip() + "…"
+        if text != self.text():
+            self.setText(text)
+
+    def resizeEvent(self, event) -> None:
+        self._clamp(event.size().width())
+        super().resizeEvent(event)
+
+
 def _period_value(period_key: str) -> int:
     """period key -> the legacy PERIOD_MAP index GraphHost/coordinator speak."""
     for idx, key in constants.data.history_period.PERIOD_MAP.items():
@@ -113,6 +152,17 @@ class NetworkHeader(QWidget):
         self._up = self._stat_block(self._tr("UPLOAD_LABEL", "Upload"), "↑", c)
         root.addLayout(self._down[0])
         root.addLayout(self._up[0])
+        # D5: shown only while part of the totals was estimated from speeds saved before 2.2 - the
+        # same note the hover card and the Overview usage card carry.
+        self._history_note = _ClampedNote(self._tr("USAGE_RECORDED_HISTORY_NOTE", ""),
+                                          constants.layout.MONITOR_HISTORY_NOTE_MAX_LINES)
+        self._history_note.setFont(su.font(tokens.TYPE_CAPTION))
+        self._history_note.setStyleSheet(f"color: {c['text_secondary']}; background: transparent;")
+        self._history_note.setMinimumWidth(constants.layout.MONITOR_HISTORY_NOTE_MIN_WIDTH)
+        self._history_note.setMaximumWidth(constants.layout.MONITOR_HISTORY_NOTE_MAX_WIDTH)
+        self._history_note.setVisible(False)
+        # Takes the free width first (up to its max) - the stretch after it only gets what's left.
+        root.addWidget(self._history_note, 100, Qt.AlignmentFlag.AlignVCenter)
         root.addStretch(1)
 
         # Right-cluster controls live in their own sub-layout with the SHARED control spacing, so the
@@ -189,11 +239,13 @@ class NetworkHeader(QWidget):
         return self._tr(period_key, period_key.replace("TIMELINE_", "").replace("_", " ").title())
 
     # --- inputs -----------------------------------------------------------------
-    def set_totals(self, up_bytes: float, down_bytes: float, period_key: Optional[str] = None) -> None:
+    def set_totals(self, up_bytes: float, down_bytes: float, period_key: Optional[str] = None,
+                   reconstructed: bool = False) -> None:
         dv, du = format_data_size(down_bytes, self._i18n, precision=1)
         uv, uu = format_data_size(up_bytes, self._i18n, precision=1)
         self._down[1].setText(f"↓ {self._fmt(dv)} {du}")
         self._up[1].setText(f"↑ {self._fmt(uv)} {uu}")
+        self._history_note.setVisible(bool(reconstructed) and bool(self._history_note.full_text()))
         # The timeline dropdown already names the window, so the totals no longer need a separate caption.
 
     def set_period_key(self, period_key: str) -> None:

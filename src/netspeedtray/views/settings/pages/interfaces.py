@@ -86,6 +86,7 @@ class InterfacesPage(QWidget):
         """)
         self.interface_scroll.viewport().setAutoFillBackground(False)
         self.interface_scroll.setVisible(False)
+        self.interface_scroll.setAccessibleName(self.i18n.MONITORING_MODE_SELECTED)   # it takes focus
 
         interfaces_container = QWidget()
         interfaces_container.setStyleSheet("background: transparent;")
@@ -192,7 +193,8 @@ class InterfacesPage(QWidget):
             mark.setFont(style_utils.font(tokens.TYPE_CAPTION))
             mark.setStyleSheet(f"color: {c['accent']}; background: transparent;")
             hl.addWidget(mark)
-            row.setAccessibleName(f"{iface} - {self.i18n.INTERFACE_ACTIVE_CONNECTION}")
+            # On the focusable control, not the row: a screen reader announces what has focus.
+            checkbox.checkbox.setAccessibleName(f"{iface} - {self.i18n.INTERFACE_ACTIVE_CONNECTION}")
         hl.addStretch(1)
         return row
 

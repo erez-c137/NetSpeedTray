@@ -28,8 +28,9 @@ SRC_DIR = Path(__file__).resolve().parents[3]          # .../src
 FONT_DIR = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
 
 # en_US is the baseline, de_DE the reported case, hu_HU the widest on main (its Hardware page ran
-# 176 px past a 640 px window; it_IT 169, es_ES 156 - all 16 locales were swept by hand).
-LOCALES = ["en_US", "de_DE", "hu_HU"]
+# 176 px past a 640 px window; it_IT 169, es_ES 156 - all 16 locales were swept by hand). ja_JP: CJK
+# wraps per character, so a squeezed description column shows there first.
+LOCALES = ["en_US", "de_DE", "hu_HU", "ja_JP"]
 
 _PROBE = textwrap.dedent(r"""
     import json, sys
@@ -42,6 +43,9 @@ _PROBE = textwrap.dedent(r"""
     from netspeedtray import constants
     from netspeedtray.constants.i18n import I18nStrings
     from netspeedtray.views.settings.dialog import SettingsDialog
+    from netspeedtray.utils.components import SettingCard
+    MAX_DESC_LINES = 3
+    MIN_DESC_WIDTH = 200
 
     def overflow(scroll):
         vp = scroll.viewport()
@@ -85,6 +89,19 @@ _PROBE = textwrap.dedent(r"""
                 if px > 1:
                     out.append(f"{lang} {label} {dlg.width()}px page {i} "
                                f"({type(dlg.stack.widget(i).widget()).__name__}): {px}px past the edge")
+                # No description squeezed into a thin column beside its control (the port-in-use
+                # status once ran 8-10 lines in a 59-100 px column at the minimum width).
+                page = dlg.stack.widget(i).widget()
+                for card in page.findChildren(SettingCard):
+                    d = getattr(card, "_desc_label", None)
+                    if d is None or not d.text().strip() or not d.isVisibleTo(page):
+                        continue
+                    lines = round(d.height() / max(1, d.fontMetrics().lineSpacing()))
+                    # A long translation may wrap at full card width; a thin column beside the control
+                    # may not - such a card must drop its control under the title instead.
+                    if lines > MAX_DESC_LINES and d.width() < MIN_DESC_WIDTH:
+                        out.append(f"{lang} {label} {dlg.width()}px page {i}: description of "
+                                   f"{card._title_label.text()!r} runs {lines} lines in {d.width()}px")
         dlg.close()
         # Delete each dialog while the QApplication is alive: left to interpreter teardown, the
         # orphaned dialogs crashed the child at exit (0xC0000005) about 1 run in 4, and the
@@ -150,6 +167,22 @@ def test_setting_card_stacks_its_control_when_narrow(qtbot):
     assert card._title_label.wordWrap()
 
     card.resize(card._side_by_side_width() + 40, 120)
+    qtbot.waitUntil(lambda: not card.isStacked())
+
+
+def test_setting_card_stacks_rather_than_squeeze_a_long_description(qtbot):
+    """A short title fits beside the control, but a long description would wrap into a thin column -
+    the card must drop the control under the text instead (the metrics "port in use" status)."""
+    from netspeedtray import constants
+    card = _hosted(qtbot, SettingCard("Address", description=" ", control=_wide_control(300)))
+    card.set_description("Port 9184 is already in use by another app. Choose another port.")
+    m = card._row.contentsMargins()
+    squeezed = m.left() + m.right() + 100 + card._row.spacing() + 300   # title fits, text gets 100 px
+    assert card._side_by_side_width() > squeezed
+    card.resize(squeezed, 160)
+    qtbot.waitUntil(card.isStacked)
+    room = constants.layout.SETTING_CARD_MIN_DESC_WIDTH + 400 + 300
+    card.resize(room, 160)
     qtbot.waitUntil(lambda: not card.isStacked())
 
 

@@ -140,10 +140,11 @@ class AdvancedPage(QWidget):
 
         self.metrics_url = QLineEdit()
         self.metrics_url.setReadOnly(True)
+        self.metrics_url.setProperty("fieldStyle", "input")   # the port spin box's look (dialog_style)
         # Wide enough for "http://127.0.0.1:65535/metrics"; ReflowRow stacks the Copy button under it
         # when the window is too narrow (no sideways scroll in any locale, #356).
         self.metrics_url.setMinimumWidth(self.metrics_url.fontMetrics().horizontalAdvance(
-            "http://127.0.0.1:65535/metrics") + 24)
+            "http://127.0.0.1:65535/metrics") + 24 + 16)   # + the input style's 8 px side padding
         self.metrics_copy_btn = QPushButton(self.i18n.METRICS_COPY_BUTTON)
         self.metrics_copy_btn.setStyleSheet(style_utils.button_style())
         self.metrics_copy_btn.clicked.connect(self._copy_metrics_url)

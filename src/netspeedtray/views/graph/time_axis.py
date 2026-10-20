@@ -12,6 +12,7 @@ x-limits without reconfiguring the axis (update_data, a growing Session) stay co
 """
 from __future__ import annotations
 
+import functools
 import math
 from typing import Optional, Tuple
 
@@ -127,34 +128,74 @@ class TimeAxisLocator(Locator):
         return [t for t in ticks if vmin <= t <= vmax]
 
 
+@functools.lru_cache(maxsize=None)
+def _locale_names(language: str) -> Tuple[Tuple[str, ...], Tuple[str, ...], bool]:
+    """(short weekday names Mon..Sun, short month names Jan..Dec, day-before-month) from Qt's CLDR data
+    for ``language``. Qt, not strftime: matplotlib formats under the C locale, so "%a" / "%b" printed
+    English names in every language."""
+    from PyQt6.QtCore import QLocale
+    q = QLocale(language)
+    short = QLocale.FormatType.ShortFormat
+    days = tuple(q.dayName(d, short) for d in range(1, 8))
+    months = tuple(q.monthName(m, short) for m in range(1, 13))
+    pattern = q.dateFormat(short)                       # e.g. "M/d/yy", "dd.MM.yy", "yyyy/MM/dd"
+    d_at, m_at = pattern.find("d"), pattern.find("M")
+    day_first = 0 <= d_at < m_at
+    return days, months, day_first
+
+
+def localized_strftime(dt, fmt: str, language: Optional[str], shape: bool = True) -> str:
+    """``dt.strftime(fmt)`` with "%a" / "%b" in ``language`` (None = strftime as-is). A "%b %d" label
+    follows the language's day/month order. Names are one-to-one with the weekday / month, so a format
+    that keeps two ticks apart in English keeps them apart in every language. ``shape`` reshapes RTL
+    (Hebrew) text into display order, as every other matplotlib label is (mpl_fonts.shape_rtl)."""
+    if not language or ("%a" not in fmt and "%b" not in fmt):
+        return dt.strftime(fmt)
+    try:
+        days, months, day_first = _locale_names(str(language))
+    except Exception:
+        return dt.strftime(fmt)
+    if day_first and fmt == "%b %d":
+        fmt = "%d %b"
+    fmt = (fmt.replace("%a", days[dt.isoweekday() - 1].replace("%", "%%"))
+              .replace("%b", months[dt.month - 1].replace("%", "%%")))
+    text = dt.strftime(fmt)
+    if shape:
+        from netspeedtray.utils.mpl_fonts import shape_rtl
+        text = shape_rtl(text, language)
+    return text
+
+
 class TimeAxisFormatter(Formatter):
-    """Formats ticks with the format matching the locator's current step."""
+    """Formats ticks with the format matching the locator's current step, with weekday and month
+    names in ``language`` (the app's UI language; None keeps strftime's names)."""
 
-    def __init__(self, locator: TimeAxisLocator):
+    def __init__(self, locator: TimeAxisLocator, language: Optional[str] = None):
         self.locator = locator
-        self._fmt = None
-        self._date_formatter = None
+        self.language = language
+        self.tz = None   # matplotlib's default (rcParams["timezone"]), as DateFormatter(fmt) used
 
-    def _formatter(self) -> mdates.DateFormatter:
+    def _fmt(self) -> str:
         try:
             _unit, _n, fmt = self.locator.plan()
         except Exception:
             fmt = constants.graph.TIME_AXIS_FMT_MINUTES
-        if fmt != self._fmt:
-            self._fmt = fmt
-            self._date_formatter = mdates.DateFormatter(fmt)
-        return self._date_formatter
+        return fmt
+
+    def _format(self, x, fmt: str) -> str:
+        return localized_strftime(mdates.num2date(x, self.tz), fmt, self.language)
 
     def format_ticks(self, values):
-        f = self._formatter()
-        return [f(v) for v in values]
+        fmt = self._fmt()
+        return [self._format(v, fmt) for v in values]
 
     def __call__(self, x, pos=None):
-        return self._formatter()(x, pos)
+        return self._format(x, self._fmt())
 
 
-def apply_time_axis(axis) -> None:
-    """Give ``axis`` (an Axes) the shared time-axis locator + formatter. The one entry point."""
+def apply_time_axis(axis, language: Optional[str] = None) -> None:
+    """Give ``axis`` (an Axes) the shared time-axis locator + formatter. The one entry point.
+    ``language`` is the app's UI language, for the weekday / month names."""
     locator = TimeAxisLocator()
     axis.xaxis.set_major_locator(locator)
-    axis.xaxis.set_major_formatter(TimeAxisFormatter(locator))
+    axis.xaxis.set_major_formatter(TimeAxisFormatter(locator, language))

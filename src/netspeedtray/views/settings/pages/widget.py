@@ -42,6 +42,8 @@ class WidgetPage(QWidget):
         self.display_mode_combo.addItem(self.i18n.DISPLAY_MODE_STACKED_COLUMN, userData="side_by_stack")
         self.display_mode_combo.addItem(self.i18n.DISPLAY_MODE_CYCLE, userData="cycle")
         self.display_mode_combo.currentIndexChanged.connect(self.on_change)
+        # Under a section header, not in a SettingCard - so it names itself.
+        self.display_mode_combo.setAccessibleName(self.i18n.WIDGET_DISPLAY_MODE_LABEL)
         layout.addWidget(self.display_mode_combo)
         note = QLabel(self.i18n.HARDWARE_GRAPH_NOTE)
         note.setWordWrap(True)

@@ -40,14 +40,17 @@ SPANS = [
 ]
 
 
-def _labels(span, period_key, width_in=8.0):
+def _labels(span, period_key, width_in=8.0, language=None):
     fig = Figure(figsize=(width_in, 4), dpi=100)
     FigureCanvasAgg(fig)
     ax = fig.add_subplot(111)
     start = END - span
     ax.plot([start, END], [0, 1])
     ax.set_xlim(start, END)
-    GraphRenderer._configure_xaxis_format(SimpleNamespace(ax_upload=ax), period_key, axis=ax)
+    host = SimpleNamespace(ax_upload=ax)
+    if language is not None:
+        host.i18n = SimpleNamespace(language=language)
+    GraphRenderer._configure_xaxis_format(host, period_key, axis=ax)
     fig.canvas.draw()
     lo, hi = ax.get_xlim()
     return [
@@ -95,3 +98,50 @@ def test_labels_stay_unique_when_a_live_session_grows():
                   if lo <= loc <= hi and t.get_text()]
         assert len(set(labels)) == len(labels), f"{span}: {labels}"
         assert 3 <= len(labels) <= 10, f"{span}: {labels}"
+
+
+# --- weekday / month names follow the app language, not matplotlib's C locale -------------------
+
+_ENGLISH_NAMES = {"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun",
+                  "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"}
+_NAMED_SPANS = [
+    (timedelta(days=1), "TIMELINE_24_HOURS"),     # "%a %H:%M"
+    (timedelta(days=7), "TIMELINE_WEEK"),         # "%a %d"
+    (timedelta(days=30), "TIMELINE_MONTH"),       # "%b %d"
+    (timedelta(days=400), "TIMELINE_ALL"),        # "%b %Y"
+]
+
+
+def _qt_names(language):
+    from PyQt6.QtCore import QLocale
+    q = QLocale(language)
+    short = QLocale.FormatType.ShortFormat
+    return ({q.dayName(d, short) for d in range(1, 8)}, {q.monthName(m, short) for m in range(1, 13)})
+
+
+@pytest.mark.parametrize("language", ["ja_JP", "de_DE", "he_IL", "en_US"])
+@pytest.mark.parametrize("span,period_key", _NAMED_SPANS, ids=lambda v: str(v))
+def test_day_and_month_names_follow_the_app_language(language, span, period_key):
+    from netspeedtray.utils.mpl_fonts import shape_rtl
+    labels = _labels(span, period_key, language=language)
+    assert len(set(labels)) == len(labels), f"{language} {period_key}: repeated labels {labels}"
+    assert 3 <= len(labels) <= 10, f"{language} {period_key}: {labels}"
+    days, months = _qt_names(language)
+    names = days if period_key in ("TIMELINE_24_HOURS", "TIMELINE_WEEK") else months
+    # Every label carries one of the language's own names (Hebrew in display order, as painted).
+    shaped = {shape_rtl(n, language) for n in names} | names
+    for lbl in labels:
+        assert any(n in lbl for n in shaped), f"{language} {period_key}: {lbl!r} has no {sorted(names)}"
+    if language != "en_US":
+        own = {n.rstrip(".") for n in days | months}           # German "Nov." is German too
+        words = {w for lbl in labels for w in lbl.replace(".", " ").split()} - own
+        assert not (words & _ENGLISH_NAMES), f"{language} {period_key}: English names in {labels}"
+
+
+def test_hebrew_axis_labels_are_shaped_for_display():
+    from netspeedtray.utils.mpl_fonts import shape_rtl
+    from netspeedtray.views.graph.time_axis import localized_strftime
+    from datetime import datetime as _dt
+    logical = localized_strftime(_dt(2026, 10, 19, 16, 0), "%a %H:%M", "he_IL", shape=False)
+    assert logical.startswith("יום ב")                     # Monday, Hebrew, logical order
+    assert localized_strftime(_dt(2026, 10, 19, 16, 0), "%a %H:%M", "he_IL") == shape_rtl(logical, "he_IL")
