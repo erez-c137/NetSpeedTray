@@ -284,6 +284,8 @@
     "DELETE_HISTORY_CONFIRM_BUTTON": "Usuń",
     "DELETE_HISTORY_DONE": "Historia została usunięta.",
     "DELETE_HISTORY_DONE_COMPACTING": "Historia została usunięta. Czyszczenie pliku wkrótce się zakończy.",
+    "DELETE_HISTORY_DONE_BACKUP_UPGRADE": "Historia została usunięta. Kopia zapasowa z aktualizacji do wersji 2.2 zostanie zachowana do zakończenia tej aktualizacji; zostanie automatycznie usunięta przy jednym z kolejnych uruchomień.",
+    "DELETE_HISTORY_DONE_BACKUP_KEPT": "Historia została usunięta, ale nie udało się usunąć pliku kopii zapasowej: jest tylko do odczytu i połączony z innym plikiem. Możesz go usunąć samodzielnie z folderu danych NetSpeedTray.",
     "DELETE_HISTORY_FAILED": "Nie udało się usunąć historii. Szczegóły znajdziesz w dzienniku.",
     "ADVANCED_REDUCE_MOTION_LABEL": "Ogranicz ruch (mniej animacji)",
     "KEEP_WINDOWS_ON_TOP_LABEL": "Utrzymuj okna Ustawienia i Monitor na wierzchu",

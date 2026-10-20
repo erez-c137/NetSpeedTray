@@ -284,6 +284,8 @@
     "DELETE_HISTORY_CONFIRM_BUTTON": "Izbriši",
     "DELETE_HISTORY_DONE": "Zgodovina je izbrisana.",
     "DELETE_HISTORY_DONE_COMPACTING": "Zgodovina je izbrisana. Čiščenje datoteke se bo kmalu končalo.",
+    "DELETE_HISTORY_DONE_BACKUP_UPGRADE": "Zgodovina je izbrisana. Varnostna kopija iz nadgradnje na 2.2 ostane, dokler se ta nadgradnja ne konča; samodejno bo odstranjena ob enem od naslednjih zagonov.",
+    "DELETE_HISTORY_DONE_BACKUP_KEPT": "Zgodovina je izbrisana, vendar ene datoteke varnostne kopije ni bilo mogoče odstraniti: je samo za branje in povezana z drugo datoteko. Izbrišete jo lahko sami iz podatkovne mape NetSpeedTray.",
     "DELETE_HISTORY_FAILED": "Zgodovine ni bilo mogoče izbrisati. Podrobnosti so v dnevniku.",
     "ADVANCED_REDUCE_MOTION_LABEL": "Zmanjšaj gibanje (manj animacij)",
     "KEEP_WINDOWS_ON_TOP_LABEL": "Ohrani okni Nastavitve in Nadzornik v ospredju",

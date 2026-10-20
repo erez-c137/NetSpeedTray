@@ -284,6 +284,8 @@
     "DELETE_HISTORY_CONFIRM_BUTTON": "Elimina",
     "DELETE_HISTORY_DONE": "La cronologia è stata eliminata.",
     "DELETE_HISTORY_DONE_COMPACTING": "La cronologia è stata eliminata. La pulizia del file terminerà a breve.",
+    "DELETE_HISTORY_DONE_BACKUP_UPGRADE": "La cronologia è stata eliminata. Il backup dell'aggiornamento alla 2.2 viene conservato finché l'aggiornamento non è completato; verrà rimosso automaticamente a un avvio successivo.",
+    "DELETE_HISTORY_DONE_BACKUP_KEPT": "La cronologia è stata eliminata, ma non è stato possibile rimuovere un file di backup: è di sola lettura e collegato a un altro file. Puoi eliminarlo tu dalla cartella dati di NetSpeedTray.",
     "DELETE_HISTORY_FAILED": "Impossibile eliminare la cronologia. Consulta il log per i dettagli.",
     "ADVANCED_REDUCE_MOTION_LABEL": "Riduci animazioni",
     "KEEP_WINDOWS_ON_TOP_LABEL": "Mantieni le finestre Impostazioni e Monitor in primo piano",

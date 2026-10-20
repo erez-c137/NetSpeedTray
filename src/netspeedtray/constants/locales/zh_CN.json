@@ -284,6 +284,8 @@
     "DELETE_HISTORY_CONFIRM_BUTTON": "删除",
     "DELETE_HISTORY_DONE": "历史记录已删除。",
     "DELETE_HISTORY_DONE_COMPACTING": "历史记录已删除。文件将很快完成清理。",
+    "DELETE_HISTORY_DONE_BACKUP_UPGRADE": "历史记录已删除。升级到 2.2 时的备份会保留到该升级完成为止，之后启动时将自动删除。",
+    "DELETE_HISTORY_DONE_BACKUP_KEPT": "历史记录已删除，但有一个备份文件无法移除：它是只读的，并且链接到另一个文件。你可以自行从 NetSpeedTray 数据文件夹中删除它。",
     "DELETE_HISTORY_FAILED": "无法删除历史记录，详情请查看日志。",
     "ADVANCED_REDUCE_MOTION_LABEL": "减弱动画效果 (较少动画)",
     "KEEP_WINDOWS_ON_TOP_LABEL": "设置和监控窗口置顶显示",

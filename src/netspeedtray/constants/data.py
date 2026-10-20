@@ -59,6 +59,13 @@ class DataRetentionConstants:
     # restarts that count). Intermittent use only delays an age-out - the safe direction.
     BACKUP_CLOCK_MAX_GAP_DAYS: Final[int] = 14
     BACKUP_CLOCK_CONTINUITY_DAYS: Final[int] = 7
+    # Within a session, wall-clock and monotonic time between two maintenance passes may disagree by
+    # this much (or 1%) before it counts as a clock jump (NTP slews are seconds; sleep is excluded from
+    # neither clock on Windows - both run across standby).
+    BACKUP_CLOCK_DRIFT_TOLERANCE_SEC: Final[int] = 300
+    # The 30-day floor is counted in steady time the app OBSERVED with the backup present: at most this
+    # much per maintenance pass (hourly while running; app-off time and jumps add nothing).
+    BACKUP_STEADY_CREDIT_MAX_SEC: Final[int] = 2 * 3600
     DAYS_MAP: Final[Dict[int, int]] = {
         0: 31,             # 1 month - covers a full calendar month so "this month" is always whole
         1: 90,             # 3 months

@@ -284,6 +284,8 @@
     "DELETE_HISTORY_CONFIRM_BUTTON": "Verwijderen",
     "DELETE_HISTORY_DONE": "Je geschiedenis is verwijderd.",
     "DELETE_HISTORY_DONE_COMPACTING": "Je geschiedenis is verwijderd. Het opschonen van het bestand is zo klaar.",
+    "DELETE_HISTORY_DONE_BACKUP_UPGRADE": "Je geschiedenis is verwijderd. De back-up van de upgrade naar 2.2 blijft bewaard tot die upgrade is voltooid; hij wordt bij een latere start automatisch verwijderd.",
+    "DELETE_HISTORY_DONE_BACKUP_KEPT": "Je geschiedenis is verwijderd, maar een back-upbestand kon niet worden verwijderd: het is alleen-lezen en gekoppeld aan een ander bestand. Je kunt het zelf verwijderen uit de gegevensmap van NetSpeedTray.",
     "DELETE_HISTORY_FAILED": "Geschiedenis kon niet worden verwijderd. Zie het logbestand voor details.",
     "ADVANCED_REDUCE_MOTION_LABEL": "Beweging beperken (minder animaties)",
     "KEEP_WINDOWS_ON_TOP_LABEL": "Vensters Instellingen en Monitor op de voorgrond houden",

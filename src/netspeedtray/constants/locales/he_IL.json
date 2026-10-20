@@ -284,6 +284,8 @@
     "DELETE_HISTORY_CONFIRM_BUTTON": "מחק",
     "DELETE_HISTORY_DONE": "ההיסטוריה נמחקה.",
     "DELETE_HISTORY_DONE_COMPACTING": "ההיסטוריה נמחקה. ניקוי הקובץ יסתיים בקרוב.",
+    "DELETE_HISTORY_DONE_BACKUP_UPGRADE": "ההיסטוריה נמחקה. הגיבוי מהשדרוג לגרסה 2.2 נשמר עד שהשדרוג יסתיים; הוא יוסר אוטומטית באחת ההפעלות הבאות.",
+    "DELETE_HISTORY_DONE_BACKUP_KEPT": "ההיסטוריה נמחקה, אך לא ניתן היה להסיר קובץ גיבוי: הוא לקריאה בלבד ומקושר לקובץ אחר. אפשר למחוק אותו בעצמך מתיקיית הנתונים של NetSpeedTray.",
     "DELETE_HISTORY_FAILED": "לא ניתן למחוק את ההיסטוריה. פרטים ביומן.",
     "ADVANCED_REDUCE_MOTION_LABEL": "הפחת תנועה (פחות אנימציות)",
     "KEEP_WINDOWS_ON_TOP_LABEL": "השאר את חלונות ההגדרות והמוניטור עליונים",

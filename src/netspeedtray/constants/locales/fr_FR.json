@@ -284,6 +284,8 @@
     "DELETE_HISTORY_CONFIRM_BUTTON": "Supprimer",
     "DELETE_HISTORY_DONE": "Votre historique a été supprimé.",
     "DELETE_HISTORY_DONE_COMPACTING": "Votre historique a été supprimé. Le fichier finira d'être nettoyé sous peu.",
+    "DELETE_HISTORY_DONE_BACKUP_UPGRADE": "Votre historique a été supprimé. La sauvegarde de la mise à niveau vers la 2.2 est conservée jusqu'à la fin de cette mise à niveau ; elle sera supprimée automatiquement lors d'un prochain démarrage.",
+    "DELETE_HISTORY_DONE_BACKUP_KEPT": "Votre historique a été supprimé, mais un fichier de sauvegarde n'a pas pu être retiré : il est en lecture seule et lié à un autre fichier. Vous pouvez le supprimer vous-même depuis le dossier de données de NetSpeedTray.",
     "DELETE_HISTORY_FAILED": "Impossible de supprimer l'historique. Consultez le journal pour plus de détails.",
     "ADVANCED_REDUCE_MOTION_LABEL": "Réduire les animations",
     "KEEP_WINDOWS_ON_TOP_LABEL": "Garder les fenêtres Paramètres et Moniteur au premier plan",

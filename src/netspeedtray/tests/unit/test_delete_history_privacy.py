@@ -226,6 +226,20 @@ def _aging_worker(d: Path, now: datetime, migrated: bool = True) -> DatabaseWork
     return w
 
 
+def _mark_seen(w: DatabaseWorker, d: Path, days: float = 60) -> None:
+    """Every backup present has been OBSERVED by the app for ``days`` of steady time."""
+    for p in w._history_backup_files():
+        w.conn.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+                       (DatabaseWorker._SEEN_PREFIX + p.name.lower(), str(int(days * 86400))))
+
+
+def _age(w: DatabaseWorker, retention, now, prev, mono=None) -> None:
+    """One age-out pass over files the app has long observed (the 30-day floor met by observed time),
+    so what is under test is the date / clock / migration rule."""
+    _mark_seen(w, w.db_path.parent)
+    w._age_out_backups(retention, now, prev, mono)
+
+
 def _steady(now: datetime) -> int:
     """The previous maintenance pass, an hour before ``now``."""
     return int(now.timestamp()) - 3600
@@ -241,7 +255,7 @@ def test_backups_age_out_with_the_retention_window(tmp_path):
     _touch(Path(str(old_stray) + "-shm"), now - timedelta(days=400))
     young_stray = _fake_stray(tmp_path, now - timedelta(days=100), "_1")
     legacy = _touch(tmp_path / f"{DB}.bak", now - timedelta(days=400))      # 2.0-era bare .bak
-    w._age_out_backups(365, now, _steady(now))
+    _age(w, 365, now, _steady(now))
     assert not old.exists() and not Path(str(old) + "-wal").exists()
     assert young.exists()
     assert not old_stray.exists() and not Path(str(old_stray) + "-shm").exists(), "strays age out too"
@@ -255,7 +269,7 @@ def test_a_fresh_backup_survives_a_short_retention_for_the_rollback_window(tmp_p
     w = _aging_worker(tmp_path, now)
     recent = _fake_bak(tmp_path, 7, now - timedelta(days=D.retention.BACKUP_MIN_KEEP_DAYS - 5))
     stale = _fake_bak(tmp_path, 6, now - timedelta(days=D.retention.BACKUP_MIN_KEEP_DAYS + 5))
-    w._age_out_backups(1, now, _steady(now))      # a hand-edited 1-day retention
+    _age(w, 1, now, _steady(now))      # a hand-edited 1-day retention
     assert recent.exists(), "never removed sooner than BACKUP_MIN_KEEP_DAYS after the upgrade"
     assert not stale.exists()
     w._close_connection()
@@ -266,7 +280,7 @@ def test_keep_everything_keeps_every_backup(tmp_path):
     w = _aging_worker(tmp_path, now)
     ancient = _fake_bak(tmp_path, 7, now - timedelta(days=3000))
     stray = _fake_stray(tmp_path, now - timedelta(days=3000))
-    w._age_out_backups(D.retention.UNLIMITED_DAYS, now, _steady(now))
+    _age(w, D.retention.UNLIMITED_DAYS, now, _steady(now))
     assert ancient.exists() and stray.exists()
     w._close_connection()
 
@@ -277,6 +291,7 @@ def test_the_hourly_maintenance_ages_backups_out(tmp_path):
     w.conn.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES ('last_maintenance_at', ?)",
                    (str(_steady(now)),))
     old = _fake_bak(tmp_path, 7, now - timedelta(days=500))
+    _mark_seen(w, tmp_path)
     w._run_maintenance({"keep_data": 365}, now=now)
     assert not old.exists()
     w._close_connection()
@@ -297,6 +312,7 @@ def test_a_clock_jump_to_2030_keeps_a_day_old_backup(tmp_path, no_retry_sleep):
                    (str(int(real.timestamp()) - 30 * 86400),))   # it HAD been running steadily
     bak = next(tmp_path.glob(f"{DB}.bak.v7_*"))
     stray = _fake_stray(tmp_path, real - timedelta(days=1))
+    _mark_seen(w, tmp_path)             # observed long enough: only the clock guard stands in the way
     wrong = datetime(2030, 1, 1, 12, 0, 0)
     w._run_maintenance({"keep_data": 365}, now=wrong)
     for h in range(1, 48):              # two days of hourly passes on the wrong clock
@@ -311,6 +327,7 @@ def test_age_out_resumes_once_the_clock_has_run_steadily(tmp_path):
     w._prepare_storage()
     w.conn.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, '1')", (DatabaseWorker.MIGRATED_FROM_V7_KEY,))
     old = _fake_bak(tmp_path, 7, now - timedelta(days=400))
+    _mark_seen(w, tmp_path)
     w._age_out_backups(365, now, None)                       # first pass ever: not armed yet
     assert old.exists()
     ts = int(now.timestamp())          # stepped in epoch seconds: a naive +1 h skips an hour at DST
@@ -327,7 +344,7 @@ def test_a_backup_dated_in_the_future_is_kept(tmp_path):
     now = datetime(2026, 10, 20, 12, 0, 0)
     w = _aging_worker(tmp_path, now)
     future = _fake_bak(tmp_path, 7, now + timedelta(days=30))
-    w._age_out_backups(31, now + timedelta(days=0), _steady(now))
+    _age(w, 31, now + timedelta(days=0), _steady(now))
     assert future.exists()
     w._close_connection()
 
@@ -338,7 +355,7 @@ def test_age_is_from_the_later_of_name_date_and_mtime(tmp_path):
     p = tmp_path / f"{DB}.bak.v7_{now - timedelta(days=400):%Y%m%d_%H%M%S}"
     _touch(p, now - timedelta(days=2))            # old name, recent file: not old
     q = _touch(tmp_path / f"{DB}.bak.v6_{now - timedelta(days=2):%Y%m%d_%H%M%S}", now - timedelta(days=400))
-    w._age_out_backups(365, now, _steady(now))
+    _age(w, 365, now, _steady(now))
     assert p.exists() and q.exists()
     w._close_connection()
 
@@ -351,7 +368,7 @@ def test_a_stuck_upgrade_keeps_its_v7_backup(tmp_path):
     bak = _fake_bak(tmp_path, 7, now - timedelta(days=400))
     stray = _fake_stray(tmp_path, now - timedelta(days=400))
     legacy = _touch(tmp_path / f"{DB}.bak", now - timedelta(days=400))
-    w._age_out_backups(31, now, _steady(now))
+    _age(w, 31, now, _steady(now))
     assert bak.exists() and stray.exists() and legacy.exists()
     w._close_connection()
 
@@ -380,7 +397,7 @@ def test_a_bad_file_does_not_stop_the_pass_or_get_logged_as_removed(tmp_path, ca
     old = _fake_bak(tmp_path, 6, now - timedelta(days=500))
     held = _fake_bak(tmp_path, 5, now - timedelta(days=500))
     with open(held, "rb"), caplog.at_level("INFO"):
-        w._age_out_backups(365, now, _steady(now))
+        _age(w, 365, now, _steady(now))
     assert d.is_dir() and not old.exists() and held.exists()
     removed = [r.getMessage() for r in caplog.records if "removed." in r.getMessage()]
     assert len(removed) == 1 and old.name in removed[0]
@@ -390,14 +407,16 @@ def test_a_bad_file_does_not_stop_the_pass_or_get_logged_as_removed(tmp_path, ca
 # --- review #376 item 5: only the app's own file names ----------------------------------------------------
 
 USER_FILES = ["speed_history.db.backup", "speed_history.db.bak_mine.zip", "speed_history.db.bak.handmade",
-              "SPEED_HISTORY.DB.BAK.V7_20200101_000000", "Speed_History.db.Stray_20200101_000000",
-              "speed_history (copy).db", "speed_history.db.bak.v7_x", "speed_history.db.bak.v7_20261019_120000.zip",
+              "speed_history (copy).db", "speed_history.db.bak.v7_20261019_120000_copy", "speed_history.db.bak.v7_x", "speed_history.db.bak.v7_20261019_120000.zip",
               "netspeedtray.conf", "migrate_v8.journal.keep"]
 APP_FILES = ["speed_history.db.bak", "speed_history.db.bak-wal",
              "speed_history.db.bak.v7_20261019_120000", "speed_history.db.bak.v7_20261019_120000-wal",
              "speed_history.db.bak.v7_20261019_120000-shm", "speed_history.db.bak.v7_20261019_120000_1",
              "speed_history.db.bak.v6_20250101_000000-journal", "speed_history.db.stray_20260101_000000",
-             "speed_history.db.stray_20260101_000000_2-wal"]
+             "speed_history.db.stray_20260101_000000_2-wal",
+             # NTFS is case-insensitive: these ARE the app's files (review #376 item 4)
+             "SPEED_HISTORY.DB.BAK.V7_20200101_000000", "Speed_History.db.Stray_20200101_000000",
+             "speed_history.db.BAK.v6_20200101_000000-WAL"]
 
 
 def test_delete_all_history_removes_only_the_apps_own_backup_names(tmp_path):
@@ -405,7 +424,7 @@ def test_delete_all_history_removes_only_the_apps_own_backup_names(tmp_path):
         (tmp_path / n).write_bytes(b"DATA" * 100)
     w = DatabaseWorker(tmp_path / DB)
     assert sorted(p.name for p in w._history_backup_files()) == sorted(APP_FILES)
-    assert w._remove_history_backups()
+    assert w._remove_history_backups() == "ok"
     assert sorted(p.name for p in tmp_path.iterdir()) == sorted(USER_FILES)
     assert all((tmp_path / n).read_bytes() == b"DATA" * 100 for n in USER_FILES), "a user file was zeroed"
 
@@ -425,7 +444,7 @@ def test_a_hard_linked_backup_is_unlinked_but_its_target_never_zeroed(tmp_path):
     except OSError as e:
         pytest.skip(f"no hard links here: {e}")
     w = DatabaseWorker(data / DB)
-    assert w._remove_history_backups()
+    assert w._remove_history_backups() == "ok"
     assert not link.exists()
     assert precious.read_bytes() == b"PRECIOUS" * 10
 
@@ -441,7 +460,7 @@ def test_a_symlinked_backup_is_unlinked_but_its_target_never_zeroed(tmp_path):
     except (OSError, NotImplementedError) as e:
         pytest.skip(f"no symlinks without privilege here: {e}")
     w = DatabaseWorker(data / DB)
-    assert w._remove_history_backups()
+    assert w._remove_history_backups() == "ok"
     assert not os.path.lexists(link)
     assert precious.read_bytes() == b"PRECIOUS" * 10
 
@@ -453,7 +472,7 @@ def test_a_read_only_backup_is_removed(tmp_path):
     p.write_bytes(b"Tailscale" * 100)
     os.chmod(p, stat.S_IREAD)
     w = DatabaseWorker(tmp_path / DB)
-    assert w._remove_history_backups()
+    assert w._remove_history_backups() == "ok"
     assert not p.exists()
 
 
@@ -711,3 +730,211 @@ def test_settings_re_arms_cap_alerts_only_after_a_successful_delete():
         SettingsDialog._on_history_deleted(fake, DatabaseWorker.DELETE_DONE)
     assert fake.config["usage_alert_state"] == "" and fake.original_config["usage_alert_state"] == ""
     assert calls == [{"usage_alert_state": ""}]
+
+
+# --- second review of #376 --------------------------------------------------------------------------------
+
+def test_a_vacuum_failure_after_the_commit_is_a_done_delete_not_a_failed_one(tmp_path, no_retry_sleep):
+    """Harness rr376/h4.py [vac]: the post-commit incremental_vacuum raising used to report FAILED -
+    the user was told nothing was deleted, the backups were kept, and the logoff save then wrote the
+    OLD 5e9 total back over the (already deleted) odometer."""
+    w = _migrated_worker(tmp_path)
+    w.conn.execute("INSERT OR REPLACE INTO usage_counter (id, cumulative_up, cumulative_down, anchor_up, "
+                   "anchor_down, period_key, updated_ts) VALUES (1, 5e9, 5e9, 0, 0, '2026-10-01', 0)")
+    got = []
+    w.history_deleted.connect(got.append)
+    with patch.object(writer_v8.WriterV8, "incremental_vacuum",
+                      side_effect=sqlite3.OperationalError("database or disk is full")):
+        w._execute_task("delete_history", {"include_usage": True})
+        assert got == [DatabaseWorker.DELETE_COMPACT_PENDING], got
+        assert w._last_delete_outcome == "usage_reset"
+        assert _bak_files(tmp_path) == [], "a done delete removes the backups"
+        assert w._vacuum_pending
+        w._persist_usage_after_delete({"if_reset": (1.0, 1.0, 0, 0, "2026-10-01", 0, None),
+                                       "if_failed": (5e9, 5e9, 0, 0, "2026-10-01", 0, None)})
+        assert w.conn.execute("SELECT cumulative_up FROM usage_counter").fetchall() == [(1.0,)]
+        w._retry_pending_compaction(force=True)          # the vacuum keeps failing...
+        assert not w._wal_pending, "...and never blocks the checkpoint"
+    w._retry_pending_compaction(force=True)              # ...until it works
+    assert not w._vacuum_pending and not w._compact_pending
+    w._close_connection()
+
+
+def _seen_s(w, name):
+    row = w.conn.execute("SELECT value FROM metadata WHERE key = ?",
+                         (DatabaseWorker._SEEN_PREFIX + name.lower(),)).fetchone()
+    return int(row[0]) if row else 0
+
+
+def _run_hours(w, start_ts: int, hours: int, keep: int = 31) -> int:
+    """The REAL maintenance pass, hourly, on a simulated clock (no monotonic: the date rules only)."""
+    for h in range(hours):
+        w._run_maintenance({"keep_data": keep}, now=datetime.fromtimestamp(start_ts + h * 3600))
+    return start_ts + hours * 3600
+
+
+def _clock_worker(tmp_path, keep=31):
+    w = DatabaseWorker(tmp_path / DB)
+    w._prepare_storage()
+    w.conn.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, '1')",
+                   (DatabaseWorker.MIGRATED_FROM_V7_KEY,))
+    w.conn.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES ('current_retention_days', ?)", (str(keep),))
+    return w
+
+
+REAL = datetime(2026, 10, 20, 12, 0, 0)
+
+
+def test_a_forward_jump_under_the_gap_rule_never_beats_the_observed_30_day_floor(tmp_path):
+    """Harness h4 A3: a backup 20 real days old, 12 days observed, then the clock jumps +13 days (under
+    the 14-day gap rule, so it looks like app-off time): it used to be deleted below the 30-day floor."""
+    w = _clock_worker(tmp_path)
+    b = _fake_bak(tmp_path, 7, REAL - timedelta(days=20))
+    _run_hours(w, int((REAL - timedelta(days=12)).timestamp()), 24 * 12)
+    _run_hours(w, int((REAL + timedelta(days=13)).timestamp()), 3)
+    assert b.exists()
+    assert _seen_s(w, b.name) < D.retention.BACKUP_MIN_KEEP_DAYS * 86400
+    w._close_connection()
+
+
+def test_two_forward_jumps_an_hour_apart_keep_an_8_day_old_backup(tmp_path):
+    """Harness h4 A4."""
+    w = _clock_worker(tmp_path)
+    b = _fake_bak(tmp_path, 7, REAL - timedelta(days=8))
+    _run_hours(w, int((REAL - timedelta(days=8)).timestamp()), 24 * 8)
+    _run_hours(w, int((REAL + timedelta(days=13)).timestamp()), 1)
+    _run_hours(w, int((REAL + timedelta(days=26)).timestamp()), 1)
+    assert b.exists()
+    w._close_connection()
+
+
+def test_a_clock_corrected_forward_keeps_a_10_day_old_backup(tmp_path):
+    """Harness h4 A2: the clock started in 2020 (backup stamped 2020), then was corrected to 2026; the
+    backup is really ~10 days old and used to go 7 days after the correction."""
+    w = _clock_worker(tmp_path)
+    b = _fake_bak(tmp_path, 7, datetime(2020, 1, 1))
+    _run_hours(w, int(datetime(2020, 1, 1, 1).timestamp()), 24)
+    _run_hours(w, int(REAL.timestamp()), 24 * 9)
+    assert b.exists()
+    w._close_connection()
+
+
+def test_steady_observed_time_past_the_floor_does_age_a_backup_out(tmp_path):
+    """The control: a correct clock, the backup 60 days old by its dates and observed for 31 steady days."""
+    w = _clock_worker(tmp_path)
+    b = _fake_bak(tmp_path, 7, REAL - timedelta(days=60))
+    end = _run_hours(w, int((REAL - timedelta(days=31)).timestamp()), 24 * 30)
+    assert b.exists(), "30 observed days: not yet"
+    _run_hours(w, end, 25)
+    assert not b.exists()
+    w._close_connection()
+
+
+def test_in_a_session_a_wall_clock_jump_against_monotonic_resets_the_steady_count(tmp_path):
+    """Within a session the gap rule can't tell a +13 d jump from app-off time - monotonic time can."""
+    w = _clock_worker(tmp_path)
+    now = int(REAL.timestamp())
+    w.conn.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES ('backup_clock_continuous_since', ?)",
+                   (str(now - 30 * 86400),))
+    mono = 5000.0
+    w._age_out_backups(31, datetime.fromtimestamp(now), now - 3600, mono)
+    credit, continuous = w._observe_clock(now + 3600, now, mono + 3600)          # a steady hour
+    assert credit == 3600 and continuous
+    credit, continuous = w._observe_clock(now + 3600 + 13 * 86400, now + 3600, mono + 7200)   # +13 d / 1 h
+    assert credit == 0 and not continuous, "a wall jump the monotonic clock did not see is a jump"
+    w._close_connection()
+
+
+def test_backup_names_match_case_insensitively_everywhere(tmp_path):
+    w = DatabaseWorker(tmp_path / DB)
+    upper = tmp_path / "SPEED_HISTORY.DB.BAK.V7_20261019_120000"
+    upper.write_bytes(b"x")
+    assert w._backup_files("v*") == [upper]
+    assert w._find_newest_backup() == upper, "the restore hint and Delete must agree"
+    assert w._remove_history_backups() == "ok" and not upper.exists()
+
+
+def test_prune_of_old_backups_never_touches_user_files(tmp_path):
+    """The v2-v6 in-place chain's _prune_old_backups used a broad glob: .bak.handmade went too."""
+    w = DatabaseWorker(tmp_path / DB)
+    mine = tmp_path / f"{DB}.bak.handmade"
+    mine.write_bytes(b"MINE")
+    for i in range(4):
+        _fake_bak(tmp_path, 6, REAL - timedelta(days=i + 1))
+    w._prune_old_backups()
+    assert mine.read_bytes() == b"MINE"
+    assert len(list(tmp_path.glob(f"{DB}.bak.v6_*"))) == w._BACKUP_RETENTION
+
+
+def test_a_read_only_hard_linked_backup_is_given_up_on_and_said_so(tmp_path, no_retry_sleep, caplog):
+    """Harness h4b: a read-only, hard-linked backup can never be unlinked without changing the other
+    name's file; it used to be retried 8 times every session forever."""
+    w = _migrated_worker(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    target = outside / "ro_precious.txt"
+    target.write_bytes(b"ROPRECIO" * 10)
+    link = tmp_path / f"{DB}.bak.v4_20250101_000000"
+    try:
+        os.link(target, link)
+    except OSError as e:
+        pytest.skip(f"no hard links here: {e}")
+    os.chmod(target, stat.S_IREAD)
+    try:
+        got = []
+        w.history_deleted.connect(got.append)
+        with caplog.at_level("INFO"):
+            w._execute_task("delete_history", {"include_usage": False})
+            assert got == [DatabaseWorker.DELETE_BACKUP_KEPT]
+            assert link.exists() and target.read_bytes() == b"ROPRECIO" * 10
+            assert not os.stat(target).st_mode & stat.S_IWRITE, "the shared file's attribute is untouched"
+            assert not w._compact_pending, "nothing left to retry"
+            assert w._history_backup_files() == [link]          # the v7 backup itself is gone
+            w._compact_pending = w._backups_pending = True
+            w._retry_pending_compaction(force=True)
+            w._retry_pending_compaction(force=True)
+        warns = [r for r in caplog.records if r.levelname == "WARNING" and link.name in r.getMessage()]
+        assert len(warns) == 1
+        assert link.name.lower() in w.conn.execute("SELECT value FROM metadata WHERE key = ?",
+                                                    (DatabaseWorker._KEPT_KEY,)).fetchone()[0]
+    finally:
+        os.chmod(target, stat.S_IREAD | stat.S_IWRITE)
+    w._close_connection()
+
+
+def test_a_journal_present_delete_says_the_backup_is_kept_until_the_upgrade_finishes(tmp_path, no_retry_sleep):
+    w = _migrated_worker(tmp_path)
+    jp = M.journal_path_for(tmp_path / DB)
+    jp.write_text("{}")
+    got = []
+    w.history_deleted.connect(got.append)
+    w._execute_task("delete_history", {"include_usage": False})
+    assert got == [DatabaseWorker.DELETE_BACKUP_KEPT_UPGRADE]
+    assert _bak_files(tmp_path), "kept while the journal exists"
+    assert w._backup_attempts >= constants.timeouts.DB_BACKUP_RETRY_MAX_ATTEMPTS, "not retried this session"
+    assert w.conn.execute("SELECT value FROM metadata WHERE key = ?",
+                          (DatabaseWorker._COMPACT_MARKER_KEY,)).fetchone() == ("2",)
+    w._close_connection()
+    jp.unlink()                                       # the upgrade has finished / been undone
+    w2 = DatabaseWorker(tmp_path / DB)
+    w2._prepare_storage()
+    assert _bak_files(tmp_path) == [], "removed at a later start"
+    w2._close_connection()
+
+
+@pytest.mark.parametrize("status,key,box", [
+    ("backup_kept_upgrade", "DELETE_HISTORY_DONE_BACKUP_UPGRADE", "information"),
+    ("backup_kept", "DELETE_HISTORY_DONE_BACKUP_KEPT", "warning")])
+def test_settings_tells_the_user_a_backup_was_kept(status, key, box):
+    from netspeedtray.views.settings.dialog import SettingsDialog
+    shown = []
+    fake = NS(_delete_timeout=NS(stop=lambda: None),
+              advanced_page=NS(delete_history_btn=NS(setEnabled=lambda v: None)),
+              parent_widget=NS(update_config=lambda u: None, invalidate_usage_cache=lambda: None),
+              config={}, original_config={}, logger=NS(debug=lambda *a, **k: None),
+              i18n=NS(SUCCESS_TITLE="ok", DELETE_HISTORY_DONE_BACKUP_UPGRADE="UPG", DELETE_HISTORY_DONE_BACKUP_KEPT="KEPT"),
+              _delete_include_usage=False)
+    with patch("netspeedtray.views.settings.dialog.QMessageBox") as mb:
+        getattr(mb, box).side_effect = lambda *a: shown.append(a[2])
+        SettingsDialog._on_history_deleted(fake, status)
+    assert shown == [getattr(fake.i18n, key)]

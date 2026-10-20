@@ -284,6 +284,8 @@
     "DELETE_HISTORY_CONFIRM_BUTTON": "削除",
     "DELETE_HISTORY_DONE": "履歴を削除しました。",
     "DELETE_HISTORY_DONE_COMPACTING": "履歴を削除しました。ファイルの整理はまもなく完了します。",
+    "DELETE_HISTORY_DONE_BACKUP_UPGRADE": "履歴を削除しました。2.2 へのアップグレードのバックアップは、そのアップグレードが完了するまで保持され、後の起動時に自動的に削除されます。",
+    "DELETE_HISTORY_DONE_BACKUP_KEPT": "履歴を削除しましたが、バックアップ ファイルを 1 つ削除できませんでした。読み取り専用で、別のファイルにリンクされています。NetSpeedTray のデータ フォルダーから手動で削除できます。",
     "DELETE_HISTORY_FAILED": "履歴を削除できませんでした。詳細はログを確認してください。",
     "ADVANCED_REDUCE_MOTION_LABEL": "視覚効果を減らす (アニメーションを抑制)",
     "KEEP_WINDOWS_ON_TOP_LABEL": "設定とモニターのウィンドウを最前面に表示",

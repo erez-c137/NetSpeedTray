@@ -284,6 +284,8 @@
     "DELETE_HISTORY_CONFIRM_BUTTON": "刪除",
     "DELETE_HISTORY_DONE": "歷史紀錄已刪除。",
     "DELETE_HISTORY_DONE_COMPACTING": "歷史紀錄已刪除。檔案很快就會清理完成。",
+    "DELETE_HISTORY_DONE_BACKUP_UPGRADE": "歷史紀錄已刪除。升級至 2.2 時的備份會保留到該升級完成為止，之後啟動時將自動移除。",
+    "DELETE_HISTORY_DONE_BACKUP_KEPT": "歷史紀錄已刪除，但有一個備份檔案無法移除：它是唯讀的，且連結到另一個檔案。你可以自行從 NetSpeedTray 資料夾中刪除它。",
     "DELETE_HISTORY_FAILED": "無法刪除歷史紀錄。詳細資訊請參閱記錄檔。",
     "ADVANCED_REDUCE_MOTION_LABEL": "減少動態效果 (較少動畫)",
     "KEEP_WINDOWS_ON_TOP_LABEL": "設定與監控視窗保持在最上層",

@@ -453,18 +453,25 @@ newest one of every schema version, so the v7 backup is never pushed out by late
 
 A backup holds history too, so it follows the same rules as the live file:
 
-- **Only the app's own names.** Matched exactly, case-sensitively, each with an optional `-wal` /
+- **Only the app's own names.** Matched exactly (ignoring case, as NTFS does), each with an optional `-wal` /
   `-shm` / `-journal` suffix: `speed_history.db.bak.v<N>_<YYYYMMDD>_<HHMMSS>[_<n>]`, the legacy bare
   `speed_history.db.bak`, and `speed_history.db.stray_<YYYYMMDD>_<HHMMSS>[_<n>]`. Nothing else in the
-  folder is ever deleted or written, and a directory never is.
+  folder is ever deleted or written, and a directory never is. The same matcher decides what the
+  older-version upgrades prune and which file the downgrade notice names as the one to restore.
 - **It ages out with "Keep history for".** The hourly maintenance deletes a backup once it is older
   than the retention period, but never sooner than 30 days after it was made (`BACKUP_MIN_KEEP_DAYS`),
   so a rollback to 2.1.x always has a month. "Keep everything" keeps backups forever. Its age comes
   from the LATER of the date in its name and the file's modified time, and a file dated in the future
-  is kept. Two guards, because a wrong deletion cannot be undone:
+  is kept. Three guards, because a wrong deletion cannot be undone:
+  - **The 30 days are counted in time the app observed.** Each maintenance pass credits at most 2 h
+    (`BACKUP_STEADY_CREDIT_MAX_SEC`) of steady time to every backup present (`backup_seen_s:<name>` in
+    `metadata`); app-off time and clock jumps add nothing. A backup goes only when BOTH its dates say
+    it is older than the retention AND it has been observed for 30 days - so a clock corrected forward,
+    or a jump small enough to pass for app-off time, can never shorten the floor.
   - **The clock must look right.** Age-out only runs once every maintenance pass for the last 7 days
     followed the previous one within 14 days, in order (`backup_clock_continuous_since` in
-    `metadata`; `BACKUP_CLOCK_*`). A clock set to 2030 would otherwise make a day-old backup look
+    `metadata`; `BACKUP_CLOCK_*`). Within a session the wall clock is also checked against the
+    monotonic clock between passes: a disagreement over 5 minutes (or 1%) is a jump too. A clock set to 2030 would otherwise make a day-old backup look
     years old - on the same pass that prunes the live rows, leaving no copy at all.
   - **A pre-v8 file needs a finished upgrade.** A `.bak.v<N>` with N < 8, the bare `.bak` and a
     stray are only aged out when the live file records a completed v7 -> v8 migration
@@ -476,11 +483,15 @@ A backup holds history too, so it follows the same rules as the live file:
   `speed_history.db.stray_<date>` files - whatever an interrupted upgrade's recovery found under the
   live name and moved aside rather than delete (it can be a whole 2.1-recorded history file); they
   also age out by the rule above. A symbolic link, junction or hard-linked file with one of these
-  names is only unlinked - whatever it points at is never written. A read-only one is made writable
-  first. A backup another program holds open is retried with backoff (5 s doubling to 1 h, at most 8
+  names is only unlinked - whatever it points at is never written; if such a link is read-only it
+  cannot be unlinked without changing the file it shares, so it is left in place for good
+  (`backups_unremovable` in `metadata`, never retried) and the result says so. A read-only file that
+  is not linked is made writable first. A backup another program holds open is retried with backoff (5 s doubling to 1 h, at most 8
   times a session, logged once as a warning) without being re-zeroed, while the WAL checkpoint is
   retried on its own; whatever is still left goes at the next start. Nothing is removed while
-  `migrate_v8.journal` exists - an unfinished upgrade still needs its backup.
+  `migrate_v8.journal` exists - an unfinished upgrade still needs its backup; the result says it is
+  kept until the upgrade has finished, and it is removed at a later start. A failure while handing
+  the free pages back AFTER the delete has committed is still a done delete (retried while idle).
 
 You need it if you go back to NetSpeedTray 2.1.x after 2.2 upgraded your database. (Going back
 without restoring is safe too - see the next section - it just doesn't record.) **With NetSpeedTray
@@ -566,8 +577,9 @@ are identifying) - with `secure_delete` on, so the freed pages are overwritten w
 free space back, and runs `wal_checkpoint(TRUNCATE)` so the old pages are gone from
 `speed_history.db-wal` too. If a reader is mid-query (the Monitor's graphs) the checkpoint reports
 busy; the app then says the file is still being cleaned up and retries every few seconds while idle
-until it completes. Every `speed_history.db.bak*` backup and `speed_history.db.stray_*` file is then
-removed (see
+until it completes. Every backup and moved-aside file - `speed_history.db.bak.v<N>_<YYYYMMDD>_<HHMMSS>[_<n>]`,
+the bare `speed_history.db.bak` and `speed_history.db.stray_<YYYYMMDD>_<HHMMSS>[_<n>]`, each with its
+`-wal`/`-shm`/`-journal` - is then removed (see
 [Restoring a backup](#restoring-a-backup)). `metadata` is kept, and so is `usage_counter` unless you
 tick "Also reset this period's data usage" in the confirmation - which, in the same transaction,
 also deletes `usage_counter_snapshot`, so the next launch reconciles nothing from before the reset.

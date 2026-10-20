@@ -284,6 +284,8 @@
     "DELETE_HISTORY_CONFIRM_BUTTON": "Eliminar",
     "DELETE_HISTORY_DONE": "Tu historial se ha eliminado.",
     "DELETE_HISTORY_DONE_COMPACTING": "Tu historial se ha eliminado. El archivo terminará de limpiarse en breve.",
+    "DELETE_HISTORY_DONE_BACKUP_UPGRADE": "Tu historial se ha eliminado. La copia de seguridad de la actualización a la 2.2 se conserva hasta que esa actualización termine; se eliminará automáticamente en un inicio posterior.",
+    "DELETE_HISTORY_DONE_BACKUP_KEPT": "Tu historial se ha eliminado, pero no se pudo quitar un archivo de copia de seguridad: es de solo lectura y está vinculado a otro archivo. Puedes eliminarlo tú mismo desde la carpeta de datos de NetSpeedTray.",
     "DELETE_HISTORY_FAILED": "No se pudo eliminar el historial. Consulta el registro para más detalles.",
     "ADVANCED_REDUCE_MOTION_LABEL": "Reducir el movimiento (menos animaciones)",
     "KEEP_WINDOWS_ON_TOP_LABEL": "Mantener las ventanas Ajustes y Monitor al frente",

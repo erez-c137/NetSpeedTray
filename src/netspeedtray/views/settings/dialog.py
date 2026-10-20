@@ -747,6 +747,11 @@ class SettingsDialog(QDialog):
             QMessageBox.information(self, self.i18n.SUCCESS_TITLE, self.i18n.DELETE_HISTORY_DONE)
         elif status == DatabaseWorker.DELETE_COMPACT_PENDING:
             QMessageBox.information(self, self.i18n.SUCCESS_TITLE, self.i18n.DELETE_HISTORY_DONE_COMPACTING)
+        elif status == DatabaseWorker.DELETE_BACKUP_KEPT_UPGRADE:
+            # Honest: the upgrade's backup is still needed by an unfinished upgrade - not "shortly".
+            QMessageBox.information(self, self.i18n.SUCCESS_TITLE, self.i18n.DELETE_HISTORY_DONE_BACKUP_UPGRADE)
+        elif status == DatabaseWorker.DELETE_BACKUP_KEPT:
+            QMessageBox.warning(self, self.i18n.SUCCESS_TITLE, self.i18n.DELETE_HISTORY_DONE_BACKUP_KEPT)
         else:
             QMessageBox.critical(self, self.i18n.ERROR_TITLE, self.i18n.DELETE_HISTORY_FAILED)
 
