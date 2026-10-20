@@ -482,14 +482,33 @@ file they make a full copy of the database (`.bak.v8_*`) on every launch and nev
 error every 10 seconds (they try to write into the read-only views), and their data-usage counter
 writes go into the v8 file.
 
+**A 2.1.x launch can change the v8 file's bytes without writing to it.** If 2.2 was killed rather
+than closed (Task Manager, a crash, the installer during an upgrade), its last writes are still in
+`speed_history.db-wal`. The first 2.1.x to open the file checkpoints those frames - 2.2's own data -
+into `speed_history.db`. The file's hash and timestamp change, but it is still v8, passes
+`PRAGMA integrity_check`, and holds nothing written by 2.1.x. Harmless; it only matters if you are
+comparing hashes to prove the file was untouched.
+
 Two things look different in 2.1.4-2.1.7, and neither is damage:
 
 - **The last 24 hours before the upgrade show empty in 2.1.x's per-second views.** The upgrade folded
   them into minute rows; 2.1.x reads its last day from the per-second tier.
-- **2.1.x over-reads totals from the folded minutes by a few percent** (measured +2.7-7%; up to ~15×
-  on a nearly idle virtual adapter), because it multiplies each minute's average by 60 seconds while
-  those minutes were only partly active. 2.2 reads the same rows exactly; restoring the backup also
-  removes it.
+- **2.1.x's history totals read high - often by a lot.** On a real 80 MB database, a rolled-back
+  2.1.7 showed 30-day totals **+47% upload / +26% download** above what 2.2 shows for the same rows;
+  per adapter it ranged from about +29% (the main Wi-Fi) to **~20×** (sparse virtual adapters). Why:
+  2.1.x turns each minute row into bytes as `average rate × 60 s`, but a raw row is only stored for a
+  second the adapter actually moved data, so the average is over the *active* seconds and a minute
+  that was busy for 5 seconds is counted as busy for 60. The quieter and burstier the adapter, the
+  bigger the error. This is how 2.1.x has always counted - on its own v7 file too - so restoring the
+  backup does **not** remove it. The upgrade's only contribution is the last day before it, folded
+  from per-second rows into minute rows that 2.1.x then reads the same way.
+  **The data-usage odometer (`usage_counter`, the data-cap figure) is unaffected**: it is a running
+  byte counter, not rebuilt from history, and reads the same in both versions.
+
+**Expect 2.2's history totals to be LOWER than 2.1.x showed for the same period.** Nothing was lost:
+2.1.x over-counted. 2.2 counts exact bytes for every row it records (`up_bytes` / `down_bytes`), and
+for rows recorded before 2.2 it estimates `average × MIN(sample_count, 60)` - the seconds the row
+really stands for - instead of a flat 60, and labels the result *recorded history*.
 
 ---
 
