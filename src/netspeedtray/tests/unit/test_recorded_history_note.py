@@ -102,9 +102,9 @@ def test_overview_session_strip_labels_estimated_totals(q_app, reconstructed):
     from netspeedtray.tests.unit.test_overview_tiles import _MW, _cfg
     i18n = I18nStrings("en_US")
     ov = OverviewTab(_MW(), _cfg(), i18n)
-    ws = MagicMock()
-    ws.get_history_volume_for_period.return_value = VolumeResult(1e9, 2e9, 0.0, 0.0, reconstructed)
-    mw = SimpleNamespace(session_start_time=datetime.now() - timedelta(minutes=5), widget_state=ws)
+    # The volume arrives with the reader thread's window load (the 1 Hz render never reads the DB).
+    ov._session_volume = VolumeResult(1e9, 2e9, 0.0, 0.0, reconstructed)
+    mw = SimpleNamespace(session_start_time=datetime.now() - timedelta(minutes=5))
     text = ov._session_text(mw)
     assert ("2.0 GB" in text) or ("2,0 GB" in text), text
     assert (i18n.USAGE_RECORDED_HISTORY_NOTE in text) is reconstructed, text

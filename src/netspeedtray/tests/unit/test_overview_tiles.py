@@ -190,16 +190,27 @@ class _HeldWS(_WS):
         self._note()
         return super().summarize_hardware(*a)
 
+    def get_earliest_data_timestamp(self):
+        self._note()
+        return datetime(2026, 1, 1)
+
+    def get_history_volume_for_period(self, start, end, iface=None):
+        from netspeedtray.core.db.history_reader import VolumeResult
+        self._note()
+        self.volume_calls = getattr(self, "volume_calls", 0) + 1
+        return VolumeResult(1e9, 2e9, 0.0, 0.0, False)
+
     def interrupt_reads(self, thread_id=None):
         self.interrupted.append(thread_id)
         for h in self.holds:
             h.set()
 
 
-def _overview_on(ws, **cfg):
+def _overview_on(ws, period=2, session_start=None, **cfg):
     class _MWh(_MW):
         widget_state = ws
-    ov = OverviewTab(_MWh(), _cfg(history_period_slider_value=2, **cfg), I18nStrings("en_US"))
+        session_start_time = session_start
+    ov = OverviewTab(_MWh(), _cfg(history_period_slider_value=period, **cfg), I18nStrings("en_US"))
     ov.isVisible = lambda: True          # bypass the visibility guard without show()
     return ov
 
@@ -316,8 +327,92 @@ def test_closing_mid_load_drops_the_result_and_interrupts_at_once(q_app, monkeyp
         q_app.processEvents()
     assert ov._win_summ is None and ov._series == {}
     # A result carrying the pre-close sequence (queued before the disconnect) is ignored too.
-    ov._on_window_loaded(stale_seq, ({"down": [1.0]}, {}, {}))
+    ov._on_window_loaded(stale_seq, ({"down": [1.0]}, {}, {}, None))
     assert ov._win_summ is None and ov._series == {}
+
+
+
+def test_a_same_range_reload_keeps_the_figures_on_screen(q_app):
+    """Review: the periodic 6 s reload (same range) must not flash the placeholder - the last
+    figures stay up while the next read runs, and are replaced only when it lands."""
+    import threading
+    holds = [threading.Event(), threading.Event()]
+    holds[0].set()                                # the first load goes straight through
+    ws = _HeldWS(holds=holds)
+    ov = _overview_on(ws)
+    try:
+        ov._reload_window()
+        _spin(lambda: ov._win_summ is not None)
+        ov._reload_window()                       # the timer's reload, held
+        _spin(lambda: ws.speed_calls == 2)
+        ov._render()                              # the 1 Hz tick meanwhile
+        assert ov._win_summ is not None and ov._series["down"] == [86400.0, 86400.0]
+        assert "Reading" not in ov._hero._sub.text() and "avg" in ov._hero._sub.text()
+        holds[1].set()
+        _spin(lambda: not ov._load_busy)
+        assert ov._win_summ is not None
+    finally:
+        ov.teardown()
+
+
+def test_hide_then_show_mid_read_ends_with_data(q_app):
+    """Hidden while a read runs (its result is dropped), shown again before it lands: the tab must
+    end up with the figures, not stuck on the placeholder."""
+    import threading
+    from PyQt6.QtGui import QHideEvent, QShowEvent
+    hold = threading.Event()
+    ws = _HeldWS(holds=[hold])
+    ov = _overview_on(ws)
+    ov._busiest.start = lambda: None             # no per-app sampler in a unit test
+    try:
+        ov._reload_window()
+        _spin(lambda: ws.speed_calls == 1)
+        ov.hideEvent(QHideEvent())
+        ov.showEvent(QShowEvent())
+        hold.set()
+        _spin(lambda: ov._win_summ is not None)
+        assert ws.speed_calls == 2 and ov._series["down"] == [86400.0, 86400.0]
+        assert "Reading" not in ov._hero._sub.text()
+    finally:
+        ov.teardown()
+
+
+def test_session_volume_and_earliest_sample_are_read_off_the_gui_thread(q_app):
+    """Review: the strip's session volume was read on every 1 Hz render, and All / System uptime read
+    the earliest stored sample (plus a batch flush) on the GUI thread on every reload. Both now come
+    from the reader thread, and the render reads nothing."""
+    import threading
+    from datetime import timedelta
+    gui = threading.get_ident()
+    ws = _HeldWS()
+    ov = _overview_on(ws, period=5, session_start=datetime.now() - timedelta(minutes=5))   # All
+    try:
+        ov._reload_window()
+        _spin(lambda: ov._win_summ is not None)
+        assert gui not in ws.threads, "a history read ran on the GUI thread"
+        reads = len(ws.threads)
+        for _ in range(3):
+            ov._render()                          # three 1 Hz ticks
+        assert len(ws.threads) == reads, "the 1 Hz render read the DB"
+        assert "2.0 GB" in ov._session_lbl.text(), ov._session_lbl.text()
+        # The range really starts at the earliest stored sample (span = now - 2026-01-01).
+        assert ov._series["down"][0] > 86400.0 * 30
+    finally:
+        ov.teardown()
+
+
+def test_a_failed_session_copy_does_not_leave_the_placeholder_up(q_app):
+    class _BadSessionWS(_HeldWS):
+        def get_aggregated_speed_history(self):
+            raise RuntimeError("deque mutated during iteration")
+    ov = _overview_on(_BadSessionWS())
+    ov._period_index = 0                           # Session (a saved 0 reads back as the 24 h default)
+    try:
+        ov._reload_window()
+        assert ov._win_summ is not None
+        assert "Reading" not in ov._hero._sub.text()
+    finally:
+        ov.teardown()
 
 
 def test_context_right_prefers_true_system_power(q_app):

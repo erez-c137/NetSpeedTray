@@ -69,11 +69,30 @@ _NARROW_BP = 760          # below this content width: reflow to the compact layo
 _VERDICT_KEYS = {"good": ("LATENCY_GOOD", "Good"), "ok": ("LATENCY_OK", "OK"), "slow": ("LATENCY_SLOW", "Slow")}
 
 
-def _read_window(ws, start: datetime, end: datetime, series: Optional[Dict[str, list]], poll: float,
-                 latency_enabled: bool):
-    """The window's DB reads - (series, summaries, drop events). Runs on the reader thread. ``series``
-    is the Session window's, already copied from the in-memory deques on the GUI thread (they are
-    appended there); None means read the sparklines from the DB."""
+def _resolve_window(ws, key: str, now: datetime, session_start: Optional[datetime]):
+    """(start, end, is_session) for period ``key`` at ``now``. All / System uptime need the earliest
+    stored sample - a DB read (plus a batch flush), so the Overview's reloads resolve it on the
+    reader thread; Export and the Stats-detail sheet resolve it on demand."""
+    hp = constants.data.history_period
+    earliest = None
+    if key in ("TIMELINE_ALL", "TIMELINE_SYSTEM_UPTIME") and ws is not None:
+        try:
+            earliest = ws.get_earliest_data_timestamp()
+        except Exception:
+            earliest = None
+    start = hp.get_start_time(key, now, session_start, None, earliest)
+    if start is None:
+        start = now - timedelta(hours=24)
+    return start, now, (key == "TIMELINE_SESSION")
+
+
+def _read_window(ws, key: str, now: datetime, session_start: Optional[datetime],
+                 series: Optional[Dict[str, list]], poll: float, latency_enabled: bool):
+    """The window's DB reads - (series, summaries, drop events, session volume). Runs on the reader
+    thread. ``series`` is the Session window's, already copied from the in-memory deques on the GUI
+    thread (they are appended there); None means read the sparklines from the DB. The session volume
+    (the strip's ↓/↑ totals, independent of the range) rides along so the 1 Hz render never reads."""
+    start, end, _is_session = _resolve_window(ws, key, now, session_start)
     if series is None:
         # wait_for_flush=False: never hold a refresh on the DB-worker drain for a last second that's
         # invisible at multi-hour resolution.
@@ -97,7 +116,13 @@ def _read_window(ws, start: datetime, end: datetime, series: Optional[Dict[str, 
     if latency_enabled:
         from netspeedtray.utils import summaries as S   # lazy: keeps numpy off the import path
         events = S.outage_summary(ws.get_hardware_history("latency_gw_timeout", start, end))
-    return series, summ, events
+    volume = None
+    if session_start is not None:
+        try:
+            volume = ws.get_history_volume_for_period(session_start, datetime.now())
+        except Exception:
+            volume = None   # the strip just shows the uptime, as when this read failed on the GUI thread
+    return series, summ, events, volume
 
 
 class _WindowLoader(QObject):
@@ -145,6 +170,8 @@ class OverviewTab(QWidget):
         # Latest per-metric WindowSummary / drop events for the active window; None = not read yet
         # (the hero says "Reading history…" and the strip claims nothing, rather than showing zeros).
         self._win_summ: Optional[Dict[str, Any]] = None
+        # The session's ↓/↑ volume (VolumeResult) from the reader's last load; None = not read yet.
+        self._session_volume = None
         # The window reads run on a reader thread (started on the first reload, stopped in teardown).
         # _load_seq stamps each request; bumping it (range change, hide, close) makes the result in
         # flight stale. One request at a time: a reload asked for meanwhile only sets _load_dirty.
@@ -362,22 +389,9 @@ class OverviewTab(QWidget):
         return constants.data.history_period.PERIOD_MAP.get(self._period_index, "TIMELINE_24_HOURS")
 
     def _window(self):
-        """(start, end, is_session) for the active period."""
-        hp = constants.data.history_period
-        key = self._period_key()
-        now = datetime.now()
-        session_start = getattr(self._main_widget, "session_start_time", None)
-        ws = getattr(self._main_widget, "widget_state", None)
-        earliest = None
-        if key in ("TIMELINE_ALL", "TIMELINE_SYSTEM_UPTIME") and ws is not None:
-            try:
-                earliest = ws.get_earliest_data_timestamp()
-            except Exception:
-                earliest = None
-        start = hp.get_start_time(key, now, session_start, None, earliest)
-        if start is None:
-            start = now - timedelta(hours=24)
-        return start, now, (key == "TIMELINE_SESSION")
+        """(start, end, is_session) for the active period - resolved here, on the calling thread."""
+        return _resolve_window(getattr(self._main_widget, "widget_state", None), self._period_key(),
+                               datetime.now(), getattr(self._main_widget, "session_start_time", None))
 
     # ----------------------------------------------------------------- lifecycle
 
@@ -488,11 +502,14 @@ class OverviewTab(QWidget):
         if self._load_busy:
             self._load_dirty = True
             return
-        start, end, is_session = self._window()
+        # The range is resolved on the reader thread (All / System uptime read the earliest sample);
+        # only the period, the clock and the session start are taken here.
+        key, now = self._period_key(), datetime.now()
+        session_start = getattr(self._main_widget, "session_start_time", None)
         # Seconds per sample for coverage / volume math: the shared resolver, never a local `or 1.0`.
         poll = resolve_poll_interval_seconds(self._config.get("update_rate", 1.0))
         series = None
-        if is_session:
+        if key == "TIMELINE_SESSION":
             try:   # the in-memory deques are appended on this thread: copy them here, not off-thread
                 agg = ws.get_aggregated_speed_history()
                 series = {
@@ -503,12 +520,15 @@ class OverviewTab(QWidget):
                 }
             except Exception as e:
                 self._log_reload_error(e)
+                if self._win_summ is None:  # no load follows: no "Reading history…" forever
+                    self._win_summ, self._latency_events = {}, {}
                 self._render()
                 return
         self._ensure_reader()
         self._load_busy = True
         self._load_requested.emit(self._load_seq, partial(
-            _read_window, ws, start, end, series, poll, bool(self._config.get("latency_enabled", True))))
+            _read_window, ws, key, now, session_start, series, poll,
+            bool(self._config.get("latency_enabled", True))))
 
     @pyqtSlot(int, object)
     def _on_window_loaded(self, seq: int, result) -> None:
@@ -522,7 +542,7 @@ class OverviewTab(QWidget):
                 if self._win_summ is None:
                     self._win_summ = {}     # stop saying "Reading history…"; the strip stays quiet
             else:
-                self._series, self._win_summ, self._latency_events = result
+                self._series, self._win_summ, self._latency_events, self._session_volume = result
             self._render()
         if self._load_dirty:
             self._load_dirty = False
@@ -652,10 +672,11 @@ class OverviewTab(QWidget):
             return ""
         secs = max(0.0, (datetime.now() - start).total_seconds())
         parts = [f"{self._tr('STAT_SESSION_LABEL', 'Session')} {format_duration_short(secs, self._i18n)}"]
-        ws = getattr(mw, "widget_state", None)
-        if ws is not None:
+        # The volume comes from the reader thread's last window load (refreshed every few seconds),
+        # never a DB read here: this runs on every 1 Hz render.
+        v = self._session_volume
+        if v is not None:
             try:
-                v = ws.get_history_volume_for_period(start, datetime.now())
                 dv, du = format_data_size(v.down_bytes, self._i18n, precision=1)
                 uv, uu = format_data_size(v.up_bytes, self._i18n, precision=1)
                 parts.append(f"↓ {self._num(dv)} {du}  ↑ {self._num(uv)} {uu}")
