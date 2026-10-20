@@ -10,7 +10,9 @@ hop); a hop's RTT is the median of the burst's replies and its loss is lost/sent
 0.6% steps over the ~2 min live window - real for the ISP-dispute use-case. Runs on its OWN QThread so a
 timeout never blocks the stats poll. Every wait inside a cycle is interruptible and stop() is checked
 before every echo (and before the anchor burst and its DNS resolve), so after stop() at most the one
-echo already in flight completes (<= its 1 s timeout) and no new packet is sent. Emits `latency_ready(LatencySample)`; the widget persists it (latency_gw / latency_anchor RTTs plus
+echo already in flight completes (<= its 1 s timeout) and no new packet is sent. The same holds for
+the ``latency_enabled`` master switch, which is read live before every echo: turning Latency off in
+Settings ends the probe (gateway and public host alike) without waiting for a restart. Emits `latency_ready(LatencySample)`; the widget persists it (latency_gw / latency_anchor RTTs plus
 the latency_gw_timeout / latency_anchor_timeout loss series) and keeps one live loss window per hop for
 the Monitor's latency pill.
 
@@ -26,6 +28,7 @@ by every reader that explains a loss (the on-demand connection check, 2.2 D3):
 from __future__ import annotations
 
 import ctypes
+import logging
 import socket
 import statistics
 import struct
@@ -39,6 +42,8 @@ from typing import Any, Callable, Deque, Dict, Optional, Tuple
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from netspeedtray import constants
+
+logger = logging.getLogger("NetSpeedTray.LatencyProbe")
 
 
 # --- the sample, the hops, and the attribution rule ------------------------------------------------
@@ -77,6 +82,10 @@ class LatencySample:
     gw_lost: Optional[int] = None
     anchor_sent: Optional[int] = None
     anchor_lost: Optional[int] = None
+    # The gateway changed during this cycle and its burst lost echoes: those say nothing about the
+    # link, so the gateway hop is NOT measured this cycle (no loss recorded, not a window cycle). The
+    # anchor burst - when enabled - is still probed and recorded as usual.
+    gw_excluded: bool = False
 
     def __post_init__(self) -> None:
         if self.gw_sent is None:
@@ -151,7 +160,8 @@ class LatencyLossWindows:
         self._min = max(1, int(min_samples))
 
     def add(self, sample: LatencySample) -> None:
-        self.gw.append((int(sample.gw_sent), int(sample.gw_lost), sample.gw_ms))
+        if not sample.gw_excluded:
+            self.gw.append((int(sample.gw_sent), int(sample.gw_lost), sample.gw_ms))
         if sample.anchor_enabled:
             self.anchor.append((int(sample.anchor_sent), int(sample.anchor_lost), sample.anchor_ms))
         else:
@@ -330,6 +340,11 @@ class LatencyProbe(QThread):
     _CADENCE_SEC = 3.0
     _TIMEOUT_MS = 1000
     _GATEWAY_REFRESH_SEC = 60.0
+    # A lost echo from a gateway resolved at least this long ago re-checks which gateway is current
+    # (a network switch with no event we hear about); bounded so a real outage costs one WMI query
+    # per this many seconds, not one per cycle.
+    _GATEWAY_RECHECK_ON_LOSS_SEC = 10.0
+    _ERROR_LOG_INTERVAL_SEC = 60.0
 
     def __init__(self, config: Dict[str, Any]) -> None:
         super().__init__()
@@ -340,6 +355,11 @@ class LatencyProbe(QThread):
         self._gateway_ts = 0.0
         # Cycles since the gateway last answered; None = it has not answered (since it last changed).
         self._gw_cycles_since_reply: Optional[int] = None
+        # Set from the GUI thread on resume / a primary-route change: re-resolve before the next burst.
+        self._gateway_stale = threading.Event()
+        self._gateway_changed = False         # the gateway changed (or was re-resolved) this cycle
+        self._errors_logged = 0
+        self._last_error_log = 0.0
 
     @property
     def _running(self) -> bool:
@@ -355,23 +375,51 @@ class LatencyProbe(QThread):
     def stop(self) -> None:
         self._running = False
 
+    def set_config(self, config: Dict[str, Any]) -> None:
+        """Point the probe at the widget's current config dict (a settings rollback replaces it)."""
+        self._config = config
+
+    def _enabled(self) -> bool:
+        """The master switch, read LIVE: Settings > Connection > Latency off ends the probe within the
+        echo in flight - same promise as stop() - whatever ``latency_public_enabled`` says."""
+        return bool(self._config.get("latency_enabled", True))
+
+    @property
+    def _active(self) -> bool:
+        """Not stopped AND the master switch is on: the condition every echo is gated on."""
+        return self._running and self._enabled()
+
     @property
     def gateway(self) -> Optional[str]:
         """The default gateway this probe last looked up (None before the first cycle / none found)."""
         return self._gateway
 
     def _pause(self, seconds: float) -> bool:
-        """Wait up to ``seconds``; wakes at once on stop(). Returns False once stopping (True = go on)."""
+        """Wait up to ``seconds``; wakes at once on stop(). Returns False once stopping or once the
+        master switch is off (True = go on), so a burst never sends another echo after either."""
         if seconds > 0:
             self._stop_event.wait(seconds)
-        return self._running
+        return self._active
 
-    def _gateway_ip(self) -> Optional[str]:
+    def invalidate_gateway(self) -> None:
+        """Any thread: the network changed (resume from sleep, a new primary route) - look the default
+        gateway up again before the next burst instead of pinging the cached one for up to a minute,
+        which recorded the old router's silence as 100% loss."""
+        self._gateway_stale.set()
+
+    def _gateway_ip(self, force: bool = False) -> Optional[str]:
         now = time.monotonic()
-        if self._gateway is None or (now - self._gateway_ts) > self._GATEWAY_REFRESH_SEC:
+        if self._gateway_stale.is_set():
+            self._gateway_stale.clear()
+            force = True
+        if force or self._gateway is None or (now - self._gateway_ts) > self._GATEWAY_REFRESH_SEC:
             gw = default_gateway_ip()
             if gw != self._gateway:
                 self._gw_cycles_since_reply = None   # a new router has proven nothing yet
+            # "Changing" = a DIFFERENT gateway than the one in use (not the probe's very first lookup).
+            # A re-resolve that finds the same router changes nothing: its loss is real loss.
+            if self._gateway_ts > 0 and gw != self._gateway:
+                self._gateway_changed = True
             self._gateway = gw
             self._gateway_ts = now
         return self._gateway
@@ -399,11 +447,22 @@ class LatencyProbe(QThread):
         """One cycle: the gateway burst, then - when opted in - the anchor burst. None if stop() cut a
         burst short (a partial burst is not a sample)."""
         lat = constants.network.latency
+        self._gateway_changed = False
+        gw_excluded = False
         gw_ip = self._gateway_ip()
         if gw_ip:
             gw = icmp_burst(gw_ip, lat.BURST_SIZE, lat.BURST_SPACING_MS, self._TIMEOUT_MS, self._pause)
             if gw is None:
                 return None
+            if (gw.lost and not self._gateway_changed
+                    and time.monotonic() - self._gateway_ts >= self._GATEWAY_RECHECK_ON_LOSS_SEC):
+                self._gateway_ip(force=True)   # is the router we pinged still the gateway?
+            if gw.lost and self._gateway_changed:
+                # Loss measured against a gateway that turned out to be the OLD one (a network switch,
+                # waking up) says nothing about the link: the gateway hop is not measured this cycle.
+                # The anchor still is. Clean bursts to a new gateway count as usual.
+                gw_excluded = True
+                gw = BurstResult((), 0)
         else:
             gw = BurstResult((), 0)   # no gateway known: nothing sent, nothing lost (as before bursts)
         gw_timed_out = gw.sent > 0 and not gw.rtts
@@ -427,8 +486,8 @@ class LatencyProbe(QThread):
                 anchor_skipped = True
                 anchor = BurstResult((), lat.BURST_SIZE)
             else:
-                if not self._running:
-                    return None   # stopped after the gateway burst: never start the public one
+                if not self._active:
+                    return None   # stopped / switched off after the gateway burst: never start the public one
                 host = str(self._config.get("latency_public_host", "1.1.1.1") or "1.1.1.1")
                 anchor = icmp_burst(host, lat.BURST_SIZE, lat.BURST_SPACING_MS, self._TIMEOUT_MS,
                                     self._pause)
@@ -440,7 +499,20 @@ class LatencyProbe(QThread):
             anchor_timed_out=anchor is not None and not anchor.rtts,
             anchor_enabled=anchor_enabled, anchor_skipped=anchor_skipped,
             gw_sent=gw.sent, gw_lost=gw.lost,
-            anchor_sent=anchor.sent if anchor else 0, anchor_lost=anchor.lost if anchor else 0)
+            anchor_sent=anchor.sent if anchor else 0, anchor_lost=anchor.lost if anchor else 0,
+            gw_excluded=gw_excluded)
+
+    def _log_cycle_error(self, e: BaseException) -> None:
+        """A failing cycle is never silent: WARNING (with the traceback) the first time, then DEBUG at
+        most once per _ERROR_LOG_INTERVAL_SEC - a recurring failure must not flood the log (#263)."""
+        self._errors_logged += 1
+        now = time.monotonic()
+        if self._errors_logged == 1:
+            logger.warning("Latency probe cycle failed; the probe keeps running: %s", e, exc_info=True)
+            self._last_error_log = now
+        elif now - self._last_error_log >= self._ERROR_LOG_INTERVAL_SEC:
+            logger.debug("Latency probe cycle still failing (%d failures so far): %s", self._errors_logged, e)
+            self._last_error_log = now
 
     def _run_loop(self) -> None:
         # Cycle length = max(cadence, time the bursts took): a healthy cycle keeps the 3 s cadence; a
@@ -448,13 +520,15 @@ class LatencyProbe(QThread):
         # through _pause, and stop() is checked before every echo, before the anchor burst and during the
         # cadence wait - the worst case is the one echo in flight (<= the 1 s timeout), inside the
         # widget's 1.5 s shutdown wait, and nothing is sent after stop().
-        while self._running:
+        # Latency switched off in Settings ends the loop (the widget's apply_latency_probe starts a
+        # fresh probe when it is switched back on); the check before every echo makes that prompt.
+        while self._active:
             started = time.monotonic()
             try:
                 sample = self._probe_cycle()
-                if sample is not None and self._running:
+                if sample is not None and self._active:
                     self.latency_ready.emit(sample)
-            except Exception:
-                pass
+            except Exception as e:
+                self._log_cycle_error(e)   # the thread stays alive; the next cycle tries again
             self._pause(self._CADENCE_SEC - (time.monotonic() - started))
 

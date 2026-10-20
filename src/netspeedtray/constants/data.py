@@ -46,6 +46,26 @@ class DataRetentionConstants:
     UNLIMITED_DAYS: Final[int] = 36500          # "Keep everything" - 100 years; prune never fires
     MAX_RETENTION_DAYS: Final[int] = UNLIMITED_DAYS
     DEFAULT_DAYS: Final[int] = 365               # 1 year
+    # Pre-migration backups (speed_history.db.bak.v*) age out with "Keep history for": maintenance
+    # deletes one once it is older than the retention window - by then every row in it is older than
+    # the window too. Never sooner than this many days after it was made, so a 2.2 -> 2.1.x rollback
+    # always has its backup for a month (every DAYS_MAP choice is >= 31 days, so this floor only
+    # matters for a hand-edited keep_data). "Keep everything" keeps backups forever (still count-capped).
+    BACKUP_MIN_KEEP_DAYS: Final[int] = 30
+    # A wrong clock must never age a backup out (a clock set to 2030 would make a day-old backup look
+    # years old - on the same pass that prunes the live rows, so the backup is the only copy left).
+    # Ageing out only runs once the clock has been CONTINUOUS for BACKUP_CLOCK_CONTINUITY_DAYS: every
+    # maintenance pass within BACKUP_CLOCK_MAX_GAP_DAYS of the previous one (a jump, either way,
+    # restarts that count). Intermittent use only delays an age-out - the safe direction.
+    BACKUP_CLOCK_MAX_GAP_DAYS: Final[int] = 14
+    BACKUP_CLOCK_CONTINUITY_DAYS: Final[int] = 7
+    # Within a session, wall-clock and monotonic time between two maintenance passes may disagree by
+    # this much (or 1%) before it counts as a clock jump (NTP slews are seconds; sleep is excluded from
+    # neither clock on Windows - both run across standby).
+    BACKUP_CLOCK_DRIFT_TOLERANCE_SEC: Final[int] = 300
+    # The 30-day floor is counted in steady time the app OBSERVED with the backup present: at most this
+    # much per maintenance pass (hourly while running; app-off time and jumps add nothing).
+    BACKUP_STEADY_CREDIT_MAX_SEC: Final[int] = 2 * 3600
     DAYS_MAP: Final[Dict[int, int]] = {
         0: 31,             # 1 month - covers a full calendar month so "this month" is always whole
         1: 90,             # 3 months

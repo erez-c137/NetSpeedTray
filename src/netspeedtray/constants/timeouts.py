@@ -19,6 +19,11 @@ class TimeoutConstants:
     DB_CHECKPOINT_RETRIES: Final[int] = 5
     DB_CHECKPOINT_RETRY_SLEEP: Final[float] = 0.2
     DB_COMPACT_RETRY_INTERVAL_SEC: Final[float] = 5.0
+    # A database backup "Delete all history" could not remove (held open, read-only, AV): retried with
+    # exponential backoff from DB_COMPACT_RETRY_INTERVAL_SEC up to this cap, at most
+    # DB_BACKUP_RETRY_MAX_ATTEMPTS times a session; after that, at the next start (the "2" marker).
+    DB_BACKUP_RETRY_MAX_SEC: Final[float] = 3600.0
+    DB_BACKUP_RETRY_MAX_ATTEMPTS: Final[int] = 8
     # How long Settings waits for the worker's answer before giving the Delete button back.
     DB_DELETE_HISTORY_UI_TIMEOUT_MS: Final[int] = 120000
     # Opening the history file at startup: how long one attempt waits for a write lock another process

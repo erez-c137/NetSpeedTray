@@ -138,6 +138,12 @@ class WidgetState(QObject):
         self.db_worker.schema_incompatible.connect(self.db_schema_incompatible)
         self.db_worker.migration_deferred.connect(self.db_migration_deferred)
         self.db_worker.history_upgraded.connect(self.db_history_upgraded)
+        # The odometer reset waits for the delete's answer (connected FIRST, so the state is settled
+        # before Settings hears the same status through the re-emit below).
+        self._usage_reset_pending = False
+        self._usage_reset_stash: List[Tuple[Any, ...]] = []
+        self._usage_post_reset: List[Any] = [0.0, 0.0, None]
+        self.db_worker.history_deleted.connect(self._on_worker_history_deleted)
         self.db_worker.history_deleted.connect(self.history_deleted)
         if not read_only:
             self.db_worker.start()
@@ -474,6 +480,8 @@ class WidgetState(QObject):
     def get_usage_launch_snapshot(self) -> Optional[Dict[str, Any]]:
         """The counter snapshot persisted by the PREVIOUS session ({} when there is none), or None
         while the odometer has not loaded yet (the caller retries)."""
+        if getattr(self, "_usage_reset_pending", False):
+            return None   # a reset is in flight: whether this snapshot still counts is not known yet
         if not self._usage_loaded and not self._try_load_usage():
             return None
         return self._usage_launch_snapshot
@@ -516,6 +524,13 @@ class WidgetState(QObject):
         launch snapshot). Bytes are charged to the period in which their window BEGAN: a standby
         gap or a closed-app window spanning the reset day lands in the period it started in, never
         all in the new one (which could fire an early overage alert)."""
+        if getattr(self, "_usage_reset_pending", False):
+            # Traffic after a reset request: if the reset lands, these bytes are the new total.
+            post = self._usage_post_reset
+            post[0] += max(0.0, up_bytes)
+            post[1] += max(0.0, down_bytes)
+            if counters is not None:
+                post[2] = (counters, sampled_at if sampled_at is not None else time.time(), primary)
         if not self._usage_loaded and not self._try_load_usage():
             # Not loaded yet - the worker is still opening (or migrating) the file and the readers are
             # held off until it has. Never write a fresh zero over the saved total, and never drop these
@@ -577,16 +592,25 @@ class WidgetState(QObject):
             self._usage_last_persist = now
 
     def _persist_usage_now(self) -> None:
-        if not self._usage_loaded:
+        if not self._usage_loaded or getattr(self, "_usage_reset_pending", False):
+            # While a reset is in flight nothing is written: the old totals must not land after the
+            # delete (resurrecting them), and zeros must not land unless the delete succeeds.
+            # (Session end with a reset still in flight: persist_usage_final.)
             return
-        u = self._usage
+        self.db_worker.enqueue_task("persist_usage", WidgetState._usage_payload(
+            self._usage, (self._usage_live_counters, self._usage_live_sampled_at, self._usage_live_primary)))
+
+    @staticmethod
+    def _usage_payload(u: Dict[str, Any], live: Optional[Tuple[Any, Any, Any]]) -> Tuple[Any, ...]:
+        """The persist_usage tuple for odometer ``u`` paired with ``live`` = (counters, sampled_at,
+        primary) - the NIC counters that total accounts up to, or counters None."""
         snapshot_json = None
-        if self._usage_live_counters is not None:
+        counters, sampled_at, primary = live if live else (None, None, None)
+        if counters is not None:
             # Fresh boot id at every persist (not cached at start): boot_time() follows wall-clock
             # corrections, so the latest reading is the one the next launch will compare against.
             snapshot_json = usage_snapshot.encode_snapshot(
-                self._usage_live_counters, self._usage_live_sampled_at or time.time(),
-                usage_snapshot.current_boot_time(), primary=self._usage_live_primary)
+                counters, sampled_at or time.time(), usage_snapshot.current_boot_time(), primary=primary)
             if snapshot_json is None:
                 # Counters seen but no trustworthy snapshot (boot id unreadable): the total is about
                 # to advance past the STORED snapshot, so it must go - leaving it would make the next
@@ -594,9 +618,32 @@ class WidgetState(QObject):
                 snapshot_json = usage_snapshot.CLEAR_SNAPSHOT
         # 7th element: the counter snapshot, written in the SAME transaction as the total;
         # CLEAR_SNAPSHOT deletes the stored one; None (no counters seen yet) leaves it untouched.
-        self.db_worker.enqueue_task("persist_usage", (
-            u["cumulative_up"], u["cumulative_down"], u["anchor_up"], u["anchor_down"],
-            u["period_key"], int(time.time()), snapshot_json))
+        return (u["cumulative_up"], u["cumulative_down"], u["anchor_up"], u["anchor_down"],
+                u["period_key"], int(time.time()), snapshot_json)
+
+    def persist_usage_final(self) -> None:
+        """Session end: persist the odometer tail (the ~30 s throttle window). With a usage reset still
+        unanswered on this thread, BOTH outcomes are handed to the write thread, which ran the delete
+        already (FIFO) and persists the one that matches: the traffic seen since the request if the
+        reset committed, or the old total plus everything since if it failed. Never zeros-by-guess."""
+        if not getattr(self, "_usage_reset_pending", False):
+            WidgetState._persist_usage_now(self)
+            return
+        post = self._usage_post_reset
+        reset = {"cumulative_up": float(post[0]), "cumulative_down": float(post[1]),
+                 "anchor_up": 0.0, "anchor_down": 0.0,
+                 "period_key": self._compute_period_key(self.config.get("data_cap_reset_day", 1))}
+        if_failed = None
+        if self._usage_loaded:
+            kept = dict(self._usage)
+            for up, down, *_rest in self._usage_reset_stash:   # the set-aside pre-request polls
+                kept["cumulative_up"] += max(0.0, up)
+                kept["cumulative_down"] += max(0.0, down)
+            if_failed = WidgetState._usage_payload(
+                kept, (self._usage_live_counters, self._usage_live_sampled_at, self._usage_live_primary))
+        self.db_worker.enqueue_task("persist_usage_after_delete", {
+            "if_reset": WidgetState._usage_payload(reset, post[2]),
+            "if_failed": if_failed})
 
     def get_usage_this_period(self) -> Tuple[float, float]:
         """(upload_bytes, download_bytes) used since the current period's reset day."""
@@ -666,8 +713,10 @@ class WidgetState(QObject):
           2. clear the in-memory series IN PLACE (readers take list() copies; reassigning would
              strand a reference held elsewhere), so the mini graph and the Monitor's live windows
              stop showing deleted data right away;
-          3. only if the user opted in, zero the data-usage odometer and persist the zeros AFTER the
-             delete (FIFO), so the next throttled persist can't resurrect the old totals.
+          3. only if the user opted in, reset the data-usage odometer - on disk inside the delete's own
+             transaction (WriterV8 clears usage_counter AND its counter snapshot), in memory only once
+             the delete reports success (_on_worker_history_deleted). Until then nothing about the
+             odometer is persisted; a FAILED delete leaves it exactly as it was.
 
         Not touched: settings, the latency probe's short live window (~2 min, never on disk on its
         own), and - unless ``include_usage`` - the odometer (D5: the data cap's billing source).
@@ -683,18 +732,57 @@ class WidgetState(QObject):
                        self.cpu_history, self.gpu_history, self.ram_history):
             series.clear()
         if include_usage:
-            self._usage = {
-                "cumulative_up": 0.0, "cumulative_down": 0.0,
-                "anchor_up": 0.0, "anchor_down": 0.0,
-                "period_key": self._compute_period_key(self.config.get("data_cap_reset_day", 1)),
-            }
-            # Treat the zeros as loaded even if the lazy load hadn't run yet: the worker creates the
-            # table before it drains its queue, so this persist lands, and a later lazy load must not
-            # read back the pre-delete row.
-            self._usage_loaded = True
+            # Polls buffered while the file was still opening are PRE-reset traffic: set aside, dropped
+            # if the reset lands, restored if it fails. Everything from here on is tallied separately.
+            # (Settings disables the button until the answer, so a second request while one is in
+            # flight is not expected; if one comes, it joins the first instead of losing its stash.)
+            if not self._usage_reset_pending:
+                self._usage_reset_stash = []
+                self._usage_post_reset = [0.0, 0.0, None]
+            self._usage_reset_pending = True
+            self._usage_reset_stash += list(getattr(self, "_usage_pending", None) or [])
+            self._usage_pending = []
+        self.logger.info("Delete all history requested (include_usage=%s).", bool(include_usage))
+
+    def _on_worker_history_deleted(self, status: str) -> None:
+        """The delete's answer (GUI thread). Settles a pending odometer reset: success -> the odometer
+        restarts from the traffic seen since the request; failure -> nothing changes."""
+        if not getattr(self, "_usage_reset_pending", False):
+            return
+        self._usage_reset_pending = False
+        stash, self._usage_reset_stash = self._usage_reset_stash, []
+        post, self._usage_post_reset = self._usage_post_reset, [0.0, 0.0, None]
+        if status == DatabaseWorker.DELETE_FAILED:
+            # Nothing was deleted, the usage row included: put the set-aside polls back. Replayed
+            # WITHOUT their counters - they are older than the counters the total already pairs with.
+            if stash:
+                if self._usage_loaded:
+                    for up, down, _c, _t, ws, _p in stash:
+                        WidgetState._add_usage_loaded(self, up, down, None, None, ws, None)
+                else:
+                    self._usage_pending = stash + list(self._usage_pending)
             self._persist_usage_now()
             self._usage_last_persist = time.time()
-        self.logger.info("Delete all history requested (include_usage=%s).", bool(include_usage))
+            self.logger.info("Delete all history failed; the data-usage counter was left unchanged.")
+            return
+        # The delete committed, usage_counter and its snapshot with it. Pre-reset bytes (loaded,
+        # buffered or set aside) are gone; what moved since the request starts the new count.
+        self._usage = {
+            "cumulative_up": float(post[0]), "cumulative_down": float(post[1]),
+            "anchor_up": 0.0, "anchor_down": 0.0,
+            "period_key": self._compute_period_key(self.config.get("data_cap_reset_day", 1)),
+        }
+        self._usage_pending = []
+        self._usage_loaded = True              # a later lazy load must not read anything back
+        self._usage_launch_snapshot = {}       # nothing from before the reset is reconciled
+        if post[2] is not None:
+            self._usage_live_counters, self._usage_live_sampled_at, self._usage_live_primary = post[2]
+        else:
+            # No counters since the request: none pair with the new total. The snapshot on disk was
+            # deleted with the row, and persisting with no counters leaves it deleted.
+            self._usage_live_counters = self._usage_live_sampled_at = self._usage_live_primary = None
+        self._persist_usage_now()
+        self._usage_last_persist = time.time()
 
     def flush_and_wait(self, timeout: float = 2.0) -> None:
         """
@@ -887,9 +975,10 @@ class WidgetState(QObject):
     def persist_essentials(self, timeout: float = 2.0) -> None:
         """Windows is ending the session: queue the last history batch and the odometer tail, and wait
         (bounded by ``timeout``) for the database thread to write them. Stops nothing - the full
-        cleanup() may never get to run before the process is ended."""
+        cleanup() may never get to run before the process is ended. A data-usage reset still waiting
+        for its delete's answer is settled by the write thread (persist_usage_final)."""
         self.flush_batch()
-        self._persist_usage_now()
+        self.persist_usage_final()
         self.flush_and_wait(timeout=timeout)
 
     def cleanup(self) -> None:
@@ -900,7 +989,7 @@ class WidgetState(QObject):
         self.flush_batch()
         # Persist the final odometer tail so the ~30s throttle window isn't lost on exit
         # (no-op if the counter was never loaded). The worker drains this before stopping.
-        self._persist_usage_now()
+        WidgetState.persist_usage_final(self)
 
         # Read connections. Never close another thread's connection from here: closing a sqlite3
         # connection while its thread is mid-query is undefined behaviour (segfaulted 4/4 in a plain

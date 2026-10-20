@@ -133,5 +133,5 @@ def test_widget_state_persist_essentials_is_bounded(tmp_path):
     ws = MagicMock()
     WidgetState.persist_essentials(ws, timeout=1.5)
     ws.flush_batch.assert_called_once_with()
-    ws._persist_usage_now.assert_called_once_with()
+    ws.persist_usage_final.assert_called_once_with()   # handles a usage reset still in flight too
     ws.flush_and_wait.assert_called_once_with(timeout=1.5)
