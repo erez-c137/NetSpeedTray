@@ -235,6 +235,9 @@ class TaskbarInfo:
     # it's absent/undetected. Used to keep the widget from landing on it in a left-aligned layout
     # (#200/#24). Defaulted so the fallback/no-taskbar constructions don't need to pass it.
     widgets_rect: Optional[Tuple[int, int, int, int]] = None
+    # Physical-pixel rect of the monitor the taskbar is on (GetMonitorInfo "Monitor", the same call that
+    # gives work_area), or None when unknown. Diagnostics only (support bundle, #322).
+    monitor_rect: Optional[Tuple[int, int, int, int]] = None
 
     def __post_init__(self) -> None:
         """Basic validation of critical attributes after initialization."""
@@ -649,6 +652,7 @@ def get_all_taskbar_info() -> List[TaskbarInfo]:
                 # Only the primary taskbar hosts a Widgets button; cached + non-blocking. Pass the
                 # Shell_TrayWnd root (`hwnd`), not tray_hwnd - the button is under the taskbar frame.
                 widgets_rect=get_widgets_rect(hwnd) if is_primary_qt else None,
+                monitor_rect=tuple(monitor_info["Monitor"]) if monitor_info.get("Monitor") else None,
             )
         except win32gui.error as e:
             if e.winerror != 0:
