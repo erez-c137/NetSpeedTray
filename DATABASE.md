@@ -418,8 +418,8 @@ swapped in by two renames; the 2.1 file is kept, unchanged, as the backup (below
 v7 is first brought to v7 in place, with a verified backup, as 2.1 did. If the upgrade cannot finish
 - not enough free disk (it needs 1.5× the file), another program holding the file, a check that does
 not match - nothing is changed: NetSpeedTray shows your history read-only, records nothing, says so,
-and tries again at the next start. A kill at any moment (the installer force-closes the app) is
-finished or undone at the next start from `migrate_v8.journal`. What the upgrade carries over and
+and tries again at the next start. A kill at any moment (a crash, Task Manager, or the installer
+force-closing an app that didn't close when asked) is finished or undone at the next start from `migrate_v8.journal`. What the upgrade carries over and
 what it cannot:
 
 - the last 24 hours of per-second rows become per-minute rows (2.1 never stored bytes or intervals,
@@ -464,8 +464,10 @@ fully closed**, in `%APPDATA%\NetSpeedTray`:
 write-ahead log of the database you are replacing. Leave them behind and SQLite silently replays
 them into the restored file on the next launch — the result *passes* an integrity check but has the
 wrong schema inside, and the history in it is unrecoverable. Don't be reassured by their absence
-either: a clean shutdown removes them, but a force-killed app (which is exactly what the installer
-does during an upgrade) leaves them hot.
+either: a clean shutdown removes them, but a force-killed app leaves them hot. The installer asks
+the app to close cleanly and only force-closes it if that fails - but installing 2.1.x over 2.2
+always force-closes it, because 2.1.x installers can't send that request (and upgrading *from*
+2.1.7 force-closes 2.1.7 once, for the same reason).
 
 Copying in step 2, rather than renaming the `.bak` itself, keeps the backup intact in case anything
 goes wrong. The restored file holds your history **up to the moment of the upgrade**; anything 2.2
@@ -483,7 +485,8 @@ error every 10 seconds (they try to write into the read-only views), and their d
 writes go into the v8 file.
 
 **A 2.1.x launch can change the v8 file's bytes without writing to it.** If 2.2 was killed rather
-than closed (Task Manager, a crash, the installer during an upgrade), its last writes are still in
+than closed (Task Manager, a crash, or an installer force-closing it - which a 2.1.x installer
+always does), its last writes are still in
 `speed_history.db-wal`. The first 2.1.x to open the file checkpoints those frames - 2.2's own data -
 into `speed_history.db`. The file's hash and timestamp change, but it is still v8, passes
 `PRAGMA integrity_check`, and holds nothing written by 2.1.x. Harmless; it only matters if you are
