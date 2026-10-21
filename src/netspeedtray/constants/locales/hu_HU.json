@@ -134,6 +134,7 @@
     "MONITORING_MODE_SELECTED": "Konkrét interfészek kiválasztása",
     "MONITORING_MODE_SELECTED_TOOLTIP": "Lehetővé teszi egy vagy több figyelendő interfész kézi kiválasztását az alábbi listából.",
     "TIMELINE_SYSTEM_UPTIME": "Rendszer üzemideje",
+    "GRAPH_BOOT_MARKER": "Rendszerindítás",
     "TIMELINE_SESSION": "Munkamenet",
     "TIMELINE_12_HOURS": "12 óra",
     "TIMELINE_24_HOURS": "24 óra",

@@ -134,6 +134,7 @@
     "MONITORING_MODE_SELECTED": "Выбрать определенные интерфейсы",
     "MONITORING_MODE_SELECTED_TOOLTIP": "Позволяет вручную выбрать один или несколько интерфейсов для мониторинга из списка ниже.",
     "TIMELINE_SYSTEM_UPTIME": "Время работы системы",
+    "GRAPH_BOOT_MARKER": "Загрузка",
     "TIMELINE_SESSION": "Сессия",
     "TIMELINE_12_HOURS": "12 часов",
     "TIMELINE_24_HOURS": "24 часа",

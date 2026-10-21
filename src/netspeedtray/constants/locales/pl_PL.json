@@ -134,6 +134,7 @@
     "MONITORING_MODE_SELECTED": "Wybierz konkretne interfejsy",
     "MONITORING_MODE_SELECTED_TOOLTIP": "Pozwala ręcznie wybrać jeden lub więcej interfejsów z listy poniżej.",
     "TIMELINE_SYSTEM_UPTIME": "Czas działania systemu",
+    "GRAPH_BOOT_MARKER": "Uruchomienie",
     "TIMELINE_SESSION": "Sesja",
     "TIMELINE_12_HOURS": "12 godzin",
     "TIMELINE_24_HOURS": "24 godziny",

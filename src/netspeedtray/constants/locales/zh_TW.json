@@ -134,6 +134,7 @@
     "MONITORING_MODE_SELECTED": "選擇特定介面",
     "MONITORING_MODE_SELECTED_TOOLTIP": "讓您可從下方清單手動選擇一個或多個要監控的介面。",
     "TIMELINE_SYSTEM_UPTIME": "系統執行時間",
+    "GRAPH_BOOT_MARKER": "開機",
     "TIMELINE_SESSION": "本次工作階段",
     "TIMELINE_12_HOURS": "12 小時",
     "TIMELINE_24_HOURS": "24 小時",

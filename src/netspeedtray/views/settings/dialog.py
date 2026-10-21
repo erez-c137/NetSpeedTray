@@ -622,7 +622,7 @@ class SettingsDialog(QDialog):
                 self,
                 self.i18n.EXPORT_SUPPORT_BUNDLE_TITLE,
                 default_path,
-                "Zip files (*.zip);;All Files (*)",
+                f"{self.i18n.STATS_DETAIL_EXPORT_ZIP_LABEL} (*.zip)",   # shared with the stats export
             )
 
             if not dest_path:

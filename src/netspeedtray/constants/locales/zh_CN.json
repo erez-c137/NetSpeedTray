@@ -134,6 +134,7 @@
     "MONITORING_MODE_SELECTED": "选择特定接口",
     "MONITORING_MODE_SELECTED_TOOLTIP": "您可从下方列表手动选择一个或多个要监控的接口。",
     "TIMELINE_SYSTEM_UPTIME": "系统运行时间",
+    "GRAPH_BOOT_MARKER": "开机",
     "TIMELINE_SESSION": "本次会话",
     "TIMELINE_12_HOURS": "12 小时",
     "TIMELINE_24_HOURS": "24 小时",

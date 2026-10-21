@@ -134,6 +134,7 @@
     "MONITORING_MODE_SELECTED": "Select Specific Interfaces",
     "MONITORING_MODE_SELECTED_TOOLTIP": "Allows you to manually select one or more interfaces to monitor from the list below.",
     "TIMELINE_SYSTEM_UPTIME": "System Uptime",
+    "GRAPH_BOOT_MARKER": "Boot",
     "TIMELINE_SESSION": "Session",
     "TIMELINE_12_HOURS": "12 Hours",
     "TIMELINE_24_HOURS": "24 Hours",

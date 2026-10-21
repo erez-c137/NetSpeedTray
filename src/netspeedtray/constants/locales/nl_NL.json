@@ -134,6 +134,7 @@
     "MONITORING_MODE_SELECTED": "Specifieke interfaces selecteren",
     "MONITORING_MODE_SELECTED_TOOLTIP": "Laat u handmatig een of meer interfaces selecteren om te monitoren uit de onderstaande lijst.",
     "TIMELINE_SYSTEM_UPTIME": "Systeem Uptime",
+    "GRAPH_BOOT_MARKER": "Opstart",
     "TIMELINE_SESSION": "Sessie",
     "TIMELINE_12_HOURS": "12 uur",
     "TIMELINE_24_HOURS": "24 uur",

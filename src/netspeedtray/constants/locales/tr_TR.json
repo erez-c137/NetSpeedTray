@@ -134,6 +134,7 @@
     "MONITORING_MODE_SELECTED": "Belirli Arayüzleri Seç",
     "MONITORING_MODE_SELECTED_TOOLTIP": "Aşağıdali listeden izlecenek bir veya daha fazla arayüzü el ile seçmenizi sağlar.",
     "TIMELINE_SYSTEM_UPTIME": "Sistem Çalışma Süresi",
+    "GRAPH_BOOT_MARKER": "Açılış",
     "TIMELINE_SESSION": "Oturum",
     "TIMELINE_12_HOURS": "12 Saat",
     "TIMELINE_24_HOURS": "24 Saat",

@@ -134,6 +134,7 @@
     "MONITORING_MODE_SELECTED": "בחירת ממשקים ספציפיים",
     "MONITORING_MODE_SELECTED_TOOLTIP": "מאפשר לך לבחור ידנית ממשק אחד או יותר לניטור מהרשימה שלמטה.",
     "TIMELINE_SYSTEM_UPTIME": "זמן פעילות המערכת",
+    "GRAPH_BOOT_MARKER": "אתחול",
     "TIMELINE_SESSION": "מושב",
     "TIMELINE_12_HOURS": "12 שעות",
     "TIMELINE_24_HOURS": "24 שעות",

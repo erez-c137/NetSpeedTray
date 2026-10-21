@@ -134,6 +134,7 @@
     "MONITORING_MODE_SELECTED": "Izberi določene vmesnike",
     "MONITORING_MODE_SELECTED_TOOLTIP": "Omogoča ročno izbiro enega ali več vmesnikov za nadzor s spodnjega seznama.",
     "TIMELINE_SYSTEM_UPTIME": "Čas delovanja sistema",
+    "GRAPH_BOOT_MARKER": "Zagon",
     "TIMELINE_SESSION": "Seja",
     "TIMELINE_12_HOURS": "12 ur",
     "TIMELINE_24_HOURS": "24 ur",

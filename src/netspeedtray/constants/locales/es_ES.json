@@ -134,6 +134,7 @@
     "MONITORING_MODE_SELECTED": "Seleccionar interfaces específicas",
     "MONITORING_MODE_SELECTED_TOOLTIP": "Permite seleccionar manualmente una o más interfaces para supervisar de la lista a continuación.",
     "TIMELINE_SYSTEM_UPTIME": "Tiempo de actividad del sistema",
+    "GRAPH_BOOT_MARKER": "Arranque",
     "TIMELINE_SESSION": "Sesión",
     "TIMELINE_12_HOURS": "12 horas",
     "TIMELINE_24_HOURS": "24 horas",

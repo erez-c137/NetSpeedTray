@@ -134,6 +134,7 @@
     "MONITORING_MODE_SELECTED": "Einzelne Schnittstellen wählen",
     "MONITORING_MODE_SELECTED_TOOLTIP": "Ermöglicht die manuelle Auswahl einer oder mehrerer Schnittstellen aus der Liste unten.",
     "TIMELINE_SYSTEM_UPTIME": "Systemlaufzeit",
+    "GRAPH_BOOT_MARKER": "Systemstart",
     "TIMELINE_SESSION": "Sitzung",
     "TIMELINE_12_HOURS": "12 Stunden",
     "TIMELINE_24_HOURS": "24 Stunden",

@@ -541,7 +541,7 @@ class GraphRenderer(QObject):
             y_top = ax.get_ylim()[1]
             text = ax.text(
                 boot_x, y_top * 0.92, 
-                ' ↑ Boot', 
+                f" ↑ {getattr(self.i18n, 'GRAPH_BOOT_MARKER', 'Boot')}",
                 fontsize=7, 
                 color='#888', 
                 va='top',
