@@ -115,6 +115,14 @@ class WidgetLayoutManager:
         if not hasattr(self.widget, 'renderer'):
             raise RuntimeError("Renderer not initialized before resizing.")
 
+        # A re-size (settings, dock or identity change) can change what the hover card should hold;
+        # close an open one rather than leave it showing the old layout's sections.
+        hide_card = getattr(self.widget, "_hide_usage_hover_card", None)
+        if callable(hide_card) and getattr(self.widget, "_hover_card", None) is not None:
+            try:
+                hide_card()
+            except Exception:
+                pass
         try:
             # #188: when the preferred monitor is a taskbar-less display we free-float on, there's no
             # taskbar to size against - render a normal compact horizontal readout with a font-derived

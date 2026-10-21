@@ -323,13 +323,13 @@ class PositionCalculator:
 
     @staticmethod
     def _centre_in_strip(widget_width: int, x_origin: float, strip_width: float) -> int:
-        """x of a side-bar widget centred in its strip, kept inside it when it fits (a fractional-DPI
-        strip such as 38.4 px must not round the widget's edge 1 px past the bar)."""
-        x = round(x_origin + (strip_width - widget_width) / 2.0)
-        left, right = math.ceil(x_origin), math.floor(x_origin + strip_width)
-        if widget_width <= right - left:
-            x = max(left, min(x, right - widget_width))
-        return x
+        """x of a side-bar widget centred in its strip.
+
+        No clamp is needed for a fractional-DPI strip (38.4 px at 125%): when the widget fits the
+        whole pixels [ceil(x0), floor(x0 + strip)] - layout floors the width so it always does - the
+        centre lies strictly within half a pixel of that span's centre, so rounding it can never move
+        an edge outside the span (test_side_taskbar_compact checks this exhaustively)."""
+        return round(x_origin + (strip_width - widget_width) / 2.0)
 
     def _calculate_vertical_position(self, taskbar_info: TaskbarInfo, widget_size: Tuple[int, int],
                                      config: Dict[str, Any], dpi_scale: float) -> Tuple[int, int]:

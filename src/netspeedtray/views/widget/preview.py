@@ -84,7 +84,10 @@ class PreviewWidget(QWidget):
         as the bar and as tall as the live widget sizes itself there (the same side_bar_fit /
         side_bar_height decisions), so the compact layout shows here before Save. None = back to
         the horizontal strip."""
-        self._bar_width = int(px) if px and px > 0 else None
+        new = int(px) if px and px > 0 else None
+        if new == self._bar_width:
+            return          # the dialog calls this on every preview update - nothing to re-measure
+        self._bar_width = new
         if self._bar_width is None:
             self.side_fit = None
         self._layout_mode = "vertical" if self._bar_width else "horizontal"

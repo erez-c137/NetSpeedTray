@@ -1056,7 +1056,15 @@ def vertical_taskbar_strip(taskbar_info: TaskbarInfo, edge: constants.TaskbarEdg
     else:
         thickness = inset if inset > 0 else window_w
 
-    x_origin = (full_geom.right() + 1) - thickness if edge == constants.TaskbarEdge.RIGHT else full_geom.left()
+    if inset > 0 and 0 < window_w < inset:
+        # Another appbar shares the edge: the reserved band is wider than the taskbar, and the
+        # taskbar may not be the part touching the screen edge - take x from its window. Safe here:
+        # a bar that reserves work area is not auto-hiding, so the rect doesn't slide (#135).
+        x_origin = rect[0] / scale
+    elif edge == constants.TaskbarEdge.RIGHT:
+        x_origin = (full_geom.right() + 1) - thickness
+    else:
+        x_origin = full_geom.left()
     return x_origin, thickness
 
 

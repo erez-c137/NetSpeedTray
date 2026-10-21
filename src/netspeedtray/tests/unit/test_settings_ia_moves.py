@@ -111,8 +111,10 @@ def test_hardware_graph_note_moved_under_the_graph_controls(dlg):
     g = dlg.widget_page.mini_graph_section
     assert g.isAncestorOf(note)
     assert flat.index(_card_of(g.graph_opacity)) < flat.index(note) < flat.index(g._split_card)
-    # The slot under Display Mode is left clean (the side-taskbar note goes there next).
-    assert flat[flat.index(dlg.widget_page.display_mode_combo) + 1].text() == dlg.i18n.WIDGET_DISPLAY_ORDER_LABEL
+    # The slot under Display Mode holds only the side-taskbar note (#322), then Display Order.
+    after = flat.index(dlg.widget_page.display_mode_combo)
+    assert flat[after + 1] is dlg.widget_page.side_bar_note
+    assert flat[after + 2].text() == dlg.i18n.WIDGET_DISPLAY_ORDER_LABEL
 
 
 @pytest.mark.parametrize("attr,key,value", [

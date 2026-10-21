@@ -1272,21 +1272,25 @@ class NetworkSpeedWidget(QWidget):
         hw: Dict[str, Any] = {}
         fit = self._side_bar_fit()
         if fit is not None and fit.hides_hardware:
+            # Only what this display mode shows on the widget: cpu_only never lists the GPU/VRAM.
+            from netspeedtray.utils.widget_paint import side_hardware_stats
+            from netspeedtray.utils.widget_renderer import RenderConfig
+            rc = RenderConfig.from_dict(cfg)
+            stats = side_hardware_stats(rc, rc.widget_display_mode)
             temps = bool(cfg.get("show_hardware_temps", False))
             power = bool(cfg.get("show_hardware_power", False))
-            for key, on, usage, temp, watts in (
-                    ("cpu", cfg.get("monitor_cpu_enabled", False), self.cpu_usage, self.cpu_temp, self.cpu_power),
-                    ("gpu", cfg.get("monitor_gpu_enabled", False), self.gpu_usage, self.gpu_temp, self.gpu_power)):
-                if on:
+            for key, usage, temp, watts in (("cpu", self.cpu_usage, self.cpu_temp, self.cpu_power),
+                                            ("gpu", self.gpu_usage, self.gpu_temp, self.gpu_power)):
+                if key.upper() in stats:
                     stat: Dict[str, Any] = {"usage": usage}
                     if temps:
                         stat["temp"] = temp
                     if power:
                         stat["power"] = watts
                     hw[key] = stat
-            if cfg.get("monitor_ram_enabled", False):
+            if "CPU" in stats and cfg.get("monitor_ram_enabled", False):
                 hw["ram"] = (self.ram_used, self.ram_total)
-            if cfg.get("monitor_vram_enabled", False):
+            if "GPU" in stats and cfg.get("monitor_vram_enabled", False):
                 hw["vram"] = (self.vram_used, self.vram_total)
         if fit is not None and fit.hides_identity:
             band, _color, _solid = self._identity_presentation()
@@ -1305,7 +1309,13 @@ class NetworkSpeedWidget(QWidget):
             return
         self._hover_hw_refreshed = now
         try:
-            card.update_hardware(self._hover_hardware_snapshot())
+            snapshot = self._hover_hardware_snapshot() if self._hover_hardware_wanted() else None
+            if not snapshot:
+                # Hardware turned off, display mode changed, or the bar now fits it: the rows would
+                # only freeze on their last values - close the card (the next hover rebuilds it).
+                self._hide_usage_hover_card()
+                return
+            card.update_hardware(snapshot)
         except Exception as e:
             self.logger.debug("hover card hardware refresh failed: %s", e)
 

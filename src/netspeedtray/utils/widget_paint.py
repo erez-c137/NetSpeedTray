@@ -265,6 +265,11 @@ def _max_w(fm: Any, items: List[str]) -> int:
 def side_hardware_stats(config: RenderConfig, mode: str) -> List[str]:
     """The CPU/GPU stats a mode puts on the bar, in display order ('CPU'/'GPU')."""
     order = list(getattr(config, "widget_display_order", None) or ["network", "cpu", "gpu"])
+    if mode == "side_by_side":   # its segments, display order included ('none' drops one)
+        keys = side_by_side_keys(order, config.monitor_cpu_enabled, config.monitor_gpu_enabled,
+                                 getattr(config, "stack_hardware_stats", False))
+        return [s for k in keys for s in (["CPU", "GPU"] if k == "hardware" else [k.upper()])
+                if k != "network"]
     want = {"cpu_only": {"cpu"}, "gpu_only": {"gpu"}, "combined": {"cpu", "gpu"}}.get(mode)
     if want is None:
         want = {k for k, on in (("cpu", config.monitor_cpu_enabled), ("gpu", config.monitor_gpu_enabled)) if on}
@@ -274,7 +279,10 @@ def side_hardware_stats(config: RenderConfig, mode: str) -> List[str]:
 
 def _mem_reference(mem_totals: Tuple[Optional[float], Optional[float]]) -> str:
     """The widest memory value the renderer can paint ("99.9/99.9G"), digit-for-digit as wide as the
-    machine's real total - the same class whether the total is known yet or not."""
+    machine's real total - the same class whether the total is known yet or not. (On a >= 100 GB
+    machine the layout may size before the total is known and get the 2-digit class; the 3-digit
+    paint can then disagree for one re-size on a borderline bar - harmless, the hardware then goes to
+    the hover card.)"""
     t = max([v for v in mem_totals if isinstance(v, (int, float)) and v > 0] or [0.0])
     whole = "9" * max(2, len(str(int(round(t, 1)))))
     return f"{whole}.9/{whole}.9G"

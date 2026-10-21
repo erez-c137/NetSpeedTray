@@ -578,12 +578,14 @@ class WidgetRenderer:
             y = y_offset + int((height - block_h) / 2 + asc)
 
             painter.save()
-            if tier >= TIER_CLIP:
-                painter.setClipRect(QRect(0, y_offset, width, height))
+            # Never paint outside the band: at T5 nothing fits, and a long locale unit at a large font
+            # ("МиБ" at 11 pt on a 32 px bar) can be wider than the bar even in its short form.
+            painter.setClipRect(QRect(0, y_offset, width, height), Qt.ClipOperation.IntersectClip)
+            if tier >= TIER_CLIP or (show_unit_row and unit_w > width - 2 * margin):
                 if not getattr(self, "_compact_clip_logged", False):
                     self._compact_clip_logged = True
-                    self.logger.warning("Side taskbar too narrow (%d px) for even the smallest readout; "
-                                        "clipping it.", width)
+                    self.logger.warning("Side taskbar too narrow (%d px) for the compact readout at this "
+                                        "font; clipping it.", width)
             row_cfg = config
             if not show_arrows or not inline_unit:
                 from dataclasses import replace
@@ -630,6 +632,8 @@ class WidgetRenderer:
             top = y
             block_w = icon_w + gap + pct_col if inline else max(icon_w, pct_col)
             x0 = max(constants.renderer.TEXT_MARGIN, (width - block_w) // 2)
+            painter.save()
+            painter.setClipRect(QRect(0, y_offset, width, height), Qt.ClipOperation.IntersectClip)
             painter.setFont(self.font)
             for label, val in stats:
                 color = QColor(cpu_color if label == 'CPU' else gpu_color)
@@ -648,6 +652,7 @@ class WidgetRenderer:
                     y += line_h + row_gap
                     painter.drawText((width - fm.horizontalAdvance(pct)) // 2, y, pct)
                 y += line_h + row_gap
+            painter.restore()
             self._last_text_rect = QRect(x0, top - asc, block_w, block_h)
             self._extend_content_bounds(self._last_text_rect)
         except Exception as e:

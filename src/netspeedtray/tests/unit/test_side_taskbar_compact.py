@@ -531,3 +531,150 @@ def test_native_side_bars_with_real_fonts(tmp_path):
         # Segoe UI 9 pt: arrow + "99.9" per row with the unit below on Default, whole numbers on Small.
         assert tier == (TIER_UNIT_ROW if th == 48 else TIER_WHOLE), where
         assert hides_hw == (name in ("side_by_side", "cycle")), where
+
+
+# --- 8. Review follow-ups -------------------------------------------------------------------------
+
+def test_centring_never_rounds_past_a_fractional_strip():
+    """Exhaustive: a widget that fits the strip's whole pixels is never rounded 1 px past either edge
+    (why _centre_in_strip needs no clamp)."""
+    import math
+    from netspeedtray.core.position_manager import PositionCalculator
+    for x10 in range(0, 100):
+        for s10 in range(300, 500, 3):
+            x0, strip = 1880 + x10 / 10, s10 / 10
+            left, right = math.ceil(x0), math.floor(x0 + strip)
+            for w in range(right - left - 3, right - left + 1):
+                x = PositionCalculator._centre_in_strip(w, x0, strip)
+                assert left <= x and x + w <= right, (x0, strip, w, x)
+
+
+def test_strip_follows_the_taskbar_window_when_another_appbar_shares_the_edge(q_app):
+    """Another appbar between the taskbar and the screen edge: the reserved band (80 px) is wider
+    than the taskbar (48 px) and the taskbar is NOT the part touching the edge."""
+    tb = _taskbar(RIGHT, 48, inset=80)
+    tb.rect = (1920 - 80, 0, 1920 - 32, 1080)            # taskbar 1840..1888, appbar 1888..1920
+    assert vertical_taskbar_strip(tb, RIGHT, 1.0) == (1840, 48)
+    tb.rect = (round((1920 - 80) * 1.5), 0, round((1920 - 32) * 1.5), 1620)
+    tb.dpi_scale = 1.5
+    assert vertical_taskbar_strip(tb, RIGHT, 1.5) == (1840, 48)
+
+
+@pytest.mark.parametrize("lang,unit_type", [("ru_RU", "bytes_binary"), ("ru_RU", "bits_binary"),
+                                            ("de_DE", "bytes_binary")])
+@pytest.mark.parametrize("font_size", [11, 13, 20])
+def test_a_unit_wider_than_a_small_bar_is_clipped_not_overhung(q_app, lang, unit_type, font_size):
+    cfg = _config(widget_display_mode="network_only", unit_type=unit_type, font_size=font_size)
+    w, h, _ = _size(cfg, _taskbar(RIGHT, 32), lang)
+    for speeds in ((12.4, 88.6), (0.0, 0.0), (900.0, 1200.0)):
+        m = WidgetMetrics(upload_mbps=speeds[0], download_mbps=speeds[1])
+        ys, xs = _outside(_paint(cfg, w, h, lang=lang, metrics=m), w, h)
+        assert not len(xs), (lang, unit_type, font_size, speeds, xs.min(), xs.max())
+
+
+def test_compact_readout_never_paints_outside_its_band(q_app):
+    """Fonts differ (CI's fallback font is narrower than Segoe UI with Cyrillic units), so drive the
+    painter directly: a T2 readout whose unit row ("МиБ/с" short form) can't fit a narrow band is
+    clipped to it, never painted over the neighbouring screen."""
+    from netspeedtray.utils.widget_paint import SideBarFit
+    cfg = _config(unit_type="bytes_binary", font_size=13)
+    ru = I18nStrings("ru_RU")
+    r = WidgetRenderer(cfg, ru)
+    fit = SideBarFit(TIER_UNIT_ROW, False, True, True, False, False, False)
+    width, height = 16, 60
+    img = QImage(width * 3, height * 3, QImage.Format.Format_ARGB32)
+    img.fill(QColor(0, 0, 0, 0))
+    p = QPainter(img)
+    p.translate(width, height)
+    r.draw_network_compact(p, 12.4 * MBIT, 88.6 * MBIT, width, height, r.config, fit)
+    p.end()
+    img = img.convertToFormat(QImage.Format.Format_RGBA8888)
+    ptr = img.constBits()
+    ptr.setsize(img.height() * img.width() * 4)
+    arr = np.frombuffer(ptr, dtype=np.uint8).reshape((img.height(), img.width(), 4)).copy()
+    inside = arr[height:2 * height, width:2 * width, 3] > 0
+    assert inside.any()
+    assert (arr[:, :, 3] > 0).sum() == inside.sum(), "painted outside the band"
+
+
+def test_card_lists_only_the_stats_the_mode_shows(q_app):
+    cfg = _config(widget_display_mode="cpu_only", monitor_vram_enabled=True, show_hardware_temps=True, **HW)
+    keep = ("monitor_", "widget_", "show_hardware", "stack_")
+    fake = _hover_fake(_fit(cfg, 32), **{k: v for k, v in cfg.items() if k.startswith(keep)})
+    assert set(fake._hover_hardware_snapshot()) == {"cpu", "ram"}      # no GPU / VRAM in cpu_only
+    order = _config(**{**MODES["side_by_side"], "widget_display_order": ["network", "cpu", "none"],
+                       "stack_hardware_stats": False})
+    fake = _hover_fake(_fit(order, 48), **{k: v for k, v in order.items() if k.startswith(keep)})
+    assert set(fake._hover_hardware_snapshot()) == {"cpu", "ram"}      # GPU dropped from the order
+
+
+def test_open_card_closes_when_its_hardware_goes_away(q_app):
+    fake = _hover_fake(_fit(_config(**MODES["side_by_side"]), 48), **HW)
+    card = MagicMock(has_hardware=True)
+    fake._hover_card = card
+    fake._hover_hw_refreshed = 0.0
+    fake._hide_usage_hover_card = MagicMock()
+    fake.config.update(monitor_cpu_enabled=False, monitor_gpu_enabled=False, monitor_ram_enabled=False)
+    fake._refresh_hover_hardware()
+    fake._hide_usage_hover_card.assert_called_once()
+    card.update_hardware.assert_not_called()
+
+
+def test_a_resize_closes_an_open_card(q_app):
+    cfg = _config()
+    widget = MagicMock()
+    widget.config, widget.i18n = cfg, EN
+    widget._identity_reserve_px.return_value = 0
+    widget._hover_card = object()
+    lm = WidgetLayoutManager(widget)
+    lm.metrics = lm.arrow_metrics = QFontMetrics(font_from_config(cfg))
+    with patch("netspeedtray.views.widget.layout.get_taskbar_info", return_value=_taskbar(RIGHT, 48)), \
+            patch("netspeedtray.utils.taskbar_utils.get_free_float_screen", return_value=None):
+        lm.resize_widget_for_font()
+    widget._hide_usage_hover_card.assert_called_once()
+
+
+def test_hover_arms_the_card_for_hardware_with_usage_and_tips_off(q_app):
+    """The ARM gate itself (enterEvent), not just the helper: usage + tips off and the side bar hides
+    the hardware -> the card is armed; on a bar that fits everything it is not."""
+    from PyQt6.QtCore import QPointF, QTimer
+    from PyQt6.QtGui import QEnterEvent
+    from PyQt6.QtWidgets import QWidget
+    from netspeedtray.views.widget.main import NetworkSpeedWidget
+
+    class _Armable(NetworkSpeedWidget):
+        def __init__(self, fit):           # only the state enterEvent reads - not the whole app
+            QWidget.__init__(self)
+            self.config = {"show_usage_on_hover": False, "show_hover_tips": False, **HW,
+                           "widget_display_mode": "side_by_side"}
+            self._cached_layout_mode = "vertical"
+            self.layout_manager = types.SimpleNamespace(_side_fit=fit)
+            self._hover_card = None
+            self._hover_card_timer = QTimer()
+            self._hover_card_timer.setSingleShot(True)
+            self.logger = MagicMock()
+
+    event = QEnterEvent(QPointF(1, 1), QPointF(1, 1), QPointF(1, 1))
+    hiding = _Armable(_fit(_config(**MODES["side_by_side"]), 48))
+    hiding.enterEvent(event)
+    fits = _Armable(_fit(_config(**MODES["side_by_side"]), 400))
+    fits.enterEvent(event)
+    try:
+        assert hiding._hover_card_timer.isActive()
+        assert not fits._hover_card_timer.isActive()
+    finally:
+        for w in (hiding, fits):
+            w._hover_card_timer.stop()
+            w.deleteLater()
+
+
+def test_preview_does_not_re_measure_when_the_bar_is_unchanged(q_app):
+    from netspeedtray.views.widget.preview import PreviewWidget
+    pv = PreviewWidget(_config(), EN, width=300, height=40)
+    with patch.object(PreviewWidget, "_fit_to_content") as fit:
+        pv.set_bar_width(None)                       # a horizontal bar: called on every preview update
+        pv.set_bar_width(None)
+        assert fit.call_count == 0
+        pv.set_bar_width(48)
+        pv.set_bar_width(48)
+        assert fit.call_count == 1
