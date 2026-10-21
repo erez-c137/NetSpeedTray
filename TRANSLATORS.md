@@ -38,6 +38,13 @@ Other locales (English, German, Spanish) are currently maintained by the project
 
 > 🆕 **Pending native review for 2.2 (hover-card hardware):** `HARDWARE_IN_HOVER_CARD_LABEL` / `HARDWARE_IN_HOVER_CARD_DESCRIPTION` - the switch under Settings > Hardware > Appearance that keeps the taskbar widget to network speed and shows CPU/GPU/memory in the hover card instead - and `HOVER_CARD_DISPLAY_MODE_NOTE`, the note under Settings > Widget > Display Mode while that switch is on. Non-English values are AI-assisted and reuse each locale's existing "hover the widget" wording; feedback on #364.
 
+> 🆕 **Pending native review for 2.2 (beta.4 polish, see #364):** non-English values are AI-assisted.
+> - `HARDWARE_HISTORY_OFF_MESSAGE` - the note on an empty Monitor → Hardware graph when CPU and GPU monitoring are off (two lines; the page names match your `SETTINGS_WINDOW_TITLE` and `HARDWARE_MONITORING_GROUP`).
+> - `HARDWARE_HISTORY_RECORD_OFF_MESSAGE` - the same note when monitoring is on but "Record hardware history" is off (quote your `RECORD_HARDWARE_HISTORY_LABEL`; the page is your `ADVANCED_SETTINGS_GROUP`).
+> - `WIDGET_HOVER_TOOLTIP` (rewritten) + `WIDGET_HOVER_DOUBLE_CLICK_HINT` (new) - the first-run hint in the widget's hover card. The old text listed right-click items the menu no longer has. The second line is filled with your `CLICK_ACTION_*_LABEL` for the user's double-click setting - keep `{action}`.
+> - `USAGE_THIS_PERIOD_LABEL` - replaces "This Month" in the hover card and Monitor → Overview when a data cap with a reset day other than the 1st is set (the row then counts the billing period, like the data-cap row under it). Match the style of your `USAGE_THIS_MONTH_LABEL`.
+> - `GRAPH_BOOT_MARKER` - the small italic label on the Monitor graph's dashed line where the PC last started (was English "Boot" in every language). Keep it to one short word.
+
 ## How translation works in NetSpeedTray
 
 - Each locale lives in a single JSON file under [`src/netspeedtray/constants/locales/`](src/netspeedtray/constants/locales/)

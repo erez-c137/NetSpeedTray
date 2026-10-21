@@ -43,7 +43,7 @@ class UsageFlyout(QWidget):
     def __init__(self, i18n, today: Optional[Totals] = None, month: Optional[Totals] = None,
                  hint: Optional[str] = None, cap: Optional[CapInfo] = None,
                  parent: Optional[QWidget] = None, history_note: Optional[str] = None,
-                 hardware: Optional[dict] = None) -> None:
+                 hardware: Optional[dict] = None, month_label: Optional[str] = None) -> None:
         super().__init__(
             parent,
             Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool
@@ -105,7 +105,8 @@ class UsageFlyout(QWidget):
             grid.setVerticalSpacing(tokens.SPACE_S)
             grid.setColumnStretch(0, 1)  # the label column flexes; values hug the right
             self._usage_row(grid, 0, self._tr("USAGE_TODAY_LABEL", "Today"), today)
-            self._usage_row(grid, 1, self._tr("USAGE_THIS_MONTH_LABEL", "This month"), month)
+            # month_label: "This period" when the row follows a data-cap billing period (main.py).
+            self._usage_row(grid, 1, month_label or self._tr("USAGE_THIS_MONTH_LABEL", "This month"), month)
             body.addLayout(grid)
             if history_note:
                 # D5: these totals come from recorded history, and part of them was estimated from

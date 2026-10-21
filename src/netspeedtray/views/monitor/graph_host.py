@@ -119,6 +119,23 @@ class _ConfigHandlerShim:
             pass
 
 
+
+def hardware_history_off_reasons(config: Dict[str, Any]) -> Dict[str, Optional[str]]:
+    """Per hardware graph role: None when its history is recorded (controller.hardware_persist_allowed,
+    the writer's own rule), "monitor" when its CPU/GPU monitoring is off (2.2 default; fix it in
+    Settings > Hardware), "record" when monitoring is on but Record hardware history is off
+    (Settings > Advanced)."""
+    from netspeedtray.core.controller import hardware_persist_allowed
+    out: Dict[str, Optional[str]] = {}
+    for role, switch in (("cpu", "monitor_cpu_enabled"), ("gpu", "monitor_gpu_enabled")):
+        if hardware_persist_allowed(role, config):
+            out[role] = None
+        elif not config.get(switch, False):
+            out[role] = "monitor"
+        else:
+            out[role] = "record"
+    return out
+
 class GraphHost(QObject):
     """One shared, lazily-loaded graph engine + canvas for the Monitor's chart tabs."""
 
@@ -359,7 +376,10 @@ class GraphHost(QObject):
                 "ram": (ram_c, "-"),   # RAM% as a green solid line (matches the Overview RAM tile)
                 "legend": bool(self.config.get("monitor_graph_legend", True)),
                 "smoothing": bool(self.config.get("monitor_graph_smoothing", False)),
-                "fixed_axis": bool(self.config.get("monitor_graph_fixed_axis", True))}
+                "fixed_axis": bool(self.config.get("monitor_graph_fixed_axis", True)),
+                # Why each role's history isn't being recorded (None = it is), so an empty ranged view
+                # that will never fill says so instead of "Collecting data" forever.
+                "history_off": hardware_history_off_reasons(self.config)}
 
     def _time_range(self):
         from netspeedtray.views.graph.logic import GraphLogic

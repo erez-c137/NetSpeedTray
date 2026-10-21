@@ -12,6 +12,7 @@ from PyQt6.QtGui import QColor
 
 from netspeedtray import constants
 from netspeedtray.utils.window_state import set_window_always_on_top
+from netspeedtray.utils.styles import set_app_reduce_motion
 from netspeedtray.utils.config import ConfigManager
 from netspeedtray.utils.timer_utils import resolve_poll_interval_seconds
 from netspeedtray.utils.helpers import effective_display_mode
@@ -226,6 +227,9 @@ class ConfigController:
             # 5. Always-on-top for the Settings/Monitor windows (#213). Guarded: see
             # _last_keep_on_top - this method runs on every throttled live-preview tick.
             self._apply_keep_on_top(w.config.get("keep_windows_on_top", False))
+
+            # 5a. Reduce motion: the app setting forces it on; off follows Windows (see styles).
+            set_app_reduce_motion(w.config.get("reduce_motion", False))
 
             # 5b. Local metrics endpoint (2.2 scope B): start / stop / re-port live with the toggle.
             if hasattr(w, "apply_metrics_endpoint"):

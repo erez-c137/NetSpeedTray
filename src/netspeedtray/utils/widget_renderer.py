@@ -354,6 +354,10 @@ class WidgetRenderer:
                 
             try:
                 self.paused = False
+                # Pause cue (widget_paint.render_widget): while set, each speed row's arrow is NOT drawn
+                # and its cell is recorded (device coords) in _pause_slots, for the pause glyph to fill.
+                self._pause_cue = False
+                self._pause_slots: List[QRectF] = []
                 
                 # Bounding rect for coordinates. _last_text_rect is the LAST segment drawn (the
                 # side-by-side layout advances by it); _content_bounds is the UNION of all segments
@@ -881,8 +885,11 @@ class WidgetRenderer:
         else:
             painter.setPen(self._cached_pens['default'])
 
-        # 1. Draw Arrow
-        if not config.hide_arrows:
+        # 1. Draw Arrow - or, while paused, leave its cell (through the arrow gap) for the pause glyph.
+        if not config.hide_arrows and self._pause_cue:
+            cell = QRectF(arrow_x, y - self.metrics.ascent(), max(0, number_x - arrow_x), self.metrics.height())
+            self._pause_slots.append(painter.transform().mapRect(cell))
+        elif not config.hide_arrows:
             painter.setFont(self.arrow_font)
             if is_upload:
                 arrow = config.arrow_up_symbol or self.i18n.UPLOAD_ARROW
@@ -1559,6 +1566,7 @@ class WidgetRenderer:
     def reset_content_bounds(self) -> None:
         """Clear the per-paint content union; render_widget calls this before drawing the segments."""
         self._content_bounds = QRect()
+        self._pause_slots = []
 
     def _extend_content_bounds(self, rect: QRect) -> None:
         """Grow _content_bounds to include ``rect`` (each drawn segment)."""

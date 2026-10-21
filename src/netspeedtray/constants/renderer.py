@@ -16,6 +16,18 @@ class RendererConstants:
     # so the readout doesn't crowd the tray-overflow chevron once it's anchored right. Larger than
     # TEXT_MARGIN (which only kept text off the very edge) - this is deliberate visual padding.
     RIGHT_ANCHOR_PADDING: Final[int] = 7
+
+    # --- Paused cue (Pause in the menu / click action) ---
+    # A paused widget draws its content at this opacity (still readable) and a two-bar pause glyph in
+    # place of the arrow column - or in the free left margin when no arrows are drawn - so frozen
+    # numbers read as paused rather than hung. The glyph never overlaps text.
+    PAUSED_CONTENT_OPACITY: Final[float] = 0.55
+    PAUSE_GLYPH_HEIGHT_RATIO: Final[float] = 0.45         # of the arrow column's height (both rows)
+    PAUSE_GLYPH_MARGIN_HEIGHT_RATIO: Final[float] = 0.3   # of the widget's height, margin placement
+    PAUSE_GLYPH_MIN_HEIGHT: Final[int] = 7
+    PAUSE_GLYPH_MAX_HEIGHT: Final[int] = 14
+    PAUSE_GLYPH_WIDTH_RATIO: Final[float] = 0.6           # glyph width (two bars + gap) per height
+    PAUSE_GLYPH_MARGIN_PAD: Final[int] = 2                # clear space each side in the margin
     GRAPH_MARGIN: Final[int] = 3
     GRAPH_LEFT_PADDING: Final[int] = 2
     GRAPH_RIGHT_PADDING: Final[int] = 2
