@@ -132,6 +132,32 @@ def test_session_volume_does_not_count_a_sleep_gap():
     assert down == pytest.approx(8000.0)   # four samples x 2 s typical, not 4000 s of 1000 B/s
 
 
+# --- M7: closing the Monitor frees its graph host + coordinator ------------------------------------
+
+def test_graph_host_is_collected_after_teardown(q_app):
+    import gc
+    import weakref
+    from PyQt6.QtCore import QCoreApplication, QEvent
+    from netspeedtray.views.monitor.graph_host import GraphHost
+    refs = []
+    for _ in range(4):
+        cfg = _cfg()
+        mw = _mw(cfg)
+        mw.widget_state = MagicMock(spec=["get_earliest_data_timestamp", "release_read_conn",
+                                          "interrupt_reads"])
+        host = GraphHost(mw, cfg, I18nStrings("en_US"))
+        host.ensure_loaded()
+        refs.append((weakref.ref(host), weakref.ref(host.coordinator)))
+        host.teardown()
+        del host, mw
+        for _ in range(3):
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+            q_app.processEvents()
+        gc.collect()
+    alive = [i for i, (h, c) in enumerate(refs) if h() is not None or c() is not None]
+    assert alive == [], f"graph host / coordinator still alive after teardown: cycles {alive}"
+
+
 # --- M4: "All" then "Since boot" ---------------------------------------------------------------------
 
 def test_since_boot_after_all_uses_the_boot_time(monkeypatch):

@@ -39,7 +39,16 @@ def bind_reader_thread(thread: QThread, widget_state, on_ident=None) -> None:
     ``WidgetState.interrupt_reads`` at it."""
     direct = Qt.ConnectionType.DirectConnection
     if on_ident is not None:
-        thread.started.connect(lambda: on_ident(threading.get_ident()), direct)
+        # Hold the owner WEAKLY: a detached thread (stop_reader_thread) can outlive the window, and a
+        # lambda closing over a bound method would keep the whole tab / host alive with it (M7).
+        import weakref
+        ref = weakref.WeakMethod(on_ident) if hasattr(on_ident, "__self__") else (lambda: on_ident)
+
+        def _started() -> None:
+            fn = ref()
+            if fn is not None:
+                fn(threading.get_ident())
+        thread.started.connect(_started, direct)
     release = getattr(widget_state, "release_read_conn", None)
     if release is not None:
         thread.finished.connect(release, direct)
@@ -220,7 +229,9 @@ class GraphHost(QObject):
         self.worker.moveToThread(self._thread)
         self.worker.totals_provenance.connect(self._on_totals_provenance)
         self.worker.data_ready.connect(self._on_data_ready)
-        self.worker.error.connect(lambda msg: self.logger.debug("graph worker error: %s", msg))
+        # A bound method, never a lambda capturing self: PyQt keeps a lambda slot alive with the
+        # worker, and through it this host + its coordinator - one leaked pair per Monitor open (M7).
+        self.worker.error.connect(self._on_worker_error)
         self.request_data_processing.connect(self.worker.process_data)
         # The worker's read connection is opened, and closed, on its own thread.
         bind_reader_thread(self._thread, self._main_widget.widget_state, self._set_thread_ident)
@@ -240,6 +251,9 @@ class GraphHost(QObject):
 
     def _set_thread_ident(self, ident: int) -> None:
         self._thread_ident = ident   # runs on the worker thread (started, DirectConnection)
+
+    def _on_worker_error(self, msg: str) -> None:
+        self.logger.debug("graph worker error: %s", msg)
 
     # ------------------------------------------------------------------ canvas hosting
 
@@ -502,9 +516,14 @@ class GraphHost(QObject):
         # into _on_data_ready mid-teardown.
         try:
             if self.worker is not None:
-                self.worker.data_ready.disconnect(self._on_data_ready)
-                self.worker.totals_provenance.disconnect(self._on_totals_provenance)
-                self.request_data_processing.disconnect(self.worker.process_data)
+                for sig, slot in ((self.worker.data_ready, self._on_data_ready),
+                                  (self.worker.totals_provenance, self._on_totals_provenance),
+                                  (self.worker.error, self._on_worker_error),
+                                  (self.request_data_processing, self.worker.process_data)):
+                    try:
+                        sig.disconnect(slot)
+                    except (TypeError, RuntimeError):
+                        pass
         except Exception:
             pass
 
