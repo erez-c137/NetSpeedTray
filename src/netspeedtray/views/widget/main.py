@@ -31,6 +31,7 @@ from netspeedtray.core.tray_manager import TrayIconManager
 from netspeedtray.core.widget_state import WidgetState as CoreWidgetState
 from netspeedtray.utils.config import ConfigManager as CoreConfigManager
 from netspeedtray.utils.timer_utils import resolve_poll_interval_seconds
+from netspeedtray.utils.styles import set_app_reduce_motion
 from netspeedtray.core.position_manager import PositionManager, WindowState
 from netspeedtray.core.input_handler import InputHandler
 from netspeedtray.utils.taskbar_utils import (
@@ -111,6 +112,7 @@ class NetworkSpeedWidget(QWidget):
         self.config_controller = ConfigController(self, self.config_manager)
         
         self.config: Dict[str, Any] = config or self.config_controller.load_initial_config(taskbar_height)
+        set_app_reduce_motion(self.config.get("reduce_motion", False))   # before any toggle animates
         
         if i18n is None:
             raise ValueError("An i18n instance must be provided to NetworkSpeedWidget.")

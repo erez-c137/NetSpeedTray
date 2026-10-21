@@ -160,10 +160,24 @@ def semantic_colors() -> dict:
     }
 
 
+# The app's own "Reduce motion" setting (config `reduce_motion`), pushed in by set_app_reduce_motion()
+# whenever config is applied. ON forces reduced motion; OFF defers to the Windows setting.
+_app_reduce_motion = False
+
+
+def set_app_reduce_motion(enabled: bool) -> None:
+    """Apply the app's "Reduce motion" setting to every animation gated by prefers_reduced_motion()."""
+    global _app_reduce_motion
+    _app_reduce_motion = bool(enabled)
+
+
 def prefers_reduced_motion() -> bool:
-    """True when the user has turned Windows animations OFF (Settings → Accessibility → Visual effects
-    → 'Animation effects', i.e. SPI_GETCLIENTAREAANIMATION = FALSE). Decorative slides/fades should
-    snap instead of animate when this is set. Defaults to False (animate) on any query failure."""
+    """True when the app's "Reduce motion" setting is on, or the user has turned Windows animations
+    OFF (Settings → Accessibility → Visual effects → 'Animation effects', i.e.
+    SPI_GETCLIENTAREAANIMATION = FALSE). Decorative slides/fades should snap instead of animate when
+    this is set. The Windows query defaults to False (animate) on any failure."""
+    if _app_reduce_motion:
+        return True
     try:
         import ctypes
         SPI_GETCLIENTAREAANIMATION = 0x1042
