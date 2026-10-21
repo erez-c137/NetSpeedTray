@@ -343,7 +343,9 @@ class ConfigConstants:
         "low_speed_color": {"type": str, "default": DEFAULT_LOW_SPEED_COLOR, "regex": r"#[0-9a-fA-F]{6}"},
         "graph_enabled": {"type": bool, "default": DEFAULT_GRAPH_ENABLED},
         "history_minutes": {"type": int, "default": DEFAULT_HISTORY_MINUTES, "min": 1, "max": 1440}, # Range from manual check
-        "graph_opacity": {"type": (int, float), "default": DEFAULT_GRAPH_OPACITY, "min": ui_constants.sliders.OPACITY_MIN, "max": ui_constants.sliders.OPACITY_MAX},
+        # "coerce": accepted as int or float (older files / hand edits), stored as a rounded int - the
+        # Settings slider and every consumer treat it as a whole percent (C1).
+        "graph_opacity": {"type": (int, float), "default": DEFAULT_GRAPH_OPACITY, "min": ui_constants.sliders.OPACITY_MIN, "max": ui_constants.sliders.OPACITY_MAX, "coerce": int},
         "graph_fixed_scale": {"type": bool, "default": DEFAULT_GRAPH_FIXED_SCALE},
         "graph_scale_headroom": {"type": int, "default": DEFAULT_GRAPH_SCALE_HEADROOM, "choices": GRAPH_SCALE_HEADROOM_CHOICES},
         "graph_show_ceiling": {"type": bool, "default": DEFAULT_GRAPH_SHOW_CEILING},

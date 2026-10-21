@@ -408,13 +408,26 @@ class SettingsDialog(QDialog):
     def _init_ui_state(self) -> None:
         """Loads current configuration into all UI elements and restores window position."""
         self.logger.debug("Initializing UI state from config...")
+        # Each page loads on its own (C1): one page raising used to abort the whole load, leaving
+        # every LATER page on its blank constructor defaults - and Save then wrote those blanks over
+        # ~25 real settings. A page that fails is remembered, and get_settings() leaves its keys at
+        # their loaded values instead of reading them back from half-initialised controls.
+        self._failed_pages = set()
+        for name, load in (
+            ("general", lambda: self.general_page.load_settings(self.config, self.startup_enabled_initial_state)),
+            ("widget", lambda: self.widget_page.load_settings(self.config)),
+            ("appearance", lambda: self.appearance_page.load_settings(self.config)),   # + units + colors
+            ("hardware", lambda: self.hardware_page.load_settings(self.config)),
+            ("interfaces", lambda: self.interfaces_page.load_settings(self.config)),
+            ("advanced", lambda: self.advanced_page.load_settings(self.config)),
+        ):
+            try:
+                load()
+            except Exception as e:
+                self._failed_pages.add(name)
+                self.logger.error("Settings page '%s' failed to load; its settings will be kept as "
+                                  "they are on Save: %s", name, e, exc_info=True)
         try:
-            self.general_page.load_settings(self.config, self.startup_enabled_initial_state)
-            self.widget_page.load_settings(self.config)
-            self.appearance_page.load_settings(self.config)   # also loads the embedded units + colors
-            self.hardware_page.load_settings(self.config)
-            self.interfaces_page.load_settings(self.config)
-            self.advanced_page.load_settings(self.config)
             self._refresh_metrics_status()
 
             # Seed the live preview from the loaded config.
@@ -556,12 +569,14 @@ class SettingsDialog(QDialog):
         """Collects settings from all pages."""
         try:
             settings = self.config.copy()
-            settings.update(self.general_page.get_settings())
-            settings.update(self.widget_page.get_settings())
-            settings.update(self.appearance_page.get_settings())   # includes embedded units + colors
-            settings.update(self.hardware_page.get_settings())
-            settings.update(self.interfaces_page.get_settings())
-            settings.update(self.advanced_page.get_settings())
+            failed = getattr(self, "_failed_pages", set())
+            for name, page in (("general", self.general_page), ("widget", self.widget_page),
+                               ("appearance", self.appearance_page),   # includes embedded units + colors
+                               ("hardware", self.hardware_page), ("interfaces", self.interfaces_page),
+                               ("advanced", self.advanced_page)):
+                if name in failed:
+                    continue   # never write a page's keys from controls that never received them (C1)
+                settings.update(page.get_settings())
 
             # Save current window position
             settings["settings_window_pos"] = {"x": self.pos().x(), "y": self.pos().y()}

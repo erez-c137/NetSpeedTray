@@ -19,7 +19,7 @@ from netspeedtray.constants.styles import styles as tokens
 from netspeedtray.utils import styles as style_utils
 from netspeedtray.utils.helpers import format_percent
 from netspeedtray.utils.components import Win11Slider, Win11Toggle, Win11ComboBox, SettingCard
-from netspeedtray.views.settings.pages._fluent import section_header, page_layout
+from netspeedtray.views.settings.pages._fluent import section_header, page_layout, as_int
 
 
 class MiniGraphSection(QWidget):
@@ -118,8 +118,11 @@ class MiniGraphSection(QWidget):
     # --- config ------------------------------------------------------------------
     def load_settings(self, config: Dict[str, Any]) -> None:
         self.enable_graph.setChecked(config.get("graph_enabled", True))
-        self.history_duration.setValue(config.get("history_minutes", constants.config.defaults.DEFAULT_HISTORY_MINUTES))
-        self.graph_opacity.setValue(config.get("graph_opacity", constants.config.defaults.DEFAULT_GRAPH_OPACITY))
+        self.history_duration.setValue(as_int(config.get("history_minutes"),
+                                              constants.config.defaults.DEFAULT_HISTORY_MINUTES))
+        # graph_opacity may be a float on disk (schema: (int, float)); the slider takes int only.
+        self.graph_opacity.setValue(as_int(config.get("graph_opacity"),
+                                           constants.config.defaults.DEFAULT_GRAPH_OPACITY))
         d = constants.config.defaults
         self.graph_fixed_scale.setChecked(bool(config.get("graph_fixed_scale", d.DEFAULT_GRAPH_FIXED_SCALE)))
         headroom_idx = self.graph_scale_headroom.findData(

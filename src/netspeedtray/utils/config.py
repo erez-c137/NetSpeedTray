@@ -646,6 +646,10 @@ class ConfigManager:
                 self.logger.warning(f"Invalid list items for {key}. Resetting to default.")
                 return default
 
+        # 6. Coercion (e.g. graph_opacity: a float on disk is stored as the int the UI expects)
+        if rules.get("coerce") is int and isinstance(value, float):
+            value = int(round(value))
+
         return value
 
     def _validate_config(self, loaded_config: Dict[str, Any]) -> Dict[str, Any]:

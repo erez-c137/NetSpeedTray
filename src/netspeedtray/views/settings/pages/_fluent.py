@@ -27,6 +27,18 @@ def section_header(text: str) -> QLabel:
     return lbl
 
 
+def as_int(value, default: int) -> int:
+    """A config value as the int a QSlider / QSpinBox ``setValue`` demands. Several schema keys allow
+    ``(int, float)`` (e.g. ``graph_opacity``), and ``setValue(55.0)`` raises a TypeError that used to
+    abort loading every later page (C1). Rounds floats; falls back to ``default`` for None / junk."""
+    if value is None or isinstance(value, bool):
+        value = default
+    try:
+        return int(round(float(value)))
+    except (TypeError, ValueError, OverflowError):
+        return int(default)
+
+
 def page_layout(widget) -> QVBoxLayout:
     """A consistent vertical page layout: tight, even spacing between cards (the card strokes already
     provide the visual separation), plus a small bottom inset so the last card never abuts the fixed

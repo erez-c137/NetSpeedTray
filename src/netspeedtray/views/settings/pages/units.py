@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import QWidget
 
 from netspeedtray import constants
 from netspeedtray.utils.components import Win11Toggle, Win11Segmented, SettingCard, Win11ComboBox
-from netspeedtray.views.settings.pages._fluent import section_header, page_layout
+from netspeedtray.views.settings.pages._fluent import section_header, page_layout, as_int
 
 class UnitsPage(QWidget):
     def __init__(self, i18n, on_change: Callable[[], None]):
@@ -88,7 +88,8 @@ class UnitsPage(QWidget):
         self.unit_type.setEnabled(True)
         
         # Others
-        self.decimal_places.setValue(config.get("decimal_places", constants.config.defaults.DEFAULT_DECIMAL_PLACES))
+        self.decimal_places.setValue(as_int(config.get("decimal_places"),
+                                            constants.config.defaults.DEFAULT_DECIMAL_PLACES))
 
         # Toggles
         self.swap_upload_download.setChecked(config.get("swap_upload_download", constants.config.defaults.DEFAULT_SWAP_UPLOAD_DOWNLOAD))
