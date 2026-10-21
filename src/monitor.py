@@ -51,6 +51,16 @@ def _arm_shutdown_deadline(argv: List[str],
 # Armed at import, ahead of the Qt / pywin32 / app imports below.
 _shutdown_deadline = _arm_shutdown_deadline(sys.argv[1:]) if __name__ == "__main__" else None
 
+# The crash record, before the DLL-loading imports below: the windowed exe has no stderr and
+# logging starts only inside main(), so a crash at logon in one of these imports (or a fault in a
+# DLL) used to leave no trace at all. faulthandler + excepthooks -> NetSpeedTray_Crash.log.
+if __name__ == "__main__":
+    try:
+        from netspeedtray import crash_log as _crash_log
+        _crash_log.enable()
+    except Exception:
+        pass
+
 import win32api
 import win32event
 import winerror
@@ -145,6 +155,42 @@ def set_app_working_directory():
     except Exception:
         pass # If this fails, we proceed with original CWD and hope for the best.
 
+def _install_exception_hooks(logger: logging.Logger) -> None:
+    """Log every unhandled exception - on the main thread AND on any threading.Thread (whose
+    default hook prints to a stderr the windowed exe does not have) - and keep it in the crash
+    log too, which survives when the log itself never got written."""
+    from netspeedtray import crash_log
+
+    def excepthook(exc_type, exc_value, exc_tb):
+        logger.critical("Unhandled exception:", exc_info=(exc_type, exc_value, exc_tb))
+        crash_log.record_exception(exc_type, exc_value, exc_tb)
+
+    def thread_excepthook(args):
+        if args.exc_type is SystemExit:
+            return
+        name = getattr(args.thread, "name", "?") if args.thread is not None else "?"
+        logger.critical("Unhandled exception in thread %s:", name,
+                        exc_info=(args.exc_type, args.exc_value, args.exc_traceback))
+        crash_log.record_exception(args.exc_type, args.exc_value, args.exc_traceback,
+                                   "thread %s" % name)
+
+    sys.excepthook = excepthook
+    threading.excepthook = thread_excepthook
+
+
+def _stop_started_widget(widget, logger: logging.Logger) -> None:
+    """After a startup failure: stop whatever the widget already started (monitor thread, DB
+    worker, latency probe, event hooks), so the process does not exit with QThreads still
+    running - which aborts it with a second crash on top of the first. No config save: the state
+    is not one to persist."""
+    if widget is None:
+        return
+    try:
+        widget.cleanup(save_config=False)
+    except Exception:
+        logger.error("Cleanup after the startup failure failed too.", exc_info=True)
+
+
 def main() -> int:
     """
     Main entry point for the NetSpeedTray application.
@@ -165,10 +211,7 @@ def main() -> int:
     ConfigManager.setup_logging()
     logger = logging.getLogger("NetSpeedTray.Main")
     
-    def excepthook(exc_type, exc_value, exc_tb):
-        logger.critical("Unhandled exception:", exc_info=(exc_type, exc_value, exc_tb))
-    
-    sys.excepthook = excepthook
+    _install_exception_hooks(logger)
 
     # Graceful-close path: `--shutdown [--timeout N]`, for manual / scripted use (setup.iss now posts
     # the same message from its own [Code] and never runs this exe - see core/shutdown_channel.py).
@@ -220,7 +263,8 @@ def main() -> int:
     # The QApplication must be created before any UI elements.
     app = QApplication(sys.argv)
 
-    i18n_strings: Optional[constants.i18n.I18nStrings] = None 
+    i18n_strings: Optional[constants.i18n.I18nStrings] = None
+    widget: Optional[NetworkSpeedWidget] = None
 
     try:
         # 2. Use the context manager to ensure only one instance is running.
@@ -293,6 +337,13 @@ def main() -> int:
     except Exception as e:
         # This is a global catch-all for any critical error during startup.
         logger.critical("A critical error occurred during startup: %s", e, exc_info=True)
+        try:
+            from netspeedtray import crash_log
+            crash_log.record_exception(type(e), e, e.__traceback__, "startup")
+        except Exception:
+            pass
+        # A widget that failed inside its own __init__ has already stopped what it started.
+        _stop_started_widget(widget, logger)
         title = i18n_strings.ERROR_WINDOW_TITLE if i18n_strings else "Application Error"
         QMessageBox.critical(None, title, f"A critical error occurred and NetSpeedTray must close:\n\n{e}")
         return 1

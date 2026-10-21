@@ -267,6 +267,13 @@ class NetworkSpeedWidget(QWidget):
 
         except Exception as e:
             self.logger.critical("Initialization failed: %s", e, exc_info=True)
+            # Stop whatever already started (monitor thread, DB worker, probes, hooks): the caller
+            # never gets this object, so nothing else could, and a QThread still running at exit
+            # aborts the process on top of this error. Not a state to save to the config.
+            try:
+                self.cleanup(save_config=False)
+            except Exception:
+                self.logger.error("Cleanup after the failed initialization failed.", exc_info=True)
             raise RuntimeError(f"Failed to initialize NetworkSpeedWidget: {e}") from e
 
 
@@ -2187,8 +2194,11 @@ class NetworkSpeedWidget(QWidget):
             except Exception as e:
                 self.logger.error("Session-end step '%s' failed: %s", name, e, exc_info=True)
 
-    def cleanup(self) -> None:
+    def cleanup(self, save_config: bool = True) -> None:
         """Performs necessary cleanup and a single, final save of the configuration.
+
+        ``save_config=False`` (after a failed startup) stops everything the same way but writes
+        nothing to the config file.
 
         Runs once. An exit reaches it twice - closeEvent calls it, then app.quit() fires aboutToQuit,
         which is connected here too - and a second pass would repeat the bounded waits (latency probe,
@@ -2288,6 +2298,8 @@ class NetworkSpeedWidget(QWidget):
             ("position config", _position_config), ("config save", _config_save),
             ("history flush", _history_flush),
         )
+        if not save_config:
+            steps = tuple(s for s in steps if s[0] not in ("position config", "config save"))
         try:
             for name, fn in steps:
                 try:
