@@ -472,20 +472,26 @@ V217_QUERIES_BY_NAME = {w: s for (w, s, _p, _n) in V217_QUERIES}
 
 
 def test_217_worker_goes_read_only_on_a_v8_file(tmp_path):
-    """The current (v7) worker stands in for 2.1.7's here - its downgrade branch is the same code
-    shipped in 2.1.5. It must see version 8, flag the file incompatible, and drop nothing.
-    Meaningful only while this build is still v7 (until step 7 bumps _DB_VERSION)."""
-    from netspeedtray.core.database import DatabaseWorker
-    if DatabaseWorker._DB_VERSION >= 8:
-        pytest.skip("this build reads v8 natively; the rollback path is covered by step 8")
+    """2.1.x's worker (frozen in tests/legacy_v7_worker - its downgrade branch is the code shipped in
+    2.1.5-2.1.7) stands in for a rolled-back install: it must see version 8, flag the file
+    incompatible, write no backup, and change nothing. (The live check on the real 2.1.7 source is in
+    the step-7 PR; step 8 repeats it with the signed build.)"""
+    import hashlib
+    from netspeedtray.tests.legacy_v7_worker import LegacyV7Worker
     w = _fresh(tmp_path)
     _populate(w)
     w.close()
-    worker = DatabaseWorker(tmp_path / "v8.db")
+    c = sqlite3.connect(tmp_path / "v8.db")
+    c.execute("PRAGMA journal_mode = WAL")   # as 2.2 leaves every file it writes
+    c.close()
+    before = hashlib.sha256((tmp_path / "v8.db").read_bytes()).hexdigest()
+    worker = LegacyV7Worker(tmp_path / "v8.db")
     worker._initialize_connection()
     worker._check_and_create_schema()
     assert worker._schema_incompatible is True
     worker._close_connection()
+    assert hashlib.sha256((tmp_path / "v8.db").read_bytes()).hexdigest() == before
+    assert not list(tmp_path.glob("v8.db.bak*"))
     conn = sqlite3.connect(tmp_path / "v8.db")
     assert conn.execute(f"SELECT COUNT(*) FROM {S.NET_RAW}").fetchone()[0] == 6
     assert {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='view'")} == set(S.COMPAT_VIEWS_V8)

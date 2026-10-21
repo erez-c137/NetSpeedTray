@@ -143,10 +143,42 @@ def _collect_system_info(config: Dict[str, Any]) -> str:
                 f"@ DPI scale {dpr:.2f}, "
                 f"available {avail.width()}x{avail.height()} logical"
             )
+        lines.extend(_taskbar_geometry_lines(config))
     else:
         lines.append("Monitors detected:    <Qt application not running>")
 
     return "\n".join(lines) + "\n"
+
+
+def _taskbar_geometry_lines(config: Dict[str, Any]) -> List[str]:
+    """The docked taskbar's geometry as Windows and Qt report it - what placement bugs turn on (#322).
+
+    Rects and sizes only (no window titles or display names): the Shell_TrayWnd rect, its monitor and
+    work area (physical px), Qt's available-geometry inset, the detected edge and DPI, and the strip
+    the widget is sized and centred in. Never raises - a failure becomes one line.
+    """
+    try:
+        from netspeedtray.utils.taskbar_utils import get_taskbar_info, horizontal_taskbar_strip
+        tb = get_taskbar_info(config.get("preferred_monitor"))
+        edge = tb.get_edge_position()
+        out = [
+            f"Taskbar edge:         {edge.name if hasattr(edge, 'name') else edge}"
+            f" (fallback: {tb.hwnd == 0}, primary: {tb.is_primary})",
+            f"  window rect (phys): {tb.rect}  DPI scale {tb.dpi_scale:.2f}  logical height {tb.height}",
+            f"  monitor (phys):     {tb.monitor_rect}  work area (phys): {tb.work_area}",
+            f"  tray rect (phys):   {tb.get_tray_rect()}",
+        ]
+        screen = tb.get_screen()
+        if screen is not None:
+            g, a = screen.geometry(), screen.availableGeometry()
+            out.append(f"  Qt insets (logical): top {a.top() - g.top()}, bottom {g.bottom() - a.bottom()}, "
+                       f"left {a.left() - g.left()}, right {g.right() - a.right()}")
+        if edge in (constants.TaskbarEdge.TOP, constants.TaskbarEdge.BOTTOM):
+            top, height = horizontal_taskbar_strip(tb, edge, tb.dpi_scale)
+            out.append(f"  dock strip (logical): top {top}, height {height}")
+        return out
+    except Exception as e:  # noqa: BLE001 - diagnostics must never break the bundle
+        return [f"Taskbar geometry:     <unavailable: {type(e).__name__}>"]
 
 
 def _scrub_log_text(text: str) -> str:

@@ -86,6 +86,7 @@ class InterfacesPage(QWidget):
         """)
         self.interface_scroll.viewport().setAutoFillBackground(False)
         self.interface_scroll.setVisible(False)
+        self.interface_scroll.setAccessibleName(self.i18n.MONITORING_MODE_SELECTED)   # it takes focus
 
         interfaces_container = QWidget()
         interfaces_container.setStyleSheet("background: transparent;")
@@ -98,17 +99,20 @@ class InterfacesPage(QWidget):
 
         layout.addWidget(mode_card)
 
-        # Network identity (v2.1) - the Wi-Fi band / network indicator on the widget.
-        self.identity = NetworkIdentitySettings(self.on_change, self.i18n)
-        layout.addWidget(self.identity)
+        # Order (2.2 IA pass): Data usage, Connection, Network identity. Data usage has its own tray
+        # entry and was last on the page below two open expanders; identity is the most cosmetic.
+
+        # Data-usage / data-cap section (the feature's in-settings home, 2.0 IA).
+        self.datacap = DataCapSettings(self.on_change, self.i18n)
+        layout.addWidget(self.datacap)
 
         # Connection section - latency monitoring (gateway + opt-in public anchor) + advertised plan.
         self.connection = ConnectionSettings(self.on_change, self.i18n)
         layout.addWidget(self.connection)
 
-        # Data-usage / data-cap section (the feature's in-settings home, 2.0 IA).
-        self.datacap = DataCapSettings(self.on_change, self.i18n)
-        layout.addWidget(self.datacap)
+        # Network identity (v2.1) - the Wi-Fi band / network indicator on the widget.
+        self.identity = NetworkIdentitySettings(self.on_change, self.i18n)
+        layout.addWidget(self.identity)
 
         layout.addStretch()
 
@@ -192,7 +196,8 @@ class InterfacesPage(QWidget):
             mark.setFont(style_utils.font(tokens.TYPE_CAPTION))
             mark.setStyleSheet(f"color: {c['accent']}; background: transparent;")
             hl.addWidget(mark)
-            row.setAccessibleName(f"{iface} - {self.i18n.INTERFACE_ACTIVE_CONNECTION}")
+            # On the focusable control, not the row: a screen reader announces what has focus.
+            checkbox.checkbox.setAccessibleName(f"{iface} - {self.i18n.INTERFACE_ACTIVE_CONNECTION}")
         hl.addStretch(1)
         return row
 

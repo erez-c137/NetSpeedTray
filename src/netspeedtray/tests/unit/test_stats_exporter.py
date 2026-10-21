@@ -33,7 +33,7 @@ class _WS:
             return summarize_raw([0.0, 1.0, 0.0])   # 1/3 timed out
         return summarize_raw([])
 
-    def get_speed_history(self, start, end, iface, resolution='auto'):
+    def get_speed_history(self, start, end, iface, resolution='auto', **_kw):
         return [(self._t0, 1_000_000.0, 10_000_000.0), (self._t0 + timedelta(seconds=1), 2_000_000.0, 20_000_000.0)]
 
     def get_hardware_history(self, stat, start, end):
@@ -131,3 +131,18 @@ def test_raw_is_long_format_sorted(out):
     # download raw is in Mbps too (10 MB/s -> 80 Mbps)
     dl = [r for r in rows if r["metric"] == "download"]
     assert float(dl[0]["value"]) == pytest.approx(80.0)
+
+
+def test_export_never_waits_for_the_db_flush(tmp_path):
+    """The interactive export runs on the GUI thread: no flush barrier per network metric
+    (2.2.0-beta.1 lifecycle review)."""
+    calls = []
+
+    class _WSNoWait(_WS):
+        def get_speed_history(self, start, end, iface, resolution='auto', wait_for_flush=True, **_kw):
+            calls.append(wait_for_flush)
+            return super().get_speed_history(start, end, iface, resolution)
+
+    start, end = datetime(2026, 6, 28, 12), datetime(2026, 6, 28, 21)
+    SE.export_window_zip(_WSNoWait(), start, end, "w", str(tmp_path / "x.zip"), "x")
+    assert calls and not any(calls)

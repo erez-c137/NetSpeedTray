@@ -76,6 +76,16 @@ class NetworkSpeedConstants:
     # 10ms (0.01s) is conservative but significantly reduces false positives from OS scheduling artifacts.
     MIN_TIME_DIFF: Final[float] = 0.01
     MIN_RECORDABLE_SPEED_BPS: Final[float] = 1.0
+    # A poll interval longer than max(RATE_VALIDITY_MIN_SECONDS, RATE_VALIDITY_POLL_MULTIPLE x the
+    # configured update rate) is a GAP (missed polls, sleep, app stall): the controller re-primes the
+    # rate display instead of drawing the averaged-out burst, and the v8 writer flags the stored row
+    # (schema_v8.FLAG_GAP) so the bytes are kept but never drawn as a spike.
+    RATE_VALIDITY_MIN_SECONDS: Final[float] = 10.0
+    RATE_VALIDITY_POLL_MULTIPLE: Final[float] = 5.0
+    # psutil.net_if_stats() (link up/down, negotiated speed, duplex) for the v8 history's link_events
+    # and link_speed / link_duplex metrics: sampled on this slow sub-cadence by the monitor thread,
+    # not every poll - link state changes rarely, and the writer rate-limits the metrics anyway.
+    LINK_STATS_POLL_INTERVAL_SEC: Final[float] = 5.0
     
     # These are now i18n keys
     DEFAULT_UNIT_BITS: Final[str] = "BITS_LABEL"
@@ -202,6 +212,14 @@ class LatencyConstants:
     CHECK_ECHOES: Final[int] = 20
     CHECK_SPACING_MS: Final[int] = 200
     CHECK_TIMEOUT_MS: Final[int] = 1000
+    # The check judges RTT with the pill's Good / OK / Slow and reports loss on its own. Over only 20
+    # echoes one lost ping is 5% (the pill's "Slow" over its ~160-probe window), so the check's loss
+    # turns red only from this many lost; one lost reads amber.
+    CHECK_LOSS_HIGH_MIN_LOST: Final[int] = 2
+    CHECK_LOSS_COLORS: Final[Dict[str, str]] = {
+        "some": "#FFB900",
+        "high": "#E81123",
+    }
     # How long closing the sheet waits for the worker: one in-flight echo plus slack.
     CHECK_STOP_WAIT_MS: Final[int] = 1500
 
@@ -220,6 +238,46 @@ class UsageOdometerConstants:
     BOOT_TIME_TOLERANCE_SEC: Final[float] = 30.0
 
 
+class MetricsEndpointConstants:
+    """The opt-in localhost metrics endpoint (2.2 scope B): Prometheus text exposition at GET /metrics.
+
+    Loopback-only by construction - HOST is the only address the server ever binds, and a peer that is
+    not loopback is refused anyway. Off by default (config ``metrics_endpoint_enabled``)."""
+    HOST: Final[str] = "127.0.0.1"
+    # 9184 - in the Prometheus default-port wiki it belongs to the Twitch exporter, which is very
+    # unlikely to run on the same Windows desktop (the whole 9100-9999 block is allocated; 9182, the
+    # Windows exporter, is the one neighbour that WOULD clash, so it is avoided). Configurable.
+    DEFAULT_PORT: Final[int] = 9184
+    MIN_PORT: Final[int] = 1024     # no privileged / well-known ports
+    MAX_PORT: Final[int] = 65535
+    PATH: Final[str] = "/metrics"
+    # Prometheus text exposition format 0.0.4 (what Prometheus, Grafana Alloy, vmagent and Telegraf read).
+    CONTENT_TYPE: Final[str] = "text/plain; version=0.0.4; charset=utf-8"
+    # Hosts a legitimate local scraper sends in its Host header. Anything else (a DNS-rebinding web page
+    # that resolved its own name to 127.0.0.1) is refused, so a browser tab cannot read the metrics.
+    ALLOWED_HOST_NAMES: Final[Set[str]] = {"127.0.0.1", "localhost", "[::1]"}
+    # At most this many connections are served at once; extras are closed unanswered.
+    MAX_CONCURRENT: Final[int] = 4
+    # The WHOLE request (line + headers) must arrive within this long, however it is trickled.
+    REQUEST_TIMEOUT_SEC: Final[float] = 2.0
+    # Token bucket: sustained requests per second, and the burst on top. A scraper asks every 5-60 s.
+    RATE_LIMIT_PER_SEC: Final[float] = 5.0
+    RATE_LIMIT_BURST: Final[int] = 10
+    # How often serve_forever() checks for shutdown - bounds how long stop() blocks the caller.
+    POLL_INTERVAL_SEC: Final[float] = 0.2
+    # How long stop() waits for the serving thread to end.
+    STOP_JOIN_TIMEOUT_SEC: Final[float] = 3.0
+    # Total time stop() waits for in-flight handler threads (daemons, so one that overstays never
+    # blocks quitting). They see the stop flag within POLL_INTERVAL_SEC, so this is ample.
+    HANDLER_JOIN_BUDGET_SEC: Final[float] = 0.5
+    # Request line longer than this is refused (414) - the only valid one is "GET /metrics HTTP/1.1".
+    MAX_REQUEST_LINE: Final[int] = 512
+    # Status values the manager reports to Settings.
+    STATE_OFF: Final[str] = "off"
+    STATE_RUNNING: Final[str] = "running"
+    STATE_ERROR: Final[str] = "error"
+
+
 class NetworkConstants:
     """Container for network-related constant groups."""
     def __init__(self) -> None:
@@ -228,6 +286,7 @@ class NetworkConstants:
         self.interface = InterfaceConstants()
         self.latency = LatencyConstants()
         self.usage = UsageOdometerConstants()
+        self.metrics = MetricsEndpointConstants()
 
 # Singleton instance for easy access
 network = NetworkConstants()

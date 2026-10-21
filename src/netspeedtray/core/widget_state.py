@@ -34,7 +34,11 @@ from PyQt6.QtCore import QObject, QThread, pyqtSignal, QTimer
 from netspeedtray import constants
 from netspeedtray.constants import network, timeouts
 from netspeedtray.core import usage_snapshot
-from netspeedtray.core.db.history_reader import HistoryReader, V7HistoryReader
+from netspeedtray.core.db.history_reader import (
+    HistoryNotReadyError, HistoryReader, V7HistoryReader, V8HistoryReader, VolumeResult,
+)
+from netspeedtray.core.db.sqlite_uri import sqlite_ro_uri
+from netspeedtray.core.db.writer_v8 import NetSample
 from netspeedtray.utils.helpers import get_app_data_path
 from netspeedtray.utils.timer_utils import resolve_poll_interval_seconds
 
@@ -78,6 +82,13 @@ class WidgetState(QObject):
     # finished construction and connected (main.py wires the flyout there) - so the
     # notification cannot be emitted before anyone is listening.
     db_schema_incompatible = pyqtSignal(int, int, str)
+    # Re-emitted from DatabaseWorker.migration_deferred (a MIGRATION_* reason): the v7 -> v8 upgrade
+    # could not complete this launch, so nothing is recorded until the next start. Same queued
+    # delivery as above, so the flyout is wired before it can fire.
+    db_migration_deferred = pyqtSignal(str)
+    # Re-emitted from DatabaseWorker.history_upgraded: this launch upgraded the history to v8 (the
+    # one-time "history upgraded" flyout). Same queued delivery as above.
+    db_history_upgraded = pyqtSignal()
     # Re-emitted from DatabaseWorker.history_deleted (a DatabaseWorker.DELETE_* status), queued onto
     # the GUI thread.
     history_deleted = pyqtSignal(str)
@@ -108,8 +119,9 @@ class WidgetState(QObject):
         self.gpu_history: Deque[HardwareStatSnapshot] = deque(maxlen=self._graph_buffer_points)
         self.ram_history: Deque[HardwareStatSnapshot] = deque(maxlen=self._graph_buffer_points)
         
-        # Batching lists for database writes
-        self._db_batch: List[Tuple[int, str, float, float]] = []
+        # Batching lists for database writes (schema v8): one NetSample per poll (exact byte deltas
+        # over the measured interval - writer_v8), and hardware samples.
+        self._net_batch: List[NetSample] = []
         self._hw_batch: List[Tuple[int, str, float]] = []
         # Guards the two batch lists: they're APPENDED on the GUI thread but flushed (snapshot+reset)
         # from the graph-worker thread (get_speed_history(wait_for_flush=True)). Without it an append
@@ -118,11 +130,20 @@ class WidgetState(QObject):
 
         # Database Worker Thread
         self._db_path = Path(get_app_data_path()) / "speed_history.db"
-        self.db_worker = DatabaseWorker(self._db_path)
+        self.db_worker = DatabaseWorker(self._db_path, poll_ms=self._poll_ms(),
+                                        is_physical=self._classify_physical)
         self.db_worker.error.connect(lambda msg: self.logger.error("DB Worker Error: %s", msg))
-        # Surface the downgrade guard (v2.1.5, action-plan item 1). Connected BEFORE
-        # start() so the worker can never trip the guard while nothing is wired.
+        # Surface the downgrade guard (v2.1.5, action-plan item 1) and a deferred v8 upgrade (2.2).
+        # Connected BEFORE start() so the worker can never trip either while nothing is wired.
         self.db_worker.schema_incompatible.connect(self.db_schema_incompatible)
+        self.db_worker.migration_deferred.connect(self.db_migration_deferred)
+        self.db_worker.history_upgraded.connect(self.db_history_upgraded)
+        # The odometer reset waits for the delete's answer (connected FIRST, so the state is settled
+        # before Settings hears the same status through the re-emit below).
+        self._usage_reset_pending = False
+        self._usage_reset_stash: List[Tuple[Any, ...]] = []
+        self._usage_post_reset: List[Any] = [0.0, 0.0, None]
+        self.db_worker.history_deleted.connect(self._on_worker_history_deleted)
         self.db_worker.history_deleted.connect(self.history_deleted)
         if not read_only:
             self.db_worker.start()
@@ -140,6 +161,13 @@ class WidgetState(QObject):
 
         self._read_conns: Dict[int, Tuple[sqlite3.Connection, float]] = {}   # tid -> (conn, last_used)
         self._read_conns_lock = threading.Lock()
+        # Set by cleanup(): from then on _get_read_conn refuses (readers read empty) instead of opening
+        # a fresh read-write connection that nothing would ever close.
+        self._reads_closed = False
+        # Threads whose reads were interrupted for a stop (interrupt_reads(thread_id=...)): their
+        # further reads are refused too, so the rest of an in-flight Monitor refresh fails fast
+        # instead of running its next query. Cleared when the thread releases its connection.
+        self._reads_refused: set = set()
 
         # Data-usage odometer (data-cap feature). Lazily loaded from the DB on first
         # use (the worker thread may not have created the table yet at construction).
@@ -156,6 +184,8 @@ class WidgetState(QObject):
         self._usage_live_sampled_at: Optional[float] = None
         self._usage_live_primary: Optional[str] = None
         self._usage_launch_snapshot: Dict[str, Any] = {}
+        # Odometer polls that arrived before the row could be loaded (see add_usage_bytes).
+        self._usage_pending: List[Tuple[Any, ...]] = []
 
         self.logger.debug("WidgetState initialized with threaded database worker.")
 
@@ -166,11 +196,53 @@ class WidgetState(QObject):
     # erring low would close a connection out from under a slow query.
     _READ_CONN_IDLE_SEC: float = 120.0
 
+    def _poll_ms(self) -> int:
+        return int(round(resolve_poll_interval_seconds(self.config.get("update_rate", 1.0)) * 1000))
+
+    @staticmethod
+    def _classify_physical(name: str) -> bool:
+        """interfaces.is_physical, from the same classifier the Settings picker uses (2.2 scope C)."""
+        from netspeedtray.utils.interface_classifier import get_classifier
+        return bool(get_classifier().is_physical(name))
+
+    def _read_schema(self) -> Tuple[Optional[int], bool, bool]:
+        """(schema the live file reads as, use mode=ro connections, final).
+
+        A live instance asks its worker, which decides this during startup (recover / migrate) -
+        until it has, nothing may open the live name (a half-swapped migration leaves it absent, and a
+        plain connect would create an empty database there; an open handle would also block the
+        swap's rename), so readers get no connection and simply come back empty. A read-only
+        instance (the --export-csv CLI) never starts the worker: it probes the file itself, read-only,
+        and never runs recover() (that writes)."""
+        if self._read_only:
+            ver = None
+            if self._db_path.exists():
+                c = None
+                try:
+                    c = sqlite3.connect(sqlite_ro_uri(self._db_path), uri=True)
+                    row = c.execute("SELECT value FROM metadata WHERE key='db_version'").fetchone()
+                    ver = int(row[0]) if row else None
+                except Exception as e:
+                    self.logger.debug("Read-only schema probe failed: %s", e)
+                finally:
+                    if c is not None:
+                        c.close()
+            return ver, True, True
+        w = self.db_worker
+        ready = getattr(w, "ready", None)
+        if not isinstance(ready, threading.Event):
+            # A hand-assembled test double: behave as before (a plain v7 read).
+            return 7, False, True
+        if not ready.is_set():
+            return None, True, False
+        return getattr(w, "reader_version", None), bool(getattr(w, "readers_read_only", False)), True
+
     def _get_read_conn(self) -> sqlite3.Connection:
         """Returns a thread-local read connection, pruning ones left behind by dead threads.
 
         Each worker thread (notably the Monitor's GraphDataWorker, recreated on every Monitor open) opens
-        its own read connection here, removed otherwise only in cleanup() at exit. Without pruning, every
+        its own read connection here, and closes it itself as it exits (release_read_conn, wired by
+        GraphHost) - pruning is the safety net for a thread that never does. Without pruning, every
         Monitor open/close leaked a connection (a file handle + a WAL reader slot) for the whole session,
         and a recycled thread id could even hand a new worker a dead thread's stale connection. So evict
         entries whose owning thread has stopped using them.
@@ -193,6 +265,8 @@ class WidgetState(QObject):
         thread_id = threading.get_ident()
         now = time.monotonic()
         with self._read_conns_lock:
+            if self._reads_closed or thread_id in self._reads_refused:
+                raise HistoryNotReadyError("history reads are closed (shutting down)")
             if self._read_conns:
                 for stale in [tid for tid, (_c, seen) in self._read_conns.items()
                               if tid != thread_id and (now - seen) > self._READ_CONN_IDLE_SEC]:
@@ -201,7 +275,18 @@ class WidgetState(QObject):
                     except Exception:
                         pass
             if thread_id not in self._read_conns:
-                conn = sqlite3.connect(self._db_path, check_same_thread=False)
+                ver, ro, _final = self._read_schema()
+                if ver is None:
+                    # Nothing safe to open yet (the worker is still migrating), or ever (the live name
+                    # is absent until the next launch's recover()). Readers catch this and read empty.
+                    raise HistoryNotReadyError("history database not available for reading")
+                if ro:
+                    # Read-only session (deferred upgrade / downgrade / export): never a read-write
+                    # handle on a file this build must not touch - not even the checkpoint SQLite runs
+                    # when the last read-write connection to a WAL file closes.
+                    conn = sqlite3.connect(sqlite_ro_uri(self._db_path), uri=True, check_same_thread=False)
+                else:
+                    conn = sqlite3.connect(self._db_path, check_same_thread=False)
                 conn.row_factory = sqlite3.Row
                 # Wait (up to 5s) for a lock instead of erroring out immediately - otherwise a
                 # read concurrent with the maintenance VACUUM can fail with "database is locked".
@@ -218,27 +303,75 @@ class WidgetState(QObject):
             self._read_conns[thread_id] = (conn, now)   # touch: this thread is demonstrably alive
             return conn
 
+    def release_read_conn(self) -> None:
+        """Close the CALLING thread's read connection, if it has one. A worker thread that reads
+        history calls this as it exits (GraphHost wires it to its QThread's ``finished``, run on that
+        thread), so every connection is closed by the thread that used it - never from under it."""
+        with self._read_conns_lock:
+            self._reads_refused.discard(threading.get_ident())
+            entry = self._read_conns.pop(threading.get_ident(), None)
+        if entry is not None:
+            try:
+                entry[0].close()
+            except Exception:
+                pass
+
+    def interrupt_reads(self, thread_id: Optional[int] = None) -> None:
+        """Abort the statement running on another thread's read connection (all other threads' when
+        ``thread_id`` is None) - ``sqlite3_interrupt``, the one call SQLite documents as safe from a
+        different thread. The query raises ``OperationalError('interrupted')`` on its own thread,
+        which the readers catch (they read empty). The connection stays open; its owner still closes
+        it. Held under the lock, so it can never race that close. A targeted ``thread_id`` is being
+        stopped: its later reads are refused until it releases its connection."""
+        me = threading.get_ident()
+        with self._read_conns_lock:
+            if thread_id is not None:
+                self._reads_refused.add(thread_id)
+            for tid, (conn, _seen) in self._read_conns.items():
+                if tid == me or (thread_id is not None and tid != thread_id):
+                    continue
+                try:
+                    conn.interrupt()
+                except Exception:
+                    pass
+
     @property
     def history_reader(self) -> HistoryReader:
         """The storage backend every history read goes through (v8 step 2). Built on first use rather
         than in __init__ so a WidgetState assembled by hand in tests still reads; it holds no connection
         of its own - each call fetches this thread's via _get_read_conn()."""
         reader = getattr(self, "_history_reader", None)
-        if reader is None:
+        if reader is not None:
+            return reader
+        ver, ro, final = self._read_schema()
+        if ver == 7:
             reader = V7HistoryReader(self._get_read_conn, lambda: self.db_worker.db_path, self.logger)
+            # The db_utils fallback opens a plain read-write connection; never on a file this session
+            # must not write (a deferred upgrade leaves the v7 file live and untouched).
+            reader.allow_fallback = not ro
+        else:
+            # v8 - and, best effort, a newer file. Before the worker is ready the conn provider
+            # raises, so every read comes back empty; the backend is cached only once the answer is
+            # final.
+            reader = V8HistoryReader(self._get_read_conn, lambda: self.db_worker.db_path, self.logger)
+        if final:
             self._history_reader = reader
         return reader
+
+    def history_schema_version(self) -> Optional[int]:
+        """The schema history is read from (8, 7 while an upgrade is deferred), or None before the
+        worker has decided / when nothing can be read."""
+        return self._read_schema()[0]
 
     def add_speed_data(self, speed_data: Dict[str, Tuple[float, float]], now: Optional[datetime] = None,
                        aggregated_up: Optional[float] = None, aggregated_down: Optional[float] = None,
                        persist_data: Optional[Dict[str, Tuple[float, float]]] = None) -> None:
-        """Adds new per-interface speed data.
+        """Adds new per-interface speed data to the IN-MEMORY live series (mini graph, Monitor session
+        view) - what the user sees; the controller passes its spike-FILTERED rates.
 
-        ``speed_data`` feeds the in-memory live series (mini graph, Monitor session view) and is
-        what the user sees - the controller passes its spike-FILTERED rates. ``persist_data``, when
-        given, is what goes to the DB batch instead: the MEASURED rates, so history holds
-        measurements rather than the filter's substitute values (v8 step 0). Omitted, the DB gets
-        ``speed_data`` (direct callers, tests)."""
+        Nothing here is persisted any more (schema v8): history stores the exact byte deltas of every
+        poll, handed over by :meth:`add_net_sample`, never a rate. ``persist_data`` (the measured rates)
+        is accepted for call-site compatibility and ignored."""
         _now = now or datetime.now()
         self.in_memory_history.append(SpeedDataSnapshot(speeds=speed_data.copy(), timestamp=_now))
 
@@ -250,14 +383,21 @@ class WidgetState(QObject):
             
         self.aggregated_history.append(AggregatedSpeedData(upload=total_up, download=total_down, timestamp=_now))
 
-        timestamp = int(_now.timestamp())
-        max_speed = network.interface.MAX_REASONABLE_SPEED_BPS
-        
-        to_persist = speed_data if persist_data is None else persist_data
+    def add_net_sample(self, ts: float, dt_ms: float, byte_deltas: Dict[str, Tuple[float, float]],
+                       counters: Optional[Dict[str, Any]] = None,
+                       if_stats: Optional[Dict[str, Any]] = None) -> None:
+        """One poll for the v8 history: the controller's exact per-interface ``byte_deltas`` (the
+        odometer's - pre-spike-filter, clamped, capped) over the measured interval ``dt_ms`` ending at
+        wall time ``ts``, plus the raw psutil ``counters`` (err/drop deltas, counter resets) and, when
+        sampled, ``if_stats`` (link up/down, speed, duplex). An empty ``byte_deltas`` only primes the
+        writer's counter baselines. Buffered here (GUI thread) and handed to the worker - the only
+        thread that touches WriterV8 - on the 10 s persist tick."""
+        if self._read_only:
+            return
+        sample = NetSample(ts=float(ts), dt_ms=max(1, int(round(dt_ms))), byte_deltas=dict(byte_deltas),
+                           counters=counters, if_stats=if_stats)
         with self._batch_lock:
-            for interface, (up_speed, down_speed) in to_persist.items():
-                if up_speed >= network.speed.MIN_RECORDABLE_SPEED_BPS or down_speed >= network.speed.MIN_RECORDABLE_SPEED_BPS:
-                    self._db_batch.append((timestamp, interface, min(up_speed, max_speed), min(down_speed, max_speed)))
+            self._net_batch.append(sample)
 
 
     # Utilization stats are 0-100% and clamped; physical stats (power W, temperature °C, latency ms)
@@ -340,6 +480,8 @@ class WidgetState(QObject):
     def get_usage_launch_snapshot(self) -> Optional[Dict[str, Any]]:
         """The counter snapshot persisted by the PREVIOUS session ({} when there is none), or None
         while the odometer has not loaded yet (the caller retries)."""
+        if getattr(self, "_usage_reset_pending", False):
+            return None   # a reset is in flight: whether this snapshot still counts is not known yet
         if not self._usage_loaded and not self._try_load_usage():
             return None
         return self._usage_launch_snapshot
@@ -382,8 +524,38 @@ class WidgetState(QObject):
         launch snapshot). Bytes are charged to the period in which their window BEGAN: a standby
         gap or a closed-app window spanning the reset day lands in the period it started in, never
         all in the new one (which could fire an early overage alert)."""
+        if getattr(self, "_usage_reset_pending", False):
+            # Traffic after a reset request: if the reset lands, these bytes are the new total.
+            post = self._usage_post_reset
+            post[0] += max(0.0, up_bytes)
+            post[1] += max(0.0, down_bytes)
+            if counters is not None:
+                post[2] = (counters, sampled_at if sampled_at is not None else time.time(), primary)
         if not self._usage_loaded and not self._try_load_usage():
-            return  # defer until the table exists, so we don't clobber the saved total
+            # Not loaded yet - the worker is still opening (or migrating) the file and the readers are
+            # held off until it has. Never write a fresh zero over the saved total, and never drop these
+            # bytes either: on a large v7 file the upgrade takes seconds, and every poll in that window
+            # is real usage. Buffered in memory (bounded) and replayed, in order, once the row loads.
+            pend = getattr(self, "_usage_pending", None)
+            if pend is None:
+                pend = self._usage_pending = []
+            if len(pend) < WidgetState._USAGE_PENDING_MAX:
+                pend.append((up_bytes, down_bytes, counters, sampled_at, window_start, primary))
+            else:
+                last = pend[-1]   # fold the overflow into the newest entry: totals stay exact
+                pend[-1] = (last[0] + up_bytes, last[1] + down_bytes, counters, sampled_at, last[4], primary)
+            return
+        if getattr(self, "_usage_pending", None):
+            pending, self._usage_pending = self._usage_pending, []
+            for args in pending:
+                WidgetState._add_usage_loaded(self, *args)
+        WidgetState._add_usage_loaded(self, up_bytes, down_bytes, counters, sampled_at, window_start, primary)
+
+    _USAGE_PENDING_MAX = 4096
+
+    def _add_usage_loaded(self, up_bytes: float, down_bytes: float, counters: Optional[Dict[str, Any]],
+                          sampled_at: Optional[float], window_start: Optional[float],
+                          primary: Optional[str]) -> None:
         u = self._usage
         # Roll the period over BEFORE adding this poll, so a boundary-crossing poll's bytes
         # count toward the NEW period rather than being stranded at the anchor (audit #15).
@@ -420,16 +592,25 @@ class WidgetState(QObject):
             self._usage_last_persist = now
 
     def _persist_usage_now(self) -> None:
-        if not self._usage_loaded:
+        if not self._usage_loaded or getattr(self, "_usage_reset_pending", False):
+            # While a reset is in flight nothing is written: the old totals must not land after the
+            # delete (resurrecting them), and zeros must not land unless the delete succeeds.
+            # (Session end with a reset still in flight: persist_usage_final.)
             return
-        u = self._usage
+        self.db_worker.enqueue_task("persist_usage", WidgetState._usage_payload(
+            self._usage, (self._usage_live_counters, self._usage_live_sampled_at, self._usage_live_primary)))
+
+    @staticmethod
+    def _usage_payload(u: Dict[str, Any], live: Optional[Tuple[Any, Any, Any]]) -> Tuple[Any, ...]:
+        """The persist_usage tuple for odometer ``u`` paired with ``live`` = (counters, sampled_at,
+        primary) - the NIC counters that total accounts up to, or counters None."""
         snapshot_json = None
-        if self._usage_live_counters is not None:
+        counters, sampled_at, primary = live if live else (None, None, None)
+        if counters is not None:
             # Fresh boot id at every persist (not cached at start): boot_time() follows wall-clock
             # corrections, so the latest reading is the one the next launch will compare against.
             snapshot_json = usage_snapshot.encode_snapshot(
-                self._usage_live_counters, self._usage_live_sampled_at or time.time(),
-                usage_snapshot.current_boot_time(), primary=self._usage_live_primary)
+                counters, sampled_at or time.time(), usage_snapshot.current_boot_time(), primary=primary)
             if snapshot_json is None:
                 # Counters seen but no trustworthy snapshot (boot id unreadable): the total is about
                 # to advance past the STORED snapshot, so it must go - leaving it would make the next
@@ -437,9 +618,32 @@ class WidgetState(QObject):
                 snapshot_json = usage_snapshot.CLEAR_SNAPSHOT
         # 7th element: the counter snapshot, written in the SAME transaction as the total;
         # CLEAR_SNAPSHOT deletes the stored one; None (no counters seen yet) leaves it untouched.
-        self.db_worker.enqueue_task("persist_usage", (
-            u["cumulative_up"], u["cumulative_down"], u["anchor_up"], u["anchor_down"],
-            u["period_key"], int(time.time()), snapshot_json))
+        return (u["cumulative_up"], u["cumulative_down"], u["anchor_up"], u["anchor_down"],
+                u["period_key"], int(time.time()), snapshot_json)
+
+    def persist_usage_final(self) -> None:
+        """Session end: persist the odometer tail (the ~30 s throttle window). With a usage reset still
+        unanswered on this thread, BOTH outcomes are handed to the write thread, which ran the delete
+        already (FIFO) and persists the one that matches: the traffic seen since the request if the
+        reset committed, or the old total plus everything since if it failed. Never zeros-by-guess."""
+        if not getattr(self, "_usage_reset_pending", False):
+            WidgetState._persist_usage_now(self)
+            return
+        post = self._usage_post_reset
+        reset = {"cumulative_up": float(post[0]), "cumulative_down": float(post[1]),
+                 "anchor_up": 0.0, "anchor_down": 0.0,
+                 "period_key": self._compute_period_key(self.config.get("data_cap_reset_day", 1))}
+        if_failed = None
+        if self._usage_loaded:
+            kept = dict(self._usage)
+            for up, down, *_rest in self._usage_reset_stash:   # the set-aside pre-request polls
+                kept["cumulative_up"] += max(0.0, up)
+                kept["cumulative_down"] += max(0.0, down)
+            if_failed = WidgetState._usage_payload(
+                kept, (self._usage_live_counters, self._usage_live_sampled_at, self._usage_live_primary))
+        self.db_worker.enqueue_task("persist_usage_after_delete", {
+            "if_reset": WidgetState._usage_payload(reset, post[2]),
+            "if_failed": if_failed})
 
     def get_usage_this_period(self) -> Tuple[float, float]:
         """(upload_bytes, download_bytes) used since the current period's reset day."""
@@ -451,6 +655,15 @@ class WidgetState(QObject):
         u = self._usage
         return (max(0.0, u["cumulative_up"] - u["anchor_up"]),
                 max(0.0, u["cumulative_down"] - u["anchor_down"]))
+
+    def get_usage_lifetime(self) -> Optional[Tuple[float, float]]:
+        """(upload_bytes, download_bytes) the odometer has counted since it began (never reset by a
+        period rollover; only "Delete all history" with the usage option zeroes it). None until the
+        odometer has loaded."""
+        if not self._usage_loaded and not self._try_load_usage():
+            return None
+        u = self._usage
+        return (max(0.0, u["cumulative_up"]), max(0.0, u["cumulative_down"]))
 
     def get_usage_period_key(self) -> str:
         """
@@ -470,16 +683,16 @@ class WidgetState(QObject):
         lock (atomic snapshot+reset), so a concurrent GUI-thread append can't land between copy and
         clear and be lost (#6). Enqueue happens after the lock is released (the worker queue is its own
         thread-safe handoff)."""
+        if self._read_only:
+            return
         with self._batch_lock:
-            db_batch, self._db_batch = self._db_batch, []
+            net_batch, self._net_batch = self._net_batch, []
             hw_batch, self._hw_batch = self._hw_batch, []
             # Enqueued INSIDE the lock (queue.put on the unbounded worker queue never blocks), so a
             # flush from the graph-worker thread can't slip a pre-delete batch in behind a
-            # delete_all_history() that ran between the snapshot and the enqueue.
-            if db_batch:
-                self.db_worker.enqueue_task("persist_speed", db_batch)
-            if hw_batch:
-                self.db_worker.enqueue_task("persist_hardware", hw_batch)
+            # delete_all_history() that ran between the snapshot and the enqueue. Enqueued even when
+            # empty: the worker's flush also writes the app_sessions heartbeat (the coverage record).
+            self.db_worker.enqueue_task("persist_v8", (net_batch, hw_batch))
 
     def can_delete_history(self) -> bool:
         """Whether a delete request would be answered: a live (not read-only) instance whose write
@@ -500,8 +713,10 @@ class WidgetState(QObject):
           2. clear the in-memory series IN PLACE (readers take list() copies; reassigning would
              strand a reference held elsewhere), so the mini graph and the Monitor's live windows
              stop showing deleted data right away;
-          3. only if the user opted in, zero the data-usage odometer and persist the zeros AFTER the
-             delete (FIFO), so the next throttled persist can't resurrect the old totals.
+          3. only if the user opted in, reset the data-usage odometer - on disk inside the delete's own
+             transaction (WriterV8 clears usage_counter AND its counter snapshot), in memory only once
+             the delete reports success (_on_worker_history_deleted). Until then nothing about the
+             odometer is persisted; a FAILED delete leaves it exactly as it was.
 
         Not touched: settings, the latency probe's short live window (~2 min, never on disk on its
         own), and - unless ``include_usage`` - the odometer (D5: the data cap's billing source).
@@ -510,25 +725,64 @@ class WidgetState(QObject):
         if self._read_only:
             return
         with self._batch_lock:
-            self._db_batch = []
+            self._net_batch = []
             self._hw_batch = []
             self.db_worker.enqueue_task("delete_history", {"include_usage": bool(include_usage)})
         for series in (self.in_memory_history, self.aggregated_history,
                        self.cpu_history, self.gpu_history, self.ram_history):
             series.clear()
         if include_usage:
-            self._usage = {
-                "cumulative_up": 0.0, "cumulative_down": 0.0,
-                "anchor_up": 0.0, "anchor_down": 0.0,
-                "period_key": self._compute_period_key(self.config.get("data_cap_reset_day", 1)),
-            }
-            # Treat the zeros as loaded even if the lazy load hadn't run yet: the worker creates the
-            # table before it drains its queue, so this persist lands, and a later lazy load must not
-            # read back the pre-delete row.
-            self._usage_loaded = True
+            # Polls buffered while the file was still opening are PRE-reset traffic: set aside, dropped
+            # if the reset lands, restored if it fails. Everything from here on is tallied separately.
+            # (Settings disables the button until the answer, so a second request while one is in
+            # flight is not expected; if one comes, it joins the first instead of losing its stash.)
+            if not self._usage_reset_pending:
+                self._usage_reset_stash = []
+                self._usage_post_reset = [0.0, 0.0, None]
+            self._usage_reset_pending = True
+            self._usage_reset_stash += list(getattr(self, "_usage_pending", None) or [])
+            self._usage_pending = []
+        self.logger.info("Delete all history requested (include_usage=%s).", bool(include_usage))
+
+    def _on_worker_history_deleted(self, status: str) -> None:
+        """The delete's answer (GUI thread). Settles a pending odometer reset: success -> the odometer
+        restarts from the traffic seen since the request; failure -> nothing changes."""
+        if not getattr(self, "_usage_reset_pending", False):
+            return
+        self._usage_reset_pending = False
+        stash, self._usage_reset_stash = self._usage_reset_stash, []
+        post, self._usage_post_reset = self._usage_post_reset, [0.0, 0.0, None]
+        if status == DatabaseWorker.DELETE_FAILED:
+            # Nothing was deleted, the usage row included: put the set-aside polls back. Replayed
+            # WITHOUT their counters - they are older than the counters the total already pairs with.
+            if stash:
+                if self._usage_loaded:
+                    for up, down, _c, _t, ws, _p in stash:
+                        WidgetState._add_usage_loaded(self, up, down, None, None, ws, None)
+                else:
+                    self._usage_pending = stash + list(self._usage_pending)
             self._persist_usage_now()
             self._usage_last_persist = time.time()
-        self.logger.info("Delete all history requested (include_usage=%s).", bool(include_usage))
+            self.logger.info("Delete all history failed; the data-usage counter was left unchanged.")
+            return
+        # The delete committed, usage_counter and its snapshot with it. Pre-reset bytes (loaded,
+        # buffered or set aside) are gone; what moved since the request starts the new count.
+        self._usage = {
+            "cumulative_up": float(post[0]), "cumulative_down": float(post[1]),
+            "anchor_up": 0.0, "anchor_down": 0.0,
+            "period_key": self._compute_period_key(self.config.get("data_cap_reset_day", 1)),
+        }
+        self._usage_pending = []
+        self._usage_loaded = True              # a later lazy load must not read anything back
+        self._usage_launch_snapshot = {}       # nothing from before the reset is reconciled
+        if post[2] is not None:
+            self._usage_live_counters, self._usage_live_sampled_at, self._usage_live_primary = post[2]
+        else:
+            # No counters since the request: none pair with the new total. The snapshot on disk was
+            # deleted with the row, and persisting with no counters leaves it deleted.
+            self._usage_live_counters = self._usage_live_sampled_at = self._usage_live_primary = None
+        self._persist_usage_now()
+        self._usage_last_persist = time.time()
 
     def flush_and_wait(self, timeout: float = 2.0) -> None:
         """
@@ -607,6 +861,14 @@ class WidgetState(QObject):
         return self.history_reader.summarize_network(direction, start_time, end_time, interface_name,
                                                      poll_interval)
 
+    def get_network_hourly_profile(self, direction: str, start_time: datetime, end_time: datetime,
+                                   interface_name: Optional[str] = None) -> Dict[int, float]:
+        """{local hour: average B/s} for 'download' or 'upload' over [start,end] - the basis for the
+        Stats sheet's busiest / quietest hour (averages, never the graph's per-bucket peaks)."""
+        if not getattr(self, 'db_worker', None):
+            return {}
+        return self.history_reader.network_hourly_profile(direction, start_time, end_time, interface_name)
+
 
     def get_total_bandwidth_for_period(self, start_time: Optional[datetime], end_time: Optional[datetime], interface_name: Optional[str] = None) -> Tuple[float, float]:
         """
@@ -616,9 +878,21 @@ class WidgetState(QObject):
         if not hasattr(self, 'db_worker') or not self.db_worker:
             return 0.0, 0.0
 
-        # The raw tier has no stored capture interval: the reader scales it by the current poll rate.
+        # v8 ignores the poll rate (every raw row carries its dt_ms); a v7 file read while an upgrade
+        # is deferred scales its raw tier by it.
         poll_interval = resolve_poll_interval_seconds(self.config.get("update_rate", 1.0))
         return self.history_reader.total_bandwidth(start_time, end_time, interface_name, poll_interval)
+
+    def get_history_volume_for_period(self, start_time: Optional[datetime], end_time: Optional[datetime],
+                                      interface_name: Optional[str] = None) -> VolumeResult:
+        """get_total_bandwidth_for_period with its provenance (decision D5): ``reconstructed`` is True
+        when any part was estimated from stored rates (history recorded before 2.2), so the UI labels
+        the number "recorded history" rather than presenting it as exact."""
+        if not hasattr(self, 'db_worker') or not self.db_worker:
+            return VolumeResult(0.0, 0.0, 0.0, 0.0, False)
+        poll_interval = resolve_poll_interval_seconds(self.config.get("update_rate", 1.0))
+        return self.history_reader.volume(start_time, end_time or datetime.now(), interface_name,
+                                          poll_interval)
 
 
     def get_in_memory_speed_history(self) -> List[SpeedDataSnapshot]:
@@ -698,6 +972,15 @@ class WidgetState(QObject):
         return self.history_reader.earliest_timestamp()
 
 
+    def persist_essentials(self, timeout: float = 2.0) -> None:
+        """Windows is ending the session: queue the last history batch and the odometer tail, and wait
+        (bounded by ``timeout``) for the database thread to write them. Stops nothing - the full
+        cleanup() may never get to run before the process is ended. A data-usage reset still waiting
+        for its delete's answer is settled by the write thread (persist_usage_final)."""
+        self.flush_batch()
+        self.persist_usage_final()
+        self.flush_and_wait(timeout=timeout)
+
     def cleanup(self) -> None:
         """Flushes final data and cleanly stops the database worker thread."""
         self.logger.info("Cleaning up WidgetState...")
@@ -706,21 +989,38 @@ class WidgetState(QObject):
         self.flush_batch()
         # Persist the final odometer tail so the ~30s throttle window isn't lost on exit
         # (no-op if the counter was never loaded). The worker drains this before stopping.
-        self._persist_usage_now()
+        WidgetState.persist_usage_final(self)
 
-        # Close persistent read connections
+        # Read connections. Never close another thread's connection from here: closing a sqlite3
+        # connection while its thread is mid-query is undefined behaviour (segfaulted 4/4 in a plain
+        # 3.13 repro; the lucky outcome was "Cannot operate on a closed database"), and quitting with
+        # the Monitor open hit exactly that. So: refuse new reads, close this thread's own connection,
+        # interrupt any statement still running elsewhere, and leave those connections to their owners
+        # (a worker closes its own as it exits - release_read_conn). The widget closes the Monitor and
+        # joins its graph worker before calling this; anything still registered is reclaimed at exit.
         with self._read_conns_lock:
-            for tid, (conn, _seen) in self._read_conns.items():
-                try:
-                    conn.close()
-                except:
-                    pass
-            self._read_conns.clear()
+            self._reads_closed = True
+            own = self._read_conns.pop(threading.get_ident(), None)
+        if own is not None:
+            try:
+                own[0].close()
+            except Exception:
+                pass
+        self.interrupt_reads()
 
         self.db_worker.stop()
-        # Only wait for the thread if it was actually running
+        # Only wait for the thread if it was actually running. Usually it drains in well under a
+        # second, but a quit right after start can land inside the v7 -> v8 migration or the first
+        # maintenance pass; the worker skips what it can once stop is set, and the wait is bounded.
+        # Never let the QThread be destroyed while it runs (Qt aborts the process): past the bound it
+        # is detached, and monitor.py exits hard - a kill the migration and the writer are tested for.
         if self.db_worker.isRunning():
-            self.db_worker.wait(2000) # Wait up to 2 seconds for the thread to finish
+            if not self.db_worker.wait(int(constants.timeouts.DB_SHUTDOWN_WAIT_MS)):
+                from netspeedtray.core.database import detach_running_worker
+                self.logger.warning("The database thread is still busy after %d ms; exiting without "
+                                    "waiting for it (an interrupted upgrade resumes at the next start).",
+                                    int(constants.timeouts.DB_SHUTDOWN_WAIT_MS))
+                detach_running_worker(self.db_worker)
 
 
     def _get_max_history_points(self) -> int:
@@ -754,7 +1054,11 @@ class WidgetState(QObject):
     def apply_config(self, config: Dict[str, Any]) -> None:
         """Apply updated configuration and adjust state."""
         self.logger.debug("Applying new configuration to WidgetState...")
+        old_poll = self._poll_ms()
         self.config = config.copy()
+        if not self._read_only and self._poll_ms() != old_poll:
+            # Only the writer's gap threshold depends on it; stored bytes never do.
+            self.db_worker.enqueue_task("set_poll_ms", self._poll_ms())
         new_max_points = self._get_max_history_points()
         if new_max_points != self.max_history_points:
             self.max_history_points = new_max_points

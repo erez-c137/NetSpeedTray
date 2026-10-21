@@ -36,6 +36,7 @@ def _make_install(root: Path, name: str = "NetSpeedTray", *, with_exe: bool = Tr
     if with_exe:
         (d / ua.APP_EXE).write_text("old", encoding="utf-8")
     (d / "_internal" / "data.bin").write_text("payload", encoding="utf-8")
+    (d / ua.PORTABLE_MARKER).write_text("portable\n", encoding="utf-8")   # as the release ZIP ships
     return d
 
 
@@ -46,6 +47,7 @@ def _make_staged(root: Path, name: str = "staged", *, with_exe: bool = True) -> 
         (d / ua.APP_EXE).write_text("new", encoding="utf-8")
     # A nested payload, so a test can tell a whole-tree copy from just the EXE landing.
     (d / "_internal" / "data.bin").write_text("new-payload", encoding="utf-8")
+    (d / ua.PORTABLE_MARKER).write_text("portable\n", encoding="utf-8")
     return d
 
 
@@ -299,10 +301,12 @@ def test_backup_paths_do_not_collide(tmp_path):
 
 def test_sweep_removes_old_backups_but_spares_recent_ones(tmp_path):
     install = _make_install(tmp_path)
-    stale = tmp_path / ("NetSpeedTray" + ua._BACKUP_SUFFIX + "1")
+    (install / ua.APP_EXE).write_bytes(b"MZ")                      # a whole, real-looking install
+    (install / "_internal" / "base_library.zip").write_bytes(b"PK")
+    stale = tmp_path / ("NetSpeedTray" + ua._LEGACY_BACKUP_SUFFIX + "1790000001")
     stale.mkdir()
     os.utime(stale, (time.time() - 3600, time.time() - 3600))
-    fresh = tmp_path / ("NetSpeedTray" + ua._BACKUP_SUFFIX + "2")
+    fresh = tmp_path / ("NetSpeedTray" + ua._LEGACY_BACKUP_SUFFIX + "1790000002")
     fresh.mkdir()
 
     removed = ua.sweep_old_backups(str(install))
@@ -341,7 +345,7 @@ def test_cli_refuses_and_reports_when_validation_fails(tmp_path):
     assert victim.is_dir()
 
 
-def test_cli_applies_a_valid_update(tmp_path, monkeypatch):
+def test_cli_applies_a_valid_update(tmp_path, monkeypatch, marker):
     install = _make_install(tmp_path)
     staged = _make_staged(tmp_path)
     launched = {}
@@ -353,7 +357,11 @@ def test_cli_applies_a_valid_update(tmp_path, monkeypatch):
     assert code == 0
     assert (install / ua.APP_EXE).read_text(encoding="utf-8") == "new"
     assert launched["exe"] == os.path.join(str(install), ua.APP_EXE)
-    assert not list(tmp_path.glob("*" + ua._BACKUP_SUFFIX + "*")), "the backup should be cleaned up"
+    backups = list(tmp_path.glob("*" + ua._BACKUP_SUFFIX + "*"))
+    assert len(backups) == 1, "the previous version is the rollback until the new one has started"
+    records = marker.parent / ua._BACKUPS_RECORD_NAME
+    assert any(e.get("kind") == "backup" for e in json.loads(records.read_text(encoding="utf-8"))), (
+        "the backup must be recorded for the new version's janitor")
 
 
 def test_apply_refuses_if_the_old_process_never_exits(tmp_path, monkeypatch):

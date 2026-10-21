@@ -12,20 +12,20 @@ from datetime import datetime, timedelta
 import pytest
 
 from netspeedtray import constants
-from netspeedtray.core.database import DatabaseWorker
+from netspeedtray.tests.legacy_v7_worker import LegacyV7Worker
 
 
 def test_bucket_floored_cutoff_floors_to_boundary():
     now = datetime.fromtimestamp(1_700_000_000 + 86400 + 37)   # 37s past a minute boundary, +24h
-    minute = DatabaseWorker._bucket_floored_cutoff(now, timedelta(hours=24), 60)
-    hour = DatabaseWorker._bucket_floored_cutoff(now, timedelta(days=1), 3600)
+    minute = LegacyV7Worker._bucket_floored_cutoff(now, timedelta(hours=24), 60)
+    hour = LegacyV7Worker._bucket_floored_cutoff(now, timedelta(days=1), 3600)
     assert minute % 60 == 0 and hour % 3600 == 0          # always on a bucket edge
     raw_second = int((now - timedelta(hours=24)).timestamp())
     assert minute <= raw_second and raw_second - minute < 60   # floored DOWN, by < one bucket
 
 
 def _fresh_worker(tmp_path):
-    w = DatabaseWorker(tmp_path / "agg.db")
+    w = LegacyV7Worker(tmp_path / "agg.db")
     w._initialize_connection()
     w._check_and_create_schema()
     return w

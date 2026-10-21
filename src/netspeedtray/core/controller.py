@@ -79,6 +79,9 @@ class StatsController(QObject):
     # Network identity (Wi-Fi band / SSID). object carries a NetworkIdentity (or None) so the widget
     # can render the band tag and detect the Location-gated SSID case. Sub-polled ~5s, not per tick.
     network_identity_updated = pyqtSignal(object)
+    # The routing (primary) interface changed - a network switch. The latency probe re-resolves its
+    # cached default gateway on it.
+    primary_interface_changed = pyqtSignal()
 
 
     def __init__(self, config: Dict[str, Any], widget_state: 'WidgetState',
@@ -95,6 +98,12 @@ class StatsController(QObject):
         self.last_check_time: float = 0.0
         self.last_interface_counters: Dict[str, Any] = {}
         self.current_speed_data: Dict[str, Tuple[float, float]] = {}
+        # The last poll's rates as ONE immutable value (the metrics endpoint's source, read on the GUI
+        # thread): (display per-interface, measured per-interface, display aggregate (up, down),
+        # measured aggregate (up, down)), bytes/s. Replaced whole, never mutated; None before the first
+        # rate. Zeroed whenever the widget is shown 0 (re-prime / gap), so it never outlives the display.
+        self.live_rates: Optional[Tuple[Dict[str, Tuple[float, float]], Dict[str, Tuple[float, float]],
+                                        Tuple[float, float], Tuple[float, float]]] = None
         self.primary_interface: Optional[str] = None
         self.last_primary_check_time: float = 0.0
         self.repriming_needed: int = 0
@@ -143,6 +152,8 @@ class StatsController(QObject):
             self.vram_info_updated.connect(self.view.update_vram_info)
         if hasattr(self.view, 'update_network_identity'):
             self.network_identity_updated.connect(self.view.update_network_identity)
+        if hasattr(self.view, 'invalidate_latency_gateway'):
+            self.primary_interface_changed.connect(self.view.invalidate_latency_gateway)
 
         self.logger.debug("View set and signals connected.")
 
@@ -153,7 +164,8 @@ class StatsController(QObject):
         """
         # 1. Handle Network
         if 'network' in stats:
-            self._handle_network_counters(stats['network'], stats.get('network_sampled_at'))
+            self._handle_network_counters(stats['network'], stats.get('network_sampled_at'),
+                                          stats.get('network_if_stats'))
 
         # Forward the network identity (band/SSID) whenever the thread sub-polled it (present-key
         # emits, like temp/power). The payload is a NetworkIdentity or None.
@@ -243,11 +255,18 @@ class StatsController(QObject):
 
 
     def _handle_network_counters(self, current_counters: Dict[str, Any],
-                                 sample_time: Optional[Tuple[float, float]] = None) -> None:
-        """Processes raw network counters: the data-usage odometer first, then the rate display.
+                                 sample_time: Optional[Tuple[float, float]] = None,
+                                 if_stats: Optional[Dict[str, Any]] = None) -> None:
+        """Processes raw network counters: the data-usage odometer and the v8 history first, then
+        the rate display.
 
         `sample_time` is (time.monotonic(), time.time()) taken by the monitor thread right after it
-        read the counters; it falls back to the handling time (direct callers, tests).
+        read the counters; it falls back to the handling time (direct callers, tests). `if_stats` is
+        psutil.net_if_stats() when the monitor thread sampled it this poll (a slow sub-cadence).
+
+        History (schema v8) stores the SAME exact byte deltas the odometer counts, per interface, over
+        the measured sampling span - never a rate, so neither the spike filter nor the poll rate can
+        reach it, and a gap's bytes are kept (the writer flags the row FLAG_GAP).
 
         Order matters. The odometer counts the exact counter delta of EVERY poll, BEFORE the gap /
         re-prime gate: a long gap (Modern Standby, the app suspended) used to discard the whole gap
@@ -258,6 +277,7 @@ class StatsController(QObject):
         sample_mono, sample_wall = sample_time if sample_time else (current_time, time.time())
 
         if not current_counters:
+            self._set_live_rates_zero()
             self.display_speed_updated.emit(0.0, 0.0)
             return
 
@@ -265,6 +285,10 @@ class StatsController(QObject):
             self.last_check_time = current_time
             self.last_interface_counters = current_counters
             self._last_sample_time = (sample_mono, sample_wall)
+            if self.widget_state:
+                # No interval yet: this only primes the history writer's counter baselines.
+                self.widget_state.add_net_sample(sample_wall, 1, {}, counters=current_counters,
+                                                 if_stats=if_stats)
             if self._launch_counters is None and not self._launch_reconciled:
                 self._launch_counters = (current_counters, sample_wall)
                 self._maybe_reconcile_launch()
@@ -296,21 +320,29 @@ class StatsController(QObject):
             self.widget_state.add_usage_bytes(agg_up_bytes, agg_down_bytes,
                                               counters=current_counters, sampled_at=sample_wall,
                                               window_start=last_wall, primary=self._odometer_primary())
+        if self.widget_state:
+            # v8 history: every interface's exact delta over the measured span (ending at this sample),
+            # gap or not - the writer flags a long interval rather than dropping its bytes.
+            self.widget_state.add_net_sample(sample_wall, sample_elapsed * 1000.0, byte_deltas,
+                                             counters=current_counters, if_stats=if_stats)
         self._last_sample_time = (sample_mono, sample_wall)
 
         # --- 2. The rate display: re-prime across gaps ------------------------------------------
-        validity_threshold = max(10.0, update_interval * 5.0)
+        _spd = constants.network.speed
+        validity_threshold = max(_spd.RATE_VALIDITY_MIN_SECONDS, update_interval * _spd.RATE_VALIDITY_POLL_MULTIPLE)
 
         if time_diff > validity_threshold:
             self.repriming_needed = 2
             self.last_check_time = current_time
             self.last_interface_counters = current_counters
+            self._set_live_rates_zero()
             self.display_speed_updated.emit(0.0, 0.0)
             return
 
         if self.repriming_needed > 0:
             self.last_check_time = current_time
             self.last_interface_counters = current_counters
+            self._set_live_rates_zero()
             self.display_speed_updated.emit(0.0, 0.0)
             self.repriming_needed -= 1
             return
@@ -383,6 +415,8 @@ class StatsController(QObject):
                 self.recent_speeds[name].append((up_speed_bps, down_speed_bps))
 
         agg_upload, agg_download = self._aggregate_for_display(self.current_speed_data, resolve_primary=False)
+        self.live_rates = (dict(self.current_speed_data), measured_speed_data, (agg_upload, agg_download),
+                           self._aggregate_for_display(measured_speed_data, resolve_primary=False))
 
         if self.current_speed_data and self.widget_state:
             self.widget_state.add_speed_data(self.current_speed_data, aggregated_up=agg_upload,
@@ -395,6 +429,25 @@ class StatsController(QObject):
 
         self.last_check_time = current_time
         self.last_interface_counters = current_counters
+
+
+    def _set_live_rates_zero(self) -> None:
+        """The widget is about to show 0 (re-prime / gap / no counters): so does the endpoint."""
+        self.live_rates = ({}, {}, (0.0, 0.0), (0.0, 0.0))
+
+
+    def monitored_interface_names(self, per_interface: Dict[str, Any]) -> set:
+        """The interfaces of ``per_interface`` the current mode aggregates - the same selection as
+        _aggregate_for_display, as names (the metrics endpoint's per-interface series)."""
+        mode = self.config.get("interface_mode", "auto")
+        names = set(per_interface)
+        if mode == "selected":
+            return names & set(self.config.get("selected_interfaces", []))
+        if mode == "auto":
+            return names & {self.primary_interface} if self.primary_interface else set()
+        if mode == "all_physical":
+            return names & self._physical_names(per_interface)
+        return names
 
 
     def _odometer_byte_deltas(self, current_counters: Dict[str, Any],
@@ -597,6 +650,10 @@ class StatsController(QObject):
                 "Primary network interface changed: %s -> %s",
                 stable_pseudonym(previous), stable_pseudonym(self.primary_interface),
             )
+            try:
+                self.primary_interface_changed.emit()
+            except Exception:
+                pass
 
 
     def current_primary_interface(self) -> Optional[str]:
@@ -637,6 +694,7 @@ class StatsController(QObject):
                     (self.ram_info_updated, 'update_ram_info'),
                     (self.vram_info_updated, 'update_vram_info'),
                     (self.network_identity_updated, 'update_network_identity'),
+                    (self.primary_interface_changed, 'invalidate_latency_gateway'),
                 ):
                     if hasattr(self.view, slot):
                         sig.disconnect(getattr(self.view, slot))

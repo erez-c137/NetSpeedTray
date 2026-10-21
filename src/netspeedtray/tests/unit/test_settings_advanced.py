@@ -27,12 +27,11 @@ def test_keep_data_snaps_to_closest_valid_retention(page):
     assert page.get_settings()["keep_data"] == 31
 
 
-def test_advanced_round_trips_hover_and_pause_toggles(page):
-    page.load_settings({"show_usage_on_hover": False, "show_hover_tips": False, "pause_in_menu": True})
+def test_hover_and_pause_toggles_left_the_advanced_page(page):
+    """Moved to General > Interaction (2.2 IA pass, change 3) - see test_settings_ia_moves.py."""
     out = page.get_settings()
-    assert out["show_usage_on_hover"] is False
-    assert out["show_hover_tips"] is False
-    assert out["pause_in_menu"] is True
+    assert not {"show_usage_on_hover", "show_hover_tips", "pause_in_menu"} & set(out)
+    assert not any(hasattr(page, a) for a in ("show_usage_hover", "show_hover_tips", "pause_in_menu"))
 
 
 @pytest.fixture
@@ -123,10 +122,25 @@ def test_delete_history_with_usage_rearms_cap_alerts(dialog, monkeypatch):
     dialog.original_config["usage_alert_state"] = "2026-10-01|100|total::80"
     dialog._delete_all_history()
     dialog.parent_widget.widget_state.delete_all_history.assert_called_once_with(include_usage=True)
+    # Re-armed only once the delete has succeeded (a failed delete keeps the counter, so its alerts).
+    dialog.parent_widget.update_config.assert_not_called()
+    assert dialog.get_settings()["usage_alert_state"] == "2026-10-01|100|total::80"
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: None)
+    dialog._on_history_deleted("done")
     dialog.parent_widget.update_config.assert_called_with({"usage_alert_state": ""})
     # Neither Save (config) nor Cancel (original_config) may restore the stale alert state.
     assert dialog.get_settings()["usage_alert_state"] == ""
     assert dialog.original_config["usage_alert_state"] == ""
+
+
+def test_a_failed_delete_with_usage_keeps_the_cap_alert_state(dialog, monkeypatch):
+    monkeypatch.setattr(dialog, "_confirm_delete_history", lambda: True)
+    dialog.config["usage_alert_state"] = "2026-10-01|100|total::80"
+    dialog._delete_all_history()
+    monkeypatch.setattr(QMessageBox, "critical", lambda *a, **k: None)
+    dialog._on_history_deleted("failed")
+    dialog.parent_widget.update_config.assert_not_called()
+    assert dialog.get_settings()["usage_alert_state"] == "2026-10-01|100|total::80"
 
 
 def test_delete_confirmation_defaults_to_safe_choices(dialog, monkeypatch):

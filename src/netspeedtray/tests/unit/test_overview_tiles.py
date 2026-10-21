@@ -132,8 +132,287 @@ def test_reload_window_passes_the_configured_poll(q_app):
 
     ov = OverviewTab(_MW2(), _cfg(update_rate=5.0), I18nStrings("en_US"))
     ov.isVisible = lambda: True          # bypass the visibility guard without show() (no feed thread)
+    try:
+        ov._reload_window()
+        _spin(lambda: ov._win_summ is not None)   # the reads run on the tab's reader thread
+        assert captured and all(p == 5.0 for p in captured)
+    finally:
+        ov.teardown()
+
+
+def _spin(cond, timeout: float = 5.0) -> None:
+    """Spin the GUI event loop until ``cond()`` holds (the reader thread's result is a queued signal)."""
+    import time
+    from PyQt6.QtWidgets import QApplication
+    deadline = time.monotonic() + timeout
+    while not cond() and time.monotonic() < deadline:
+        QApplication.processEvents()
+        time.sleep(0.005)
+    assert cond(), "timed out waiting for the Overview's reader thread"
+
+
+class _HeldWS(_WS):
+    """Records the thread of every history read. The i-th get_speed_history call (one per window
+    load) waits on ``holds[i]`` when there is one; the download it returns is the window's span in
+    seconds, so a test can tell which range a result was read for."""
+    def __init__(self, holds=()):
+        import threading
+        self.holds = list(holds)
+        self.threads = []
+        self.speed_calls = 0
+        self.interrupted = []
+        self._lock = threading.Lock()
+
+    def _note(self):
+        import threading
+        with self._lock:
+            self.threads.append(threading.get_ident())
+
+    def get_speed_history(self, start, end, iface, resolution='auto', **kwargs):
+        self._note()
+        with self._lock:
+            i = self.speed_calls
+            self.speed_calls += 1
+        if i < len(self.holds):
+            self.holds[i].wait(3.0)
+        span = (end - start).total_seconds()
+        return [(end, 1.0, span), (end, 1.0, span)]
+
+    def get_hardware_history(self, stat, start, end):
+        self._note()
+        return super().get_hardware_history(stat, start, end)
+
+    def summarize_network(self, *a):
+        self._note()
+        return super().summarize_network(*a)
+
+    def summarize_hardware(self, *a):
+        self._note()
+        return super().summarize_hardware(*a)
+
+    def get_earliest_data_timestamp(self):
+        self._note()
+        return datetime(2026, 1, 1)
+
+    def get_history_volume_for_period(self, start, end, iface=None):
+        from netspeedtray.core.db.history_reader import VolumeResult
+        self._note()
+        self.volume_calls = getattr(self, "volume_calls", 0) + 1
+        return VolumeResult(1e9, 2e9, 0.0, 0.0, False)
+
+    def interrupt_reads(self, thread_id=None):
+        self.interrupted.append(thread_id)
+        for h in self.holds:
+            h.set()
+
+
+def _overview_on(ws, period=2, session_start=None, **cfg):
+    class _MWh(_MW):
+        widget_state = ws
+        session_start_time = session_start
+    ov = OverviewTab(_MWh(), _cfg(history_period_slider_value=period, **cfg), I18nStrings("en_US"))
+    ov.isVisible = lambda: True          # bypass the visibility guard without show()
+    return ov
+
+
+def test_window_reads_run_off_the_gui_thread(q_app):
+    """Beta checkup follow-up: _reload_window ran ~10 history reads on the GUI thread every 6 s (up to
+    ~1.3 s per reload on a 26 MB v8 DB). They must run on the reader thread; until the result lands
+    the hero says it is reading instead of showing an empty avg/peak, and the strip claims nothing."""
+    import threading
+    gui = threading.get_ident()
+    ws = _HeldWS()
+    ov = _overview_on(ws)
+    try:
+        ov._reload_window()
+        assert gui not in ws.threads, "a history read ran on the GUI thread"
+        ov._render()
+        assert ov._hero._sub.text() == "Reading history…"
+        assert ov._connection_health_html(_MW()) == ""
+        _spin(lambda: ov._win_summ is not None)
+        assert ws.threads and gui not in ws.threads, "a history read ran on the GUI thread"
+        # ...and the tiles get the same figures the synchronous reload produced.
+        assert ov._series["down"] == [86400.0, 86400.0] and ov._series["cpu"] == [42.0]
+        assert ov._win_summ["cpu"].max == 42.0 and ov._latency_events is not None
+        assert "avg" in ov._hero._sub.text() and "Reading" not in ov._hero._sub.text()
+    finally:
+        ov.teardown()
+    assert ov._reader_thread is None
+
+
+def test_reloads_coalesce_while_one_is_in_flight(q_app):
+    """The 6 s timer, a show and a range change can all ask for a reload while a slow one runs: they
+    must not pile up behind it - one in flight, at most one rerun after it."""
+    import threading
+    hold = threading.Event()
+    ws = _HeldWS(holds=[hold])
+    ov = _overview_on(ws)
+    try:
+        ov._reload_window()
+        _spin(lambda: ws.speed_calls == 1)
+        for _ in range(3):
+            ov._reload_window()
+        assert ws.speed_calls == 1, "a reload started while another was in flight"
+        hold.set()
+        _spin(lambda: ws.speed_calls == 2)        # exactly one rerun for the three requests...
+        for _ in range(50):
+            q_app.processEvents()
+        assert ws.speed_calls == 2                # ...and nothing more queued behind it
+    finally:
+        ov.teardown()
+
+
+def test_a_result_for_the_old_range_is_dropped(q_app):
+    """The range changes while the old range's read is running: its late result must never be
+    painted under the new range's label - the placeholder stays until the new range's read lands."""
+    import threading
+    holds = [threading.Event(), threading.Event()]
+    ws = _HeldWS(holds=holds)
+    ov = _overview_on(ws)
+    try:
+        ov._reload_window()                       # 24 hours, held
+        _spin(lambda: ws.speed_calls == 1)
+        ov._on_period_changed(7)                  # -> 1 hour
+        assert ov._win_summ is None and ov._series == {}
+        holds[0].set()                            # the 24 h result lands now...
+        _spin(lambda: ws.speed_calls == 2)        # ...and the coalesced 1 h reload has started
+        q_app.processEvents()
+        assert ov._win_summ is None and ov._series == {}, "the old range's result was applied"
+        holds[1].set()
+        _spin(lambda: ov._win_summ is not None)
+        assert ov._series["down"] == [3600.0, 3600.0]
+    finally:
+        ov.teardown()
+
+
+def test_a_result_landing_after_hide_is_dropped(q_app):
+    import threading
+    from PyQt6.QtGui import QHideEvent
+    hold = threading.Event()
+    ws = _HeldWS(holds=[hold])
+    ov = _overview_on(ws)
+    try:
+        ov._reload_window()
+        _spin(lambda: ws.speed_calls == 1)
+        ov.hideEvent(QHideEvent())
+        hold.set()
+        for _ in range(50):
+            q_app.processEvents()
+        assert ov._win_summ is None and ov._series == {}
+        assert ws.speed_calls == 1                # and no rerun while hidden
+    finally:
+        ov.teardown()
+
+
+def test_closing_mid_load_drops_the_result_and_interrupts_at_once(q_app, monkeypatch):
+    """The Monitor closes while a reload runs: the query is interrupted straight away (no
+    GRAPH_THREAD_QUIT_WAIT_MS of blocked UI - stretched to 5 s here so the bound is timing-proof),
+    the reader thread is stopped, and the late result never reaches the tab."""
+    import threading
+    import time
+    from netspeedtray import constants
+    monkeypatch.setattr(constants.timeouts, "GRAPH_THREAD_QUIT_WAIT_MS", 5000)
+    hold = threading.Event()
+    ws = _HeldWS(holds=[hold])
+    ov = _overview_on(ws)
     ov._reload_window()
-    assert captured and all(p == 5.0 for p in captured)
+    _spin(lambda: ws.speed_calls == 1 and getattr(ov, "_reader_ident", None) is not None)
+    reader, stale_seq = ov._reader_ident, ov._load_seq
+    t0 = time.perf_counter()
+    ov.teardown()
+    assert time.perf_counter() - t0 < 2.5, "close waited for a result it discards"
+    assert ws.interrupted == [reader]
+    assert ov._reader_thread is None
+    for _ in range(20):
+        q_app.processEvents()
+    assert ov._win_summ is None and ov._series == {}
+    # A result carrying the pre-close sequence (queued before the disconnect) is ignored too.
+    ov._on_window_loaded(stale_seq, ({"down": [1.0]}, {}, {}, None))
+    assert ov._win_summ is None and ov._series == {}
+
+
+
+def test_a_same_range_reload_keeps_the_figures_on_screen(q_app):
+    """Review: the periodic 6 s reload (same range) must not flash the placeholder - the last
+    figures stay up while the next read runs, and are replaced only when it lands."""
+    import threading
+    holds = [threading.Event(), threading.Event()]
+    holds[0].set()                                # the first load goes straight through
+    ws = _HeldWS(holds=holds)
+    ov = _overview_on(ws)
+    try:
+        ov._reload_window()
+        _spin(lambda: ov._win_summ is not None)
+        ov._reload_window()                       # the timer's reload, held
+        _spin(lambda: ws.speed_calls == 2)
+        ov._render()                              # the 1 Hz tick meanwhile
+        assert ov._win_summ is not None and ov._series["down"] == [86400.0, 86400.0]
+        assert "Reading" not in ov._hero._sub.text() and "avg" in ov._hero._sub.text()
+        holds[1].set()
+        _spin(lambda: not ov._load_busy)
+        assert ov._win_summ is not None
+    finally:
+        ov.teardown()
+
+
+def test_hide_then_show_mid_read_ends_with_data(q_app):
+    """Hidden while a read runs (its result is dropped), shown again before it lands: the tab must
+    end up with the figures, not stuck on the placeholder."""
+    import threading
+    from PyQt6.QtGui import QHideEvent, QShowEvent
+    hold = threading.Event()
+    ws = _HeldWS(holds=[hold])
+    ov = _overview_on(ws)
+    ov._busiest.start = lambda: None             # no per-app sampler in a unit test
+    try:
+        ov._reload_window()
+        _spin(lambda: ws.speed_calls == 1)
+        ov.hideEvent(QHideEvent())
+        ov.showEvent(QShowEvent())
+        hold.set()
+        _spin(lambda: ov._win_summ is not None)
+        assert ws.speed_calls == 2 and ov._series["down"] == [86400.0, 86400.0]
+        assert "Reading" not in ov._hero._sub.text()
+    finally:
+        ov.teardown()
+
+
+def test_session_volume_and_earliest_sample_are_read_off_the_gui_thread(q_app):
+    """Review: the strip's session volume was read on every 1 Hz render, and All / System uptime read
+    the earliest stored sample (plus a batch flush) on the GUI thread on every reload. Both now come
+    from the reader thread, and the render reads nothing."""
+    import threading
+    from datetime import timedelta
+    gui = threading.get_ident()
+    ws = _HeldWS()
+    ov = _overview_on(ws, period=5, session_start=datetime.now() - timedelta(minutes=5))   # All
+    try:
+        ov._reload_window()
+        _spin(lambda: ov._win_summ is not None)
+        assert gui not in ws.threads, "a history read ran on the GUI thread"
+        reads = len(ws.threads)
+        for _ in range(3):
+            ov._render()                          # three 1 Hz ticks
+        assert len(ws.threads) == reads, "the 1 Hz render read the DB"
+        assert "2.0 GB" in ov._session_lbl.text(), ov._session_lbl.text()
+        # The range really starts at the earliest stored sample (span = now - 2026-01-01).
+        assert ov._series["down"][0] > 86400.0 * 30
+    finally:
+        ov.teardown()
+
+
+def test_a_failed_session_copy_does_not_leave_the_placeholder_up(q_app):
+    class _BadSessionWS(_HeldWS):
+        def get_aggregated_speed_history(self):
+            raise RuntimeError("deque mutated during iteration")
+    ov = _overview_on(_BadSessionWS())
+    ov._period_index = 0                           # Session (a saved 0 reads back as the 24 h default)
+    try:
+        ov._reload_window()
+        assert ov._win_summ is not None
+        assert "Reading" not in ov._hero._sub.text()
+    finally:
+        ov.teardown()
 
 
 def test_context_right_prefers_true_system_power(q_app):

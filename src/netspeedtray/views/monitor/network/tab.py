@@ -122,11 +122,12 @@ class NetworkTab(QWidget):
         from netspeedtray.views.monitor.connection_check import open_connection_check
         open_connection_check(self._main_widget, self._config, self._i18n, parent=self.window())
 
-    def _on_totals(self, up_bytes: float, down_bytes: float, period_key: str) -> None:
+    def _on_totals(self, up_bytes: float, down_bytes: float, period_key: str,
+                   reconstructed: bool = False) -> None:
         # Update the numbers (+ the window label) only. The pills are the period's source of truth -
         # syncing them from a totals emit would let a late reply flip the user's selection.
         try:
-            self._header.set_totals(up_bytes, down_bytes, period_key)
+            self._header.set_totals(up_bytes, down_bytes, period_key, reconstructed=reconstructed)
         except Exception:
             pass
 

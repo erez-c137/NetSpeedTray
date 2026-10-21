@@ -2,7 +2,7 @@
 "Data usage" settings section - the data-cap feature's in-settings home (Network page, 2.0 IA).
 
 A header-toggle SettingExpander (the master toggle == data_cap_enabled) over the cap / reset-day
-/ count / alerts controls. Mirrors the interim tray DataCapDialog so both write the same keys.
+/ count / alerts controls. The only place the cap is configured (the interim tray dialog is gone).
 """
 from typing import Any, Callable, Dict
 

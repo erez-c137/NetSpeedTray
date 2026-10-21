@@ -306,6 +306,34 @@ class TestSystemInfo:
         if hostname and len(hostname) > 3:
             assert hostname not in sysinfo
 
+    def test_taskbar_geometry_is_reported(self, q_app):
+        """#322: the bundle must carry the taskbar window/monitor/work-area rects and the dock strip -
+        the data a top-taskbar placement report turns on."""
+        from unittest.mock import MagicMock
+        from PyQt6.QtCore import QRect
+        from netspeedtray import constants
+        from netspeedtray.utils.taskbar_utils import TaskbarInfo
+        tb = MagicMock(spec=TaskbarInfo)
+        tb.rect, tb.monitor_rect, tb.work_area = (0, 0, 2880, 72), (0, 0, 2880, 1620), (0, 0, 2880, 1620)
+        tb.dpi_scale, tb.height, tb.hwnd, tb.is_primary = 1.5, 72, 1, True
+        tb.get_tray_rect.return_value = (2500, 0, 2880, 72)
+        tb.get_edge_position.return_value = constants.TaskbarEdge.TOP
+        screen = MagicMock()
+        screen.geometry.return_value = QRect(0, 0, 1920, 1080)
+        screen.availableGeometry.return_value = QRect(0, 0, 1920, 1080)
+        tb.get_screen.return_value = screen
+        with patch("netspeedtray.utils.taskbar_utils.get_taskbar_info", return_value=tb):
+            text = "\n".join(support_bundle._taskbar_geometry_lines({}))
+        assert "Taskbar edge:         TOP" in text
+        assert "(0, 0, 2880, 72)" in text and "(0, 0, 2880, 1620)" in text
+        assert "Qt insets (logical): top 0, bottom 0" in text
+        assert "dock strip (logical): top 0, height 48.0" in text
+
+    def test_taskbar_geometry_never_raises(self):
+        with patch("netspeedtray.utils.taskbar_utils.get_taskbar_info", side_effect=RuntimeError("x")):
+            assert support_bundle._taskbar_geometry_lines({}) == [
+                "Taskbar geometry:     <unavailable: RuntimeError>"]
+
 
 class TestAppActivityExclusion:
     def test_no_app_activity_files_in_bundle(self, q_app, tmp_path, fake_config, fake_log_dir):

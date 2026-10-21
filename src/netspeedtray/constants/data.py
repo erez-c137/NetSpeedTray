@@ -46,6 +46,26 @@ class DataRetentionConstants:
     UNLIMITED_DAYS: Final[int] = 36500          # "Keep everything" - 100 years; prune never fires
     MAX_RETENTION_DAYS: Final[int] = UNLIMITED_DAYS
     DEFAULT_DAYS: Final[int] = 365               # 1 year
+    # Pre-migration backups (speed_history.db.bak.v*) age out with "Keep history for": maintenance
+    # deletes one once it is older than the retention window - by then every row in it is older than
+    # the window too. Never sooner than this many days after it was made, so a 2.2 -> 2.1.x rollback
+    # always has its backup for a month (every DAYS_MAP choice is >= 31 days, so this floor only
+    # matters for a hand-edited keep_data). "Keep everything" keeps backups forever (still count-capped).
+    BACKUP_MIN_KEEP_DAYS: Final[int] = 30
+    # A wrong clock must never age a backup out (a clock set to 2030 would make a day-old backup look
+    # years old - on the same pass that prunes the live rows, so the backup is the only copy left).
+    # Ageing out only runs once the clock has been CONTINUOUS for BACKUP_CLOCK_CONTINUITY_DAYS: every
+    # maintenance pass within BACKUP_CLOCK_MAX_GAP_DAYS of the previous one (a jump, either way,
+    # restarts that count). Intermittent use only delays an age-out - the safe direction.
+    BACKUP_CLOCK_MAX_GAP_DAYS: Final[int] = 14
+    BACKUP_CLOCK_CONTINUITY_DAYS: Final[int] = 7
+    # Within a session, wall-clock and monotonic time between two maintenance passes may disagree by
+    # this much (or 1%) before it counts as a clock jump (NTP slews are seconds; sleep is excluded from
+    # neither clock on Windows - both run across standby).
+    BACKUP_CLOCK_DRIFT_TOLERANCE_SEC: Final[int] = 300
+    # The 30-day floor is counted in steady time the app OBSERVED with the backup present: at most this
+    # much per maintenance pass (hourly while running; app-off time and jumps add nothing).
+    BACKUP_STEADY_CREDIT_MAX_SEC: Final[int] = 2 * 3600
     DAYS_MAP: Final[Dict[int, int]] = {
         0: 31,             # 1 month - covers a full calendar month so "this month" is always whole
         1: 90,             # 3 months
@@ -193,11 +213,20 @@ class DataConstants:
     # with a per-period anchor so usage_this_period = cumulative - anchor.
     USAGE_COUNTER_TABLE: Final[str] = "usage_counter"
 
-    # Every table "Delete all history" empties (only those present in the file are touched). The
-    # odometer (USAGE_COUNTER_TABLE) is deliberately NOT here: it is the data-cap's billing source of
-    # truth (decision D5) and is only cleared when the user ticks the separate opt-in. `metadata`
-    # (db_version, maintenance stamps) is schema bookkeeping, not history, and is never deleted.
+    # Every table "Delete all history" empties on the v8 schema (2.2+): the facts first, then the
+    # `interfaces` / `metrics` dimension tables - adapter friendly names are identifying (privacy.md),
+    # so a delete that kept them would not delete everything it promised. Must equal
+    # core/db/schema_v8.HISTORY_TABLES_V8 (a unit test pins it; listed here as literals because
+    # schema_v8 imports this module). The odometer (USAGE_COUNTER_TABLE) is deliberately NOT here: it
+    # is the data-cap's billing source of truth (decision D5) and is only cleared when the user ticks
+    # the separate opt-in. `metadata` (db_version, watermarks, maintenance stamps) is schema
+    # bookkeeping, not history, and is never deleted.
     HISTORY_TABLES: Final[tuple] = (
+        "net_raw", "net_minute", "net_hour", "hw_raw", "hw_minute", "hw_hour",
+        "link_events", "app_sessions", "interfaces", "metrics",
+    )
+    # The v7 set (2.1.x), kept only so tests that build a v7 file can delete from it like 2.1.x did.
+    HISTORY_TABLES_V7: Final[tuple] = (
         SPEED_TABLE_RAW, SPEED_TABLE_MINUTE, SPEED_TABLE_HOUR,
         HARDWARE_STATS_TABLE_RAW, HARDWARE_STATS_TABLE_MINUTE, HARDWARE_STATS_TABLE_HOUR,
         BANDWIDTH_TABLE, APP_BANDWIDTH_TABLE, SPEED_TABLE, AGGREGATED_TABLE,
@@ -212,6 +241,10 @@ class DataConstants:
     RAW_TIER_RETENTION_SECONDS: Final[int] = 24 * 3600
     MINUTE_TIER_RETENTION_SECONDS: Final[int] = 30 * 86400
     TIER_BOUNDARY_SLACK_SECONDS: Final[int] = 2 * 3600
+
+    # v8 (auto_vacuum=INCREMENTAL): free pages handed back to the OS per maintenance pass, instead of a
+    # full-file VACUUM. ~8 MB at the 4096-byte page; bounded so one pass never holds the write lock long.
+    V8_INCREMENTAL_VACUUM_PAGES: Final[int] = 2048
 
     def __init__(self) -> None:
         self.legend_position = LegendPositionConstants()

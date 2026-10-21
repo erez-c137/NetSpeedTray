@@ -73,6 +73,15 @@ class ConfigConstants:
     DEFAULT_GRAPH_SCALE_HEADROOM: Final[int] = 10   # percent above the plan speed
     GRAPH_SCALE_HEADROOM_CHOICES: Final[List[int]] = [0, 10, 20, 30]
     DEFAULT_GRAPH_SHOW_CEILING: Final[bool] = True  # only drawn when the headroom is above 0%
+    # Separate upload/download graphs (DU Meter-style), each with its own scale. Off by default so no
+    # widget changes size on upgrade. Side by side on a horizontal taskbar, stacked on a vertical one;
+    # Auto-Cycle rotates upload and download as their own phases instead, so it keeps its size.
+    DEFAULT_GRAPH_SPLIT_DIRECTIONS: Final[bool] = False
+    # Mini graph look: "detailed" plots every sample (the classic filled, spiky graph); "trend" smooths
+    # each series into a calm line (widget_renderer.trend_smooth). Trend is the default (owner, #395),
+    # also for existing configs without the key; Detailed is one click away in Settings.
+    GRAPH_STYLE_CHOICES: Final[List[str]] = ["detailed", "trend"]
+    DEFAULT_GRAPH_STYLE: Final[str] = "trend"
     DEFAULT_INTERFACE_MODE: Final[str] = network.interface.DEFAULT_MODE
     DEFAULT_KEEP_DATA_DAYS: Final[int] = data.retention.DEFAULT_DAYS # 365 days (1 Year) default
     DEFAULT_DARK_MODE: Final[bool] = True
@@ -135,7 +144,22 @@ class ConfigConstants:
     DEFAULT_SHOW_HARDWARE_TEMPS: Final[bool] = True
     DEFAULT_SHOW_HARDWARE_POWER: Final[bool] = False
     DEFAULT_STACK_HARDWARE_STATS: Final[bool] = True
-    DEFAULT_HARDWARE_LABEL_STYLE: Final[str] = "icons_monochrome"
+    # Side-taskbar design phase C: keep the taskbar widget to network speed and show the enabled
+    # CPU/GPU/memory in the hover card instead. Off by default, so nobody's widget changes.
+    DEFAULT_HARDWARE_IN_HOVER_CARD: Final[bool] = False
+    # CPU/GPU label SHAPE and COLOUR are two settings (2.2): the style is "icons" | "text", the
+    # colour "brand" | "match_text" | "custom". The pre-2.2 three-way style (icons_colored /
+    # icons_monochrome / text) is split in two by ConfigManager._migrate_config.
+    HARDWARE_LABEL_STYLE_CHOICES: Final[List[str]] = ["icons", "text"]
+    DEFAULT_HARDWARE_LABEL_STYLE: Final[str] = "icons"
+    HARDWARE_LABEL_COLOR_CHOICES: Final[List[str]] = ["brand", "match_text", "custom"]
+    # New installs get Brand (owner call, 2.2). Existing configs are migrated by their old style instead:
+    # icons_monochrome users keep their look as match_text (which, unlike the old hard-coded white,
+    # stays visible on a LIGHT taskbar); the coloured styles become brand.
+    DEFAULT_HARDWARE_LABEL_COLOR: Final[str] = "brand"
+    # Custom picks start at the pre-2.2 neutral label colours (== constants.renderer.CPU/GPU_LINE_COLOR).
+    DEFAULT_CPU_LABEL_COLOR: Final[str] = "#3498DB"
+    DEFAULT_GPU_LABEL_COLOR: Final[str] = "#E74C3C"
     DEFAULT_WIDGET_DISPLAY_MODE: Final[str] = "side_by_side" # Choices: network_only, cycle, side_by_side
     DEFAULT_WIDGET_DISPLAY_ORDER: Final[List[str]] = ["network", "cpu", "gpu"]
     DEFAULT_WIDGET_CYCLE_INTERVAL: Final[int] = 3 # Seconds
@@ -167,6 +191,8 @@ class ConfigConstants:
         "graph_fixed_scale": DEFAULT_GRAPH_FIXED_SCALE,
         "graph_scale_headroom": DEFAULT_GRAPH_SCALE_HEADROOM,
         "graph_show_ceiling": DEFAULT_GRAPH_SHOW_CEILING,
+        "graph_split_directions": DEFAULT_GRAPH_SPLIT_DIRECTIONS,
+        "graph_style": DEFAULT_GRAPH_STYLE,
         "interface_mode": DEFAULT_INTERFACE_MODE,
         "selected_interfaces": [],
         "excluded_interfaces": network.interface.DEFAULT_EXCLUSIONS,
@@ -194,6 +220,9 @@ class ConfigConstants:
         "double_click_action": DEFAULT_DOUBLE_CLICK_ACTION,
         "middle_click_action": DEFAULT_MIDDLE_CLICK_ACTION,
         "hardware_label_style": DEFAULT_HARDWARE_LABEL_STYLE,
+        "hardware_label_color": DEFAULT_HARDWARE_LABEL_COLOR,
+        "cpu_label_color": DEFAULT_CPU_LABEL_COLOR,
+        "gpu_label_color": DEFAULT_GPU_LABEL_COLOR,
         "keep_visible_fullscreen": DEFAULT_KEEP_VISIBLE_FULLSCREEN,
         "force_decimals": DEFAULT_FORCE_DECIMALS,
         "unit_type": DEFAULT_UNIT_TYPE,
@@ -255,6 +284,7 @@ class ConfigConstants:
         "plan_up_mbps": 0,
         "throttle_temp_c": 0,
         "stack_hardware_stats": DEFAULT_STACK_HARDWARE_STATS,
+        "hardware_in_hover_card": DEFAULT_HARDWARE_IN_HOVER_CARD,
         "widget_display_mode": DEFAULT_WIDGET_DISPLAY_MODE,
         "widget_display_order": DEFAULT_WIDGET_DISPLAY_ORDER,
         "widget_cycle_interval": DEFAULT_WIDGET_CYCLE_INTERVAL,
@@ -275,6 +305,7 @@ class ConfigConstants:
         "first_run_v2_seen": False,
         "first_run_ever": True,
         "tooltip_hint_shown_count": 0,     # gesture-hint tooltip fades after a few sessions
+        "history_upgrade_notice_shown": False,  # the one "history upgraded" flyout after v7 -> v8
         "temp_onboarding_dismissed": False,  # user opted out of the no-sensor temp explainer
         "preferred_monitor": None,
         # --- Data-usage / data-cap ---
@@ -284,6 +315,11 @@ class ConfigConstants:
         "data_cap_count": "total",         # total | download | upload
         "data_cap_alert_enabled": True,    # opt-in toast at 80% / 100%
         "usage_alert_state": "",           # internal: "<period_key>:<levels>" for restart-safe alerts
+        # --- Local metrics endpoint (2.2 scope B) ---
+        # OFF by default: an always-listening socket in a zero-telemetry app has to be the user's
+        # deliberate act. When on, it binds 127.0.0.1 only - nothing leaves the machine.
+        "metrics_endpoint_enabled": False,
+        "metrics_endpoint_port": network.metrics.DEFAULT_PORT,
     }
     
     # --- Schema Definition for Modern Config Validation ---
@@ -310,6 +346,8 @@ class ConfigConstants:
         "graph_fixed_scale": {"type": bool, "default": DEFAULT_GRAPH_FIXED_SCALE},
         "graph_scale_headroom": {"type": int, "default": DEFAULT_GRAPH_SCALE_HEADROOM, "choices": GRAPH_SCALE_HEADROOM_CHOICES},
         "graph_show_ceiling": {"type": bool, "default": DEFAULT_GRAPH_SHOW_CEILING},
+        "graph_split_directions": {"type": bool, "default": DEFAULT_GRAPH_SPLIT_DIRECTIONS},
+        "graph_style": {"type": str, "default": DEFAULT_GRAPH_STYLE, "choices": GRAPH_STYLE_CHOICES},
         "interface_mode": {"type": str, "default": DEFAULT_INTERFACE_MODE, "choices": list(network.interface.VALID_INTERFACE_MODES)},
         "selected_interfaces": {"type": list, "default": [], "item_type": str},
         "excluded_interfaces": {"type": list, "default": network.interface.DEFAULT_EXCLUSIONS, "item_type": str},
@@ -342,7 +380,10 @@ class ConfigConstants:
         "free_float": {"type": bool, "default": DEFAULT_FREE_FLOAT},
         "double_click_action": {"type": str, "default": DEFAULT_DOUBLE_CLICK_ACTION, "choices": CLICK_ACTION_CHOICES},
         "middle_click_action": {"type": str, "default": DEFAULT_MIDDLE_CLICK_ACTION, "choices": CLICK_ACTION_CHOICES},
-        "hardware_label_style": {"type": str, "default": DEFAULT_HARDWARE_LABEL_STYLE, "choices": ["icons_colored", "icons_monochrome", "text"]},
+        "hardware_label_style": {"type": str, "default": DEFAULT_HARDWARE_LABEL_STYLE, "choices": HARDWARE_LABEL_STYLE_CHOICES},
+        "hardware_label_color": {"type": str, "default": DEFAULT_HARDWARE_LABEL_COLOR, "choices": HARDWARE_LABEL_COLOR_CHOICES},
+        "cpu_label_color": {"type": str, "default": DEFAULT_CPU_LABEL_COLOR, "regex": r"#[0-9a-fA-F]{6}"},
+        "gpu_label_color": {"type": str, "default": DEFAULT_GPU_LABEL_COLOR, "regex": r"#[0-9a-fA-F]{6}"},
         "keep_visible_fullscreen": {"type": bool, "default": DEFAULT_KEEP_VISIBLE_FULLSCREEN},
         "force_decimals": {"type": bool, "default": DEFAULT_FORCE_DECIMALS},
         "unit_type": {"type": str, "default": DEFAULT_UNIT_TYPE, "choices": ["bits_decimal", "bits_binary", "bytes_decimal", "bytes_binary"]},
@@ -393,6 +434,7 @@ class ConfigConstants:
         "throttle_temp_c": {"type": (int, float), "default": 0, "min": 0, "max": 130},
         "show_hardware_power": {"type": bool, "default": DEFAULT_SHOW_HARDWARE_POWER},
         "stack_hardware_stats": {"type": bool, "default": DEFAULT_STACK_HARDWARE_STATS},
+        "hardware_in_hover_card": {"type": bool, "default": DEFAULT_HARDWARE_IN_HOVER_CARD},
         "widget_display_mode": {"type": str, "default": DEFAULT_WIDGET_DISPLAY_MODE, "choices": ["network_only", "cycle", "side_by_side"]},
         "widget_display_order": {"type": list, "default": DEFAULT_WIDGET_DISPLAY_ORDER, "item_type": str},
         "widget_cycle_interval": {"type": int, "default": DEFAULT_WIDGET_CYCLE_INTERVAL, "min": 1, "max": 60},
@@ -411,6 +453,7 @@ class ConfigConstants:
         "first_run_v2_seen": {"type": bool, "default": False},
         "first_run_ever": {"type": bool, "default": True},
         "tooltip_hint_shown_count": {"type": int, "default": 0, "min": 0},
+        "history_upgrade_notice_shown": {"type": bool, "default": False},
         "temp_onboarding_dismissed": {"type": bool, "default": False},
         # QScreen.name() identifier (e.g. "\\.\DISPLAY1"). None = use primary.
         # If the saved screen isn't found at runtime, fall back to primary.
@@ -422,6 +465,9 @@ class ConfigConstants:
         "data_cap_count": {"type": str, "default": "total", "choices": ["total", "download", "upload"]},
         "data_cap_alert_enabled": {"type": bool, "default": True},
         "usage_alert_state": {"type": str, "default": ""},
+        "metrics_endpoint_enabled": {"type": bool, "default": False},
+        "metrics_endpoint_port": {"type": int, "default": network.metrics.DEFAULT_PORT,
+                                  "min": network.metrics.MIN_PORT, "max": network.metrics.MAX_PORT},
     }
 
 

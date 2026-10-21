@@ -1,7 +1,7 @@
 """
-The v8 database schema - DORMANT. Nothing in the app calls this module yet (``core/database.py``
-imports only ``EXPECTED_TABLES_V8`` for its per-version registry); ``_DB_VERSION`` in
-``core/database.py`` stays 7 until the switch-over (implementation step 7).
+The v8 database schema - the app's schema since the switch-over (step 7, ``_DB_VERSION = 8`` in
+``core/database.py``): a fresh install is created by :func:`create_v8_schema`, a v7 file is rebuilt
+into it by ``migrate_v8``.
 
 Design authority: ``Docs/reference/database-v8-final.md``. In short:
 
@@ -12,7 +12,8 @@ Design authority: ``Docs/reference/database-v8-final.md``. In short:
   history carries over untouched, plus ``up_bytes`` / ``down_bytes`` / ``covered_ms`` which are
   **NULL for every pre-v8 row** - converting v7 rates to bytes would bake in a measured x1.53
   over-count, and backfilling coverage would invent data.
-* Tiers are query-precedence layers, never additive: each sub-range is answered by exactly one tier.
+* Tiers are query-precedence layers, never additive: each sub-range is answered by exactly one tier,
+  and the tier boundaries are WATERMARKS in ``metadata`` (``WATERMARK_KEYS`` below), not MIN(ts).
 * ``usage_counter`` and ``metadata`` are byte-for-byte the v7 tables. ``bandwidth_history`` (never
   written to) is not carried over. The throughput histogram / ``ms_above`` tables were cut from 2.2.
 
@@ -62,6 +63,53 @@ FLAG_GAP = 2             # interval longer than the poll rate (missed polls, sle
 FLAG_RESUMED = 4         # the system resumed from sleep inside the interval
 FLAG_FIRST_SAMPLE = 8    # first sample of a session; its delta is not trustworthy
 
+# Tier watermarks (metadata keys, value = unix epoch seconds as text). "Every row of this tier older
+# than the watermark has been rolled up into the next-coarser tier", written in the SAME transaction
+# as the roll-up that moves the rows. Readers answer a range with exactly one tier per sub-range:
+# hour for [.., minute watermark), minute for [minute watermark, raw watermark), raw from the raw
+# watermark on - never MIN(ts) guesses. The network and hardware families roll up independently
+# (the v7 -> v8 migration folds the network raw tier but leaves hardware raw rows in place), so each
+# family has its own pair. Always: raw watermark >= minute watermark; the minute watermark is hour
+# aligned and the raw watermark minute aligned.
+WATERMARK_RAW_KEY = "tier_watermark_raw"            # network: raw -> minute
+WATERMARK_MINUTE_KEY = "tier_watermark_minute"      # network: minute -> hour
+HW_WATERMARK_RAW_KEY = "hw_tier_watermark_raw"      # hardware: raw -> minute
+HW_WATERMARK_MINUTE_KEY = "hw_tier_watermark_minute"  # hardware: minute -> hour
+WATERMARK_KEYS = (WATERMARK_RAW_KEY, WATERMARK_MINUTE_KEY, HW_WATERMARK_RAW_KEY, HW_WATERMARK_MINUTE_KEY)
+
+# The rest of the contract, as the reader (core/db/history_reader.V8HistoryReader) applies it.
+# Per family, W_r = its raw watermark and W_m = its minute watermark:
+#
+# * Ranges: raw answers [W_r, inf), minute [W_m, W_r), hour (-inf, min(W_r, W_m)). On overlap the
+#   coarser tier wins: a finer row below its watermark (left behind, or stamped there by a clock set
+#   back after the pass) is ignored until the next pass rolls it up; a coarser row at/above the finer
+#   watermark (a copy) is ignored.
+# * Value: a base-10 integer string and nothing else ('1760000000'). The reader treats a value that is
+#   not all digits, is <= 0, or more than WATERMARK_MAX_LEAD_SECONDS past its clock as ABSENT - a
+#   watermark from a clock that ran ahead would declare every live raw row "already rolled up" and
+#   blank the graph until the clock caught up. The lead exists because the migrator stamps the raw
+#   watermark at the END of the newest minute bucket (the one the migration ran in), clamped at
+#   now + the migrator's FUTURE_SLACK_SECONDS, then floored to a minute and +60: at most now + 360 s.
+# * Atomicity: INSERT the coarser rows, DELETE (or keep) the finer ones, set the watermark, COMMIT - one
+#   transaction, so a reader that sees the new rows sees the new watermark and vice versa.
+# * The value is the cutoff of the LATEST pass, not a running max: it may move backwards (clock set
+#   back) and is still a true statement.
+# * Absent = no claim. The reader then falls back, for that boundary only, to the step-2 rule: the
+#   finer tier's MIN(ts) inside its retention horizon (+ slack). The migrator writes all four in its
+#   migration transaction; maintenance writes a family's pair in the same transaction as each roll-up.
+WATERMARK_MAX_LEAD_SECONDS = 360   # >= the migrator's FUTURE_SLACK_SECONDS + 60 (pinned by a test)
+
+# NET_TIER_UNITS - what net_minute / net_hour numbers mean (writer_v8 writes them; the reader's legacy
+# estimate relies on them):
+# * ``sample_count`` = the measured SECONDS the row stands for, capped at the bucket length (60 / 3600):
+#   ROUND(SUM(dt_ms) / 1000) of its raw rows for a v8 row; v7's per-second sample count for a migrated
+#   row (the unit LEGACY_SAMPLE_SECONDS = 1 already assumes). ``*_avg`` = the time-weighted rate over
+#   those seconds, bytes/s. Hardware tiers are unaffected: there sample_count is a sample count.
+# * Volume: SUM(bytes) where bytes is NOT NULL; else (legacy) ``avg x MIN(sample_count, bucket)`` -
+#   the same capped expression in the reader and in every roll-up / merge of the writer, so a row's
+#   estimate never changes when it is merged or rolled up: a merge (or a roll-up group) that includes a
+#   legacy row stays legacy and stores avg = (sum of its parts' estimates) / MIN(n_total, bucket).
+
 # The tables a v8 file is DEFINED to have. The per-version registry is
 # DatabaseWorker.EXPECTED_TABLES in core/database.py (used by _verify_backup); its v8 entry is this
 # tuple, imported from here. The dependency runs database.py -> schema_v8 only: this module stays
@@ -78,7 +126,8 @@ COMPAT_VIEWS_V8: Tuple[str, ...] = (
     _D.HARDWARE_STATS_TABLE_RAW, _D.HARDWARE_STATS_TABLE_MINUTE, _D.HARDWARE_STATS_TABLE_HOUR,
 )
 
-# What "Delete all history" empties on a v8 file (the v8 counterpart of constants.data.HISTORY_TABLES).
+# What "Delete all history" empties on a v8 file - equal to constants.data.HISTORY_TABLES (pinned by a
+# test; that module cannot import this one).
 # Facts first, then the dimensions: adapter friendly names are identifying (privacy.md), so a delete
 # that kept `interfaces` would not delete everything it promised. Emptying the dimensions under a
 # running writer is safe for readers (the views LEFT JOIN), but the writer must drop its cached ids.
@@ -101,7 +150,7 @@ def _net_tier(name: str) -> str:
     down_avg     REAL    NOT NULL,
     up_max       REAL    NOT NULL,          -- peak sample rate, bytes/s
     down_max     REAL    NOT NULL,
-    sample_count INTEGER NOT NULL DEFAULT 1,
+    sample_count INTEGER NOT NULL DEFAULT 1,  -- SECONDS the row stands for (see NET_TIER_UNITS)
     covered_ms   INTEGER CHECK (covered_ms >= 0),  -- ms the app was running; NULL = unknown (pre-v8)
     flags        INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (ts, iface_id)

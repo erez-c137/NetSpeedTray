@@ -72,6 +72,10 @@ _NON_CPU_SENSOR_IDENTS: tuple = (
 )
 
 
+# Stats that only a temperature / power sensor source can fill.
+_SENSOR_STAT_KEYS = ('cpu_temp', 'gpu_temp', 'cpu_power', 'gpu_power')
+
+
 def hardware_collection_gates(config: Dict[str, Any], force: bool) -> Tuple[bool, bool]:
     """(collect_cpu_ram, collect_gpu_vram) for one poll: the user's monitoring switches, or everything
     while the Monitor window forces collection for its live tiles. Recording is NOT a reason to poll -
@@ -173,6 +177,7 @@ class StatsMonitorThread(QThread):
         self._lhm_notice_emitted: bool = False  # One-time notification flag
         self._lhm_check_polls: int = 0  # Count polls before emitting notice
         self._last_identity_poll: float = 0.0  # monotonic ts of the last network-identity sub-poll (0 = poll immediately)
+        self._last_link_stats_poll: float = 0.0  # monotonic ts of the last net_if_stats sub-poll (v8 link history)
         self._nvidia_smi_path: Optional[str] = self._get_cached_path("nvidia-smi")
         # nvidia-smi is a synchronous subprocess (up to NVIDIA_SMI_TIMEOUT_SEC). Temps/power
         # change slowly, so poll it on a slow sub-cadence and cache between calls - keeps the
@@ -959,6 +964,35 @@ class StatsMonitorThread(QThread):
             self.logger.info("CPU temperature: %.1f°C via %s (sensor: %s).", celsius, source, sensor)
         return celsius
 
+    def _update_lhm_notice(self, stats: Dict[str, Any], in_rdp: bool) -> None:
+        """Emit ``lhm_not_detected`` once per session when temps/power are wanted but no sensor reads.
+
+        Only a poll that the USER's settings made read temps/power counts: temperatures are shown
+        next to CPU/GPU usage, so they need ``monitor_cpu_enabled`` / ``monitor_gpu_enabled`` as well
+        as the temps/power switch. ``show_hardware_temps`` defaults to True while CPU/GPU monitoring
+        defaults to off, so the switch alone says nothing. Through 2.1.7 the record_hardware_history
+        gate made every default install poll CPU temps anyway (and find one, on most machines); once
+        recording stopped being a reason to poll (#347), a default config read no sensor at all and
+        the "Turn on temperatures" explainer appeared on every launch for a stat nobody had turned on.
+        Polls forced by the open Monitor window do not count either - opening a window is not
+        asking for temperatures on the taskbar."""
+        if self._lhm_notice_emitted:
+            return
+        wants = (bool(self.config.get('show_hardware_temps', False))
+                 or bool(self.config.get('show_hardware_power', False)))
+        if not wants:
+            return
+        user_cpu, user_gpu = hardware_collection_gates(self.config, False)
+        if not (user_cpu or (user_gpu and not in_rdp)):
+            return
+        self._lhm_check_polls += 1
+        # Wait 5 polls (~5s) to give LHM time to be detected
+        if self._lhm_check_polls >= 5:
+            has_any_reading = any(stats.get(k) is not None for k in _SENSOR_STAT_KEYS)
+            if not has_any_reading:
+                self._lhm_notice_emitted = True
+                self.lhm_not_detected.emit()
+
     def run(self) -> None:
         """Main monitoring loop."""
         self.logger.info("StatsMonitorThread starting loop.")
@@ -1003,6 +1037,15 @@ class StatsMonitorThread(QThread):
                     # samples closer together than they were taken; the odometer's sanity cap must be
                     # measured over the real sampling span, not the handling span (#13).
                     stats['network_sampled_at'] = (time.monotonic(), time.time())
+                    # Link state for the v8 history (link_events, link speed/duplex), on a slow
+                    # sub-cadence. Never fatal: a failing call costs the link record, not the poll.
+                    now = time.monotonic()
+                    if now - self._last_link_stats_poll >= constants.network.speed.LINK_STATS_POLL_INTERVAL_SEC:
+                        self._last_link_stats_poll = now
+                        try:
+                            stats['network_if_stats'] = psutil.net_if_stats()
+                        except Exception as e:
+                            self.logger.debug("net_if_stats failed: %s", e)
 
                 # 1b. Network identity (Wi-Fi band / SSID) - only when the widget wants it, and only
                 # on the slow sub-cadence. get_connected_network_identity() never raises. Emitting on
@@ -1065,21 +1108,8 @@ class StatsMonitorThread(QThread):
                 if stats:
                     self.stats_ready.emit(stats)
 
-                # One-time LHM notice: if temps/power enabled but no readings after a few polls
-                if not self._lhm_notice_emitted:
-                    wants_temps = self.config.get('show_hardware_temps', False)
-                    wants_power = self.config.get('show_hardware_power', False)
-                    if wants_temps or wants_power:
-                        self._lhm_check_polls += 1
-                        # Wait 5 polls (~5s) to give LHM time to be detected
-                        if self._lhm_check_polls >= 5:
-                            has_any_reading = any(
-                                stats.get(k) is not None
-                                for k in ('cpu_temp', 'gpu_temp', 'cpu_power', 'gpu_power')
-                            )
-                            if not has_any_reading:
-                                self._lhm_notice_emitted = True
-                                self.lhm_not_detected.emit()
+                # One-time LHM notice: temps/power wanted on a monitored metric, but no readings.
+                self._update_lhm_notice(stats, _in_rdp)
 
                 # Success - reset the circuit breaker (and announce recovery if we'd notified)
                 if self.consecutive_errors > 0:

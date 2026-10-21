@@ -11,6 +11,8 @@ class TimerConstants:
     POSITION_CHECK_INTERVAL_MS: Final[int] = 500
     VISIBILITY_CHECK_INTERVAL_MS: Final[int] = 500
     MAXIMUM_UPDATE_RATE_SECONDS: Final[float] = 10.0
+    # The one-time "history upgraded" flyout reads three sentences - twice the data-cap alert's 15 s.
+    HISTORY_UPGRADE_NOTICE_MS: Final[int] = 30000
 
     def __init__(self) -> None:
         self.validate()
