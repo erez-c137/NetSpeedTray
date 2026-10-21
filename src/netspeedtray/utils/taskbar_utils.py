@@ -393,6 +393,24 @@ class TaskbarInfo:
             return None
 
 
+    @staticmethod
+    def _edge_in_rect(r: Tuple[int, int, int, int], mon: Tuple[int, int, int, int],
+                      tolerance: float) -> constants.TaskbarEdge:
+        """The edge of ``mon`` the bar rect ``r`` (both (l, t, r, b), same coordinate space) is
+        docked to: flush with an edge, else (an auto-hide bar slid off it) the nearer half."""
+        edge = constants.taskbar.edge
+        if r[2] - r[0] > r[3] - r[1]:
+            if abs(r[1] - mon[1]) < tolerance:
+                return edge.TOP
+            if abs(r[3] - mon[3]) < tolerance:
+                return edge.BOTTOM
+            return edge.TOP if (r[1] + r[3]) / 2 < (mon[1] + mon[3]) / 2 else edge.BOTTOM
+        if abs(r[0] - mon[0]) < tolerance:
+            return edge.LEFT
+        if abs(r[2] - mon[2]) < tolerance:
+            return edge.RIGHT
+        return edge.LEFT if (r[0] + r[2]) / 2 < (mon[0] + mon[2]) / 2 else edge.RIGHT
+
     def get_edge_position(self) -> constants.TaskbarEdge:
         """
         Determines which edge of the screen the taskbar is docked to (logical coords).
@@ -402,6 +420,20 @@ class TaskbarInfo:
                          Defaults to BOTTOM if calculation fails or is ambiguous.
         """
         try:
+            # A fallback taskbar (hwnd 0, e.g. Explorer not up yet at logon) has a (0,0,0,0) rect.
+            # Width 0 is not > height 0, so it read as VERTICAL -> LEFT and the widget sized itself as a
+            # compact side-bar block at the desktop's bottom-right. No taskbar = the default bottom.
+            r = self.rect
+            if not self.hwnd or not r or len(r) != 4 or r[2] - r[0] <= 0 or r[3] - r[1] <= 0:
+                return constants.taskbar.edge.BOTTOM
+            # Decide in PHYSICAL px against the taskbar's own monitor (GetMonitorInfo) when known. The
+            # logical path below divides a physical rect by this monitor's DPI and compares it with
+            # Qt's logical screen geometry, which keeps each screen's native origin: a 150% monitor
+            # stacked below a 100% primary has a physical top of 1080 but a Qt top of 1080 too, while
+            # rect/1.5 puts it at 720 - so both its bottom and its top bar read as TOP (#7).
+            mon = self.monitor_rect
+            if mon and len(mon) == 4 and mon[2] - mon[0] > 0 and mon[3] - mon[1] > 0:
+                return self._edge_in_rect(r, mon, 5 * max(self.dpi_scale, 1.0))
             screen = self.get_screen()
             if not screen:
                 logger.error("Cannot determine taskbar edge: No valid QScreen for HWND %s.", self.hwnd)

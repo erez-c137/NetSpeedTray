@@ -32,7 +32,7 @@ from netspeedtray.utils import styles as style_utils
 from netspeedtray.utils.window_state import (restore_window_position, save_window_position,
                                              set_window_always_on_top)
 from netspeedtray.utils.helpers import get_app_data_path, get_app_asset_path, reveal_in_explorer
-from netspeedtray.utils.styles import is_dark_mode
+from netspeedtray.utils.styles import is_dark_mode, shell_theme_text_color
 from netspeedtray.utils.support_bundle import build_support_bundle
 from netspeedtray.utils.dwm import apply_win11_chrome
 
@@ -289,11 +289,17 @@ class SettingsDialog(QDialog):
                 delete_history_callback=self._delete_all_history,
             )
             # The Record-hardware-history card greys out live as CPU/GPU monitoring is switched.
+            # The battery hover toggle counts too: with the PR's defaults (CPU/GPU monitoring off)
+            # it is the thing that governs battery recording, and a user who switched it off
+            # could not switch it back on (#323 review).
             def _sync_record_card(_on: bool = False) -> None:
                 self.advanced_page.set_hardware_monitoring_active(
-                    self.hardware_page.monitor_cpu.isChecked() or self.hardware_page.monitor_gpu.isChecked())
+                    self.hardware_page.monitor_cpu.isChecked()
+                    or self.hardware_page.monitor_gpu.isChecked()
+                    or self.general_page.power_display.isChecked())
             self.hardware_page.monitor_cpu.toggled.connect(_sync_record_card)
             self.hardware_page.monitor_gpu.toggled.connect(_sync_record_card)
+            self.general_page.power_display.toggled.connect(_sync_record_card)
             # Safety net for Delete all history: if the worker never answers, give the button back.
             self._delete_timeout = QTimer(self)
             self._delete_timeout.setSingleShot(True)
@@ -565,11 +571,31 @@ class SettingsDialog(QDialog):
                 settings["color_is_automatic"] = False
             else:
                  settings["color_is_automatic"] = self.original_config.get("color_is_automatic", True)
-                 
-            return settings
+
+            return self._with_live_auto_color(settings)
         except Exception as e:
             self.logger.error(f"Error collecting settings: {e}", exc_info=True)
             return {}
+
+    def _with_live_auto_color(self, cfg: Dict[str, Any]) -> Dict[str, Any]:
+        """``cfg`` with an AUTOMATIC text colour taken from the current Windows theme.
+
+        The dialog loads ``default_color`` once, when it opens. If the Windows theme flips while it
+        is open, the theme manager re-colours the widget - and the next live-preview tick (or Cancel,
+        which re-applies ``original_config``) put the stale colour straight back. While the colour is
+        automatic and the user has not changed it here (no pick, no edit of the field), the theme owns
+        it, so the dialog passes the theme's colour instead of pinning the one it was opened with."""
+        if self._user_chose_default_color or not cfg.get("color_is_automatic", True):
+            return cfg
+        opened_with = str(self.original_config.get("default_color", "") or "").upper()
+        if str(cfg.get("default_color", "") or "").upper() != opened_with:
+            return cfg   # the user typed a colour into the field
+        live = shell_theme_text_color()
+        if not live or live.upper() == opened_with:
+            return cfg
+        out = dict(cfg)
+        out["default_color"] = live
+        return out
 
     # --- Callbacks ---
 
@@ -865,7 +891,8 @@ class SettingsDialog(QDialog):
     def _cancel_and_close(self) -> None:
         """Reverts settings, then persists the window position, then closes."""
         if hasattr(self.parent_widget, 'handle_settings_changed'):
-            self.parent_widget.handle_settings_changed(self.original_config, save_to_disk=False)
+            self.parent_widget.handle_settings_changed(self._with_live_auto_color(self.original_config),
+                                                       save_to_disk=False)
         # Save the position AFTER the revert: handle_settings_changed merges
         # original_config back into the live config, which would otherwise clobber
         # settings_window_pos with the value from when the dialog opened.

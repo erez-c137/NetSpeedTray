@@ -184,6 +184,7 @@ class NetworkSpeedWidget(QWidget):
         self.cpu_power: Optional[float] = None
         self.gpu_power: Optional[float] = None
         self.system_power: Optional[float] = None   # true whole-system W (RAPL PSYS / battery), if available
+        self.battery_power: Optional[float] = None  # signed battery draw: discharge +, charge - (display only)
         self.latency_probe = None                    # apply_latency_probe owns it (startup + every apply)
         self.latency_gw: Optional[float] = None      # gateway RTT ms (LAN latency); None = timeout
         self.latency_anchor: Optional[float] = None  # public-anchor RTT ms (internet latency); opt-in
@@ -217,6 +218,8 @@ class NetworkSpeedWidget(QWidget):
         self._drag_offset: QPoint = QPoint()
         self.startup_manager: StartupManager
         self.is_paused: bool = False
+        # (net, cpu, gpu) graph histories frozen at pause() - see _graph_histories.
+        self._paused_histories: Optional[Tuple[list, list, list]] = None
         self._is_context_menu_visible: bool = False
         self.last_tray_rect: Optional[Tuple[int, int, int, int]] = None
         self._taskbar_lost_count: int = 0
@@ -239,6 +242,8 @@ class NetworkSpeedWidget(QWidget):
         self._hover_card_timer.timeout.connect(self._show_usage_hover_card)
         self._hover_usage_cache: Optional[Tuple[Tuple[float, float], Tuple[float, float]]] = None
         self._hover_usage_cache_ts: float = 0.0
+        self._hover_battery_avg_cache: Optional[float] = None
+        self._hover_battery_avg_cache_ts: float = 0.0
         self._hover_usage_period_start: Optional[datetime] = None   # set by _hover_usage_totals
 
         self.setVisible(False)
@@ -735,6 +740,11 @@ class NetworkSpeedWidget(QWidget):
         # is_paused is a transient live-view toggle only - deliberately NOT persisted, so the
         # widget never reboots into a frozen state that looks like a hang.
         self.is_paused = True
+        self._paused_histories = None
+        try:
+            self._paused_histories = self._live_graph_histories()
+        except Exception as e:
+            self.logger.debug("Could not snapshot the graph for pause: %s", e)
         self.update()
 
 
@@ -745,6 +755,7 @@ class NetworkSpeedWidget(QWidget):
             return
         self.logger.info("Resuming widget updates")
         self.is_paused = False
+        self._paused_histories = None
         self.update()
 
 
@@ -1049,10 +1060,24 @@ class NetworkSpeedWidget(QWidget):
             if painter.isActive():
                 painter.end()
 
+    def _live_graph_histories(self) -> Tuple[list, list, list]:
+        ws = self.widget_state
+        return (list(ws.get_aggregated_speed_history()), list(ws.cpu_history), list(ws.gpu_history))
+
+    def _graph_histories(self) -> Tuple[list, list, list]:
+        """The (net, cpu, gpu) histories the mini-graph draws. While paused, the ones frozen at
+        pause(): the numbers are frozen, and the history keeps recording underneath, so any repaint
+        (the Auto-Cycle tick, a hover, a resize) used to scroll a live graph under frozen numbers."""
+        frozen = getattr(self, "_paused_histories", None)
+        if getattr(self, "is_paused", False) and frozen is not None:
+            return frozen
+        return self._live_graph_histories()
+
     def _build_metrics(self) -> WidgetMetrics:
         """Snapshot the current live state into the shared paint path's metrics object."""
         identity_text, identity_color, identity_solid = self._identity_presentation()
         identity_ssid = self._identity_ssid_text()
+        net_history, cpu_history, gpu_history = self._graph_histories()
         return WidgetMetrics(
             upload_mbps=self.upload_speed,
             download_mbps=self.download_speed,
@@ -1066,9 +1091,9 @@ class NetworkSpeedWidget(QWidget):
             ram_total=self.ram_total,
             vram_used=self.vram_used,
             vram_total=self.vram_total,
-            net_history=self.widget_state.get_aggregated_speed_history(),
-            cpu_history=list(self.widget_state.cpu_history),
-            gpu_history=list(self.widget_state.gpu_history),
+            net_history=net_history,
+            cpu_history=cpu_history,
+            gpu_history=gpu_history,
             identity_band=identity_text,
             identity_band_color=identity_color,
             identity_band_solid=identity_solid,
@@ -1135,12 +1160,23 @@ class NetworkSpeedWidget(QWidget):
         self._hover_usage_cache = None
         self._hover_usage_cache_ts = 0.0
 
+    @staticmethod
+    def _hover_card_enabled(config: Dict[str, Any]) -> bool:
+        """Whether ANY section of the hover card can render - enterEvent's arm gate.
+
+        Must stay in sync with _show_usage_hover_card, which decides what actually
+        shows: the usage rows, the gesture hint, the battery section
+        (power_display_enabled - the General tab's battery display) and the hardware
+        section."""
+        return (bool(config.get("show_usage_on_hover", True))
+                or bool(config.get("show_hover_tips", True))
+                or bool(config.get("power_display_enabled", False)))
+
     def enterEvent(self, event) -> None:
         """On hover, arm the usage card (shown after a short rest, positioned above the taskbar).
-        Skipped entirely when the user has turned the hover card off in Settings."""
+        Skipped entirely when the user has turned every hover section off in Settings."""
         try:
-            hover_enabled = (self.config.get("show_usage_on_hover", True)
-                             or self.config.get("show_hover_tips", True)
+            hover_enabled = (self._hover_card_enabled(self.config)
                              or self._hover_hardware_wanted())
             if hover_enabled and self._hover_card is None and not self._hover_card_timer.isActive():
                 self._hover_card_timer.start(self._HOVER_CARD_DELAY_MS)
@@ -1170,25 +1206,35 @@ class NetworkSpeedWidget(QWidget):
             from netspeedtray.views.usage_flyout import UsageFlyout
             show_data = bool(self.config.get("show_usage_on_hover", True))
             show_tips = bool(self.config.get("show_hover_tips", True))
+            show_power = bool(self.config.get("power_display_enabled", False))
             hint = self._hover_hint_text() if show_tips else None
             today, month = self._hover_usage_totals() if show_data else (None, None)
             cap = self._hover_cap_info() if show_data else None
+            power = self._hover_power_summary() if show_power else None
             hardware = self._hover_hardware_snapshot() if self._hover_hardware_wanted() else None
-            if hint is None and today is None and not hardware:
-                return  # nothing to show (both toggles off, or tips graduated while data is off)
-            self._hide_usage_hover_card()  # never stack two cards
+            if hint is None and today is None and power is None and not hardware:
+                return  # nothing to show (all toggles off, or tips graduated while data is off)
             note = (self.i18n.USAGE_RECORDED_HISTORY_NOTE
                     if today is not None and getattr(self, "_hover_usage_reconstructed", False) else None)
             month_label = (self.i18n.USAGE_THIS_PERIOD_LABEL
                            if today is not None and getattr(self, "_hover_usage_period_start", None)
                            else None)
-            self._hover_card = UsageFlyout(self.i18n, today, month, hint=hint, cap=cap, history_note=note,
-                                           hardware=hardware, month_label=month_label)
+            card = UsageFlyout(self.i18n, today, month, hint=hint, cap=cap, power=power,
+                               history_note=note, hardware=hardware, month_label=month_label)
             self._hover_hw_refreshed = time.monotonic()
             screen = self.screen() or QApplication.primaryScreen()
             avail = screen.availableGeometry() if screen else self.frameGeometry()
-            self._hover_card.show_for(self.frameGeometry(), avail, edge=self._hover_card_edge(),
-                                      screen=screen)
+            # Never stack two cards - but show the new one BEFORE the old one goes: a rebuild
+            # while the pointer rests on the widget (refresh_hover_power) then swaps cards with
+            # no frame in between, instead of a visible blink.
+            old, self._hover_card = self._hover_card, card
+            card.show_for(self.frameGeometry(), avail, edge=self._hover_card_edge(), screen=screen)
+            if old is not None:
+                try:
+                    old.hide()
+                    old.deleteLater()
+                except Exception:
+                    pass
         except Exception as e:
             self.logger.error("Error showing usage hover card: %s", e, exc_info=True)
 
@@ -1246,6 +1292,89 @@ class NetworkSpeedWidget(QWidget):
         self._hover_usage_cache = (today, month)
         self._hover_usage_cache_ts = now
         return self._hover_usage_cache
+
+    def _hover_power_summary(self) -> Optional[dict]:
+        """Everything the hover card's battery section needs, in one dict.
+
+        The live watts come from the monitor thread's battery poll (``self.system_power``
+        while discharging, the signed ``self.battery_power`` while charging), the mode and
+        charge percent from one GetSystemPowerStatus syscall, and today's average from the
+        system_power stat history via the 30-second TTL cache below. None (section omitted)
+        when the machine reports no battery or the state read failed - battery data is a
+        nice-to-have, never worth an error card."""
+        from netspeedtray.utils import power_utils
+        try:
+            state = power_utils.read_power_state()
+            if state.mode == power_utils.MODE_NONE:
+                return None
+            mode = state.mode
+            # Signed poll value: negative while charging (the card renders it as "+X W").
+            # system_power is only a battery draw while the state says discharging: on
+            # AC a whole-system reading (e.g. RAPL PSYS) must never be shown as drain
+            # (#323 review). Charge detection still wins via the signed battery_power.
+            if self.battery_power is not None:
+                live_w = self.battery_power
+            elif state.mode == power_utils.MODE_DISCHARGE:
+                live_w = self.system_power
+            else:
+                live_w = None
+            # The signed watts outrank the API's mode when they disagree: the charging bit can
+            # lag the real flow around a plug-in. Watts are the ground truth for the state.
+            # (With the AC line unknown, only the signed charge flow is trusted - a
+            # whole-system reading is never guessed into a drain.)
+            if live_w is not None and live_w < 0:
+                mode = power_utils.MODE_CHARGE
+            elif live_w:
+                mode = power_utils.MODE_DISCHARGE
+            else:
+                mode = state.mode
+            projected = None
+            if mode == power_utils.MODE_DISCHARGE:
+                # Windows' own estimate first; else design capacity x charge at the live draw.
+                # The capacity comes from the cache the monitor thread fills - never WMI here,
+                # on the GUI thread.
+                projected = power_utils.windows_runtime_hours()
+                if projected is None and live_w:
+                    projected = power_utils.projected_runtime_hours(
+                        live_w, state.charge_pct, power_utils.cached_design_capacity_mwh())
+            return {
+                "mode": mode,
+                "live_w": live_w,
+                "today_avg_w": self._hover_battery_today_avg(),
+                "projected_hours": projected,
+                "charge_pct": state.charge_pct,
+            }
+        except Exception as e:
+            self.logger.debug("hover power summary failed: %s", e)
+            return None
+
+    def _hover_battery_today_avg(self) -> Optional[float]:
+        """Today's average discharge in watts, from the battery_drain stat history
+        (mirror of system_power written only while the machine is actually
+        discharging, so an AC-side RAPL PSYS reading can never creep in).
+
+        Cached with a short TTL like the bandwidth totals: rapid hovers shouldn't
+        re-run the DB summary, but the figure only changes minute-to-minute."""
+        now = time.monotonic()
+        if self._hover_battery_avg_cache is not None and \
+                (now - self._hover_battery_avg_cache_ts) < self._HOVER_USAGE_TTL_SEC:
+            return self._hover_battery_avg_cache
+        avg: Optional[float] = None
+        try:
+            now_dt = datetime.now()
+            midnight = now_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+            summary = self.widget_state.summarize_hardware('battery_drain', midnight, now_dt,
+                                                            poll_interval=resolve_poll_interval_seconds(
+                                                                self.config.get("update_rate", 1.0)))
+            # Only claim an average once real history exists - a fresh install (or the
+            # first hours after the battery section was enabled) has no samples yet.
+            if summary and summary.avg and summary.count:
+                avg = float(summary.avg)
+        except Exception as e:
+            self.logger.debug("hover battery average fetch failed: %s", e)
+        self._hover_battery_avg_cache = avg
+        self._hover_battery_avg_cache_ts = now
+        return avg
 
     def _hover_hint_text(self) -> Optional[str]:
         """The fading gesture hint - shown for the first few app runs, then retired. Counted at
@@ -1359,6 +1488,30 @@ class NetworkSpeedWidget(QWidget):
         except Exception as e:
             self.logger.debug("hover card hardware refresh failed: %s", e)
 
+    def refresh_hover_power(self) -> None:
+        """Push a fresh battery summary into an open hover card (~1 Hz; the controller calls this on
+        every poll). When the summary needs different rows - plugged in or unplugged mid-hover,
+        today's history arrived - the card is rebuilt and swapped (the new one shown before the
+        old one hides). Not closed like the hardware rows: the pointer is still resting on the
+        widget, so no enterEvent would bring a closed card back, and a plug-in is exactly the
+        moment the user is watching it. With nothing left to show it is closed."""
+        card = self._hover_card
+        if card is None or not getattr(card, "has_power", False):
+            return
+        now = time.monotonic()
+        if now - getattr(self, "_hover_power_refreshed", 0.0) < self._HOVER_HW_REFRESH_SEC:
+            return
+        self._hover_power_refreshed = now
+        try:
+            power = (self._hover_power_summary()
+                     if self.config.get("power_display_enabled", False) else None)
+            if power is None or not card.update_power(power):
+                self._show_usage_hover_card()          # builds the new card, then hides this one
+                if self._hover_card is card:           # nothing to show (or not now): close it
+                    self._hide_usage_hover_card()
+        except Exception as e:
+            self.logger.debug("hover card power refresh failed: %s", e)
+
     def _hover_card_edge(self):
         """The edge of the taskbar the widget is docked to (the card opens away from it)."""
         try:
@@ -1468,6 +1621,15 @@ class NetworkSpeedWidget(QWidget):
         self.logger.debug(f"Widget showEvent triggered. New visibility: {self.isVisible()}")
         super().showEvent(event)
         self._arm_shutdown_channel()
+        # Windows broadcasts the theme change (WM_SETTINGCHANGE "ImmersiveColorSet") to top-level
+        # windows, and an owned window that was hidden (fullscreen app) may not get it. One registry
+        # read on re-show catches a flip made meanwhile; a no-op when nothing changed.
+        handler = getattr(self, "system_event_handler", None)
+        if handler is not None:
+            try:
+                handler.check_shell_theme()
+            except Exception as e:
+                self.logger.debug("theme re-check on show failed: %s", e)
 
     def event(self, event: QEvent) -> bool:
         # Qt sends WinIdChange whenever the native window is created or recreated (a window-flag

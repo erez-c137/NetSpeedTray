@@ -8,7 +8,7 @@ forced collection persisted temps/power the user never enabled. Now:
   * the in-memory live series still fill (mini graph, Monitor live tiles) - display is not persistence;
   * the thread collects hardware only for monitoring the user turned on, or while the Monitor forces it.
 """
-from datetime import datetime
+from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -68,6 +68,16 @@ def test_temps_and_power_need_their_metric_and_their_own_switch():
 def test_latency_is_not_governed_by_the_hardware_toggle():
     # The latency series have their own switch (latency_enabled); this policy never blocks them.
     assert hardware_persist_allowed("latency_gw", _cfg(record_hardware_history=False)) is True
+
+
+def test_battery_drain_follows_the_power_display_switch():
+    """The hover's "Today avg" source (#323) has its own consent switch: it fills under
+    the PR's own defaults (CPU/GPU/power-stats off) and is NOT held hostage by
+    show_hardware_power, which system_power still requires."""
+    assert hardware_persist_allowed("battery_drain", _cfg(power_display_enabled=True)) is True
+    assert hardware_persist_allowed("battery_drain", _cfg()) is False
+    r = _cfg(power_display_enabled=True, record_hardware_history=False)
+    assert hardware_persist_allowed("battery_drain", r) is False
 
 
 def test_default_config_keeps_recording_for_monitored_stats():
@@ -156,3 +166,98 @@ def test_record_hardware_history_schema_rejects_non_bool(tmp_path):
     assert out["record_hardware_history"] is True    # coerced back to the default
     out = cm._validate_config({"record_hardware_history": False})
     assert out["record_hardware_history"] is False
+
+
+# --- the battery-only poll reaches history through the REAL write path (3rd #323 review) -----------
+
+def _live_state(tmp_path):
+    """A real WidgetState on a throwaway DB, with the v8 write thread RUNNING - so the
+    real write path (the worker's persist handler + the v8 schema) and the real summary
+    reader are both exercised. The v7 internals this test used to poke
+    (``_check_and_create_schema`` / ``_persist_hardware_batch``) are gone after the v8
+    switch-over, so the port is: wait for ``db_worker.ready``, then ``flush_and_wait``."""
+    with patch("netspeedtray.core.widget_state.get_app_data_path", return_value=tmp_path):
+        s = WidgetState(constants.config.defaults.DEFAULT_CONFIG.copy())
+    s.batch_persist_timer.stop()          # no background flush - the test drives the write
+    s.db_worker.ready.wait(timeout=10)     # the v8 schema is live on disk
+    return s
+
+
+def test_battery_only_poll_reaches_history_through_the_real_write_path(q_app, tmp_path, monkeypatch):
+    """With the PR's own defaults (power display on, CPU/GPU/power-stats off) a battery-only
+    handle_stats poll must land in the history DB, and the hover's "Today avg" must read it
+    back from disk - no summarize_hardware mock, no add_hardware_stat stub: the real write
+    (the worker's persist handler, exactly what the thread runs) and the real summary."""
+    from datetime import datetime, timedelta
+    from netspeedtray.utils import power_utils
+    import netspeedtray.core.widget_state as wsm
+
+    state = _live_state(tmp_path)
+    try:
+        state.config["power_display_enabled"] = True
+        ctl = StatsController(_cfg(power_display_enabled=True), state)
+        ctl.set_view(MagicMock())
+        monkeypatch.setattr(power_utils, "read_power_state",
+                            lambda: power_utils.PowerState(power_utils.MODE_DISCHARGE, 63))
+
+        # Two real polls a few "seconds" apart - same-second samples collapse into one
+        # raw row (INSERT OR IGNORE on the timestamp), like they do at a real cadence.
+        base = datetime.now() - timedelta(minutes=1)
+        tick = {"n": 0}
+        def _fake_now():
+            tick["n"] += 1
+            return base if tick["n"] <= 2 else base + timedelta(seconds=3)
+        monkeypatch.setattr(wsm, "datetime", type("_DT", (), {"now": staticmethod(_fake_now)}))
+        ctl.handle_stats({"system_power": 12.0})
+        ctl.handle_stats({"system_power": 18.0})
+        # The real persist path: flush the batch and wait until the write thread has it
+        # on disk (the v8 writer + schema), exactly what the thread does on a live machine.
+        state.flush_and_wait(timeout=5.0)
+        assert not state._hw_batch, "the flush did not drain the batch"
+
+        monkeypatch.undo()
+        now = datetime.now()
+        midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        summary = state.summarize_hardware('battery_drain', midnight, now,
+                                           poll_interval=1.0)
+        assert summary is not None and summary.count == 2, "no battery_drain history on disk"
+        assert summary.avg == pytest.approx(15.0)   # (12 + 18) / 2 - exactly the hover's read
+
+        # The v8 metrics dimension labels it in watts like the *_power stats (4th #323 review),
+        # not with the empty unit _unit_for gives an unknown name.
+        import sqlite3
+        from netspeedtray.core.db.schema_v8 import METRICS
+        from netspeedtray.core.db.sqlite_uri import sqlite_ro_uri
+        conn = sqlite3.connect(sqlite_ro_uri(state._db_path), uri=True)
+        try:
+            unit = conn.execute(f"SELECT unit FROM {METRICS} WHERE name = 'battery_drain'").fetchone()
+        finally:
+            conn.close()
+        assert unit == ("watt",)
+    finally:
+        state.cleanup()
+
+
+def test_battery_only_poll_records_nothing_with_power_display_off(q_app, tmp_path, monkeypatch):
+    """And the consent gate works in the same real path: power_display off -> no rows."""
+    from netspeedtray.utils import power_utils
+
+    state = _live_state(tmp_path)
+    try:
+        ctl = StatsController(_cfg(), state)
+        ctl.set_view(MagicMock())
+        monkeypatch.setattr(power_utils, "read_power_state",
+                            lambda: power_utils.PowerState(power_utils.MODE_DISCHARGE, 63))
+
+        ctl.handle_stats({"system_power": 12.0})
+        types = [b[1] for b in state._hw_batch]
+        assert 'battery_drain' not in types
+        # Nothing to write for battery_drain - flush anyway so the reader sees the real
+        # (empty) on-disk state rather than a pending batch.
+        state.flush_and_wait(timeout=5.0)
+        now = datetime.now()
+        summary = state.summarize_hardware('battery_drain',
+                                           now - timedelta(minutes=5), now, poll_interval=1.0)
+        assert not summary or not summary.count
+    finally:
+        state.cleanup()

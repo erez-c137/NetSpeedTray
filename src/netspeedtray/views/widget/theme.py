@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Optional
 from PyQt6.QtGui import QColor
 
 from netspeedtray import constants
+from netspeedtray.utils.styles import shell_theme_text_color
 
 if TYPE_CHECKING:
     from netspeedtray.views.widget.main import NetworkSpeedWidget
@@ -79,17 +80,12 @@ class WidgetThemeManager:
             if not self.widget.config.get("color_is_automatic", True):
                 return
 
-            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
-            system_uses_light_theme, _ = winreg.QueryValueEx(key, "SystemUsesLightTheme")
-            winreg.CloseKey(key)
+            target_color_hex = shell_theme_text_color()
+            if target_color_hex is None:
+                self.logger.warning("Could not read the Windows theme for live update.")
+                return
+            theme_name = "Light" if target_color_hex == constants.color.BLACK else "Dark"
 
-            if system_uses_light_theme == 1:
-                target_color_hex = constants.color.BLACK
-                theme_name = "Light"
-            else:
-                target_color_hex = constants.config.defaults.DEFAULT_COLOR
-                theme_name = "Dark"
-            
             current_color = self.widget.config.get("default_color", constants.config.defaults.DEFAULT_COLOR)
             
             if current_color.upper() != target_color_hex.upper():

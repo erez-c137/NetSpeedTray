@@ -233,6 +233,9 @@ class SideBarFit(NamedTuple):
     classic: bool             # today's layout fits as a whole - draw exactly what 2.2 did
     hides_hardware: bool      # enabled hardware (or its memory/temps/power) is off the bar -> hover card
     hides_identity: bool      # the Wi-Fi identity badge is off the bar -> hover card
+    # compact CPU/GPU rows keep the "%" sign. False when even the stacked "100%" is wider than the bar
+    # (Small 32 px at 11 pt): the value shows as "100" under its CPU/GPU icon rather than clipped.
+    hw_percent_sign: bool = True
 
 
 def _str_items(items: Any) -> List[str]:
@@ -377,6 +380,7 @@ def side_bar_fit(config: RenderConfig, metrics: Any, arrow_metrics: Any, i18n: A
     icon_col = (_max_w(fm, stats or ["CPU"]) if config.hardware_label_style == "text"
                 else constants.renderer.HW_ICON_SIZE_PX)
     hw_inline = icon_col + constants.renderer.COMPACT_HW_ICON_GAP_PX + fm.horizontalAdvance("100%") <= inner
+    hw_percent_sign = hw_inline or fm.horizontalAdvance("100%") <= inner
 
     if mode in _HARDWARE_MODES:
         classic = hw_full
@@ -389,7 +393,7 @@ def side_bar_fit(config: RenderConfig, metrics: Any, arrow_metrics: Any, i18n: A
     else:
         hides_hw = (not hw_full) and _hw_details_enabled(config, stats)
     hides_identity = bool(identity_reserve) and tier != TIER_CLASSIC and mode not in _HARDWARE_MODES
-    return SideBarFit(tier, hw_full, hw_inline, unit_short, classic, hides_hw, hides_identity)
+    return SideBarFit(tier, hw_full, hw_inline, unit_short, classic, hides_hw, hides_identity, hw_percent_sign)
 
 
 def compact_network_rows(config: RenderConfig, fit: SideBarFit, directions: int = 2) -> int:
@@ -480,7 +484,7 @@ def _draw_side_compact(painter: QPainter, renderer: WidgetRenderer, width: int, 
         else:
             values = {"CPU": metrics.cpu_usage, "GPU": metrics.gpu_usage}
             renderer.draw_hardware_compact(painter, [(s, values[s]) for s in stats], width, height,
-                                           config, inline=fit.hw_inline)
+                                           config, inline=fit.hw_inline, percent_sign=fit.hw_percent_sign)
         return
 
     if mode == "network_only" and split_active(config):

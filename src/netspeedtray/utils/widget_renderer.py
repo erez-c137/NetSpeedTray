@@ -670,6 +670,23 @@ class WidgetRenderer:
             unit_w = fm.horizontalAdvance(unit) if (inline_unit or show_unit_row) else 0
             block_w = arrow_w + arrow_gap + num_col + (unit_gap + unit_w if inline_unit else 0)
             margin = constants.renderer.TEXT_MARGIN
+            # A long locale unit at a large font ("МиБ" at 11 pt on a 32 px bar) can be wider than the
+            # bar even in its short form. There is no shorter honest label (dropping the "и" would say
+            # decimal MB), so the unit row alone steps its font down until the unit fits the bar. The
+            # step is sized from the WIDEST unit of the family (B/K/M/G), never the live one, so the
+            # row keeps one size as traffic crosses K <-> M <-> G instead of shrinking and growing.
+            unit_font = self.font
+            if show_unit_row:
+                from netspeedtray.utils.helpers import get_unit_labels_for_type
+                # Only the units this readout can show: "always Mbps" never drops below mega.
+                labels = get_unit_labels_for_type(self.i18n, config.unit_type, short)
+                if config.speed_display_mode == "always_mbps":
+                    labels = labels[2:]
+                family = [u for u in labels if isinstance(u, str) and u] + [unit]
+                widest = max(family, key=fm.horizontalAdvance)
+                if fm.horizontalAdvance(widest) > width - 2 * margin:
+                    unit_font, _ = self._fit_font(widest, width - 2 * margin)
+                    unit_w = QFontMetrics(unit_font).horizontalAdvance(unit)
             x0 = max(margin, (width - block_w) // 2)
 
             line_h, asc, gap = fm.height(), fm.ascent(), constants.renderer.TWO_ROW_GAP_PX
@@ -681,7 +698,7 @@ class WidgetRenderer:
             # Never paint outside the band: at T5 nothing fits, and a long locale unit at a large font
             # ("МиБ" at 11 pt on a 32 px bar) can be wider than the bar even in its short form.
             painter.setClipRect(QRect(0, y_offset, width, height), Qt.ClipOperation.IntersectClip)
-            if tier >= TIER_CLIP or (show_unit_row and unit_w > width - 2 * margin):
+            if tier >= TIER_CLIP or (show_unit_row and unit_w > width - 2 * margin):   # past the floor
                 if not getattr(self, "_compact_clip_logged", False):
                     self._compact_clip_logged = True
                     self.logger.warning("Side taskbar too narrow (%d px) for the compact readout at this "
@@ -699,7 +716,7 @@ class WidgetRenderer:
                                       row_cfg, num_col)
                 y += line_h + gap
             if show_unit_row:
-                painter.setFont(self.font)
+                painter.setFont(unit_font)
                 painter.setPen(self._cached_pens['default'])
                 painter.drawText(max(margin, (width - unit_w) // 2), y, unit)
             painter.restore()
@@ -710,11 +727,34 @@ class WidgetRenderer:
         except Exception as e:
             self.logger.error("Failed to draw compact network speeds: %s", e)
 
+    _MIN_UNIT_POINT_SIZE = 6.0
+
+    def _fit_font(self, text: str, avail: int) -> Tuple[QFont, int]:
+        """(font, width): the widget font stepped down in half points until ``text`` fits ``avail``
+        px, never below _MIN_UNIT_POINT_SIZE (past that it is clipped - and logged - as before)."""
+        font = QFont(self.font)
+        width = QFontMetrics(font).horizontalAdvance(text)
+        size = font.pointSizeF()
+        if size <= 0:   # a pixel-sized font
+            px = font.pixelSize()
+            while width > avail and px > 6:
+                px -= 1
+                font.setPixelSize(px)
+                width = QFontMetrics(font).horizontalAdvance(text)
+            return font, width
+        while width > avail and size > self._MIN_UNIT_POINT_SIZE:
+            size = max(self._MIN_UNIT_POINT_SIZE, size - 0.5)
+            font.setPointSizeF(size)
+            width = QFontMetrics(font).horizontalAdvance(text)
+        return font, width
+
     def draw_hardware_compact(self, painter: QPainter, stats: List[Tuple[str, Optional[float]]], width: int,
                               height: int, config: RenderConfig, *, inline: bool = True,
-                              y_offset: int = 0) -> None:
+                              y_offset: int = 0, percent_sign: bool = True) -> None:
         """CPU/GPU on a side taskbar too narrow for today's rows: ``[icon] 37%`` per stat (``inline``)
-        or the icon centred over the value; memory, temperature and power live in the hover card."""
+        or the icon centred over the value; memory, temperature and power live in the hover card.
+        ``percent_sign`` False (side_bar_fit: even "100%" is wider than the bar) draws "100" - still
+        read as a percent under its CPU/GPU icon, and whole instead of clipped at both ends."""
         try:
             if not stats:
                 return
@@ -724,7 +764,7 @@ class WidgetRenderer:
             icon_w = (max(fm.horizontalAdvance(s) for s, _ in stats) if style == "text"
                       else constants.renderer.HW_ICON_SIZE_PX)
             gap = constants.renderer.COMPACT_HW_ICON_GAP_PX
-            pct_col = fm.horizontalAdvance("100%")
+            pct_col = fm.horizontalAdvance("100%" if percent_sign else "100")
             line_h, asc, row_gap = fm.height(), fm.ascent(), constants.renderer.TWO_ROW_GAP_PX
             n = len(stats) * (1 if inline else 2)
             block_h = n * line_h + max(0, n - 1) * row_gap
@@ -738,6 +778,8 @@ class WidgetRenderer:
             for label, val in stats:
                 color = QColor(cpu_color if label == 'CPU' else gpu_color)
                 pct = self._fmt_hw_percent(val if val is not None else float("nan"))
+                if not percent_sign:
+                    pct = pct.rstrip("%")
                 icon_x = x0 if inline else (width - icon_w) // 2
                 if style == "text":
                     painter.setPen(QPen(color))

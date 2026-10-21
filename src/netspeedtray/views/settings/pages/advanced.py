@@ -198,9 +198,12 @@ class AdvancedPage(QWidget):
         self._metrics_url_card.set_description(self.metrics_status_text() or " ")
 
     def set_hardware_monitoring_active(self, active: bool) -> None:
-        """Grey the Record-hardware-history card out while neither CPU nor GPU is monitored (it would
-        show On while recording nothing). The user's choice is kept - only shown as unavailable, the
-        same Win11 dependent-control look the Hardware page uses."""
+        """Grey the Record-hardware-history card out while nothing that records hardware is on (it
+        would show On while recording nothing). Active means CPU or GPU monitoring, or the battery
+        hover toggle - with the PR's defaults CPU/GPU monitoring is off, so the battery toggle is
+        the thing that governs battery recording, and a user who switched it off could not switch
+        it back on (#323 review). The user's choice is kept - only shown as unavailable, the same
+        Win11 dependent-control look the Hardware page uses."""
         self._record_card.setEnabled(active)
         eff = self._record_card.graphicsEffect()
         if not isinstance(eff, QGraphicsOpacityEffect):
@@ -222,8 +225,11 @@ class AdvancedPage(QWidget):
                       key=lambda i: abs(int(self.keep_data.itemData(i)) - days))
         self.keep_data.setCurrentIndex(idx)
         self.record_hardware.setChecked(bool(config.get("record_hardware_history", True)))
+        # The battery hover toggle (General > Interaction) governs battery recording, so it
+        # keeps the Record-hardware-history card live on its own (#323 review).
         self.set_hardware_monitoring_active(bool(config.get("monitor_cpu_enabled", False))
-                                            or bool(config.get("monitor_gpu_enabled", False)))
+                                            or bool(config.get("monitor_gpu_enabled", False))
+                                            or bool(config.get("power_display_enabled", False)))
         self.reduce_motion.setChecked(bool(config.get("reduce_motion", False)))
         self.keep_windows_on_top.setChecked(bool(config.get("keep_windows_on_top", False)))
         m = constants.network.metrics

@@ -143,6 +143,25 @@ class TestInputHandler(unittest.TestCase):
         self.assertTrue(self.handler._is_dragging)
         self.assertEqual(self.mock_widget._dragging, True)
 
+    def test_drag_start_dismisses_the_hover_card(self):
+        """A hover card up when the drag begins is hidden (and a pending show cancelled) - once, at
+        the start, not on every move."""
+        self.mock_widget._hide_usage_hover_card = MagicMock()
+        self.mock_widget._hover_card_timer = MagicMock()
+        self.handler._drag_start_pos = QPoint(50, 50)
+        self.mock_position_manager.constrain_drag.side_effect = lambda p: p
+        for x in (200, 210, 220):
+            self.handler.handle_mouse_move(self._create_mouse_event(global_x=x, global_y=200))
+        self.mock_widget._hide_usage_hover_card.assert_called_once()
+        self.mock_widget._hover_card_timer.stop.assert_called_once()
+
+    def test_press_without_a_move_keeps_the_hover_card(self):
+        self.mock_widget._hide_usage_hover_card = MagicMock()
+        self.handler.handle_mouse_press(self._create_mouse_event(global_x=150, global_y=150))
+        # Below the drag distance: not a drag.
+        self.handler.handle_mouse_move(self._create_mouse_event(global_x=51, global_y=50))
+        self.mock_widget._hide_usage_hover_card.assert_not_called()
+
     def test_mouse_release_ends_drag(self):
         """Test release ends drag and saves config."""
         self.handler._is_dragging = True

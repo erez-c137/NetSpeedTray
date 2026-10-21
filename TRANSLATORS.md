@@ -49,6 +49,13 @@ Other locales (English, German, Spanish) are currently maintained by the project
 > - `LHM_WEB_SERVER_HINT` (new) - shown under the temperature note on Settings → Hardware and in the "turn on temperatures" explainer: current LibreHardwareMonitor is read over its web server, which the user has to switch on. Its last sentence asks to leave LHM's web-server authentication off and let it listen on all interfaces (otherwise LHM refuses NetSpeedTray's local request). Keep `{port}`, and keep `Options → Remote Web Server` in English - it is LibreHardwareMonitor's own (untranslated) menu.
 > - `HARDWARE_TEMPS_LIMITATION_NOTE` / `TEMP_ONBOARDING_BODY` - the "use LHM v0.9.4, later versions removed the interface" sentence is gone (no longer true). Removed from `en_US`, `hu_HU`, `it_IT` and `tr_TR`, the locales that carried it; nothing else in them changed.
 
+> 🆕 **Pending native review for 2.2 (battery in the hover card, #323, see #364):** non-English values are AI-assisted.
+> - `POWER_HOVER_CARD_LABEL` - the opt-in switch under Settings > General > Interaction, next to your `HOVER_USAGE_CARD_LABEL` - reuse its "hover the widget" wording.
+> - `POWER_SECTION_TITLE` - the small caption over the card's battery rows ("Battery"). One word, as on your laptop's own battery flyout.
+> - `POWER_NOW_LABEL` / `POWER_TODAY_AVG_LABEL` - row labels in the card's battery section ("Now" = the live draw in watts; "Today avg" = today's average draw on battery). Keep them short; the value sits to their right.
+> - `POWER_ON_AC_VALUE` - shown in place of the watts when the laptop is plugged in and not charging ("On AC").
+> - `POWER_CHARGE_PCT_TEMPLATE` - the charge-level line under the rows; keep `{pct}`, and write the percent the way your `PERCENT_TEMPLATE` does.
+
 ## How translation works in NetSpeedTray
 
 - Each locale lives in a single JSON file under [`src/netspeedtray/constants/locales/`](src/netspeedtray/constants/locales/)

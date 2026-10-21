@@ -27,6 +27,22 @@ def test_keep_data_snaps_to_closest_valid_retention(page):
     assert page.get_settings()["keep_data"] == 31
 
 
+def test_record_card_stays_live_when_only_the_battery_toggle_is_on(page):
+    """#323 review: with CPU/GPU monitoring off, the battery hover toggle is the thing that
+    governs battery recording - so the Record-hardware-history card must stay live. Greyed
+    out, a user who switched it off could never switch it back on."""
+    page.load_settings({"keep_data": 30, "monitor_cpu_enabled": False,
+                        "monitor_gpu_enabled": False, "power_display_enabled": True})
+    assert page._record_card.isEnabled() is True
+
+    # With nothing recording hardware, the card greys out (it would show On while recording
+    # nothing) - but the user's saved choice is kept.
+    page.load_settings({"keep_data": 30, "monitor_cpu_enabled": False,
+                        "monitor_gpu_enabled": False, "power_display_enabled": False})
+    assert page._record_card.isEnabled() is False
+    assert page.get_settings()["record_hardware_history"] is True
+
+
 def test_hover_and_pause_toggles_left_the_advanced_page(page):
     """Moved to General > Interaction (2.2 IA pass, change 3) - see test_settings_ia_moves.py."""
     out = page.get_settings()

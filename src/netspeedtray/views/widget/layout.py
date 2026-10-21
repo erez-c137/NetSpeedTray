@@ -258,6 +258,11 @@ class WidgetLayoutManager:
                 # the renderer paints with). Zero when off, so no existing widget changes width.
                 mem_label_w = (memory_label_width(self.metrics)
                                if self.widget.config.get("show_memory_labels", False) else 0)
+                # Memory column for the cpu_only / gpu_only / combined / cycle branches: a stable
+                # reference from the machine TOTAL, reserved whenever RAM/VRAM monitoring is on. It used
+                # to be reserved only once a live ram_used existed - never at the first resize, and
+                # nothing re-sizes when it arrives, so every cold start clipped the memory (81 vs 145 px).
+                inline_mem_ref = self._memory_reference(monitor_ram, monitor_vram)
                 if display_mode == "side_by_side":
                     active_segments = 0
                     monitor_cpu = self.widget.config.get("monitor_cpu_enabled", False)
@@ -377,16 +382,16 @@ class WidgetLayoutManager:
                         cpu_width = label_offset + self.metrics.horizontalAdvance(" 100%")
                         if hw_suffix_w:
                             cpu_width += hw_suffix_w
-                        if monitor_ram and getattr(self.widget, 'ram_used', None) is not None:
-                            cpu_width += self.metrics.horizontalAdvance(" | 16.0/16.0G") + mem_label_w
+                        if monitor_ram:
+                            cpu_width += self.metrics.horizontalAdvance(f" | {inline_mem_ref}") + mem_label_w
                         calculated_width = max(calculated_width, cpu_width)
 
                     if display_mode in ["gpu_only", "combined"]:
                         gpu_width = label_offset + self.metrics.horizontalAdvance(" 100%")
                         if hw_suffix_w:
                             gpu_width += hw_suffix_w
-                        if monitor_vram and getattr(self.widget, 'vram_used', None) is not None:
-                            gpu_width += self.metrics.horizontalAdvance(" | 16.0/16.0G") + mem_label_w
+                        if monitor_vram:
+                            gpu_width += self.metrics.horizontalAdvance(f" | {inline_mem_ref}") + mem_label_w
                         calculated_width = max(calculated_width, gpu_width)
                 elif display_mode == "cycle":
                     # Cycle shows one metric at a time (network, then each enabled HW
@@ -406,13 +411,13 @@ class WidgetLayoutManager:
                         hw_suffix_w = 0
                     if monitor_cpu:
                         cpu_width = label_offset + self.metrics.horizontalAdvance(" 100%") + hw_suffix_w
-                        if monitor_ram and getattr(self.widget, 'ram_used', None) is not None:
-                            cpu_width += self.metrics.horizontalAdvance(" | 16.0/16.0G") + mem_label_w
+                        if monitor_ram:
+                            cpu_width += self.metrics.horizontalAdvance(f" | {inline_mem_ref}") + mem_label_w
                         calculated_width = max(calculated_width, cpu_width)
                     if monitor_gpu:
                         gpu_width = label_offset + self.metrics.horizontalAdvance(" 100%") + hw_suffix_w
-                        if monitor_vram and getattr(self.widget, 'vram_used', None) is not None:
-                            gpu_width += self.metrics.horizontalAdvance(" | 16.0/16.0G") + mem_label_w
+                        if monitor_vram:
+                            gpu_width += self.metrics.horizontalAdvance(f" | {inline_mem_ref}") + mem_label_w
                         calculated_width = max(calculated_width, gpu_width)
                 
                 
@@ -465,6 +470,31 @@ class WidgetLayoutManager:
             self.logger.error(f"Failed to resize widget: {e}", exc_info=True)
             self.widget.setFixedSize(150, 40)
             self.logger.warning("Applied fallback widget size: 150x40px")
+
+    def _memory_reference(self, monitor_ram: bool, monitor_vram: bool) -> str:
+        """Worst-case "used/totalG" reference for the memory column, from the machine TOTAL (used can
+        never exceed it) with every digit an 8 and at least two integer digits ("88.8/88.8G"), so it
+        covers whatever the renderer draws from the same totals. Never a live value: the widget is
+        sized once, before the first reading. RAM's total is knowable synchronously (psutil); a VRAM
+        total that is not known yet keeps the two-digit floor (any GPU under 100 GB)."""
+        total = 0.0
+        if monitor_ram:
+            rt = getattr(self.widget, 'ram_total', 0.0)
+            rt = rt if isinstance(rt, (int, float)) else 0.0
+            if rt <= 0:
+                try:
+                    import psutil
+                    rt = psutil.virtual_memory().total / (1024 ** 3)
+                except Exception:
+                    rt = 0.0
+            total = max(total, rt)
+        if monitor_vram:
+            vt = getattr(self.widget, 'vram_total', 0.0)
+            if isinstance(vt, (int, float)) and vt > 0:
+                total = max(total, vt)
+        digits = max(2, len(str(int(math.ceil(total))))) if total > 0 else 2
+        num = "8" * digits + ".8"
+        return f"{num}/{num}G"
 
     def _render_config(self):
         """The widget config as the paint path reads it (RenderConfig)."""
@@ -656,13 +686,4 @@ class WidgetLayoutManager:
                     return h
         except Exception as e:
             self.logger.debug("Thin-strip fit check failed (%s); keeping the two-row floor.", e)
-        return old_floor
-        scales = constants.renderer.INK_FIT_SCALES if self._font is not None else (1.0,)
-        try:
-            extents = [(s, *self._ink_extents(s)) for s in scales]
-        except Exception:
-            return old_floor
-        for h in range(start, old_floor):
-            if all(self._two_rows_fit(h, above, below, s) for s, above, below in extents):
-                return h
         return old_floor

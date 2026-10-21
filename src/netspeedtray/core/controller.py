@@ -39,6 +39,9 @@ _HW_PERSIST_REQUIRES: Dict[str, Tuple[str, ...]] = {
     "gpu_temp": ("monitor_gpu_enabled", "show_hardware_temps"),
     "cpu_power": ("monitor_cpu_enabled", "show_hardware_power"),
     "gpu_power": ("monitor_gpu_enabled", "show_hardware_power"),
+    # The hover's "Today avg" source (#323): the power-display switch is what the user
+    # turned on to get this stat, so it is the consent gate - not CPU/GPU monitoring.
+    "battery_drain": ("power_display_enabled",),
 }
 _HW_POWER_TOTALS = ("system_power", "total_power")
 
@@ -47,7 +50,11 @@ def hardware_persist_allowed(stat_type: str, config: Dict[str, Any]) -> bool:
     """Whether a hardware sample of ``stat_type`` may be written to the history DB (2.2 item C).
 
     ``system_power`` / ``total_power`` need the power switch and at least one of CPU/GPU on; the
-    caller additionally checks ``total_power``'s contributors (see handle_stats)."""
+    caller additionally checks ``total_power``'s contributors (see handle_stats). ``battery_drain``
+    is the hover card's own stat (the "Today avg" source, #323): it follows the power-display
+    switch, NOT system_power's - it must fill under the PR's own defaults (CPU/GPU/power-stats
+    off) or the hover never has history to average, and it must fill via the write outside the
+    CPU/GPU gate below."""
     if stat_type not in _HW_PERSIST_REQUIRES and stat_type not in _HW_POWER_TOTALS:
         return True
     if not config.get("record_hardware_history", True):
@@ -172,6 +179,26 @@ class StatsController(QObject):
         if 'network_identity' in stats:
             self.network_identity_updated.emit(stats['network_identity'])
 
+        # A whole-system reading (RAPL PSYS etc.) is battery drain only while the machine is
+        # actually discharging (#323 review): resolved ONCE per poll, only when such a reading
+        # exists, for the battery_drain mirror below. DISCHARGE specifically - "not on AC" would
+        # also count a desktop whose PSYS sensor reports with no battery in the box. And only
+        # with the battery switch on: battery_drain exists for the hover's battery section
+        # alone, so with that switch off there is nothing to decide (and no syscall).
+        system_power_discharging = False
+        if stats.get('system_power') is not None and self.config.get('power_display_enabled', False):
+            try:
+                from netspeedtray.utils import power_utils
+                system_power_discharging = (
+                    power_utils.read_power_state().mode == power_utils.MODE_DISCHARGE)
+            except Exception:
+                system_power_discharging = False
+
+        # The one persist-policy lookup, shared by every history write below (moved out
+        # of the CPU/GPU gate: battery-only polls need it too).
+        def _keep(stat_type: str) -> bool:
+            return hardware_persist_allowed(stat_type, self.config)
+
         if 'cpu' in stats or 'gpu' in stats:
             cpu = stats.get('cpu')
             gpu = stats.get('gpu')
@@ -179,10 +206,6 @@ class StatsController(QObject):
             ram_total = stats.get('ram_total')
             vram_used = stats.get('vram_used')
             vram_total = stats.get('vram_total')
-
-            # Emit signals for UI components
-            def _keep(stat_type: str) -> bool:
-                return hardware_persist_allowed(stat_type, self.config)
 
             if cpu is not None:
                 self.cpu_usage_updated.emit(cpu)
@@ -217,18 +240,12 @@ class StatsController(QObject):
             # Persist temperature + power as their own (unclamped) hardware stat_types so the Monitor's
             # pro-stats (avg/max/p95, the Stats-detail sheet, export, throttle-time) have real history.
             # Total power = CPU + GPU watts (a "CPU+GPU power" figure, not whole-system draw).
-            # Whole-system power (RAPL PSYS / battery) - a real source when present; stash it on the
-            # widget so the Monitor can show a true "System N W" distinct from the CPU+GPU sum.
-            if 'system_power' in stats and self.view is not None:
-                try:
-                    self.view.system_power = stats['system_power']
-                except Exception:
-                    pass
             if self.widget_state:
-                for key in ('cpu_temp', 'gpu_temp', 'cpu_power', 'gpu_power', 'system_power'):
+                for key in ('cpu_temp', 'gpu_temp', 'cpu_power', 'gpu_power'):
                     v = stats.get(key)
                     if v is not None and v > 0:
                         self.widget_state.add_hardware_stat(key, float(v), persist=_keep(key))
+
                 cp, gp = stats.get('cpu_power'), stats.get('gpu_power')
                 cp_on, gp_on = cp is not None and cp > 0, gp is not None and gp > 0
                 if cp_on or gp_on:
@@ -252,6 +269,57 @@ class StatsController(QObject):
                 v_total = stats.get('vram_total')
                 v_total_val = float(v_total) if v_total is not None else -1.0
                 self.vram_info_updated.emit(stats['vram_used'], v_total_val)
+
+        # Power history, OUTSIDE the CPU/GPU gate above (#323 review 3): with the PR's own
+        # defaults (CPU/GPU/power-stats off) a battery-only poll reaches this block alone,
+        # and it is the only history the hover has to average.
+        if self.widget_state and stats.get('system_power') is not None:
+            v = float(stats['system_power'])
+            if v > 0:
+                # system_power keeps the stat history it has always had - every real sensor
+                # reading lands there, on AC included, so the Stats-export "System power"
+                # column and any pro-stats consumer stay meaningful on desktops with RAPL.
+                self.widget_state.add_hardware_stat('system_power', v, persist=_keep('system_power'))
+                # The hover's "Today avg" needs discharge-only samples though: a whole-system
+                # reading is battery drain only while the machine is ACTUALLY discharging -
+                # "not on AC" above also counts MODE_NONE (e.g. a desktop whose RAPL PSYS
+                # sensor reports with no battery in the box), so a plain not-on-AC gate would
+                # write battery_drain rows that can never be shown. Discharge-only mirrors
+                # exactly what the hover can display; the mirror follows battery_drain's own
+                # policy (the power-display switch) rather than system_power's.
+                if system_power_discharging:
+                    self.widget_state.add_hardware_stat(
+                        'battery_drain', v, persist=_keep('battery_drain'))
+
+        # Whole-system / battery power, mirrored from THIS poll (#323 review). The hover card
+        # treats both slots as current truth, so each is set from the current stats and cleared
+        # when its key is absent: a stale "discharging 12 W" on AC, or a lingering "+38 W" after
+        # charging to full, is worse than no value. Charge and discharge are mutually exclusive,
+        # so a new value for one leaves the other cleared. Kept outside the cpu/gpu gate above:
+        # battery-only polls must reach the view even when CPU history recording is off.
+        if self.view is not None:
+            try:
+                # The slot carries the CURRENT whole-system reading, on AC included - the
+                # Monitor's "System N W" strip needs it even on AC (a laptop with a RAPL
+                # PSYS counter reports there, and clearing it blanked the strip). The hover
+                # card decides what to SHOW: it only reads system_power while the machine
+                # is discharging, so a PSYS reading on AC is never shown as battery drain
+                # (#323 review). Absent key -> clear the slot, so a stale "discharging
+                # 12 W" cannot outlive the reading.
+                if 'system_power' in stats:
+                    self.view.system_power = stats['system_power']
+                else:
+                    self.view.system_power = None
+
+                self.view.battery_power = (
+                    stats['battery_power'] if 'battery_power' in stats else None)
+                # An open hover card's battery rows are live, like its hardware rows (#399);
+                # the view throttles this and it is a no-op without a battery card up.
+                refresh = getattr(self.view, "refresh_hover_power", None)
+                if callable(refresh):
+                    refresh()
+            except Exception:
+                pass
 
 
     def _handle_network_counters(self, current_counters: Dict[str, Any],
