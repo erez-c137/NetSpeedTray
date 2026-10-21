@@ -528,6 +528,7 @@
     "METRICS_STATUS_DENIED": "Windows שומרת את פורט {port}. בחר פורט אחר.",
     "METRICS_STATUS_ERROR": "לא ניתן להפעיל בפורט {port}. בחר פורט אחר.",
     "POWER_HOVER_CARD_LABEL": "הצג צריכת סוללה בעת ריחוף מעל היישומון",
+    "POWER_SECTION_TITLE": "סוללה",
     "POWER_NOW_LABEL": "כעת",
     "POWER_TODAY_AVG_LABEL": "ממוצע היום",
     "POWER_ON_AC_VALUE": "בחשמל",

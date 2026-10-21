@@ -1192,19 +1192,27 @@ class NetworkSpeedWidget(QWidget):
             hardware = self._hover_hardware_snapshot() if self._hover_hardware_wanted() else None
             if hint is None and today is None and power is None and not hardware:
                 return  # nothing to show (all toggles off, or tips graduated while data is off)
-            self._hide_usage_hover_card()  # never stack two cards
             note = (self.i18n.USAGE_RECORDED_HISTORY_NOTE
                     if today is not None and getattr(self, "_hover_usage_reconstructed", False) else None)
             month_label = (self.i18n.USAGE_THIS_PERIOD_LABEL
                            if today is not None and getattr(self, "_hover_usage_period_start", None)
                            else None)
-            self._hover_card = UsageFlyout(self.i18n, today, month, hint=hint, cap=cap, power=power,
-                                           history_note=note, hardware=hardware, month_label=month_label)
+            card = UsageFlyout(self.i18n, today, month, hint=hint, cap=cap, power=power,
+                               history_note=note, hardware=hardware, month_label=month_label)
             self._hover_hw_refreshed = time.monotonic()
             screen = self.screen() or QApplication.primaryScreen()
             avail = screen.availableGeometry() if screen else self.frameGeometry()
-            self._hover_card.show_for(self.frameGeometry(), avail, edge=self._hover_card_edge(),
-                                      screen=screen)
+            # Never stack two cards - but show the new one BEFORE the old one goes: a rebuild
+            # while the pointer rests on the widget (refresh_hover_power) then swaps cards with
+            # no frame in between, instead of a visible blink.
+            old, self._hover_card = self._hover_card, card
+            card.show_for(self.frameGeometry(), avail, edge=self._hover_card_edge(), screen=screen)
+            if old is not None:
+                try:
+                    old.hide()
+                    old.deleteLater()
+                except Exception:
+                    pass
         except Exception as e:
             self.logger.error("Error showing usage hover card: %s", e, exc_info=True)
 
@@ -1288,9 +1296,10 @@ class NetworkSpeedWidget(QWidget):
                 live_w = self.system_power
             else:
                 live_w = None
-            # The signed watts outrank the ctypes mode when they disagree: this machine's
-            # firmware reports flag=9 ("no battery") while actually charging, and the flag's
-            # charging bit lags the real flow. Watts are the ground truth for the state.
+            # The signed watts outrank the API's mode when they disagree: the charging bit can
+            # lag the real flow around a plug-in. Watts are the ground truth for the state.
+            # (With the AC line unknown, only the signed charge flow is trusted - a
+            # whole-system reading is never guessed into a drain.)
             if live_w is not None and live_w < 0:
                 mode = power_utils.MODE_CHARGE
             elif live_w:
@@ -1298,9 +1307,14 @@ class NetworkSpeedWidget(QWidget):
             else:
                 mode = state.mode
             projected = None
-            if mode == power_utils.MODE_DISCHARGE and live_w:
-                projected = power_utils.projected_runtime_hours(
-                    live_w, state.charge_pct, power_utils.read_design_capacity_mwh())
+            if mode == power_utils.MODE_DISCHARGE:
+                # Windows' own estimate first; else design capacity x charge at the live draw.
+                # The capacity comes from the cache the monitor thread fills - never WMI here,
+                # on the GUI thread.
+                projected = power_utils.windows_runtime_hours()
+                if projected is None and live_w:
+                    projected = power_utils.projected_runtime_hours(
+                        live_w, state.charge_pct, power_utils.cached_design_capacity_mwh())
             return {
                 "mode": mode,
                 "live_w": live_w,
@@ -1455,8 +1469,10 @@ class NetworkSpeedWidget(QWidget):
     def refresh_hover_power(self) -> None:
         """Push a fresh battery summary into an open hover card (~1 Hz; the controller calls this on
         every poll). When the summary needs different rows - plugged in or unplugged mid-hover,
-        today's history arrived, the switch went off - the card is rebuilt instead, so no row
-        lingers with a value it no longer has."""
+        today's history arrived - the card is rebuilt and swapped (the new one shown before the
+        old one hides). Not closed like the hardware rows: the pointer is still resting on the
+        widget, so no enterEvent would bring a closed card back, and a plug-in is exactly the
+        moment the user is watching it. With nothing left to show it is closed."""
         card = self._hover_card
         if card is None or not getattr(card, "has_power", False):
             return
@@ -1468,9 +1484,9 @@ class NetworkSpeedWidget(QWidget):
             power = (self._hover_power_summary()
                      if self.config.get("power_display_enabled", False) else None)
             if power is None or not card.update_power(power):
-                # Hide first: with nothing left to show, _show_usage_hover_card builds no new card.
-                self._hide_usage_hover_card()
-                self._show_usage_hover_card()
+                self._show_usage_hover_card()          # builds the new card, then hides this one
+                if self._hover_card is card:           # nothing to show (or not now): close it
+                    self._hide_usage_hover_card()
         except Exception as e:
             self.logger.debug("hover card power refresh failed: %s", e)
 

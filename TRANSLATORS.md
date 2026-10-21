@@ -47,6 +47,7 @@ Other locales (English, German, Spanish) are currently maintained by the project
 
 > 🆕 **Pending native review for 2.2 (battery in the hover card, #323, see #364):** non-English values are AI-assisted.
 > - `POWER_HOVER_CARD_LABEL` - the opt-in switch under Settings > General > Interaction, next to your `HOVER_USAGE_CARD_LABEL` - reuse its "hover the widget" wording.
+> - `POWER_SECTION_TITLE` - the small caption over the card's battery rows ("Battery"). One word, as on your laptop's own battery flyout.
 > - `POWER_NOW_LABEL` / `POWER_TODAY_AVG_LABEL` - row labels in the card's battery section ("Now" = the live draw in watts; "Today avg" = today's average draw on battery). Keep them short; the value sits to their right.
 > - `POWER_ON_AC_VALUE` - shown in place of the watts when the laptop is plugged in and not charging ("On AC").
 > - `POWER_CHARGE_PCT_TEMPLATE` - the charge-level line under the rows; keep `{pct}`, and write the percent the way your `PERCENT_TEMPLATE` does.

@@ -10,6 +10,8 @@ NetSpeedTray's own readings only - no external data sources.
 """
 import logging
 
+import pytest
+
 from netspeedtray.utils import power_utils
 from netspeedtray.views.widget.main import NetworkSpeedWidget
 
@@ -29,6 +31,11 @@ class _StubWidget:
 def _forced_state_mode(monkeypatch, mode):
     monkeypatch.setattr(power_utils, "read_power_state",
                         lambda: power_utils.PowerState(mode, 63))
+    # No real WMI or kernel reads in unit tests: the projection inputs are stubbed too.
+    monkeypatch.setattr(power_utils, "windows_runtime_hours", lambda: None)
+    monkeypatch.setattr(power_utils, "cached_design_capacity_mwh", lambda: None)
+    monkeypatch.setattr(power_utils, "read_design_capacity_mwh",
+                        lambda: (_ for _ in ()).throw(AssertionError("WMI on the GUI thread")))
 
 
 def test_power_summary_ac_with_system_power_shows_no_drain(monkeypatch):
@@ -51,7 +58,7 @@ def test_power_summary_discharging_uses_system_power(monkeypatch):
 
 
 def test_power_summary_charging_signed_value_wins(monkeypatch):
-    """The signed battery poll outranks the ctypes mode (flag=9 firmware quirk)."""
+    """The signed battery poll outranks the API's mode (its charging bit can lag the flow)."""
     _forced_state_mode(monkeypatch, power_utils.MODE_AC)
     summary = NetworkSpeedWidget._hover_power_summary(_StubWidget(8.8, signed_w=-38.2))
 
@@ -113,10 +120,15 @@ class _RefreshStub:
 
     def _hide_usage_hover_card(self):
         self.hidden = getattr(self, "hidden", 0) + 1
+        self._hover_card = None
 
     def _show_usage_hover_card(self):
-        assert getattr(self, "hidden", 0) == self.rebuilt + 1, "rebuild must hide the old card first"
+        # The real one builds the new card and shows it BEFORE the old one goes, so the
+        # pointer never sees a frame without a card (no hide first).
+        assert getattr(self, "hidden", 0) == 0, "the old card was hidden before the rebuild"
         self.rebuilt += 1
+        if self.summary is not None:
+            self._hover_card = _FakeCard()
 
 
 def test_refresh_pushes_fresh_values_into_the_open_card():
@@ -134,9 +146,10 @@ def test_refresh_rebuilds_when_the_rows_change_or_the_section_goes():
     stub = _RefreshStub(_FakeCard(accept=False), {"mode": "charge", "live_w": -38.2})
     NetworkSpeedWidget.refresh_hover_power(stub)
     assert stub.rebuilt == 1
+    assert getattr(stub, "hidden", 0) == 0     # swapped, not closed
     gone = _RefreshStub(_FakeCard(), None)     # switched off in Settings, or no battery anymore
     NetworkSpeedWidget.refresh_hover_power(gone)
-    assert gone.rebuilt == 1
+    assert gone.rebuilt == 1 and gone.hidden == 1 and gone._hover_card is None
 
 
 def test_refresh_is_a_no_op_without_a_battery_card():
@@ -147,3 +160,27 @@ def test_refresh_is_a_no_op_without_a_battery_card():
     stub2 = _RefreshStub(card, {"mode": "ac"})
     NetworkSpeedWidget.refresh_hover_power(stub2)       # card without a battery section
     assert card.updates == [] and stub.rebuilt == 0 and stub2.rebuilt == 0
+
+
+# --- projection sources (independent review of 2c053df) ------------------------------------
+
+def test_projection_prefers_windows_estimate(monkeypatch):
+    _forced_state_mode(monkeypatch, power_utils.MODE_DISCHARGE)
+    monkeypatch.setattr(power_utils, "windows_runtime_hours", lambda: 3.5)
+    monkeypatch.setattr(power_utils, "cached_design_capacity_mwh", lambda: 60000)
+    summary = NetworkSpeedWidget._hover_power_summary(_StubWidget(live_w=8.8))
+    assert summary["projected_hours"] == 3.5
+
+
+def test_projection_falls_back_to_the_prefetched_capacity(monkeypatch):
+    _forced_state_mode(monkeypatch, power_utils.MODE_DISCHARGE)
+    monkeypatch.setattr(power_utils, "cached_design_capacity_mwh", lambda: 60000)
+    summary = NetworkSpeedWidget._hover_power_summary(_StubWidget(live_w=8.8))
+    assert summary["projected_hours"] == pytest.approx(60000 * 0.63 / 8.8 / 1000.0)
+
+
+def test_unknown_ac_line_keeps_the_section(monkeypatch):
+    """Battery present, AC line unknown: show the charge level, never a guessed drain."""
+    _forced_state_mode(monkeypatch, power_utils.MODE_UNKNOWN)
+    summary = NetworkSpeedWidget._hover_power_summary(_StubWidget(live_w=8.8))
+    assert summary is not None and summary["live_w"] is None and summary["charge_pct"] == 63

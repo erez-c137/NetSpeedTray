@@ -30,7 +30,9 @@ from netspeedtray.constants.styles import styles as tokens
 _GAP_ABOVE = 8
 _EDGE_MARGIN = 8
 _OVER_CAP_COLOR = "#E81123"  # Win11 "critical" red, used when usage is at/over the cap
-_CHARGING_COLOR = "#6CCB5F"  # Win11 dark-mode success green
+# Win11 success green per theme - the dark one is ~2:1 on the light card; both clear 4.5:1 on theirs.
+_CHARGING_COLOR_DARK = "#6CCB5F"
+_CHARGING_COLOR_LIGHT = "#0F7B0F"
 
 # (up_bytes, down_bytes)
 Totals = Tuple[float, float]
@@ -56,6 +58,7 @@ class UsageFlyout(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)  # never steal focus
 
         self._c = su.semantic_colors()
+        self._charging_color = _CHARGING_COLOR_DARK if su.is_dark_mode() else _CHARGING_COLOR_LIGHT
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(12, 12, 12, 12)  # room for the drop shadow
@@ -310,7 +313,7 @@ class UsageFlyout(QWidget):
         # (first seconds after launch, or a firmware that reports nothing yet) shows an em dash
         # rather than a wrong 0.0 W. live_w is the signed poll value (negative while charging).
         if mode == "charge" and live_w:
-            now = (f"+{watts(abs(live_w))}", _CHARGING_COLOR)
+            now = (f"+{watts(abs(live_w))}", self._charging_color)
         elif mode == "ac":
             now = (self._tr("POWER_ON_AC_VALUE", "On AC"), self._c["text_secondary"])
         elif live_w:
@@ -331,6 +334,11 @@ class UsageFlyout(QWidget):
         """The battery rows: live draw, today's average, projected runtime, charge level. Values are
         kept so ``update_power`` can refresh them in place while the card is open."""
         texts = self._power_texts(power)
+        # A caption, so "Now 9.6 W" doesn't read as one more hardware row above it and "Today avg"
+        # isn't mistaken for the usage "Today" below (the hardware rows need none: CPU/GPU/RAM
+        # name themselves).
+        body.addWidget(self._label(self._tr("POWER_SECTION_TITLE", "Battery"), tokens.TYPE_CAPTION,
+                                   self._c["text_secondary"]))
         grid = QGridLayout()
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setHorizontalSpacing(16)

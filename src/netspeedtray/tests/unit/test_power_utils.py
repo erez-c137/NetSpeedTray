@@ -29,8 +29,10 @@ def _status(ac=1, flags=0, pct=80, life=14400, full=18000):
 @pytest.fixture(autouse=True)
 def _reset_capacity_cache():
     power_utils._design_mwh = None      # the process-wide cache must not leak across tests
+    power_utils._capacity_retry_at = 0.0
     yield
     power_utils._design_mwh = None
+    power_utils._capacity_retry_at = 0.0
 
 
 # --- power_utils.read_power_state ---------------------------------------------------
@@ -96,7 +98,7 @@ def test_capacity_nonsense_rejected(monkeypatch):
     assert power_utils.read_design_capacity_mwh() is None
 
 
-def test_capacity_cached_across_calls(monkeypatch):
+def test_capacity_cached_across_calls(monkeypatch):  # a GOOD value is cached for the process
     calls = {"n": 0}
 
     def _wmi(namespace=None):
@@ -311,3 +313,123 @@ def test_update_power_asks_for_a_rebuild_when_the_rows_change(q_app):
     card = UsageFlyout(None, power=_power())
     assert card.update_power(_power(mode="charge", live_w=-38.2, projected_hours=None)) is False
     assert UsageFlyout(_i18n(), (0, 0), (0, 0)).has_power is False
+
+
+# --- independent review of 2c053df: state edge cases, Windows' estimate, capacity retry ---------
+
+def test_state_no_battery_flag_wins_over_a_percent(monkeypatch):
+    # 128 "no system battery" is honored by itself: a stray percent is not a battery.
+    monkeypatch.setattr(power_utils, "_power_status_struct",
+                        lambda: _status(ac=1, flags=0x80, pct=100))
+    assert power_utils.read_power_state().mode == "none"
+
+
+def test_state_unknown_ac_line_with_a_real_battery_is_shown(monkeypatch):
+    # ACLineStatus 255 with a battery present: unknown-but-present, so the section still
+    # shows (charge level, a dash for the rate) instead of vanishing.
+    monkeypatch.setattr(power_utils, "_power_status_struct",
+                        lambda: _status(ac=255, flags=0x1, pct=60))
+    assert power_utils.read_power_state() == power_utils.PowerState("unknown", 60)
+    assert power_utils.has_battery() is True
+    monkeypatch.setattr(power_utils, "_power_status_struct",
+                        lambda: _status(ac=255, flags=0xFF, pct=255))
+    assert power_utils.read_power_state().mode == "none"
+
+
+def test_windows_runtime_estimate(monkeypatch):
+    monkeypatch.setattr(power_utils, "_power_status_struct",
+                        lambda: _status(ac=0, flags=0x1, pct=70, life=14400))
+    assert power_utils.windows_runtime_hours() == pytest.approx(4.0)
+    monkeypatch.setattr(power_utils, "_power_status_struct",
+                        lambda: _status(ac=0, flags=0x1, pct=70, life=0xFFFFFFFF))
+    assert power_utils.windows_runtime_hours() is None      # "unknown"
+    monkeypatch.setattr(power_utils, "_power_status_struct",
+                        lambda: _status(ac=1, flags=0x1, pct=70, life=14400))
+    assert power_utils.windows_runtime_hours() is None      # on AC it is not a runtime
+    monkeypatch.setattr(power_utils, "_power_status_struct", lambda: None)
+    assert power_utils.windows_runtime_hours() is None
+
+
+def test_ac_line_status(monkeypatch):
+    monkeypatch.setattr(power_utils, "_power_status_struct", lambda: _status(ac=0))
+    assert power_utils.ac_line_status() == 0
+    monkeypatch.setattr(power_utils, "_power_status_struct", lambda: None)
+    assert power_utils.ac_line_status() is None
+
+
+def test_capacity_sums_every_pack(monkeypatch):
+    # Dual-battery laptops (ThinkPad internal + hot-swap): the runtime is the sum of packs.
+    monkeypatch.setattr(power_utils.wmi, "WMI",
+                        lambda namespace=None: types.SimpleNamespace(query=lambda q: [
+                            types.SimpleNamespace(DesignedCapacity=23_000),
+                            types.SimpleNamespace(DesignedCapacity=72_000)]))
+    assert power_utils.read_design_capacity_mwh() == 95_000
+
+
+def test_capacity_failure_is_retried_after_a_backoff(monkeypatch):
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(power_utils.time, "monotonic", lambda: clock["t"])
+    calls = {"n": 0}
+
+    def _wmi(namespace=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise OSError("RPC server unavailable")          # transient, e.g. right after resume
+        return types.SimpleNamespace(query=lambda q: [types.SimpleNamespace(DesignedCapacity=60000)])
+    monkeypatch.setattr(power_utils.wmi, "WMI", _wmi)
+    assert power_utils.read_design_capacity_mwh() is None
+    assert power_utils.read_design_capacity_mwh() is None   # inside the backoff: no new query
+    assert calls["n"] == 1
+    clock["t"] += constants.hardware.power.CAPACITY_RETRY_SEC + 1
+    assert power_utils.read_design_capacity_mwh() == 60000  # not cached as "unavailable" forever
+    assert calls["n"] == 2
+
+
+def test_cached_capacity_never_queries_wmi(monkeypatch):
+    """The hover (GUI thread) reads only the cache the monitor thread fills."""
+    def _boom(namespace=None):
+        raise AssertionError("WMI on the GUI thread")
+    monkeypatch.setattr(power_utils.wmi, "WMI", _boom)
+    assert power_utils.cached_design_capacity_mwh() is None
+    power_utils._design_mwh = 54700
+    assert power_utils.cached_design_capacity_mwh() == 54700
+
+
+# --- the card: theme-aware charging green, a section caption -----------------------------------
+
+def _rgb(hex_color):
+    h = hex_color.lstrip("#")
+    return [int(h[i:i + 2], 16) / 255.0 for i in (0, 2, 4)]
+
+
+def _contrast(a, b):
+    def lum(c):
+        lin = [v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4 for v in _rgb(c)]
+        return 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2]
+    hi, lo = sorted((lum(a), lum(b)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+@pytest.mark.parametrize("dark", [True, False])
+def test_charging_green_is_readable_in_both_themes(q_app, monkeypatch, dark):
+    """#6CCB5F on the light card is ~2:1; the light theme uses Win11's light success green."""
+    import re
+    from netspeedtray.utils import styles as su
+    monkeypatch.setattr(su, "is_dark_mode", lambda: dark)
+    card = UsageFlyout(None, power=_power(mode="charge", live_w=-38.2, projected_hours=None))
+    lbl = next(w for w in card.findChildren(QLabel) if w.text() == "+38.2 W")
+    color = re.search(r"color:\s*(#[0-9A-Fa-f]{6})", lbl.styleSheet()).group(1)
+    assert _contrast(color, su.semantic_colors()["card_bg"]) >= 4.5
+
+
+def test_battery_section_has_a_caption(q_app):
+    """Without a heading, "Now 9.6 W" under "CPU ... 8.5 W" read as another hardware row, and
+    "Today avg" sat next to the usage "Today"."""
+    i18n = _i18n()
+    i18n.POWER_SECTION_TITLE = "Battery"
+    card = UsageFlyout(i18n, power=_power(), hardware={"cpu": {"usage": 12.0}})
+    order = [t for t in _body_order(card) if t != "<sep>"]
+    cap = order.index("Battery")
+    now = next(i for i, t in enumerate(order) if t.startswith("Now"))
+    cpu = next(i for i, t in enumerate(order) if t.startswith("CPU"))
+    assert cpu < cap < now

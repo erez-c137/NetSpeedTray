@@ -528,6 +528,7 @@
     "METRICS_STATUS_DENIED": "Windows réserve le port {port}. Choisissez un autre port.",
     "METRICS_STATUS_ERROR": "Impossible de démarrer sur le port {port}. Choisissez un autre port.",
     "POWER_HOVER_CARD_LABEL": "Afficher la consommation de la batterie au survol du widget",
+    "POWER_SECTION_TITLE": "Batterie",
     "POWER_NOW_LABEL": "Actuel",
     "POWER_TODAY_AVG_LABEL": "Moy. du jour",
     "POWER_ON_AC_VALUE": "Sur secteur",
