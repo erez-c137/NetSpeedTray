@@ -7,6 +7,16 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_SCALE_FACTOR", "1")  # pin DPI for render determinism
 
+# No test may write the maintainer's real %APPDATA%/NetSpeedTray (config, history, the update
+# records) or %LOCALAPPDATA%/NetSpeedTray. Redirected for the whole session BEFORE anything imports
+# helpers (get_app_data_path() caches its first answer): utils/styles.py once wrote its chevron PNG
+# cache there from every Settings test, and an unisolated apply_update test wrote a stray update
+# marker (#260 review). Per-test fixtures still narrow this further where a test needs to.
+import tempfile as _tempfile
+_SESSION_PROFILE = _tempfile.mkdtemp(prefix="nst-test-profile-")
+os.environ["APPDATA"] = os.path.join(_SESSION_PROFILE, "Roaming")
+os.environ["LOCALAPPDATA"] = os.path.join(_SESSION_PROFILE, "Local")
+
 import pytest
 from PyQt6.QtWidgets import QApplication
 
@@ -33,3 +43,7 @@ def _isolate_update_marker(tmp_path, monkeypatch):
                         lambda: str(root / "appdata" / update_applier._STAGED_MARKER_NAME))
     monkeypatch.setattr(update_applier, "staging_root",
                         lambda: str(root / "localappdata" / "NetSpeedTray" / "updates"))
+    # Recorded staged folders are only deleted from a staging location; in tests that is the
+    # test's own Downloads stand-in (or tmp_path itself) - never the real Downloads.
+    monkeypatch.setattr(update_applier, "_downloads_dirs", raising=False, value=
+                        lambda: [str(tmp_path / "Downloads"), str(tmp_path)])

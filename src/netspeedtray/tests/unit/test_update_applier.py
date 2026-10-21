@@ -357,7 +357,8 @@ def test_cli_applies_a_valid_update(tmp_path, monkeypatch, marker):
     assert launched["exe"] == os.path.join(str(install), ua.APP_EXE)
     backups = list(tmp_path.glob("*" + ua._BACKUP_SUFFIX + "*"))
     assert len(backups) == 1, "the previous version is the rollback until the new one has started"
-    assert any(e.get("kind") == "backup" for e in json.loads(marker.read_text(encoding="utf-8"))), (
+    records = marker.parent / ua._BACKUPS_RECORD_NAME
+    assert any(e.get("kind") == "backup" for e in json.loads(records.read_text(encoding="utf-8"))), (
         "the backup must be recorded for the new version's janitor")
 
 

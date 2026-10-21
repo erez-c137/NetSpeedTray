@@ -286,6 +286,15 @@ def _downloads_dir() -> str:
     return downloads if os.path.isdir(downloads) else home
 
 
+def _in_staging_root(path: str) -> bool:
+    """True if ``path`` lies in the app-owned staging root (update_applier.staging_root())."""
+    try:
+        from netspeedtray.core.update_applier import _is_within, staging_root
+        return _is_within(path, staging_root())
+    except Exception:
+        return False
+
+
 def _sha256_file(path: str) -> str:
     """Streaming SHA-256 of a file, as lowercase hex."""
     import hashlib
@@ -326,16 +335,15 @@ def _unique_dir(path: str) -> str:
     Return a directory path that does not currently exist, so a subsequent ``shutil.move`` renames the
     source *to* it rather than nesting *inside* a surviving directory.
 
-    Tries to clear ``path`` first (a stale staging folder from a previous run); if a locked file leaves
-    it partly present, falls back to ``path-2``, ``path-3``, ... so we never move into a mixed folder.
+    An existing ``path`` is NEVER cleared: in Downloads it may be the user's own folder (a copy they
+    unzipped by hand, a rollback they kept), and in the staging root a failed update is kept on
+    purpose. It falls through to ``path-2``, ``path-3``, ... instead, so we never move into a mixed
+    folder and never delete anything to make room (#260 review).
     """
-    if not os.path.exists(path):
-        return path
-    shutil.rmtree(path, ignore_errors=True)
-    if not os.path.exists(path):
+    if not os.path.lexists(path):
         return path
     i = 2
-    while os.path.exists(f"{path}-{i}"):
+    while os.path.lexists(f"{path}-{i}"):
         i += 1
     return f"{path}-{i}"
 
@@ -632,8 +640,8 @@ class SecureUpdater(QObject):
             # Staging already finished before the cancel landed; don't leave a surprise folder behind.
             try:
                 shutil.rmtree(ready, ignore_errors=True)
-                if os.path.isfile(ready + ".zip"):
-                    os.remove(ready + ".zip")
+                if _in_staging_root(ready) and os.path.isfile(ready + ".zip"):
+                    os.remove(ready + ".zip")   # ours; beside a Downloads folder it may be theirs
             except Exception:
                 pass
             self._finish()
@@ -648,6 +656,10 @@ class SecureUpdater(QObject):
         # doubtful falls through to the guided copy below rather than being worked around.
         if self._try_hands_off(ready, app_dir):
             return
+        # Guided copy from here on. If it was staged for the hands-off swap (in AppData), move it
+        # where the user will look - the message below sends them to it, and the staging root is
+        # aged out after a week - and drop the zip kept for the swap (#260 review L5).
+        ready = self._move_to_downloads(ready)
 
         try:
             os.startfile(ready)   # type: ignore[attr-defined]  # reveal in Explorer (Windows)
@@ -665,6 +677,23 @@ class SecureUpdater(QObject):
         except Exception:
             pass
         self._finish()
+
+    def _move_to_downloads(self, ready: str) -> str:
+        """Move a copy staged in the app's update folder to Downloads; returns where it now is
+        (unchanged if it was not in the staging root, or could not be moved)."""
+        if not _in_staging_root(ready):
+            return ready
+        try:
+            target = _unique_dir(os.path.join(_downloads_dir(), os.path.basename(ready)))
+            shutil.move(ready, target)
+            logger.info("Moved the staged update to Downloads for the guided copy.")
+            if os.path.isfile(ready + ".zip"):
+                os.remove(ready + ".zip")
+            return target
+        except Exception:
+            logger.warning("Could not move the staged update to Downloads; pointing the user at "
+                           "the update folder instead.", exc_info=True)
+            return ready
 
     def _try_hands_off(self, ready: str, app_dir: str) -> bool:
         """Launch the staged copy to apply the update itself. True if handed off (caller must stop).

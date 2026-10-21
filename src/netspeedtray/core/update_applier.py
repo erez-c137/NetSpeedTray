@@ -14,17 +14,17 @@ the new copy applies the update itself:
     2. launch staged NetSpeedTray.exe
        --apply-update <install> --wait-pid <own pid>
     3. quit  ---------------------------> 4. wait for <pid> to exit
-                                          5. rename <install> -> <install>.old-<ts>
+                                          5. rename <install> -> <install>.previous-<ts>
                                           6. copy   <staged>  -> <install>, verify the copy
                                           7. record the outcome in the marker, launch
                                              <install>/NetSpeedTray.exe, exit
     new version (v N+1, in <install>)
     ---------------------------------
     9. once it has been up a few seconds - i.e. it STARTED - the update janitor waits for the
-       applier to exit, then removes the .old- folder, the staged copy and its downloaded zip
+       applier to exit, then removes the .previous- folder, the staged copy and its downloaded zip
        (with retries for AV/indexer locks; anything still locked is retried next launch).
 
-Nothing is kept as a rollback once the new version has started. Until then the .old- folder IS the
+Nothing is kept as a rollback once the new version has started. Until then the .previous- folder IS the
 rollback: a new version that crashes on start leaves the previous one intact beside it (#260).
 
 Since 2.2 the staged copy lives in an app-owned folder (``staging_root()``, under %LOCALAPPDATA%),
@@ -98,7 +98,13 @@ _EXIT_TIMEOUT_SEC = 30.0
 _SWAP_RETRY_SEC = 8.0
 _SWAP_RETRY_STEP = 0.25
 
-_BACKUP_SUFFIX = ".old-"
+# The previous install is renamed to `<install>.previous-<ts>`. Builds up to 2.2.0-beta.3 named it
+# `<install>.old-<ts>` and, at every start, rmtree'd ANY `<install>.old-*` sibling with no check of
+# what is inside - so a backup holding a user's file would be wiped by an older build run from the
+# same folder (a downgrade). They never match the new name. Their `.old-` leftovers are still swept
+# here, under the same guards (#260 review).
+_BACKUP_SUFFIX = ".previous-"
+_LEGACY_BACKUP_SUFFIX = ".old-"
 
 
 def _wait_for_exit(pid: int, timeout: float = _EXIT_TIMEOUT_SEC) -> bool:
@@ -283,6 +289,14 @@ def _copy_mismatch(staged_dir: str, install_dir: str) -> Optional[str]:
 # two identifying files LAST - so a delete interrupted by a lock leaves a folder that is still
 # recognisably ours, and the next attempt still passes the check.
 
+def _reparse_is_link(attrs: int, tag: int) -> bool:
+    """A reparse point that NAMES another location (junction, symlink, mount point), or one whose
+    tag we cannot read. Cloud-file placeholders are reparse points without the name-surrogate bit."""
+    if not attrs & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400):
+        return False
+    return not tag or bool(tag & _REPARSE_NAME_SURROGATE)
+
+
 def _is_link_like(path: str) -> bool:
     """True for a symlink, junction or mount point - anything that names ANOTHER location.
 
@@ -301,10 +315,84 @@ def _is_link_like(path: str) -> bool:
             return True
     except AttributeError:                           # pragma: no cover - older Python
         pass
-    if getattr(st, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400):
-        tag = getattr(st, "st_reparse_tag", 0)
-        return not tag or bool(tag & _REPARSE_NAME_SURROGATE)
-    return False
+    return _reparse_is_link(getattr(st, "st_file_attributes", 0), getattr(st, "st_reparse_tag", 0))
+
+
+def _entry_is_link(entry: "os.DirEntry") -> bool:
+    """``_is_link_like`` from the directory listing itself - no second lookup by path that a swap
+    could slip between."""
+    try:
+        if entry.is_symlink() or getattr(entry, "is_junction", lambda: False)():
+            return True
+        st = entry.stat(follow_symlinks=False)
+        return _reparse_is_link(getattr(st, "st_file_attributes", 0),
+                                getattr(st, "st_reparse_tag", 0))
+    except OSError:
+        return True
+
+
+def _has_other_links(path: str) -> bool:
+    """True if this file has more than one name (a hard link): the data, and its attributes, are
+    shared with a name outside our tree, so we never chmod it and never treat it as ours."""
+    try:
+        return os.lstat(path).st_nlink > 1
+    except OSError:
+        return True
+
+
+class _HeldDir:
+    """A directory handle that pins ``path`` while we work inside it (#260 review M1).
+
+    Opened with FILE_FLAG_OPEN_REPARSE_POINT, so a junction or symlink is opened AS ITSELF and seen
+    for what it is rather than resolved; and without FILE_SHARE_DELETE, so nobody can rename or
+    delete the directory - and so swap a junction into its place - until we close it. ``ok`` is
+    False when the path is not a plain directory. Off Windows it degrades to a path check.
+    """
+    _GENERIC_FLAGS = 0x02000000 | 0x00200000       # BACKUP_SEMANTICS | OPEN_REPARSE_POINT
+    _ACCESS = 0x0001 | 0x0080                      # FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES
+    _SHARE = 0x1 | 0x2                             # READ | WRITE - deliberately not DELETE
+
+    def __init__(self, path: str) -> None:
+        self.handle = None
+        self.ok = False
+        try:
+            import ctypes
+            from ctypes import wintypes
+        except Exception:                          # pragma: no cover - non-Windows
+            self.ok = os.path.isdir(path) and not _is_link_like(path)
+            return
+        if os.name != "nt":                        # pragma: no cover
+            self.ok = os.path.isdir(path) and not _is_link_like(path)
+            return
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.CreateFileW.restype = wintypes.HANDLE
+        k32.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                                    ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD,
+                                    wintypes.HANDLE]
+        k32.GetFileInformationByHandleEx.argtypes = [wintypes.HANDLE, ctypes.c_int,
+                                                     ctypes.c_void_p, wintypes.DWORD]
+        k32.CloseHandle.argtypes = [wintypes.HANDLE]
+        self._k32 = k32
+        h = k32.CreateFileW(path, self._ACCESS, self._SHARE, None, 3, self._GENERIC_FLAGS, None)
+        if not h or h == wintypes.HANDLE(-1).value:
+            return
+        self.handle = h
+
+        class _TagInfo(ctypes.Structure):          # FILE_ATTRIBUTE_TAG_INFO
+            _fields_ = [("FileAttributes", wintypes.DWORD), ("ReparseTag", wintypes.DWORD)]
+        info = _TagInfo()
+        if not k32.GetFileInformationByHandleEx(h, 9, ctypes.byref(info), ctypes.sizeof(info)):
+            return
+        is_dir = bool(info.FileAttributes & 0x10)
+        self.ok = is_dir and not _reparse_is_link(info.FileAttributes, info.ReparseTag)
+
+    def close(self) -> None:
+        if self.handle:
+            try:
+                self._k32.CloseHandle(self.handle)
+            except Exception:
+                pass
+            self.handle = None
 
 
 def _top_level_names(path: Optional[str]) -> List[str]:
@@ -322,9 +410,10 @@ def _portable_tree_refusal(path: str, *, allowed_extra: Iterable[str] = (),
     - at its top level, nothing but the portable layout (EXE, ``_internal``, ``portable.marker``)
       plus ``allowed_extra`` - the top-level names of the CURRENT install, so a future build that
       adds a file still matches its own previous copy. A user's own file there is a refusal;
-    - the EXE and ``portable.marker`` present as regular files (``require_markers``; only a legacy
-      entry our own earlier sweep half-deleted is exempt);
-    - no junction or symlink anywhere inside.
+    - ``require_markers``: ``portable.marker`` present, and the EXE too unless the marker is all
+      that is left (our own delete removes the EXE before the marker - review L1). Exempt only for
+      an unrecorded ``<install>.old-<digits>`` sibling, which an older applier half-deleted;
+    - no junction, symlink or hard-linked file anywhere inside.
     An empty directory is always deletable: removing it removes nothing else.
     """
     if not path or not os.path.isabs(path):
@@ -344,14 +433,21 @@ def _portable_tree_refusal(path: str, *, allowed_extra: Iterable[str] = (),
     if unexpected:
         return "it holds items that are not part of NetSpeedTray: %s" % ", ".join(unexpected[:5])
     if require_markers:
-        for required in (APP_EXE, PORTABLE_MARKER):
+        lower = {n.lower() for n in names}
+        needed = [PORTABLE_MARKER] if lower == {PORTABLE_MARKER} else [APP_EXE, PORTABLE_MARKER]
+        for required in needed:
             p = os.path.join(path, required)
             if not os.path.isfile(p) or _is_link_like(p):
                 return "it has no %s" % required
     for dirpath, dirnames, filenames in os.walk(path, followlinks=False):
         for n in dirnames + filenames:
-            if _is_link_like(os.path.join(dirpath, n)):
-                return "it contains a junction or symlink: %s" % os.path.join(dirpath, n)
+            p = os.path.join(dirpath, n)
+            if _is_link_like(p):
+                return "it contains a junction or symlink: %s" % p
+        for n in filenames:
+            p = os.path.join(dirpath, n)
+            if _has_other_links(p):
+                return "it contains a hard-linked file: %s" % p
     return None
 
 
@@ -359,21 +455,36 @@ def _unlink(path: str) -> None:
     try:
         os.unlink(path)
     except PermissionError:
+        if _has_other_links(path):
+            raise                                   # its attributes are shared: never chmod it
         os.chmod(path, stat.S_IWRITE)               # a read-only file; nothing else is retried
         os.unlink(path)
+
+
+def _rmdir(path: str) -> None:
+    try:
+        os.rmdir(path)
+    except PermissionError:
+        os.chmod(path, stat.S_IWRITE)               # a read-only folder (review L2)
+        os.rmdir(path)
 
 
 def _remove_portable_tree(path: str) -> bool:
     """Delete a folder that passed ``_portable_tree_refusal``. True when it is gone.
 
-    Children first, the EXE and ``portable.marker`` last and only once everything else is gone, so a
-    lock part-way leaves the identifying files in place for the retry. A link met on the way is
-    never followed and stops the delete.
+    Every directory is pinned with ``_HeldDir`` before it is listed - the root included - so it is
+    checked as a plain directory by handle and cannot be swapped for a junction while we work in it
+    (review M1); a link met on the way stops the delete. Children first; then the EXE, and
+    ``portable.marker`` LAST, only once everything else is gone - so a lock part-way leaves the
+    folder recognisably ours for the retry.
     """
     failures: List[str] = []
-    identifying = {APP_EXE.lower(), PORTABLE_MARKER}
+    identifying = frozenset({APP_EXE.lower(), PORTABLE_MARKER})
 
-    def _clear(d: str, skip: frozenset = frozenset()) -> None:
+    def _clear(d: str, held: "_HeldDir", skip: frozenset = frozenset()) -> None:
+        if not held.ok:
+            failures.append(d)
+            return
         try:
             entries = list(os.scandir(d))
         except OSError:
@@ -384,27 +495,42 @@ def _remove_portable_tree(path: str) -> bool:
                 continue
             p = entry.path
             try:
-                if _is_link_like(p):
+                if _entry_is_link(entry):
                     failures.append(p)              # refuse: never follow, never unlink a link
                 elif entry.is_dir(follow_symlinks=False):
-                    _clear(p)
-                    os.rmdir(p)
+                    sub = _HeldDir(p)
+                    try:
+                        _clear(p, sub)
+                    finally:
+                        sub.close()
+                    if sub.ok:
+                        _rmdir(p)
+                elif _has_other_links(p):
+                    failures.append(p)
                 else:
                     _unlink(p)
             except OSError:
                 failures.append(p)
 
-    _clear(path, frozenset(identifying))
-    if failures:
-        logger.info("Could not remove everything in %s yet (%d item(s) in use); will retry.",
-                    path, len(failures))
-        return False
+    root = _HeldDir(path)
     try:
-        for name in (PORTABLE_MARKER, APP_EXE):     # the EXE last: it is what makes the folder ours
-            p = os.path.join(path, name)
-            if os.path.lexists(p):
-                _unlink(p)
-        os.rmdir(path)
+        _clear(path, root, identifying)
+        if failures:
+            logger.info("Could not remove everything in %s yet (%d item(s) in use or refused); "
+                        "will retry.", path, len(failures))
+            return False
+        try:
+            for name in (APP_EXE, PORTABLE_MARKER):     # the marker last: it is what marks it ours
+                p = os.path.join(path, name)
+                if os.path.lexists(p):
+                    _unlink(p)
+        except OSError as e:
+            logger.info("Could not finish removing %s yet: %s; will retry.", path, e)
+            return False
+    finally:
+        root.close()
+    try:
+        _rmdir(path)
     except OSError as e:
         logger.info("Could not finish removing %s yet: %s; will retry.", path, e)
         return False
@@ -418,41 +544,82 @@ def _norm(path: str) -> str:
         return ""
 
 
-def _running_dir() -> str:
+def _same_path(a: str, b: str) -> bool:
+    """Same directory? By file identity where both exist (8.3 names, case, a subst drive), by
+    normalised path otherwise."""
+    if not a or not b:
+        return False
     try:
-        return _norm(os.path.dirname(os.path.abspath(sys.executable)))
+        return os.path.samefile(a, b)
+    except OSError:
+        return _norm(a) == _norm(b)
+
+
+def _running_dir() -> str:
+    """The folder of the running executable, in its ORIGINAL case (review M3)."""
+    try:
+        return os.path.dirname(os.path.abspath(sys.executable))
     except Exception:
         return ""
 
 
-def sweep_old_backups(install_dir: str, keep_newer_than_sec: float = 60.0) -> int:
-    """Remove ``<install>.old-<ts>`` folders that a swap left behind - the ones the marker does not
-    track: those an older applier (2.1.x - 2.2 betas) failed to delete straight after its swap.
+def _install_is_complete(install_dir: str) -> bool:
+    """The running install has its EXE, ``portable.marker`` and ``_internal``. If it does not, a
+    swap went wrong and an ``.old-`` sibling may be the only complete copy (review L4)."""
+    return (os.path.isfile(os.path.join(install_dir, APP_EXE))
+            and os.path.isfile(os.path.join(install_dir, PORTABLE_MARKER))
+            and os.path.isdir(os.path.join(install_dir, "_internal")))
 
-    The age guard keeps this from deleting a backup belonging to an update still in flight. Each
-    one must pass ``_portable_tree_refusal`` - a user's own file inside it, an odd layout or a
-    junction leaves it in place, logged.
+
+def _is_backup_name(path: str, install_dir: str) -> bool:
+    """``path`` is exactly ``<install>.previous-<digits>`` (or the legacy ``.old-<digits>``), a
+    sibling of ``install_dir``. Case-insensitive, as the filesystem is."""
+    install_abs = os.path.abspath(install_dir)
+    if _norm(os.path.dirname(os.path.abspath(path))) != _norm(os.path.dirname(install_abs)):
+        return False
+    name = os.path.basename(os.path.abspath(path)).lower()
+    for suffix in (_BACKUP_SUFFIX, _LEGACY_BACKUP_SUFFIX):
+        prefix = (os.path.basename(install_abs) + suffix).lower()
+        if name.startswith(prefix) and name[len(prefix):].isdigit():
+            return True
+    return False
+
+
+def sweep_old_backups(install_dir: str, keep_newer_than_sec: float = 60.0) -> int:
+    """Remove ``<install>.old-<ts>`` folders that a swap left behind and nothing records: those an
+    older applier (2.1.x - 2.2 betas) failed to delete straight after its swap. Its rmtree ran with
+    errors ignored, so what is left is often PARTIAL - no EXE, just a locked file or two - and is
+    therefore accepted as any SUBSET of the portable layout (review M3).
+
+    Never while an update recently failed (the backup may be the only complete copy), never while
+    the running install itself is incomplete (review L4), never a junction, never a folder with
+    anything that is not ours in it.
     """
     removed = 0
     try:
         install_abs = os.path.abspath(install_dir)
+        if not _install_is_complete(install_abs):
+            logger.info("The running install looks incomplete; leaving any previous version alone.")
+            return 0
+        if _recent_failure(install_abs):
+            logger.info("An update failed recently; leaving any previous version alone.")
+            return 0
         parent = os.path.dirname(install_abs)
-        base = os.path.basename(install_abs) + _BACKUP_SUFFIX
         current_names = _top_level_names(install_abs)
-        here = _running_dir()
         now = time.time()
         for name in os.listdir(parent):
-            if not name.startswith(base) or not name[len(base):].isdigit():
-                continue
             path = os.path.join(parent, name)
-            if _norm(path) == here or _is_link_like(path) or not os.path.isdir(path):
+            if not _is_backup_name(path, install_abs):
+                continue
+            if _same_path(path, _running_dir()) or _is_link_like(path) or not os.path.isdir(path):
                 continue
             try:
                 if now - os.path.getmtime(path) < keep_newer_than_sec:
                     continue
             except OSError:
                 continue
-            refusal = _portable_tree_refusal(path, allowed_extra=current_names)
+            refusal = _portable_tree_refusal(path, allowed_extra=current_names,
+                                             require_markers=False)
             if refusal:
                 logger.info("Leaving the old version at %s in place: %s", path, refusal)
                 continue
@@ -489,13 +656,13 @@ def apply_update(install_dir: str, wait_pid: Optional[int], staged_dir: Optional
 
     if wait_pid and not _wait_for_exit(wait_pid):
         logger.warning("The previous instance did not exit; refusing to swap.")
-        _note_applier_outcome(staged_dir, applied=False)
+        _note_applier_outcome(staged_dir, applied=False, install_dir=install_dir)
         return 2
 
     reason = validate(install_dir, staged_dir)
     if reason:
         logger.warning("Refusing to apply the update: %s", reason)
-        _note_applier_outcome(staged_dir, applied=False)
+        _note_applier_outcome(staged_dir, applied=False, install_dir=install_dir)
         return 3
 
     try:
@@ -503,7 +670,7 @@ def apply_update(install_dir: str, wait_pid: Optional[int], staged_dir: Optional
     except Exception as e:
         logger.error("Update swap failed: %s", e, exc_info=True)
         # The staged copy (and its zip) are KEPT for a retry or a support bundle, and aged out later.
-        _note_applier_outcome(staged_dir, applied=False)
+        _note_applier_outcome(staged_dir, applied=False, install_dir=install_dir)
         return 4
 
     # Neither the backup nor `staged_dir` is removed here. The backup is the rollback until the
@@ -542,6 +709,18 @@ def _marker_path() -> str:
     return os.path.join(base, "NetSpeedTray", _STAGED_MARKER_NAME)
 
 
+# Backups and failed swaps are recorded in a SEPARATE file (review M2). Builds up to 2.2.0-beta.3
+# read the staged marker and delete any `NetSpeedTray-*` folder in it with an EXE after ten minutes,
+# whatever else the entry says - so a backup recorded there could be deleted by an older build
+# (the installed copy, or after a downgrade) with a user's file inside it. They never read this.
+_BACKUPS_RECORD_NAME = "update_backups.json"
+
+
+def _backups_path() -> str:
+    """Next to the staged marker (so whatever relocates one relocates both)."""
+    return os.path.join(os.path.dirname(_marker_path()), _BACKUPS_RECORD_NAME)
+
+
 def staging_root() -> str:
     """The app-owned folder a verified portable update is staged in (since 2.2; #260).
 
@@ -553,62 +732,116 @@ def staging_root() -> str:
     return os.path.join(base, "NetSpeedTray", "updates")
 
 
+# FOLDERID_Downloads (as update_installer; duplicated to keep this module free of Qt imports).
+_FOLDERID_DOWNLOADS = (0x374DE290, 0x123F, 0x4565, (0x91, 0x64, 0x39, 0xC4, 0x92, 0x5E, 0x46, 0x7B))
+
+
+def _downloads_dirs() -> List[str]:
+    """Where any build ever staged a portable update: Windows' Downloads folder, and the
+    ``~/Downloads`` / home fallbacks update_installer._downloads_dir() used."""
+    out: List[str] = []
+    try:
+        import ctypes
+
+        class GUID(ctypes.Structure):
+            _fields_ = [("d1", ctypes.c_uint32), ("d2", ctypes.c_uint16),
+                        ("d3", ctypes.c_uint16), ("d4", ctypes.c_ubyte * 8)]
+        a, b, c, d = _FOLDERID_DOWNLOADS
+        g = GUID(a, b, c, (ctypes.c_ubyte * 8)(*d))
+        p = ctypes.c_wchar_p()
+        if ctypes.windll.shell32.SHGetKnownFolderPath(ctypes.byref(g), 0, None,
+                                                      ctypes.byref(p)) == 0:
+            try:
+                if p.value:
+                    out.append(p.value)
+            finally:
+                ctypes.windll.ole32.CoTaskMemFree(p)
+    except Exception:
+        pass
+    home = os.path.expanduser("~")
+    out += [os.path.join(home, "Downloads"), home]
+    return out
+
+
+def _allowed_staged_parents() -> List[str]:
+    """A recorded staged folder is only ever deleted from directly inside one of these (review
+    L3): a tampered marker naming some other portable install must not delete it."""
+    return [staging_root()] + _downloads_dirs()
+
+
 # Marker read-modify-writes from this process (the janitor thread vs. a new update recording its
 # staged folder on the UI thread) are serialized; the applier is a separate process that only
 # writes while the app is not running.
 _marker_lock = threading.RLock()
 
 
-def _read_staged_paths() -> List[dict]:
-    """The recorded entries, or []. Each is a dict with at least ``path`` and ``validated``.
-
-    Bare-string entries from older markers are accepted as unvalidated staged entries. A missing or
-    unreadable marker reads as empty - the sweep then removes nothing (fail-safe) and cleans the
-    file up. Keys this version does not know are preserved.
-
-    Entry kinds (``kind``, default ``"staged"``):
-    - ``staged``: a verified copy the hands-off flow staged. ``applied`` is set by the applier after
-      a verified swap (delete it now); ``failed_at`` after a refused/failed one (keep it
-      ``_FAILED_KEEP_SEC``); ``package`` is its downloaded zip, deleted with it.
-    - ``backup``: the previous install, renamed aside by the swap, with the ``install`` it came from.
-    ``validated`` (legacy, 2.1.5-2.2 betas) means an earlier sweep passed this folder through its
-    guard and half-deleted it, so its EXE may already be gone (review C3)."""
-    entries: List[dict] = []
+def _read_list(path: str) -> List[dict]:
+    """A JSON list of dict records, or [] when missing/unreadable."""
     try:
-        with open(_marker_path(), "r", encoding="utf-8") as fh:
+        with open(path, "r", encoding="utf-8") as fh:
             data = json.load(fh)
-        if isinstance(data, list):
-            for item in data:
-                if isinstance(item, str) and item:
-                    entries.append({"path": item, "validated": False})
-                elif (isinstance(item, dict) and isinstance(item.get("path"), str)
-                        and item["path"]):
-                    entry = dict(item)
-                    entry["validated"] = bool(item.get("validated"))
-                    entries.append(entry)
     except Exception:
-        pass
+        return []
+    return data if isinstance(data, list) else []
+
+
+def _read_staged_paths() -> List[dict]:
+    """The staged-marker entries, or []. Each is a dict with at least ``path`` and ``validated``.
+
+    The SHAPE IS SHARED with older builds, which also read this file: ``{"path", "validated"}``,
+    and the extra keys this version adds are ones they ignore harmlessly - ``applied`` /
+    ``applier_pid`` (set by the applier after a verified swap: delete it now), ``failed_at`` (a
+    refused/failed swap: keep it ``_FAILED_KEEP_SEC``), ``package`` (its downloaded zip, deleted
+    with it). Bare-string entries from older markers are accepted as unvalidated. A missing or
+    unreadable marker reads as empty - the sweep then removes nothing (fail-safe).
+    ``validated`` (legacy) means an earlier sweep half-deleted this folder (review C3)."""
+    entries: List[dict] = []
+    for item in _read_list(_marker_path()):
+        if isinstance(item, str) and item:
+            entries.append({"path": item, "validated": False})
+        elif isinstance(item, dict) and isinstance(item.get("path"), str) and item["path"]:
+            if item.get("kind") not in (None, "staged"):
+                continue                            # not a staged entry: never ours to act on
+            entry = dict(item)
+            entry["validated"] = bool(item.get("validated"))
+            entries.append(entry)
     return entries
 
 
-def _write_entries(entries: List[dict]) -> None:
-    """Persist ``entries`` (atomically), or remove the marker when there are none."""
-    marker = _marker_path()
+def _read_backup_records() -> List[dict]:
+    """``{"kind": "backup", "path", "install", "applier_pid"}`` and
+    ``{"kind": "failure", "install", "failed_at"}`` records."""
+    out = []
+    for item in _read_list(_backups_path()):
+        if isinstance(item, dict) and item.get("kind") in ("backup", "failure") \
+                and isinstance(item.get("install"), str):
+            if item["kind"] == "backup" and not isinstance(item.get("path"), str):
+                continue
+            out.append(dict(item))
+    return out
+
+
+def _write_list(path: str, entries: List[dict]) -> None:
+    """Persist ``entries`` (atomically), or remove the file when there are none."""
     if not entries:
         try:
-            os.remove(marker)
+            os.remove(path)
         except FileNotFoundError:
             pass
         return
-    os.makedirs(os.path.dirname(marker), exist_ok=True)
-    tmp = marker + ".tmp"
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(entries, fh)
-    os.replace(tmp, marker)
+    os.replace(tmp, path)
+
+
+def _write_entries(entries: List[dict]) -> None:
+    _write_list(_marker_path(), entries)
 
 
 def _entry_key(entry: dict) -> Tuple[str, str]:
-    return (entry.get("kind") or "staged", _norm(entry["path"]))
+    return (entry.get("kind") or "staged", _norm(entry.get("path") or entry.get("install") or ""))
 
 
 def record_staged_path(path: str, package: Optional[str] = None) -> None:
@@ -638,8 +871,9 @@ def record_staged_path(path: str, package: Optional[str] = None) -> None:
 
 def _note_applier_outcome(staged_dir: str, *, applied: bool, backup: Optional[str] = None,
                           install_dir: Optional[str] = None) -> None:
-    """The applier's half of the record: mark the staged entry applied (or failed) and record the
-    backup the swap made, so the relaunched version knows exactly what it may remove.
+    """The applier's half of the record: mark the staged entry applied (or failed) in the staged
+    marker, and record the backup the swap made - or the failure - in the backups record, so the
+    relaunched version knows exactly what it may remove, and what it must not.
 
     A staged folder the old version did not record (pre-2.1.5 handoff) is only added when it lies
     inside our own ``staging_root()`` - a folder elsewhere that nobody recorded is never adopted.
@@ -670,14 +904,39 @@ def _note_applier_outcome(staged_dir: str, *, applied: bool, backup: Optional[st
                 else:
                     e["failed_at"] = now
                 entries.append(e)
-            if applied and backup and install_dir:
-                entries.append({"kind": "backup", "path": os.path.abspath(backup),
-                                "install": os.path.abspath(install_dir),
-                                "applier_pid": os.getpid(), "validated": False})
             _write_entries(entries)
+            if install_dir:
+                records = _read_backup_records()
+                if applied and backup:
+                    records.append({"kind": "backup", "path": os.path.abspath(backup),
+                                    "install": os.path.abspath(install_dir),
+                                    "applier_pid": os.getpid()})
+                elif not applied:
+                    records.append({"kind": "failure", "install": os.path.abspath(install_dir),
+                                    "staged": staged_abs, "failed_at": now})
+                _write_list(_backups_path(), records)
     except Exception:
         logger.warning("Could not record the update outcome; leftovers may need a later sweep.",
                        exc_info=True)
+
+
+def _recent_failure(install_dir: str) -> bool:
+    """An update failed within ``_FAILED_KEEP_SEC``: for this install (backups record), or any
+    ``failed_at`` in the staged marker. While true, no ``.old-`` folder is removed (review L4)."""
+    now = time.time()
+
+    def _recent(ts) -> bool:
+        try:
+            return now - float(ts) < _FAILED_KEEP_SEC
+        except (TypeError, ValueError):
+            return True                             # unreadable timestamp: assume recent
+
+    for r in _read_backup_records():
+        if r.get("kind") == "failure" and _same_path(r["install"], install_dir) \
+                and _recent(r.get("failed_at")):
+            return True
+    return any(e.get("failed_at") is not None and _recent(e.get("failed_at"))
+               for e in _read_staged_paths())
 
 
 def _remove_package(entry: dict) -> None:
@@ -687,43 +946,53 @@ def _remove_package(entry: dict) -> None:
         return
     try:
         if (pkg.lower().endswith(".zip") and _is_within(pkg, staging_root())
-                and os.path.isfile(pkg) and not _is_link_like(pkg)):
+                and os.path.isfile(pkg) and not _is_link_like(pkg) and not _has_other_links(pkg)):
             _unlink(pkg)
             logger.info("Removed the downloaded update package: %s", pkg)
     except OSError:
         logger.info("Could not remove %s yet; it is aged out later.", pkg)
 
 
-# Outcomes of handling one marker entry in a sweep pass.
+# Outcomes of handling one record in a sweep pass.
 _REMOVED, _KEEP, _RETRY, _DROP = "removed", "keep", "retry", "drop"
+
+
+def _failed_recently(entry: dict, now: float) -> Optional[bool]:
+    """None if the entry is not a failed one; else whether it is still within the keep window."""
+    if entry.get("failed_at") is None:
+        return None
+    try:
+        return now - float(entry["failed_at"]) < _FAILED_KEEP_SEC
+    except (TypeError, ValueError):
+        return True
 
 
 def _sweep_staged_entry(entry: dict, here: str, now: float) -> str:
     path = entry["path"]
-    if _norm(path) == here:
+    if _same_path(path, here):
         # Never delete the ground we stand on. This is the staged copy itself running (the
         # --apply-update handoff); the relaunched install is the one that sweeps it.
         logger.info("Recorded staged folder is the running copy; deferring: %s", path)
         return _KEEP
+    failed = _failed_recently(entry, now)
+    if failed:
+        return _KEEP                                # kept for a retry, a bundle, and review L4
     if not os.path.isdir(path):
         if entry.get("applied"):
             _remove_package(entry)
-        return _DROP                            # already gone - drop the stale entry quietly
+        return _DROP                                # already gone - drop the stale entry quietly
     if not os.path.basename(path).startswith("NetSpeedTray-"):
         # A corrupted marker must never become a way to delete an arbitrary folder.
         logger.warning("Recorded staged folder does not look like ours; leaving it alone: %s", path)
-        return _DROP                            # refuse AND stop tracking it
-    if entry.get("applied"):
-        pass                                    # swapped in and verified: remove it now
-    elif entry.get("failed_at") is not None:
-        try:
-            failed_at = float(entry["failed_at"])
-        except (TypeError, ValueError):
-            failed_at = 0.0
-        if now - failed_at < _FAILED_KEEP_SEC:
-            return _KEEP                        # kept for a retry or a support bundle
+        return _DROP                                # refuse AND stop tracking it
+    if not any(_same_path(os.path.dirname(os.path.abspath(path)), p)
+               for p in _allowed_staged_parents()):
+        logger.warning("Recorded staged folder is not in a staging location; leaving it alone: %s",
+                       path)
+        return _DROP
+    if failed is False:
         logger.info("Ageing out the staged copy of an update that failed to apply: %s", path)
-    elif not entry["validated"]:
+    elif not entry.get("applied") and not entry["validated"]:
         try:
             age = now - os.path.getmtime(path)
         except OSError:
@@ -746,24 +1015,25 @@ def _sweep_staged_entry(entry: dict, here: str, now: float) -> str:
     return _RETRY
 
 
-def _sweep_backup_entry(entry: dict, here: str) -> str:
-    path, install = entry["path"], entry.get("install") or ""
-    if not install or _norm(install) != here or _norm(path) == here:
+def _sweep_backup_record(rec: dict, here: str, now: float) -> str:
+    if rec.get("kind") == "failure":
+        return _KEEP if _failed_recently(rec, now) else _DROP
+    path, install = rec["path"], rec["install"]
+    if not _same_path(install, here) or _same_path(path, here):
         # Only the new version, running from the very install this backup was taken from, may
-        # remove it. The installed copy (which shares this marker) or a rollback run from the
+        # remove it. The installed copy (which shares this record) or a rollback run from the
         # backup itself leaves it alone.
         return _KEEP
-    if not os.path.isdir(path):
+    if not os.path.isdir(path) and not os.path.lexists(path):
         return _DROP
-    install_abs = os.path.abspath(install)
-    name = os.path.basename(os.path.abspath(path))
-    prefix = os.path.basename(install_abs) + _BACKUP_SUFFIX
-    if (_norm(os.path.dirname(os.path.abspath(path))) != _norm(os.path.dirname(install_abs))
-            or not name.startswith(prefix) or not name[len(prefix):].isdigit()):
+    if not _is_backup_name(path, install):
         logger.warning("Recorded previous version does not look like ours; leaving it alone: %s",
                        path)
         return _DROP
-    refusal = _portable_tree_refusal(path, allowed_extra=_top_level_names(install_abs))
+    if not _install_is_complete(here):
+        logger.info("The running install looks incomplete; keeping the previous version: %s", path)
+        return _KEEP
+    refusal = _portable_tree_refusal(path, allowed_extra=_top_level_names(here))
     if refusal:
         logger.warning("The previous version at %s is left in place: %s", path, refusal)
         return _DROP
@@ -774,44 +1044,62 @@ def _sweep_backup_entry(entry: dict, here: str) -> str:
 
 
 def _sweep_once() -> Tuple[int, int]:
-    """One pass over the marker. Returns (removed, still locked)."""
-    if not os.path.isfile(_marker_path()):
+    """One pass over both records. Returns (removed, still locked)."""
+    if not os.path.isfile(_marker_path()) and not os.path.isfile(_backups_path()):
         return 0, 0
     with _marker_lock:
-        recorded = _read_staged_paths()
+        staged = _read_staged_paths()
+        backups = _read_backup_records()
     here = _running_dir()
     now = time.time()
     removed = retry = 0
     outcome = {}
-    for entry in recorded:
-        try:
-            if (entry.get("kind") or "staged") == "backup":
-                result = _sweep_backup_entry(entry, here)
-            elif entry.get("kind") in (None, "staged"):
-                result = _sweep_staged_entry(entry, here, now)
-            else:
-                result = _KEEP                  # a kind from a newer version: not ours to judge
-        except Exception:
-            logger.debug("Sweep of %s failed.", entry.get("path"), exc_info=True)
-            result = _RETRY
-        outcome[_entry_key(entry)] = result
-        removed += result == _REMOVED
-        retry += result == _RETRY
+    for kind, items in (("staged", staged), ("record", backups)):
+        for entry in items:
+            try:
+                result = (_sweep_staged_entry(entry, here, now) if kind == "staged"
+                          else _sweep_backup_record(entry, here, now))
+            except Exception:
+                logger.debug("Sweep of %s failed.", entry.get("path"), exc_info=True)
+                result = _RETRY
+            outcome[(kind,) + _entry_key(entry)] = result
+            removed += result == _REMOVED
+            retry += result == _RETRY
     # Re-read before writing: a new update may have recorded a folder meanwhile (UI thread).
     try:
         with _marker_lock:
-            fresh = _read_staged_paths()
-            _write_entries([e for e in fresh
-                            if outcome.get(_entry_key(e), _KEEP) in (_KEEP, _RETRY)])
+            if os.path.isfile(_marker_path()):
+                _write_entries(_merge_keep(_read_list(_marker_path()), "staged", outcome))
+            _write_list(_backups_path(), [r for r in _read_backup_records()
+                                          if outcome.get(("record",) + _entry_key(r), _KEEP)
+                                          in (_KEEP, _RETRY)])
     except Exception:
         pass
     return removed, retry
 
 
-def sweep_staged_leftovers() -> int:
-    """One pass of the marker-driven cleanup. Returns the number of folders removed.
+def _merge_keep(raw: list, kind: str, outcome: dict) -> list:
+    """The staged marker as currently on disk, minus what this pass removed or dropped. Items this
+    version does not understand (another build's) are kept verbatim."""
+    out = []
+    for item in raw:
+        if isinstance(item, str) and item:
+            key = (kind, "staged", _norm(item))
+        elif isinstance(item, dict) and isinstance(item.get("path"), str) and item["path"] \
+                and item.get("kind") in (None, "staged"):
+            key = (kind, "staged", _norm(item["path"]))
+        else:
+            out.append(item)
+            continue
+        if outcome.get(key, _KEEP) in (_KEEP, _RETRY):
+            out.append(item)
+    return out
 
-    Only paths recorded in the marker are ever candidates - with no marker present the sweep
+
+def sweep_staged_leftovers() -> int:
+    """One pass of the record-driven cleanup. Returns the number of folders removed.
+
+    Only paths recorded by an update are ever candidates - with no record present the sweep
     removes NOTHING, so a folder that merely looks like a staged copy (a user's own rollback
     backup, for instance) is never collateral. Every removal is logged with its full path.
     Entries whose folder is already gone are dropped; an entry the sweep refuses is dropped
@@ -821,7 +1109,7 @@ def sweep_staged_leftovers() -> int:
 
 
 def age_out_staging_root(max_age_sec: float = _FAILED_KEEP_SEC) -> int:
-    """Remove anything in ``staging_root()`` that no marker entry references and that is older than
+    """Remove anything in ``staging_root()`` that no record references and that is older than
     ``max_age_sec``: a staging an app crash never recorded, a kept package outliving its folder.
     Only ``NetSpeedTray-*`` names; folders must pass ``_portable_tree_refusal``."""
     root = staging_root()
@@ -838,7 +1126,7 @@ def age_out_staging_root(max_age_sec: float = _FAILED_KEEP_SEC) -> int:
         for name in os.listdir(root):
             path = os.path.join(root, name)
             if (not name.startswith("NetSpeedTray-") or _norm(path) in referenced
-                    or _norm(path) == here or _is_link_like(path)):
+                    or _same_path(path, here) or _is_link_like(path)):
                 continue
             try:
                 if now - os.path.getmtime(path) < max_age_sec:
@@ -846,6 +1134,8 @@ def age_out_staging_root(max_age_sec: float = _FAILED_KEEP_SEC) -> int:
             except OSError:
                 continue
             if os.path.isfile(path) and name.lower().endswith(".zip"):
+                if _has_other_links(path):
+                    continue
                 try:
                     _unlink(path)
                     removed += 1
@@ -860,7 +1150,7 @@ def age_out_staging_root(max_age_sec: float = _FAILED_KEEP_SEC) -> int:
                     removed += 1
                     logger.info("Aged out an old staged update: %s", path)
         try:
-            os.rmdir(root)                      # only succeeds when empty
+            os.rmdir(root)                          # only succeeds when empty
         except OSError:
             pass
     except Exception:
@@ -872,7 +1162,7 @@ def run_update_janitor(retry_delays: Iterable[float] = _JANITOR_RETRY_DELAYS,
                        sleep=time.sleep) -> int:
     """The post-update cleanup, run by the NEW version once it has started (#260).
 
-    Waits for the applier recorded in the marker to exit (it runs from the staged folder), removes
+    Waits for the applier recorded in the records to exit (it runs from the staged folder), removes
     what the update left - the staged copy, its zip, the previous version - retrying while AV or the
     indexer still holds a just-closed file, then sweeps unrecorded ``.old-`` folders from older
     appliers and ages out the staging root. Anything still locked stays recorded for the next
@@ -881,8 +1171,8 @@ def run_update_janitor(retry_delays: Iterable[float] = _JANITOR_RETRY_DELAYS,
     removed = 0
     try:
         with _marker_lock:
-            entries = _read_staged_paths()
-        pids = {e.get("applier_pid") for e in entries}
+            pids = {e.get("applier_pid") for e in _read_staged_paths()}
+            pids |= {r.get("applier_pid") for r in _read_backup_records()}
         for pid in pids:
             if isinstance(pid, int) and pid > 0 and pid != os.getpid():
                 _wait_for_exit(pid, _APPLIER_EXIT_WAIT_SEC)

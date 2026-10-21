@@ -89,6 +89,11 @@ def _apply(install: Path, staged: Path) -> int:
     return ua.apply_update(str(install), wait_pid=None, staged_dir=str(staged))
 
 
+def _records(marker: Path) -> Path:
+    """The backups/failures record - kept apart from the staged marker older builds read (M2)."""
+    return marker.parent / ua._BACKUPS_RECORD_NAME
+
+
 def _backups(parent: Path):
     return sorted(parent.glob("*" + ua._BACKUP_SUFFIX + "*"))
 
@@ -118,14 +123,17 @@ def test_the_previous_version_is_kept_until_the_new_one_has_started(
     apps = tmp_path / "Apps"
     install = _portable(apps, "NetSpeedTray")
     staged = _portable(tmp_path / "Downloads", "NetSpeedTray-9.9.9", exe_text="new")
+    ua.record_staged_path(str(staged))
 
     assert _apply(install, staged) == 0
 
     (backup,) = _backups(apps)
     assert (backup / ua.APP_EXE).read_text(encoding="utf-8") == "old"
-    entries = json.loads(marker.read_text(encoding="utf-8"))
+    entries = json.loads(_records(marker).read_text(encoding="utf-8"))
     assert {"kind": "backup", "path": str(backup), "install": str(install)}.items() <= next(
         e for e in entries if e.get("kind") == "backup").items()
+    assert all("kind" not in e for e in json.loads(marker.read_text(encoding="utf-8"))), (
+        "the staged marker keeps the shape older builds understand - no backup records in it")
 
 
 def test_the_janitor_removes_every_leftover_of_a_successful_update(
@@ -140,10 +148,11 @@ def test_the_janitor_removes_every_leftover_of_a_successful_update(
     ua.record_staged_path(str(staged), package=str(package))
 
     assert _apply(install, staged) == 0
-    entries = json.loads(marker.read_text(encoding="utf-8"))
-    for e in entries:                                         # the applier was another process
-        e["applier_pid"] = 424242
-    marker.write_text(json.dumps(entries), encoding="utf-8")
+    for f in (marker, _records(marker)):                      # the applier was another process
+        entries = json.loads(f.read_text(encoding="utf-8"))
+        for e in entries:
+            e["applier_pid"] = 424242
+        f.write_text(json.dumps(entries), encoding="utf-8")
     _run_as(monkeypatch, install)
     ua.run_update_janitor(retry_delays=(), sleep=lambda s: None)
 
@@ -222,7 +231,7 @@ def test_a_recorded_backup_that_is_a_junction_is_refused(tmp_path, monkeypatch, 
     link = apps / ("NetSpeedTray" + ua._BACKUP_SUFFIX + "123")
     _winapi.CreateJunction(str(victim), str(link))
     marker.parent.mkdir(parents=True)
-    marker.write_text(json.dumps([{"kind": "backup", "path": str(link), "install": str(install),
+    _records(marker).write_text(json.dumps([{"kind": "backup", "path": str(link), "install": str(install),
                                    "validated": False}]), encoding="utf-8")
     _run_as(monkeypatch, install)
 
@@ -237,7 +246,7 @@ def test_a_recorded_backup_outside_the_install_parent_is_refused(
     oddname = _portable(tmp_path / "Apps", "NetSpeedTray" + ua._BACKUP_SUFFIX + "mine")
     install = _portable(tmp_path / "Apps", "NetSpeedTray")
     marker.parent.mkdir(parents=True)
-    marker.write_text(json.dumps([
+    _records(marker).write_text(json.dumps([
         {"kind": "backup", "path": str(elsewhere), "install": str(install), "validated": False},
         {"kind": "backup", "path": str(oddname), "install": str(install), "validated": False},
     ]), encoding="utf-8")
@@ -279,7 +288,8 @@ def test_the_installed_copy_leaves_a_portable_backup_alone(
     ua.run_update_janitor(retry_delays=(), sleep=lambda s: None)
     (backup,) = _backups(apps)
     assert (backup / ua.APP_EXE).exists()
-    assert any(e.get("kind") == "backup" for e in json.loads(marker.read_text(encoding="utf-8")))
+    assert any(e.get("kind") == "backup"
+               for e in json.loads(_records(marker).read_text(encoding="utf-8")))
 
     _run_as(monkeypatch, install)                             # later, the portable copy starts
     ua.run_update_janitor(retry_delays=(), sleep=lambda s: None)
@@ -337,7 +347,8 @@ def test_still_locked_after_every_retry_is_kept_for_the_next_launch(
     with open(backup / "_internal" / "python313.dll", "rb"):
         ua.run_update_janitor(retry_delays=(0.0,), sleep=lambda s: None)
     assert backup.exists()
-    assert any(e.get("kind") == "backup" for e in json.loads(marker.read_text(encoding="utf-8")))
+    assert any(e.get("kind") == "backup"
+               for e in json.loads(_records(marker).read_text(encoding="utf-8")))
 
     ua.run_update_janitor(retry_delays=(), sleep=lambda s: None)   # the next launch
     assert not backup.exists()
@@ -365,12 +376,16 @@ def test_a_failed_swap_keeps_the_staged_copy_and_zip_then_ages_them_out(
     ua.run_update_janitor(retry_delays=(), sleep=lambda s: None)
     assert staged.exists() and package.exists(), "kept for a retry or a support bundle"
 
-    entries = json.loads(marker.read_text(encoding="utf-8"))
-    for e in entries:
-        e["failed_at"] = time.time() - 8 * 24 * 3600
-    marker.write_text(json.dumps(entries), encoding="utf-8")
+    assert any(r.get("kind") == "failure"
+               for r in json.loads(_records(marker).read_text(encoding="utf-8")))
+    for f in (marker, _records(marker)):
+        entries = json.loads(f.read_text(encoding="utf-8"))
+        for e in entries:
+            e["failed_at"] = time.time() - 8 * 24 * 3600
+        f.write_text(json.dumps(entries), encoding="utf-8")
     ua.run_update_janitor(retry_delays=(), sleep=lambda s: None)
     assert not staged.exists() and not package.exists()
+    assert not marker.exists() and not _records(marker).exists(), "aged-out records go too"
 
 
 def test_the_staging_root_ages_out_only_old_unreferenced_items(
@@ -484,3 +499,197 @@ def test_is_link_like_detects_a_junction_but_not_a_plain_folder(tmp_path):
     assert ua._is_link_like(str(link)) is True
     assert ua._is_link_like(str(target)) is False
     assert ua._is_link_like(str(tmp_path / "does-not-exist")) is True, "unreadable is unsafe"
+
+
+# ------------------------------------------------------------- adversarial review of #260 (M/L)
+
+def test_m1_a_folder_swapped_for_a_junction_after_the_check_is_never_followed(tmp_path):
+    """The guard passes, then the folder is replaced by a junction to the user's documents before
+    the delete runs. The delete pins every directory by handle and sees the link for what it is."""
+    import shutil
+    victim = tmp_path / "UserDocs"
+    victim.mkdir()
+    for n in ("thesis.docx", "photos.zip"):
+        (victim / n).write_text("precious", encoding="utf-8")
+    staged = _portable(tmp_path, "NetSpeedTray-9.9.9")
+    assert ua._portable_tree_refusal(str(staged)) is None
+    shutil.rmtree(staged)
+    _winapi.CreateJunction(str(victim), str(staged))
+
+    assert ua._remove_portable_tree(str(staged)) is False
+    assert sorted(p.name for p in victim.iterdir()) == ["photos.zip", "thesis.docx"]
+
+
+def test_m1_a_subfolder_swapped_for_a_junction_is_never_followed(tmp_path):
+    import shutil
+    victim = tmp_path / "UserDocs"
+    victim.mkdir()
+    (victim / "thesis.docx").write_text("precious", encoding="utf-8")
+    d = _portable(tmp_path, "NetSpeedTray-9.9.9")
+    assert ua._portable_tree_refusal(str(d)) is None
+    shutil.rmtree(d / "_internal" / "PyQt6")
+    _winapi.CreateJunction(str(victim), str(d / "_internal" / "PyQt6"))
+
+    assert ua._remove_portable_tree(str(d)) is False
+    assert (victim / "thesis.docx").read_text(encoding="utf-8") == "precious"
+
+
+def test_m2_backups_are_recorded_where_older_builds_never_look(tmp_path, marker, no_relaunch):
+    """Builds up to 2.2.0-beta.3 delete any recorded `NetSpeedTray-*` folder with an EXE from the
+    staged marker after ten minutes, and rmtree every `<install>.old-*` sibling at startup. The
+    backup of an install named NetSpeedTray-Portable (holding a user's file) must be in neither."""
+    apps = tmp_path / "Apps"
+    install = _portable(apps, "NetSpeedTray-Portable")
+    (install / "my-notes.txt").write_text("USER DATA", encoding="utf-8")
+    staged = _portable(tmp_path / "Downloads", "NetSpeedTray-9.9.9", exe_text="new")
+    ua.record_staged_path(str(staged))
+
+    assert _apply(install, staged) == 0
+
+    (backup,) = _backups(apps)
+    legacy = json.loads(marker.read_text(encoding="utf-8"))
+    assert [os.path.normcase(e["path"]) for e in legacy] == [os.path.normcase(str(staged))]
+    assert all("kind" not in e for e in legacy)
+    assert not backup.name.lower().startswith("netspeedtray-portable.old-")
+
+
+def test_m3_a_partial_legacy_backup_is_found_and_removed(tmp_path, monkeypatch, marker, no_wait):
+    """2.1.7's cleanup_backup rmtree'd with errors ignored: an AV-held file leaves just
+    `_internal/PyQt6/QtCore.pyd`. The janitor (passing the running folder in its ORIGINAL case)
+    must find it, and accept that subset."""
+    apps = tmp_path / "Apps"
+    install = _portable(apps, "NetSpeedTray")
+    bk = apps / "NetSpeedTray.old-1700000000"
+    (bk / "_internal" / "PyQt6").mkdir(parents=True)
+    (bk / "_internal" / "PyQt6" / "QtCore.pyd").write_bytes(b"pyd")
+    _backdate(bk)
+    _run_as(monkeypatch, install)
+
+    ua.run_update_janitor(retry_delays=(), sleep=lambda s: None)
+    assert not bk.exists()
+
+
+def test_l1_an_av_held_exe_leaves_a_folder_the_retry_still_recognises(tmp_path):
+    d = _portable(tmp_path, "NetSpeedTray.old-1700000000")
+    with open(d / ua.APP_EXE, "rb"):
+        assert ua._remove_portable_tree(str(d)) is False
+    assert ua._portable_tree_refusal(str(d)) is None
+    assert ua._remove_portable_tree(str(d)) is True
+
+
+def test_l1_a_folder_with_only_the_marker_left_is_still_ours(tmp_path):
+    d = tmp_path / "NetSpeedTray.old-1700000000"
+    d.mkdir()
+    (d / ua.PORTABLE_MARKER).write_text("portable\n", encoding="utf-8")
+    assert ua._portable_tree_refusal(str(d)) is None
+
+
+def test_l2_a_read_only_subfolder_is_removed_in_one_pass(tmp_path):
+    import subprocess
+    d = _portable(tmp_path, "NetSpeedTray.old-1700000000")
+    sub = d / "_internal" / "PyQt6"
+    subprocess.run(["attrib", "+R", str(sub)], check=True)
+    try:
+        assert ua._remove_portable_tree(str(d)) is True
+    finally:
+        if sub.exists():
+            subprocess.run(["attrib", "-R", str(sub)])
+    assert not d.exists()
+
+
+def test_l3_a_tampered_applied_entry_cannot_delete_another_install(tmp_path, monkeypatch, marker):
+    other = _portable(tmp_path / "D_Tools", "NetSpeedTray-Portable")
+    marker.parent.mkdir(parents=True)
+    marker.write_text(json.dumps([{"path": str(other), "applied": True}]), encoding="utf-8")
+    _run_as(monkeypatch, _portable(tmp_path / "elsewhere", "NetSpeedTray"))
+
+    assert ua.sweep_staged_leftovers() == 0
+    assert (other / ua.APP_EXE).exists()
+
+
+def test_l4_after_a_failed_restore_the_only_complete_copy_survives(
+        tmp_path, monkeypatch, marker, no_wait):
+    apps = tmp_path / "Apps"
+    install = _portable(apps, "NetSpeedTray")                       # partial NEW copy
+    (install / "_internal" / "PyQt6" / "QtCore.pyd").unlink()
+    bk = _portable(apps, "NetSpeedTray.old-1792590000")             # the only complete copy
+    _backdate(bk, 5 * 86400)                                         # a rename keeps the old mtime
+    marker.parent.mkdir(parents=True)
+    marker.write_text(json.dumps([{"path": str(tmp_path / "NetSpeedTray-9.9.9"),
+                                   "failed_at": time.time()}]), encoding="utf-8")
+    _run_as(monkeypatch, install)
+
+    ua.run_update_janitor(retry_delays=(), sleep=lambda s: None)
+    assert ua.sweep_old_backups(str(install)) == 0                  # and called directly, after
+    assert (bk / "_internal" / "PyQt6" / "QtCore.pyd").exists()
+
+
+def test_l4_an_incomplete_running_install_never_removes_a_previous_version(tmp_path, monkeypatch):
+    apps = tmp_path / "Apps"
+    install = _portable(apps, "NetSpeedTray")
+    (install / ua.PORTABLE_MARKER).unlink()
+    bk = _portable(apps, "NetSpeedTray.old-1792590000")
+    _backdate(bk)
+    _run_as(monkeypatch, install)
+    assert ua.sweep_old_backups(str(install), keep_newer_than_sec=0) == 0
+    assert bk.exists()
+
+
+def test_a_hard_linked_read_only_file_is_never_made_writable(tmp_path):
+    import stat as _stat
+    d = _portable(tmp_path, "NetSpeedTray.old-1")
+    outside = tmp_path / "user.txt"
+    outside.write_text("keep", encoding="utf-8")
+    os.chmod(outside, _stat.S_IREAD)
+    os.link(outside, d / "_internal" / "hl.txt")
+    try:
+        assert ua._portable_tree_refusal(str(d)) is not None
+        assert ua._remove_portable_tree(str(d)) is False
+        assert outside.read_text(encoding="utf-8") == "keep"
+        assert not os.access(outside, os.W_OK), "chmod on a hard link changes the user's file"
+    finally:
+        os.chmod(outside, _stat.S_IWRITE)
+
+
+def _secure_updater():
+    from types import SimpleNamespace
+    from netspeedtray.core import update_installer as ui
+    return ui.SecureUpdater(None, "", "https://example/release", SimpleNamespace(), portable=True,
+                            portable_url="https://example/p.zip", latest_version="9.9.9")
+
+
+def test_l5_a_failed_handoff_moves_the_copy_to_downloads(q_app, tmp_path, monkeypatch, root):
+    """Popen blocked (AppLocker/AV): the guided message must not send the user into AppData, to a
+    folder that is aged out in a week."""
+    from netspeedtray.core import update_installer as ui
+    downloads = tmp_path / "Downloads"
+    downloads.mkdir()
+    monkeypatch.setattr(ui, "_downloads_dir", lambda: str(downloads))
+    ready = _portable(root, "NetSpeedTray-9.9.9", exe_text="new")
+    (root / "NetSpeedTray-9.9.9.zip").write_bytes(b"PK")
+
+    moved = _secure_updater()._move_to_downloads(str(ready))
+
+    assert moved == str(downloads / "NetSpeedTray-9.9.9")
+    assert (downloads / "NetSpeedTray-9.9.9" / ua.APP_EXE).exists()
+    assert not ready.exists() and not (root / "NetSpeedTray-9.9.9.zip").exists()
+
+
+def test_l5_cancel_never_deletes_a_zip_beside_a_downloads_folder(q_app, tmp_path):
+    downloads = tmp_path / "Downloads"
+    ready = _portable(downloads, "NetSpeedTray-9.9.9", exe_text="new")
+    theirs = downloads / "NetSpeedTray-9.9.9.zip"
+    theirs.write_bytes(b"the user's own download")
+    up = _secure_updater()
+    up._user_cancelled = True
+
+    up._on_staged(str(ready))
+
+    assert theirs.exists()
+
+
+def test_the_test_session_never_points_at_the_real_profile():
+    """The conftest floor: nothing in the suite can write the maintainer's %APPDATA%."""
+    from netspeedtray.utils.helpers import get_app_data_path
+    real = os.path.join(os.path.expanduser("~"), "AppData", "Roaming")
+    assert not os.path.normcase(str(get_app_data_path())).startswith(os.path.normcase(real))
