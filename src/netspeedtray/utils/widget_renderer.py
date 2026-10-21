@@ -712,9 +712,11 @@ class WidgetRenderer:
 
     def draw_hardware_compact(self, painter: QPainter, stats: List[Tuple[str, Optional[float]]], width: int,
                               height: int, config: RenderConfig, *, inline: bool = True,
-                              y_offset: int = 0) -> None:
+                              y_offset: int = 0, percent_sign: bool = True) -> None:
         """CPU/GPU on a side taskbar too narrow for today's rows: ``[icon] 37%`` per stat (``inline``)
-        or the icon centred over the value; memory, temperature and power live in the hover card."""
+        or the icon centred over the value; memory, temperature and power live in the hover card.
+        ``percent_sign`` False (side_bar_fit: even "100%" is wider than the bar) draws "100" - still
+        read as a percent under its CPU/GPU icon, and whole instead of clipped at both ends."""
         try:
             if not stats:
                 return
@@ -724,7 +726,7 @@ class WidgetRenderer:
             icon_w = (max(fm.horizontalAdvance(s) for s, _ in stats) if style == "text"
                       else constants.renderer.HW_ICON_SIZE_PX)
             gap = constants.renderer.COMPACT_HW_ICON_GAP_PX
-            pct_col = fm.horizontalAdvance("100%")
+            pct_col = fm.horizontalAdvance("100%" if percent_sign else "100")
             line_h, asc, row_gap = fm.height(), fm.ascent(), constants.renderer.TWO_ROW_GAP_PX
             n = len(stats) * (1 if inline else 2)
             block_h = n * line_h + max(0, n - 1) * row_gap
@@ -738,6 +740,8 @@ class WidgetRenderer:
             for label, val in stats:
                 color = QColor(cpu_color if label == 'CPU' else gpu_color)
                 pct = self._fmt_hw_percent(val if val is not None else float("nan"))
+                if not percent_sign:
+                    pct = pct.rstrip("%")
                 icon_x = x0 if inline else (width - icon_w) // 2
                 if style == "text":
                     painter.setPen(QPen(color))
