@@ -497,7 +497,22 @@ class WidgetState(QObject):
         clock/DST shift unable to wipe the running total, and the empty initial key first-anchors.
         """
         u = self._usage
-        pk = self._compute_period_key(self.config.get("data_cap_reset_day", 1))
+        reset_day = WidgetState._reset_day(self.config)
+        pk = self._compute_period_key(reset_day)
+        stored = u["period_key"]
+        if stored and stored != pk:
+            try:
+                stored_start = date.fromisoformat(stored)
+            except (TypeError, ValueError):
+                stored_start = None
+            if stored_start is not None and stored_start.day != reset_day:
+                # Every key is a period START on the reset day, so a stored key on another day means
+                # the reset day was changed (in Settings, or while the app was closed). The forward-only
+                # rule below must not apply: the new period can start BEFORE the stored one (15 -> 10
+                # on the 21st -> the 10th), and a stored key "newer" than every computed one froze the
+                # cap - each poll then looked like a closed period's and went only to the lifetime total.
+                WidgetState._rekey_for_reset_day(self, pk, stored_start)
+                return True
         if pk > u["period_key"]:
             u["anchor_up"] = u["cumulative_up"]
             u["anchor_down"] = u["cumulative_down"]
@@ -506,6 +521,49 @@ class WidgetState(QObject):
             self._usage_last_persist = time.time()
             return True
         return False
+
+    @staticmethod
+    def _reset_day(config: Dict[str, Any]) -> int:
+        """The data-cap reset day as ``_compute_period_key`` uses it (clamped 1-28; 1 if unreadable)."""
+        try:
+            return max(1, min(28, int(config.get("data_cap_reset_day", 1))))
+        except (TypeError, ValueError):
+            return 1
+
+    def _rekey_for_reset_day(self, new_key: str, old_start: date) -> None:
+        """The reset day changed: move the odometer to the period ``new_key`` starts, and make "used this
+        period" the bytes moved since THAT start, as far as recorded history can tell - the same figure
+        the "This Period" row shows above the cap, so the two agree.
+
+        History (the metered adapters' recorded volume since the new start) bounds it, combined with
+        what the odometer already knows: a new period that began on or before the old one CONTAINS the
+        old one, so it holds at least what was already counted (history can miss bytes the odometer
+        recovered for a closed app); one that began later holds at most that. Without a usable history
+        read this degrades to exactly those bounds - keep the count, or count from now - so the cap
+        never stops counting and never jumps to more than was really counted."""
+        u = self._usage
+        new_start = date.fromisoformat(new_key)
+        used = (max(0.0, u["cumulative_up"] - u["anchor_up"]), max(0.0, u["cumulative_down"] - u["anchor_down"]))
+        hist = None
+        try:
+            v = WidgetState.get_metered_volume_for_period(
+                self, datetime(new_start.year, new_start.month, new_start.day), datetime.now())
+            hist = (max(0.0, float(v.up_bytes)), max(0.0, float(v.down_bytes)))
+        except Exception as e:
+            self.logger.debug("Reset-day change: no history read (%s).", e)
+        if new_start <= old_start:
+            seeded = (max(used[0], hist[0]), max(used[1], hist[1])) if hist else used
+        else:
+            seeded = (min(used[0], hist[0]), min(used[1], hist[1])) if hist else (0.0, 0.0)
+        u["anchor_up"] = max(0.0, u["cumulative_up"] - seeded[0])
+        u["anchor_down"] = max(0.0, u["cumulative_down"] - seeded[1])
+        u["period_key"] = new_key
+        self.logger.info("Data-cap reset day changed: period %s -> %s; usage this period set to %.2f GB "
+                         "(%s).", old_start.isoformat(), new_key,
+                         (u["cumulative_up"] - u["anchor_up"] + u["cumulative_down"] - u["anchor_down"]) / 1e9,
+                         "from recorded history" if hist else "no history read - kept the safe bound")
+        self._persist_usage_now()
+        self._usage_last_persist = time.time()
 
     def add_usage_bytes(self, up_bytes: float, down_bytes: float,
                         counters: Optional[Dict[str, Any]] = None,
@@ -570,7 +628,10 @@ class WidgetState(QObject):
                                                     date.fromtimestamp(window_start))
             except (OverflowError, OSError, ValueError):
                 start_pk = u["period_key"]
-            if start_pk < u["period_key"]:
+            # Compared with the OLDER of the stored and the computed key: a stored key newer than
+            # today's period (a clock that ran ahead, see _maybe_reanchor) must not make every window
+            # look like a closed period's - that froze the cap's count.
+            if start_pk < min(u["period_key"], self._compute_period_key(self.config.get("data_cap_reset_day", 1))):
                 # The window began in an already-closed period: lifetime total yes, this period no.
                 # Moving the anchor with it works whether the rollover happened just now or earlier
                 # (e.g. on a read) - the anchor never exceeds the cumulative.
