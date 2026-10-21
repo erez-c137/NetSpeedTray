@@ -117,6 +117,43 @@ def test_fit_font_steps_down_until_the_text_fits(q_app):
     assert font.pointSizeF() < r.font.pointSizeF()
 
 
+@pytest.mark.parametrize("mode", ["auto", "always_mbps"])
+@pytest.mark.parametrize("lang", ["ru_RU", "en_US"])
+@pytest.mark.parametrize("unit_type", ["bytes_binary", "bits_binary"])
+@pytest.mark.parametrize("font_size", [9, 10, 11])
+def test_unit_row_keeps_one_font_size_as_traffic_crosses_units(q_app, font_size, unit_type, lang, mode):
+    """The step-down is sized from the widest unit of the family, not the live one: КиБ / МиБ / ГиБ
+    (different widths) all draw at the same size, so the row doesn't shrink and grow with traffic."""
+    from netspeedtray.utils.helpers import get_unit_labels_for_type
+    from netspeedtray.utils.widget_paint import SideBarFit, TIER_UNIT_ROW
+    cfg = dict(constants.config.defaults.DEFAULT_CONFIG)
+    cfg.update({"language": lang, "unit_type": unit_type, "font_size": font_size,
+                "short_unit_labels": True, "speed_display_mode": mode})
+    renderer = WidgetRenderer(cfg, _i18n(lang))
+    fm = renderer.metrics
+    family = get_unit_labels_for_type(_i18n(lang), unit_type, True)
+    if mode == "always_mbps":
+        family = family[2:]
+    widths = sorted(fm.horizontalAdvance(u) for u in family)
+    if widths[-1] == widths[0]:
+        pytest.skip("this font gives every unit of the family one width")
+    # 1 px short of the widest unit: it needs a step down, the narrowest does not.
+    w = 2 * constants.renderer.TEXT_MARGIN + widths[-1] - 1
+    fit = SideBarFit(TIER_UNIT_ROW, True, True, True, False, False, False)
+    sizes = {}
+    for bps in (5e3, 5e6, 5e9, 500.0):   # K, M, G, base
+        painter = MagicMock()
+        fonts = []
+        painter.setFont.side_effect = lambda f: fonts.append(f.pointSizeF())
+        drawn = []
+        painter.drawText.side_effect = lambda *a: drawn.append(a[-1])
+        renderer.draw_network_compact(painter, bps, bps, w, 80, renderer.config, fit, unit_only=True)
+        assert drawn, "the unit row was not drawn"
+        sizes[drawn[-1]] = fonts[-1]
+    assert len(set(sizes.values())) == 1, sizes
+    assert next(iter(sizes.values())) < renderer.font.pointSizeF()
+
+
 def _ink_right(font, text):
     """x of the last inked column + 1 when ``text`` is drawn at x = 0."""
     from PyQt6.QtGui import QFontMetrics

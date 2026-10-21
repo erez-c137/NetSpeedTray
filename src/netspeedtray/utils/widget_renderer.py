@@ -672,10 +672,21 @@ class WidgetRenderer:
             margin = constants.renderer.TEXT_MARGIN
             # A long locale unit at a large font ("МиБ" at 11 pt on a 32 px bar) can be wider than the
             # bar even in its short form. There is no shorter honest label (dropping the "и" would say
-            # decimal MB), so the unit row alone steps its font down until the unit fits the bar.
+            # decimal MB), so the unit row alone steps its font down until the unit fits the bar. The
+            # step is sized from the WIDEST unit of the family (B/K/M/G), never the live one, so the
+            # row keeps one size as traffic crosses K <-> M <-> G instead of shrinking and growing.
             unit_font = self.font
-            if show_unit_row and unit_w > width - 2 * margin:
-                unit_font, unit_w = self._fit_font(unit, width - 2 * margin)
+            if show_unit_row:
+                from netspeedtray.utils.helpers import get_unit_labels_for_type
+                # Only the units this readout can show: "always Mbps" never drops below mega.
+                labels = get_unit_labels_for_type(self.i18n, config.unit_type, short)
+                if config.speed_display_mode == "always_mbps":
+                    labels = labels[2:]
+                family = [u for u in labels if isinstance(u, str) and u] + [unit]
+                widest = max(family, key=fm.horizontalAdvance)
+                if fm.horizontalAdvance(widest) > width - 2 * margin:
+                    unit_font, _ = self._fit_font(widest, width - 2 * margin)
+                    unit_w = QFontMetrics(unit_font).horizontalAdvance(unit)
             x0 = max(margin, (width - block_w) // 2)
 
             line_h, asc, gap = fm.height(), fm.ascent(), constants.renderer.TWO_ROW_GAP_PX
