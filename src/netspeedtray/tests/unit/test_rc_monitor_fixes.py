@@ -210,6 +210,31 @@ def test_network_header_controls_never_overlap_at_minimum_width(q_app, lang):
         box.deleteLater()
 
 
+# --- later list: quitting with the Stats sheet open ------------------------------------------------
+
+def test_stats_sheet_deleted_during_exec_does_not_raise(q_app, monkeypatch):
+    """App quit closes the Monitor (deleting the modal sheet with it) while sheet.exec() runs; the
+    click handler's deleteLater() on the dead wrapper raised and was logged CRITICAL."""
+    from PyQt6 import sip
+    from netspeedtray.views.monitor import stats_detail as SD
+    from netspeedtray.views.monitor.overview.tab import OverviewTab
+
+    def fake_exec(self):
+        sip.delete(self)   # what the Monitor's teardown does to its child sheet
+        return 0
+    monkeypatch.setattr(SD.StatsDetailSheet, "exec", fake_exec)
+    cfg = _cfg()
+    mw = _mw(cfg)
+    tab = OverviewTab(mw, cfg, I18nStrings("en_US"))
+    errors = []
+    monkeypatch.setattr(tab.logger, "error", lambda *a, **k: errors.append(a))
+    try:
+        tab._open_detail("cpu")      # must not raise
+        assert not errors
+    finally:
+        tab.teardown()
+
+
 # --- M4: "All" then "Since boot" ---------------------------------------------------------------------
 
 def test_since_boot_after_all_uses_the_boot_time(monkeypatch):

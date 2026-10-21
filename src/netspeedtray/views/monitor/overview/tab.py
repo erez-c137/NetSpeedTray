@@ -906,7 +906,10 @@ class OverviewTab(QWidget):
         finally:
             # Parented to the Monitor window, so without this every opened sheet stayed alive as its
             # child until the Monitor closed. exec() has stopped the sheet's reader thread by now.
-            if sheet is not None:
+            # Quitting the app with the sheet open closes (and deletes) the Monitor - and the sheet with
+            # it - while exec() still runs; deleteLater() on the dead wrapper then raised out of this
+            # click handler and the app logged it as CRITICAL on the way out.
+            if sheet is not None and not sip.isdeleted(sheet):
                 sheet.deleteLater()
 
     def _open_connection_check(self) -> None:
