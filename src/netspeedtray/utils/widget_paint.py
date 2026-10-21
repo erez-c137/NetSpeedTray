@@ -20,8 +20,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
-from PyQt6.QtCore import QRect
-from PyQt6.QtGui import QFont, QPainter, QImage
+from PyQt6.QtCore import QPointF, QRect, QRectF, Qt
+from PyQt6.QtGui import QColor, QFont, QPainter, QImage
 
 from netspeedtray import constants
 from netspeedtray.utils.widget_renderer import RenderConfig, WidgetRenderer
@@ -679,7 +679,52 @@ def _draw_foreground(painter: QPainter, renderer: WidgetRenderer, width: int, he
 def render_widget(painter: QPainter, rect: QRect, renderer: WidgetRenderer, config: RenderConfig,
                   metrics: WidgetMetrics, *, layout_mode: str = "horizontal",
                   cycle_mode: str = "network_only", network_width: Optional[int] = None,
-                  font: Optional[QFont] = None) -> None:
+                  font: Optional[QFont] = None, paused: bool = False) -> None:
+    """
+    Draw the full widget content - see _render_widget_content for the arguments.
+
+    ``paused``: the user froze the readout (Pause). Frozen numbers alone look like a hung app, so the
+    content is drawn dimmed with a small pause glyph over it. Same rect, same layout - the widget's
+    size never changes for it.
+    """
+    kwargs = dict(layout_mode=layout_mode, cycle_mode=cycle_mode, network_width=network_width, font=font)
+    if not paused:
+        _render_widget_content(painter, rect, renderer, config, metrics, **kwargs)
+        return
+    painter.save()
+    painter.setOpacity(constants.renderer.PAUSED_CONTENT_OPACITY)
+    _render_widget_content(painter, rect, renderer, config, metrics, **kwargs)
+    painter.restore()
+    _draw_pause_glyph(painter, rect, renderer)
+
+
+def _draw_pause_glyph(painter: QPainter, rect: QRect, renderer: WidgetRenderer) -> None:
+    """A small pause badge - a disc in the widget's text color with two bars in the contrasting tone,
+    so it reads on either theme - centered on the drawn (dimmed) readout."""
+    r = constants.renderer
+    d = max(r.PAUSE_GLYPH_MIN_HEIGHT, min(r.PAUSE_GLYPH_MAX_HEIGHT, round(rect.height() * r.PAUSE_GLYPH_HEIGHT_RATIO)))
+    bounds = renderer.get_content_bounds()
+    # Horizontally on the readout (content is right-aligned in some modes), vertically on the widget.
+    cx = QRectF(bounds if bounds is not None and not bounds.isNull() else rect).center().x()
+    c = QPointF(cx, QRectF(rect).center().y())
+    disc = QColor(renderer.default_color)
+    bar = QColor(0, 0, 0) if disc.lightness() > 127 else QColor(255, 255, 255)
+    bar_w, bar_h = d * r.PAUSE_GLYPH_BAR_RATIO * 0.6, d * 0.45
+    painter.save()
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(disc)
+    painter.drawEllipse(c, d / 2.0, d / 2.0)
+    painter.setBrush(bar)
+    for dx in (-bar_w * 1.5, bar_w * 0.5):
+        painter.drawRect(QRectF(c.x() + dx, c.y() - bar_h / 2.0, bar_w, bar_h))
+    painter.restore()
+
+
+def _render_widget_content(painter: QPainter, rect: QRect, renderer: WidgetRenderer, config: RenderConfig,
+                           metrics: WidgetMetrics, *, layout_mode: str = "horizontal",
+                           cycle_mode: str = "network_only", network_width: Optional[int] = None,
+                           font: Optional[QFont] = None) -> None:
     """
     Draw the full widget content (background + mini-graph + foreground) onto `painter`.
 

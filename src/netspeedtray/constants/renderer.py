@@ -16,6 +16,15 @@ class RendererConstants:
     # so the readout doesn't crowd the tray-overflow chevron once it's anchored right. Larger than
     # TEXT_MARGIN (which only kept text off the very edge) - this is deliberate visual padding.
     RIGHT_ANCHOR_PADDING: Final[int] = 7
+
+    # --- Paused cue (Pause in the menu / click action) ---
+    # A paused widget draws its content at this opacity with a small pause badge over it, so frozen
+    # numbers read as paused rather than hung. The badge's diameter follows the widget's height.
+    PAUSED_CONTENT_OPACITY: Final[float] = 0.4
+    PAUSE_GLYPH_HEIGHT_RATIO: Final[float] = 0.4
+    PAUSE_GLYPH_MIN_HEIGHT: Final[int] = 10
+    PAUSE_GLYPH_MAX_HEIGHT: Final[int] = 18
+    PAUSE_GLYPH_BAR_RATIO: Final[float] = 0.3   # pause-bar width basis, as a share of the diameter
     GRAPH_MARGIN: Final[int] = 3
     GRAPH_LEFT_PADDING: Final[int] = 2
     GRAPH_RIGHT_PADDING: Final[int] = 2

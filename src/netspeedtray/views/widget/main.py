@@ -1072,6 +1072,7 @@ class NetworkSpeedWidget(QWidget):
                 cycle_mode=self._current_cycle_mode,
                 network_width=getattr(self.layout_manager, "_network_width", None),
                 font=self.current_font,
+                paused=self.is_paused,
             )
         except Exception as e:
             self.logger.error(f"Error in paintEvent: {e}", exc_info=True)
