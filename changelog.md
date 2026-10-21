@@ -2,7 +2,7 @@
 
 **Battery power rows on the widget's hover card, opt-in.** Laptops can show a battery section -
 live draw in watts, today's average, projected runtime, and charge level - reusing the battery
-polling and stats history the app already collects. Off by default: Settings > Advanced >
+polling and stats history the app already collects. Off by default: Settings > General >
 "Show battery power when hovering the widget".
 
 **Firmware garbage no longer reaches the battery history.** Battery flow samples at or above

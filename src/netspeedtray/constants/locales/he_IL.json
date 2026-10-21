@@ -527,7 +527,6 @@
     "METRICS_STATUS_IN_USE": "פורט {port} כבר נמצא בשימוש של אפליקציה אחרת. בחר פורט אחר.",
     "METRICS_STATUS_DENIED": "Windows שומרת את פורט {port}. בחר פורט אחר.",
     "METRICS_STATUS_ERROR": "לא ניתן להפעיל בפורט {port}. בחר פורט אחר.",
-    "DISPLAY_MODE_POWER": "סוללה בלבד",
     "POWER_HOVER_CARD_LABEL": "הצגת צריכת סוללה בריחוף מעל הווידג'ט",
     "POWER_NOW_LABEL": "כעת",
     "POWER_TODAY_AVG_LABEL": "ממוצע היום",

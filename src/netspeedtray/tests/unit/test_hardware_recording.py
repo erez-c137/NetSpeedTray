@@ -1,4 +1,4 @@
-﻿"""
+"""
 Hardware history recording follows the user's choice (2.2 scope item C).
 
 Before: `record_hardware_history` (default True, no UI) was OR-ed into the collection gate, so CPU/GPU/RAM
@@ -171,16 +171,15 @@ def test_record_hardware_history_schema_rejects_non_bool(tmp_path):
 # --- the battery-only poll reaches history through the REAL write path (3rd #323 review) -----------
 
 def _live_state(tmp_path):
-    """A real WidgetState on a throwaway DB (worker thread never started; its
-    connection/schema are initialized directly like the summary-tier tests do)."""
-    from PyQt6.QtCore import QThread
-    with patch.object(QThread, "start", lambda self: None), \
-            patch("netspeedtray.core.widget_state.get_app_data_path", return_value=tmp_path):
+    """A real WidgetState on a throwaway DB, with the v8 write thread RUNNING - so the
+    real write path (the worker's persist handler + the v8 schema) and the real summary
+    reader are both exercised. The v7 internals this test used to poke
+    (``_check_and_create_schema`` / ``_persist_hardware_batch``) are gone after the v8
+    switch-over, so the port is: wait for ``db_worker.ready``, then ``flush_and_wait``."""
+    with patch("netspeedtray.core.widget_state.get_app_data_path", return_value=tmp_path):
         s = WidgetState(constants.config.defaults.DEFAULT_CONFIG.copy())
-    w = s.db_worker
-    w.db_path = tmp_path / "speed_history.db"
-    w._initialize_connection()
-    w._check_and_create_schema()
+    s.batch_persist_timer.stop()          # no background flush - the test drives the write
+    s.db_worker.ready.wait(timeout=10)     # the v8 schema is live on disk
     return s
 
 
@@ -211,11 +210,10 @@ def test_battery_only_poll_reaches_history_through_the_real_write_path(q_app, tm
         monkeypatch.setattr(wsm, "datetime", type("_DT", (), {"now": staticmethod(_fake_now)}))
         ctl.handle_stats({"system_power": 12.0})
         ctl.handle_stats({"system_power": 18.0})
-        assert state._hw_batch, "battery-only poll produced no history batch"
-        # The real persist path, thread or no thread: the same handler the worker drains
-        # its queue with on a live machine, through the real on-disk schema.
-        state.db_worker._persist_hardware_batch(list(state._hw_batch))
-        state._hw_batch = []
+        # The real persist path: flush the batch and wait until the write thread has it
+        # on disk (the v8 writer + schema), exactly what the thread does on a live machine.
+        state.flush_and_wait(timeout=5.0)
+        assert not state._hw_batch, "the flush did not drain the batch"
 
         monkeypatch.undo()
         now = datetime.now()
@@ -225,7 +223,6 @@ def test_battery_only_poll_reaches_history_through_the_real_write_path(q_app, tm
         assert summary is not None and summary.count == 2, "no battery_drain history on disk"
         assert summary.avg == pytest.approx(15.0)   # (12 + 18) / 2 - exactly the hover's read
     finally:
-        state.db_worker._close_connection()
         state.cleanup()
 
 
@@ -243,13 +240,12 @@ def test_battery_only_poll_records_nothing_with_power_display_off(q_app, tmp_pat
         ctl.handle_stats({"system_power": 12.0})
         types = [b[1] for b in state._hw_batch]
         assert 'battery_drain' not in types
-        sys_rows = [b for b in state._hw_batch if b[1] == 'system_power']
-        state.db_worker._persist_hardware_batch(sys_rows)
-        state._hw_batch = []
+        # Nothing to write for battery_drain - flush anyway so the reader sees the real
+        # (empty) on-disk state rather than a pending batch.
+        state.flush_and_wait(timeout=5.0)
         now = datetime.now()
         summary = state.summarize_hardware('battery_drain',
                                            now - timedelta(minutes=5), now, poll_interval=1.0)
         assert not summary or not summary.count
     finally:
-        state.db_worker._close_connection()
         state.cleanup()

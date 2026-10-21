@@ -178,9 +178,6 @@ class GeneralPage(QWidget):
         self.power_display.setChecked(bool(config.get("power_display_enabled", False)))
         self.show_hover_tips.setChecked(bool(config.get("show_hover_tips", True)))
 
-        # Power display hover card (moved from Advanced > Behavior, #400)
-        self.power_display.setChecked(bool(config.get("power_display_enabled", False)))
-
     def _select_click_action(self, combo: Win11ComboBox, value: str) -> None:
         idx = combo.findData(value)
         combo.setCurrentIndex(idx if idx >= 0 else 0)

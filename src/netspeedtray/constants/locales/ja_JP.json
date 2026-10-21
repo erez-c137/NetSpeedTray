@@ -527,7 +527,6 @@
     "METRICS_STATUS_IN_USE": "ポート {port} は別のアプリが使用中です。別のポートを選んでください。",
     "METRICS_STATUS_DENIED": "ポート {port} は Windows によって予約されています。別のポートを選んでください。",
     "METRICS_STATUS_ERROR": "ポート {port} で開始できませんでした。別のポートを選んでください。",
-    "DISPLAY_MODE_POWER": "バッテリーのみ",
     "POWER_HOVER_CARD_LABEL": "ウィジェットのホバー時にバッテリー駆動を表示",
     "POWER_NOW_LABEL": "現在",
     "POWER_TODAY_AVG_LABEL": "今日の平均",

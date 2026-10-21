@@ -528,7 +528,6 @@
     "METRICS_STATUS_IN_USE": "端口 {port} 已被其他应用占用。请选择其他端口。",
     "METRICS_STATUS_DENIED": "端口 {port} 已被 Windows 保留。请选择其他端口。",
     "METRICS_STATUS_ERROR": "无法在端口 {port} 上启动。请选择其他端口。",
-    "DISPLAY_MODE_POWER": "仅电池",
     "POWER_HOVER_CARD_LABEL": "鼠标悬停小组件时显示电池功耗",
     "POWER_NOW_LABEL": "当前",
     "POWER_TODAY_AVG_LABEL": "今日平均",
