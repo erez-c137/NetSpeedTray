@@ -60,6 +60,53 @@ def identity_layout(fm, ssid, band):
 logger = logging.getLogger("NetSpeedTray.WidgetRenderer")
 
 
+def trend_window(num_points: int) -> int:
+    """Smoothing window (in samples) for the Trend mini graph: a fixed fraction of the samples on
+    screen, so the curve is equally calm at any timespan, at least TREND_MIN_WINDOW."""
+    r = constants.renderer
+    return max(r.TREND_MIN_WINDOW, int(round(num_points * r.TREND_WINDOW_FRACTION)))
+
+
+def trend_smooth(values: List[float], window: int) -> List[float]:
+    """Smooth an evenly spaced series for the Trend mini graph: a centred Gaussian moving average,
+    with a slope-damped local-linear fit where the window runs off the ends.
+
+    Interior: a centred Gaussian average (sigma = window / 4, cut at +-2 sigma). Centred, so a burst
+    stays where it happened instead of sliding right and smearing the way a trailing EMA does.
+
+    Edges: the right edge is "now", where the eye reads, and has no future samples. A plain truncated
+    average there lags (a step 2 s old reached 75% of its level at the 3 min default); a full local-
+    linear fit has no lag but overshoots (115%) and wags with the per-second noise (77% of the raw
+    noise, vs 35% in the interior). Damping the fitted slope (TREND_EDGE_SLOPE_DAMPING, a ridge on
+    the slope term) keeps most of the catch-up (87% after 2 s, 96% after 3 s) with no overshoot and
+    nearly the truncated average's calm (52% of the raw noise). In the interior the slope term is
+    exactly zero (symmetric weights), so the damping changes nothing there.
+
+    Five numpy convolutions, O(n * window): well under a millisecond for 1,800 samples, and only
+    when the history changes (the caller caches the result with its polyline)."""
+    import numpy as np   # lazy, like calculate_monotone_cubic_interpolation: only with the graph on
+
+    y = np.asarray(values, dtype=float)
+    n = len(y)
+    # The kernel must not be longer than the data ('same' convolution keeps len(y) only then).
+    half = min(int(window) // 2, (n - 1) // 2)
+    if half < 1:
+        return y.tolist()
+    d = np.arange(-half, half + 1, dtype=float)
+    sigma = max(half / 2.0, 0.5)
+    g = np.exp(-0.5 * (d / sigma) ** 2)
+    ones = np.ones(n)
+
+    def corr(a, k):   # out[i] = sum_j a[j] * k(j - i), over the samples that exist
+        return np.convolve(a, k[::-1], mode="same")
+
+    s0, s1 = corr(ones, g), corr(ones, g * d)
+    # Weighted second moment plus the ridge, scaled to the full kernel's own second moment.
+    s2 = corr(ones, g * d * d) + constants.renderer.TREND_EDGE_SLOPE_DAMPING * float((g * d * d).sum())
+    t0, t1 = corr(y, g), corr(y, g * d)
+    return ((s2 * t0 - s1 * t1) / (s0 * s2 - s1 * s1)).tolist()
+
+
 class _SpeedColumns(NamedTuple):
     """Formatted speeds and the column geometry shared by every speed row (see _speed_columns)."""
     up_val: str
@@ -113,6 +160,8 @@ class RenderConfig:
     graph_split_directions: bool = constants.config.defaults.DEFAULT_GRAPH_SPLIT_DIRECTIONS
     graph_scale_ceiling_up: float = 0.0
     graph_scale_ceiling_down: float = 0.0
+    # "detailed" (every sample, filled) or "trend" (smoothed line) - see draw_mini_graph.
+    graph_style: str = constants.config.defaults.DEFAULT_GRAPH_STYLE
     use_separate_arrow_font: bool = False
     arrow_font_family: str = constants.config.defaults.DEFAULT_FONT_FAMILY
     arrow_font_size: int = 9
@@ -168,6 +217,9 @@ class RenderConfig:
             plan_up = max(0.0, float(config.get('plan_up_mbps', 0) or 0)) * mbps_to_bytes
             scale_ceiling = max(plan_down, plan_up)
             headroom_pct = config.get('graph_scale_headroom', constants.config.defaults.DEFAULT_GRAPH_SCALE_HEADROOM)
+            graph_style = str(config.get('graph_style', constants.config.defaults.DEFAULT_GRAPH_STYLE))
+            if graph_style not in constants.config.defaults.GRAPH_STYLE_CHOICES:
+                graph_style = constants.config.defaults.DEFAULT_GRAPH_STYLE
 
             return cls(
                 color_coding=bool(config.get('color_coding', constants.config.defaults.DEFAULT_COLOR_CODING)),
@@ -209,6 +261,7 @@ class RenderConfig:
                 graph_split_directions=bool(config.get('graph_split_directions', constants.config.defaults.DEFAULT_GRAPH_SPLIT_DIRECTIONS)),
                 graph_scale_ceiling_up=plan_up,
                 graph_scale_ceiling_down=plan_down,
+                graph_style=graph_style,
                 use_custom_arrow_colors=bool(config.get(
                     'use_custom_arrow_colors', constants.config.defaults.DEFAULT_USE_CUSTOM_ARROW_COLORS)),
                 arrow_up_color=str(config.get(
@@ -266,10 +319,10 @@ class WidgetRenderer:
                 self._last_text_rect = QRect()
                 self._content_bounds = QRect()
 
-                # Mini graph polyline cache, one slot per graph kind - (is_hardware, series) - since the
+                # Mini graph polyline cache, one slot per graph kind - (is_hardware, series, style) - since the
                 # split view draws an upload and a download panel every paint, which would thrash a
                 # single slot. Value: (size, history key, upload points, download points, ceiling row).
-                self._graph_cache: Dict[Tuple[bool, str], Tuple[Any, ...]] = {}
+                self._graph_cache: Dict[Tuple[bool, str, str], Tuple[Any, ...]] = {}
 
                 # Caching for high-frequency paint events
                 self._cached_pens = {}
@@ -1165,12 +1218,17 @@ class WidgetRenderer:
             graph_rect = QRect(side_margin, top_margin, width - (side_margin * 2), height - (top_margin + bottom_margin))
             if graph_rect.width() <= 0 or graph_rect.height() <= 0: return
 
+            if config.graph_style == "trend":
+                self._draw_trend_graph(painter, graph_rect, width, height, config, history,
+                                       is_hardware, hardware_color, series)
+                return
+
             # Cache key for the (expensive) polyline recompute below. The history is an
             # append-only, time-ordered sliding window, so (first, last, length) uniquely
             # identifies its contents - an O(1) key instead of hashing all ~N points every
             # paint. (len >= MIN_GRAPH_POINTS here, so [0]/[-1] are safe.)
             current_hash = hash((history[0], history[-1], len(history), is_hardware))
-            cache_key = (is_hardware, series)
+            cache_key = (is_hardware, series, "detailed")
             cached = self._graph_cache.get(cache_key)
 
             if cached is None or cached[0] != (width, height) or cached[1] != current_hash:
@@ -1285,9 +1343,113 @@ class WidgetRenderer:
         except Exception as e:
             self.logger.error("Failed to draw mini graph: %s", e)
 
+    def _draw_trend_graph(self, painter: QPainter, graph_rect: QRect, width: int, height: int,
+                          config: RenderConfig, history: List[Any], is_hardware: bool,
+                          hardware_color: str, series: str) -> None:
+        """The "trend" mini graph style: each series smoothed (trend_smooth) and drawn as a clean line
+        with a faint fill, instead of every per-second sample. Same axis rules as Detailed - a fixed
+        scale is unchanged; the auto-fit is sized to the SMOOTHED data, so the trend fills the height
+        instead of leaving room for spikes it no longer draws. Points are cached like Detailed's."""
+        current_hash = hash((history[0], history[-1], len(history), is_hardware))
+        cache_key = (is_hardware, series, "trend")
+        cached = self._graph_cache.get(cache_key)
+
+        if cached is None or cached[0] != (width, height) or cached[1] != current_hash:
+            num_points = len(history)
+            window = trend_window(num_points)
+            if is_hardware:
+                ups, downs = trend_smooth([d.value for d in history], window), []
+                max_y, ceiling = 100.0, None
+            else:
+                ups = (trend_smooth([d.upload for d in history], window)
+                       if series in ("both", "upload") else [])
+                downs = (trend_smooth([d.download for d in history], window)
+                         if series in ("both", "download") else [])
+                max_y, ceiling = self._network_graph_scale(history, config, series, ups, downs)
+            y_cap = max_y if ceiling is not None else math.inf
+
+            step_x = graph_rect.width() / (num_points - 1) if num_points > 1 else graph_rect.width()
+            right_edge = float(graph_rect.right())
+            base_y = float(graph_rect.bottom())
+            h = float(graph_rect.height())
+            xs = [right_edge - (num_points - 1 - i) * step_x for i in range(num_points)]
+            # Fewer samples than pixels (a short history stretched across the graph): interpolate so
+            # the line stays a curve, not a chain of segments. Denser than that (the usual case): the
+            # smoothed series has no detail finer than a pixel, so ~2 points per pixel are plenty.
+            sparse = num_points < graph_rect.width()
+            stride = max(1, num_points // (2 * max(1, graph_rect.width())))
+
+            def polyline(values):
+                if not values:
+                    return []
+                if sparse:
+                    px, py = calculate_monotone_cubic_interpolation(xs, values, density=5)
+                    px, py = list(px), list(py)
+                    if not px or px[-1] != xs[-1]:   # end exactly on "now"
+                        px.append(xs[-1])
+                        py.append(values[-1])
+                else:
+                    idx = list(range(0, num_points, stride))
+                    if idx[-1] != num_points - 1:
+                        idx.append(num_points - 1)
+                    px, py = [xs[i] for i in idx], [values[i] for i in idx]
+                return [QPointF(x, base_y - (min(max(0.0, y), y_cap) / max_y) * h) for x, y in zip(px, py)]
+
+            if ceiling is not None and config.graph_show_ceiling and config.graph_scale_headroom > 0:
+                ceiling_y = math.floor(base_y - (ceiling / max_y) * h) + 0.5
+            else:
+                ceiling_y = None
+            cached = ((width, height), current_hash, polyline(ups), polyline(downs), ceiling_y)
+            self._graph_cache[cache_key] = cached
+
+        _size, _key, upload_points, download_points, ceiling_y = cached
+        from PyQt6.QtGui import QLinearGradient, QBrush, QPolygonF
+
+        painter.save()
+        painter.setOpacity(config.graph_opacity)
+        if ceiling_y is not None:
+            ceiling_pen = QPen(QColor(config.default_color), 1)
+            ceiling_pen.setStyle(Qt.PenStyle.DotLine)
+            painter.setPen(ceiling_pen)
+            painter.drawLine(QPointF(float(graph_rect.left()), ceiling_y),
+                             QPointF(float(graph_rect.right()), ceiling_y))
+
+        if is_hardware:
+            lines = [(upload_points, hardware_color)]
+        else:
+            lines = [(upload_points, constants.graph.UPLOAD_LINE_COLOR),
+                     (download_points, constants.graph.DOWNLOAD_LINE_COLOR)]
+        lines = [(pts, c) for pts, c in lines if pts]
+
+        fill_alpha = constants.renderer.TREND_FILL_ALPHA
+        if fill_alpha > 0:
+            # A faint wash in plain SourceOver (not Detailed's additive Plus, which all but vanishes on
+            # a light taskbar): it only says "area under the line"; the line carries the data.
+            bottom = float(graph_rect.bottom())
+            painter.setPen(Qt.PenStyle.NoPen)
+            for pts, color_hex in lines:
+                grad = QLinearGradient(0, graph_rect.top(), 0, graph_rect.bottom())
+                c = QColor(color_hex)
+                c.setAlpha(fill_alpha)
+                grad.setColorAt(0.0, c)
+                c.setAlpha(0)
+                grad.setColorAt(1.0, c)
+                painter.setBrush(QBrush(grad))
+                painter.drawPolygon(QPolygonF([QPointF(pts[0].x(), bottom), *pts, QPointF(pts[-1].x(), bottom)]))
+
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        for pts, color_hex in lines:
+            pen = QPen(QColor(color_hex), constants.renderer.TREND_LINE_WIDTH)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            painter.setPen(pen)
+            painter.drawPolyline(pts)
+        painter.restore()
+
     @staticmethod
     def _network_graph_scale(history: List[Any], config: RenderConfig,
-                             series: str = "both") -> Tuple[float, Optional[float]]:
+                             series: str = "both", uploads: Optional[List[float]] = None,
+                             downloads: Optional[List[float]] = None) -> Tuple[float, Optional[float]]:
         """Top of the network mini graph's y-axis in bytes/sec, plus the fixed ceiling it was built from
         (None while auto-scaling).
 
@@ -1297,14 +1459,18 @@ class WidgetRenderer:
         set) tops out at the plan speed plus the headroom instead, so a given height always means the
         same speed. A single-direction panel ("upload" / "download") scales to that direction's own
         samples and plan speed, so a 30 Mbps upload isn't flattened by a 300 Mbps download.
-        History is non-empty here (len >= MIN_GRAPH_POINTS)."""
+        History is non-empty here (len >= MIN_GRAPH_POINTS). ``uploads`` / ``downloads`` override the
+        samples the auto-fit reads (the Trend style's smoothed series); None reads them from history."""
         ceiling = {"upload": config.graph_scale_ceiling_up,
                    "download": config.graph_scale_ceiling_down}.get(series, config.graph_scale_ceiling)
         if config.graph_fixed_scale and ceiling > 0:
             return max(ceiling * (1.0 + config.graph_scale_headroom), constants.renderer.MIN_Y_SCALE), ceiling
 
-        uploads = [d.upload for d in history] if series in ("both", "upload") else []
-        downloads = [d.download for d in history] if series in ("both", "download") else []
+        # The Trend style passes its smoothed series in, so the auto-fit is sized to what is drawn.
+        if uploads is None:
+            uploads = [d.upload for d in history] if series in ("both", "upload") else []
+        if downloads is None:
+            downloads = [d.download for d in history] if series in ("both", "download") else []
         max_speed_val = max(uploads + downloads)
 
         if len(history) > 10:

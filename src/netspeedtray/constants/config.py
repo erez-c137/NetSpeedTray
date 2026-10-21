@@ -77,6 +77,10 @@ class ConfigConstants:
     # widget changes size on upgrade. Side by side on a horizontal taskbar, stacked on a vertical one;
     # Auto-Cycle rotates upload and download as their own phases instead, so it keeps its size.
     DEFAULT_GRAPH_SPLIT_DIRECTIONS: Final[bool] = False
+    # Mini graph look: "detailed" plots every sample (the classic filled, spiky graph); "trend" smooths
+    # each series into a calm line (widget_renderer.trend_smooth). The default is a one-line switch.
+    GRAPH_STYLE_CHOICES: Final[List[str]] = ["detailed", "trend"]
+    DEFAULT_GRAPH_STYLE: Final[str] = "detailed"
     DEFAULT_INTERFACE_MODE: Final[str] = network.interface.DEFAULT_MODE
     DEFAULT_KEEP_DATA_DAYS: Final[int] = data.retention.DEFAULT_DAYS # 365 days (1 Year) default
     DEFAULT_DARK_MODE: Final[bool] = True
@@ -184,6 +188,7 @@ class ConfigConstants:
         "graph_scale_headroom": DEFAULT_GRAPH_SCALE_HEADROOM,
         "graph_show_ceiling": DEFAULT_GRAPH_SHOW_CEILING,
         "graph_split_directions": DEFAULT_GRAPH_SPLIT_DIRECTIONS,
+        "graph_style": DEFAULT_GRAPH_STYLE,
         "interface_mode": DEFAULT_INTERFACE_MODE,
         "selected_interfaces": [],
         "excluded_interfaces": network.interface.DEFAULT_EXCLUSIONS,
@@ -337,6 +342,7 @@ class ConfigConstants:
         "graph_scale_headroom": {"type": int, "default": DEFAULT_GRAPH_SCALE_HEADROOM, "choices": GRAPH_SCALE_HEADROOM_CHOICES},
         "graph_show_ceiling": {"type": bool, "default": DEFAULT_GRAPH_SHOW_CEILING},
         "graph_split_directions": {"type": bool, "default": DEFAULT_GRAPH_SPLIT_DIRECTIONS},
+        "graph_style": {"type": str, "default": DEFAULT_GRAPH_STYLE, "choices": GRAPH_STYLE_CHOICES},
         "interface_mode": {"type": str, "default": DEFAULT_INTERFACE_MODE, "choices": list(network.interface.VALID_INTERFACE_MODES)},
         "selected_interfaces": {"type": list, "default": [], "item_type": str},
         "excluded_interfaces": {"type": list, "default": network.interface.DEFAULT_EXCLUSIONS, "item_type": str},

@@ -81,7 +81,7 @@ def test_graph_scaling():
     
     # Check cached points
     # These are private, but accessible
-    points = renderer._graph_cache[(False, "both")][2]   # (size, key, upload, download, ceiling)
+    points = renderer._graph_cache[(False, "both", "detailed")][2]   # (size, key, upload, download, ceiling)
     if not points:
         print("FAIL: No points generated.")
         return

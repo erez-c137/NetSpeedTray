@@ -21,7 +21,7 @@ DEFAULTS = constants.config.defaults.DEFAULT_CONFIG
 
 # Keys owned by the Mini Graph section, now on the Widget page (was Appearance).
 GRAPH_KEYS = {"graph_enabled", "history_minutes", "graph_opacity", "graph_fixed_scale",
-              "graph_scale_headroom", "graph_show_ceiling", "graph_split_directions"}
+              "graph_scale_headroom", "graph_show_ceiling", "graph_split_directions", "graph_style"}
 
 
 @pytest.fixture
@@ -150,7 +150,8 @@ def test_graph_keys_are_owned_by_widget_page_only(dlg):
 
 def test_graph_keys_load_into_the_widget_page(dlg):
     cfg = dict(DEFAULTS, graph_enabled=False, history_minutes=9, graph_opacity=33, graph_fixed_scale=True,
-               graph_scale_headroom=10, graph_show_ceiling=False, graph_split_directions=True)
+               graph_scale_headroom=10, graph_show_ceiling=False, graph_split_directions=True,
+               graph_style="trend")
     dlg.reset_with_config(cfg, False)
     got = dlg.get_settings()
     assert {k: got[k] for k in GRAPH_KEYS} == {k: cfg[k] for k in GRAPH_KEYS}
@@ -180,6 +181,15 @@ def test_graph_change_updates_the_live_preview(dlg, qtbot):
     g.graph_opacity.setValue(55)
     qtbot.waitUntil(lambda: bool(seen), timeout=2000)
     assert seen[-1]["graph_opacity"] == 55
+
+
+def test_graph_style_change_updates_the_live_preview(dlg, qtbot):
+    seen = []
+    dlg.preview_widget.set_config = lambda cfg: seen.append(cfg)
+    g = dlg.widget_page.mini_graph_section
+    g.graph_style.setCurrentIndex(g.graph_style.findData("trend"))
+    qtbot.waitUntil(lambda: bool(seen) and seen[-1].get("graph_style") == "trend", timeout=2000)
+    assert dlg.get_settings()["graph_style"] == "trend"
 
 
 # --- change 4: Preferred Monitor -> Widget > Behavior ----------------------------------------------
