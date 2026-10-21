@@ -76,6 +76,7 @@
     "ORDER_TYPE_GPU": "GPU",
     "ORDER_TYPE_NONE": "Geen",
     "HARDWARE_GRAPH_NOTE": "Hardwaregrafieken gebruiken dezelfde transparantie en tijdsduur als de netwerkgrafiek.",
+    "SIDE_TASKBAR_HOVER_NOTE": "Op een taakbalk aan de zijkant worden CPU/GPU/geheugen getoond als je de muis boven de widget houdt.",
     "GRAPH_CPU_UTIL_AXIS_LABEL": "CPU-gebruik (%)",
     "GRAPH_GPU_UTIL_AXIS_LABEL": "GPU-gebruik (%)",
     "GRAPH_HW_UTIL_AXIS_LABEL": "Gebruik (%)",

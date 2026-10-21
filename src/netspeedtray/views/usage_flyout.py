@@ -13,10 +13,11 @@ rounded corners to match the native Win11 flyouts. Built on the shared design to
 """
 from __future__ import annotations
 
+import math
 from typing import Optional, Tuple
 
 from PyQt6.QtCore import Qt, QRect
-from PyQt6.QtGui import QColor
+from PyQt6.QtGui import QColor, QFontMetrics, QScreen
 from PyQt6.QtWidgets import (
     QWidget, QFrame, QLabel, QGridLayout, QVBoxLayout, QHBoxLayout,
     QGraphicsDropShadowEffect, QProgressBar,
@@ -41,7 +42,8 @@ class UsageFlyout(QWidget):
 
     def __init__(self, i18n, today: Optional[Totals] = None, month: Optional[Totals] = None,
                  hint: Optional[str] = None, cap: Optional[CapInfo] = None,
-                 parent: Optional[QWidget] = None, history_note: Optional[str] = None) -> None:
+                 parent: Optional[QWidget] = None, history_note: Optional[str] = None,
+                 hardware: Optional[dict] = None) -> None:
         super().__init__(
             parent,
             Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool
@@ -73,13 +75,21 @@ class UsageFlyout(QWidget):
         body.setSpacing(tokens.SPACE_S)
         outer.addWidget(card)
 
-        # The card carries any subset of {gesture hint, usage rows, cap progress}, driven by the
-        # two independent Settings toggles. Sections are divided only when more than one is shown.
+        # The card carries any subset of {hardware, gesture hint, usage rows, cap progress}, driven by
+        # the Settings toggles. Sections are divided only when more than one is shown.
         sections = 0
+
+        # --- Hardware the side taskbar has no room for (live while the card is open) ---
+        self._hw_values: dict = {}
+        if hardware:
+            self._hardware_section(body, hardware)
+            sections += 1
 
         # --- Gesture hint (right-click / double-click) ---
         if hint:
-            hint_lbl = self._label(hint, tokens.TYPE_BODY, self._c["text_secondary"])
+            if sections:
+                body.addWidget(self._separator())
+            hint_lbl =self._label(hint, tokens.TYPE_BODY, self._c["text_secondary"])
             hint_lbl.setWordWrap(True)
             hint_lbl.setMaximumWidth(300)
             body.addWidget(hint_lbl)
@@ -172,23 +182,141 @@ class UsageFlyout(QWidget):
         grid.addWidget(self._label(f"↑ {self._fmt(up_bytes)}", tokens.TYPE_BODY,
                                    self._c["text_primary"], Qt.AlignmentFlag.AlignRight), row, 2)
 
+    # Rows of the hardware section, in order: (key, label). The labels are the universal abbreviations
+    # the widget itself paints (not translated there either).
+    _HW_ROWS = (("cpu", "CPU"), ("ram", "RAM"), ("gpu", "GPU"), ("vram", "VRAM"))
+    # Widest value each column can show, so a live update never makes the card jump in width.
+    _HW_REFS = {"pct": "100%", "temp": "100°C", "power": "250.0 W", "mem": "99.9 / 99.9 GB"}
+
+    def _hardware_section(self, body: QVBoxLayout, hardware: dict) -> None:
+        """CPU/GPU/memory (and the Wi-Fi identity) the side taskbar has no room for. Fixed-width,
+        right-aligned value columns so the 1 Hz updates (``update_hardware``) never shift the card."""
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(12)
+        grid.setVerticalSpacing(tokens.SPACE_S)
+        grid.setColumnStretch(0, 1)
+        fm = QFontMetrics(su.font(tokens.TYPE_BODY))
+        widths = {k: fm.horizontalAdvance(helpers.format_percent(100, self._i18n) if k == "pct" else v)
+                  for k, v in self._HW_REFS.items()}
+        # Temperature / power columns only when a stat carries them (the widget's own toggles).
+        stat_cols = ["pct"] + [c for c in ("temp", "power")
+                               if any(c in (hardware.get(k) or {}) for k in ("cpu", "gpu"))]
+        row = 0
+        for key, label in self._HW_ROWS:
+            if key not in hardware:
+                continue
+            grid.addWidget(self._label(label, tokens.TYPE_BODY_STRONG, self._c["text_primary"]), row, 0)
+            cols = stat_cols if key in ("cpu", "gpu") else ["mem"]
+            for i, col in enumerate(cols):
+                lbl = self._label("", tokens.TYPE_BODY, self._c["text_primary"], Qt.AlignmentFlag.AlignRight)
+                lbl.setMinimumWidth(widths[col])
+                lbl.setAccessibleName(label)
+                span = len(stat_cols) if col == "mem" else 1
+                grid.addWidget(lbl, row, 1 + i, 1, span)
+                self._hw_values[(key, col)] = lbl
+            row += 1
+        identity = hardware.get("identity")
+        if identity:
+            grid.addWidget(self._label(self._tr("NETWORK_IDENTITY_TITLE", "Network"), tokens.TYPE_BODY_STRONG,
+                                       self._c["text_primary"]), row, 0)
+            lbl = self._label("", tokens.TYPE_BODY, self._c["text_primary"], Qt.AlignmentFlag.AlignRight)
+            grid.addWidget(lbl, row, 1, 1, len(stat_cols))
+            self._hw_values[("identity", "text")] = lbl
+        body.addLayout(grid)
+        self.update_hardware(hardware)
+
+    @property
+    def has_hardware(self) -> bool:
+        return bool(self._hw_values)
+
+    def update_hardware(self, hardware: Optional[dict]) -> None:
+        """Refresh the hardware rows in place (the card stays up while the pointer rests on the widget).
+        Keys: cpu/gpu -> {usage, temp, power}; ram/vram -> (used_gb, total_gb); identity -> str. A
+        missing reading shows an em dash, never a made-up 0."""
+        if not hardware or not self._hw_values:
+            return
+        dash = "—"
+
+        def num(v: object) -> Optional[float]:
+            try:
+                f = float(v)
+            except (TypeError, ValueError):
+                return None
+            return f if math.isfinite(f) else None
+
+        for key in ("cpu", "gpu"):
+            stat = hardware.get(key)
+            if stat is None or (key, "pct") not in self._hw_values:
+                continue
+            usage, temp, power = num(stat.get("usage")), num(stat.get("temp")), num(stat.get("power"))
+            self._hw_values[(key, "pct")].setText(
+                helpers.format_percent(int(round(usage)), self._i18n) if usage is not None else dash)
+            if (key, "temp") in self._hw_values:
+                self._hw_values[(key, "temp")].setText(f"{temp:.0f}°C" if temp is not None else dash)
+            if (key, "power") in self._hw_values:
+                self._hw_values[(key, "power")].setText(
+                    f"{helpers.format_decimal(power, self._i18n, 1)} W" if power is not None else dash)
+        gb = self._tr("GB_UNIT", "GB")
+        for key in ("ram", "vram"):
+            mem = hardware.get(key)
+            if mem is None or (key, "mem") not in self._hw_values:
+                continue
+            used, total = (num(mem[0]), num(mem[1])) if isinstance(mem, (tuple, list)) and len(mem) == 2 \
+                else (None, None)
+            if used is None:
+                text = dash
+            elif total:
+                text = (f"{helpers.format_decimal(used, self._i18n, 1)} / "
+                        f"{helpers.format_decimal(total, self._i18n, 1)} {gb}")
+            else:
+                text = f"{helpers.format_decimal(used, self._i18n, 1)} {gb}"
+            self._hw_values[(key, "mem")].setText(text)
+        if ("identity", "text") in self._hw_values:
+            self._hw_values[("identity", "text")].setText(str(hardware.get("identity") or dash))
+
     # ----------------------------------------------------------------- show
 
-    def show_for(self, widget_geo: QRect, avail: QRect) -> None:
+    def show_for(self, widget_geo: QRect, avail: QRect, edge: Optional[object] = None,
+                 screen: Optional[QScreen] = None) -> None:
         """
         Show the card anchored to ``widget_geo`` (the widget's global frame rect) but clamped
-        fully inside ``avail`` (the screen's work area, which excludes the taskbar). Preferred
-        placement is centered just above the widget; the clamp guarantees it never overlaps the
-        taskbar regardless of which edge the taskbar is on.
+        fully inside ``avail`` (the work area of the widget's screen, which excludes the taskbar).
+
+        Placement follows the taskbar ``edge`` (a ``TaskbarEdge``; None = bottom): above the widget on
+        a bottom bar, below it on a top bar, and BESIDE it on a side bar - flush with the work area's
+        inner edge, vertically centred on the widget. The clamp guarantees it never overlaps the
+        taskbar. ``screen`` (the widget's) is set on the card's window before it is sized, so a card
+        on a second monitor with a different scale lays out at that monitor's DPI.
         """
+        if screen is not None:
+            try:
+                self.winId()                     # create the native window so it has a handle
+                handle = self.windowHandle()
+                if handle is not None:
+                    handle.setScreen(screen)
+            except Exception:
+                pass
         self.adjustSize()
         sz = self.size()
-
-        x = widget_geo.center().x() - sz.width() // 2
-        y = widget_geo.top() - sz.height() - _GAP_ABOVE  # prefer above the widget
-
+        x, y = self._anchor(widget_geo, avail, sz, edge)
         x = max(avail.left() + _EDGE_MARGIN, min(x, avail.right() - sz.width() - _EDGE_MARGIN))
         y = max(avail.top() + _EDGE_MARGIN, min(y, avail.bottom() - sz.height() - _EDGE_MARGIN))
 
         self.move(int(x), int(y))
         self.show()
+
+    @staticmethod
+    def _anchor(widget_geo: QRect, avail: QRect, sz, edge: Optional[object]) -> Tuple[int, int]:
+        """Preferred (unclamped) top-left for the card - see ``show_for``. The card's window has a
+        12 px transparent shadow margin, so "flush" uses the same _EDGE_MARGIN the clamp keeps."""
+        from netspeedtray.constants import TaskbarEdge
+        cx = widget_geo.center().x() - sz.width() // 2
+        cy = widget_geo.center().y() - sz.height() // 2
+        if edge == TaskbarEdge.RIGHT:
+            return avail.right() - _EDGE_MARGIN - sz.width(), cy
+        if edge == TaskbarEdge.LEFT:
+            return avail.left() + _EDGE_MARGIN, cy
+        if edge == TaskbarEdge.TOP:
+            return cx, widget_geo.bottom() + _GAP_ABOVE
+        return cx, widget_geo.top() - sz.height() - _GAP_ABOVE   # bottom bar: above the widget

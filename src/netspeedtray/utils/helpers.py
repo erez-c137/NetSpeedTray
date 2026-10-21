@@ -329,6 +329,85 @@ def format_speed(
     return f"{formatted_val} {unit}"
 
 
+def _compact_number(val: float, decimal_places: int, whole_from_ten: bool) -> str:
+    """One value in the compact readout's shared unit: at most three digits. Below 10 it keeps the
+    decimals (capped at one); 10-99 keeps them unless ``whole_from_ten``; 100 and up is whole. The
+    bracket is chosen from the ROUNDED value, so 9.96 reads "10.0" (or "10"), never "9.96"-wide."""
+    if decimal_places > 0:
+        r = round(val, decimal_places)
+        if r < 10 or (r < 100 and not whole_from_ten):
+            return f"{val:.{decimal_places}f}"
+    return f"{val:.0f}"
+
+
+def compact_speed_reference_strings(decimal_places: int, whole_from_ten: bool,
+                                    decimal_sep: str = ".") -> List[str]:
+    """The widest strings ``format_speed_compact`` can return for these settings (digits are tabular
+    in the widget fonts; '8' stands for any digit, as in ``get_reference_value_string``) - what the
+    side-bar ladder sizes from, never a live value."""
+    dp = max(0, min(1, int(decimal_places)))
+    refs = ["888"]
+    if dp:
+        refs.append(f"8{decimal_sep}8" if whole_from_ten else f"88{decimal_sep}8")
+    return refs
+
+
+def format_speed_compact(
+    upload: float,
+    download: float,
+    i18n,
+    *,
+    force_mega_unit: bool = False,
+    decimal_places: int = 1,
+    unit_type: str = "bits_decimal",
+    short_labels: bool = False,
+    whole_from_ten: bool = False,
+) -> Tuple[str, str, str]:
+    """``(upload_text, download_text, unit)`` for the side-taskbar compact readout - the sibling of
+    ``format_speed`` for a widget too narrow for a unit on every row.
+
+    - ONE shared unit for both values: the smallest whose larger value stays below 999.5 (rounds to at
+      most three digits). ``force_mega_unit`` keeps the mega floor and still promotes to giga.
+    - At most three digits per value (``99.9``, ``999``); ``whole_from_ten`` drops the decimal from 10
+      up (the Small 32 px bar). ``decimal_places`` 0 is honoured, 2 is capped to 1.
+    - The locale's decimal separator, as ``format_speed`` uses.
+    """
+    dp = max(0, min(1, int(decimal_places)))
+    units = constants.network.units
+    is_binary = unit_type.endswith("_binary")
+    is_bytes = unit_type.startswith("bytes")
+    step = float(units.KIBI_DIVISOR if is_binary else units.KILO_DIVISOR)
+    divisors = (1.0, step, step ** 2, step ** 3)
+
+    def _clean(v: object) -> float:
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            return 0.0
+        return v if math.isfinite(v) and v > 0 else 0.0
+
+    up, dw = _clean(upload), _clean(download)
+    if not is_bytes:
+        up, dw = up * units.BITS_PER_BYTE, dw * units.BITS_PER_BYTE
+    peak = max(up, dw)
+    floor_tier = 2 if force_mega_unit else 0
+    if max(_clean(upload), _clean(download)) < units.MINIMUM_DISPLAY_SPEED:
+        tier = 2 if force_mega_unit else 1     # idle reads "0.0 Kbps", as format_speed does
+        up = dw = 0.0
+    else:
+        tier = floor_tier
+        while tier < 3 and peak / divisors[tier] >= 999.5:
+            tier += 1
+    labels = get_unit_labels_for_type(i18n, unit_type, short_labels)
+    tier_dp = 0 if tier == 0 else dp          # whole bits/bytes, like format_speed's base unit
+    up_txt = _compact_number(up / divisors[tier], tier_dp, whole_from_ten)
+    dw_txt = _compact_number(dw / divisors[tier], tier_dp, whole_from_ten)
+    sep = getattr(i18n, "DECIMAL_SEPARATOR", ".")
+    if isinstance(sep, str) and sep != ".":
+        up_txt, dw_txt = up_txt.replace(".", sep), dw_txt.replace(".", sep)
+    return up_txt, dw_txt, labels[tier]
+
+
 def format_duration_short(secs: float, i18n) -> str:
     """A compact, localized duration: '2h 30m', '45m', or '30s'. Units come from i18n (DURATION_*_SHORT)
     so a locale can use 'min'/'std'/etc. Consolidates the duplicate _fmt_dur helpers in the Monitor."""

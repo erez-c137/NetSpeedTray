@@ -1020,6 +1020,56 @@ def horizontal_taskbar_strip(taskbar_info: TaskbarInfo, edge: constants.TaskbarE
     return top, height
 
 
+def vertical_taskbar_strip(taskbar_info: TaskbarInfo, edge: constants.TaskbarEdge,
+                           dpi_scale: float) -> Tuple[float, float]:
+    """The visible strip a LEFT/RIGHT taskbar occupies, as ``(x_origin, thickness)`` in logical px.
+
+    Twin of ``horizontal_taskbar_strip``: one source of truth for the side-bar widget's width
+    (``WidgetLayoutManager``), its x (``PositionCalculator._calculate_vertical_position``), the drag
+    constraint and ``dock_signature``, so the four can't disagree about where the bar is.
+
+    - Thickness: the work-area inset, capped by the taskbar WINDOW's width (a second appbar on the
+      same edge reserves more than the taskbar covers). No inset at all (auto-hide, #221 quirk): the
+      window width.
+    - x: the STABLE screen edge, never ``taskbar_info.rect[0]``, which slides while an auto-hide bar
+      animates (#135).
+    """
+    screen = taskbar_info.get_screen()
+    full_geom = screen.geometry()
+    avail_geom = screen.availableGeometry()
+    if not isinstance(avail_geom, QRect):
+        avail_geom = full_geom
+    scale = dpi_scale if dpi_scale and dpi_scale > 0 else 1.0
+    rect = getattr(taskbar_info, "rect", None)
+    if isinstance(rect, (tuple, list)) and len(rect) == 4 and all(isinstance(v, (int, float)) for v in rect):
+        window_w = (rect[2] - rect[0]) / scale
+    else:
+        window_w = 0.0   # no usable window rect
+
+    if edge == constants.TaskbarEdge.RIGHT:
+        inset = full_geom.right() - avail_geom.right()
+    else:
+        inset = avail_geom.left() - full_geom.left()
+
+    if inset > 0 and window_w > 0:
+        thickness = min(inset, window_w)
+    else:
+        thickness = inset if inset > 0 else window_w
+
+    x_origin = (full_geom.right() + 1) - thickness if edge == constants.TaskbarEdge.RIGHT else full_geom.left()
+    return x_origin, thickness
+
+
+def rect_overlaps_y(top: float, bottom: float, widgets_rect: Optional[Tuple[int, int, int, int]],
+                    dpi_scale: float) -> bool:
+    """The side-bar twin of ``rect_overlaps_x``: True if ``[top, bottom]`` (logical px) overlaps the
+    Widgets/weather element's y-extent. On a LEFT/RIGHT taskbar the widget and the Widgets button
+    share the bar's whole width, so comparing x always "overlapped" (#200 nudge false positive)."""
+    if not widgets_rect or dpi_scale <= 0:
+        return False
+    return top < widgets_rect[3] / dpi_scale and bottom > widgets_rect[1] / dpi_scale
+
+
 def dock_signature(taskbar_info: Optional[TaskbarInfo]) -> Optional[tuple]:
     """What the docked widget's SIZE depends on: ``(edge, thickness, dpi_scale, small)``, or None
     for a fallback/unknown taskbar.
@@ -1030,7 +1080,8 @@ def dock_signature(taskbar_info: Optional[TaskbarInfo]) -> Optional[tuple]:
 
     Built from the STABLE values ``WidgetLayoutManager`` sizes from, never the window's position:
     a horizontal bar's thickness is ``horizontal_taskbar_strip`` (work-area inset, else the window
-    HEIGHT), a side bar's is the work-area inset; neither changes while an auto-hide bar slides (#135).
+    HEIGHT), a side bar's is ``vertical_taskbar_strip`` (inset, else the window WIDTH); neither changes
+    while an auto-hide bar slides (#135).
     """
     if taskbar_info is None or taskbar_info.hwnd == 0:
         return None
@@ -1039,10 +1090,5 @@ def dock_signature(taskbar_info: Optional[TaskbarInfo]) -> Optional[tuple]:
     if edge in (constants.TaskbarEdge.TOP, constants.TaskbarEdge.BOTTOM):
         _, thickness = horizontal_taskbar_strip(taskbar_info, edge, dpi)
     else:
-        screen = taskbar_info.get_screen()
-        full_geom, avail_geom = screen.geometry(), screen.availableGeometry()
-        if edge == constants.TaskbarEdge.RIGHT:
-            thickness = full_geom.right() - avail_geom.right()
-        else:
-            thickness = avail_geom.left() - full_geom.left()
+        _, thickness = vertical_taskbar_strip(taskbar_info, edge, dpi)
     return (edge, round(thickness), round(dpi, 3), is_small_taskbar(taskbar_info))

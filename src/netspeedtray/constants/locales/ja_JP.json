@@ -76,6 +76,7 @@
     "ORDER_TYPE_GPU": "GPU",
     "ORDER_TYPE_NONE": "なし",
     "HARDWARE_GRAPH_NOTE": "ハードウェアグラフはネットワークグラフと同じ不透明度と時間範囲を使用します。",
+    "SIDE_TASKBAR_HOVER_NOTE": "サイドのタスクバーでは、ウィジェットにマウスを合わせると CPU/GPU/メモリが表示されます。",
     "GRAPH_CPU_UTIL_AXIS_LABEL": "CPU 使用率 (%)",
     "GRAPH_GPU_UTIL_AXIS_LABEL": "GPU 使用率 (%)",
     "GRAPH_HW_UTIL_AXIS_LABEL": "使用率 (%)",

@@ -34,6 +34,8 @@ Other locales (English, German, Spanish) are currently maintained by the project
 
 > 🆕 **Pending native review for Hebrew (2.1):** `he_IL` was seeded by [@rami123](https://github.com/rami123) (~74 strings); the remaining ~300 were AI-assisted for the 2.1 RTL work, each checked to preserve its `{…}` placeholders. The whole locale is **pending a native-speaker pass** - Hebrew is the app's first right-to-left language, so both the wording and any RTL layout quirks are worth a look. Corrections are hugely welcome and credited.
 
+> 🆕 **Pending native review for 2.2 (side taskbar):** `SIDE_TASKBAR_HOVER_NOTE` - the note under Settings > Widget > Display Mode when the widget is docked to a left/right taskbar ("On a side taskbar, CPU/GPU/memory show when you hover the widget."). Non-English values are AI-assisted; `CPU`/`GPU` are kept as the widget paints them.
+
 ## How translation works in NetSpeedTray
 
 - Each locale lives in a single JSON file under [`src/netspeedtray/constants/locales/`](src/netspeedtray/constants/locales/)

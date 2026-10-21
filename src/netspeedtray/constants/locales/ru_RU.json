@@ -76,6 +76,7 @@
     "ORDER_TYPE_GPU": "ГП",
     "ORDER_TYPE_NONE": "Нет",
     "HARDWARE_GRAPH_NOTE": "Графики оборудования используют ту же прозрачность и временной охват, что и график сети.",
+    "SIDE_TASKBAR_HOVER_NOTE": "На боковой панели задач CPU/GPU/память показываются при наведении указателя на виджет.",
     "GRAPH_CPU_UTIL_AXIS_LABEL": "Загрузка ЦП (%)",
     "GRAPH_GPU_UTIL_AXIS_LABEL": "Загрузка ГП (%)",
     "GRAPH_HW_UTIL_AXIS_LABEL": "Загрузка (%)",

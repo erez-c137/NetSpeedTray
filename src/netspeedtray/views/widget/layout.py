@@ -9,9 +9,9 @@ from PyQt6.QtWidgets import QWidget
 
 from netspeedtray import constants
 from netspeedtray.utils.taskbar_utils import (is_small_taskbar, get_taskbar_info, horizontal_taskbar_strip,
-                                              dock_signature)
+                                              vertical_taskbar_strip, dock_signature)
 from netspeedtray.utils.helpers import memory_label_width
-from netspeedtray.utils.widget_paint import side_by_side_keys, stacked_segment_height
+
 
 if TYPE_CHECKING:
     from netspeedtray.views.widget.main import NetworkSpeedWidget
@@ -29,6 +29,8 @@ class WidgetLayoutManager:
         self.arrow_metrics: Optional[QFontMetrics] = None
         self._font: Optional[QFont] = None
         self._arrow_font: Optional[QFont] = None
+        # widget_paint.SideBarFit of the last side-taskbar sizing (None on a TOP/BOTTOM bar).
+        self._side_fit = None
 
     def setup_window_properties(self) -> None:
         """Set Qt window flags and attributes for proper Windows integration."""
@@ -222,6 +224,7 @@ class WidgetLayoutManager:
 
                 # Save calculated network width for other layout consumers (e.g. mini-graph)
                 self._network_width = calculated_width
+                self._side_fit = None
 
                 # Separate upload/download graphs: the readout becomes two panels side by side, each one
                 # network block wide (_network_width keeps meaning one block - the renderer sizes each
@@ -415,45 +418,32 @@ class WidgetLayoutManager:
                     calculated_height = self._horizontal_dock_height(edge, taskbar_info, dpi_scale)
 
             else:
-                # Width is the TRUE visible taskbar width for vertical docking (Fixes #104/PR #110)
-                screen = taskbar_info.get_screen()
-                full_geom = screen.geometry()
-                avail_geom = screen.availableGeometry()
-                
-                if edge == constants.TaskbarEdge.RIGHT:
-                    visible_tb_width = full_geom.right() - avail_geom.right()
-                else: # LEFT
-                    visible_tb_width = avail_geom.left() - full_geom.left()
+                # Width is the TRUE visible taskbar width for vertical docking (Fixes #104/PR #110): the
+                # strip the position code centres in (inset capped by the window; the window when
+                # there is no inset - auto-hide / #221), floored to whole px so it never hangs over.
+                _, visible_tb_width = vertical_taskbar_strip(taskbar_info, edge, dpi_scale)
+                calculated_width = math.floor(visible_tb_width) if visible_tb_width > 0 else 0
+                # Height: today's two text rows + padding (side_by_side stacks a band per segment,
+                # split graphs two panels) when that layout fits the bar; else the compact "fits"
+                # ladder the paint path draws - one pure decision from the same width, shared with the
+                # Settings preview (widget_paint.side_bar_height).
+                from netspeedtray.utils.widget_paint import side_bar_height
+                # No thickness known (a fallback taskbar at logon): the #88 floor width below, which
+                # is also the width the paint path will decide from.
+                self._side_fit = self._side_bar_fit(calculated_width if calculated_width > 0 else 50,
+                                                    _identity_reserve)
+                calculated_height = side_bar_height(self._render_config(), self._side_fit, self.metrics.height())
+                # The network block is the whole widget (None = the rect, which is what a fresh start on
+                # a side bar always passed). Never the stale horizontal width from an earlier sizing: it
+                # right-aligned the side bar's readout in a slot from the last TOP/BOTTOM layout.
+                self._network_width = None
 
-                calculated_width = visible_tb_width
-                # Height is calculated to fit exactly two lines of text + small padding
-                # This prevents the widget from stretching the full length of the screen.
-                calculated_height = self.metrics.height() * 2 + (margin * 4)
-                # Separate upload/download graphs stack on a side taskbar: two panels, each as tall as
-                # today's readout. Only network_only - Auto-Cycle shows one direction per phase, and
-                # side_by_side stacks its segments below with the network's two-row band.
-                if self._split_graphs() and self.widget.config.get("widget_display_mode", "network_only") == "network_only":
-                    calculated_height = 2 * calculated_height + constants.renderer.GRAPH_SPLIT_GAP
-
-                # side_by_side has no room for its segments in a row on a widget only as wide as the
-                # taskbar, so the paint path stacks them top-to-bottom (widget_paint._draw_stacked):
-                # reserve every segment's band, with the same padding.
-                config = self.widget.config
-                if config.get("widget_display_mode", "network_only") == "side_by_side":
-                    keys = side_by_side_keys(config.get("widget_display_order", ["network", "cpu", "gpu"]),
-                                             config.get("monitor_cpu_enabled", False),
-                                             config.get("monitor_gpu_enabled", False),
-                                             config.get("stack_hardware_stats", False))
-                    if len(keys) > 1:
-                        ram = config.get("monitor_ram_enabled", False)
-                        vram = config.get("monitor_vram_enabled", False)
-                        calculated_height = (
-                            sum(stacked_segment_height(k, self.metrics.height(), ram, vram) for k in keys)
-                            + constants.layout.WIDGET_SEGMENT_GAP_STACKED_PX * (len(keys) - 1)
-                            + (margin * 4))
-
-            # FIX for #88: Ensure minimum size to prevents widget from disappearing
-            final_width = max(calculated_width, 50) 
+            # FIX for #88: Ensure minimum size to prevents widget from disappearing. Not on a side bar
+            # whose thickness is known: the floor hung a 48 px widget-wide 50 px widget off it.
+            if not is_horizontal and calculated_width > 0:
+                final_width = calculated_width
+            else:
+                final_width = max(calculated_width, 50)
             final_height = max(calculated_height, 20)
 
             self.widget.setFixedSize(math.ceil(final_width), math.ceil(final_height))
@@ -466,6 +456,28 @@ class WidgetLayoutManager:
             self.logger.error(f"Failed to resize widget: {e}", exc_info=True)
             self.widget.setFixedSize(150, 40)
             self.logger.warning("Applied fallback widget size: 150x40px")
+
+    def _render_config(self):
+        """The widget config as the paint path reads it (RenderConfig)."""
+        from netspeedtray.utils.widget_renderer import RenderConfig
+        return RenderConfig.from_dict(self.widget.config)
+
+    def _side_bar_fit(self, width: int, identity_reserve: int):
+        """``widget_paint.side_bar_fit`` for a side-bar widget ``width`` px wide - the same decision
+        render_widget makes from the rect, so the reserved height is the one that gets painted. None
+        (keep today's sizing) if it can't be evaluated."""
+        try:
+            from netspeedtray.utils.widget_paint import side_bar_fit
+            ram = getattr(self.widget, 'ram_total', None)
+            vram = getattr(self.widget, 'vram_total', None)
+            totals = tuple(v if isinstance(v, (int, float)) else None for v in (ram, vram))
+            reserve = identity_reserve if isinstance(identity_reserve, (int, float)) else 0
+            return side_bar_fit(self._render_config(), self.metrics, self.arrow_metrics or self.metrics,
+                                self.widget.i18n, width, identity_reserve=reserve,
+                                mem_totals=totals)
+        except Exception as e:
+            self.logger.warning("Side-taskbar fit check failed (%s); keeping the classic layout.", e)
+            return None
 
     def _split_graphs(self) -> bool:
         """Separate upload/download graphs are on (they need the mini graph itself on) - same rule as

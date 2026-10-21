@@ -76,6 +76,7 @@
     "ORDER_TYPE_GPU": "GPU",
     "ORDER_TYPE_NONE": "Nincs",
     "HARDWARE_GRAPH_NOTE": "A hardvergrafikonok ugyanazt az átlátszatlanságot és időtartományt használják, mint a hálózati grafikon.",
+    "SIDE_TASKBAR_HOVER_NOTE": "Oldalsó tálcán a CPU/GPU/memória akkor jelenik meg, ha az egérmutatót a widget fölé viszi.",
     "GRAPH_CPU_UTIL_AXIS_LABEL": "CPU-kihasználtság (%)",
     "GRAPH_GPU_UTIL_AXIS_LABEL": "GPU-kihasználtság (%)",
     "GRAPH_HW_UTIL_AXIS_LABEL": "Kihasználtság (%)",

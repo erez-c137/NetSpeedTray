@@ -76,6 +76,7 @@
     "ORDER_TYPE_GPU": "GPU",
     "ORDER_TYPE_NONE": "없음",
     "HARDWARE_GRAPH_NOTE": "하드웨어 그래프는 네트워크 그래프와 동일한 불투명도 및 시간 범위를 사용합니다.",
+    "SIDE_TASKBAR_HOVER_NOTE": "측면 작업 표시줄에서는 위젯 위에 마우스를 올리면 CPU/GPU/메모리가 표시됩니다.",
     "GRAPH_CPU_UTIL_AXIS_LABEL": "CPU 사용률 (%)",
     "GRAPH_GPU_UTIL_AXIS_LABEL": "GPU 사용률 (%)",
     "GRAPH_HW_UTIL_AXIS_LABEL": "사용률 (%)",
