@@ -125,12 +125,49 @@ def test_raw_is_long_format_sorted(out):
     paths = SE.export_window(_WS(), datetime(2026, 6, 28, 11), datetime(2026, 6, 28, 12),
                              "Last hour", out, "nst")
     rows = _rows(paths["raw_csv"])
-    assert set(rows[0].keys()) == {"timestamp_unix", "timestamp_iso", "metric", "value"}
+    assert set(rows[0].keys()) == {"timestamp_unix", "timestamp_iso", "metric", "value", "aggregation"}
     ts = [int(r["timestamp_unix"]) for r in rows]
     assert ts == sorted(ts)
     # download raw is in Mbps too (10 MB/s -> 80 Mbps)
     dl = [r for r in rows if r["metric"] == "download"]
     assert float(dl[0]["value"]) == pytest.approx(80.0)
+
+
+def test_raw_file_has_tier_rows_only_no_edge_padding(out):
+    """RC M8: past 6 h the "raw" file held per-bucket PEAKS under a bare "value" header, plus zero rows
+    padded onto both window edges, beside a summary computed from raw samples. Now: the summary's own
+    tier, every row labelled, and nothing outside the stored rows."""
+    start, end = datetime(2026, 6, 27, 12), datetime(2026, 6, 28, 12)   # 24 h
+    seen = {}
+
+    class _Padded(_WS):
+        def get_speed_history(self, s, e, iface, resolution='auto', **_kw):
+            seen["res"] = resolution
+            # what the reader does: real rows + zero pads exactly at the REQUESTED edges
+            real = [(start + timedelta(hours=1), 1e6, 1e7), (start + timedelta(hours=2), 2e6, 2e7)]
+            return [(s, 0.0, 0.0)] + real + [(e, 0.0, 0.0)]
+
+    paths = SE.export_window(_Padded(), start, end, "24 h", out, "nst")
+    dl = [r for r in _rows(paths["raw_csv"]) if r["metric"] == "download"]
+    assert seen["res"] == "raw"                       # the summary for download is raw-tier exact
+    assert [float(r["value"]) for r in dl] == [80.0, 160.0]   # no zero edge rows
+    assert {r["aggregation"] for r in dl} == {"sample"}
+
+
+def test_rollup_window_labels_network_values_as_bucket_peaks(out):
+    start, end = datetime(2026, 6, 21), datetime(2026, 6, 28)   # a week: rollup tier
+
+    class _Week(_WS):
+        def summarize_network(self, direction, s, e, iface, poll):
+            return summarize_rollup([1e6], [5e6], [3600], tier="hour") if direction == "download" \
+                else summarize_raw([])
+
+        def get_speed_history(self, s, e, iface, resolution='auto', **_kw):
+            return [(start + timedelta(hours=5), 1e6, 5e6)]
+
+    paths = SE.export_window(_Week(), start, end, "Week", out, "nst")
+    dl = [r for r in _rows(paths["raw_csv"]) if r["metric"] == "download"]
+    assert dl and {r["aggregation"] for r in dl} == {"hour_max"}
 
 
 def test_export_never_waits_for_the_db_flush(tmp_path):
