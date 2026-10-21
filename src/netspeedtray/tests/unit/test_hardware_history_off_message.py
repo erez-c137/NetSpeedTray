@@ -81,6 +81,24 @@ def test_toggle_layout_gpu_view_with_only_cpu_recorded(renderer):
     assert COLLECTING in _texts(renderer.figure)
 
 
+NO_HISTORY = I18N.STATS_DETAIL_NO_DATA
+
+
+def test_empty_network_range_says_so_instead_of_a_flat_zero_line(renderer):
+    """RC later-list: with nothing stored for the range the reader returns only zero padding, and the
+    Network graph drew a flat 0 line - read as "no traffic" - with no note."""
+    end = datetime.now()
+    start = end - timedelta(hours=24)
+    pad = [(start + timedelta(hours=h), 0.0, 0.0) for h in range(0, 25, 3)]
+    renderer.render(pad, start, end, "TIMELINE_24_HOURS", stat_type="network")
+    assert NO_HISTORY in _texts(renderer.figure)
+    renderer.render([], start, end, "TIMELINE_24_HOURS", stat_type="network")
+    assert NO_HISTORY in _texts(renderer.figure)
+    real = [(start + timedelta(hours=h), 1e5, 2e6) for h in range(0, 25, 3)]
+    renderer.render(real, start, end, "TIMELINE_24_HOURS", stat_type="network")
+    assert NO_HISTORY not in _texts(renderer.figure)   # taken down once data is there
+
+
 @pytest.mark.parametrize("stat", ["hwcombined", "hwseparate"])
 def test_cpu_monitored_but_not_recorded_points_to_the_record_switch(renderer, stat):
     """RC M6: CPU on + Record off (GPU off) said "turn on CPU or GPU monitoring" - but CPU IS on, and

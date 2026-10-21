@@ -616,6 +616,8 @@ class GraphRenderer(QObject):
                     self._format_hardware_axes(stat_type)
             if stat_type in ("cpu", "gpu") and hw_styles is not None:   # the Monitor's toggle layout
                 self._draw_hw_empty_message(self.ax_download, period_key, hw_styles, roles=(stat_type,))
+            elif stat_type == "network":
+                self._draw_net_empty_message(period_key)
             self.canvas.draw_idle()
             return None
 
@@ -626,6 +628,7 @@ class GraphRenderer(QObject):
         elif stat_type == "hwseparate":
             self._render_hwseparate(history_data, start_time, end_time, period_key, hw_styles)
         elif stat_type == "network":
+            self._clear_net_empty_message()
             safe_data = [
                 (ts.timestamp() if isinstance(ts, datetime) else float(ts), float(up), float(dn))
                 for ts, up, dn in history_data
@@ -641,6 +644,10 @@ class GraphRenderer(QObject):
             plotted_ts, plotted_up, plotted_down = self._plot_high_res(plot_datetimes_array, upload_mbps, download_mbps, target_end_time=end_time)
             self._configure_axes(start_time, end_time, period_key, timestamps, plotted_up, plotted_down,
                                  plotted_ts=plotted_ts)
+            if not raw_data[:, 1:].any():
+                # Nothing but the reader's zero padding (an empty database / a range before the first
+                # sample): say so, rather than draw a flat 0 line that reads as "no traffic".
+                self._draw_net_empty_message(period_key)
         elif stat_type in ("cpu", "gpu") and hw_styles is not None:
             # Monitor's "toggle" layout: a single CPU- or GPU-only line that must honor the same
             # display settings as combined/separate (per-role color, Smooth, fixed/auto y-axis). The
@@ -917,6 +924,30 @@ class GraphRenderer(QObject):
             frame.set_edgecolor(self._current_grid_color)
             for text in legend.get_texts():
                 text.set_color(self._current_text_color)
+
+    def _draw_net_empty_message(self, period_key) -> None:
+        """The centered note on a network graph with no stored history for the range. The live
+        Session view is still filling, so it says "Collecting data" there instead."""
+        if period_key == "TIMELINE_SESSION":
+            text = getattr(self.i18n, "COLLECTING_DATA_MESSAGE", "Collecting data…")
+        else:
+            text = getattr(self.i18n, "STATS_DETAIL_NO_DATA", "Not enough history for this period yet.")
+        self._clear_net_empty_message()
+        ax = self.ax_download
+        self._net_empty_artist = ax.text(
+            0.5, 0.5, self._lbl(text), transform=ax.transAxes, ha="center", va="center",
+            multialignment="center", color=self._current_text_color, alpha=0.55, fontsize=10)
+
+    def _clear_net_empty_message(self) -> None:
+        """The network lines are updated in place between renders, so the note must be taken down
+        explicitly once real data arrives."""
+        artist = getattr(self, "_net_empty_artist", None)
+        self._net_empty_artist = None
+        if artist is not None:
+            try:
+                artist.remove()
+            except (ValueError, NotImplementedError, AttributeError):
+                pass   # already gone with a cleared figure / axes
 
     def _draw_hw_empty_message(self, ax, period_key, hw_styles=None, roles=("cpu", "gpu")) -> None:
         """The centered note on an empty hardware graph. A fresh session is still collecting; but a
