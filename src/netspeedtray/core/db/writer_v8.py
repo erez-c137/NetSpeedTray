@@ -898,9 +898,10 @@ class WriterV8:
 
     def run_maintenance(self, now_ts: Optional[float] = None, retention_days: Optional[float] = None,
                         vacuum_pages: Optional[int] = None, mono: Optional[float] = None) -> Dict[str, int]:
-        """The hourly pass - and step 7 also calls it ONCE right after ``migrate_v8.migrate()`` succeeds,
-        before the first flush, so the first v8 polls that land in the folded minute (below the raw
-        watermark, invisible to readers until rolled) are merged within one tick rather than an hour.
+        """The hourly pass. The worker also calls it right after ``migrate_v8.migrate()`` succeeds - before
+        the first flush, so that pass cannot merge the first v8 polls that land in the folded minute
+        (below the raw watermark, invisible to readers until rolled up); one more pass ~70 s after the
+        first flush does (``DatabaseWorker._maybe_post_migration_followup``) instead of the next hourly one.
         ``retention_days``: the hour tiers' retention the worker has already resolved through its
         grace-period logic (``_prune_data_with_grace_period``); None prunes nothing. ``mono``: the
         monotonic clock read with ``now_ts`` (``now_ts`` None reads both clocks itself), for the clock
