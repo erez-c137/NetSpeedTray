@@ -63,7 +63,10 @@ class InputHandler(QObject):
         if (event.globalPosition().toPoint() - self._drag_start_pos).manhattanLength() < QApplication.startDragDistance():
             return
 
-        # Start dragging if we haven't already
+        # Start dragging if we haven't already. A hover card left up would stay at the old spot while
+        # the widget moves away (or under it), so dismiss it - and any pending show - as the drag begins.
+        if not self._is_dragging:
+            self._dismiss_hover_card()
         self._is_dragging = True
         self.widget._dragging = True # Notify widget to stop position checks
         
@@ -76,6 +79,17 @@ class InputHandler(QObject):
         # Apply move
         self.widget.move(final_pos)
         event.accept()
+
+    def _dismiss_hover_card(self) -> None:
+        try:
+            timer = getattr(self.widget, "_hover_card_timer", None)
+            if timer is not None:
+                timer.stop()
+            hide = getattr(self.widget, "_hide_usage_hover_card", None)
+            if callable(hide):
+                hide()
+        except Exception as e:
+            self.logger.debug("hover card dismiss on drag failed: %s", e)
 
     def handle_mouse_release(self, event: QMouseEvent) -> None:
         """Handles drag end and config saving."""
