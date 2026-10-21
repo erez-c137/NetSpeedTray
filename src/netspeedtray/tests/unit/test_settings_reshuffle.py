@@ -27,6 +27,8 @@ from netspeedtray.views.settings.dialog import SettingsDialog
 MANAGED_KEYS = {
     # General
     "language", "update_rate", "start_with_windows", "check_for_updates",
+    # General > Interaction (moved from Advanced > Behavior, 2.2 IA pass change 3)
+    "double_click_action", "middle_click_action", "pause_in_menu", "show_usage_on_hover", "show_hover_tips",
     # Widget (layout + on-taskbar placement/behavior; preferred_monitor moved from General, 2.2 IA pass)
     "preferred_monitor", "free_move", "free_float", "keep_visible_fullscreen",
     "widget_display_mode", "stack_hardware_stats", "widget_display_order",
@@ -58,8 +60,8 @@ MANAGED_KEYS = {
     # Appearance - fixed arrow weight (constant, but must survive the load/get chain)
     "arrow_font_weight",
     # Advanced
-    "keep_data", "record_hardware_history", "reduce_motion", "show_usage_on_hover", "show_hover_tips",
-    "pause_in_menu",
+    "keep_data", "record_hardware_history", "reduce_motion", "keep_windows_on_top",
+    "metrics_endpoint_enabled", "metrics_endpoint_port",
 }
 
 # High-risk keys for the reshuffle: the ones that MOVE pages, the segmented enums (int/string
@@ -92,6 +94,10 @@ ROUNDTRIP = {
     "graph_split_directions": True,
     "graph_fixed_scale": True,
     "throttle_temp_c": 85,
+    # Moved by the 2.2 IA pass change 3 (Advanced > Behavior -> General > Interaction)
+    "pause_in_menu": True,
+    "show_usage_on_hover": False,
+    "show_hover_tips": False,
 }
 
 

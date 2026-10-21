@@ -81,17 +81,8 @@ class AdvancedPage(QWidget):
         layout.addWidget(SettingCard(self.i18n.KEEP_WINDOWS_ON_TOP_LABEL,
                                      control=self.keep_windows_on_top))
 
-        self.show_usage_hover = Win11Toggle(label_text="")
-        self.show_usage_hover.toggled.connect(self.on_change)
-        layout.addWidget(SettingCard(self.i18n.HOVER_USAGE_CARD_LABEL, control=self.show_usage_hover))
-
-        self.show_hover_tips = Win11Toggle(label_text="")
-        self.show_hover_tips.toggled.connect(self.on_change)
-        layout.addWidget(SettingCard(self.i18n.HOVER_TIPS_LABEL, control=self.show_hover_tips))
-
-        self.pause_in_menu = Win11Toggle(label_text="")
-        self.pause_in_menu.toggled.connect(self.on_change)
-        layout.addWidget(SettingCard(self.i18n.PAUSE_IN_MENU_LABEL, control=self.pause_in_menu))
+        # (Hover usage, hover tips and Pause-in-menu moved to General > Interaction, 2.2 IA pass: they
+        # are everyday widget-interaction toggles, so "Reset this page" no longer covers them.)
 
         # --- Integrations (2.2 scope B): the opt-in local metrics endpoint ---
         self._build_integrations(layout)
@@ -235,9 +226,6 @@ class AdvancedPage(QWidget):
                                             or bool(config.get("monitor_gpu_enabled", False)))
         self.reduce_motion.setChecked(bool(config.get("reduce_motion", False)))
         self.keep_windows_on_top.setChecked(bool(config.get("keep_windows_on_top", False)))
-        self.show_usage_hover.setChecked(bool(config.get("show_usage_on_hover", True)))
-        self.show_hover_tips.setChecked(bool(config.get("show_hover_tips", True)))
-        self.pause_in_menu.setChecked(bool(config.get("pause_in_menu", False)))
         m = constants.network.metrics
         try:
             port = int(config.get("metrics_endpoint_port", m.DEFAULT_PORT))
@@ -255,9 +243,6 @@ class AdvancedPage(QWidget):
             "record_hardware_history": self.record_hardware.isChecked(),
             "reduce_motion": self.reduce_motion.isChecked(),
             "keep_windows_on_top": self.keep_windows_on_top.isChecked(),
-            "show_usage_on_hover": self.show_usage_hover.isChecked(),
-            "show_hover_tips": self.show_hover_tips.isChecked(),
-            "pause_in_menu": self.pause_in_menu.isChecked(),
             "metrics_endpoint_enabled": self.metrics_enabled.isChecked(),
             "metrics_endpoint_port": int(self.metrics_port.value()),
         }

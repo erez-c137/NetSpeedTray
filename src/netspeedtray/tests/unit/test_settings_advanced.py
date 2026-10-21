@@ -27,12 +27,11 @@ def test_keep_data_snaps_to_closest_valid_retention(page):
     assert page.get_settings()["keep_data"] == 31
 
 
-def test_advanced_round_trips_hover_and_pause_toggles(page):
-    page.load_settings({"show_usage_on_hover": False, "show_hover_tips": False, "pause_in_menu": True})
+def test_hover_and_pause_toggles_left_the_advanced_page(page):
+    """Moved to General > Interaction (2.2 IA pass, change 3) - see test_settings_ia_moves.py."""
     out = page.get_settings()
-    assert out["show_usage_on_hover"] is False
-    assert out["show_hover_tips"] is False
-    assert out["pause_in_menu"] is True
+    assert not {"show_usage_on_hover", "show_hover_tips", "pause_in_menu"} & set(out)
+    assert not any(hasattr(page, a) for a in ("show_usage_hover", "show_hover_tips", "pause_in_menu"))
 
 
 @pytest.fixture
