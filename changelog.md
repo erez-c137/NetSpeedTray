@@ -75,6 +75,139 @@ ALSO
 
 ---
 
+## [2.2.0-beta.3] - October 21, 2026
+
+*A beta, for testers. It's a manual download from the release page - the in-app updater, WinGet
+and the Store never offer prereleases.*
+
+The taskbar release: NetSpeedTray now follows Windows 11's own taskbar settings - top, left, right
+and Small - instead of only fitting the classic bottom bar.
+
+> **Upgrading:** from beta.1 or beta.2, just install over it - the running app closes itself and
+> comes back. From 2.1.x, everything in the beta.1 notes applies.
+>
+> - **The CPU and GPU labels have a color setting now**, and existing setups are carried over by
+>   what they had: **Monochrome icons become "Match text"** (the same white on a dark taskbar, and now
+>   visible on a light one); **colored icons and text labels move to Brand**, which paints them in
+>   your CPU and GPU maker's color. New installs start on Brand.
+> - **Some Settings moved.** Mini Graph is on the Widget page now, Preferred Monitor is under Widget →
+>   Behavior, and Appearance and Hardware are reordered. Nothing was renamed or reset.
+
+### Added
+
+- **A compact layout for side taskbars.** On Windows 11's native Left or Right taskbar the widget
+  fits the 48 px bar: an arrow and up to three digits per row, one shared unit, the graph behind.
+  Horizontal taskbars look exactly as before. ([#394])
+
+  *Under the hood: one pure `side_bar_fit()` decides the layout for both sizing and painting - if
+  the normal readout fits (wide third-party bars) nothing changes, otherwise it steps down to the
+  compact one. `vertical_taskbar_strip()` caps the width at the bar for layout, position, drag and
+  `dock_signature`; the old 50 px floor now applies to horizontal bars and free-float only, so the
+  widget no longer hangs 2 px past a 48 px bar. Checked pixel-identical on horizontal bars and
+  free-float across 75 configs × top/bottom × 48/32 px.*
+
+- **CPU, GPU and memory move to the hover card when a side taskbar has no room for them.** The card
+  shows them live, about once a second, and opens beside the bar - or below a top bar, above a
+  bottom one. Settings → Widget → Display Mode says so. ([#394])
+- **Brand, Match text or Custom colors for the CPU and GPU labels**, in Settings → Hardware →
+  Indicator Color. Brand uses NVIDIA green, AMD red and Intel blue, with a sibling shade when the CPU
+  and GPU share a maker; Custom gives each a color picker. ([#391])
+
+  *Under the hood: a mixed-vendor GPU setup (a Ryzen iGPU next to an RTX) is treated as unknown and
+  stays neutral, because the GPU % is the busiest adapter, not a particular one. The old three-way
+  `hardware_label_style` is split into shape + `hardware_label_color` on every load; a color already
+  on file wins, so a round trip to beta.2 and back keeps the user's choice. Vendor detection is one
+  cached registry read per process.*
+
+- **A "Graph style" option for the mini graph: Trend (new default) or Detailed.** Trend smooths each
+  line into a calm curve, so a busy minute reads as a shape instead of a row of spikes; Detailed is the
+  graph you know, every sample plotted, one click away on the Widget page under Mini Graph. ([#395])
+  *Under the hood: a centered Gaussian moving average over ~6% of the visible window; the newest
+  samples use a fixed 11-sample window with a slope-damped fit, so the "now" end catches up within
+  ~10 s at any timespan with no overshoot. The line is always kept inside the graph, and the auto-fit
+  reads the newest samples as a mean so a lone spike doesn't rescale the whole graph. Applies to the
+  hardware mini graphs too, and is far cheaper per repaint than Detailed (cached until a new sample).*
+
+### Changed
+
+- **Settings are organized by what you're looking for.** Units and decimals sit near the top of
+  Appearance, Mini Graph moved to the Widget page, and Preferred Monitor sits right above "Float on a
+  display without a taskbar", the one setting it affects. Same controls, same saved settings.
+  ([#393])
+- **The Monitor's Overview tab and Statistics sheet read history in the background.** They open at
+  once with "Reading history…" and fill in a moment later, instead of freezing the window - up to
+  1.3 s per refresh on a large history file. ([#387], [#388])
+
+### Fixed
+
+- **Moving or resizing the taskbar no longer leaves the widget the wrong size.** Top + Small left a
+  48 px widget in a 32 px bar, and moving the bar to the right left a horizontal strip lying across
+  the desktop. The widget now re-sizes within a few seconds, without a restart. ([#322], thanks
+  [@un99known99]; [#390])
+
+  *Under the hood: `taskbar_changed` only ever re-positioned. A `dock_signature()` - edge, strip
+  thickness, DPI, small mode, read from the work-area inset and never the sliding auto-hide rect -
+  now triggers `resize_widget_for_font()` only when it changes, so a plain move never resizes. A
+  start against a fallback taskbar (logon before Explorer is ready) re-sizes once the real one
+  appears.*
+
+- **The widget fits Windows 11's 32 px Small taskbar** with the default font, flush in the bar,
+  top or bottom. Larger fonts or languages that can't fit keep the old two-row size. ([#390])
+
+  *Under the hood: the old two-row floor (`metrics.height() * 2 + 2` = 34 px at Segoe UI 9) counted
+  the empty space above the capitals. The fit is now decided by painting the strings the readout
+  actually draws - the active locale's units, the arrows, the CPU/GPU icon - at every standard
+  scale from 100% to 250%, with 1 px of top clearance. Default 48 px bars are pixel-identical.*
+
+- **Monochrome CPU/GPU labels are visible on a light taskbar.** They were hard-coded white; "Match
+  text" follows the widget's text color instead. ([#391])
+- **The Widgets-button overlap hint no longer warns by mistake on a side taskbar.** ([#394])
+- **The Statistics sheet stays on screen** instead of growing past the bottom edge once its figures
+  load, and closed sheets are freed instead of piling up behind the Monitor. ([#387])
+- **Visiting the Settings page with the monitor picker no longer re-applies every setting live** -
+  the picker was connected twice. ([#393])
+
+### Localization
+
+- Hungarian reviewed by a native speaker, including the new label-color strings. ([#386], [#392],
+  thanks [@cscsanaki])
+- Dutch beta.2 strings reviewed by a native speaker. ([#383], thanks [@boonstraworks])
+- 10 new strings are AI-drafted in every language and listed for review in [#364].
+
+### Developer notes
+
+- The support bundle now includes the taskbar geometry - edge, rects, insets, DPI and dock strip,
+  rects only, no names. ([#390])
+- [DATABASE.md](DATABASE.md)'s "busiest hour" recipe ranks hours by data moved and reads every tier
+  in its own watermark range; it used to read `net_hour` only and missed the last week. ([#384])
+- Regression pins for two 2.1.5 fixes: the CPU-temperature source order ([#216]) and the Monitor
+  graph hover, end to end through `render()`. ([#385])
+- A history test built its two fixtures from two clock readings and failed when they straddled a
+  minute. ([#389])
+- 3,140 tests.
+
+[#216]: https://github.com/erez-c137/NetSpeedTray/issues/216
+[#322]: https://github.com/erez-c137/NetSpeedTray/issues/322
+[#364]: https://github.com/erez-c137/NetSpeedTray/issues/364
+[#383]: https://github.com/erez-c137/NetSpeedTray/pull/383
+[#384]: https://github.com/erez-c137/NetSpeedTray/pull/384
+[#385]: https://github.com/erez-c137/NetSpeedTray/pull/385
+[#386]: https://github.com/erez-c137/NetSpeedTray/pull/386
+[#387]: https://github.com/erez-c137/NetSpeedTray/pull/387
+[#388]: https://github.com/erez-c137/NetSpeedTray/pull/388
+[#389]: https://github.com/erez-c137/NetSpeedTray/pull/389
+[#390]: https://github.com/erez-c137/NetSpeedTray/pull/390
+[#391]: https://github.com/erez-c137/NetSpeedTray/pull/391
+[#392]: https://github.com/erez-c137/NetSpeedTray/pull/392
+[#393]: https://github.com/erez-c137/NetSpeedTray/pull/393
+[#395]: https://github.com/erez-c137/NetSpeedTray/pull/395
+[#394]: https://github.com/erez-c137/NetSpeedTray/pull/394
+[@un99known99]: https://github.com/un99known99
+[@cscsanaki]: https://github.com/cscsanaki
+[@boonstraworks]: https://github.com/boonstraworks
+
+---
+
 ## [2.2.0-beta.2] - October 20, 2026
 
 *A beta, for testers. It's a manual download from the release page - the in-app updater, WinGet
