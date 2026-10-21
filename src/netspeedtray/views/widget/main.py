@@ -1234,8 +1234,10 @@ class NetworkSpeedWidget(QWidget):
             period_start = self._usage_billing_period_start(month_start)
             if period_start is not None:
                 month_start = period_start
-            vt = self.widget_state.get_history_volume_for_period(midnight, now_dt)
-            vm = self.widget_state.get_history_volume_for_period(month_start, now_dt)
+            # Only the adapters the cap's odometer meters: summing every adapter counts a VPN / WSL /
+            # Hyper-V adapter's traffic twice and could read up to 2x the cap row beneath it.
+            vt = self.widget_state.get_metered_volume_for_period(midnight, now_dt)
+            vm = self.widget_state.get_metered_volume_for_period(month_start, now_dt)
             today, month = (vt.up_bytes, vt.down_bytes), (vm.up_bytes, vm.down_bytes)
             # D5: part of the month was estimated from speeds recorded before 2.2 -> label it.
             reconstructed = bool(vt.reconstructed or vm.reconstructed)

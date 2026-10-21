@@ -35,7 +35,7 @@ from netspeedtray import constants
 from netspeedtray.constants import network, timeouts
 from netspeedtray.core import usage_snapshot
 from netspeedtray.core.db.history_reader import (
-    HistoryNotReadyError, HistoryReader, V7HistoryReader, V8HistoryReader, VolumeResult,
+    HistoryNotReadyError, HistoryReader, MeteredScope, V7HistoryReader, V8HistoryReader, VolumeResult,
 )
 from netspeedtray.core.db.sqlite_uri import sqlite_ro_uri
 from netspeedtray.core.db.writer_v8 import NetSample
@@ -894,6 +894,29 @@ class WidgetState(QObject):
         return self.history_reader.volume(start_time, end_time or datetime.now(), interface_name,
                                           poll_interval)
 
+    @staticmethod
+    def metered_scope(config: Dict[str, Any]) -> Optional[MeteredScope]:
+        """The adapters the data-usage odometer meters, as a history filter (see ``MeteredScope``):
+        ``selected`` -> exactly the selected adapters; ``all_virtual`` -> every adapter; ``auto`` /
+        ``all_physical`` (and anything unknown) -> the physical adapters. Auto meters ONE routing
+        adapter that history cannot replay poll by poll; it is a physical one, so summing the physical
+        adapters matches it without counting a VPN / WSL / Hyper-V adapter's bytes a second time."""
+        mode = config.get("interface_mode", "auto")
+        if mode == "selected":
+            return MeteredScope(names=tuple(config.get("selected_interfaces", []) or ()))
+        if mode in ("all_virtual", "virtual"):
+            return None
+        return MeteredScope(physical_only=True)
+
+    def get_metered_volume_for_period(self, start_time: Optional[datetime],
+                                      end_time: Optional[datetime]) -> VolumeResult:
+        """Recorded volume over [start, end] for the adapters the odometer meters - what every "usage"
+        figure shown next to the data cap must count, so it agrees with the cap row (F5)."""
+        if not hasattr(self, 'db_worker') or not self.db_worker:
+            return VolumeResult(0.0, 0.0, 0.0, 0.0, False)
+        poll_interval = resolve_poll_interval_seconds(self.config.get("update_rate", 1.0))
+        return self.history_reader.metered_volume(start_time, end_time or datetime.now(),
+                                                  WidgetState.metered_scope(self.config), poll_interval)
 
     def get_in_memory_speed_history(self) -> List[SpeedDataSnapshot]:
         """

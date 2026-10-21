@@ -101,6 +101,18 @@ class Coverage:
     sessions: Tuple[Tuple[int, int], ...]
 
 
+@dataclass(frozen=True)
+class MeteredScope:
+    """Which adapters a usage figure covers - the odometer's selection, as history can express it.
+
+    ``names``: exactly these adapters (``selected`` mode). Otherwise ``physical_only``: adapters the
+    classifier marked physical (``interfaces.is_physical``) - auto mode meters the routing adapter,
+    which is a physical one in history's terms, and ``all_physical`` sums them; when no adapter is
+    marked physical at all (a VM guest NIC) every adapter counts, as the odometer's fallback does."""
+    names: Optional[Tuple[str, ...]] = None
+    physical_only: bool = True
+
+
 class HistoryReader(ABC):
     """Every read the app makes against the history database."""
 
@@ -145,6 +157,14 @@ class HistoryReader(ABC):
                interface_name: Optional[str], poll_interval: float) -> VolumeResult:
         """``total_bandwidth`` with its provenance: how much is exact, and whether any of it was
         reconstructed from rates (D5 labelling)."""
+
+    def metered_volume(self, start_time: Optional[datetime], end_time: datetime,
+                       scope: Optional["MeteredScope"], poll_interval: float) -> VolumeResult:
+        """``volume`` over only the adapters the data-usage odometer meters (``scope``; None = every
+        adapter). The usage rows next to the cap ("Today", "This Period") must count what the cap
+        counts: summing every adapter double-counts a VPN / WSL / Hyper-V adapter whose bytes also
+        ride the real NIC. A backend without adapter metadata (v7) answers for every adapter."""
+        return self.volume(start_time, end_time, None, poll_interval)
 
     @abstractmethod
     def coverage(self, start_time: datetime, end_time: datetime) -> Optional[Coverage]:
@@ -1121,9 +1141,13 @@ class V8HistoryReader(_ReaderBase):
                interface_name: Optional[str], poll_interval: float) -> VolumeResult:
         """``poll_interval`` is accepted for the interface and ignored: every v8 raw row carries the
         interval it was measured over (``dt_ms``), so the live poll rate has no say over stored bytes."""
+        iface_sql, iface_p = self._iface_filter(interface_name)
+        return self._volume(start_time, end_time, iface_sql, iface_p)
+
+    def _volume(self, start_time: Optional[datetime], end_time: datetime,
+                iface_sql: str, iface_p: tuple) -> VolumeResult:
         st = int(start_time.timestamp()) if start_time else 0
         et = int(end_time.timestamp())
-        iface_sql, iface_p = self._iface_filter(interface_name)
         bounds = self._tier_bounds(self._NET, "n")
 
         def run(cur):
@@ -1150,6 +1174,21 @@ class V8HistoryReader(_ReaderBase):
             return VolumeResult(tot[0], tot[1], exact[0], exact[1], recon > 0)
 
         return self._snapshot_call(run, lambda: VolumeResult(0.0, 0.0, 0.0, 0.0, False))
+
+    def metered_volume(self, start_time: Optional[datetime], end_time: datetime,
+                       scope: Optional[MeteredScope], poll_interval: float) -> VolumeResult:
+        if scope is None:
+            return self.volume(start_time, end_time, None, poll_interval)
+        if scope.names is not None:
+            names = tuple(str(n) for n in scope.names)
+            if not names:
+                return VolumeResult(0.0, 0.0, 0.0, 0.0, False)   # selected mode with nothing selected
+            marks = ", ".join("?" * len(names))
+            return self._volume(start_time, end_time, f" AND {self._IFACE_NAME} IN ({marks})", names)
+        return self._volume(
+            start_time, end_time,
+            f" AND (COALESCE(i.is_physical, 1) = 1 OR NOT EXISTS "
+            f"(SELECT 1 FROM {S8.INTERFACES} WHERE is_physical = 1))", ())
 
     def total_bandwidth(self, start_time: Optional[datetime], end_time: datetime,
                         interface_name: Optional[str], poll_interval: float) -> Tuple[float, float]:

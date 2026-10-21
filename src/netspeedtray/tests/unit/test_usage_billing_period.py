@@ -26,7 +26,7 @@ class _WS:
     def get_usage_period_key(self):
         return self.period_key
 
-    def get_history_volume_for_period(self, start, end):
+    def get_metered_volume_for_period(self, start, end):
         self.starts.append(start)
         return SimpleNamespace(up_bytes=1.0, down_bytes=2.0, reconstructed=False)
 
