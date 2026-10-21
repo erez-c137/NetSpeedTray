@@ -203,6 +203,16 @@ def test_cancel_after_reset_all_restores_the_user_config(qtbot):
         assert main.config[k] == user[k], k
 
 
+# --- S6: Reset this page re-greys Record hardware history from the live toggles --------------------
+
+def test_reset_advanced_page_uses_the_live_hardware_toggles(qtbot):
+    dlg, _ = _make(qtbot, dict(DEFAULTS, monitor_cpu_enabled=False, monitor_gpu_enabled=False))
+    dlg.hardware_page.monitor_cpu.setChecked(True)   # turned on in this session
+    assert dlg.advanced_page._record_card.isEnabled()
+    dlg.advanced_page.reset_page_btn.click()
+    assert dlg.advanced_page._record_card.isEnabled()
+
+
 # --- S8: a half-typed hex never reaches the widget or the saved file ---------------------------------
 
 def test_half_typed_hex_keeps_the_last_valid_colour(qtbot):

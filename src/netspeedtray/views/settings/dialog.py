@@ -298,17 +298,10 @@ class SettingsDialog(QDialog):
                 delete_history_callback=self._delete_all_history,
             )
             # The Record-hardware-history card greys out live as CPU/GPU monitoring is switched.
-            # The battery hover toggle counts too: with the PR's defaults (CPU/GPU monitoring off)
-            # it is the thing that governs battery recording, and a user who switched it off
-            # could not switch it back on (#323 review).
-            def _sync_record_card(_on: bool = False) -> None:
-                self.advanced_page.set_hardware_monitoring_active(
-                    self.hardware_page.monitor_cpu.isChecked()
-                    or self.hardware_page.monitor_gpu.isChecked()
-                    or self.general_page.power_display.isChecked())
-            self.hardware_page.monitor_cpu.toggled.connect(_sync_record_card)
-            self.hardware_page.monitor_gpu.toggled.connect(_sync_record_card)
-            self.general_page.power_display.toggled.connect(_sync_record_card)
+            # The battery hover toggle counts too (#323) - see _sync_record_card.
+            self.hardware_page.monitor_cpu.toggled.connect(self._sync_record_card)
+            self.hardware_page.monitor_gpu.toggled.connect(self._sync_record_card)
+            self.general_page.power_display.toggled.connect(self._sync_record_card)
             # Safety net for Delete all history: if the worker never answers, give the button back.
             self._delete_timeout = QTimer(self)
             self._delete_timeout.setSingleShot(True)
@@ -394,6 +387,16 @@ class SettingsDialog(QDialog):
                 self.i18n.ERROR_UI_SETUP_FAILED.format(error=str(e))
             )
             QTimer.singleShot(0, self.reject)
+
+    def _sync_record_card(self, _on: bool = False) -> None:
+        """Grey "Record hardware history" by the LIVE Hardware-page toggles - never by a config
+        snapshot, which is stale once the user flips CPU/GPU in this session (S6). The battery hover
+        toggle counts too: with CPU/GPU monitoring off it governs battery recording, and a user who
+        switched the record card off could not switch it back on (#323 review)."""
+        self.advanced_page.set_hardware_monitoring_active(
+            self.hardware_page.monitor_cpu.isChecked()
+            or self.hardware_page.monitor_gpu.isChecked()
+            or self.general_page.power_display.isChecked())
 
     @staticmethod
     def _wrap_in_scroll(page: QWidget) -> QScrollArea:
@@ -758,6 +761,7 @@ class SettingsDialog(QDialog):
             if k in defaults:
                 cfg[k] = defaults[k]
         self.advanced_page.load_settings(cfg)
+        self._sync_record_card()   # load_settings greyed it from the stale snapshot (S6)
         self._schedule_settings_update()
 
     def _reset_all_to_defaults(self) -> None:
