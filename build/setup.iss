@@ -4,7 +4,9 @@
 #define MyAppPublisher "Erez C137"
 #define MyAppURL "https://github.com/erez-c137/NetSpeedTray"
 #define MyAppExeName "NetSpeedTray.exe"
-#define MyAppMutex "Global\NetSpeedTray_SingleInstanceMutex"
+; constants.app.MUTEX_NAME (per session since 2.2.0) and LEGACY_MUTEX_NAME (every earlier build).
+#define MyAppMutex "Local\NetSpeedTray_SingleInstanceMutex"
+#define MyLegacyAppMutex "Global\NetSpeedTray_SingleInstanceMutex"
 #define MyAppId "{{D3A32B89-C533-4F2C-9F87-23B2395B5B89}}"
 ; Graceful-shutdown channel - a wire protocol with the running app. Must match
 ; constants.app.SHUTDOWN_MESSAGE_NAME / SHUTDOWN_WINDOW_PROP (a unit test pins both).
@@ -80,8 +82,9 @@ UninstallDisplayName={#MyAppName}
 RestartIfNeededByRun=no
 CloseApplications=force
 CloseApplicationsFilter=*.exe,*.dll
-; Must match constants.app.MUTEX_NAME so Inno reliably detects the running app on (auto-)upgrade.
-AppMutex={#MyAppMutex}
+; Must match constants.app.MUTEX_NAME / LEGACY_MUTEX_NAME so Inno reliably detects the running app on
+; (auto-)upgrade. Both: a pre-2.2 instance only holds the Global\ one.
+AppMutex={#MyAppMutex},{#MyLegacyAppMutex}
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -217,20 +220,37 @@ begin
     Result := 'False';
 end;
 
-function IsAppRunning(): Boolean;
+function MutexExists(Name: string): Boolean;
 var
   MutexHandle: THandle;
 begin
-  MutexHandle := OpenMutex($00100000, False, '{#MyAppMutex}');
-  if MutexHandle <> 0 then
-  begin
+  MutexHandle := OpenMutex($00100000, False, Name);
+  Result := MutexHandle <> 0;
+  if Result then
     CloseHandle(MutexHandle);
-    Result := True;
-  end
-  else
-  begin
-    Result := False;
+end;
+
+// Any NetSpeedTray.exe in ANY session. Since 2.2.0 the app's mutex is per session (Local\), so the
+// mutexes alone only show this session's instance (and pre-2.2 ones, via Global\) - but another
+// signed-in user's instance holds the same files open. Setup is elevated, so WMI sees every process.
+function AnyAppProcess(): Boolean;
+var
+  Locator, Service, Procs: Variant;
+begin
+  Result := False;
+  try
+    Locator := CreateOleObject('WbemScripting.SWbemLocator');
+    Service := Locator.ConnectServer('.', 'root\CIMV2');
+    Procs := Service.ExecQuery('SELECT ProcessId FROM Win32_Process WHERE Name = ''{#MyAppExeName}''');
+    Result := Procs.Count > 0;
+  except
+    Log('Process check failed: ' + GetExceptionMessage);
   end;
+end;
+
+function IsAppRunning(): Boolean;
+begin
+  Result := MutexExists('{#MyAppMutex}') or MutexExists('{#MyLegacyAppMutex}') or AnyAppProcess();
 end;
 
 // Windows marked by the running app as its shutdown target, filled by CollectShutdownTarget.

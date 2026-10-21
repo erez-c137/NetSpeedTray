@@ -9,7 +9,13 @@ class AppConstants:
     """Defines application metadata and the single-instance mutex name."""
     APP_NAME: Final[str] = "NetSpeedTray"
     VERSION: Final[str] = netspeedtray.__version__
-    MUTEX_NAME: Final[str] = "Global\\NetSpeedTray_SingleInstanceMutex"
+    # One instance per Windows SESSION (2.2.0): Local\, not Global\ - the Global\ name let the first
+    # user's instance (or a SYSTEM one in session 0) silently block every other user's. setup.iss
+    # (MyAppMutex / MyLegacyAppMutex) checks both names; keep them in sync.
+    MUTEX_NAME: Final[str] = "Local\\NetSpeedTray_SingleInstanceMutex"
+    # The name every build before 2.2.0 used. Still claimed when free and checked when held, so an
+    # old copy and a new one can never both run in one session during the transition (monitor.py).
+    LEGACY_MUTEX_NAME: Final[str] = "Global\\NetSpeedTray_SingleInstanceMutex"
     ICON_FILENAME: Final[str] = "NetSpeedTray.ico"
     GITHUB_OWNER: Final[str] = "erez-c137"
     GITHUB_REPO: Final[str] = "NetSpeedTray"

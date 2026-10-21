@@ -77,20 +77,102 @@ class AlreadyRunningError(RuntimeError):
     mutex failure so the caller can exit silently (no dialog) - a duplicate launch is a no-op."""
 
 
+_HEADLESS_FLAGS = ("--apply-update", "--shutdown", "--export-csv")
+
+
+def _legacy_instance_in_this_session() -> bool:
+    """Is a NetSpeedTray app (not a headless --apply-update/--shutdown/--export-csv run) other than
+    this process running in OUR Windows session? Asked only when the legacy Global\\ mutex is held
+    by someone: a pre-2.2 instance there is the same user's, on the same config and database, while
+    one in another session is another user's and must not stop us (the bug the Local\\ name fixes).
+
+    WTSEnumerateProcesses gives every process's session without opening it, so an ELEVATED old
+    instance (2.1.6/2.1.7 in-app updates relaunched elevated) is seen too. If the question cannot
+    be answered, the answer is yes: two instances on one database is the worse failure."""
+    try:
+        import psutil
+        import win32ts
+        me = os.getpid()
+        session = win32ts.ProcessIdToSessionId(me)
+        for sid, pid, name, _sid in win32ts.WTSEnumerateProcesses(
+                win32ts.WTS_CURRENT_SERVER_HANDLE, 1, 0):
+            if pid == me or sid != session or str(name).lower() != "netspeedtray.exe":
+                continue
+            try:
+                cmdline = psutil.Process(pid).cmdline()
+            except Exception:
+                cmdline = []                      # unreadable (elevated): count it
+            if any(flag in cmdline for flag in _HEADLESS_FLAGS):
+                continue                          # e.g. the portable applier showing its notice
+            return True
+        return False
+    except Exception:
+        logging.getLogger("NetSpeedTray.SingleInstanceChecker").warning(
+            "Could not check this session for an older NetSpeedTray; assuming one is running.",
+            exc_info=True)
+        return True
+
+
 class SingleInstanceChecker:
     """
-    Ensures that only one instance of the application can run at a time using a system-wide mutex.
+    Ensures that only one instance of the application runs per Windows session.
+
+    The mutex is ``Local\\`` (per session) since 2.2.0. It was ``Global\\``, so the first user's
+    instance - or a SYSTEM instance an old installer started in session 0 - silently stopped every
+    other signed-in user's from starting until it exited. Each user has their own config and
+    history, so one instance per session is the real invariant.
+
+    Transition: 2.1.x and the 2.2 betas only know the ``Global\\`` name. So the ``Global\\`` mutex is
+    also claimed when free (an old copy started later in ANY session then exits, as it always
+    would), and when it is already held, this launch exits only if a NetSpeedTray process is
+    running in this same session (``_legacy_instance_in_this_session``).
 
     This class is designed to be used as a context manager.
 
     Raises:
         AlreadyRunningError: If another instance is already running (caller exits silently) - including
-            one we may not open (an elevated or other-user instance: ERROR_ACCESS_DENIED).
+            one we may not open (an elevated instance: ERROR_ACCESS_DENIED).
         RuntimeError: If the mutex itself cannot be created.
     """
     def __init__(self):
         self.mutex = None
+        self.legacy_mutex = None
         self.logger = logging.getLogger("NetSpeedTray.SingleInstanceChecker")
+        self._acquire_session_mutex()
+        try:
+            self._claim_legacy_mutex()
+        except AlreadyRunningError:
+            self._close(self.mutex)
+            self.mutex = None
+            raise
+
+    def _claim_legacy_mutex(self) -> None:
+        held_elsewhere = False
+        try:
+            handle = win32event.CreateMutex(None, False, constants.app.LEGACY_MUTEX_NAME)
+            if win32api.GetLastError() == winerror.ERROR_ALREADY_EXISTS:
+                self._close(handle)
+                held_elsewhere = True
+            else:
+                self.legacy_mutex = handle
+        except win32api.error as e:
+            if e.winerror == winerror.ERROR_ACCESS_DENIED:
+                held_elsewhere = True               # another user's, or an elevated instance's
+            else:
+                self.logger.warning("Could not check the legacy mutex: %s", e)
+        if held_elsewhere and _legacy_instance_in_this_session():
+            self.logger.info("An older NetSpeedTray is already running in this session; this launch "
+                             "will exit quietly.")
+            raise AlreadyRunningError("An older instance is already running in this session.")
+
+    def _close(self, handle) -> None:
+        if handle:
+            try:
+                win32api.CloseHandle(handle)
+            except win32api.error as e:
+                self.logger.error("Failed to release mutex: %s", e)
+
+    def _acquire_session_mutex(self) -> None:
         try:
             self.mutex = win32event.CreateMutex(None, False, constants.app.MUTEX_NAME)
             if win32api.GetLastError() == winerror.ERROR_ALREADY_EXISTS:
@@ -102,10 +184,10 @@ class SingleInstanceChecker:
             if e.winerror == winerror.ERROR_ACCESS_DENIED:
                 # The mutex exists but we may not open it: it was created by an ELEVATED instance (its
                 # default DACL admits only Administrators/SYSTEM and its High integrity label blocks a
-                # Medium-IL caller), or by another user's session (the name is Global\). CreateMutexW
+                # Medium-IL caller) in this same session. CreateMutexW
                 # can only be denied on an object that already exists, so this is the same fact as
                 # ERROR_ALREADY_EXISTS - another instance is running - and gets the same quiet exit.
-                self.logger.info("NetSpeedTray is already running (mutex held by an elevated or other-user "
+                self.logger.info("NetSpeedTray is already running (mutex held by an elevated "
                                  "instance); this duplicate launch will exit quietly.")
                 raise AlreadyRunningError("Application is already running.") from e
             self.logger.error("Failed to create mutex: %s", e)
@@ -116,12 +198,9 @@ class SingleInstanceChecker:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        """Exit the context manager, releasing the mutex handle."""
-        if self.mutex:
-            try:
-                win32api.CloseHandle(self.mutex)
-            except win32api.error as e:
-                self.logger.error("Failed to release mutex: %s", e)
+        """Exit the context manager, releasing the mutex handles."""
+        self._close(self.mutex)
+        self._close(self.legacy_mutex)
 
 def set_app_working_directory():
     """
