@@ -23,7 +23,7 @@ from netspeedtray.views.settings.pages._fluent import section_header, page_layou
 
 
 class MiniGraphSection(QWidget):
-    """Show Mini Graph, timespan, opacity, split upload/download, fixed scale (+ headroom, plan line)."""
+    """Show Mini Graph, style, timespan, opacity, split upload/download, fixed scale (+ headroom, plan line)."""
 
     layout_changed = pyqtSignal()
 
@@ -42,6 +42,17 @@ class MiniGraphSection(QWidget):
         layout.addWidget(SettingCard(self.i18n.ENABLE_GRAPH_LABEL, control=self.enable_graph))
 
         layout.addWidget(self._note(self.i18n.GRAPH_NOTE_TEXT))
+
+        # Detailed (every sample) or Trend (a smoothed line) - the look of every mini graph, network and
+        # hardware alike. Grays out with the graph off, like the split toggle.
+        self.graph_style = Win11ComboBox()
+        style_names = {"detailed": self.i18n.GRAPH_STYLE_DETAILED, "trend": self.i18n.GRAPH_STYLE_TREND}
+        for style in constants.config.defaults.GRAPH_STYLE_CHOICES:
+            self.graph_style.addItem(style_names[style], style)
+        self.graph_style.currentIndexChanged.connect(lambda _i: self.on_change())
+        self._style_card = SettingCard(self.i18n.GRAPH_STYLE_LABEL, self.i18n.GRAPH_STYLE_DESC,
+                                       control=self.graph_style)
+        layout.addWidget(self._style_card)
 
         self.history_duration = Win11Slider(editable=False)
         hist_min, hist_max = constants.ui.history.HISTORY_MINUTES_RANGE
@@ -68,6 +79,7 @@ class MiniGraphSection(QWidget):
                                        control=self.graph_split)
         layout.addWidget(self._split_card)
         self.enable_graph.toggled.connect(lambda _on: self._sync_split_card())
+        self.enable_graph.toggled.connect(lambda _on: self._sync_style_card())
 
         # Fixed scale (DU Meter-style): the axis tops out at the advertised plan speed instead of re-fitting
         # to the busiest recent sample. The plan speed is the one already set on the Network page, so there
@@ -120,6 +132,11 @@ class MiniGraphSection(QWidget):
         self._sync_ceiling_card()
         self.graph_split.setChecked(bool(config.get("graph_split_directions", d.DEFAULT_GRAPH_SPLIT_DIRECTIONS)))
         self._sync_split_card()
+        style_idx = self.graph_style.findData(config.get("graph_style", d.DEFAULT_GRAPH_STYLE))
+        if style_idx < 0:   # a hand-edited value the combo doesn't offer
+            style_idx = self.graph_style.findData(d.DEFAULT_GRAPH_STYLE)
+        self.graph_style.setCurrentIndex(style_idx)
+        self._sync_style_card()
 
     def get_settings(self) -> Dict[str, Any]:
         return {
@@ -130,6 +147,7 @@ class MiniGraphSection(QWidget):
             "graph_scale_headroom": int(self.graph_scale_headroom.currentData()),
             "graph_show_ceiling": self.graph_show_ceiling.isChecked(),
             "graph_split_directions": self.graph_split.isChecked(),
+            "graph_style": str(self.graph_style.currentData()),
         }
 
     # --- behavior ----------------------------------------------------------------
@@ -150,6 +168,10 @@ class MiniGraphSection(QWidget):
     def _sync_split_card(self) -> None:
         """Separate upload/download graphs split the mini graph, so gray the toggle out while it's off."""
         self._set_card_enabled(self._split_card, self.enable_graph.isChecked())
+
+    def _sync_style_card(self) -> None:
+        """The style is the mini graph's look, so it grays out while the graph is off."""
+        self._set_card_enabled(self._style_card, self.enable_graph.isChecked())
 
     @staticmethod
     def _set_card_enabled(card: SettingCard, enabled: bool) -> None:
