@@ -96,6 +96,37 @@ def has_dedicated_vram(used: Optional[float]) -> bool:
         return False
 
 
+def hardware_in_hover_card_active(config) -> bool:
+    """The "Show hardware in the hover card" switch is on AND there is hardware to move there.
+
+    RAM rides on the CPU line and VRAM on the GPU line (they are only collected and shown with
+    their host monitor), so "some hardware is enabled" means CPU or GPU monitoring is on. With
+    nothing enabled the switch is inert: the widget keeps its Display Mode and the card gets no
+    hardware section."""
+    try:
+        return bool(config.get("hardware_in_hover_card", False)) and bool(
+            config.get("monitor_cpu_enabled", False) or config.get("monitor_gpu_enabled", False))
+    except AttributeError:
+        return False
+
+
+def effective_display_mode(config) -> str:
+    """The display mode the taskbar widget actually SIZES and PAINTS with.
+
+    The one place the hover-card switch touches the widget: while it is active
+    (``hardware_in_hover_card_active``) every Display Mode collapses to ``network_only`` - the
+    clean network readout + mini graph (split graphs included) - and the hardware moves to the
+    hover card. The user's ``widget_display_mode`` is left alone on disk, so turning the switch
+    off brings their layout back unchanged. RenderConfig (paint, Settings preview), the layout
+    manager (sizing) and the Auto-Cycle timer all read the mode through here, so they can't
+    disagree."""
+    try:
+        mode = str(config.get("widget_display_mode", "network_only") or "network_only")
+    except AttributeError:
+        return "network_only"
+    return "network_only" if hardware_in_hover_card_active(config) else mode
+
+
 def is_portable_install() -> bool:
     """
     True when the app is running as the portable ZIP build.

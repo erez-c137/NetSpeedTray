@@ -102,6 +102,17 @@ class HardwarePage(QWidget):
         # the sidebar's "Appearance" string as the section caption, so it needs no new translation.
         layout.addWidget(section_header(self.i18n.APPEARANCE_SETTINGS_GROUP))
 
+        # Where the readouts show (side-taskbar design phase C): first under Appearance, because it is
+        # the biggest "how hardware looks" choice - on the taskbar, or only in the hover card, leaving
+        # a clean speed-only widget. Keeps the Widget page's Display Mode for when it is turned off.
+        # Greyed with CPU and GPU both off (nothing to move; RAM/VRAM ride on those lines).
+        self.hardware_in_hover_card = Win11Toggle(label_text="")
+        self.hardware_in_hover_card.toggled.connect(self.on_change)
+        self._hover_card_card = SettingCard(self.i18n.HARDWARE_IN_HOVER_CARD_LABEL,
+                                            description=self.i18n.HARDWARE_IN_HOVER_CARD_DESCRIPTION,
+                                            control=self.hardware_in_hover_card)
+        layout.addWidget(self._hover_card_card)
+
         # Indicator SHAPE (icons / text) and COLOUR (brand / match text / custom) are separate choices;
         # pre-2.2 configs carried both in one three-way style and are split by the config migration.
         self.label_style = Win11ComboBox()
@@ -187,7 +198,10 @@ class HardwarePage(QWidget):
         self.show_temps.blockSignals(True)
         self.show_power.blockSignals(True)
         self.show_memory_labels.blockSignals(True)
+        self.hardware_in_hover_card.blockSignals(True)
 
+        self.hardware_in_hover_card.setChecked(bool(config.get(
+            "hardware_in_hover_card", constants.config.defaults.DEFAULT_HARDWARE_IN_HOVER_CARD)))
         self.monitor_cpu.setChecked(config.get("monitor_cpu_enabled", False))
         self.monitor_gpu.setChecked(config.get("monitor_gpu_enabled", False))
         self.monitor_ram.setChecked(config.get("monitor_ram_enabled", False))
@@ -218,6 +232,7 @@ class HardwarePage(QWidget):
         self.show_temps.blockSignals(False)
         self.show_power.blockSignals(False)
         self.show_memory_labels.blockSignals(False)
+        self.hardware_in_hover_card.blockSignals(False)
         # Signals were blocked above, so _on_monitor_toggled never fired - sync the dependent
         # (temp/power) cards' enabled state to the just-loaded CPU/GPU monitor values directly.
         self._sync_dependent_cards()
@@ -305,6 +320,7 @@ class HardwarePage(QWidget):
         has_util = cpu_on or gpu_on
         self._set_card_enabled(self._temps_card, has_util)
         self._set_card_enabled(self._power_card, has_util)
+        self._set_card_enabled(self._hover_card_card, has_util)
         self._set_card_enabled(self._ram_card, cpu_on)
         self._set_card_enabled(self._vram_card, gpu_on)
         self._set_card_enabled(self._mem_labels_card,
@@ -319,6 +335,7 @@ class HardwarePage(QWidget):
             "show_memory_labels": self.show_memory_labels.isChecked(),
             "show_hardware_temps": self.show_temps.isChecked(),
             "show_hardware_power": self.show_power.isChecked(),
+            "hardware_in_hover_card": self.hardware_in_hover_card.isChecked(),
             "hardware_label_style": self.label_style.currentData(),
             "hardware_label_color": self.label_color.currentData(),
             "cpu_label_color": self._label_hex("cpu_label_color"),

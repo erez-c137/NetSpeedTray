@@ -52,6 +52,8 @@
     "SHOW_HARDWARE_TEMPS_TOOLTIP": "Показывает температуру рядом с использованием ЦП/ГП. Для большинства систем требуется LibreHardwareMonitor (запущенный от имени администратора) либо nvidia-smi для температуры видеокарт NVIDIA.",
     "HARDWARE_TEMPS_LIMITATION_NOTE": "Большинству датчиков температуры и энергопотребления CPU/GPU требуется LibreHardwareMonitor (запущенный от имени администратора) - NetSpeedTray обнаруживает его автоматически и сам никогда не требует прав администратора. Показания NVIDIA работают нативно через nvidia-smi.",
     "SHOW_HARDWARE_POWER_LABEL": "Показать мощность ЦП/ГП (Ватты)",
+    "HARDWARE_IN_HOVER_CARD_LABEL": "Показывать оборудование только при наведении на виджет",
+    "HARDWARE_IN_HOVER_CARD_DESCRIPTION": "Виджет на панели задач показывает только скорость сети. CPU, GPU и память появляются в карточке при наведении указателя.",
     "SHOW_HARDWARE_POWER_TOOLTIP": "Показывает энергопотребление рядом с использованием ЦП/ГП. Использует Intel RAPL (без прав администратора) для ЦП, nvidia-smi для NVIDIA ГП и LibreHardwareMonitor для AMD/Intel ГП.",
     "HARDWARE_LABEL_STYLE_ICONS": "Значки",
     "HARDWARE_LABEL_STYLE_TEXT_LABELS": "Текстовые метки (CPU, GPU)",

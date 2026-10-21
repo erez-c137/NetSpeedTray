@@ -14,6 +14,7 @@ from netspeedtray import constants
 from netspeedtray.utils.window_state import set_window_always_on_top
 from netspeedtray.utils.config import ConfigManager
 from netspeedtray.utils.timer_utils import resolve_poll_interval_seconds
+from netspeedtray.utils.helpers import effective_display_mode
 
 if TYPE_CHECKING:
     from netspeedtray.views.widget.main import NetworkSpeedWidget
@@ -211,8 +212,9 @@ class ConfigController:
             self.logger.debug("Updating widget position...")
             w.update_position()
             
-            # 4. Manage Cycling Timer
-            if w.config.get("widget_display_mode") == "cycle":
+            # 4. Manage Cycling Timer (stopped while "Show hardware in the hover card" collapses the
+            # widget to network-only - nothing to rotate; the saved Auto-Cycle comes back with it off)
+            if effective_display_mode(w.config) == "cycle":
                 if not w._cycle_timer.isActive():
                     w._cycle_timer.start(constants.renderer.CYCLE_INTERVAL_MS)
                     self.logger.debug("Cycle timer started via ConfigController.")

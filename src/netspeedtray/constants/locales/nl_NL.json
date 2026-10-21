@@ -52,6 +52,8 @@
     "SHOW_HARDWARE_TEMPS_TOOLTIP": "Toont temperatuur naast CPU/GPU-gebruik indien beschikbaar.",
     "HARDWARE_TEMPS_LIMITATION_NOTE": "De meeste CPU-/GPU-temperatuur- en vermogenssensoren vereisen LibreHardwareMonitor (als Administrator uitvoeren) - NetSpeedTray detecteert het automatisch en heeft zelf nooit beheerdersrechten nodig. NVIDIA-waarden werken native via nvidia-smi.",
     "SHOW_HARDWARE_POWER_LABEL": "CPU/GPU-vermogen tonen (Watt)",
+    "HARDWARE_IN_HOVER_CARD_LABEL": "Hardware alleen tonen bij hoveren over de widget",
+    "HARDWARE_IN_HOVER_CARD_DESCRIPTION": "De taakbalkwidget toont alleen de netwerksnelheid. CPU, GPU en geheugen verschijnen in de kaart als je de muis boven de widget houdt.",
     "SHOW_HARDWARE_POWER_TOOLTIP": "Toont het energieverbruik naast het CPU/GPU-gebruik. Gebruikt Intel RAPL (geen admin) voor CPU, nvidia-smi voor NVIDIA GPU en LibreHardwareMonitor voor AMD/Intel GPU.",
     "HARDWARE_LABEL_STYLE_ICONS": "Pictogrammen",
     "HARDWARE_LABEL_STYLE_TEXT_LABELS": "Tekstlabels (CPU, GPU)",

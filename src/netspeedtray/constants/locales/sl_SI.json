@@ -52,6 +52,8 @@
     "SHOW_HARDWARE_TEMPS_TOOLTIP": "Prikaže temperaturo poleg izkoriščenosti CPU/GPU. Za večino sistemov zahteva LibreHardwareMonitor (zagnan kot skrbnik) ali nvidia-smi za temperaturo grafičnih kartic NVIDIA.",
     "HARDWARE_TEMPS_LIMITATION_NOTE": "Večina senzorjev temperature in porabe CPU/GPU potrebuje LibreHardwareMonitor (zagnan kot skrbnik) - NetSpeedTray ga zazna samodejno in sam nikoli ne potrebuje skrbniških pravic. Vrednosti NVIDIA delujejo izvorno prek nvidia-smi.",
     "SHOW_HARDWARE_POWER_LABEL": "Prikaži moč CPU/GPU (Watt)",
+    "HARDWARE_IN_HOVER_CARD_LABEL": "Strojno opremo pokaži samo ob prehodu miške čez gradnik",
+    "HARDWARE_IN_HOVER_CARD_DESCRIPTION": "Gradnik v opravilni vrstici prikazuje samo hitrost omrežja. CPU, GPU in pomnilnik se prikažejo na kartici, ko z miško pokažete nanj.",
     "SHOW_HARDWARE_POWER_TOOLTIP": "Prikazuje porabo energije poleg uporabe CPU/GPU. Uporablja Intel RAPL (brez skrbnika) za CPU, nvidia-smi za NVIDIA GPU in LibreHardwareMonitor za AMD/Intel GPU.",
     "HARDWARE_LABEL_STYLE_ICONS": "Ikone",
     "HARDWARE_LABEL_STYLE_TEXT_LABELS": "Besedilne oznake (CPU, GPU)",

@@ -52,6 +52,8 @@
     "SHOW_HARDWARE_TEMPS_TOOLTIP": "CPU/GPU kullanımının yanında sıcaklığı gösterir. Çoğu sistemde LibreHardwareMonitor'un (Yönetici olarak çalıştırılması gerekir) veya NVIDIA GPU sıcaklığı için nvidia-smi'nin kullanılması gerekir.",
     "HARDWARE_TEMPS_LIMITATION_NOTE": "Çoğu CPU/GPU sıcaklık ve güç sensörü, Yönetici olarak çalıştırılan LibreHardwareMonitor v0.9.4'ü gerektirir. Daha sonraki sürümlerde NetSpeedTray'in okuduğu arayüz kaldırılmıştır. NetSpeedTray bunu otomatik olarak algılar ve kendisinin yönetici olarak çalıştırılması gerekmez. NVIDIA değerleri nvidia-smi aracılığıyla yerel olarak okunur. Bazı çok yeni CPU'larda sıcaklık sensörü hiç bulunmayabilir.",
     "SHOW_HARDWARE_POWER_LABEL": "CPU/GPU gücünü göster (Watt)",
+    "HARDWARE_IN_HOVER_CARD_LABEL": "Donanımı yalnızca widget'ın üzerine gelindiğinde göster",
+    "HARDWARE_IN_HOVER_CARD_DESCRIPTION": "Görev çubuğu widget'ı yalnızca ağ hızını gösterir. CPU, GPU ve bellek, fareyle üzerine gelindiğinde açılan kartta görünür.",
     "SHOW_HARDWARE_POWER_TOOLTIP": "PU/GPU kullanımının yanında güç tüketimini gösterir. CPU için Intel RAPL (yönetici izni gerekmez), NVIDIA GPU için nvidia-smi ve AMD/Intel GPU için LibreHardwareMonitor kullanılır.",
     "HARDWARE_LABEL_STYLE_ICONS": "Simgeler",
     "HARDWARE_LABEL_STYLE_TEXT_LABELS": "Metin Etiketleri (CPU, GPU)",

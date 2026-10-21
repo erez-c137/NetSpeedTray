@@ -516,9 +516,14 @@ class SettingsDialog(QDialog):
         try:
             # Preview parity on a side (LEFT/RIGHT) taskbar: as wide as the bar, laid out as there.
             pv.set_bar_width(self._docked_side_bar_width())
-            pv.set_config({**self.config, **(settings or {})})
+            merged = {**self.config, **(settings or {})}
+            pv.set_config(merged)
+            # The side-bar note ("CPU/GPU/memory show when you hover the widget") also holds when the
+            # hover-card switch put them there (the preview then fits network-only and hides nothing).
+            from netspeedtray.utils.helpers import hardware_in_hover_card_active
             self.widget_page.set_side_bar_note_visible(
-                bool(pv.side_fit is not None and pv.side_fit.hides_hardware))
+                bool(pv.side_fit is not None
+                     and (pv.side_fit.hides_hardware or hardware_in_hover_card_active(merged))))
         except Exception as e:
             self.logger.debug("preview update failed: %s", e)
 

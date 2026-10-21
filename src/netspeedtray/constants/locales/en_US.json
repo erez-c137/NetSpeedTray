@@ -52,6 +52,8 @@
     "SHOW_HARDWARE_TEMPS_TOOLTIP": "Show temperature next to CPU/GPU usage. Requires LibreHardwareMonitor (run as Administrator) for most systems, or nvidia-smi for NVIDIA GPU temperature.",
     "HARDWARE_TEMPS_LIMITATION_NOTE": "Most CPU/GPU temperature and power sensors need LibreHardwareMonitor v0.9.4, run as Administrator - later versions removed the interface NetSpeedTray reads from. NetSpeedTray detects it automatically and never needs admin itself. NVIDIA readings work natively via nvidia-smi. Some very new CPUs publish no temperature sensor at all.",
     "SHOW_HARDWARE_POWER_LABEL": "Show CPU/GPU Power (Watts)",
+    "HARDWARE_IN_HOVER_CARD_LABEL": "Show hardware only when hovering the widget",
+    "HARDWARE_IN_HOVER_CARD_DESCRIPTION": "Keeps the taskbar widget to network speed. CPU, GPU and memory appear in the card when you hover it.",
     "SHOW_HARDWARE_POWER_TOOLTIP": "Show power draw next to CPU/GPU usage. Uses Intel RAPL (non-admin) for CPU, nvidia-smi for NVIDIA GPU, and LibreHardwareMonitor for AMD/Intel GPU.",
     "HARDWARE_LABEL_STYLE_ICONS": "Icons",
     "HARDWARE_LABEL_STYLE_TEXT_LABELS": "Text Labels (CPU, GPU)",
