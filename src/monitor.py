@@ -433,7 +433,10 @@ def _finish(code: int) -> int:
     QThread aborts the process with a crash dialog. A hard exit mid-migration is safe by design (the
     journal + recover() at the next start; kill-tested)."""
     from netspeedtray.core.database import detached_workers_running
-    if detached_workers_running():
+    from netspeedtray.core import thread_reaper
+    # Also any worker that outlived its bounded wait at quit (a DNS lookup, the update check's
+    # urlopen, a WMI call): same abort if it is destroyed while running (core/thread_reaper.py).
+    if detached_workers_running() or thread_reaper.any_running():
         logging.shutdown()
         os._exit(code)
     return code

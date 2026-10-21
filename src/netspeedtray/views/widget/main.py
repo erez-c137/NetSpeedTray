@@ -2261,6 +2261,14 @@ class NetworkSpeedWidget(QWidget):
                 p.stop()
             for p in probes:   # all stopped first, so the waits overlap (one in-flight echo each)
                 p.wait(1500)
+            from netspeedtray.core import thread_reaper
+            for p in probes:   # e.g. inside gethostbyname for the anchor - DNS cannot be cancelled
+                thread_reaper.outlived(p, "A latency probe")
+
+        def _update_checker() -> None:
+            # A check in flight sits in urlopen for up to 10 s; it is not waited for.
+            if getattr(self, 'update_checker', None):
+                self.update_checker.stop()
 
         def _metrics_endpoint() -> None:
             # Joins its threads; nothing is left listening.
@@ -2302,6 +2310,7 @@ class NetworkSpeedWidget(QWidget):
             ("position manager", _position_manager), ("state watcher", _state_watcher),
             ("monitor window", _monitor_window),
             ("monitor thread", _monitor_thread), ("latency probe", _latency_probe),
+            ("update checker", _update_checker),
             ("metrics endpoint", _metrics_endpoint), ("controller", _controller),
             ("position config", _position_config), ("config save", _config_save),
             ("history flush", _history_flush),

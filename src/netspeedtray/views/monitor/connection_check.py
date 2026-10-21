@@ -109,10 +109,13 @@ class _CheckRegistry(QObject):
                 pass   # its C++ side is already gone
         for w in list(self._live):
             w.stop()
+        from netspeedtray.core import thread_reaper
         for w in list(self._live):
             w.wait(constants.network.latency.CHECK_STOP_WAIT_MS)
             if not w.isRunning():
                 self._live.discard(w)
+            else:
+                thread_reaper.outlived(w, "A connection check")   # e.g. in a DNS lookup
 
 
 _registry: Optional[_CheckRegistry] = None

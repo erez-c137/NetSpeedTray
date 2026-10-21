@@ -12,6 +12,7 @@ and prevents micro-stutters during system stack latency.
 
 import logging
 import math
+import threading
 import time
 from typing import Dict, Any, Optional, List, NamedTuple, Tuple
 
@@ -179,6 +180,9 @@ class StatsMonitorThread(QThread):
         self._last_identity_poll: float = 0.0  # monotonic ts of the last network-identity sub-poll (0 = poll immediately)
         self._last_link_stats_poll: float = 0.0  # monotonic ts of the last net_if_stats sub-poll (v8 link history)
         self._nvidia_smi_path: Optional[str] = self._get_cached_path("nvidia-smi")
+        # The helper process in flight, if any - stop() kills it (see _run_child).
+        self._child: Optional[subprocess.Popen] = None
+        self._child_lock = threading.Lock()
         # nvidia-smi is a synchronous subprocess (up to NVIDIA_SMI_TIMEOUT_SEC). Temps/power
         # change slowly, so poll it on a slow sub-cadence and cache between calls - keeps the
         # per-second network readout off the subprocess critical path.
@@ -438,11 +442,9 @@ class StatsMonitorThread(QThread):
                 self._nvidia_last_poll = now_mono
                 try:
                     query_fields = "temperature.gpu,memory.total,power.draw"
-                    output = subprocess.check_output(
+                    output = self._run_child(
                         [self._nvidia_smi_path, f"--query-gpu={query_fields}", "--format=csv,noheader,nounits"],
-                        encoding='utf-8', timeout=constants.timeouts.NVIDIA_SMI_TIMEOUT_SEC,
-                        creationflags=subprocess.CREATE_NO_WINDOW
-                    )
+                        constants.timeouts.NVIDIA_SMI_TIMEOUT_SEC)
                     parts = output.strip().split('\n')[0].split(',')
                     if len(parts) > 0:
                         try:
@@ -1176,8 +1178,48 @@ class StatsMonitorThread(QThread):
         except Exception:
             pass
 
+    def _run_child(self, argv, timeout: float) -> str:
+        """Run a short-lived helper (nvidia-smi) and return its stdout, like check_output - but the
+        process is held where ``stop()`` can kill it, so a quit never waits out (or orphans) a slow
+        one. Raises on a non-zero exit, a timeout (the child is killed), or a kill from stop()."""
+        with self._child_lock:
+            if not self._is_running:
+                raise RuntimeError("stopping")
+            proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                    stdin=subprocess.DEVNULL, encoding="utf-8",
+                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            self._child = proc
+        try:
+            try:
+                out, _ = proc.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.communicate()
+                raise
+            if proc.returncode != 0:
+                raise subprocess.CalledProcessError(proc.returncode, argv, out)
+            return out
+        finally:
+            with self._child_lock:
+                self._child = None
+
+    def _kill_child(self) -> None:
+        with self._child_lock:
+            proc = self._child
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.kill()
+                self.logger.info("Stopped an in-flight helper process at quit.")
+            except OSError:
+                pass
+
     def stop(self) -> None:
-        """Gracefully stops the monitoring loop."""
+        """Stops the monitoring loop: kills a helper process still running (nvidia-smi can take
+        1.5 s, longer cold), waits a bounded time, and hands a thread that is still inside an
+        uninterruptible call (WMI) to the thread reaper rather than letting quit abort on it."""
         self._is_running = False
+        self._kill_child()
         self.wait(constants.timeouts.MONITOR_THREAD_STOP_WAIT_MS)
-        self.logger.info("StatsMonitorThread stopped.")
+        from netspeedtray.core import thread_reaper
+        if not thread_reaper.outlived(self, "The stats monitor thread"):
+            self.logger.info("StatsMonitorThread stopped.")
