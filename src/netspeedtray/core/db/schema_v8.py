@@ -60,8 +60,8 @@ PAGE_SIZE = 4096
 # "up_bytes IS NULL", not a flag.
 FLAG_COUNTER_RESET = 1   # counter went backwards (reset / wrap / adapter re-enumerated)
 FLAG_GAP = 2             # interval longer than the poll rate (missed polls, sleep, app stall)
-FLAG_RESUMED = 4         # the system resumed from sleep inside the interval
-FLAG_FIRST_SAMPLE = 8    # first sample of a session; its delta is not trustworthy
+FLAG_RESUMED = 4         # RESERVED (nothing sets it yet): the system resumed from sleep in the interval
+FLAG_FIRST_SAMPLE = 8    # RESERVED (nothing sets it yet): first sample of a session
 
 # Tier watermarks (metadata keys, value = unix epoch seconds as text). "Every row of this tier older
 # than the watermark has been rolled up into the next-coarser tier", written in the SAME transaction

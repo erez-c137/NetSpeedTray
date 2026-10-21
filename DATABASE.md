@@ -118,7 +118,8 @@ display smoothing, a counter that went backwards counts 0, and one interval is c
 a driver glitch cannot add phantom gigabytes. A poll in which an adapter moved nothing is not written
 (the session record says the app was running). `flags`: `1` the counter went backwards in that
 interval, `2` a gap (the interval was far longer than the poll rate - standby, a stall; the bytes are
-real, a graph should not draw them as one spike), `4` resumed from sleep, `8` first sample.
+real, a graph should not draw them as one spike). `4` and `8` are reserved (meant for "resumed
+from sleep" and "first sample of a session"); nothing sets them yet, so a reader must not rely on them.
 
 ### `net_minute` / `net_hour` — the rollups
 

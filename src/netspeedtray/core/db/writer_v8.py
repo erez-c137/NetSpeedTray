@@ -171,7 +171,7 @@ class NetSample:
     (up, down) exact bytes. ``counters``: psutil ``net_io_counters(pernic=True)`` of this poll (for
     err/drop deltas and counter-reset detection) - optional. ``if_stats``: psutil ``net_if_stats()``
     of this poll - optional (step 7 decides how often to read it). ``flags``: extra row flags the
-    caller knows about (``FLAG_RESUMED``). A sample with no ``byte_deltas`` only primes the counter
+    caller knows about (none today: ``FLAG_RESUMED`` / ``FLAG_FIRST_SAMPLE`` are reserved). A sample with no ``byte_deltas`` only primes the counter
     baselines (the controller's first poll)."""
     ts: float
     dt_ms: int
