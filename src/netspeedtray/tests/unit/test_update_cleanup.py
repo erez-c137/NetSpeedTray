@@ -404,11 +404,18 @@ def test_a_failed_swap_keeps_the_staged_copy_and_zip_then_ages_them_out(
 
     assert any(r.get("kind") == "failure"
                for r in json.loads(_records(marker).read_text(encoding="utf-8")))
+    # The refusal took it out of the staged marker (older builds' sweeps read that file and would
+    # delete it within ten minutes); only the failure record and the staging-root age-out track it.
+    assert not marker.exists() or str(staged) not in marker.read_text(encoding="utf-8")
     for f in (marker, _records(marker)):
+        if not f.exists():
+            continue
         entries = json.loads(f.read_text(encoding="utf-8"))
         for e in entries:
             e["failed_at"] = time.time() - 8 * 24 * 3600
         f.write_text(json.dumps(entries), encoding="utf-8")
+    _backdate(staged, 8 * 24 * 3600)
+    _backdate(package, 8 * 24 * 3600)
     ua.run_update_janitor(retry_delays=(), sleep=lambda s: None)
     assert not staged.exists() and not package.exists()
     assert not marker.exists() and not _records(marker).exists(), "aged-out records go too"

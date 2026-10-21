@@ -570,3 +570,27 @@ def test_the_swap_carries_explorer_metadata_and_the_backup_stays_removable(
     if os.name == "nt":                              # let tmp_path clean up
         import ctypes
         ctypes.windll.kernel32.SetFileAttributesW(str(install), 0x10)
+
+
+def test_a_refused_staged_copy_leaves_the_marker_older_sweeps_read(tmp_path, restart_spy):
+    """The app restarted after a refusal is often an OLDER build, whose sweep deletes every folder
+    in staged_update.json ten minutes after staging - the folder the notice sends the user to."""
+    launched, told = restart_spy
+    install = _make_install(tmp_path)
+    (install / "notes.txt").write_text("mine", encoding="utf-8")
+    staged = _make_staged(tmp_path, "NetSpeedTray-9.9.9")
+    other = str(tmp_path / "NetSpeedTray-other")
+    ua.record_staged_path(str(staged))
+    marker = Path(ua._marker_path())
+    entries = json.loads(marker.read_text(encoding="utf-8"))
+    entries.append(other)                                       # an older build's bare entry
+    marker.write_text(json.dumps(entries), encoding="utf-8")
+
+    assert ua.apply_update(str(install), None, str(staged)) == 3
+    left = json.loads(marker.read_text(encoding="utf-8")) if marker.exists() else []
+    paths = [e if isinstance(e, str) else e.get("path") for e in left]
+    assert str(staged) not in paths, "an older build's sweep would delete the folder we point at"
+    assert other in paths, "other entries are kept verbatim"
+    failures = json.loads((marker.parent / ua._BACKUPS_RECORD_NAME).read_text(encoding="utf-8"))
+    assert any(r.get("kind") == "failure" and r.get("staged") == str(staged) for r in failures)
+    assert staged.is_dir() and told and told[0][1] == str(staged)

@@ -828,6 +828,12 @@ def _restart_unchanged(install_dir: str, staged_dir: str, reason: str) -> None:
     Launched like the post-update relaunch: a plain child of this process, at its integrity (the
     applier is started by the unelevated app). Only an install folder that still holds our EXE is
     ever launched from; a refusal for "not obviously ours" launches nothing."""
+    # The message below sends the user to the staged folder - but the app restarted here is often an
+    # OLDER build, whose sweep deletes every folder in the staged marker ten minutes after it was
+    # staged, whatever the entry says. So the folder leaves the marker first: the failure record in
+    # update_backups.json (which older builds never read) still names it, and this version ages
+    # unreferenced staged copies out after _FAILED_KEEP_SEC.
+    _forget_staged_record(staged_dir)
     exe = os.path.join(install_dir, APP_EXE) if install_dir else ""
     if exe and os.path.isfile(exe) and not _is_link_like(exe):
         if relaunch(exe):
@@ -1167,6 +1173,30 @@ def _note_applier_outcome(staged_dir: str, *, applied: bool, backup: Optional[st
     except Exception:
         logger.warning("Could not record the update outcome; leftovers may need a later sweep.",
                        exc_info=True)
+
+
+def _forget_staged_record(staged_dir: str) -> None:
+    """Drop ``staged_dir`` from the staged marker (any entry shape), keeping every other entry
+    verbatim. Best-effort: a failure leaves the record (and an older build may then sweep it)."""
+    try:
+        target = _norm(os.path.abspath(staged_dir))
+        with _marker_lock:
+            raw, readable = _read_list_checked(_marker_path())
+            if not readable or not raw:
+                return
+            kept = []
+            for item in raw:
+                path = item if isinstance(item, str) else (
+                    item.get("path") if isinstance(item, dict) else None)
+                if isinstance(path, str) and _norm(path) == target:
+                    continue
+                kept.append(item)
+            if len(kept) != len(raw):
+                _write_list(_marker_path(), kept)
+                logger.info("Took the staged copy out of the staged marker so no sweep removes it: %s",
+                            staged_dir)
+    except Exception:
+        logger.warning("Could not take the staged copy out of the staged marker.", exc_info=True)
 
 
 def _recent_failure(install_dir: str) -> bool:
