@@ -561,3 +561,118 @@ def test_settings_preview_shows_the_clean_widget(q_app, bar_width):
     finally:
         for pv in previews.values():
             pv.deleteLater()
+
+
+# --- 7. Auto-Cycle stays off; the note under Display Mode -----------------------------------------
+
+def _timer_fake(config):
+    from netspeedtray.views.widget.main import NetworkSpeedWidget as W
+    fake = types.SimpleNamespace(config=config, i18n=EN, logger=MagicMock(), position_manager=MagicMock(),
+                                 _state_watcher_timer=MagicMock(), _cycle_timer=MagicMock(),
+                                 widget_state=MagicMock(), update_config=MagicMock(),
+                                 _show_usage_alert=MagicMock(), _on_update_available=MagicMock(),
+                                 _execute_refresh=MagicMock())
+    with patch("netspeedtray.views.widget.main.UpdateChecker") as uc:
+        uc.return_value.should_check.return_value = False
+        W._setup_timers(fake)
+    return fake
+
+
+def test_startup_never_starts_the_cycle_timer_with_the_switch_on(q_app):
+    on = _timer_fake(_config(widget_display_mode="cycle", hardware_in_hover_card=True, **HW))
+    on._cycle_timer.start.assert_not_called()
+    off = _timer_fake(_config(widget_display_mode="cycle", hardware_in_hover_card=False, **HW))
+    off._cycle_timer.start.assert_called_once()
+
+
+def _wheel_widget(on):
+    from PyQt6.QtWidgets import QWidget
+    from netspeedtray.views.widget.main import NetworkSpeedWidget
+
+    class _Wheel(NetworkSpeedWidget):
+        def __init__(self):            # only the state wheelEvent / _step_cycle read
+            QWidget.__init__(self)
+            self.config = _config(widget_display_mode="cycle", hardware_in_hover_card=on, **HW)
+            self._cycle_timer = MagicMock()
+            self._cycle_index, self._current_cycle_mode = 0, "network_only"
+            self.logger = MagicMock()
+    return _Wheel()
+
+
+def _wheel_event():
+    from PyQt6.QtCore import QPoint, QPointF, Qt
+    from PyQt6.QtGui import QWheelEvent
+    return QWheelEvent(QPointF(5, 5), QPointF(5, 5), QPoint(0, 0), QPoint(0, -120),
+                       Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
+                       Qt.ScrollPhase.NoScrollPhase, False)
+
+
+def test_scrolling_does_not_step_auto_cycle_with_the_switch_on(q_app):
+    on, off = _wheel_widget(True), _wheel_widget(False)
+    try:
+        ev = _wheel_event()
+        on.wheelEvent(ev)
+        assert on._current_cycle_mode == "network_only" and on._cycle_index == 0
+        assert not ev.isAccepted()                     # passed through, like any non-cycle mode
+        ev = _wheel_event()
+        off.wheelEvent(ev)
+        assert off._current_cycle_mode == "cpu_only" and ev.isAccepted()
+    finally:
+        on.deleteLater()
+        off.deleteLater()
+
+
+@pytest.fixture
+def dialog(qtbot, monkeypatch):
+    from PyQt6.QtWidgets import QMessageBox
+    from netspeedtray.views.settings.dialog import SettingsDialog
+    monkeypatch.setattr(QMessageBox, "critical", lambda *a, **k: None)
+
+    def make(side_bar_px=None):
+        m = MagicMock()
+        m.config, m.config_manager = {}, MagicMock()
+        m._cached_layout_mode = "vertical" if side_bar_px else "horizontal"
+        m.width.return_value = side_bar_px or 0
+        d = SettingsDialog(main_widget=m, config=_config(), version="2.2.0", i18n=EN,
+                           available_interfaces=["Ethernet"], is_startup_enabled=False)
+        qtbot.addWidget(d)
+        return d
+    return make
+
+
+def _note(d):
+    n = d.widget_page.display_mode_note
+    return n.text() if not n.isHidden() else None
+
+
+@pytest.mark.parametrize("side_bar_px", [None, 48])
+def test_display_mode_note_follows_the_switch_live_on_any_edge(dialog, side_bar_px):
+    d = dialog(side_bar_px)
+    hw = d.hardware_page
+    hw.monitor_cpu.setChecked(True)
+    combo = d.widget_page.display_mode_combo
+    combo.setCurrentIndex(combo.findData("side_by_side"))
+    d._emit_settings_changed_throttled()               # the live-preview path every change takes
+    assert _note(d) == (EN.SIDE_TASKBAR_HOVER_NOTE if side_bar_px else None)
+    hw.hardware_in_hover_card.setChecked(True)
+    d._emit_settings_changed_throttled()
+    assert _note(d) == EN.HOVER_CARD_DISPLAY_MODE_NOTE   # one note - the switch's, on every edge
+    assert combo.isEnabled()                             # Display Mode stays editable
+    hw.hardware_in_hover_card.setChecked(False)          # switch off: back to the edge's own note
+    d._emit_settings_changed_throttled()
+    assert _note(d) == (EN.SIDE_TASKBAR_HOVER_NOTE if side_bar_px else None)
+    hw.hardware_in_hover_card.setChecked(True)
+    hw.monitor_cpu.setChecked(False)                     # no hardware: the switch is inert, no note
+    d._emit_settings_changed_throttled()
+    assert _note(d) is None
+
+
+def test_side_bar_with_the_switch_on_explains_where_the_hardware_went(dialog):
+    """On a side bar the switch makes the preview fit network-only (hides_hardware False), so the
+    note has to come from the switch, not from the fit."""
+    d = dialog(48)
+    d.hardware_page.monitor_gpu.setChecked(True)
+    d.hardware_page.hardware_in_hover_card.setChecked(True)
+    d._emit_settings_changed_throttled()
+    assert d.preview_widget.side_fit is not None and not d.preview_widget.side_fit.hides_hardware
+    assert _note(d) == EN.HOVER_CARD_DISPLAY_MODE_NOTE

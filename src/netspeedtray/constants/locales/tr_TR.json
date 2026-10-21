@@ -79,6 +79,7 @@
     "ORDER_TYPE_NONE": "Yok",
     "HARDWARE_GRAPH_NOTE": "Donanım grafikleri, ağ grafikleriyle aynı opaklık ve zaman aralığını kullanır.",
     "SIDE_TASKBAR_HOVER_NOTE": "Yan görev çubuğunda CPU/GPU/bellek, fareyle widget'ın üzerine gelindiğinde gösterilir.",
+    "HOVER_CARD_DISPLAY_MODE_NOTE": "Görev çubuğu yalnızca ağ hızını gösterir: CPU/GPU/bellek, üzerine gelindiğinde açılan karttadır (Donanım sayfası). Bunu kapattığınızda bu mod geri gelir.",
     "GRAPH_CPU_UTIL_AXIS_LABEL": "CPU Kullanımı (%)",
     "GRAPH_GPU_UTIL_AXIS_LABEL": "GPU Kullanımı (%)",
     "GRAPH_HW_UTIL_AXIS_LABEL": "Kulllanım (%)",

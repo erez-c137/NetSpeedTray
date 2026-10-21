@@ -79,6 +79,7 @@
     "ORDER_TYPE_NONE": "Geen",
     "HARDWARE_GRAPH_NOTE": "Hardwaregrafieken gebruiken dezelfde transparantie en tijdsduur als de netwerkgrafiek.",
     "SIDE_TASKBAR_HOVER_NOTE": "Op een taakbalk aan de zijkant worden CPU/GPU/geheugen getoond als je de muis boven de widget houdt.",
+    "HOVER_CARD_DISPLAY_MODE_NOTE": "De taakbalk toont alleen de netwerksnelheid: CPU/GPU/geheugen staan in de hoverkaart (pagina Hardware). Deze modus komt terug als je dat uitzet.",
     "GRAPH_CPU_UTIL_AXIS_LABEL": "CPU-gebruik (%)",
     "GRAPH_GPU_UTIL_AXIS_LABEL": "GPU-gebruik (%)",
     "GRAPH_HW_UTIL_AXIS_LABEL": "Gebruik (%)",

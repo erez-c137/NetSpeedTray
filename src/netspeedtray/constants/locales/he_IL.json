@@ -79,6 +79,7 @@
     "ORDER_TYPE_NONE": "ללא",
     "HARDWARE_GRAPH_NOTE": "גרפי החומרה משתמשים באותה אטימות וטווח זמן כמו גרף הרשת.",
     "SIDE_TASKBAR_HOVER_NOTE": "בשורת משימות צדדית, CPU/GPU/זיכרון מוצגים כשמעבירים את העכבר מעל הווידג'ט.",
+    "HOVER_CARD_DISPLAY_MODE_NOTE": "שורת המשימות מציגה רק את מהירות הרשת: CPU/GPU/זיכרון נמצאים בכרטיס הריחוף (עמוד החומרה). מצב זה יחזור כשתכבו את האפשרות.",
     "GRAPH_CPU_UTIL_AXIS_LABEL": "ניצול CPU (%)",
     "GRAPH_GPU_UTIL_AXIS_LABEL": "ניצול GPU (%)",
     "GRAPH_HW_UTIL_AXIS_LABEL": "ניצול (%)",

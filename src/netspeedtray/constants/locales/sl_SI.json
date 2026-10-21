@@ -79,6 +79,7 @@
     "ORDER_TYPE_NONE": "Brez",
     "HARDWARE_GRAPH_NOTE": "Grafi strojne opreme uporabljajo isto prosojnost in časovni razpon kot graf omrežja.",
     "SIDE_TASKBAR_HOVER_NOTE": "Na stranski opravilni vrstici se CPU/GPU/pomnilnik prikažejo, ko z miško pokažete na pripomoček.",
+    "HOVER_CARD_DISPLAY_MODE_NOTE": "Opravilna vrstica prikazuje samo hitrost omrežja: CPU/GPU/pomnilnik so na kartici ob prehodu miške (stran Strojna oprema). Ta način se vrne, ko to izklopite.",
     "GRAPH_CPU_UTIL_AXIS_LABEL": "Izkoriščenost CPU (%)",
     "GRAPH_GPU_UTIL_AXIS_LABEL": "Izkoriščenost GPU (%)",
     "GRAPH_HW_UTIL_AXIS_LABEL": "Izkoriščenost (%)",
