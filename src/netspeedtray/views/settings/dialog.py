@@ -516,11 +516,24 @@ class SettingsDialog(QDialog):
         try:
             # Preview parity on a side (LEFT/RIGHT) taskbar: as wide as the bar, laid out as there.
             pv.set_bar_width(self._docked_side_bar_width())
-            pv.set_config({**self.config, **(settings or {})})
-            self.widget_page.set_side_bar_note_visible(
-                bool(pv.side_fit is not None and pv.side_fit.hides_hardware))
+            merged = {**self.config, **(settings or {})}
+            pv.set_config(merged)
+            self.widget_page.set_display_mode_note(self._display_mode_note_kind(merged, pv.side_fit))
         except Exception as e:
             self.logger.debug("preview update failed: %s", e)
+
+    @staticmethod
+    def _display_mode_note_kind(settings: Dict[str, Any], side_fit) -> Optional[str]:
+        """Which note goes under Widget > Display Mode (WidgetPage.set_display_mode_note). The
+        hover-card switch wins on every edge - it is the reason the bar shows network only, and the
+        more specific explanation on a side bar too; else the side-bar note when a docked side bar
+        has no room for the hardware; else none."""
+        from netspeedtray.utils.helpers import hardware_in_hover_card_active
+        if hardware_in_hover_card_active(settings):
+            return "hover_card"
+        if side_fit is not None and side_fit.hides_hardware:
+            return "side_bar"
+        return None
 
     def _docked_side_bar_width(self) -> Optional[int]:
         """The live widget's width when it is docked to a side taskbar (it is exactly the bar's

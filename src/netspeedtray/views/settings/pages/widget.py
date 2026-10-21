@@ -10,7 +10,7 @@ graph); the 2.0 IA and the 2.2 IA pass gather them here so "the widget" is one p
 Slider→Segmented and QListWidget upgrades are intentionally NOT done here - the controls move as-is
 (same widgets, same config mappings) so the reshuffle can't silently corrupt a saved value.
 """
-from typing import Dict, Any, Callable, List
+from typing import Dict, Any, Callable, List, Optional
 
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtGui import QGuiApplication
@@ -50,13 +50,16 @@ class WidgetPage(QWidget):
         layout.addWidget(self.display_mode_combo)
         # (HARDWARE_GRAPH_NOTE moved to the Mini Graph section below, next to the opacity/timespan
         # controls it describes.)
-        # Docked to a side taskbar with hardware the bar has no room for: say where it went.
-        self.side_bar_note = QLabel(self.i18n.SIDE_TASKBAR_HOVER_NOTE)
-        self.side_bar_note.setWordWrap(True)
-        self.side_bar_note.setStyleSheet(
+        # ONE note slot under Display Mode, saying where the hardware went (set_display_mode_note):
+        # "side_bar" - docked to a side taskbar with no room for it; "hover_card" - the Hardware page's
+        # "Show hardware only when hovering the widget" is on, so the bar shows network only on any edge.
+        self.display_mode_note = QLabel("")
+        self.display_mode_note.setWordWrap(True)
+        self.display_mode_note.setStyleSheet(
             f"color: {su.semantic_colors()['text_secondary']}; background: transparent; padding: 0 2px;")
-        self.side_bar_note.setVisible(False)
-        layout.addWidget(self.side_bar_note)
+        self.display_mode_note.setVisible(False)
+        self._display_mode_note_kind: Optional[str] = None
+        layout.addWidget(self.display_mode_note)
 
         # --- Display order ---
         layout.addWidget(section_header(self.i18n.WIDGET_DISPLAY_ORDER_LABEL))
@@ -165,10 +168,21 @@ class WidgetPage(QWidget):
             self._populate_monitor_combo()
 
     # --- behavior ---------------------------------------------------------------
-    def set_side_bar_note_visible(self, visible: bool) -> None:
-        """Show the side-taskbar note (CPU/GPU/memory are in the hover card) - the dialog decides,
-        from the same fit the live widget uses."""
-        self.side_bar_note.setVisible(bool(visible))
+    def set_display_mode_note(self, kind: Optional[str]) -> None:
+        """The note under Display Mode: None (hidden), "side_bar" (a side taskbar has no room for the
+        hardware - it is in the hover card) or "hover_card" (the hover-card switch is on: the bar shows
+        network only, and this Display Mode returns when it is turned off). The dialog decides on every
+        preview update, so it follows the settings live; one label, so only one note ever shows."""
+        texts = {"side_bar": self.i18n.SIDE_TASKBAR_HOVER_NOTE,
+                 "hover_card": self.i18n.HOVER_CARD_DISPLAY_MODE_NOTE}
+        kind = kind if kind in texts else None
+        if kind == self._display_mode_note_kind:
+            return
+        self._display_mode_note_kind = kind
+        if kind is not None:
+            self.display_mode_note.setText(texts[kind])
+        self.display_mode_note.setVisible(kind is not None)
+        self.layout_changed.emit()
 
     def ensure_hardware_visible(self) -> None:
         """Called by the dialog when a hardware monitor is enabled on the Hardware page: switch the

@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 
 from netspeedtray.core.widget_state import SpeedDataSnapshot, AggregatedSpeedData
 from netspeedtray.utils.helpers import (has_dedicated_vram, format_speed, calculate_monotone_cubic_interpolation,
-                                        memory_label_width)
+                                        memory_label_width, effective_display_mode)
 from PyQt6.QtGui import QPainter, QColor, QFont, QFontMetrics, QPen, QPainterPath
 from PyQt6.QtCore import Qt, QPointF, QRect, QRectF
 from netspeedtray import constants
@@ -225,6 +225,8 @@ class RenderConfig:
     hardware_label_color: str = constants.config.defaults.DEFAULT_HARDWARE_LABEL_COLOR
     cpu_label_color: str = constants.config.defaults.DEFAULT_CPU_LABEL_COLOR
     gpu_label_color: str = constants.config.defaults.DEFAULT_GPU_LABEL_COLOR
+    # The mode the widget PAINTS with - helpers.effective_display_mode (the user's Display Mode, or
+    # network_only while "Show hardware in the hover card" is active).
     widget_display_mode: str = "network_only"
     widget_display_order: List[str] = field(default_factory=lambda: ["network", "cpu", "gpu"])
     show_hardware_temps: bool = False
@@ -323,7 +325,7 @@ class RenderConfig:
                 monitor_vram_enabled=bool(config.get('monitor_vram_enabled', False)),
                 show_memory_labels=bool(config.get('show_memory_labels', False)),
                 stack_hardware_stats=bool(config.get('stack_hardware_stats', False)),
-                widget_display_mode=str(config.get('widget_display_mode', 'network_only')),
+                widget_display_mode=effective_display_mode(config),
                 widget_display_order=list(config.get('widget_display_order', ["network", "cpu", "gpu"])),
                 show_hardware_temps=bool(config.get('show_hardware_temps', False)),
                 show_hardware_power=bool(config.get('show_hardware_power', False))

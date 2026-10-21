@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import QWidget
 from netspeedtray import constants
 from netspeedtray.utils.taskbar_utils import (is_small_taskbar, get_taskbar_info, horizontal_taskbar_strip,
                                               vertical_taskbar_strip, dock_signature)
-from netspeedtray.utils.helpers import memory_label_width
+from netspeedtray.utils.helpers import memory_label_width, effective_display_mode
 
 
 if TYPE_CHECKING:
@@ -239,12 +239,13 @@ class WidgetLayoutManager:
                 # panel from it). Only the last panel carries the identity badge, so its reserve is
                 # counted once. Auto-Cycle rotates upload and download as single-panel phases instead,
                 # so its network width stays one block.
-                if self._split_graphs() and self.widget.config.get("widget_display_mode", "network_only") in (
-                        "network_only", "side_by_side"):
+                # The mode the paint path draws (RenderConfig reads the same helper): network_only while
+                # "Show hardware in the hover card" is active, else the user's Display Mode.
+                display_mode = effective_display_mode(self.widget.config)
+                if self._split_graphs() and display_mode in ("network_only", "side_by_side"):
                     calculated_width = 2 * calculated_width - _identity_reserve + constants.renderer.GRAPH_SPLIT_GAP
 
                 # --- SIDE-BY-SIDE MODE ADJUSTMENT ---
-                display_mode = self.widget.config.get("widget_display_mode", "network_only")
                 monitor_ram = self.widget.config.get("monitor_ram_enabled", False)
                 monitor_vram = self.widget.config.get("monitor_vram_enabled", False)
                 # Hoisted so every display-mode branch below has it defined. Previously

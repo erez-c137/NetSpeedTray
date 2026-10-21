@@ -144,6 +144,9 @@ class ConfigConstants:
     DEFAULT_SHOW_HARDWARE_TEMPS: Final[bool] = True
     DEFAULT_SHOW_HARDWARE_POWER: Final[bool] = False
     DEFAULT_STACK_HARDWARE_STATS: Final[bool] = True
+    # Side-taskbar design phase C: keep the taskbar widget to network speed and show the enabled
+    # CPU/GPU/memory in the hover card instead. Off by default, so nobody's widget changes.
+    DEFAULT_HARDWARE_IN_HOVER_CARD: Final[bool] = False
     # CPU/GPU label SHAPE and COLOUR are two settings (2.2): the style is "icons" | "text", the
     # colour "brand" | "match_text" | "custom". The pre-2.2 three-way style (icons_colored /
     # icons_monochrome / text) is split in two by ConfigManager._migrate_config.
@@ -281,6 +284,7 @@ class ConfigConstants:
         "plan_up_mbps": 0,
         "throttle_temp_c": 0,
         "stack_hardware_stats": DEFAULT_STACK_HARDWARE_STATS,
+        "hardware_in_hover_card": DEFAULT_HARDWARE_IN_HOVER_CARD,
         "widget_display_mode": DEFAULT_WIDGET_DISPLAY_MODE,
         "widget_display_order": DEFAULT_WIDGET_DISPLAY_ORDER,
         "widget_cycle_interval": DEFAULT_WIDGET_CYCLE_INTERVAL,
@@ -430,6 +434,7 @@ class ConfigConstants:
         "throttle_temp_c": {"type": (int, float), "default": 0, "min": 0, "max": 130},
         "show_hardware_power": {"type": bool, "default": DEFAULT_SHOW_HARDWARE_POWER},
         "stack_hardware_stats": {"type": bool, "default": DEFAULT_STACK_HARDWARE_STATS},
+        "hardware_in_hover_card": {"type": bool, "default": DEFAULT_HARDWARE_IN_HOVER_CARD},
         "widget_display_mode": {"type": str, "default": DEFAULT_WIDGET_DISPLAY_MODE, "choices": ["network_only", "cycle", "side_by_side"]},
         "widget_display_order": {"type": list, "default": DEFAULT_WIDGET_DISPLAY_ORDER, "item_type": str},
         "widget_cycle_interval": {"type": int, "default": DEFAULT_WIDGET_CYCLE_INTERVAL, "min": 1, "max": 60},

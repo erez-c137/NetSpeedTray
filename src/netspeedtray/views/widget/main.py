@@ -47,6 +47,13 @@ from netspeedtray.core.startup_manager import StartupManager
 from netspeedtray.core.config_controller import ConfigController
 from netspeedtray.core.update_checker import UpdateChecker
 from netspeedtray.core import shutdown_channel
+from netspeedtray.utils.helpers import effective_display_mode, hardware_in_hover_card_active
+
+# Display modes whose taskbar widget paints a CPU (and RAM) / GPU (and VRAM) reading - a new value
+# for one of them is worth a repaint. Read through effective_display_mode, so with "Show hardware in
+# the hover card" on the widget stops repainting for hardware it no longer shows.
+_CPU_BAR_MODES = ("cpu_only", "combined", "side_by_side", "cycle")
+_GPU_BAR_MODES = ("gpu_only", "combined", "side_by_side", "cycle")
 
 # --- Type Checking ---
 if TYPE_CHECKING:
@@ -278,8 +285,8 @@ class NetworkSpeedWidget(QWidget):
         if self.update_checker.should_check():
             QTimer.singleShot(5000, self.update_checker.check_now)
 
-        # Cycle Timer
-        if self.config.get("widget_display_mode") == "cycle":
+        # Cycle Timer (not while "Show hardware in the hover card" collapses the widget to network-only)
+        if effective_display_mode(self.config) == "cycle":
             self._cycle_timer.start(constants.renderer.CYCLE_INTERVAL_MS)
             self.logger.debug("Cycle timer started.")
 
@@ -762,13 +769,18 @@ class NetworkSpeedWidget(QWidget):
         self.update() # Trigger a repaint
 
 
+    def _bar_shows(self, modes: Tuple[str, ...]) -> bool:
+        """The widget's painted display mode is one of ``modes`` (see _CPU_BAR_MODES). The reading is
+        stored either way - the hover card and the Monitor window use it."""
+        return effective_display_mode(self.config) in modes
+
     def update_cpu_usage(self, usage: float) -> None:
         """Update CPU usage and trigger repaint."""
         if self.is_paused:
             return
         self.cpu_usage = usage
         self._refresh_hover_hardware()
-        if self.config.get("widget_display_mode") in ["cpu_only", "combined", "side_by_side", "cycle"]:
+        if self._bar_shows(_CPU_BAR_MODES):
             self.update()
 
     def update_gpu_usage(self, usage: float) -> None:
@@ -777,7 +789,7 @@ class NetworkSpeedWidget(QWidget):
             return
         self.gpu_usage = usage
         self._refresh_hover_hardware()
-        if self.config.get("widget_display_mode") in ["gpu_only", "combined", "side_by_side", "cycle"]:
+        if self._bar_shows(_GPU_BAR_MODES):
             self.update()
 
     def update_network_identity(self, identity: Optional[object]) -> None:
@@ -813,7 +825,7 @@ class NetworkSpeedWidget(QWidget):
         if self.is_paused:
             return
         self.cpu_temp = temp
-        if self.config.get("widget_display_mode") in ["cpu_only", "combined", "side_by_side", "cycle"]:
+        if self._bar_shows(_CPU_BAR_MODES):
             self.update()
 
     def update_gpu_temp(self, temp: Optional[float]) -> None:
@@ -821,7 +833,7 @@ class NetworkSpeedWidget(QWidget):
         if self.is_paused:
             return
         self.gpu_temp = temp
-        if self.config.get("widget_display_mode") in ["gpu_only", "combined", "side_by_side", "cycle"]:
+        if self._bar_shows(_GPU_BAR_MODES):
             self.update()
 
     def update_cpu_power(self, power: Optional[float]) -> None:
@@ -829,7 +841,7 @@ class NetworkSpeedWidget(QWidget):
         if self.is_paused:
             return
         self.cpu_power = power
-        if self.config.get("widget_display_mode") in ["cpu_only", "combined", "side_by_side", "cycle"]:
+        if self._bar_shows(_CPU_BAR_MODES):
             self.update()
 
     def update_gpu_power(self, power: Optional[float]) -> None:
@@ -837,7 +849,7 @@ class NetworkSpeedWidget(QWidget):
         if self.is_paused:
             return
         self.gpu_power = power
-        if self.config.get("widget_display_mode") in ["gpu_only", "combined", "side_by_side", "cycle"]:
+        if self._bar_shows(_GPU_BAR_MODES):
             self.update()
 
     def update_ram_info(self, used: float, total: float) -> None:
@@ -847,7 +859,7 @@ class NetworkSpeedWidget(QWidget):
         self.ram_used = used
         self.ram_total = total
         self._refresh_hover_hardware()
-        if self.config.get("widget_display_mode") in ["cpu_only", "combined", "side_by_side", "cycle"]:
+        if self._bar_shows(_CPU_BAR_MODES):
             self.update()
 
     def update_vram_info(self, used: float, total: float) -> None:
@@ -856,7 +868,7 @@ class NetworkSpeedWidget(QWidget):
             return
         self.vram_used = used
         self.vram_total = total if total >= 0 else None
-        if self.config.get("widget_display_mode") in ["gpu_only", "combined", "side_by_side", "cycle"]:
+        if self._bar_shows(_GPU_BAR_MODES):
             self.update()
 
     def _rotate_cycle(self) -> None:
@@ -1262,7 +1274,13 @@ class NetworkSpeedWidget(QWidget):
     def _hover_hardware_wanted(self) -> bool:
         """The hover card's hardware section has its own gate: the bar hides enabled hardware (or the
         Wi-Fi identity). Independent of show_usage_on_hover / show_hover_tips - turning the usage card
-        off must not make CPU/GPU/memory unreachable on a side taskbar."""
+        off must not make CPU/GPU/memory unreachable on a side taskbar.
+
+        "Show hardware in the hover card" (hardware_in_hover_card) opens the same gate on EVERY edge:
+        the widget then paints network-only (helpers.effective_display_mode), and the card is where
+        the enabled CPU/GPU/memory live."""
+        if hardware_in_hover_card_active(self.config):
+            return True
         fit = self._side_bar_fit()
         return bool(fit is not None and (fit.hides_hardware or fit.hides_identity))
 
@@ -1271,12 +1289,18 @@ class NetworkSpeedWidget(QWidget):
         cfg = self.config
         hw: Dict[str, Any] = {}
         fit = self._side_bar_fit()
-        if fit is not None and fit.hides_hardware:
+        in_card = hardware_in_hover_card_active(cfg)
+        if in_card or (fit is not None and fit.hides_hardware):
             # Only what this display mode shows on the widget: cpu_only never lists the GPU/VRAM.
+            # With the hover-card switch on, the user's OWN Display Mode decides (the widget paints
+            # network_only then): side_by_side keeps its order and "None" slots, network_only and
+            # Auto-Cycle list every enabled monitor.
             from netspeedtray.utils.widget_paint import side_hardware_stats
             from netspeedtray.utils.widget_renderer import RenderConfig
             rc = RenderConfig.from_dict(cfg)
-            stats = side_hardware_stats(rc, rc.widget_display_mode)
+            mode = (str(cfg.get("widget_display_mode", "network_only") or "network_only") if in_card
+                    else rc.widget_display_mode)
+            stats = side_hardware_stats(rc, mode)
             temps = bool(cfg.get("show_hardware_temps", False))
             power = bool(cfg.get("show_hardware_power", False))
             for key, usage, temp, watts in (("cpu", self.cpu_usage, self.cpu_temp, self.cpu_power),
@@ -1396,7 +1420,7 @@ class NetworkSpeedWidget(QWidget):
         timer is restarted so the metric the user lands on stays put for a full
         interval. In every other display mode the scroll is passed through untouched.
         """
-        if self.config.get("widget_display_mode") != "cycle":
+        if effective_display_mode(self.config) != "cycle":
             super().wheelEvent(event)
             return
         delta = event.angleDelta().y()
