@@ -61,37 +61,23 @@ logger = logging.getLogger("NetSpeedTray.WidgetRenderer")
 
 
 def trend_window(num_points: int) -> int:
-    """Smoothing window (in samples) for the Trend mini graph: a fixed fraction of the samples on
-    screen, so the curve is equally calm at any timespan, at least TREND_MIN_WINDOW."""
+    """Smoothing window (in samples) for the Trend mini graph's interior: a fixed fraction of the
+    samples on screen, so the curve is equally calm at any timespan, at least TREND_MIN_WINDOW. The
+    right edge uses the short TREND_EDGE_WINDOW instead (see trend_smooth)."""
     r = constants.renderer
     return max(r.TREND_MIN_WINDOW, int(round(num_points * r.TREND_WINDOW_FRACTION)))
 
 
-def trend_smooth(values: List[float], window: int) -> List[float]:
-    """Smooth an evenly spaced series for the Trend mini graph: a centred Gaussian moving average,
-    with a slope-damped local-linear fit where the window runs off the ends.
+def _gaussian_local_linear(y, window: int):
+    """The smoother behind trend_smooth for ONE window: centred Gaussian in the interior, slope-damped
+    local-linear fit where the window runs off the ends. Returns a numpy array."""
+    import numpy as np
 
-    Interior: a centred Gaussian average (sigma = window / 4, cut at +-2 sigma). Centred, so a burst
-    stays where it happened instead of sliding right and smearing the way a trailing EMA does.
-
-    Edges: the right edge is "now", where the eye reads, and has no future samples. A plain truncated
-    average there lags (a step 2 s old reached 75% of its level at the 3 min default); a full local-
-    linear fit has no lag but overshoots (115%) and wags with the per-second noise (77% of the raw
-    noise, vs 35% in the interior). Damping the fitted slope (TREND_EDGE_SLOPE_DAMPING, a ridge on
-    the slope term) keeps most of the catch-up (87% after 2 s, 96% after 3 s) with no overshoot and
-    nearly the truncated average's calm (52% of the raw noise). In the interior the slope term is
-    exactly zero (symmetric weights), so the damping changes nothing there.
-
-    Five numpy convolutions, O(n * window): well under a millisecond for 1,800 samples, and only
-    when the history changes (the caller caches the result with its polyline)."""
-    import numpy as np   # lazy, like calculate_monotone_cubic_interpolation: only with the graph on
-
-    y = np.asarray(values, dtype=float)
     n = len(y)
     # The kernel must not be longer than the data ('same' convolution keeps len(y) only then).
     half = min(int(window) // 2, (n - 1) // 2)
     if half < 1:
-        return y.tolist()
+        return y.copy()
     d = np.arange(-half, half + 1, dtype=float)
     sigma = max(half / 2.0, 0.5)
     g = np.exp(-0.5 * (d / sigma) ** 2)
@@ -104,7 +90,62 @@ def trend_smooth(values: List[float], window: int) -> List[float]:
     # Weighted second moment plus the ridge, scaled to the full kernel's own second moment.
     s2 = corr(ones, g * d * d) + constants.renderer.TREND_EDGE_SLOPE_DAMPING * float((g * d * d).sum())
     t0, t1 = corr(y, g), corr(y, g * d)
-    return ((s2 * t0 - s1 * t1) / (s0 * s2 - s1 * s1)).tolist()
+    return (s2 * t0 - s1 * t1) / (s0 * s2 - s1 * s1)
+
+
+def trend_smooth(values: List[float], window: int, edge_window: Optional[int] = None) -> List[float]:
+    """Smooth an evenly spaced series for the Trend mini graph: a centred Gaussian moving average,
+    with a slope-damped local-linear fit where the window runs off the ends, and a short window at
+    the right edge.
+
+    Interior: a centred Gaussian average (sigma = window / 4, cut at +-2 sigma). Centred, so a burst
+    stays where it happened instead of sliding right and smearing the way a trailing EMA does.
+
+    Ends: there are no samples past them. A plain truncated average lags there (a step 2 s old reached
+    75% of its level at the 3 min default); a full local-linear fit has no lag but overshoots (115%)
+    and wags with the per-second noise (77% of the raw noise, vs 35% in the interior). Damping the
+    fitted slope (TREND_EDGE_SLOPE_DAMPING, a ridge on the slope term) keeps most of the catch-up (87%
+    after 2 s, 96% after 3 s) with no overshoot and nearly the truncated average's calm (52% of the
+    raw noise). In the interior the slope term is exactly zero (symmetric weights).
+
+    Right edge = "now": its lag must not grow with the timespan, or the line still shows half a
+    finished download while the text beside it reads 0 (a 6% window is 108 samples on 30 min). So the
+    newest half-window blends linearly from the interior smoothing into a fixed short window
+    (``edge_window``, default TREND_EDGE_WINDOW samples): after a drop to 0 the last point is near 0
+    within ~5 samples at every timespan. Long timespans stay calm where it matters - many samples
+    share one pixel there.
+
+    A few numpy convolutions, O(n * window): under a millisecond for 1,800 samples, and only when
+    the history changes (the caller caches the result with its polyline)."""
+    import numpy as np   # lazy, like calculate_monotone_cubic_interpolation: only with the graph on
+
+    y = np.asarray(values, dtype=float)
+    n = len(y)
+    out = _gaussian_local_linear(y, window)
+    edge = constants.renderer.TREND_EDGE_WINDOW if edge_window is None else int(edge_window)
+    blend = min(int(window) // 2, n - 1)
+    if edge < window and blend > 0:
+        short = _gaussian_local_linear(y, edge)
+        k = np.arange(n - 1, -1, -1, dtype=float)          # samples back from "now"
+        w = np.clip(1.0 - k / blend, 0.0, 1.0)              # 1 at "now", 0 a half-window back
+        out = (1.0 - w) * out + w * short
+    return out.tolist()
+
+
+def trend_scale_values(smoothed: List[float]) -> List[float]:
+    """What the Trend auto-fit sizes the axis to: the smoothed series, with its newest half edge
+    window (TREND_EDGE_WINDOW // 2 samples) stood in for by its MEAN.
+
+    At "now" a lone 1 s spike and the first second of a sustained burst look the same, and the edge
+    fit draws both high (~40% of the spike's height) before a spike settles to ~16% as it scrolls into
+    the interior. Sizing the axis to that edge peak re-scaled the whole graph by 2.2x over 3 s after
+    every lone spike; the edge mean keeps that within 1.3x. A burst still grows the axis as its level
+    is confirmed (its line rides the top edge meanwhile, capped). The line itself is drawn unchanged."""
+    h = constants.renderer.TREND_EDGE_WINDOW // 2
+    if h < 1 or len(smoothed) <= h + 1:
+        return smoothed
+    edge = smoothed[-h:]
+    return smoothed[:-h] + [sum(edge) / len(edge)]
 
 
 class _SpeedColumns(NamedTuple):
@@ -1347,7 +1388,7 @@ class WidgetRenderer:
                           config: RenderConfig, history: List[Any], is_hardware: bool,
                           hardware_color: str, series: str) -> None:
         """The "trend" mini graph style: each series smoothed (trend_smooth) and drawn as a clean line
-        with a faint fill, instead of every per-second sample. Same axis rules as Detailed - a fixed
+        (no fill unless TREND_FILL_ALPHA is raised), instead of every per-second sample. Same axis rules as Detailed - a fixed
         scale is unchanged; the auto-fit is sized to the SMOOTHED data, so the trend fills the height
         instead of leaving room for spikes it no longer draws. Points are cached like Detailed's."""
         current_hash = hash((history[0], history[-1], len(history), is_hardware))
@@ -1365,13 +1406,19 @@ class WidgetRenderer:
                        if series in ("both", "upload") else [])
                 downs = (trend_smooth([d.download for d in history], window)
                          if series in ("both", "download") else [])
-                max_y, ceiling = self._network_graph_scale(history, config, series, ups, downs)
-            y_cap = max_y if ceiling is not None else math.inf
+                # No outlier clip: smoothing already took out the 1 s spikes it exists for, and on
+                # smoothed data it fired on real (smoothed) peaks and set the axis below them.
+                max_y, ceiling = self._network_graph_scale(history, config, series, trend_scale_values(ups),
+                                                           trend_scale_values(downs), outlier_clip=False)
+            # Always inside the graph: the auto-fit reads the edge damped (trend_scale_values) and a
+            # fixed axis can be outrun, so cap at the top edge either way - never draw off the rect.
+            y_cap = max_y
 
             step_x = graph_rect.width() / (num_points - 1) if num_points > 1 else graph_rect.width()
             right_edge = float(graph_rect.right())
             base_y = float(graph_rect.bottom())
-            h = float(graph_rect.height())
+            # QRect.bottom() is top + height - 1, so span height - 1: max_y lands ON the top row, not above it.
+            h = float(max(1, graph_rect.height() - 1))
             xs = [right_edge - (num_points - 1 - i) * step_x for i in range(num_points)]
             # Fewer samples than pixels (a short history stretched across the graph): interpolate so
             # the line stays a curve, not a chain of segments. Denser than that (the usual case): the
@@ -1449,7 +1496,8 @@ class WidgetRenderer:
     @staticmethod
     def _network_graph_scale(history: List[Any], config: RenderConfig,
                              series: str = "both", uploads: Optional[List[float]] = None,
-                             downloads: Optional[List[float]] = None) -> Tuple[float, Optional[float]]:
+                             downloads: Optional[List[float]] = None,
+                             outlier_clip: bool = True) -> Tuple[float, Optional[float]]:
         """Top of the network mini graph's y-axis in bytes/sec, plus the fixed ceiling it was built from
         (None while auto-scaling).
 
@@ -1473,7 +1521,7 @@ class WidgetRenderer:
             downloads = [d.download for d in history] if series in ("both", "download") else []
         max_speed_val = max(uploads + downloads)
 
-        if len(history) > 10:
+        if outlier_clip and len(history) > 10:
             all_speeds = uploads + downloads
             all_speeds_sorted = sorted(all_speeds)
             percentile_95 = all_speeds_sorted[int(len(all_speeds_sorted) * 0.95)]

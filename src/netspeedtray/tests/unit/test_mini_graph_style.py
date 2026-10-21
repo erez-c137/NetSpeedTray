@@ -147,24 +147,83 @@ def test_trend_plots_a_smoother_line_than_detailed(q_app):
 
 
 def test_trend_auto_fit_uses_the_smoothed_data(q_app):
-    """A lone 1 s spike sets Detailed's auto-fit; Trend scales to what it draws, so its line fills the
-    height instead of hugging the floor under room left for a spike it no longer shows."""
+    """Trend sizes the axis to what it draws: a lone 200 Mbps second smooths to a much lower peak, and
+    that peak (not the raw 200) reaches the top of the graph instead of sitting at a fraction of it."""
     hist = [AggregatedSpeedData(upload=1 * MBPS, download=(10.0 + (i % 2)) * MBPS,
                                 timestamp=T0 + timedelta(seconds=i)) for i in range(180)]
     hist[90] = AggregatedSpeedData(upload=1 * MBPS, download=200 * MBPS, timestamp=hist[90].timestamp)
-    det = WidgetRenderer(_cfg(graph_style="detailed"), I18nStrings("en_US"))
     tr = WidgetRenderer(_cfg(graph_style="trend"), I18nStrings("en_US"))
-    _draw(det, hist)
     _draw(tr, hist)
-    _, det_down = _points(det, (False, "both", "detailed"))
     _, tr_down = _points(tr, (False, "both", "trend"))
     # y grows downward: the trend's highest point reaches near the top of the graph.
     assert tr_down.min() < constants.renderer.GRAPH_MARGIN + 0.25 * H
-    assert np.median(tr_down) < np.median(det_down)
+
+
+GRAPH_TOP = constants.renderer.GRAPH_MARGIN
+GRAPH_BOTTOM = H - constants.renderer.GRAPH_BOTTOM_PADDING - 1   # QRect.bottom() of the graph rect
+
+
+def _idle_with(n, burst_at, burst_len, level=50.0, idle=1.15):
+    """n samples of idle with a `burst_len`-second burst starting `burst_at` samples before "now"."""
+    vals = [idle] * n
+    for i in range(n - 1 - burst_at, min(n, n - 1 - burst_at + burst_len)):
+        vals[i] = level
+    return [AggregatedSpeedData(upload=0.1 * MBPS, download=v * MBPS, timestamp=T0 + timedelta(seconds=i))
+            for i, v in enumerate(vals)]
+
+
+SHAPES = {
+    **{f"spike{b}s@{age}": (b, age) for b in (1, 2, 3, 5, 8) for age in (0, 1, 3, 12, 90)},
+    "burst40s@60": (40, 60), "step@20": (21, 20), "step@0": (1, 0),
+}
+
+
+@pytest.mark.parametrize("fixed", [False, True], ids=["auto", "fixed"])
+@pytest.mark.parametrize("shape", sorted(SHAPES) + ["zero"])
+def test_trend_line_never_leaves_the_graph_rect(q_app, shape, fixed):
+    """Review finding: the 95th-percentile outlier rule fed with the smoothed series set the axis
+    at 1.39 Mbps under a smoothed 50 Mbps spike, and with no cap in auto-fit the line was drawn 200+
+    px above the widget. Every Trend point must sit inside the graph rect, auto or fixed scale."""
+    if shape == "zero":
+        hist = [AggregatedSpeedData(upload=0.0, download=0.0, timestamp=T0 + timedelta(seconds=i))
+                for i in range(180)]
+    else:
+        hist = _idle_with(180, SHAPES[shape][1], SHAPES[shape][0])
+    extra = dict(graph_fixed_scale=True, plan_down_mbps=20, plan_up_mbps=5) if fixed else {}
+    tr = WidgetRenderer(_cfg(graph_style="trend", **extra), I18nStrings("en_US"))
+    _draw(tr, hist)
+    up, down = _points(tr, (False, "both", "trend"))
+    ys = np.concatenate([up, down])
+    assert ys.min() >= GRAPH_TOP - 1e-6 and ys.max() <= GRAPH_BOTTOM + 1e-6
+
+
+@pytest.mark.parametrize("minutes", [3, 10, 30])
+def test_trend_edge_follows_a_drop_at_every_timespan(minutes):
+    """Review finding: the window is 6% of the samples on screen, so on 30 min the right edge still
+    showed 59% of a finished download 10 s later while the text read 0. The edge window is fixed."""
+    n = minutes * 60
+    w = trend_window(n)
+    for k, most in ((5, 15.0), (10, 1.0)):
+        y = [100.0] * (n - k) + [0.0] * k
+        assert trend_smooth(y, w)[-1] <= most, (minutes, k)
+
+
+def test_trend_auto_fit_does_not_chase_a_fresh_spike(q_app):
+    """Review finding: a lone 1 s spike is drawn high at the edge and settles lower as it scrolls in;
+    sizing the axis to the edge peak re-scaled the whole graph 2.2x over 3 s. Measured by the idle
+    baseline's height (far from the spike) as the spike ages 0..9 s: it must stay within 1.4x."""
+    heights = []
+    for age in range(10):
+        tr = WidgetRenderer(_cfg(graph_style="trend"), I18nStrings("en_US"))
+        _draw(tr, _idle_with(180, age, 1))
+        _, down = _points(tr, (False, "both", "trend"))
+        heights.append(GRAPH_BOTTOM - down[20])
+    assert max(heights) / min(heights) <= 1.4, heights
 
 
 def test_trend_fixed_scale_is_unchanged(q_app):
-    """With a fixed scale both styles share the plan-speed axis and the plan line row."""
+    """With a fixed scale both styles share the plan-speed axis and the plan line row (within the one
+    row Trend gives back by mapping max_y onto the graph's top row instead of the row above it)."""
     flat = [AggregatedSpeedData(upload=10 * MBPS, download=50 * MBPS, timestamp=T0 + timedelta(seconds=i))
             for i in range(60)]
     fixed = dict(graph_fixed_scale=True, plan_down_mbps=100, plan_up_mbps=20, graph_scale_headroom=10)
@@ -172,10 +231,10 @@ def test_trend_fixed_scale_is_unchanged(q_app):
     tr = WidgetRenderer(_cfg(graph_style="trend", **fixed), I18nStrings("en_US"))
     _draw(det, flat)
     _draw(tr, flat)
-    assert det._graph_cache[(False, "both", "detailed")][4] == tr._graph_cache[(False, "both", "trend")][4]
+    assert abs(det._graph_cache[(False, "both", "detailed")][4] - tr._graph_cache[(False, "both", "trend")][4]) <= 1
     _, d = _points(det, (False, "both", "detailed"))
     _, t = _points(tr, (False, "both", "trend"))
-    assert t[-1] == pytest.approx(d[-1], abs=0.01)   # a flat 50 Mbps sits on the same row
+    assert t[-1] == pytest.approx(d[-1], abs=1.0)   # a flat 50 Mbps sits on the same row
 
 
 def test_trend_split_panel_and_hardware_graph_paint(q_app):

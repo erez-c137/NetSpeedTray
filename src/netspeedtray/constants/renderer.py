@@ -38,6 +38,9 @@ class RendererConstants:
     # 1 s polls = 11 s; of a 30 min window = 108 s. See widget_renderer.trend_smooth().
     TREND_WINDOW_FRACTION: Final[float] = 0.06
     TREND_MIN_WINDOW: Final[int] = 3
+    # Window at the right edge ("now"), in samples: fixed, so the newest point's lag does not grow with
+    # the timespan (11 = the 3 min default's own window; ~11 s at 1 s polls).
+    TREND_EDGE_WINDOW: Final[int] = 11
     # Ridge on the fitted slope at the series' ends (0 = full local-linear, large = plain truncated
     # average): trades the edge's lag against its per-second wag. Numbers in trend_smooth's docstring.
     TREND_EDGE_SLOPE_DAMPING: Final[float] = 0.5
