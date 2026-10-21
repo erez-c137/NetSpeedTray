@@ -646,5 +646,20 @@ def calculate_monotone_cubic_interpolation(x_coords: List[float], y_coords: List
     
     interp_x.append(x[-1])
     interp_y.append(y[-1])
-    
+
     return interp_x, interp_y
+
+
+def reveal_in_explorer(path: str) -> None:
+    """Open File Explorer on the folder holding ``path``, with the file selected. Never raises.
+
+    Explorer is launched by ABSOLUTE path (it lives in the Windows dir, not System32). A bare
+    "explorer" lets CreateProcess search the current directory first, and the portable build chdir's
+    into its own - user/attacker-writable - folder, so a planted explorer.exe could run. Same
+    CWD-hijack hardening the codebase already applies to nvidia-smi (monitor_thread.py)."""
+    try:
+        import subprocess
+        explorer = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "explorer.exe")
+        subprocess.Popen([explorer, "/select,", os.path.normpath(str(path))])
+    except Exception as e:
+        logging.getLogger("NetSpeedTray.helpers").debug("reveal_in_explorer failed: %s", e)

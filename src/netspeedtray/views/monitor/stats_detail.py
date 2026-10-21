@@ -22,7 +22,6 @@ from __future__ import annotations
 import logging
 import os
 import re
-import subprocess
 from datetime import datetime
 from functools import partial
 from typing import Any, Dict, List, Optional, Tuple
@@ -37,7 +36,7 @@ from PyQt6.QtWidgets import (
 from netspeedtray import constants
 from netspeedtray.utils import styles as su
 from netspeedtray.constants.styles import styles as tokens
-from netspeedtray.utils.helpers import format_speed, get_machine_id, format_duration_short
+from netspeedtray.utils.helpers import format_speed, get_machine_id, format_duration_short, reveal_in_explorer
 from netspeedtray.utils.timer_utils import resolve_poll_interval_seconds
 from netspeedtray.utils import summaries as S
 from netspeedtray.utils import stats_exporter
@@ -91,15 +90,7 @@ def run_interactive_export(parent, widget_state, start: datetime, end: datetime,
     box.addButton(QMessageBox.StandardButton.Close)
     box.exec()
     if box.clickedButton() is open_btn:
-        try:
-            # Launch explorer by ABSOLUTE path (it lives in the Windows dir, not System32). A bare
-            # "explorer" lets CreateProcess search the current directory first, and the portable build
-            # chdir's into its own - user/attacker-writable - folder, so a planted explorer.exe could run.
-            # Same CWD-hijack hardening the codebase already applies to nvidia-smi (monitor_thread.py).
-            explorer = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "explorer.exe")
-            subprocess.Popen([explorer, "/select,", os.path.normpath(zip_path)])
-        except Exception:
-            pass
+        reveal_in_explorer(zip_path)   # absolute-path explorer (CWD-hijack hardening), never raises
 
 
 def _summarize(ws, key: str, kind: str, start: datetime, end: datetime, poll: float, logger):
