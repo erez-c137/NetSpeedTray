@@ -489,13 +489,11 @@ class NetworkSpeedWidget(QWidget):
         QTimer.singleShot(1200, self._maybe_show_welcome)
 
     def _maybe_show_welcome(self) -> None:
-        """First-run onboarding. A brand-new install gets the calm 'unfold' flyout that
-        points at the features most users never find; an upgrader gets the one-time 2.0
-        welcome dialog. The two gates are mutually exclusive - they never both fire."""
-        # Brand-new install: the unfold flyout is DISABLED for this release - its only action opens the
-        # Monitor, so there's no real guided tour to justify an interrupting pop-up yet (re-enable once
-        # there's an actual walkthrough; _show_unfold_flyout() is kept for that). We still advance the
-        # first-run flags so nothing pops later and the upgrade dialog stays correctly suppressed.
+        """First-run onboarding. An upgrader gets the one-time 2.0 welcome dialog; a brand-new install
+        gets no pop-up (the hover card's gesture hint is its onboarding)."""
+        # Brand-new install: no interrupting pop-up until there's a real guided tour (the old 'unfold'
+        # flyout only opened the Monitor and was removed in 2.2). We still advance the first-run flags
+        # so nothing pops later and the upgrade dialog stays correctly suppressed.
         if self.config.get("first_run_ever", True):
             self.config["first_run_ever"] = False
             self.config["first_run_v2_seen"] = True  # a new 2.0 user has no "before"
@@ -518,21 +516,6 @@ class NetworkSpeedWidget(QWidget):
         # Mark seen (even if the dialog errored) so it appears at most once.
         self.config["first_run_v2_seen"] = True
         self.update_config({"first_run_v2_seen": True})
-
-    def _show_unfold_flyout(self) -> None:
-        """A one-time calm callout near the widget pointing at the hidden features."""
-        try:
-            from netspeedtray.views.flyout import Flyout
-            self._unfold_flyout = Flyout(
-                self.i18n.UNFOLD_FLYOUT_TITLE,
-                self.i18n.UNFOLD_FLYOUT_BODY,
-                action_text=self.i18n.SHOW_ME_AROUND_LABEL,
-            )
-            self._unfold_flyout.action_clicked.connect(self.open_monitor_window)
-            geo = self.frameGeometry()
-            self._unfold_flyout.show_at(QPoint(geo.left(), geo.top()))
-        except Exception as e:
-            self.logger.error(f"Error showing unfold flyout: {e}", exc_info=True)
 
     def _on_latency(self, sample) -> None:
         """A LatencySample arrived (main thread, queued from the probe thread). Update the live
@@ -740,20 +723,6 @@ class NetworkSpeedWidget(QWidget):
             self._usage_alert_flyout.show_at(QPoint(geo.left(), geo.top()))
         except Exception as e:
             self.logger.error(f"Error showing usage alert: {e}", exc_info=True)
-
-    def open_data_cap_dialog(self) -> None:
-        """Open the data-cap settings dialog and apply any changes."""
-        try:
-            from netspeedtray.views.datacap_dialog import DataCapDialog
-            up, down = self.widget_state.get_usage_this_period()
-            cnt = self.config.get("data_cap_count", "total")
-            used = down if cnt == "download" else up if cnt == "upload" else (up + down)
-            dlg = DataCapDialog(self.config, used_bytes=used, parent=self, i18n=self.i18n)
-            if dlg.exec():
-                self.update_config(dlg.get_values())
-        except Exception as e:
-            self.logger.error(f"Error opening data cap dialog: {e}", exc_info=True)
-
 
     def pause(self) -> None:
         """Freeze the live readout. The monitor keeps recording history in the background; only
