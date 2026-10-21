@@ -239,7 +239,9 @@ class UsageOdometerConstants:
     # A stored billing period starting more than this many days after today cannot be real: the clock
     # ran ahead for a poll and advanced the forward-only period key (WidgetState._maybe_reanchor re-keys
     # it). Small enough to catch any clock that crossed a reset day ahead; large enough that a clock a
-    # little slow at a boundary (time-zone change, NTP correction) never re-keys.
+    # little slow at a boundary (time-zone change, NTP correction) never re-keys. Accepted cost: a clock
+    # ahead by less than this across a reset day rolls the period over up to that much early (the
+    # bytes of those hours count toward the new period); the period key then simply stays correct.
     FUTURE_PERIOD_TOLERANCE_DAYS: Final[int] = 2
 
 

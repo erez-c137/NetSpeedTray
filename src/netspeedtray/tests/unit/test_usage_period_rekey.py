@@ -1,16 +1,20 @@
 """
-The odometer's period key under a reset-day change and a wall clock that ran ahead (2.2 RC checkup,
-F1 + F2; harnesses h3_reset_day_change / h2_odometer_future_clock).
+The odometer's period key under a reset-day change and a wall clock that was wrong (2.2 RC checkup F1
++ F2 and their review B1 / S1 / S2 / S6 / L1; harnesses h2, h3, r1, r5).
 
 F1: the stored period key only moved forward. After the data-cap reset day changed, the key computed
 from the NEW day could be older than the stored one (15 -> 10 on Oct 21: stored 2026-10-15, computed
 2026-10-10), so "the window began in an already-closed period" fired on every poll and nothing counted
-toward the cap: "used this period" froze. A reset-day change is now an explicit re-key, seeded from the
-metered adapters' recorded history where it can be.
+toward the cap: "used this period" froze. A reset-day change is now an explicit re-key: the odometer's
+own count, adjusted only by what recorded history can justify (a strict read - a failed one is never a
+0; history may raise the count only where it meters exactly the odometer's adapters), and a toggle back
+restores the exact anchor.
 
 F2: one poll with the clock ahead advanced the stored key into the future and the period then never
-reset until that date. A stored period start more than two days after today is impossible: re-key.
-Real WidgetState code throughout; only ``date`` (and, for F2 tests, nothing else) is patched.
+reset until that date. A stored period starting days from now is re-keyed - but only with evidence the
+clock is right NOW (B1: the same picture arises with the clock BEHIND, and re-keying then wiped the
+period once the clock was corrected), and a re-key the next rollover proves wrong is undone.
+Real WidgetState code throughout; only ``date`` is patched.
 """
 import logging
 import time
@@ -42,24 +46,33 @@ def _fake_date():
 
 
 class _Reader:
-    """Recorded history: ``down_since[start date]`` bytes down (and a tenth of that up) since it."""
-    def __init__(self, down_since):
-        self.down_since = down_since
+    """Recorded history: ``down_since[start date]`` GB down since that start (a tenth of it up);
+    ``fail``: every strict read fails; ``stamp``: the writer's clock_trusted_ts."""
+    def __init__(self, down_since=None, fail=False, stamp=None):
+        self.down_since, self.fail, self.stamp = down_since or {}, fail, stamp
         self.calls = []
 
-    def metered_volume(self, start, end, scope, poll):
+    def metered_volume_strict(self, start, end, scope):
         self.calls.append((start, scope))
-        d = float(self.down_since.get(start.date(), 0.0))
+        if self.fail:
+            return None
+        d = float(self.down_since.get(start.date(), 0.0)) * GB
         return VolumeResult(d / 10, d, d / 10, d, False)
 
+    def interface_names(self):
+        return ["Ethernet"]
 
-def _state(reset_day, key, reader=None, interface_mode="auto"):
+    def clock_trusted_ts(self):
+        return self.stamp
+
+
+def _state(reset_day, key, reader=None, interface_mode="auto", used=0.0, lifetime=500.0):
     s = types.SimpleNamespace()
-    s.config = {"data_cap_reset_day": reset_day, "interface_mode": interface_mode}
+    s.config = {"data_cap_reset_day": reset_day, "interface_mode": interface_mode, "excluded_interfaces": []}
     s.db_worker = MagicMock()
     s.logger = logging.getLogger("test.rekey")
-    s._usage = {"cumulative_up": 0.0, "cumulative_down": 0.0, "anchor_up": 0.0, "anchor_down": 0.0,
-                "period_key": key}
+    s._usage = {"cumulative_up": lifetime * GB, "cumulative_down": lifetime * GB,
+                "anchor_up": lifetime * GB, "anchor_down": (lifetime - used) * GB, "period_key": key}
     s._usage_loaded = True
     s._usage_last_persist = time.time()
     s._usage_live_counters = s._usage_live_sampled_at = s._usage_live_primary = None
@@ -79,7 +92,9 @@ def _poll(s, when, down):
     WidgetState.add_usage_bytes(s, 0.0, down, None, when.timestamp(), when.timestamp() - 1, None)
 
 
-def _used_down(s):
+def _read(s, on=None):
+    if on is not None:
+        FakeDate.today_value = on
     return round(WidgetState.get_usage_this_period(s)[1] / GB, 3)
 
 
@@ -90,15 +105,14 @@ def _used_down(s):
     (1, "2026-10-01", 25, 5, range(5, 25), 10 + 20 * 2),      # 1 -> 25 on the 5th: Sep 25 period
 ])
 def test_cap_keeps_counting_after_a_reset_day_change(old_day, key, new_day, change_on, days, expected):
-    """Was frozen at 10.0 GB (h3). No history read here: the new period contains the old one, so what
-    was already counted is kept (a lower bound) and every later poll counts."""
-    s = _state(old_day, key)
+    """Was frozen at 10.0 GB (h3). No history: the count is kept and every later poll counts."""
+    s = _state(old_day, key, lifetime=0.0)
     _poll(s, datetime(2026, 10, change_on, 8), 10 * GB)
-    assert _used_down(s) == 10
+    assert _read(s) == 10
     s.config["data_cap_reset_day"] = new_day
     for d in days:
         _poll(s, datetime(2026, 10, d, 12), 2 * GB)
-    assert _used_down(s) == expected
+    assert _read(s) == expected
     assert s._usage["period_key"] == WidgetState._compute_period_key(new_day, FakeDate.today_value)
     assert s._usage["cumulative_down"] == expected * GB              # lifetime unchanged by the re-key
 
@@ -109,54 +123,68 @@ def test_alerts_see_the_new_period_key_at_once():
     assert WidgetState.get_usage_period_key(s) == "2026-10-10"
 
 
-def test_later_start_is_seeded_from_history_so_cap_and_this_period_agree():
+def test_later_start_is_seeded_from_history():
     """1 -> 15 on Oct 21: the period now began Oct 15. It used to re-anchor at 'now' (cap 0 GB while
-    'This Period' showed Oct 15-21's traffic); it now reads the metered history since Oct 15."""
-    reader = _Reader({date(2026, 10, 15): 7 * GB})
-    s = _state(1, "2026-10-01", reader)
-    _poll(s, datetime(2026, 10, 21, 8), 30 * GB)                      # 30 GB counted since Oct 1
+    'This Period' showed Oct 15-21); history saw everything the odometer counted, so it is exact."""
+    reader = _Reader({date(2026, 10, 1): 30, date(2026, 10, 15): 7})
+    s = _state(1, "2026-10-01", reader, used=30)
     s.config["data_cap_reset_day"] = 15
-    assert _used_down(s) == 7
+    assert _read(s) == 7
     assert reader.calls[0][0] == datetime(2026, 10, 15)
-    assert reader.calls[0][1] == WidgetState.metered_scope(s.config)  # the cap's adapters only
     _poll(s, datetime(2026, 10, 21, 9), 1 * GB)
-    assert _used_down(s) == 8
+    assert _read(s) == 8
+
+
+def test_later_start_keeps_the_bytes_history_never_saw():
+    """The odometer counted 5 GB more than history since the old start (recovered for a closed app):
+    they stay counted (they may be in the new period) - history alone would read 7."""
+    s = _state(1, "2026-10-01", _Reader({date(2026, 10, 1): 25, date(2026, 10, 15): 7}), used=30)
+    s.config["data_cap_reset_day"] = 15
+    assert _read(s) == 12
 
 
 def test_later_start_never_exceeds_what_the_odometer_counted():
-    reader = _Reader({date(2026, 10, 15): 50 * GB})                   # history says more than the cap saw
-    s = _state(1, "2026-10-01", reader)
-    _poll(s, datetime(2026, 10, 21, 8), 30 * GB)
+    s = _state(1, "2026-10-01", _Reader({date(2026, 10, 1): 60, date(2026, 10, 15): 50}), used=30)
     s.config["data_cap_reset_day"] = 15
-    assert _used_down(s) == 30
+    assert _read(s) == 30
 
 
-def test_later_start_without_history_counts_from_now():
-    s = _state(1, "2026-10-01")                                        # no history reader at all
-    _poll(s, datetime(2026, 10, 21, 8), 30 * GB)
+@pytest.mark.parametrize("reader", [_Reader(fail=True), None])
+def test_later_start_with_unusable_history_keeps_the_count(reader):
+    """S1 / r5 case 1: the v8 reader returns zeros on any error; the re-key took that as "nothing moved
+    since the new start" and wrote 0 GB. A failed or missing read now keeps the count."""
+    s = _state(10, "2026-10-10", reader, used=30)
     s.config["data_cap_reset_day"] = 15
-    assert _used_down(s) == 0
-    _poll(s, datetime(2026, 10, 21, 9), 1 * GB)
-    assert _used_down(s) == 1
+    assert _read(s) == 30
 
 
-def test_earlier_start_takes_history_when_it_holds_more():
-    """15 -> 10 on Oct 21: the period now began Oct 10 and holds Oct 10-14 too."""
-    reader = _Reader({date(2026, 10, 10): 25 * GB})
-    s = _state(15, "2026-10-15", reader)
-    s._usage.update(cumulative_up=500 * GB, cumulative_down=500 * GB, anchor_up=500 * GB,
-                    anchor_down=500 * GB)                             # a lifetime from earlier periods
-    _poll(s, datetime(2026, 10, 21, 8), 10 * GB)
+def test_earlier_start_adds_the_history_between_the_starts_when_it_is_exact():
+    """15 -> 10 on Oct 21, all_physical mode (history meters exactly the odometer's adapters): the
+    period now also holds Oct 10-14 = 24 - 9 GB of history."""
+    reader = _Reader({date(2026, 10, 10): 24, date(2026, 10, 15): 9})
+    s = _state(15, "2026-10-15", reader, interface_mode="all_physical", used=10)
     s.config["data_cap_reset_day"] = 10
-    assert _used_down(s) == 25
+    assert _read(s) == 10 + 15
 
 
-def test_earlier_start_never_drops_below_what_was_counted():
-    reader = _Reader({date(2026, 10, 10): 4 * GB})                    # history missed recovered bytes
-    s = _state(15, "2026-10-15", reader)
-    _poll(s, datetime(2026, 10, 21, 8), 10 * GB)
+def test_earlier_start_in_auto_mode_never_raises_the_count():
+    """S2 / r5 case 3: auto meters ONE routing adapter; history (every physical adapter - a docked
+    laptop's Wi-Fi LAN traffic too) cannot raise the cap above the odometer: it read 55 vs ~33."""
+    reader = _Reader({date(2026, 10, 5): 55, date(2026, 10, 10): 50})
+    s = _state(10, "2026-10-10", reader, interface_mode="auto", used=30)
+    s.config["data_cap_reset_day"] = 5
+    assert _read(s) == 30
+
+
+def test_toggling_the_reset_day_back_restores_the_count():
+    """L1 / r5 case 2: 10 -> 15 -> 10 lost the 5 GB history never saw (30 -> 13.6 -> 25)."""
+    per_day = {date(2026, 10, d): (21 - d) * 25 / 11 for d in range(1, 22)}
+    s = _state(10, "2026-10-10", _Reader(per_day), used=30)
+    s.config["data_cap_reset_day"] = 15
+    first = _read(s)
+    assert first < 30
     s.config["data_cap_reset_day"] = 10
-    assert _used_down(s) == 10
+    assert _read(s) == 30
 
 
 def test_reset_day_change_is_persisted_once():
@@ -172,47 +200,52 @@ def test_reset_day_change_is_persisted_once():
 
 def test_clamped_reset_day_is_not_a_change():
     """Reset day 31 is clamped to 28: a stored key on the 28th is the SAME reset day."""
-    s = _state(31, "2026-09-28")
+    s = _state(31, "2026-09-28", lifetime=0.0)
     _poll(s, datetime(2026, 10, 21, 8), 3 * GB)
     _poll(s, datetime(2026, 10, 21, 9), 3 * GB)
-    assert _used_down(s) == 6 and s._usage["period_key"] == "2026-09-28"
+    assert _read(s) == 6 and s._usage["period_key"] == "2026-09-28"
 
 
-# --- F2: the h2 scenario (a clock briefly AHEAD) ------------------------------------------------
+# --- F2: a clock that was AHEAD (h2) ---------------------------------------------------------------
 
 def test_one_poll_with_the_clock_ahead_does_not_freeze_the_period():
-    """h2: was stuck at period 2027-02-15 and 1.0 GB until March 2027."""
-    s = _state(15, "2026-10-15")
-    s._usage["cumulative_down"] = 10 * GB
+    """h2: was stuck at period 2027-02-15 and 1.0 GB until March 2027. This session saw the jump, so
+    the period gets its pre-jump anchor back: nothing is lost."""
+    s = _state(15, "2026-10-15", lifetime=10.0, used=10)
     _poll(s, datetime(2026, 10, 21, 9), 1 * GB)
-    assert _used_down(s) == 11
+    assert _read(s) == 11
     _poll(s, datetime(2027, 3, 2, 9), 1 * GB)                         # one poll, clock ahead
     assert s._usage["period_key"] == "2027-02-15"
     for d in range(21, 32):                                            # clock corrected
         _poll(s, datetime(2026, 10, d, 12), 5 * GB)
     assert s._usage["period_key"] == "2026-10-15"
-    # This session saw the jump, so the period gets its pre-jump anchor back: nothing is lost.
-    assert _used_down(s) == 11 + 1 + 55
+    assert _read(s) == 11 + 1 + 55
     for d in range(1, 30):
         _poll(s, datetime(2026, 11, d, 12), 5 * GB)
     assert s._usage["period_key"] == "2026-11-15"                     # it rolls over again on time
-    assert _used_down(s) == 15 * 5                                     # Nov 15..29
+    assert _read(s) == 15 * 5
 
 
-def test_future_key_from_an_earlier_session_rekeys_without_moving_the_anchor():
-    """Persisted by a previous session: no pre-jump anchor is known, so the count since the jump
-    stands (never more than was counted), and the period counts on from there."""
-    s = _state(15, "2027-02-15")
-    s._usage.update(cumulative_down=40 * GB, anchor_down=37 * GB)
-    _poll(s, datetime(2026, 10, 21, 12), 2 * GB)
-    assert s._usage["period_key"] == "2026-10-15"
-    assert _used_down(s) == 5
-    _poll(s, datetime(2026, 10, 22, 12), 2 * GB)
-    assert _used_down(s) == 7
+def test_future_key_from_an_earlier_session_needs_the_trusted_stamp():
+    """Persisted by a previous session: without evidence the clock is right now, nothing changes."""
+    s = _state(15, "2027-02-15", used=3)
+    assert _read(s, date(2026, 10, 21)) == 3 and s._usage["period_key"] == "2027-02-15"
+    s = _state(15, "2027-02-15", _Reader(stamp=int(time.time())), used=3)
+    assert _read(s) == 3 and s._usage["period_key"] == "2026-10-15"
+
+
+def test_future_key_rekey_is_raised_to_history_where_it_is_exact():
+    """S6: the bytes before the jump (a previous session) come back from history - only where history
+    meters exactly what the odometer does."""
+    stamp = int(time.time())
+    s = _state(15, "2027-02-15", _Reader({date(2026, 10, 15): 9}, stamp=stamp), interface_mode="selected", used=3)
+    assert _read(s) == 9
+    s = _state(15, "2027-02-15", _Reader({date(2026, 10, 15): 9}, stamp=stamp), interface_mode="auto", used=3)
+    assert _read(s) == 3
 
 
 def test_future_key_is_logged_once(caplog):
-    s = _state(15, "2027-02-15")
+    s = _state(15, "2027-02-15", _Reader(stamp=int(time.time())))
     with caplog.at_level(logging.WARNING, logger="test.rekey"):
         _poll(s, datetime(2026, 10, 21, 12), 1 * GB)
         s._usage["period_key"] = "2027-05-15"
@@ -223,10 +256,40 @@ def test_future_key_is_logged_once(caplog):
 
 @pytest.mark.parametrize("today", [date(2026, 10, 14), date(2026, 10, 13)])
 def test_a_clock_a_little_slow_at_the_boundary_keeps_the_period(today):
-    """Within the tolerance (the period starts tomorrow / in 2 days): a backward clock or time-zone
-    shift must keep the running total, exactly as before."""
-    s = _state(15, "2026-10-15")
+    s = _state(15, "2026-10-15", lifetime=0.0)
     _poll(s, datetime(2026, 10, 15, 9), 3 * GB)
     _poll(s, datetime(today.year, today.month, today.day, 23), 1 * GB)
     assert s._usage["period_key"] == "2026-10-15"
-    assert _used_down(s) == 4
+    assert _read(s) == 4
+
+
+# --- B1: a clock that is BEHIND (r1) -----------------------------------------------------------------
+
+@pytest.mark.parametrize("wrong", [datetime(2009, 1, 1, 0, 5), datetime(2026, 10, 10, 9)])
+def test_a_clock_behind_never_wipes_the_period_once_corrected(wrong):
+    """r1: a dead CMOS battery / a VM snapshot restore. The stored period then looks like it starts in
+    the future; re-keying away and anchoring at the total when NTP corrected the clock left 1.0 GB of
+    31. No evidence the clock is right (no stamp, no jump seen): the period stays."""
+    s = _state(15, "2026-10-15", used=30)
+    _poll(s, wrong, 0.0)
+    assert s._usage["period_key"] == "2026-10-15"
+    _poll(s, datetime(2026, 10, 21, 9, 1), 1 * GB)
+    assert _read(s) == 31
+
+
+def test_a_clock_behind_its_trusted_stamp_does_not_rekey():
+    s = _state(15, "2026-10-15", _Reader(stamp=int(time.time()) + 30 * 86400), used=30)
+    _poll(s, datetime(2026, 10, 10, 9), 0.0)
+    assert s._usage["period_key"] == "2026-10-15"
+
+
+def test_a_rekey_the_next_rollover_proves_wrong_is_undone():
+    """Evidence can be wrong (an old stamp). Re-keyed away from 10-15 on a clock behind; the clock is
+    then corrected and rolls forward onto exactly 10-15 - far sooner than real time could have - so the
+    re-key was wrong and the period's anchor comes back."""
+    s = _state(15, "2026-10-15", _Reader(stamp=0), used=30)
+    _poll(s, datetime(2026, 10, 10, 9), 0.0)
+    assert s._usage["period_key"] == "2026-09-15"                     # re-keyed on the stale evidence
+    _poll(s, datetime(2026, 10, 21, 9, 1), 1 * GB)
+    assert s._usage["period_key"] == "2026-10-15"
+    assert _read(s) == 31

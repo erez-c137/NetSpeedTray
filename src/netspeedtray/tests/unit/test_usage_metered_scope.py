@@ -67,16 +67,50 @@ def test_no_physical_adapter_at_all_counts_every_adapter(tmp_path):
         r.volume(*_win(), None, 1.0).down_bytes
 
 
+class _Classifier:
+    """The controller's classifier, faked: kind() honours exclusions; fallback_eligible() never a VPN."""
+    PHYS = {"Ethernet", "Wi-Fi"}
+
+    def kind(self, name, exclusions=()):
+        from netspeedtray import constants
+        iface = constants.network.interface
+        if any(x.lower() in name.lower() for x in exclusions):
+            return iface.KIND_PSEUDO
+        return iface.KIND_PHYSICAL if name in self.PHYS else iface.KIND_VIRTUAL
+
+    def fallback_eligible(self, name, exclusions=()):
+        return "vpn" not in name.lower() and not any(x.lower() in name.lower() for x in exclusions)
+
+
+NAMES = ["Ethernet", "Wi-Fi", "ProtonVPN", "vEthernet (WSL)"]
+
+
 @pytest.mark.parametrize("config, expected", [
-    ({"interface_mode": "auto"}, MeteredScope(physical_only=True)),
-    ({}, MeteredScope(physical_only=True)),
-    ({"interface_mode": "all_physical"}, MeteredScope(physical_only=True)),
+    ({"interface_mode": "auto", "excluded_interfaces": []}, MeteredScope(names=("Ethernet", "Wi-Fi"))),
+    ({"interface_mode": "all_physical", "excluded_interfaces": []}, MeteredScope(names=("Ethernet", "Wi-Fi"))),
+    ({"interface_mode": "all_physical", "excluded_interfaces": ["wi-fi"]}, MeteredScope(names=("Ethernet",))),
     ({"interface_mode": "selected", "selected_interfaces": ["Wi-Fi"]}, MeteredScope(names=("Wi-Fi",))),
     ({"interface_mode": "all_virtual"}, None),
     ({"interface_mode": "virtual"}, None),
 ])
-def test_scope_follows_the_odometers_interface_mode(config, expected):
-    assert WidgetState.metered_scope(config) == expected
+def test_scope_follows_the_controllers_selection(config, expected):
+    """Same classifier, same exclusions as the controller (S2: history's stored is_physical ignored
+    excluded_interfaces)."""
+    assert WidgetState.metered_scope(config, NAMES, _Classifier()) == expected
+
+
+def test_no_physical_adapter_falls_back_like_the_controller():
+    """The controller's fallback is fallback_eligible (never a known VPN / tunnel), not every adapter."""
+    scope = WidgetState.metered_scope({"interface_mode": "all_physical", "excluded_interfaces": []},
+                                      ["ProtonVPN", "Ethernet 2 (VM)"], type("C", (_Classifier,), {"PHYS": set()})())
+    assert scope == MeteredScope(names=("Ethernet 2 (VM)",))
+
+
+def test_only_auto_mode_is_inexact():
+    assert not WidgetState.metered_scope_is_exact({"interface_mode": "auto"})
+    assert not WidgetState.metered_scope_is_exact({})
+    for mode in ("all_physical", "selected", "all_virtual"):
+        assert WidgetState.metered_scope_is_exact({"interface_mode": mode})
 
 
 class _WS:
@@ -90,11 +124,15 @@ class _WS:
     def get_metered_volume_for_period(self, start, end):
         return VolumeResult(1e9, 10e9, 1e9, 10e9, False)
 
+    def get_usage_this_period(self):
+        return (0.5e9, 9e9)                    # the odometer: what the cap row shows
+
 
 class _W:
     _HOVER_USAGE_TTL_SEC = NetworkSpeedWidget._HOVER_USAGE_TTL_SEC
     _hover_usage_totals = NetworkSpeedWidget._hover_usage_totals
     _usage_billing_period_start = NetworkSpeedWidget._usage_billing_period_start
+    _usage_cap_set = NetworkSpeedWidget._usage_cap_set
 
     def __init__(self):
         self.config = {"data_cap_enabled": True, "data_cap_gb": 100, "data_cap_reset_day": 15}
@@ -107,12 +145,25 @@ class _W:
 def test_hover_usage_rows_count_what_the_cap_counts():
     """The rows the hover card and the Overview usage tile show (both read _hover_usage_totals)."""
     today, period = _W()._hover_usage_totals()
-    assert today == (1e9, 10e9)
-    assert period == (1e9, 10e9)
+    assert today == (1e9, 10e9)                # history, the metered adapters only
+    assert period == (0.5e9, 9e9)              # with a cap set: exactly the cap row's count
 
 
 def test_widget_state_metered_volume_reads_through_the_scope(tmp_path):
     r = _db(tmp_path / "h.db")
-    ws = SimpleNamespace(db_worker=object(), config={"interface_mode": "auto"}, history_reader=r)
+    ws = SimpleNamespace(db_worker=object(), config={"interface_mode": "auto", "excluded_interfaces": []},
+                         history_reader=r)
     v = WidgetState.get_metered_volume_for_period(ws, *_win())
     assert v.down_bytes == 60 * (10_000 + 500)
+
+
+def test_strict_read_returns_none_on_a_failed_read_not_zeros(tmp_path):
+    """S1: the v8 reader turns every error into a zero VolumeResult; a re-key read that as "nothing
+    moved" and wrote 0 GB. The strict read says None instead."""
+    r = _db(tmp_path / "h.db")
+    ok = r.metered_volume_strict(*_win(), MeteredScope(names=("Ethernet",)))
+    assert ok is not None and ok.down_bytes == 60 * 10_000
+    broken = V8HistoryReader(lambda: sqlite3.connect(tmp_path / "missing" / "x.db"), lambda: tmp_path, clock=lambda: NOW)
+    assert broken.metered_volume(*_win(), MeteredScope(names=("Ethernet",)), 1.0).down_bytes == 0.0
+    assert broken.metered_volume_strict(*_win(), MeteredScope(names=("Ethernet",))) is None
+    assert sorted(r.interface_names()) == ["Ethernet", "ProtonVPN", "Wi-Fi"]
