@@ -44,6 +44,7 @@ def test_reorder_hook_is_system_wide_and_filtered_to_the_desktop(handler):
     assert len(calls) == 1
     assert calls[0].kwargs.get("source_hwnd_filter") == 0x10010
     assert calls[0].kwargs.get("hwnd_to_watch", 0) == 0          # process-wide, not per-thread
+    assert calls[0].kwargs.get("skip_own_process") is True       # our own re-seat echoes dropped
     assert handler.reorder_hook is not None
 
 
@@ -176,6 +177,8 @@ def test_guards_skip_the_check_entirely(kwargs):
     NetworkSpeedWidget._recover_if_buried(fake)
     fake.position_manager.is_buried_behind_taskbar.assert_not_called()
     fake.position_manager.reseat_above_taskbar.assert_not_called()
+    # S3 (#327 review): an unverified tick breaks the on-top stretch that retires the backoff.
+    fake.position_manager.note_on_top_unverified.assert_called_once_with()
 
 
 def test_recovery_errors_are_swallowed():
@@ -190,3 +193,94 @@ def test_explorer_restart_resets_the_backoff(monkeypatch):
                                  position_manager=MagicMock())
     NetworkSpeedWidget._recover_taskbar_restarted(fake)
     fake.position_manager.reset_reseat_state.assert_called_once_with()
+
+
+# --- S1/S2 (#327 review): the topmost cadence recovers only through the guarded path ------
+
+
+def _fake_topmost(visible=True, **kw):
+    fake = _fake_widget(visible=visible, **kw)
+    fake._allow_taskbar_created = MagicMock()
+    fake._recover_if_buried = MagicMock()
+    return fake
+
+
+def test_topmost_cadence_recovers_through_the_guarded_path():
+    fake = _fake_topmost()
+    NetworkSpeedWidget._ensure_win32_topmost(fake)
+    fake.position_manager.ensure_topmost.assert_called_once_with()
+    fake._recover_if_buried.assert_called_once_with()
+    fake.position_manager.reseat_above_taskbar.assert_not_called()   # never directly
+
+
+def test_topmost_cadence_with_our_menu_open_does_not_reseat():
+    """The guarded path itself, end to end: a lost-topmost/buried widget with our own context
+    menu open is left alone (the old ensure_topmost elif re-seated regardless)."""
+    fake = _fake_widget(menu=True)
+    fake._allow_taskbar_created = MagicMock()
+    fake._recover_if_buried = lambda: NetworkSpeedWidget._recover_if_buried(fake)
+    NetworkSpeedWidget._ensure_win32_topmost(fake)
+    fake.position_manager.reseat_above_taskbar.assert_not_called()
+
+
+def test_hidden_topmost_cadence_breaks_the_stretch():
+    fake = _fake_topmost(visible=False)
+    NetworkSpeedWidget._ensure_win32_topmost(fake)
+    fake.position_manager.ensure_topmost.assert_not_called()
+    fake.position_manager.note_on_top_unverified.assert_called_once_with()
+
+
+# --- WinEventHook lifecycle: a system-wide hook must always be unhooked -------------------
+
+
+def test_hook_prototypes_are_pointer_sized():
+    import ctypes
+    from ctypes import wintypes
+    from netspeedtray.utils import win_event_hook as weh
+    assert weh._SetWinEventHook.restype is wintypes.HANDLE
+    assert weh._UnhookWinEvent.argtypes == [wintypes.HANDLE]
+    assert ctypes.sizeof(weh._SetWinEventHook.restype) == ctypes.sizeof(ctypes.c_void_p)
+
+
+def test_skip_own_process_flag(q_app):
+    from netspeedtray.utils import win_event_hook as weh
+    assert WinEventHook(EVENT_OBJECT_REORDER)._flags == weh.WINEVENT_OUTOFCONTEXT
+    assert WinEventHook(EVENT_OBJECT_REORDER, skip_own_process=True)._flags ==         weh.WINEVENT_OUTOFCONTEXT | weh.WINEVENT_SKIPOWNPROCESS
+
+
+def test_stop_right_after_start_still_unhooks(q_app):
+    """start() then stop() within milliseconds - before run() published its thread id - used to
+    return early and leak the thread and its SYSTEM-WIDE hook."""
+    import time as _time
+    from netspeedtray.utils import win_event_hook as weh
+    real_peek = weh._PeekMessageW
+
+    def slow_peek(*a):
+        _time.sleep(0.2)            # widen the start-up window stop() lands in
+        return real_peek(*a)
+
+    unhook = MagicMock(return_value=True)
+    with patch.object(weh, "_SetWinEventHook", return_value=0x5150) as sethook,          patch.object(weh, "_UnhookWinEvent", unhook),          patch.object(weh, "_PeekMessageW", side_effect=slow_peek):
+        hook = WinEventHook(EVENT_OBJECT_REORDER)
+        hook.start()
+        hook.stop()                 # lands while run() is still starting up
+        hook.join(3.0)
+    assert not hook.is_alive()
+    sethook.assert_called_once()
+    unhook.assert_called_once_with(0x5150)
+
+
+def test_stop_before_hook_install_never_installs(q_app):
+    from netspeedtray.utils import win_event_hook as weh
+    with patch.object(weh, "_SetWinEventHook", return_value=0x5150) as sethook,          patch.object(weh, "_UnhookWinEvent") as unhook:
+        hook = WinEventHook(EVENT_OBJECT_REORDER)
+        hook._stop_requested = True     # stop() won the race outright
+        hook.run()
+    sethook.assert_not_called()
+    unhook.assert_not_called()
+    assert hook._ready.is_set()
+
+
+def test_stop_on_a_never_started_hook_is_a_noop(q_app):
+    hook = WinEventHook(EVENT_OBJECT_REORDER)
+    hook.stop()                         # must not wait or raise

@@ -485,8 +485,8 @@ class NetworkSpeedWidget(QWidget):
                 # Always re-assert topmost status when visible to prevent falling behind taskbar (#77)
                 self._ensure_win32_topmost()
 
-                # The 1 s safety net behind the event-driven burial recovery (_recover_if_buried).
-                self._recover_if_buried()
+                # (_ensure_win32_topmost also runs _recover_if_buried: the 1 s safety net behind
+                # the event-driven burial recovery.)
 
                 # One-time heads-up if we're sitting over the Win11 Widgets/weather panel (#200).
                 self._maybe_nudge_widgets_overlap(taskbar_info)
@@ -1587,9 +1587,14 @@ class NetworkSpeedWidget(QWidget):
     def _ensure_win32_topmost(self) -> None:
         """Delegates to PositionManager. No-op while hidden (e.g. over a fullscreen app)."""
         if not self.isVisible():
+            pm = getattr(self, "position_manager", None)
+            if pm is not None:
+                pm.note_on_top_unverified()   # hidden time never counts as "held" on top
             return
         self._allow_taskbar_created()
         self.position_manager.ensure_topmost()
+        # Burial / lost-topmost recovery, through the one guarded path (#327 review).
+        self._recover_if_buried()
 
     def _allow_taskbar_created(self) -> None:
         """
@@ -1715,13 +1720,15 @@ class NetworkSpeedWidget(QWidget):
         place over the video stays exactly as it was before this recovery existed.
         """
         try:
-            if not self.isVisible() or self._is_context_menu_visible or self._dragging:
+            pm = getattr(self, "position_manager", None)
+            if pm is None:
                 return
             handler = getattr(self, "system_event_handler", None)
-            if handler is not None and handler.is_fullscreen_active():
+            if (not self.isVisible() or self._is_context_menu_visible or self._dragging
+                    or (handler is not None and handler.is_fullscreen_active())):
+                pm.note_on_top_unverified()   # not a verified on-top tick (backoff stretch)
                 return
-            pm = getattr(self, "position_manager", None)
-            if pm is not None and pm.is_buried_behind_taskbar():
+            if pm.is_buried_behind_taskbar():
                 pm.reseat_above_taskbar()
         except Exception as e:
             self.logger.debug("Burial recovery check failed: %s", e)

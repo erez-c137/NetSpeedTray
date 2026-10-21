@@ -247,13 +247,27 @@ def test_reseat_failure_is_logged_not_raised(caplog):
 # --- ensure_topmost(): style restore goes through the safe seat --------------------------
 
 
-def test_ensure_topmost_restores_lost_topmost_by_seating_above_taskbar():
-    """Owner intact, WS_EX_TOPMOST lost -> seat directly above the taskbar (not top of band)."""
+def test_lost_topmost_is_burial_and_the_safe_seat_restores_it():
+    """Owner intact, WS_EX_TOPMOST lost: the widget is below the topmost taskbar, so the guarded
+    recovery path sees burial and the seat above the taskbar makes it topmost again."""
     with _env([OTHER_TOP, MENU, TB, APP, W], topmost=(TB, MENU, OTHER_TOP)) as (m, z, *_):
-        m.ensure_topmost()
-        assert z.set_calls and z.set_calls[0][:2] == (W, MENU)
+        assert m.is_buried_behind_taskbar() is True
+        assert m.reseat_above_taskbar() is True
+        assert z.set_calls[0][:2] == (W, MENU)
         assert W in z.topmost
         assert z.above(MENU, W) and z.above(W, TB)
+
+
+def test_ensure_topmost_never_reseats_a_lost_topmost_widget_itself(caplog):
+    """S1/S2 (#327 review): ensure_topmost() runs at 1 Hz and on taskbar focus; it must neither
+    re-seat (that bypassed the menu/drag/fullscreen guards) nor log on every call while the
+    re-seat is held back. Recovery belongs to the widget's guarded _recover_if_buried."""
+    with _env([OTHER_TOP, MENU, TB, APP, W], topmost=(TB, MENU, OTHER_TOP)) as (m, z, *_):
+        with caplog.at_level(logging.DEBUG, logger="NetSpeedTray.Core.PositionManager"):
+            for _ in range(5):
+                m.ensure_topmost()
+        assert z.set_calls == []
+        assert not [r for r in caplog.records if "WS_EX_TOPMOST" in r.message]
 
 
 def test_ensure_topmost_leaves_intact_topmost_alone():
@@ -309,10 +323,9 @@ def test_sustained_on_top_stretch_retires_backoff():
     with _env([TB, W]) as (m, z, _w, clock):
         m.reseat_above_taskbar()
         m._reseat_attempts = 5                          # pretend it escalated
-        clock.t += 1
-        m.is_buried_behind_taskbar()
-        clock.t += pm_mod._RESEAT_HEALTHY_S
-        m.is_buried_behind_taskbar()
+        for _ in range(int(pm_mod._RESEAT_HEALTHY_S) + 1):   # observed once a second
+            clock.t += 1
+            m.is_buried_behind_taskbar()
         assert m._reseat_attempts == 0 and not m._last_reseat_ts
         _bury(z)
         clock.t += 0.1
@@ -396,3 +409,55 @@ def test_window_band_none_on_failure_or_zero_hwnd():
     with patch.object(pm_mod, "_GetWindowBandRaw", MagicMock(return_value=0)):
         assert pm_mod._window_band(W) is None
     assert pm_mod._window_band(0) is None
+
+
+# --- S3 (#327 review): unobserved / hidden time never counts as "held on top" -----------
+
+
+def test_hidden_check_breaks_the_on_top_stretch():
+    with _env([TB, W]) as (m, z, _w, clock):
+        m.reseat_above_taskbar()
+        clock.t += 1
+        m.is_buried_behind_taskbar()
+        assert m._on_top_since is not None
+        m._state.widget.isVisible.return_value = False
+        m.is_buried_behind_taskbar()
+        assert m._on_top_since is None
+
+
+def test_hide_show_mid_fight_does_not_retire_the_backoff():
+    """Hidden for longer than the healthy stretch (a fullscreen video, say) with no checks
+    running: the first on-top tick after it must start a NEW stretch, not retire the backoff."""
+    with _env([TB, W]) as (m, z, _w, clock):
+        m.reseat_above_taskbar()
+        m._reseat_attempts = 4
+        clock.t += 1
+        m.is_buried_behind_taskbar()                    # stretch starts
+        clock.t += pm_mod._RESEAT_HEALTHY_S + 30        # unobserved (hidden, no ticks)
+        m.is_buried_behind_taskbar()
+        assert m._reseat_attempts == 4                  # not retired by unobserved time
+
+
+def test_note_on_top_unverified_clears_the_stretch():
+    m = _manager()
+    m._on_top_since = 5.0
+    m.note_on_top_unverified()
+    assert m._on_top_since is None
+
+
+# --- the insert-after window vanishing mid-call ---------------------------------------------
+
+
+def test_insert_after_destroyed_mid_call_is_debug_and_free(caplog):
+    with _env([MENU, TIP, TB, W]) as (m, z, win32, _c):
+        def vanish(*_a):
+            z.order.remove(TIP)
+            raise RuntimeError("invalid window handle")
+        win32.SetWindowPos.side_effect = vanish
+        with caplog.at_level(logging.DEBUG, logger="NetSpeedTray.Core.PositionManager"):
+            assert m.reseat_above_taskbar() is False
+        assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+        assert m._reseat_attempts == 0 and not m._last_reseat_ts   # no backoff charged
+        win32.SetWindowPos.side_effect = z.SetWindowPos
+        assert m.reseat_above_taskbar() is True                    # retry hits the new neighbour
+        assert z.set_calls[-1][:2] == (W, MENU)

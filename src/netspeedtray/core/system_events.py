@@ -165,7 +165,10 @@ class SystemEventHandler(QObject):
             desktop = int(win32gui.GetDesktopWindow() or 0)
             if not desktop:
                 return
-            self.reorder_hook = WinEventHook(EVENT_OBJECT_REORDER, source_hwnd_filter=desktop)
+            # skip_own_process: our own re-seat echoes back as a reorder; dropping it saves a
+            # pointless check (anything our own UI does is still caught by the 1 s tick).
+            self.reorder_hook = WinEventHook(EVENT_OBJECT_REORDER, source_hwnd_filter=desktop,
+                                             skip_own_process=True)
             self.reorder_hook.event_triggered.connect(self._on_zorder_event)
             self.reorder_hook.start()
         except Exception as e:

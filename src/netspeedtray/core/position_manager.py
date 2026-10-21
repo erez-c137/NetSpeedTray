@@ -111,6 +111,10 @@ _RESEAT_BACKOFF_BASE_S = 1.0
 _RESEAT_BACKOFF_MAX_S = 60.0
 _RESEAT_BACKOFF_EXP_CAP = 6
 _RESEAT_HEALTHY_S = 10.0
+# The on-top stretch must be OBSERVED: checks run at least once a second while the widget is
+# shown, so a longer gap between two verified on-top checks (the widget was hidden, or nothing
+# checked) restarts the stretch instead of counting the unobserved time as healthy.
+_ON_TOP_MAX_GAP_S = 3.0
 
 
 # Protocols
@@ -541,6 +545,7 @@ class PositionManager(QObject):
         # Start of the current continuous on-top stretch (is_buried_behind_taskbar);
         # None while we have not verified we are on top. Gates backoff retirement.
         self._on_top_since: Optional[float] = None
+        self._last_on_top_ts: float = 0.0   # last verified on-top check (gap detection)
         # (reason, backoff window) of the last DEBUG-logged deferral - one line per window.
         self._deferral_logged: Optional[tuple] = None
         
@@ -882,15 +887,11 @@ class PositionManager(QObject):
                     hwnd, win32con.HWND_TOPMOST, 0, 0, 0, 0,
                     win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE
                 )
-            elif not (win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE) & win32con.WS_EX_TOPMOST):
-                # Owner link is correct, but the window itself fell out of the topmost
-                # band (Qt can drop WS_EX_TOPMOST across show/flag changes, the same
-                # churn that resets the owner). An owner link to a topmost taskbar does
-                # not pull a normal-band window up, so restore the style bit. This can't
-                # cause the #200 menu clipping: a normal-band window was never above an
-                # open menu to begin with.
-                logger.debug("Widget lost WS_EX_TOPMOST - re-seating it above the taskbar.")
-                self.reseat_above_taskbar()
+            # A widget that fell out of the topmost band (Qt can drop WS_EX_TOPMOST across
+            # show/flag changes) is necessarily BELOW the topmost taskbar, so it is "buried"
+            # in is_buried_behind_taskbar()'s terms and the widget's guarded recovery path
+            # (_recover_if_buried: menu / drag / fullscreen guards, backoff, deferral logging)
+            # restores it with the safe seat. Nothing is re-seated from here (#327 review).
         except Exception as e:
             logger.error("Failed to ensure topmost status: %s", e)
 
@@ -960,19 +961,23 @@ class PositionManager(QObject):
         try:
             widget = self._state.widget
             if not widget.isVisible():
+                self.note_on_top_unverified()
                 return False
             hwnd = int(widget.winId())
             if not hwnd or not win32gui.IsWindow(hwnd):
+                self.note_on_top_unverified()
                 return False
             tb = self._docked_taskbar_hwnd(hwnd)
             if not tb:
+                self.note_on_top_unverified()
                 return False
             above = self._is_above_in_zorder(hwnd, tb)
             if above is None:
+                self.note_on_top_unverified()
                 return False
             if above:
                 now = time.monotonic()
-                if self._on_top_since is None:
+                if self._on_top_since is None or now - self._last_on_top_ts > _ON_TOP_MAX_GAP_S:
                     self._on_top_since = now
                 elif (self._reseat_attempts or self._last_reseat_ts) and \
                         now - self._on_top_since >= _RESEAT_HEALTHY_S:
@@ -980,12 +985,22 @@ class PositionManager(QObject):
                     # recovers at once and logs at INFO again.
                     self.reset_reseat_state()
                     self._on_top_since = now
+                self._last_on_top_ts = now
                 return False
             self._on_top_since = None
             return True
         except Exception as e:
+            self.note_on_top_unverified()
             logger.debug("Buried-behind-taskbar check failed: %s", e)
             return False
+
+    def note_on_top_unverified(self) -> None:
+        """
+        A check that could not confirm the widget is on top (hidden, a fullscreen app, our
+        own menu open, ...) breaks the continuous on-top stretch that retires the backoff -
+        otherwise a hide/show in the middle of a fight would count as "held" (#327 review).
+        """
+        self._on_top_since = None
 
     def reseat_above_taskbar(self) -> bool:
         """
@@ -1032,10 +1047,19 @@ class PositionManager(QObject):
             if prev == hwnd:
                 return False  # already directly above the taskbar
             insert_after = prev if prev else win32con.HWND_TOPMOST
+            try:
+                win32gui.SetWindowPos(hwnd, insert_after, 0, 0, 0, 0, _RESEAT_SWP_FLAGS)
+            except Exception as e:
+                if prev and not win32gui.IsWindow(prev):
+                    # The window above the taskbar (often a transient tooltip) was destroyed
+                    # between GetWindow and SetWindowPos. Benign: no backoff charged, the
+                    # next Z-order event or tick retries against the new neighbour.
+                    logger.debug("Re-seat raced a closing window (%s) - retrying on the next check.", e)
+                    return False
+                raise
             self._last_reseat_ts = now
             self._reseat_attempts = min(self._reseat_attempts + 1, _RESEAT_BACKOFF_EXP_CAP + 1)
             self._deferral_logged = None
-            win32gui.SetWindowPos(hwnd, insert_after, 0, 0, 0, 0, _RESEAT_SWP_FLAGS)
             if self._first_recovery_logged:
                 logger.debug("Widget re-seated above the taskbar (attempt %d).", self._reseat_attempts)
             else:
