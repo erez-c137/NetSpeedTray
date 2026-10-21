@@ -15,7 +15,7 @@ By contract this module imports only Qt + app utils - never matplotlib (it backs
 from __future__ import annotations
 
 import calendar
-from datetime import datetime
+from datetime import date, datetime
 from typing import List, Optional, Tuple
 
 from PyQt6.QtCore import Qt, QPointF, QRectF, pyqtSignal
@@ -431,6 +431,7 @@ class UsageTile(QFrame):
 
         self._today = self._make_row(self._tr("USAGE_TODAY_LABEL", "Today"), c)
         self._month = self._make_row(self._tr("USAGE_THIS_MONTH_LABEL", "This Month"), c)
+        self._month_name = self._month[0].itemAt(0).widget()   # relabelled for a billing period
         self._avgday = self._make_row(self._tr("USAGE_AVG_DAY_LABEL", "Avg / day"), c)
         self._proj = self._make_row(self._tr("USAGE_PROJECTED_LABEL", "Projected"), c)
         for row in (self._today, self._month, self._avgday, self._proj):
@@ -510,9 +511,17 @@ class UsageTile(QFrame):
             f"QProgressBar::chunk {{ background: {chunk}; border-radius: 3px; }}")
 
     def set(self, today: Tuple[float, float], month: Tuple[float, float],
-            cap: Optional[Tuple[float, float, float]], history_note: Optional[str] = None) -> None:
+            cap: Optional[Tuple[float, float, float]], history_note: Optional[str] = None,
+            period_start: Optional[datetime] = None) -> None:
+        """``period_start``: the data-cap billing period's start when ``month`` covers that period
+        (a reset day other than the 1st) instead of the calendar month - the row then reads
+        "This period" and avg/day + projected use the period's days, matching the cap bar."""
+        if not isinstance(period_start, datetime):
+            period_start = None
         self._today[1].setText(self._fmt_pair(today))
         self._month[1].setText(self._fmt_pair(month))
+        self._month_name.setText(self._tr("USAGE_THIS_PERIOD_LABEL", "This period") if period_start
+                                 else self._tr("USAGE_THIS_MONTH_LABEL", "This Month"))
         # D5: the rows are recorded history; when part of it was estimated from speeds saved before
         # 2.2, say so where the eye already is (a tooltip on the rows), never in the headline.
         for row in (self._today, self._month):
@@ -522,6 +531,12 @@ class UsageTile(QFrame):
         now = datetime.now()
         day = max(1, now.day)
         days_in_month = calendar.monthrange(now.year, now.month)[1]
+        if period_start is not None:
+            # The reset day is clamped to 1-28, so the same day next month always exists.
+            nxt = (date(period_start.year + 1, 1, period_start.day) if period_start.month == 12
+                   else date(period_start.year, period_start.month + 1, period_start.day))
+            day = max(1, (now.date() - period_start.date()).days + 1)
+            days_in_month = (nxt - period_start.date()).days
         m_up, m_down = month
         avg = (m_up / day, m_down / day)
         self._avgday[1].setText(self._fmt_pair(avg))

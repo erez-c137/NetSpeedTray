@@ -41,6 +41,7 @@ Other locales (English, German, Spanish) are currently maintained by the project
 > 🆕 **Pending native review for 2.2 (beta.4 polish, see #364):** non-English values are AI-assisted.
 > - `HARDWARE_HISTORY_OFF_MESSAGE` - the note on an empty Monitor → Hardware graph when CPU and GPU monitoring are off (two lines; the page names match your `SETTINGS_WINDOW_TITLE` and `HARDWARE_MONITORING_GROUP`).
 > - `WIDGET_HOVER_TOOLTIP` (rewritten) + `WIDGET_HOVER_DOUBLE_CLICK_HINT` (new) - the first-run hint in the widget's hover card. The old text listed right-click items the menu no longer has. The second line is filled with your `CLICK_ACTION_*_LABEL` for the user's double-click setting - keep `{action}`.
+> - `USAGE_THIS_PERIOD_LABEL` - replaces "This Month" in the hover card and Monitor → Overview when a data cap with a reset day other than the 1st is set (the row then counts the billing period, like the data-cap row under it). Match the style of your `USAGE_THIS_MONTH_LABEL`.
 
 ## How translation works in NetSpeedTray
 

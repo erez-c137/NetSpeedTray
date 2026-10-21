@@ -157,6 +157,7 @@
     "RESUME_MENU_ITEM": "재개(&R)",
     "USAGE_TODAY_LABEL": "오늘",
     "USAGE_THIS_MONTH_LABEL": "이번 달",
+    "USAGE_THIS_PERIOD_LABEL": "이번 기간",
     "EXIT_MENU_ITEM": "종료(&X)",
     "SELECT_FONT_BUTTON": "선택",
     "EXPORT_SUPPORT_BUNDLE_BUTTON": "지원 번들 내보내기",

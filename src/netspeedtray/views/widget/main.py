@@ -8,7 +8,7 @@ import os
 import sys
 import time
 from ctypes import wintypes
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 # --- Third-Party Imports ---
@@ -239,6 +239,7 @@ class NetworkSpeedWidget(QWidget):
         self._hover_card_timer.timeout.connect(self._show_usage_hover_card)
         self._hover_usage_cache: Optional[Tuple[Tuple[float, float], Tuple[float, float]]] = None
         self._hover_usage_cache_ts: float = 0.0
+        self._hover_usage_period_start: Optional[datetime] = None   # set by _hover_usage_totals
 
         self.setVisible(False)
         self.logger.debug("Widget initially hidden to stabilize position and size.")
@@ -1208,8 +1209,11 @@ class NetworkSpeedWidget(QWidget):
             self._hide_usage_hover_card()  # never stack two cards
             note = (self.i18n.USAGE_RECORDED_HISTORY_NOTE
                     if today is not None and getattr(self, "_hover_usage_reconstructed", False) else None)
+            month_label = (self.i18n.USAGE_THIS_PERIOD_LABEL
+                           if today is not None and getattr(self, "_hover_usage_period_start", None)
+                           else None)
             self._hover_card = UsageFlyout(self.i18n, today, month, hint=hint, cap=cap, history_note=note,
-                                           hardware=hardware)
+                                           hardware=hardware, month_label=month_label)
             self._hover_hw_refreshed = time.monotonic()
             screen = self.screen() or QApplication.primaryScreen()
             avail = screen.availableGeometry() if screen else self.frameGeometry()
@@ -1228,18 +1232,38 @@ class NetworkSpeedWidget(QWidget):
             except Exception:
                 pass
 
+    def _usage_billing_period_start(self, month_start: datetime) -> Optional[datetime]:
+        """Start of the data-cap billing period when a cap is set and the period does not begin on
+        the 1st (else None - the calendar month IS the period). The "month" usage row follows it so
+        it never disagrees with the cap row beneath it; the start comes from the odometer, which
+        owns the period."""
+        try:
+            if not self.config.get("data_cap_enabled") or float(self.config.get("data_cap_gb", 0) or 0) <= 0:
+                return None
+            start = date.fromisoformat(self.widget_state.get_usage_period_key())
+        except Exception:
+            return None
+        start_dt = datetime(start.year, start.month, start.day)
+        return None if start_dt == month_start else start_dt
+
     def _hover_usage_totals(self) -> Tuple[Tuple[float, float], Tuple[float, float]]:
-        """(today, this-month) bandwidth as (up, down) byte pairs, cached with a short TTL."""
+        """(today, this-month) bandwidth as (up, down) byte pairs, cached with a short TTL. "This
+        month" is the billing period when a data cap with a reset day other than the 1st is set
+        (``_hover_usage_period_start`` then holds its start, else None)."""
         now = time.monotonic()
         if self._hover_usage_cache is not None and (now - self._hover_usage_cache_ts) < self._HOVER_USAGE_TTL_SEC:
             return self._hover_usage_cache
         today: Tuple[float, float] = (0.0, 0.0)
         month: Tuple[float, float] = (0.0, 0.0)
         reconstructed = False
+        period_start: Optional[datetime] = None
         try:
             now_dt = datetime.now()
             midnight = now_dt.replace(hour=0, minute=0, second=0, microsecond=0)
             month_start = midnight.replace(day=1)
+            period_start = self._usage_billing_period_start(month_start)
+            if period_start is not None:
+                month_start = period_start
             vt = self.widget_state.get_history_volume_for_period(midnight, now_dt)
             vm = self.widget_state.get_history_volume_for_period(month_start, now_dt)
             today, month = (vt.up_bytes, vt.down_bytes), (vm.up_bytes, vm.down_bytes)
@@ -1248,6 +1272,7 @@ class NetworkSpeedWidget(QWidget):
         except Exception as e:
             self.logger.debug("hover usage fetch failed: %s", e)
         self._hover_usage_reconstructed = reconstructed
+        self._hover_usage_period_start = period_start
         self._hover_usage_cache = (today, month)
         self._hover_usage_cache_ts = now
         return self._hover_usage_cache
