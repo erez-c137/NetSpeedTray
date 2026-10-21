@@ -35,7 +35,7 @@ from netspeedtray.core.position_manager import PositionManager, WindowState
 from netspeedtray.core.input_handler import InputHandler
 from netspeedtray.utils.taskbar_utils import (
     get_taskbar_info, is_taskbar_obstructed, is_taskbar_visible,
-    get_process_name_from_hwnd
+    get_process_name_from_hwnd, dock_signature
 )
 
 from netspeedtray.utils.widget_renderer import WidgetRenderer as CoreWidgetRenderer, RenderConfig
@@ -127,6 +127,7 @@ class NetworkSpeedWidget(QWidget):
         self.tray_manager: TrayIconManager
         self.monitor_thread: StatsMonitorThread
         self._cached_layout_mode: str = 'horizontal'  # taskbar-edge orientation; updated on taskbar changes
+        self._dock_sig_seen: Optional[tuple] = None  # last taskbar dock_signature seen (#322)
         self.monitor_window = None  # unified Monitor (Overview / Network / Hardware), lazy
         self.update_checker: Optional[UpdateChecker] = None
         self.app_icon: QIcon
@@ -417,6 +418,9 @@ class NetworkSpeedWidget(QWidget):
 
             # Only update position if we are supposed to be visible.
             if self.isVisible():
+                # Taskbar thickness/edge changed while running (#322): re-size (which repositions).
+                if not free_float_active:
+                    self._resize_if_dock_changed(taskbar_info)
                 # Free-move keeps the user's exact saved spot (applied once); docked and free-float both
                 # reposition on the refresh (free-float re-places on / re-detects its taskbar-less display).
                 if not self.config.get("free_move", False):
@@ -1841,9 +1845,40 @@ class NetworkSpeedWidget(QWidget):
         self._refresh_cached_layout_mode()
         if self.position_manager:
             try:
-                self.position_manager.update_position()
+                taskbar_info = get_taskbar_info(preferred_screen_name=self.config.get("preferred_monitor"))
+                # A taskbar that changed thickness or edge needs a re-SIZE, not just a move (#322).
+                # The resize ends in update_position() itself, so the move is already done.
+                if self._resize_if_dock_changed(taskbar_info):
+                    return
+                self.position_manager.update_position(fresh_taskbar_info=taskbar_info)
             except Exception as e:
                 self.logger.error(f"Error during position update: {e}", exc_info=True)
+
+    def _resize_if_dock_changed(self, taskbar_info) -> bool:
+        """Re-run the layout sizing when the taskbar's dock geometry changed since last seen (#322).
+
+        The widget is sized once at startup to the taskbar strip; a live switch of Win11's native
+        taskbar size (Default 48 px <-> Small 32 px) or edge only fired a reposition, so the widget kept
+        its old height and hung off a thinner bar. Cheap tuple compare on every taskbar change; a plain
+        move (same signature) resizes nothing. ``_dock_sig_seen`` is recorded by
+        ``resize_widget_for_font`` from the taskbar it actually sized against - the same preferred-monitor
+        taskbar read here - and is None when that was a fallback taskbar (Explorer not ready at logon)
+        or a free-float, so the first real taskbar after either re-sizes. No loop: the resize's own
+        update_position() sees the signature it just recorded. Returns True if it resized.
+        """
+        try:
+            if self.position_manager is not None and self.position_manager.is_free_float_active():
+                return False   # a free-floating widget isn't sized to a taskbar (#188)
+            sig = dock_signature(taskbar_info)
+            if sig is None or sig == self._dock_sig_seen:
+                return False   # fallback taskbar now, or nothing changed
+            prev, self._dock_sig_seen = self._dock_sig_seen, sig   # a failed resize can't retry every tick
+            self.logger.info("Taskbar dock geometry changed %s -> %s; re-sizing the widget.", prev, sig)
+            self.layout_manager.resize_widget_for_font()   # ends with update_position()
+            return True
+        except Exception as e:
+            self.logger.error(f"Error checking taskbar dock geometry: {e}", exc_info=True)
+            return False
 
 
     def _refresh_cached_layout_mode(self) -> None:

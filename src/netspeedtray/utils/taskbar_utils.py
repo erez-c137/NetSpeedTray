@@ -235,6 +235,9 @@ class TaskbarInfo:
     # it's absent/undetected. Used to keep the widget from landing on it in a left-aligned layout
     # (#200/#24). Defaulted so the fallback/no-taskbar constructions don't need to pass it.
     widgets_rect: Optional[Tuple[int, int, int, int]] = None
+    # Physical-pixel rect of the monitor the taskbar is on (GetMonitorInfo "Monitor", the same call that
+    # gives work_area), or None when unknown. Diagnostics only (support bundle, #322).
+    monitor_rect: Optional[Tuple[int, int, int, int]] = None
 
     def __post_init__(self) -> None:
         """Basic validation of critical attributes after initialization."""
@@ -649,6 +652,7 @@ def get_all_taskbar_info() -> List[TaskbarInfo]:
                 # Only the primary taskbar hosts a Widgets button; cached + non-blocking. Pass the
                 # Shell_TrayWnd root (`hwnd`), not tray_hwnd - the button is under the taskbar frame.
                 widgets_rect=get_widgets_rect(hwnd) if is_primary_qt else None,
+                monitor_rect=tuple(monitor_info["Monitor"]) if monitor_info.get("Monitor") else None,
             )
         except win32gui.error as e:
             if e.winerror != 0:
@@ -1014,3 +1018,31 @@ def horizontal_taskbar_strip(taskbar_info: TaskbarInfo, edge: constants.TaskbarE
 
     top = full_geom.top() if edge == constants.TaskbarEdge.TOP else (full_geom.bottom() + 1) - height
     return top, height
+
+
+def dock_signature(taskbar_info: Optional[TaskbarInfo]) -> Optional[tuple]:
+    """What the docked widget's SIZE depends on: ``(edge, thickness, dpi_scale, small)``, or None
+    for a fallback/unknown taskbar.
+
+    Compared on every taskbar change so the widget is re-sized only when its dock geometry changed -
+    e.g. Win11's native taskbar size switched Default (48 px) <-> Small (32 px) while running, or the
+    bar moved to another edge (#322) - and not on a plain move, which only needs a reposition.
+
+    Built from the STABLE values ``WidgetLayoutManager`` sizes from, never the window's position:
+    a horizontal bar's thickness is ``horizontal_taskbar_strip`` (work-area inset, else the window
+    HEIGHT), a side bar's is the work-area inset; neither changes while an auto-hide bar slides (#135).
+    """
+    if taskbar_info is None or taskbar_info.hwnd == 0:
+        return None
+    edge = taskbar_info.get_edge_position()
+    dpi = taskbar_info.dpi_scale if taskbar_info.dpi_scale > 0 else 1.0
+    if edge in (constants.TaskbarEdge.TOP, constants.TaskbarEdge.BOTTOM):
+        _, thickness = horizontal_taskbar_strip(taskbar_info, edge, dpi)
+    else:
+        screen = taskbar_info.get_screen()
+        full_geom, avail_geom = screen.geometry(), screen.availableGeometry()
+        if edge == constants.TaskbarEdge.RIGHT:
+            thickness = full_geom.right() - avail_geom.right()
+        else:
+            thickness = avail_geom.left() - full_geom.left()
+    return (edge, round(thickness), round(dpi, 3), is_small_taskbar(taskbar_info))
