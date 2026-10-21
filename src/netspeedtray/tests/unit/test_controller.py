@@ -344,6 +344,31 @@ def test_system_power_history_universal_battery_drain_discharge_only(controller_
     assert 'battery_drain' not in keys
 
 
+def test_system_power_slot_survives_ac_but_clears_when_absent(controller_instance, monkeypatch):
+    """The system_power slot carries the CURRENT whole-system reading, AC included.
+
+    Clearing it on AC blanked the Monitor's "System N W" strip on a laptop with a RAPL
+    PSYS counter (that sensor reports on mains too). The hover card is the layer that
+    decides what to SHOW - it reads system_power only while the machine is discharging,
+    so a PSYS reading on AC is never shown as battery drain. An absent key still clears
+    the slot, so no stale "discharging 12 W" can outlive the reading.
+    """
+    from netspeedtray.utils import power_utils
+
+    controller = controller_instance
+    view = MagicMock()
+    controller.set_view(view)
+    monkeypatch.setattr(power_utils, "read_power_state",
+                        lambda: power_utils.PowerState(power_utils.MODE_AC, None))
+
+    controller.handle_stats({"cpu": 50.0, "system_power": 12.0})
+    assert view.system_power == 12.0, "the Monitor's system-power strip was blanked on AC"
+
+    # No reading this poll -> the slot is cleared (no stale value).
+    controller.handle_stats({"cpu": 50.0})
+    assert view.system_power is None
+
+
 def test_power_slots_reach_the_view_without_cpu_stats(controller_instance):
     """A battery-only poll still updates the hover slots when CPU history recording is off."""
     controller = controller_instance

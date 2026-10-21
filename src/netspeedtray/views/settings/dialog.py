@@ -289,11 +289,17 @@ class SettingsDialog(QDialog):
                 delete_history_callback=self._delete_all_history,
             )
             # The Record-hardware-history card greys out live as CPU/GPU monitoring is switched.
+            # The battery hover toggle counts too: with the PR's defaults (CPU/GPU monitoring off)
+            # it is the thing that governs battery recording, and a user who switched it off
+            # could not switch it back on (#323 review).
             def _sync_record_card(_on: bool = False) -> None:
                 self.advanced_page.set_hardware_monitoring_active(
-                    self.hardware_page.monitor_cpu.isChecked() or self.hardware_page.monitor_gpu.isChecked())
+                    self.hardware_page.monitor_cpu.isChecked()
+                    or self.hardware_page.monitor_gpu.isChecked()
+                    or self.general_page.power_display.isChecked())
             self.hardware_page.monitor_cpu.toggled.connect(_sync_record_card)
             self.hardware_page.monitor_gpu.toggled.connect(_sync_record_card)
+            self.general_page.power_display.toggled.connect(_sync_record_card)
             # Safety net for Delete all history: if the worker never answers, give the button back.
             self._delete_timeout = QTimer(self)
             self._delete_timeout.setSingleShot(True)

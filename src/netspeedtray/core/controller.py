@@ -302,9 +302,14 @@ class StatsController(QObject):
         # battery-only polls must reach the view even when CPU history recording is off.
         if self.view is not None:
             try:
-                # On AC (or charging) a whole-system reading is not battery draw, so the slot
-                # is cleared rather than shown (#323 review); see system_power_on_ac above.
-                if 'system_power' in stats and not system_power_on_ac:
+                # The slot carries the CURRENT whole-system reading, on AC included - the
+                # Monitor's "System N W" strip needs it even on AC (a laptop with a RAPL
+                # PSYS counter reports there, and clearing it blanked the strip). The hover
+                # card decides what to SHOW: it only reads system_power while the machine
+                # is discharging, so a PSYS reading on AC is never shown as battery drain
+                # (#323 review). Absent key -> clear the slot, so a stale "discharging
+                # 12 W" cannot outlive the reading.
+                if 'system_power' in stats:
                     self.view.system_power = stats['system_power']
                 else:
                     self.view.system_power = None

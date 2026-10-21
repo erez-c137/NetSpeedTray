@@ -65,7 +65,7 @@ def test_temps_and_power_need_their_metric_and_their_own_switch():
     assert hardware_persist_allowed("system_power", p) is True
 
 
-def test_lat_and_battery_drain_are_not_governed_by_the_hardware_toggle():
+def test_latency_is_not_governed_by_the_hardware_toggle():
     # The latency series have their own switch (latency_enabled); this policy never blocks them.
     assert hardware_persist_allowed("latency_gw", _cfg(record_hardware_history=False)) is True
 
