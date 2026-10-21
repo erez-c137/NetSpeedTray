@@ -513,7 +513,28 @@ class WidgetState(QObject):
                 # cap - each poll then looked like a closed period's and went only to the lifetime total.
                 WidgetState._rekey_for_reset_day(self, pk, stored_start)
                 return True
+            if stored_start is not None and stored_start > date.today() + timedelta(
+                    days=constants.network.usage.FUTURE_PERIOD_TOLERANCE_DAYS):
+                # A period that STARTS days from now is impossible: one poll with the clock ahead (a
+                # manual date change, a bad RTC before NTP, a VM restore) advanced the key, and the
+                # forward-only rule would hold it there - no rollover until that date. Re-key to today's
+                # period. The anchor stays, unless this session saw the jump and still knows the anchor
+                # today's period had before it (then the bytes counted before the jump count again).
+                prev = getattr(self, "_usage_prev_period", None)
+                if prev is not None and prev[0] == pk and prev[1] <= u["cumulative_up"]                         and prev[2] <= u["cumulative_down"]:
+                    u["anchor_up"], u["anchor_down"] = prev[1], prev[2]
+                if not getattr(self, "_usage_future_key_logged", False):
+                    self._usage_future_key_logged = True
+                    self.logger.warning("Data-cap period %s starts in the future (the clock ran ahead); "
+                                        "back to the current period %s.", stored, pk)
+                u["period_key"] = pk
+                self._persist_usage_now()
+                self._usage_last_persist = time.time()
+                return True
         if pk > u["period_key"]:
+            # Remembered for this session only: if the clock turns out to have run ahead, the period
+            # this rollover closed is restored with its anchor (above).
+            self._usage_prev_period = (u["period_key"], u["anchor_up"], u["anchor_down"])
             u["anchor_up"] = u["cumulative_up"]
             u["anchor_down"] = u["cumulative_down"]
             u["period_key"] = pk

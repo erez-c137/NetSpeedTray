@@ -236,6 +236,11 @@ class UsageOdometerConstants:
     # apart. Erring wide only risks treating a sub-30 s session as "same boot", and the
     # counters-went-backwards guard still catches a reboot (its counters restart from zero).
     BOOT_TIME_TOLERANCE_SEC: Final[float] = 30.0
+    # A stored billing period starting more than this many days after today cannot be real: the clock
+    # ran ahead for a poll and advanced the forward-only period key (WidgetState._maybe_reanchor re-keys
+    # it). Small enough to catch any clock that crossed a reset day ahead; large enough that a clock a
+    # little slow at a boundary (time-zone change, NTP correction) never re-keys.
+    FUTURE_PERIOD_TOLERANCE_DAYS: Final[int] = 2
 
 
 class MetricsEndpointConstants:

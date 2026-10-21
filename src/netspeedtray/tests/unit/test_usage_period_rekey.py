@@ -176,3 +176,57 @@ def test_clamped_reset_day_is_not_a_change():
     _poll(s, datetime(2026, 10, 21, 8), 3 * GB)
     _poll(s, datetime(2026, 10, 21, 9), 3 * GB)
     assert _used_down(s) == 6 and s._usage["period_key"] == "2026-09-28"
+
+
+# --- F2: the h2 scenario (a clock briefly AHEAD) ------------------------------------------------
+
+def test_one_poll_with_the_clock_ahead_does_not_freeze_the_period():
+    """h2: was stuck at period 2027-02-15 and 1.0 GB until March 2027."""
+    s = _state(15, "2026-10-15")
+    s._usage["cumulative_down"] = 10 * GB
+    _poll(s, datetime(2026, 10, 21, 9), 1 * GB)
+    assert _used_down(s) == 11
+    _poll(s, datetime(2027, 3, 2, 9), 1 * GB)                         # one poll, clock ahead
+    assert s._usage["period_key"] == "2027-02-15"
+    for d in range(21, 32):                                            # clock corrected
+        _poll(s, datetime(2026, 10, d, 12), 5 * GB)
+    assert s._usage["period_key"] == "2026-10-15"
+    # This session saw the jump, so the period gets its pre-jump anchor back: nothing is lost.
+    assert _used_down(s) == 11 + 1 + 55
+    for d in range(1, 30):
+        _poll(s, datetime(2026, 11, d, 12), 5 * GB)
+    assert s._usage["period_key"] == "2026-11-15"                     # it rolls over again on time
+    assert _used_down(s) == 15 * 5                                     # Nov 15..29
+
+
+def test_future_key_from_an_earlier_session_rekeys_without_moving_the_anchor():
+    """Persisted by a previous session: no pre-jump anchor is known, so the count since the jump
+    stands (never more than was counted), and the period counts on from there."""
+    s = _state(15, "2027-02-15")
+    s._usage.update(cumulative_down=40 * GB, anchor_down=37 * GB)
+    _poll(s, datetime(2026, 10, 21, 12), 2 * GB)
+    assert s._usage["period_key"] == "2026-10-15"
+    assert _used_down(s) == 5
+    _poll(s, datetime(2026, 10, 22, 12), 2 * GB)
+    assert _used_down(s) == 7
+
+
+def test_future_key_is_logged_once(caplog):
+    s = _state(15, "2027-02-15")
+    with caplog.at_level(logging.WARNING, logger="test.rekey"):
+        _poll(s, datetime(2026, 10, 21, 12), 1 * GB)
+        s._usage["period_key"] = "2027-05-15"
+        _poll(s, datetime(2026, 10, 21, 13), 1 * GB)
+    assert s._usage["period_key"] == "2026-10-15"
+    assert sum("starts in the future" in r.message for r in caplog.records) == 1
+
+
+@pytest.mark.parametrize("today", [date(2026, 10, 14), date(2026, 10, 13)])
+def test_a_clock_a_little_slow_at_the_boundary_keeps_the_period(today):
+    """Within the tolerance (the period starts tomorrow / in 2 days): a backward clock or time-zone
+    shift must keep the running total, exactly as before."""
+    s = _state(15, "2026-10-15")
+    _poll(s, datetime(2026, 10, 15, 9), 3 * GB)
+    _poll(s, datetime(today.year, today.month, today.day, 23), 1 * GB)
+    assert s._usage["period_key"] == "2026-10-15"
+    assert _used_down(s) == 4
