@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from netspeedtray.views.widget import NetworkSpeedWidget
 
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QSize
-from PyQt6.QtGui import QColor, QFont, QIcon, QCloseEvent, QShowEvent
+from PyQt6.QtGui import QColor, QFont, QIcon, QCloseEvent, QKeySequence, QShortcut, QShowEvent
 from PyQt6.QtWidgets import (
     QApplication, QCheckBox, QColorDialog, QDialog, QFileDialog, QFontDialog,
     QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMessageBox, QPushButton, QScrollArea,
@@ -204,7 +204,16 @@ class SettingsDialog(QDialog):
             self.sidebar.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             self.sidebar.setTextElideMode(Qt.TextElideMode.ElideRight)
             self.sidebar.setStyleSheet(style_utils.sidebar_style())
-            self.sidebar.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            # Keyboard-reachable (S4): Tab lands on the sidebar and the arrow keys switch pages; the
+            # Ctrl+Tab family below switches from anywhere in the dialog.
+            self.sidebar.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+            self._page_shortcuts = []
+            for seq, delta in (("Ctrl+Tab", 1), ("Ctrl+PgDown", 1), ("Ctrl+Shift+Tab", -1),
+                               ("Ctrl+Shift+Backtab", -1), ("Ctrl+PgUp", -1)):
+                sc = QShortcut(QKeySequence(seq), self)
+                sc.setContext(Qt.ShortcutContext.WindowShortcut)
+                sc.activated.connect(lambda d=delta: self._step_page(d))
+                self._page_shortcuts.append(sc)
             self.sidebar.setIconSize(QSize(16, 16))
             # (label, Segoe Fluent codepoint) - Win10-safe MDL2 glyphs; Hardware/Network match the
             # Monitor tabs for cross-window consistency. Settings/Personalize/Color/DeveloperTools/
@@ -457,6 +466,13 @@ class SettingsDialog(QDialog):
         except Exception:
             pass
 
+    def _step_page(self, delta: int) -> None:
+        """Ctrl+Tab / Ctrl+PgDn (+1) and Ctrl+Shift+Tab / Ctrl+PgUp (-1): the next / previous page,
+        wrapping - the keyboard way through the sidebar (S4)."""
+        n = self.sidebar.count()
+        if n:
+            self.sidebar.setCurrentRow((max(0, self.sidebar.currentRow()) + delta) % n)
+
     def _on_sidebar_selection_changed(self, row: int) -> None:
         """Handles sidebar row changes to switch the stacked page + retitle the page header."""
         self.stack.setCurrentIndex(row)
@@ -565,44 +581,62 @@ class SettingsDialog(QDialog):
             pass
         return None
 
+    def _pages(self) -> list:
+        """The pages whose controls hold real values, in sidebar order (the Appearance page includes
+        the embedded units + colour sections). A page that failed to load is left out: its keys are
+        never written from controls that never received them (C1)."""
+        failed = getattr(self, "_failed_pages", set())
+        return [page for name, page in (
+            ("general", self.general_page), ("widget", self.widget_page),
+            ("appearance", self.appearance_page), ("hardware", self.hardware_page),
+            ("interfaces", self.interfaces_page), ("advanced", self.advanced_page),
+        ) if name not in failed]
+
     def get_settings(self) -> Dict[str, Any]:
         """Collects settings from all pages."""
         try:
             settings = self.config.copy()
-            failed = getattr(self, "_failed_pages", set())
-            for name, page in (("general", self.general_page), ("widget", self.widget_page),
-                               ("appearance", self.appearance_page),   # includes embedded units + colors
-                               ("hardware", self.hardware_page), ("interfaces", self.interfaces_page),
-                               ("advanced", self.advanced_page)):
-                if name in failed:
-                    continue   # never write a page's keys from controls that never received them (C1)
+            for page in self._pages():
                 settings.update(page.get_settings())
 
             # Save current window position
             settings["settings_window_pos"] = {"x": self.pos().x(), "y": self.pos().y()}
             
-            # Re-implement color logic check:
-            if self._user_chose_default_color:
+            # The text colour is the user's own once they picked it in the dialog OR typed a different
+            # hex (S3: a typed one stayed "automatic" and the next launch's theme sync reset it).
+            typed = str(settings.get("default_color", "")).upper() != \
+                str(self.config.get("default_color", "")).upper()
+            if self._user_chose_default_color or typed:
                 settings["color_is_automatic"] = False
             else:
-                 settings["color_is_automatic"] = self.original_config.get("color_is_automatic", True)
+                # The dialog's working baseline: equal to original_config on open, the factory value
+                # after Reset all (which keeps original_config for Cancel - S5).
+                settings["color_is_automatic"] = self.config.get("color_is_automatic", True)
 
+            # A typed / picked colour set color_is_automatic False above, so the live theme colour
+            # below never overrides it (S3 + #405).
             return self._with_live_auto_color(settings)
         except Exception as e:
             self.logger.error(f"Error collecting settings: {e}", exc_info=True)
             return {}
 
-    def _with_live_auto_color(self, cfg: Dict[str, Any]) -> Dict[str, Any]:
+    def _with_live_auto_color(self, cfg: Dict[str, Any],
+                              baseline: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """``cfg`` with an AUTOMATIC text colour taken from the current Windows theme.
 
         The dialog loads ``default_color`` once, when it opens. If the Windows theme flips while it
         is open, the theme manager re-colours the widget - and the next live-preview tick (or Cancel,
         which re-applies ``original_config``) put the stale colour straight back. While the colour is
         automatic and the user has not changed it here (no pick, no edit of the field), the theme owns
-        it, so the dialog passes the theme's colour instead of pinning the one it was opened with."""
+        it, so the dialog passes the theme's colour instead of pinning the one it was opened with.
+
+        ``baseline`` is the config ``cfg``'s colour is compared with to tell "untouched" from "typed":
+        the dialog's working config by default (after Reset all that is the factory set, not the
+        pre-dialog config Cancel restores), ``original_config`` for the Cancel revert."""
         if self._user_chose_default_color or not cfg.get("color_is_automatic", True):
             return cfg
-        opened_with = str(self.original_config.get("default_color", "") or "").upper()
+        base = self.config if baseline is None else baseline
+        opened_with = str(base.get("default_color", "") or "").upper()
         if str(cfg.get("default_color", "") or "").upper() != opened_with:
             return cfg   # the user typed a colour into the field
         live = shell_theme_text_color()
@@ -698,15 +732,21 @@ class SettingsDialog(QDialog):
         self.available_interfaces = new_interfaces
         self.primary_interface = primary_interface
         if hasattr(self, 'interfaces_page'):
+            # Read what the page shows NOW, before the rebuild throws its checkboxes away (S2): reading
+            # after it found no boxes ticked, so re-opening Settings while it was open (tray, Monitor
+            # "Set a limit" link) emptied selected_interfaces and a Save made the widget show 0.
+            current = self.get_settings() or self.config
             self.interfaces_page.update_interface_list(new_interfaces, primary_interface)
-            # Re-apply current selection
-            self.interfaces_page.load_settings(self.get_settings())
+            self.interfaces_page.load_settings(current)
 
-    def reset_with_config(self, config: Dict[str, Any], is_startup_enabled: bool) -> None:
-        """Resets the UI state with a new configuration dictionary."""
+    def reset_with_config(self, config: Dict[str, Any], is_startup_enabled: bool,
+                          keep_baseline: bool = False) -> None:
+        """Resets the UI state with a new configuration dictionary. ``keep_baseline`` (Reset all) keeps
+        the pre-dialog config as what Cancel restores (S5); a fresh open replaces it."""
         self.config = config.copy()
-        self.original_config = config.copy()
-        self.startup_enabled_initial_state = is_startup_enabled
+        if not keep_baseline:
+            self.original_config = config.copy()
+            self.startup_enabled_initial_state = is_startup_enabled
         self._user_chose_default_color = False
         self._init_ui_state()
 
@@ -730,15 +770,22 @@ class SettingsDialog(QDialog):
         )
         if resp != QMessageBox.StandardButton.Yes:
             return
-        defaults = dict(constants.config.defaults.DEFAULT_CONFIG)
-        # Preserve non-settings state a reset shouldn't wipe (window positions, onboarding flags).
-        for k in ("position_x", "position_y", "settings_window_pos", "graph_window_pos",
-                  "app_activity_window_pos", "monitor_window_pos", "first_run_ever",
-                  "first_run_v2_seen", "tooltip_hint_shown_count", "temp_onboarding_dismissed",
-                  "usage_alert_state", "skipped_version"):
-            if k in self.config:
-                defaults[k] = self.config[k]
-        self.reset_with_config(defaults, self.startup_enabled_initial_state)
+        factory = constants.config.defaults.DEFAULT_CONFIG
+        # Reset exactly the SETTINGS - the keys the pages own - and keep everything else as it is:
+        # window positions, onboarding / nudge / notice flags, the Monitor's remembered tab and
+        # periods, the pause state, update bookkeeping. A fixed allow-list of keys to keep missed
+        # newer flags (location_onboarding_dismissed, widgets_overlap_nudge_shown, ...).
+        owned = {"color_is_automatic"}
+        for page in self._pages():
+            owned |= set(page.get_settings())
+        reset = dict(self.config)
+        for k in owned:
+            if k in factory:
+                reset[k] = factory[k]
+        self._user_chose_default_color = False
+        # keep_baseline: Cancel after Reset all restores the config the dialog opened with (S5), and
+        # the window-position save on Cancel then writes THAT, not the defaults, to disk.
+        self.reset_with_config(reset, self.startup_enabled_initial_state, keep_baseline=True)
         self._schedule_settings_update()
 
     def _confirm_delete_history(self) -> Optional[bool]:
@@ -905,14 +952,24 @@ class SettingsDialog(QDialog):
 
     def _cancel_and_close(self) -> None:
         """Reverts settings, then persists the window position, then closes."""
+        self.reject()
+
+    def reject(self) -> None:
+        """Every non-Save close - Cancel, the title-bar X, and Esc (QDialog routes Esc straight here) -
+        reverts the live preview first (S1: Esc used to close with the previewed changes still applied)."""
+        self._revert_live_preview()
+        super().reject()
+
+    def _revert_live_preview(self) -> None:
+        self._update_timer.stop()   # a pending throttled apply must not land after the revert
         if hasattr(self.parent_widget, 'handle_settings_changed'):
-            self.parent_widget.handle_settings_changed(self._with_live_auto_color(self.original_config),
-                                                       save_to_disk=False)
+            self.parent_widget.handle_settings_changed(
+                self._with_live_auto_color(self.original_config, baseline=self.original_config),
+                save_to_disk=False)
         # Save the position AFTER the revert: handle_settings_changed merges
         # original_config back into the live config, which would otherwise clobber
         # settings_window_pos with the value from when the dialog opened.
         save_window_position(self, self.parent_widget, "settings_window_pos")
-        self.hide()
 
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)

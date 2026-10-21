@@ -39,6 +39,33 @@ def as_int(value, default: int) -> int:
         return int(default)
 
 
+def is_hex(text) -> bool:
+    """A complete ``#RRGGBB`` colour (what the config schema accepts for every colour key)."""
+    t = (text or "").strip()
+    return len(t) == 7 and t.startswith("#") and all(c in "0123456789abcdefABCDEF" for c in t[1:])
+
+
+class LastValidHex:
+    """The last COMPLETE ``#RRGGBB`` seen in each hex field (S8). A half-typed value ("#AB") must
+    never reach the live widget or the config - config validation would turn it into the factory
+    colour - so get() answers with the colour the user had until the field holds a whole one again.
+    Same rule as the Hardware page's label colours."""
+
+    def __init__(self, defaults: dict):
+        self._values = dict(defaults)
+
+    def remember(self, key: str, text) -> bool:
+        """Record ``text`` if it is a complete hex; True when it was."""
+        if is_hex(text):
+            self._values[key] = text.strip()
+            return True
+        return False
+
+    def get(self, key: str, text) -> str:
+        self.remember(key, text)
+        return self._values[key]
+
+
 def page_layout(widget) -> QVBoxLayout:
     """A consistent vertical page layout: tight, even spacing between cards (the card strokes already
     provide the visual separation), plus a small bottom inset so the last card never abuts the fixed

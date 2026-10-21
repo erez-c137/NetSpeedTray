@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QMessageBox
+from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from netspeedtray import constants
 from netspeedtray.constants.i18n import I18nStrings
@@ -114,3 +114,110 @@ def test_config_validation_stores_graph_opacity_as_int(tmp_path):
     v = cm._validate_config({"graph_opacity": 55.6})
     assert v["graph_opacity"] == 56 and isinstance(v["graph_opacity"], int)
     assert cm._validate_config({"graph_opacity": 40})["graph_opacity"] == 40
+
+
+# --- S1: Esc reverts the live preview like Cancel ---------------------------------------------------
+
+def test_escape_reverts_the_live_preview(qtbot):
+    from PyQt6.QtTest import QTest
+    dlg, main = _make(qtbot)
+    dlg.show()
+    dlg.appearance_page.bg_opacity.setValue(77)
+    _flush(dlg)
+    assert main.config["background_opacity"] == 77
+    QTest.keyClick(dlg, Qt.Key.Key_Escape)
+    assert not dlg.isVisible()
+    assert main.config["background_opacity"] == DEFAULTS["background_opacity"]
+
+
+# --- S2: re-opening Settings while it is open keeps the unsaved adapter selection ------------------
+
+def test_reopen_while_open_keeps_selected_interfaces(qtbot):
+    cfg = dict(DEFAULTS, interface_mode="selected", selected_interfaces=["Wi-Fi"])
+    dlg, _ = _make(qtbot, cfg, ifaces=("Ethernet", "Wi-Fi", "vEthernet (WSL)"))
+    dlg.interfaces_page.interface_checkboxes["Ethernet"].setChecked(True)   # unsaved edit
+    dlg.update_interface_list(["Ethernet", "Wi-Fi", "vEthernet (WSL)"], "Wi-Fi")   # tray click again
+    assert sorted(dlg.get_settings()["selected_interfaces"]) == ["Ethernet", "Wi-Fi"]
+
+
+# --- S3: a text colour typed as hex is user-chosen ---------------------------------------------------
+
+def test_typed_default_color_is_marked_user_chosen(qtbot):
+    from PyQt6.QtTest import QTest
+    dlg, _ = _make(qtbot)
+    field = dlg.appearance_page.default_color_input
+    field.selectAll()
+    QTest.keyClicks(field, "#FF8800")   # textEdited, like a real user
+    s = dlg.get_settings()
+    assert s["default_color"].upper() == "#FF8800"
+    assert s["color_is_automatic"] is False
+
+
+def test_loading_a_colour_does_not_mark_it_user_chosen(qtbot):
+    dlg, _ = _make(qtbot, dict(DEFAULTS, default_color="#123456", color_is_automatic=True))
+    assert dlg.get_settings()["color_is_automatic"] is True
+
+
+# --- S4: keyboard page switching ----------------------------------------------------------------------
+
+def test_sidebar_takes_focus_and_ctrl_tab_switches_pages(qtbot):
+    # Window shortcuts need an ACTIVE window, which the offscreen test platform never gives; the
+    # real key path is exercised by the rc harness (h5_focus) on the windows platform. Here: the
+    # bindings exist on the dialog and each one steps the page the right way.
+    from PyQt6.QtGui import QKeySequence, QShortcut
+    dlg, _ = _make(qtbot)
+    assert dlg.sidebar.focusPolicy() & Qt.FocusPolicy.TabFocus
+    by_key = {sc.key().toString(): sc for sc in dlg.findChildren(QShortcut)}
+
+    def press(seq):
+        by_key[QKeySequence(seq).toString()].activated.emit()
+
+    dlg.navigate_to_page(0)
+    press("Ctrl+Tab")
+    assert dlg.sidebar.currentRow() == 1
+    press("Ctrl+PgDown")
+    assert dlg.sidebar.currentRow() == 2
+    press("Ctrl+PgUp")
+    assert dlg.sidebar.currentRow() == 1
+    dlg.navigate_to_page(0)
+    press("Ctrl+Shift+Tab")
+    assert dlg.sidebar.currentRow() == dlg.sidebar.count() - 1   # wraps
+    assert dlg.stack.currentIndex() == dlg.sidebar.count() - 1
+
+
+# --- S5: Cancel undoes Reset all, on screen and on disk ---------------------------------------------
+
+def test_cancel_after_reset_all_restores_the_user_config(qtbot):
+    user = dict(DEFAULTS, font_size=8, pause_in_menu=True, keep_data=90, reduce_motion=True,
+                color_coding=True, location_onboarding_dismissed=True,
+                widgets_overlap_nudge_shown=True, monitor_active_tab="hardware")
+    dlg, main = _make(qtbot, user)
+    dlg.advanced_page.reset_all_btn.click()
+    _flush(dlg)
+    assert main.config["font_size"] == DEFAULTS["font_size"]
+    # Reset all resets settings only - onboarding / nudge flags and UI state are kept.
+    for k in ("location_onboarding_dismissed", "widgets_overlap_nudge_shown", "monitor_active_tab"):
+        assert dlg.config[k] == user[k], k
+    dlg.cancel_button.click()
+    for k in ("font_size", "pause_in_menu", "keep_data", "reduce_motion", "color_coding"):
+        assert main.config[k] == user[k], k
+
+
+# --- S8: a half-typed hex never reaches the widget or the saved file ---------------------------------
+
+def test_half_typed_hex_keeps_the_last_valid_colour(qtbot):
+    # color_is_automatic False: a custom colour is the user's (an automatic one follows the live theme, #405)
+    cfg = dict(DEFAULTS, default_color="#ABCDEF", color_is_automatic=False, background_color="#101010",
+               high_speed_color="#00FF00", arrow_up_color="#11FF11")
+    dlg, main = _make(qtbot, cfg)
+    dlg.appearance_page.default_color_input.setText("#AB")
+    dlg.appearance_page.background_color_input.setText("#1")
+    dlg.appearance_page.arrow_up_color_input.setText("")
+    dlg.colors_page.high_speed_color_input.setText("#00")
+    _flush(dlg)
+    s = dlg.get_settings()
+    assert (s["default_color"], s["background_color"], s["arrow_up_color"], s["high_speed_color"]) == \
+        ("#ABCDEF", "#101010", "#11FF11", "#00FF00")
+    assert main.config["default_color"] == "#ABCDEF"
+    dlg.appearance_page.default_color_input.setText("#123456")
+    assert dlg.get_settings()["default_color"] == "#123456"
