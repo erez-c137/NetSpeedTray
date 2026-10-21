@@ -191,6 +191,22 @@ def test_speed_history_matches_legacy(ws, resolution, return_raw):
             kw = dict(interface_name=iface, return_raw=return_raw, resolution=resolution, wait_for_flush=False)
             old = Legacy.get_speed_history(ws, start, end, **kw)
             new = ws.get_speed_history(start, end, **kw)
+            effective = resolution if resolution != "auto" else \
+                constants.data.history_period.get_target_resolution(start, end)
+            if effective == "day":
+                # The one intended divergence (2.2 RC): day buckets now start at LOCAL midnight, not
+                # UTC midnight (which moved by an hour across DST). Every bucket with traffic must sit
+                # on a local midnight (the zero edge / empty-window pads sit wherever the window does),
+                # and no traffic may be lost or invented by the re-alignment.
+                for p in new:
+                    if not (p[1] or p[2]):
+                        continue
+                    ts = p[0] if return_raw else p[0].timestamp()
+                    t = datetime.fromtimestamp(int(ts))
+                    assert (t.hour, t.minute, t.second) == (0, 0, 0), t
+                assert bool(any(p[1] or p[2] for p in new)) == bool(any(p[1] or p[2] for p in old))
+                checked += len(old)
+                continue
             _same(new, old, f"speed_history({start},{end},{iface},{resolution},{return_raw})")
             checked += len(old)
     assert checked > 1000

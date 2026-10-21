@@ -235,6 +235,28 @@ def test_stats_sheet_deleted_during_exec_does_not_raise(q_app, monkeypatch):
         tab.teardown()
 
 
+# --- later list: day / hour buckets on LOCAL boundaries (DST) ----------------------------------------
+
+def test_day_and_hour_buckets_start_on_local_boundaries():
+    """Day buckets were ts // 86400 - UTC midnight, i.e. 02:00 / 03:00 in Israel, moving by an hour
+    across DST; hour buckets were half an hour off in +5:30 zones. Checked against Python's own
+    local-time conversion (the one the graph's axis labels use) across both DST changes of a year.
+    (On a UTC machine - CI - the old form happens to agree; the owner's UTC+2/+3 PC is where it bit.)"""
+    import sqlite3
+    from netspeedtray.core.db.history_reader import _local_bin_sql
+    conn = sqlite3.connect(":memory:")
+    base = int(datetime(2026, 1, 1).timestamp())
+    for i in range(0, 366 * 24, 7):                      # every 7 hours through a year
+        ts = base + i * 3600 + 1234
+        local = datetime.fromtimestamp(ts)
+        day = conn.execute(f"SELECT {_local_bin_sql('?', 86400)}".replace("?", str(ts))).fetchone()[0]
+        hour = conn.execute(f"SELECT {_local_bin_sql('?', 3600)}".replace("?", str(ts))).fetchone()[0]
+        assert datetime.fromtimestamp(day) == local.replace(hour=0, minute=0, second=0), local
+        assert datetime.fromtimestamp(hour) == local.replace(minute=0, second=0), local
+    assert _local_bin_sql("n.ts", 60) == "CAST(n.ts / 60 AS INTEGER) * 60"   # minutes: unchanged
+    conn.close()
+
+
 # --- M4: "All" then "Since boot" ---------------------------------------------------------------------
 
 def test_since_boot_after_all_uses_the_boot_time(monkeypatch):
