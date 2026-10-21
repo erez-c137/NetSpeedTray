@@ -56,6 +56,10 @@ Other locales (English, German, Spanish) are currently maintained by the project
 > - `POWER_ON_AC_VALUE` - shown in place of the watts when the laptop is plugged in and not charging ("On AC").
 > - `POWER_CHARGE_PCT_TEMPLATE` - the charge-level line under the rows; keep `{pct}`, and write the percent the way your `PERCENT_TEMPLATE` does.
 
+> 🆕 **Pending native review for 2.2 (release-candidate checkup, see #364):** non-English values are AI-assisted.
+> - Turkish: `MEMORY_HEADER` was still English ("Memory") - now "Bellek", matching the "bellek" in your hover-card strings. `THOUSANDS_SEPARATOR` is now "." (it was "," - the same as your decimal separator, so 1,234 read as a decimal).
+> - Hungarian: `CANCEL_BUTTON` is now "Mé&gse" (Alt+G) - "&Mégse" shared Alt+M with "&Mentés". Pick another letter if G reads oddly.
+
 ## How translation works in NetSpeedTray
 
 - Each locale lives in a single JSON file under [`src/netspeedtray/constants/locales/`](src/netspeedtray/constants/locales/)

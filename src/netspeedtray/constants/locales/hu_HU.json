@@ -161,7 +161,7 @@
     "SUPPORT_BUNDLE_SUCCESS_MESSAGE": "A támogatási csomag mentve ide:\n{file_path}\n\nA fájl biztonságosan csatolható GitHub-hibajegyhez. Az elérési utak, IP- és MAC-címek, gépnevek és interfész-GUID-k ki lettek takarva a naplóból.",
     "SUPPORT_BUNDLE_ERROR_MESSAGE": "A támogatási csomag létrehozása sikertelen:\n{error}",
     "SAVE_BUTTON": "&Mentés",
-    "CANCEL_BUTTON": "&Mégse",
+    "CANCEL_BUTTON": "Mé&gse",
     "BPS_LABEL": "B/s",
     "BITS_LABEL": "bps",
     "KBPS_LABEL": "KB/s",
