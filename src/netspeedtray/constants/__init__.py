@@ -31,6 +31,7 @@ from netspeedtray.constants.gpu import gpu
 from netspeedtray.constants.graph import graph
 from netspeedtray.constants.i18n import strings, I18nStrings
 from netspeedtray.constants.layout import layout
+from netspeedtray.constants.lhm import lhm
 from netspeedtray.constants.logs import logs
 from netspeedtray.constants.network import network
 from netspeedtray.constants.renderer import renderer
@@ -57,6 +58,7 @@ __all__ = [
     "strings",
     "I18nStrings",
     "layout",
+    "lhm",
     "logs",
     "network",
     "renderer",

@@ -8,19 +8,20 @@ available, allowing callers to retain their existing WMI/native fallbacks.
 
 from __future__ import annotations
 
+import http.client
 import json
+import logging
 import math
 import re
+import socket
 import time
-import urllib.request
 from dataclasses import dataclass
 from typing import Any, Iterator, Optional, Tuple
 
+from netspeedtray import constants
 
-DEFAULT_URL = "http://127.0.0.1:8085/data.json"
-DEFAULT_TIMEOUT_SEC = 0.35
-DEFAULT_CACHE_SEC = 0.75
-DEFAULT_FAILURE_BACKOFF_SEC = 30.0
+
+logger = logging.getLogger("NetSpeedTray.LhmHttp")
 
 _NUMBER_RE = re.compile(r"[-+]?(?:\d+(?:[.,]\d+)?|[.,]\d+)")
 _CPU_PREFIXES = ("/amdcpu/", "/intelcpu/")
@@ -80,6 +81,11 @@ def parse_lhm_value(value: Any) -> Optional[float]:
     return result if math.isfinite(result) else None
 
 
+def _is_fahrenheit(raw: str) -> bool:
+    text = raw.strip().casefold()
+    return text.endswith("°f") or text.endswith("℉") or text.endswith(" f")
+
+
 def _walk_nodes(
     node: Any, hardware_id: str = "", hardware_name: str = ""
 ) -> Iterator[Tuple[dict, str, str]]:
@@ -100,9 +106,13 @@ def _iter_sensors(data: Any) -> Iterator[LhmSensor]:
     for node, hardware_id, hardware_name in _walk_nodes(data):
         sensor_id = str(node.get("SensorId") or "").strip().lower()
         sensor_type = str(node.get("Type") or "").strip().lower()
-        value = parse_lhm_value(node.get("Value"))
+        raw_value = node.get("Value")
+        value = parse_lhm_value(raw_value)
         if not sensor_id or not sensor_type or value is None:
             continue
+        if sensor_type == "temperature" and isinstance(raw_value, str) and _is_fahrenheit(raw_value):
+            # LHM can be set to display Fahrenheit, and data.json carries the display string.
+            value = (value - 32.0) * 5.0 / 9.0
         yield LhmSensor(
             name=str(node.get("Text") or "").strip(),
             sensor_type=sensor_type,
@@ -201,23 +211,106 @@ def parse_snapshot(data: Any) -> LhmSnapshot:
     )
 
 
+class _DeadlineSocket(socket.socket):
+    """A TCP socket whose every read gets only what is left of one overall deadline.
+
+    A plain socket timeout applies per read, so a server that trickles one byte at a time can
+    hold the caller for (bytes x timeout). http.client reads through ``makefile()``, which calls
+    ``recv_into`` on this object - re-arming the timeout there bounds the status line, headers
+    and body together.
+    """
+
+    deadline: float = 0.0
+
+    def _arm(self) -> None:
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("LHM HTTP request exceeded its deadline")
+        self.settimeout(remaining)
+
+    def recv_into(self, *args: Any, **kwargs: Any) -> int:
+        self._arm()
+        return super().recv_into(*args, **kwargs)
+
+    def recv(self, *args: Any, **kwargs: Any) -> bytes:
+        self._arm()
+        return super().recv(*args, **kwargs)
+
+
+class _DeadlineHTTPConnection(http.client.HTTPConnection):
+    """HTTPConnection on a _DeadlineSocket. http.client never consults proxy settings, so a
+    system or corporate proxy can never see (or slow down) a loopback sensor read."""
+
+    def __init__(self, host: str, port: int, connect_timeout: float, deadline: float) -> None:
+        super().__init__(host, port, timeout=connect_timeout)
+        self._deadline = deadline
+
+    def connect(self) -> None:
+        sock = _DeadlineSocket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.deadline = self._deadline
+        try:
+            sock.settimeout(max(0.001, min(self.timeout, self._deadline - time.monotonic())))
+            sock.connect((self.host, self.port))
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        except BaseException:
+            sock.close()
+            raise
+        self.sock = sock
+
+
 class LhmHttpClient:
-    """Small client with a per-poll cache and a quiet failure backoff."""
+    """Small client with a per-poll cache and a quiet failure backoff.
+
+    ``get_snapshot()`` never raises and never blocks longer than ``total_deadline`` seconds.
+    """
 
     def __init__(
         self,
-        url: str = DEFAULT_URL,
-        timeout: float = DEFAULT_TIMEOUT_SEC,
-        cache_seconds: float = DEFAULT_CACHE_SEC,
-        failure_backoff_seconds: float = DEFAULT_FAILURE_BACKOFF_SEC,
+        host: str = constants.lhm.HTTP_HOST,
+        port: int = constants.lhm.HTTP_PORT,
+        path: str = constants.lhm.HTTP_PATH,
+        connect_timeout: float = constants.lhm.CONNECT_TIMEOUT_SEC,
+        total_deadline: float = constants.lhm.TOTAL_DEADLINE_SEC,
+        cache_seconds: float = constants.lhm.CACHE_SEC,
+        failure_backoff_seconds: float = constants.lhm.FAILURE_BACKOFF_SEC,
+        max_response_bytes: int = constants.lhm.MAX_RESPONSE_BYTES,
     ) -> None:
-        self.url = url
-        self.timeout = timeout
+        self.host = host
+        self.port = port
+        self.path = path
+        self.connect_timeout = connect_timeout
+        self.total_deadline = total_deadline
         self.cache_seconds = cache_seconds
         self.failure_backoff_seconds = failure_backoff_seconds
+        self.max_response_bytes = max_response_bytes
         self._cached_at = 0.0
         self._cached: Optional[LhmSnapshot] = None
         self._retry_after = 0.0
+        self._last_failure: Optional[str] = None
+
+    @property
+    def url(self) -> str:
+        return f"http://{self.host}:{self.port}{self.path}"
+
+    def reset_backoff(self) -> None:
+        """Forget a remembered failure so the next call tries the endpoint again."""
+        self._retry_after = 0.0
+
+    def _fetch_json(self) -> Any:
+        conn = _DeadlineHTTPConnection(
+            self.host, self.port, self.connect_timeout,
+            deadline=time.monotonic() + self.total_deadline)
+        try:
+            conn.request("GET", self.path, headers={"Accept": "application/json"})
+            response = conn.getresponse()
+            if response.status != 200:
+                raise ValueError(f"HTTP {response.status}")
+            body = response.read(self.max_response_bytes + 1)
+            if len(body) > self.max_response_bytes:
+                raise ValueError("response too large")
+            return json.loads(body.decode("utf-8-sig"))
+        finally:
+            conn.close()
 
     def get_snapshot(self) -> Optional[LhmSnapshot]:
         now = time.monotonic()
@@ -226,17 +319,28 @@ class LhmHttpClient:
         if now < self._retry_after:
             return None
         try:
-            with urllib.request.urlopen(self.url, timeout=self.timeout) as response:
-                data = json.loads(response.read().decode("utf-8-sig"))
-            snapshot = parse_snapshot(data)
-        except (OSError, ValueError, TypeError, UnicodeError):
-            # CPU temperature, CPU power and GPU polling share this client. Remember a
-            # failed request so an unavailable/malformed endpoint costs one short timeout,
-            # not one timeout per metric on every one-second poll.
+            snapshot = parse_snapshot(self._fetch_json())
+        except Exception as e:
+            # Deliberately broad: this is an optional, best-effort source polled from the monitor
+            # thread, where an escaping error drops the whole tick (network speeds included). Besides
+            # OSError (refused, timeout, deadline) and ValueError (bad JSON, non-200), whatever else
+            # answers on the port can raise http.client.HTTPException (BadStatusLine, IncompleteRead,
+            # LineTooLong...), and a pathological tree can raise RecursionError.
+            # CPU temperature, CPU power and GPU polling share this client. Remember the failure so
+            # an unavailable/foreign endpoint costs one bounded attempt per backoff window, not one
+            # per metric on every poll.
             self._retry_after = now + self.failure_backoff_seconds
+            self._cached = None
+            reason = f"{type(e).__name__}: {e}"
+            if reason != self._last_failure:
+                self._last_failure = reason
+                logger.debug("LHM HTTP source unavailable at %s (%s); retrying in %.0f s.",
+                             self.url, reason, self.failure_backoff_seconds)
             return None
+        if self._last_failure is not None or self._cached is None:
+            logger.debug("LHM HTTP source answered at %s.", self.url)
+        self._last_failure = None
         self._cached = snapshot
         self._cached_at = now
         self._retry_after = 0.0
         return snapshot
-

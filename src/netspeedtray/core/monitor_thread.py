@@ -61,7 +61,6 @@ logger = logging.getLogger("NetSpeedTray.StatsMonitorThread")
 # Network identity (Wi-Fi band / SSID) changes rarely, so poll it on a slow sub-cadence off the
 # per-second network readout - never on the GUI thread. See releases/v2.1/KICKOFF.md §2/§3.
 _IDENTITY_POLL_INTERVAL_SEC: float = 5.0
-_GPU_QUERY_RETRY_SEC: float = 30.0
 
 # LibreHardwareMonitor identifier prefixes that scope a sensor to something that is NOT the CPU.
 # The CPU-temperature search falls back to matching sensor *names* (for boards that label the die
@@ -328,8 +327,8 @@ class StatsMonitorThread(QThread):
         """
         Collects GPU stats using a hybrid approach:
         - Utilization & VRAM via Universal PDH (all vendors)
-        - Temperature via LHM/OHM WMI if available (all vendors), else nvidia-smi (NVIDIA only)
-        - Power via LHM/OHM WMI (all vendors) → nvidia-smi (NVIDIA) → PDH RAPL PP1 (Intel iGPU)
+        - Temperature via LHM web server (v0.9.5+) → LHM v0.9.4/OHM WMI (all vendors) → nvidia-smi (NVIDIA)
+        - Power via LHM web server → LHM/OHM WMI (all vendors) → nvidia-smi (NVIDIA) → PDH RAPL PP1 (Intel iGPU)
         Returns: GpuPollResult named tuple
         """
         now_mono = time.monotonic()
@@ -337,7 +336,7 @@ class StatsMonitorThread(QThread):
             if self._init_gpu_query():
                 self._gpu_query_retry_after = 0.0
             else:
-                self._gpu_query_retry_after = now_mono + _GPU_QUERY_RETRY_SEC
+                self._gpu_query_retry_after = now_mono + constants.gpu.QUERY_RETRY_SEC
 
         util_pct = 0.0
         vram_used = None   # None = no VRAM counter available -> N/A (not a misleading "0.0 GB used")
@@ -719,8 +718,9 @@ class StatsMonitorThread(QThread):
     def _poll_cpu_power(self) -> Optional[float]:
         """
         Polls CPU power draw in watts, trying sources in order:
-          1. PDH RAPL PKG (Intel - milliwatts, non-admin)
-          2. LHM/OHM WMI (all vendors, requires admin)
+          1. LibreHardwareMonitor v0.9.5+ web server (all vendors, if enabled)
+          2. PDH RAPL PKG (Intel - milliwatts, non-admin)
+          3. LHM v0.9.4 / OHM WMI (all vendors, requires admin)
         """
         # 1. LHM 0.9.5+ HTTP source
         snapshot = self._lhm_http.get_snapshot()
@@ -820,21 +820,23 @@ class StatsMonitorThread(QThread):
                     "Run LibreHardwareMonitor as Administrator to expose CPU/GPU temps and power."
                 )
             else:
-                # No namespace at all: tool not running, or LHM v0.9.5+ (which removed WMI).
+                # No namespace at all: tool not running, or LHM v0.9.5+ (which removed WMI and is
+                # read over HTTP instead - this probe only runs when that read found nothing).
                 self.logger.info(
-                    "Hardware monitor: no CPU/GPU sensor source found (%s). Start "
-                    "LibreHardwareMonitor if it is not running. Note: LibreHardwareMonitor "
-                    "v0.9.5+ removed its WMI provider, so temps and power need LHM v0.9.4 "
-                    "(the last WMI-capable release).", "; ".join(probe_errors)
+                    "Hardware monitor: no CPU/GPU sensor source found (%s; no LHM web server at "
+                    "%s:%d). Start LibreHardwareMonitor as Administrator; on v0.9.5+ also enable "
+                    "Options > Remote Web Server (port %d).", "; ".join(probe_errors),
+                    constants.lhm.HTTP_HOST, constants.lhm.HTTP_PORT, constants.lhm.HTTP_PORT
                 )
         # Leave _wmi_ohm as None so we retry next poll (LHM may not be running yet)
 
     def _poll_cpu_temperature(self) -> Optional[float]:
         """
         Polls CPU temperature, trying sources in order:
-          1. LibreHardwareMonitor / OpenHardwareMonitor WMI  (accurate CPU-die sensor, if running)
-          2. PDH Thermal Zone Information  (generic ACPI - often a motherboard/ambient zone)
-          3. WMI MSAcpi_ThermalZoneTemperature  (legacy ACPI fallback)
+          1. LibreHardwareMonitor v0.9.5+ web server (data.json over loopback HTTP, if enabled)
+          2. LibreHardwareMonitor v0.9.4 / OpenHardwareMonitor WMI  (accurate CPU-die sensor)
+          3. PDH Thermal Zone Information  (generic ACPI - often a motherboard/ambient zone)
+          4. WMI MSAcpi_ThermalZoneTemperature  (legacy ACPI fallback)
 
         LHM/OHM is tried FIRST because its CPU-die sensor (CPU Package / Tctl/Tdie) is
         the accurate source. The generic ACPI "Thermal Zone" is frequently a
@@ -1064,6 +1066,7 @@ class StatsMonitorThread(QThread):
                     self._hw_queries_dirty = False
                     self._cleanup_gpu_query()
                     self._gpu_query_retry_after = 0.0
+                    self._lhm_http.reset_backoff()   # temps/power just switched on: look for LHM now
                     self._cleanup_thermal_query()
                     self._cleanup_power_query()
                     self._wmi_ohm = None   # re-probe LHM/OHM on the next temp poll
@@ -1222,4 +1225,3 @@ class StatsMonitorThread(QThread):
         self._is_running = False
         self.wait(constants.timeouts.MONITOR_THREAD_STOP_WAIT_MS)
         self.logger.info("StatsMonitorThread stopped.")
-

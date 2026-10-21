@@ -27,12 +27,17 @@ class GpuConstants:
     UTIL_MIN_PERCENT: Final[float] = 0.0
     UTIL_MAX_PERCENT: Final[float] = 100.0
 
+    # A missing/broken PDH GPU provider is re-opened at most this often, never on every poll.
+    QUERY_RETRY_SEC: Final[float] = 30.0
+
     def __init__(self) -> None:
         self.validate()
 
     def validate(self) -> None:
         if not self.UTIL_MIN_PERCENT < self.UTIL_MAX_PERCENT:
             raise ValueError("UTIL_MIN_PERCENT must be below UTIL_MAX_PERCENT.")
+        if self.QUERY_RETRY_SEC <= 0:
+            raise ValueError("QUERY_RETRY_SEC must be positive.")
 
 
 # Singleton instance for easy access

@@ -40,3 +40,28 @@ def _isolate_update_marker(tmp_path, monkeypatch):
     # test's own Downloads stand-in (or tmp_path itself) - never the real Downloads.
     monkeypatch.setattr(update_applier, "_downloads_dirs", raising=False, value=
                         lambda: [str(tmp_path / "Downloads"), str(tmp_path)])
+
+
+class _NoLhmWebServer:
+    """Stand-in for LhmHttpClient: LibreHardwareMonitor's web server is not running."""
+
+    def __init__(self, *args, **kwargs):
+        self.calls = 0
+
+    def get_snapshot(self):
+        self.calls += 1
+        return None
+
+    def reset_backoff(self):
+        pass
+
+
+@pytest.fixture(autouse=True)
+def _no_real_lhm_web_server(monkeypatch):
+    """No StatsMonitorThread under test may read a real LibreHardwareMonitor on the developer's
+    machine (127.0.0.1:8085, #187): a live LHM would answer ahead of the WMI/ACPI sources a test
+    pins, and its absence costs a connect attempt. Tests of the HTTP source itself use
+    netspeedtray.core.lhm_http directly, against servers they start; tests that want an LHM
+    reading set ``thread._lhm_http`` themselves."""
+    from netspeedtray.core import monitor_thread
+    monkeypatch.setattr(monitor_thread, "LhmHttpClient", _NoLhmWebServer)
