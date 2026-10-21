@@ -37,11 +37,17 @@ def _portable(root: Path, name: str, exe_text: str = "old") -> Path:
     """A folder laid out exactly like the released portable ZIP's NetSpeedTray folder."""
     d = root / name
     (d / "_internal" / "PyQt6").mkdir(parents=True, exist_ok=True)
-    (d / ua.APP_EXE).write_text(exe_text, encoding="utf-8")
+    (d / ua.APP_EXE).write_bytes(b"MZ" + exe_text.encode())     # a PE header, like the real one
+    (d / "_internal" / "base_library.zip").write_bytes(b"PK")    # the frozen stdlib
     (d / ua.PORTABLE_MARKER).write_text("portable\n", encoding="utf-8")
     (d / "_internal" / "python313.dll").write_bytes(b"dll")
     (d / "_internal" / "PyQt6" / "QtCore.pyd").write_bytes(b"pyd")
     return d
+
+
+def _exe(d: Path) -> str:
+    """The text a test put in ``d``'s EXE (after the PE header)."""
+    return (d / ua.APP_EXE).read_bytes()[2:].decode()
 
 
 def _backdate(path: Path, age_sec: float = 24 * 3600.0) -> None:
@@ -128,7 +134,7 @@ def test_the_previous_version_is_kept_until_the_new_one_has_started(
     assert _apply(install, staged) == 0
 
     (backup,) = _backups(apps)
-    assert (backup / ua.APP_EXE).read_text(encoding="utf-8") == "old"
+    assert _exe(backup) == "old"
     entries = json.loads(_records(marker).read_text(encoding="utf-8"))
     assert {"kind": "backup", "path": str(backup), "install": str(install)}.items() <= next(
         e for e in entries if e.get("kind") == "backup").items()
@@ -156,7 +162,7 @@ def test_the_janitor_removes_every_leftover_of_a_successful_update(
     _run_as(monkeypatch, install)
     ua.run_update_janitor(retry_delays=(), sleep=lambda s: None)
 
-    assert (install / ua.APP_EXE).read_text(encoding="utf-8") == "new"
+    assert _exe(install) == "new"
     assert not staged.exists() and not package.exists()
     assert _backups(apps) == [], "the previous version must be gone once the new one started"
     assert sorted(p.name for p in apps.iterdir()) == ["NetSpeedTray"]
@@ -167,23 +173,43 @@ def test_the_janitor_removes_every_leftover_of_a_successful_update(
 
 # --------------------------------------------------------------------------- dangerous cases
 
-def test_user_files_in_the_install_are_never_deleted_with_the_previous_version(
+def test_user_files_in_the_install_are_never_swapped_away(
         tmp_path, monkeypatch, marker, no_wait, no_relaunch):
-    """Someone keeps notes, or a second tool, inside the portable folder. The swap renames that
-    folder aside with their file in it; deleting the backup would silently destroy the file."""
+    """Someone keeps notes, or a second tool, inside the portable folder. The swap renames the
+    WHOLE folder aside, so their file would silently move into the backup (review-2 M2). The
+    hands-off swap is refused and the update goes down the guided copy instead."""
     apps = tmp_path / "Apps"
     install = _portable(apps, "NetSpeedTray")
     (install / "my-notes.txt").write_text("mine", encoding="utf-8")
     staged = _portable(tmp_path / "Downloads", "NetSpeedTray-9.9.9", exe_text="new")
 
-    assert _apply(install, staged) == 0
-    _run_as(monkeypatch, install)
-    ua.run_update_janitor(retry_delays=(), sleep=lambda s: None)
-    ua.sweep_old_backups(str(install), keep_newer_than_sec=0)   # the legacy sweep, too
+    assert ua.validate(str(install), str(staged)) is not None
+    assert _apply(install, staged) == 3
+    assert (install / "my-notes.txt").read_text(encoding="utf-8") == "mine"
+    assert _exe(install) == "old" and _backups(apps) == []
 
-    (backup,) = _backups(apps)
-    assert (backup / "my-notes.txt").read_text(encoding="utf-8") == "mine"
-    assert (backup / ua.APP_EXE).exists(), "a refused folder is left whole, not half-deleted"
+
+def test_a_refused_backup_record_is_kept_and_logged_once(
+        tmp_path, monkeypatch, marker, no_wait, caplog):
+    """A recorded backup holding something that is not ours is never deleted - and its record is
+    never dropped either (review-2 M2): it stays, the refusal is logged once, not every launch."""
+    import logging
+    apps = tmp_path / "Apps"
+    install = _portable(apps, "NetSpeedTray")
+    bk = _portable(apps, "NetSpeedTray" + ua._BACKUP_SUFFIX + "1790000000")
+    (bk / "my-notes.txt").write_text("mine", encoding="utf-8")
+    _records(marker).parent.mkdir(parents=True)
+    _records(marker).write_text(json.dumps([{"kind": "backup", "path": str(bk),
+                                             "install": str(install)}]), encoding="utf-8")
+    _run_as(monkeypatch, install)
+
+    with caplog.at_level(logging.WARNING, logger="NetSpeedTray.UpdateApplier"):
+        for _ in range(3):
+            ua.run_update_janitor(retry_delays=(), sleep=lambda s: None)
+    assert (bk / "my-notes.txt").exists()
+    recs = json.loads(_records(marker).read_text(encoding="utf-8"))
+    assert [r["path"] for r in recs] == [str(bk)], "the refused record must be kept"
+    assert sum("left in place" in r.getMessage() for r in caplog.records) == 1
 
 
 def test_a_junction_inside_the_previous_version_is_never_followed(
@@ -214,8 +240,8 @@ def test_a_junction_named_like_a_backup_is_never_followed(tmp_path, monkeypatch)
     install = _portable(apps, "NetSpeedTray")
     # A folder that looks exactly like ours, reached through a junction with a backup's name.
     lookalike = _portable(tmp_path / "Elsewhere", "Real")
-    _winapi.CreateJunction(str(lookalike), str(apps / ("NetSpeedTray" + ua._BACKUP_SUFFIX + "123")))
-    _winapi.CreateJunction(str(victim), str(apps / ("NetSpeedTray" + ua._BACKUP_SUFFIX + "456")))
+    _winapi.CreateJunction(str(lookalike), str(apps / ("NetSpeedTray" + ua._BACKUP_SUFFIX + "1790000123")))
+    _winapi.CreateJunction(str(victim), str(apps / ("NetSpeedTray" + ua._BACKUP_SUFFIX + "1790000456")))
     _run_as(monkeypatch, install)
 
     assert ua.sweep_old_backups(str(install), keep_newer_than_sec=0) == 0
@@ -228,7 +254,7 @@ def test_a_recorded_backup_that_is_a_junction_is_refused(tmp_path, monkeypatch, 
     victim = _portable(tmp_path / "Elsewhere", "Victim")
     apps = tmp_path / "Apps"
     install = _portable(apps, "NetSpeedTray")
-    link = apps / ("NetSpeedTray" + ua._BACKUP_SUFFIX + "123")
+    link = apps / ("NetSpeedTray" + ua._BACKUP_SUFFIX + "1790000123")
     _winapi.CreateJunction(str(victim), str(link))
     marker.parent.mkdir(parents=True)
     _records(marker).write_text(json.dumps([{"kind": "backup", "path": str(link), "install": str(install),
@@ -242,7 +268,7 @@ def test_a_recorded_backup_that_is_a_junction_is_refused(tmp_path, monkeypatch, 
 def test_a_recorded_backup_outside_the_install_parent_is_refused(
         tmp_path, monkeypatch, marker, no_wait):
     """The backup must be the install's own ``<name>.old-<digits>`` sibling - nothing else."""
-    elsewhere = _portable(tmp_path / "Other", "NetSpeedTray" + ua._BACKUP_SUFFIX + "123")
+    elsewhere = _portable(tmp_path / "Other", "NetSpeedTray" + ua._BACKUP_SUFFIX + "1790000123")
     oddname = _portable(tmp_path / "Apps", "NetSpeedTray" + ua._BACKUP_SUFFIX + "mine")
     install = _portable(tmp_path / "Apps", "NetSpeedTray")
     marker.parent.mkdir(parents=True)
@@ -369,7 +395,7 @@ def test_a_failed_swap_keeps_the_staged_copy_and_zip_then_ages_them_out(
         raise OSError("simulated: disk full")
     monkeypatch.setattr(ua.shutil, "copytree", _boom)
     assert _apply(install, staged) == 4
-    assert (install / ua.APP_EXE).read_text(encoding="utf-8") == "old", "restored"
+    assert _exe(install) == "old", "restored"
 
     _backdate(staged)                                         # well past the in-flight grace
     _run_as(monkeypatch, install)
@@ -455,7 +481,7 @@ def test_a_hands_off_update_is_staged_in_the_app_folder_not_downloads(
     w._run_portable()
 
     assert got == [str(root / "NetSpeedTray-9.9.9")]
-    assert (root / "NetSpeedTray-9.9.9" / ua.APP_EXE).read_text(encoding="utf-8") == "new"
+    assert _exe(root / "NetSpeedTray-9.9.9") == "new"
     assert (root / "NetSpeedTray-9.9.9.zip").is_file(), "the zip is kept until the swap is verified"
     assert list((tmp_path / "Downloads").iterdir()) == [], "nothing is put in the user's Downloads"
 
@@ -540,7 +566,6 @@ def test_m2_backups_are_recorded_where_older_builds_never_look(tmp_path, marker,
     backup of an install named NetSpeedTray-Portable (holding a user's file) must be in neither."""
     apps = tmp_path / "Apps"
     install = _portable(apps, "NetSpeedTray-Portable")
-    (install / "my-notes.txt").write_text("USER DATA", encoding="utf-8")
     staged = _portable(tmp_path / "Downloads", "NetSpeedTray-9.9.9", exe_text="new")
     ua.record_staged_path(str(staged))
 
@@ -693,3 +718,235 @@ def test_the_test_session_never_points_at_the_real_profile():
     from netspeedtray.utils.helpers import get_app_data_path
     real = os.path.join(os.path.expanduser("~"), "AppData", "Roaming")
     assert not os.path.normcase(str(get_app_data_path())).startswith(os.path.normcase(real))
+
+
+# ------------------------------------------------------------- second adversarial review (#260)
+
+_STAMP = "1790000000"                                  # a plausible int(time.time()) (2026-09)
+
+
+def _whole_install(apps: Path) -> Path:
+    return _portable(apps, "NetSpeedTray")
+
+
+def test_r2_m1_a_users_old_folder_beside_the_install_survives_every_launch(tmp_path, monkeypatch):
+    """S1: `Tools.old-<stamp>` next to a portable named `Tools`, holding only `_internal\\photos`."""
+    install = _portable(tmp_path, "Tools")
+    user = tmp_path / ("Tools.old-" + _STAMP)
+    (user / "_internal" / "photos").mkdir(parents=True)
+    (user / "_internal" / "photos" / "kid.jpg").write_text("precious", encoding="utf-8")
+    _backdate(user)
+    _run_as(monkeypatch, install)
+    assert ua.sweep_old_backups(str(install), keep_newer_than_sec=0) == 0
+    assert (user / "_internal" / "photos" / "kid.jpg").exists()
+
+
+def test_r2_m1_a_users_rollback_copy_with_a_short_suffix_survives(tmp_path, monkeypatch):
+    """S2: the user's own complete copy, `NetSpeedTray.old-2` - not a timestamp."""
+    install = _whole_install(tmp_path)
+    mine = _portable(tmp_path, "NetSpeedTray.old-2", exe_text="my rollback")
+    _backdate(mine)
+    _run_as(monkeypatch, install)
+    assert ua.sweep_old_backups(str(install), keep_newer_than_sec=0) == 0
+    assert _exe(mine) == "my rollback"
+
+
+def test_r2_m1_this_versions_backups_are_never_swept_unrecorded(tmp_path, monkeypatch):
+    install = _whole_install(tmp_path)
+    prev = _portable(tmp_path, "NetSpeedTray" + ua._BACKUP_SUFFIX + _STAMP)
+    _backdate(prev)
+    _run_as(monkeypatch, install)
+    assert ua.sweep_old_backups(str(install), keep_newer_than_sec=0) == 0
+    assert prev.exists(), "a .previous- backup is only ever removed through its record"
+
+
+@pytest.mark.parametrize("name", [
+    "Kit.old-" + _STAMP,                        # KELVIN SIGN, which str.lower() folds to 'k'
+    "Kit.old-١٢٣٤٥٦٧٨٩٠",   # Arabic-Indic
+    "Kit.old-¹²³" + "1234567",        # superscripts
+    "Kit.old-17900000",                              # too short
+    "Kit.old-9999999999",                            # in the future
+    "Kit.old-1000000000",                            # 2001: before any portable updater
+])
+def test_r2_m1_only_a_plausible_ascii_timestamp_names_a_backup(tmp_path, name):
+    install = _portable(tmp_path, "Kit")
+    assert not ua._is_backup_name(str(tmp_path / name), str(install))
+    assert ua._is_backup_name(str(tmp_path / ("kit.OLD-" + _STAMP)), str(install))
+
+
+def test_r2_m1_a_real_partial_leftover_is_still_removed(tmp_path, monkeypatch):
+    """What 2.1.7 really leaves - a locked Qt module - still carries the build's fingerprint."""
+    install = _whole_install(tmp_path)
+    bk = tmp_path / ("NetSpeedTray.old-" + _STAMP)
+    (bk / "_internal" / "PyQt6").mkdir(parents=True)
+    (bk / "_internal" / "PyQt6" / "QtCore.pyd").write_bytes(b"pyd")
+    _backdate(bk)
+    _run_as(monkeypatch, install)
+    assert ua.sweep_old_backups(str(install), keep_newer_than_sec=0) == 1
+    assert not bk.exists()
+
+
+def test_r2_l1_a_folder_recreated_at_the_install_path_is_never_wiped(
+        tmp_path, monkeypatch, marker, root, no_relaunch):
+    """S7: something re-creates the install path between the rename and the copy."""
+    install = _portable(tmp_path / "Apps", "P")
+    staged = _portable(root, "NetSpeedTray-4.0.0", exe_text="new")
+    orig = ua._rename_with_retry
+
+    def _rename_then_recreate(src, dst, timeout=0):
+        orig(src, dst, 0)
+        os.makedirs(src)
+        (Path(src) / "SOMEONE_ELSES.txt").write_text("x", encoding="utf-8")
+    monkeypatch.setattr(ua, "_rename_with_retry", _rename_then_recreate)
+
+    assert _apply(install, staged) == 4
+    assert (install / "SOMEONE_ELSES.txt").exists()
+    (backup,) = _backups(tmp_path / "Apps")
+    assert _exe(backup) == "old"
+    recs = json.loads(_records(marker).read_text(encoding="utf-8"))
+    assert any(r.get("restore_failed") and r.get("backup") == str(backup) for r in recs)
+
+
+def test_r2_m3_a_failed_restore_records_the_only_good_copy_forever(
+        tmp_path, monkeypatch, marker, root, no_relaunch, no_wait):
+    """S8: copy fails, then the restore fails too. The backup is named in a no-expiry record and
+    nothing removes it - not after 8 days, not even with a whole-looking install in place."""
+    apps = tmp_path / "Apps"
+    install = _portable(apps, "Q")
+    staged = _portable(root, "NetSpeedTray-9.9.9", exe_text="new")
+
+    def _boom(src, dst, *a, **k):
+        _portable(Path(dst).parent, Path(dst).name, exe_text="partial")   # a partial copy...
+        raise OSError("simulated: disk full")
+    monkeypatch.setattr(ua.shutil, "copytree", _boom)
+    real_rename = os.rename
+
+    def _no_restore(a, b):
+        if Path(a).name.startswith("Q" + ua._BACKUP_SUFFIX):
+            raise OSError("simulated: restore blocked")
+        return real_rename(a, b)
+    monkeypatch.setattr(ua.os, "rename", _no_restore)
+    monkeypatch.setattr(ua.shutil, "rmtree", lambda *a, **k: None)          # ...that stays put
+
+    assert _apply(install, staged) == 4
+    monkeypatch.undo()
+    monkeypatch.setattr(ua, "_marker_path", lambda: str(marker))
+    monkeypatch.setattr(ua, "_wait_for_exit", lambda pid, timeout=None: True)
+    (backup,) = _backups(apps)
+    recs = json.loads(_records(marker).read_text(encoding="utf-8"))
+    for r in recs:
+        r["failed_at"] = time.time() - 8 * 86400
+    recs.append({"kind": "backup", "path": str(backup), "install": str(install)})   # tampered
+    _records(marker).write_text(json.dumps(recs), encoding="utf-8")
+    _run_as(monkeypatch, install)
+
+    for _ in range(2):
+        ua.run_update_janitor(retry_delays=(), sleep=lambda s: None)
+    assert _exe(backup) == "old", "the only complete copy must never be removed"
+
+
+def test_r2_m3_an_install_without_its_frozen_stdlib_is_not_complete(tmp_path):
+    install = _portable(tmp_path, "NetSpeedTray")
+    assert ua._install_is_complete(str(install))
+    (install / "_internal" / "base_library.zip").unlink()
+    assert not ua._install_is_complete(str(install))
+    (install / "_internal" / "base_library.zip").write_bytes(b"PK")
+    (install / ua.APP_EXE).write_text("not a program", encoding="utf-8")
+    assert not ua._install_is_complete(str(install))
+
+
+def test_r2_l2_an_unreadable_backups_record_protects_every_backup(tmp_path, monkeypatch, marker):
+    """S10: a truncated update_backups.json may have held a failure record."""
+    install = _whole_install(tmp_path)
+    bk = _portable(tmp_path, "NetSpeedTray.old-" + _STAMP)
+    _backdate(bk)
+    _records(marker).parent.mkdir(parents=True)
+    _records(marker).write_text('[{"kind": "failure", "install": "x", "failed_at": 1',
+                                encoding="utf-8")
+    _run_as(monkeypatch, install)
+    ua.run_update_janitor(retry_delays=(), sleep=lambda s: None)
+    assert bk.exists()
+    assert _records(marker).read_text(encoding="utf-8").startswith('[{"kind"'), "left as found"
+
+
+def test_r2_l2_records_are_written_through_a_unique_temp_file(tmp_path, marker):
+    """Two processes never share a temp name: a stale `<record>.tmp` (another writer's, or a
+    leftover) does not stop the write."""
+    (marker.parent).mkdir(parents=True)
+    (marker.parent / (ua._BACKUPS_RECORD_NAME + ".tmp")).mkdir()          # blocks a fixed name
+    ua._write_list(str(_records(marker)), [{"kind": "failure", "install": "x", "failed_at": 1}])
+    assert json.loads(_records(marker).read_text(encoding="utf-8"))[0]["install"] == "x"
+    assert sorted(p.name for p in marker.parent.iterdir()) == [
+        ua._BACKUPS_RECORD_NAME, ua._BACKUPS_RECORD_NAME + ".tmp"]
+
+
+def test_r2_l3_a_permanently_locked_leftover_is_given_up_on_not_retried_forever(
+        tmp_path, monkeypatch, marker, no_wait, no_relaunch):
+    apps = tmp_path / "Apps"
+    install = _whole_install(apps)
+    staged = _portable(tmp_path / "Downloads", "NetSpeedTray-9.9.9", exe_text="new")
+    assert _apply(install, staged) == 0
+    (backup,) = _backups(apps)
+    _run_as(monkeypatch, install)
+    with open(backup / "_internal" / "python313.dll", "rb"):
+        for _ in range(ua._MAX_LAUNCH_ATTEMPTS):
+            ua.run_update_janitor(retry_delays=(), sleep=lambda s: None)
+    assert backup.exists(), "giving up never means deleting some other way"
+    assert not _records(marker).exists() or not any(
+        r.get("kind") == "backup" for r in json.loads(_records(marker).read_text("utf-8")))
+
+
+def test_r2_l3_the_applier_pid_is_forgotten_once_seen_exited(
+        tmp_path, monkeypatch, marker, no_relaunch):
+    apps = tmp_path / "Apps"
+    install = _whole_install(apps)
+    staged = _portable(tmp_path / "Downloads", "NetSpeedTray-9.9.9", exe_text="new")
+    ua.record_staged_path(str(staged))
+    assert _apply(install, staged) == 0
+    for f in (marker, _records(marker)):
+        items = json.loads(f.read_text(encoding="utf-8"))
+        for it in items:
+            it["applier_pid"] = 424242
+        f.write_text(json.dumps(items), encoding="utf-8")
+    waited = []
+    monkeypatch.setattr(ua, "_wait_for_exit", lambda pid, timeout=None: waited.append(pid) or True)
+    _run_as(monkeypatch, install)
+    with open(_backups(apps)[0] / "_internal" / "python313.dll", "rb"):   # keep a record alive
+        ua.run_update_janitor(retry_delays=(), sleep=lambda s: None)
+        ua.run_update_janitor(retry_delays=(), sleep=lambda s: None)
+    assert waited == [424242], "a recycled PID must not be waited on every launch"
+
+
+def test_r2_l4_the_verdict_is_taken_again_once_the_folder_is_pinned(tmp_path, monkeypatch):
+    """Something drops a user file into the folder after the first check: the re-check under the
+    pinning handle refuses, and nothing is deleted."""
+    d = _portable(tmp_path, "NetSpeedTray.old-" + _STAMP)
+    assert ua._portable_tree_refusal(str(d)) is None
+    real = ua._HeldDir
+
+    class _LateWriter(real):
+        def __init__(self, path):
+            if os.path.normcase(path) == os.path.normcase(str(d)):
+                (d / "late-user-file.txt").write_text("mine", encoding="utf-8")
+            super().__init__(path)
+    monkeypatch.setattr(ua, "_HeldDir", _LateWriter)
+
+    assert ua._remove_portable_tree(str(d)) is False
+    assert (d / "late-user-file.txt").exists() and (d / "_internal" / "python313.dll").exists()
+
+
+def test_r2_l5_a_cross_drive_move_that_copied_fully_points_at_the_copy(
+        q_app, tmp_path, monkeypatch, root):
+    from netspeedtray.core import update_installer as ui
+    downloads = tmp_path / "Downloads"
+    downloads.mkdir()
+    monkeypatch.setattr(ui, "_downloads_dir", lambda: str(downloads))
+    ready = _portable(root, "NetSpeedTray-9.9.9", exe_text="new")
+    import shutil as _sh
+
+    def _copy_then_fail(src, dst):
+        _sh.copytree(src, dst)
+        raise PermissionError("simulated: AV holds a file in the source")
+    monkeypatch.setattr(ui.shutil, "move", _copy_then_fail)
+
+    assert _secure_updater()._move_to_downloads(str(ready)) == str(downloads / "NetSpeedTray-9.9.9")

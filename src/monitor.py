@@ -271,10 +271,11 @@ def main() -> int:
             # previous version's folder is the rollback until then. Runs INSIDE the single-instance
             # mutex (review C1) - the --apply-update process exits long before this point, so the
             # applier never sweeps its own ground - and on a background thread, because it waits
-            # for the applier to exit and retries files AV still holds. Only paths the update
-            # RECORDED (plus guarded <install>.old-<ts> folders) are removed; anything that merely
-            # looks like a staged copy - e.g. a rollback backup like NetSpeedTray-2.1.5-backup
-            # kept beside the install - is never touched.
+            # for the applier to exit and retries files AV still holds. Only what an update
+            # RECORDED is removed, plus the <install>.old-<unix time> leftovers older appliers
+            # left (strictly checked - see update_applier.sweep_old_backups); anything that merely
+            # looks like a staged copy or a backup - e.g. a rollback copy like
+            # NetSpeedTray-2.1.5-backup kept beside the install - is never touched.
             def _start_update_janitor() -> None:
                 try:
                     from netspeedtray.core.update_applier import start_update_janitor

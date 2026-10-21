@@ -295,6 +295,23 @@ def _in_staging_root(path: str) -> bool:
         return False
 
 
+def _is_complete_copy(target: str, source: str) -> bool:
+    """``target`` holds a whole portable app: its EXE, portable.marker and ``_internal`` with at
+    least as many entries as whatever is left of ``source``."""
+    try:
+        from netspeedtray.core.update_applier import APP_EXE, PORTABLE_MARKER
+        if not (os.path.isfile(os.path.join(target, APP_EXE))
+                and os.path.isfile(os.path.join(target, PORTABLE_MARKER))
+                and os.path.isdir(os.path.join(target, "_internal"))):
+            return False
+        left = os.path.join(source, "_internal")
+        if os.path.isdir(left):
+            return len(os.listdir(os.path.join(target, "_internal"))) >= len(os.listdir(left))
+        return True
+    except Exception:
+        return False
+
+
 def _sha256_file(path: str) -> str:
     """Streaming SHA-256 of a file, as lowercase hex."""
     import hashlib
@@ -683,6 +700,7 @@ class SecureUpdater(QObject):
         (unchanged if it was not in the staging root, or could not be moved)."""
         if not _in_staging_root(ready):
             return ready
+        target = ""
         try:
             target = _unique_dir(os.path.join(_downloads_dir(), os.path.basename(ready)))
             shutil.move(ready, target)
@@ -691,6 +709,13 @@ class SecureUpdater(QObject):
                 os.remove(ready + ".zip")
             return target
         except Exception:
+            # Across drives, move = copy then delete. If the copy finished and only removing the
+            # source failed, the complete copy is the target - point the user there; the remnant
+            # in the update folder is aged out (review-2 L5).
+            if target and _is_complete_copy(target, ready):
+                logger.warning("Moved the staged update to Downloads, but could not remove all of "
+                               "the original.", exc_info=True)
+                return target
             logger.warning("Could not move the staged update to Downloads; pointing the user at "
                            "the update folder instead.", exc_info=True)
             return ready

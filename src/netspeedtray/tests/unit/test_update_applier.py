@@ -301,10 +301,12 @@ def test_backup_paths_do_not_collide(tmp_path):
 
 def test_sweep_removes_old_backups_but_spares_recent_ones(tmp_path):
     install = _make_install(tmp_path)
-    stale = tmp_path / ("NetSpeedTray" + ua._BACKUP_SUFFIX + "1")
+    (install / ua.APP_EXE).write_bytes(b"MZ")                      # a whole, real-looking install
+    (install / "_internal" / "base_library.zip").write_bytes(b"PK")
+    stale = tmp_path / ("NetSpeedTray" + ua._LEGACY_BACKUP_SUFFIX + "1790000001")
     stale.mkdir()
     os.utime(stale, (time.time() - 3600, time.time() - 3600))
-    fresh = tmp_path / ("NetSpeedTray" + ua._BACKUP_SUFFIX + "2")
+    fresh = tmp_path / ("NetSpeedTray" + ua._LEGACY_BACKUP_SUFFIX + "1790000002")
     fresh.mkdir()
 
     removed = ua.sweep_old_backups(str(install))
