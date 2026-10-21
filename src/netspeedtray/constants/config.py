@@ -249,6 +249,9 @@ class ConfigConstants:
         "monitor_graph_smoothing": False,      # smooth (monotone-cubic) vs raw lines on the hw graph
         "monitor_graph_fixed_axis": True,      # hw graph y-axis fixed 0-100% vs auto-scale to the data
         "history_period_slider_value": 0,  # UI-specific state
+        # True once the user picks a Monitor period (any tab). Until then the Overview opens on 24h
+        # rather than the stored 0 - which is also Session's index, so 0 alone can't say which (M2).
+        "history_period_chosen": False,
         "show_legend": DEFAULT_SHOW_LEGEND,
         "use_separate_arrow_font": DEFAULT_USE_SEPARATE_ARROW_FONT,
         "arrow_font_family": DEFAULT_ARROW_FONT_FAMILY,
@@ -422,6 +425,7 @@ class ConfigConstants:
         "monitor_graph_smoothing": {"type": bool, "default": False},
         "monitor_graph_fixed_axis": {"type": bool, "default": True},
         "history_period_slider_value": {"type": int, "default": 0, "min": 0, "max": len(data.history_period.PERIOD_MAP) - 1},
+        "history_period_chosen": {"type": bool, "default": False},
         "show_legend": {"type": bool, "default": DEFAULT_SHOW_LEGEND},
         "monitor_cpu_enabled": {"type": bool, "default": DEFAULT_MONITOR_CPU_ENABLED},
         "monitor_gpu_enabled": {"type": bool, "default": DEFAULT_MONITOR_GPU_ENABLED},

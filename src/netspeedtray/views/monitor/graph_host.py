@@ -111,6 +111,8 @@ class _ConfigHandlerShim:
         self._host = host
 
     def queue_config_update(self, updates: Dict[str, Any]) -> None:
+        if "history_period_slider_value" in updates:
+            updates = {**updates, "history_period_chosen": True}   # a deliberate pick (M2)
         try:
             mw = self._host._main_widget
             mw.config.update(updates)
@@ -330,6 +332,26 @@ class GraphHost(QObject):
 
     # ------------------------------------------------------------------ host surface: refresh
 
+    def sync_period_from_config(self) -> None:
+        """Adopt the period chosen on ANOTHER tab (the Overview writes config, not the host) before a
+        chart tab shows (M1: picking Week on the Overview left Network/Hardware on 24 h). Only once
+        a period was ever chosen: a fresh install keeps each tab's own opening view."""
+        if self._is_closing or not self.config.get("history_period_chosen", False):
+            return
+        try:
+            value = int(self.config.get("history_period_slider_value", self._history_period_value))
+        except (TypeError, ValueError):
+            return
+        if value == self._history_period_value:
+            return
+        self._history_period_value = value
+        self._accept_from_seq = self._current_request_id + 1   # an older-period reply must not paint
+        try:
+            if self.renderer is not None:
+                self.renderer.reset_ylim()   # sticky y-limits belong to the old period
+        except Exception:
+            pass
+
     def update_graph(self, show_loading: bool = True) -> None:
         """Build a DataRequest for the active stat_type + dispatch to the worker thread."""
         if self._is_closing or not self._loaded:
@@ -397,11 +419,16 @@ class GraphHost(QObject):
             # call per tick, forever.
             self._earliest_db_fetched = True
             try:
-                if period_key == "TIMELINE_SYSTEM_UPTIME":
-                    self._cached_boot_time = GraphLogic.get_boot_time()
                 self._cached_earliest_db = self._main_widget.widget_state.get_earliest_data_timestamp()
             except Exception:
-                self._cached_boot_time = self._cached_earliest_db = None
+                self._cached_earliest_db = None
+        # The boot time is fetched on its own (psutil, no DB). It used to ride the earliest-row latch,
+        # so "All" first and then "Since boot" never fetched it and drew the whole history (M4).
+        if period_key == "TIMELINE_SYSTEM_UPTIME" and self._cached_boot_time is None:
+            try:
+                self._cached_boot_time = GraphLogic.get_boot_time()
+            except Exception:
+                self._cached_boot_time = None
         return GraphLogic.get_time_range(self._history_period_value, self.session_start_time,
                                          self._cached_boot_time, self._cached_earliest_db)
 
