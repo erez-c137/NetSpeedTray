@@ -86,10 +86,10 @@ and Small - instead of only fitting the classic bottom bar.
 > **Upgrading:** from beta.1 or beta.2, just install over it - the running app closes itself and
 > comes back. From 2.1.x, everything in the beta.1 notes applies.
 >
-> - **The CPU and GPU labels have a colour setting now**, and existing setups are carried over by
+> - **The CPU and GPU labels have a color setting now**, and existing setups are carried over by
 >   what they had: **Monochrome icons become "Match text"** (the same white on a dark taskbar, and now
->   visible on a light one); **coloured icons and text labels move to Brand**, which paints them in
->   your CPU and GPU maker's colour. New installs start on Brand.
+>   visible on a light one); **colored icons and text labels move to Brand**, which paints them in
+>   your CPU and GPU maker's color. New installs start on Brand.
 > - **Some Settings moved.** Mini Graph is on the Widget page now, Preferred Monitor is under Widget →
 >   Behavior, and Appearance and Hardware are reordered. Nothing was renamed or reset.
 
@@ -109,20 +109,20 @@ and Small - instead of only fitting the classic bottom bar.
 - **CPU, GPU and memory move to the hover card when a side taskbar has no room for them.** The card
   shows them live, about once a second, and opens beside the bar - or below a top bar, above a
   bottom one. Settings → Widget → Display Mode says so. ([#394])
-- **Brand, Match text or Custom colours for the CPU and GPU labels**, in Settings → Hardware →
+- **Brand, Match text or Custom colors for the CPU and GPU labels**, in Settings → Hardware →
   Indicator Color. Brand uses NVIDIA green, AMD red and Intel blue, with a sibling shade when the CPU
-  and GPU share a maker; Custom gives each a colour picker. ([#391])
+  and GPU share a maker; Custom gives each a color picker. ([#391])
 
   *Under the hood: a mixed-vendor GPU setup (a Ryzen iGPU next to an RTX) is treated as unknown and
   stays neutral, because the GPU % is the busiest adapter, not a particular one. The old three-way
-  `hardware_label_style` is split into shape + `hardware_label_color` on every load; a colour already
+  `hardware_label_style` is split into shape + `hardware_label_color` on every load; a color already
   on file wins, so a round trip to beta.2 and back keeps the user's choice. Vendor detection is one
   cached registry read per process.*
 
 - **A "Graph style" option for the mini graph: Trend (new default) or Detailed.** Trend smooths each
   line into a calm curve, so a busy minute reads as a shape instead of a row of spikes; Detailed is the
   graph you know, every sample plotted, one click away on the Widget page under Mini Graph. ([#395])
-  *Under the hood: a centred Gaussian moving average over ~6% of the visible window; the newest
+  *Under the hood: a centered Gaussian moving average over ~6% of the visible window; the newest
   samples use a fixed 11-sample window with a slope-damped fit, so the "now" end catches up within
   ~10 s at any timespan with no overshoot. The line is always kept inside the graph, and the auto-fit
   reads the newest samples as a mean so a lone spike doesn't rescale the whole graph. Applies to the
@@ -130,7 +130,7 @@ and Small - instead of only fitting the classic bottom bar.
 
 ### Changed
 
-- **Settings are organised by what you're looking for.** Units and decimals sit near the top of
+- **Settings are organized by what you're looking for.** Units and decimals sit near the top of
   Appearance, Mini Graph moved to the Widget page, and Preferred Monitor sits right above "Float on a
   display without a taskbar", the one setting it affects. Same controls, same saved settings.
   ([#393])
@@ -160,7 +160,7 @@ and Small - instead of only fitting the classic bottom bar.
   scale from 100% to 250%, with 1 px of top clearance. Default 48 px bars are pixel-identical.*
 
 - **Monochrome CPU/GPU labels are visible on a light taskbar.** They were hard-coded white; "Match
-  text" follows the widget's text colour instead. ([#391])
+  text" follows the widget's text color instead. ([#391])
 - **The Widgets-button overlap hint no longer warns by mistake on a side taskbar.** ([#394])
 - **The Statistics sheet stays on screen** instead of growing past the bottom edge once its figures
   load, and closed sheets are freed instead of piling up behind the Monitor. ([#387])
@@ -169,7 +169,7 @@ and Small - instead of only fitting the classic bottom bar.
 
 ### Localization
 
-- Hungarian reviewed by a native speaker, including the new label-colour strings. ([#386], [#392],
+- Hungarian reviewed by a native speaker, including the new label-color strings. ([#386], [#392],
   thanks [@cscsanaki])
 - Dutch beta.2 strings reviewed by a native speaker. ([#383], thanks [@boonstraworks])
 - 10 new strings are AI-drafted in every language and listed for review in [#364].
