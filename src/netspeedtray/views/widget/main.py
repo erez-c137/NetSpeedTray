@@ -91,6 +91,25 @@ except Exception:
     _WM_NST_SHUTDOWN = 0
 
 
+# double_click_action -> the i18n key of its Settings label (the same words the user picked it by).
+_DOUBLE_CLICK_HINT_LABELS = {
+    constants.config.defaults.CLICK_ACTION_OPEN_MONITOR: "CLICK_ACTION_OPEN_MONITOR_LABEL",
+    constants.config.defaults.CLICK_ACTION_SETTINGS: "CLICK_ACTION_SETTINGS_LABEL",
+    constants.config.defaults.CLICK_ACTION_PAUSE: "CLICK_ACTION_PAUSE_LABEL",
+}
+
+
+def hover_hint_text(i18n, config: Dict[str, Any]) -> str:
+    """The first-run gesture hint: what the right-click menu holds, plus the double-click action
+    the user actually has configured (no line when it does nothing)."""
+    lines = [i18n.WIDGET_HOVER_TOOLTIP]
+    key = _DOUBLE_CLICK_HINT_LABELS.get(
+        config.get("double_click_action", constants.config.defaults.DEFAULT_DOUBLE_CLICK_ACTION))
+    if key:
+        lines.append(i18n.WIDGET_HOVER_DOUBLE_CLICK_HINT.format(action=getattr(i18n, key)))
+    return "\n".join(lines)
+
+
 class NetworkSpeedWidget(QWidget):
     """Main widget for displaying network speeds near the Windows system tray."""
 
@@ -1244,7 +1263,7 @@ class NetworkSpeedWidget(QWidget):
                 self._tooltip_counted_this_session = True
                 self.config_controller.update_config(
                     {"tooltip_hint_shown_count": count + 1}, apply_and_repaint=False)
-            return self.i18n.WIDGET_HOVER_TOOLTIP
+            return hover_hint_text(self.i18n, self.config)
         except Exception:
             return None
 

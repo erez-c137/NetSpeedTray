@@ -25,7 +25,7 @@ def _i18n():
     ns.USAGE_TODAY_LABEL = "Today"
     ns.USAGE_THIS_MONTH_LABEL = "This month"
     ns.TRAY_DATA_CAP_MENU_ITEM = "Data cap…"
-    ns.WIDGET_HOVER_TOOLTIP = "Right-click for graphs, app activity, and CPU/GPU stats"
+    ns.WIDGET_HOVER_TOOLTIP = "Right-click for Settings, the Monitor, and more"
     return ns
 
 
