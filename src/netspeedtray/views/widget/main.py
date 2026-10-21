@@ -217,6 +217,8 @@ class NetworkSpeedWidget(QWidget):
         self._drag_offset: QPoint = QPoint()
         self.startup_manager: StartupManager
         self.is_paused: bool = False
+        # (net, cpu, gpu) graph histories frozen at pause() - see _graph_histories.
+        self._paused_histories: Optional[Tuple[list, list, list]] = None
         self._is_context_menu_visible: bool = False
         self.last_tray_rect: Optional[Tuple[int, int, int, int]] = None
         self._taskbar_lost_count: int = 0
@@ -735,6 +737,11 @@ class NetworkSpeedWidget(QWidget):
         # is_paused is a transient live-view toggle only - deliberately NOT persisted, so the
         # widget never reboots into a frozen state that looks like a hang.
         self.is_paused = True
+        self._paused_histories = None
+        try:
+            self._paused_histories = self._live_graph_histories()
+        except Exception as e:
+            self.logger.debug("Could not snapshot the graph for pause: %s", e)
         self.update()
 
 
@@ -745,6 +752,7 @@ class NetworkSpeedWidget(QWidget):
             return
         self.logger.info("Resuming widget updates")
         self.is_paused = False
+        self._paused_histories = None
         self.update()
 
 
@@ -1049,10 +1057,24 @@ class NetworkSpeedWidget(QWidget):
             if painter.isActive():
                 painter.end()
 
+    def _live_graph_histories(self) -> Tuple[list, list, list]:
+        ws = self.widget_state
+        return (list(ws.get_aggregated_speed_history()), list(ws.cpu_history), list(ws.gpu_history))
+
+    def _graph_histories(self) -> Tuple[list, list, list]:
+        """The (net, cpu, gpu) histories the mini-graph draws. While paused, the ones frozen at
+        pause(): the numbers are frozen, and the history keeps recording underneath, so any repaint
+        (the Auto-Cycle tick, a hover, a resize) used to scroll a live graph under frozen numbers."""
+        frozen = getattr(self, "_paused_histories", None)
+        if getattr(self, "is_paused", False) and frozen is not None:
+            return frozen
+        return self._live_graph_histories()
+
     def _build_metrics(self) -> WidgetMetrics:
         """Snapshot the current live state into the shared paint path's metrics object."""
         identity_text, identity_color, identity_solid = self._identity_presentation()
         identity_ssid = self._identity_ssid_text()
+        net_history, cpu_history, gpu_history = self._graph_histories()
         return WidgetMetrics(
             upload_mbps=self.upload_speed,
             download_mbps=self.download_speed,
@@ -1066,9 +1088,9 @@ class NetworkSpeedWidget(QWidget):
             ram_total=self.ram_total,
             vram_used=self.vram_used,
             vram_total=self.vram_total,
-            net_history=self.widget_state.get_aggregated_speed_history(),
-            cpu_history=list(self.widget_state.cpu_history),
-            gpu_history=list(self.widget_state.gpu_history),
+            net_history=net_history,
+            cpu_history=cpu_history,
+            gpu_history=gpu_history,
             identity_band=identity_text,
             identity_band_color=identity_color,
             identity_band_solid=identity_solid,
