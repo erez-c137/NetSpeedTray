@@ -767,3 +767,21 @@ def test_the_widget_retries_the_endpoint_on_each_stats_tick():
     NetworkSpeedWidget._publish_metrics_snapshot(stub)
     ep.retry_if_due.assert_called_once()
     ep.publish.assert_not_called()
+
+
+def test_an_ipv6_only_excluded_port_falls_back_to_ipv4_only(endpoint, monkeypatch):
+    """WSAEACCES on [::1] (a Hyper-V/WSL IPv6-only excluded range): nobody can listen there, so the
+    endpoint runs on 127.0.0.1 like a machine without IPv6, instead of reporting the port dead."""
+    real = me._LoopbackHTTPServer
+
+    def fake(port, store, host=M.HOST):
+        if host == "::1":
+            err = OSError(13, "An attempt was made to access a socket in a way forbidden")
+            err.winerror = 10013
+            raise err
+        return real(port, store, host=host)
+    monkeypatch.setattr(me, "_LoopbackHTTPServer", fake)
+    port = free_port()
+    st = endpoint.apply(True, port)
+    assert st.state == M.STATE_RUNNING and endpoint._server6 is None
+    assert get(port)[0] == 200

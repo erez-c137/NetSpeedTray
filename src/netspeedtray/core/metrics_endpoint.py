@@ -506,7 +506,8 @@ class MetricsEndpoint:
     ``localhost`` usually tries ::1 first, and any local process listening on [::1]:port would
     otherwise answer it - with made-up numbers, or reading what it sends. If [::1]:port is already
     taken the endpoint does not run (status ``in_use``) rather than share the name with a squatter;
-    if the machine has no IPv6 loopback at all, 127.0.0.1 alone is fine.
+    if the machine has no IPv6 loopback, or the port lies in an IPv6-only excluded range (nobody can
+    listen there), 127.0.0.1 alone is fine.
 
     A port that cannot be bound is retried with backoff (``retry_if_due``, from the GUI thread's
     stats tick): a port busy at startup - a scraper or another app still releasing it - used to stay
@@ -612,12 +613,15 @@ class MetricsEndpoint:
             server6 = _LoopbackHTTPServer(port, self.store, host=self.IPV6_HOST)
         except OSError as e:
             kind = bind_error_kind(e)
-            if kind in ("in_use", "denied"):
+            if kind == "in_use":
                 server.server_close()
-                return self._fail(port, kind, "Local metrics endpoint: [::1]:%d is %s by another "
+                return self._fail(port, kind, "Local metrics endpoint: [::1]:%d is taken by another "
                                   "program, so 'localhost' would reach it instead; not serving (%s)."
-                                  % (port, "taken" if kind == "in_use" else "reserved", e))
-            logger.info("Local metrics endpoint: no IPv6 loopback here (%s); 127.0.0.1 only.", e)
+                                  % (port, e))
+            # No IPv6 loopback, or the port is in an IPv6-only excluded range (WSAEACCES; Hyper-V/
+            # WSL reserve ranges per family): nobody else can listen there either, so 127.0.0.1
+            # alone is safe.
+            logger.info("Local metrics endpoint: [::1]:%d unavailable (%s); 127.0.0.1 only.", port, e)
         self._server, self._thread = server, self._serve(server, self.THREAD_NAME)
         if server6 is not None:
             self._server6, self._thread6 = server6, self._serve(server6, self.THREAD_NAME + "-v6")
