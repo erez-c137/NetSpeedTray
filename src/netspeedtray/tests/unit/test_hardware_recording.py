@@ -222,6 +222,18 @@ def test_battery_only_poll_reaches_history_through_the_real_write_path(q_app, tm
                                            poll_interval=1.0)
         assert summary is not None and summary.count == 2, "no battery_drain history on disk"
         assert summary.avg == pytest.approx(15.0)   # (12 + 18) / 2 - exactly the hover's read
+
+        # The v8 metrics dimension labels it in watts like the *_power stats (4th #323 review),
+        # not with the empty unit _unit_for gives an unknown name.
+        import sqlite3
+        from netspeedtray.core.db.schema_v8 import METRICS
+        from netspeedtray.core.db.sqlite_uri import sqlite_ro_uri
+        conn = sqlite3.connect(sqlite_ro_uri(state._db_path), uri=True)
+        try:
+            unit = conn.execute(f"SELECT unit FROM {METRICS} WHERE name = 'battery_drain'").fetchone()
+        finally:
+            conn.close()
+        assert unit == ("watt",)
     finally:
         state.cleanup()
 
