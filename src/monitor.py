@@ -225,20 +225,6 @@ def main() -> int:
     try:
         # 2. Use the context manager to ensure only one instance is running.
         with SingleInstanceChecker():
-            # Update-janitor work runs INSIDE the single-instance mutex (review C1): a duplicate
-            # launch during the update handoff dies at the mutex above before it can sweep the
-            # staged folder the applier is still running from. The --apply-update process exits
-            # before ever reaching this point, so the applier never sweeps its own ground. Only
-            # paths the hands-off flow RECORDED in its marker are removed; anything that merely
-            # looks like a staged copy - e.g. a rollback backup like NetSpeedTray-2.1.5-backup
-            # kept beside the install - is never touched.
-            try:
-                from netspeedtray.core.update_applier import sweep_old_backups, sweep_staged_leftovers
-                sweep_old_backups(os.path.dirname(os.path.abspath(sys.executable)))
-                sweep_staged_leftovers()
-            except Exception:
-                pass
-
             # 3. Load the application configuration from the file.
             config_manager = ConfigManager()
             config = config_manager.load()
@@ -280,6 +266,23 @@ def main() -> int:
 
             # 8. Show the widget after a short delay to ensure the event loop is running.
             QTimer.singleShot(500, widget.show)
+
+            # 8b. Post-update cleanup (#260), once this version has demonstrably STARTED: the
+            # previous version's folder is the rollback until then. Runs INSIDE the single-instance
+            # mutex (review C1) - the --apply-update process exits long before this point, so the
+            # applier never sweeps its own ground - and on a background thread, because it waits
+            # for the applier to exit and retries files AV still holds. Only what an update
+            # RECORDED is removed, plus the <install>.old-<unix time> leftovers older appliers
+            # left (strictly checked - see update_applier.sweep_old_backups); anything that merely
+            # looks like a staged copy or a backup - e.g. a rollback copy like
+            # NetSpeedTray-2.1.5-backup kept beside the install - is never touched.
+            def _start_update_janitor() -> None:
+                try:
+                    from netspeedtray.core.update_applier import start_update_janitor
+                    start_update_janitor()
+                except Exception:
+                    logger.debug("Post-update cleanup not started.", exc_info=True)
+            QTimer.singleShot(constants.app.UPDATE_JANITOR_DELAY_MS, _start_update_janitor)
 
             # 9. Start the application event loop.
             return app.exec()
