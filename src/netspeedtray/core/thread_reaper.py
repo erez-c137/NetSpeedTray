@@ -24,8 +24,8 @@ _lock = threading.Lock()
 def _is_running(thread) -> bool:
     try:
         if hasattr(thread, "isRunning"):
-            return bool(thread.isRunning())
-        return bool(thread.is_alive())
+            return thread.isRunning() is True
+        return thread.is_alive() is True
     except RuntimeError:                    # its C++ side is already gone
         return False
 
