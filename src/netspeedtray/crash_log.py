@@ -6,7 +6,9 @@ and the app's own modules are imported. A crash at logon - a DLL that fails to l
 violation inside one, an exception in an import - therefore left no trace anywhere. This module:
 
 - turns on ``faulthandler`` into ``%APPDATA%\\NetSpeedTray\\NetSpeedTray_Crash.log`` (all threads),
-  so a hard fault (access violation, stack overflow, abort) writes its Python stacks;
+  so a hard fault (access violation, stack overflow, abort) writes its Python stacks - during
+  STARTUP only: ``startup_complete()`` turns it off once the widget is up, because on Windows it
+  also reports access violations that the code raising them handles (see there);
 - installs a ``sys.excepthook`` / ``threading.excepthook`` that append any unhandled exception's
   traceback there, until (and also after) logging takes over.
 
@@ -85,6 +87,24 @@ def _thread_hook(args) -> None:
         return
     name = getattr(args.thread, "name", "?") if args.thread is not None else "?"
     record_exception(args.exc_type, args.exc_value, args.exc_traceback, "thread %s" % name)
+
+
+def startup_complete() -> None:
+    """The app has come up: turn faulthandler OFF, keep the exception hooks.
+
+    faulthandler's Windows handler is a vectored exception handler, so it sees first-chance SEH
+    exceptions - including ones that are HANDLED: drivers, PDH, WMI providers, Qt and AV hooks
+    probe memory and catch the access violation themselves (IsBadReadPtr is the textbook case).
+    Left on for the whole run it logged each of those as "Windows fatal exception" with every
+    thread's stack, which reads as a crash in a support bundle when nothing crashed. The window
+    that matters - DLL loads and imports at logon, before logging exists - is covered by then."""
+    try:
+        if faulthandler.is_enabled():
+            faulthandler.disable()
+        _write("%s startup complete pid %d; fault handler off\n"
+               % (time.strftime("%Y-%m-%d %H:%M:%S"), os.getpid()))
+    except Exception:
+        pass
 
 
 def enable(argv=None) -> Optional[str]:

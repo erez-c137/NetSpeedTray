@@ -487,6 +487,14 @@ def main() -> int:
             # 8. Show the widget after a short delay to ensure the event loop is running.
             QTimer.singleShot(500, widget.show)
 
+            # 8a. Startup has succeeded once the widget is up and the first stats ticks have run:
+            # turn the crash log's fault handler off (it also reports access violations that
+            # drivers/PDH/WMI/AV handle themselves); the exception hooks stay.
+            def _startup_complete() -> None:
+                from netspeedtray import crash_log
+                crash_log.startup_complete()
+            QTimer.singleShot(constants.app.CRASH_FAULT_WINDOW_MS, _startup_complete)
+
             # 8b. Post-update cleanup (#260), once this version has demonstrably STARTED: the
             # previous version's folder is the rollback until then. Runs INSIDE the single-instance
             # mutex (review C1) - the --apply-update process exits long before this point, so the

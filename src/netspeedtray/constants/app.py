@@ -44,6 +44,10 @@ class AppConstants:
     # It removes the previous version's folder after a portable update, and that folder is the
     # rollback until the new version has shown it can start - so not immediately (#260).
     UPDATE_JANITOR_DELAY_MS: Final[int] = 10_000
+    # How long after the event loop starts the crash log's fault handler stays on (netspeedtray/
+    # crash_log.py): long enough to cover the widget's first show and stats ticks, short enough
+    # that handled access violations later in the run are never logged as crashes.
+    CRASH_FAULT_WINDOW_MS: Final[int] = 5_000
 
     def __init__(self) -> None:
         self.validate()

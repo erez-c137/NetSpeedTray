@@ -54,6 +54,32 @@ def test_an_unhandled_exception_on_a_thread_is_recorded(tmp_path):
     assert "in thread NST-Worker" in text and "worker died" in text
 
 
+_HANDLED_AV = (
+    "import ctypes\n"
+    "k = ctypes.windll.kernel32\n"
+    "k.IsBadReadPtr.argtypes = [ctypes.c_void_p, ctypes.c_size_t]\n"
+    "k.IsBadReadPtr(0x7ff000000000, 1)\n"          # an access violation kernel32 handles itself
+)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows SEH")
+def test_handled_access_violations_after_startup_are_not_logged_as_crashes(tmp_path):
+    """faulthandler on Windows sees first-chance SEH exceptions, handled ones included: left on,
+    a driver/PDH/WMI probe read like a crash in every support bundle (review)."""
+    log = _run_child(tmp_path, "crash_log.startup_complete()\n" + _HANDLED_AV
+                     + "raise RuntimeError('real one')\n")
+    text = log.read_text(encoding="utf-8", errors="replace")
+    assert "startup complete" in text
+    assert "fatal exception" not in text.lower(), text
+    assert "real one" in text, "the exception hooks must stay on"
+
+
+def test_monitor_ends_the_fault_window_once_started():
+    src = (SRC / "monitor.py").read_text(encoding="utf-8")
+    assert "crash_log.startup_complete()" in src
+    assert "QTimer.singleShot(constants.app.CRASH_FAULT_WINDOW_MS, _startup_complete)" in src
+
+
 def test_a_large_crash_log_is_rotated_at_start(tmp_path):
     path = tmp_path / crash_log.CRASH_LOG_FILENAME
     path.write_bytes(b"x" * (crash_log.MAX_BYTES + 1))
