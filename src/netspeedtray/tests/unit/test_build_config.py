@@ -60,6 +60,17 @@ def test_the_silent_relaunch_goes_through_the_shell_and_skips_service_contexts()
     assert "SessionId = 0" in ctx and "'SYSTEM'" in ctx
 
 
+def test_no_relaunch_under_an_over_the_shoulder_administrator():
+    """A standard user who types an admin's credentials: the in-app updater starts Setup elevated
+    as THAT admin, so 'original user' is the admin - the app must not be started under it."""
+    iss = _read("build", "setup.iss")
+    body = re.search(r"function LaunchSilentViaShell\(\): Boolean;(.*?)\nend;", iss, re.S).group(1)
+    assert body.index("SetupRunsAsAnotherUser()") < body.index("Result := True")
+    other = re.search(r"function SetupRunsAsAnotherUser\(\): Boolean;(.*?)\nend;", iss, re.S).group(1)
+    assert "SessionUserName()" in other and "GetUserNameString()" in other
+    assert "WTSQuerySessionInformationW@wtsapi32.dll" in iss
+
+
 def test_an_upgrade_installs_into_the_existing_folder():
     """UsePreviousAppDir=no moved every silent upgrade of a custom-folder install to Program Files
     and left the old copy (and its shortcuts) running the old version against the migrated DB."""

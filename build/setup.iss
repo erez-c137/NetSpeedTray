@@ -174,6 +174,13 @@ function WinGetCurrentProcessId(): Longword;
   external 'GetCurrentProcessId@kernel32.dll stdcall';
 function WinProcessIdToSessionId(dwProcessId: Longword; var pSessionId: Longword): Integer;
   external 'ProcessIdToSessionId@kernel32.dll stdcall';
+function WinWTSQuerySessionInformation(hServer: Longword; SessionId: Longword; InfoClass: Integer;
+  var ppBuffer: Longword; var pBytesReturned: Longword): Integer;
+  external 'WTSQuerySessionInformationW@wtsapi32.dll stdcall';
+procedure WinWTSFreeMemory(pMemory: Longword);
+  external 'WTSFreeMemory@wtsapi32.dll stdcall';
+function WinLstrcpyn(lpString1: string; lpString2: Longword; iMaxLength: Integer): Longword;
+  external 'lstrcpynW@kernel32.dll stdcall';
 
 // --- Helper Functions ---
 function ShellIsRunning(): Boolean;
@@ -196,12 +203,56 @@ begin
     Result := True;
 end;
 
+// The user signed in to this session, or '' if it cannot be read.
+function SessionUserName(): string;
+var
+  Buffer: Longword;
+  Bytes: Longword;
+  Name: string;
+begin
+  Result := '';
+  Buffer := 0;
+  Bytes := 0;
+  // WTS_CURRENT_SERVER_HANDLE = 0, WTS_CURRENT_SESSION = $FFFFFFFF, WTSUserName = 5.
+  if WinWTSQuerySessionInformation(0, $FFFFFFFF, 5, Buffer, Bytes) = 0 then
+    Exit;
+  try
+    if (Buffer <> 0) and (Bytes > 2) then
+    begin
+      Name := StringOfChar(' ', Bytes div 2);
+      WinLstrcpyn(Name, Buffer, Bytes div 2);
+      Result := Trim(Copy(Name, 1, Pos(#0, Name + #0) - 1));
+    end;
+  finally
+    WinWTSFreeMemory(Buffer);
+  end;
+end;
+
+// Setup runs as a DIFFERENT account than the one signed in to this session: a standard user who
+// typed an administrator's credentials at the UAC prompt (over-the-shoulder elevation). The in-app
+// updater starts Setup already elevated, so Inno's "original user" is that administrator too, and
+// handing explorer.exe a launch from the administrator's token is not proven to come back as the
+// signed-in user. Not relaunching is the safe answer: the app returns at their next sign-in or from
+// the Start menu, never under the administrator's account (which would also write that account's
+// %APPDATA%, not theirs).
+function SetupRunsAsAnotherUser(): Boolean;
+var
+  SessionUser: string;
+begin
+  SessionUser := SessionUserName();
+  Result := (SessionUser <> '') and (CompareText(SessionUser, GetUserNameString()) <> 0);
+  if SessionUser = '' then
+    Log('Could not read the session''s user name; assuming Setup runs as the signed-in user.');
+end;
+
 function LaunchSilentViaShell(): Boolean;
 begin
   Result := False;
   if not WizardSilent() then
     Exit;
-  if InServiceContext() then
+  if SetupRunsAsAnotherUser() then
+    Log('Silent install: Setup runs as ' + GetUserNameString() + ', not as the user signed in to this session - not starting {#MyAppName} under that account; it starts at their next sign-in or from the Start menu.')
+  else if InServiceContext() then
     Log('Silent install: running as SYSTEM or in session 0 - not starting {#MyAppName}; each user starts it at their next sign-in or from the Start menu.')
   else if not ShellIsRunning() then
     Log('Silent install: no shell running - not starting {#MyAppName}; it starts at the next sign-in or from the Start menu.')
