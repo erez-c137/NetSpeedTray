@@ -143,9 +143,19 @@ class WidgetPage(QWidget):
             primary = app.primaryScreen()
             for i, screen in enumerate(app.screens(), start=1):
                 geom = screen.geometry()
-                tag = " (primary)" if screen is primary else ""
-                label = f"Monitor {i}: {geom.width()}x{geom.height()}{tag}"
+                label = self.i18n.PREFERRED_MONITOR_ITEM.format(index=i, width=geom.width(),
+                                                                height=geom.height())
+                if screen is primary:
+                    label = f"{label} {self.i18n.PREFERRED_MONITOR_PRIMARY_TAG}"
                 self.preferred_monitor_combo.addItem(label, userData=screen.name())
+
+        # The saved monitor, while it is unplugged (S7): listed as "(not connected)" and kept, so an
+        # untouched Save doesn't silently reset the choice to Primary. The runtime already falls back
+        # to the primary display while it is away (position_manager).
+        saved = getattr(self, "_saved_monitor", None)
+        if saved and self.preferred_monitor_combo.findData(saved) < 0:
+            self.preferred_monitor_combo.addItem(f"{saved} {self.i18n.SETTINGS_NOT_CONNECTED_TAG}",
+                                                 userData=saved)
 
         # Restore previous selection if it still exists; otherwise fall back to "Primary (auto)".
         if previous_selection is not None:
@@ -232,11 +242,12 @@ class WidgetPage(QWidget):
             if idx >= 0:
                 combo.setCurrentIndex(idx)
 
-        # Preferred monitor (#72) - match by stored screen name.
-        # If the saved monitor name doesn't match any detected screen (e.g.,
-        # monitor was disconnected since last save), the combo just stays at
-        # "Primary (auto)" and the runtime fallback in position_manager kicks in.
+        # Preferred monitor (#72) - match by stored screen name. A saved monitor that isn't
+        # connected right now stays selectable as "(not connected)" (S7) - it used to fall to
+        # "Primary (auto)" here, and an untouched Save then erased the user's choice.
         preferred_name = config.get("preferred_monitor")
+        self._saved_monitor = preferred_name
+        self._populate_monitor_combo()
         idx = self.preferred_monitor_combo.findData(preferred_name)
         self.preferred_monitor_combo.setCurrentIndex(idx if idx >= 0 else 0)
 

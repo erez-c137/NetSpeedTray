@@ -213,6 +213,45 @@ def test_reset_advanced_page_uses_the_live_hardware_toggles(qtbot):
     assert dlg.advanced_page._record_card.isEnabled()
 
 
+# --- S7: Save keeps a preferred monitor / selected adapter that isn't connected right now ----------
+
+def test_untouched_save_keeps_unplugged_monitor_and_adapter(qtbot):
+    cfg = dict(DEFAULTS, interface_mode="selected", selected_interfaces=["Wi-Fi", "WireGuard Tunnel"],
+               preferred_monitor=r"\\.\DISPLAY9")
+    dlg, main = _make(qtbot, cfg, ifaces=("Ethernet", "Wi-Fi"))
+    combo = dlg.widget_page.preferred_monitor_combo
+    assert combo.currentData() == r"\\.\DISPLAY9"
+    assert dlg.i18n.SETTINGS_NOT_CONNECTED_TAG in combo.currentText()
+    assert "WireGuard Tunnel" in dlg.interfaces_page.interface_checkboxes   # shown, still ticked
+    dlg.save_button.click()
+    assert main.saved[-1]["preferred_monitor"] == r"\\.\DISPLAY9"
+    assert sorted(main.saved[-1]["selected_interfaces"]) == ["Wi-Fi", "WireGuard Tunnel"]
+
+
+def test_unticking_an_unplugged_adapter_removes_it(qtbot):
+    cfg = dict(DEFAULTS, interface_mode="selected", selected_interfaces=["Wi-Fi", "WireGuard Tunnel"])
+    dlg, _ = _make(qtbot, cfg, ifaces=("Ethernet", "Wi-Fi"))
+    dlg.interfaces_page.interface_checkboxes["WireGuard Tunnel"].setChecked(False)
+    assert dlg.get_settings()["selected_interfaces"] == ["Wi-Fi"]
+
+
+@pytest.mark.parametrize("lang", ["ru_RU", "de_DE", "ja_JP"])
+def test_monitor_names_are_translated(qtbot, lang):
+    """S9: "Monitor {i}: WxH (primary)" was hard-coded English in every language."""
+    cfg = dict(DEFAULTS)
+    main = _Main(cfg)
+    dlg = SettingsDialog(main_widget=main, config=cfg, version="2.2.0", i18n=I18nStrings(lang),
+                         available_interfaces=["Ethernet"], is_startup_enabled=False)
+    qtbot.addWidget(dlg)
+    combo = dlg.widget_page.preferred_monitor_combo
+    if combo.count() < 2:
+        pytest.skip("no screens on this test platform")
+    text = combo.itemText(1)
+    assert not text.startswith("Monitor 1:") or lang == "de_DE"
+    assert "(primary)" not in text
+    assert text.startswith(dlg.i18n.PREFERRED_MONITOR_ITEM.split("{")[0].strip() or text[:1])
+
+
 # --- S8: a half-typed hex never reaches the widget or the saved file ---------------------------------
 
 def test_half_typed_hex_keeps_the_last_valid_colour(qtbot):

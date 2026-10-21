@@ -59,6 +59,7 @@ Other locales (English, German, Spanish) are currently maintained by the project
 > 🆕 **Pending native review for 2.2 (release-candidate checkup, see #364):** non-English values are AI-assisted.
 > - Turkish: `MEMORY_HEADER` was still English ("Memory") - now "Bellek", matching the "bellek" in your hover-card strings. `THOUSANDS_SEPARATOR` is now "." (it was "," - the same as your decimal separator, so 1,234 read as a decimal).
 > - Hungarian: `CANCEL_BUTTON` is now "Mé&gse" (Alt+G) - "&Mégse" shared Alt+M with "&Mentés". Pick another letter if G reads oddly.
+> - New, all locales: `PREFERRED_MONITOR_ITEM` ("Monitor {index}: {width}x{height}" in Settings > Widget > Preferred Monitor - was hard-coded English; **keep `{index}`, `{width}`, `{height}`**), `PREFERRED_MONITOR_PRIMARY_TAG` ("(primary)"), `SETTINGS_NOT_CONNECTED_TAG` ("(not connected)" - after a saved monitor that is unplugged right now) and `INTERFACE_GROUP_NOT_CONNECTED` (the heading over selected network adapters that aren't present right now, in Settings > Network).
 
 ## How translation works in NetSpeedTray
 
