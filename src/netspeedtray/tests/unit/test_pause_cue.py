@@ -54,7 +54,11 @@ def _paint(cfg, w, h, *, layout_mode="horizontal", cycle_mode="network_only", pa
     img.fill(QColor(0, 0, 0, 0))
     renderer = WidgetRenderer(cfg, I18nStrings("en_US"))
     if not glyph:
+        # The text mask: no glyph, and no graph layer (lines, fills, split divider) - the glyph may sit
+        # over the graph like the arrows it replaces; only text counts. Same layout either way.
         monkeypatch.setattr(wp, "_draw_pause_glyphs", lambda *a: None)
+        monkeypatch.setattr(WidgetRenderer, "draw_mini_graph", lambda *a, **k: None)
+        monkeypatch.setattr(WidgetRenderer, "draw_split_divider", staticmethod(lambda *a, **k: None))
     p = QPainter(img)
     try:
         render_widget(p, QRect(0, 0, w, h), renderer, renderer.config, METRICS, layout_mode=layout_mode,
@@ -105,6 +109,24 @@ def test_glyph_never_overlaps_text_on_a_side_taskbar(q_app, monkeypatch, mode, t
     cfg["default_color"] = THEMES[theme]
     w, h, _fit = side._size(cfg, side._taskbar(side.LEFT, thickness))
     _assert_no_overlap(cfg, w, h, monkeypatch, f"side {mode}", layout_mode="vertical")
+
+
+def test_split_panels_in_one_column_get_a_glyph_each_off_the_divider(q_app):
+    """Split graphs stacked on a side bar: both rows' arrow cells share a column but sit either side of
+    the divider (on the real-font platform: cells at y 4-20 and 32-48 in a 48 x 72 widget). One glyph
+    per row - never a merged one straddling the divider. A stacked readout's adjacent rows still merge.
+    Geometry-only, so it holds whatever fonts the test platform has."""
+    from PyQt6.QtCore import QRectF
+    r = WidgetRenderer(_cfg({}, "#FFFFFF"), I18nStrings("en_US"))
+    r._pause_slots = [QRectF(9, 4, 8, 16), QRectF(9, 32, 8, 16)]      # split panels, divider at ~26
+    rects = wp._pause_glyph_rects(QRect(0, 0, 48, 72), r)
+    assert len(rects) == 2
+    for g, cell in zip(rects, r._pause_slots):
+        assert cell.contains(g)
+    gap = constants.renderer.TWO_ROW_GAP_PX
+    r._pause_slots = [QRectF(9, 4, 8, 16), QRectF(9, 20 + gap, 8, 16)]   # one stacked readout
+    rects = wp._pause_glyph_rects(QRect(0, 0, 48, 72), r)
+    assert len(rects) == 1 and abs(rects[0].center().y() - (4 + 36 + gap) / 2) < 0.01
 
 
 def test_glyph_replaces_the_arrows_centered_across_both_rows(q_app):

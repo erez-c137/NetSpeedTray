@@ -711,9 +711,14 @@ def _pause_glyph_rects(rect: QRect, renderer: WidgetRenderer) -> List[QRectF]:
     centered across both rows), else the left margin when the content leaves room, else nowhere."""
     r = constants.renderer
     columns: List[QRectF] = []
+    # Merge only the rows of ONE stacked readout (same column, adjacent rows). Split-graph panels
+    # stacked on a side bar share the column but sit either side of the divider: each gets its own
+    # glyph in its own row, so a merged glyph never straddles the divider.
+    adjacent = constants.renderer.TWO_ROW_GAP_PX + 1.0
     for cell in renderer._pause_slots:
         for i, col in enumerate(columns):
-            if abs(col.left() - cell.left()) <= 1.0:
+            if (abs(col.left() - cell.left()) <= 1.0
+                    and cell.top() - col.bottom() <= adjacent and col.top() - cell.bottom() <= adjacent):
                 columns[i] = col.united(cell)
                 break
         else:
