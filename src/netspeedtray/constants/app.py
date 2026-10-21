@@ -33,6 +33,10 @@ class AppConstants:
     # which monitor.py exits hard on its own. So this must clear ~17 s with margin, or Setup would
     # taskkill a quit that was about to finish. setup.iss waits the same value (ShutdownTimeoutSec).
     SHUTDOWN_DEFAULT_TIMEOUT_S: Final[float] = 30.0
+    # How long after startup the post-update cleanup (update_applier.start_update_janitor) begins.
+    # It removes the previous version's folder after a portable update, and that folder is the
+    # rollback until the new version has shown it can start - so not immediately (#260).
+    UPDATE_JANITOR_DELAY_MS: Final[int] = 10_000
 
     def __init__(self) -> None:
         self.validate()

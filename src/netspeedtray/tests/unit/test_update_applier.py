@@ -36,6 +36,7 @@ def _make_install(root: Path, name: str = "NetSpeedTray", *, with_exe: bool = Tr
     if with_exe:
         (d / ua.APP_EXE).write_text("old", encoding="utf-8")
     (d / "_internal" / "data.bin").write_text("payload", encoding="utf-8")
+    (d / ua.PORTABLE_MARKER).write_text("portable\n", encoding="utf-8")   # as the release ZIP ships
     return d
 
 
@@ -46,6 +47,7 @@ def _make_staged(root: Path, name: str = "staged", *, with_exe: bool = True) -> 
         (d / ua.APP_EXE).write_text("new", encoding="utf-8")
     # A nested payload, so a test can tell a whole-tree copy from just the EXE landing.
     (d / "_internal" / "data.bin").write_text("new-payload", encoding="utf-8")
+    (d / ua.PORTABLE_MARKER).write_text("portable\n", encoding="utf-8")
     return d
 
 
@@ -341,7 +343,7 @@ def test_cli_refuses_and_reports_when_validation_fails(tmp_path):
     assert victim.is_dir()
 
 
-def test_cli_applies_a_valid_update(tmp_path, monkeypatch):
+def test_cli_applies_a_valid_update(tmp_path, monkeypatch, marker):
     install = _make_install(tmp_path)
     staged = _make_staged(tmp_path)
     launched = {}
@@ -353,7 +355,10 @@ def test_cli_applies_a_valid_update(tmp_path, monkeypatch):
     assert code == 0
     assert (install / ua.APP_EXE).read_text(encoding="utf-8") == "new"
     assert launched["exe"] == os.path.join(str(install), ua.APP_EXE)
-    assert not list(tmp_path.glob("*" + ua._BACKUP_SUFFIX + "*")), "the backup should be cleaned up"
+    backups = list(tmp_path.glob("*" + ua._BACKUP_SUFFIX + "*"))
+    assert len(backups) == 1, "the previous version is the rollback until the new one has started"
+    assert any(e.get("kind") == "backup" for e in json.loads(marker.read_text(encoding="utf-8"))), (
+        "the backup must be recorded for the new version's janitor")
 
 
 def test_apply_refuses_if_the_old_process_never_exits(tmp_path, monkeypatch):

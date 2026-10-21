@@ -19,3 +19,17 @@ def q_app():
     so this coexists with them (both return the same singleton).
     """
     return QApplication.instance() or QApplication([])
+
+
+@pytest.fixture(autouse=True)
+def _isolate_update_marker(tmp_path, monkeypatch):
+    """No test may read or write the real %APPDATA%/NetSpeedTray/staged_update.json or stage into
+    the real %LOCALAPPDATA%/NetSpeedTray/updates (#260): ``apply_update`` records its outcome
+    there, and an unisolated CLI test once wrote a stray entry into the maintainer's live marker.
+    Tests that need the marker override ``_marker_path`` themselves; this is the floor."""
+    from netspeedtray.core import update_applier
+    root = tmp_path / "_isolated_update_state"
+    monkeypatch.setattr(update_applier, "_marker_path",
+                        lambda: str(root / "appdata" / update_applier._STAGED_MARKER_NAME))
+    monkeypatch.setattr(update_applier, "staging_root",
+                        lambda: str(root / "localappdata" / "NetSpeedTray" / "updates"))

@@ -17,9 +17,10 @@ unzipped), so in portable mode the same worker runs a guided flow instead (#195)
 ZIP is many files, not one signed binary, so Authenticode on the bootstrap EXE alone would NOT vouch
 for the _internal/ payload that actually runs. Instead the whole ZIP's SHA-256 is checked against the
 release's published checksums.txt (fetched over HTTPS) - i.e. the download is exactly as trustworthy as
-fetching that ZIP yourself from the release page. On a match it's extracted and staged in the user's
-Downloads for them to copy over their folder. Settings live in %APPDATA%, so a folder replace never
-touches them. (Installer-grade signing of the portable bundle is a tracked hardening follow-up.)
+fetching that ZIP yourself from the release page. On a match it's extracted and staged: in the app's
+own update folder (update_applier.staging_root()) when the hands-off swap will apply it, else in the
+user's Downloads for them to copy over their folder. Settings live in %APPDATA%, so a folder replace
+never touches them. (Installer-grade signing of the portable bundle is a tracked hardening follow-up.)
 """
 from __future__ import annotations
 
@@ -359,7 +360,8 @@ class _DownloadWorker(QObject):
 
     def __init__(self, url: str, dest: str, *, portable: bool = False,
                  extract_dir: Optional[str] = None, checksums_url: str = "",
-                 expected_name: str = "", ready_target: str = "") -> None:
+                 expected_name: str = "", ready_target: str = "",
+                 staging_target: str = "", app_dir: str = "") -> None:
         super().__init__()
         self._url = url
         self._dest = dest
@@ -368,6 +370,8 @@ class _DownloadWorker(QObject):
         self._checksums_url = checksums_url
         self._expected_name = expected_name
         self._ready_target = ready_target
+        self._staging_target = staging_target
+        self._app_dir = app_dir
         self._cancelled = False
 
     def cancel(self) -> None:
@@ -411,10 +415,38 @@ class _DownloadWorker(QObject):
         logger.info("Portable update checksum verified for %s", self._expected_name)
         _safe_extract(self._dest, self._extract_dir or "")
         app_folder = os.path.dirname(_locate_portable_exe(self._extract_dir or ""))
-        ready = _unique_dir(self._ready_target)
+        hands_off = self._hands_off_possible(app_folder)
+        target = self._staging_target if hands_off else self._ready_target
+        if hands_off:
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+        ready = _unique_dir(target)
         shutil.move(app_folder, ready)   # move the verified tree out of the temp dir, off the UI thread
-        logger.info("Portable update staged; the user must copy this folder over their install.")
+        if hands_off:
+            # Keep the verified zip beside its staged copy until the update is known to have
+            # worked: the janitor deletes both after a verified swap, a failed swap keeps both.
+            try:
+                shutil.move(self._dest, ready + ".zip")
+            except Exception:
+                logger.info("Could not keep the update package; it is discarded.", exc_info=True)
+            logger.info("Portable update staged in the app's update folder for the hands-off swap.")
+        else:
+            logger.info("Portable update staged; the user must copy this folder over their install.")
         self.staged.emit(ready)
+
+    def _hands_off_possible(self, app_folder: str) -> bool:
+        """Will the hands-off swap be offered? Then stage in the app-owned folder, which the
+        janitor cleans; otherwise in Downloads, where the user is sent to copy it by hand (#260).
+        ``_try_hands_off`` re-validates the final path, so this is only a choice of location."""
+        if not self._staging_target or not self._app_dir:
+            return False
+        try:
+            from netspeedtray.core.update_applier import _is_within, staging_root, validate
+            root = staging_root()
+            if _is_within(root, self._app_dir) or _is_within(self._app_dir, root):
+                return False   # a portable copy unzipped into our own data folder: keep clear of it
+            return validate(self._app_dir, app_folder) is None
+        except Exception:
+            return False
 
 
 class SecureUpdater(QObject):
@@ -489,7 +521,7 @@ class SecureUpdater(QObject):
         self._progress.setAutoReset(False)
         self._progress.canceled.connect(self._on_cancel)
 
-        checksums_url = expected_name = ready_target = ""
+        checksums_url = expected_name = ready_target = staging_target = app_dir = ""
         if self._portable:
             # checksums.txt is published next to the portable ZIP in the same release-download folder;
             # the expected filename is the ZIP's own basename as listed there.
@@ -499,11 +531,18 @@ class SecureUpdater(QObject):
             name = (f"{constants.app.APP_NAME}-{self._latest_version}"
                     if self._latest_version else f"{constants.app.APP_NAME}-update")
             ready_target = os.path.join(_downloads_dir(), name)
+            try:
+                from netspeedtray.core.update_applier import staging_root
+                staging_target = os.path.join(staging_root(), name)
+                app_dir = os.path.dirname(os.path.abspath(sys.executable))
+            except Exception:
+                staging_target = app_dir = ""
 
         self._thread = QThread(self)
         self._worker = _DownloadWorker(url, self._dest, portable=self._portable,
                                        extract_dir=self._extract_dir, checksums_url=checksums_url,
-                                       expected_name=expected_name, ready_target=ready_target)
+                                       expected_name=expected_name, ready_target=ready_target,
+                                       staging_target=staging_target, app_dir=app_dir)
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
         self._worker.progress.connect(self._on_progress)
@@ -593,6 +632,8 @@ class SecureUpdater(QObject):
             # Staging already finished before the cancel landed; don't leave a surprise folder behind.
             try:
                 shutil.rmtree(ready, ignore_errors=True)
+                if os.path.isfile(ready + ".zip"):
+                    os.remove(ready + ".zip")
             except Exception:
                 pass
             self._finish()
@@ -649,11 +690,13 @@ class SecureUpdater(QObject):
             logger.error("Could not hand off to the staged copy; using the guided copy.", exc_info=True)
             return False
 
-        # Only now commit: quitting is what lets the swap proceed. Record the staged folder for
-        # the startup sweep, which removes ONLY recorded paths - the applier cannot delete the
-        # folder it runs from, and without the record it would linger in Downloads forever, while
-        # recording any earlier would mark the very folder the guided fallback hands the user.
-        record_staged_path(ready)
+        # Only now commit: quitting is what lets the swap proceed. Record the staged folder (and the
+        # zip kept beside it) for the post-update janitor, which removes ONLY recorded paths - the
+        # applier cannot delete the folder it runs from, and without the record it would linger
+        # forever, while recording any earlier would mark the very folder the guided fallback
+        # hands the user.
+        package = ready + ".zip"
+        record_staged_path(ready, package=package if os.path.isfile(package) else None)
         self._finish()
         self.launching.emit()
         return True
