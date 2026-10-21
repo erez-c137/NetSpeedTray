@@ -16,6 +16,24 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7
 
+      # First, before anything is built or sent for signing: the tag must name the version the code
+      # carries. The build, the asset names, the in-app updater and WinGet all read __version__, so a
+      # tag on the wrong commit (it has happened: a chained tag landed on the wrong one) would publish
+      # a release whose files say another version. Prerelease tags compare the same way
+      # (v2.2.0-rc.1 <-> "2.2.0-rc.1").
+      - name: Check the tag matches __version__
+        shell: pwsh
+        run: |
+          $init = Get-Content -Raw -Path src/netspeedtray/__init__.py
+          $m = [regex]::Match($init, '(?m)^__version__\s*=\s*"([^"]+)"')
+          if (-not $m.Success) { Write-Error "No __version__ in src/netspeedtray/__init__.py"; exit 1 }
+          $expected = "v" + $m.Groups[1].Value
+          if ($env:GITHUB_REF_NAME -cne $expected) {
+            Write-Error "Tag '$($env:GITHUB_REF_NAME)' does not match __version__ (expected '$expected'). Re-tag the right commit."
+            exit 1
+          }
+          Write-Host "Tag $($env:GITHUB_REF_NAME) matches __version__."
+
       - name: Set up Python
         uses: actions/setup-python@v7
         with:

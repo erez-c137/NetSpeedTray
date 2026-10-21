@@ -58,3 +58,19 @@ def test_the_silent_relaunch_goes_through_the_shell_and_skips_service_contexts()
     assert "InServiceContext()" in body and "ShellIsRunning()" in body
     ctx = re.search(r"function InServiceContext\(\): Boolean;(.*?)\nend;", iss, re.S).group(1)
     assert "SessionId = 0" in ctx and "'SYSTEM'" in ctx
+
+
+# --- a release tag must name the version the code carries --------------------------------------
+
+def test_release_checks_the_tag_against_version_before_building():
+    yml = _read(".github", "workflows", "release.yml")
+    check = yml.index("Check the tag matches __version__")
+    assert check < yml.index("Run unit tests") < yml.index("build.bat"), (
+        "the tag check must run before anything is built or sent for signing")
+    step = yml[check:yml.index("- name:", check)]
+    assert "GITHUB_REF_NAME" in step and "-cne" in step and '"v" +' in step
+    # The step's own pattern must find the real version line (PowerShell and Python agree on it).
+    pattern = re.search(r"Match\(\$init, '([^']+)'\)", step).group(1)
+    init = _read("src", "netspeedtray", "__init__.py")
+    import netspeedtray
+    assert re.search(pattern, init).group(1) == netspeedtray.__version__
