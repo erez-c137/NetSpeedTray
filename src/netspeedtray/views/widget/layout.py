@@ -687,12 +687,3 @@ class WidgetLayoutManager:
         except Exception as e:
             self.logger.debug("Thin-strip fit check failed (%s); keeping the two-row floor.", e)
         return old_floor
-        scales = constants.renderer.INK_FIT_SCALES if self._font is not None else (1.0,)
-        try:
-            extents = [(s, *self._ink_extents(s)) for s in scales]
-        except Exception:
-            return old_floor
-        for h in range(start, old_floor):
-            if all(self._two_rows_fit(h, above, below, s) for s, above, below in extents):
-                return h
-        return old_floor
