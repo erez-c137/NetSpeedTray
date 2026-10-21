@@ -50,12 +50,17 @@ def test_ok_does_not_open_explorer(q_app, monkeypatch, tmp_path):
     assert revealed == []
 
 
-def test_reveal_launches_explorer_by_absolute_path_with_select(monkeypatch):
+@pytest.mark.parametrize("path", [
+    r"C:/Users/x/Desktop/b.zip",
+    r"C:\Users\x\My Files\b.zip",
+    r"C:\Users\x\a,b\NetSpeedTray_Support,1.zip",   # Explorer splits /select, on commas
+])
+def test_reveal_launches_explorer_by_absolute_path_with_the_path_quoted(monkeypatch, path):
     calls = []
     monkeypatch.setattr(subprocess, "Popen", lambda args: calls.append(args))
     monkeypatch.setenv("SystemRoot", r"C:\Windows")
-    helpers.reveal_in_explorer(r"C:/Users/x/Desktop/b.zip")
-    assert calls == [[r"C:\Windows\explorer.exe", "/select,", os.path.normpath(r"C:/Users/x/Desktop/b.zip")]]
+    helpers.reveal_in_explorer(path)
+    assert calls == ['"C:\\Windows\\explorer.exe" /select,"' + os.path.normpath(path) + '"']
 
 
 def test_reveal_never_raises(monkeypatch):

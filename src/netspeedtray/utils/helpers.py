@@ -656,10 +656,15 @@ def reveal_in_explorer(path: str) -> None:
     Explorer is launched by ABSOLUTE path (it lives in the Windows dir, not System32). A bare
     "explorer" lets CreateProcess search the current directory first, and the portable build chdir's
     into its own - user/attacker-writable - folder, so a planted explorer.exe could run. Same
-    CWD-hijack hardening the codebase already applies to nvidia-smi (monitor_thread.py)."""
+    CWD-hijack hardening the codebase already applies to nvidia-smi (monitor_thread.py).
+
+    The command line is built by hand: Explorer splits /select, on commas, and list2cmdline quotes
+    only paths with spaces, so a path like ``C:\\a,b\\x.zip`` would open the wrong place. The path is
+    always quoted (a Windows path cannot contain '"'; any is stripped)."""
     try:
         import subprocess
         explorer = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "explorer.exe")
-        subprocess.Popen([explorer, "/select,", os.path.normpath(str(path))])
+        target = os.path.normpath(str(path)).replace('"', "")
+        subprocess.Popen(f'"{explorer}" /select,"{target}"')
     except Exception as e:
         logging.getLogger("NetSpeedTray.helpers").debug("reveal_in_explorer failed: %s", e)
