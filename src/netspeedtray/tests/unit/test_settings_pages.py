@@ -31,6 +31,9 @@ def mock_i18n():
     i18n.OPTIONS_GROUP_TITLE = "Options"
     i18n.DYNAMIC_UPDATE_RATE_LABEL = "Dynamic Update"
     i18n.START_WITH_WINDOWS_LABEL = "Start with Windows"
+    i18n.PAUSE_IN_MENU_LABEL = "Pause in menu"          # General > Interaction (2.2 IA change 3)
+    i18n.HOVER_USAGE_CARD_LABEL = "Show usage on hover"
+    i18n.HOVER_TIPS_LABEL = "Show tips"
     i18n.FREE_MOVE_LABEL = "Free Move"
     i18n.FONT_SETTINGS_GROUP_TITLE = "Font"
     i18n.FONT_FAMILY_LABEL = "Family"

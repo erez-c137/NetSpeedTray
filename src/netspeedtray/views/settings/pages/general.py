@@ -110,6 +110,21 @@ class GeneralPage(QWidget):
             getattr(self.i18n, "MIDDLE_CLICK_ACTION_LABEL", "Middle-click action"),
             control=self.middle_click_action))
 
+        # Moved from Advanced > Behavior (2.2 IA pass, change 3): everyday widget-interaction toggles,
+        # not low-frequency / destructive ones. Pause-in-menu first - it is the right-click route to the
+        # same "Pause / Resume" the two click lists above offer - then the hover card's two toggles.
+        self.pause_in_menu = Win11Toggle(label_text="")
+        self.pause_in_menu.toggled.connect(self.on_change)
+        layout.addWidget(SettingCard(self.i18n.PAUSE_IN_MENU_LABEL, control=self.pause_in_menu))
+
+        self.show_usage_hover = Win11Toggle(label_text="")
+        self.show_usage_hover.toggled.connect(self.on_change)
+        layout.addWidget(SettingCard(self.i18n.HOVER_USAGE_CARD_LABEL, control=self.show_usage_hover))
+
+        self.show_hover_tips = Win11Toggle(label_text="")
+        self.show_hover_tips.toggled.connect(self.on_change)
+        layout.addWidget(SettingCard(self.i18n.HOVER_TIPS_LABEL, control=self.show_hover_tips))
+
         layout.addStretch()
 
     def _populate_click_action_combo(self, combo: Win11ComboBox) -> None:
@@ -153,6 +168,9 @@ class GeneralPage(QWidget):
             self.double_click_action, config.get("double_click_action", defaults.DEFAULT_DOUBLE_CLICK_ACTION))
         self._select_click_action(
             self.middle_click_action, config.get("middle_click_action", defaults.DEFAULT_MIDDLE_CLICK_ACTION))
+        self.pause_in_menu.setChecked(bool(config.get("pause_in_menu", False)))
+        self.show_usage_hover.setChecked(bool(config.get("show_usage_on_hover", True)))
+        self.show_hover_tips.setChecked(bool(config.get("show_hover_tips", True)))
 
     def _select_click_action(self, combo: Win11ComboBox, value: str) -> None:
         idx = combo.findData(value)
@@ -170,6 +188,9 @@ class GeneralPage(QWidget):
             "check_for_updates": self.check_for_updates.isChecked(),
             "double_click_action": self.double_click_action.currentData(),
             "middle_click_action": self.middle_click_action.currentData(),
+            "pause_in_menu": self.pause_in_menu.isChecked(),
+            "show_usage_on_hover": self.show_usage_hover.isChecked(),
+            "show_hover_tips": self.show_hover_tips.isChecked(),
             # free_move / keep_visible_fullscreen / tray_offset_x (2.0 IA) and preferred_monitor
             # (2.2 IA pass) now live on the Widget page.
         }

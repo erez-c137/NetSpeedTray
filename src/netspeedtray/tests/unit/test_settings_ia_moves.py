@@ -1,8 +1,8 @@
 """
-Settings IA pass (2.2, docs: settings-ia-review-2026-10.md, changes 1/2/4/5/6) - moves only.
+Settings IA pass (2.2, docs: settings-ia-review-2026-10.md, changes 1-6) - moves only.
 
-Pins where each moved control now lives, that it still saves to the SAME config key, that the
-Advanced page's "Reset this page" scope did not change (it is the only per-page reset), that
+Pins where each moved control now lives, that it still saves to the SAME config key, the exact scope
+of the Advanced page's "Reset this page" (the only per-page reset; change 3 shrank it), that
 conditional reveals still work after the move, and the new section order / keyboard focus order on
 every changed page. test_settings_reshuffle.py remains the structure-agnostic key-coverage net.
 """
@@ -287,18 +287,99 @@ def test_network_section_order_and_plan_collapsed(dlg):
     assert pos == sorted(pos)
 
 
+# --- change 3: hover / pause toggles -> General > Interaction ------------------------------------------
+
+INTERACTION_KEYS = {"pause_in_menu": True, "show_usage_on_hover": False, "show_hover_tips": False}  # non-defaults
+INTERACTION_ATTRS = {"pause_in_menu": "pause_in_menu", "show_usage_on_hover": "show_usage_hover",
+                     "show_hover_tips": "show_hover_tips"}
+
+
+def test_interaction_toggles_left_advanced(dlg):
+    assert not set(INTERACTION_KEYS) & set(dlg.advanced_page.get_settings())
+    for attr in INTERACTION_ATTRS.values():
+        assert not hasattr(dlg.advanced_page, attr)
+    labels = {dlg.i18n.HOVER_USAGE_CARD_LABEL, dlg.i18n.HOVER_TIPS_LABEL, dlg.i18n.PAUSE_IN_MENU_LABEL}
+    assert not [c for c in dlg.advanced_page.findChildren(SettingCard) if c._title_label.text() in labels]
+
+
+@pytest.mark.parametrize("key", sorted(INTERACTION_KEYS))
+def test_interaction_toggles_live_on_general_and_save_to_their_keys(dlg, key):
+    control = getattr(dlg.general_page, INTERACTION_ATTRS[key])
+    assert _page(dlg, 0).isAncestorOf(control) and not _page(dlg, 5).isAncestorOf(control)
+    control.setChecked(INTERACTION_KEYS[key])
+    assert dlg.general_page.get_settings()[key] is INTERACTION_KEYS[key]
+    assert dlg.get_settings()[key] is INTERACTION_KEYS[key]
+    control.setChecked(not INTERACTION_KEYS[key])
+    assert dlg.get_settings()[key] is (not INTERACTION_KEYS[key])
+
+
+def test_interaction_toggles_load_from_config_and_keep_their_defaults(dlg):
+    dlg.reset_with_config(dict(DEFAULTS, **INTERACTION_KEYS), False)
+    got = dlg.get_settings()
+    assert {k: got[k] for k in INTERACTION_KEYS} == INTERACTION_KEYS
+    # Absent keys fall back to the same defaults Advanced used (pause off, hover usage + tips on).
+    dlg.general_page.load_settings({"language": None, "update_rate": 1.0}, is_startup_enabled=False)
+    s = dlg.general_page.get_settings()
+    assert (s["pause_in_menu"], s["show_usage_on_hover"], s["show_hover_tips"]) == (False, True, True)
+    assert {k: DEFAULTS[k] for k in INTERACTION_KEYS} == {"pause_in_menu": False, "show_usage_on_hover": True,
+                                                          "show_hover_tips": True}
+
+
+def test_interaction_order_on_general(dlg):
+    """Click actions, then Pause-in-menu (the right-click route to the same Pause / Resume the click
+    lists offer), then the hover card's usage + tips toggles - all under the Interaction header, last on
+    the page."""
+    g, i = dlg.general_page, dlg.i18n
+    flat = _flatten(g.layout())
+    header = flat.index(next(x for x in flat if isinstance(x, QLabel) and x.text() == i.INTERACTION_GROUP_TITLE))
+    cards = [flat.index(_card_of(c)) for c in (g.double_click_action, g.middle_click_action, g.pause_in_menu,
+                                               g.show_usage_hover, g.show_hover_tips)]
+    assert cards == list(range(header + 1, header + 6))
+    assert cards[-1] == len(flat) - 1
+    assert _headers(_page(dlg, 0), {i.UPDATE_RATE_GROUP_TITLE, i.BEHAVIOR_GROUP_TITLE, i.INTERACTION_GROUP_TITLE})         == [i.UPDATE_RATE_GROUP_TITLE, i.BEHAVIOR_GROUP_TITLE, i.INTERACTION_GROUP_TITLE]
+
+
+def test_general_tab_order(dlg):
+    g = dlg.general_page
+    pos = _focus_positions(dlg, [g.language_combo, g.start_with_windows, g.check_for_updates,
+                                 g.double_click_action, g.middle_click_action, g.pause_in_menu,
+                                 g.show_usage_hover, g.show_hover_tips])
+    assert pos == sorted(pos)
+
+
+def test_advanced_keeps_its_low_frequency_sections(dlg):
+    """Advanced > Behavior keeps reduce-motion + keep-on-top (two cards, so no fold is needed)."""
+    a, i = dlg.advanced_page, dlg.i18n
+    flat = _flatten(a.layout())
+    order = [i.ADVANCED_DATA_GROUP, i.BEHAVIOR_GROUP_TITLE, i.INTEGRATIONS_GROUP, i.ADVANCED_RESET_GROUP]
+    assert _headers(_page(dlg, 5), set(order)) == order
+    beh = flat.index(next(x for x in flat if isinstance(x, QLabel) and x.text() == i.BEHAVIOR_GROUP_TITLE))
+    assert [flat.index(_card_of(a.reduce_motion)), flat.index(_card_of(a.keep_windows_on_top))] == [beh + 1, beh + 2]
+    pos = _focus_positions(dlg, [a.keep_data, a.record_hardware, a.delete_history_btn, a.reduce_motion,
+                                 a.keep_windows_on_top, a.metrics_enabled, a.reset_page_btn, a.reset_all_btn])
+    assert pos == sorted(pos)
+
+
+def test_interaction_toggle_live_applies(dlg, qtbot):
+    emitted = []
+    dlg.settings_changed.connect(lambda cfg: emitted.append(cfg))
+    dlg.general_page.pause_in_menu.setChecked(True)
+    qtbot.waitUntil(lambda: bool(emitted) and emitted[-1].get("pause_in_menu") is True, timeout=2000)
+
+
 # --- Reset scope ---------------------------------------------------------------------------------------
 
-# "Reset this page" exists only on Advanced. No control moved on or off Advanced in this pass, so its
-# scope must be exactly what it was; the moved keys must be untouched by it.
+# "Reset this page" exists only on Advanced. Change 3 moved pause_in_menu / show_usage_on_hover /
+# show_hover_tips off Advanced, so its scope shrank to exactly these keys; the moved keys (from every
+# change in the pass) must be untouched by it, and "Reset all" must still reset them.
 ADVANCED_RESET_KEYS = {"keep_data", "keep_windows_on_top", "metrics_endpoint_enabled", "metrics_endpoint_port",
-                       "pause_in_menu", "record_hardware_history", "reduce_motion", "show_hover_tips",
-                       "show_usage_on_hover"}
+                       "record_hardware_history", "reduce_motion"}
 MOVED_NON_DEFAULTS = {"graph_enabled": False, "graph_opacity": 33, "graph_split_directions": True,
-                      "graph_fixed_scale": True, "throttle_temp_c": 85, "plan_down_mbps": 300}
+                      "graph_fixed_scale": True, "throttle_temp_c": 85, "plan_down_mbps": 300,
+                      **INTERACTION_KEYS}
 
 
-def test_reset_this_page_scope_unchanged_and_skips_moved_keys(dlg):
+def test_reset_this_page_scope_and_skips_moved_keys(dlg):
     assert set(dlg.advanced_page.get_settings()) == ADVANCED_RESET_KEYS
     dlg.reset_with_config(dict(DEFAULTS, **MOVED_NON_DEFAULTS, reduce_motion=True), False)
     dlg._reset_advanced_page()
