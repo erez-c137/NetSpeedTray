@@ -822,41 +822,44 @@ class WriterV8:
         A maintenance pass MOVES and DELETES rows by ``now``, so a wrong clock costs history: two years
         ahead, one pass rolled everything up and pruned it all; behind, it lowered the watermarks and hid
         all but the last 24 h. The clock is trusted when it is continuous with the last trusted pass:
-        in this session, within the drift tolerance of the monotonic clock (``mono``, when the caller
-        reads the real clocks); otherwise (first pass of a session, simulated clocks) no more than
-        CLOCK_BEHIND_TOLERANCE_SEC behind it and no more than BACKUP_CLOCK_MAX_GAP_DAYS ahead (app-off
-        time). With no trusted pass recorded yet, only "behind the newest stored row" is caught.
+
+        * in this session (``mono``, when the caller reads the real clocks): the wall clock may run AHEAD
+          of the monotonic clock by up to BACKUP_CLOCK_MAX_GAP_DAYS - that is what sleep looks like when
+          the monotonic clock does not count it (or a VM guest the host suspended), the same as app-off
+          time - but not behind it by more than the drift tolerance;
+        * otherwise (first pass of a session, simulated clocks): no more than CLOCK_BEHIND_TOLERANCE_SEC
+          behind the stamped last trusted pass and no more than BACKUP_CLOCK_MAX_GAP_DAYS ahead of it.
+          With no stamp yet (a fresh, migrated or 2.2-beta file) the newest stored row stands in for it,
+          and the first stamp starts the prune's continuity week.
 
         Anything else is a CANDIDATE clock - a jump, a large correction, or a long time off. Nothing moves
         on it (skipping is always safe); once later passes have agreed with it (each forward, within the
-        gap, and with the monotonic clock in a session) for CLOCK_ACCEPT_SECONDS it is accepted, so a
-        legit correction can never block maintenance for good. The prune also needs the clock to have
-        been continuous for BACKUP_CLOCK_CONTINUITY_DAYS since the last acceptance: a clock that stays
-        wrong gets a week before it can delete anything."""
+        gap, never behind the monotonic clock) for CLOCK_ACCEPT_SECONDS it is accepted, so a legit
+        correction can never block maintenance for good. The prune also needs the clock to have been
+        continuous for BACKUP_CLOCK_CONTINUITY_DAYS since the last acceptance (or the first stamp): a
+        clock that stays wrong gets a week before it can delete anything."""
         R = constants.data.retention
         tol = R.BACKUP_CLOCK_DRIFT_TOLERANCE_SEC
         max_gap = R.BACKUP_CLOCK_MAX_GAP_DAYS * 86400
 
-        def agrees(wall0: int, mono0: Optional[float]) -> bool:
-            if mono is None or mono0 is None:
-                return True
-            return abs((now - wall0) - (mono - mono0)) <= max(tol, 0.01 * max(mono - mono0, 0.0))
+        def follows(wall0: int, mono0: Optional[float], behind: float) -> bool:
+            """``now`` continues from (wall0, mono0): forward by at most max_gap beyond what the monotonic
+            clock elapsed (or than nothing, without one), behind it by at most ``behind``."""
+            elapsed = 0.0 if (mono is None or mono0 is None) else mono - mono0
+            lead = (now - wall0) - elapsed
+            return -max(behind, 0.01 * max(elapsed, 0.0)) <= lead <= max_gap
 
+        first_stamp = False
         ref = self._clock_ref                       # (wall, mono) of this session's last trusted pass
         if ref is not None and mono is not None and ref[1] is not None:
             ref_ts = ref[0]
-            trusted = agrees(ref[0], ref[1])
+            trusted = follows(ref[0], ref[1], tol)
         else:
             ref_ts = self._meta_int(self.CLOCK_TRUSTED_KEY)
-            if ref_ts is not None:
-                trusted = -R.CLOCK_BEHIND_TOLERANCE_SEC <= now - ref_ts <= max_gap
-            else:
-                # No trusted pass recorded yet (a fresh, migrated or 2.2-beta file). Its newest row
-                # still proves a clock BEHIND it; old rows prove nothing about a clock ahead (the app
-                # may simply not have run for months), so that direction waits for the first stamp -
-                # written by the first pass, which runs at startup on the clock the app started with.
+            if ref_ts is None:
+                first_stamp = True
                 ref_ts = self._newest_row_ts()
-                trusted = ref_ts is None or now - ref_ts >= -R.CLOCK_BEHIND_TOLERANCE_SEC
+            trusted = ref_ts is None or follows(ref_ts, None, R.CLOCK_BEHIND_TOLERANCE_SEC)
 
         accepted_since = None
         if not trusted:
@@ -867,8 +870,7 @@ class WriterV8:
                 parts = str(row[0]).split(",") if row else []
                 if len(parts) == 2 and all(p.isdigit() for p in parts):
                     cand = (int(parts[0]), int(parts[1]), None)
-            consistent = (cand is not None and -tol <= now - cand[1] <= max_gap
-                          and agrees(cand[1], cand[2]))
+            consistent = cand is not None and follows(cand[1], cand[2], tol)
             cand = (cand[0], now, mono) if consistent else (now, now, mono)
             days = (now - ref_ts) / 86400.0 if ref_ts is not None else 0.0
             if now - cand[0] >= R.CLOCK_ACCEPT_SECONDS:
@@ -879,9 +881,9 @@ class WriterV8:
                 if not self._clock_warned:
                     self._clock_warned = True
                     self.logger.warning(
-                        "Clock is %+.1f days from the last trusted maintenance pass (or disagrees with the "
-                        "monotonic clock): history roll-ups and pruning are paused until it has run "
-                        "steadily for %.0f h.", days, R.CLOCK_ACCEPT_SECONDS / 3600.0)
+                        "Clock is %+.1f days from the last trusted maintenance pass (or behind the monotonic "
+                        "clock): history roll-ups and pruning are paused until it has run steadily for "
+                        "%.0f h.", days, R.CLOCK_ACCEPT_SECONDS / 3600.0)
                 self._clock_cand = cand
                 self._set_meta({self.CLOCK_CANDIDATE_KEY: f"{cand[0]},{cand[1]}"})
                 return False, False
@@ -892,6 +894,8 @@ class WriterV8:
         put = {self.CLOCK_TRUSTED_KEY: str(now)}
         if accepted_since is not None:
             put[self.CLOCK_CONTINUOUS_SINCE_KEY] = str(accepted_since)
+        elif first_stamp:
+            put[self.CLOCK_CONTINUOUS_SINCE_KEY] = str(now)
         self._set_meta(put, drop=(self.CLOCK_CANDIDATE_KEY,))
         since = self._meta_int(self.CLOCK_CONTINUOUS_SINCE_KEY) or 0
         return True, now - since >= R.BACKUP_CLOCK_CONTINUITY_DAYS * 86400
@@ -924,22 +928,34 @@ class WriterV8:
         hw_raw_c, hw_min_c = self._cutoffs(now, raw_keep, min_keep, S.HW_WATERMARK_RAW_KEY,
                                            S.HW_WATERMARK_MINUTE_KEY)
         # Finer first: raw rows below the minute cutoff reach the hour tier in this same pass.
-        out["net_raw_moved"] = self._move("net_raw", S.WATERMARK_RAW_KEY, net_raw_c,
-                                          lambda: self._roll_net_raw(net_raw_c))
-        out["net_minute_moved"] = self._move("net_minute", S.WATERMARK_MINUTE_KEY, net_min_c,
-                                             lambda: self._roll_net_minute(net_min_c))
-        out["hw_raw_moved"] = self._move("hw_raw", S.HW_WATERMARK_RAW_KEY, hw_raw_c,
-                                         lambda: self._roll_hw_raw(hw_raw_c))
-        out["hw_minute_moved"] = self._move("hw_minute", S.HW_WATERMARK_MINUTE_KEY, hw_min_c,
-                                            lambda: self._roll_hw_minute(hw_min_c))
-        out.update({S.WATERMARK_RAW_KEY: net_raw_c, S.WATERMARK_MINUTE_KEY: net_min_c,
-                    S.HW_WATERMARK_RAW_KEY: hw_raw_c, S.HW_WATERMARK_MINUTE_KEY: hw_min_c})
+        moves = (("net_raw", S.WATERMARK_RAW_KEY, net_raw_c, (S.NET_MINUTE, S.NET_HOUR), self._roll_net_raw),
+                 ("net_minute", S.WATERMARK_MINUTE_KEY, net_min_c, (S.NET_HOUR,), self._roll_net_minute),
+                 ("hw_raw", S.HW_WATERMARK_RAW_KEY, hw_raw_c, (S.HW_MINUTE, S.HW_HOUR), self._roll_hw_raw),
+                 ("hw_minute", S.HW_WATERMARK_MINUTE_KEY, hw_min_c, (S.HW_HOUR,), self._roll_hw_minute))
+        for name, key, cutoff, coarser, roll in moves:
+            if self._lowering_hides_rows(key, cutoff, coarser):
+                out[f"{name}_paused"] = 1
+                continue
+            out[f"{name}_moved"] = self._move(name, key, cutoff, lambda roll=roll, cutoff=cutoff: roll(cutoff))
+            out[key] = cutoff
         if retention_days is not None:
             out["pruned"] = self._prune(now, retention_days) if may_prune else 0
         out["vacuumed_pages"] = self.incremental_vacuum(
             _D.V8_INCREMENTAL_VACUUM_PAGES if vacuum_pages is None else vacuum_pages)
         self.conn.execute("DROP TABLE IF EXISTS temp.v8w_cov")
         return out
+
+    def _lowering_hides_rows(self, key: str, cutoff: int, coarser: Sequence[str]) -> bool:
+        """Whether writing ``cutoff`` would LOWER the stored watermark ``key`` below rows already moved
+        into a ``coarser`` tier. A stored watermark ahead of the clock (a wrong clock that was accepted,
+        then corrected) is not honoured by ``_cutoffs``; lowering it would shadow the rows that clock
+        rolled up - every coarser tier answers only below this watermark - and hide them for up to that
+        tier's retention. Then that roll-up waits until the clock passes them; nothing else changes."""
+        stored = self._meta_int(key)
+        if stored is None or cutoff >= stored:
+            return False
+        return any(self.conn.execute(f"SELECT 1 FROM {t} WHERE ts >= ? LIMIT 1", (cutoff,)).fetchone()
+                   for t in coarser)
 
     def _prune(self, now: int, retention_days: float) -> int:
         try:

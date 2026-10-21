@@ -29,8 +29,10 @@ R = constants.data.retention
 WM_KEYS = (S.WATERMARK_RAW_KEY, S.WATERMARK_MINUTE_KEY, S.HW_WATERMARK_RAW_KEY, S.HW_WATERMARK_MINUTE_KEY)
 
 
-def _build(path: Path, now: int = NOW, days: int = 60):
-    """h1's fixture: ``days`` of traffic, one 1 MB sample every 10 minutes, one trusted pass at ``now``."""
+def _build(path: Path, now: int = NOW, days: int = 60, established: bool = True):
+    """h1's fixture: ``days`` of traffic, one 1 MB sample every 10 minutes, one trusted pass at ``now``.
+    ``established``: the file has been maintained on a steady clock for long (no continuity week
+    pending, as on a fresh file's first stamp)."""
     c = sqlite3.connect(path)
     S.create_v8_schema(c)
     c.execute("PRAGMA journal_mode = WAL")
@@ -46,6 +48,10 @@ def _build(path: Path, now: int = NOW, days: int = 60):
     w.flush(now)
     out = w.run_maintenance(now_ts=now, retention_days=365)
     assert "clock_untrusted" not in out
+    if established:
+        c.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, '0')",
+                  (W.WriterV8.CLOCK_CONTINUOUS_SINCE_KEY,))
+        c.commit()
     return c, w
 
 
@@ -88,14 +94,57 @@ def test_one_pass_with_the_clock_behind_never_lowers_a_watermark(tmp_path):
     assert _volume_mb(p, NOW + 60) == FULL_MB
 
 
-def test_an_in_session_jump_under_the_gap_rule_is_caught_by_the_monotonic_clock(tmp_path):
-    """+13 days looks like app-off time to the date rule; within a session the monotonic clock says the
-    pass came an hour after the last one."""
+def test_in_session_a_wall_clock_behind_the_monotonic_clock_is_caught(tmp_path):
+    """Within a session the monotonic clock says the pass came an hour after the last one; a wall
+    clock that went BACK a day is a jump (the date rule alone would let 1 h - 1 day through as drift)."""
     c, w = _build(tmp_path / "c.db")
     w.run_maintenance(now_ts=NOW + 3600, retention_days=365, mono=1000.0)          # trusted, in-session
     wms = _wms(c)
-    out = w.run_maintenance(now_ts=NOW + 13 * DAY, retention_days=365, mono=1000.0 + 3600)
+    out = w.run_maintenance(now_ts=NOW + 3600 - DAY // 2, retention_days=365, mono=1000.0 + 3600)
     assert out.get("clock_untrusted") == 1 and _wms(c) == wms
+
+
+@pytest.mark.parametrize("asleep_h", [8, 13 * 24])
+def test_sleep_the_monotonic_clock_did_not_count_is_like_app_off_time(tmp_path, asleep_h):
+    """r3 B / D: a monotonic clock that stops across sleep (or a VM guest the host suspended) leaves the
+    wall clock AHEAD of it - not a jump. It used to pause roll-ups for 6 h and restart the prune's
+    continuity week every night, so the prune never ran."""
+    c, w = _build(tmp_path / "s.db")
+    mono, wall = 1000.0, NOW + 3600
+    w.run_maintenance(now_ts=wall, retention_days=365, mono=mono)
+    since = c.execute("SELECT value FROM metadata WHERE key = ?", (W.WriterV8.CLOCK_CONTINUOUS_SINCE_KEY,)).fetchone()
+    out = w.run_maintenance(now_ts=wall + 3600 + asleep_h * 3600, retention_days=365, mono=mono + 3600)
+    assert "clock_untrusted" not in out and "pruned" in out
+    assert c.execute("SELECT value FROM metadata WHERE key = ?",
+                     (W.WriterV8.CLOCK_CONTINUOUS_SINCE_KEY,)).fetchone() == since
+
+
+def test_a_month_of_nightly_sleep_with_a_sleep_blind_monotonic_clock_keeps_pruning(tmp_path):
+    """r3 case B, end to end: 30 days, 16 h awake + 8 h asleep, monotonic excluding sleep."""
+    c, w = _build(tmp_path / "m.db", days=40)
+    mono, wall, untrusted, pruned_passes = 1000.0, NOW + 3600, 0, 0
+    for day in range(30):
+        for h in range(16):
+            out = w.run_maintenance(now_ts=wall, retention_days=31, mono=mono)
+            untrusted += out.get("clock_untrusted", 0)
+            pruned_passes += "pruned" in out
+            wall += 3600
+            mono += 3600
+        wall += 8 * 3600
+    assert untrusted == 0 and pruned_passes == 30 * 16
+
+
+def test_a_fresh_stamp_starts_the_prunes_continuity_week(tmp_path):
+    """S4: the first stamp on a file (every 2.2 beta file, every fresh migration) does not prove the
+    clock it was written on: the prune waits BACKUP_CLOCK_CONTINUITY_DAYS of steady passes."""
+    c, w = _build(tmp_path / "w.db", days=40, established=False)
+    t, mono = NOW, 0.0
+    out = w.run_maintenance(now_ts=t + 3600, retention_days=31, mono=mono)
+    assert "clock_untrusted" not in out and out["pruned"] == 0       # rolls up, prunes nothing yet
+    while t < NOW + R.BACKUP_CLOCK_CONTINUITY_DAYS * DAY:
+        t, mono = t + 3600, mono + 3600
+        out = w.run_maintenance(now_ts=t + 3600, retention_days=31, mono=mono)
+    assert out["pruned"] > 0
 
 
 def test_steady_hourly_passes_keep_rolling_up_and_pruning(tmp_path):
@@ -159,8 +208,8 @@ def test_the_untrusted_pass_is_logged_once(tmp_path, caplog):
 
 
 def test_first_pass_on_a_file_with_no_trusted_stamp_checks_the_newest_row(tmp_path):
-    """An existing 2.2 beta / freshly migrated file has no clock_trusted_ts yet: a clock behind its
-    newest row is caught; old rows alone are not evidence of a clock ahead (the app was off)."""
+    """An existing 2.2 beta / freshly migrated file has no clock_trusted_ts yet: its newest row stands
+    in for the stamp, in both directions (r4: the first pass at +2 y used to prune all 60 days)."""
     p = tmp_path / "i.db"
     c, w = _build(p)
     wms = _wms(c)
@@ -173,7 +222,33 @@ def test_first_pass_on_a_file_with_no_trusted_stamp_checks_the_newest_row(tmp_pa
               (W.WriterV8.CLOCK_TRUSTED_KEY, W.WriterV8.CLOCK_CANDIDATE_KEY))
     c.commit()
     w3 = W.WriterV8(c, version="t", poll_ms=1000)
-    assert "clock_untrusted" not in w3.run_maintenance(now_ts=NOW + 40 * DAY)
+    assert w3.run_maintenance(now_ts=NOW + 2 * 365 * DAY, retention_days=365).get("clock_untrusted") == 1
+    assert _wms(c) == wms and _volume_mb(p) == FULL_MB
+    w4 = W.WriterV8(c, version="t", poll_ms=1000)
+    c.execute("DELETE FROM metadata WHERE key IN (?, ?)",
+              (W.WriterV8.CLOCK_TRUSTED_KEY, W.WriterV8.CLOCK_CANDIDATE_KEY))
+    c.commit()
+    assert "clock_untrusted" not in w4.run_maintenance(now_ts=NOW + 5 * DAY)   # app off 5 days: fine
+
+
+def test_an_accepted_wrong_clock_then_corrected_never_hides_rolled_up_rows(tmp_path):
+    """r4 / S5: two years ahead for 8 h (accepted after 6 h - everything rolled up at the fake time),
+    then corrected (accepted again). Lowering the watermarks back to the real clock shadowed the rows
+    the wrong clock had rolled up: 8640 -> 4410 MB, the last 7 days read 0."""
+    p = tmp_path / "r4.db"
+    c, w = _build(p)
+    ahead = 730 * DAY
+    for h in range(8):
+        w.run_maintenance(now_ts=NOW + ahead + h * 3600, retention_days=365)
+    real = NOW + 8 * 3600
+    for h in range(8):
+        out = w.run_maintenance(now_ts=real + h * 3600, retention_days=365)
+    assert "clock_untrusted" not in out
+    end = real + 7 * 3600
+    assert _volume_mb(p, end) == FULL_MB
+    r = V8HistoryReader(lambda: sqlite3.connect(p), lambda: p, clock=lambda: end)
+    last7 = r.volume(datetime.fromtimestamp(end - 7 * DAY), datetime.fromtimestamp(end), None, 1.0).down_bytes
+    assert round(last7 / 1e6) == 7 * 144 - 15 * 6                   # the data stops at NOW; 15 h later
 
 
 def test_database_worker_hands_the_writer_the_monotonic_clock(tmp_path, monkeypatch):
