@@ -338,7 +338,8 @@ class LhmHttpClient:
                              self.url, reason, self.failure_backoff_seconds)
             return None
         if self._last_failure is not None or self._cached is None:
-            logger.debug("LHM HTTP source answered at %s.", self.url)
+            # Once per transition to "available" - a line the support bundle should show.
+            logger.info("Hardware monitor: reading the LibreHardwareMonitor web server at %s.", self.url)
         self._last_failure = None
         self._cached = snapshot
         self._cached_at = now
