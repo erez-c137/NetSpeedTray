@@ -21,6 +21,10 @@ my_hidden_imports = [
     'PyQt6.QtWidgets',
     'psutil',
     'win32api',
+    # Imported lazily by monitor.py's single-instance check (per-user instance scan); a missing one
+    # there would fall back to psutil, then assume an instance is running - keep them bundled.
+    'win32ts',
+    'win32security',
     'win32com.shell.shell',
     'matplotlib',
     'matplotlib.pyplot',

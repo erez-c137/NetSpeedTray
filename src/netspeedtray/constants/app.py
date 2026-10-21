@@ -9,12 +9,13 @@ class AppConstants:
     """Defines application metadata and the single-instance mutex name."""
     APP_NAME: Final[str] = "NetSpeedTray"
     VERSION: Final[str] = netspeedtray.__version__
-    # One instance per Windows SESSION (2.2.0): Local\, not Global\ - the Global\ name let the first
+    # One instance per Windows USER (2.2.0): this prefix + the user's SID (monitor._instance_mutex_name),
+    # in Global\ so the same user's second session sees it. The single shared name below let the first
     # user's instance (or a SYSTEM one in session 0) silently block every other user's. setup.iss
-    # (MyAppMutex / MyLegacyAppMutex) checks both names; keep them in sync.
-    MUTEX_NAME: Final[str] = "Local\\NetSpeedTray_SingleInstanceMutex"
+    # cannot know the SID: it checks the legacy name and looks for the process instead.
+    MUTEX_NAME_PREFIX: Final[str] = "Global\\NetSpeedTray_Instance_"
     # The name every build before 2.2.0 used. Still claimed when free and checked when held, so an
-    # old copy and a new one can never both run in one session during the transition (monitor.py).
+    # old copy and a new one of the same user never both run during the transition (monitor.py).
     LEGACY_MUTEX_NAME: Final[str] = "Global\\NetSpeedTray_SingleInstanceMutex"
     ICON_FILENAME: Final[str] = "NetSpeedTray.ico"
     GITHUB_OWNER: Final[str] = "erez-c137"
@@ -53,8 +54,8 @@ class AppConstants:
             raise ValueError("APP_NAME must not be empty")
         if not self.VERSION:
             raise ValueError("VERSION must not be empty")
-        if not self.MUTEX_NAME:
-            raise ValueError("MUTEX_NAME must not be empty")
+        if not self.MUTEX_NAME_PREFIX or not self.LEGACY_MUTEX_NAME:
+            raise ValueError("mutex names must not be empty")
         if not self.ICON_FILENAME:
             raise ValueError("ICON_FILENAME must not be empty")
 

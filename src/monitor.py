@@ -18,6 +18,7 @@ import signal
 import sys
 import os
 import threading
+import time
 from typing import Callable, List, Optional
 
 # `--shutdown` hard deadline. Must stay the same as constants.app.SHUTDOWN_DEFAULT_TIMEOUT_S (a unit
@@ -78,54 +79,150 @@ class AlreadyRunningError(RuntimeError):
 
 
 _HEADLESS_FLAGS = ("--apply-update", "--shutdown", "--export-csv")
+# A legacy (pre-2.2) instance found at startup is re-checked once after this long before the launch
+# gives way to it: an old and a new copy started at the same moment (a Run key plus a pinned
+# shortcut) would otherwise each see the other and BOTH exit.
+_LEGACY_RECHECK_DELAY_S = 1.5
 
 
-def _legacy_instance_in_this_session() -> bool:
-    """Is a NetSpeedTray app (not a headless --apply-update/--shutdown/--export-csv run) other than
-    this process running in OUR Windows session? Asked only when the legacy Global\\ mutex is held
-    by someone: a pre-2.2 instance there is the same user's, on the same config and database, while
-    one in another session is another user's and must not stop us (the bug the Local\\ name fixes).
+def _current_user_sid() -> str:
+    """This process's user SID as a string (S-1-5-21-...)."""
+    import win32con
+    import win32security
+    token = win32security.OpenProcessToken(win32api.GetCurrentProcess(), win32con.TOKEN_QUERY)
+    try:
+        return win32security.ConvertSidToStringSid(
+            win32security.GetTokenInformation(token, win32security.TokenUser)[0])
+    finally:
+        token.Close()
 
-    WTSEnumerateProcesses gives every process's session without opening it, so an ELEVATED old
-    instance (2.1.6/2.1.7 in-app updates relaunched elevated) is seen too. If the question cannot
-    be answered, the answer is yes: two instances on one database is the worse failure."""
+
+def _instance_mutex_name() -> str:
+    """One instance per USER (2.2.0): ``Global\\`` + a per-user name. Global so the same user signed
+    in to two sessions (RDS, multi-session Windows, fast user switching to their own second session)
+    still gets one instance on their one config and database; per user so one user's instance
+    never blocks another's - the pre-2.2 single Global\\ name did (and a SYSTEM instance an old
+    installer started in session 0 blocked everyone)."""
+    try:
+        suffix = _current_user_sid()
+    except Exception:
+        # No SID (should not happen): the user name still separates users on this machine.
+        suffix = "user-" + (os.environ.get("USERDOMAIN", "") + "-" + os.environ.get("USERNAME", "")
+                            ).replace("\\", "_")
+    return constants.app.MUTEX_NAME_PREFIX + suffix
+
+
+def _is_app_process(pid: int, name: str) -> bool:
+    """A NetSpeedTray.exe other than this process, and not a headless run (the portable applier
+    showing its notice, `--shutdown`, `--export-csv`). An unreadable command line counts."""
+    if pid == os.getpid() or str(name).lower() != "netspeedtray.exe":
+        return False
     try:
         import psutil
-        import win32ts
-        me = os.getpid()
-        session = win32ts.ProcessIdToSessionId(me)
-        for sid, pid, name, _sid in win32ts.WTSEnumerateProcesses(
-                win32ts.WTS_CURRENT_SERVER_HANDLE, 1, 0):
-            if pid == me or sid != session or str(name).lower() != "netspeedtray.exe":
-                continue
-            try:
-                cmdline = psutil.Process(pid).cmdline()
-            except Exception:
-                cmdline = []                      # unreadable (elevated): count it
-            if any(flag in cmdline for flag in _HEADLESS_FLAGS):
-                continue                          # e.g. the portable applier showing its notice
-            return True
-        return False
+        cmdline = psutil.Process(pid).cmdline()
     except Exception:
-        logging.getLogger("NetSpeedTray.SingleInstanceChecker").warning(
-            "Could not check this session for an older NetSpeedTray; assuming one is running.",
-            exc_info=True)
+        cmdline = []
+    return not any(flag in cmdline for flag in _HEADLESS_FLAGS)
+
+
+def _same_user_instances_wts(my_sid: str) -> List[int]:
+    """PIDs of this user's NetSpeedTray instances in ANY session. WTSEnumerateProcesses reports
+    each process's user SID without opening it, so an ELEVATED old instance of the same user
+    (2.1.6/2.1.7 in-app updates relaunched elevated) is seen too."""
+    import win32security
+    import win32ts
+    found = []
+    for _session, pid, name, sid in win32ts.WTSEnumerateProcesses(
+            win32ts.WTS_CURRENT_SERVER_HANDLE, 1, 0):
+        if sid is None or not _is_app_process(pid, name):
+            continue
+        if win32security.ConvertSidToStringSid(sid) == my_sid:
+            found.append(pid)
+    return found
+
+
+def _same_user_instances_psutil(my_sid: str) -> List[int]:
+    """Fallback without win32ts: psutil names each process's user when it may read the token; one
+    it may not read (elevated, or another user's) counts only when it is in OUR session."""
+    import ctypes
+    import psutil
+    import win32security
+    me_name = win32security.LookupAccountSid(None, win32security.ConvertStringSidToSid(my_sid))
+    me_user = ("%s\\%s" % (me_name[1], me_name[0])).lower()
+    k32 = ctypes.windll.kernel32
+
+    def session_of(pid: int) -> Optional[int]:
+        out = ctypes.c_ulong(0)
+        return out.value if k32.ProcessIdToSessionId(pid, ctypes.byref(out)) else None
+
+    mine = session_of(os.getpid())
+    found = []
+    for proc in psutil.process_iter(["pid", "name"]):
+        pid, name = proc.info["pid"], proc.info["name"] or ""
+        if not _is_app_process(pid, name):
+            continue
+        try:
+            if proc.username().lower() == me_user:
+                found.append(pid)
+            continue
+        except Exception:
+            pass
+        sess = session_of(pid)
+        if sess is not None and sess == mine:
+            found.append(pid)
+    return found
+
+
+def _legacy_instance_of_this_user() -> bool:
+    """Is a NetSpeedTray app of THIS user (any session) running besides us? Asked only when the
+    legacy Global\\ mutex is held: a pre-2.2 instance of ours shares our config and database, while
+    another user's (or a SYSTEM one in session 0) must not stop us.
+
+    WTSEnumerateProcesses first, psutil as the fallback; only when neither can answer is an
+    instance assumed (two instances on one database is the worse failure). A hit is re-checked
+    once after ``_LEGACY_RECHECK_DELAY_S``, so an old copy launched at the same moment - which
+    exits on seeing ours - does not take this one down with it."""
+    log = logging.getLogger("NetSpeedTray.SingleInstanceChecker")
+    try:
+        my_sid = _current_user_sid()
+    except Exception:
+        log.warning("Could not read this process's user; assuming an older NetSpeedTray is running.",
+                    exc_info=True)
         return True
+
+    def scan() -> Optional[List[int]]:
+        for probe in (_same_user_instances_wts, _same_user_instances_psutil):
+            try:
+                return probe(my_sid)
+            except Exception:
+                log.debug("Instance scan %s failed.", getattr(probe, "__name__", probe), exc_info=True)
+        return None
+
+    first = scan()
+    if first is None:
+        log.warning("Could not list processes; assuming an older NetSpeedTray is running.")
+        return True
+    if not first:
+        return False
+    time.sleep(_LEGACY_RECHECK_DELAY_S)
+    again = scan()
+    return True if again is None else bool(set(first) & set(again))
 
 
 class SingleInstanceChecker:
     """
-    Ensures that only one instance of the application runs per Windows session.
+    Ensures that only one instance of the application runs per Windows USER.
 
-    The mutex is ``Local\\`` (per session) since 2.2.0. It was ``Global\\``, so the first user's
-    instance - or a SYSTEM instance an old installer started in session 0 - silently stopped every
-    other signed-in user's from starting until it exited. Each user has their own config and
-    history, so one instance per session is the real invariant.
+    The mutex is ``Global\\NetSpeedTray_Instance_<user SID>`` since 2.2.0 (``_instance_mutex_name``).
+    It was one ``Global\\`` name for everyone, so the first user's instance - or a SYSTEM instance
+    an old installer started in session 0 - silently stopped every other signed-in user's from
+    starting until it exited. Each user has their own config and history, so one instance per
+    user (across all their sessions) is the real invariant.
 
-    Transition: 2.1.x and the 2.2 betas only know the ``Global\\`` name. So the ``Global\\`` mutex is
-    also claimed when free (an old copy started later in ANY session then exits, as it always
-    would), and when it is already held, this launch exits only if a NetSpeedTray process is
-    running in this same session (``_legacy_instance_in_this_session``).
+    Transition: 2.1.x and the 2.2 betas only know the shared ``Global\\`` name. So it is also
+    claimed when free (an old copy started later then exits, as it always would), and when it is
+    already held, this launch exits only if a NetSpeedTray process of the same user is running
+    (``_legacy_instance_of_this_user``).
 
     This class is designed to be used as a context manager.
 
@@ -160,10 +257,10 @@ class SingleInstanceChecker:
                 held_elsewhere = True               # another user's, or an elevated instance's
             else:
                 self.logger.warning("Could not check the legacy mutex: %s", e)
-        if held_elsewhere and _legacy_instance_in_this_session():
-            self.logger.info("An older NetSpeedTray is already running in this session; this launch "
+        if held_elsewhere and _legacy_instance_of_this_user():
+            self.logger.info("An older NetSpeedTray of this user is already running; this launch "
                              "will exit quietly.")
-            raise AlreadyRunningError("An older instance is already running in this session.")
+            raise AlreadyRunningError("An older instance of this user is already running.")
 
     def _close(self, handle) -> None:
         if handle:
@@ -174,7 +271,7 @@ class SingleInstanceChecker:
 
     def _acquire_session_mutex(self) -> None:
         try:
-            self.mutex = win32event.CreateMutex(None, False, constants.app.MUTEX_NAME)
+            self.mutex = win32event.CreateMutex(None, False, _instance_mutex_name())
             if win32api.GetLastError() == winerror.ERROR_ALREADY_EXISTS:
                 # Expected, not an error: a duplicate launch while the app is already running. Log it and
                 # let the caller exit quietly - no dialog (per design: re-launch is a silent no-op).
@@ -184,7 +281,7 @@ class SingleInstanceChecker:
             if e.winerror == winerror.ERROR_ACCESS_DENIED:
                 # The mutex exists but we may not open it: it was created by an ELEVATED instance (its
                 # default DACL admits only Administrators/SYSTEM and its High integrity label blocks a
-                # Medium-IL caller) in this same session. CreateMutexW
+                # Medium-IL caller) of this same user. CreateMutexW
                 # can only be denied on an object that already exists, so this is the same fact as
                 # ERROR_ALREADY_EXISTS - another instance is running - and gets the same quiet exit.
                 self.logger.info("NetSpeedTray is already running (mutex held by an elevated "

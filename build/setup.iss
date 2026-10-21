@@ -4,8 +4,9 @@
 #define MyAppPublisher "Erez C137"
 #define MyAppURL "https://github.com/erez-c137/NetSpeedTray"
 #define MyAppExeName "NetSpeedTray.exe"
-; constants.app.MUTEX_NAME (per session since 2.2.0) and LEGACY_MUTEX_NAME (every earlier build).
-#define MyAppMutex "Local\NetSpeedTray_SingleInstanceMutex"
+; constants.app.LEGACY_MUTEX_NAME - what every build before 2.2.0 holds. Since 2.2.0 the app's own
+; mutex is per user (Global\NetSpeedTray_Instance_<SID>), which Setup cannot name, so it also looks
+; for the process itself (AnyAppProcess). 2.2.0+ also holds this legacy name while it is free.
 #define MyLegacyAppMutex "Global\NetSpeedTray_SingleInstanceMutex"
 #define MyAppId "{{D3A32B89-C533-4F2C-9F87-23B2395B5B89}}"
 ; Graceful-shutdown channel - a wire protocol with the running app. Must match
@@ -82,9 +83,9 @@ UninstallDisplayName={#MyAppName}
 RestartIfNeededByRun=no
 CloseApplications=force
 CloseApplicationsFilter=*.exe,*.dll
-; Must match constants.app.MUTEX_NAME / LEGACY_MUTEX_NAME so Inno reliably detects the running app on
-; (auto-)upgrade. Both: a pre-2.2 instance only holds the Global\ one.
-AppMutex={#MyAppMutex},{#MyLegacyAppMutex}
+; Must match constants.app.LEGACY_MUTEX_NAME so Inno detects a running app on (auto-)upgrade;
+; InitializeSetup's IsAppRunning also finds 2.2.0+ instances by process.
+AppMutex={#MyLegacyAppMutex}
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -281,9 +282,9 @@ begin
     CloseHandle(MutexHandle);
 end;
 
-// Any NetSpeedTray.exe in ANY session. Since 2.2.0 the app's mutex is per session (Local\), so the
-// mutexes alone only show this session's instance (and pre-2.2 ones, via Global\) - but another
-// signed-in user's instance holds the same files open. Setup is elevated, so WMI sees every process.
+// Any NetSpeedTray.exe in ANY session. Since 2.2.0 the app's mutex is per user (its name carries the
+// user's SID, which Setup cannot know), and another signed-in user's instance holds the same files
+// open. Setup is elevated, so WMI sees every process.
 function AnyAppProcess(): Boolean;
 var
   Locator, Service, Procs: Variant;
@@ -301,7 +302,7 @@ end;
 
 function IsAppRunning(): Boolean;
 begin
-  Result := MutexExists('{#MyAppMutex}') or MutexExists('{#MyLegacyAppMutex}') or AnyAppProcess();
+  Result := MutexExists('{#MyLegacyAppMutex}') or AnyAppProcess();
 end;
 
 // Windows marked by the running app as its shutdown target, filled by CollectShutdownTarget.
