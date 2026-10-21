@@ -311,6 +311,13 @@ class StatsController(QObject):
         # clock need not advance across sleep, the wall clock can jump - either alone could clip
         # real bytes. A too-generous span only loosens the cap for that one poll.
         sample_elapsed = max(sample_mono - last_mono, sample_wall - last_wall, 0.0)
+        # The rate's span is the SAMPLING span too (monotonic only - a wall-clock jump must not move
+        # a rate). The previous sample is always the rate baseline here: every path past the
+        # half-interval gate re-baselines both. Dividing by the HANDLING span instead turned any stall
+        # on the monitor thread between sampling and emitting (a WMI query, an LHM connect attempt)
+        # into one tick shown too high and the next too low (PR #276 review). Without a sample time
+        # (direct callers) this equals time_diff.
+        rate_span = (sample_mono - last_mono) if self._last_sample_time else time_diff
         byte_deltas = self._odometer_byte_deltas(current_counters, sample_elapsed)
         # Same interface selection as the display, but raw deltas, not rates. Gated on byte_deltas,
         # NOT on the display data: a rate over the ceiling is display-dropped, its bytes are real (#13).
@@ -362,7 +369,7 @@ class StatsController(QObject):
                 up_diff = max(0, current.bytes_sent - last.bytes_sent)
                 down_diff = max(0, current.bytes_recv - last.bytes_recv)
 
-                safe_time_diff = max(time_diff, constants.network.speed.MIN_TIME_DIFF)
+                safe_time_diff = max(rate_span, constants.network.speed.MIN_TIME_DIFF)
                 up_speed_bps = int(up_diff / safe_time_diff)
                 down_speed_bps = int(down_diff / safe_time_diff)
 

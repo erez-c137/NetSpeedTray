@@ -182,8 +182,9 @@ def test_the_cap_logs_once_per_session(caplog):
 
 def test_cap_uses_the_sampling_span_not_the_handling_span():
     """#13's real mechanism: the GUI thread can handle two samples closer together than they were
-    taken (a late delivery of the previous one). The display rate is then inflated past the ceiling
-    and dropped, but the bytes are real - the cap is measured over when the counters were SAMPLED."""
+    taken (a late delivery of the previous one). The bytes are real - the cap is measured over when
+    the counters were SAMPLED. Since PR #276's review the display rate is too, so it is no longer
+    inflated past the ceiling and dropped: it shows the honest ~10.7 GB/s over the 3 s sampled."""
     state = FakeState()
     c = _controller(state)
     t0 = 1000.0
@@ -192,7 +193,7 @@ def test_cap_uses_the_sampling_span_not_the_handling_span():
     huge = 30 * 1024**3   # 30 GiB: over the ceiling for the 1 s handling span, under it for 3 s sampled
     with patch("time.monotonic", return_value=t0 + 1.0):
         c._handle_network_counters({"Wi-Fi": NetIO(huge, 0)}, sample_time=(t0 + 1.0, 5_003.0))
-    assert state.speed_calls == 0                    # over-ceiling rate -> display-dropped
+    assert state.speed_calls == 1                    # rate over the SAMPLED span: under the ceiling
     assert state.adds[-1] == (huge, 0)                # ...but every byte counted
 
 
