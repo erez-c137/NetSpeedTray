@@ -48,7 +48,18 @@ class _WheelGuard(QObject):
         return False
 
 
-_WHEEL_GUARD = _WheelGuard()   # single shared, stateless instance
+_WHEEL_GUARD = None   # single shared, stateless instance - created on first use
+
+
+def _wheel_guard() -> _WheelGuard:
+    """The shared guard, (re)created when missing. A module-level QObject made at import dies with
+    the QApplication that owned it; anything that later builds a settings page in the same process
+    (a second QApplication in the test run) then crashed in installEventFilter."""
+    global _WHEEL_GUARD
+    from PyQt6 import sip
+    if _WHEEL_GUARD is None or sip.isdeleted(_WHEEL_GUARD):
+        _WHEEL_GUARD = _WheelGuard()
+    return _WHEEL_GUARD
 
 
 def install_wheel_guard(root: QWidget) -> None:
@@ -58,9 +69,10 @@ def install_wheel_guard(root: QWidget) -> None:
     scrolls it, instead of changing the slider/combo/spin box the cursor passes over. Covers the
     custom Win11 controls too, since Win11ComboBox is a QComboBox and Win11Slider wraps a QSlider.
     """
+    guard = _wheel_guard()
     for cls in (QComboBox, QAbstractSpinBox, QAbstractSlider):
         for w in root.findChildren(cls):
-            w.installEventFilter(_WHEEL_GUARD)
+            w.installEventFilter(guard)
             # Drop wheel-focus so a scroll can't first focus the control and then change it.
             if w.focusPolicy() == Qt.FocusPolicy.WheelFocus:
                 w.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
