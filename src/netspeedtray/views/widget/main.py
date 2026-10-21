@@ -485,13 +485,8 @@ class NetworkSpeedWidget(QWidget):
                 # Always re-assert topmost status when visible to prevent falling behind taskbar (#77)
                 self._ensure_win32_topmost()
 
-                # Ownership keeps the widget above the taskbar in theory, but Win11 shell
-                # churn can bury it without breaking the owner link, and steady-state
-                # ensure_topmost() deliberately never touches Z-order (#200). Hit-test for
-                # exactly that state - the taskbar itself covering the widget - and re-seat
-                # once. Menus/flyouts covering us must NOT trigger this (#200).
-                if self.position_manager.is_buried_behind_taskbar():
-                    self.position_manager.reseat_topmost()
+                # The 1 s safety net behind the event-driven burial recovery (_recover_if_buried).
+                self._recover_if_buried()
 
                 # One-time heads-up if we're sitting over the Win11 Widgets/weather panel (#200).
                 self._maybe_nudge_widgets_overlap(taskbar_info)
@@ -1026,6 +1021,11 @@ class NetworkSpeedWidget(QWidget):
             # Handle taskbar restarts - both the 3s validity poll and the instant
             # TaskbarCreated broadcast (nativeEvent) land in _recover_taskbar_restarted.
             self.system_event_handler.taskbar_restarted.connect(self._recover_taskbar_restarted)
+
+            # Burial recovery, event-driven (#314, #238): the shell raised a window - possibly
+            # the taskbar over the widget. Coalesced in SystemEventHandler; the check itself is
+            # a short Z-order walk, and it re-seats only when the widget really is buried.
+            self.system_event_handler.zorder_changed.connect(self._recover_if_buried)
 
             # React to monitor topology changes (add/remove/primary swap, KVM, dock/undock):
             # re-validate the position + re-assert the widget. A set-and-forget app must follow
@@ -1700,6 +1700,32 @@ class NetworkSpeedWidget(QWidget):
             self.logger.debug("nativeEvent power handling failed: %s", e)
         return False, 0
 
+    def _recover_if_buried(self) -> None:
+        """
+        Put the widget back on top of its taskbar if the shell buried it (#314, #238).
+
+        Ownership keeps the widget above the taskbar in theory, but the shell can raise the
+        taskbar over it without breaking the owner link, and steady-state ensure_topmost()
+        deliberately never touches Z-order (#200). Runs on every coalesced Z-order change
+        (EVENT_OBJECT_REORDER / foreground) and on the 1 s safety-net tick; re-seats the
+        widget directly above the taskbar only when it really is below it.
+
+        Skipped while hidden, while our own menu is open or a drag is under way, and while a
+        fullscreen app owns the screen - with Keep visible in fullscreen on, the widget's
+        place over the video stays exactly as it was before this recovery existed.
+        """
+        try:
+            if not self.isVisible() or self._is_context_menu_visible or self._dragging:
+                return
+            handler = getattr(self, "system_event_handler", None)
+            if handler is not None and handler.is_fullscreen_active():
+                return
+            pm = getattr(self, "position_manager", None)
+            if pm is not None and pm.is_buried_behind_taskbar():
+                pm.reseat_above_taskbar()
+        except Exception as e:
+            self.logger.debug("Burial recovery check failed: %s", e)
+
     def _recover_taskbar_restarted(self) -> None:
         """
         Explorer is (re)building the taskbar. Ride out the shell's startup with the
@@ -1710,6 +1736,9 @@ class NetworkSpeedWidget(QWidget):
         exists instead of up to a poll interval later.
         """
         try:
+            pm = getattr(self, "position_manager", None)
+            if pm is not None:
+                pm.reset_reseat_state()   # a new taskbar starts a new burial history
             for i in range(constants.timeouts.TASKBAR_RESTART_RETRIES):
                 QTimer.singleShot(i * constants.timeouts.TASKBAR_RESTART_RECOVERY_DELAY_MS,
                                   self._execute_refresh)

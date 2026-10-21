@@ -32,6 +32,9 @@ WINEVENTPROC = ctypes.WINFUNCTYPE(
 # WinEvent Constants
 EVENT_SYSTEM_FOREGROUND = 0x0003
 EVENT_OBJECT_LOCATIONCHANGE = 0x800B
+# A window's children changed Z-order. For top-level windows the source is the desktop
+# window (#32769): explorer fires it right before it raises the taskbar over the widget.
+EVENT_OBJECT_REORDER = 0x8004
 EVENT_SYSTEM_MOVESIZEEND = 0x000B # Fired when a window finishes moving or resizing
 WINEVENT_OUTOFCONTEXT = 0x0000
 
@@ -48,9 +51,14 @@ class WinEventHook(QObject, threading.Thread):
     # Internal signal for safe cross-thread communication
     _internal_event_received = pyqtSignal(int)
 
-    def __init__(self, event_to_watch: int, hwnd_to_watch: int = 0, debounce_ms: Optional[int] = None, parent=None):
+    def __init__(self, event_to_watch: int, hwnd_to_watch: int = 0, debounce_ms: Optional[int] = None,
+                 parent=None, source_hwnd_filter: Optional[int] = None):
         """
         Initializes the hook.
+
+        source_hwnd_filter: when set, events whose source HWND differs are dropped on the hook
+        thread, before they cross into Qt - for a system-wide hook (hwnd_to_watch=0) on a
+        frequent event where only one source matters (EVENT_OBJECT_REORDER on the desktop).
         """
         super().__init__(parent)
         threading.Thread.__init__(self)
@@ -61,6 +69,7 @@ class WinEventHook(QObject, threading.Thread):
         
         self.event_to_watch = event_to_watch
         self.hwnd_to_watch = hwnd_to_watch
+        self.source_hwnd_filter = source_hwnd_filter
         self.c_callback = WINEVENTPROC(self.callback)
 
         self._debounced_timer = QTimer()
@@ -105,9 +114,12 @@ class WinEventHook(QObject, threading.Thread):
     def callback(self, hWinEventHook, event, hwnd, idObject, idChild, dwEventThread, dwmsEventTime):
         """
         The C-compatible callback. Runs on the worker thread.
-        Its ONLY job is to emit the internal signal to safely cross the thread boundary.
+        Its ONLY job is to emit the internal signal to safely cross the thread boundary
+        (after the optional source filter).
         """
-        self._internal_event_received.emit(hwnd)
+        if self.source_hwnd_filter is not None and (hwnd or 0) != self.source_hwnd_filter:
+            return
+        self._internal_event_received.emit(hwnd or 0)
 
     def _handle_event_on_main_thread(self, hwnd: int):
         """

@@ -58,42 +58,59 @@ _SetWindowLongPtr.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_void_p]
 _GetWindowLongPtr.restype = ctypes.c_void_p
 _GetWindowLongPtr.argtypes = [wintypes.HWND, ctypes.c_int]
 
-# --- Buried-behind-taskbar hit-test (see PositionManager.is_buried_behind_taskbar) ---
-_GA_ROOT = 2
+# --- Burial recovery: re-seat directly above the taskbar (#314, #238, PR #327) ---
+# The owner link keeps the widget above the taskbar in theory, but the shell can still
+# raise the taskbar over it (Win10: maximize + restore; Win11: Start/flyout churn, hovering
+# grouped previews). Recovery seats the widget DIRECTLY above its taskbar - never at the
+# top of the topmost band - so anything already above the taskbar (open menus, jump lists,
+# tooltips, Start/Search/Widgets flyouts) stays above the widget, and SWP_NOOWNERZORDER
+# keeps the taskbar's owner cluster where it is (the #200 clipping came from dragging it
+# up). With that insertion point the re-seat no longer has to recognise popups at all.
 _SHELL_TASKBAR_CLASSES = ("Shell_TrayWnd", "Shell_SecondaryTrayWnd")
-_WindowFromPoint = _user32.WindowFromPoint
-_WindowFromPoint.argtypes = [wintypes.POINT]
-_WindowFromPoint.restype = wintypes.HWND
-_GetAncestor = _user32.GetAncestor
-_GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
-_GetAncestor.restype = wintypes.HWND
-_GetClassNameW = _user32.GetClassNameW
-_GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
-_GetClassNameW.restype = ctypes.c_int
+_GW_HWNDPREV = 3
+_SWP_NOOWNERZORDER = 0x0200
+_RESEAT_SWP_FLAGS = (win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE
+                     | _SWP_NOOWNERZORDER)
+# Upper bound for the walk from the taskbar up to the top of the Z-order. The taskbar sits
+# near the top of the topmost band (a dozen windows above it on a live Win11 26200 probe),
+# so this never binds in practice; it only stops a pathological list from spinning.
+_ZORDER_WALK_LIMIT = 1024
 
-# A visible shell menu/popup gates the re-seat: see PositionManager._open_shell_menu_on_monitor.
-# #32768 is the classic Win32 menu; on Win11 the shell's popup host - Start/flyouts, and on
-# some builds taskbar menus/jump lists - surfaces as Xaml_WindowedPopupClass instead, so the
-# guard must recognize both (#327 review).
-_MENU_CLASS = "#32768"
-_SHELL_MENU_CLASSES = (_MENU_CLASS, "Xaml_WindowedPopupClass")
-_MONITOR_DEFAULTTONEAREST = 2
-_MonitorFromWindow = _user32.MonitorFromWindow
-_MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
-_MonitorFromWindow.restype = ctypes.c_void_p
+# GetWindowBand (user32, undocumented but exported since Win8). Win11 lifts the taskbar into
+# a higher Z-band while Start is open; a band-1 widget cannot be seated inside another band,
+# so the re-seat waits for the taskbar to come back instead of fighting it. None = unknown.
+try:
+    _GetWindowBandRaw = _user32.GetWindowBand
+    _GetWindowBandRaw.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    _GetWindowBandRaw.restype = wintypes.BOOL
+except AttributeError:
+    _GetWindowBandRaw = None
 
-# Re-seat backoff: the first recovery fires immediately, then the delay doubles up to
-# the cap, so a shell that keeps re-burying the widget can never camp on the 1 Hz
-# refresh cadence (that would be the periodic re-assert #200 removed, back again
-# through the recovery door).
+
+def _window_band(hwnd: int) -> Optional[int]:
+    """The window's Z-band, or None when the API is missing or the call fails."""
+    if _GetWindowBandRaw is None or not hwnd:
+        return None
+    try:
+        band = wintypes.DWORD(0)
+        if _GetWindowBandRaw(hwnd, ctypes.byref(band)):
+            return int(band.value)
+    except Exception:
+        pass
+    return None
+
+
+# Re-seat backoff, the safety net against a shell that re-buries the widget the instant it
+# is re-seated: the first recovery fires immediately, then each re-seat that does not hold
+# doubles the wait (1, 2, 4 ... 60 s). The seat above the taskbar cannot clip a menu, so the
+# backoff only has to stop a fight, not every recovery: it retires after the widget has
+# stayed on top for _RESEAT_HEALTHY_S. That is shorter than an ordinary gap between two user
+# actions that bury it (pasharm's Win10 repro buries it on every maximize/restore), so those
+# always recover at once, while a real fight still decays to one re-seat a minute.
 _RESEAT_BACKOFF_BASE_S = 1.0
 _RESEAT_BACKOFF_MAX_S = 60.0
 _RESEAT_BACKOFF_EXP_CAP = 6
-# Retirement of the backoff requires a sustained on-top stretch (#327 review): a
-# single on-top tick is not proof the burial episode is over, so retiring on the
-# first tick would hand a shell that re-buries every other second the same
-# near-free re-seat cadence the backoff exists to prevent.
-_RESEAT_HEALTHY_S = 60.0
+_RESEAT_HEALTHY_S = 10.0
 
 
 # Protocols
@@ -516,7 +533,7 @@ class PositionManager(QObject):
         # display we should float on instead of docking to the primary taskbar.
         self._free_float_active: bool = False
         self._free_float_screen: Optional[QScreen] = None
-        # Re-seat backoff state (see reseat_topmost): consecutive acted re-seats grow
+        # Re-seat backoff state (see reseat_above_taskbar): consecutive acted re-seats grow
         # the delay; steady-state health retires the escalation between episodes.
         self._reseat_attempts: int = 0
         self._last_reseat_ts: float = 0.0
@@ -524,9 +541,8 @@ class PositionManager(QObject):
         # Start of the current continuous on-top stretch (is_buried_behind_taskbar);
         # None while we have not verified we are on top. Gates backoff retirement.
         self._on_top_since: Optional[float] = None
-        # One-time-per-class census of visible window classes seen while scanning
-        # for shell menus (#327 review): logs what the #32768 guard actually sees.
-        self._menu_census_logged: set = set()
+        # (reason, backoff window) of the last DEBUG-logged deferral - one line per window.
+        self._deferral_logged: Optional[tuple] = None
         
         # Timers
         self._tray_watcher_timer = QTimer(self)
@@ -873,8 +889,8 @@ class PositionManager(QObject):
                 # not pull a normal-band window up, so restore the style bit. This can't
                 # cause the #200 menu clipping: a normal-band window was never above an
                 # open menu to begin with.
-                logger.debug("Widget lost WS_EX_TOPMOST - restoring topmost band.")
-                self.reseat_topmost()
+                logger.debug("Widget lost WS_EX_TOPMOST - re-seating it above the taskbar.")
+                self.reseat_above_taskbar()
         except Exception as e:
             logger.error("Failed to ensure topmost status: %s", e)
 
@@ -886,184 +902,160 @@ class PositionManager(QObject):
         if self._state.widget.isVisible():
             self.ensure_topmost()
 
-    def reseat_topmost(self) -> None:
+    def reset_reseat_state(self) -> None:
+        """Forget the burial-recovery backoff: a fresh taskbar (explorer restart) is a fresh start."""
+        self._reseat_attempts = 0
+        self._last_reseat_ts = 0.0
+        self._first_recovery_logged = False
+        self._on_top_since = None
+        self._deferral_logged = None
+
+    def _docked_taskbar_hwnd(self, hwnd: int) -> int:
         """
-        One-shot re-insertion of the widget at the top of the topmost Z-band.
+        The taskbar the widget is docked to: its owner (GWLP_HWNDPARENT) when that is a
+        taskbar window - the primary or a secondary one - else the detected taskbar. 0 if
+        neither is a live window.
+        """
+        try:
+            owner = int(_GetWindowLongPtr(hwnd, _GWLP_HWNDPARENT) or 0)
+            if owner and win32gui.IsWindow(owner) and \
+                    win32gui.GetClassName(owner) in _SHELL_TASKBAR_CLASSES:
+                return owner
+        except Exception:
+            pass
+        tb_info = self._state.taskbar_info
+        tb = int(tb_info.hwnd) if tb_info and tb_info.hwnd else 0
+        return tb if tb and win32gui.IsWindow(tb) else 0
 
-        Unlike the blanket periodic re-assert removed for #200, this is only called
-        when the widget is known to be buried (is_buried_behind_taskbar) or to have
-        lost WS_EX_TOPMOST outright - states in which no shell menu can be clipped
-        by raising the widget.
+    @staticmethod
+    def _is_above_in_zorder(hwnd: int, other: int) -> Optional[bool]:
+        """
+        True when hwnd is above `other` in the Z-order, False when it is below, None when
+        the walk could not tell (it never acts on a guess). Walks GW_HWNDPREV from `other`
+        towards the top: a dozen steps for the taskbar.
+        """
+        cur = other
+        for _ in range(_ZORDER_WALK_LIMIT):
+            cur = win32gui.GetWindow(cur, _GW_HWNDPREV) or 0
+            if not cur:
+                return False
+            if cur == hwnd:
+                return True
+        return None
 
-        Two guards keep this from becoming the #200 re-assert through the back door:
+    def is_buried_behind_taskbar(self) -> bool:
+        """
+        True when the widget is visible but sits BELOW its taskbar in Z-order - invisible to
+        the user although isVisible() is True (#314, #238).
 
-        - A visible shell menu/popup (#32768, or Win11's Xaml_WindowedPopupClass)
-          anywhere on the widget's monitor defers the re-seat - even one that never
-          overlaps the widget's center hit-test, since the taskbar's owner-cluster
-          rise can still end up above a menu elsewhere on the strip. The caller's
-          cadence retries while the menu is open.
-        - A backoff (see _reseat_delay) keeps a shell that re-buries the widget from
-          riding the 1 Hz refresh; sustained on-top health retires the escalation.
+        The owner link (GWLP_HWNDPARENT) is supposed to make that impossible, yet the shell
+        does it anyway (pasharm: maximize + restore on Win10 raises the taskbar over the
+        widget with the owner link intact; kamal63442 saw it on a fresh Win11 launch). The
+        check is a pure Z-order comparison: no hit-test, so no DPI conversion and no need to
+        tell a covering menu from the taskbar - a menu above the widget is not burial, and
+        a widget under the taskbar is burial even while a menu covers its centre.
 
-        The backoff is checked first (#327 review): while an escalation is cooling
-        down the menu scan must not run every tick, so the timeliness sacrifice of
-        skipping the scan inside the backoff window is made up by the caller retrying
-        once the window lapses - well before the user could re-open a menu.
+        Also tracks how long the widget has stayed on top, which retires the re-seat backoff.
+        """
+        try:
+            widget = self._state.widget
+            if not widget.isVisible():
+                return False
+            hwnd = int(widget.winId())
+            if not hwnd or not win32gui.IsWindow(hwnd):
+                return False
+            tb = self._docked_taskbar_hwnd(hwnd)
+            if not tb:
+                return False
+            above = self._is_above_in_zorder(hwnd, tb)
+            if above is None:
+                return False
+            if above:
+                now = time.monotonic()
+                if self._on_top_since is None:
+                    self._on_top_since = now
+                elif (self._reseat_attempts or self._last_reseat_ts) and \
+                        now - self._on_top_since >= _RESEAT_HEALTHY_S:
+                    # The last re-seat held: retire the escalation, so the next burial
+                    # recovers at once and logs at INFO again.
+                    self.reset_reseat_state()
+                    self._on_top_since = now
+                return False
+            self._on_top_since = None
+            return True
+        except Exception as e:
+            logger.debug("Buried-behind-taskbar check failed: %s", e)
+            return False
+
+    def reseat_above_taskbar(self) -> bool:
+        """
+        Re-insert the widget directly above its taskbar in Z-order (pasharm's insertion
+        point): hWndInsertAfter = the window right above the taskbar, or HWND_TOPMOST when
+        the taskbar is first in the Z-order. Flags: NOMOVE | NOSIZE | NOACTIVATE |
+        NOOWNERZORDER - never moves, never takes focus, never drags the taskbar's owner
+        cluster (#200).
+
+        Because everything already above the taskbar stays above the widget, this cannot
+        clip an open menu, jump list or flyout, and it never lifts the widget over a
+        fullscreen app: the shell drops the taskbar out of the topmost band under one, and
+        the re-seat refuses to follow it there.
+
+        Guards, in order (each one defers; the next event or the 1 s tick retries):
+        backoff -> taskbar not topmost -> taskbar in another Z-band -> already seated.
+
+        Returns True when the widget was actually re-seated.
         """
         try:
             hwnd = int(self._state.widget.winId())
-            if not win32gui.IsWindow(hwnd):
-                return
+            if not hwnd or not win32gui.IsWindow(hwnd):
+                return False
             now = time.monotonic()
             delay = self._reseat_delay()
             if self._last_reseat_ts and (now - self._last_reseat_ts) < delay:
-                logger.debug("Re-seat deferred: backoff (%.0fs window).", delay)
-                return
-            if self._open_shell_menu_on_monitor(hwnd):
-                # DEBUG, not INFO: Erez asked for INFO only on the first recovery, and a
-                # long burial would otherwise log this on every backoff tick.
-                logger.debug("Re-seat deferred: a shell menu/popup is open on this monitor.")
-                return
+                self._log_deferral("backoff", "Re-seat deferred: backoff (%.0fs window).", delay)
+                return False
+            tb = self._docked_taskbar_hwnd(hwnd)
+            if not tb:
+                return False
+            if not (win32gui.GetWindowLong(tb, win32con.GWL_EXSTYLE) & win32con.WS_EX_TOPMOST):
+                # A fullscreen app (or anything else) took the taskbar out of the topmost band:
+                # following it down would put the widget under that window - leave it alone.
+                self._log_deferral("tb-not-topmost", "Re-seat deferred: the taskbar is not topmost.")
+                return False
+            own_band, tb_band = _window_band(hwnd), _window_band(tb)
+            if own_band is not None and tb_band is not None and own_band != tb_band:
+                self._log_deferral(
+                    "band", "Re-seat deferred: taskbar is in Z-band %s, the widget in %s.",
+                    tb_band, own_band)
+                return False
+            prev = int(win32gui.GetWindow(tb, _GW_HWNDPREV) or 0)
+            if prev == hwnd:
+                return False  # already directly above the taskbar
+            insert_after = prev if prev else win32con.HWND_TOPMOST
             self._last_reseat_ts = now
             self._reseat_attempts = min(self._reseat_attempts + 1, _RESEAT_BACKOFF_EXP_CAP + 1)
-            win32gui.SetWindowPos(
-                hwnd, win32con.HWND_TOPMOST, 0, 0, 0, 0,
-                win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE
-            )
+            self._deferral_logged = None
+            win32gui.SetWindowPos(hwnd, insert_after, 0, 0, 0, 0, _RESEAT_SWP_FLAGS)
             if self._first_recovery_logged:
-                logger.debug("Widget re-seated at the top of the topmost band.")
+                logger.debug("Widget re-seated above the taskbar (attempt %d).", self._reseat_attempts)
             else:
-                logger.info("Widget recovered from taskbar burial - re-seated topmost.")
+                logger.info("Widget recovered from taskbar burial - re-seated directly above the taskbar.")
                 self._first_recovery_logged = True
+            return True
         except Exception as e:
-            logger.error("Failed to re-seat topmost: %s", e)
+            logger.error("Failed to re-seat the widget above the taskbar: %s", e)
+            return False
+
+    def _log_deferral(self, reason: str, msg: str, *args) -> None:
+        """DEBUG-log a deferred re-seat once per (reason, backoff window), not once per tick."""
+        key = (reason, self._last_reseat_ts)
+        if self._deferral_logged != key:
+            self._deferral_logged = key
+            logger.debug(msg, *args)
 
     def _reseat_delay(self) -> float:
         """Seconds of quiet required before the next re-seat: 0 first, then doubling, capped."""
         if not self._last_reseat_ts:
             return 0.0
-        return min(_RESEAT_BACKOFF_BASE_S * (2 ** min(self._reseat_attempts, _RESEAT_BACKOFF_EXP_CAP)),
+        return min(_RESEAT_BACKOFF_BASE_S * (2 ** min(self._reseat_attempts - 1, _RESEAT_BACKOFF_EXP_CAP)),
                    _RESEAT_BACKOFF_MAX_S)
-
-    def _open_shell_menu_on_monitor(self, hwnd: int) -> bool:
-        """
-        True when any visible shell menu (#32768) is on the monitor that contains hwnd.
-
-        The widget's center hit-test is not enough alone (#327 review): a taskbar
-        context menu opened elsewhere on the strip never overlaps the widget, yet a
-        re-seat raises the taskbar's whole owner cluster above it. Fails safe
-        (True = defer) so a broken helper can never turn the recovery into the
-        #200 re-assert.
-        """
-        try:
-            target = _MonitorFromWindow(hwnd, _MONITOR_DEFAULTTONEAREST) or 0
-        except Exception:
-            return True
-        found = False
-
-        def _scan(menu_hwnd, _ctx):
-            nonlocal found
-            try:
-                if found or not win32gui.IsWindowVisible(menu_hwnd):
-                    return True
-                cls = win32gui.GetClassName(menu_hwnd)
-                other = _MonitorFromWindow(menu_hwnd, _MONITOR_DEFAULTTONEAREST) or 0
-                on_target = not target or not other or other == target
-                if cls not in _SHELL_MENU_CLASSES:
-                    # Census (#327 review): a live session's log then shows every
-                    # visible class on this monitor, so we learn whether a build's
-                    # taskbar menu/jump list is served by a class the guard misses.
-                    # Once per class per run, DEBUG only.
-                    if on_target and cls and cls not in self._menu_census_logged:
-                        self._menu_census_logged.add(cls)
-                        logger.debug(
-                            "Shell-menu scan census: visible class %r (no guard match) on the widget's monitor.",
-                            cls)
-                    return True
-                if on_target:
-                    found = True
-                    if cls not in self._menu_census_logged:
-                        self._menu_census_logged.add(cls)
-                        logger.debug(
-                            "Shell-menu scan: matched visible class %r on this monitor - deferring.",
-                            cls)
-            except Exception:
-                pass
-            return True
-
-        try:
-            win32gui.EnumWindows(_scan, None)
-            return found
-        except Exception as e:
-            logger.debug("Shell-menu scan failed (%s) - deferring re-seat.", e)
-            return True
-
-    def is_buried_behind_taskbar(self) -> bool:
-        """
-        True when the widget is visible but a hit-test at its center returns the
-        taskbar instead of the widget - i.e. it is sitting BELOW the taskbar in
-        Z-order and is invisible to the user even though isVisible() is True.
-
-        The ownership invariant (GWLP_HWNDPARENT) is supposed to make that state
-        impossible, but Win11's shell reorders the topmost band in ways that bury
-        the widget without touching its owner, and steady-state ensure_topmost()
-        deliberately never re-seats (#200). This is the detector for exactly that
-        state, so the 1 Hz refresh can reseat_topmost() as a one-shot fix.
-
-        Only the taskbar itself counts as burial. An open shell menu (#32768 /
-        Xaml_WindowedPopupClass) or a Win11 flyout covering the widget is the #200
-        case and must NOT trigger a re-seat, or the widget would raise the taskbar
-        over the open menu.
-        """
-        try:
-            widget = self._state.widget
-            hwnd = int(widget.winId())
-            if not widget.isVisible() or not win32gui.IsWindow(hwnd):
-                return False
-            # Native rect, not Qt's mapToGlobal(): Qt geometry is device-independent
-            # pixels while WindowFromPoint wants physical pixels - at 125% scaling the
-            # logical point lands ~25% off and hit-tests the wrong window, so the
-            # burial (which is real) would never be detected. GetWindowRect of the
-            # widget's own HWND is in the same physical space as the taskbar rects.
-            l, t, r, b = win32gui.GetWindowRect(hwnd)
-            if r - l < 2 or b - t < 2:
-                return False
-            hit = _WindowFromPoint(wintypes.POINT((l + r) // 2, (t + b) // 2))
-            if not hit:
-                return False
-            root = int(_GetAncestor(hit, _GA_ROOT) or hit)
-            if root == hwnd:
-                now = time.monotonic()
-                if self._on_top_since is None:
-                    # Start (restart) the clock on the current on-top stretch.
-                    self._on_top_since = now
-                elif self._reseat_attempts or self._last_reseat_ts:
-                    if now - self._on_top_since >= _RESEAT_HEALTHY_S:
-                        # A sustained stretch on top is real recovery, not a
-                        # transient flip (#327 review): retire the backoff so a
-                        # fresh burial episode starts its escalation from scratch
-                        # and logs once at INFO again. A single on-top tick must
-                        # NOT retire it, or a shell that re-buries every other
-                        # second keeps riding the near-free cadence.
-                        self._reseat_attempts = 0
-                        self._last_reseat_ts = 0.0
-                        self._first_recovery_logged = False
-                return False  # the point hits us (or one of our children) - we are on top
-            # Any tick where we are not verifiably on top breaks the "continuous"
-            # stretch, including non-taskbar coverage (menus/flyouts).
-            self._on_top_since = None
-            buf = ctypes.create_unicode_buffer(64)
-            _GetClassNameW(root, buf, 64)
-            covering = buf.value
-            if covering and covering not in self._menu_census_logged:
-                # Census (#327 review): name whatever actually covers the widget's
-                # center, and whether the shell-menu guard recognizes it - so a live
-                # session with a taskbar menu or jump list open gets direct evidence.
-                self._menu_census_logged.add(covering)
-                logger.debug(
-                    "Widget center covered by visible class %r (shell-menu guard match: %s).",
-                    covering, covering in _SHELL_MENU_CLASSES)
-            return covering in _SHELL_TASKBAR_CLASSES
-        except Exception as e:
-            logger.debug("Buried-behind-taskbar check failed: %s", e)
-            return False

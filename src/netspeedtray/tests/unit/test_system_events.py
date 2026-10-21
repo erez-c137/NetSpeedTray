@@ -51,9 +51,10 @@ def test_start_creates_hooks(system_handler, mock_hooks):
         # Check hooks were created
         assert system_handler.foreground_hook is not None
         assert system_handler.movesize_hook is not None
-        
-        # Check hooks were started
-        assert mock_instance.start.call_count == 2 
+        assert system_handler.reorder_hook is not None
+
+        # Check hooks were started: foreground, taskbar move/size, desktop Z-order
+        assert mock_instance.start.call_count == 3
 
 def test_immediate_hide_signal_emitted(system_handler):
     """Tests that the immediate hide signal is emitted when fullscreen is detected."""
