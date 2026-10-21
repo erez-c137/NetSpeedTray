@@ -18,6 +18,7 @@ from netspeedtray.constants import timeouts
 from netspeedtray.utils.taskbar_utils import (
     get_taskbar_info, is_taskbar_obstructed, TaskbarInfo
 )
+from netspeedtray.utils.styles import read_system_uses_light_theme
 from netspeedtray.utils.win_event_hook import (
     EVENT_SYSTEM_FOREGROUND,
     EVENT_SYSTEM_MOVESIZEEND,
@@ -62,11 +63,14 @@ class SystemEventHandler(QObject):
         self._taskbar_validity_timer.timeout.connect(self._check_taskbar_validity)
         self._fullscreen_poll_timer = QTimer(self)
         self._fullscreen_poll_timer.timeout.connect(self._poll_fullscreen)
+        self._shell_theme_timer = QTimer(self)
+        self._shell_theme_timer.timeout.connect(self._poll_shell_theme)
 
         # State
         self._is_paused = False
         self._theme_signal_connected = False
         self._was_fullscreen = False  # last polled fullscreen state (edge detection)
+        self._last_shell_light: Optional[int] = None  # last seen SystemUsesLightTheme (edge detection)
 
     def start(self) -> None:
         """Starts all hooks and monitoring timers."""
@@ -85,6 +89,7 @@ class SystemEventHandler(QObject):
             self.movesize_hook.stop()
         self._taskbar_validity_timer.stop()
         self._fullscreen_poll_timer.stop()
+        self._shell_theme_timer.stop()
         self._disconnect_color_scheme_signal()
 
     def _setup_hooks(self) -> None:
@@ -136,6 +141,8 @@ class SystemEventHandler(QObject):
         focused, when no foreground event fires, so the widget hides promptly.)"""
         self._taskbar_validity_timer.start(timeouts.TASKBAR_VALIDITY_CHECK_INTERVAL_MS)
         self._fullscreen_poll_timer.start(timeouts.FULLSCREEN_POLL_INTERVAL_MS)
+        self._last_shell_light = read_system_uses_light_theme()
+        self._shell_theme_timer.start(timeouts.SHELL_THEME_POLL_INTERVAL_MS)
 
     def _poll_fullscreen(self) -> None:
         """
@@ -317,6 +324,28 @@ class SystemEventHandler(QObject):
         except (TypeError, RuntimeError):
             pass
         self._theme_signal_connected = False
+
+    def _poll_shell_theme(self) -> None:
+        """Emit theme_changed when the WINDOWS-mode theme (SystemUsesLightTheme) flips.
+
+        Qt's colorSchemeChanged follows the APP mode (AppsUseLightTheme), but the widget's automatic
+        text colour follows the Windows mode the taskbar is painted in. In Win11's "Custom" mode a
+        user can flip only the Windows mode, which emits nothing from Qt - the widget kept white text
+        on a now-light taskbar until a restart. One registry read per tick; acts only on a change.
+        While paused the last value is left alone, so a flip during the pause still fires on resume.
+        """
+        if self._is_paused:
+            return
+        value = read_system_uses_light_theme()
+        if value is None:
+            return
+        if self._last_shell_light is None:
+            self._last_shell_light = value
+            return
+        if value != self._last_shell_light:
+            self._last_shell_light = value
+            self.logger.info("Windows-mode theme changed (SystemUsesLightTheme=%s); emitting theme_changed.", value)
+            self.theme_changed.emit()
 
     def _on_color_scheme_changed(self, _scheme) -> None:
         """Re-emit Qt's signal as our existing theme_changed signal."""
