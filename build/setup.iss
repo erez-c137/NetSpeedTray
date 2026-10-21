@@ -152,7 +152,9 @@ function OpenMutex(dwDesiredAccess: LongWord; bInheritHandle: Boolean; lpName: s
 function CloseHandle(hObject: THandle): Boolean;
   external 'CloseHandle@kernel32.dll stdcall';
 // Graceful-shutdown channel (see TryGracefulClose). Win-prefixed so nothing clashes with Inno's own
-// support functions. Setup is a 32-bit process, so HWND / LPARAM fit in Longint.
+// support functions. Setup is a 32-bit process, so HWND / LPARAM fit in Longint - and the
+// WTSQuerySessionInformationW buffer pointer below is a Longword for the same reason. If a future
+// Inno Setup builds a 64-bit Setup, every pointer here must widen; release.yml pins the version.
 function WinRegisterWindowMessage(lpString: string): Cardinal;
   external 'RegisterWindowMessageW@user32.dll stdcall';
 function WinEnumWindows(lpEnumFunc: Longword; lParam: Longint): Integer;
@@ -182,6 +184,8 @@ procedure WinWTSFreeMemory(pMemory: Longword);
   external 'WTSFreeMemory@wtsapi32.dll stdcall';
 function WinLstrcpyn(lpString1: string; lpString2: Longword; iMaxLength: Integer): Longword;
   external 'lstrcpynW@kernel32.dll stdcall';
+function WinGetUserNameEx(NameFormat: Integer; lpNameBuffer: string; var nSize: Longword): Integer;
+  external 'GetUserNameExW@secur32.dll stdcall';
 
 // --- Helper Functions ---
 function ShellIsRunning(): Boolean;
@@ -204,29 +208,54 @@ begin
     Result := True;
 end;
 
-// The user signed in to this session, or '' if it cannot be read.
-function SessionUserName(): string;
+// One string of this session's information (WTSQuerySessionInformationW), or '' if unreadable.
+// WTS_CURRENT_SERVER_HANDLE = 0, WTS_CURRENT_SESSION = $FFFFFFFF; InfoClass WTSUserName = 5,
+// WTSDomainName = 7.
+function SessionInfoString(InfoClass: Integer): string;
 var
   Buffer: Longword;
   Bytes: Longword;
-  Name: string;
+  Text: string;
 begin
   Result := '';
   Buffer := 0;
   Bytes := 0;
-  // WTS_CURRENT_SERVER_HANDLE = 0, WTS_CURRENT_SESSION = $FFFFFFFF, WTSUserName = 5.
-  if WinWTSQuerySessionInformation(0, $FFFFFFFF, 5, Buffer, Bytes) = 0 then
+  if WinWTSQuerySessionInformation(0, $FFFFFFFF, InfoClass, Buffer, Bytes) = 0 then
     Exit;
   try
     if (Buffer <> 0) and (Bytes > 2) then
     begin
-      Name := StringOfChar(' ', Bytes div 2);
-      WinLstrcpyn(Name, Buffer, Bytes div 2);
-      Result := Trim(Copy(Name, 1, Pos(#0, Name + #0) - 1));
+      Text := StringOfChar(' ', Bytes div 2);
+      WinLstrcpyn(Text, Buffer, Bytes div 2);
+      Result := Trim(Copy(Text, 1, Pos(#0, Text + #0) - 1));
     end;
   finally
     WinWTSFreeMemory(Buffer);
   end;
+end;
+
+// DOMAIN\user signed in to this session, or '' if unreadable.
+function SessionAccount(): string;
+var
+  User: string;
+begin
+  Result := '';
+  User := SessionInfoString(5);
+  if User <> '' then
+    Result := SessionInfoString(7) + '\' + User;
+end;
+
+// DOMAIN\user Setup itself runs as (GetUserNameExW, NameSamCompatible = 2), or '' if unreadable.
+function SetupAccount(): string;
+var
+  Size: Longword;
+  Text: string;
+begin
+  Result := '';
+  Size := 512;
+  Text := StringOfChar(' ', Size);
+  if WinGetUserNameEx(2, Text, Size) <> 0 then
+    Result := Trim(Copy(Text, 1, Size));
 end;
 
 // Setup runs as a DIFFERENT account than the one signed in to this session: a standard user who
@@ -235,15 +264,18 @@ end;
 // handing explorer.exe a launch from the administrator's token is not proven to come back as the
 // signed-in user. Not relaunching is the safe answer: the app returns at their next sign-in or from
 // the Start menu, never under the administrator's account (which would also write that account's
-// %APPDATA%, not theirs).
+// %APPDATA%, not theirs). Compared as DOMAIN\user, so two accounts with the same name in different
+// domains (a local and a domain "admin") are told apart; both are logged every time.
 function SetupRunsAsAnotherUser(): Boolean;
 var
-  SessionUser: string;
+  SessionUser, SetupUser: string;
 begin
-  SessionUser := SessionUserName();
-  Result := (SessionUser <> '') and (CompareText(SessionUser, GetUserNameString()) <> 0);
-  if SessionUser = '' then
-    Log('Could not read the session''s user name; assuming Setup runs as the signed-in user.');
+  SessionUser := SessionAccount();
+  SetupUser := SetupAccount();
+  Log('Session user: [' + SessionUser + ']; Setup runs as: [' + SetupUser + '].');
+  Result := (SessionUser <> '') and (SetupUser <> '') and (CompareText(SessionUser, SetupUser) <> 0);
+  if (SessionUser = '') or (SetupUser = '') then
+    Log('Could not read both accounts; assuming Setup runs as the signed-in user.');
 end;
 
 function LaunchSilentViaShell(): Boolean;
@@ -252,7 +284,7 @@ begin
   if not WizardSilent() then
     Exit;
   if SetupRunsAsAnotherUser() then
-    Log('Silent install: Setup runs as ' + GetUserNameString() + ', not as the user signed in to this session - not starting {#MyAppName} under that account; it starts at their next sign-in or from the Start menu.')
+    Log('Silent install: Setup runs as ' + SetupAccount() + ', not as the user signed in to this session - not starting {#MyAppName} under that account; it starts at their next sign-in or from the Start menu.')
   else if InServiceContext() then
     Log('Silent install: running as SYSTEM or in session 0 - not starting {#MyAppName}; each user starts it at their next sign-in or from the Start menu.')
   else if not ShellIsRunning() then
@@ -501,6 +533,31 @@ begin
     end;
   end;
   Result := True;
+end;
+
+// UsePreviousAppDir=yes upgrades in place - but the previous folder can be on a drive that is no
+// longer there (an unplugged USB disk, a removed or re-lettered volume, an unreachable share). A
+// silent upgrade there would fail with nothing on screen, so it goes to the default folder instead.
+// Runs in silent mode too: the wizard form exists, it is just not shown.
+function PreviousDriveMissing(Dir: string): Boolean;
+var
+  Drive: string;
+begin
+  Drive := ExtractFileDrive(Dir);
+  Result := (Drive = '') or not DirExists(AddBackslash(Drive));
+end;
+
+procedure InitializeWizard();
+var
+  Dir, Fallback: string;
+begin
+  Dir := WizardForm.DirEdit.Text;
+  if (Dir <> '') and PreviousDriveMissing(Dir) then
+  begin
+    Fallback := ExpandConstant('{autopf}\{#MyAppName}');
+    Log('The previous install folder ' + Dir + ' is on a drive that is not available; installing to ' + Fallback + ' instead.');
+    WizardForm.DirEdit.Text := Fallback;
+  end;
 end;
 
 function InitializeUninstall(): Boolean;

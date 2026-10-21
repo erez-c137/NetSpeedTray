@@ -67,8 +67,27 @@ def test_no_relaunch_under_an_over_the_shoulder_administrator():
     body = re.search(r"function LaunchSilentViaShell\(\): Boolean;(.*?)\nend;", iss, re.S).group(1)
     assert body.index("SetupRunsAsAnotherUser()") < body.index("Result := True")
     other = re.search(r"function SetupRunsAsAnotherUser\(\): Boolean;(.*?)\nend;", iss, re.S).group(1)
-    assert "SessionUserName()" in other and "GetUserNameString()" in other
-    assert "WTSQuerySessionInformationW@wtsapi32.dll" in iss
+    # DOMAIN\user on both sides (a local and a domain account may share a name), logged each time.
+    assert "SessionAccount()" in other and "SetupAccount()" in other and "Log(" in other
+    assert "GetUserNameString" not in other
+    assert "WTSQuerySessionInformationW@wtsapi32.dll" in iss and "GetUserNameExW@secur32.dll" in iss
+    account = re.search(r"function SessionAccount\(\): string;(.*?)\nend;", iss, re.S).group(1)
+    assert "SessionInfoString(7)" in account and "SessionInfoString(5)" in account
+
+
+def test_release_pins_inno_setup():
+    """setup.iss declares 32-bit pointers; an unpinned Inno could change Setup under a release."""
+    yml = _read(".github", "workflows", "release.yml")
+    assert re.search(r"choco install innosetup --version=\d+\.\d+\.\d+", yml)
+
+
+def test_a_previous_folder_on_a_missing_drive_falls_back_to_the_default():
+    iss = _read("build", "setup.iss")
+    wiz = re.search(r"procedure InitializeWizard\(\);(.*?)\nend;", iss, re.S).group(1)
+    assert "PreviousDriveMissing(Dir)" in wiz and "{autopf}\\{#MyAppName}" in wiz
+    check = re.search(r"function PreviousDriveMissing\(Dir: string\): Boolean;(.*?)\nend;", iss,
+                      re.S).group(1)
+    assert "ExtractFileDrive(Dir)" in check and "DirExists" in check
 
 
 def test_an_upgrade_installs_into_the_existing_folder():

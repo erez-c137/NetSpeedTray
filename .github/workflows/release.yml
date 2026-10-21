@@ -66,8 +66,12 @@ jobs:
         with:
           python-version: "3.13"
 
+      # Pinned: a new Inno Setup could change the compiled Setup under a release with nothing in
+      # this repo changing. setup.iss's [Code] also declares Win32 pointers as Longword, which is
+      # right only while Setup is a 32-bit process (Inno Setup 6). Bump deliberately, after an
+      # ISCC compile and an install test.
       - name: Install Inno Setup
-        run: choco install innosetup --no-progress
+        run: choco install innosetup --version=6.7.1 --no-progress -y
 
       - name: Install dependencies
         run: |
