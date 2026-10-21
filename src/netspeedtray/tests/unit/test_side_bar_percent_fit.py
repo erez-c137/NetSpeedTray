@@ -92,8 +92,8 @@ def _ink_outside(cfg, w, h, phase):
 
 
 # Every size where at least "100" fits: the drop case is 11 pt under Segoe UI / the Windows platform,
-# 6-7 pt under the wider offscreen fallback font CI renders with.
-@pytest.mark.parametrize("font_size", range(5, 13))
+# 7 pt under the wider offscreen fallback font CI renders with.
+@pytest.mark.parametrize("font_size", range(constants.fonts.FONT_SIZE_MIN, 13))
 @pytest.mark.parametrize("mode", MODES)
 def test_compact_hardware_rows_never_clip_on_a_small_side_bar(q_app, mode, font_size):
     over, phases = MODES[mode]
@@ -112,7 +112,7 @@ def _fit(cfg, width):
 
 
 @pytest.mark.parametrize("width", [32, 48])
-@pytest.mark.parametrize("font_size", range(5, 13))
+@pytest.mark.parametrize("font_size", range(constants.fonts.FONT_SIZE_MIN, 13))
 def test_percent_sign_drops_only_when_the_stacked_percent_cannot_fit(q_app, width, font_size):
     cfg = _config(font_size=font_size, widget_display_mode="combined")
     fit = _fit(cfg, width)
