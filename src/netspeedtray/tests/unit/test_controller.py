@@ -310,6 +310,7 @@ def test_system_power_history_universal_battery_drain_discharge_only(controller_
     from netspeedtray.utils import power_utils
 
     controller = controller_instance
+    controller.config["power_display_enabled"] = True   # the mirror's own switch
     controller.set_view(MagicMock())
 
     for mode in (power_utils.MODE_AC, power_utils.MODE_CHARGE, power_utils.MODE_NONE):
@@ -400,6 +401,40 @@ def test_battery_only_poll_writes_history_under_power_display_only(controller_in
     assert 'system_power' in persist
     assert persist['system_power'] is False   # legacy policy unchanged (needs the power tiles + a CPU/GPU)
     assert persist['battery_drain'] is True   # the hover stat, on its own power-display switch
+
+
+def test_power_state_is_not_read_with_the_battery_switch_off(controller_instance, monkeypatch):
+    """battery_drain only exists for the hover's battery section, so with that switch off the
+    controller must not resolve the power state at all (no syscall per poll for a feature the
+    user never turned on) and must not mirror anything - system_power's history is untouched."""
+    from netspeedtray.utils import power_utils
+
+    calls = []    # counted, not raised: the controller's own except would swallow an assert
+
+    def _read():
+        calls.append(1)
+        return power_utils.PowerState(power_utils.MODE_DISCHARGE, 63)
+    controller = controller_instance
+    controller.config["power_display_enabled"] = False
+    controller.set_view(MagicMock())
+    monkeypatch.setattr(power_utils, "read_power_state", _read)
+
+    controller.handle_stats({"cpu": 50.0, "system_power": 12.0})
+    assert calls == [], "power state read with power_display_enabled off"
+    keys = [c.args[0] for c in controller.widget_state.add_hardware_stat.call_args_list]
+    assert 'system_power' in keys
+    assert 'battery_drain' not in keys
+
+
+def test_power_poll_refreshes_an_open_hover_card(controller_instance):
+    """The battery rows are live while the card is open, like the hardware rows (#399): each
+    poll nudges the view, which refreshes its card (throttled and no-op without a card)."""
+    controller = controller_instance
+    view = MagicMock()
+    controller.set_view(view)
+
+    controller.handle_stats({"battery_power": -38.2})
+    view.refresh_hover_power.assert_called_once_with()
 
 
 # --- all_physical uses the shared adapter classifier (2.2 scope C, accuracy audit finding 5) -------

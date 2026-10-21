@@ -82,3 +82,68 @@ def test_power_summary_has_no_external_data_sources(monkeypatch):
     summary = NetworkSpeedWidget._hover_power_summary(_StubWidget(live_w=8.8))
     assert summary is not None
     assert not ({"budget_w", "budget_hours", "tier", "heat"} & set(summary))
+
+
+# --- live refresh of an open card -----------------------------------------------------
+
+class _FakeCard:
+    def __init__(self, accept=True):
+        self.has_power = True
+        self.accept = accept
+        self.updates = []
+
+    def update_power(self, power):
+        self.updates.append(power)
+        return self.accept
+
+
+class _RefreshStub:
+    _HOVER_HW_REFRESH_SEC = NetworkSpeedWidget._HOVER_HW_REFRESH_SEC
+
+    def __init__(self, card, summary, enabled=True):
+        self.logger = logging.getLogger("test")
+        self.config = {"power_display_enabled": enabled}
+        self._hover_card = card
+        self._hover_power_refreshed = 0.0
+        self.summary = summary
+        self.rebuilt = 0
+
+    def _hover_power_summary(self):
+        return self.summary
+
+    def _hide_usage_hover_card(self):
+        self.hidden = getattr(self, "hidden", 0) + 1
+
+    def _show_usage_hover_card(self):
+        assert getattr(self, "hidden", 0) == self.rebuilt + 1, "rebuild must hide the old card first"
+        self.rebuilt += 1
+
+
+def test_refresh_pushes_fresh_values_into_the_open_card():
+    card = _FakeCard()
+    stub = _RefreshStub(card, {"mode": "discharge", "live_w": 9.0})
+    NetworkSpeedWidget.refresh_hover_power(stub)
+    assert card.updates == [{"mode": "discharge", "live_w": 9.0}]
+    assert stub.rebuilt == 0
+    # Throttled like the hardware rows: an immediate second poll does nothing.
+    NetworkSpeedWidget.refresh_hover_power(stub)
+    assert len(card.updates) == 1
+
+
+def test_refresh_rebuilds_when_the_rows_change_or_the_section_goes():
+    stub = _RefreshStub(_FakeCard(accept=False), {"mode": "charge", "live_w": -38.2})
+    NetworkSpeedWidget.refresh_hover_power(stub)
+    assert stub.rebuilt == 1
+    gone = _RefreshStub(_FakeCard(), None)     # switched off in Settings, or no battery anymore
+    NetworkSpeedWidget.refresh_hover_power(gone)
+    assert gone.rebuilt == 1
+
+
+def test_refresh_is_a_no_op_without_a_battery_card():
+    stub = _RefreshStub(None, {"mode": "ac"})
+    NetworkSpeedWidget.refresh_hover_power(stub)        # no card open
+    card = _FakeCard()
+    card.has_power = False
+    stub2 = _RefreshStub(card, {"mode": "ac"})
+    NetworkSpeedWidget.refresh_hover_power(stub2)       # card without a battery section
+    assert card.updates == [] and stub.rebuilt == 0 and stub2.rebuilt == 0

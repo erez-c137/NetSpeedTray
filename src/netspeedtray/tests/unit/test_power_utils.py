@@ -43,9 +43,9 @@ def test_state_discharging(monkeypatch):
 
 def test_state_charging_bit_beats_ac_online(monkeypatch):
     # Firmwares can report ACLineStatus online a moment before charging starts;
-    # the charging bit is the authority.
+    # the charging bit (8 in the Win32 BatteryFlag) is the authority.
     monkeypatch.setattr(power_utils, "_power_status_struct",
-                        lambda: _status(ac=1, flags=0x4, pct=42))
+                        lambda: _status(ac=1, flags=0x8, pct=42))
     assert power_utils.read_power_state().mode == "charge"
 
 
@@ -57,8 +57,9 @@ def test_state_on_ac_idle(monkeypatch):
 
 
 def test_state_no_battery_flag(monkeypatch):
+    # 128 = "no system battery" in the Win32 BatteryFlag.
     monkeypatch.setattr(power_utils, "_power_status_struct",
-                        lambda: _status(ac=1, flags=0x8, pct=255))
+                        lambda: _status(ac=1, flags=0x80, pct=255))
     assert power_utils.read_power_state() == power_utils.PowerState("none", None)
 
 
@@ -170,7 +171,7 @@ def test_battery_rows_render(q_app):
     card = UsageFlyout(None, power=_power())
     texts = _texts(card)
     assert "Now" in texts and "8.6 W" in texts
-    assert "3 h 12 m" in texts
+    assert "3h 12m" in texts             # helpers.format_duration_short, like the Monitor
     assert "67% battery" in texts
 
 
@@ -207,11 +208,106 @@ def test_battery_section_absent_without_dict(q_app):
     assert not any("Now" in t for t in texts)
 
 
-def test_state_flag_lies_about_no_battery(monkeypatch):
-    # Real firmware quirk (IdeaPad 13ARP10): flag 9 = "low + no battery" while
-    # charging at 72%. A valid percent is proof of a battery; the state must
-    # fall through to the AC line, not vanish.
+def test_state_flag_9_is_high_plus_charging(monkeypatch):
+    # IdeaPad 13ARP10 at 72%: BatteryFlag 9 is 1 (high) + 8 (charging) per the Win32
+    # docs - not "low + no battery". The first draft read the bits off by one position.
     monkeypatch.setattr(power_utils, "_power_status_struct",
                         lambda: _status(ac=1, flags=0x9, pct=72))
-    state = power_utils.read_power_state()
-    assert state.mode == "ac" and state.charge_pct == 72
+    assert power_utils.read_power_state() == power_utils.PowerState("charge", 72)
+
+
+def test_state_desktop_reports_no_battery(monkeypatch):
+    # What a desktop really returns (measured on the owner's PC, 2026-10-21): AC online,
+    # BatteryFlag 128 "no system battery", percent 255. The section must not appear -
+    # it used to read as MODE_AC and paint "On AC" on every desktop with the toggle on.
+    monkeypatch.setattr(power_utils, "_power_status_struct",
+                        lambda: _status(ac=1, flags=0x80, pct=255))
+    assert power_utils.read_power_state() == power_utils.PowerState("none", None)
+    assert power_utils.has_battery() is False
+
+
+def test_state_critical_discharge_is_not_charging(monkeypatch):
+    # 4 = critical (<5%), 2 = low: a nearly empty laptop on battery is DISCHARGING.
+    monkeypatch.setattr(power_utils, "_power_status_struct",
+                        lambda: _status(ac=0, flags=0x4 | 0x2, pct=3))
+    assert power_utils.read_power_state() == power_utils.PowerState("discharge", 3)
+
+
+def test_state_unknown_flag_is_not_read_as_bits(monkeypatch):
+    # 255 = "unknown status": every bit is set, so it must not read as charging.
+    monkeypatch.setattr(power_utils, "_power_status_struct",
+                        lambda: _status(ac=255, flags=0xFF, pct=255))
+    assert power_utils.read_power_state().mode == "none"
+    monkeypatch.setattr(power_utils, "_power_status_struct",
+                        lambda: _status(ac=0, flags=0xFF, pct=55))
+    assert power_utils.read_power_state() == power_utils.PowerState("discharge", 55)
+
+
+def test_has_battery_on_a_laptop(monkeypatch):
+    monkeypatch.setattr(power_utils, "_power_status_struct",
+                        lambda: _status(ac=0, flags=0x1, pct=80))
+    assert power_utils.has_battery() is True
+    monkeypatch.setattr(power_utils, "_power_status_struct", lambda: None)
+    assert power_utils.has_battery() is False
+
+
+# --- the battery section in the card: placement, locale, live refresh (#399/#394 consistency) ---
+
+def _body_order(card):
+    """Top-to-bottom text of the card body: one entry per body item, a sub-layout's labels joined."""
+    from PyQt6.QtWidgets import QFrame
+    body = card.findChild(QFrame, "usageCard").layout()
+    out = []
+    for i in range(body.count()):
+        item = body.itemAt(i)
+        if item.widget() is not None:
+            w = item.widget()
+            out.append(w.text() if isinstance(w, QLabel) else "<sep>")
+        elif item.layout() is not None:
+            lay = item.layout()
+            out.append(" ".join(lay.itemAt(j).widget().text() for j in range(lay.count())
+                                if isinstance(lay.itemAt(j).widget(), QLabel)))
+    return out
+
+
+def test_battery_sits_with_the_live_readings_above_hint_and_usage(q_app):
+    """Battery is a live reading like the hardware rows (#399): it follows them, ahead of the
+    gesture hint and the usage totals - not tacked on under the data-cap bar."""
+    card = UsageFlyout(_i18n(), (1e6, 2e6), (3e6, 4e6), hint="Right-click for options",
+                       power=_power(), hardware={"cpu": {"usage": 12.0}})
+    order = [t for t in _body_order(card) if t != "<sep>"]
+    cpu = next(i for i, t in enumerate(order) if t.startswith("CPU"))
+    now = next(i for i, t in enumerate(order) if t.startswith("Now"))
+    hint = order.index("Right-click for options")
+    today = next(i for i, t in enumerate(order) if t.startswith("Today "))
+    assert cpu < now < hint < today
+
+
+def test_battery_values_use_the_locale_decimal_separator(q_app):
+    """Same rule as the hardware rows beside it: "8,6 W" in de_DE, never a mixed "8.6 W"."""
+    i18n = _i18n()
+    i18n.DECIMAL_SEPARATOR = ","
+    texts = _texts(UsageFlyout(i18n, power=_power(live_w=8.6, today_avg_w=9.1)))
+    assert "8,6 W" in texts and "9,1 W" in texts
+    charging = _texts(UsageFlyout(i18n, power=_power(mode="charge", live_w=-38.2, projected_hours=None)))
+    assert "+38,2 W" in charging
+
+
+def test_update_power_refreshes_the_rows_in_place(q_app):
+    """The card stays up while the pointer rests on the widget, so the live draw refreshes in
+    place (like update_hardware) - no rebuild while the same rows are shown."""
+    card = UsageFlyout(None, power=_power(live_w=8.6, projected_hours=3.2, charge_pct=67))
+    assert card.has_power
+    assert card.update_power(_power(live_w=11.4, projected_hours=2.0, charge_pct=66)) is True
+    texts = _texts(card)
+    assert "11.4 W" in texts and "8.6 W" not in texts
+    assert "2h 0m" in texts
+    assert "66% battery" in texts
+
+
+def test_update_power_asks_for_a_rebuild_when_the_rows_change(q_app):
+    """Plugging in mid-hover drops "Projected" and turns "Now" green: a different row set, so
+    the card says so (False) and the widget rebuilds it instead of showing stale rows."""
+    card = UsageFlyout(None, power=_power())
+    assert card.update_power(_power(mode="charge", live_w=-38.2, projected_hours=None)) is False
+    assert UsageFlyout(_i18n(), (0, 0), (0, 0)).has_power is False

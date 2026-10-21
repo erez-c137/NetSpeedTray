@@ -1452,6 +1452,28 @@ class NetworkSpeedWidget(QWidget):
         except Exception as e:
             self.logger.debug("hover card hardware refresh failed: %s", e)
 
+    def refresh_hover_power(self) -> None:
+        """Push a fresh battery summary into an open hover card (~1 Hz; the controller calls this on
+        every poll). When the summary needs different rows - plugged in or unplugged mid-hover,
+        today's history arrived, the switch went off - the card is rebuilt instead, so no row
+        lingers with a value it no longer has."""
+        card = self._hover_card
+        if card is None or not getattr(card, "has_power", False):
+            return
+        now = time.monotonic()
+        if now - getattr(self, "_hover_power_refreshed", 0.0) < self._HOVER_HW_REFRESH_SEC:
+            return
+        self._hover_power_refreshed = now
+        try:
+            power = (self._hover_power_summary()
+                     if self.config.get("power_display_enabled", False) else None)
+            if power is None or not card.update_power(power):
+                # Hide first: with nothing left to show, _show_usage_hover_card builds no new card.
+                self._hide_usage_hover_card()
+                self._show_usage_hover_card()
+        except Exception as e:
+            self.logger.debug("hover card power refresh failed: %s", e)
+
     def _hover_card_edge(self):
         """The edge of the taskbar the widget is docked to (the card opens away from it)."""
         try:

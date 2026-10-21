@@ -179,22 +179,19 @@ class StatsController(QObject):
         if 'network_identity' in stats:
             self.network_identity_updated.emit(stats['network_identity'])
 
-        # A whole-system reading (RAPL PSYS etc.) is an AC-side figure unless the machine is
+        # A whole-system reading (RAPL PSYS etc.) is battery drain only while the machine is
         # actually discharging (#323 review): resolved ONCE per poll, only when such a reading
-        # exists, and shared by the history writes and the view-slot mirror further down. The
-        # mode is captured whole - the battery_drain mirror below needs the DISCHARGE case
-        # specifically, because "not on AC" also counts a desktop whose PSYS sensor reports
-        # while the box has no battery at all (the hover omits its battery section there too).
-        system_power_on_ac = False
+        # exists, for the battery_drain mirror below. DISCHARGE specifically - "not on AC" would
+        # also count a desktop whose PSYS sensor reports with no battery in the box. And only
+        # with the battery switch on: battery_drain exists for the hover's battery section
+        # alone, so with that switch off there is nothing to decide (and no syscall).
         system_power_discharging = False
-        if stats.get('system_power') is not None:
+        if stats.get('system_power') is not None and self.config.get('power_display_enabled', False):
             try:
                 from netspeedtray.utils import power_utils
-                mode = power_utils.read_power_state().mode
-                system_power_on_ac = mode in (power_utils.MODE_AC, power_utils.MODE_CHARGE)
-                system_power_discharging = mode == power_utils.MODE_DISCHARGE
+                system_power_discharging = (
+                    power_utils.read_power_state().mode == power_utils.MODE_DISCHARGE)
             except Exception:
-                system_power_on_ac = False
                 system_power_discharging = False
 
         # The one persist-policy lookup, shared by every history write below (moved out
@@ -316,6 +313,11 @@ class StatsController(QObject):
 
                 self.view.battery_power = (
                     stats['battery_power'] if 'battery_power' in stats else None)
+                # An open hover card's battery rows are live, like its hardware rows (#399);
+                # the view throttles this and it is a no-op without a battery card up.
+                refresh = getattr(self.view, "refresh_hover_power", None)
+                if callable(refresh):
+                    refresh()
             except Exception:
                 pass
 

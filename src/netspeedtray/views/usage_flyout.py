@@ -77,14 +77,23 @@ class UsageFlyout(QWidget):
         body.setSpacing(tokens.SPACE_S)
         outer.addWidget(card)
 
-        # The card carries any subset of {hardware, gesture hint, usage rows, cap progress}, driven by
-        # the Settings toggles. Sections are divided only when more than one is shown.
+        # The card carries any subset of {hardware, battery, gesture hint, usage rows, cap progress},
+        # driven by the Settings toggles. Sections are divided only when more than one is shown.
         sections = 0
 
         # --- Hardware the side taskbar has no room for (live while the card is open) ---
         self._hw_values: dict = {}
         if hardware:
             self._hardware_section(body, hardware)
+            sections += 1
+
+        # --- Battery (opt-in, laptops only; live while the card is open, beside the hardware) ---
+        self._power_values: dict = {}
+        self._power_rows: Optional[tuple] = None
+        if power is not None:
+            if sections:
+                body.addWidget(self._separator())
+            self._battery_section(body, power)
             sections += 1
 
         # --- Gesture hint (right-click / double-click) ---
@@ -152,14 +161,6 @@ class UsageFlyout(QWidget):
                 f"QProgressBar::chunk {{ background: {fill}; border-radius: 2px; }}"
             )
             body.addWidget(bar)
-
-        # --- Battery power (fed by utils/power_utils + the system_power stat; every
-        # value degrades silently - a row whose data is missing is omitted, not dashed) ---
-        if power is not None:
-            if sections:
-                body.addWidget(self._separator())
-            self._battery_section(body, power)
-            sections += 1
 
     # ----------------------------------------------------------------- helpers
 
@@ -285,66 +286,101 @@ class UsageFlyout(QWidget):
             self._hw_values[(key, "mem")].setText(text)
         if ("identity", "text") in self._hw_values:
             self._hw_values[("identity", "text")].setText(str(hardware.get("identity") or dash))
-    def _battery_section(self, body: QVBoxLayout, power: dict) -> None:
-        """The battery rows: live draw, today's average, projected runtime, charge level."""
+
+    # ----------------------------------------------------------------- battery
+
+    @staticmethod
+    def _power_row_set(power: dict) -> tuple:
+        """Which battery rows a summary shows. A row whose data is missing is omitted, not dashed
+        (the live "Now" row is the exception: it is always there, with a dash before the first
+        reading), so the set changes with the mode - and an open card then rebuilds."""
+        mode = power.get("mode", "none")
+        return (mode,
+                bool(power.get("today_avg_w")),
+                mode == "discharge" and bool(power.get("projected_hours")),
+                power.get("charge_pct") is not None)
+
+    def _power_texts(self, power: dict) -> dict:
+        """Display text (and the Now row's color) for each battery row, locale-formatted like the
+        hardware rows beside it."""
         mode = power.get("mode", "none")
         live_w = power.get("live_w")
-        today_avg_w = power.get("today_avg_w")
-        projected_hours = power.get("projected_hours")
-        charge_pct = power.get("charge_pct")
+        watts = lambda w: f"{helpers.format_decimal(w, self._i18n, 1)} W"   # noqa: E731
+        # Now - the live rate. Charging is "+" and green (always good news); a missing reading
+        # (first seconds after launch, or a firmware that reports nothing yet) shows an em dash
+        # rather than a wrong 0.0 W. live_w is the signed poll value (negative while charging).
+        if mode == "charge" and live_w:
+            now = (f"+{watts(abs(live_w))}", _CHARGING_COLOR)
+        elif mode == "ac":
+            now = (self._tr("POWER_ON_AC_VALUE", "On AC"), self._c["text_secondary"])
+        elif live_w:
+            now = (watts(live_w), self._c["text_primary"])
+        else:
+            now = ("—", self._c["text_secondary"])
+        out = {"now": now}
+        if power.get("today_avg_w"):
+            out["today"] = watts(power["today_avg_w"])
+        if mode == "discharge" and power.get("projected_hours"):
+            out["projected"] = helpers.format_duration_short(power["projected_hours"] * 3600.0, self._i18n)
+        if power.get("charge_pct") is not None:
+            out["charge"] = self._tr("POWER_CHARGE_PCT_TEMPLATE", "{pct}% battery").replace(
+                "{pct}", str(power["charge_pct"]))
+        return out
 
+    def _battery_section(self, body: QVBoxLayout, power: dict) -> None:
+        """The battery rows: live draw, today's average, projected runtime, charge level. Values are
+        kept so ``update_power`` can refresh them in place while the card is open."""
+        texts = self._power_texts(power)
         grid = QGridLayout()
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setHorizontalSpacing(16)
         grid.setVerticalSpacing(tokens.SPACE_S)
         grid.setColumnStretch(0, 1)
+        rows = (("now", "POWER_NOW_LABEL", "Now"),
+                ("today", "POWER_TODAY_AVG_LABEL", "Today avg"),
+                ("projected", "USAGE_PROJECTED_LABEL", "Projected"))
         grid_row = 0
-
-        # Now - the live rate. Charging is "+" and green (always good news); a missing
-        # reading (first seconds after launch, or a firmware that reports nothing yet)
-        # shows an em-dash rather than a wrong 0.0 W.
-        if mode == "charge" and live_w:
-            # live_w is the signed poll value (negative while charging) - render "+".
-            now_text, now_color = f"+{abs(live_w):.1f} W", _CHARGING_COLOR
-        elif mode == "ac":
-            now_text, now_color = self._tr("POWER_ON_AC_VALUE", "On AC"), self._c["text_secondary"]
-        elif live_w:
-            now_text, now_color = f"{live_w:.1f} W", self._c["text_primary"]
-        else:
-            now_text, now_color = "—", self._c["text_secondary"]
-        grid.addWidget(self._label(self._tr("POWER_NOW_LABEL", "Now"), tokens.TYPE_BODY_STRONG,
-                                   self._c["text_primary"]), grid_row, 0)
-        grid.addWidget(self._label(now_text, tokens.TYPE_BODY_STRONG, now_color,
-                                   Qt.AlignmentFlag.AlignRight), grid_row, 1)
-        grid_row += 1
-
-        if today_avg_w:
-            grid.addWidget(self._label(self._tr("POWER_TODAY_AVG_LABEL", "Today avg"),
-                                       tokens.TYPE_BODY_STRONG, self._c["text_primary"]), grid_row, 0)
-            grid.addWidget(self._label(f"{today_avg_w:.1f} W", tokens.TYPE_BODY,
-                                       self._c["text_primary"],
-                                       Qt.AlignmentFlag.AlignRight), grid_row, 1)
-            grid_row += 1
-
-        # Only meaningful while discharging with a real reading and a known pack size.
-        if mode == "discharge" and projected_hours:
-            grid.addWidget(self._label(self._tr("USAGE_PROJECTED_LABEL", "Projected"),
-                                       tokens.TYPE_BODY_STRONG, self._c["text_primary"]), grid_row, 0)
-            grid.addWidget(self._label(self._fmt_duration(projected_hours), tokens.TYPE_BODY,
-                                       self._c["text_primary"],
-                                       Qt.AlignmentFlag.AlignRight), grid_row, 1)
+        for key, i18n_key, default in rows:
+            if key not in texts:
+                continue
+            grid.addWidget(self._label(self._tr(i18n_key, default), tokens.TYPE_BODY_STRONG,
+                                       self._c["text_primary"]), grid_row, 0)
+            text, color = texts[key] if key == "now" else (texts[key], self._c["text_primary"])
+            value = self._label(text, tokens.TYPE_BODY_STRONG if key == "now" else tokens.TYPE_BODY,
+                                color, Qt.AlignmentFlag.AlignRight)
+            # Room for the widest live value, so a refresh never makes the card jump in width.
+            value.setMinimumWidth(QFontMetrics(value.font()).horizontalAdvance("+888.8 W"))
+            grid.addWidget(value, grid_row, 1)
+            self._power_values[key] = value
             grid_row += 1
         body.addLayout(grid)
+        if "charge" in texts:
+            foot = self._label(texts["charge"], tokens.TYPE_BODY, self._c["text_secondary"])
+            body.addWidget(foot)
+            self._power_values["charge"] = foot
+        self._power_rows = self._power_row_set(power)
 
-        if charge_pct is not None:
-            foot = self._tr("POWER_CHARGE_PCT_TEMPLATE", "{pct}% battery").replace("{pct}", str(charge_pct))
-            body.addWidget(self._label(foot, tokens.TYPE_BODY, self._c["text_secondary"]))
+    @property
+    def has_power(self) -> bool:
+        return self._power_rows is not None
 
-    @staticmethod
-    def _fmt_duration(hours: float) -> str:
-        total = int(round(hours * 60.0))
-        h, m = divmod(total, 60)
-        return f"{h} h {m:02d} m" if h else f"{m} m"
+    def update_power(self, power: Optional[dict]) -> bool:
+        """Refresh the battery rows in place. False when the summary needs a DIFFERENT set of rows
+        (plugged in or unplugged mid-hover, history arrived, section gone): the caller rebuilds the
+        card then, rather than leaving a stale row up."""
+        if power is None or self._power_rows is None or self._power_row_set(power) != self._power_rows:
+            return False
+        for key, value in self._power_texts(power).items():
+            lbl = self._power_values.get(key)
+            if lbl is None:
+                continue
+            if key == "now":
+                text, color = value
+                lbl.setStyleSheet(f"color: {color}; background: transparent;")
+                lbl.setText(text)
+            else:
+                lbl.setText(value)
+        return True
 
     # ----------------------------------------------------------------- show
 
