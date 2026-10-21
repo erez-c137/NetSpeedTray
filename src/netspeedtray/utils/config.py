@@ -370,7 +370,10 @@ class ConfigManager:
             "dynamic_update_rate": "dynamic_update_enabled",
             "color_coding_enabled": "color_coding",
             "history_duration": "history_minutes",
-            "fixed_width_values": None # Explicitly drop removed field
+            "fixed_width_values": None, # Explicitly drop removed field
+            # Runtime-only state that 2.0-2.2 betas wrote into the file (C3); dropped, not preserved
+            # as an "unknown key from a newer version".
+            "taskbar_height": None,
         }
 
         migrated = config.copy()
