@@ -29,6 +29,7 @@ from netspeedtray.constants.styles import styles as tokens
 # Gap between the card and the widget, and keep-off from the work-area edges.
 _GAP_ABOVE = 8
 _EDGE_MARGIN = 8
+_SHADOW_MARGIN = 12   # the card window's transparent drop-shadow margin (outer.setContentsMargins)
 _OVER_CAP_COLOR = "#E81123"  # Win11 "critical" red, used when usage is at/over the cap
 
 # (up_bytes, down_bytes)
@@ -47,7 +48,11 @@ class UsageFlyout(QWidget):
         super().__init__(
             parent,
             Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool
-            | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.WindowDoesNotAcceptFocus,
+            | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.WindowDoesNotAcceptFocus
+            # Purely informational, never clicked: let the pointer fall through to whatever is under
+            # it. Then even a card forced over its widget (a screen too small for it anywhere, see
+            # ``placement``) cannot take the hover away from the widget and start a flicker loop.
+            | Qt.WindowType.WindowTransparentForInput,
         )
         self._i18n = i18n
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
@@ -56,7 +61,7 @@ class UsageFlyout(QWidget):
         self._c = su.semantic_colors()
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(12, 12, 12, 12)  # room for the drop shadow
+        outer.setContentsMargins(*(_SHADOW_MARGIN,) * 4)  # room for the drop shadow
 
         card = QFrame()
         card.setObjectName("usageCard")
@@ -285,9 +290,9 @@ class UsageFlyout(QWidget):
         fully inside ``avail`` (the work area of the widget's screen, which excludes the taskbar).
 
         Placement follows the taskbar ``edge`` (a ``TaskbarEdge``; None = bottom): above the widget on
-        a bottom bar, below it on a top bar, and BESIDE it on a side bar - flush with the work area's
-        inner edge, vertically centred on the widget. The clamp guarantees it never overlaps the
-        taskbar. ``screen`` (the widget's) is set on the card's window before it is sized, so a card
+        a bottom bar, below it on a top bar, and BESIDE it on a side bar, vertically centred on the
+        widget; it flips to the other side when there is no room, and never covers the widget (see
+        ``placement``). The clamp keeps it off a docked taskbar. ``screen`` (the widget's) is set on the card's window before it is sized, so a card
         on a second monitor with a different scale lays out at that monitor's DPI.
         """
         if screen is not None:
@@ -299,25 +304,104 @@ class UsageFlyout(QWidget):
             except Exception:
                 pass
         self.adjustSize()
-        sz = self.size()
-        x, y = self._anchor(widget_geo, avail, sz, edge)
-        x = max(avail.left() + _EDGE_MARGIN, min(x, avail.right() - sz.width() - _EDGE_MARGIN))
-        y = max(avail.top() + _EDGE_MARGIN, min(y, avail.bottom() - sz.height() - _EDGE_MARGIN))
-
-        self.move(int(x), int(y))
+        bounds = None
+        try:
+            bounds = screen.geometry() if screen is not None else None
+        except Exception:
+            bounds = None
+        rect = self.placement(widget_geo, avail, self.size(), edge, bounds=bounds)
+        self.move(rect.x(), rect.y())
         self.show()
 
     @staticmethod
-    def _anchor(widget_geo: QRect, avail: QRect, sz, edge: Optional[object]) -> Tuple[int, int]:
-        """Preferred (unclamped) top-left for the card - see ``show_for``. The card's window has a
-        12 px transparent shadow margin, so "flush" uses the same _EDGE_MARGIN the clamp keeps."""
+    def _candidates(widget_geo: QRect, avail: QRect, sz, edge: Optional[object]):
+        """Unclamped top-left positions for the card, most preferred first. Each one lies wholly
+        beside the widget (gap included), so none of them intersects it before clamping.
+
+        - side bar: beside the widget, toward the desktop, vertically centred on it. The inner edge
+          is ``min(work area, widget)``: an AUTO-HIDE side bar does not shrink the work area, so
+          flushing to the work area alone put the card on top of the widget.
+        - top bar: below, else above; bottom bar / free-float / no edge: above, else below (a widget
+          dragged or floated to the top of a screen has no room above it).
+        """
         from netspeedtray.constants import TaskbarEdge
-        cx = widget_geo.center().x() - sz.width() // 2
-        cy = widget_geo.center().y() - sz.height() // 2
+        w, h = sz.width(), sz.height()
+        cx = widget_geo.center().x() - w // 2
+        cy = widget_geo.center().y() - h // 2
+        # (x, y, axis that separates the card from the widget)
+        above = (cx, widget_geo.top() - _GAP_ABOVE - h, "y")
+        below = (cx, widget_geo.bottom() + 1 + _GAP_ABOVE, "y")
+        # QRect.right() is left + width - 1, so the first column past an edge is right() + 1.
+        left_of = (min(avail.right() + 1 - _EDGE_MARGIN, widget_geo.left() - _GAP_ABOVE) - w, cy, "x")
+        right_of = (max(avail.left() + _EDGE_MARGIN, widget_geo.right() + 1 + _GAP_ABOVE), cy, "x")
         if edge == TaskbarEdge.RIGHT:
-            return avail.right() - _EDGE_MARGIN - sz.width(), cy
-        if edge == TaskbarEdge.LEFT:
-            return avail.left() + _EDGE_MARGIN, cy
-        if edge == TaskbarEdge.TOP:
-            return cx, widget_geo.bottom() + _GAP_ABOVE
-        return cx, widget_geo.top() - sz.height() - _GAP_ABOVE   # bottom bar: above the widget
+            order = [left_of, right_of, above, below]
+        elif edge == TaskbarEdge.LEFT:
+            order = [right_of, left_of, above, below]
+        elif edge == TaskbarEdge.TOP:
+            order = [below, above, left_of, right_of]
+        else:
+            order = [above, below, left_of, right_of]
+        return order
+
+    @classmethod
+    def placement(cls, widget_geo: QRect, avail: QRect, sz, edge: Optional[object] = None,
+                  bounds: Optional[QRect] = None) -> QRect:
+        """The card's global rect for ``show_for`` (pure geometry; the window is not touched).
+
+        The first preferred position that, once clamped into ``avail`` (minus _EDGE_MARGIN), still
+        leaves the widget uncovered wins. A card over its own widget is not just ugly: it sits under
+        the resting cursor, so the widget gets a leave event, hides the card, gets an enter event and
+        re-shows it 350 ms later - a flicker loop.
+
+        No room anywhere (a screen too small for the card on any side): each candidate keeps the axis
+        that does not separate it from the widget clamped into ``avail``, and the separating axis is
+        limited to ``bounds`` (the widget's whole screen; ``avail`` when unknown) so the card's body
+        never leaves the monitor or lands on a neighbour. The one covering the least of the widget
+        wins; the card is transparent for input, so even then the pointer stays on the widget."""
+        w, h = sz.width(), sz.height()
+        lo_x, hi_x = avail.left() + _EDGE_MARGIN, avail.right() + 1 - _EDGE_MARGIN - w
+        lo_y, hi_y = avail.top() + _EDGE_MARGIN, avail.bottom() + 1 - _EDGE_MARGIN - h
+        candidates = cls._candidates(widget_geo, avail, sz, edge)
+        for x, y, _axis in candidates:
+            x = max(lo_x, min(x, hi_x))
+            y = max(lo_y, min(y, hi_y))
+            rect = QRect(int(x), int(y), w, h)
+            if not rect.intersects(widget_geo):
+                return rect
+
+        screen_rect = bounds if bounds is not None and not bounds.isEmpty() else avail
+
+        def body_range(lo_edge_of, hi_edge_of, size):
+            # The shadow margin is transparent: only the BODY must stay inside. In the work area
+            # (off the taskbar) when the body fits there, else on the widget's screen.
+            for r in (avail, screen_rect):
+                lo, hi = lo_edge_of(r) - _SHADOW_MARGIN, hi_edge_of(r) + 1 + _SHADOW_MARGIN - size
+                if hi >= lo:
+                    return lo, hi
+            return lo, hi
+
+        blo_x, bhi_x = body_range(QRect.left, QRect.right, w)
+        blo_y, bhi_y = body_range(QRect.top, QRect.bottom, h)
+
+        def clamp(v, lo, hi):
+            return lo if hi < lo else max(lo, min(v, hi))
+
+        best, best_cover = None, None
+        for x, y, axis in candidates:
+            if axis == "y":
+                x, y = clamp(x, lo_x, hi_x), clamp(y, blo_y, bhi_y)
+            else:
+                x, y = clamp(x, blo_x, bhi_x), clamp(y, lo_y, hi_y)
+            rect = QRect(int(x), int(y), w, h)
+            cover = rect.intersected(widget_geo)
+            area = 0 if cover.isEmpty() else cover.width() * cover.height()
+            if best is None or area < best_cover:
+                best, best_cover = rect, area
+        return best
+
+    @classmethod
+    def _anchor(cls, widget_geo: QRect, avail: QRect, sz, edge: Optional[object]) -> Tuple[int, int]:
+        """Top-left of ``placement`` (kept for callers that clamp it themselves - a no-op on it)."""
+        rect = cls.placement(widget_geo, avail, sz, edge)
+        return rect.x(), rect.y()
