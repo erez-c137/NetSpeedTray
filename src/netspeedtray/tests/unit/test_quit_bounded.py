@@ -18,36 +18,46 @@ from PyQt6.QtCore import QObject, QThread
 from netspeedtray.core import thread_reaper
 
 
+_RELEASE = threading.Event()
+
+
 class _Sleeper(QThread):
-    def __init__(self, seconds, parent=None):
+    """Runs until the test releases it (``block``), or returns at once - no wall-clock sleeps, so
+    a loaded machine cannot finish it before the assertion that needs it running."""
+    def __init__(self, block=True, parent=None):
         super().__init__(parent)
-        self.seconds = seconds
+        self.block = block
 
     def run(self):
-        time.sleep(self.seconds)
+        if self.block:
+            _RELEASE.wait(30)
 
 
 @pytest.fixture(autouse=True)
 def _clean_reaper():
+    _RELEASE.clear()
     yield
+    _RELEASE.set()
     for t in list(thread_reaper._OUTLIVED):
-        t.wait(5000)
+        if hasattr(t, "wait"):
+            t.wait(5000)
     thread_reaper._OUTLIVED.clear()
 
 
 def test_a_thread_still_running_is_kept_and_unparented(q_app):
     parent = QObject()
-    t = _Sleeper(0.5, parent)
+    t = _Sleeper(True, parent)
     t.start()
     assert thread_reaper.outlived(t, "test") is True
     assert t.parent() is None, "a Qt parent would delete the running thread"
     assert thread_reaper.any_running() is True
-    t.wait(5000)
+    _RELEASE.set()
+    assert t.wait(10000)
     assert thread_reaper.any_running() is False
 
 
 def test_a_finished_thread_is_not_kept(q_app):
-    t = _Sleeper(0)
+    t = _Sleeper(False)
     t.start()
     t.wait(5000)
     assert thread_reaper.outlived(t, "test") is False
@@ -56,9 +66,9 @@ def test_a_finished_thread_is_not_kept(q_app):
 
 def test_finish_exits_hard_while_a_reaped_thread_runs(q_app, monkeypatch):
     import monitor
-    t = _Sleeper(0.5)
+    t = _Sleeper(True)
     t.start()
-    thread_reaper.outlived(t, "test")
+    assert thread_reaper.outlived(t, "test")
     exits = []
     monkeypatch.setattr(monitor.os, "_exit", lambda code: exits.append(code))
     monitor._finish(0)
@@ -107,14 +117,14 @@ def test_run_child_returns_output_and_raises_on_failure(q_app):
 def test_the_update_check_is_not_waited_out_at_quit(q_app):
     from netspeedtray.core.update_checker import UpdateChecker
     uc = UpdateChecker({}, None)
-    worker = _Sleeper(1.0, uc)
+    worker = _Sleeper(True, uc)
     worker.finished = MagicMock()        # the real _CheckWorker's result signals
     worker.failed = MagicMock()
     QThread.start(worker)
     uc._worker = worker
     start = time.monotonic()
     uc.stop()
-    assert time.monotonic() - start < 0.9
+    assert time.monotonic() - start < 5, "a check in flight must not be waited out"
     worker.finished.disconnect.assert_called_once()
     assert worker in thread_reaper._OUTLIVED and worker.parent() is None
 
