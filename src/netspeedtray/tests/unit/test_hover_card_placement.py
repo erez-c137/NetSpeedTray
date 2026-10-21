@@ -11,12 +11,16 @@ Pure geometry through ``UsageFlyout.placement`` (what ``show_for`` moves the win
 shown.
 """
 import itertools
+import types
 
 import pytest
 from PyQt6.QtCore import QRect, QSize
 
 from netspeedtray.constants import TaskbarEdge
+import netspeedtray.views.usage_flyout as _uf
 from netspeedtray.views.usage_flyout import UsageFlyout
+
+SHADOW = getattr(_uf, "_SHADOW_MARGIN", 12)   # the card window's transparent shadow margin
 
 T, B, L, R = TaskbarEdge.TOP, TaskbarEdge.BOTTOM, TaskbarEdge.LEFT, TaskbarEdge.RIGHT
 
@@ -108,9 +112,84 @@ def test_bottom_bar_still_opens_above_and_centred():
     assert abs(card.center().x() - widget.center().x()) <= 1
 
 
-def test_card_too_big_for_the_work_area_still_stays_off_the_widget():
-    """No clamped position clears the widget -> keep one beside it, even past the work area."""
-    avail = QRect(0, 0, 300, 200)
-    widget = QRect(100, 80, 85, 40)
-    card = UsageFlyout.placement(widget, avail, QSize(280, 190), B)
-    assert not card.intersects(widget)
+def test_no_room_anywhere_keeps_the_card_on_its_screen():
+    """No side of the widget has room (a 640 x 360 screen, widget mid-screen): the card used to keep
+    an unclamped position beside the widget - off the monitor (y -102..-215) or onto a neighbour.
+    Now its body stays on the screen; it covers as little of the widget as it can."""
+    screen = QRect(0, 0, 640, 360)
+    avail = screen.adjusted(0, 0, 0, -48)
+    widget = QRect(260, 160, 120, 40)
+    card = UsageFlyout.placement(widget, avail, QSize(294, 249), None, bounds=screen)
+    body = card.adjusted(SHADOW, SHADOW, -SHADOW, -SHADOW)
+    assert screen.contains(body), (card, body)
+
+
+def _review_placements():
+    """The independent reviewer's sweep (h_place.py): 6 monitors incl. tiny and negative-coordinate,
+    every edge + free-float, docked and auto-hide, 40 widget positions each."""
+    import random
+    mons = [("1080p", QRect(0, 0, 1920, 1080)), ("small-right", QRect(1920, 200, 1024, 600)),
+            ("portrait", QRect(-1080, -400, 1080, 1920)), ("above", QRect(0, -1080, 1920, 1080)),
+            ("tiny", QRect(1920, 0, 800, 480)), ("tiny2", QRect(0, 0, 640, 360))]
+    th = 48
+    for (name, scr), edge, ah, pos in itertools.product(mons, [B, T, L, R, None], [False, True], range(40)):
+        if edge == B:
+            avail = scr.adjusted(0, 0, 0, 0 if ah else -th)
+        elif edge == T:
+            avail = scr.adjusted(0, 0 if ah else th, 0, 0)
+        elif edge == L:
+            avail = scr.adjusted(0 if ah else th, 0, 0, 0)
+        elif edge == R:
+            avail = scr.adjusted(0, 0, 0 if ah else -th, 0)
+        else:
+            avail = scr.adjusted(0, 0, 0, -th)
+        rnd = random.Random(pos)
+        if edge in (B, T):
+            ww, wh = 120, th
+            x = scr.left() + [0, scr.width() - ww, rnd.randrange(scr.width() - ww)][pos % 3]
+            y = scr.bottom() + 1 - th if edge == B else scr.top()
+        elif edge in (L, R):
+            ww, wh = th, 60
+            y = scr.top() + [0, scr.height() - wh, rnd.randrange(scr.height() - wh)][pos % 3]
+            x = scr.left() if edge == L else scr.right() + 1 - th
+        else:
+            ww, wh = 120, 40
+            x = scr.left() + rnd.randrange(scr.width() - ww)
+            y = scr.top() + rnd.randrange(scr.height() - wh)
+        taskbar = None
+        if edge is not None and not ah:
+            taskbar = {B: QRect(scr.left(), scr.bottom() + 1 - th, scr.width(), th),
+                       T: QRect(scr.left(), scr.top(), scr.width(), th),
+                       L: QRect(scr.left(), scr.top(), th, scr.height()),
+                       R: QRect(scr.right() + 1 - th, scr.top(), th, scr.height())}[edge]
+        yield name, scr, avail, edge, QRect(x, y, ww, wh), taskbar
+
+
+@pytest.mark.parametrize("sz", [QSize(278, 249), QSize(294, 249)], ids=["en", "ru"])
+def test_reviewer_placement_sweep(sz):
+    for name, scr, avail, edge, widget, taskbar in _review_placements():
+        card = UsageFlyout.placement(widget, avail, sz, edge, bounds=scr)
+        body = card.adjusted(SHADOW, SHADOW, -SHADOW, -SHADOW)
+        ctx = (name, edge, widget, card)
+        assert scr.contains(body), ctx
+        assert avail.contains(body), ctx
+        assert taskbar is None or not body.intersects(taskbar), ctx
+        # Over the widget only when no side has room for it.
+        lo_x, hi_x = avail.left() + 8, avail.right() + 1 - 8        # work area minus _EDGE_MARGIN
+        lo_y, hi_y = avail.top() + 8, avail.bottom() + 1 - 8
+        room = (widget.left() - 8 - lo_x >= sz.width() or hi_x - (widget.right() + 1 + 8) >= sz.width()
+                or widget.top() - 8 - lo_y >= sz.height() or hi_y - (widget.bottom() + 1 + 8) >= sz.height())
+        if room:
+            assert not card.intersects(widget), ctx
+
+
+def test_the_card_is_transparent_for_input(q_app):
+    """Even a card forced over its widget cannot steal the hover (and start the flicker loop)."""
+    from PyQt6.QtCore import Qt
+    card = UsageFlyout(types.SimpleNamespace(**{k: k for k in (
+        "BYTES_UNIT", "KB_UNIT", "MB_UNIT", "GB_UNIT", "TB_UNIT", "PB_UNIT", "USAGE_TODAY_LABEL",
+        "USAGE_THIS_MONTH_LABEL")}), (1, 1), (1, 1))
+    try:
+        assert card.windowFlags() & Qt.WindowType.WindowTransparentForInput
+    finally:
+        card.deleteLater()
