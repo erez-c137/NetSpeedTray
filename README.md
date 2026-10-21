@@ -103,7 +103,7 @@ The widget lives on your taskbar - at its simplest, just your up &amp; down spee
     <p><sub><b>Appearance</b> - fonts, colors, and arrow-style presets, with a live widget preview at the bottom that updates as you change things.</sub></p>
     <br/>
     <img src="screenshots/settings_general_2.0.png" alt="NetSpeedTray Settings - General page" width="780" />
-    <p><sub><b>General</b> - language, update rate, behavior, preferred monitor, and configurable double-/middle-click actions. Six pages in all: General · Widget · Appearance · Hardware · Network · Advanced.</sub></p>
+    <p><sub><b>General</b> - language, update rate, startup and update checks, and configurable double-/middle-click actions. Six pages in all: General · Widget · Appearance · Hardware · Network · Advanced.</sub></p>
   </div>
 </details>
 

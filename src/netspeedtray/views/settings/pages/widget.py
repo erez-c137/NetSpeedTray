@@ -72,8 +72,7 @@ class WidgetPage(QWidget):
         self.preferred_monitor_combo = Win11ComboBox()
         self.preferred_monitor_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.preferred_monitor_combo.setMinimumWidth(220)
-        self._populate_monitor_combo()
-        self.preferred_monitor_combo.currentIndexChanged.connect(self.on_change)
+        self._populate_monitor_combo()   # (re)connects on_change itself - connecting here too doubled it
         layout.addWidget(SettingCard(self.i18n.PREFERRED_MONITOR_LABEL, control=self.preferred_monitor_combo))
 
         self.free_move = Win11Toggle(label_text="")

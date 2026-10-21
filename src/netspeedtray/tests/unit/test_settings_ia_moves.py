@@ -214,6 +214,18 @@ def test_preferred_monitor_list_refreshes_when_the_widget_page_shows(dlg, monkey
     assert calls
 
 
+def test_monitor_refresh_on_show_does_not_live_apply(dlg):
+    """Review: the combo was connected to on_change twice (construction + the refresh's reconnect), so the
+    refresh's single disconnect left one live and every visit to the page re-applied all settings."""
+    combo = dlg.widget_page.preferred_monitor_combo
+    assert combo.receivers(combo.currentIndexChanged) == 1
+    emitted = []
+    dlg.settings_changed.connect(lambda *_: emitted.append(1))
+    QApplication.sendEvent(dlg.widget_page, QShowEvent())
+    assert combo.receivers(combo.currentIndexChanged) == 1
+    assert not emitted
+
+
 def test_widget_page_tab_order(dlg):
     w, g = dlg.widget_page, dlg.widget_page.mini_graph_section
     pos = _focus_positions(dlg, [w.display_mode_combo, w.pos_combos[2], w.preferred_monitor_combo,
