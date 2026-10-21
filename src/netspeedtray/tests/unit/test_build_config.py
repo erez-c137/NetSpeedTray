@@ -87,3 +87,16 @@ def test_release_checks_the_tag_against_version_before_building():
     init = _read("src", "netspeedtray", "__init__.py")
     import netspeedtray
     assert re.search(pattern, init).group(1) == netspeedtray.__version__
+
+
+def test_release_publishes_tracked_notes_with_the_release():
+    """The release went public (and Latest) with an empty body; notes came by hand later."""
+    yml = _read(".github", "workflows", "release.yml")
+    step = yml[yml.index("Resolve the release notes"):]
+    step = step[:step.index("- name:")]
+    assert 'release-notes/$($env:GITHUB_REF_NAME).md' in step
+    assert "<!--.*?-->" in step, "draft comments must be stripped (the update dialog is plain text)"
+    assert yml.index("Resolve the release notes") < yml.index("build.bat")
+    create = yml[yml.index("- name: Create Release"):]
+    assert "body_path: ${{ steps.notes.outputs.path }}" in create[:create.index("submit-to-winget")]
+    assert (ROOT / "release-notes" / "README.md").is_file()
