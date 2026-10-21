@@ -64,6 +64,7 @@ class UsageRecord:
     counter snapshot, {} when there is none or it is unreadable."""
     counter_row: Optional[Tuple[Any, ...]]
     snapshot: Dict[str, Any] = field(default_factory=dict)
+    rekey_memory: Optional[str] = None      # the odometer's persisted re-key memory (raw JSON), if any
 
 
 @dataclass(frozen=True)
@@ -295,7 +296,14 @@ class _ReaderBase(HistoryReader):
             f"SELECT cumulative_up, cumulative_down, anchor_up, anchor_down, period_key "
             f"FROM {constants.data.USAGE_COUNTER_TABLE} WHERE id = 1")
         row = cur.fetchone()
-        return UsageRecord(tuple(row) if row else None, self._read_usage_snapshot(cur))
+        memory = None
+        try:
+            m = cur.execute("SELECT value FROM metadata WHERE key = ?",
+                            (constants.network.usage.REKEY_MEMORY_METADATA_KEY,)).fetchone()
+            memory = m[0] if m else None
+        except Exception as e:
+            self.logger.debug("No usage re-key memory readable: %s", e)
+        return UsageRecord(tuple(row) if row else None, self._read_usage_snapshot(cur), memory)
 
     def _read_usage_snapshot(self, cur: sqlite3.Cursor) -> Dict[str, Any]:
         """The previous session's counter snapshot (metadata row), or {} - never raises, so a

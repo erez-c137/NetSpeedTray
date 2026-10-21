@@ -261,6 +261,14 @@ with the one before it; `clock_continuous_since` is when the current run of such
 that did not follow on - a jump, a large correction or a long time off - while passes confirm it:
 nothing is rolled up or pruned on it until it has held for 6 hours. Absent keys are normal on a
 file this build has not maintained yet.
+The first stamp a file gets (every file from a 2.2 beta, every fresh v7 -> v8 upgrade) starts
+`clock_continuous_since`, so its first retention prune runs 7 days later; roll-ups are not delayed.
+`usage_rekey_memory` (JSON) remembers, for the data-usage counter, the periods it left on a
+rollover or a reset-day change and their anchors, so a reset day changed back (or a clock
+correction) restores the exact count; it is written with `usage_counter` and deleted with it.
+After "Delete all history" with the usage kept, a reset-day change to a later start can
+over-count by the traffic between the old start and the delete until the next rollover:
+history no longer covers it, and the counter keeps no per-day record.
 Every key a 2.1 database had is carried over unchanged by the upgrade.
 
 `usage_counter_snapshot` is JSON, written in the same transaction as the `usage_counter` row:

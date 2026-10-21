@@ -471,6 +471,7 @@ class WidgetState(QObject):
                 self._usage = {"cumulative_up": cu, "cumulative_down": cd,
                                "anchor_up": au, "anchor_down": ad, "period_key": str(row[4] or "")}
             self._usage_launch_snapshot = rec.snapshot
+            self._usage_left = WidgetState._decode_left_periods(getattr(rec, "rekey_memory", None))
             self._usage_loaded = True
             return True
         except Exception as e:
@@ -521,16 +522,14 @@ class WidgetState(QObject):
                 WidgetState._rekey_from_future(self, pk, stored)
                 return True
         if pk > u["period_key"]:
-            left = WidgetState._usage_left_periods(self)
-            back = left.get(pk)
-            if back is not None and back[3] == "future" and time.monotonic() - back[2] < \
+            back = WidgetState._usage_left_periods(self).get(pk)
+            if back is not None and back["mono"] is not None and time.monotonic() - back["mono"] < \
                     constants.network.usage.FUTURE_PERIOD_TOLERANCE_DAYS * 86400 \
-                    and back[0] <= u["cumulative_up"] and back[1] <= u["cumulative_down"]:
+                    and WidgetState._restore_left_period(self, pk, "future"):
                 # The clock is going back to the period this session re-keyed away from as "in the
                 # future" - sooner than real time could reach it, so that re-key was the wrong call
                 # (the clock was BEHIND then, not ahead before). Its anchor comes back: nothing is lost.
                 self.logger.warning("Data-cap period %s restored: the clock was behind, not ahead.", pk)
-                u["anchor_up"], u["anchor_down"] = back[0], back[1]
             else:
                 WidgetState._remember_left_period(self, u["period_key"], "rollover")
                 u["anchor_up"] = u["cumulative_up"]
@@ -553,10 +552,13 @@ class WidgetState(QObject):
 
     _USAGE_LEFT_MAX = 8
 
-    def _usage_left_periods(self) -> Dict[str, Tuple[float, float, float, str]]:
-        """This session's memory of periods the odometer left: key -> (anchor_up, anchor_down, monotonic
-        time it left, why: 'rollover' / 'future' / 'reset_day'). In memory only - it lets a re-key that
-        turns out wrong, or is undone (a reset day toggled back), restore the exact anchor."""
+    def _usage_left_periods(self) -> Dict[str, Dict[str, Any]]:
+        """Periods the odometer left: key -> {au, ad: the anchor it had; cu, cd: the totals when it left;
+        mono: time.monotonic() then (None once reloaded); why: 'rollover' / 'future' / 'reset_day'}. It
+        lets a re-key that turns out wrong, or is undone (a reset day toggled back), restore the exact
+        anchor. 'rollover' and 'reset_day' entries are persisted with the odometer (a restart keeps the
+        exact path); 'future' entries only count within this session (their test is monotonic time).
+        Cleared by a usage reset; an entry is only ever restored onto the same running total."""
         left = getattr(self, "_usage_left", None)
         if left is None:
             left = self._usage_left = {}
@@ -565,35 +567,73 @@ class WidgetState(QObject):
     def _remember_left_period(self, key: str, why: str) -> None:
         if not key:
             return
+        u = self._usage
         left = WidgetState._usage_left_periods(self)
-        left[key] = (self._usage["anchor_up"], self._usage["anchor_down"], time.monotonic(), why)
+        left.pop(key, None)
+        left[key] = {"au": u["anchor_up"], "ad": u["anchor_down"], "cu": u["cumulative_up"],
+                     "cd": u["cumulative_down"], "mono": time.monotonic(), "why": why}
         while len(left) > WidgetState._USAGE_LEFT_MAX:
             left.pop(next(iter(left)))
 
     def _restore_left_period(self, key: str, why: str) -> bool:
+        """Put back the anchor ``key`` had when the odometer left it for reason ``why`` - only onto the
+        SAME running total: one that is now smaller (a usage reset since, or a total from another
+        machine) would turn an old anchor into a wrong count."""
         u = self._usage
         back = WidgetState._usage_left_periods(self).get(key)
-        if back is None or back[3] != why or back[0] > u["cumulative_up"] or back[1] > u["cumulative_down"]:
+        if back is None or back["why"] != why:
             return False
-        u["anchor_up"], u["anchor_down"] = back[0], back[1]
+        if u["cumulative_up"] < back["cu"] or u["cumulative_down"] < back["cd"] \
+                or back["au"] > back["cu"] or back["ad"] > back["cd"]:
+            return False
+        u["anchor_up"], u["anchor_down"] = back["au"], back["ad"]
         return True
+
+    @staticmethod
+    def _encode_left_periods(left: Dict[str, Dict[str, Any]]) -> str:
+        """The persistable part of the re-key memory as JSON ("" = none: the stored key is deleted)."""
+        import json
+        keep = {k: [v["au"], v["ad"], v["cu"], v["cd"], v["why"]] for k, v in left.items()
+                if v.get("why") in ("rollover", "reset_day")}
+        return json.dumps(keep, separators=(",", ":")) if keep else ""
+
+    @staticmethod
+    def _decode_left_periods(raw: Any) -> Dict[str, Dict[str, Any]]:
+        import json
+        out: Dict[str, Dict[str, Any]] = {}
+        try:
+            data = json.loads(raw) if raw else {}
+            for k, v in (data.items() if isinstance(data, dict) else ()):
+                au, ad, cu, cd = (float(x) for x in v[:4])
+                if v[4] in ("rollover", "reset_day") and all(x >= 0 and x == x for x in (au, ad, cu, cd)):
+                    date.fromisoformat(str(k))
+                    out[str(k)] = {"au": au, "ad": ad, "cu": cu, "cd": cd, "mono": None, "why": v[4]}
+        except Exception:
+            return {}
+        return out
 
     def _clock_is_current(self, pk: str) -> bool:
         """Evidence that the wall clock is right NOW, before a period stored in the future is treated as
         one a clock that ran ahead wrote. The same picture arises when the clock is BEHIND now (a dead
         CMOS battery, a VM snapshot restore, a date set back by hand) - re-keying then, and anchoring at
         the total when the clock is corrected, wiped the period's usage. Evidence: the history writer's
-        last trusted maintenance stamp (the clock is not behind it), or - when there is none - this
-        session having seen the forward jump out of exactly that period."""
+        last trusted maintenance stamp (the clock is not behind it), or the odometer having rolled
+        forward out of exactly that period on this running total."""
         stamp = None
         try:
             stamp = self.history_reader.clock_trusted_ts()
         except Exception:
             stamp = None
-        if stamp is not None:
-            return time.time() >= stamp - constants.data.retention.CLOCK_BEHIND_TOLERANCE_SEC
+        if stamp is not None and time.time() >= stamp - constants.data.retention.CLOCK_BEHIND_TOLERANCE_SEC:
+            return True
+        # The odometer rolled forward out of exactly this period on THIS total (in this session or a
+        # previous one): evidence enough, because a re-key that proves wrong is undone at the next
+        # rollover (see _maybe_reanchor). Covers a stamp the writer itself took on a clock that was
+        # ahead (a jump of a few days in a session is trusted as sleep / app-off time).
         back = WidgetState._usage_left_periods(self).get(pk)
-        return back is not None and back[3] == "rollover"
+        u = self._usage
+        return back is not None and back["why"] == "rollover" \
+            and u["cumulative_up"] >= back["cu"] and u["cumulative_down"] >= back["cd"]
 
     def _rekey_from_future(self, pk: str, stored: str) -> None:
         """A period that STARTS days from now cannot be real: a poll with the clock ahead (a manual date
@@ -648,7 +688,11 @@ class WidgetState(QObject):
           history since the old start (bytes it recovered for a closed app; history never saw them) -
           never more than the count. No usable history: the count is kept.
 
-        The cap never stops counting, and an unusable read never turns into a 0."""
+        The cap never stops counting, and an unusable read never turns into a 0. Known over-count
+        (accepted, never an under-count): after "Delete all history" with the usage kept, history
+        starts at the delete, so for a later start the bytes between the old start and the delete
+        look like bytes history never saw and stay counted - the odometer keeps no per-day record that
+        could tell them apart. The next rollover ends it."""
         u = self._usage
         new_start = date.fromisoformat(new_key)
         WidgetState._remember_left_period(self, old_start.isoformat(), "reset_day")
@@ -773,12 +817,15 @@ class WidgetState(QObject):
             # (Session end with a reset still in flight: persist_usage_final.)
             return
         self.db_worker.enqueue_task("persist_usage", WidgetState._usage_payload(
-            self._usage, (self._usage_live_counters, self._usage_live_sampled_at, self._usage_live_primary)))
+            self._usage, (self._usage_live_counters, self._usage_live_sampled_at, self._usage_live_primary),
+            WidgetState._encode_left_periods(WidgetState._usage_left_periods(self))))
 
     @staticmethod
-    def _usage_payload(u: Dict[str, Any], live: Optional[Tuple[Any, Any, Any]]) -> Tuple[Any, ...]:
+    def _usage_payload(u: Dict[str, Any], live: Optional[Tuple[Any, Any, Any]],
+                       memory: Optional[str] = None) -> Tuple[Any, ...]:
         """The persist_usage tuple for odometer ``u`` paired with ``live`` = (counters, sampled_at,
-        primary) - the NIC counters that total accounts up to, or counters None."""
+        primary) - the NIC counters that total accounts up to, or counters None - and ``memory``, the
+        encoded re-key memory ("" deletes it, None leaves it untouched)."""
         snapshot_json = None
         counters, sampled_at, primary = live if live else (None, None, None)
         if counters is not None:
@@ -794,7 +841,7 @@ class WidgetState(QObject):
         # 7th element: the counter snapshot, written in the SAME transaction as the total;
         # CLEAR_SNAPSHOT deletes the stored one; None (no counters seen yet) leaves it untouched.
         return (u["cumulative_up"], u["cumulative_down"], u["anchor_up"], u["anchor_down"],
-                u["period_key"], int(time.time()), snapshot_json)
+                u["period_key"], int(time.time()), snapshot_json, memory)
 
     def persist_usage_final(self) -> None:
         """Session end: persist the odometer tail (the ~30 s throttle window). With a usage reset still
@@ -815,9 +862,10 @@ class WidgetState(QObject):
                 kept["cumulative_up"] += max(0.0, up)
                 kept["cumulative_down"] += max(0.0, down)
             if_failed = WidgetState._usage_payload(
-                kept, (self._usage_live_counters, self._usage_live_sampled_at, self._usage_live_primary))
+                kept, (self._usage_live_counters, self._usage_live_sampled_at, self._usage_live_primary),
+                WidgetState._encode_left_periods(WidgetState._usage_left_periods(self)))
         self.db_worker.enqueue_task("persist_usage_after_delete", {
-            "if_reset": WidgetState._usage_payload(reset, post[2]),
+            "if_reset": WidgetState._usage_payload(reset, post[2], ""),
             "if_failed": if_failed})
 
     def get_usage_this_period(self) -> Tuple[float, float]:
@@ -948,6 +996,7 @@ class WidgetState(QObject):
             "period_key": self._compute_period_key(self.config.get("data_cap_reset_day", 1)),
         }
         self._usage_pending = []
+        self._usage_left = {}                  # no anchor from before the reset may ever come back
         self._usage_loaded = True              # a later lazy load must not read anything back
         self._usage_launch_snapshot = {}       # nothing from before the reset is reconciled
         if post[2] is not None:

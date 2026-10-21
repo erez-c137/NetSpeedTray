@@ -1250,6 +1250,9 @@ class NetworkSpeedWidget(QWidget):
                 # can only approximate it (auto mode meters one routing adapter history cannot replay;
                 # the odometer also recovers bytes moved while the app was closed).
                 month = tuple(self.widget_state.get_usage_this_period())
+                # Today is history (in auto mode every physical adapter, not just the routing one the
+                # cap meters), so it can read above the period's own count: never show Today > Period.
+                today = (min(today[0], month[0]), min(today[1], month[1]))
             else:
                 vm = self.widget_state.get_metered_volume_for_period(month_start, now_dt)
                 month = (vm.up_bytes, vm.down_bytes)

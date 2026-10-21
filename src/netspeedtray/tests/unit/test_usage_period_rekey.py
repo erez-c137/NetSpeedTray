@@ -293,3 +293,98 @@ def test_a_rekey_the_next_rollover_proves_wrong_is_undone():
     _poll(s, datetime(2026, 10, 21, 9, 1), 1 * GB)
     assert s._usage["period_key"] == "2026-10-15"
     assert _read(s) == 31
+
+
+# --- second review: N1, L-b, L-e -------------------------------------------------------------------
+
+def test_a_usage_reset_never_lets_an_old_anchor_back():
+    """N1 / r7: 5 GB used, 10 -> 15, usage reset, 6 GB used, 15 -> 10: the pre-reset anchor was
+    restored onto the new, smaller total (cap 3.0 GB, not 6). Only the same running total may get a
+    remembered anchor back."""
+    s = _state(10, "2026-10-10", lifetime=8.0, used=5)
+    s._usage.update(cumulative_up=0.0, anchor_up=0.0)                 # r7: a download-only total
+    s.config["data_cap_reset_day"] = 15
+    assert _read(s) == 5
+    s._usage = {"cumulative_up": 0.0, "cumulative_down": 0.0, "anchor_up": 0.0, "anchor_down": 0.0,
+                "period_key": "2026-10-15"}                            # the reset's effect, by hand
+    for _ in range(6):
+        WidgetState._add_usage_loaded(s, 0.0, 1 * GB, None, None, None, None)
+    s.config["data_cap_reset_day"] = 10
+    assert _read(s) == 6
+
+
+def test_the_real_usage_reset_clears_the_memory():
+    s = _state(10, "2026-10-10", lifetime=8.0, used=5)
+    s.config["data_cap_reset_day"] = 15
+    _read(s)
+    assert WidgetState._usage_left_periods(s)
+    s._usage_reset_pending, s._usage_reset_stash, s._usage_post_reset = True, [], [0.0, 2 * GB, None]
+    WidgetState._on_worker_history_deleted(s, "deleted")
+    assert s._usage_left == {}
+    payload = s.db_worker.enqueue_task.call_args_list[-1].args[1]
+    assert payload[7] == ""                                            # the stored memory goes too
+
+
+def test_a_jump_the_writer_stamped_as_trusted_still_rekeys_on_the_rollover_evidence():
+    """L-b: a few days' jump inside a session is trusted by the history writer (it looks like sleep), so
+    its stamp is AHEAD after the correction. The odometer's own rollover out of the period is evidence
+    enough - no 6 h wait for the writer to re-accept the clock - and the early rollover is undone."""
+    s = _state(15, "2026-10-15", _Reader(stamp=int(time.time()) + 10 * 86400), lifetime=10.0, used=10)
+    _poll(s, datetime(2026, 10, 21, 9), 1 * GB)
+    _poll(s, datetime(2026, 11, 20, 9), 1 * GB)                       # crosses Nov 15: early rollover
+    assert s._usage["period_key"] == "2026-11-15"
+    _poll(s, datetime(2026, 10, 21, 10), 1 * GB)                      # corrected
+    assert s._usage["period_key"] == "2026-10-15"
+    assert _read(s) == 13
+
+
+def test_the_memory_survives_a_restart():
+    """L-e: the reset-day toggle-back restore no longer needs the same session."""
+    s = _state(10, "2026-10-10", lifetime=100.0, used=30)
+    s.config["data_cap_reset_day"] = 15
+    _read(s)
+    payload = s.db_worker.enqueue_task.call_args_list[-1].args[1]
+    assert payload[7]                                                  # persisted with the total
+    from netspeedtray.core.db.history_reader import UsageRecord
+    u = s._usage
+    rec = UsageRecord((u["cumulative_up"], u["cumulative_down"], u["anchor_up"], u["anchor_down"],
+                       u["period_key"]), {}, payload[7])
+    s2 = _state(15, u["period_key"])                                   # next launch
+    s2.history_reader = types.SimpleNamespace(load_usage=lambda: rec)
+    s2._usage_loaded = False
+    assert WidgetState._try_load_usage(s2)
+    s2.config["data_cap_reset_day"] = 10
+    assert _read(s2) == 30
+
+
+def test_a_garbled_memory_is_ignored():
+    assert WidgetState._decode_left_periods("{not json") == {}
+    assert WidgetState._decode_left_periods('{"2026-10-10": [1, 2, 3, 4, "future"]}') == {}
+    assert WidgetState._decode_left_periods('{"x": [1, 2, 3, 4, "reset_day"]}') == {}
+    assert WidgetState._decode_left_periods(None) == {}
+
+
+@pytest.mark.parametrize("include_usage", [True, False])
+def test_the_memory_round_trips_through_the_database_and_goes_with_a_usage_reset(tmp_path, include_usage):
+    import sqlite3
+    from netspeedtray import constants
+    from netspeedtray.core.database import DatabaseWorker
+    from netspeedtray.core.db.history_reader import V8HistoryReader
+    db = tmp_path / "speed_history.db"
+    w = DatabaseWorker(db)
+    w._prepare_storage()
+    try:
+        memory = '{"2026-10-10":[470000000000.0,0,500000000000.0,0,"reset_day"]}'
+        w._persist_usage((1.0, 2.0, 0.0, 0.0, "2026-10-15", 0, None, memory))
+        reader = V8HistoryReader(lambda: sqlite3.connect(db), lambda: db)
+        assert reader.load_usage().rekey_memory == memory
+        w._persist_usage((1.0, 2.0, 0.0, 0.0, "2026-10-15", 0, None, None))     # None: untouched
+        assert reader.load_usage().rekey_memory == memory
+        w._writer.delete_history(include_usage=include_usage)
+        key = constants.network.usage.REKEY_MEMORY_METADATA_KEY
+        left = w.conn.execute("SELECT value FROM metadata WHERE key = ?", (key,)).fetchone()
+        assert (left is None) == include_usage                     # "keep usage" keeps its memory
+        w._persist_usage((1.0, 2.0, 0.0, 0.0, "2026-10-15", 0, None, ""))       # "": deleted
+        assert w.conn.execute("SELECT value FROM metadata WHERE key = ?", (key,)).fetchone() is None
+    finally:
+        w._close_connection()

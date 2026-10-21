@@ -1175,6 +1175,7 @@ class DatabaseWorker(QThread):
             return
         cumulative_up, cumulative_down, anchor_up, anchor_down, period_key, updated_ts = data[:6]
         snapshot_json = data[6] if len(data) > 6 else None
+        memory_json = data[7] if len(data) > 7 else None
         try:
             with explicit_txn(self.conn, self.logger) as cursor:
                 cursor.execute(
@@ -1198,6 +1199,13 @@ class DatabaseWorker(QThread):
                 elif snapshot_json is not None:
                     cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
                                    (constants.network.usage.SNAPSHOT_METADATA_KEY, snapshot_json))
+                # 8th element: the odometer's re-key memory; "" deletes it, None leaves it untouched.
+                if memory_json == "":
+                    cursor.execute("DELETE FROM metadata WHERE key = ?",
+                                   (constants.network.usage.REKEY_MEMORY_METADATA_KEY,))
+                elif memory_json is not None:
+                    cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+                                   (constants.network.usage.REKEY_MEMORY_METADATA_KEY, memory_json))
         except sqlite3.Error as e:
             self.logger.error("Failed to persist usage counter: %s", e)
 

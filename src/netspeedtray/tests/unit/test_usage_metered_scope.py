@@ -145,8 +145,16 @@ class _W:
 def test_hover_usage_rows_count_what_the_cap_counts():
     """The rows the hover card and the Overview usage tile show (both read _hover_usage_totals)."""
     today, period = _W()._hover_usage_totals()
-    assert today == (1e9, 10e9)                # history, the metered adapters only
     assert period == (0.5e9, 9e9)              # with a cap set: exactly the cap row's count
+    # Today is history (1 / 10 GB here); with a cap set it never reads above the period (L-a).
+    assert today == (0.5e9, 9e9)
+
+
+def test_today_below_the_period_is_left_alone():
+    w = _W()
+    w.widget_state.get_usage_this_period = lambda: (5e9, 50e9)
+    today, _period = w._hover_usage_totals()
+    assert today == (1e9, 10e9)
 
 
 def test_widget_state_metered_volume_reads_through_the_scope(tmp_path):

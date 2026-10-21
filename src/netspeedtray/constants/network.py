@@ -230,6 +230,9 @@ class UsageOdometerConstants:
     # usage_counter row. A key/value row, not a column: no schema change, no migration.
     SNAPSHOT_METADATA_KEY: Final[str] = "usage_counter_snapshot"
     SNAPSHOT_FORMAT_VERSION: Final[int] = 1
+    # metadata-table key holding the odometer's re-key memory (periods it left and their anchors, JSON),
+    # written in the same transaction as the usage_counter row; deleted with it by a usage reset.
+    REKEY_MEMORY_METADATA_KEY: Final[str] = "usage_rekey_memory"
     # Two psutil.boot_time() readings belong to the same boot session when they agree within this.
     # On Windows boot_time() is wall-clock now minus uptime, so it jitters (~1 s, psutil #1007) and
     # follows wall-clock corrections; two different boots are always at least one whole session

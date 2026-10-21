@@ -538,8 +538,9 @@ class WriterV8:
                 # The odometer's NIC-counter snapshot (adapter names + counters) belongs to the total
                 # it is paired with: left next to a zeroed odometer, the next same-boot launch would
                 # re-add pre-reset traffic, and it is the one place adapter names would survive.
-                self.conn.execute(f"DELETE FROM {S.METADATA} WHERE key = ?",
-                                  (constants.network.usage.SNAPSHOT_METADATA_KEY,))
+                self.conn.execute(f"DELETE FROM {S.METADATA} WHERE key IN (?, ?)",
+                                  (constants.network.usage.SNAPSHOT_METADATA_KEY,
+                                   constants.network.usage.REKEY_MEMORY_METADATA_KEY))
             self.invalidate_caches()
             self.session_id = self._insert_session(now)
             self.conn.commit()
