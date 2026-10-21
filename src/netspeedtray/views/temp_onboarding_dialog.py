@@ -17,14 +17,14 @@ from PyQt6.QtWidgets import (
     QCheckBox, QDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget,
 )
 
+from netspeedtray import constants
 from netspeedtray.utils import styles as su
 from netspeedtray.utils.dwm import apply_win11_chrome
 
-# LibreHardwareMonitor v0.9.5+ dropped its WMI provider (the ".NET 10 build"
-# change, Jan 2026), so temps/power only work with v0.9.4 - the last WMI-capable
-# release. Pin the download there until we read LHM's HTTP server instead (2.1).
-# Opened in the user's browser.
-LHM_RELEASES_URL = "https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases/tag/v0.9.4"
+# LibreHardwareMonitor v0.9.5+ dropped its WMI provider (the ".NET 10 build" change, Jan 2026);
+# NetSpeedTray reads those versions over LHM's web server instead (#187), and still reads v0.9.4
+# over WMI. So the button points at the current release. Opened in the user's browser.
+LHM_RELEASES_URL = "https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases/latest"
 
 
 class TempOnboardingDialog(QDialog):
@@ -62,6 +62,12 @@ class TempOnboardingDialog(QDialog):
         body.setWordWrap(True)
         body.setMinimumWidth(440)
         layout.addWidget(body)
+
+        # Current LHM is read over its web server, which is off by default: say how to turn it on.
+        self.web_server_hint = QLabel(
+            i18n.LHM_WEB_SERVER_HINT.format(port=constants.lhm.HTTP_PORT), self)
+        self.web_server_hint.setWordWrap(True)
+        layout.addWidget(self.web_server_hint)
 
         self.dont_remind = QCheckBox(i18n.TEMP_ONBOARDING_DONT_REMIND, self)
         layout.addWidget(self.dont_remind)

@@ -52,6 +52,7 @@
     "SHOW_HARDWARE_TEMPS_LABEL": "顯示 CPU/GPU 溫度",
     "SHOW_HARDWARE_TEMPS_TOOLTIP": "在 CPU/GPU 使用率旁顯示溫度。多數系統需要 LibreHardwareMonitor (以系統管理員身分執行)，NVIDIA GPU 溫度則需要 nvidia-smi。",
     "HARDWARE_TEMPS_LIMITATION_NOTE": "大多數 CPU/GPU 溫度與功耗感測器需要 LibreHardwareMonitor (以系統管理員身分執行) - NetSpeedTray 會自動偵測它，本身則永遠不需要系統管理員權限。NVIDIA 的讀數可透過 nvidia-smi 原生取得。",
+    "LHM_WEB_SERVER_HINT": "LibreHardwareMonitor v0.9.5 或更新版本：請開啟 Options → Remote Web Server（連接埠 {port}），NetSpeedTray 會從這裡讀取感測器數值。v0.9.4 不需此設定也能使用。",
     "SHOW_HARDWARE_POWER_LABEL": "顯示 CPU/GPU 功耗 (瓦特)",
     "HARDWARE_IN_HOVER_CARD_LABEL": "僅在滑鼠移到小工具上時顯示硬體資訊",
     "HARDWARE_IN_HOVER_CARD_DESCRIPTION": "工作列小工具只顯示網路速度。將滑鼠移到其上時，CPU、GPU 和記憶體會顯示在卡片中。",

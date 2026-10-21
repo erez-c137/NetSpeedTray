@@ -52,6 +52,7 @@
     "SHOW_HARDWARE_TEMPS_LABEL": "CPU/GPU 温度を表示",
     "SHOW_HARDWARE_TEMPS_TOOLTIP": "CPU/GPU 使用率の横に温度を表示します。ほとんどのシステムでは LibreHardwareMonitor (管理者として実行) が必要です。NVIDIA GPU の温度は nvidia-smi でもネイティブに動作します。",
     "HARDWARE_TEMPS_LIMITATION_NOTE": "ほとんどの CPU/GPU の温度・電力センサーには LibreHardwareMonitor (管理者として実行) が必要です - NetSpeedTray は自動的に検出し、それ自体が管理者権限を必要とすることはありません。NVIDIA の値は nvidia-smi を介してネイティブに動作します。",
+    "LHM_WEB_SERVER_HINT": "LibreHardwareMonitor v0.9.5 以降: Options → Remote Web Server をオンにしてください（ポート {port}）。NetSpeedTray はそこからセンサー値を読み取ります。v0.9.4 はこの設定なしでも動作します。",
     "SHOW_HARDWARE_POWER_LABEL": "CPU/GPU 電力 (ワット) を表示",
     "HARDWARE_IN_HOVER_CARD_LABEL": "ハードウェアはウィジェットにカーソルを合わせたときだけ表示",
     "HARDWARE_IN_HOVER_CARD_DESCRIPTION": "タスクバーのウィジェットにはネットワーク速度だけを表示します。CPU、GPU、メモリはマウスを合わせると表示されるカードに出ます。",
