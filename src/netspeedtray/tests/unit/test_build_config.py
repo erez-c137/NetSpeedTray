@@ -29,3 +29,32 @@ def test_the_build_scripts_do_not_fetch_or_pass_upx():
     for bat in ("build.bat", "build-exe-only.bat"):
         text = _read("build", bat).lower()
         assert "fetch_upx" not in text and "--upx-dir" not in text, bat
+
+
+# --- the installer never starts the app with its own token ------------------------------------
+
+def _run_section(iss: str) -> list:
+    m = re.search(r"^\[Run\]\s*$(.*?)^\[", iss, re.M | re.S)
+    assert m, "no [Run] section"
+    return [ln for ln in m.group(1).splitlines() if ln.strip() and not ln.lstrip().startswith(";")]
+
+
+def test_no_silent_run_entry_starts_the_exe_directly():
+    """A silent install's direct `{app}\\NetSpeedTray.exe` launch ran with Setup's token: SYSTEM in
+    session 0 under Intune/SCCM (holding the Global\\ mutex against every user until a reboot), or
+    elevated in the in-app update path whenever Explorer was briefly missing."""
+    iss = _read("build", "setup.iss")
+    for line in _run_section(iss):
+        if line.startswith('Filename: "{app}\\{#MyAppExeName}"'):
+            assert "skipifsilent" in line and "postinstall" in line, line
+    assert "LaunchSilentDirect" not in iss
+
+
+def test_the_silent_relaunch_goes_through_the_shell_and_skips_service_contexts():
+    iss = _read("build", "setup.iss")
+    shell = [ln for ln in _run_section(iss) if "Check: LaunchSilentViaShell" in ln]
+    assert len(shell) == 1 and shell[0].startswith('Filename: "{win}\\explorer.exe"')
+    body = re.search(r"function LaunchSilentViaShell\(\): Boolean;(.*?)\nend;", iss, re.S).group(1)
+    assert "InServiceContext()" in body and "ShellIsRunning()" in body
+    ctx = re.search(r"function InServiceContext\(\): Boolean;(.*?)\nend;", iss, re.S).group(1)
+    assert "SessionId = 0" in ctx and "'SYSTEM'" in ctx

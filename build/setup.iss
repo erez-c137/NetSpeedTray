@@ -119,10 +119,15 @@ Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}
 ; started Setup", and the in-app updater (2.1.6+) starts Setup already elevated, so the app came back
 ; as admin and stayed that way until the next sign-in (found verifying 2.1.7). So the launch is handed
 ; to the running shell: explorer.exe passes it to the user's existing Explorer, which starts it at the
-; shell's own (medium) integrity whatever Setup's token is. Only when no shell is running (no
-; Shell_TrayWnd - e.g. a headless deployment) does the direct runasoriginaluser launch remain.
+; shell's own (medium) integrity whatever Setup's token is.
+;
+; There is deliberately NO direct launch when no shell is running (2.2.0). It started the installed
+; exe with Setup's own token: in an Intune/SCCM deployment that is SYSTEM in session 0, which then
+; held the Global\ mutex so every user's own launch exited quietly until a reboot; and in the in-app
+; update path that token is elevated, so a momentarily missing Shell_TrayWnd (Explorer restarting)
+; brought the app back as admin. Without a shell the app simply starts the next time the user
+; starts it or signs in (LaunchSilentViaShell logs which case applied).
 Filename: "{win}\explorer.exe"; Parameters: """{app}\{#MyAppExeName}"""; Flags: nowait runasoriginaluser; Check: LaunchSilentViaShell
-Filename: "{app}\{#MyAppExeName}"; Flags: nowait runasoriginaluser; Check: LaunchSilentDirect
 
 [UninstallDelete]
 Type: files; Name: "{autodesktop}\{#MyAppName}.lnk"
@@ -156,6 +161,10 @@ function WinWaitForSingleObject(hHandle: THandle; dwMilliseconds: Longword): Lon
   external 'WaitForSingleObject@kernel32.dll stdcall';
 function WinGetTickCount(): Longword;
   external 'GetTickCount@kernel32.dll stdcall';
+function WinGetCurrentProcessId(): Longword;
+  external 'GetCurrentProcessId@kernel32.dll stdcall';
+function WinProcessIdToSessionId(dwProcessId: Longword; var pSessionId: Longword): Integer;
+  external 'ProcessIdToSessionId@kernel32.dll stdcall';
 
 // --- Helper Functions ---
 function ShellIsRunning(): Boolean;
@@ -163,18 +172,35 @@ begin
   Result := FindWindowByClassName('Shell_TrayWnd') <> 0;
 end;
 
-function LaunchSilentViaShell(): Boolean;
+// Setup runs where no user is: session 0 (services - Intune's and SCCM's agents run there as SYSTEM)
+// or as the SYSTEM account itself. Starting the app from there would run it as SYSTEM, holding the
+// Global\ single-instance mutex against every real user until a reboot.
+function InServiceContext(): Boolean;
+var
+  SessionId: Longword;
 begin
-  Result := WizardSilent() and ShellIsRunning();
-  if Result then
-    Log('Silent install: starting {#MyAppName} through the shell, so it runs unelevated (no Finish page to offer it).');
+  SessionId := 0;
+  Result := False;
+  if WinProcessIdToSessionId(WinGetCurrentProcessId(), SessionId) <> 0 then
+    Result := SessionId = 0;
+  if CompareText(GetUserNameString(), 'SYSTEM') = 0 then
+    Result := True;
 end;
 
-function LaunchSilentDirect(): Boolean;
+function LaunchSilentViaShell(): Boolean;
 begin
-  Result := WizardSilent() and not ShellIsRunning();
-  if Result then
-    Log('Silent install: no shell running - starting {#MyAppName} as the original user.');
+  Result := False;
+  if not WizardSilent() then
+    Exit;
+  if InServiceContext() then
+    Log('Silent install: running as SYSTEM or in session 0 - not starting {#MyAppName}; each user starts it at their next sign-in or from the Start menu.')
+  else if not ShellIsRunning() then
+    Log('Silent install: no shell running - not starting {#MyAppName}; it starts at the next sign-in or from the Start menu.')
+  else
+  begin
+    Result := True;
+    Log('Silent install: starting {#MyAppName} through the shell, so it runs unelevated (no Finish page to offer it).');
+  end;
 end;
 
 function BoolToStr(Value: Boolean): string;
