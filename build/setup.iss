@@ -68,7 +68,13 @@ VersionInfoTextVersion={#AppVersion}
 VersionInfoProductTextVersion={#AppVersion}
 
 DisableDirPage=auto
-UsePreviousAppDir=no
+; An upgrade installs where the app already is (2.2.0). This said "no" from the per-user 1.0.6 era,
+; which sent every silent upgrade (in-app, winget, Store) of a custom-folder install to
+; {autopf}\NetSpeedTray instead, and left the old copy behind - its pinned shortcut or Run entry then
+; started the OLD version against a database the new one had already migrated. Inno reads the
+; previous folder from this AppId's HKLM uninstall key; a fresh install still offers the default
+; folder (DisableDirPage=auto shows the page then and skips it on an upgrade).
+UsePreviousAppDir=yes
 SetupLogging=yes
 UninstallDisplayName={#MyAppName}
 RestartIfNeededByRun=no

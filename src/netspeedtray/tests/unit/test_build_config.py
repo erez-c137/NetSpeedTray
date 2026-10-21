@@ -60,6 +60,19 @@ def test_the_silent_relaunch_goes_through_the_shell_and_skips_service_contexts()
     assert "SessionId = 0" in ctx and "'SYSTEM'" in ctx
 
 
+def test_an_upgrade_installs_into_the_existing_folder():
+    """UsePreviousAppDir=no moved every silent upgrade of a custom-folder install to Program Files
+    and left the old copy (and its shortcuts) running the old version against the migrated DB."""
+    iss = _read("build", "setup.iss")
+    assert re.search(r"^UsePreviousAppDir=yes\s*$", iss, re.M)
+    assert re.search(r"^DisableDirPage=auto\s*$", iss, re.M)
+
+
+def test_the_in_app_update_never_overrides_the_install_folder():
+    from netspeedtray.core.update_installer import INSTALLER_SILENT_ARGS
+    assert "/DIR" not in INSTALLER_SILENT_ARGS.upper()
+
+
 # --- a release tag must name the version the code carries --------------------------------------
 
 def test_release_checks_the_tag_against_version_before_building():
