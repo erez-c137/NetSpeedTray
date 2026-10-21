@@ -76,6 +76,7 @@
     "ORDER_TYPE_GPU": "GPU",
     "ORDER_TYPE_NONE": "Aucun",
     "HARDWARE_GRAPH_NOTE": "Les graphiques matériels utilisent la même opacité et le même intervalle de temps que le graphique réseau.",
+    "SIDE_TASKBAR_HOVER_NOTE": "Sur une barre des tâches latérale, le CPU/GPU/la mémoire s'affichent au survol du widget.",
     "GRAPH_CPU_UTIL_AXIS_LABEL": "Utilisation CPU (%)",
     "GRAPH_GPU_UTIL_AXIS_LABEL": "Utilisation GPU (%)",
     "GRAPH_HW_UTIL_AXIS_LABEL": "Utilisation (%)",

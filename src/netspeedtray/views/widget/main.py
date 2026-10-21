@@ -767,6 +767,7 @@ class NetworkSpeedWidget(QWidget):
         if self.is_paused:
             return
         self.cpu_usage = usage
+        self._refresh_hover_hardware()
         if self.config.get("widget_display_mode") in ["cpu_only", "combined", "side_by_side", "cycle"]:
             self.update()
 
@@ -775,6 +776,7 @@ class NetworkSpeedWidget(QWidget):
         if self.is_paused:
             return
         self.gpu_usage = usage
+        self._refresh_hover_hardware()
         if self.config.get("widget_display_mode") in ["gpu_only", "combined", "side_by_side", "cycle"]:
             self.update()
 
@@ -844,6 +846,7 @@ class NetworkSpeedWidget(QWidget):
             return
         self.ram_used = used
         self.ram_total = total
+        self._refresh_hover_hardware()
         if self.config.get("widget_display_mode") in ["cpu_only", "combined", "side_by_side", "cycle"]:
             self.update()
 
@@ -1133,7 +1136,8 @@ class NetworkSpeedWidget(QWidget):
         Skipped entirely when the user has turned the hover card off in Settings."""
         try:
             hover_enabled = (self.config.get("show_usage_on_hover", True)
-                             or self.config.get("show_hover_tips", True))
+                             or self.config.get("show_hover_tips", True)
+                             or self._hover_hardware_wanted())
             if hover_enabled and self._hover_card is None and not self._hover_card_timer.isActive():
                 self._hover_card_timer.start(self._HOVER_CARD_DELAY_MS)
         except Exception as e:
@@ -1165,15 +1169,19 @@ class NetworkSpeedWidget(QWidget):
             hint = self._hover_hint_text() if show_tips else None
             today, month = self._hover_usage_totals() if show_data else (None, None)
             cap = self._hover_cap_info() if show_data else None
-            if hint is None and today is None:
+            hardware = self._hover_hardware_snapshot() if self._hover_hardware_wanted() else None
+            if hint is None and today is None and not hardware:
                 return  # nothing to show (both toggles off, or tips graduated while data is off)
             self._hide_usage_hover_card()  # never stack two cards
             note = (self.i18n.USAGE_RECORDED_HISTORY_NOTE
                     if today is not None and getattr(self, "_hover_usage_reconstructed", False) else None)
-            self._hover_card = UsageFlyout(self.i18n, today, month, hint=hint, cap=cap, history_note=note)
+            self._hover_card = UsageFlyout(self.i18n, today, month, hint=hint, cap=cap, history_note=note,
+                                           hardware=hardware)
+            self._hover_hw_refreshed = time.monotonic()
             screen = self.screen() or QApplication.primaryScreen()
             avail = screen.availableGeometry() if screen else self.frameGeometry()
-            self._hover_card.show_for(self.frameGeometry(), avail)
+            self._hover_card.show_for(self.frameGeometry(), avail, edge=self._hover_card_edge(),
+                                      screen=screen)
         except Exception as e:
             self.logger.error("Error showing usage hover card: %s", e, exc_info=True)
 
@@ -1238,6 +1246,85 @@ class NetworkSpeedWidget(QWidget):
             used = down if cnt == "download" else up if cnt == "upload" else (up + down)
             used_gb = used / (1000 ** 3)
             return used_gb, cap, (used_gb / cap) * 100.0
+        except Exception:
+            return None
+
+    # The hover card's hardware rows refresh at most this often while it is open.
+    _HOVER_HW_REFRESH_SEC = 0.9
+
+    def _side_bar_fit(self):
+        """The side-taskbar fit the widget was last sized for (widget_paint.SideBarFit), or None on a
+        TOP/BOTTOM bar / free-float."""
+        if self._cached_layout_mode != 'vertical':
+            return None
+        return getattr(getattr(self, "layout_manager", None), "_side_fit", None)
+
+    def _hover_hardware_wanted(self) -> bool:
+        """The hover card's hardware section has its own gate: the bar hides enabled hardware (or the
+        Wi-Fi identity). Independent of show_usage_on_hover / show_hover_tips - turning the usage card
+        off must not make CPU/GPU/memory unreachable on a side taskbar."""
+        fit = self._side_bar_fit()
+        return bool(fit is not None and (fit.hides_hardware or fit.hides_identity))
+
+    def _hover_hardware_snapshot(self) -> Optional[dict]:
+        """Live values for the hover card's hardware section - only the stats the user turned on."""
+        cfg = self.config
+        hw: Dict[str, Any] = {}
+        fit = self._side_bar_fit()
+        if fit is not None and fit.hides_hardware:
+            # Only what this display mode shows on the widget: cpu_only never lists the GPU/VRAM.
+            from netspeedtray.utils.widget_paint import side_hardware_stats
+            from netspeedtray.utils.widget_renderer import RenderConfig
+            rc = RenderConfig.from_dict(cfg)
+            stats = side_hardware_stats(rc, rc.widget_display_mode)
+            temps = bool(cfg.get("show_hardware_temps", False))
+            power = bool(cfg.get("show_hardware_power", False))
+            for key, usage, temp, watts in (("cpu", self.cpu_usage, self.cpu_temp, self.cpu_power),
+                                            ("gpu", self.gpu_usage, self.gpu_temp, self.gpu_power)):
+                if key.upper() in stats:
+                    stat: Dict[str, Any] = {"usage": usage}
+                    if temps:
+                        stat["temp"] = temp
+                    if power:
+                        stat["power"] = watts
+                    hw[key] = stat
+            if "CPU" in stats and cfg.get("monitor_ram_enabled", False):
+                hw["ram"] = (self.ram_used, self.ram_total)
+            if "GPU" in stats and cfg.get("monitor_vram_enabled", False):
+                hw["vram"] = (self.vram_used, self.vram_total)
+        if fit is not None and fit.hides_identity:
+            band, _color, _solid = self._identity_presentation()
+            parts = [p for p in (self._identity_ssid_text(), band) if p]
+            if parts:
+                hw["identity"] = "  ".join(parts)
+        return hw or None
+
+    def _refresh_hover_hardware(self) -> None:
+        """Push fresh values into an open hover card's hardware rows (~1 Hz)."""
+        card = self._hover_card
+        if card is None or not getattr(card, "has_hardware", False):
+            return
+        now = time.monotonic()
+        if now - getattr(self, "_hover_hw_refreshed", 0.0) < self._HOVER_HW_REFRESH_SEC:
+            return
+        self._hover_hw_refreshed = now
+        try:
+            snapshot = self._hover_hardware_snapshot() if self._hover_hardware_wanted() else None
+            if not snapshot:
+                # Hardware turned off, display mode changed, or the bar now fits it: the rows would
+                # only freeze on their last values - close the card (the next hover rebuilds it).
+                self._hide_usage_hover_card()
+                return
+            card.update_hardware(snapshot)
+        except Exception as e:
+            self.logger.debug("hover card hardware refresh failed: %s", e)
+
+    def _hover_card_edge(self):
+        """The edge of the taskbar the widget is docked to (the card opens away from it)."""
+        try:
+            if self.position_manager is not None and self.position_manager.is_free_float_active():
+                return None
+            return get_taskbar_info(preferred_screen_name=self.config.get("preferred_monitor")).get_edge_position()
         except Exception:
             return None
 
@@ -1801,9 +1888,19 @@ class NetworkSpeedWidget(QWidget):
             widgets_rect = getattr(taskbar_info, "widgets_rect", None)
             if not widgets_rect:
                 return
-            from netspeedtray.utils.taskbar_utils import rect_overlaps_x
-            if not rect_overlaps_x(self.x(), self.x() + self.width(), widgets_rect,
-                                   getattr(taskbar_info, "dpi_scale", 1.0) or 1.0):
+            from netspeedtray.utils.taskbar_utils import rect_overlaps_x, rect_overlaps_y
+            dpi = getattr(taskbar_info, "dpi_scale", 1.0) or 1.0
+            try:
+                edge = taskbar_info.get_edge_position()
+            except Exception:
+                edge = None
+            if edge in (constants.TaskbarEdge.LEFT, constants.TaskbarEdge.RIGHT):
+                # A side bar: the widget and the Widgets button both span the bar's width, so only
+                # their y-extents can tell an overlap apart (comparing x always "overlapped").
+                overlaps = rect_overlaps_y(self.y(), self.y() + self.height(), widgets_rect, dpi)
+            else:
+                overlaps = rect_overlaps_x(self.x(), self.x() + self.width(), widgets_rect, dpi)
+            if not overlaps:
                 return
             # Latch immediately so a re-entrant refresh (or the deferred call below) can't double-fire.
             self._widgets_nudge_shown = True

@@ -45,6 +45,14 @@ class RendererConstants:
     INK_REFERENCE_STRINGS: Final[tuple] = ("0123456789.,", "100%", "(99°C, 250.0W)", "(N/A)",
                                            "CPU GPU", "RAM VRAM", "99.9/99.9G")
 
+    # --- Side (LEFT/RIGHT) taskbar compact readout (the "fits" ladder T1-T5) ---
+    # Tighter than ARROW_NUMBER_GAP / VALUE_UNIT_GAP: on a 48 px bar (44 px inside the margins) the
+    # classic gaps alone cost 10 px. About one space wide in the default 9 pt font.
+    COMPACT_ARROW_GAP_PX: Final[int] = 2
+    COMPACT_UNIT_GAP_PX: Final[int] = 3
+    # Icon + gap in front of a compact CPU/GPU percent (the icon is HW_ICON_SIZE_PX wide).
+    COMPACT_HW_ICON_GAP_PX: Final[int] = 2
+
     # --- Display Cycling ---
     CYCLE_INTERVAL_MS: Final[int] = 5000 # 5 seconds per metric
     

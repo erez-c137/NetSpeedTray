@@ -76,6 +76,7 @@
     "ORDER_TYPE_GPU": "GPU",
     "ORDER_TYPE_NONE": "无",
     "HARDWARE_GRAPH_NOTE": "硬件图表与网络图表使用相同的不透明度与时间范围。",
+    "SIDE_TASKBAR_HOVER_NOTE": "在侧边任务栏上，将鼠标悬停在小组件上即可查看 CPU/GPU/内存。",
     "GRAPH_CPU_UTIL_AXIS_LABEL": "CPU 使用率 (%)",
     "GRAPH_GPU_UTIL_AXIS_LABEL": "GPU 使用率 (%)",
     "GRAPH_HW_UTIL_AXIS_LABEL": "使用率 (%)",

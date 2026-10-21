@@ -503,23 +503,160 @@ class WidgetRenderer:
                                      identity_text if last else None, identity_color,
                                      identity_solid, identity_ssid if last else None)
 
-            # A faint divider in the gap, so the two graphs read as two charts.
-            if len(rects) == 2:
-                a, b = rects
-                inset = constants.renderer.GRAPH_MARGIN * 2
-                divider = QColor(config.default_color)
-                divider.setAlpha(60)
-                painter.save()
-                painter.setPen(QPen(divider, 1))
-                if b.x() > a.x():   # side by side
-                    x = (a.right() + b.left()) / 2.0 + 0.5
-                    painter.drawLine(QPointF(x, a.top() + inset), QPointF(x, a.bottom() - inset))
-                else:               # stacked
-                    y = (a.bottom() + b.top()) / 2.0 + 0.5
-                    painter.drawLine(QPointF(a.left() + inset, y), QPointF(a.right() - inset, y))
-                painter.restore()
+            self.draw_split_divider(painter, rects, config)
         except Exception as e:
             self.logger.error("Failed to draw split network graphs: %s", e)
+
+    @staticmethod
+    def draw_split_divider(painter: QPainter, rects: List[QRect], config: RenderConfig) -> None:
+        """A faint divider in the gap between the two split panels, so the graphs read as two charts."""
+        if len(rects) != 2:
+            return
+        a, b = rects
+        inset = constants.renderer.GRAPH_MARGIN * 2
+        divider = QColor(config.default_color)
+        divider.setAlpha(60)
+        painter.save()
+        painter.setPen(QPen(divider, 1))
+        if b.x() > a.x():   # side by side
+            x = (a.right() + b.left()) / 2.0 + 0.5
+            painter.drawLine(QPointF(x, a.top() + inset), QPointF(x, a.bottom() - inset))
+        else:               # stacked
+            y = (a.bottom() + b.top()) / 2.0 + 0.5
+            painter.drawLine(QPointF(a.left() + inset, y), QPointF(a.right() - inset, y))
+        painter.restore()
+
+    def draw_network_compact(self, painter: QPainter, upload: float, download: float, width: int,
+                             height: int, config: RenderConfig, fit: Any, *, y_offset: int = 0,
+                             only_upload: Optional[bool] = None, unit_row: bool = True,
+                             unit_only: bool = False) -> None:
+        """The side-taskbar compact readout (``widget_paint.side_bar_fit`` tiers T1-T5): arrow + a
+        <= 3-digit number per row in ONE shared unit, the unit inline (T1, short label) or on a row of
+        its own under the numbers (T2+), whole numbers from 10 up (T3+), no arrows (T4+). Centred in
+        the ``width`` x ``height`` band at ``y_offset``.
+
+        only_upload: True/False draws just that direction's row (a split panel / cycle phase).
+        unit_row: False leaves the unit row to the caller (split panels share one); unit_only draws
+        only the unit row.
+        """
+        from netspeedtray.utils.widget_paint import TIER_INLINE_UNIT, TIER_WHOLE, TIER_NO_ARROWS, TIER_CLIP
+        from netspeedtray.utils.helpers import format_speed_compact, compact_speed_reference_strings
+        try:
+            tier = fit.tier
+            inline_unit = tier == TIER_INLINE_UNIT and not config.hide_unit_suffix
+            whole = tier >= TIER_WHOLE
+            short = inline_unit or fit.unit_short or config.short_unit_labels
+            up_t, dw_t, unit = format_speed_compact(
+                upload, download, self.i18n, force_mega_unit=(config.speed_display_mode == "always_mbps"),
+                decimal_places=config.decimal_places, unit_type=config.unit_type, short_labels=short,
+                whole_from_ten=whole)
+            show_arrows = not config.hide_arrows and tier < TIER_NO_ARROWS
+            first_up = not config.swap_upload_download
+            rows = [] if unit_only else [(is_up, up_t if is_up else dw_t, upload if is_up else download)
+                                         for is_up in (first_up, not first_up)
+                                         if only_upload is None or is_up == only_upload]
+            show_unit_row = (unit_only or unit_row) and not inline_unit and not config.hide_unit_suffix
+
+            fm, afm = self.metrics, self.arrow_metrics
+            sep = getattr(self.i18n, "DECIMAL_SEPARATOR", ".")
+            sep = sep if isinstance(sep, str) and sep else "."
+            refs = compact_speed_reference_strings(config.decimal_places, whole, sep)
+            num_col = max([fm.horizontalAdvance(s) for s in refs] + [fm.horizontalAdvance(t) for _, t, _ in rows])
+            glyphs = [config.arrow_up_symbol or self.i18n.UPLOAD_ARROW,
+                      config.arrow_down_symbol or self.i18n.DOWNLOAD_ARROW]
+            arrow_w = max(afm.horizontalAdvance(g) for g in glyphs) if show_arrows else 0
+            arrow_gap = constants.renderer.COMPACT_ARROW_GAP_PX if show_arrows else 0
+            unit_gap = constants.renderer.COMPACT_UNIT_GAP_PX if inline_unit else 0
+            unit_w = fm.horizontalAdvance(unit) if (inline_unit or show_unit_row) else 0
+            block_w = arrow_w + arrow_gap + num_col + (unit_gap + unit_w if inline_unit else 0)
+            margin = constants.renderer.TEXT_MARGIN
+            x0 = max(margin, (width - block_w) // 2)
+
+            line_h, asc, gap = fm.height(), fm.ascent(), constants.renderer.TWO_ROW_GAP_PX
+            n = len(rows) + (1 if show_unit_row else 0)
+            block_h = n * line_h + max(0, n - 1) * gap
+            y = y_offset + int((height - block_h) / 2 + asc)
+
+            painter.save()
+            # Never paint outside the band: at T5 nothing fits, and a long locale unit at a large font
+            # ("МиБ" at 11 pt on a 32 px bar) can be wider than the bar even in its short form.
+            painter.setClipRect(QRect(0, y_offset, width, height), Qt.ClipOperation.IntersectClip)
+            if tier >= TIER_CLIP or (show_unit_row and unit_w > width - 2 * margin):
+                if not getattr(self, "_compact_clip_logged", False):
+                    self._compact_clip_logged = True
+                    self.logger.warning("Side taskbar too narrow (%d px) for the compact readout at this "
+                                        "font; clipping it.", width)
+            row_cfg = config
+            if not show_arrows or not inline_unit:
+                from dataclasses import replace
+                row_cfg = replace(config, hide_arrows=not show_arrows, hide_unit_suffix=not inline_unit)
+            arrow_x = x0
+            number_x = arrow_x + arrow_w + arrow_gap
+            unit_x = number_x + num_col + unit_gap
+            top = y
+            for is_up, text, raw in rows:
+                self._draw_speed_line(painter, is_up, text, unit, raw, arrow_x, number_x, unit_x, y,
+                                      row_cfg, num_col)
+                y += line_h + gap
+            if show_unit_row:
+                painter.setFont(self.font)
+                painter.setPen(self._cached_pens['default'])
+                painter.drawText(max(margin, (width - unit_w) // 2), y, unit)
+            painter.restore()
+
+            self._last_text_rect = QRect(min(x0, (width - unit_w) // 2) if show_unit_row else x0,
+                                         top - asc, max(block_w, unit_w), block_h)
+            self._extend_content_bounds(self._last_text_rect)
+        except Exception as e:
+            self.logger.error("Failed to draw compact network speeds: %s", e)
+
+    def draw_hardware_compact(self, painter: QPainter, stats: List[Tuple[str, Optional[float]]], width: int,
+                              height: int, config: RenderConfig, *, inline: bool = True,
+                              y_offset: int = 0) -> None:
+        """CPU/GPU on a side taskbar too narrow for today's rows: ``[icon] 37%`` per stat (``inline``)
+        or the icon centred over the value; memory, temperature and power live in the hover card."""
+        try:
+            if not stats:
+                return
+            fm = self.metrics
+            style = getattr(config, 'hardware_label_style', constants.config.defaults.DEFAULT_HARDWARE_LABEL_STYLE)
+            cpu_color, gpu_color = self.hardware_label_colors(config)
+            icon_w = (max(fm.horizontalAdvance(s) for s, _ in stats) if style == "text"
+                      else constants.renderer.HW_ICON_SIZE_PX)
+            gap = constants.renderer.COMPACT_HW_ICON_GAP_PX
+            pct_col = fm.horizontalAdvance("100%")
+            line_h, asc, row_gap = fm.height(), fm.ascent(), constants.renderer.TWO_ROW_GAP_PX
+            n = len(stats) * (1 if inline else 2)
+            block_h = n * line_h + max(0, n - 1) * row_gap
+            y = y_offset + int((height - block_h) / 2 + asc)
+            top = y
+            block_w = icon_w + gap + pct_col if inline else max(icon_w, pct_col)
+            x0 = max(constants.renderer.TEXT_MARGIN, (width - block_w) // 2)
+            painter.save()
+            painter.setClipRect(QRect(0, y_offset, width, height), Qt.ClipOperation.IntersectClip)
+            painter.setFont(self.font)
+            for label, val in stats:
+                color = QColor(cpu_color if label == 'CPU' else gpu_color)
+                pct = self._fmt_hw_percent(val if val is not None else float("nan"))
+                icon_x = x0 if inline else (width - icon_w) // 2
+                if style == "text":
+                    painter.setPen(QPen(color))
+                    painter.drawText(icon_x, y, label)
+                else:
+                    self._draw_icon(painter, label, icon_x, y, color)
+                painter.setFont(self.font)
+                painter.setPen(self.default_color)
+                if inline:
+                    painter.drawText(x0 + icon_w + gap + pct_col - fm.horizontalAdvance(pct), y, pct)
+                else:
+                    y += line_h + row_gap
+                    painter.drawText((width - fm.horizontalAdvance(pct)) // 2, y, pct)
+                y += line_h + row_gap
+            painter.restore()
+            self._last_text_rect = QRect(x0, top - asc, block_w, block_h)
+            self._extend_content_bounds(self._last_text_rect)
+        except Exception as e:
+            self.logger.error("Failed to draw compact hardware stats: %s", e)
 
     def draw_network_single(self, painter: QPainter, upload: float, download: float, is_upload: bool,
                             width: int, height: int, config: RenderConfig,

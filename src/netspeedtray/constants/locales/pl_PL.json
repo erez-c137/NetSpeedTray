@@ -76,6 +76,7 @@
     "ORDER_TYPE_GPU": "GPU",
     "ORDER_TYPE_NONE": "Brak",
     "HARDWARE_GRAPH_NOTE": "Wykresy sprzętowe używają tej samej przezroczystości i zakresu czasu co wykres sieciowy.",
+    "SIDE_TASKBAR_HOVER_NOTE": "Na bocznym pasku zadań CPU/GPU/pamięć są widoczne po najechaniu kursorem na widżet.",
     "GRAPH_CPU_UTIL_AXIS_LABEL": "Użycie CPU (%)",
     "GRAPH_GPU_UTIL_AXIS_LABEL": "Użycie GPU (%)",
     "GRAPH_HW_UTIL_AXIS_LABEL": "Użycie (%)",

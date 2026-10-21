@@ -514,9 +514,24 @@ class SettingsDialog(QDialog):
         if pv is None:
             return
         try:
+            # Preview parity on a side (LEFT/RIGHT) taskbar: as wide as the bar, laid out as there.
+            pv.set_bar_width(self._docked_side_bar_width())
             pv.set_config({**self.config, **(settings or {})})
+            self.widget_page.set_side_bar_note_visible(
+                bool(pv.side_fit is not None and pv.side_fit.hides_hardware))
         except Exception as e:
             self.logger.debug("preview update failed: %s", e)
+
+    def _docked_side_bar_width(self) -> Optional[int]:
+        """The live widget's width when it is docked to a side taskbar (it is exactly the bar's
+        thickness there), else None."""
+        w = self.parent_widget
+        try:
+            if getattr(w, "_cached_layout_mode", None) == "vertical" and int(w.width()) > 0:
+                return int(w.width())
+        except Exception:
+            pass
+        return None
 
     def get_settings(self) -> Dict[str, Any]:
         """Collects settings from all pages."""

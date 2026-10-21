@@ -14,9 +14,10 @@ from typing import Dict, Any, Callable, List
 
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtGui import QGuiApplication
-from PyQt6.QtWidgets import QWidget, QComboBox
+from PyQt6.QtWidgets import QWidget, QComboBox, QLabel
 
 from netspeedtray import constants
+from netspeedtray.utils import styles as su
 from netspeedtray.utils.components import Win11Toggle, SettingCard, Win11ComboBox
 from netspeedtray.views.settings.pages._fluent import section_header, page_layout
 from netspeedtray.views.settings.pages.mini_graph_section import MiniGraphSection
@@ -49,6 +50,13 @@ class WidgetPage(QWidget):
         layout.addWidget(self.display_mode_combo)
         # (HARDWARE_GRAPH_NOTE moved to the Mini Graph section below, next to the opacity/timespan
         # controls it describes.)
+        # Docked to a side taskbar with hardware the bar has no room for: say where it went.
+        self.side_bar_note = QLabel(self.i18n.SIDE_TASKBAR_HOVER_NOTE)
+        self.side_bar_note.setWordWrap(True)
+        self.side_bar_note.setStyleSheet(
+            f"color: {su.semantic_colors()['text_secondary']}; background: transparent; padding: 0 2px;")
+        self.side_bar_note.setVisible(False)
+        layout.addWidget(self.side_bar_note)
 
         # --- Display order ---
         layout.addWidget(section_header(self.i18n.WIDGET_DISPLAY_ORDER_LABEL))
@@ -157,6 +165,11 @@ class WidgetPage(QWidget):
             self._populate_monitor_combo()
 
     # --- behavior ---------------------------------------------------------------
+    def set_side_bar_note_visible(self, visible: bool) -> None:
+        """Show the side-taskbar note (CPU/GPU/memory are in the hover card) - the dialog decides,
+        from the same fit the live widget uses."""
+        self.side_bar_note.setVisible(bool(visible))
+
     def ensure_hardware_visible(self) -> None:
         """Called by the dialog when a hardware monitor is enabled on the Hardware page: switch the
         widget out of network-only so the freshly-enabled stat is actually visible. This is the

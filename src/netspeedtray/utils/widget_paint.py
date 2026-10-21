@@ -18,7 +18,7 @@ a `RenderConfig`, and the snapshot, and draws. That keeps it trivially testable 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
 from PyQt6.QtCore import QRect
 from PyQt6.QtGui import QFont, QPainter, QImage
@@ -207,6 +207,325 @@ def stacked_segment_height(key: str, line_height: int, ram_enabled: bool, vram_e
     return line_height * (2 if has_memory else 1)
 
 
+# --- Side (LEFT/RIGHT) taskbar: the "fits" ladder ------------------------------------------------
+#
+# A side taskbar is as narrow as its thickness (44 px inside the margins on Win11's Default 48 px bar,
+# 28 on Small). Today's classic readout needs ~83 px, so instead of a "side bar" switch the widget
+# climbs down a ladder until its content fits the measured width:
+#   T0 classic (today's layout, unchanged)        T1 arrow + compact number + short unit inline
+#   T2 arrow + compact number per row + unit row  T3 T2 with whole numbers from 10 up
+#   T4 no arrows                                  T5 nothing fits: T4 clipped (logged once)
+# ONE pure function decides it, from font metrics and reference strings only, for both the layout's
+# sizing and the paint path (tier from the rect's width), so the Settings preview matches by being
+# given the same width. Hardware that cannot fit on the bar moves to the hover card.
+
+TIER_CLASSIC, TIER_INLINE_UNIT, TIER_UNIT_ROW, TIER_WHOLE, TIER_NO_ARROWS, TIER_CLIP = range(6)
+
+_HARDWARE_MODES = ("cpu_only", "gpu_only", "combined")
+
+
+class SideBarFit(NamedTuple):
+    """What a side-taskbar widget of a given width can show (see ``side_bar_fit``)."""
+    tier: int                 # TIER_* for the network readout
+    hw_full_fits: bool        # today's hardware rows (with temps/power/memory) fit the width
+    hw_inline: bool           # compact CPU/GPU rows: icon + percent on one row (else icon over value)
+    unit_short: bool          # the shared unit row uses the short labels (the configured ones don't fit)
+    classic: bool             # today's layout fits as a whole - draw exactly what 2.2 did
+    hides_hardware: bool      # enabled hardware (or its memory/temps/power) is off the bar -> hover card
+    hides_identity: bool      # the Wi-Fi identity badge is off the bar -> hover card
+
+
+def _str_items(items: Any) -> List[str]:
+    return [s for s in (items or []) if isinstance(s, str) and s]
+
+
+def _arrow_glyphs(config: RenderConfig, i18n: Any) -> List[str]:
+    up = config.arrow_up_symbol or getattr(i18n, "UPLOAD_ARROW", None)
+    dw = config.arrow_down_symbol or getattr(i18n, "DOWNLOAD_ARROW", None)
+    return [g if isinstance(g, str) and g else d for g, d in ((up, "↑"), (dw, "↓"))]
+
+
+def _unit_labels(i18n: Any, unit_type: str, short: bool) -> List[str]:
+    try:
+        from netspeedtray.utils.helpers import get_unit_labels_for_type
+        return _str_items(get_unit_labels_for_type(i18n, unit_type, short))
+    except Exception:
+        return []
+
+
+def _decimal_sep(i18n: Any) -> str:
+    sep = getattr(i18n, "DECIMAL_SEPARATOR", ".")
+    return sep if isinstance(sep, str) and sep else "."
+
+
+def _max_w(fm: Any, items: List[str]) -> int:
+    return max((fm.horizontalAdvance(s) for s in items), default=0)
+
+
+def side_hardware_stats(config: RenderConfig, mode: str) -> List[str]:
+    """The CPU/GPU stats a mode puts on the bar, in display order ('CPU'/'GPU')."""
+    order = list(getattr(config, "widget_display_order", None) or ["network", "cpu", "gpu"])
+    if mode == "side_by_side":   # its segments, display order included ('none' drops one)
+        keys = side_by_side_keys(order, config.monitor_cpu_enabled, config.monitor_gpu_enabled,
+                                 getattr(config, "stack_hardware_stats", False))
+        return [s for k in keys for s in (["CPU", "GPU"] if k == "hardware" else [k.upper()])
+                if k != "network"]
+    want = {"cpu_only": {"cpu"}, "gpu_only": {"gpu"}, "combined": {"cpu", "gpu"}}.get(mode)
+    if want is None:
+        want = {k for k, on in (("cpu", config.monitor_cpu_enabled), ("gpu", config.monitor_gpu_enabled)) if on}
+    ranked = sorted(want, key=lambda k: order.index(k) if k in order else 99)
+    return [k.upper() for k in ranked]
+
+
+def _mem_reference(mem_totals: Tuple[Optional[float], Optional[float]]) -> str:
+    """The widest memory value the renderer can paint ("99.9/99.9G"), digit-for-digit as wide as the
+    machine's real total - the same class whether the total is known yet or not. (On a >= 100 GB
+    machine the layout may size before the total is known and get the 2-digit class; the 3-digit
+    paint can then disagree for one re-size on a borderline bar - harmless, the hardware then goes to
+    the hover card.)"""
+    t = max([v for v in mem_totals if isinstance(v, (int, float)) and v > 0] or [0.0])
+    whole = "9" * max(2, len(str(int(round(t, 1)))))
+    return f"{whole}.9/{whole}.9G"
+
+
+def _hw_rows_width(config: RenderConfig, fm: Any, stats: List[str], memory_below: bool,
+                   mem_ref: str) -> int:
+    """Width of today's hardware rows as ``draw_hardware_stats`` lays them out (its ``seg_w``)."""
+    if not stats:
+        return 0
+    from netspeedtray.utils.helpers import memory_label_width
+    style = config.hardware_label_style
+    label_col = (_max_w(fm, stats) + 4) if style == "text" else 14
+    pct_col = fm.horizontalAdvance("100%")
+    temps, power = config.show_hardware_temps, config.show_hardware_power
+    suffix_ref = ("(99°C, 250.0W)" if temps and power else "(250.0W)" if power
+                  else "(99°C)" if temps else "")
+    suffix_col = (fm.horizontalAdvance(" ") + fm.horizontalAdvance(suffix_ref)) if suffix_ref else 0
+    any_mem = ("CPU" in stats and config.monitor_ram_enabled) or ("GPU" in stats and config.monitor_vram_enabled)
+    mem_num = fm.horizontalAdvance(mem_ref) if any_mem else 0
+    mem_label = memory_label_width(fm) if (config.show_memory_labels and any_mem) else 0
+    inline = len(stats) > 1 and not memory_below
+    mem_col = (fm.horizontalAdvance("  ") + mem_label + mem_num) if (any_mem and inline) else 0
+    below = (label_col + mem_label + mem_num) if (any_mem and not inline) else 0
+    return max(label_col + pct_col + suffix_col + mem_col, below)
+
+
+def _hw_details_enabled(config: RenderConfig, stats: List[str]) -> bool:
+    """Something beyond the bare percent is on for these stats (memory, temperature or power)."""
+    return bool(stats) and bool(config.show_hardware_temps or config.show_hardware_power
+                                or ("CPU" in stats and config.monitor_ram_enabled)
+                                or ("GPU" in stats and config.monitor_vram_enabled))
+
+
+def side_bar_fit(config: RenderConfig, metrics: Any, arrow_metrics: Any, i18n: Any, width: int, *,
+                 identity_reserve: int = 0,
+                 mem_totals: Tuple[Optional[float], Optional[float]] = (None, None)) -> SideBarFit:
+    """Pick the side-taskbar tier for a widget ``width`` px wide - the one decision the layout sizes
+    from and ``render_widget`` paints from. Pure: font metrics and reference strings, never a live
+    value, so the answer cannot change from one tick to the next."""
+    fm, afm = metrics, (arrow_metrics or metrics)
+    margin = constants.renderer.TEXT_MARGIN
+    inner = width - 2 * margin
+    mode = config.widget_display_mode
+    show_arrows, show_units = not config.hide_arrows, not config.hide_unit_suffix
+    arrow_w = _max_w(afm, _arrow_glyphs(config, i18n)) if show_arrows else 0
+
+    # T0: today's two-row readout (draw_network_speeds) - same columns it pins.
+    from netspeedtray.utils.helpers import get_reference_value_string, compact_speed_reference_strings
+    labels = _unit_labels(i18n, config.unit_type, config.short_unit_labels)
+    short_labels = _unit_labels(i18n, config.unit_type, True)
+    classic_w = (arrow_w + (constants.renderer.ARROW_NUMBER_GAP if show_arrows else 0)
+                 + fm.horizontalAdvance(get_reference_value_string(False, config.decimal_places, config.unit_type))
+                 + ((constants.renderer.VALUE_UNIT_GAP + _max_w(fm, labels)) if show_units else 0)
+                 + identity_reserve)
+
+    sep = _decimal_sep(i18n)
+    num_dec = _max_w(fm, compact_speed_reference_strings(config.decimal_places, False, sep))
+    num_whole = _max_w(fm, compact_speed_reference_strings(config.decimal_places, True, sep))
+    ag = constants.renderer.COMPACT_ARROW_GAP_PX if show_arrows else 0
+    inline_unit_w = (constants.renderer.COMPACT_UNIT_GAP_PX + _max_w(fm, short_labels)) if show_units else 0
+    if classic_w <= inner:
+        tier = TIER_CLASSIC
+    elif arrow_w + ag + num_dec + inline_unit_w <= inner:
+        tier = TIER_INLINE_UNIT
+    elif arrow_w + ag + num_dec <= inner:
+        tier = TIER_UNIT_ROW
+    elif arrow_w + ag + num_whole <= inner:
+        tier = TIER_WHOLE
+    elif num_whole <= inner:
+        tier = TIER_NO_ARROWS
+    else:
+        tier = TIER_CLIP
+    unit_short = bool(show_units and not config.short_unit_labels and _max_w(fm, labels) > inner)
+
+    # Hardware: today's rows as the side bar stacks them, else compact "[icon] 37%" rows.
+    mem_ref = _mem_reference(mem_totals)
+    if mode == "side_by_side":
+        keys = side_by_side_keys(config.widget_display_order, config.monitor_cpu_enabled,
+                                 config.monitor_gpu_enabled, getattr(config, "stack_hardware_stats", False))
+        groups = [["CPU", "GPU"] if k == "hardware" else [k.upper()] for k in keys if k != "network"]
+        hw_full = all(_hw_rows_width(config, fm, g, True, mem_ref) <= inner for g in groups)
+        stats = [s for g in groups for s in g]
+    elif mode in _HARDWARE_MODES:
+        stats = side_hardware_stats(config, mode)
+        hw_full = _hw_rows_width(config, fm, stats, False, mem_ref) <= inner
+    elif mode == "cycle":
+        stats = side_hardware_stats(config, mode)
+        hw_full = all(_hw_rows_width(config, fm, [s], False, mem_ref) <= inner for s in stats)
+    else:
+        stats, hw_full = [], True
+    icon_col = (_max_w(fm, stats or ["CPU"]) if config.hardware_label_style == "text"
+                else constants.renderer.HW_ICON_SIZE_PX)
+    hw_inline = icon_col + constants.renderer.COMPACT_HW_ICON_GAP_PX + fm.horizontalAdvance("100%") <= inner
+
+    if mode in _HARDWARE_MODES:
+        classic = hw_full
+    else:
+        classic = tier == TIER_CLASSIC and hw_full
+    if classic:
+        hides_hw = False
+    elif mode == "side_by_side":
+        hides_hw = bool(stats)                       # all of it goes to the card
+    else:
+        hides_hw = (not hw_full) and _hw_details_enabled(config, stats)
+    hides_identity = bool(identity_reserve) and tier != TIER_CLASSIC and mode not in _HARDWARE_MODES
+    return SideBarFit(tier, hw_full, hw_inline, unit_short, classic, hides_hw, hides_identity)
+
+
+def compact_network_rows(config: RenderConfig, fit: SideBarFit, directions: int = 2) -> int:
+    """Text rows of the compact network readout: one per direction, plus the shared unit row
+    (T2 and down, unless units are hidden)."""
+    unit_row = (not config.hide_unit_suffix) and fit.tier >= TIER_UNIT_ROW
+    return directions + (1 if unit_row else 0)
+
+
+def _rows_band(rows: int, line_height: int) -> int:
+    return rows * line_height + max(0, rows - 1) * constants.renderer.TWO_ROW_GAP_PX
+
+
+def _hw_band(config: RenderConfig, fit: SideBarFit, stats: List[str], line_height: int) -> int:
+    """Height of a hardware mode's rows on the bar: today's rows (memory on a row of its own), or the
+    compact ones (one row per stat, two when the icon goes over the value)."""
+    if fit.hw_full_fits:
+        mem_rows = sum(1 for s in stats if (s == "CPU" and config.monitor_ram_enabled)
+                       or (s == "GPU" and config.monitor_vram_enabled))
+        return line_height * (len(stats) + mem_rows)
+    return _rows_band(len(stats) * (1 if fit.hw_inline else 2), line_height)
+
+
+def side_compact_height(config: RenderConfig, fit: SideBarFit, line_height: int) -> int:
+    """Widget height for a side taskbar when ``fit`` is not classic, sized to the TALLEST thing it can
+    show (every Auto-Cycle phase), with today's 4 x TEXT_MARGIN padding."""
+    pad = 4 * constants.renderer.TEXT_MARGIN
+    mode = config.widget_display_mode
+    net_band = (2 * line_height if fit.tier == TIER_CLASSIC
+                else _rows_band(compact_network_rows(config, fit), line_height))
+    if mode in _HARDWARE_MODES:
+        return _hw_band(config, fit, side_hardware_stats(config, mode), line_height) + pad
+    if mode == "network_only" and split_active(config):
+        return split_compact_height(config, fit, line_height)
+    if mode == "cycle":
+        bands = [net_band] + [_hw_band(config, fit, [s], line_height)
+                              for s in side_hardware_stats(config, mode)]
+        return max(bands) + pad
+    return net_band + pad   # network_only / side_by_side (its hardware is in the hover card)
+
+
+def side_classic_height(config: RenderConfig, line_height: int) -> int:
+    """Today's (T0) side-taskbar widget height: two text rows + padding; separate upload/download
+    graphs stack two such panels (network_only); side_by_side stacks a band per segment."""
+    margin = constants.renderer.TEXT_MARGIN
+    height = line_height * 2 + margin * 4
+    mode = config.widget_display_mode
+    if split_active(config) and mode == "network_only":
+        height = 2 * height + constants.renderer.GRAPH_SPLIT_GAP
+    if mode == "side_by_side":
+        keys = side_by_side_keys(config.widget_display_order, config.monitor_cpu_enabled,
+                                 config.monitor_gpu_enabled, getattr(config, "stack_hardware_stats", False))
+        if len(keys) > 1:
+            height = (sum(stacked_segment_height(k, line_height, config.monitor_ram_enabled,
+                                                 config.monitor_vram_enabled) for k in keys)
+                      + constants.layout.WIDGET_SEGMENT_GAP_STACKED_PX * (len(keys) - 1) + margin * 4)
+    return height
+
+
+def side_bar_height(config: RenderConfig, fit: Optional[SideBarFit], line_height: int) -> int:
+    """The side-taskbar widget height for ``fit`` - what the layout reserves and the Settings preview
+    shows, so the two can't disagree."""
+    if fit is None or fit.classic:
+        return side_classic_height(config, line_height)
+    return side_compact_height(config, fit, line_height)
+
+
+def split_compact_height(config: RenderConfig, fit: SideBarFit, line_height: int) -> int:
+    """Separate upload/download graphs on a side bar: two one-row panels and the shared unit row."""
+    m = constants.renderer.TEXT_MARGIN
+    panel = line_height + 4 * m
+    unit_row = compact_network_rows(config, fit, 0)
+    return 2 * panel + constants.renderer.GRAPH_SPLIT_GAP + (unit_row * (line_height + 2 * m))
+
+
+def _draw_side_compact(painter: QPainter, renderer: WidgetRenderer, width: int, height: int,
+                       config: RenderConfig, metrics: WidgetMetrics, mode: str, layout: str,
+                       fit: SideBarFit) -> None:
+    """Paint a side-taskbar widget whose classic layout doesn't fit (see side_bar_fit)."""
+    up_bytes, dw_bytes = metrics.net_bytes()
+    history = list(metrics.net_history)
+    if mode in _HARDWARE_MODES:
+        stats = side_hardware_stats(config, mode)
+        if config.graph_enabled and mode in ("cpu_only", "gpu_only"):
+            _draw_graph(painter, renderer, width, height, config, metrics, mode, layout)
+        if fit.hw_full_fits:
+            _draw_foreground(painter, renderer, width, height, config, metrics, mode, layout, None)
+        else:
+            values = {"CPU": metrics.cpu_usage, "GPU": metrics.gpu_usage}
+            renderer.draw_hardware_compact(painter, [(s, values[s]) for s in stats], width, height,
+                                           config, inline=fit.hw_inline)
+        return
+
+    if mode == "network_only" and split_active(config):
+        m = constants.renderer.TEXT_MARGIN
+        line = renderer.metrics.height()
+        panel = line + 4 * m
+        gap = constants.renderer.GRAPH_SPLIT_GAP
+        unit_rows = compact_network_rows(config, fit, 0)
+        top = max(0, (height - split_compact_height(config, fit, line)) // 2)
+        rects = [QRect(0, top, width, panel), QRect(0, top + panel + gap, width, panel)]
+        first_up = not config.swap_upload_download
+        for rect, is_up in zip(rects, (first_up, not first_up)):
+            painter.save()
+            painter.translate(rect.x(), rect.y())
+            renderer.draw_mini_graph(painter, rect.width(), rect.height(), config, history, layout,
+                                     series="upload" if is_up else "download")
+            painter.restore()
+            renderer.draw_network_compact(painter, up_bytes, dw_bytes, width, rect.height(), config,
+                                          fit, y_offset=rect.y(), only_upload=is_up, unit_row=False)
+        renderer.draw_split_divider(painter, rects, config)
+        if unit_rows:
+            renderer.draw_network_compact(painter, up_bytes, dw_bytes, width, line + 2 * m, config, fit,
+                                          y_offset=rects[1].bottom() + 1, unit_only=True)
+        return
+
+    if config.graph_enabled:
+        if mode in SPLIT_PHASES:
+            renderer.draw_mini_graph(painter, width, height, config, history, layout,
+                                     series="upload" if mode == "network_upload" else "download")
+        else:
+            renderer.draw_mini_graph(painter, width, height, config, history, layout)
+    if fit.tier == TIER_CLASSIC:
+        # The network fits as it always did; only the hardware moved to the hover card.
+        renderer.draw_network_speeds(painter, up_bytes, dw_bytes, width, height, config, layout,
+                                     identity_text=metrics.identity_band,
+                                     identity_color=metrics.identity_band_color,
+                                     identity_solid=metrics.identity_band_solid,
+                                     identity_ssid=metrics.identity_ssid)
+    elif mode in SPLIT_PHASES:
+        renderer.draw_network_compact(painter, up_bytes, dw_bytes, width, height, config, fit,
+                                      only_upload=(mode == "network_upload"))
+    else:
+        renderer.draw_network_compact(painter, up_bytes, dw_bytes, width, height, config, fit)
+
+
 def _draw_segment(painter: QPainter, renderer: WidgetRenderer, key: str, width: int, height: int,
                   config: RenderConfig, metrics: WidgetMetrics, layout: str, x_offset: int = 0,
                   y_offset: int = 0, slot_width: Optional[int] = None, memory_below: bool = False) -> None:
@@ -384,6 +703,20 @@ def render_widget(painter: QPainter, rect: QRect, renderer: WidgetRenderer, conf
 
     renderer.reset_content_bounds()   # accumulate this paint's segment union for menu centering
     renderer.draw_background(painter, rect, config)
+
+    if layout_mode == "vertical":
+        # A side taskbar is only as wide as the bar: climb down the "fits" ladder when today's layout
+        # doesn't fit (side_bar_fit). When it does (a wide third-party bar), everything below draws
+        # exactly what it always did.
+        fit = side_bar_fit(config, renderer.metrics, renderer.arrow_metrics, renderer.i18n, width,
+                           identity_reserve=renderer.identity_reserve(metrics.identity_band,
+                                                                      metrics.identity_ssid),
+                           mem_totals=(metrics.ram_total, metrics.vram_total))
+        if not fit.classic:
+            if font is not None:
+                painter.setFont(font)
+            _draw_side_compact(painter, renderer, width, height, config, metrics, mode, layout_mode, fit)
+            return
 
     if config.graph_enabled:
         _draw_graph(painter, renderer, width, height, config, metrics, mode, layout_mode)
