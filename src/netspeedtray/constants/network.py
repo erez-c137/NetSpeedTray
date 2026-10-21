@@ -241,8 +241,8 @@ class UsageOdometerConstants:
 class MetricsEndpointConstants:
     """The opt-in localhost metrics endpoint (2.2 scope B): Prometheus text exposition at GET /metrics.
 
-    Loopback-only by construction - HOST is the only address the server ever binds, and a peer that is
-    not loopback is refused anyway. Off by default (config ``metrics_endpoint_enabled``)."""
+    Loopback-only by construction - HOST (and [::1] on the same port, held so nothing else can squat
+    it) are the only addresses the server ever binds, and a peer that is not loopback is refused anyway. Off by default (config ``metrics_endpoint_enabled``)."""
     HOST: Final[str] = "127.0.0.1"
     # 9184 - in the Prometheus default-port wiki it belongs to the Twitch exporter, which is very
     # unlikely to run on the same Windows desktop (the whole 9100-9999 block is allocated; 9182, the

@@ -644,8 +644,16 @@ class NetworkSpeedWidget(QWidget):
         """GUI thread: freeze the live values into the endpoint's snapshot. The server thread only
         ever reads that frozen object - it never touches the widget, controller or WidgetState."""
         ep = self.metrics_endpoint
-        if ep is None or not ep.running:
+        if ep is None:
             return
+        if not ep.running:
+            try:
+                # A port that was busy is retried with backoff; cheap when nothing is due.
+                if not ep.retry_if_due():
+                    return
+            except Exception as e:
+                self.logger.debug("metrics endpoint retry failed: %s", e)
+                return
         try:
             from netspeedtray.core.metrics_snapshot import build_snapshot
             ep.publish(build_snapshot(self))
