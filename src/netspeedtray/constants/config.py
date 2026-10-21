@@ -78,9 +78,10 @@ class ConfigConstants:
     # Auto-Cycle rotates upload and download as their own phases instead, so it keeps its size.
     DEFAULT_GRAPH_SPLIT_DIRECTIONS: Final[bool] = False
     # Mini graph look: "detailed" plots every sample (the classic filled, spiky graph); "trend" smooths
-    # each series into a calm line (widget_renderer.trend_smooth). The default is a one-line switch.
+    # each series into a calm line (widget_renderer.trend_smooth). Trend is the default (owner, #395),
+    # also for existing configs without the key; Detailed is one click away in Settings.
     GRAPH_STYLE_CHOICES: Final[List[str]] = ["detailed", "trend"]
-    DEFAULT_GRAPH_STYLE: Final[str] = "detailed"
+    DEFAULT_GRAPH_STYLE: Final[str] = "trend"
     DEFAULT_INTERFACE_MODE: Final[str] = network.interface.DEFAULT_MODE
     DEFAULT_KEEP_DATA_DAYS: Final[int] = data.retention.DEFAULT_DAYS # 365 days (1 Year) default
     DEFAULT_DARK_MODE: Final[bool] = True
