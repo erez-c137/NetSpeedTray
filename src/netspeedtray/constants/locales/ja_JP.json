@@ -11,6 +11,7 @@
     "LANGUAGE_RESTART_TITLE": "再起動が必要です",
     "COLLECTING_DATA_MESSAGE": "現在のセッションのデータを収集中...",
     "HARDWARE_HISTORY_OFF_MESSAGE": "ハードウェアの履歴はオフです。\n設定 → ハードウェアで CPU または GPU の監視をオンにしてください。",
+    "HARDWARE_HISTORY_RECORD_OFF_MESSAGE": "ハードウェアの履歴はオフです。\n設定 → 詳細設定で「ハードウェア履歴を記録」をオンにしてください。",
     "SETTINGS_ERROR_MESSAGE": "1つ以上の設定の適用に失敗しました。",
     "EXPORT_SUCCESS_MESSAGE": "エクスポートに成功しました :\n{file_path}",
     "NO_HISTORY_DATA_MESSAGE": "エクスポートする履歴データがありません。",

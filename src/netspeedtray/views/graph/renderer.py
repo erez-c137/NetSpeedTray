@@ -541,7 +541,7 @@ class GraphRenderer(QObject):
             y_top = ax.get_ylim()[1]
             text = ax.text(
                 boot_x, y_top * 0.92, 
-                f" ↑ {getattr(self.i18n, 'GRAPH_BOOT_MARKER', 'Boot')}",
+                f" ↑ {self._lbl(getattr(self.i18n, 'GRAPH_BOOT_MARKER', 'Boot'))}",
                 fontsize=7, 
                 color='#888', 
                 va='top',
@@ -615,7 +615,7 @@ class GraphRenderer(QObject):
                 elif stat_type != "overview" and stat_type != "network":
                     self._format_hardware_axes(stat_type)
             if stat_type in ("cpu", "gpu") and hw_styles is not None:   # the Monitor's toggle layout
-                self._draw_hw_empty_message(self.ax_download, period_key, hw_styles)
+                self._draw_hw_empty_message(self.ax_download, period_key, hw_styles, roles=(stat_type,))
             self.canvas.draw_idle()
             return None
 
@@ -918,17 +918,22 @@ class GraphRenderer(QObject):
             for text in legend.get_texts():
                 text.set_color(self._current_text_color)
 
-    def _draw_hw_empty_message(self, ax, period_key, hw_styles=None) -> None:
+    def _draw_hw_empty_message(self, ax, period_key, hw_styles=None, roles=("cpu", "gpu")) -> None:
         """The centered note on an empty hardware graph. A fresh session is still collecting; but a
-        ranged view with CPU and GPU monitoring off will never fill (nothing is recorded), so it says
-        where to turn recording on instead of "Collecting data" forever."""
-        if (hw_styles or {}).get("history_off") and period_key != "TIMELINE_SESSION":
+        ranged view whose ``roles`` are all unrecorded will never fill, so it says where to turn
+        recording on (Hardware for monitoring, Advanced for the record switch) instead of "Collecting
+        data" forever. ``hw_styles["history_off"]`` is graph_host.hardware_history_off_reasons()."""
+        reasons = [((hw_styles or {}).get("history_off") or {}).get(r) for r in roles]
+        if period_key == "TIMELINE_SESSION" or not reasons or None in reasons:
+            text = getattr(self.i18n, "COLLECTING_DATA_MESSAGE", "Collecting data…")
+        elif "monitor" in reasons:
             text = getattr(self.i18n, "HARDWARE_HISTORY_OFF_MESSAGE",
                            "Hardware history is off.\nTurn on CPU or GPU monitoring in Settings → Hardware.")
         else:
-            text = getattr(self.i18n, "COLLECTING_DATA_MESSAGE", "Collecting data…")
-        ax.text(0.5, 0.5, text, transform=ax.transAxes, ha="center", va="center", multialignment="center",
-                color=self._current_text_color, alpha=0.55, fontsize=10)
+            text = getattr(self.i18n, "HARDWARE_HISTORY_RECORD_OFF_MESSAGE",
+                           "Hardware history is off.\nTurn on Record hardware history in Settings → Advanced.")
+        ax.text(0.5, 0.5, self._lbl(text), transform=ax.transAxes, ha="center", va="center",
+                multialignment="center", color=self._current_text_color, alpha=0.55, fontsize=10)
 
     def _configure_hardware_axes(self, start_time, end_time, period_key, timestamps, values):
         """Sets limits and formatters for hardware stats."""

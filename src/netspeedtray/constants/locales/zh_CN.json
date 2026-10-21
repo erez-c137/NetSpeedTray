@@ -11,6 +11,7 @@
     "LANGUAGE_RESTART_TITLE": "需要重启应用",
     "COLLECTING_DATA_MESSAGE": "正在收集当前会话的数据...",
     "HARDWARE_HISTORY_OFF_MESSAGE": "硬件历史记录已关闭。\n请在 设置 → 硬件 中开启 CPU 或 GPU 监控。",
+    "HARDWARE_HISTORY_RECORD_OFF_MESSAGE": "硬件历史记录已关闭。\n请在 设置 → 高级 中开启“记录硬件历史”。",
     "SETTINGS_ERROR_MESSAGE": "部分设置应用失败。",
     "EXPORT_SUCCESS_MESSAGE": "已成功导出到:\n{file_path}",
     "NO_HISTORY_DATA_MESSAGE": "没有可以导出的历史记录。",

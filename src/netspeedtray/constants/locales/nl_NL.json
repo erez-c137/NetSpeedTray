@@ -11,6 +11,7 @@
     "LANGUAGE_RESTART_TITLE": "Herstart vereist",
     "COLLECTING_DATA_MESSAGE": "Gegevens verzamelen voor huidige sessie...",
     "HARDWARE_HISTORY_OFF_MESSAGE": "Hardwaregeschiedenis staat uit.\nZet CPU- of GPU-bewaking aan in Instellingen → Hardware.",
+    "HARDWARE_HISTORY_RECORD_OFF_MESSAGE": "Hardwaregeschiedenis staat uit.\nZet 'Hardwaregeschiedenis opslaan' aan in Instellingen → Geavanceerd.",
     "SETTINGS_ERROR_MESSAGE": "Kon een of meer instellingen niet toepassen.",
     "EXPORT_SUCCESS_MESSAGE": "Succesvol geëxporteerd naar:\n{file_path}",
     "NO_HISTORY_DATA_MESSAGE": "Geen geschiedenisgegevens beschikbaar om te exporteren.",

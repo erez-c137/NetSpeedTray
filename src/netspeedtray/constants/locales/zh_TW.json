@@ -11,6 +11,7 @@
     "LANGUAGE_RESTART_TITLE": "需要重新啟動",
     "COLLECTING_DATA_MESSAGE": "正在蒐集目前工作階段的資料...",
     "HARDWARE_HISTORY_OFF_MESSAGE": "硬體歷史記錄已關閉。\n請在 設定 → 硬體 中開啟 CPU 或 GPU 監控。",
+    "HARDWARE_HISTORY_RECORD_OFF_MESSAGE": "硬體歷史記錄已關閉。\n請在 設定 → 進階 中開啟「記錄硬體歷史紀錄」。",
     "SETTINGS_ERROR_MESSAGE": "套用一項或多項設定失敗。",
     "EXPORT_SUCCESS_MESSAGE": "已成功匯出至：\n{file_path}",
     "NO_HISTORY_DATA_MESSAGE": "沒有可匯出的歷史資料。",

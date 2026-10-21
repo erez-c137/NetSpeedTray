@@ -11,6 +11,7 @@
     "LANGUAGE_RESTART_TITLE": "재시작 필요",
     "COLLECTING_DATA_MESSAGE": "현재 세션에 대한 데이터 수집 중...",
     "HARDWARE_HISTORY_OFF_MESSAGE": "하드웨어 기록이 꺼져 있습니다.\n설정 → 하드웨어에서 CPU 또는 GPU 모니터링을 켜세요.",
+    "HARDWARE_HISTORY_RECORD_OFF_MESSAGE": "하드웨어 기록이 꺼져 있습니다.\n설정 → 고급에서 '하드웨어 기록 저장'을 켜세요.",
     "SETTINGS_ERROR_MESSAGE": "하나 이상의 설정을 적용하지 못했습니다.",
     "EXPORT_SUCCESS_MESSAGE": "성공적으로 내보냈습니다:\n{file_path}",
     "NO_HISTORY_DATA_MESSAGE": "내보낼 수 있는 기록 데이터가 없습니다.",

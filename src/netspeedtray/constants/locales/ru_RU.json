@@ -11,6 +11,7 @@
     "LANGUAGE_RESTART_TITLE": "Требуется перезапуск",
     "COLLECTING_DATA_MESSAGE": "Сбор данных для текущей сессии...",
     "HARDWARE_HISTORY_OFF_MESSAGE": "История оборудования отключена.\nВключите мониторинг CPU или GPU в разделе Настройки → Оборудование.",
+    "HARDWARE_HISTORY_RECORD_OFF_MESSAGE": "История оборудования отключена.\nВключите «Записывать историю оборудования» в разделе Настройки → Дополнительно.",
     "SETTINGS_ERROR_MESSAGE": "Не удалось применить одну или несколько настроек.",
     "EXPORT_SUCCESS_MESSAGE": "Успешно экспортировано в:\n{file_path}",
     "NO_HISTORY_DATA_MESSAGE": "Нет данных истории для экспорта.",
