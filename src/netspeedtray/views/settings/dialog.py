@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QSize
 from PyQt6.QtGui import QColor, QFont, QIcon, QCloseEvent, QShowEvent
 from PyQt6.QtWidgets import (
-    QApplication, QColorDialog, QDialog, QFileDialog, QFontDialog,
+    QApplication, QCheckBox, QColorDialog, QDialog, QFileDialog, QFontDialog,
     QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMessageBox, QPushButton, QScrollArea,
     QStackedWidget, QVBoxLayout, QWidget
 )
@@ -31,7 +31,7 @@ from netspeedtray import constants
 from netspeedtray.utils import styles as style_utils
 from netspeedtray.utils.window_state import (restore_window_position, save_window_position,
                                              set_window_always_on_top)
-from netspeedtray.utils.helpers import get_app_data_path, get_app_asset_path
+from netspeedtray.utils.helpers import get_app_data_path, get_app_asset_path, reveal_in_explorer
 from netspeedtray.utils.styles import is_dark_mode
 from netspeedtray.utils.support_bundle import build_support_bundle
 from netspeedtray.utils.dwm import apply_win11_chrome
@@ -47,7 +47,6 @@ from netspeedtray.views.settings.pages.advanced import AdvancedPage
 # units.py + colors.py are now embedded inside AppearancePage (the dialog reaches them via
 # appearance_page.units_section / .colors_section for the Force-MB rule + color-picker routing).
 from netspeedtray.views.widget.preview import PreviewWidget
-from netspeedtray.constants.update_mode import UpdateMode
 
 
 class SettingsDialog(QDialog):
@@ -74,6 +73,7 @@ class SettingsDialog(QDialog):
         available_interfaces: Optional[List[str]] = None,
         is_startup_enabled: bool = False,
         parent: QWidget | None = None,
+        primary_interface: Optional[str] = None,
     ) -> None:
         """
         Initializes the settings dialog.
@@ -88,6 +88,7 @@ class SettingsDialog(QDialog):
         self.version = version
         self.i18n = i18n
         self.available_interfaces = available_interfaces or []
+        self.primary_interface = primary_interface   # the routing interface, marked in the picker
         self.startup_enabled_initial_state = is_startup_enabled
         self._user_chose_default_color = False
 
@@ -125,28 +126,39 @@ class SettingsDialog(QDialog):
         # add the sidebar, content margins, and room for a vertical scrollbar.
         margin = constants.layout.SETTINGS_CONTENT_MARGIN
         content_w = 560   # comfortable floor so the window is roomy and cards aren't pinned to their min
+        floor_w = 0       # the widest page's floor: below it some page would scroll sideways
         try:
             # minimumSizeHint is the floor below which the page can't shrink
-            # without forcing a horizontal scrollbar; size to the widest page's
-            # floor so no page ever scrolls sideways.
+            # without forcing a horizontal scrollbar. Cards wrap their titles and
+            # drop their control under the title when narrow, so these floors are
+            # small (~300px) in every locale; the window may never go below them.
             page_widths = [
                 self.stack.widget(i).widget().minimumSizeHint().width()
                 for i in range(self.stack.count())
                 if self.stack.widget(i).widget() is not None
             ]
             if page_widths:
-                content_w = max(max(page_widths), content_w)   # keep the comfortable floor
+                floor_w = max(page_widths)
+                content_w = max(floor_w, content_w)   # keep the comfortable floor
         except Exception:
             pass
         # +40 leaves room for the vertical scrollbar plus a little slack so the
         # horizontal scrollbar stays hidden even with slightly wider translations.
         # The final width is bounded by the screen below, so this can't run away.
-        desired_w = constants.layout.SIDEBAR_WIDTH + (2 * margin) + content_w + 40
+        sidebar_w = self.sidebar.maximumWidth()   # fixed; widened past SIDEBAR_WIDTH for long page names
+        chrome_w = sidebar_w + (2 * margin) + 40
+        desired_w = chrome_w + content_w
 
-        self.setMinimumSize(min(640, desired_w), 400)
+        # Resizing the window narrower never makes a page scroll sideways, and never clips the footer
+        # (preview strip + Support bundle / Cancel / Save, whose labels are longer in some languages).
+        footer_w = sidebar_w + self._content_widget.minimumSizeHint().width()
+        min_w = max(640, chrome_w + floor_w, footer_w)
         screen = self.screen() or QApplication.primaryScreen()
         if screen:
             avail = screen.availableGeometry()
+            min_w = min(min_w, avail.width())
+        self.setMinimumSize(min_w, 400)
+        if screen:
             width = min(desired_w, avail.width() - 80)
             # Open just tall enough for the short/moderate pages (General/Widget/Advanced ≈ 720px incl.
             # chrome) without scrolling, while staying compact. The genuinely long pages (Network,
@@ -187,6 +199,10 @@ class SettingsDialog(QDialog):
             self.sidebar = QListWidget()
             self.sidebar.setFixedWidth(constants.layout.SIDEBAR_WIDTH)
             self.sidebar.setMinimumWidth(180)
+            # The sidebar never scrolls sideways either: it widens to its longest page name (de_DE
+            # "Netzwerkschnittstellen" overflowed 200 px), and anything still too long elides.
+            self.sidebar.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            self.sidebar.setTextElideMode(Qt.TextElideMode.ElideRight)
             self.sidebar.setStyleSheet(style_utils.sidebar_style())
             self.sidebar.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             self.sidebar.setIconSize(QSize(16, 16))
@@ -202,12 +218,18 @@ class SettingsDialog(QDialog):
             self.sidebar.currentRowChanged.connect(lambda *_: self._tint_sidebar_icons())
             self.sidebar.setCurrentRow(0)
             self._tint_sidebar_icons()
+            for row in range(self.sidebar.count()):     # the full name, should it ever elide
+                self.sidebar.item(row).setToolTip(self.sidebar.item(row).text())
+            needed = self.sidebar.sizeHintForColumn(0) + 2 * self.sidebar.frameWidth() + 4
+            self.sidebar.setFixedWidth(min(max(constants.layout.SIDEBAR_WIDTH, needed),
+                                           constants.layout.SIDEBAR_MAX_WIDTH))
             sidebar_layout.addWidget(self.sidebar)
             main_layout.addWidget(sidebar_container)
 
             # --- Content Area ---
             content_widget = QWidget()
             content_widget.setObjectName("contentWidget")
+            self._content_widget = content_widget
             content_layout = QVBoxLayout(content_widget)
             # Generous horizontal inset around the card column (Win11 insets its content well clear of the
             # sidebar + window edge); matches the window-width budget so cards keep their width as the
@@ -251,24 +273,38 @@ class SettingsDialog(QDialog):
             self.colors_page = self.appearance_page.colors_section
             self.units_page = self.appearance_page.units_section
 
-            self.hardware_page = HardwarePage(self.i18n, self._schedule_settings_update)
+            self.hardware_page = HardwarePage(self.i18n, self._schedule_settings_update,
+                                              self._open_color_dialog)
             self.interfaces_page = InterfacesPage(
                 self.i18n,
                 self.available_interfaces,
-                self._schedule_settings_update
+                self._schedule_settings_update,
+                primary_interface=self.primary_interface,
             )
             self.advanced_page = AdvancedPage(
                 self.i18n,
                 self._schedule_settings_update,
                 reset_page_callback=self._reset_advanced_page,
                 reset_all_callback=self._reset_all_to_defaults,
+                delete_history_callback=self._delete_all_history,
             )
+            # The Record-hardware-history card greys out live as CPU/GPU monitoring is switched.
+            def _sync_record_card(_on: bool = False) -> None:
+                self.advanced_page.set_hardware_monitoring_active(
+                    self.hardware_page.monitor_cpu.isChecked() or self.hardware_page.monitor_gpu.isChecked())
+            self.hardware_page.monitor_cpu.toggled.connect(_sync_record_card)
+            self.hardware_page.monitor_gpu.toggled.connect(_sync_record_card)
+            # Safety net for Delete all history: if the worker never answers, give the button back.
+            self._delete_timeout = QTimer(self)
+            self._delete_timeout.setSingleShot(True)
+            self._delete_timeout.setInterval(constants.timeouts.DB_DELETE_HISTORY_UI_TIMEOUT_MS)
+            self._delete_timeout.timeout.connect(self._on_delete_timeout)
 
             # Add pages wrapped in scroll areas (order matches sidebar)
             for page in [
                 self.general_page,       # 0 - General
-                self.widget_page,        # 1 - Widget
-                self.appearance_page,    # 2 - Appearance (font/color/units/color-coding/graph)
+                self.widget_page,        # 1 - Widget (layout, placement, mini graph)
+                self.appearance_page,    # 2 - Appearance (font/units/color-coding/background/arrows)
                 self.hardware_page,      # 3 - Hardware
                 self.interfaces_page,    # 4 - Network
                 self.advanced_page,      # 5 - Advanced
@@ -373,6 +409,7 @@ class SettingsDialog(QDialog):
             self.hardware_page.load_settings(self.config)
             self.interfaces_page.load_settings(self.config)
             self.advanced_page.load_settings(self.config)
+            self._refresh_metrics_status()
 
             # Seed the live preview from the loaded config.
             self._update_preview(self.config)
@@ -398,33 +435,6 @@ class SettingsDialog(QDialog):
         # there now), so the freshly-enabled stat is actually visible.
         try:
             self.hardware_page.hardware_enabled.connect(self.widget_page.ensure_hardware_visible)
-        except Exception:
-            pass
-        # When Force MB toggle is changed, ensure SMART update_rate is not selected.
-        try:
-            self.units_page.speed_display_mode.toggled.connect(self._on_force_mb_toggled)
-        except Exception:
-            # Defensive: if widget API differs, ignore
-            pass
-
-    def _on_force_mb_toggled(self, checked: bool) -> None:
-        """When Force MB is toggled, ensure update_rate SMART is not selected when Force MB is OFF.
-
-        If the toggle is turned OFF (auto mode) and the update rate slider is on SMART (position 0),
-        move it to AGGRESSIVE (1s) to prevent jitter. This enforces the UI-level rule immediately
-        so users can't save an incompatible combination.
-        """
-        try:
-            # If turned off, ensure GeneralPage slider isn't set to SMART
-            if not checked and hasattr(self, 'general_page'):
-                try:
-                    if self.general_page.update_rate.value() == 0:
-                        self.general_page.update_rate.setValue(1)
-                        self.general_page.update_rate.setValueText(self.general_page._format_update_rate_label(1))
-                        # Propagate change immediately
-                        self._schedule_settings_update()
-                except Exception:
-                    pass
         except Exception:
             pass
 
@@ -483,6 +493,20 @@ class SettingsDialog(QDialog):
         current_settings = self.get_settings()
         self._update_preview(current_settings)
         self.settings_changed.emit(current_settings)
+        # The emit applied the settings synchronously (incl. starting/stopping the metrics endpoint),
+        # so the endpoint's status now describes what the user just chose.
+        self._refresh_metrics_status()
+
+    def _refresh_metrics_status(self) -> None:
+        """Show the local metrics endpoint's live status (listening / port in use) under its address."""
+        try:
+            from netspeedtray.core.metrics_endpoint import EndpointStatus
+            ep = getattr(self.parent_widget, "metrics_endpoint", None)
+            status = getattr(ep, "status", None) if ep is not None else None
+            self.advanced_page.set_metrics_endpoint_status(
+                status if isinstance(status, EndpointStatus) else None)
+        except Exception as e:
+            self.logger.debug("metrics endpoint status unavailable: %s", e)
 
     def _update_preview(self, settings: Dict[str, Any]) -> None:
         """Refresh the live-preview strip to reflect the current (merged) settings."""
@@ -490,9 +514,37 @@ class SettingsDialog(QDialog):
         if pv is None:
             return
         try:
-            pv.set_config({**self.config, **(settings or {})})
+            # Preview parity on a side (LEFT/RIGHT) taskbar: as wide as the bar, laid out as there.
+            pv.set_bar_width(self._docked_side_bar_width())
+            merged = {**self.config, **(settings or {})}
+            pv.set_config(merged)
+            self.widget_page.set_display_mode_note(self._display_mode_note_kind(merged, pv.side_fit))
         except Exception as e:
             self.logger.debug("preview update failed: %s", e)
+
+    @staticmethod
+    def _display_mode_note_kind(settings: Dict[str, Any], side_fit) -> Optional[str]:
+        """Which note goes under Widget > Display Mode (WidgetPage.set_display_mode_note). The
+        hover-card switch wins on every edge - it is the reason the bar shows network only, and the
+        more specific explanation on a side bar too; else the side-bar note when a docked side bar
+        has no room for the hardware; else none."""
+        from netspeedtray.utils.helpers import hardware_in_hover_card_active
+        if hardware_in_hover_card_active(settings):
+            return "hover_card"
+        if side_fit is not None and side_fit.hides_hardware:
+            return "side_bar"
+        return None
+
+    def _docked_side_bar_width(self) -> Optional[int]:
+        """The live widget's width when it is docked to a side taskbar (it is exactly the bar's
+        thickness there), else None."""
+        w = self.parent_widget
+        try:
+            if getattr(w, "_cached_layout_mode", None) == "vertical" and int(w.width()) > 0:
+                return int(w.width())
+        except Exception:
+            pass
+        return None
 
     def get_settings(self) -> Dict[str, Any]:
         """Collects settings from all pages."""
@@ -514,13 +566,6 @@ class SettingsDialog(QDialog):
             else:
                  settings["color_is_automatic"] = self.original_config.get("color_is_automatic", True)
                  
-            # UI-level rule: if Force MB is OFF (speed_display_mode == 'auto') then SMART
-            # adaptive update mode is not allowed because it causes rapid unit flips.
-            # Enforce at UI collection time by forcing to 1s (AGGRESSIVE) when needed.
-            if settings.get("speed_display_mode") == "auto" and float(settings.get("update_rate", 1.0)) <= 0:
-                self.logger.info("Force MB is off and SMART was selected; forcing update_rate to %ss", UpdateMode.AGGRESSIVE)
-                settings["update_rate"] = float(UpdateMode.AGGRESSIVE)
-
             return settings
         except Exception as e:
             self.logger.error(f"Error collecting settings: {e}", exc_info=True)
@@ -540,6 +585,8 @@ class SettingsDialog(QDialog):
         # Get current color from the correct page to set initial state
         if key_name in ["high_speed_color", "low_speed_color"]:
             current_settings = self.colors_page.get_settings()
+        elif key_name in HardwarePage.LABEL_COLOR_KEYS:
+            current_settings = self.hardware_page.get_settings()
         else:
             current_settings = self.appearance_page.get_settings()
             
@@ -550,6 +597,8 @@ class SettingsDialog(QDialog):
             new_hex = color.name().upper()
             if key_name in ["high_speed_color", "low_speed_color"]:
                 self.colors_page.set_color_input(key_name.replace("_color", ""), new_hex)
+            elif key_name in HardwarePage.LABEL_COLOR_KEYS:
+                self.hardware_page.set_color_input(key_name, new_hex)
             else:
                 self.appearance_page.set_color_input(key_name.replace("_color", ""), new_hex)
             
@@ -573,7 +622,7 @@ class SettingsDialog(QDialog):
                 self,
                 self.i18n.EXPORT_SUPPORT_BUNDLE_TITLE,
                 default_path,
-                "Zip files (*.zip);;All Files (*)",
+                f"{self.i18n.STATS_DETAIL_EXPORT_ZIP_LABEL} (*.zip)",   # shared with the stats export
             )
 
             if not dest_path:
@@ -584,11 +633,15 @@ class SettingsDialog(QDialog):
                 config=self.config,
             )
             self.logger.info("Support bundle written to %s", written)
-            QMessageBox.information(
-                self,
-                self.i18n.SUCCESS_TITLE,
-                self.i18n.SUPPORT_BUNDLE_SUCCESS_MESSAGE.format(file_path=str(written)),
-            )
+            # The next step is attaching the zip to an issue, so offer to show it in Explorer.
+            box = QMessageBox(QMessageBox.Icon.Information, self.i18n.SUCCESS_TITLE,
+                              self.i18n.SUPPORT_BUNDLE_SUCCESS_MESSAGE.format(file_path=str(written)),
+                              parent=self)
+            open_btn = box.addButton(self.i18n.STATS_DETAIL_OPEN_FOLDER, QMessageBox.ButtonRole.AcceptRole)
+            box.addButton(QMessageBox.StandardButton.Ok)
+            box.exec()
+            if box.clickedButton() is open_btn:
+                reveal_in_explorer(str(written))
         except Exception as e:
             self.logger.error("Failed to export support bundle: %s", e, exc_info=True)
             QMessageBox.critical(
@@ -597,11 +650,14 @@ class SettingsDialog(QDialog):
                 self.i18n.SUPPORT_BUNDLE_ERROR_MESSAGE.format(error=str(e)),
             )
 
-    def update_interface_list(self, new_interfaces: List[str]) -> None:
-        """Updates the list of available network interfaces."""
+    def update_interface_list(self, new_interfaces: List[str],
+                              primary_interface: Optional[str] = None) -> None:
+        """Updates the list of available network interfaces and the marked primary one (None
+        clears the mark - no route right now)."""
         self.available_interfaces = new_interfaces
+        self.primary_interface = primary_interface
         if hasattr(self, 'interfaces_page'):
-            self.interfaces_page.update_interface_list(new_interfaces)
+            self.interfaces_page.update_interface_list(new_interfaces, primary_interface)
             # Re-apply current selection
             self.interfaces_page.load_settings(self.get_settings())
 
@@ -644,6 +700,108 @@ class SettingsDialog(QDialog):
         self.reset_with_config(defaults, self.startup_enabled_initial_state)
         self._schedule_settings_update()
 
+    def _confirm_delete_history(self) -> Optional[bool]:
+        """The destructive-action confirmation. Returns None if cancelled, else whether the user also
+        ticked "reset this period's data usage" (unchecked by default: the odometer is the data cap's
+        billing source, D5, and is the one thing here that history retention never touches)."""
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle(self.i18n.DELETE_HISTORY_CONFIRM_TITLE)
+        box.setText(self.i18n.DELETE_HISTORY_CONFIRM_TEXT)
+        # Said plainly: after a delete the cap still reads e.g. "120 of 200 GB" while "This month"
+        # (computed from the now-empty speed history) drops to ~0 - by design, not a bug.
+        box.setInformativeText(self.i18n.DELETE_HISTORY_USAGE_NOTE)
+        usage = QCheckBox(self.i18n.DELETE_HISTORY_INCLUDE_USAGE)
+        usage.setChecked(False)
+        box.setCheckBox(usage)
+        delete_btn = box.addButton(self.i18n.DELETE_HISTORY_CONFIRM_BUTTON,
+                                   QMessageBox.ButtonRole.DestructiveRole)
+        cancel_btn = box.addButton(self.i18n.CANCEL_BUTTON, QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(cancel_btn)
+        box.setEscapeButton(cancel_btn)
+        box.exec()
+        if box.clickedButton() is not delete_btn:
+            return None
+        return usage.isChecked()
+
+    def _delete_all_history(self) -> None:
+        """Settings > Advanced > Delete all history (2.2 item C). Immediate - not deferred to Save."""
+        ws = getattr(self.parent_widget, "widget_state", None)
+        if ws is None or not hasattr(ws, "delete_all_history") or not ws.can_delete_history():
+            # Checked BEFORE asking: no point confirming a delete nobody will carry out, and the
+            # button must never sit disabled waiting for a worker that isn't there.
+            self.logger.error("Delete all history: the history database is not available for writing.")
+            QMessageBox.critical(self, self.i18n.ERROR_TITLE, self.i18n.DELETE_HISTORY_FAILED)
+            return
+        include_usage = self._confirm_delete_history()
+        if include_usage is None:
+            return
+        if not getattr(self, "_history_deleted_connected", False):
+            try:
+                ws.history_deleted.connect(self._on_history_deleted)
+                self._history_deleted_connected = True
+            except Exception as e:
+                self.logger.debug("history_deleted not connectable: %s", e)
+        self.advanced_page.delete_history_btn.setEnabled(False)   # re-enabled on completion/timeout
+        self._delete_timeout.start()
+        # The cap alerts are re-armed only once the delete has SUCCEEDED (_on_history_deleted): a
+        # failed delete leaves the odometer as it was, so its alert state must stay too.
+        self._delete_include_usage = bool(include_usage)
+        ws.delete_all_history(include_usage=include_usage)
+        try:
+            self.parent_widget.update()   # repaint the mini graph from the now-empty series
+        except Exception:
+            pass
+
+    def _on_history_deleted(self, status: str) -> None:
+        """The worker's answer - a DatabaseWorker.DELETE_* status - reported as it is: 'compact_pending'
+        means the rows are gone but the file is still being cleaned (the worker keeps retrying)."""
+        from netspeedtray.core.database import DatabaseWorker
+        self._delete_timeout.stop()
+        try:
+            self.advanced_page.delete_history_btn.setEnabled(True)
+        except Exception:
+            pass
+        include_usage = getattr(self, "_delete_include_usage", False)
+        self._delete_include_usage = False
+        if status != DatabaseWorker.DELETE_FAILED and include_usage:
+            # The odometer restarted at 0, so re-arm the 80%/100% cap alerts for this period. Written
+            # into BOTH dialog snapshots too - Save writes self.config back, Cancel original_config,
+            # and either would otherwise restore the stale "already alerted" state.
+            self.config["usage_alert_state"] = ""
+            self.original_config["usage_alert_state"] = ""
+            if hasattr(self.parent_widget, "update_config"):
+                self.parent_widget.update_config({"usage_alert_state": ""})
+        if status != DatabaseWorker.DELETE_FAILED:
+            # The hover card caches its today/this-month totals; they were computed from the
+            # history that is now gone.
+            if hasattr(self.parent_widget, "invalidate_usage_cache"):
+                try:
+                    self.parent_widget.invalidate_usage_cache()
+                except Exception as e:
+                    self.logger.debug("hover usage cache not invalidated: %s", e)
+        if status == DatabaseWorker.DELETE_DONE:
+            QMessageBox.information(self, self.i18n.SUCCESS_TITLE, self.i18n.DELETE_HISTORY_DONE)
+        elif status == DatabaseWorker.DELETE_COMPACT_PENDING:
+            QMessageBox.information(self, self.i18n.SUCCESS_TITLE, self.i18n.DELETE_HISTORY_DONE_COMPACTING)
+        elif status == DatabaseWorker.DELETE_BACKUP_KEPT_UPGRADE:
+            # Honest: the upgrade's backup is still needed by an unfinished upgrade - not "shortly".
+            QMessageBox.information(self, self.i18n.SUCCESS_TITLE, self.i18n.DELETE_HISTORY_DONE_BACKUP_UPGRADE)
+        elif status == DatabaseWorker.DELETE_BACKUP_KEPT:
+            QMessageBox.warning(self, self.i18n.SUCCESS_TITLE, self.i18n.DELETE_HISTORY_DONE_BACKUP_KEPT)
+        else:
+            QMessageBox.critical(self, self.i18n.ERROR_TITLE, self.i18n.DELETE_HISTORY_FAILED)
+
+    def _on_delete_timeout(self) -> None:
+        """No answer from the write thread in DB_DELETE_HISTORY_UI_TIMEOUT_MS: give the button back
+        and say so, rather than leaving Delete disabled for the rest of the session."""
+        self.logger.warning("Delete all history: no answer from the database worker; giving up waiting.")
+        try:
+            self.advanced_page.delete_history_btn.setEnabled(True)
+        except Exception:
+            pass
+        QMessageBox.critical(self, self.i18n.ERROR_TITLE, self.i18n.DELETE_HISTORY_FAILED)
+
     def _save_and_close(self) -> None:
         """Saves settings and closes."""
         self.logger.debug("Save and close requested.")
@@ -678,6 +836,7 @@ class SettingsDialog(QDialog):
             # Apply settings to the main widget/application
             if hasattr(self.parent_widget, 'handle_settings_changed'):
                 self.parent_widget.handle_settings_changed(final_settings, save_to_disk=True)
+            self._refresh_metrics_status()
             
             # Determine startup change
             requested_startup = final_settings.get("start_with_windows", False)

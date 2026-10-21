@@ -6,6 +6,7 @@ GUIDs to friendly names, and determining the primary internet-facing interface.
 """
 
 import ctypes
+import ipaddress
 import logging
 import socket
 import sys
@@ -15,6 +16,8 @@ from dataclasses import dataclass
 from typing import Optional
 
 import psutil
+
+from netspeedtray import constants
 
 logger = logging.getLogger("NetSpeedTray.NetworkUtils")
 
@@ -77,50 +80,81 @@ def _note_reachable() -> None:
 
 
 
+def _route_source_address(family: int, target: tuple) -> Optional[str]:
+    """The local address the OS would use to reach `target` (UDP connect - no packet is sent).
+    Raises OSError when the family has no route."""
+    with socket.socket(family, socket.SOCK_DGRAM) as s:
+        s.settimeout(0.1)
+        s.connect(target)
+        local_ip = s.getsockname()[0]
+    if local_ip in ("0.0.0.0", "::"):
+        return None
+    return local_ip
+
+
+def _same_address(a: str, b: str) -> bool:
+    """Address equality that survives IPv6 spelling differences ('2001:DB8::1' vs
+    '2001:db8:0:0:0:0:0:1') and a '%scope' suffix on either side."""
+    try:
+        return ipaddress.ip_address(a.split("%", 1)[0]) == ipaddress.ip_address(b.split("%", 1)[0])
+    except ValueError:
+        return a == b
+
+
 def get_primary_interface_name() -> Optional[str]:
     """
     Determines the name of the network interface associated with the default gateway.
 
     This is the interface most likely responsible for the main internet connection.
     It works by creating a temporary UDP socket to a public DNS server (without
-    sending any data) and checking which local IP address the OS chooses.
+    sending any data) and checking which local IP address the OS chooses. IPv4 is
+    tried first, then IPv6 - an IPv6-only network has no IPv4 default route, and
+    resolving nothing there left auto mode metering zero bytes indefinitely
+    (data-usage accuracy audit, finding 2).
 
     Returns:
         The name of the primary interface (e.g., "Wi-Fi"), or None if it
         cannot be determined.
     """
-    local_ip = "0.0.0.0" # Initialize for logging in case of early exit
+    probes = (
+        (socket.AF_INET, constants.network.interface.ROUTE_PROBE_V4),
+        (socket.AF_INET6, constants.network.interface.ROUTE_PROBE_V6),
+    )
+    last_error: Optional[BaseException] = None
+    tried_ips = []
     try:
-        # Create a UDP socket to a public IP (Google's DNS) to find the default route
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            s.settimeout(0.1)
-            s.connect(("8.8.8.8", 80))
-            local_ip = s.getsockname()[0]
-        
-        if local_ip == "0.0.0.0":
-            logger.warning("Could not determine a specific local IP; got 0.0.0.0.")
-            return None
+        for family, target in probes:
+            try:
+                local_ip = _route_source_address(family, target)
+            except (OSError, socket.gaierror) as e:
+                last_error = e
+                continue
+            if local_ip is None:
+                continue
+            tried_ips.append(local_ip)
 
-        # Find the interface that has this local IP address
-        all_addrs = psutil.net_if_addrs()
-        for iface_name, addrs in all_addrs.items():
-            for addr in addrs:
-                if addr.family == socket.AF_INET and addr.address == local_ip:
-                    _note_reachable()
-                    logger.debug(f"Determined primary interface: '{iface_name}' with IP {local_ip}")
-                    return iface_name
-                    
-    except (OSError, socket.gaierror) as e:
-        # Having no route is a NORMAL, recurring state (offline, VPN reconnecting, resuming from
-        # sleep), not an event worth a line per attempt. Log the EDGE: once on the way in, once on
-        # the way out. See _note_unreachable().
-        _note_unreachable(e)
-        return None
+            # Find the interface that has this local IP address
+            for iface_name, addrs in psutil.net_if_addrs().items():
+                for addr in addrs:
+                    if addr.family == family and _same_address(addr.address, local_ip):
+                        _note_reachable()
+                        logger.debug("Determined primary interface: '%s' with IP %s", iface_name, local_ip)
+                        return iface_name
     except Exception as e:
         logger.error(f"Unexpected error determining primary interface: {e}", exc_info=True)
         return None
-        
-    logger.warning(f"Could not find an interface matching the local IP {local_ip}.")
+
+    if not tried_ips:
+        if last_error is not None:
+            # Having no route is a NORMAL, recurring state (offline, VPN reconnecting, resuming from
+            # sleep), not an event worth a line per attempt. Log the EDGE: once on the way in, once on
+            # the way out. See _note_unreachable().
+            _note_unreachable(last_error)
+        else:
+            logger.warning("Could not determine a specific local IP; got an unspecified address.")
+        return None
+
+    logger.warning(f"Could not find an interface matching the local IP {tried_ips[-1]}.")
     return None
 
 

@@ -11,8 +11,10 @@ unlabelled one the way matplotlib does. `_init_matplotlib` is replaced per test 
 never by class assignment, which leaks into every later test in the session.
 """
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import matplotlib.dates as mdates
 import numpy as np
 import pytest
 from matplotlib.figure import Figure
@@ -20,6 +22,7 @@ from matplotlib.figure import Figure
 from netspeedtray.constants import styles as style_constants
 from netspeedtray.constants.i18n import I18nStrings
 from netspeedtray.views.graph.renderer import GraphRenderer
+from netspeedtray.views.monitor.graph_hover import GraphHoverTooltip
 
 
 def _bare_init(self):
@@ -113,3 +116,64 @@ def test_role_names_are_the_localized_ui_strings(renderer):
     assert renderer._hw_role_label("gpu") == i18n.ORDER_TYPE_GPU
     assert renderer._hw_role_label("ram") == i18n.MONITOR_TILE_RAM
     assert renderer._hw_role_label("vram") == "VRAM"       # anything unmapped: readable, never `_child`
+
+
+# ----------------------------------------------------------------------------- end to end: render() -> hover
+
+# The tests above call the plot helpers directly. These go through the entry point the Monitor's
+# GraphHost uses - `render(..., stat_type=..., hw_styles=...)` - and then ask the real hover lookup
+# what it would show. A change in render()'s dispatch that routes a layout to an unlabelled plot call
+# (the #281 bug) fails here even if every helper is still labelled.
+
+def _hover_rows(renderer, stat, at):
+    """What GraphHoverTooltip._rows_at returns on every visible axis, for the cursor at `at`."""
+    host = SimpleNamespace(_current_stat=stat, config={}, i18n=renderer.i18n)
+    hover = GraphHoverTooltip(host)
+    x = mdates.date2num(at)
+    return [[(lbl, round(y, 2)) for lbl, y, _c in hover._rows_at(ax, x)[0]]
+            for ax in renderer.figure.axes if ax.get_visible()]
+
+
+def _net_rows(n, gap_after=None):
+    """(epoch, upload B/s, download B/s) rows: 100 kB/s up (0.8 Mbps), 5 MB/s down (40 Mbps)."""
+    rows = []
+    for i in range(n):
+        shift = 300 if gap_after is not None and i > gap_after else 0
+        rows.append(((T0 + timedelta(seconds=i + shift)).timestamp(), 1e5, 5e6))
+    return rows
+
+
+@pytest.mark.parametrize("rows", [_net_rows(60), _net_rows(60, gap_after=30)],
+                         ids=["continuous", "with-gap"])
+def test_network_render_gives_the_hover_both_series(renderer, rows):
+    renderer.render(rows, T0, T0 + timedelta(seconds=400), PERIOD, stat_type="network",
+                    force_rebuild=True)
+    got = _hover_rows(renderer, "network", T0 + timedelta(seconds=10))
+    assert got == [[(renderer.i18n.DOWNLOAD_LABEL, 40.0)], [(renderer.i18n.UPLOAD_LABEL, 0.8)]]
+
+
+def test_network_live_refresh_keeps_the_hover_alive(renderer):
+    """Later ticks update the existing lines in place (set_data); the label must survive that."""
+    renderer.render(_net_rows(60), T0, T0 + timedelta(seconds=60), PERIOD, stat_type="network",
+                    force_rebuild=True)
+    renderer.render(_net_rows(61), T0, T0 + timedelta(seconds=61), PERIOD, stat_type="network")
+    got = _hover_rows(renderer, "network", T0 + timedelta(seconds=10))
+    assert got == [[(renderer.i18n.DOWNLOAD_LABEL, 40.0)], [(renderer.i18n.UPLOAD_LABEL, 0.8)]]
+
+
+@pytest.mark.parametrize("stat,data,expected", [
+    ("cpu", _hw_rows(value=40.0), [[("cpu", 40.0)]]),
+    ("gpu", _hw_rows(value=30.0), [[("gpu", 30.0)]]),
+    ("hwcombined", {"cpu": _hw_rows(value=40.0), "gpu": _hw_rows(value=30.0)},
+     [[("cpu", 40.0), ("gpu", 30.0)]]),
+    ("hwseparate", {"cpu": _hw_rows(value=40.0), "gpu": _hw_rows(value=30.0),
+                    "ram": _hw_rows(value=70.0)},
+     [[("cpu", 40.0)], [("gpu", 30.0)], [("ram", 70.0)]]),
+])
+def test_hardware_render_gives_the_hover_every_series(renderer, stat, data, expected):
+    """Every Hardware-tab layout the Monitor can pick (combined, separate, CPU/GPU toggle). The
+    Monitor always passes hw_styles, which is what routes the toggle to the labelled path."""
+    renderer.render(data, T0, T0 + timedelta(seconds=30), PERIOD, stat_type=stat,
+                    force_rebuild=True, hw_styles={})
+    got = _hover_rows(renderer, stat, T0 + timedelta(seconds=10))
+    assert got == [[(renderer._hw_role_label(role), v) for role, v in axis] for axis in expected]

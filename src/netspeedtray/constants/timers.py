@@ -6,12 +6,13 @@ from typing import Final
 
 class TimerConstants:
     """Defines all timer intervals used for updates and checks."""
-    SMART_MODE_INTERVAL_MS: Final[int] = 2000
     MINIMUM_INTERVAL_MS: Final[int] = 100
     CSV_FLUSH_INTERVAL_MS: Final[int] = 5000
     POSITION_CHECK_INTERVAL_MS: Final[int] = 500
     VISIBILITY_CHECK_INTERVAL_MS: Final[int] = 500
     MAXIMUM_UPDATE_RATE_SECONDS: Final[float] = 10.0
+    # The one-time "history upgraded" flyout reads three sentences - twice the data-cap alert's 15 s.
+    HISTORY_UPGRADE_NOTICE_MS: Final[int] = 30000
 
     def __init__(self) -> None:
         self.validate()

@@ -27,7 +27,8 @@ from netspeedtray import constants
 from netspeedtray.utils.config import stable_pseudonym
 # We import taskbar_utils for low-level detection
 from netspeedtray.utils import taskbar_utils
-from netspeedtray.utils.taskbar_utils import TaskbarInfo, get_taskbar_info, is_small_taskbar
+from netspeedtray.utils.taskbar_utils import (TaskbarInfo, get_taskbar_info, is_small_taskbar,
+                                              horizontal_taskbar_strip, vertical_taskbar_strip)
 
 if TYPE_CHECKING:
     from netspeedtray.views.widget import NetworkSpeedWidget
@@ -198,8 +199,11 @@ class PositionCalculator:
                         widget_width, max_width
                     )
                     widget_width = max_width
-                # Clamp height
-                if widget_height > max_height:
+                # Clamp height - but not on a side taskbar, where side_by_side stacks its segments into a
+                # widget taller than the cap, and positioning it by the clamped height would sink it over
+                # the tray. There the real height is bounded by the taskbar icons and validate_position.
+                if widget_height > max_height and edge not in (constants.taskbar.edge.LEFT,
+                                                               constants.taskbar.edge.RIGHT):
                     logger.warning(
                         "Widget height %s exceeds max %spx (DPI-scaled). Clamping to prevent off-screen positioning.",
                         widget_height, max_height
@@ -252,29 +256,10 @@ class PositionCalculator:
         
         edge = taskbar_info.get_edge_position()
         
-        if edge == constants.taskbar.edge.BOTTOM:
-            # Visible taskbar is the space below available geometry
-            visible_tb_height = full_geom.bottom() - avail_geom.bottom()
-            y_origin = avail_geom.bottom() + 1
-            if visible_tb_height <= 0:
-                # Work area isn't inset for the taskbar (auto-hide, or the Win11 26200 quirk
-                # where availableGeometry() == geometry() - see #221). Take the band height
-                # from the taskbar rect, but anchor Y to the STABLE screen edge, NOT
-                # taskbar_info.rect[1]: an auto-hide taskbar's rect top slides during the
-                # show/hide animation, and reading it here made the widget chase the slide
-                # up and down every refresh tick (#135). A docked bottom taskbar always
-                # occupies the bottom `visible_tb_height` band of the screen.
-                visible_tb_height = (taskbar_info.rect[3] - taskbar_info.rect[1]) / dpi_scale
-                y_origin = (full_geom.bottom() + 1) - visible_tb_height
-        elif edge == constants.taskbar.edge.TOP:
-            # Visible taskbar is the space above available geometry
-            visible_tb_height = avail_geom.top() - full_geom.top()
-            y_origin = full_geom.top()
-            if visible_tb_height <= 0:
-                # See the BOTTOM note (#135/#221). Anchor to the screen's top edge, which is
-                # stable; the rect top slides off-screen while an auto-hide taskbar animates.
-                visible_tb_height = (taskbar_info.rect[3] - taskbar_info.rect[1]) / dpi_scale
-                y_origin = full_geom.top()
+        if edge in (constants.taskbar.edge.BOTTOM, constants.taskbar.edge.TOP):
+            # The visible strip: work-area inset capped by the taskbar window, anchored to the
+            # stable screen edge (#104/#110, #135, #221, #322 - see horizontal_taskbar_strip).
+            y_origin, visible_tb_height = horizontal_taskbar_strip(taskbar_info, edge, dpi_scale)
         else:
             # Fallback to rect-based if we're not sure
             visible_tb_height = (taskbar_info.rect[3] - taskbar_info.rect[1]) / dpi_scale
@@ -282,8 +267,8 @@ class PositionCalculator:
 
         # Calculate Y: center widget vertically in the *visible* taskbar gap
         y_center = y_origin + (visible_tb_height - widget_height) / 2.0
-        y = round(y_center)
-        
+        y = self._clamp_into_strip(round(y_center), widget_height, y_origin, visible_tb_height, edge)
+
         # Calculate X: align to the right (system-tray side), keeping the widget clear of the tray.
         tray_rect = taskbar_info.get_tray_rect()
         offset = config.get('tray_offset_x', constants.config.defaults.DEFAULT_TRAY_OFFSET_X)
@@ -319,6 +304,33 @@ class PositionCalculator:
 
         return x, y
 
+    @staticmethod
+    def _clamp_into_strip(y: int, widget_height: int, strip_top: float, strip_height: float,
+                          edge: constants.TaskbarEdge) -> int:
+        """Keep a horizontal-taskbar widget inside its strip, top AND bottom edge (#322).
+
+        ScreenUtils.validate_position only keeps the widget on the SCREEN: an over-tall widget
+        centred on a TOP bar got a negative y, was pushed down to the screen top, and every pixel of
+        overflow landed on the desktop. Layout now sizes the widget to the strip, so this is the
+        backstop: inside the strip when it fits; when it can't fit, flush with the screen edge the
+        bar sits on, so overflow is at least bounded by the screen rather than centred off it.
+        """
+        top = math.ceil(strip_top)
+        bottom = math.floor(strip_top + strip_height)   # exclusive
+        if widget_height <= bottom - top:
+            return max(top, min(y, bottom - widget_height))
+        return top if edge == constants.taskbar.edge.TOP else bottom - widget_height
+
+    @staticmethod
+    def _centre_in_strip(widget_width: int, x_origin: float, strip_width: float) -> int:
+        """x of a side-bar widget centred in its strip.
+
+        No clamp is needed for a fractional-DPI strip (38.4 px at 125%): when the widget fits the
+        whole pixels [ceil(x0), floor(x0 + strip)] - layout floors the width so it always does - the
+        centre lies strictly within half a pixel of that span's centre, so rounding it can never move
+        an edge outside the span (test_side_taskbar_compact checks this exhaustively)."""
+        return round(x_origin + (strip_width - widget_width) / 2.0)
+
     def _calculate_vertical_position(self, taskbar_info: TaskbarInfo, widget_size: Tuple[int, int],
                                      config: Dict[str, Any], dpi_scale: float) -> Tuple[int, int]:
         """
@@ -341,31 +353,12 @@ class PositionCalculator:
             avail_geom = full_geom
         
         edge = taskbar_info.get_edge_position()
-        
-        if edge == constants.taskbar.edge.RIGHT:
-            # Visible taskbar is the space to the right of available geometry
-            visible_tb_width = full_geom.right() - avail_geom.right()
-            x_origin = avail_geom.right() + 1
-            if visible_tb_width <= 0:
-                # No work-area inset (auto-hide, or the #221 quirk). Anchor X to the STABLE
-                # screen edge, not taskbar_info.rect[0] which slides during the auto-hide
-                # animation (the vertical-taskbar analogue of the #135 bottom/top jump). A
-                # docked right taskbar always occupies the right `visible_tb_width` band.
-                visible_tb_width = (taskbar_info.rect[2] - taskbar_info.rect[0]) / dpi_scale
-                x_origin = (full_geom.right() + 1) - visible_tb_width
-        else: # LEFT
-            # Visible taskbar is the space to the left of available geometry
-            visible_tb_width = avail_geom.left() - full_geom.left()
-            x_origin = full_geom.left()
-            if visible_tb_width <= 0:
-                # See the RIGHT note (#135/#221). Anchor to the screen's left edge, which is
-                # stable; the rect left slides off-screen while a left auto-hide bar animates.
-                visible_tb_width = (taskbar_info.rect[2] - taskbar_info.rect[0]) / dpi_scale
-                x_origin = full_geom.left()
-            
-        # Calculate X: center widget horizontally in taskbar gap
-        x_center = x_origin + (visible_tb_width - widget_width) / 2.0
-        x = round(x_center)
+
+        # The visible strip: work-area inset capped by the taskbar window (the window when there is no
+        # inset - auto-hide / #221), anchored to the STABLE screen edge, never rect[0], which slides
+        # while an auto-hide bar animates (#135). Same strip the layout sizes the width from.
+        x_origin, visible_tb_width = vertical_taskbar_strip(taskbar_info, edge, dpi_scale)
+        x = self._centre_in_strip(widget_width, x_origin, visible_tb_width)
         
         # Calculate Y: align to bottom (system tray side) with offset.
         tray_rect = taskbar_info.get_tray_rect()
@@ -434,17 +427,10 @@ class PositionCalculator:
 
             if edge in (constants.taskbar.edge.BOTTOM, constants.taskbar.edge.TOP):
                 # Horizontal Constraint - center on visible taskbar area
-                screen_obj = taskbar_info.get_screen()
-                if screen_obj and edge == constants.taskbar.edge.BOTTOM:
-                    vis_top = screen_obj.availableGeometry().bottom() + 1
-                    vis_bot = screen_obj.geometry().bottom() + 1
-                elif screen_obj and edge == constants.taskbar.edge.TOP:
-                    vis_top = screen_obj.geometry().top()
-                    vis_bot = screen_obj.availableGeometry().top()
-                else:
-                    vis_top = round(taskbar_info.rect[1] / dpi_scale)
-                    vis_bot = round(taskbar_info.rect[3] / dpi_scale)
-                fixed_y = round((vis_top + vis_bot) / 2.0 - widget_height / 2.0)
+                # Same strip as the auto-placement (#322), so a drag can't park it off the bar either.
+                vis_top, vis_h = horizontal_taskbar_strip(taskbar_info, edge, dpi_scale)
+                fixed_y = self._clamp_into_strip(round(vis_top + (vis_h - widget_height) / 2.0),
+                                                 widget_height, vis_top, vis_h, edge)
                 
                 # Keep the same tray-side gap as the auto-placement, so a user can't drag the widget
                 # flush against the "^" chevron (#161 pt1).
@@ -455,10 +441,9 @@ class PositionCalculator:
                 return QPoint(constrained_x, fixed_y)
 
             elif edge in (constants.taskbar.edge.LEFT, constants.taskbar.edge.RIGHT):
-                # Vertical Constraint
-                tb_left_log = round(taskbar_info.rect[0] / dpi_scale)
-                tb_width_log = round((taskbar_info.rect[2] - taskbar_info.rect[0]) / dpi_scale)
-                fixed_x = tb_left_log + (tb_width_log - widget_width) // 2
+                # Vertical Constraint - the same strip as the auto-placement and the width.
+                strip_x, strip_w = vertical_taskbar_strip(taskbar_info, edge, dpi_scale)
+                fixed_x = self._centre_in_strip(widget_width, strip_x, strip_w)
                 
                 # Keep within the safe zone, but allow bottom-alignment as calculated choice
                 bottom_boundary = (round(taskbar_info.get_tray_rect()[1] / dpi_scale) - widget_height - constants.layout.DEFAULT_PADDING) if taskbar_info.get_tray_rect() else (screen.geometry().bottom() - widget_height)

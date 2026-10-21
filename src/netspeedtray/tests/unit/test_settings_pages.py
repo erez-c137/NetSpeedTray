@@ -9,6 +9,7 @@ from PyQt6.QtGui import QFont
 
 from netspeedtray.views.settings.pages.general import GeneralPage
 from netspeedtray.views.settings.pages.appearance import AppearancePage
+from netspeedtray.views.settings.pages.mini_graph_section import MiniGraphSection
 from netspeedtray.views.settings.pages.units import UnitsPage
 from netspeedtray.views.settings.pages.interfaces import InterfacesPage
 from netspeedtray.views.settings.pages.colors import ColorsPage
@@ -30,6 +31,9 @@ def mock_i18n():
     i18n.OPTIONS_GROUP_TITLE = "Options"
     i18n.DYNAMIC_UPDATE_RATE_LABEL = "Dynamic Update"
     i18n.START_WITH_WINDOWS_LABEL = "Start with Windows"
+    i18n.PAUSE_IN_MENU_LABEL = "Pause in menu"          # General > Interaction (2.2 IA change 3)
+    i18n.HOVER_USAGE_CARD_LABEL = "Show usage on hover"
+    i18n.HOVER_TIPS_LABEL = "Show tips"
     i18n.FREE_MOVE_LABEL = "Free Move"
     i18n.FONT_SETTINGS_GROUP_TITLE = "Font"
     i18n.FONT_FAMILY_LABEL = "Family"
@@ -78,6 +82,17 @@ def mock_i18n():
     i18n.GRAPH_NOTE_TEXT = "Note"
     i18n.HISTORY_DURATION_LABEL = "History"
     i18n.GRAPH_OPACITY_LABEL = "Opacity"
+    i18n.GRAPH_FIXED_SCALE_LABEL = "Fixed Graph Scale"
+    i18n.GRAPH_FIXED_SCALE_DESC = "Scale to your plan speed"
+    i18n.GRAPH_SCALE_HEADROOM_LABEL = "Headroom"
+    i18n.GRAPH_SHOW_CEILING_LABEL = "Show Plan Speed Line"
+    i18n.GRAPH_SHOW_CEILING_DESC = "Needs headroom above 0%"
+    i18n.GRAPH_SPLIT_LABEL = "Separate Upload and Download Graphs"
+    i18n.GRAPH_SPLIT_DESC = "Side by side or stacked"
+    i18n.GRAPH_STYLE_LABEL = "Graph style"
+    i18n.GRAPH_STYLE_DESC = "Detailed or Trend"
+    i18n.GRAPH_STYLE_DETAILED = "Detailed"
+    i18n.GRAPH_STYLE_TREND = "Trend"
     i18n.UNIT_TYPE_LABEL = "Unit Type"
     i18n.UNIT_TYPE_BITS_DECIMAL = "Bits (Dec)"
     i18n.UNIT_TYPE_BITS_BINARY = "Bits (Bin)"
@@ -96,12 +111,10 @@ def mock_i18n():
     i18n.MONITORING_MODE_PHYSICAL = "Physical"
     i18n.MONITORING_MODE_VIRTUAL = "Virtual"
     i18n.MONITORING_MODE_SELECTED = "Selected"
-    i18n.MONITORING_MODE_AUTO_TOOLTIP = "Auto Tooltip"
-    i18n.MONITORING_MODE_PHYSICAL_TOOLTIP = "Physical Tooltip"
-    i18n.MONITORING_MODE_VIRTUAL_TOOLTIP = "Virtual Tooltip"
-    i18n.MONITORING_MODE_SELECTED_TOOLTIP = "Selected Tooltip"
-    i18n.EXPORT_ERROR_LOG_TOOLTIP = "Export Log"
     i18n.NO_INTERFACES_FOUND = "None"
+    i18n.INTERFACE_GROUP_PHYSICAL = "Physical adapters"
+    i18n.INTERFACE_GROUP_VIRTUAL = "Virtual adapters and VPNs"
+    i18n.INTERFACE_ACTIVE_CONNECTION = "Active connection"
     i18n.TROUBLESHOOTING_GROUP = "Troubleshooting"
     i18n.EXPORT_ERROR_LOG_BUTTON = "Export"
     i18n.DISPLAY_FORMAT_GROUP = "Data Format"
@@ -121,12 +134,12 @@ def mock_i18n():
     # New v1.3.0 Keys
     i18n.BACKGROUND_SETTINGS_GROUP_TITLE = "Background"
     i18n.BACKGROUND_COLOR_LABEL = "Bg Color"
-    i18n.BACKGROUND_COLOR_TOOLTIP = "Select Bg"
     i18n.BACKGROUND_OPACITY_LABEL = "Opacity"
     i18n.SHORT_UNIT_LABELS_LABEL = "Short Labels"
     i18n.KEEP_VISIBLE_FULLSCREEN_LABEL = "Keep Visible in Fullscreen"
     i18n.BEHAVIOR_GROUP_TITLE = "Behavior"
     i18n.MINI_GRAPH_SECTION_TITLE = "Mini Graph"
+    i18n.HARDWARE_GRAPH_NOTE = "Hardware graphs use the same opacity and timespan"
     i18n.HARDWARE_INDICATOR_STYLE_LABEL = "Indicator Style"
     i18n.MONITORING_MODE_AUTO_SUBTITLE = "Monitors the primary active connection"
     i18n.MONITORING_MODE_PHYSICAL_SUBTITLE = "Excludes VPNs and virtual adapters"
@@ -134,7 +147,6 @@ def mock_i18n():
     i18n.MONITORING_MODE_SELECTED_SUBTITLE = "Choose specific interfaces from the list below"
 
     # For GeneralPage update rate slider
-    i18n.SMART_MODE_LABEL = "Smart"
     i18n.UPDATE_MODE_AGGRESSIVE_LABEL = "Aggressive"
     i18n.UPDATE_MODE_BALANCED_LABEL = "Balanced"
     i18n.UPDATE_MODE_EFFICIENT_LABEL = "Efficient"
@@ -177,16 +189,11 @@ def test_general_page(q_app, mock_i18n, mock_callback):
     assert "free_move" not in settings
     assert "tray_offset_x" not in settings
 
-    # Test with Smart mode (update_rate = -1.0)
-    config_smart = {
-        "language": "en_US",
-        "update_rate": -1.0,  # SMART sentinel
-    }
-
-    page.load_settings(config_smart, is_startup_enabled=False)
-    settings_smart = page.get_settings()
-    assert settings_smart["update_rate"] == -1.0  # Smart mode
-    assert settings_smart["language"] == "en_US"
+    # The slowest preset round-trips too (10 s must not clamp to 5 s on a renumbered slider).
+    page.load_settings({"language": "en_US", "update_rate": 10.0}, is_startup_enabled=False)
+    settings_slow = page.get_settings()
+    assert settings_slow["update_rate"] == 10.0
+    assert settings_slow["language"] == "en_US"
 
 
 def test_language_none_round_trips_as_auto_detect(q_app, mock_i18n, mock_callback):
@@ -324,9 +331,6 @@ def test_appearance_page(q_app, mock_i18n, mock_callback):
         "use_separate_arrow_font": False,
         "arrow_font_family": "Arial",
         "arrow_font_size": 10,
-        "graph_enabled": False,
-        "history_minutes": 30,
-        "graph_opacity": 80
     }
 
     with patch("PyQt6.QtGui.QFontDatabase.styles", return_value=["Normal", "Bold"]):
@@ -336,6 +340,15 @@ def test_appearance_page(q_app, mock_i18n, mock_callback):
     assert settings["font_family"] == "Arial"
     assert settings["font_size"] == 10
     assert settings["default_color"] == "#FF0000"
+    # The Mini Graph section moved to the Widget page (2.2 IA pass) - Appearance no longer owns its keys.
+    assert not {"graph_enabled", "history_minutes", "graph_opacity"} & set(settings)
+
+
+def test_mini_graph_section_round_trip(q_app, mock_i18n, mock_callback):
+    """The basic graph keys (was part of test_appearance_page) round-trip through the moved section."""
+    page = MiniGraphSection(mock_i18n, mock_callback)
+    page.load_settings({"graph_enabled": False, "history_minutes": 30, "graph_opacity": 80})
+    settings = page.get_settings()
     assert settings["graph_enabled"] is False
     assert settings["history_minutes"] == 30
     assert settings["graph_opacity"] == 80
@@ -446,6 +459,72 @@ def test_arrow_colors_round_trip(q_app, mock_i18n, mock_callback):
     out = page.get_settings()
     assert out["use_custom_arrow_colors"] is False
     assert out["arrow_up_color"] == "#ABCDEF"
+
+
+def test_graph_fixed_scale_defaults_off(q_app, mock_i18n, mock_callback):
+    """A config from before the setting existed loads as automatic, with the sub-options hidden."""
+    page = MiniGraphSection(mock_i18n, mock_callback)
+    page.load_settings({})
+    assert page.graph_fixed_scale.isChecked() is False
+    assert page.graph_scale_container.isVisibleTo(page) is False
+    out = page.get_settings()
+    assert out["graph_fixed_scale"] is False
+    assert out["graph_scale_headroom"] == constants.config.defaults.DEFAULT_GRAPH_SCALE_HEADROOM
+    assert out["graph_show_ceiling"] is constants.config.defaults.DEFAULT_GRAPH_SHOW_CEILING
+
+
+def test_graph_fixed_scale_round_trip(q_app, mock_i18n, mock_callback):
+    """Toggle, headroom and plan-speed line persist; headroom + line only show with the fixed scale on."""
+    page = MiniGraphSection(mock_i18n, mock_callback)
+    page.load_settings({"graph_fixed_scale": True, "graph_scale_headroom": 30, "graph_show_ceiling": False})
+    assert page.graph_scale_container.isVisibleTo(page) is True
+    out = page.get_settings()
+    assert out["graph_fixed_scale"] is True
+    assert out["graph_scale_headroom"] == 30
+    assert out["graph_show_ceiling"] is False
+
+    page.graph_fixed_scale.setChecked(False)
+    assert page.graph_scale_container.isVisibleTo(page) is False
+
+
+def test_plan_speed_line_grayed_out_at_zero_headroom(q_app, mock_i18n, mock_callback):
+    """At 0% headroom the plan speed is the graph's top edge and no line is drawn, so the line toggle is
+    unavailable - and comes back as soon as there is headroom to show it in. Its saved value survives."""
+    page = MiniGraphSection(mock_i18n, mock_callback)
+    page.load_settings({"graph_fixed_scale": True, "graph_scale_headroom": 0, "graph_show_ceiling": True})
+    assert page._ceiling_card.isEnabled() is False
+    assert page.get_settings()["graph_show_ceiling"] is True
+
+    page.graph_scale_headroom.setCurrentIndex(page.graph_scale_headroom.findData(20))
+    assert page._ceiling_card.isEnabled() is True
+    assert page.get_settings()["graph_scale_headroom"] == 20
+
+
+def test_graph_headroom_outside_the_choices_falls_back_to_default(q_app, mock_i18n, mock_callback):
+    """A hand-edited headroom the combo doesn't offer must not leave the combo blank."""
+    page = MiniGraphSection(mock_i18n, mock_callback)
+    page.load_settings({"graph_fixed_scale": True, "graph_scale_headroom": 25})
+    assert page.get_settings()["graph_scale_headroom"] == constants.config.defaults.DEFAULT_GRAPH_SCALE_HEADROOM
+
+
+def test_graph_split_round_trip(q_app, mock_i18n, mock_callback):
+    """Separate upload/download graphs: off by default, persists when on."""
+    page = MiniGraphSection(mock_i18n, mock_callback)
+    page.load_settings({"graph_enabled": True})
+    assert page.get_settings()["graph_split_directions"] is False
+    page.load_settings({"graph_enabled": True, "graph_split_directions": True})
+    assert page.graph_split.isChecked() is True
+    assert page.get_settings()["graph_split_directions"] is True
+
+
+def test_graph_split_grayed_out_without_the_mini_graph(q_app, mock_i18n, mock_callback):
+    """It splits the mini graph, so it is unavailable while the graph is off - and its stored value survives."""
+    page = MiniGraphSection(mock_i18n, mock_callback)
+    page.load_settings({"graph_enabled": False, "graph_split_directions": True})
+    assert page._split_card.isEnabled() is False
+    assert page.get_settings()["graph_split_directions"] is True
+    page.enable_graph.setChecked(True)
+    assert page._split_card.isEnabled() is True
 
 
 def test_arrow_color_widgets_follow_the_dialog_naming_convention(q_app, mock_i18n, mock_callback):

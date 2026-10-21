@@ -193,12 +193,14 @@ def test_unique_dir_returns_same_when_absent(tmp_path):
     assert ui._unique_dir(str(target)) == str(target)
 
 
-def test_unique_dir_clears_removable_stale(tmp_path):
+def test_unique_dir_never_deletes_an_existing_folder(tmp_path):
+    """#260 review: in Downloads an existing NetSpeedTray-<ver> may be the user's own folder (a copy
+    they unzipped by hand, a rollback). It is never cleared to make room - a suffix is used."""
     target = tmp_path / "NetSpeedTray-2.1.0"
     target.mkdir()
-    (target / "old.txt").write_text("stale from a prior run")
-    assert ui._unique_dir(str(target)) == str(target)
-    assert not target.exists()
+    (target / "mine.txt").write_text("the user's")
+    assert ui._unique_dir(str(target)) == str(tmp_path / "NetSpeedTray-2.1.0-2")
+    assert (target / "mine.txt").read_text() == "the user's"
 
 
 def test_unique_dir_suffixes_when_stale_cannot_be_removed(tmp_path, monkeypatch):

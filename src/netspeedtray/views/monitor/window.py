@@ -15,6 +15,7 @@ import logging
 from typing import Any, Callable, Dict, List, Optional
 
 from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QStackedWidget, QApplication, QLabel, QToolButton,
 )
@@ -68,7 +69,26 @@ class MonitorWindow(QWidget):
         self.resize(default_w, default_h)
         self.setObjectName("monitorWindow")
         c = su.semantic_colors()
-        self.setStyleSheet(f"#monitorWindow {{ background: {c['card_bg']}; }}")
+        # Palette too, not only QSS: the first native frame is filled from the palette before any
+        # stylesheet paint, so a light system palette flashed a white window on open.
+        pal = self.palette()
+        pal.setColor(QPalette.ColorRole.Window, QColor(c['card_bg']))
+        pal.setColor(QPalette.ColorRole.Base, QColor(c['card_bg']))
+        self.setPalette(pal)
+        self.setAutoFillBackground(True)
+        # Splitter handles and scroll bars cascade from here so no tab shows the light native ones.
+        self.setStyleSheet(
+            f"#monitorWindow {{ background: {c['card_bg']}; }}"
+            f" QSplitter::handle {{ background: transparent; }}"
+            f" QScrollArea, QScrollArea > QWidget > QWidget {{ background: transparent; border: none; }}"
+            f" QScrollBar:vertical {{ background: transparent; width: 10px; margin: 0; }}"
+            f" QScrollBar:horizontal {{ background: transparent; height: 10px; margin: 0; }}"
+            f" QScrollBar::handle {{ background: {c['card_stroke']}; border-radius: 4px; }}"
+            f" QScrollBar::handle:vertical {{ min-height: 24px; margin: 1px 2px; }}"
+            f" QScrollBar::handle:horizontal {{ min-width: 24px; margin: 2px 1px; }}"
+            f" QScrollBar::handle:hover {{ background: {c['text_secondary']}; }}"
+            f" QScrollBar::add-line, QScrollBar::sub-line {{ width: 0; height: 0; }}"
+            f" QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}")
 
         self._descriptors: List[LazyTabDescriptor] = self._build_descriptors()
 
@@ -330,4 +350,11 @@ class MonitorWindow(QWidget):
                 self._graph_host.teardown()
             except Exception:
                 pass
+        # A Check-connection sheet is our child: close it and stop + wait its worker before
+        # WA_DeleteOnClose takes the sheet down with us (a running QThread must never be destroyed).
+        try:
+            from netspeedtray.views.monitor.connection_check import stop_all_checks
+            stop_all_checks()
+        except Exception:
+            pass
         event.accept()

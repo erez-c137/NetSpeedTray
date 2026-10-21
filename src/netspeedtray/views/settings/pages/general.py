@@ -3,11 +3,11 @@ General Settings Page.
 """
 from typing import Dict, Any, Callable, Optional
 
-from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWidgets import QWidget, QComboBox
 
 from netspeedtray import constants
 from netspeedtray.constants.update_mode import UpdateMode
+from netspeedtray.utils.timer_utils import snap_update_rate
 from netspeedtray.utils.components import Win11Slider, Win11Toggle, SettingCard, Win11ComboBox
 from netspeedtray.views.settings.pages._fluent import section_header, page_layout
 
@@ -64,9 +64,9 @@ class GeneralPage(QWidget):
 
         # --- Update Rate ---
         layout.addWidget(section_header(self.i18n.UPDATE_RATE_GROUP_TITLE))
-        # Slider range 0-4 = 5 discrete presets (0=SMART,1=FAST,2=BALANCED,3=EFFICIENT,4=POWER_SAVER).
+        # One slider position per preset: 0..3 = 1 / 2 / 5 / 10 s (UpdateMode.PRESETS order).
         self.update_rate = Win11Slider(editable=False)
-        self.update_rate.setRange(0, 4)
+        self.update_rate.setRange(0, len(UpdateMode.PRESETS) - 1)
         self.update_rate.setSingleStep(1)
         self.update_rate.setMinimumWidth(260)
         self.update_rate.valueChanged.connect(self._on_update_rate_changed)
@@ -84,13 +84,8 @@ class GeneralPage(QWidget):
         self.check_for_updates.toggled.connect(self.on_change)
         layout.addWidget(SettingCard(self.i18n.CHECK_FOR_UPDATES_LABEL, control=self.check_for_updates))
 
-        # Preferred Monitor (#72) - pin the widget to a specific display (default = primary).
-        self.preferred_monitor_combo = Win11ComboBox()
-        self.preferred_monitor_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-        self.preferred_monitor_combo.setMinimumWidth(220)
-        self._populate_monitor_combo()
-        self.preferred_monitor_combo.currentIndexChanged.connect(self.on_change)
-        layout.addWidget(SettingCard(self.i18n.PREFERRED_MONITOR_LABEL, control=self.preferred_monitor_combo))
+        # (Preferred Monitor moved to the Widget page's Behavior section, 2.2 IA pass: it decides which
+        # taskbar the widget docks to, and its dependent "Float on a display without a taskbar" is there.)
 
         # --- Interaction (community PR #165, @rami123) ---
         # What a double-click / middle-click on the taskbar widget does. Adapted to the 2.0 action
@@ -115,6 +110,21 @@ class GeneralPage(QWidget):
             getattr(self.i18n, "MIDDLE_CLICK_ACTION_LABEL", "Middle-click action"),
             control=self.middle_click_action))
 
+        # Moved from Advanced > Behavior (2.2 IA pass, change 3): everyday widget-interaction toggles,
+        # not low-frequency / destructive ones. Pause-in-menu first - it is the right-click route to the
+        # same "Pause / Resume" the two click lists above offer - then the hover card's two toggles.
+        self.pause_in_menu = Win11Toggle(label_text="")
+        self.pause_in_menu.toggled.connect(self.on_change)
+        layout.addWidget(SettingCard(self.i18n.PAUSE_IN_MENU_LABEL, control=self.pause_in_menu))
+
+        self.show_usage_hover = Win11Toggle(label_text="")
+        self.show_usage_hover.toggled.connect(self.on_change)
+        layout.addWidget(SettingCard(self.i18n.HOVER_USAGE_CARD_LABEL, control=self.show_usage_hover))
+
+        self.show_hover_tips = Win11Toggle(label_text="")
+        self.show_hover_tips.toggled.connect(self.on_change)
+        layout.addWidget(SettingCard(self.i18n.HOVER_TIPS_LABEL, control=self.show_hover_tips))
+
         layout.addStretch()
 
     def _populate_click_action_combo(self, combo: Win11ComboBox) -> None:
@@ -129,58 +139,6 @@ class GeneralPage(QWidget):
         for value, label in actions:
             combo.addItem(label, userData=value)
 
-    def _populate_monitor_combo(self) -> None:
-        """Fill the preferred-monitor dropdown with detected screens.
-
-        First entry is always "Primary (auto)" mapped to None. Subsequent
-        entries are real QScreens labeled with their resolution. We store
-        the screen's name() as userData so reselection survives reboots,
-        while showing a friendlier label.
-
-        Called on construction AND on every showEvent so users who plug in
-        a monitor after the app started still see it in the dropdown.
-        """
-        # Remember the current selection so we can preserve it across refresh.
-        previous_selection = self.preferred_monitor_combo.currentData() if self.preferred_monitor_combo.count() else None
-
-        # Temporarily disconnect to avoid firing on_change during the rebuild.
-        try:
-            self.preferred_monitor_combo.currentIndexChanged.disconnect(self.on_change)
-        except (TypeError, RuntimeError):
-            pass
-
-        self.preferred_monitor_combo.clear()
-        self.preferred_monitor_combo.addItem(self.i18n.PREFERRED_MONITOR_PRIMARY, userData=None)
-
-        app = QGuiApplication.instance()
-        if app is not None:
-            primary = app.primaryScreen()
-            for i, screen in enumerate(app.screens(), start=1):
-                geom = screen.geometry()
-                tag = " (primary)" if screen is primary else ""
-                label = f"Monitor {i}: {geom.width()}x{geom.height()}{tag}"
-                self.preferred_monitor_combo.addItem(label, userData=screen.name())
-
-        # Restore previous selection if it still exists; otherwise fall back to "Primary (auto)".
-        if previous_selection is not None:
-            idx = self.preferred_monitor_combo.findData(previous_selection)
-            if idx >= 0:
-                self.preferred_monitor_combo.setCurrentIndex(idx)
-
-        # Reconnect the change signal.
-        self.preferred_monitor_combo.currentIndexChanged.connect(self.on_change)
-
-    def showEvent(self, event):  # type: ignore[override]
-        """Refresh the monitor dropdown whenever the page becomes visible.
-
-        Catches the case where a user plugs/unplugs a monitor while the app
-        is running, then opens Settings - the dropdown should reflect the
-        current monitor topology, not the topology at app launch.
-        """
-        super().showEvent(event)
-        if hasattr(self, "preferred_monitor_combo"):
-            self._populate_monitor_combo()
-
     def load_settings(self, config: Dict[str, Any], is_startup_enabled: bool):
         # Language - None means auto-detect (the first combo row); a real code selects its own row.
         current_lang = config.get("language")
@@ -191,11 +149,10 @@ class GeneralPage(QWidget):
             if index >= 0:
                 self.language_combo.setCurrentIndex(index)
 
-        # Update Rate - Map config value to slider position (0-4)
-        raw_rate = float(config.get("update_rate", constants.config.defaults.DEFAULT_UPDATE_RATE))
-        
-        # Convert to slider position
-        slider_position = self._rate_to_slider_position(raw_rate)
+        # Update Rate - map the config value to its slider position (an off-preset value snaps to
+        # the nearest preset, the same rule the config migration applies).
+        slider_position = self._rate_to_slider_position(
+            config.get("update_rate", constants.config.defaults.DEFAULT_UPDATE_RATE))
         self.update_rate.setValue(slider_position)
         self.update_rate.setValueText(self._format_update_rate_label(slider_position))
         
@@ -203,14 +160,7 @@ class GeneralPage(QWidget):
         self.start_with_windows.setChecked(is_startup_enabled)
         self.check_for_updates.setChecked(config.get("check_for_updates", True))
         # free_move / keep_visible_fullscreen / tray_offset_x are loaded by the Widget page now.
-
-        # Preferred monitor (#72) - match by stored screen name.
-        # If the saved monitor name doesn't match any detected screen (e.g.,
-        # monitor was disconnected since last save), the combo just stays at
-        # "Primary (auto)" and the runtime fallback in position_manager kicks in.
-        preferred_name = config.get("preferred_monitor")
-        idx = self.preferred_monitor_combo.findData(preferred_name)
-        self.preferred_monitor_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        # preferred_monitor is loaded by the Widget page now (2.2 IA pass).
 
         # Click actions (#165) - select the saved action, falling back to the first row.
         defaults = constants.config.defaults
@@ -218,6 +168,9 @@ class GeneralPage(QWidget):
             self.double_click_action, config.get("double_click_action", defaults.DEFAULT_DOUBLE_CLICK_ACTION))
         self._select_click_action(
             self.middle_click_action, config.get("middle_click_action", defaults.DEFAULT_MIDDLE_CLICK_ACTION))
+        self.pause_in_menu.setChecked(bool(config.get("pause_in_menu", False)))
+        self.show_usage_hover.setChecked(bool(config.get("show_usage_on_hover", True)))
+        self.show_hover_tips.setChecked(bool(config.get("show_hover_tips", True)))
 
     def _select_click_action(self, combo: Win11ComboBox, value: str) -> None:
         idx = combo.findData(value)
@@ -233,10 +186,13 @@ class GeneralPage(QWidget):
             "update_rate": update_rate_value,
             "start_with_windows": self.start_with_windows.isChecked(),
             "check_for_updates": self.check_for_updates.isChecked(),
-            "preferred_monitor": self.preferred_monitor_combo.currentData(),
             "double_click_action": self.double_click_action.currentData(),
             "middle_click_action": self.middle_click_action.currentData(),
-            # free_move / keep_visible_fullscreen / tray_offset_x now live on the Widget page (2.0 IA).
+            "pause_in_menu": self.pause_in_menu.isChecked(),
+            "show_usage_on_hover": self.show_usage_hover.isChecked(),
+            "show_hover_tips": self.show_hover_tips.isChecked(),
+            # free_move / keep_visible_fullscreen / tray_offset_x (2.0 IA) and preferred_monitor
+            # (2.2 IA pass) now live on the Widget page.
         }
 
     def _on_update_rate_changed(self, value: int) -> None:
@@ -251,41 +207,18 @@ class GeneralPage(QWidget):
     
     def _format_update_rate_label(self, slider_position: int) -> str:
         """Format slider position as a human-readable label."""
-        # Map slider position (0-4) to update mode label
-        position_to_mode = {
-            0: self.i18n.SMART_MODE_LABEL,
-            1: f"{int(UpdateMode.AGGRESSIVE)}s" if not hasattr(self.i18n, 'UPDATE_MODE_AGGRESSIVE_LABEL') else self.i18n.UPDATE_MODE_AGGRESSIVE_LABEL,
-            2: f"{int(UpdateMode.BALANCED)}s" if not hasattr(self.i18n, 'UPDATE_MODE_BALANCED_LABEL') else self.i18n.UPDATE_MODE_BALANCED_LABEL,
-            3: f"{int(UpdateMode.EFFICIENT)}s" if not hasattr(self.i18n, 'UPDATE_MODE_EFFICIENT_LABEL') else self.i18n.UPDATE_MODE_EFFICIENT_LABEL,
-            4: f"{int(UpdateMode.POWER_SAVER)}s" if not hasattr(self.i18n, 'UPDATE_MODE_POWER_SAVER_LABEL') else self.i18n.UPDATE_MODE_POWER_SAVER_LABEL,
-        }
-        return position_to_mode.get(slider_position, "Unknown")
+        keys = ("UPDATE_MODE_AGGRESSIVE_LABEL", "UPDATE_MODE_BALANCED_LABEL",
+                "UPDATE_MODE_EFFICIENT_LABEL", "UPDATE_MODE_POWER_SAVER_LABEL")
+        if not 0 <= slider_position < len(UpdateMode.PRESETS):
+            return "Unknown"
+        return getattr(self.i18n, keys[slider_position], f"{int(UpdateMode.PRESETS[slider_position])}s")
 
-    def _rate_to_slider_position(self, update_rate: float) -> int:
-        """Convert update_rate value to slider position (0-4)."""
-        # Map update rates to slider positions
-        if update_rate < 0:  # SMART sentinel
-            return 0
-        elif abs(update_rate - UpdateMode.AGGRESSIVE) < 0.1:
-            return 1
-        elif abs(update_rate - UpdateMode.BALANCED) < 0.1:
-            return 2
-        elif abs(update_rate - UpdateMode.EFFICIENT) < 0.1:
-            return 3
-        elif abs(update_rate - UpdateMode.POWER_SAVER) < 0.1:
-            return 4
-        else:
-            # Default to BALANCED if unrecognized
-            return 2
+    def _rate_to_slider_position(self, update_rate: object) -> int:
+        """Convert an update_rate value to its slider position (0-3), snapping to the nearest preset."""
+        return UpdateMode.PRESETS.index(snap_update_rate(update_rate))
 
     def _slider_position_to_rate(self, slider_position: int) -> float:
-        """Convert slider position (0-4) to update_rate value."""
-        position_to_rate = {
-            0: UpdateMode.SMART,        # -1.0
-            1: UpdateMode.AGGRESSIVE,   # 1.0
-            2: UpdateMode.BALANCED,     # 2.0
-            3: UpdateMode.EFFICIENT,    # 5.0
-            4: UpdateMode.POWER_SAVER,  # 10.0
-        }
-        return position_to_rate.get(slider_position, UpdateMode.BALANCED)
-
+        """Convert a slider position (0-3) to its update_rate preset in seconds."""
+        if 0 <= slider_position < len(UpdateMode.PRESETS):
+            return UpdateMode.PRESETS[slider_position]
+        return constants.config.defaults.DEFAULT_UPDATE_RATE

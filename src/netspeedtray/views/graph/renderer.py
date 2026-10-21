@@ -6,6 +6,7 @@ import threading
 
 import numpy as np
 from PyQt6.QtCore import QObject, Qt, pyqtSignal
+from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QSizePolicy
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
@@ -19,6 +20,8 @@ from netspeedtray.constants import styles as style_constants
 from netspeedtray.constants.renderer import RendererConstants
 from netspeedtray.utils.helpers import calculate_monotone_cubic_interpolation, format_decimal
 from netspeedtray.utils.mpl_fonts import configure_cjk_font
+from netspeedtray.views.graph.time_axis import apply_time_axis
+from netspeedtray.views.graph.value_axis import ValueAxisFormatter, clipped_axis_max, clipped_runs
 import matplotlib.colors as mcolors
 from matplotlib.patches import PathPatch
 from matplotlib.path import Path
@@ -75,6 +78,7 @@ class GraphRenderer(QObject):
 
         self._current_ylim_up = constants.graph.MINIMUM_Y_AXIS_MBPS
         self._current_ylim_down = constants.graph.MINIMUM_Y_AXIS_MBPS
+        self._clip_artists = {}   # id(axes) -> the clipped-outlier marks drawn on it
         
         self._last_render_mode = None  # 'high_res' or aggregate modes
         self._last_period_key = None
@@ -129,6 +133,10 @@ class GraphRenderer(QObject):
         self.canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.canvas.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         self.canvas.setMouseTracking(True)
+        # matplotlib marks the canvas opaque, so Qt never paints its background; let it, so the edge
+        # sliver the buffer doesn't cover takes the graph color set in apply_theme.
+        self.canvas.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, False)
+        self.canvas.setAutoFillBackground(True)
         
         existing_layout = self.parent_widget.layout()
         if existing_layout is not None:
@@ -197,7 +205,13 @@ class GraphRenderer(QObject):
         self._current_grid_color = style_constants.GRID_COLOR_DARK if is_dark_mode else style_constants.GRID_COLOR_LIGHT
         
         self.figure.patch.set_facecolor(graph_bg)
-        
+        # The rendered buffer can fall a pixel short of the widget at fractional DPI scaling; fill the
+        # widget itself with the graph color so that sliver isn't left white.
+        if self.canvas is not None:
+            pal = self.canvas.palette()
+            pal.setColor(QPalette.ColorRole.Window, QColor(graph_bg))
+            self.canvas.setPalette(pal)
+
         for ax in self.axes:
             ax.set_facecolor(graph_bg)
             
@@ -251,17 +265,21 @@ class GraphRenderer(QObject):
                 cls._GRADIENT_CACHE[color_hex] = gradient
             return cls._GRADIENT_CACHE[color_hex]
 
-    def _apply_gradient_fill(self, ax, x_data, y_data, color_hex: str, artist_prefix: str):
+    def _apply_gradient_fill(self, ax, x_data, y_data, color_hex: str, artist_prefix: str,
+                             reuse: bool = True):
         """
         Creates or updates a gradient-filled area under a line plot.
         Uses the 'Reuse, Don't Recreate' pattern for live update performance.
-        
+
         Args:
             ax: The matplotlib axes
             x_data: X coordinates (datetime objects or matplotlib float days)
             y_data: Y coordinates (speed values in Mbps)
             color_hex: Hex color string (e.g., '#00ff00')
             artist_prefix: 'download' or 'upload' - used to store artist references
+            reuse: False for one SEGMENT of a gapped series - a fresh, uncached fill per segment. The
+                cached pair is one fill per axis, so reusing it moved the fill on to each next segment
+                and only the LAST segment kept one (the Network 'All' view filled from Sep 6 on).
         """
         if len(x_data) == 0 or len(y_data) == 0:
             return
@@ -301,7 +319,7 @@ class GraphRenderer(QObject):
         existing_patch = getattr(self, patch_attr, None)
         
         # FAST PATH: Update existing artists
-        if existing_im is not None and existing_im.axes is not None:
+        if reuse and existing_im is not None and existing_im.axes is not None:
             try:
                 # Update extent (changes position/scale)
                 existing_im.set_extent(extent)
@@ -333,10 +351,11 @@ class GraphRenderer(QObject):
             interpolation='bilinear'
         )
         im.set_clip_path(patch)
-        
+
         # Store references for future updates
-        setattr(self, im_attr, im)
-        setattr(self, patch_attr, patch)
+        if reuse:
+            setattr(self, im_attr, im)
+            setattr(self, patch_attr, patch)
 
     # ========== PHASE 3: ANALYTICAL INTELLIGENCE ==========
     def _get_peak_label_placement(self, ax, peak_x: float, peak_y: float) -> Tuple[Tuple[int, int], str, str]:
@@ -522,7 +541,7 @@ class GraphRenderer(QObject):
             y_top = ax.get_ylim()[1]
             text = ax.text(
                 boot_x, y_top * 0.92, 
-                ' ↑ Boot', 
+                f" ↑ {self._lbl(getattr(self.i18n, 'GRAPH_BOOT_MARKER', 'Boot'))}",
                 fontsize=7, 
                 color='#888', 
                 va='top',
@@ -595,6 +614,8 @@ class GraphRenderer(QObject):
                     self._format_hwseparate_axes()
                 elif stat_type != "overview" and stat_type != "network":
                     self._format_hardware_axes(stat_type)
+            if stat_type in ("cpu", "gpu") and hw_styles is not None:   # the Monitor's toggle layout
+                self._draw_hw_empty_message(self.ax_download, period_key, hw_styles, roles=(stat_type,))
             self.canvas.draw_idle()
             return None
 
@@ -618,7 +639,8 @@ class GraphRenderer(QObject):
             download_mbps = (raw_data[:, 2] * constants.network.units.BITS_PER_BYTE) / constants.network.units.MEGA_DIVISOR
             
             plotted_ts, plotted_up, plotted_down = self._plot_high_res(plot_datetimes_array, upload_mbps, download_mbps, target_end_time=end_time)
-            self._configure_axes(start_time, end_time, period_key, timestamps, plotted_up, plotted_down)
+            self._configure_axes(start_time, end_time, period_key, timestamps, plotted_up, plotted_down,
+                                 plotted_ts=plotted_ts)
         elif stat_type in ("cpu", "gpu") and hw_styles is not None:
             # Monitor's "toggle" layout: a single CPU- or GPU-only line that must honor the same
             # display settings as combined/separate (per-role color, Smooth, fixed/auto y-axis). The
@@ -698,6 +720,46 @@ class GraphRenderer(QObject):
         self.ax_gpu.set_ylabel(self._lbl(self.i18n.ORDER_TYPE_GPU), fontsize=8, color=text_color)
 
     @staticmethod
+    def _gap_threshold(timestamps) -> float:
+        """Seconds between two points beyond which the series has a GAP (no data), from the data's own
+        spacing: the median interval x GAP_DETECTION_MULTIPLIER, at least MIN_GAP_THRESHOLD_SEC. One
+        rule for the network and the hardware graphs."""
+        intervals = np.diff(np.asarray(timestamps, dtype=float))
+        if len(intervals) == 0:
+            return RendererConstants.MIN_GAP_THRESHOLD_SEC
+        return max(float(np.median(intervals)) * RendererConstants.GAP_DETECTION_MULTIPLIER,
+                   RendererConstants.MIN_GAP_THRESHOLD_SEC)
+
+    @classmethod
+    def _gap_segments(cls, timestamps) -> List[slice]:
+        """``timestamps`` (epoch seconds, ascending) split at every gap (``_gap_threshold``)."""
+        ts = np.asarray(timestamps, dtype=float)
+        if ts.size == 0:
+            return []
+        cuts = (np.flatnonzero(np.diff(ts) > cls._gap_threshold(ts)) + 1).tolist()
+        bounds = [0] + cuts + [ts.size]
+        return [slice(a, b) for a, b in zip(bounds[:-1], bounds[1:])]
+
+    def _plot_hw_series(self, ax, ts, values, color, linestyle, label, smooth: bool = False,
+                        smooth_window: int = 5):
+        """One hardware series as one line PER GAP-FREE SEGMENT (the network graph's gap rule), so a
+        month without data is a break, not a straight line drawn across it. Segments share ``label``
+        (the hover tooltip collapses them to one row); smoothing runs per segment, never across a gap.
+        Returns the first segment's Line2D (the legend handle), or None for an empty series."""
+        first = None
+        for seg in self._gap_segments(ts):
+            ys = np.asarray(values[seg], dtype=float)
+            if smooth:
+                ys = self._smooth_series(ys, smooth_window)
+            dts = [datetime.fromtimestamp(t) for t in ts[seg]]
+            # A lone sample is a point, not a zero-length (invisible) line.
+            marker = "o" if len(dts) == 1 else None
+            line, = ax.plot(dts, ys, color=color, linestyle=linestyle, linewidth=1.5, zorder=10,
+                            label=label, marker=marker, markersize=2)
+            first = first or line
+        return first
+
+    @staticmethod
     def _rows_as_floats(series) -> np.ndarray:
         """(timestamp, value, ...) rows as a float array, accepting datetime OR epoch timestamps.
 
@@ -760,31 +822,7 @@ class GraphRenderer(QObject):
         # Apply period-aware formatting to the bottom axis (GPU row).
         # Overview uses 4 stacked axes; we keep x labels only on the last one.
         try:
-            axis = self.ax_gpu
-            major_locator = mdates.AutoDateLocator(maxticks=8)
-            major_formatter = mdates.DateFormatter('%H:%M')
-
-            xlim = axis.get_xlim()
-            if xlim[0] < xlim[1]:
-                duration_days = xlim[1] - xlim[0]
-                duration_sec = duration_days * 86400
-                if duration_sec < 120:
-                    major_formatter = mdates.DateFormatter('%H:%M:%S')
-
-            if period_key == "TIMELINE_WEEK":
-                major_formatter = mdates.DateFormatter('%a %d')
-            elif period_key == "TIMELINE_MONTH":
-                major_formatter = mdates.DateFormatter('%b %d')
-            elif period_key == "TIMELINE_ALL":
-                major_formatter = mdates.DateFormatter('%Y-%m-%d')
-            elif period_key == "TIMELINE_SYSTEM_UPTIME":
-                major_formatter = mdates.ConciseDateFormatter(major_locator)
-
-            axis.xaxis.set_major_locator(major_locator)
-            axis.xaxis.set_major_formatter(major_formatter)
-
-            if "HOURS" in (period_key or ""):
-                axis.xaxis.set_minor_locator(NullLocator())
+            self._configure_xaxis_format(period_key, axis=self.ax_gpu)
         except Exception:
             pass
         
@@ -855,11 +893,9 @@ class GraphRenderer(QObject):
                 continue
             arr = self._rows_as_floats(series)
             ts = arr[:, 0]
-            dts = [datetime.fromtimestamp(t) for t in ts]
-            ys = self._smooth_series(arr[:, 1], styles.get("smooth_window", 5)) if smooth else arr[:, 1]
             color, ls = styles.get(role) or hv.graph_line_style(role)
-            line, = ax.plot(dts, ys, color=color, linestyle=ls, linewidth=1.5,
-                            zorder=10, label=label)
+            line = self._plot_hw_series(ax, ts, arr[:, 1], color, ls, label, smooth,
+                                        styles.get("smooth_window", 5))
             handles.append(line)
             all_ts.append(ts)
             data_max = max(data_max, float(arr[:, 1].max()))
@@ -870,9 +906,7 @@ class GraphRenderer(QObject):
 
         if not handles:
             # No CPU/GPU history yet (the common fresh-session state) - say so, don't show a blank grid.
-            ax.text(0.5, 0.5, getattr(self.i18n, "COLLECTING_DATA_MESSAGE", "Collecting data…"),
-                    transform=ax.transAxes, ha="center", va="center",
-                    color=self._current_text_color, alpha=0.55, fontsize=10)
+            self._draw_hw_empty_message(ax, period_key, hw_styles)
         elif (hw_styles or {}).get("legend", True):
             # upper-RIGHT: the lines peg high (near 100%) under load, so the upper-left is the busy
             # zone; a near-opaque themed chip keeps the legend readable over pegged traces.
@@ -883,6 +917,23 @@ class GraphRenderer(QObject):
             frame.set_edgecolor(self._current_grid_color)
             for text in legend.get_texts():
                 text.set_color(self._current_text_color)
+
+    def _draw_hw_empty_message(self, ax, period_key, hw_styles=None, roles=("cpu", "gpu")) -> None:
+        """The centered note on an empty hardware graph. A fresh session is still collecting; but a
+        ranged view whose ``roles`` are all unrecorded will never fill, so it says where to turn
+        recording on (Hardware for monitoring, Advanced for the record switch) instead of "Collecting
+        data" forever. ``hw_styles["history_off"]`` is graph_host.hardware_history_off_reasons()."""
+        reasons = [((hw_styles or {}).get("history_off") or {}).get(r) for r in roles]
+        if period_key == "TIMELINE_SESSION" or not reasons or None in reasons:
+            text = getattr(self.i18n, "COLLECTING_DATA_MESSAGE", "Collecting data…")
+        elif "monitor" in reasons:
+            text = getattr(self.i18n, "HARDWARE_HISTORY_OFF_MESSAGE",
+                           "Hardware history is off.\nTurn on CPU or GPU monitoring in Settings → Hardware.")
+        else:
+            text = getattr(self.i18n, "HARDWARE_HISTORY_RECORD_OFF_MESSAGE",
+                           "Hardware history is off.\nTurn on Record hardware history in Settings → Advanced.")
+        ax.text(0.5, 0.5, self._lbl(text), transform=ax.transAxes, ha="center", va="center",
+                multialignment="center", color=self._current_text_color, alpha=0.55, fontsize=10)
 
     def _configure_hardware_axes(self, start_time, end_time, period_key, timestamps, values):
         """Sets limits and formatters for hardware stats."""
@@ -973,18 +1024,15 @@ class GraphRenderer(QObject):
                 continue
             arr = self._rows_as_floats(series)
             ts = arr[:, 0]
-            dts = [datetime.fromtimestamp(t) for t in ts]
-            ys = self._smooth_series(arr[:, 1], styles.get("smooth_window", 5)) if smooth else arr[:, 1]
             color, _ls = styles.get(role) or hv.graph_line_style(role)
-            ax.plot(dts, ys, color=color, linewidth=1.5, zorder=10, label=self._hw_role_label(role))
+            self._plot_hw_series(ax, ts, arr[:, 1], color, "-", self._hw_role_label(role), smooth,
+                                 styles.get("smooth_window", 5))
             self._apply_hw_ylim(ax, fixed, float(arr[:, 1].max()))
             any_data = True
             all_ts.append(ts)
 
         if not any_data:
-            self.ax_cpu.text(0.5, 0.5, getattr(self.i18n, "COLLECTING_DATA_MESSAGE", "Collecting data…"),
-                             transform=self.ax_cpu.transAxes, ha="center", va="center",
-                             color=self._current_text_color, alpha=0.55, fontsize=10)
+            self._draw_hw_empty_message(self.ax_cpu, period_key, hw_styles)
             return
         merged = np.concatenate(all_ts)
         xs, xe = self._hw_xlim(period_key, start_time, end_time, merged.min(), merged.max())
@@ -1006,11 +1054,10 @@ class GraphRenderer(QObject):
 
         raw = self._rows_as_floats(history_data)
         timestamps = raw[:, 0]
-        dts = [datetime.fromtimestamp(t) for t in timestamps]
         values = raw[:, 1]
-        ys = self._smooth_series(values, styles.get("smooth_window", 5)) if smooth else values
         color, _ls = styles.get(stat_type) or hv.graph_line_style(stat_type)   # solid for a lone line
-        ax.plot(dts, ys, color=color, linewidth=1.5, zorder=10, label=self._hw_role_label(stat_type))
+        self._plot_hw_series(ax, timestamps, values, color, "-", self._hw_role_label(stat_type), smooth,
+                             styles.get("smooth_window", 5))
 
         xs, xe = self._hw_xlim(period_key, start_time, end_time, timestamps.min(), timestamps.max())
         ax.set_xlim(xs, xe)
@@ -1128,14 +1175,7 @@ class GraphRenderer(QObject):
         # A "gap" is when time between points is significantly larger than normal
         timestamps_float = np.array([dt.timestamp() for dt in plot_datetimes])
         intervals = np.diff(timestamps_float)
-        
-        if len(intervals) > 0:
-            median_interval = np.median(intervals)
-            # Gap = any interval > 2x the median (accounts for jitter + actual gaps)
-            gap_threshold = max(median_interval * RendererConstants.GAP_DETECTION_MULTIPLIER, RendererConstants.MIN_GAP_THRESHOLD_SEC)
-        else:
-            gap_threshold = RendererConstants.MIN_GAP_THRESHOLD_SEC
-            
+        gap_threshold = self._gap_threshold(timestamps_float)
         gaps = intervals > gap_threshold
         
         # Prepare lists for collecting interpolated segments
@@ -1194,8 +1234,10 @@ class GraphRenderer(QObject):
                                     label=self.i18n.UPLOAD_LABEL)
                 
                 # Add Gradient (per segment)
-                self._apply_gradient_fill(self.ax_download, np.array(seg_ts), seg_down, color_down, 'download')
-                self._apply_gradient_fill(self.ax_upload, np.array(seg_ts), seg_up, color_up, 'upload')
+                self._apply_gradient_fill(self.ax_download, np.array(seg_ts), seg_down, color_down, 'download',
+                                          reuse=False)
+                self._apply_gradient_fill(self.ax_upload, np.array(seg_ts), seg_up, color_up, 'upload',
+                                          reuse=False)
                 
                 # Accrue for return (just raw or interpolated? detailed return allows tooltips to snap to curve)
                 final_ts.extend(seg_ts)
@@ -1312,11 +1354,18 @@ class GraphRenderer(QObject):
 
 
 
-    def _configure_axes(self, start_time, end_time, period_key, timestamps, upload_mbps, download_mbps):
-        """Sets limits and Formatters with sticky behavior to prevent jitter."""
+    def _configure_axes(self, start_time, end_time, period_key, timestamps, upload_mbps, download_mbps,
+                        plotted_ts=None):
+        """Sets limits and Formatters with sticky behavior to prevent jitter.
+
+        On long windows (VALUE_AXIS_CLIP_PERIODS) each speed axis may scale to the 99th percentile of
+        its plotted points instead of the max, so a couple of speed tests stop squashing a month into
+        the bottom few percent; the points above the edge are then marked (``_mark_clipped``).
+        ``plotted_ts`` (the x of ``upload_mbps``/``download_mbps``) is needed only for those marks.
+        """
         # Y-Axis Scaling (Sticky Logic with smart rounding)
-        max_up = np.max(upload_mbps) if len(upload_mbps) > 0 else 0
-        max_down = np.max(download_mbps) if len(download_mbps) > 0 else 0
+        max_up, _ = clipped_axis_max(upload_mbps if upload_mbps is not None else [], period_key)
+        max_down, _ = clipped_axis_max(download_mbps if download_mbps is not None else [], period_key)
         
         y_top_up = self._get_sticky_y_top(max_up, self._current_ylim_up)
         y_top_down = self._get_sticky_y_top(max_down, self._current_ylim_down)
@@ -1357,15 +1406,67 @@ class GraphRenderer(QObject):
         self._set_smart_y_ticks(self.ax_upload, y_top_up)
         self._set_smart_y_ticks(self.ax_download, y_top_down)
         
-        # Formatters for clean labels (no decimals for large ranges)
-        self.ax_upload.yaxis.set_major_formatter(lambda x, pos: f"{int(x)}" if x >= 1 else format_decimal(x, self.i18n, 1))
-        self.ax_download.yaxis.set_major_formatter(lambda x, pos: f"{int(x)}" if x >= 1 else format_decimal(x, self.i18n, 1))
+        # Labels carry exactly the precision the tick step needs ("0.5, 1, 1.5"), in the locale's
+        # decimal separator - the old int(x) for x >= 1 printed 1.5 as "1" ("0.0, 0.5, 1, 1, 2").
+        self.ax_upload.yaxis.set_major_formatter(ValueAxisFormatter(self.i18n))
+        self.ax_download.yaxis.set_major_formatter(ValueAxisFormatter(self.i18n))
 
         self.ax_upload.set_ylim(bottom=0, top=y_top_up)
         self.ax_download.set_ylim(bottom=0, top=y_top_down)
 
+        # Points the axis no longer reaches stay on the line (the hover reads their true value); mark
+        # them so they never silently vanish. A no-op off the long windows, where nothing is clipped.
+        self._mark_clipped(self.ax_download, plotted_ts, download_mbps, y_top_down,
+                           constants.graph.DOWNLOAD_LINE_COLOR)
+        self._mark_clipped(self.ax_upload, plotted_ts, upload_mbps, y_top_up,
+                           constants.graph.UPLOAD_LINE_COLOR)
+
         # X-Axis Formatting
         self._configure_xaxis_format(period_key)
+
+    def _mark_clipped(self, ax, xs, ys, top: float, color_hex: str) -> None:
+        """Caret markers on the top edge for each run of points above ``top``, plus the true peak.
+
+        Called on every axis configuration, so it first removes its previous marks (a re-render of
+        the same period does not rebuild the axes). The markers are a scatter collection, not a
+        Line2D, and carry no label, so the hover tooltip - which reads only labelled lines - never
+        mistakes them for data.
+        """
+        store = getattr(self, "_clip_artists", None)
+        if store is None:
+            store = self._clip_artists = {}
+        for artist in store.pop(id(ax), []):
+            try:
+                artist.remove()
+            except Exception:
+                pass
+        if xs is None or ys is None or len(xs) == 0 or len(xs) != len(ys):
+            return
+        try:
+            x = np.asarray(xs)
+            if x.dtype == object or np.issubdtype(x.dtype, np.datetime64):
+                x = mdates.date2num(list(x))
+            runs = clipped_runs(np.asarray(x, dtype=float), ys, top)
+            if not runs:
+                return
+            g = constants.graph
+            artists = [ax.scatter(
+                [rx for rx, _ in runs], [1.0] * len(runs), transform=ax.get_xaxis_transform(),
+                marker=g.VALUE_AXIS_CLIP_MARKER, s=g.VALUE_AXIS_CLIP_MARKER_SIZE, color=color_hex,
+                linewidths=0, clip_on=False, zorder=12, label="_value_axis_clip_markers",
+                gid="value_axis_clip_markers")]
+            peak = max(ry for _, ry in runs)
+            # Through _lbl like every axis label: matplotlib does no bidi, so Hebrew would read reversed.
+            text = self._lbl(f"{self.i18n.GRAPH_PEAK_SHORT} {format_decimal(peak, self.i18n, 1)} "
+                             f"{self.i18n.MBITS_UNIT}")
+            artists.append(ax.text(
+                1.0, 1.0, text, transform=ax.transAxes, ha="right", va="bottom",
+                fontsize=g.VALUE_AXIS_CLIP_PEAK_FONTSIZE, alpha=g.VALUE_AXIS_CLIP_PEAK_ALPHA,
+                color=getattr(self, "_current_text_color", style_constants.DARK_MODE_TEXT_COLOR),
+                clip_on=False, gid="value_axis_clip_peak"))
+            store[id(ax)] = artists
+        except Exception as e:
+            self.logger.debug("clip markers skipped: %s", e)
 
     def _set_smart_y_ticks(self, ax, y_max: float):
         """
@@ -1440,32 +1541,12 @@ class GraphRenderer(QObject):
         """
         if axis is None:
             axis = self.ax_upload
-        
-        # Default for most views
-        major_locator = mdates.AutoDateLocator(maxticks=8)
-        major_formatter = mdates.DateFormatter('%H:%M') 
 
-        # For extremely short views (e.g. freshly started Session), show seconds
-        # This prevents repeating labels like "19:27, 19:27, 19:27"
-        xlim = axis.get_xlim()
-        if xlim[0] < xlim[1]:
-            duration_days = xlim[1] - xlim[0]
-            duration_sec = duration_days * 86400
-            if duration_sec < 120: # Less than 2 minutes
-                major_formatter = mdates.DateFormatter('%H:%M:%S')
-        if period_key == "TIMELINE_WEEK":
-            major_formatter = mdates.DateFormatter('%a %d')
-        elif period_key == "TIMELINE_MONTH":
-            major_formatter = mdates.DateFormatter('%b %d')
-        elif period_key == "TIMELINE_ALL":
-            major_formatter = mdates.DateFormatter('%Y-%m-%d')
-        elif period_key == "TIMELINE_SYSTEM_UPTIME":
-             # Uptime can be minutes or days; Concise is best here
-             major_formatter = mdates.ConciseDateFormatter(major_locator)
-        
-        axis.xaxis.set_major_locator(major_locator)
-        axis.xaxis.set_major_formatter(major_formatter)
-        
+        # One locator + formatter for every period: the tick step follows the visible span and the
+        # axis width, and the label format follows the step, so no two ticks ever print the same text
+        # (the old fixed per-period formats printed "18:12, 18:12, 18:13" under 30 s ticks).
+        apply_time_axis(axis, getattr(getattr(self, "i18n", None), "language", None))
+
         if "HOURS" in (period_key or ""):
             axis.xaxis.set_minor_locator(NullLocator())
 

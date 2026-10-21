@@ -12,8 +12,10 @@ from PyQt6.QtGui import QColor
 
 from netspeedtray import constants
 from netspeedtray.utils.window_state import set_window_always_on_top
+from netspeedtray.utils.styles import set_app_reduce_motion
 from netspeedtray.utils.config import ConfigManager
-from netspeedtray.utils.timer_utils import calculate_timer_interval
+from netspeedtray.utils.timer_utils import resolve_poll_interval_seconds
+from netspeedtray.utils.helpers import effective_display_mode
 
 if TYPE_CHECKING:
     from netspeedtray.views.widget.main import NetworkSpeedWidget
@@ -176,14 +178,10 @@ class ConfigController:
             
             if w.monitor_thread:
                 w.monitor_thread.update_config(w.config)
-                # Resolve the SMART sentinel (-1.0) BEFORE handing the value to the sampler.
-                # set_interval() clamps with max(0.1, interval), so passing -1.0 through raw
-                # set the poll interval to 0.1s - 100ms, twenty times the intended 2s, and the
-                # one rate constants/update_mode.py explicitly rules out as "too jarring for
-                # human perception". Startup was already correct (main.py resolves it); only
-                # this path, taken on every settings save, was not.
+                # Same resolver as startup (main.py), so a settings save can never hand the sampler
+                # a value startup would not (#273: a raw value once hit set_interval's 0.1 s floor).
                 update_rate = w.config.get("update_rate", constants.config.defaults.DEFAULT_UPDATE_RATE)
-                w.monitor_thread.set_interval(calculate_timer_interval(update_rate) / 1000.0)
+                w.monitor_thread.set_interval(resolve_poll_interval_seconds(update_rate))
             
             if w.widget_state:
                 self.logger.debug("Applying widget state config...")
@@ -215,8 +213,9 @@ class ConfigController:
             self.logger.debug("Updating widget position...")
             w.update_position()
             
-            # 4. Manage Cycling Timer
-            if w.config.get("widget_display_mode") == "cycle":
+            # 4. Manage Cycling Timer (stopped while "Show hardware in the hover card" collapses the
+            # widget to network-only - nothing to rotate; the saved Auto-Cycle comes back with it off)
+            if effective_display_mode(w.config) == "cycle":
                 if not w._cycle_timer.isActive():
                     w._cycle_timer.start(constants.renderer.CYCLE_INTERVAL_MS)
                     self.logger.debug("Cycle timer started via ConfigController.")
@@ -228,6 +227,18 @@ class ConfigController:
             # 5. Always-on-top for the Settings/Monitor windows (#213). Guarded: see
             # _last_keep_on_top - this method runs on every throttled live-preview tick.
             self._apply_keep_on_top(w.config.get("keep_windows_on_top", False))
+
+            # 5a. Reduce motion: the app setting forces it on; off follows Windows (see styles).
+            set_app_reduce_motion(w.config.get("reduce_motion", False))
+
+            # 5b. Local metrics endpoint (2.2 scope B): start / stop / re-port live with the toggle.
+            if hasattr(w, "apply_metrics_endpoint"):
+                w.apply_metrics_endpoint()
+
+            # 5c. Latency probe: follows the Latency switch live (privacy review 2.2 - turning it off
+            # used to keep pinging until the next restart).
+            if hasattr(w, "apply_latency_probe"):
+                w.apply_latency_probe()
 
             # 6. Schedule a repaint to reflect all changes.
             w.update()

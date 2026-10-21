@@ -17,10 +17,19 @@ class LayoutConstants:
     MAIN_SPACING: Final[int] = 12
     GROUP_BOX_SPACING: Final[int] = 12
     SIDEBAR_WIDTH: Final[int] = 200
+    # The Settings sidebar grows past SIDEBAR_WIDTH to fit its longest translated page name, up to this.
+    SIDEBAR_MAX_WIDTH: Final[int] = 260
     # Horizontal breathing room around the Settings card column (Win11 Settings insets its content
     # generously from the sidebar + window edge; the bare 16px read edge-to-edge). The window width
     # formula and the content layout both use this so the cards keep their width as the inset grows.
     SETTINGS_CONTENT_MARGIN: Final[int] = 32
+    # A SettingCard keeps its control beside the title only while the title still gets at least this
+    # much width (or its whole one-line width, if shorter); below that the control drops under the
+    # title - the Win11 Settings narrow-window reflow - so no card ever forces the page to scroll sideways.
+    SETTING_CARD_MIN_TITLE_WIDTH: Final[int] = 120
+    # The same floor for a card's description (or its whole one-line width, if shorter): a long
+    # description never wraps into a thin column beside the control - the control drops under it.
+    SETTING_CARD_MIN_DESC_WIDTH: Final[int] = 200
 
     # --- Interface Page Specific ---
     INTERFACE_SCROLL_MAX_ITEMS: Final[int] = 7
@@ -36,6 +45,11 @@ class LayoutConstants:
     # from jumping vertically when the user switches tabs. Tab body content gets this side inset so it
     # lines up under the band's controls.
     MONITOR_HEADER_BAND_HEIGHT: Final[int] = 56
+    # The Network header's "From recorded history" note (D5): a wrapped caption beside the totals.
+    # It wraps to at most MAX_LINES inside the fixed band; anything longer ends in "…" (tooltip: all).
+    MONITOR_HISTORY_NOTE_MIN_WIDTH: Final[int] = 160
+    MONITOR_HISTORY_NOTE_MAX_WIDTH: Final[int] = 340
+    MONITOR_HISTORY_NOTE_MAX_LINES: Final[int] = 2
     MONITOR_BODY_MARGIN: Final[int] = 16
     # Gap between the right-cluster command-band controls (NIC / timeline / Live). Shared by every tab
     # so the spacing around the Live pill is identical on Network and Hardware.
@@ -50,6 +64,9 @@ class LayoutConstants:
     # close to the hardware rather than floating far from it.
     WIDGET_SEGMENT_GAP_AFTER_NETWORK_PX: Final[int] = 10
     WIDGET_SEGMENT_GAP_BETWEEN_HARDWARE_PX: Final[int] = 5
+    # A side (LEFT/RIGHT) taskbar is too narrow for the segments in a row, so they stack top-to-bottom
+    # with this gap between them instead.
+    WIDGET_SEGMENT_GAP_STACKED_PX: Final[int] = 4
     # Minimum gap (logical px) kept between the widget's tray-side edge and the tray boundary /
     # the "^" show-hidden-icons chevron, so the widget never abuts it and steals its clicks (#161 pt1).
     TRAY_EDGE_MIN_GAP_PX: Final[int] = 8

@@ -33,6 +33,12 @@ from PyQt6.QtCore import QObject, QThread, pyqtSignal, QTimer
 
 from netspeedtray import constants
 from netspeedtray.constants import network, timeouts
+from netspeedtray.core import usage_snapshot
+from netspeedtray.core.db.history_reader import (
+    HistoryNotReadyError, HistoryReader, V7HistoryReader, V8HistoryReader, VolumeResult,
+)
+from netspeedtray.core.db.sqlite_uri import sqlite_ro_uri
+from netspeedtray.core.db.writer_v8 import NetSample
 from netspeedtray.utils.helpers import get_app_data_path
 from netspeedtray.utils.timer_utils import resolve_poll_interval_seconds
 
@@ -76,6 +82,16 @@ class WidgetState(QObject):
     # finished construction and connected (main.py wires the flyout there) - so the
     # notification cannot be emitted before anyone is listening.
     db_schema_incompatible = pyqtSignal(int, int, str)
+    # Re-emitted from DatabaseWorker.migration_deferred (a MIGRATION_* reason): the v7 -> v8 upgrade
+    # could not complete this launch, so nothing is recorded until the next start. Same queued
+    # delivery as above, so the flyout is wired before it can fire.
+    db_migration_deferred = pyqtSignal(str)
+    # Re-emitted from DatabaseWorker.history_upgraded: this launch upgraded the history to v8 (the
+    # one-time "history upgraded" flyout). Same queued delivery as above.
+    db_history_upgraded = pyqtSignal()
+    # Re-emitted from DatabaseWorker.history_deleted (a DatabaseWorker.DELETE_* status), queued onto
+    # the GUI thread.
+    history_deleted = pyqtSignal(str)
 
     def __init__(self, config: Dict[str, Any], read_only: bool = False) -> None:
         super().__init__()
@@ -103,8 +119,9 @@ class WidgetState(QObject):
         self.gpu_history: Deque[HardwareStatSnapshot] = deque(maxlen=self._graph_buffer_points)
         self.ram_history: Deque[HardwareStatSnapshot] = deque(maxlen=self._graph_buffer_points)
         
-        # Batching lists for database writes
-        self._db_batch: List[Tuple[int, str, float, float]] = []
+        # Batching lists for database writes (schema v8): one NetSample per poll (exact byte deltas
+        # over the measured interval - writer_v8), and hardware samples.
+        self._net_batch: List[NetSample] = []
         self._hw_batch: List[Tuple[int, str, float]] = []
         # Guards the two batch lists: they're APPENDED on the GUI thread but flushed (snapshot+reset)
         # from the graph-worker thread (get_speed_history(wait_for_flush=True)). Without it an append
@@ -113,11 +130,21 @@ class WidgetState(QObject):
 
         # Database Worker Thread
         self._db_path = Path(get_app_data_path()) / "speed_history.db"
-        self.db_worker = DatabaseWorker(self._db_path)
+        self.db_worker = DatabaseWorker(self._db_path, poll_ms=self._poll_ms(),
+                                        is_physical=self._classify_physical)
         self.db_worker.error.connect(lambda msg: self.logger.error("DB Worker Error: %s", msg))
-        # Surface the downgrade guard (v2.1.5, action-plan item 1). Connected BEFORE
-        # start() so the worker can never trip the guard while nothing is wired.
+        # Surface the downgrade guard (v2.1.5, action-plan item 1) and a deferred v8 upgrade (2.2).
+        # Connected BEFORE start() so the worker can never trip either while nothing is wired.
         self.db_worker.schema_incompatible.connect(self.db_schema_incompatible)
+        self.db_worker.migration_deferred.connect(self.db_migration_deferred)
+        self.db_worker.history_upgraded.connect(self.db_history_upgraded)
+        # The odometer reset waits for the delete's answer (connected FIRST, so the state is settled
+        # before Settings hears the same status through the re-emit below).
+        self._usage_reset_pending = False
+        self._usage_reset_stash: List[Tuple[Any, ...]] = []
+        self._usage_post_reset: List[Any] = [0.0, 0.0, None]
+        self.db_worker.history_deleted.connect(self._on_worker_history_deleted)
+        self.db_worker.history_deleted.connect(self.history_deleted)
         if not read_only:
             self.db_worker.start()
 
@@ -134,6 +161,13 @@ class WidgetState(QObject):
 
         self._read_conns: Dict[int, Tuple[sqlite3.Connection, float]] = {}   # tid -> (conn, last_used)
         self._read_conns_lock = threading.Lock()
+        # Set by cleanup(): from then on _get_read_conn refuses (readers read empty) instead of opening
+        # a fresh read-write connection that nothing would ever close.
+        self._reads_closed = False
+        # Threads whose reads were interrupted for a stop (interrupt_reads(thread_id=...)): their
+        # further reads are refused too, so the rest of an in-flight Monitor refresh fails fast
+        # instead of running its next query. Cleared when the thread releases its connection.
+        self._reads_refused: set = set()
 
         # Data-usage odometer (data-cap feature). Lazily loaded from the DB on first
         # use (the worker thread may not have created the table yet at construction).
@@ -143,6 +177,15 @@ class WidgetState(QObject):
         }
         self._usage_loaded: bool = False
         self._usage_last_persist: float = 0.0
+        # Launch reconciliation (audit item 2): the NIC counters the cumulative has been counted UP
+        # TO (persisted with it, in the same transaction), and the snapshot loaded from the previous
+        # session - read once at load, so this session's own persists can never feed it back.
+        self._usage_live_counters: Optional[Dict[str, Any]] = None
+        self._usage_live_sampled_at: Optional[float] = None
+        self._usage_live_primary: Optional[str] = None
+        self._usage_launch_snapshot: Dict[str, Any] = {}
+        # Odometer polls that arrived before the row could be loaded (see add_usage_bytes).
+        self._usage_pending: List[Tuple[Any, ...]] = []
 
         self.logger.debug("WidgetState initialized with threaded database worker.")
 
@@ -153,11 +196,53 @@ class WidgetState(QObject):
     # erring low would close a connection out from under a slow query.
     _READ_CONN_IDLE_SEC: float = 120.0
 
+    def _poll_ms(self) -> int:
+        return int(round(resolve_poll_interval_seconds(self.config.get("update_rate", 1.0)) * 1000))
+
+    @staticmethod
+    def _classify_physical(name: str) -> bool:
+        """interfaces.is_physical, from the same classifier the Settings picker uses (2.2 scope C)."""
+        from netspeedtray.utils.interface_classifier import get_classifier
+        return bool(get_classifier().is_physical(name))
+
+    def _read_schema(self) -> Tuple[Optional[int], bool, bool]:
+        """(schema the live file reads as, use mode=ro connections, final).
+
+        A live instance asks its worker, which decides this during startup (recover / migrate) -
+        until it has, nothing may open the live name (a half-swapped migration leaves it absent, and a
+        plain connect would create an empty database there; an open handle would also block the
+        swap's rename), so readers get no connection and simply come back empty. A read-only
+        instance (the --export-csv CLI) never starts the worker: it probes the file itself, read-only,
+        and never runs recover() (that writes)."""
+        if self._read_only:
+            ver = None
+            if self._db_path.exists():
+                c = None
+                try:
+                    c = sqlite3.connect(sqlite_ro_uri(self._db_path), uri=True)
+                    row = c.execute("SELECT value FROM metadata WHERE key='db_version'").fetchone()
+                    ver = int(row[0]) if row else None
+                except Exception as e:
+                    self.logger.debug("Read-only schema probe failed: %s", e)
+                finally:
+                    if c is not None:
+                        c.close()
+            return ver, True, True
+        w = self.db_worker
+        ready = getattr(w, "ready", None)
+        if not isinstance(ready, threading.Event):
+            # A hand-assembled test double: behave as before (a plain v7 read).
+            return 7, False, True
+        if not ready.is_set():
+            return None, True, False
+        return getattr(w, "reader_version", None), bool(getattr(w, "readers_read_only", False)), True
+
     def _get_read_conn(self) -> sqlite3.Connection:
         """Returns a thread-local read connection, pruning ones left behind by dead threads.
 
         Each worker thread (notably the Monitor's GraphDataWorker, recreated on every Monitor open) opens
-        its own read connection here, removed otherwise only in cleanup() at exit. Without pruning, every
+        its own read connection here, and closes it itself as it exits (release_read_conn, wired by
+        GraphHost) - pruning is the safety net for a thread that never does. Without pruning, every
         Monitor open/close leaked a connection (a file handle + a WAL reader slot) for the whole session,
         and a recycled thread id could even hand a new worker a dead thread's stale connection. So evict
         entries whose owning thread has stopped using them.
@@ -180,6 +265,8 @@ class WidgetState(QObject):
         thread_id = threading.get_ident()
         now = time.monotonic()
         with self._read_conns_lock:
+            if self._reads_closed or thread_id in self._reads_refused:
+                raise HistoryNotReadyError("history reads are closed (shutting down)")
             if self._read_conns:
                 for stale in [tid for tid, (_c, seen) in self._read_conns.items()
                               if tid != thread_id and (now - seen) > self._READ_CONN_IDLE_SEC]:
@@ -188,7 +275,18 @@ class WidgetState(QObject):
                     except Exception:
                         pass
             if thread_id not in self._read_conns:
-                conn = sqlite3.connect(self._db_path, check_same_thread=False)
+                ver, ro, _final = self._read_schema()
+                if ver is None:
+                    # Nothing safe to open yet (the worker is still migrating), or ever (the live name
+                    # is absent until the next launch's recover()). Readers catch this and read empty.
+                    raise HistoryNotReadyError("history database not available for reading")
+                if ro:
+                    # Read-only session (deferred upgrade / downgrade / export): never a read-write
+                    # handle on a file this build must not touch - not even the checkpoint SQLite runs
+                    # when the last read-write connection to a WAL file closes.
+                    conn = sqlite3.connect(sqlite_ro_uri(self._db_path), uri=True, check_same_thread=False)
+                else:
+                    conn = sqlite3.connect(self._db_path, check_same_thread=False)
                 conn.row_factory = sqlite3.Row
                 # Wait (up to 5s) for a lock instead of erroring out immediately - otherwise a
                 # read concurrent with the maintenance VACUUM can fail with "database is locked".
@@ -205,8 +303,75 @@ class WidgetState(QObject):
             self._read_conns[thread_id] = (conn, now)   # touch: this thread is demonstrably alive
             return conn
 
-    def add_speed_data(self, speed_data: Dict[str, Tuple[float, float]], now: Optional[datetime] = None, aggregated_up: Optional[float] = None, aggregated_down: Optional[float] = None) -> None:
-        """Adds new per-interface speed data."""
+    def release_read_conn(self) -> None:
+        """Close the CALLING thread's read connection, if it has one. A worker thread that reads
+        history calls this as it exits (GraphHost wires it to its QThread's ``finished``, run on that
+        thread), so every connection is closed by the thread that used it - never from under it."""
+        with self._read_conns_lock:
+            self._reads_refused.discard(threading.get_ident())
+            entry = self._read_conns.pop(threading.get_ident(), None)
+        if entry is not None:
+            try:
+                entry[0].close()
+            except Exception:
+                pass
+
+    def interrupt_reads(self, thread_id: Optional[int] = None) -> None:
+        """Abort the statement running on another thread's read connection (all other threads' when
+        ``thread_id`` is None) - ``sqlite3_interrupt``, the one call SQLite documents as safe from a
+        different thread. The query raises ``OperationalError('interrupted')`` on its own thread,
+        which the readers catch (they read empty). The connection stays open; its owner still closes
+        it. Held under the lock, so it can never race that close. A targeted ``thread_id`` is being
+        stopped: its later reads are refused until it releases its connection."""
+        me = threading.get_ident()
+        with self._read_conns_lock:
+            if thread_id is not None:
+                self._reads_refused.add(thread_id)
+            for tid, (conn, _seen) in self._read_conns.items():
+                if tid == me or (thread_id is not None and tid != thread_id):
+                    continue
+                try:
+                    conn.interrupt()
+                except Exception:
+                    pass
+
+    @property
+    def history_reader(self) -> HistoryReader:
+        """The storage backend every history read goes through (v8 step 2). Built on first use rather
+        than in __init__ so a WidgetState assembled by hand in tests still reads; it holds no connection
+        of its own - each call fetches this thread's via _get_read_conn()."""
+        reader = getattr(self, "_history_reader", None)
+        if reader is not None:
+            return reader
+        ver, ro, final = self._read_schema()
+        if ver == 7:
+            reader = V7HistoryReader(self._get_read_conn, lambda: self.db_worker.db_path, self.logger)
+            # The db_utils fallback opens a plain read-write connection; never on a file this session
+            # must not write (a deferred upgrade leaves the v7 file live and untouched).
+            reader.allow_fallback = not ro
+        else:
+            # v8 - and, best effort, a newer file. Before the worker is ready the conn provider
+            # raises, so every read comes back empty; the backend is cached only once the answer is
+            # final.
+            reader = V8HistoryReader(self._get_read_conn, lambda: self.db_worker.db_path, self.logger)
+        if final:
+            self._history_reader = reader
+        return reader
+
+    def history_schema_version(self) -> Optional[int]:
+        """The schema history is read from (8, 7 while an upgrade is deferred), or None before the
+        worker has decided / when nothing can be read."""
+        return self._read_schema()[0]
+
+    def add_speed_data(self, speed_data: Dict[str, Tuple[float, float]], now: Optional[datetime] = None,
+                       aggregated_up: Optional[float] = None, aggregated_down: Optional[float] = None,
+                       persist_data: Optional[Dict[str, Tuple[float, float]]] = None) -> None:
+        """Adds new per-interface speed data to the IN-MEMORY live series (mini graph, Monitor session
+        view) - what the user sees; the controller passes its spike-FILTERED rates.
+
+        Nothing here is persisted any more (schema v8): history stores the exact byte deltas of every
+        poll, handed over by :meth:`add_net_sample`, never a rate. ``persist_data`` (the measured rates)
+        is accepted for call-site compatibility and ignored."""
         _now = now or datetime.now()
         self.in_memory_history.append(SpeedDataSnapshot(speeds=speed_data.copy(), timestamp=_now))
 
@@ -218,22 +383,35 @@ class WidgetState(QObject):
             
         self.aggregated_history.append(AggregatedSpeedData(upload=total_up, download=total_down, timestamp=_now))
 
-        timestamp = int(_now.timestamp())
-        max_speed = network.interface.MAX_REASONABLE_SPEED_BPS
-        
+    def add_net_sample(self, ts: float, dt_ms: float, byte_deltas: Dict[str, Tuple[float, float]],
+                       counters: Optional[Dict[str, Any]] = None,
+                       if_stats: Optional[Dict[str, Any]] = None) -> None:
+        """One poll for the v8 history: the controller's exact per-interface ``byte_deltas`` (the
+        odometer's - pre-spike-filter, clamped, capped) over the measured interval ``dt_ms`` ending at
+        wall time ``ts``, plus the raw psutil ``counters`` (err/drop deltas, counter resets) and, when
+        sampled, ``if_stats`` (link up/down, speed, duplex). An empty ``byte_deltas`` only primes the
+        writer's counter baselines. Buffered here (GUI thread) and handed to the worker - the only
+        thread that touches WriterV8 - on the 10 s persist tick."""
+        if self._read_only:
+            return
+        sample = NetSample(ts=float(ts), dt_ms=max(1, int(round(dt_ms))), byte_deltas=dict(byte_deltas),
+                           counters=counters, if_stats=if_stats)
         with self._batch_lock:
-            for interface, (up_speed, down_speed) in speed_data.items():
-                if up_speed >= network.speed.MIN_RECORDABLE_SPEED_BPS or down_speed >= network.speed.MIN_RECORDABLE_SPEED_BPS:
-                    self._db_batch.append((timestamp, interface, min(up_speed, max_speed), min(down_speed, max_speed)))
+            self._net_batch.append(sample)
 
 
     # Utilization stats are 0-100% and clamped; physical stats (power W, temperature °C, latency ms)
     # are NOT percentages and must be stored unclamped - a 200 ms ping or 180 W draw must not become 100.
     _PCT_STATS = frozenset({'cpu', 'gpu', 'ram', 'vram'})
 
-    def add_hardware_stat(self, stat_type: str, value: float, now: Optional[datetime] = None) -> None:
+    def add_hardware_stat(self, stat_type: str, value: float, now: Optional[datetime] = None,
+                          persist: bool = True) -> None:
         """Record a hardware sample (utilization %, power W, temperature °C, or latency ms) to the
-        in-memory deque (for graphed util stats) + the DB batch (for all, via the 3-tier rollups)."""
+        in-memory deque (for graphed util stats) + the DB batch (for all, via the 3-tier rollups).
+
+        ``persist=False`` feeds only the in-memory live series (mini graph, Monitor live tiles) and
+        writes nothing to disk - the caller (StatsController, via hardware_persist_allowed) passes it
+        when the user has hardware recording off or isn't monitoring that metric."""
         _now = now or datetime.now()
         snapshot = HardwareStatSnapshot(value=value, timestamp=_now)
 
@@ -244,6 +422,8 @@ class WidgetState(QObject):
         elif stat_type == 'ram':
             self.ram_history.append(snapshot)
 
+        if not persist:
+            return
         # Clamp only the percentage stats; store physical stats unclamped (just floor at 0).
         v = max(0.0, min(100.0, value)) if stat_type in self._PCT_STATS else max(0.0, float(value))
         with self._batch_lock:
@@ -270,16 +450,10 @@ class WidgetState(QObject):
         Returns False (so the caller defers) if the table isn't ready yet - never
         overwrites a real persisted counter with a fresh zero one."""
         try:
-            conn = self._get_read_conn()
-            cur = conn.cursor()
-            cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?",
-                        (constants.data.USAGE_COUNTER_TABLE,))
-            if cur.fetchone() is None:
+            rec = self.history_reader.load_usage()
+            if rec is None:
                 return False
-            cur.execute(
-                f"SELECT cumulative_up, cumulative_down, anchor_up, anchor_down, period_key "
-                f"FROM {constants.data.USAGE_COUNTER_TABLE} WHERE id = 1")
-            row = cur.fetchone()
+            row = rec.counter_row
             if row:
                 # Validate the persisted row - a corrupt/negative/NaN value flowing into the cap
                 # math could trigger a false 100% alert. Coerce to a finite, non-negative float
@@ -296,11 +470,21 @@ class WidgetState(QObject):
                 au, ad = min(_f(row[2]), cu), min(_f(row[3]), cd)
                 self._usage = {"cumulative_up": cu, "cumulative_down": cd,
                                "anchor_up": au, "anchor_down": ad, "period_key": str(row[4] or "")}
+            self._usage_launch_snapshot = rec.snapshot
             self._usage_loaded = True
             return True
         except Exception as e:
             self.logger.debug("Usage counter not ready yet: %s", e)
             return False
+
+    def get_usage_launch_snapshot(self) -> Optional[Dict[str, Any]]:
+        """The counter snapshot persisted by the PREVIOUS session ({} when there is none), or None
+        while the odometer has not loaded yet (the caller retries)."""
+        if getattr(self, "_usage_reset_pending", False):
+            return None   # a reset is in flight: whether this snapshot still counts is not known yet
+        if not self._usage_loaded and not self._try_load_usage():
+            return None
+        return self._usage_launch_snapshot
 
     def _maybe_reanchor(self) -> bool:
         """
@@ -323,17 +507,80 @@ class WidgetState(QObject):
             return True
         return False
 
-    def add_usage_bytes(self, up_bytes: float, down_bytes: float) -> None:
+    def add_usage_bytes(self, up_bytes: float, down_bytes: float,
+                        counters: Optional[Dict[str, Any]] = None,
+                        sampled_at: Optional[float] = None,
+                        window_start: Optional[float] = None,
+                        primary: Optional[str] = None) -> None:
         """Accumulate exact transferred bytes into the odometer, re-anchoring on a new
-        billing period, and persist on a throttle. Called every poll; cheap."""
+        billing period, and persist on a throttle. Called every poll; cheap.
+
+        `counters` are the raw NIC counters the total now accounts up to (sampled at wall time
+        `sampled_at`; `primary` is the auto-mode interface they were metered on); they are persisted
+        with the total so the next launch in the same boot can recover what moves while the app is
+        closed. Kept by reference - serialized only on persist.
+
+        `window_start` is the wall time the measurement window began (the previous sample, or the
+        launch snapshot). Bytes are charged to the period in which their window BEGAN: a standby
+        gap or a closed-app window spanning the reset day lands in the period it started in, never
+        all in the new one (which could fire an early overage alert)."""
+        if getattr(self, "_usage_reset_pending", False):
+            # Traffic after a reset request: if the reset lands, these bytes are the new total.
+            post = self._usage_post_reset
+            post[0] += max(0.0, up_bytes)
+            post[1] += max(0.0, down_bytes)
+            if counters is not None:
+                post[2] = (counters, sampled_at if sampled_at is not None else time.time(), primary)
         if not self._usage_loaded and not self._try_load_usage():
-            return  # defer until the table exists, so we don't clobber the saved total
+            # Not loaded yet - the worker is still opening (or migrating) the file and the readers are
+            # held off until it has. Never write a fresh zero over the saved total, and never drop these
+            # bytes either: on a large v7 file the upgrade takes seconds, and every poll in that window
+            # is real usage. Buffered in memory (bounded) and replayed, in order, once the row loads.
+            pend = getattr(self, "_usage_pending", None)
+            if pend is None:
+                pend = self._usage_pending = []
+            if len(pend) < WidgetState._USAGE_PENDING_MAX:
+                pend.append((up_bytes, down_bytes, counters, sampled_at, window_start, primary))
+            else:
+                last = pend[-1]   # fold the overflow into the newest entry: totals stay exact
+                pend[-1] = (last[0] + up_bytes, last[1] + down_bytes, counters, sampled_at, last[4], primary)
+            return
+        if getattr(self, "_usage_pending", None):
+            pending, self._usage_pending = self._usage_pending, []
+            for args in pending:
+                WidgetState._add_usage_loaded(self, *args)
+        WidgetState._add_usage_loaded(self, up_bytes, down_bytes, counters, sampled_at, window_start, primary)
+
+    _USAGE_PENDING_MAX = 4096
+
+    def _add_usage_loaded(self, up_bytes: float, down_bytes: float, counters: Optional[Dict[str, Any]],
+                          sampled_at: Optional[float], window_start: Optional[float],
+                          primary: Optional[str]) -> None:
         u = self._usage
         # Roll the period over BEFORE adding this poll, so a boundary-crossing poll's bytes
         # count toward the NEW period rather than being stranded at the anchor (audit #15).
+        # (This may persist - with the PREVIOUS counters, which is what the total still matches.)
         rolled = self._maybe_reanchor()
-        u["cumulative_up"] += max(0.0, up_bytes)
-        u["cumulative_down"] += max(0.0, down_bytes)
+        up, down = max(0.0, up_bytes), max(0.0, down_bytes)
+        u["cumulative_up"] += up
+        u["cumulative_down"] += down
+        if window_start is not None and (up or down):
+            try:
+                start_pk = self._compute_period_key(self.config.get("data_cap_reset_day", 1),
+                                                    date.fromtimestamp(window_start))
+            except (OverflowError, OSError, ValueError):
+                start_pk = u["period_key"]
+            if start_pk < u["period_key"]:
+                # The window began in an already-closed period: lifetime total yes, this period no.
+                # Moving the anchor with it works whether the rollover happened just now or earlier
+                # (e.g. on a read) - the anchor never exceeds the cumulative.
+                u["anchor_up"] += up
+                u["anchor_down"] += down
+        if counters is not None:
+            # Only now does the total include these counters' bytes - pair them from here on.
+            self._usage_live_counters = counters
+            self._usage_live_sampled_at = sampled_at if sampled_at is not None else time.time()
+            self._usage_live_primary = primary
         if rolled:
             self._persist_usage_now()  # capture this poll's bytes into the fresh period now
             self._usage_last_persist = time.time()
@@ -345,12 +592,58 @@ class WidgetState(QObject):
             self._usage_last_persist = now
 
     def _persist_usage_now(self) -> None:
-        if not self._usage_loaded:
+        if not self._usage_loaded or getattr(self, "_usage_reset_pending", False):
+            # While a reset is in flight nothing is written: the old totals must not land after the
+            # delete (resurrecting them), and zeros must not land unless the delete succeeds.
+            # (Session end with a reset still in flight: persist_usage_final.)
             return
-        u = self._usage
-        self.db_worker.enqueue_task("persist_usage", (
-            u["cumulative_up"], u["cumulative_down"], u["anchor_up"], u["anchor_down"],
-            u["period_key"], int(time.time())))
+        self.db_worker.enqueue_task("persist_usage", WidgetState._usage_payload(
+            self._usage, (self._usage_live_counters, self._usage_live_sampled_at, self._usage_live_primary)))
+
+    @staticmethod
+    def _usage_payload(u: Dict[str, Any], live: Optional[Tuple[Any, Any, Any]]) -> Tuple[Any, ...]:
+        """The persist_usage tuple for odometer ``u`` paired with ``live`` = (counters, sampled_at,
+        primary) - the NIC counters that total accounts up to, or counters None."""
+        snapshot_json = None
+        counters, sampled_at, primary = live if live else (None, None, None)
+        if counters is not None:
+            # Fresh boot id at every persist (not cached at start): boot_time() follows wall-clock
+            # corrections, so the latest reading is the one the next launch will compare against.
+            snapshot_json = usage_snapshot.encode_snapshot(
+                counters, sampled_at or time.time(), usage_snapshot.current_boot_time(), primary=primary)
+            if snapshot_json is None:
+                # Counters seen but no trustworthy snapshot (boot id unreadable): the total is about
+                # to advance past the STORED snapshot, so it must go - leaving it would make the next
+                # same-boot launch re-add bytes this total already holds.
+                snapshot_json = usage_snapshot.CLEAR_SNAPSHOT
+        # 7th element: the counter snapshot, written in the SAME transaction as the total;
+        # CLEAR_SNAPSHOT deletes the stored one; None (no counters seen yet) leaves it untouched.
+        return (u["cumulative_up"], u["cumulative_down"], u["anchor_up"], u["anchor_down"],
+                u["period_key"], int(time.time()), snapshot_json)
+
+    def persist_usage_final(self) -> None:
+        """Session end: persist the odometer tail (the ~30 s throttle window). With a usage reset still
+        unanswered on this thread, BOTH outcomes are handed to the write thread, which ran the delete
+        already (FIFO) and persists the one that matches: the traffic seen since the request if the
+        reset committed, or the old total plus everything since if it failed. Never zeros-by-guess."""
+        if not getattr(self, "_usage_reset_pending", False):
+            WidgetState._persist_usage_now(self)
+            return
+        post = self._usage_post_reset
+        reset = {"cumulative_up": float(post[0]), "cumulative_down": float(post[1]),
+                 "anchor_up": 0.0, "anchor_down": 0.0,
+                 "period_key": self._compute_period_key(self.config.get("data_cap_reset_day", 1))}
+        if_failed = None
+        if self._usage_loaded:
+            kept = dict(self._usage)
+            for up, down, *_rest in self._usage_reset_stash:   # the set-aside pre-request polls
+                kept["cumulative_up"] += max(0.0, up)
+                kept["cumulative_down"] += max(0.0, down)
+            if_failed = WidgetState._usage_payload(
+                kept, (self._usage_live_counters, self._usage_live_sampled_at, self._usage_live_primary))
+        self.db_worker.enqueue_task("persist_usage_after_delete", {
+            "if_reset": WidgetState._usage_payload(reset, post[2]),
+            "if_failed": if_failed})
 
     def get_usage_this_period(self) -> Tuple[float, float]:
         """(upload_bytes, download_bytes) used since the current period's reset day."""
@@ -362,6 +655,15 @@ class WidgetState(QObject):
         u = self._usage
         return (max(0.0, u["cumulative_up"] - u["anchor_up"]),
                 max(0.0, u["cumulative_down"] - u["anchor_down"]))
+
+    def get_usage_lifetime(self) -> Optional[Tuple[float, float]]:
+        """(upload_bytes, download_bytes) the odometer has counted since it began (never reset by a
+        period rollover; only "Delete all history" with the usage option zeroes it). None until the
+        odometer has loaded."""
+        if not self._usage_loaded and not self._try_load_usage():
+            return None
+        u = self._usage
+        return (max(0.0, u["cumulative_up"]), max(0.0, u["cumulative_down"]))
 
     def get_usage_period_key(self) -> str:
         """
@@ -381,13 +683,106 @@ class WidgetState(QObject):
         lock (atomic snapshot+reset), so a concurrent GUI-thread append can't land between copy and
         clear and be lost (#6). Enqueue happens after the lock is released (the worker queue is its own
         thread-safe handoff)."""
+        if self._read_only:
+            return
         with self._batch_lock:
-            db_batch, self._db_batch = self._db_batch, []
+            net_batch, self._net_batch = self._net_batch, []
             hw_batch, self._hw_batch = self._hw_batch, []
-        if db_batch:
-            self.db_worker.enqueue_task("persist_speed", db_batch)
-        if hw_batch:
-            self.db_worker.enqueue_task("persist_hardware", hw_batch)
+            # Enqueued INSIDE the lock (queue.put on the unbounded worker queue never blocks), so a
+            # flush from the graph-worker thread can't slip a pre-delete batch in behind a
+            # delete_all_history() that ran between the snapshot and the enqueue. Enqueued even when
+            # empty: the worker's flush also writes the app_sessions heartbeat (the coverage record).
+            self.db_worker.enqueue_task("persist_v8", (net_batch, hw_batch))
+
+    def can_delete_history(self) -> bool:
+        """Whether a delete request would be answered: a live (not read-only) instance whose write
+        thread is running and accepting writes. Checked up front so Settings never waits forever."""
+        w = self.db_worker
+        return (not self._read_only and w.isRunning()
+                and not getattr(w, "_schema_incompatible", False))
+
+    def delete_all_history(self, include_usage: bool = False) -> None:
+        """
+        "Delete all history" (Settings > Advanced): wipe every recorded speed/hardware/latency sample,
+        on disk (via the DatabaseWorker, then VACUUM) and in memory, and keep recording.
+
+        Order matters, and all of it is on the GUI thread, which is where samples are appended:
+          1. under the batch lock, drop the not-yet-flushed batches and enqueue the delete - so a
+             sample taken before the request can never be written after it (flush_batch also
+             enqueues under this lock);
+          2. clear the in-memory series IN PLACE (readers take list() copies; reassigning would
+             strand a reference held elsewhere), so the mini graph and the Monitor's live windows
+             stop showing deleted data right away;
+          3. only if the user opted in, reset the data-usage odometer - on disk inside the delete's own
+             transaction (WriterV8 clears usage_counter AND its counter snapshot), in memory only once
+             the delete reports success (_on_worker_history_deleted). Until then nothing about the
+             odometer is persisted; a FAILED delete leaves it exactly as it was.
+
+        Not touched: settings, the latency probe's short live window (~2 min, never on disk on its
+        own), and - unless ``include_usage`` - the odometer (D5: the data cap's billing source).
+        Completion is reported by ``history_deleted``.
+        """
+        if self._read_only:
+            return
+        with self._batch_lock:
+            self._net_batch = []
+            self._hw_batch = []
+            self.db_worker.enqueue_task("delete_history", {"include_usage": bool(include_usage)})
+        for series in (self.in_memory_history, self.aggregated_history,
+                       self.cpu_history, self.gpu_history, self.ram_history):
+            series.clear()
+        if include_usage:
+            # Polls buffered while the file was still opening are PRE-reset traffic: set aside, dropped
+            # if the reset lands, restored if it fails. Everything from here on is tallied separately.
+            # (Settings disables the button until the answer, so a second request while one is in
+            # flight is not expected; if one comes, it joins the first instead of losing its stash.)
+            if not self._usage_reset_pending:
+                self._usage_reset_stash = []
+                self._usage_post_reset = [0.0, 0.0, None]
+            self._usage_reset_pending = True
+            self._usage_reset_stash += list(getattr(self, "_usage_pending", None) or [])
+            self._usage_pending = []
+        self.logger.info("Delete all history requested (include_usage=%s).", bool(include_usage))
+
+    def _on_worker_history_deleted(self, status: str) -> None:
+        """The delete's answer (GUI thread). Settles a pending odometer reset: success -> the odometer
+        restarts from the traffic seen since the request; failure -> nothing changes."""
+        if not getattr(self, "_usage_reset_pending", False):
+            return
+        self._usage_reset_pending = False
+        stash, self._usage_reset_stash = self._usage_reset_stash, []
+        post, self._usage_post_reset = self._usage_post_reset, [0.0, 0.0, None]
+        if status == DatabaseWorker.DELETE_FAILED:
+            # Nothing was deleted, the usage row included: put the set-aside polls back. Replayed
+            # WITHOUT their counters - they are older than the counters the total already pairs with.
+            if stash:
+                if self._usage_loaded:
+                    for up, down, _c, _t, ws, _p in stash:
+                        WidgetState._add_usage_loaded(self, up, down, None, None, ws, None)
+                else:
+                    self._usage_pending = stash + list(self._usage_pending)
+            self._persist_usage_now()
+            self._usage_last_persist = time.time()
+            self.logger.info("Delete all history failed; the data-usage counter was left unchanged.")
+            return
+        # The delete committed, usage_counter and its snapshot with it. Pre-reset bytes (loaded,
+        # buffered or set aside) are gone; what moved since the request starts the new count.
+        self._usage = {
+            "cumulative_up": float(post[0]), "cumulative_down": float(post[1]),
+            "anchor_up": 0.0, "anchor_down": 0.0,
+            "period_key": self._compute_period_key(self.config.get("data_cap_reset_day", 1)),
+        }
+        self._usage_pending = []
+        self._usage_loaded = True              # a later lazy load must not read anything back
+        self._usage_launch_snapshot = {}       # nothing from before the reset is reconciled
+        if post[2] is not None:
+            self._usage_live_counters, self._usage_live_sampled_at, self._usage_live_primary = post[2]
+        else:
+            # No counters since the request: none pair with the new total. The snapshot on disk was
+            # deleted with the row, and persisting with no counters leaves it deleted.
+            self._usage_live_counters = self._usage_live_sampled_at = self._usage_live_primary = None
+        self._persist_usage_now()
+        self._usage_last_persist = time.time()
 
     def flush_and_wait(self, timeout: float = 2.0) -> None:
         """
@@ -443,50 +838,10 @@ class WidgetState(QObject):
         if not hasattr(self, 'db_worker') or not self.db_worker:
             return []
 
-        try:
-            conn = self._get_read_conn()
-            cursor = conn.cursor()
-            
-            _end = end_time or datetime.now()
-            _start = start_time or (_end - timedelta(hours=24))
-            
-            start_ts = int(_start.timestamp())
-            end_ts = int(_end.timestamp())
-            
-            # Target resolution by window length: raw (≤6h), minute (≤30d), hour (>30d).
-            duration = end_ts - start_ts
-            interval = 1 if duration <= 6 * 3600 else (60 if duration <= 30 * 86400 else 3600)
-
-            # Union ALL tiers (non-overlapping - data is moved, not copied) and bin to the target
-            # interval, mirroring get_speed_history. A recent-but-long window (e.g. 48h or a week) has
-            # its most-recent <24h only in the RAW tier and the older portion in minute/hour; reading a
-            # single tier silently dropped the recent half (and the old fallback only fired when the tier
-            # was TOTALLY empty). Binning keeps the point count bounded by window/interval regardless.
-            HRAW = constants.data.HARDWARE_STATS_TABLE_RAW
-            HMIN = constants.data.HARDWARE_STATS_TABLE_MINUTE
-            HHOUR = constants.data.HARDWARE_STATS_TABLE_HOUR
-            bin_ts = f"CAST(timestamp / {interval} AS INTEGER) * {interval}"
-            cursor.execute(f"""
-                SELECT b, AVG(v) FROM (
-                    SELECT {bin_ts} AS b, value AS v FROM {HRAW}
-                        WHERE stat_type = ? AND timestamp BETWEEN ? AND ?
-                    UNION ALL
-                    SELECT {bin_ts} AS b, avg_value AS v FROM {HMIN}
-                        WHERE stat_type = ? AND timestamp BETWEEN ? AND ?
-                    UNION ALL
-                    SELECT {bin_ts} AS b, avg_value AS v FROM {HHOUR}
-                        WHERE stat_type = ? AND timestamp BETWEEN ? AND ?
-                ) GROUP BY b ORDER BY b ASC
-            """, (stat_type, start_ts, end_ts) * 3)
-            rows = cursor.fetchall()
-
-            return [(datetime.fromtimestamp(row[0]), row[1]) for row in rows]
-        except Exception as e:
-            self.logger.error("Error fetching hardware history: %s", e, exc_info=True)
-            return []
+        return self.history_reader.hardware_history(stat_type, start_time, end_time)
 
     # --- pro-stats: tier-aware honest window summaries (exact ≤24h raw, avg+max beyond) ----------
-    _RAW_SUMMARY_SECONDS = 24 * 3600   # the raw tier retains ~24h; windows within it summarize exactly
+    # The SQL lives in core/db/history_reader.py (V7HistoryReader.summarize_*).
 
     def summarize_hardware(self, stat_type: str, start_time: datetime, end_time: datetime,
                            poll_interval: float = 1.0):
@@ -494,39 +849,7 @@ class WidgetState(QObject):
         from netspeedtray.utils import summaries as S
         if not getattr(self, 'db_worker', None):
             return S.summarize_raw([])
-        win = max(0.0, (end_time - start_time).total_seconds())
-        st, et = int(start_time.timestamp()), int(end_time.timestamp())
-        try:
-            cur = self._get_read_conn().cursor()
-            if win <= self._RAW_SUMMARY_SECONDS:
-                cur.execute(f"SELECT value FROM {constants.data.HARDWARE_STATS_TABLE_RAW} "
-                            f"WHERE stat_type=? AND timestamp BETWEEN ? AND ?", (stat_type, st, et))
-                vals = [r[0] for r in cur.fetchall()]
-                return S.summarize_raw(vals, S.coverage_pct(len(vals), win, poll_interval))
-            # Beyond the raw horizon the window spans tiers: the recent <24h is still in RAW, older data
-            # in minute/hour. Union all three (non-overlapping - data is moved, not copied - exactly like
-            # get_speed_history) so the summary covers the WHOLE window instead of only the rolled-up
-            # older half, which silently dropped the most recent ~24h and disagreed with the graph.
-            avgs, maxes, counts = [], [], []
-            for table in (constants.data.HARDWARE_STATS_TABLE_MINUTE, constants.data.HARDWARE_STATS_TABLE_HOUR):
-                cur.execute(f"SELECT avg_value, max_value, sample_count FROM {table} "
-                            f"WHERE stat_type=? AND timestamp BETWEEN ? AND ?", (stat_type, st, et))
-                for r in cur.fetchall():
-                    if r[0] is None:
-                        continue
-                    avgs.append(r[0]); maxes.append(r[1]); counts.append(r[2] or 1)
-            cur.execute(f"SELECT value FROM {constants.data.HARDWARE_STATS_TABLE_RAW} "
-                        f"WHERE stat_type=? AND timestamp BETWEEN ? AND ?", (stat_type, st, et))
-            raw_vals = [r[0] for r in cur.fetchall() if r[0] is not None]
-            if not avgs:   # the whole window still fits the raw tier (e.g. a <24h-old install) -> exact
-                return S.summarize_raw(raw_vals, S.coverage_pct(len(raw_vals), win, poll_interval))
-            avgs += raw_vals; maxes += raw_vals; counts += [1] * len(raw_vals)   # raw samples = count-1 buckets
-            tier = "minute" if win <= 30 * 86400 else "hour"
-            return S.summarize_rollup(avgs, maxes, counts, tier,
-                                      S.coverage_pct(sum(counts), win, poll_interval))
-        except Exception as e:
-            self.logger.error("summarize_hardware failed: %s", e, exc_info=True)
-            return S.summarize_raw([])
+        return self.history_reader.summarize_hardware(stat_type, start_time, end_time, poll_interval)
 
     def summarize_network(self, direction: str, start_time: datetime, end_time: datetime,
                           interface_name: Optional[str] = None, poll_interval: float = 1.0):
@@ -535,58 +858,16 @@ class WidgetState(QObject):
         from netspeedtray.utils import summaries as S
         if not getattr(self, 'db_worker', None):
             return S.summarize_raw([])
-        col = "download" if direction == "download" else "upload"
-        win = max(0.0, (end_time - start_time).total_seconds())
-        st, et = int(start_time.timestamp()), int(end_time.timestamp())
-        iface = None if interface_name in (None, "all") else interface_name
-        wh = "" if iface is None else " AND interface_name=?"
-        params_tail = () if iface is None else (iface,)
-        try:
-            cur = self._get_read_conn().cursor()
+        return self.history_reader.summarize_network(direction, start_time, end_time, interface_name,
+                                                     poll_interval)
 
-            def _raw_vals():
-                # Sum per-timestamp across interfaces when aggregating, so an "all" summary matches the
-                # widget's aggregate rather than mixing per-NIC samples.
-                cur.execute(
-                    f"SELECT SUM({col}_bytes_sec) FROM {constants.data.SPEED_TABLE_RAW} "
-                    f"WHERE timestamp BETWEEN ? AND ?{wh} GROUP BY timestamp", (st, et) + params_tail)
-                return [r[0] for r in cur.fetchall() if r[0] is not None]
-
-            if win <= self._RAW_SUMMARY_SECONDS:
-                vals = _raw_vals()
-                return S.summarize_raw(vals, S.coverage_pct(len(vals), win, poll_interval))
-
-            # Beyond the raw horizon the window spans tiers: the recent <24h is still in RAW, older data
-            # in minute/hour. Union all three (non-overlapping, like get_speed_history) so the summary
-            # covers the WHOLE window instead of only the rolled-up older half (which dropped the most
-            # recent ~24h and disagreed with the graph for the same window).
-            avgs, maxes, counts = [], [], []
-            covered_seconds = 0.0   # for coverage: count distinct TIME buckets × their duration, NOT
-            #                         SUM(sample_count) - which, for an "all" aggregate, double-counts by
-            #                         NIC and inflates the evidence-admissibility figure past 100%.
-            for table, bucket_secs in ((constants.data.SPEED_TABLE_MINUTE, 60.0),
-                                       (constants.data.SPEED_TABLE_HOUR, 3600.0)):
-                cur.execute(
-                    f"SELECT SUM({col}_avg), MAX(t.mx), SUM(sample_count) FROM "
-                    f"(SELECT timestamp, {col}_avg, {col}_max AS mx, sample_count FROM {table} "
-                    f" WHERE timestamp BETWEEN ? AND ?{wh}) t GROUP BY t.timestamp",
-                    (st, et) + params_tail)
-                for r in cur.fetchall():
-                    if r[0] is None:
-                        continue
-                    avgs.append(r[0]); maxes.append(r[1]); counts.append(r[2] or 1)
-                    covered_seconds += bucket_secs   # one distinct timestamp bucket of this tier
-            raw_vals = _raw_vals()
-            if not avgs:   # the whole window still fits the raw tier -> exact percentiles
-                return S.summarize_raw(raw_vals, S.coverage_pct(len(raw_vals), win, poll_interval))
-            avgs += raw_vals; maxes += raw_vals; counts += [1] * len(raw_vals)   # raw samples = count-1 buckets
-            covered_seconds += len(raw_vals) * poll_interval
-            coverage = min(100.0, (covered_seconds / win * 100.0)) if win > 0 else 0.0
-            tier = "minute" if win <= 30 * 86400 else "hour"
-            return S.summarize_rollup(avgs, maxes, counts, tier, coverage)
-        except Exception as e:
-            self.logger.error("summarize_network failed: %s", e, exc_info=True)
-            return S.summarize_raw([])
+    def get_network_hourly_profile(self, direction: str, start_time: datetime, end_time: datetime,
+                                   interface_name: Optional[str] = None) -> Dict[int, float]:
+        """{local hour: average B/s} for 'download' or 'upload' over [start,end] - the basis for the
+        Stats sheet's busiest / quietest hour (averages, never the graph's per-bucket peaks)."""
+        if not getattr(self, 'db_worker', None):
+            return {}
+        return self.history_reader.network_hourly_profile(direction, start_time, end_time, interface_name)
 
 
     def get_total_bandwidth_for_period(self, start_time: Optional[datetime], end_time: Optional[datetime], interface_name: Optional[str] = None) -> Tuple[float, float]:
@@ -597,55 +878,21 @@ class WidgetState(QObject):
         if not hasattr(self, 'db_worker') or not self.db_worker:
             return 0.0, 0.0
 
-        try:
-            conn = self._get_read_conn()
-            cursor = conn.cursor()
-            
-            start_ts = int(start_time.timestamp()) if start_time else 0
-            end_ts = int(end_time.timestamp())
+        # v8 ignores the poll rate (every raw row carries its dt_ms); a v7 file read while an upgrade
+        # is deferred scales its raw tier by it.
+        poll_interval = resolve_poll_interval_seconds(self.config.get("update_rate", 1.0))
+        return self.history_reader.total_bandwidth(start_time, end_time, interface_name, poll_interval)
 
-            total_up, total_down = 0.0, 0.0
-            
-            # Optimization: Only query tiers that could potentially have data for this range.
-            # Raw: last 2 days. Minute: last 32 days. Hour: all.
-            now_ts = int(datetime.now().timestamp())
-            
-            # Bytes per tier = (sum of per-sample RATES) × (the seconds that sum represents). For the
-            # MINUTE and HOUR rollups that span is the FIXED bucket duration (60 / 3600 s) - NOT
-            # sample_count × the LIVE poll interval, which silently rescales ALL historical data when the
-            # user changes the poll rate (1s→5s would 5×-over-report months of minute/hour history). When
-            # the poll rate is unchanged the two agree (sample_count × poll ≈ bucket duration); the fix
-            # only changes the rate-changed case. The raw tier has no stored capture interval, so it uses
-            # the current poll interval (it's ≤24h, where the rate rarely changes). Per the db_utils model.
-            # SMART (-1.0) / the historical 0 sentinel actually sample every 2.0 s, not 1.0 s -
-            # resolve through the shared helper so raw-tier volume is not under-reported 2x.
-            poll_interval = resolve_poll_interval_seconds(self.config.get("update_rate", 1.0))
-
-            tiers = []
-            if start_ts <= now_ts:                  # raw: SUM(bytes_sec) × poll_interval
-                tiers.append(("speed_history_raw", "upload_bytes_sec", "download_bytes_sec", poll_interval))
-            if start_ts < (now_ts - 24 * 3600):     # minute: SUM(avg) × 60
-                tiers.append(("speed_history_minute", "upload_avg", "download_avg", 60.0))
-            if start_ts < (now_ts - 30 * 86400):    # hour: SUM(avg) × 3600
-                tiers.append(("speed_history_hour", "upload_avg", "download_avg", 3600.0))
-
-            for table, up_expr, down_expr, secs in tiers:
-                query = f"SELECT SUM({up_expr}), SUM({down_expr}) FROM {table} WHERE timestamp BETWEEN ? AND ?"
-                params = [start_ts, end_ts]
-                if interface_name and str(interface_name).lower() != "all":
-                    query += " AND interface_name = ?"
-                    params.append(interface_name)
-                cursor.execute(query, params)
-                row = cursor.fetchone()
-                if row:
-                    total_up += (row[0] or 0.0) * secs
-                    total_down += (row[1] or 0.0) * secs
-
-            return total_up, total_down
-
-        except Exception as e:
-            self.logger.error("Error calculating total bandwidth: %s", e, exc_info=True)
-            return 0.0, 0.0
+    def get_history_volume_for_period(self, start_time: Optional[datetime], end_time: Optional[datetime],
+                                      interface_name: Optional[str] = None) -> VolumeResult:
+        """get_total_bandwidth_for_period with its provenance (decision D5): ``reconstructed`` is True
+        when any part was estimated from stored rates (history recorded before 2.2), so the UI labels
+        the number "recorded history" rather than presenting it as exact."""
+        if not hasattr(self, 'db_worker') or not self.db_worker:
+            return VolumeResult(0.0, 0.0, 0.0, 0.0, False)
+        poll_interval = resolve_poll_interval_seconds(self.config.get("update_rate", 1.0))
+        return self.history_reader.volume(start_time, end_time or datetime.now(), interface_name,
+                                          poll_interval)
 
 
     def get_in_memory_speed_history(self) -> List[SpeedDataSnapshot]:
@@ -708,212 +955,12 @@ class WidgetState(QObject):
         if _visited_resolutions is None and wait_for_flush:
             self.flush_and_wait()
 
-        # 1. Timeline Setup
-        _now_ts = int(datetime.now().timestamp())
-        _start_ts = int(start_time.timestamp()) if start_time else 0
-        _end_ts = int(end_time.timestamp()) if end_time else _now_ts
-        
-        # 2. Determine Resolution
-        target_res = resolution
-        if target_res == 'auto':
-            target_res = constants.data.history_period.get_target_resolution(start_time, end_time)
-
-        # Resolution -> Interval (seconds) mapping
-        # 'day' maps to 86400, others to their standard seconds
-        res_map = {'raw': 1, 'minute': 60, 'hour': 3600, 'day': 86400}
-        target_interval = res_map.get(target_res, 60)
-        
-        # 3. Build TARGETED Query (Single Table based on Resolution)
-        # For multi-tier queries (minute/hour), we query both the aggregated table AND raw table
-        # to ensure we capture recent data that hasn't been moved to aggregates yet.
-        is_all_ifaces = not interface_name or str(interface_name).lower() == "all"
-        
-        # Map resolution to primary table and columns
-        table_map = {
-            'raw': ("speed_history_raw", "upload_bytes_sec", "download_bytes_sec"),
-            'minute': ("speed_history_minute", "upload_avg", "download_avg"),
-            'hour': ("speed_history_hour", "upload_avg", "download_avg"),
-            'day': ("speed_history_hour", "upload_avg", "download_avg"),
-        }
-        
-        table, up_col, down_col = table_map.get(target_res, table_map['minute'])
-        
-        try:
-            conn = self._get_read_conn()
-            cursor = conn.cursor()
-            
-            # Time binning calculation
-            time_calc = f"CAST(timestamp / {target_interval} AS INTEGER) * {target_interval}"
-            
-            # Build inner query. For aggregated resolutions, construct a UNION
-            # and keep peak speed semantics (MAX) across tiers so timeline
-            # changes do not dilute/reshape the same event differently.
-            if target_res in ('minute', 'hour', 'day'):
-                # Multi-tier merge with explicit peak-preserving logic.
-                tier_queries = []
-                params = []
-
-                def add_tier_query(table_name: str, up_expr: str, down_expr: str) -> None:
-                    q = f"""
-                        SELECT
-                            {time_calc} as bin_ts,
-                            interface_name,
-                            {up_expr} as up,
-                            {down_expr} as down
-                        FROM {table_name}
-                        WHERE timestamp BETWEEN ? AND ?
-                    """
-                    tier_params = [_start_ts, _end_ts]
-                    if not is_all_ifaces:
-                        q += " AND interface_name = ?"
-                        tier_params.append(interface_name)
-                    tier_queries.append(q)
-                    params.extend(tier_params)
-
-                # Raw keeps exact per-second peaks.
-                add_tier_query(constants.data.SPEED_TABLE_RAW, "upload_bytes_sec", "download_bytes_sec")
-                # Aggregated tiers use preserved per-bucket maxima.
-                add_tier_query(constants.data.SPEED_TABLE_MINUTE, "upload_max", "download_max")
-
-                if target_res in ('hour', 'day'):
-                    add_tier_query(constants.data.SPEED_TABLE_HOUR, "upload_max", "download_max")
-
-                union_query = " UNION ALL ".join(tier_queries)
-                inner_query = f"""
-                    SELECT
-                        bin_ts,
-                        interface_name,
-                        MAX(up) as up,
-                        MAX(down) as down
-                    FROM ({union_query})
-                    GROUP BY bin_ts, interface_name
-                """
-            else:
-                # Raw resolution: single table query
-                inner_query = f"""
-                    SELECT 
-                        {time_calc} as bin_ts, 
-                        interface_name, 
-                        AVG({up_col}) as up, 
-                        AVG({down_col}) as down
-                    FROM {table}
-                    WHERE timestamp BETWEEN ? AND ?
-                """
-                params = [_start_ts, _end_ts]
-                if not is_all_ifaces:
-                    inner_query += " AND interface_name = ?"
-                    params.append(interface_name)
-                inner_query += " GROUP BY bin_ts, interface_name"
-                
-            # Outer query: aggregate bins
-            if is_all_ifaces:
-                outer_query = f"""
-                    SELECT bin_ts, COALESCE(SUM(up), 0), COALESCE(SUM(down), 0)
-                    FROM ({inner_query})
-                    GROUP BY bin_ts
-                    ORDER BY bin_ts
-                """
-            else:
-                outer_query = f"""
-                    SELECT bin_ts, COALESCE(AVG(up), 0), COALESCE(AVG(down), 0)
-                    FROM ({inner_query})
-                    GROUP BY bin_ts
-                    ORDER BY bin_ts
-                """
-            
-            cursor.execute(outer_query, tuple(params))
-            rows = cursor.fetchall()
-            self.logger.debug("History query: target_res=%s fetched_rows=%d", target_res, len(rows))
-            
-            # Convert rows to standard format (Timestamp, Up, Down)
-            valid_rows = [row for row in rows if row and row[0] is not None]
-            if len(valid_rows) != len(rows):
-                self.logger.warning(
-                    "Dropping %d invalid graph rows with NULL timestamp (resolution=%s).",
-                    len(rows) - len(valid_rows),
-                    target_res
-                )
-
-            data_points = []
-            if return_raw:
-                 data_points = [(int(row[0]), float(row[1] or 0.0), float(row[2] or 0.0)) for row in valid_rows]
-            else:
-                 data_points = [(datetime.fromtimestamp(int(row[0])), float(row[1] or 0.0), float(row[2] or 0.0)) for row in valid_rows]
-
-            # If targeted-table query returned no rows and we targeted an aggregated
-            # table (minute/hour/day), fall back to the more comprehensive
-            # optimized query in utils.db_utils which unions tiers. This allows
-            # freshly-started apps (with only raw data present) to still show
-            # historical ranges by reading directly from raw where appropriate.
-            if not data_points and target_res != 'raw':
-                try:
-                    from netspeedtray.utils.db_utils import get_speed_history as util_get_speed_history
-                    self.logger.debug("Targeted query returned no rows; falling back to unified DB query.")
-                    fallback = util_get_speed_history(self.db_worker.db_path, start_time=start_time, end_time=end_time, interface_name=interface_name)
-                    self.logger.debug("Fallback unified DB query returned %d rows", len(fallback) if fallback else 0)
-                    if fallback:
-                        if return_raw:
-                            data_points = [(int(dt.timestamp()), up, down) for dt, up, down in fallback]
-                        else:
-                            data_points = [(dt, up, down) for dt, up, down in fallback]
-                except Exception:
-                    self.logger.exception("Fallback unified DB query failed.")
-
-            # --- SMART Edge Padding (Zero-Fill) ---
-            # If no real data, create evenly-spaced zeros across the timeline.
-            # This prevents gap detection from splitting into single-point segments.
-            if start_time and end_time:
-                duration = (_end_ts - _start_ts)  # seconds
-                
-                if not data_points:
-                    # No real data: Generate synthetic flat baseline
-                    # 1 point per hour, min 10, max 100 for performance
-                    num_points = min(100, max(10, int(duration / 3600)))
-                    interval = duration / max(1, num_points - 1)
-                    
-                    for i in range(num_points):
-                        pt_ts = _start_ts + (i * interval)
-                        if return_raw:
-                            data_points.append((pt_ts, 0.0, 0.0))
-                        else:
-                            data_points.append((datetime.fromtimestamp(pt_ts), 0.0, 0.0))
-                else:
-                    # Has real data: Just ensure edges are covered
-                    s_pt = _start_ts if return_raw else start_time
-                    e_pt = _end_ts if return_raw else end_time
-                    
-                    if data_points[0][0] > s_pt:
-                        data_points.insert(0, (s_pt, 0.0, 0.0))
-                    if data_points[-1][0] < e_pt:
-                        data_points.append((e_pt, 0.0, 0.0))
-            
-            return data_points
-
-        except sqlite3.Error as e:
-            self.logger.error("Unified graph query failed: %s", e, exc_info=True)
-            return []
+        return self.history_reader.speed_history(start_time, end_time, interface_name, return_raw, resolution)
 
 
     def get_distinct_interfaces(self) -> List[str]:
         """Returns a sorted list of all unique interface names from the database."""
-        try:
-            conn = self._get_read_conn()
-            cursor = conn.cursor()
-
-            # Query all three tables to be comprehensive
-            cursor.execute("""
-                SELECT DISTINCT interface_name FROM speed_history_raw
-                UNION
-                SELECT DISTINCT interface_name FROM speed_history_minute
-                UNION
-                SELECT DISTINCT interface_name FROM speed_history_hour
-                ORDER BY interface_name
-            """)
-            interfaces = [row[0] for row in cursor.fetchall()]
-            return interfaces
-        except sqlite3.Error as e:
-            self.logger.error("Error fetching distinct interfaces: %s", e, exc_info=True)
-            return []
+        return self.history_reader.distinct_interfaces()
 
 
     def get_earliest_data_timestamp(self) -> Optional[datetime]:
@@ -922,32 +969,17 @@ class WidgetState(QObject):
         """
         self.flush_batch()
         # time.sleep(0.1)  # REMOVED: This was causing a 100ms freeze on the UI thread.
-        
-        try:
-            conn = self._get_read_conn()
-            cursor = conn.cursor()
+        return self.history_reader.earliest_timestamp()
 
-            query = """
-                SELECT MIN(earliest_ts) FROM (
-                    SELECT MIN(timestamp) as earliest_ts FROM speed_history_raw
-                    UNION ALL
-                    SELECT MIN(timestamp) as earliest_ts FROM speed_history_minute
-                    UNION ALL
-                    SELECT MIN(timestamp) as earliest_ts FROM speed_history_hour
-                ) WHERE earliest_ts IS NOT NULL;
-            """
-            cursor.execute(query)
-            result = cursor.fetchone()
-            
-            if result and result[0] is not None:
-                earliest_ts = int(result[0])
-                return datetime.fromtimestamp(earliest_ts)
 
-        except sqlite3.Error as e:
-            self.logger.error("Failed to retrieve the earliest timestamp from database: %s", e, exc_info=True)
-
-        return None
-
+    def persist_essentials(self, timeout: float = 2.0) -> None:
+        """Windows is ending the session: queue the last history batch and the odometer tail, and wait
+        (bounded by ``timeout``) for the database thread to write them. Stops nothing - the full
+        cleanup() may never get to run before the process is ended. A data-usage reset still waiting
+        for its delete's answer is settled by the write thread (persist_usage_final)."""
+        self.flush_batch()
+        self.persist_usage_final()
+        self.flush_and_wait(timeout=timeout)
 
     def cleanup(self) -> None:
         """Flushes final data and cleanly stops the database worker thread."""
@@ -957,30 +989,45 @@ class WidgetState(QObject):
         self.flush_batch()
         # Persist the final odometer tail so the ~30s throttle window isn't lost on exit
         # (no-op if the counter was never loaded). The worker drains this before stopping.
-        self._persist_usage_now()
+        WidgetState.persist_usage_final(self)
 
-        # Close persistent read connections
+        # Read connections. Never close another thread's connection from here: closing a sqlite3
+        # connection while its thread is mid-query is undefined behaviour (segfaulted 4/4 in a plain
+        # 3.13 repro; the lucky outcome was "Cannot operate on a closed database"), and quitting with
+        # the Monitor open hit exactly that. So: refuse new reads, close this thread's own connection,
+        # interrupt any statement still running elsewhere, and leave those connections to their owners
+        # (a worker closes its own as it exits - release_read_conn). The widget closes the Monitor and
+        # joins its graph worker before calling this; anything still registered is reclaimed at exit.
         with self._read_conns_lock:
-            for tid, (conn, _seen) in self._read_conns.items():
-                try:
-                    conn.close()
-                except:
-                    pass
-            self._read_conns.clear()
+            self._reads_closed = True
+            own = self._read_conns.pop(threading.get_ident(), None)
+        if own is not None:
+            try:
+                own[0].close()
+            except Exception:
+                pass
+        self.interrupt_reads()
 
         self.db_worker.stop()
-        # Only wait for the thread if it was actually running
+        # Only wait for the thread if it was actually running. Usually it drains in well under a
+        # second, but a quit right after start can land inside the v7 -> v8 migration or the first
+        # maintenance pass; the worker skips what it can once stop is set, and the wait is bounded.
+        # Never let the QThread be destroyed while it runs (Qt aborts the process): past the bound it
+        # is detached, and monitor.py exits hard - a kill the migration and the writer are tested for.
         if self.db_worker.isRunning():
-            self.db_worker.wait(2000) # Wait up to 2 seconds for the thread to finish
+            if not self.db_worker.wait(int(constants.timeouts.DB_SHUTDOWN_WAIT_MS)):
+                from netspeedtray.core.database import detach_running_worker
+                self.logger.warning("The database thread is still busy after %d ms; exiting without "
+                                    "waiting for it (an interrupted upgrade resumes at the next start).",
+                                    int(constants.timeouts.DB_SHUTDOWN_WAIT_MS))
+                detach_running_worker(self.db_worker)
 
 
     def _get_max_history_points(self) -> int:
         """Calculates max points for the in-memory deque based on config."""
         try:
             history_minutes = self.config.get("history_minutes", 30)
-            update_rate_sec = self.config.get("update_rate", 1.0)
-            if update_rate_sec <= 0: update_rate_sec = 1.0
-
+            update_rate_sec = resolve_poll_interval_seconds(self.config.get("update_rate", 1.0))
             points = int(round((history_minutes * 60) / update_rate_sec))
             return max(10, min(points, 5000))
 
@@ -996,8 +1043,7 @@ class WidgetState(QObject):
         try:
             from netspeedtray import constants
             _, max_minutes = constants.ui.history.HISTORY_MINUTES_RANGE
-            update_rate_sec = self.config.get("update_rate", 1.0)
-            if update_rate_sec <= 0: update_rate_sec = 1.0
+            update_rate_sec = resolve_poll_interval_seconds(self.config.get("update_rate", 1.0))
             points = int(round((max_minutes * 60) / update_rate_sec))
             return max(10, min(points, 5000))
         except Exception as e:
@@ -1008,7 +1054,11 @@ class WidgetState(QObject):
     def apply_config(self, config: Dict[str, Any]) -> None:
         """Apply updated configuration and adjust state."""
         self.logger.debug("Applying new configuration to WidgetState...")
+        old_poll = self._poll_ms()
         self.config = config.copy()
+        if not self._read_only and self._poll_ms() != old_poll:
+            # Only the writer's gap threshold depends on it; stored bytes never do.
+            self.db_worker.enqueue_task("set_poll_ms", self._poll_ms())
         new_max_points = self._get_max_history_points()
         if new_max_points != self.max_history_points:
             self.max_history_points = new_max_points

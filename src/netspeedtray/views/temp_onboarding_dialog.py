@@ -4,7 +4,8 @@ power) but no sensor source is detected. Instead of a silent blank readout, it e
 points one click at LibreHardwareMonitor, and is explicit that NetSpeedTray itself never runs
 as admin and never ships a driver of its own.
 
-Gated upstream (monitor thread emits at most once per session, only when temps/power are on)
+Gated upstream (monitor thread emits at most once per session, only when temps/power are on for a
+monitored CPU/GPU - see StatsMonitorThread._update_lhm_notice)
 and further suppressible via the "Don't remind me again" checkbox (config: temp_onboarding_dismissed).
 """
 from __future__ import annotations

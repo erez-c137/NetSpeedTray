@@ -26,16 +26,20 @@ from netspeedtray.views.settings.dialog import SettingsDialog
 # onboarding flags, db-internal keys etc. are deliberately excluded - they aren't page-managed.
 MANAGED_KEYS = {
     # General
-    "language", "update_rate", "start_with_windows", "check_for_updates", "preferred_monitor",
-    # Widget (layout + on-taskbar behavior)
-    "free_move", "keep_visible_fullscreen",
+    "language", "update_rate", "start_with_windows", "check_for_updates",
+    # General > Interaction (moved from Advanced > Behavior, 2.2 IA pass change 3)
+    "double_click_action", "middle_click_action", "pause_in_menu", "show_usage_on_hover", "show_hover_tips",
+    # Widget (layout + on-taskbar placement/behavior; preferred_monitor moved from General, 2.2 IA pass)
+    "preferred_monitor", "free_move", "free_float", "keep_visible_fullscreen",
     "widget_display_mode", "stack_hardware_stats", "widget_display_order",
+    # Widget - mini graph (moved from Appearance, 2.2 IA pass)
+    "graph_enabled", "history_minutes", "graph_opacity", "graph_fixed_scale", "graph_scale_headroom",
+    "graph_show_ceiling", "graph_split_directions",
     # Appearance - font / color / arrows / background
     "font_family", "font_size", "font_weight", "default_color",
     "background_color", "background_opacity",
     "use_separate_arrow_font", "arrow_font_family", "arrow_font_size",
     "arrow_up_symbol", "arrow_down_symbol",
-    "graph_enabled", "history_minutes", "graph_opacity",
     # Appearance - units / format (was the Display page)
     "unit_type", "speed_display_mode", "decimal_places", "text_alignment",
     "swap_upload_download", "hide_arrows", "hide_unit_suffix", "short_unit_labels",
@@ -56,7 +60,8 @@ MANAGED_KEYS = {
     # Appearance - fixed arrow weight (constant, but must survive the load/get chain)
     "arrow_font_weight",
     # Advanced
-    "keep_data", "reduce_motion", "show_usage_on_hover", "show_hover_tips", "pause_in_menu",
+    "keep_data", "record_hardware_history", "reduce_motion", "keep_windows_on_top",
+    "metrics_endpoint_enabled", "metrics_endpoint_port",
 }
 
 # High-risk keys for the reshuffle: the ones that MOVE pages, the segmented enums (int/string
@@ -83,6 +88,16 @@ ROUNDTRIP = {
     "interface_mode": "all_physical",
     "keep_data": 90,
     "reduce_motion": True,
+    # Moved by the 2.2 IA pass (mini graph -> Widget, throttle temp within Hardware)
+    "graph_enabled": False,
+    "graph_opacity": 33,
+    "graph_split_directions": True,
+    "graph_fixed_scale": True,
+    "throttle_temp_c": 85,
+    # Moved by the 2.2 IA pass change 3 (Advanced > Behavior -> General > Interaction)
+    "pause_in_menu": True,
+    "show_usage_on_hover": False,
+    "show_hover_tips": False,
 }
 
 
@@ -159,15 +174,6 @@ def test_color_picker_routes_to_the_right_embedded_section(qtbot, monkeypatch):
     monkeypatch.setattr(QColorDialog, "getColor", lambda *a, **k: QColor("#ABCDEF"))
     dlg._open_color_dialog("default_color")
     assert dlg.appearance_page.default_color_input.text().upper() == "#ABCDEF"
-
-
-def test_force_mb_off_disallows_smart_update_rate(qtbot):
-    """UI rule: SMART (adaptive) update cadence isn't allowed when Force-MB is off (it causes unit
-    jitter). Loading SMART + auto must come back out of get_settings forced to >= AGGRESSIVE."""
-    cfg = dict(constants.config.defaults.DEFAULT_CONFIG)
-    cfg.update({"speed_display_mode": "auto", "update_rate": -1.0})  # -1 == SMART sentinel
-    dlg = _dialog(qtbot, cfg)
-    assert float(dlg.get_settings()["update_rate"]) >= 1.0
 
 
 def test_enabling_a_hardware_monitor_switches_widget_out_of_network_only(qtbot):

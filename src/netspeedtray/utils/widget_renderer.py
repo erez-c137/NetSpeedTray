@@ -8,15 +8,17 @@ supports multiple layouts (e.g., vertical, horizontal) to adapt to different UI 
 
 import logging
 import math
-from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple, TYPE_CHECKING
 from dataclasses import dataclass, field
 
 from netspeedtray.core.widget_state import SpeedDataSnapshot, AggregatedSpeedData
 from netspeedtray.utils.helpers import (has_dedicated_vram, format_speed, calculate_monotone_cubic_interpolation,
-                                        memory_label_width)
+                                        memory_label_width, effective_display_mode)
 from PyQt6.QtGui import QPainter, QColor, QFont, QFontMetrics, QPen, QPainterPath
 from PyQt6.QtCore import Qt, QPointF, QRect, QRectF
 from netspeedtray import constants
+from netspeedtray.utils.timer_utils import resolve_poll_interval_seconds
+from netspeedtray.utils import hardware_vendors
 
 # v2.1 network-identity band tag, drawn as a rounded pill/badge. The layout RESERVES the fixed
 # worst-case slot and the renderer DRAWS the actual (usually narrower) tag in it - both MUST use these
@@ -58,6 +60,107 @@ def identity_layout(fm, ssid, band):
 logger = logging.getLogger("NetSpeedTray.WidgetRenderer")
 
 
+def trend_window(num_points: int) -> int:
+    """Smoothing window (in samples) for the Trend mini graph's interior: a fixed fraction of the
+    samples on screen, so the curve is equally calm at any timespan, at least TREND_MIN_WINDOW. The
+    right edge uses the short TREND_EDGE_WINDOW instead (see trend_smooth)."""
+    r = constants.renderer
+    return max(r.TREND_MIN_WINDOW, int(round(num_points * r.TREND_WINDOW_FRACTION)))
+
+
+def _gaussian_local_linear(y, window: int):
+    """The smoother behind trend_smooth for ONE window: centred Gaussian in the interior, slope-damped
+    local-linear fit where the window runs off the ends. Returns a numpy array."""
+    import numpy as np
+
+    n = len(y)
+    # The kernel must not be longer than the data ('same' convolution keeps len(y) only then).
+    half = min(int(window) // 2, (n - 1) // 2)
+    if half < 1:
+        return y.copy()
+    d = np.arange(-half, half + 1, dtype=float)
+    sigma = max(half / 2.0, 0.5)
+    g = np.exp(-0.5 * (d / sigma) ** 2)
+    ones = np.ones(n)
+
+    def corr(a, k):   # out[i] = sum_j a[j] * k(j - i), over the samples that exist
+        return np.convolve(a, k[::-1], mode="same")
+
+    s0, s1 = corr(ones, g), corr(ones, g * d)
+    # Weighted second moment plus the ridge, scaled to the full kernel's own second moment.
+    s2 = corr(ones, g * d * d) + constants.renderer.TREND_EDGE_SLOPE_DAMPING * float((g * d * d).sum())
+    t0, t1 = corr(y, g), corr(y, g * d)
+    return (s2 * t0 - s1 * t1) / (s0 * s2 - s1 * s1)
+
+
+def trend_smooth(values: List[float], window: int, edge_window: Optional[int] = None) -> List[float]:
+    """Smooth an evenly spaced series for the Trend mini graph: a centred Gaussian moving average,
+    with a slope-damped local-linear fit where the window runs off the ends, and a short window at
+    the right edge.
+
+    Interior: a centred Gaussian average (sigma = window / 4, cut at +-2 sigma). Centred, so a burst
+    stays where it happened instead of sliding right and smearing the way a trailing EMA does.
+
+    Ends: there are no samples past them. A plain truncated average lags there (a step 2 s old reached
+    75% of its level at the 3 min default); a full local-linear fit has no lag but overshoots (115%)
+    and wags with the per-second noise (77% of the raw noise, vs 35% in the interior). Damping the
+    fitted slope (TREND_EDGE_SLOPE_DAMPING, a ridge on the slope term) keeps most of the catch-up (87%
+    after 2 s, 96% after 3 s) with no overshoot and nearly the truncated average's calm (52% of the
+    raw noise). In the interior the slope term is exactly zero (symmetric weights).
+
+    Right edge = "now": its lag must not grow with the timespan, or the line still shows half a
+    finished download while the text beside it reads 0 (a 6% window is 108 samples on 30 min). So the
+    newest half-window blends linearly from the interior smoothing into a fixed short window
+    (``edge_window``, default TREND_EDGE_WINDOW samples): after a drop to 0 the last point is near 0
+    within ~5 samples at every timespan. Long timespans stay calm where it matters - many samples
+    share one pixel there.
+
+    A few numpy convolutions, O(n * window): under a millisecond for 1,800 samples, and only when
+    the history changes (the caller caches the result with its polyline)."""
+    import numpy as np   # lazy, like calculate_monotone_cubic_interpolation: only with the graph on
+
+    y = np.asarray(values, dtype=float)
+    n = len(y)
+    out = _gaussian_local_linear(y, window)
+    edge = constants.renderer.TREND_EDGE_WINDOW if edge_window is None else int(edge_window)
+    blend = min(int(window) // 2, n - 1)
+    if edge < window and blend > 0:
+        short = _gaussian_local_linear(y, edge)
+        k = np.arange(n - 1, -1, -1, dtype=float)          # samples back from "now"
+        w = np.clip(1.0 - k / blend, 0.0, 1.0)              # 1 at "now", 0 a half-window back
+        out = (1.0 - w) * out + w * short
+    return out.tolist()
+
+
+def trend_scale_values(smoothed: List[float]) -> List[float]:
+    """What the Trend auto-fit sizes the axis to: the smoothed series, with its newest half edge
+    window (TREND_EDGE_WINDOW // 2 samples) stood in for by its MEAN.
+
+    At "now" a lone 1 s spike and the first second of a sustained burst look the same, and the edge
+    fit draws both high (~40% of the spike's height) before a spike settles to ~16% as it scrolls into
+    the interior. Sizing the axis to that edge peak re-scaled the whole graph by 2.2x over 3 s after
+    every lone spike; the edge mean keeps that within 1.3x. A burst still grows the axis as its level
+    is confirmed (its line rides the top edge meanwhile, capped). The line itself is drawn unchanged."""
+    h = constants.renderer.TREND_EDGE_WINDOW // 2
+    if h < 1 or len(smoothed) <= h + 1:
+        return smoothed
+    edge = smoothed[-h:]
+    return smoothed[:-h] + [sum(edge) / len(edge)]
+
+
+class _SpeedColumns(NamedTuple):
+    """Formatted speeds and the column geometry shared by every speed row (see _speed_columns)."""
+    up_val: str
+    up_unit: str
+    dw_val: str
+    dw_unit: str
+    number_area_width: int
+    max_arrow_width: int
+    arrow_gap: int
+    unit_gap: int
+    max_unit_width: int
+
+
 @dataclass
 class RenderConfig:
     """A data class holding a snapshot of all configuration relevant to rendering."""
@@ -86,6 +189,20 @@ class RenderConfig:
     hide_unit_suffix: bool = constants.config.defaults.DEFAULT_HIDE_UNIT_SUFFIX
     short_unit_labels: bool = constants.config.defaults.DEFAULT_SHORT_UNIT_LABELS
     max_samples: int = 1800 # Default 30 mins * 60s
+    # Fixed mini-graph y-axis. graph_scale_ceiling is the advertised plan speed in bytes/sec - the larger
+    # of down/up, since both series share one axis - and 0 means no plan is set, which keeps the graph
+    # automatic even with graph_fixed_scale on. graph_scale_headroom is a fraction (0.10 == 10%).
+    graph_fixed_scale: bool = constants.config.defaults.DEFAULT_GRAPH_FIXED_SCALE
+    graph_scale_ceiling: float = 0.0
+    graph_scale_headroom: float = constants.config.defaults.DEFAULT_GRAPH_SCALE_HEADROOM / 100.0
+    graph_show_ceiling: bool = constants.config.defaults.DEFAULT_GRAPH_SHOW_CEILING
+    # Separate upload/download graphs. Each panel scales to its own direction's plan speed (0 = not set,
+    # so that panel stays automatic); graph_scale_ceiling above is the shared axis of the combined graph.
+    graph_split_directions: bool = constants.config.defaults.DEFAULT_GRAPH_SPLIT_DIRECTIONS
+    graph_scale_ceiling_up: float = 0.0
+    graph_scale_ceiling_down: float = 0.0
+    # "detailed" (every sample, filled) or "trend" (smoothed line) - see draw_mini_graph.
+    graph_style: str = constants.config.defaults.DEFAULT_GRAPH_STYLE
     use_separate_arrow_font: bool = False
     arrow_font_family: str = constants.config.defaults.DEFAULT_FONT_FAMILY
     arrow_font_size: int = 9
@@ -104,7 +221,12 @@ class RenderConfig:
     monitor_vram_enabled: bool = False
     show_memory_labels: bool = False
     stack_hardware_stats: bool = False
-    hardware_label_style: str = "icons_colored"
+    hardware_label_style: str = constants.config.defaults.DEFAULT_HARDWARE_LABEL_STYLE
+    hardware_label_color: str = constants.config.defaults.DEFAULT_HARDWARE_LABEL_COLOR
+    cpu_label_color: str = constants.config.defaults.DEFAULT_CPU_LABEL_COLOR
+    gpu_label_color: str = constants.config.defaults.DEFAULT_GPU_LABEL_COLOR
+    # The mode the widget PAINTS with - helpers.effective_display_mode (the user's Display Mode, or
+    # network_only while "Show hardware in the hover card" is active).
     widget_display_mode: str = "network_only"
     widget_display_order: List[str] = field(default_factory=lambda: ["network", "cpu", "gpu"])
     show_hardware_temps: bool = False
@@ -119,8 +241,8 @@ class RenderConfig:
             opacity = float(opacity_raw) / 100.0 if opacity_raw is not None else (constants.config.defaults.DEFAULT_GRAPH_OPACITY / 100.0)
             
             hist_mins = int(config.get('history_minutes', constants.config.defaults.DEFAULT_HISTORY_MINUTES))
-            rate = float(config.get('update_rate', constants.config.defaults.DEFAULT_UPDATE_RATE))
-            if rate <= 0: rate = 1.0
+            rate = resolve_poll_interval_seconds(
+                config.get('update_rate', constants.config.defaults.DEFAULT_UPDATE_RATE))
             max_samples = int((hist_mins * 60) / rate)
 
             weight_raw = config.get('font_weight', constants.fonts.WEIGHT_DEMIBOLD)
@@ -132,6 +254,15 @@ class RenderConfig:
             else:
                 try: weight_val = int(weight_raw)
                 except: weight_val = constants.fonts.WEIGHT_DEMIBOLD
+
+            mbps_to_bytes = constants.network.units.MEGA_DIVISOR / constants.network.units.BITS_PER_BYTE
+            plan_down = max(0.0, float(config.get('plan_down_mbps', 0) or 0)) * mbps_to_bytes
+            plan_up = max(0.0, float(config.get('plan_up_mbps', 0) or 0)) * mbps_to_bytes
+            scale_ceiling = max(plan_down, plan_up)
+            headroom_pct = config.get('graph_scale_headroom', constants.config.defaults.DEFAULT_GRAPH_SCALE_HEADROOM)
+            graph_style = str(config.get('graph_style', constants.config.defaults.DEFAULT_GRAPH_STYLE))
+            if graph_style not in constants.config.defaults.GRAPH_STYLE_CHOICES:
+                graph_style = constants.config.defaults.DEFAULT_GRAPH_STYLE
 
             return cls(
                 color_coding=bool(config.get('color_coding', constants.config.defaults.DEFAULT_COLOR_CODING)),
@@ -156,9 +287,24 @@ class RenderConfig:
                 swap_upload_download=bool(config.get('swap_upload_download', constants.config.defaults.DEFAULT_SWAP_UPLOAD_DOWNLOAD)),
                 hide_arrows=bool(config.get('hide_arrows', constants.config.defaults.DEFAULT_HIDE_ARROWS)),
                 hide_unit_suffix=bool(config.get('hide_unit_suffix', constants.config.defaults.DEFAULT_HIDE_UNIT_SUFFIX)),
-                hardware_label_style=str(config.get('hardware_label_style', 'icons_colored')),
+                hardware_label_style=str(config.get(
+                    'hardware_label_style', constants.config.defaults.DEFAULT_HARDWARE_LABEL_STYLE)),
+                hardware_label_color=str(config.get(
+                    'hardware_label_color', constants.config.defaults.DEFAULT_HARDWARE_LABEL_COLOR)),
+                cpu_label_color=str(config.get(
+                    'cpu_label_color', constants.config.defaults.DEFAULT_CPU_LABEL_COLOR)),
+                gpu_label_color=str(config.get(
+                    'gpu_label_color', constants.config.defaults.DEFAULT_GPU_LABEL_COLOR)),
                 short_unit_labels=bool(config.get('short_unit_labels', constants.config.defaults.DEFAULT_SHORT_UNIT_LABELS)),
                 max_samples=max_samples,
+                graph_fixed_scale=bool(config.get('graph_fixed_scale', constants.config.defaults.DEFAULT_GRAPH_FIXED_SCALE)),
+                graph_scale_ceiling=max(0.0, scale_ceiling),
+                graph_scale_headroom=max(0.0, float(headroom_pct or 0)) / 100.0,
+                graph_show_ceiling=bool(config.get('graph_show_ceiling', constants.config.defaults.DEFAULT_GRAPH_SHOW_CEILING)),
+                graph_split_directions=bool(config.get('graph_split_directions', constants.config.defaults.DEFAULT_GRAPH_SPLIT_DIRECTIONS)),
+                graph_scale_ceiling_up=plan_up,
+                graph_scale_ceiling_down=plan_down,
+                graph_style=graph_style,
                 use_custom_arrow_colors=bool(config.get(
                     'use_custom_arrow_colors', constants.config.defaults.DEFAULT_USE_CUSTOM_ARROW_COLORS)),
                 arrow_up_color=str(config.get(
@@ -179,7 +325,7 @@ class RenderConfig:
                 monitor_vram_enabled=bool(config.get('monitor_vram_enabled', False)),
                 show_memory_labels=bool(config.get('show_memory_labels', False)),
                 stack_hardware_stats=bool(config.get('stack_hardware_stats', False)),
-                widget_display_mode=str(config.get('widget_display_mode', 'network_only')),
+                widget_display_mode=effective_display_mode(config),
                 widget_display_order=list(config.get('widget_display_order', ["network", "cpu", "gpu"])),
                 show_hardware_temps=bool(config.get('show_hardware_temps', False)),
                 show_hardware_power=bool(config.get('show_hardware_power', False))
@@ -208,6 +354,10 @@ class WidgetRenderer:
                 
             try:
                 self.paused = False
+                # Pause cue (widget_paint.render_widget): while set, each speed row's arrow is NOT drawn
+                # and its cell is recorded (device coords) in _pause_slots, for the pause glyph to fill.
+                self._pause_cue = False
+                self._pause_slots: List[QRectF] = []
                 
                 # Bounding rect for coordinates. _last_text_rect is the LAST segment drawn (the
                 # side-by-side layout advances by it); _content_bounds is the UNION of all segments
@@ -216,12 +366,11 @@ class WidgetRenderer:
                 self._last_text_rect = QRect()
                 self._content_bounds = QRect()
 
-                # Mini graph state cache tracking
-                self._last_widget_size = (0, 0)
-                self._last_history_hash = 0
-                self._cached_upload_points = []
-                self._cached_download_points = []
-                
+                # Mini graph polyline cache, one slot per graph kind - (is_hardware, series, style) - since the
+                # split view draws an upload and a download panel every paint, which would thrash a
+                # single slot. Value: (size, history key, upload points, download points, ceiling row).
+                self._graph_cache: Dict[Tuple[bool, str, str], Tuple[Any, ...]] = {}
+
                 # Caching for high-frequency paint events
                 self._cached_pens = {}
                 self._cached_bg_color = None
@@ -299,66 +448,31 @@ class WidgetRenderer:
             
         painter.fillRect(rect, self._cached_bg_color)
 
-    def draw_network_speeds(self, painter: QPainter, upload: float, download: float, width: int, height: int, config: RenderConfig, layout_mode: str = 'vertical', x_offset: int = 0, slot_width: Optional[int] = None, fixed_width: Optional[int] = None, identity_text: Optional[str] = None, identity_color: Optional[str] = None, identity_solid: bool = False, identity_ssid: Optional[str] = None) -> None:
+    def draw_network_speeds(self, painter: QPainter, upload: float, download: float, width: int, height: int, config: RenderConfig, layout_mode: str = 'vertical', x_offset: int = 0, slot_width: Optional[int] = None, fixed_width: Optional[int] = None, identity_text: Optional[str] = None, identity_color: Optional[str] = None, identity_solid: bool = False, identity_ssid: Optional[str] = None, y_offset: int = 0) -> None:
         """Draws current upload and download speeds.
 
         identity_text: optional network-identity band tag (e.g. "5G") drawn to the right of the unit
         column, vertically centered. When present it participates in the block width (so side_by_side
         right-align accounts for it) and the content bounds. Reserved width is the fixed worst-case
         (IDENTITY_BAND_REFERENCE), so a 2.4G<->5G change never shifts the layout.
+        y_offset: top of the band (`height` tall) the readout is centered in; side_by_side on a side
+        taskbar stacks its segments in bands down the widget.
         """
         try:
-            # Format speeds
-            up_val, up_unit = format_speed(
-                upload, self.i18n, force_mega_unit=(config.speed_display_mode == "always_mbps"),
-                decimal_places=config.decimal_places, unit_type=config.unit_type,
-                short_labels=config.short_unit_labels, split_unit=True
-            )
-            dw_val, dw_unit = format_speed(
-                download, self.i18n, force_mega_unit=(config.speed_display_mode == "always_mbps"),
-                decimal_places=config.decimal_places, unit_type=config.unit_type,
-                short_labels=config.short_unit_labels, split_unit=True
-            )
+            cols = self._speed_columns(upload, download, config)
+            up_val, up_unit, dw_val, dw_unit = cols.up_val, cols.up_unit, cols.dw_val, cols.dw_unit
+            number_area_width, max_arrow_width = cols.number_area_width, cols.max_arrow_width
+            arrow_gap, unit_gap, max_unit_width = cols.arrow_gap, cols.unit_gap, cols.max_unit_width
 
             painter.setFont(self.font)
             line_height = self.metrics.height()
             ascent = self.metrics.ascent()
-            
-            # --- FIXED/DYNAMIC WIDTH CALCULATIONS ---
-            # We want units to stay put for 3 digits, but move for 4.
-            from netspeedtray.utils.helpers import get_reference_value_string
-            
-            # 1. Base 3-digit width for alignment stability
-            # We use a 3-digit ref string to pin the "normal" unit position
-            ref_str_3 = get_reference_value_string(False, config.decimal_places, config.unit_type, min_digits=3)
-            base_number_width = self.metrics.horizontalAdvance(ref_str_3)
-            
-            # 2. Actual max width of currently displayed values
-            actual_up_width = self.metrics.horizontalAdvance(up_val)
-            actual_dw_width = self.metrics.horizontalAdvance(dw_val)
-            actual_max_width = max(actual_up_width, actual_dw_width)
-            
-            # The area width follows the baseline, but expands if actual values are wider (4 digits)
-            number_area_width = max(base_number_width, actual_max_width)
-
-            # 3. Arrow Width (use max of UP/DW arrows). Custom glyph or the native default.
-            arrow_up = self.config.arrow_up_symbol or self.i18n.UPLOAD_ARROW
-            arrow_dw = self.config.arrow_down_symbol or self.i18n.DOWNLOAD_ARROW
-            max_arrow_width = max(
-                self.arrow_metrics.horizontalAdvance(arrow_up),
-                self.arrow_metrics.horizontalAdvance(arrow_dw)
-            ) if not config.hide_arrows else 0
-            
-            # Constants for gaps
-            arrow_gap = constants.renderer.ARROW_NUMBER_GAP if not config.hide_arrows else 0
-            unit_gap = constants.renderer.VALUE_UNIT_GAP if not config.hide_unit_suffix else 0
-            vertical_gap = 1
+            vertical_gap = constants.renderer.TWO_ROW_GAP_PX
             margin = constants.renderer.TEXT_MARGIN
-            
+
             # Right-align the whole readout inside its reserved slot (side_by_side) so the network hugs
             # the hardware instead of floating left in the worst-case width. The slack lands on the left,
             # toward the app icons; both rows shift equally so the arrows stay mutually aligned.
-            max_unit_width = max(self.metrics.horizontalAdvance(up_unit), self.metrics.horizontalAdvance(dw_unit)) if not config.hide_unit_suffix else 0
             # v2.1: reserve the identity badge slot (SSID pill / band pill / compound capsule) so
             # right-align accounts for it and the layout reserves the same amount. Matches
             # NetworkSpeedWidget._identity_reserve_px (same identity_layout geometry).
@@ -377,7 +491,7 @@ class WidgetRenderer:
             
             # Default Vertical Layout (Stack UP over DW)
             total_height = (line_height * 2) + vertical_gap
-            top_y = int((height - total_height) / 2 + ascent)
+            top_y = y_offset + int((height - total_height) / 2 + ascent)
             
             # Draw top line (upload by default, download when swapped).
             # Pass the canonical bytes/sec value (not the formatted string) so color
@@ -395,7 +509,7 @@ class WidgetRenderer:
             # v2.1: draw the network-identity badge to the right of the unit column, vertically centered.
             if identity_badge_w:
                 badge_x = unit_x + max_unit_width + IDENTITY_BAND_GAP_PX
-                badge_y = (height - identity_parts["h"]) / 2.0
+                badge_y = y_offset + (height - identity_parts["h"]) / 2.0
                 self._draw_identity_badge(painter, badge_x, badge_y, identity_parts,
                                           identity_ssid, identity_text, identity_color, identity_solid)
 
@@ -406,6 +520,284 @@ class WidgetRenderer:
 
         except Exception as e:
             self.logger.error("Failed to draw network speeds: %s", e)
+
+    def _speed_columns(self, upload: float, download: float, config: RenderConfig) -> "_SpeedColumns":
+        """Formatted speeds plus the shared arrow / number / unit column geometry of the readout. Both
+        values feed it, so the two rows (or the two split panels, or the two cycle phases) line up."""
+        up_val, up_unit = format_speed(
+            upload, self.i18n, force_mega_unit=(config.speed_display_mode == "always_mbps"),
+            decimal_places=config.decimal_places, unit_type=config.unit_type,
+            short_labels=config.short_unit_labels, split_unit=True
+        )
+        dw_val, dw_unit = format_speed(
+            download, self.i18n, force_mega_unit=(config.speed_display_mode == "always_mbps"),
+            decimal_places=config.decimal_places, unit_type=config.unit_type,
+            short_labels=config.short_unit_labels, split_unit=True
+        )
+
+        # --- FIXED/DYNAMIC WIDTH CALCULATIONS ---
+        # We want units to stay put for 3 digits, but move for 4.
+        from netspeedtray.utils.helpers import get_reference_value_string
+
+        # 1. Base 3-digit width for alignment stability
+        # We use a 3-digit ref string to pin the "normal" unit position
+        ref_str_3 = get_reference_value_string(False, config.decimal_places, config.unit_type, min_digits=3)
+        base_number_width = self.metrics.horizontalAdvance(ref_str_3)
+
+        # 2. Actual max width of currently displayed values
+        actual_up_width = self.metrics.horizontalAdvance(up_val)
+        actual_dw_width = self.metrics.horizontalAdvance(dw_val)
+        actual_max_width = max(actual_up_width, actual_dw_width)
+
+        # The area width follows the baseline, but expands if actual values are wider (4 digits)
+        number_area_width = max(base_number_width, actual_max_width)
+
+        # 3. Arrow Width (use max of UP/DW arrows). Custom glyph or the native default.
+        arrow_up = self.config.arrow_up_symbol or self.i18n.UPLOAD_ARROW
+        arrow_dw = self.config.arrow_down_symbol or self.i18n.DOWNLOAD_ARROW
+        max_arrow_width = max(
+            self.arrow_metrics.horizontalAdvance(arrow_up),
+            self.arrow_metrics.horizontalAdvance(arrow_dw)
+        ) if not config.hide_arrows else 0
+
+        # Constants for gaps
+        arrow_gap = constants.renderer.ARROW_NUMBER_GAP if not config.hide_arrows else 0
+        unit_gap = constants.renderer.VALUE_UNIT_GAP if not config.hide_unit_suffix else 0
+        max_unit_width = max(self.metrics.horizontalAdvance(up_unit), self.metrics.horizontalAdvance(dw_unit)) if not config.hide_unit_suffix else 0
+        return _SpeedColumns(up_val, up_unit, dw_val, dw_unit, number_area_width, max_arrow_width,
+                             arrow_gap, unit_gap, max_unit_width)
+
+    def identity_reserve(self, identity_text: Optional[str], identity_ssid: Optional[str]) -> int:
+        """Width the identity badge adds after the unit column (0 without one) - the same geometry
+        draw_network_speeds and NetworkSpeedWidget._identity_reserve_px use."""
+        badge_w, _parts = identity_layout(self.metrics, identity_ssid, identity_text)
+        return (IDENTITY_BAND_GAP_PX + badge_w) if badge_w else 0
+
+    def network_panel_width(self, upload: float, download: float, config: RenderConfig) -> int:
+        """Width of one split panel, without the identity badge, measured from the live values - for
+        callers without the layout manager's reserved width (the Settings preview). Same span the
+        two-row readout occupies."""
+        cols = self._speed_columns(upload, download, config)
+        return (2 * constants.renderer.TEXT_MARGIN + cols.max_arrow_width + cols.arrow_gap
+                + cols.number_area_width + cols.unit_gap + cols.max_unit_width)
+
+    def draw_network_split(self, painter: QPainter, upload: float, download: float, rects: List[QRect],
+                           config: RenderConfig, history: List[Any], layout_mode: str = 'vertical',
+                           identity_text: Optional[str] = None, identity_color: Optional[str] = None,
+                           identity_solid: bool = False, identity_ssid: Optional[str] = None) -> None:
+        """Separate upload/download graphs: two panels (``rects``, in reading order), each with its own
+        graph - own scale, own plan-speed line - and its own speed row. Upload comes first unless
+        swap_upload_download is on, matching the stacked readout's top row. The identity badge goes in
+        the last panel, after its unit column."""
+        try:
+            cols = self._speed_columns(upload, download, config)
+            first_is_upload = not config.swap_upload_download
+            for i, (rect, is_upload) in enumerate(zip(rects, (first_is_upload, not first_is_upload))):
+                painter.save()
+                painter.translate(rect.x(), rect.y())
+                self.draw_mini_graph(painter, rect.width(), rect.height(), config, history, layout_mode,
+                                     series="upload" if is_upload else "download")
+                painter.restore()
+                last = i == len(rects) - 1
+                self._draw_speed_row(painter, is_upload, upload, download, cols, rect, config,
+                                     identity_text if last else None, identity_color,
+                                     identity_solid, identity_ssid if last else None)
+
+            self.draw_split_divider(painter, rects, config)
+        except Exception as e:
+            self.logger.error("Failed to draw split network graphs: %s", e)
+
+    @staticmethod
+    def draw_split_divider(painter: QPainter, rects: List[QRect], config: RenderConfig) -> None:
+        """A faint divider in the gap between the two split panels, so the graphs read as two charts."""
+        if len(rects) != 2:
+            return
+        a, b = rects
+        inset = constants.renderer.GRAPH_MARGIN * 2
+        divider = QColor(config.default_color)
+        divider.setAlpha(60)
+        painter.save()
+        painter.setPen(QPen(divider, 1))
+        if b.x() > a.x():   # side by side
+            x = (a.right() + b.left()) / 2.0 + 0.5
+            painter.drawLine(QPointF(x, a.top() + inset), QPointF(x, a.bottom() - inset))
+        else:               # stacked
+            y = (a.bottom() + b.top()) / 2.0 + 0.5
+            painter.drawLine(QPointF(a.left() + inset, y), QPointF(a.right() - inset, y))
+        painter.restore()
+
+    def draw_network_compact(self, painter: QPainter, upload: float, download: float, width: int,
+                             height: int, config: RenderConfig, fit: Any, *, y_offset: int = 0,
+                             only_upload: Optional[bool] = None, unit_row: bool = True,
+                             unit_only: bool = False) -> None:
+        """The side-taskbar compact readout (``widget_paint.side_bar_fit`` tiers T1-T5): arrow + a
+        <= 3-digit number per row in ONE shared unit, the unit inline (T1, short label) or on a row of
+        its own under the numbers (T2+), whole numbers from 10 up (T3+), no arrows (T4+). Centred in
+        the ``width`` x ``height`` band at ``y_offset``.
+
+        only_upload: True/False draws just that direction's row (a split panel / cycle phase).
+        unit_row: False leaves the unit row to the caller (split panels share one); unit_only draws
+        only the unit row.
+        """
+        from netspeedtray.utils.widget_paint import TIER_INLINE_UNIT, TIER_WHOLE, TIER_NO_ARROWS, TIER_CLIP
+        from netspeedtray.utils.helpers import format_speed_compact, compact_speed_reference_strings
+        try:
+            tier = fit.tier
+            inline_unit = tier == TIER_INLINE_UNIT and not config.hide_unit_suffix
+            whole = tier >= TIER_WHOLE
+            short = inline_unit or fit.unit_short or config.short_unit_labels
+            up_t, dw_t, unit = format_speed_compact(
+                upload, download, self.i18n, force_mega_unit=(config.speed_display_mode == "always_mbps"),
+                decimal_places=config.decimal_places, unit_type=config.unit_type, short_labels=short,
+                whole_from_ten=whole)
+            show_arrows = not config.hide_arrows and tier < TIER_NO_ARROWS
+            first_up = not config.swap_upload_download
+            rows = [] if unit_only else [(is_up, up_t if is_up else dw_t, upload if is_up else download)
+                                         for is_up in (first_up, not first_up)
+                                         if only_upload is None or is_up == only_upload]
+            show_unit_row = (unit_only or unit_row) and not inline_unit and not config.hide_unit_suffix
+
+            fm, afm = self.metrics, self.arrow_metrics
+            sep = getattr(self.i18n, "DECIMAL_SEPARATOR", ".")
+            sep = sep if isinstance(sep, str) and sep else "."
+            refs = compact_speed_reference_strings(config.decimal_places, whole, sep)
+            num_col = max([fm.horizontalAdvance(s) for s in refs] + [fm.horizontalAdvance(t) for _, t, _ in rows])
+            glyphs = [config.arrow_up_symbol or self.i18n.UPLOAD_ARROW,
+                      config.arrow_down_symbol or self.i18n.DOWNLOAD_ARROW]
+            arrow_w = max(afm.horizontalAdvance(g) for g in glyphs) if show_arrows else 0
+            arrow_gap = constants.renderer.COMPACT_ARROW_GAP_PX if show_arrows else 0
+            unit_gap = constants.renderer.COMPACT_UNIT_GAP_PX if inline_unit else 0
+            unit_w = fm.horizontalAdvance(unit) if (inline_unit or show_unit_row) else 0
+            block_w = arrow_w + arrow_gap + num_col + (unit_gap + unit_w if inline_unit else 0)
+            margin = constants.renderer.TEXT_MARGIN
+            x0 = max(margin, (width - block_w) // 2)
+
+            line_h, asc, gap = fm.height(), fm.ascent(), constants.renderer.TWO_ROW_GAP_PX
+            n = len(rows) + (1 if show_unit_row else 0)
+            block_h = n * line_h + max(0, n - 1) * gap
+            y = y_offset + int((height - block_h) / 2 + asc)
+
+            painter.save()
+            # Never paint outside the band: at T5 nothing fits, and a long locale unit at a large font
+            # ("МиБ" at 11 pt on a 32 px bar) can be wider than the bar even in its short form.
+            painter.setClipRect(QRect(0, y_offset, width, height), Qt.ClipOperation.IntersectClip)
+            if tier >= TIER_CLIP or (show_unit_row and unit_w > width - 2 * margin):
+                if not getattr(self, "_compact_clip_logged", False):
+                    self._compact_clip_logged = True
+                    self.logger.warning("Side taskbar too narrow (%d px) for the compact readout at this "
+                                        "font; clipping it.", width)
+            row_cfg = config
+            if not show_arrows or not inline_unit:
+                from dataclasses import replace
+                row_cfg = replace(config, hide_arrows=not show_arrows, hide_unit_suffix=not inline_unit)
+            arrow_x = x0
+            number_x = arrow_x + arrow_w + arrow_gap
+            unit_x = number_x + num_col + unit_gap
+            top = y
+            for is_up, text, raw in rows:
+                self._draw_speed_line(painter, is_up, text, unit, raw, arrow_x, number_x, unit_x, y,
+                                      row_cfg, num_col)
+                y += line_h + gap
+            if show_unit_row:
+                painter.setFont(self.font)
+                painter.setPen(self._cached_pens['default'])
+                painter.drawText(max(margin, (width - unit_w) // 2), y, unit)
+            painter.restore()
+
+            self._last_text_rect = QRect(min(x0, (width - unit_w) // 2) if show_unit_row else x0,
+                                         top - asc, max(block_w, unit_w), block_h)
+            self._extend_content_bounds(self._last_text_rect)
+        except Exception as e:
+            self.logger.error("Failed to draw compact network speeds: %s", e)
+
+    def draw_hardware_compact(self, painter: QPainter, stats: List[Tuple[str, Optional[float]]], width: int,
+                              height: int, config: RenderConfig, *, inline: bool = True,
+                              y_offset: int = 0) -> None:
+        """CPU/GPU on a side taskbar too narrow for today's rows: ``[icon] 37%`` per stat (``inline``)
+        or the icon centred over the value; memory, temperature and power live in the hover card."""
+        try:
+            if not stats:
+                return
+            fm = self.metrics
+            style = getattr(config, 'hardware_label_style', constants.config.defaults.DEFAULT_HARDWARE_LABEL_STYLE)
+            cpu_color, gpu_color = self.hardware_label_colors(config)
+            icon_w = (max(fm.horizontalAdvance(s) for s, _ in stats) if style == "text"
+                      else constants.renderer.HW_ICON_SIZE_PX)
+            gap = constants.renderer.COMPACT_HW_ICON_GAP_PX
+            pct_col = fm.horizontalAdvance("100%")
+            line_h, asc, row_gap = fm.height(), fm.ascent(), constants.renderer.TWO_ROW_GAP_PX
+            n = len(stats) * (1 if inline else 2)
+            block_h = n * line_h + max(0, n - 1) * row_gap
+            y = y_offset + int((height - block_h) / 2 + asc)
+            top = y
+            block_w = icon_w + gap + pct_col if inline else max(icon_w, pct_col)
+            x0 = max(constants.renderer.TEXT_MARGIN, (width - block_w) // 2)
+            painter.save()
+            painter.setClipRect(QRect(0, y_offset, width, height), Qt.ClipOperation.IntersectClip)
+            painter.setFont(self.font)
+            for label, val in stats:
+                color = QColor(cpu_color if label == 'CPU' else gpu_color)
+                pct = self._fmt_hw_percent(val if val is not None else float("nan"))
+                icon_x = x0 if inline else (width - icon_w) // 2
+                if style == "text":
+                    painter.setPen(QPen(color))
+                    painter.drawText(icon_x, y, label)
+                else:
+                    self._draw_icon(painter, label, icon_x, y, color)
+                painter.setFont(self.font)
+                painter.setPen(self.default_color)
+                if inline:
+                    painter.drawText(x0 + icon_w + gap + pct_col - fm.horizontalAdvance(pct), y, pct)
+                else:
+                    y += line_h + row_gap
+                    painter.drawText((width - fm.horizontalAdvance(pct)) // 2, y, pct)
+                y += line_h + row_gap
+            painter.restore()
+            self._last_text_rect = QRect(x0, top - asc, block_w, block_h)
+            self._extend_content_bounds(self._last_text_rect)
+        except Exception as e:
+            self.logger.error("Failed to draw compact hardware stats: %s", e)
+
+    def draw_network_single(self, painter: QPainter, upload: float, download: float, is_upload: bool,
+                            width: int, height: int, config: RenderConfig,
+                            identity_text: Optional[str] = None, identity_color: Optional[str] = None,
+                            identity_solid: bool = False, identity_ssid: Optional[str] = None) -> None:
+        """One direction's speed row, vertically centered - the foreground of an Auto-Cycle upload or
+        download phase when the graphs are split (render_widget draws that phase's graph)."""
+        try:
+            cols = self._speed_columns(upload, download, config)
+            self._draw_speed_row(painter, is_upload, upload, download, cols, QRect(0, 0, width, height), config,
+                                 identity_text, identity_color, identity_solid, identity_ssid)
+        except Exception as e:
+            self.logger.error("Failed to draw network speed: %s", e)
+
+    def _draw_speed_row(self, painter: QPainter, is_upload: bool, upload: float, download: float,
+                        cols: "_SpeedColumns", rect: QRect, config: RenderConfig,
+                        identity_text: Optional[str], identity_color: Optional[str],
+                        identity_solid: bool, identity_ssid: Optional[str]) -> None:
+        """A single arrow + value + unit row, left-aligned at the margin of ``rect`` and vertically
+        centered in it (the split-panel counterpart of draw_network_speeds' two-row stack)."""
+        painter.setFont(self.font)
+        margin = constants.renderer.TEXT_MARGIN
+        arrow_x = rect.x() + margin
+        number_x = arrow_x + cols.max_arrow_width + cols.arrow_gap
+        unit_x = number_x + cols.number_area_width + cols.unit_gap
+        y = int(rect.y() + (rect.height() - self.metrics.height()) / 2 + self.metrics.ascent())
+        val, unit = (cols.up_val, cols.up_unit) if is_upload else (cols.dw_val, cols.dw_unit)
+        self._draw_speed_line(painter, is_upload, val, unit, upload if is_upload else download,
+                              arrow_x, number_x, unit_x, y, config, cols.number_area_width)
+
+        identity_badge_w, identity_parts = identity_layout(self.metrics, identity_ssid, identity_text)
+        if identity_badge_w:
+            badge_x = unit_x + cols.max_unit_width + IDENTITY_BAND_GAP_PX
+            badge_y = rect.y() + (rect.height() - identity_parts["h"]) / 2.0
+            self._draw_identity_badge(painter, badge_x, badge_y, identity_parts,
+                                      identity_ssid, identity_text, identity_color, identity_solid)
+        identity_reserve = (IDENTITY_BAND_GAP_PX + identity_badge_w) if identity_badge_w else 0
+
+        row_width = (unit_x - arrow_x) + cols.max_unit_width + identity_reserve
+        self._last_text_rect = QRect(arrow_x, y - self.metrics.ascent(), row_width, self.metrics.height())
+        self._extend_content_bounds(self._last_text_rect)
 
     def _draw_pill(self, painter: QPainter, rect: QRectF, accent: QColor, text: str, solid: bool, radius: float) -> None:
         """Draw one rounded pill: SOLID fills `accent` with white text; OUTLINE strokes `accent`, text in `accent`."""
@@ -493,8 +885,11 @@ class WidgetRenderer:
         else:
             painter.setPen(self._cached_pens['default'])
 
-        # 1. Draw Arrow
-        if not config.hide_arrows:
+        # 1. Draw Arrow - or, while paused, leave its cell (through the arrow gap) for the pause glyph.
+        if not config.hide_arrows and self._pause_cue:
+            cell = QRectF(arrow_x, y - self.metrics.ascent(), max(0, number_x - arrow_x), self.metrics.height())
+            self._pause_slots.append(painter.transform().mapRect(cell))
+        elif not config.hide_arrows:
             painter.setFont(self.arrow_font)
             if is_upload:
                 arrow = config.arrow_up_symbol or self.i18n.UPLOAD_ARROW
@@ -556,16 +951,19 @@ class WidgetRenderer:
                            ram_info: Optional[Tuple[float, float]] = None,
                            vram_info: Optional[Tuple[float, float]] = None,
                            layout_mode: str = 'vertical', x_offset: int = 0, fixed_width: Optional[int] = None,
-                           cpu_power: Optional[float] = None, gpu_power: Optional[float] = None) -> None:
-        """Draws CPU and/or GPU utilization statistics with optional temperature, power, and memory."""
+                           cpu_power: Optional[float] = None, gpu_power: Optional[float] = None,
+                           y_offset: int = 0, memory_below: bool = False) -> None:
+        """Draws CPU and/or GPU utilization statistics with optional temperature, power, and memory.
+
+        y_offset: top of the band (`height` tall) the rows are centered in (see draw_network_speeds).
+        memory_below: give each RAM/VRAM value a row of its own under its stat even when CPU and GPU
+            share the segment (where it is otherwise inline); a side taskbar is too narrow for it inline."""
         try:
             order = getattr(config, 'widget_display_order', ["network", "cpu", "gpu"])
             cpu_idx = order.index("cpu") if "cpu" in order else 999
             gpu_idx = order.index("gpu") if "gpu" in order else 999
 
-            style = getattr(config, 'hardware_label_style', 'icons_colored')
-            cpu_color = "#FFFFFF" if style == "icons_monochrome" else constants.renderer.CPU_LINE_COLOR
-            gpu_color = "#FFFFFF" if style == "icons_monochrome" else constants.renderer.GPU_LINE_COLOR
+            cpu_color, gpu_color = self.hardware_label_colors(config)
 
             items = []
             if cpu_usage is not None:
@@ -593,8 +991,8 @@ class WidgetRenderer:
             show_temps = getattr(config, "show_hardware_temps", False)
             show_power = getattr(config, "show_hardware_power", False)
 
-            style = getattr(config, 'hardware_label_style', 'icons_colored')
-            sp = self.metrics.horizontalAdvance(" ")
+            style = getattr(config, 'hardware_label_style', constants.config.defaults.DEFAULT_HARDWARE_LABEL_STYLE)
+            sp =self.metrics.horizontalAdvance(" ")
 
             # Keep percent / suffix / memory as SEPARATE cells (not one concatenated string) so each sits
             # in its own fixed-width column. That lines the rows up (the memory values align across CPU
@@ -645,12 +1043,12 @@ class WidgetRenderer:
             # so the numbers stay aligned across rows. Zero when off: the widget keeps its width.
             show_mem_labels = bool(getattr(config, 'show_memory_labels', False))
             mem_label_col = memory_label_width(self.metrics) if (show_mem_labels and any_mem) else 0
-            inline_mem = is_compact
+            inline_mem = is_compact and not memory_below
             mem_col = (sep_col + mem_label_col + mem_num_col) if (any_mem and inline_mem) else 0
 
             extra_rows = 0 if inline_mem else sum(1 for r in rows if r['mem'])
             total_height = line_height * (len(rows) + extra_rows)
-            top_y = int((height - total_height) / 2 + ascent)
+            top_y = y_offset + int((height - total_height) / 2 + ascent)
             current_x = x_offset + margin
 
             stat_col = label_col + pct_col + suffix_col + mem_col
@@ -680,19 +1078,26 @@ class WidgetRenderer:
                     painter.drawText(vx + pct_col + sp, y, r['suffix'])  # live suffix in its worst-case column
                 if inline_mem and mem_col and r['mem']:
                     mx = vx + pct_col + suffix_col
-                    # right-align the number in its column so the trailing 'G' lines up across rows
-                    num_x = mx + mem_col - self.metrics.horizontalAdvance(r['mem'])
+                    label_x = mx + sep_col
+                    number_col_x = label_x + mem_label_col
+                    # Right-align the number in its fixed-width column so the trailing 'G'
+                    # lines up across rows while RAM/VRAM stay anchored in their own cell.
+                    num_x = number_col_x + mem_num_col - self.metrics.horizontalAdvance(r['mem'])
                     if mem_label_col:
-                        self._draw_memory_label(painter, num_x, y, r)
+                        self._draw_memory_label(painter, label_x, y, r)
                     painter.drawText(num_x, y, r['mem'])
                 y += line_height
                 if not inline_mem and r['mem']:
-                    # right-align memory to the segment's right edge, so its right bound lines up with the
-                    # %/temp above it (per #179 feedback) instead of floating left under the value column
+                    # Right-align memory to the segment's right edge while keeping the
+                    # RAM/VRAM label anchored in its fixed-width label cell.
                     mem_right = current_x + seg_w
+                    number_col_x = mem_right - mem_num_col
+                    label_x = number_col_x - mem_label_col
                     num_x = mem_right - self.metrics.horizontalAdvance(r['mem'])
+
                     if mem_label_col:
-                        self._draw_memory_label(painter, num_x, y, r)
+                        self._draw_memory_label(painter, label_x, y, r)
+
                     painter.drawText(num_x, y, r['mem'])
                     y += line_height
 
@@ -703,13 +1108,38 @@ class WidgetRenderer:
             self.logger.error("Failed to draw hardware stats: %s", e)
 
 
-    def _draw_memory_label(self, painter: QPainter, number_x: int, y: int, row: Dict[str, Any]) -> None:
-        """Paint a row's RAM/VRAM label immediately before its number (which starts at `number_x`),
-        in the row's CPU/GPU colour (white in monochrome style), then restore the value pen. Hugging
-        the number reads as one value; the reserved cell (memory_label_width) is always wide enough."""
+    @staticmethod
+    def hardware_label_colors(config: RenderConfig) -> Tuple[str, str]:
+        """(cpu_hex, gpu_hex) for the CPU/GPU labels - icons, text labels and the RAM/VRAM tags alike.
+
+        - match_text: the widget's text colour, so the labels follow it onto a light taskbar (it turns
+          black there) instead of the hard-coded white that pre-2.2 "monochrome" painted, invisibly.
+        - custom: the two picked colours (an unparsable one falls back to the text colour).
+        - brand (default branch): the vendor palette in hardware_vendors. The taskbar is judged light
+          or dark from the text colour - the widget background is usually transparent, and the text
+          colour is exactly what the theme manager flips per taskbar theme (or what the user chose to
+          be legible on theirs), so it is the honest proxy and costs no registry read per paint.
+        """
+        text = str(getattr(config, 'default_color', constants.config.defaults.DEFAULT_COLOR))
+        mode = getattr(config, 'hardware_label_color', constants.config.defaults.DEFAULT_HARDWARE_LABEL_COLOR)
+        if mode == "match_text":
+            return text, text
+        if mode == "custom":
+            pair = []
+            for key in ('cpu_label_color', 'gpu_label_color'):
+                value = str(getattr(config, key, '') or '')
+                pair.append(value if QColor.isValidColorName(value) else text)
+            return pair[0], pair[1]
+        text_qc = QColor(text)
+        light_taskbar = text_qc.isValid() and text_qc.lightnessF() < 0.5
+        return (hardware_vendors.widget_label_color("cpu", light_taskbar),
+                hardware_vendors.widget_label_color("gpu", light_taskbar))
+
+    def _draw_memory_label(self, painter: QPainter, label_x: int, y: int, row: Dict[str, Any]) -> None:
+        """Paint a row's RAM/VRAM label at the fixed start of its reserved label cell,
+        in the row's CPU/GPU colour, then restore the value pen."""
         painter.setPen(QPen(QColor(row['color'])))
-        label = row['mem_label']
-        painter.drawText(number_x - self.metrics.horizontalAdvance(label + " "), y, label)
+        painter.drawText(label_x, y, row['mem_label'])
         painter.setPen(self.default_color)
 
     def _draw_icon(self, painter: QPainter, icon_type: str, x: int, y_ascent: int, color: Optional[QColor] = None) -> None:
@@ -717,7 +1147,7 @@ class WidgetRenderer:
         painter.save()
 
         # Icon box size
-        size = 11
+        size = constants.renderer.HW_ICON_SIZE_PX
         rect = QRect(x, y_ascent - size + 1, size, size)
         
         draw_color = color if color else self.default_color
@@ -745,7 +1175,9 @@ class WidgetRenderer:
             
             # Silicon Die Core (Inner dark center)
             core_rect = rect.adjusted(4, 4, -4, -4) 
-            painter.fillRect(core_rect, QColor("#121212")) 
+            # The die is a contrasting dot: near-black inside a light package, near-white inside a dark
+            # one - a black (match-text, light taskbar) icon would otherwise lose it entirely.
+            painter.fillRect(core_rect, QColor("#121212" if draw_color.lightnessF() >= 0.5 else "#F0F0F0"))
 
         elif icon_type == 'GPU':
             # Graphics card with 'G' and Fan
@@ -811,9 +1243,13 @@ class WidgetRenderer:
         return f"({', '.join(valid_parts)})"
 
     def draw_mini_graph(self, painter: QPainter, width: int, height: int, config: RenderConfig,
-                        history: List[Any], layout_mode: str = 'vertical', 
-                        is_hardware: bool = False, hardware_color: str = "#FFFFFF") -> None:
-        """Draws a mini graph of history (speed or hardware utilization)."""
+                        history: List[Any], layout_mode: str = 'vertical',
+                        is_hardware: bool = False, hardware_color: str = "#FFFFFF",
+                        series: str = "both") -> None:
+        """Draws a mini graph of history (speed or hardware utilization).
+
+        ``series`` picks the network line(s): "both" (one shared axis), or "upload" / "download" alone
+        on their own axis - the panels of the split view."""
         if not config.graph_enabled or len(history) < constants.renderer.MIN_GRAPH_POINTS:
             return
 
@@ -832,32 +1268,29 @@ class WidgetRenderer:
             graph_rect = QRect(side_margin, top_margin, width - (side_margin * 2), height - (top_margin + bottom_margin))
             if graph_rect.width() <= 0 or graph_rect.height() <= 0: return
 
+            if config.graph_style == "trend":
+                self._draw_trend_graph(painter, graph_rect, width, height, config, history,
+                                       is_hardware, hardware_color, series)
+                return
+
             # Cache key for the (expensive) polyline recompute below. The history is an
             # append-only, time-ordered sliding window, so (first, last, length) uniquely
             # identifies its contents - an O(1) key instead of hashing all ~N points every
             # paint. (len >= MIN_GRAPH_POINTS here, so [0]/[-1] are safe.)
             current_hash = hash((history[0], history[-1], len(history), is_hardware))
+            cache_key = (is_hardware, series, "detailed")
+            cached = self._graph_cache.get(cache_key)
 
-            if self._last_widget_size != (width, height) or self._last_history_hash != current_hash:
+            if cached is None or cached[0] != (width, height) or cached[1] != current_hash:
                 if is_hardware:
                     # Hardware is 0-100%
-                    max_y = 100.0
+                    max_y, ceiling = 100.0, None
                 else:
-                    # Speed history (history is non-empty here: len >= MIN_GRAPH_POINTS)
-                    max_speed_val = max(
-                        max(d.upload for d in history),
-                        max(d.download for d in history)
-                    )
-                    
-                    if len(history) > 10:
-                        all_speeds = [d.upload for d in history] + [d.download for d in history]
-                        all_speeds_sorted = sorted(all_speeds)
-                        percentile_95 = all_speeds_sorted[int(len(all_speeds_sorted) * 0.95)]
-                        if percentile_95 > 0 and max_speed_val > percentile_95 * 3.0:
-                            max_speed_val = percentile_95
-
-                    padded_max_speed = max_speed_val * constants.renderer.GRAPH_Y_AXIS_PADDING_FACTOR
-                    max_y = max(padded_max_speed, constants.renderer.MIN_Y_SCALE)
+                    max_y, ceiling = self._network_graph_scale(history, config, series)
+                # A fixed axis can be outrun (a burst above plan + headroom), so the curve is capped at its
+                # top edge instead of running off the top of the graph. The auto-fit is sized to the data,
+                # so it is left exactly as before.
+                y_cap = max_y if ceiling is not None else math.inf
                 
                 num_points = len(history)
                 step_x = graph_rect.width() / (num_points - 1) if num_points > 1 else graph_rect.width()
@@ -870,21 +1303,42 @@ class WidgetRenderer:
                 def make_smooth_polyline(accessor):
                     raw_y = [accessor(d) for d in history]
                     cx, cy = calculate_monotone_cubic_interpolation(raw_x, raw_y, density=5)
-                    points = [QPointF(x, base_y - (max(0, y) / max_y) * h) for x, y in zip(cx, cy)]
+                    points = [QPointF(x, base_y - (min(max(0, y), y_cap) / max_y) * h) for x, y in zip(cx, cy)]
                     return points
 
-                if is_hardware:
-                    self._cached_upload_points = make_smooth_polyline(lambda d: d.value)
-                    self._cached_download_points = []
+                # Dotted line at the plan speed - only with headroom above 0%: at 0% the plan speed IS the
+                # graph's top edge, so a line there would add nothing. Snapped to a pixel center so the
+                # antialiased 1px dots stay crisp instead of smearing across two rows.
+                if ceiling is not None and config.graph_show_ceiling and config.graph_scale_headroom > 0:
+                    ceiling_y = math.floor(base_y - (ceiling / max_y) * h) + 0.5
                 else:
-                    self._cached_upload_points = make_smooth_polyline(lambda d: d.upload)
-                    self._cached_download_points = make_smooth_polyline(lambda d: d.download)
+                    ceiling_y = None
 
-                self._last_widget_size = (width, height)
-                self._last_history_hash = current_hash
+                if is_hardware:
+                    upload_points = make_smooth_polyline(lambda d: d.value)
+                    download_points = []
+                else:
+                    upload_points = (make_smooth_polyline(lambda d: d.upload)
+                                     if series in ("both", "upload") else [])
+                    download_points = (make_smooth_polyline(lambda d: d.download)
+                                       if series in ("both", "download") else [])
+
+                cached = ((width, height), current_hash, upload_points, download_points, ceiling_y)
+                self._graph_cache[cache_key] = cached
+
+            _size, _key, upload_points, download_points, ceiling_y = cached
 
             painter.save()
             painter.setOpacity(config.graph_opacity)
+
+            # Behind the data, in the text color (theme-aware, so it reads on light and dark taskbars).
+            if ceiling_y is not None:
+                ceiling_pen = QPen(QColor(config.default_color), 1)
+                ceiling_pen.setStyle(Qt.PenStyle.DotLine)
+                painter.setPen(ceiling_pen)
+                painter.drawLine(QPointF(float(graph_rect.left()), ceiling_y),
+                                 QPointF(float(graph_rect.right()), ceiling_y))
+
             painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Plus)
 
             from PyQt6.QtGui import QLinearGradient, QBrush, QPolygonF
@@ -907,35 +1361,184 @@ class WidgetRenderer:
                 painter.drawPolygon(QPolygonF(poly_points))
 
             if is_hardware:
-                draw_area(self._cached_upload_points, hardware_color)
+                draw_area(upload_points, hardware_color)
             else:
-                draw_area(self._cached_upload_points, constants.graph.UPLOAD_LINE_COLOR)
-                draw_area(self._cached_download_points, constants.graph.DOWNLOAD_LINE_COLOR)
-            
+                draw_area(upload_points, constants.graph.UPLOAD_LINE_COLOR)
+                draw_area(download_points, constants.graph.DOWNLOAD_LINE_COLOR)
+
             painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
-            stroke_width = 1.5 
+            stroke_width = 1.5
 
             if is_hardware:
                 hw_pen = QPen(QColor(hardware_color), stroke_width)
                 hw_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
                 painter.setPen(hw_pen)
                 painter.setBrush(Qt.BrushStyle.NoBrush)
-                painter.drawPolyline(self._cached_upload_points)
+                painter.drawPolyline(upload_points)
             else:
-                upload_pen = QPen(QColor(constants.graph.UPLOAD_LINE_COLOR), stroke_width)
-                upload_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-                painter.setPen(upload_pen)
                 painter.setBrush(Qt.BrushStyle.NoBrush)
-                painter.drawPolyline(self._cached_upload_points)
+                if upload_points:
+                    upload_pen = QPen(QColor(constants.graph.UPLOAD_LINE_COLOR), stroke_width)
+                    upload_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+                    painter.setPen(upload_pen)
+                    painter.drawPolyline(upload_points)
 
-                download_pen = QPen(QColor(constants.graph.DOWNLOAD_LINE_COLOR), stroke_width)
-                download_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-                painter.setPen(download_pen)
-                painter.drawPolyline(self._cached_download_points)
+                if download_points:
+                    download_pen = QPen(QColor(constants.graph.DOWNLOAD_LINE_COLOR), stroke_width)
+                    download_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+                    painter.setPen(download_pen)
+                    painter.drawPolyline(download_points)
 
             painter.restore()
         except Exception as e:
             self.logger.error("Failed to draw mini graph: %s", e)
+
+    def _draw_trend_graph(self, painter: QPainter, graph_rect: QRect, width: int, height: int,
+                          config: RenderConfig, history: List[Any], is_hardware: bool,
+                          hardware_color: str, series: str) -> None:
+        """The "trend" mini graph style: each series smoothed (trend_smooth) and drawn as a clean line
+        (no fill unless TREND_FILL_ALPHA is raised), instead of every per-second sample. Same axis rules as Detailed - a fixed
+        scale is unchanged; the auto-fit is sized to the SMOOTHED data, so the trend fills the height
+        instead of leaving room for spikes it no longer draws. Points are cached like Detailed's."""
+        current_hash = hash((history[0], history[-1], len(history), is_hardware))
+        cache_key = (is_hardware, series, "trend")
+        cached = self._graph_cache.get(cache_key)
+
+        if cached is None or cached[0] != (width, height) or cached[1] != current_hash:
+            num_points = len(history)
+            window = trend_window(num_points)
+            if is_hardware:
+                ups, downs = trend_smooth([d.value for d in history], window), []
+                max_y, ceiling = 100.0, None
+            else:
+                ups = (trend_smooth([d.upload for d in history], window)
+                       if series in ("both", "upload") else [])
+                downs = (trend_smooth([d.download for d in history], window)
+                         if series in ("both", "download") else [])
+                # No outlier clip: smoothing already took out the 1 s spikes it exists for, and on
+                # smoothed data it fired on real (smoothed) peaks and set the axis below them.
+                max_y, ceiling = self._network_graph_scale(history, config, series, trend_scale_values(ups),
+                                                           trend_scale_values(downs), outlier_clip=False)
+            # Always inside the graph: the auto-fit reads the edge damped (trend_scale_values) and a
+            # fixed axis can be outrun, so cap at the top edge either way - never draw off the rect.
+            y_cap = max_y
+
+            step_x = graph_rect.width() / (num_points - 1) if num_points > 1 else graph_rect.width()
+            right_edge = float(graph_rect.right())
+            base_y = float(graph_rect.bottom())
+            # QRect.bottom() is top + height - 1, so span height - 1: max_y lands ON the top row, not above it.
+            h = float(max(1, graph_rect.height() - 1))
+            xs = [right_edge - (num_points - 1 - i) * step_x for i in range(num_points)]
+            # Fewer samples than pixels (a short history stretched across the graph): interpolate so
+            # the line stays a curve, not a chain of segments. Denser than that (the usual case): the
+            # smoothed series has no detail finer than a pixel, so ~2 points per pixel are plenty.
+            sparse = num_points < graph_rect.width()
+            stride = max(1, num_points // (2 * max(1, graph_rect.width())))
+
+            def polyline(values):
+                if not values:
+                    return []
+                if sparse:
+                    px, py = calculate_monotone_cubic_interpolation(xs, values, density=5)
+                    px, py = list(px), list(py)
+                    if not px or px[-1] != xs[-1]:   # end exactly on "now"
+                        px.append(xs[-1])
+                        py.append(values[-1])
+                else:
+                    idx = list(range(0, num_points, stride))
+                    if idx[-1] != num_points - 1:
+                        idx.append(num_points - 1)
+                    px, py = [xs[i] for i in idx], [values[i] for i in idx]
+                return [QPointF(x, base_y - (min(max(0.0, y), y_cap) / max_y) * h) for x, y in zip(px, py)]
+
+            if ceiling is not None and config.graph_show_ceiling and config.graph_scale_headroom > 0:
+                ceiling_y = math.floor(base_y - (ceiling / max_y) * h) + 0.5
+            else:
+                ceiling_y = None
+            cached = ((width, height), current_hash, polyline(ups), polyline(downs), ceiling_y)
+            self._graph_cache[cache_key] = cached
+
+        _size, _key, upload_points, download_points, ceiling_y = cached
+        from PyQt6.QtGui import QLinearGradient, QBrush, QPolygonF
+
+        painter.save()
+        painter.setOpacity(config.graph_opacity)
+        if ceiling_y is not None:
+            ceiling_pen = QPen(QColor(config.default_color), 1)
+            ceiling_pen.setStyle(Qt.PenStyle.DotLine)
+            painter.setPen(ceiling_pen)
+            painter.drawLine(QPointF(float(graph_rect.left()), ceiling_y),
+                             QPointF(float(graph_rect.right()), ceiling_y))
+
+        if is_hardware:
+            lines = [(upload_points, hardware_color)]
+        else:
+            lines = [(upload_points, constants.graph.UPLOAD_LINE_COLOR),
+                     (download_points, constants.graph.DOWNLOAD_LINE_COLOR)]
+        lines = [(pts, c) for pts, c in lines if pts]
+
+        fill_alpha = constants.renderer.TREND_FILL_ALPHA
+        if fill_alpha > 0:
+            # A faint wash in plain SourceOver (not Detailed's additive Plus, which all but vanishes on
+            # a light taskbar): it only says "area under the line"; the line carries the data.
+            bottom = float(graph_rect.bottom())
+            painter.setPen(Qt.PenStyle.NoPen)
+            for pts, color_hex in lines:
+                grad = QLinearGradient(0, graph_rect.top(), 0, graph_rect.bottom())
+                c = QColor(color_hex)
+                c.setAlpha(fill_alpha)
+                grad.setColorAt(0.0, c)
+                c.setAlpha(0)
+                grad.setColorAt(1.0, c)
+                painter.setBrush(QBrush(grad))
+                painter.drawPolygon(QPolygonF([QPointF(pts[0].x(), bottom), *pts, QPointF(pts[-1].x(), bottom)]))
+
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        for pts, color_hex in lines:
+            pen = QPen(QColor(color_hex), constants.renderer.TREND_LINE_WIDTH)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            painter.setPen(pen)
+            painter.drawPolyline(pts)
+        painter.restore()
+
+    @staticmethod
+    def _network_graph_scale(history: List[Any], config: RenderConfig,
+                             series: str = "both", uploads: Optional[List[float]] = None,
+                             downloads: Optional[List[float]] = None,
+                             outlier_clip: bool = True) -> Tuple[float, Optional[float]]:
+        """Top of the network mini graph's y-axis in bytes/sec, plus the fixed ceiling it was built from
+        (None while auto-scaling).
+
+        Auto-scaling re-fits the axis to the busiest sample in the window, so once a download scrolls out
+        the axis shrinks and idle background traffic fills the graph as tall as the download did - the two
+        are only told apart by reading the numbers. A fixed scale (graph_fixed_scale with a plan speed
+        set) tops out at the plan speed plus the headroom instead, so a given height always means the
+        same speed. A single-direction panel ("upload" / "download") scales to that direction's own
+        samples and plan speed, so a 30 Mbps upload isn't flattened by a 300 Mbps download.
+        History is non-empty here (len >= MIN_GRAPH_POINTS). ``uploads`` / ``downloads`` override the
+        samples the auto-fit reads (the Trend style's smoothed series); None reads them from history."""
+        ceiling = {"upload": config.graph_scale_ceiling_up,
+                   "download": config.graph_scale_ceiling_down}.get(series, config.graph_scale_ceiling)
+        if config.graph_fixed_scale and ceiling > 0:
+            return max(ceiling * (1.0 + config.graph_scale_headroom), constants.renderer.MIN_Y_SCALE), ceiling
+
+        # The Trend style passes its smoothed series in, so the auto-fit is sized to what is drawn.
+        if uploads is None:
+            uploads = [d.upload for d in history] if series in ("both", "upload") else []
+        if downloads is None:
+            downloads = [d.download for d in history] if series in ("both", "download") else []
+        max_speed_val = max(uploads + downloads)
+
+        if outlier_clip and len(history) > 10:
+            all_speeds = uploads + downloads
+            all_speeds_sorted = sorted(all_speeds)
+            percentile_95 = all_speeds_sorted[int(len(all_speeds_sorted) * 0.95)]
+            if percentile_95 > 0 and max_speed_val > percentile_95 * 3.0:
+                max_speed_val = percentile_95
+
+        padded_max_speed = max_speed_val * constants.renderer.GRAPH_Y_AXIS_PADDING_FACTOR
+        return max(padded_max_speed, constants.renderer.MIN_Y_SCALE), None
 
 
     def update_config(self, config_dict: Dict[str, Any]) -> None:
@@ -950,9 +1553,7 @@ class WidgetRenderer:
             # source of truth and makes edits apply live.
             self._refresh_resource_cache()
 
-            self._cached_upload_points = []
-            self._cached_download_points = []
-            self._last_history_hash = 0
+            self._graph_cache.clear()
             self.logger.debug("Renderer config updated.")
         except Exception as e:
             self.logger.error("Failed to update config: %s", e)
@@ -965,6 +1566,7 @@ class WidgetRenderer:
     def reset_content_bounds(self) -> None:
         """Clear the per-paint content union; render_widget calls this before drawing the segments."""
         self._content_bounds = QRect()
+        self._pause_slots = []
 
     def _extend_content_bounds(self, rect: QRect) -> None:
         """Grow _content_bounds to include ``rect`` (each drawn segment)."""

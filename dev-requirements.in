@@ -12,3 +12,8 @@ pillow>=12.3.0  # Security: 13 CVEs fixed in 12.3.0 (see dependabot)
 pytest>=9.0.3   # Security: vulnerable tmpdir handling fix
 parameterized
 pytest-qt       # GUI interaction tests (qtbot) for the PyQt6 dialogs, run headless via offscreen
+
+# PyInstaller pulls these in on Windows only. Listed here so the compiled pins carry the marker
+# too (pip-compile drops transitive markers); Dependabot resolves on Linux.
+pefile; sys_platform == "win32"
+pywin32-ctypes; sys_platform == "win32"

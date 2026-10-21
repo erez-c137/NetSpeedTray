@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional, Union
 
 from netspeedtray.utils.helpers import get_app_data_path
 from netspeedtray.utils.styles import is_dark_mode
+from netspeedtray.utils.timer_utils import snap_update_rate
 from netspeedtray import constants
 
 
@@ -414,6 +415,51 @@ class ConfigManager:
                 changes_made = True
         except Exception as e:
             self.logger.debug("keep_data migration skipped: %s", e)
+
+        # update_rate (2.2): SMART mode is gone and the slider offers exactly 1/2/5/10 s. SMART was
+        # persisted as the sentinel -1.0 (and, before that, 0) and sampled at a fixed 2.0 s, so any
+        # non-positive rate becomes 2.0 - the cadence that user actually had, not the 1 s default.
+        # Every other value snaps to the nearest preset (10 s stays 10 s; ties go to the faster one,
+        # as keep_data's do); garbage becomes the default. Idempotent, version-independent, and runs
+        # before _validate_config, whose `choices` rule would otherwise reset -1.0 to 1 s. A missing
+        # key is left for validation to fill.
+        if "update_rate" in migrated:
+            old_rate = migrated["update_rate"]
+            new_rate = snap_update_rate(old_rate)
+            if type(old_rate) is not float or old_rate != new_rate:   # NaN != NaN: rewritten too
+                migrated["update_rate"] = new_rate
+                self.logger.info("Migrated update_rate %r -> %s s (the 1/2/5/10 s presets)",
+                                 old_rate, new_rate)
+                changes_made = True
+
+        # hardware_label_style (2.2): the old three-way style mixed shape and colour. It is now a shape
+        # ("icons" | "text") plus hardware_label_color ("brand" | "match_text" | "custom"):
+        #   icons_monochrome -> icons + match_text. The same look on a dark taskbar (white text there),
+        #                       and no longer invisible on a light one.
+        #   icons_colored    -> icons + brand   } both painted the fixed blue/red, which meant nothing;
+        #   text             -> text  + brand   } Brand gives the colour a meaning and falls back to
+        #                                         exactly that blue/red when the vendor is unknown.
+        # The implied colour applies ONLY when hardware_label_color is missing. Its presence means this
+        # build wrote it - the user's real choice - and the old style beside it is a rollback artefact:
+        # 2.1.x / 2.2 beta.2 reset the unknown "icons" to their default icons_monochrome but keep the
+        # unknown colour keys, so icons+brand comes back as icons_monochrome+brand and must stay brand.
+        # Idempotent: the new values are not in the map. Runs before _validate_config, whose `choices`
+        # rule would otherwise reset the old values to the default.
+        legacy_style = migrated.get("hardware_label_style")
+        legacy_map = {
+            "icons_colored": ("icons", "brand"),
+            "icons_monochrome": ("icons", "match_text"),
+            "text": ("text", "brand"),
+        }
+        if isinstance(legacy_style, str) and legacy_style in legacy_map and (
+                legacy_style != "text" or "hardware_label_color" not in migrated):
+            new_style, implied_color = legacy_map[legacy_style]
+            migrated["hardware_label_style"] = new_style
+            if "hardware_label_color" not in migrated:
+                migrated["hardware_label_color"] = implied_color
+            self.logger.info("Migrated hardware_label_style %r -> %r + hardware_label_color %r",
+                             legacy_style, new_style, migrated["hardware_label_color"])
+            changes_made = True
 
         # Version-based migrations (applied if loaded_version < target version)
         # Example structure for future versions:

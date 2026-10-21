@@ -129,11 +129,16 @@ def test_odometer_counts_bytes_even_when_all_rates_exceed_ceiling(controller_ins
     controller.last_interface_counters = {"Wi-Fi": MockNetIO(bytes_sent=0, bytes_recv=0)}
     controller.primary_interface = None
     controller.set_view(MagicMock())
+    # #13's real mechanism: the previous sample was HANDLED late, so this one arrives 1 s after it
+    # although the counters were SAMPLED 3 s apart. (A literal 30 GiB in 1 s of sampling would be
+    # 240 Gbps - a counter glitch, which the odometer's sanity cap now clips; see
+    # test_odometer_accuracy.py.)
+    controller._last_sample_time = (controller.last_check_time - 2.0, 10_000.0)
 
-    huge = 30 * 1024**3  # 30 GiB in 1s -> ~30 GB/s, far above the ~12.5 GB/s ceiling -> display-dropped
+    huge = 30 * 1024**3  # 30 GiB over a 1 s handling span -> ~30 GB/s, above the ceiling -> display-dropped
     second = {"Wi-Fi": MockNetIO(bytes_sent=huge, bytes_recv=0)}
     with patch('time.monotonic', return_value=controller.last_check_time + 1.0):
-        controller._handle_network_counters(second)
+        controller._handle_network_counters(second, sample_time=(controller.last_check_time + 1.0, 10_003.0))
 
     mock_widget_state.add_speed_data.assert_not_called()       # over-ceiling rate -> dropped from display
     mock_widget_state.add_usage_bytes.assert_called_once()     # ...but the real bytes WERE counted
@@ -262,3 +267,98 @@ def test_absent_temp_power_key_emits_nothing(controller_instance):
     mock_view.update_cpu_power.assert_not_called()
     mock_view.update_gpu_temp.assert_not_called()
     mock_view.update_gpu_power.assert_not_called()
+
+
+# --- all_physical uses the shared adapter classifier (2.2 scope C, accuracy audit finding 5) -------
+
+def _classifier_for(table):
+    from netspeedtray.utils.interface_classifier import AdapterInfo, InterfaceClassifier
+    rows = {n: AdapterInfo(n, d, t, hw) for n, (d, t, hw) in table.items()}
+    return InterfaceClassifier(loader=lambda: rows)
+
+
+_DEV_MACHINE = {   # this machine's live adapters, GetIfTable2 2026-10-19 (+ NordLynx)
+    "Wi-Fi 3": ("Realtek 8851BU Wireless LAN WiFi 6 USB NIC", 71, True),
+    "Ethernet": ("Intel(R) Ethernet Connection (17) I219-LM", 6, True),
+    "Tailscale": ("Tailscale Tunnel", 53, False),
+    "vEthernet (WSL (Hyper-V firewall))": ("Hyper-V Virtual Ethernet Adapter #2", 6, False),
+    "Ethernet 3": ("VirtualBox Host-Only Ethernet Adapter", 6, False),
+    "NordLynx": ("NordLynx Tunnel", 53, False),
+    "Loopback Pseudo-Interface 1": ("Software Loopback Interface 1", 24, False),
+}
+
+
+def _run_all_physical(mock_config, mock_widget_state, table, first, second):
+    controller = StatsController(config=mock_config, widget_state=mock_widget_state,
+                                 interface_classifier=_classifier_for(table))
+    controller.config["interface_mode"] = "all_physical"
+    controller.primary_interface = None
+    view = MagicMock()
+    controller.set_view(view)
+    controller.last_check_time = time.monotonic()
+    controller.last_interface_counters = {n: MockNetIO(*v) for n, v in first.items()}
+    with patch('time.monotonic', return_value=controller.last_check_time + 1.0):
+        controller._handle_network_counters({n: MockNetIO(*v) for n, v in second.items()})
+    return view.update_display_speeds.call_args[0], mock_widget_state.add_usage_bytes.call_args[0]
+
+
+def test_all_physical_excludes_vpns_and_virtual_adapters(mock_config, mock_widget_state):
+    """A full-tunnel VPN's bytes ride the Wi-Fi too; the 2.1 keyword list let Tailscale, NordLynx,
+    vEthernet and a VirtualBox 'Ethernet 3' through, double-counting them (display AND odometer)."""
+    names = list(_DEV_MACHINE)
+    first = {n: (0, 0) for n in names}
+    second = {n: (0, 0) for n in names}
+    second["Wi-Fi 3"] = (125_000, 250_000)          # 1 / 2 Mbps over 1 s
+    for n in ("Tailscale", "NordLynx", "vEthernet (WSL (Hyper-V firewall))", "Ethernet 3"):
+        second[n] = (100_000, 200_000)              # each would add 0.8 / 1.6 Mbps
+    display, usage = _run_all_physical(mock_config, mock_widget_state, _DEV_MACHINE, first, second)
+    assert display[0] == pytest.approx(1.0)
+    assert display[1] == pytest.approx(2.0)
+    assert tuple(usage) == (125_000, 250_000)
+
+
+def test_all_physical_with_no_physical_adapter_counts_the_rest(mock_config, mock_widget_state):
+    """Inside a VM whose NIC the OS doesn't flag as hardware, the mode must not read 0 forever:
+    with no physical adapter at all it sums every non-pseudo interface."""
+    table = {"Ethernet 8": ("Acme Network Adapter", 6, False),
+             "Loopback Pseudo-Interface 1": ("Software Loopback Interface 1", 24, False)}
+    first = {"Ethernet 8": (0, 0), "Loopback Pseudo-Interface 1": (0, 0)}
+    second = {"Ethernet 8": (125_000, 125_000), "Loopback Pseudo-Interface 1": (500_000, 500_000)}
+    display, usage = _run_all_physical(mock_config, mock_widget_state, table, first, second)
+    assert display[0] == pytest.approx(1.0)
+    assert tuple(usage) == (125_000, 125_000)
+
+
+def test_all_physical_fallback_never_reintroduces_a_vpn(mock_config, mock_widget_state):
+    """No physical adapter (a VM NIC the OS doesn't flag) while a WireGuard tunnel and Tailscale are
+    up: the fallback must sum the NIC only - the tunnels' bytes already ride it."""
+    table = {"Ethernet 8": ("Acme Network Adapter", 6, False),
+             "home": ("WireGuard Tunnel", 53, False),
+             "Tailscale": ("Tailscale Tunnel", 53, False)}
+    first = {n: (0, 0) for n in table}
+    second = {"Ethernet 8": (125_000, 125_000), "home": (100_000, 100_000), "Tailscale": (100_000, 100_000)}
+    display, usage = _run_all_physical(mock_config, mock_widget_state, table, first, second)
+    assert display[0] == pytest.approx(1.0)
+    assert tuple(usage) == (125_000, 125_000)
+
+
+def test_available_interfaces_lists_vpns_but_not_pseudo(mock_config, mock_widget_state):
+    """The picker now SHOWS VPNs (grouped as virtual) - selected mode can pick a tunnel - but still
+    hides loopback / Teredo like 2.1 did."""
+    controller = StatsController(config=mock_config, widget_state=mock_widget_state,
+                                 interface_classifier=_classifier_for(_DEV_MACHINE))
+    counters = {n: MockNetIO(0, 0) for n in _DEV_MACHINE}
+    with patch("psutil.net_io_counters", return_value=counters):
+        got = controller.get_available_interfaces()
+    assert "Tailscale" in got and "NordLynx" in got and "Wi-Fi 3" in got
+    assert "Loopback Pseudo-Interface 1" not in got
+
+def test_current_primary_interface_resolves_in_any_mode(mock_config, mock_widget_state):
+    """The picker marks the routing interface even when the mode isn't auto (where the per-poll
+    lookup never runs)."""
+    controller = StatsController(config=mock_config, widget_state=mock_widget_state)
+    controller.config["interface_mode"] = "all_physical"
+    with patch("netspeedtray.core.controller.get_primary_interface_name", return_value="Wi-Fi 3") as g:
+        assert controller.current_primary_interface() == "Wi-Fi 3"
+        assert controller.current_primary_interface() == "Wi-Fi 3"
+    assert g.call_count == 1   # the 15 s cache applies

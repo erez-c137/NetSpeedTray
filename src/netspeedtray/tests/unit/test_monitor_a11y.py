@@ -97,7 +97,7 @@ def test_hardware_row_has_accessible_name(q_app):
     assert "python.exe" in row.accessibleName()
 
 
-def test_top_talkers_card_is_keyboard_activatable(q_app):
+def test_most_connections_card_is_keyboard_activatable(q_app):
     from netspeedtray.views.monitor.overview.busiest_apps import BusiestAppsCard
     card = BusiestAppsCard(I18nStrings("en_US"))
     assert card.focusPolicy() == Qt.FocusPolicy.StrongFocus

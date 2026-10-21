@@ -8,9 +8,8 @@ import os
 import sys
 import time
 from ctypes import wintypes
-from datetime import datetime
-from collections import deque
-from typing import Any, Deque, Dict, List, Optional, Tuple, TYPE_CHECKING
+from datetime import date, datetime
+from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 # --- Third-Party Imports ---
 import win32api
@@ -27,27 +26,35 @@ from PyQt6.QtWidgets import QApplication, QMenu, QMessageBox, QWidget
 # --- First-Party (Local) Imports ---
 from netspeedtray import constants
 from netspeedtray.core.controller import StatsController as CoreController
-from netspeedtray.core.timer_manager import SpeedTimerManager
 from netspeedtray.core.monitor_thread import StatsMonitorThread
 from netspeedtray.core.tray_manager import TrayIconManager
 from netspeedtray.core.widget_state import WidgetState as CoreWidgetState
 from netspeedtray.utils.config import ConfigManager as CoreConfigManager
 from netspeedtray.utils.timer_utils import resolve_poll_interval_seconds
+from netspeedtray.utils.styles import set_app_reduce_motion
 from netspeedtray.core.position_manager import PositionManager, WindowState
 from netspeedtray.core.input_handler import InputHandler
 from netspeedtray.utils.taskbar_utils import (
     get_taskbar_info, is_taskbar_obstructed, is_taskbar_visible,
-    get_process_name_from_hwnd
+    get_process_name_from_hwnd, dock_signature
 )
 
 from netspeedtray.utils.widget_renderer import WidgetRenderer as CoreWidgetRenderer, RenderConfig
-from netspeedtray.utils.widget_paint import WidgetMetrics, render_widget
+from netspeedtray.utils.widget_paint import WidgetMetrics, render_widget, split_network_phases
 from netspeedtray.core.system_events import SystemEventHandler
 from netspeedtray.views.widget.layout import WidgetLayoutManager
 from netspeedtray.views.widget.theme import WidgetThemeManager
 from netspeedtray.core.startup_manager import StartupManager
 from netspeedtray.core.config_controller import ConfigController
 from netspeedtray.core.update_checker import UpdateChecker
+from netspeedtray.core import shutdown_channel
+from netspeedtray.utils.helpers import effective_display_mode, hardware_in_hover_card_active
+
+# Display modes whose taskbar widget paints a CPU (and RAM) / GPU (and VRAM) reading - a new value
+# for one of them is worth a repaint. Read through effective_display_mode, so with "Show hardware in
+# the hover card" on the widget stops repainting for hardware it no longer shows.
+_CPU_BAR_MODES = ("cpu_only", "combined", "side_by_side", "cycle")
+_GPU_BAR_MODES = ("gpu_only", "combined", "side_by_side", "cycle")
 
 # --- Type Checking ---
 if TYPE_CHECKING:
@@ -66,14 +73,45 @@ class _NativeMSG(ctypes.Structure):
     ]
 
 _WM_POWERBROADCAST = 0x0218
+_WM_QUERYENDSESSION = 0x0011
+_WM_ENDSESSION = 0x0016
+# Inside WM_QUERYENDSESSION / WM_ENDSESSION, how long the odometer + last history batch may wait for
+# the database thread. Windows ends a logging-off app ~5 s after asking; the config save (an atomic
+# file write, milliseconds) runs first, so this bounded wait is all that can use the budget.
+_SESSION_END_DB_WAIT_S = 2.0
 _PBT_APMRESUMESUSPEND = 0x0007
 _PBT_APMRESUMEAUTOMATIC = 0x0012
+
+# The installer's graceful-close request (setup.iss [Code], or `--shutdown`; core/shutdown_channel.py). A registered
+# message: one system-wide atom per string, so resolving it once at import is correct. 0 = failed,
+# and nativeEvent then never matches (WM_NULL is 0, so the guard matters).
+try:
+    _WM_NST_SHUTDOWN = shutdown_channel.shutdown_message_id()
+except Exception:
+    _WM_NST_SHUTDOWN = 0
+
+
+# double_click_action -> the i18n key of its Settings label (the same words the user picked it by).
+_DOUBLE_CLICK_HINT_LABELS = {
+    constants.config.defaults.CLICK_ACTION_OPEN_MONITOR: "CLICK_ACTION_OPEN_MONITOR_LABEL",
+    constants.config.defaults.CLICK_ACTION_SETTINGS: "CLICK_ACTION_SETTINGS_LABEL",
+    constants.config.defaults.CLICK_ACTION_PAUSE: "CLICK_ACTION_PAUSE_LABEL",
+}
+
+
+def hover_hint_text(i18n, config: Dict[str, Any]) -> str:
+    """The first-run gesture hint: what the right-click menu holds, plus the double-click action
+    the user actually has configured (no line when it does nothing)."""
+    lines = [i18n.WIDGET_HOVER_TOOLTIP]
+    key = _DOUBLE_CLICK_HINT_LABELS.get(
+        config.get("double_click_action", constants.config.defaults.DEFAULT_DOUBLE_CLICK_ACTION))
+    if key:
+        lines.append(i18n.WIDGET_HOVER_DOUBLE_CLICK_HINT.format(action=getattr(i18n, key)))
+    return "\n".join(lines)
 
 
 class NetworkSpeedWidget(QWidget):
     """Main widget for displaying network speeds near the Windows system tray."""
-
-    MIN_UPDATE_INTERVAL = constants.config.defaults.MINIMUM_UPDATE_RATE
 
 
     def __init__(self, taskbar_height: int = constants.taskbar.taskbar.DEFAULT_HEIGHT, config: Optional[Dict[str, Any]] = None, i18n: Optional[constants.i18n.I18nStrings] = None, parent: QObject | None = None) -> None:
@@ -93,6 +131,7 @@ class NetworkSpeedWidget(QWidget):
         self.config_controller = ConfigController(self, self.config_manager)
         
         self.config: Dict[str, Any] = config or self.config_controller.load_initial_config(taskbar_height)
+        set_app_reduce_motion(self.config.get("reduce_motion", False))   # before any toggle animates
         
         if i18n is None:
             raise ValueError("An i18n instance must be provided to NetworkSpeedWidget.")
@@ -107,7 +146,6 @@ class NetworkSpeedWidget(QWidget):
 
         # --- Declare all instance attributes for clarity ---
         self.widget_state: CoreWidgetState
-        self.timer_manager: SpeedTimerManager
         self.controller: CoreController
         self.renderer: CoreWidgetRenderer
         self.position_manager: PositionManager
@@ -117,6 +155,7 @@ class NetworkSpeedWidget(QWidget):
         self.tray_manager: TrayIconManager
         self.monitor_thread: StatsMonitorThread
         self._cached_layout_mode: str = 'horizontal'  # taskbar-edge orientation; updated on taskbar changes
+        self._dock_sig_seen: Optional[tuple] = None  # last taskbar dock_signature seen (#322)
         self.monitor_window = None  # unified Monitor (Overview / Network / Hardware), lazy
         self.update_checker: Optional[UpdateChecker] = None
         self.app_icon: QIcon
@@ -145,10 +184,23 @@ class NetworkSpeedWidget(QWidget):
         self.cpu_power: Optional[float] = None
         self.gpu_power: Optional[float] = None
         self.system_power: Optional[float] = None   # true whole-system W (RAPL PSYS / battery), if available
+        self.latency_probe = None                    # apply_latency_probe owns it (startup + every apply)
         self.latency_gw: Optional[float] = None      # gateway RTT ms (LAN latency); None = timeout
         self.latency_anchor: Optional[float] = None  # public-anchor RTT ms (internet latency); opt-in
-        self.latency_loss: float = 0.0               # rolling gateway loss% over recent probes
-        self._latency_window: Deque[bool] = deque(maxlen=40)   # recent timed-out flags for live loss%
+        # Live loss% (~2 min) per hop, and the HEADLINE loss: the anchor's when the public probe is on,
+        # the gateway's otherwise (latency_probe.headline_hop) - the figure the Overview pill shows.
+        # Loss values are None until the hop's window holds constants.network.latency.LOSS_MIN_SAMPLES.
+        self.latency_loss: Optional[float] = None
+        self.latency_loss_gw: Optional[float] = None
+        self.latency_loss_anchor: Optional[float] = None
+        self.latency_headline_hop: Optional[str] = None   # "anchor" / "gateway"; None before a sample
+        # Most recent successful RTT of the headline hop within its live window - the pill's ms, so one
+        # lost ping does not blank it (and the router's ms never stands in for the internet's).
+        self.latency_headline_ms: Optional[float] = None
+        from netspeedtray.core.latency_probe import LatencyLossWindows
+        self._latency_loss_windows = LatencyLossWindows()
+        # Local metrics endpoint (2.2 scope B) - created on first enable, None while never enabled.
+        self.metrics_endpoint = None
         self.ram_used: Optional[float] = None
         self.ram_total: Optional[float] = None
         self.vram_used: Optional[float] = None
@@ -169,6 +221,7 @@ class NetworkSpeedWidget(QWidget):
         self.last_tray_rect: Optional[Tuple[int, int, int, int]] = None
         self._taskbar_lost_count: int = 0
         self._will_quit_app: bool = False # Flag to distinguish hide vs exit
+        self._shutdown_armed_hwnd: int = 0  # HWND the --shutdown channel was armed on
         
         # Hooks for system events
         self.system_event_handler: SystemEventHandler
@@ -186,6 +239,7 @@ class NetworkSpeedWidget(QWidget):
         self._hover_card_timer.timeout.connect(self._show_usage_hover_card)
         self._hover_usage_cache: Optional[Tuple[Tuple[float, float], Tuple[float, float]]] = None
         self._hover_usage_cache_ts: float = 0.0
+        self._hover_usage_period_start: Optional[datetime] = None   # set by _hover_usage_totals
 
         self.setVisible(False)
         self.logger.debug("Widget initially hidden to stabilize position and size.")
@@ -203,7 +257,10 @@ class NetworkSpeedWidget(QWidget):
             self._setup_timers()
             self.position_manager.update_position()
             self._synchronize_startup_task()
-            
+            self.apply_metrics_endpoint()   # opt-in, off by default: a no-op unless the user enabled it
+            # Reachable by the installer's shutdown request from here on, not only once first shown.
+            self._arm_shutdown_channel()
+
             QTimer.singleShot(0, self._delayed_initial_show)
 
             self.logger.debug("NetworkSpeedWidget initialized successfully.")
@@ -250,8 +307,8 @@ class NetworkSpeedWidget(QWidget):
         if self.update_checker.should_check():
             QTimer.singleShot(5000, self.update_checker.check_now)
 
-        # Cycle Timer
-        if self.config.get("widget_display_mode") == "cycle":
+        # Cycle Timer (not while "Show hardware in the hover card" collapses the widget to network-only)
+        if effective_display_mode(self.config) == "cycle":
             self._cycle_timer.start(constants.renderer.CYCLE_INTERVAL_MS)
             self.logger.debug("Cycle timer started.")
 
@@ -260,43 +317,26 @@ class NetworkSpeedWidget(QWidget):
         """
         Initialize non-UI core logic components.
 
-        Sets up WidgetState, SpeedTimerManager, StatsController, and WidgetRenderer.
+        Sets up WidgetState, the stats monitor thread, StatsController, and WidgetRenderer.
         """
         self.logger.debug("Initializing core components...")
         if not self.config:
             raise RuntimeError("Cannot initialize core: Config missing")
         try:
             self.widget_state = CoreWidgetState(self.config)
-            self.timer_manager = SpeedTimerManager(self.config, parent=self)
             
             # Background Monitoring Thread
-            # One shared resolver decides the sampling interval for SMART (-1.0) and the legacy
-            # 0 sentinel, so the sampler, the exports and the raw-tier volume math can never
-            # disagree (review C6/C7). The old speed_display_mode=='auto' fallback is gone: the
-            # Settings dialog already refuses to save that combination, so it only ever fired on
-            # hand-edited configs - and silently sampled at 1.0 s while every seconds-per-sample
-            # computation assumed 2.0 s, doubling raw-tier volume. The 0 sentinel previously fell
-            # into the fixed-rate clamp and sampled at 0.1 s - the #273 bug shape, at startup.
-            cfg_rate = self.config.get("update_rate", constants.config.defaults.DEFAULT_UPDATE_RATE)
-            try:
-                cfg_rate = float(cfg_rate)
-            except (TypeError, ValueError):
-                cfg_rate = float(constants.config.defaults.DEFAULT_UPDATE_RATE)
-            if cfg_rate <= 0:
-                effective_interval = resolve_poll_interval_seconds(cfg_rate)
-            else:
-                # Fixed interval: Clamp to allowed min/max
-                effective_interval = max(constants.config.defaults.MINIMUM_UPDATE_RATE,
-                                         min(cfg_rate, constants.timers.MAXIMUM_UPDATE_RATE_SECONDS))
-
+            # The monitor thread's sleep loop is the only sampling pacer. The rate is one of the
+            # 1/2/5/10 s presets (the config migration put it there); the shared resolver is the same
+            # clamp every seconds-per-sample computation uses, so they can never disagree.
+            effective_interval = resolve_poll_interval_seconds(
+                self.config.get("update_rate", constants.config.defaults.DEFAULT_UPDATE_RATE))
             self.monitor_thread = StatsMonitorThread(interval=effective_interval, config=self.config)
             
             self.controller = CoreController(config=self.config, widget_state=self.widget_state)
             self.controller.set_view(self)
             self.renderer = CoreWidgetRenderer(self.config, self.i18n)
             
-            # Note: We no longer start timer_manager for speeds; monitor_thread drives them.
-            # self.timer_manager.start_timer() 
             self.logger.debug("Core components initialized; monitor thread ready.")
         except Exception as e:
             self.logger.error("Failed to initialize core components: %s", e, exc_info=True)
@@ -407,6 +447,9 @@ class NetworkSpeedWidget(QWidget):
 
             # Only update position if we are supposed to be visible.
             if self.isVisible():
+                # Taskbar thickness/edge changed while running (#322): re-size (which repositions).
+                if not free_float_active:
+                    self._resize_if_dock_changed(taskbar_info)
                 # Free-move keeps the user's exact saved spot (applied once); docked and free-float both
                 # reposition on the refresh (free-float re-places on / re-detects its taskbar-less display).
                 if not self.config.get("free_move", False):
@@ -446,13 +489,11 @@ class NetworkSpeedWidget(QWidget):
         QTimer.singleShot(1200, self._maybe_show_welcome)
 
     def _maybe_show_welcome(self) -> None:
-        """First-run onboarding. A brand-new install gets the calm 'unfold' flyout that
-        points at the features most users never find; an upgrader gets the one-time 2.0
-        welcome dialog. The two gates are mutually exclusive - they never both fire."""
-        # Brand-new install: the unfold flyout is DISABLED for this release - its only action opens the
-        # Monitor, so there's no real guided tour to justify an interrupting pop-up yet (re-enable once
-        # there's an actual walkthrough; _show_unfold_flyout() is kept for that). We still advance the
-        # first-run flags so nothing pops later and the upgrade dialog stays correctly suppressed.
+        """First-run onboarding. An upgrader gets the one-time 2.0 welcome dialog; a brand-new install
+        gets no pop-up (the hover card's gesture hint is its onboarding)."""
+        # Brand-new install: no interrupting pop-up until there's a real guided tour (the old 'unfold'
+        # flyout only opened the Monitor and was removed in 2.2). We still advance the first-run flags
+        # so nothing pops later and the upgrade dialog stays correctly suppressed.
         if self.config.get("first_run_ever", True):
             self.config["first_run_ever"] = False
             self.config["first_run_v2_seen"] = True  # a new 2.0 user has no "before"
@@ -476,40 +517,133 @@ class NetworkSpeedWidget(QWidget):
         self.config["first_run_v2_seen"] = True
         self.update_config({"first_run_v2_seen": True})
 
-    def _show_unfold_flyout(self) -> None:
-        """A one-time calm callout near the widget pointing at the hidden features."""
-        try:
-            from netspeedtray.views.flyout import Flyout
-            self._unfold_flyout = Flyout(
-                self.i18n.UNFOLD_FLYOUT_TITLE,
-                self.i18n.UNFOLD_FLYOUT_BODY,
-                action_text=self.i18n.SHOW_ME_AROUND_LABEL,
-            )
-            self._unfold_flyout.action_clicked.connect(self.open_monitor_window)
-            geo = self.frameGeometry()
-            self._unfold_flyout.show_at(QPoint(geo.left(), geo.top()))
-        except Exception as e:
-            self.logger.error(f"Error showing unfold flyout: {e}", exc_info=True)
-
-    def _on_latency(self, gw_ms, anchor_ms, gw_timed_out: bool) -> None:
-        """A latency sample arrived (main thread, queued from the probe thread). Update the live
-        attributes + rolling loss%, and persist gateway/anchor RTT + the timeout flag so the Monitor's
-        window loss% (the ISP-dispute figure) is honest."""
-        self.latency_gw = gw_ms
-        self.latency_anchor = anchor_ms
-        self._latency_window.append(bool(gw_timed_out))
-        if self._latency_window:
-            self.latency_loss = round(sum(self._latency_window) / len(self._latency_window) * 100.0, 1)
+    def _on_latency(self, sample) -> None:
+        """A LatencySample arrived (main thread, queued from the probe thread). Update the live
+        attributes + each hop's rolling loss%, and persist both RTTs and both hops' loss fractions so the
+        Monitor's window loss% (the ISP-dispute figure) is honest for the internet, not just the router."""
+        from netspeedtray.core.latency_probe import HOP_ANCHOR, headline_hop
+        lat = constants.network.latency
+        self.latency_gw = sample.gw_ms
+        self.latency_anchor = sample.anchor_ms
+        windows = self._latency_loss_windows
+        windows.add(sample)
+        self.latency_loss_gw = windows.gw_loss
+        self.latency_loss_anchor = windows.anchor_loss
+        self.latency_headline_hop = headline_hop(sample.anchor_enabled)
+        self.latency_loss = (self.latency_loss_anchor if self.latency_headline_hop == HOP_ANCHOR
+                             else self.latency_loss_gw)
+        self.latency_headline_ms = windows.last_ms(self.latency_headline_hop)
         ws = getattr(self, "widget_state", None)
         if ws is not None:
             try:
-                if gw_ms is not None:
-                    ws.add_hardware_stat("latency_gw", float(gw_ms))
-                if anchor_ms is not None:
-                    ws.add_hardware_stat("latency_anchor", float(anchor_ms))
-                ws.add_hardware_stat("latency_gw_timeout", 1.0 if gw_timed_out else 0.0)
+                if sample.gw_ms is not None:
+                    ws.add_hardware_stat("latency_gw", float(sample.gw_ms))
+                if sample.anchor_ms is not None:
+                    ws.add_hardware_stat("latency_anchor", float(sample.anchor_ms))
+                # The loss series: lost / sent of this cycle's burst (0, .25, .5, .75, 1). Old 0/1 rows
+                # (one echo per cycle) mean the same thing - the share of that cycle's probes lost - so
+                # every reader (rollup AVG, outage_summary's >= 0.5, the exporter) takes both unchanged.
+                if not getattr(sample, "gw_excluded", False):   # gateway changed mid-cycle: not measured
+                    ws.add_hardware_stat(lat.STAT_GW_TIMEOUT, float(sample.gw_loss_fraction))
+                if sample.anchor_enabled:
+                    ws.add_hardware_stat(lat.STAT_ANCHOR_TIMEOUT, float(sample.anchor_loss_fraction))
             except Exception:
                 pass
+
+    def apply_latency_probe(self) -> None:
+        """Start / stop the latency probe to match ``latency_enabled``. Called at startup and from every
+        settings apply; idempotent. Switching it off stops the probe at once (the probe also reads the
+        switch before every echo, so not even the rest of a burst goes out - to the router or the public
+        host) and clears the live figures; switching it back on starts a fresh probe. Never blocks the
+        GUI thread: a stopped probe finishes its in-flight echo (<= 1 s) on its own and is joined at
+        shutdown if it has not by then."""
+        enabled = bool(self.config.get("latency_enabled", True))
+        probe = getattr(self, "latency_probe", None)
+        if probe is not None:
+            probe.set_config(self.config)   # a settings rollback replaces the dict
+            if enabled and probe.isRunning() and probe._running:
+                return
+            self._retire_latency_probe(probe)
+            self.latency_probe = None
+        if not enabled:
+            if probe is not None:
+                self._clear_live_latency()
+            return
+        try:
+            from netspeedtray.core.latency_probe import LatencyProbe
+            self.latency_probe = LatencyProbe(self.config)
+            self.latency_probe.latency_ready.connect(self._on_latency)
+            self.latency_probe.start()
+        except Exception as e:
+            self.latency_probe = None
+            self.logger.debug("LatencyProbe not started: %s", e)
+
+    def invalidate_latency_gateway(self) -> None:
+        """Resume from sleep / a new primary route: the probe looks its default gateway up again before
+        the next burst (it would otherwise ping the cached one for up to a minute and record that
+        router's silence as loss)."""
+        probe = getattr(self, "latency_probe", None)
+        if probe is not None:
+            try:
+                probe.invalidate_gateway()
+            except Exception as e:
+                self.logger.debug("latency gateway not invalidated: %s", e)
+
+    def _retire_latency_probe(self, probe) -> None:
+        """Stop ``probe`` without waiting; keep a reference until its thread has ended (a QThread
+        destroyed while running aborts the process). Shutdown joins whatever is still here."""
+        try:
+            probe.stop()
+            probe.latency_ready.disconnect(self._on_latency)   # a sample already in flight is dropped
+        except Exception:
+            pass
+        retiring = getattr(self, "_retired_latency_probes", None)
+        if retiring is None:
+            retiring = self._retired_latency_probes = []
+        retiring[:] = [p for p in retiring if p.isRunning()]
+        if probe.isRunning():
+            retiring.append(probe)
+
+    def _clear_live_latency(self) -> None:
+        """Latency switched off: nothing on screen may keep showing the last reading."""
+        from netspeedtray.core.latency_probe import LatencyLossWindows
+        self.latency_gw = self.latency_anchor = None
+        self.latency_loss = self.latency_loss_gw = self.latency_loss_anchor = None
+        self.latency_headline_hop = None
+        self.latency_headline_ms = None
+        self._latency_loss_windows = LatencyLossWindows()
+
+    def apply_metrics_endpoint(self) -> None:
+        """Start / stop / move the local metrics endpoint to match the config (2.2 scope B). Called at
+        startup and from every settings apply; idempotent, so a live-preview tick that did not touch
+        the endpoint keys costs nothing. A port that cannot be bound is reported via
+        metrics_endpoint.status (Settings shows it), never raised."""
+        enabled = bool(self.config.get("metrics_endpoint_enabled", False))
+        if self.metrics_endpoint is None and not enabled:
+            return   # never enabled: not even the object exists
+        try:
+            if self.metrics_endpoint is None:
+                from netspeedtray.core.metrics_endpoint import MetricsEndpoint
+                self.metrics_endpoint = MetricsEndpoint()
+            was_running = self.metrics_endpoint.running
+            self.metrics_endpoint.apply(enabled, int(self.config.get(
+                "metrics_endpoint_port", constants.network.metrics.DEFAULT_PORT)))
+            if self.metrics_endpoint.running and not was_running:
+                self._publish_metrics_snapshot()   # the first scrape should not wait for a tick
+        except Exception as e:
+            self.logger.error("Could not apply the metrics endpoint setting: %s", e, exc_info=True)
+
+    def _publish_metrics_snapshot(self, _stats: object = None) -> None:
+        """GUI thread: freeze the live values into the endpoint's snapshot. The server thread only
+        ever reads that frozen object - it never touches the widget, controller or WidgetState."""
+        ep = self.metrics_endpoint
+        if ep is None or not ep.running:
+            return
+        try:
+            from netspeedtray.core.metrics_snapshot import build_snapshot
+            ep.publish(build_snapshot(self))
+        except Exception as e:
+            self.logger.debug("metrics snapshot not published: %s", e)
 
     def _on_monitor_error(self, message: str) -> None:
         """
@@ -546,29 +680,49 @@ class NetworkSpeedWidget(QWidget):
         except Exception as e:
             self.logger.error("Error showing database read-only notice: %s", e, exc_info=True)
 
-    def _show_usage_alert(self, title: str, message: str) -> None:
+    def _on_db_migration_deferred(self, reason: str) -> None:
+        """
+        The v7 -> v8 history upgrade could not finish this launch (low disk, the file held by
+        another program, an interrupted earlier attempt), so the worker records nothing until the
+        next start, when it retries. Same calm flyout as the downgrade notice - the title is shared,
+        the body says what happens next; the worker's ERROR log carries the technical reason.
+        """
+        try:
+            self.logger.info("Surfacing deferred database upgrade notice (reason: %s).", reason)
+            body = (self.i18n.DB_UPGRADE_PAUSED_NO_SPACE_FLYOUT_BODY if reason == "no_space"
+                    else self.i18n.DB_UPGRADE_PAUSED_FLYOUT_BODY)
+            self._show_usage_alert(self.i18n.DB_READONLY_FLYOUT_TITLE, body)
+        except Exception as e:
+            self.logger.error("Error showing deferred database upgrade notice: %s", e, exc_info=True)
+
+    def _on_db_history_upgraded(self) -> None:
+        """
+        This launch upgraded the history to v8 (2.2). Say so once, calmly: older days now read as
+        estimates and can total LESS than 2.1 showed - 2.1 over-counted quiet minutes - and the
+        data-cap count (the odometer) is unaffected. Without it the drop looks like lost history.
+        The persisted flag keeps it to one showing even if a v7 file is ever upgraded again.
+        """
+        try:
+            if self.config.get("history_upgrade_notice_shown", False):
+                return
+            self.logger.info("Surfacing the one-time history-upgraded notice.")
+            self._show_usage_alert(self.i18n.DB_UPGRADE_DONE_FLYOUT_TITLE,
+                                   self.i18n.DB_UPGRADE_DONE_FLYOUT_BODY,
+                                   auto_dismiss_ms=constants.timers.HISTORY_UPGRADE_NOTICE_MS)
+            self.config_controller.update_config({"history_upgrade_notice_shown": True},
+                                                 apply_and_repaint=False)
+        except Exception as e:
+            self.logger.error("Error showing the history-upgraded notice: %s", e, exc_info=True)
+
+    def _show_usage_alert(self, title: str, message: str, auto_dismiss_ms: int = 15000) -> None:
         """Show a data-cap usage alert via the flyout (no system-tray icon needed)."""
         try:
             from netspeedtray.views.flyout import Flyout
-            self._usage_alert_flyout = Flyout(title, message, auto_dismiss_ms=15000)
+            self._usage_alert_flyout = Flyout(title, message, auto_dismiss_ms=auto_dismiss_ms)
             geo = self.frameGeometry()
             self._usage_alert_flyout.show_at(QPoint(geo.left(), geo.top()))
         except Exception as e:
             self.logger.error(f"Error showing usage alert: {e}", exc_info=True)
-
-    def open_data_cap_dialog(self) -> None:
-        """Open the data-cap settings dialog and apply any changes."""
-        try:
-            from netspeedtray.views.datacap_dialog import DataCapDialog
-            up, down = self.widget_state.get_usage_this_period()
-            cnt = self.config.get("data_cap_count", "total")
-            used = down if cnt == "download" else up if cnt == "upload" else (up + down)
-            dlg = DataCapDialog(self.config, used_bytes=used, parent=self, i18n=self.i18n)
-            if dlg.exec():
-                self.update_config(dlg.get_values())
-        except Exception as e:
-            self.logger.error(f"Error opening data cap dialog: {e}", exc_info=True)
-
 
     def pause(self) -> None:
         """Freeze the live readout. The monitor keeps recording history in the background; only
@@ -606,12 +760,18 @@ class NetworkSpeedWidget(QWidget):
         self.update() # Trigger a repaint
 
 
+    def _bar_shows(self, modes: Tuple[str, ...]) -> bool:
+        """The widget's painted display mode is one of ``modes`` (see _CPU_BAR_MODES). The reading is
+        stored either way - the hover card and the Monitor window use it."""
+        return effective_display_mode(self.config) in modes
+
     def update_cpu_usage(self, usage: float) -> None:
         """Update CPU usage and trigger repaint."""
         if self.is_paused:
             return
         self.cpu_usage = usage
-        if self.config.get("widget_display_mode") in ["cpu_only", "combined", "side_by_side", "cycle"]:
+        self._refresh_hover_hardware()
+        if self._bar_shows(_CPU_BAR_MODES):
             self.update()
 
     def update_gpu_usage(self, usage: float) -> None:
@@ -619,7 +779,8 @@ class NetworkSpeedWidget(QWidget):
         if self.is_paused:
             return
         self.gpu_usage = usage
-        if self.config.get("widget_display_mode") in ["gpu_only", "combined", "side_by_side", "cycle"]:
+        self._refresh_hover_hardware()
+        if self._bar_shows(_GPU_BAR_MODES):
             self.update()
 
     def update_network_identity(self, identity: Optional[object]) -> None:
@@ -655,7 +816,7 @@ class NetworkSpeedWidget(QWidget):
         if self.is_paused:
             return
         self.cpu_temp = temp
-        if self.config.get("widget_display_mode") in ["cpu_only", "combined", "side_by_side", "cycle"]:
+        if self._bar_shows(_CPU_BAR_MODES):
             self.update()
 
     def update_gpu_temp(self, temp: Optional[float]) -> None:
@@ -663,7 +824,7 @@ class NetworkSpeedWidget(QWidget):
         if self.is_paused:
             return
         self.gpu_temp = temp
-        if self.config.get("widget_display_mode") in ["gpu_only", "combined", "side_by_side", "cycle"]:
+        if self._bar_shows(_GPU_BAR_MODES):
             self.update()
 
     def update_cpu_power(self, power: Optional[float]) -> None:
@@ -671,7 +832,7 @@ class NetworkSpeedWidget(QWidget):
         if self.is_paused:
             return
         self.cpu_power = power
-        if self.config.get("widget_display_mode") in ["cpu_only", "combined", "side_by_side", "cycle"]:
+        if self._bar_shows(_CPU_BAR_MODES):
             self.update()
 
     def update_gpu_power(self, power: Optional[float]) -> None:
@@ -679,7 +840,7 @@ class NetworkSpeedWidget(QWidget):
         if self.is_paused:
             return
         self.gpu_power = power
-        if self.config.get("widget_display_mode") in ["gpu_only", "combined", "side_by_side", "cycle"]:
+        if self._bar_shows(_GPU_BAR_MODES):
             self.update()
 
     def update_ram_info(self, used: float, total: float) -> None:
@@ -688,7 +849,8 @@ class NetworkSpeedWidget(QWidget):
             return
         self.ram_used = used
         self.ram_total = total
-        if self.config.get("widget_display_mode") in ["cpu_only", "combined", "side_by_side", "cycle"]:
+        self._refresh_hover_hardware()
+        if self._bar_shows(_CPU_BAR_MODES):
             self.update()
 
     def update_vram_info(self, used: float, total: float) -> None:
@@ -697,7 +859,7 @@ class NetworkSpeedWidget(QWidget):
             return
         self.vram_used = used
         self.vram_total = total if total >= 0 else None
-        if self.config.get("widget_display_mode") in ["gpu_only", "combined", "side_by_side", "cycle"]:
+        if self._bar_shows(_GPU_BAR_MODES):
             self.update()
 
     def _rotate_cycle(self) -> None:
@@ -711,6 +873,10 @@ class NetworkSpeedWidget(QWidget):
         only one metric is available (nothing to cycle through).
         """
         modes = ["network_only"]
+        if self.config.get("graph_enabled", False) and self.config.get("graph_split_directions", False):
+            # Separate upload/download graphs: each direction is a phase of its own, so the widget
+            # keeps its size instead of widening every phase to two panels.
+            modes = split_network_phases(bool(self.config.get("swap_upload_download", False)))
         if self.config.get("monitor_cpu_enabled", False): modes.append("cpu_only")
         if self.config.get("monitor_gpu_enabled", False): modes.append("gpu_only")
 
@@ -762,11 +928,14 @@ class NetworkSpeedWidget(QWidget):
         stable, debounced visibility management.
         """
         self.logger.debug("Setting up signal connections and WinEventHooks...")
-        if not all([self.widget_state, self.timer_manager, self.controller]):
+        if not all([self.widget_state, self.controller]):
             raise RuntimeError("Core components missing during signal connection setup.")
         try:
             # Connect core component signals
             self.monitor_thread.stats_ready.connect(self.controller.handle_stats)
+            # AFTER the controller (queued slots run in connection order): the metrics endpoint's
+            # snapshot is built from what the controller just computed. No-op while it is off.
+            self.monitor_thread.stats_ready.connect(self._publish_metrics_snapshot)
             
             # NOTE: the display/cpu/gpu/temp/power/ram/vram slots are wired exactly
             # once in StatsController.set_view() (called at construction). Wiring any
@@ -787,21 +956,16 @@ class NetworkSpeedWidget(QWidget):
             # a guard tripped during startup arrives once the event loop spins - after this
             # connect has run.
             self.widget_state.db_schema_incompatible.connect(self._on_db_schema_incompatible)
+            self.widget_state.db_migration_deferred.connect(self._on_db_migration_deferred)
+            self.widget_state.db_history_upgraded.connect(self._on_db_history_upgraded)
 
             # Start the monitoring thread
             self.monitor_thread.start()
 
             # Latency probe on its own thread (gateway by default; public anchor opt-in). A 1 s ICMP
             # timeout must never sit on the stats poll, so it's a separate QThread.
-            self.latency_probe = None
-            if self.config.get("latency_enabled", True):
-                try:
-                    from netspeedtray.core.latency_probe import LatencyProbe
-                    self.latency_probe = LatencyProbe(self.config)
-                    self.latency_probe.latency_ready.connect(self._on_latency)
-                    self.latency_probe.start()
-                except Exception as e:
-                    self.logger.debug("LatencyProbe not started: %s", e)
+            # Started / stopped live with Settings > Connection > Latency (apply_latency_probe).
+            self.apply_latency_probe()
 
             # 1. System Event Handler (replaces manual WinEventHooks)
             self.system_event_handler.foreground_app_changed.connect(self._execute_refresh)
@@ -877,6 +1041,7 @@ class NetworkSpeedWidget(QWidget):
                 cycle_mode=self._current_cycle_mode,
                 network_width=getattr(self.layout_manager, "_network_width", None),
                 font=self.current_font,
+                paused=self.is_paused,
             )
         except Exception as e:
             self.logger.error(f"Error in paintEvent: {e}", exc_info=True)
@@ -964,12 +1129,19 @@ class NetworkSpeedWidget(QWidget):
     # Cache window for the (today, this-month) DB totals so rapid hovers don't hammer the DB.
     _HOVER_USAGE_TTL_SEC = 30.0
 
+    def invalidate_usage_cache(self) -> None:
+        """Drop the hover card's cached today/this-month totals so the next hover re-reads them
+        (after Delete all history - otherwise it shows deleted usage for up to the TTL)."""
+        self._hover_usage_cache = None
+        self._hover_usage_cache_ts = 0.0
+
     def enterEvent(self, event) -> None:
         """On hover, arm the usage card (shown after a short rest, positioned above the taskbar).
         Skipped entirely when the user has turned the hover card off in Settings."""
         try:
             hover_enabled = (self.config.get("show_usage_on_hover", True)
-                             or self.config.get("show_hover_tips", True))
+                             or self.config.get("show_hover_tips", True)
+                             or self._hover_hardware_wanted())
             if hover_enabled and self._hover_card is None and not self._hover_card_timer.isActive():
                 self._hover_card_timer.start(self._HOVER_CARD_DELAY_MS)
         except Exception as e:
@@ -1001,13 +1173,22 @@ class NetworkSpeedWidget(QWidget):
             hint = self._hover_hint_text() if show_tips else None
             today, month = self._hover_usage_totals() if show_data else (None, None)
             cap = self._hover_cap_info() if show_data else None
-            if hint is None and today is None:
+            hardware = self._hover_hardware_snapshot() if self._hover_hardware_wanted() else None
+            if hint is None and today is None and not hardware:
                 return  # nothing to show (both toggles off, or tips graduated while data is off)
             self._hide_usage_hover_card()  # never stack two cards
-            self._hover_card = UsageFlyout(self.i18n, today, month, hint=hint, cap=cap)
+            note = (self.i18n.USAGE_RECORDED_HISTORY_NOTE
+                    if today is not None and getattr(self, "_hover_usage_reconstructed", False) else None)
+            month_label = (self.i18n.USAGE_THIS_PERIOD_LABEL
+                           if today is not None and getattr(self, "_hover_usage_period_start", None)
+                           else None)
+            self._hover_card = UsageFlyout(self.i18n, today, month, hint=hint, cap=cap, history_note=note,
+                                           hardware=hardware, month_label=month_label)
+            self._hover_hw_refreshed = time.monotonic()
             screen = self.screen() or QApplication.primaryScreen()
             avail = screen.availableGeometry() if screen else self.frameGeometry()
-            self._hover_card.show_for(self.frameGeometry(), avail)
+            self._hover_card.show_for(self.frameGeometry(), avail, edge=self._hover_card_edge(),
+                                      screen=screen)
         except Exception as e:
             self.logger.error("Error showing usage hover card: %s", e, exc_info=True)
 
@@ -1021,21 +1202,47 @@ class NetworkSpeedWidget(QWidget):
             except Exception:
                 pass
 
+    def _usage_billing_period_start(self, month_start: datetime) -> Optional[datetime]:
+        """Start of the data-cap billing period when a cap is set and the period does not begin on
+        the 1st (else None - the calendar month IS the period). The "month" usage row follows it so
+        it never disagrees with the cap row beneath it; the start comes from the odometer, which
+        owns the period."""
+        try:
+            if not self.config.get("data_cap_enabled") or float(self.config.get("data_cap_gb", 0) or 0) <= 0:
+                return None
+            start = date.fromisoformat(self.widget_state.get_usage_period_key())
+        except Exception:
+            return None
+        start_dt = datetime(start.year, start.month, start.day)
+        return None if start_dt == month_start else start_dt
+
     def _hover_usage_totals(self) -> Tuple[Tuple[float, float], Tuple[float, float]]:
-        """(today, this-month) bandwidth as (up, down) byte pairs, cached with a short TTL."""
+        """(today, this-month) bandwidth as (up, down) byte pairs, cached with a short TTL. "This
+        month" is the billing period when a data cap with a reset day other than the 1st is set
+        (``_hover_usage_period_start`` then holds its start, else None)."""
         now = time.monotonic()
         if self._hover_usage_cache is not None and (now - self._hover_usage_cache_ts) < self._HOVER_USAGE_TTL_SEC:
             return self._hover_usage_cache
         today: Tuple[float, float] = (0.0, 0.0)
         month: Tuple[float, float] = (0.0, 0.0)
+        reconstructed = False
+        period_start: Optional[datetime] = None
         try:
             now_dt = datetime.now()
             midnight = now_dt.replace(hour=0, minute=0, second=0, microsecond=0)
             month_start = midnight.replace(day=1)
-            today = self.widget_state.get_total_bandwidth_for_period(midnight, now_dt)
-            month = self.widget_state.get_total_bandwidth_for_period(month_start, now_dt)
+            period_start = self._usage_billing_period_start(month_start)
+            if period_start is not None:
+                month_start = period_start
+            vt = self.widget_state.get_history_volume_for_period(midnight, now_dt)
+            vm = self.widget_state.get_history_volume_for_period(month_start, now_dt)
+            today, month = (vt.up_bytes, vt.down_bytes), (vm.up_bytes, vm.down_bytes)
+            # D5: part of the month was estimated from speeds recorded before 2.2 -> label it.
+            reconstructed = bool(vt.reconstructed or vm.reconstructed)
         except Exception as e:
             self.logger.debug("hover usage fetch failed: %s", e)
+        self._hover_usage_reconstructed = reconstructed
+        self._hover_usage_period_start = period_start
         self._hover_usage_cache = (today, month)
         self._hover_usage_cache_ts = now
         return self._hover_usage_cache
@@ -1051,7 +1258,7 @@ class NetworkSpeedWidget(QWidget):
                 self._tooltip_counted_this_session = True
                 self.config_controller.update_config(
                     {"tooltip_hint_shown_count": count + 1}, apply_and_repaint=False)
-            return self.i18n.WIDGET_HOVER_TOOLTIP
+            return hover_hint_text(self.i18n, self.config)
         except Exception:
             return None
 
@@ -1067,6 +1274,97 @@ class NetworkSpeedWidget(QWidget):
             used = down if cnt == "download" else up if cnt == "upload" else (up + down)
             used_gb = used / (1000 ** 3)
             return used_gb, cap, (used_gb / cap) * 100.0
+        except Exception:
+            return None
+
+    # The hover card's hardware rows refresh at most this often while it is open.
+    _HOVER_HW_REFRESH_SEC = 0.9
+
+    def _side_bar_fit(self):
+        """The side-taskbar fit the widget was last sized for (widget_paint.SideBarFit), or None on a
+        TOP/BOTTOM bar / free-float."""
+        if self._cached_layout_mode != 'vertical':
+            return None
+        return getattr(getattr(self, "layout_manager", None), "_side_fit", None)
+
+    def _hover_hardware_wanted(self) -> bool:
+        """The hover card's hardware section has its own gate: the bar hides enabled hardware (or the
+        Wi-Fi identity). Independent of show_usage_on_hover / show_hover_tips - turning the usage card
+        off must not make CPU/GPU/memory unreachable on a side taskbar.
+
+        "Show hardware in the hover card" (hardware_in_hover_card) opens the same gate on EVERY edge:
+        the widget then paints network-only (helpers.effective_display_mode), and the card is where
+        the enabled CPU/GPU/memory live."""
+        if hardware_in_hover_card_active(self.config):
+            return True
+        fit = self._side_bar_fit()
+        return bool(fit is not None and (fit.hides_hardware or fit.hides_identity))
+
+    def _hover_hardware_snapshot(self) -> Optional[dict]:
+        """Live values for the hover card's hardware section - only the stats the user turned on."""
+        cfg = self.config
+        hw: Dict[str, Any] = {}
+        fit = self._side_bar_fit()
+        in_card = hardware_in_hover_card_active(cfg)
+        if in_card or (fit is not None and fit.hides_hardware):
+            # Only what this display mode shows on the widget: cpu_only never lists the GPU/VRAM.
+            # With the hover-card switch on, the user's OWN Display Mode decides (the widget paints
+            # network_only then): side_by_side keeps its order and "None" slots, network_only and
+            # Auto-Cycle list every enabled monitor.
+            from netspeedtray.utils.widget_paint import side_hardware_stats
+            from netspeedtray.utils.widget_renderer import RenderConfig
+            rc = RenderConfig.from_dict(cfg)
+            mode = (str(cfg.get("widget_display_mode", "network_only") or "network_only") if in_card
+                    else rc.widget_display_mode)
+            stats = side_hardware_stats(rc, mode)
+            temps = bool(cfg.get("show_hardware_temps", False))
+            power = bool(cfg.get("show_hardware_power", False))
+            for key, usage, temp, watts in (("cpu", self.cpu_usage, self.cpu_temp, self.cpu_power),
+                                            ("gpu", self.gpu_usage, self.gpu_temp, self.gpu_power)):
+                if key.upper() in stats:
+                    stat: Dict[str, Any] = {"usage": usage}
+                    if temps:
+                        stat["temp"] = temp
+                    if power:
+                        stat["power"] = watts
+                    hw[key] = stat
+            if "CPU" in stats and cfg.get("monitor_ram_enabled", False):
+                hw["ram"] = (self.ram_used, self.ram_total)
+            if "GPU" in stats and cfg.get("monitor_vram_enabled", False):
+                hw["vram"] = (self.vram_used, self.vram_total)
+        if fit is not None and fit.hides_identity:
+            band, _color, _solid = self._identity_presentation()
+            parts = [p for p in (self._identity_ssid_text(), band) if p]
+            if parts:
+                hw["identity"] = "  ".join(parts)
+        return hw or None
+
+    def _refresh_hover_hardware(self) -> None:
+        """Push fresh values into an open hover card's hardware rows (~1 Hz)."""
+        card = self._hover_card
+        if card is None or not getattr(card, "has_hardware", False):
+            return
+        now = time.monotonic()
+        if now - getattr(self, "_hover_hw_refreshed", 0.0) < self._HOVER_HW_REFRESH_SEC:
+            return
+        self._hover_hw_refreshed = now
+        try:
+            snapshot = self._hover_hardware_snapshot() if self._hover_hardware_wanted() else None
+            if not snapshot:
+                # Hardware turned off, display mode changed, or the bar now fits it: the rows would
+                # only freeze on their last values - close the card (the next hover rebuilds it).
+                self._hide_usage_hover_card()
+                return
+            card.update_hardware(snapshot)
+        except Exception as e:
+            self.logger.debug("hover card hardware refresh failed: %s", e)
+
+    def _hover_card_edge(self):
+        """The edge of the taskbar the widget is docked to (the card opens away from it)."""
+        try:
+            if self.position_manager is not None and self.position_manager.is_free_float_active():
+                return None
+            return get_taskbar_info(preferred_screen_name=self.config.get("preferred_monitor")).get_edge_position()
         except Exception:
             return None
 
@@ -1138,7 +1436,7 @@ class NetworkSpeedWidget(QWidget):
         timer is restarted so the metric the user lands on stays put for a full
         interval. In every other display mode the scroll is passed through untouched.
         """
-        if self.config.get("widget_display_mode") != "cycle":
+        if effective_display_mode(self.config) != "cycle":
             super().wheelEvent(event)
             return
         delta = event.angleDelta().y()
@@ -1169,6 +1467,33 @@ class NetworkSpeedWidget(QWidget):
     def showEvent(self, event: QShowEvent) -> None:
         self.logger.debug(f"Widget showEvent triggered. New visibility: {self.isVisible()}")
         super().showEvent(event)
+        self._arm_shutdown_channel()
+
+    def event(self, event: QEvent) -> bool:
+        # Qt sends WinIdChange whenever the native window is created or recreated (a window-flag
+        # change, a re-parent, #327's re-dock after an explorer restart) - re-arm on the new HWND, so
+        # --shutdown can always find us. internalWinId() never creates a window (it is 0 while the
+        # HWND is being torn down, and arming is then skipped).
+        if event.type() == QEvent.Type.WinIdChange:
+            self._arm_shutdown_channel(create=False)
+        return super().event(event)
+
+    def _arm_shutdown_channel(self, create: bool = True) -> None:
+        """
+        Make this window the target of the installer's graceful close (setup.iss, or `--shutdown`):
+        mark it and let the message through UIPI, so an unelevated sender reaches an elevated app.
+        Idempotent per native window; re-armed when Qt hands us a new HWND. Called at the end of
+        __init__ (create=True realizes the HWND, so a starting, not-yet-shown instance is already
+        reachable), on every WinIdChange, and on show.
+        """
+        try:
+            hwnd = int(self.winId() if create else (self.internalWinId() or 0))
+            if not hwnd or hwnd == self._shutdown_armed_hwnd:
+                return
+            if shutdown_channel.arm_window(hwnd):
+                self._shutdown_armed_hwnd = hwnd
+        except Exception as e:
+            self.logger.debug("Arming the shutdown channel failed: %s", e)
 
 
     def hideEvent(self, event: QHideEvent) -> None:
@@ -1259,6 +1584,10 @@ class NetworkSpeedWidget(QWidget):
         (monitors and the taskbar are often re-arranged across a suspend cycle). We only watch
         the message - we never consume it.
 
+        The one message we DO consume is our own registered shutdown message (``--shutdown``, sent
+        by the installer): it schedules ``fully_exit_application`` - the tray Exit path - and
+        returns ``(True, 0)``. Nothing else ever carries that atom.
+
         CRITICAL: do NOT call ``super().nativeEvent(eventType, message)`` here. Re-dispatching the
         native message through the base implementation from a Python override access-violates
         inside Qt during window creation - it crashed the widget on its very first show() (a hard
@@ -1269,12 +1598,29 @@ class NetworkSpeedWidget(QWidget):
         try:
             if eventType == b"windows_generic_MSG" and message is not None:
                 msg = _NativeMSG.from_address(int(message))
+                if _WM_NST_SHUTDOWN and msg.message == _WM_NST_SHUTDOWN:
+                    # Deferred out of the native dispatch, then exactly the tray Exit path.
+                    self.logger.info("Shutdown requested by another process (installer/--shutdown) - exiting cleanly.")
+                    QTimer.singleShot(0, self.fully_exit_application)
+                    return True, 0
+                if msg.message == _WM_QUERYENDSESSION or (msg.message == _WM_ENDSESSION and msg.wParam):
+                    # Logoff / shutdown / restart. The normal quit path (closeEvent -> cleanup) never
+                    # runs: Windows terminates us soon after WM_ENDSESSION returns, so the essential
+                    # saves happen HERE, synchronously, inside its ~5 s budget. Observe only - Qt
+                    # still answers (TRUE: never veto the logoff). Repeating it on ENDSESSION is
+                    # cheap and catches anything changed in between.
+                    self._save_session_essentials(
+                        "query-end-session" if msg.message == _WM_QUERYENDSESSION else "end-session")
+                    return False, 0
                 if msg.message == _WM_POWERBROADCAST and msg.wParam in (
                     _PBT_APMRESUMESUSPEND, _PBT_APMRESUMEAUTOMATIC
                 ):
                     self.logger.info("Resume from sleep detected - re-asserting widget.")
                     QTimer.singleShot(constants.timeouts.TASKBAR_RESTART_RECOVERY_DELAY_MS,
                                       lambda: self._on_environment_changed("resume"))
+                    invalidate = getattr(self, "invalidate_latency_gateway", None)
+                    if invalidate is not None:
+                        invalidate()   # the router may differ after sleep
         except Exception as e:
             self.logger.debug("nativeEvent power handling failed: %s", e)
         return False, 0
@@ -1338,7 +1684,8 @@ class NetworkSpeedWidget(QWidget):
                     version=constants.app.VERSION,
                     i18n=self.i18n,
                     available_interfaces=self.get_unified_interface_list(),
-                    is_startup_enabled=self.is_startup_enabled()
+                    is_startup_enabled=self.is_startup_enabled(),
+                    primary_interface=self._primary_interface_for_picker(),
                 )
                 # Connect signal for live preview updates (don't save to disk during preview)
                 self.settings_dialog.settings_changed.connect(
@@ -1347,7 +1694,8 @@ class NetworkSpeedWidget(QWidget):
 
             if not self.settings_dialog.isVisible():
                 # Also update the interface list when showing an existing dialog
-                self.settings_dialog.update_interface_list(self.get_unified_interface_list())
+                self.settings_dialog.update_interface_list(
+                    self.get_unified_interface_list(), self._primary_interface_for_picker())
                 self.settings_dialog.reset_with_config(
                     config=self.config.copy(),
                     is_startup_enabled=self.is_startup_enabled()
@@ -1356,7 +1704,8 @@ class NetworkSpeedWidget(QWidget):
             else:
                 self.logger.debug("Settings dialog already visible. Activating.")
                 # Also update the interface list when re-activating the dialog
-                self.settings_dialog.update_interface_list(self.get_unified_interface_list())
+                self.settings_dialog.update_interface_list(
+                    self.get_unified_interface_list(), self._primary_interface_for_picker())
                 self.settings_dialog.raise_()
                 self.settings_dialog.activateWindow()
 
@@ -1572,17 +1921,32 @@ class NetworkSpeedWidget(QWidget):
         most once, ever (session flag + persisted config flag)."""
         try:
             if self._widgets_nudge_shown or self.config.get("widgets_overlap_nudge_shown", False):
+                # Nothing else reads the Widgets rect: stop probing for it (taskbar_utils).
+                from netspeedtray.utils.taskbar_utils import set_widgets_probe_enabled
+                set_widgets_probe_enabled(False)
                 return
             widgets_rect = getattr(taskbar_info, "widgets_rect", None)
             if not widgets_rect:
                 return
-            from netspeedtray.utils.taskbar_utils import rect_overlaps_x
-            if not rect_overlaps_x(self.x(), self.x() + self.width(), widgets_rect,
-                                   getattr(taskbar_info, "dpi_scale", 1.0) or 1.0):
+            from netspeedtray.utils.taskbar_utils import rect_overlaps_x, rect_overlaps_y
+            dpi = getattr(taskbar_info, "dpi_scale", 1.0) or 1.0
+            try:
+                edge = taskbar_info.get_edge_position()
+            except Exception:
+                edge = None
+            if edge in (constants.TaskbarEdge.LEFT, constants.TaskbarEdge.RIGHT):
+                # A side bar: the widget and the Widgets button both span the bar's width, so only
+                # their y-extents can tell an overlap apart (comparing x always "overlapped").
+                overlaps = rect_overlaps_y(self.y(), self.y() + self.height(), widgets_rect, dpi)
+            else:
+                overlaps = rect_overlaps_x(self.x(), self.x() + self.width(), widgets_rect, dpi)
+            if not overlaps:
                 return
             # Latch immediately so a re-entrant refresh (or the deferred call below) can't double-fire.
             self._widgets_nudge_shown = True
             self.update_config({"widgets_overlap_nudge_shown": True})
+            from netspeedtray.utils.taskbar_utils import set_widgets_probe_enabled
+            set_widgets_probe_enabled(False)
             title = getattr(self.i18n, "WIDGETS_OVERLAP_NUDGE_TITLE", "NetSpeedTray overlaps the Widgets panel")
             body = getattr(
                 self.i18n, "WIDGETS_OVERLAP_NUDGE_BODY",
@@ -1618,9 +1982,40 @@ class NetworkSpeedWidget(QWidget):
         self._refresh_cached_layout_mode()
         if self.position_manager:
             try:
-                self.position_manager.update_position()
+                taskbar_info = get_taskbar_info(preferred_screen_name=self.config.get("preferred_monitor"))
+                # A taskbar that changed thickness or edge needs a re-SIZE, not just a move (#322).
+                # The resize ends in update_position() itself, so the move is already done.
+                if self._resize_if_dock_changed(taskbar_info):
+                    return
+                self.position_manager.update_position(fresh_taskbar_info=taskbar_info)
             except Exception as e:
                 self.logger.error(f"Error during position update: {e}", exc_info=True)
+
+    def _resize_if_dock_changed(self, taskbar_info) -> bool:
+        """Re-run the layout sizing when the taskbar's dock geometry changed since last seen (#322).
+
+        The widget is sized once at startup to the taskbar strip; a live switch of Win11's native
+        taskbar size (Default 48 px <-> Small 32 px) or edge only fired a reposition, so the widget kept
+        its old height and hung off a thinner bar. Cheap tuple compare on every taskbar change; a plain
+        move (same signature) resizes nothing. ``_dock_sig_seen`` is recorded by
+        ``resize_widget_for_font`` from the taskbar it actually sized against - the same preferred-monitor
+        taskbar read here - and is None when that was a fallback taskbar (Explorer not ready at logon)
+        or a free-float, so the first real taskbar after either re-sizes. No loop: the resize's own
+        update_position() sees the signature it just recorded. Returns True if it resized.
+        """
+        try:
+            if self.position_manager is not None and self.position_manager.is_free_float_active():
+                return False   # a free-floating widget isn't sized to a taskbar (#188)
+            sig = dock_signature(taskbar_info)
+            if sig is None or sig == self._dock_sig_seen:
+                return False   # fallback taskbar now, or nothing changed
+            prev, self._dock_sig_seen = self._dock_sig_seen, sig   # a failed resize can't retry every tick
+            self.logger.info("Taskbar dock geometry changed %s -> %s; re-sizing the widget.", prev, sig)
+            self.layout_manager.resize_widget_for_font()   # ends with update_position()
+            return True
+        except Exception as e:
+            self.logger.error(f"Error checking taskbar dock geometry: {e}", exc_info=True)
+            return False
 
 
     def _refresh_cached_layout_mode(self) -> None:
@@ -1632,8 +2027,8 @@ class NetworkSpeedWidget(QWidget):
         so it passes 'horizontal') - otherwise the live widget and the Settings/Overview preview of the
         same config diverge. In particular the side-by-side right-align probe only fires for 'horizontal'
         (the over-reserved, right-anchored-to-the-tray case); a side taskbar is docked differently and is
-        left as-is. (The renderer's draw methods accept layout_mode but don't branch on it today, so this
-        only drives the right-align decision and the live/preview parity.)
+        left as-is. (Beyond the right-align decision and the live/preview parity, 'vertical' only stacks
+        the side_by_side segments top-to-bottom, since a side taskbar has no room for them in a row.)
         """
         try:
             # A free-floating widget on a taskbar-less display has no taskbar edge; render it as a
@@ -1733,6 +2128,17 @@ class NetworkSpeedWidget(QWidget):
             return [] # Return an empty list on error
         
 
+    def _primary_interface_for_picker(self) -> Optional[str]:
+        """The routing interface, marked "Active connection" in the Settings picker. None if the
+        controller isn't up or there is no route."""
+        if not self.controller:
+            return None
+        try:
+            return self.controller.current_primary_interface()
+        except Exception as e:
+            self.logger.debug("Primary interface lookup for the picker failed: %s", e)
+            return None
+
     def get_active_interfaces(self) -> List[str]:
         """
         Provides a passthrough to the controller's method for getting a list
@@ -1743,10 +2149,64 @@ class NetworkSpeedWidget(QWidget):
         return []
 
 
+    def _capture_position_config(self) -> None:
+        """Put the widget's current spot into self.config (not saved here).
+
+        Persist the absolute spot when it's actively floating (Free Move or #188 free-float). Only CLEAR
+        the saved coords when the widget is genuinely docked - i.e. BOTH free_move and free_float are
+        OFF in config. Crucially we do NOT clear just because the free-float display is currently
+        absent (asleep/unplugged): is_floating() is runtime state, so gating the clear on it would wipe
+        a user's dragged spot every time the accessory panel sleeps. (config_controller clears on an
+        explicit switch to docked.) (#188)"""
+        if self.position_manager and self.position_manager.is_floating():
+            pos = self.pos()
+            self.update_config({"position_x": pos.x(), "position_y": pos.y()}, save_to_disk=False)
+        elif not self.config.get("free_move", False) and not self.config.get("free_float", True):
+            self.update_config({"position_x": None, "position_y": None}, save_to_disk=False)
+        # else: free-float-capable but the display is temporarily absent -> keep the saved spot.
+
+    def _save_session_essentials(self, reason: str) -> None:
+        """The saves that must survive a logoff/shutdown, inside Windows' ~5 s WM_ENDSESSION budget:
+        the widget position + config (an atomic file write) first, then the odometer tail and the
+        last history batch, waited for at most _SESSION_END_DB_WAIT_S. Nothing here stops a thread or
+        waits DB_SHUTDOWN_WAIT_MS; the database thread keeps draining best-effort until the process
+        ends. Each step is guarded, so a failing one never skips the next."""
+        self.logger.info("Windows session ending (%s): saving settings and the usage counter.", reason)
+
+        def _odometer() -> None:
+            if getattr(self, "widget_state", None):
+                self.widget_state.persist_essentials(timeout=_SESSION_END_DB_WAIT_S)
+
+        for name, fn in (
+            ("position config", self._capture_position_config),
+            ("config save", lambda: self.config_manager.save(self.config)),
+            ("odometer + history", _odometer),
+        ):
+            try:
+                fn()
+            except Exception as e:
+                self.logger.error("Session-end step '%s' failed: %s", name, e, exc_info=True)
+
     def cleanup(self) -> None:
-        """Performs necessary cleanup and a single, final save of the configuration."""
+        """Performs necessary cleanup and a single, final save of the configuration.
+
+        Runs once. An exit reaches it twice - closeEvent calls it, then app.quit() fires aboutToQuit,
+        which is connected here too - and a second pass would repeat the bounded waits (latency probe,
+        and the database thread's DB_SHUTDOWN_WAIT_MS when a migration outlived the first one),
+        doubling a slow quit past the installer's --shutdown timeout. The done-flag is set only after
+        every step has had its turn; the running-flag stops a re-entrant call meanwhile.
+
+        Every step runs in its own guard (log and continue), so one failing teardown - an event hook
+        that will not unhook, a thread that raises on stop - can never skip the history flush or the
+        final config save that come after it.
+        """
+        if getattr(self, "_cleanup_done", False) or getattr(self, "_cleanup_running", False):
+            return
+        self._cleanup_running = True
         self.logger.debug("Performing widget cleanup...")
-        try:
+        failed: List[str] = []
+
+        def _hover_card() -> None:
             # Tear down the hover usage card + its armed timer first, before the data layer
             # (widget_state / monitor thread) goes away - otherwise a pending 350ms singleShot
             # could fire _show_usage_hover_card into half-torn-down state, or leave an orphan
@@ -1754,61 +2214,91 @@ class NetworkSpeedWidget(QWidget):
             self._hover_card_timer.stop()
             self._hide_usage_hover_card()
 
-            # --- Stop all external event listeners and timers ---
-            # self.foreground_hook and movesize_hook are likely legacy, but keeping check is harmless
-            if hasattr(self, 'system_event_handler') and self.system_event_handler:
+        def _event_hooks() -> None:
+            # self.foreground_hook is likely legacy, but keeping the check is harmless
+            if getattr(self, 'system_event_handler', None):
                 self.system_event_handler.stop()
-            elif hasattr(self, 'foreground_hook') and self.foreground_hook: 
+            elif getattr(self, 'foreground_hook', None):
                 self.foreground_hook.stop()
-            
-            # Stop PositionManager monitoring
-            if self.position_manager:
+
+        def _position_manager() -> None:
+            if getattr(self, 'position_manager', None):
                 self.position_manager.stop_monitoring()
-            
-            if self._state_watcher_timer.isActive(): self._state_watcher_timer.stop()
-            
-            # --- Stop the background monitor thread ---
-            if hasattr(self, 'monitor_thread') and self.monitor_thread:
+
+        def _state_watcher() -> None:
+            timer = getattr(self, '_state_watcher_timer', None)
+            if timer is not None and timer.isActive():
+                timer.stop()
+
+        def _monitor_thread() -> None:
+            if getattr(self, 'monitor_thread', None):
                 self.logger.debug("Stopping StatsMonitorThread...")
                 self.monitor_thread.stop()
 
-            # --- Stop the latency probe thread ---
+        def _latency_probe() -> None:
+            probes = list(getattr(self, '_retired_latency_probes', None) or [])
             if getattr(self, 'latency_probe', None):
-                try:
-                    self.latency_probe.stop()
-                    self.latency_probe.wait(1500)
-                except Exception:
-                    pass
+                probes.append(self.latency_probe)
+            for p in probes:
+                p.stop()
+            for p in probes:   # all stopped first, so the waits overlap (one in-flight echo each)
+                p.wait(1500)
 
-            # --- Clean up core components ---
-            if self.timer_manager: self.timer_manager.cleanup()
-            if self.controller: self.controller.cleanup()
-            if self.widget_state: self.widget_state.cleanup()
+        def _metrics_endpoint() -> None:
+            # Joins its threads; nothing is left listening.
+            if getattr(self, 'metrics_endpoint', None):
+                self.metrics_endpoint.stop()
 
+        def _controller() -> None:
+            if getattr(self, 'controller', None):
+                self.controller.cleanup()
+
+        def _history_flush() -> None:
+            # The final batch is written and the DB thread stopped (bounded by DB_SHUTDOWN_WAIT_MS).
+            if getattr(self, 'widget_state', None):
+                self.widget_state.cleanup()
+
+        def _monitor_window() -> None:
             # Close the Monitor if it's open (it persists its own geometry + active tab on close).
-            if self.monitor_window:
+            if getattr(self, 'monitor_window', None):
                 try:
                     self.monitor_window.close()
-                except Exception:
-                    pass
-                self.monitor_window = None
+                finally:
+                    self.monitor_window = None
 
-            # Persist the widget's absolute spot when it's actively floating (Free Move or #188
-            # free-float). Only CLEAR the saved coords when the widget is genuinely docked - i.e. BOTH
-            # free_move and free_float are OFF in config. Crucially we do NOT clear just because the
-            # free-float display is currently absent (asleep/unplugged): is_floating() is runtime state,
-            # so gating the clear on it would wipe a user's dragged spot every time the accessory panel
-            # sleeps. (config_controller clears on an explicit switch to docked.) (#188)
-            if self.position_manager and self.position_manager.is_floating():
-                pos = self.pos()
-                self.update_config({"position_x": pos.x(), "position_y": pos.y()}, save_to_disk=False)
-            elif not self.config.get("free_move", False) and not self.config.get("free_float", True):
-                self.update_config({"position_x": None, "position_y": None}, save_to_disk=False)
-            # else: free-float-capable but the display is temporarily absent -> keep the saved spot.
-            
+        def _position_config() -> None:
+            self._capture_position_config()
+
+        def _config_save() -> None:
             self.logger.debug("Performing final configuration save...")
             self.config_manager.save(self.config)
 
+        # Order matters (2.2.0-beta.1 lifecycle review):
+        # * "monitor window" before "history flush": closing the Monitor stops + joins its graph worker
+        #   (bounded), which closes its own read connection - WidgetState.cleanup() must never find a
+        #   reader mid-query. It also persists the Monitor's geometry into self.config.
+        # * "config save" before "history flush": the DB step can wait DB_SHUTDOWN_WAIT_MS (15 s) for a
+        #   busy database thread, and a logoff ends the process ~5 s in - the save must already be done.
+        steps = (
+            ("hover card", _hover_card), ("event hooks", _event_hooks),
+            ("position manager", _position_manager), ("state watcher", _state_watcher),
+            ("monitor window", _monitor_window),
+            ("monitor thread", _monitor_thread), ("latency probe", _latency_probe),
+            ("metrics endpoint", _metrics_endpoint), ("controller", _controller),
+            ("position config", _position_config), ("config save", _config_save),
+            ("history flush", _history_flush),
+        )
+        try:
+            for name, fn in steps:
+                try:
+                    fn()
+                except Exception as e:
+                    failed.append(name)
+                    self.logger.error("Cleanup step '%s' failed: %s", name, e, exc_info=True)
+        finally:
+            self._cleanup_running = False
+            self._cleanup_done = True
+        if failed:
+            self.logger.warning("Widget cleanup finished; failed steps: %s", ", ".join(failed))
+        else:
             self.logger.debug("Widget cleanup finished successfully.")
-        except Exception as e:
-            self.logger.error(f"Unexpected error during cleanup: %s", e, exc_info=True)
