@@ -430,3 +430,21 @@ def test_overview_frees_each_sheet_after_it_closes(q_app, monkeypatch):
     QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
     assert ov.window().findChildren(StatsDetailSheet) == []
     ov.deleteLater()
+
+
+def test_labels_inside_a_card_draw_no_border_of_their_own(q_app):
+    """RC later-list: the card's bare "QFrame { border }" style also hit every QLabel inside it
+    (QLabel is a QFrame), so each label drew a bordered box and its text clipped inside it."""
+    from PyQt6.QtWidgets import QFrame, QLabel
+    subjects = [{"key": "download", "label": "Download", "unit": "Mbps", "kind": "net_down", "primary": True},
+                {"key": "cpu", "label": "CPU", "unit": "%", "kind": "hw", "primary": True}]
+    sheet = _open(_WS(), subjects, _window(), _cfg(), I18nStrings("en_US"))
+    sheet.show()
+    cards = [f for f in sheet.findChildren(QFrame)
+             if not isinstance(f, QLabel) and "border-radius: 8px" in f.styleSheet()]
+    assert cards
+    for card in cards:
+        for lbl in card.findChildren(QLabel):
+            lbl.ensurePolished()
+            assert lbl.contentsRect() == lbl.rect(), lbl.text()
+    sheet.close()
