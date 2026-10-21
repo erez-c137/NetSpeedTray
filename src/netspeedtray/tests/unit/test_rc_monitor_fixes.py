@@ -158,6 +158,58 @@ def test_graph_host_is_collected_after_teardown(q_app):
     assert alive == [], f"graph host / coordinator still alive after teardown: cycles {alive}"
 
 
+# --- M9: the Network header fits the Monitor's minimum width in every locale -------------------------
+
+def _locales():
+    from pathlib import Path
+    return sorted(p.stem for p in (Path(constants.__file__).parent / "locales").glob("*.json"))
+
+
+@pytest.mark.parametrize("lang", _locales())
+def test_network_header_controls_never_overlap_at_minimum_width(q_app, lang):
+    from PyQt6.QtWidgets import QApplication
+    from netspeedtray.views.monitor.network.header import NetworkHeader
+    host = MagicMock()
+    host.is_live = True
+    hdr = NetworkHeader(I18nStrings(lang), graph_host=host)
+    from PyQt6.QtWidgets import QWidget
+    # The test platform's fallback font is far wider than Segoe UI, so absolute widths can't be
+    # asserted here (the rc harness checks 660-960 px in all 16 locales with real fonts). What is
+    # font-independent: the band can go compact, it then needs much less room, and at ANY width down
+    # to that minimum the controls never overlap and only the interface button gives up text.
+    box = QWidget()
+    hdr = NetworkHeader(I18nStrings(lang), parent=box, graph_host=host)
+    hdr.set_interfaces(["Ethernet 3 (Realtek PCIe 2.5GbE Family Controller)", "Wi-Fi"])
+    hdr._select_iface("Ethernet 3 (Realtek PCIe 2.5GbE Family Controller)", "")
+    hdr.set_totals(123.4e9, 456.7e9, "TIMELINE_24_HOURS")
+    try:
+        box.show()
+        hdr.resize(4000, constants.layout.MONITOR_HEADER_BAND_HEIGHT)
+        QApplication.processEvents()
+        assert not hdr._compact
+        full_min = hdr.layout().minimumSize().width()
+        hdr._fit(full_min - 1)
+        hdr.layout().activate()
+        compact_min = hdr.layout().minimumSize().width()
+        assert hdr._compact and compact_min < full_min - 40
+        assert hdr._iface_btn.minimumSizeHint().width() == constants.layout.MONITOR_IFACE_BUTTON_MIN_WIDTH
+        for width in (compact_min, compact_min + 60, full_min - 1):
+            hdr.resize(width, constants.layout.MONITOR_HEADER_BAND_HEIGHT)
+            QApplication.processEvents()
+            ctrls = [hdr._check_btn, hdr._iface_btn, hdr._timeline, hdr._live]
+            rects = [c.geometry() for c in ctrls]
+            for i in range(len(rects)):
+                assert rects[i].right() < width, (lang, width, i)
+                for j in range(i + 1, len(rects)):
+                    assert not rects[i].intersects(rects[j]), (lang, width, i, j)
+            for c in (hdr._check_btn, hdr._timeline, hdr._live):
+                assert c.width() + 1 >= c.minimumSizeHint().width(), (lang, width, type(c).__name__)
+        assert hdr._iface_btn.text().endswith("▾")   # elided label, chevron kept
+    finally:
+        box.hide()
+        box.deleteLater()
+
+
 # --- M4: "All" then "Since boot" ---------------------------------------------------------------------
 
 def test_since_boot_after_all_uses_the_boot_time(monkeypatch):
