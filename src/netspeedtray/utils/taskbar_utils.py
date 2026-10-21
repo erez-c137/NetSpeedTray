@@ -402,6 +402,12 @@ class TaskbarInfo:
                          Defaults to BOTTOM if calculation fails or is ambiguous.
         """
         try:
+            # A fallback taskbar (hwnd 0, e.g. Explorer not up yet at logon) has a (0,0,0,0) rect.
+            # Width 0 is not > height 0, so it read as VERTICAL -> LEFT and the widget sized itself as a
+            # compact side-bar block at the desktop's bottom-right. No taskbar = the default bottom.
+            r = self.rect
+            if not self.hwnd or not r or len(r) != 4 or r[2] - r[0] <= 0 or r[3] - r[1] <= 0:
+                return constants.taskbar.edge.BOTTOM
             screen = self.get_screen()
             if not screen:
                 logger.error("Cannot determine taskbar edge: No valid QScreen for HWND %s.", self.hwnd)
