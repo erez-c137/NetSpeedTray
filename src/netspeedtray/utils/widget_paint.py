@@ -20,7 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
-from PyQt6.QtCore import QPointF, QRect, QRectF, Qt
+from PyQt6.QtCore import QRect, QRectF, Qt
 from PyQt6.QtGui import QColor, QFont, QPainter, QImage
 
 from netspeedtray import constants
@@ -684,40 +684,72 @@ def render_widget(painter: QPainter, rect: QRect, renderer: WidgetRenderer, conf
     Draw the full widget content - see _render_widget_content for the arguments.
 
     ``paused``: the user froze the readout (Pause). Frozen numbers alone look like a hung app, so the
-    content is drawn dimmed with a small pause glyph over it. Same rect, same layout - the widget's
-    size never changes for it.
+    content is drawn dimmed and a two-bar pause glyph takes the place of the up/down arrow column
+    (or, with no arrows drawn, sits in the free left margin when there is room; else dimming alone).
+    The glyph never overlaps text and the widget's size never changes for it. The glyph rects drawn
+    are left in ``renderer.pause_glyph_rects`` (device coords).
     """
     kwargs = dict(layout_mode=layout_mode, cycle_mode=cycle_mode, network_width=network_width, font=font)
+    renderer.pause_glyph_rects = []
     if not paused:
         _render_widget_content(painter, rect, renderer, config, metrics, **kwargs)
         return
     painter.save()
     painter.setOpacity(constants.renderer.PAUSED_CONTENT_OPACITY)
-    _render_widget_content(painter, rect, renderer, config, metrics, **kwargs)
-    painter.restore()
-    _draw_pause_glyph(painter, rect, renderer)
+    renderer._pause_cue = True    # rows record their arrow cell instead of drawing the arrow
+    try:
+        _render_widget_content(painter, rect, renderer, config, metrics, **kwargs)
+    finally:
+        renderer._pause_cue = False
+        painter.restore()
+    renderer.pause_glyph_rects = _pause_glyph_rects(rect, renderer)
+    _draw_pause_glyphs(painter, renderer.pause_glyph_rects, QColor(renderer.default_color))
 
 
-def _draw_pause_glyph(painter: QPainter, rect: QRect, renderer: WidgetRenderer) -> None:
-    """A small pause badge - a disc in the widget's text color with two bars in the contrasting tone,
-    so it reads on either theme - centered on the drawn (dimmed) readout."""
+def _pause_glyph_rects(rect: QRect, renderer: WidgetRenderer) -> List[QRectF]:
+    """Where the pause glyph goes: one per arrow column (the stacked rows' cells merged, so it is
+    centered across both rows), else the left margin when the content leaves room, else nowhere."""
     r = constants.renderer
-    d = max(r.PAUSE_GLYPH_MIN_HEIGHT, min(r.PAUSE_GLYPH_MAX_HEIGHT, round(rect.height() * r.PAUSE_GLYPH_HEIGHT_RATIO)))
+    columns: List[QRectF] = []
+    for cell in renderer._pause_slots:
+        for i, col in enumerate(columns):
+            if abs(col.left() - cell.left()) <= 1.0:
+                columns[i] = col.united(cell)
+                break
+        else:
+            columns.append(QRectF(cell))
+    if columns:
+        out = []
+        for col in columns:
+            h = min(col.height(), max(r.PAUSE_GLYPH_MIN_HEIGHT,
+                                      min(r.PAUSE_GLYPH_MAX_HEIGHT, col.height() * r.PAUSE_GLYPH_HEIGHT_RATIO)))
+            w = min(col.width() - 1.0, h * r.PAUSE_GLYPH_WIDTH_RATIO)
+            if w >= 3.0:   # room for two bars and a gap
+                out.append(QRectF(col.center().x() - w / 2.0, col.center().y() - h / 2.0, w, h))
+        return out
     bounds = renderer.get_content_bounds()
-    # Horizontally on the readout (content is right-aligned in some modes), vertically on the widget.
-    cx = QRectF(bounds if bounds is not None and not bounds.isNull() else rect).center().x()
-    c = QPointF(cx, QRectF(rect).center().y())
-    disc = QColor(renderer.default_color)
-    bar = QColor(0, 0, 0) if disc.lightness() > 127 else QColor(255, 255, 255)
-    bar_w, bar_h = d * r.PAUSE_GLYPH_BAR_RATIO * 0.6, d * 0.45
+    if bounds is None or bounds.isNull() or bounds.isEmpty():
+        return []
+    h = max(r.PAUSE_GLYPH_MIN_HEIGHT, min(r.PAUSE_GLYPH_MAX_HEIGHT, rect.height() * r.PAUSE_GLYPH_MARGIN_HEIGHT_RATIO))
+    w = h * r.PAUSE_GLYPH_WIDTH_RATIO
+    free = bounds.left() - rect.left()
+    if free < w + 2 * r.PAUSE_GLYPH_MARGIN_PAD:
+        return []          # no room beside the content: dimming alone carries the cue
+    return [QRectF(rect.left() + (free - w) / 2.0, rect.top() + (rect.height() - h) / 2.0, w, h)]
+
+
+def _draw_pause_glyphs(painter: QPainter, rects: List[QRectF], color: QColor) -> None:
+    """Two vertical bars (the universal pause mark) filling each rect, in the text color at full
+    opacity - the theme's own contrast, like the arrows it replaces."""
     painter.save()
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     painter.setPen(Qt.PenStyle.NoPen)
-    painter.setBrush(disc)
-    painter.drawEllipse(c, d / 2.0, d / 2.0)
-    painter.setBrush(bar)
-    for dx in (-bar_w * 1.5, bar_w * 0.5):
-        painter.drawRect(QRectF(c.x() + dx, c.y() - bar_h / 2.0, bar_w, bar_h))
+    painter.setBrush(color)
+    for g in rects:
+        bar = g.width() * 0.36
+        radius = min(bar / 2.0, 1.0)
+        painter.drawRoundedRect(QRectF(g.left(), g.top(), bar, g.height()), radius, radius)
+        painter.drawRoundedRect(QRectF(g.right() - bar, g.top(), bar, g.height()), radius, radius)
     painter.restore()
 
 
