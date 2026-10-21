@@ -670,6 +670,12 @@ class WidgetRenderer:
             unit_w = fm.horizontalAdvance(unit) if (inline_unit or show_unit_row) else 0
             block_w = arrow_w + arrow_gap + num_col + (unit_gap + unit_w if inline_unit else 0)
             margin = constants.renderer.TEXT_MARGIN
+            # A long locale unit at a large font ("МиБ" at 11 pt on a 32 px bar) can be wider than the
+            # bar even in its short form. There is no shorter honest label (dropping the "и" would say
+            # decimal MB), so the unit row alone steps its font down until the unit fits the bar.
+            unit_font = self.font
+            if show_unit_row and unit_w > width - 2 * margin:
+                unit_font, unit_w = self._fit_font(unit, width - 2 * margin)
             x0 = max(margin, (width - block_w) // 2)
 
             line_h, asc, gap = fm.height(), fm.ascent(), constants.renderer.TWO_ROW_GAP_PX
@@ -681,7 +687,7 @@ class WidgetRenderer:
             # Never paint outside the band: at T5 nothing fits, and a long locale unit at a large font
             # ("МиБ" at 11 pt on a 32 px bar) can be wider than the bar even in its short form.
             painter.setClipRect(QRect(0, y_offset, width, height), Qt.ClipOperation.IntersectClip)
-            if tier >= TIER_CLIP or (show_unit_row and unit_w > width - 2 * margin):
+            if tier >= TIER_CLIP or (show_unit_row and unit_w > width - 2 * margin):   # past the floor
                 if not getattr(self, "_compact_clip_logged", False):
                     self._compact_clip_logged = True
                     self.logger.warning("Side taskbar too narrow (%d px) for the compact readout at this "
@@ -699,7 +705,7 @@ class WidgetRenderer:
                                       row_cfg, num_col)
                 y += line_h + gap
             if show_unit_row:
-                painter.setFont(self.font)
+                painter.setFont(unit_font)
                 painter.setPen(self._cached_pens['default'])
                 painter.drawText(max(margin, (width - unit_w) // 2), y, unit)
             painter.restore()
@@ -709,6 +715,27 @@ class WidgetRenderer:
             self._extend_content_bounds(self._last_text_rect)
         except Exception as e:
             self.logger.error("Failed to draw compact network speeds: %s", e)
+
+    _MIN_UNIT_POINT_SIZE = 6.0
+
+    def _fit_font(self, text: str, avail: int) -> Tuple[QFont, int]:
+        """(font, width): the widget font stepped down in half points until ``text`` fits ``avail``
+        px, never below _MIN_UNIT_POINT_SIZE (past that it is clipped - and logged - as before)."""
+        font = QFont(self.font)
+        width = QFontMetrics(font).horizontalAdvance(text)
+        size = font.pointSizeF()
+        if size <= 0:   # a pixel-sized font
+            px = font.pixelSize()
+            while width > avail and px > 6:
+                px -= 1
+                font.setPixelSize(px)
+                width = QFontMetrics(font).horizontalAdvance(text)
+            return font, width
+        while width > avail and size > self._MIN_UNIT_POINT_SIZE:
+            size = max(self._MIN_UNIT_POINT_SIZE, size - 0.5)
+            font.setPointSizeF(size)
+            width = QFontMetrics(font).horizontalAdvance(text)
+        return font, width
 
     def draw_hardware_compact(self, painter: QPainter, stats: List[Tuple[str, Optional[float]]], width: int,
                               height: int, config: RenderConfig, *, inline: bool = True,
