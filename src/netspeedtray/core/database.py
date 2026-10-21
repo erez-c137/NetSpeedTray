@@ -1183,7 +1183,7 @@ class DatabaseWorker(QThread):
                 retention = self._resolve_retention_days(cursor, config, _now)
                 row = cursor.execute("SELECT value FROM metadata WHERE key = 'last_maintenance_at'").fetchone()
                 prev_maintenance = int(row[0]) if row and str(row[0]).isdigit() else None
-            out = self._writer.run_maintenance(now_ts=now_ts, retention_days=retention)
+            out = self._writer.run_maintenance(now_ts=now_ts, retention_days=retention, mono=mono)
             with self._txn() as cursor:
                 cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES ('last_maintenance_at', ?)",
                                (str(now_ts),))

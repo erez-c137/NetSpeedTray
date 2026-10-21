@@ -214,6 +214,11 @@ class WriterV8:
         # however many polls one flush carries.
         self._last_isup: Dict[str, int] = {}
         self._link_metric_last: Dict[Tuple[str, str], Tuple[float, int]] = {}
+        # Clock guard (_observe_clock): this session's last trusted (wall, mono), the clock being
+        # confirmed (first wall, last wall, last mono), and whether that one has been logged.
+        self._clock_ref: Optional[Tuple[int, Optional[float]]] = None
+        self._clock_cand: Optional[Tuple[int, int, Optional[float]]] = None
+        self._clock_warned = False
 
     # ---- threads / transactions ----------------------------------------------------------------
 
@@ -781,17 +786,138 @@ class WriterV8:
             {self._HW_MERGE}""", (cutoff,))
         return self.conn.execute(f"DELETE FROM {S.HW_MINUTE} WHERE ts < ?", (cutoff,)).rowcount
 
+    # ---- clock continuity (the live-history twin of DatabaseWorker._observe_clock) ---------------
+
+    CLOCK_TRUSTED_KEY = "clock_trusted_ts"                 # wall time of the last pass on a trusted clock
+    CLOCK_CONTINUOUS_SINCE_KEY = "clock_continuous_since"  # absent = continuous as far as known
+    CLOCK_CANDIDATE_KEY = "clock_candidate"                # "<first ts>,<last ts>" of an unconfirmed clock
+
+    def _meta_int(self, key: str) -> Optional[int]:
+        row = self.conn.execute(f"SELECT value FROM {S.METADATA} WHERE key = ?", (key,)).fetchone()
+        return int(row[0]) if row and str(row[0]).isdigit() else None
+
+    def _newest_row_ts(self) -> Optional[int]:
+        best = None
+        for t in (S.NET_RAW, S.NET_MINUTE, S.NET_HOUR, S.HW_RAW, S.HW_MINUTE, S.HW_HOUR):
+            v = self.conn.execute(f"SELECT MAX(ts) FROM {t}").fetchone()[0]
+            if v is not None and (best is None or int(v) > best):
+                best = int(v)
+        return best
+
+    def _set_meta(self, put: Dict[str, str], drop: Sequence[str] = ()) -> None:
+        self._begin()
+        try:
+            for k, v in put.items():
+                self.conn.execute(f"INSERT OR REPLACE INTO {S.METADATA} (key, value) VALUES (?, ?)", (k, v))
+            for k in drop:
+                self.conn.execute(f"DELETE FROM {S.METADATA} WHERE key = ?", (k,))
+            self.conn.commit()
+        except BaseException:
+            self._rollback()
+            raise
+
+    def _observe_clock(self, now: int, mono: Optional[float]) -> Tuple[bool, bool]:
+        """(roll-ups may run, the prune may run) for a pass at wall time ``now``.
+
+        A maintenance pass MOVES and DELETES rows by ``now``, so a wrong clock costs history: two years
+        ahead, one pass rolled everything up and pruned it all; behind, it lowered the watermarks and hid
+        all but the last 24 h. The clock is trusted when it is continuous with the last trusted pass:
+        in this session, within the drift tolerance of the monotonic clock (``mono``, when the caller
+        reads the real clocks); otherwise (first pass of a session, simulated clocks) no more than
+        CLOCK_BEHIND_TOLERANCE_SEC behind it and no more than BACKUP_CLOCK_MAX_GAP_DAYS ahead (app-off
+        time). With no trusted pass recorded yet, only "behind the newest stored row" is caught.
+
+        Anything else is a CANDIDATE clock - a jump, a large correction, or a long time off. Nothing moves
+        on it (skipping is always safe); once later passes have agreed with it (each forward, within the
+        gap, and with the monotonic clock in a session) for CLOCK_ACCEPT_SECONDS it is accepted, so a
+        legit correction can never block maintenance for good. The prune also needs the clock to have
+        been continuous for BACKUP_CLOCK_CONTINUITY_DAYS since the last acceptance: a clock that stays
+        wrong gets a week before it can delete anything."""
+        R = constants.data.retention
+        tol = R.BACKUP_CLOCK_DRIFT_TOLERANCE_SEC
+        max_gap = R.BACKUP_CLOCK_MAX_GAP_DAYS * 86400
+
+        def agrees(wall0: int, mono0: Optional[float]) -> bool:
+            if mono is None or mono0 is None:
+                return True
+            return abs((now - wall0) - (mono - mono0)) <= max(tol, 0.01 * max(mono - mono0, 0.0))
+
+        ref = self._clock_ref                       # (wall, mono) of this session's last trusted pass
+        if ref is not None and mono is not None and ref[1] is not None:
+            ref_ts = ref[0]
+            trusted = agrees(ref[0], ref[1])
+        else:
+            ref_ts = self._meta_int(self.CLOCK_TRUSTED_KEY)
+            if ref_ts is not None:
+                trusted = -R.CLOCK_BEHIND_TOLERANCE_SEC <= now - ref_ts <= max_gap
+            else:
+                # No trusted pass recorded yet (a fresh, migrated or 2.2-beta file). Its newest row
+                # still proves a clock BEHIND it; old rows prove nothing about a clock ahead (the app
+                # may simply not have run for months), so that direction waits for the first stamp -
+                # written by the first pass, which runs at startup on the clock the app started with.
+                ref_ts = self._newest_row_ts()
+                trusted = ref_ts is None or now - ref_ts >= -R.CLOCK_BEHIND_TOLERANCE_SEC
+
+        accepted_since = None
+        if not trusted:
+            cand = self._clock_cand                 # (first wall, last wall, last mono)
+            if cand is None:
+                row = self.conn.execute(f"SELECT value FROM {S.METADATA} WHERE key = ?",
+                                        (self.CLOCK_CANDIDATE_KEY,)).fetchone()
+                parts = str(row[0]).split(",") if row else []
+                if len(parts) == 2 and all(p.isdigit() for p in parts):
+                    cand = (int(parts[0]), int(parts[1]), None)
+            consistent = (cand is not None and -tol <= now - cand[1] <= max_gap
+                          and agrees(cand[1], cand[2]))
+            cand = (cand[0], now, mono) if consistent else (now, now, mono)
+            days = (now - ref_ts) / 86400.0 if ref_ts is not None else 0.0
+            if now - cand[0] >= R.CLOCK_ACCEPT_SECONDS:
+                trusted, accepted_since = True, cand[0]
+                self.logger.info("Clock accepted for history maintenance after %.1f h of agreeing passes "
+                                 "(%+.1f days from the last trusted pass).", (now - cand[0]) / 3600.0, days)
+            else:
+                if not self._clock_warned:
+                    self._clock_warned = True
+                    self.logger.warning(
+                        "Clock is %+.1f days from the last trusted maintenance pass (or disagrees with the "
+                        "monotonic clock): history roll-ups and pruning are paused until it has run "
+                        "steadily for %.0f h.", days, R.CLOCK_ACCEPT_SECONDS / 3600.0)
+                self._clock_cand = cand
+                self._set_meta({self.CLOCK_CANDIDATE_KEY: f"{cand[0]},{cand[1]}"})
+                return False, False
+
+        self._clock_cand = None
+        self._clock_warned = False
+        self._clock_ref = (now, mono)
+        put = {self.CLOCK_TRUSTED_KEY: str(now)}
+        if accepted_since is not None:
+            put[self.CLOCK_CONTINUOUS_SINCE_KEY] = str(accepted_since)
+        self._set_meta(put, drop=(self.CLOCK_CANDIDATE_KEY,))
+        since = self._meta_int(self.CLOCK_CONTINUOUS_SINCE_KEY) or 0
+        return True, now - since >= R.BACKUP_CLOCK_CONTINUITY_DAYS * 86400
+
     def run_maintenance(self, now_ts: Optional[float] = None, retention_days: Optional[float] = None,
-                        vacuum_pages: Optional[int] = None) -> Dict[str, int]:
+                        vacuum_pages: Optional[int] = None, mono: Optional[float] = None) -> Dict[str, int]:
         """The hourly pass - and step 7 also calls it ONCE right after ``migrate_v8.migrate()`` succeeds,
         before the first flush, so the first v8 polls that land in the folded minute (below the raw
         watermark, invisible to readers until rolled) are merged within one tick rather than an hour.
         ``retention_days``: the hour tiers' retention the worker has already resolved through its
-        grace-period logic (``_prune_data_with_grace_period``); None prunes nothing. Returns counts
-        (rows moved / pruned, pages vacuumed, the watermarks written)."""
+        grace-period logic (``_prune_data_with_grace_period``); None prunes nothing. ``mono``: the
+        monotonic clock read with ``now_ts`` (``now_ts`` None reads both clocks itself), for the clock
+        guard (``_observe_clock``): on an untrusted clock nothing is rolled up, no watermark moves
+        (either way) and nothing is pruned. Returns counts (rows moved / pruned, pages vacuumed, the
+        watermarks written; ``clock_untrusted`` = 1 when the pass skipped all of that)."""
         self._check_thread()
-        now = int(time.time() if now_ts is None else now_ts)
+        if now_ts is None:
+            now_ts, mono = time.time(), time.monotonic()
+        now = int(now_ts)
         out: Dict[str, int] = {}
+        may_roll, may_prune = self._observe_clock(now, mono)
+        if not may_roll:
+            out["clock_untrusted"] = 1
+            out["vacuumed_pages"] = self.incremental_vacuum(
+                _D.V8_INCREMENTAL_VACUUM_PAGES if vacuum_pages is None else vacuum_pages)
+            return out
         raw_keep, min_keep = _D.RAW_TIER_RETENTION_SECONDS, _D.MINUTE_TIER_RETENTION_SECONDS
         net_raw_c, net_min_c = self._cutoffs(now, raw_keep, min_keep, S.WATERMARK_RAW_KEY, S.WATERMARK_MINUTE_KEY)
         hw_raw_c, hw_min_c = self._cutoffs(now, raw_keep, min_keep, S.HW_WATERMARK_RAW_KEY,
@@ -808,7 +934,7 @@ class WriterV8:
         out.update({S.WATERMARK_RAW_KEY: net_raw_c, S.WATERMARK_MINUTE_KEY: net_min_c,
                     S.HW_WATERMARK_RAW_KEY: hw_raw_c, S.HW_WATERMARK_MINUTE_KEY: hw_min_c})
         if retention_days is not None:
-            out["pruned"] = self._prune(now, retention_days)
+            out["pruned"] = self._prune(now, retention_days) if may_prune else 0
         out["vacuumed_pages"] = self.incremental_vacuum(
             _D.V8_INCREMENTAL_VACUUM_PAGES if vacuum_pages is None else vacuum_pages)
         self.conn.execute("DROP TABLE IF EXISTS temp.v8w_cov")

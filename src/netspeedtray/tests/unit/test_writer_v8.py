@@ -716,11 +716,13 @@ def test_legacy_merge_at_any_poll_rate_keeps_volume_and_a_true_rate(conn, poll_s
     for k in range(30 // poll_s):
         w.add_net_sample(W.NetSample(b + 30 + poll_s * (k + 1) - 1, poll_s * 1000, {"e": (1000 * poll_s,) * 2}))
     assert w.flush(b + 60)
-    w.run_maintenance(b + 2 * 86400)            # raw -> minute only
+    # A 33-day step between two passes: the clock guard needs the monotonic clock to agree that the
+    # app really ran that long (a jump on the wall clock alone pauses the roll-ups).
+    w.run_maintenance(b + 2 * 86400, mono=float(b + 2 * 86400))   # raw -> minute only
     bytes_, avg, n = conn.execute("SELECT up_bytes, up_avg, sample_count FROM net_minute").fetchone()
     assert bytes_ is None and n == 60 and avg == pytest.approx(1000.0)
     assert _est(conn, "net_minute", 60) == pytest.approx(60_000)
-    w.run_maintenance(NOW)                      # minute -> hour
+    w.run_maintenance(NOW, mono=float(NOW))     # minute -> hour
     assert conn.execute("SELECT COUNT(*) FROM net_minute").fetchone()[0] == 0
     assert _est(conn, "net_hour", 3600) == pytest.approx(60_000)
     assert conn.execute("SELECT up_avg FROM net_hour").fetchone()[0] == pytest.approx(1000.0)
@@ -737,10 +739,10 @@ def test_clock_set_back_into_a_legacy_minute_keeps_both_parts_through_the_hour(c
     for k in range(30):
         w.add_net_sample(W.NetSample(b + k, 1000, {"e": (100, 100)}))
     assert w.flush(b + 60)
-    w.run_maintenance(b + 2 * 86400)
+    w.run_maintenance(b + 2 * 86400, mono=float(b + 2 * 86400))   # (see the test above: mono)
     assert _est(conn, "net_minute", 60) == pytest.approx(8000)
     assert conn.execute("SELECT sample_count FROM net_minute").fetchone()[0] == 60
-    w.run_maintenance(NOW)
+    w.run_maintenance(NOW, mono=float(NOW))
     assert _est(conn, "net_hour", 3600) == pytest.approx(8000)
 
 

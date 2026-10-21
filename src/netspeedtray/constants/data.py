@@ -66,6 +66,16 @@ class DataRetentionConstants:
     # The 30-day floor is counted in steady time the app OBSERVED with the backup present: at most this
     # much per maintenance pass (hourly while running; app-off time and jumps add nothing).
     BACKUP_STEADY_CREDIT_MAX_SEC: Final[int] = 2 * 3600
+    # The same continuity rules guard the LIVE history (WriterV8._observe_clock): roll-ups (watermark
+    # moves) and the retention prune run only on a clock continuous with the last trusted pass - within
+    # the drift tolerance of the monotonic clock in a session, else no more than CLOCK_BEHIND_TOLERANCE_SEC
+    # behind it and no more than BACKUP_CLOCK_MAX_GAP_DAYS ahead. One pass with the clock two years ahead
+    # used to prune every row; one with it behind lowered the watermarks and hid all but the last 24 h.
+    # Skipping is always safe (rows stay where they are). A new clock - a legit large correction, or a
+    # long time off - is accepted once passes have agreed with it for CLOCK_ACCEPT_SECONDS; the prune
+    # then also waits until it has been continuous for BACKUP_CLOCK_CONTINUITY_DAYS.
+    CLOCK_BEHIND_TOLERANCE_SEC: Final[int] = 3600
+    CLOCK_ACCEPT_SECONDS: Final[int] = 6 * 3600
     DAYS_MAP: Final[Dict[int, int]] = {
         0: 31,             # 1 month - covers a full calendar month so "this month" is always whole
         1: 90,             # 3 months
