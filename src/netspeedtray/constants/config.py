@@ -36,7 +36,10 @@ class ConfigConstants:
     # The migration system will use this to determine which upgrades to apply.
     # Current version history:
     #   v1.0: Initial schema with all current fields (as of 2026-02-18)
-    CONFIG_SCHEMA_VERSION: Final[str] = "1.1"
+    # 1.2 (2.2): hardware_label_style split into style + hardware_label_color, update_rate snapped to
+    # presets. The bump is what makes load() keep a `.bak.v1.1` of the 2.1.x file before migrating it;
+    # 2.1.x leaves a newer version untouched (verified against the 2.1.7 tree).
+    CONFIG_SCHEMA_VERSION: Final[str] = "1.2"
     
     # --- Default Values for Individual Settings (referencing other constants) ---
     DEFAULT_UPDATE_RATE: Final[float] = 1.0

@@ -300,6 +300,19 @@ def test_old_styles_survive_a_full_load(tmp_path, old, style, color):
     assert (loaded["hardware_label_style"], loaded["hardware_label_color"]) == (style, color)
 
 
+def test_a_2_1_config_is_backed_up_before_the_label_style_migration(tmp_path):
+    """RC C2: the label-style split rewrites a 2.1.x value, so the schema version moved past 1.1 -
+    otherwise the pre-migration backup (`.bak.v<old>`) never triggers and a rollback has no copy."""
+    path = tmp_path / "config.json"
+    original = {"config_version": "1.1", "hardware_label_style": "icons_colored"}
+    path.write_text(json.dumps(original), encoding="utf-8")
+    loaded = ConfigManager(path).load()
+    backup = path.with_name(f"{path.name}.bak.v1.1")
+    assert backup.exists()
+    assert json.loads(backup.read_text(encoding="utf-8")) == original
+    assert loaded["config_version"] == "1.2"
+
+
 @pytest.mark.parametrize("color", ["brand", "custom", "match_text"])
 def test_a_colour_already_on_file_wins_over_the_implied_one(manager, color):
     """Rollback round trip: 2.1.x / 2.2 beta.2 reset the unknown style "icons" to THEIR default,
