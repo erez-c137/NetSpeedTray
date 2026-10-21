@@ -43,10 +43,6 @@ class TimeoutConstants:
     # for the 1s state-watcher tick (a visible ~1s lag). Cheap: short-circuits
     # before any taskbar query unless the foreground window is actually fullscreen.
     FULLSCREEN_POLL_INTERVAL_MS: Final[int] = 250
-    # Windows-mode (taskbar) theme poll. Qt's colorSchemeChanged follows the APP mode
-    # (AppsUseLightTheme); the widget's text colour follows the WINDOWS mode (SystemUsesLightTheme),
-    # and in Win11's "Custom" mode flipping only that emits nothing. One registry read per tick.
-    SHELL_THEME_POLL_INTERVAL_MS: Final[int] = 1000
     TASKBAR_RESTART_RECOVERY_DELAY_MS: Final[int] = 1000
     TASKBAR_RESTART_RETRIES: Final[int] = 5
 

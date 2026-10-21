@@ -1490,6 +1490,15 @@ class NetworkSpeedWidget(QWidget):
         self.logger.debug(f"Widget showEvent triggered. New visibility: {self.isVisible()}")
         super().showEvent(event)
         self._arm_shutdown_channel()
+        # Windows broadcasts the theme change (WM_SETTINGCHANGE "ImmersiveColorSet") to top-level
+        # windows, and an owned window that was hidden (fullscreen app) may not get it. One registry
+        # read on re-show catches a flip made meanwhile; a no-op when nothing changed.
+        handler = getattr(self, "system_event_handler", None)
+        if handler is not None:
+            try:
+                handler.check_shell_theme()
+            except Exception as e:
+                self.logger.debug("theme re-check on show failed: %s", e)
 
     def event(self, event: QEvent) -> bool:
         # Qt sends WinIdChange whenever the native window is created or recreated (a window-flag

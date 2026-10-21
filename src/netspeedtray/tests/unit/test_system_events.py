@@ -205,10 +205,15 @@ def test_color_scheme_change_emits_theme_changed_signal(system_handler):
     """
     mock_slot = MagicMock()
     system_handler.theme_changed.connect(mock_slot)
+    read = "netspeedtray.core.system_events.read_system_uses_light_theme"
+    with patch(read, return_value=1):
+        system_handler.check_shell_theme()      # baseline: light
 
-    # Simulate Qt firing the colorSchemeChanged signal
+    # Simulate Qt firing the colorSchemeChanged signal for a flip to dark. It re-checks the
+    # Windows-mode theme the widget follows (deduped with the WM_SETTINGCHANGE path).
     from PyQt6.QtCore import Qt
-    system_handler._on_color_scheme_changed(Qt.ColorScheme.Dark)
+    with patch(read, return_value=0):
+        system_handler._on_color_scheme_changed(Qt.ColorScheme.Dark)
 
     mock_slot.assert_called_once()
 

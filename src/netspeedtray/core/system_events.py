@@ -6,12 +6,14 @@ WinEventHooks for foreground window changes and object location changes (taskbar
 It abstracts the raw win32 API calls and exposes clean Qt signals to the application.
 """
 
+import ctypes
 import logging
 import win32api
 import win32gui
+from ctypes import wintypes
 from typing import Optional
 
-from PyQt6.QtCore import QObject, QTimer, pyqtSignal
+from PyQt6.QtCore import QAbstractNativeEventFilter, QObject, QTimer, pyqtSignal
 from PyQt6.QtGui import QGuiApplication
 
 from netspeedtray.constants import timeouts
@@ -24,6 +26,40 @@ from netspeedtray.utils.win_event_hook import (
     EVENT_SYSTEM_MOVESIZEEND,
     WinEventHook
 )
+
+_WM_SETTINGCHANGE = 0x001A
+# lParam of the WM_SETTINGCHANGE Windows broadcasts when the Light/Dark (or accent) theme changes.
+_IMMERSIVE_COLOR_SET = "ImmersiveColorSet"
+
+
+class _NativeMSG(ctypes.Structure):
+    _fields_ = [
+        ("hwnd", wintypes.HWND), ("message", wintypes.UINT),
+        ("wParam", ctypes.c_size_t), ("lParam", ctypes.c_ssize_t),
+        ("time", wintypes.DWORD), ("pt_x", wintypes.LONG), ("pt_y", wintypes.LONG),
+    ]
+
+
+class _ImmersiveColorSetFilter(QAbstractNativeEventFilter):
+    """App-wide native filter: calls ``on_change`` for a WM_SETTINGCHANGE "ImmersiveColorSet" seen by
+    any of the app's windows. Observe only - never consumes a message. (The pre-#62 filter compared
+    the event type to the str "windows_generic_MSG"; PyQt6 passes bytes, so it never matched.)"""
+
+    def __init__(self, on_change) -> None:
+        super().__init__()
+        self._on_change = on_change
+
+    def nativeEventFilter(self, eventType, message):
+        try:
+            if eventType in (b"windows_generic_MSG", "windows_generic_MSG") and message is not None:
+                msg = _NativeMSG.from_address(int(message))
+                if msg.message == _WM_SETTINGCHANGE and msg.lParam:
+                    if ctypes.wstring_at(msg.lParam, len(_IMMERSIVE_COLOR_SET) + 1) == _IMMERSIVE_COLOR_SET + "\0":
+                        self._on_change()
+        except Exception:
+            pass
+        return False, 0
+
 
 class SystemEventHandler(QObject):
     """
@@ -63,14 +99,13 @@ class SystemEventHandler(QObject):
         self._taskbar_validity_timer.timeout.connect(self._check_taskbar_validity)
         self._fullscreen_poll_timer = QTimer(self)
         self._fullscreen_poll_timer.timeout.connect(self._poll_fullscreen)
-        self._shell_theme_timer = QTimer(self)
-        self._shell_theme_timer.timeout.connect(self._poll_shell_theme)
 
         # State
         self._is_paused = False
         self._theme_signal_connected = False
         self._was_fullscreen = False  # last polled fullscreen state (edge detection)
         self._last_shell_light: Optional[int] = None  # last seen SystemUsesLightTheme (edge detection)
+        self._theme_filter: Optional[_ImmersiveColorSetFilter] = None
 
     def start(self) -> None:
         """Starts all hooks and monitoring timers."""
@@ -78,6 +113,9 @@ class SystemEventHandler(QObject):
         self._setup_hooks()
         self._setup_timers()
         self._connect_color_scheme_signal()
+        if self._last_shell_light is None:   # the baseline survives Explorer-restart stop()/start()
+            self._last_shell_light = read_system_uses_light_theme()
+        self._install_theme_filter()
         self.logger.debug("SystemEventHandler started.")
 
     def stop(self) -> None:
@@ -89,8 +127,8 @@ class SystemEventHandler(QObject):
             self.movesize_hook.stop()
         self._taskbar_validity_timer.stop()
         self._fullscreen_poll_timer.stop()
-        self._shell_theme_timer.stop()
         self._disconnect_color_scheme_signal()
+        self._remove_theme_filter()
 
     def _setup_hooks(self) -> None:
         """Initializes and starts WinEventHooks."""
@@ -141,8 +179,6 @@ class SystemEventHandler(QObject):
         focused, when no foreground event fires, so the widget hides promptly.)"""
         self._taskbar_validity_timer.start(timeouts.TASKBAR_VALIDITY_CHECK_INTERVAL_MS)
         self._fullscreen_poll_timer.start(timeouts.FULLSCREEN_POLL_INTERVAL_MS)
-        self._last_shell_light = read_system_uses_light_theme()
-        self._shell_theme_timer.start(timeouts.SHELL_THEME_POLL_INTERVAL_MS)
 
     def _poll_fullscreen(self) -> None:
         """
@@ -282,9 +318,10 @@ class SystemEventHandler(QObject):
         self.events_paused.emit(True)
 
     def resume(self) -> None:
-        """Resumes event processing."""
+        """Resumes event processing. A theme flip while paused fires now."""
         self._is_paused = False
         self.events_paused.emit(False)
+        self.check_shell_theme()
 
     def is_fullscreen_active(self) -> bool:
         """True when the most recent poll saw a fullscreen obstruction. Lets the widget suppress
@@ -325,31 +362,59 @@ class SystemEventHandler(QObject):
             pass
         self._theme_signal_connected = False
 
-    def _poll_shell_theme(self) -> None:
-        """Emit theme_changed when the WINDOWS-mode theme (SystemUsesLightTheme) flips.
+    def _install_theme_filter(self) -> None:
+        if self._theme_filter is not None:
+            return
+        app = QGuiApplication.instance()
+        if app is None:
+            return
+        try:
+            self._theme_filter = _ImmersiveColorSetFilter(self.check_shell_theme)
+            app.installNativeEventFilter(self._theme_filter)
+        except Exception as e:
+            self._theme_filter = None
+            self.logger.warning("Failed to install the theme-change filter: %s", e)
+
+    def _remove_theme_filter(self) -> None:
+        if self._theme_filter is None:
+            return
+        app = QGuiApplication.instance()
+        try:
+            if app is not None:
+                app.removeNativeEventFilter(self._theme_filter)
+        except Exception:
+            pass
+        self._theme_filter = None
+
+    def check_shell_theme(self) -> None:
+        """Emit theme_changed when the WINDOWS-mode theme (SystemUsesLightTheme) has flipped.
 
         Qt's colorSchemeChanged follows the APP mode (AppsUseLightTheme), but the widget's automatic
         text colour follows the Windows mode the taskbar is painted in. In Win11's "Custom" mode a
         user can flip only the Windows mode, which emits nothing from Qt - the widget kept white text
-        on a now-light taskbar until a restart. One registry read per tick; acts only on a change.
-        While paused the last value is left alone, so a flip during the pause still fires on resume.
+        on a now-light taskbar until a restart. Windows broadcasts WM_SETTINGCHANGE "ImmersiveColorSet"
+        for either flip; the app-wide native filter calls this then, and only then (no polling).
+
+        ONE registry read; emits only when the value differs from the last one seen, so one flip is
+        one theme_changed however many windows got the broadcast and whichever path (this or Qt's
+        signal) saw it first. While paused the last value is left alone; resume() re-checks.
         """
         if self._is_paused:
             return
         value = read_system_uses_light_theme()
-        if value is None:
+        if value is None or value == self._last_shell_light:
             return
-        if self._last_shell_light is None:
-            self._last_shell_light = value
+        first = self._last_shell_light is None
+        self._last_shell_light = value
+        if first:
             return
-        if value != self._last_shell_light:
-            self._last_shell_light = value
-            self.logger.info("Windows-mode theme changed (SystemUsesLightTheme=%s); emitting theme_changed.", value)
-            self.theme_changed.emit()
+        self.logger.info("Windows-mode theme changed (SystemUsesLightTheme=%s); emitting theme_changed.", value)
+        self.theme_changed.emit()
 
     def _on_color_scheme_changed(self, _scheme) -> None:
-        """Re-emit Qt's signal as our existing theme_changed signal."""
+        """Qt saw a colour-scheme change: re-check the Windows-mode theme the widget follows (the
+        same deduped check as the native path, so a flip both see emits theme_changed once)."""
         if self._is_paused:
             return
-        self.logger.info("Color scheme changed; emitting theme_changed.")
-        self.theme_changed.emit()
+        self.logger.info("Color scheme changed; re-checking the Windows-mode theme.")
+        self.check_shell_theme()

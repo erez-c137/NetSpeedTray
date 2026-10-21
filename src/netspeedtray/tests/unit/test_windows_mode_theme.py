@@ -5,10 +5,12 @@ dialog does not pin the old automatic colour.
 Qt's colorSchemeChanged follows the APP mode (AppsUseLightTheme); the widget's automatic text colour
 follows the Windows mode (SystemUsesLightTheme) the taskbar is painted in. Flipping only the Windows
 mode emitted nothing, so the widget kept white text on a light taskbar until a restart (also 2.1.7;
-likely part of #332). SystemEventHandler now polls SystemUsesLightTheme and emits theme_changed on a
-change. And while Settings is open, the live-preview tick and Cancel re-applied the colour the dialog
+likely part of #332). Windows broadcasts WM_SETTINGCHANGE "ImmersiveColorSet" for that flip; an
+app-wide native filter now re-reads SystemUsesLightTheme then (no polling) and emits theme_changed on
+a change - deduped, so one flip is one emit whichever path (the filter or Qt's signal) sees it. And while Settings is open, the live-preview tick and Cancel re-applied the colour the dialog
 was opened with, undoing the theme manager's re-colour.
 """
+import ctypes
 import types
 from unittest.mock import MagicMock, patch
 
@@ -30,52 +32,121 @@ def handler(q_app):
         h.stop()
 
 
-def _poll_with(handler, values):
-    """Start the timers with the first registry value, then poll once per remaining value."""
+READ = "netspeedtray.core.system_events.read_system_uses_light_theme"
+
+
+def _settingchange(text, message=0x001A):
+    """(MSG struct, keep-alive buffer) for a native message with lParam -> ``text`` (or 0)."""
+    from netspeedtray.core import system_events as se
+    buf = ctypes.create_unicode_buffer(text) if text is not None else None
+    msg = se._NativeMSG()
+    msg.message = message
+    msg.lParam = ctypes.addressof(buf) if buf is not None else 0
+    return msg, buf
+
+
+@pytest.mark.parametrize("text,message,fires", [
+    ("ImmersiveColorSet", 0x001A, True),
+    ("ImmersiveColorSetX", 0x001A, False),
+    ("Immersive", 0x001A, False),
+    ("Policy", 0x001A, False),
+    (None, 0x001A, False),                       # an SPI_* change: lParam 0
+    ("ImmersiveColorSet", 0x0010, False),        # not WM_SETTINGCHANGE
+])
+def test_native_filter_reacts_only_to_immersive_color_set(q_app, text, message, fires):
+    from netspeedtray.core import system_events as se
+    seen = MagicMock()
+    f = se._ImmersiveColorSetFilter(seen)
+    msg, _buf = _settingchange(text, message)
+    assert f.nativeEventFilter(b"windows_generic_MSG", ctypes.addressof(msg)) == (False, 0)  # observe only
+    assert seen.called is fires
+
+
+def test_start_installs_the_filter_and_stop_removes_it(handler):
+    with patch(READ, return_value=0), patch("netspeedtray.core.system_events.get_taskbar_info"):
+        handler.start()
+        assert handler._theme_filter is not None
+        handler.stop()
+    assert handler._theme_filter is None
+
+
+def test_no_theme_polling_timer(handler):
+    """Event-driven: the only timers are the taskbar-validity and fullscreen ones."""
+    from PyQt6.QtCore import QTimer
+    timers = handler.findChildren(QTimer)
+    assert set(timers) == {handler._taskbar_validity_timer, handler._fullscreen_poll_timer}
+
+
+def _baseline(handler, value=0):
     seen = MagicMock()
     handler.theme_changed.connect(seen)
-    reads = iter(values)
-    with patch("netspeedtray.core.system_events.read_system_uses_light_theme", side_effect=lambda: next(reads)):
-        handler._setup_timers()
-        for _ in values[1:]:
-            handler._poll_shell_theme()
+    with patch(READ, return_value=value):
+        handler.check_shell_theme()          # first read = baseline, no emit
     return seen
 
 
 def test_windows_mode_flip_emits_theme_changed_once(handler):
-    seen = _poll_with(handler, [0, 0, 1, 1, 1])
+    seen = _baseline(handler, 0)
+    with patch(READ, return_value=1):
+        for _ in range(3):                   # the broadcast reaches several windows
+            handler.check_shell_theme()
     assert seen.call_count == 1
 
 
-def test_steady_theme_emits_nothing(handler):
-    assert _poll_with(handler, [1, 1, 1, 1]).call_count == 0
+def test_one_flip_seen_by_both_paths_emits_once(handler):
+    from PyQt6.QtCore import Qt
+    seen = _baseline(handler, 0)
+    with patch(READ, return_value=1):
+        handler.check_shell_theme()                          # native broadcast first
+        handler._on_color_scheme_changed(Qt.ColorScheme.Light)   # then Qt's signal
+    assert seen.call_count == 1
+    with patch(READ, return_value=0):
+        handler._on_color_scheme_changed(Qt.ColorScheme.Dark)    # Qt first this time
+        handler.check_shell_theme()
+    assert seen.call_count == 2
 
 
-def test_unreadable_theme_is_ignored(handler):
-    assert _poll_with(handler, [0, None, None, 0]).call_count == 0
-
-
-def test_poll_timer_runs_while_started(handler):
-    with patch("netspeedtray.core.system_events.read_system_uses_light_theme", return_value=0):
-        handler._setup_timers()
-    assert handler._shell_theme_timer.isActive()
-    assert handler._shell_theme_timer.interval() == constants.timeouts.SHELL_THEME_POLL_INTERVAL_MS
-    handler.stop()
-    assert not handler._shell_theme_timer.isActive()
+def test_steady_or_unreadable_theme_emits_nothing(handler):
+    seen = _baseline(handler, 1)
+    for v in (1, None, 1):
+        with patch(READ, return_value=v):
+            handler.check_shell_theme()
+    assert seen.call_count == 0
 
 
 def test_a_flip_while_paused_fires_on_resume(handler):
+    seen = _baseline(handler, 0)
+    with patch(READ, return_value=1):
+        handler.pause()
+        handler.check_shell_theme()
+        assert seen.call_count == 0
+        handler.resume()
+    assert seen.call_count == 1
+
+
+def test_a_real_settingchange_reaches_the_filter_through_qt(handler):
+    """End to end on the real Windows platform plugin: a WM_SETTINGCHANGE "ImmersiveColorSet" sent to
+    one of the app's (hidden, never shown) native windows goes through Qt's dispatch into the filter
+    and emits theme_changed. Skipped under the offscreen platform CI uses (no native windows)."""
+    from PyQt6.QtGui import QGuiApplication
+    from PyQt6.QtWidgets import QWidget
+    if QGuiApplication.platformName() != "windows":
+        pytest.skip("needs the windows platform plugin")
+    import win32gui
     seen = MagicMock()
     handler.theme_changed.connect(seen)
-    with patch("netspeedtray.core.system_events.read_system_uses_light_theme", return_value=0):
-        handler._setup_timers()
-    with patch("netspeedtray.core.system_events.read_system_uses_light_theme", return_value=1):
-        handler._is_paused = True
-        handler._poll_shell_theme()
-        assert seen.call_count == 0
-        handler._is_paused = False
-        handler._poll_shell_theme()
-    assert seen.call_count == 1
+    w = QWidget()
+    try:
+        hwnd = int(w.winId())   # native window, never shown
+        with patch(READ, return_value=0), patch("netspeedtray.core.system_events.get_taskbar_info"):
+            handler.start()
+        with patch(READ, return_value=1):
+            win32gui.SendMessage(hwnd, 0x001A, 0, "ImmersiveColorSet")
+            win32gui.SendMessage(hwnd, 0x001A, 0, "Policy")
+        assert seen.call_count == 1
+    finally:
+        handler.stop()
+        w.deleteLater()
 
 
 def test_theme_manager_recolours_from_the_windows_mode():
