@@ -26,16 +26,18 @@ from netspeedtray.views.settings.dialog import SettingsDialog
 # onboarding flags, db-internal keys etc. are deliberately excluded - they aren't page-managed.
 MANAGED_KEYS = {
     # General
-    "language", "update_rate", "start_with_windows", "check_for_updates", "preferred_monitor",
-    # Widget (layout + on-taskbar behavior)
-    "free_move", "keep_visible_fullscreen",
+    "language", "update_rate", "start_with_windows", "check_for_updates",
+    # Widget (layout + on-taskbar placement/behavior; preferred_monitor moved from General, 2.2 IA pass)
+    "preferred_monitor", "free_move", "free_float", "keep_visible_fullscreen",
     "widget_display_mode", "stack_hardware_stats", "widget_display_order",
+    # Widget - mini graph (moved from Appearance, 2.2 IA pass)
+    "graph_enabled", "history_minutes", "graph_opacity", "graph_fixed_scale", "graph_scale_headroom",
+    "graph_show_ceiling", "graph_split_directions",
     # Appearance - font / color / arrows / background
     "font_family", "font_size", "font_weight", "default_color",
     "background_color", "background_opacity",
     "use_separate_arrow_font", "arrow_font_family", "arrow_font_size",
     "arrow_up_symbol", "arrow_down_symbol",
-    "graph_enabled", "history_minutes", "graph_opacity",
     # Appearance - units / format (was the Display page)
     "unit_type", "speed_display_mode", "decimal_places", "text_alignment",
     "swap_upload_download", "hide_arrows", "hide_unit_suffix", "short_unit_labels",
@@ -84,6 +86,12 @@ ROUNDTRIP = {
     "interface_mode": "all_physical",
     "keep_data": 90,
     "reduce_motion": True,
+    # Moved by the 2.2 IA pass (mini graph -> Widget, throttle temp within Hardware)
+    "graph_enabled": False,
+    "graph_opacity": 33,
+    "graph_split_directions": True,
+    "graph_fixed_scale": True,
+    "throttle_temp_c": 85,
 }
 
 

@@ -2,9 +2,10 @@
 Widget Settings Page (2.0 IA).
 
 Everything about the on-taskbar widget itself - how its stats are laid out (display mode + order),
-and how it behaves/sits on the taskbar (free-move, keep-visible-in-fullscreen, tray offset). These
-controls used to be scattered across the General page (behavior) and the Hardware page (layout); the
-2.0 IA gathers them here so "the widget" is one place.
+where it sits and how it behaves on the taskbar (preferred monitor, free-move, free-float,
+keep-visible-in-fullscreen), and the mini graph. These controls used to be scattered across the
+General page (behavior, preferred monitor), the Hardware page (layout) and the Appearance page (mini
+graph); the 2.0 IA and the 2.2 IA pass gather them here so "the widget" is one place.
 
 Slider→Segmented and QListWidget upgrades are intentionally NOT done here - the controls move as-is
 (same widgets, same config mappings) so the reshuffle can't silently corrupt a saved value.
@@ -12,16 +13,17 @@ Slider→Segmented and QListWidget upgrades are intentionally NOT done here - th
 from typing import Dict, Any, Callable, List
 
 from PyQt6.QtCore import pyqtSignal
-from PyQt6.QtWidgets import QWidget, QComboBox, QLabel
+from PyQt6.QtGui import QGuiApplication
+from PyQt6.QtWidgets import QWidget, QComboBox
 
 from netspeedtray import constants
-from netspeedtray.utils import styles as su
 from netspeedtray.utils.components import Win11Toggle, SettingCard, Win11ComboBox
 from netspeedtray.views.settings.pages._fluent import section_header, page_layout
+from netspeedtray.views.settings.pages.mini_graph_section import MiniGraphSection
 
 
 class WidgetPage(QWidget):
-    """Layout (display mode + order) and on-taskbar behavior (free-move, fullscreen, offset)."""
+    """Layout (display mode + order), on-taskbar placement/behavior, and the mini graph."""
 
     layout_changed = pyqtSignal()
 
@@ -45,11 +47,8 @@ class WidgetPage(QWidget):
         # Under a section header, not in a SettingCard - so it names itself.
         self.display_mode_combo.setAccessibleName(self.i18n.WIDGET_DISPLAY_MODE_LABEL)
         layout.addWidget(self.display_mode_combo)
-        note = QLabel(self.i18n.HARDWARE_GRAPH_NOTE)
-        note.setWordWrap(True)
-        note.setStyleSheet(
-            f"color: {su.semantic_colors()['text_secondary']}; background: transparent; padding: 0 2px;")
-        layout.addWidget(note)
+        # (HARDWARE_GRAPH_NOTE moved to the Mini Graph section below, next to the opacity/timespan
+        # controls it describes.)
 
         # --- Display order ---
         layout.addWidget(section_header(self.i18n.WIDGET_DISPLAY_ORDER_LABEL))
@@ -67,6 +66,15 @@ class WidgetPage(QWidget):
 
         # --- Behavior (was on the General page) ---
         layout.addWidget(section_header(self.i18n.BEHAVIOR_GROUP_TITLE))
+        # Preferred Monitor (#72) - pin the widget to a specific display (default = primary). It picks
+        # the taskbar the widget docks to, and "Float on a display without a taskbar" below only acts on
+        # it, so it lives here with the other placement controls (moved from General, 2.2 IA pass).
+        self.preferred_monitor_combo = Win11ComboBox()
+        self.preferred_monitor_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.preferred_monitor_combo.setMinimumWidth(220)
+        self._populate_monitor_combo()   # (re)connects on_change itself - connecting here too doubled it
+        layout.addWidget(SettingCard(self.i18n.PREFERRED_MONITOR_LABEL, control=self.preferred_monitor_combo))
+
         self.free_move = Win11Toggle(label_text="")
         self.free_move.toggled.connect(self.on_change)
         layout.addWidget(SettingCard(self.i18n.FREE_MOVE_LABEL, control=self.free_move))
@@ -87,7 +95,66 @@ class WidgetPage(QWidget):
         # reposition escape hatch; the auto-position uses sensible default offsets. tray_offset_x/y remain
         # in config for the position engine (position_manager) but aren't surfaced as fiddly px sliders.
 
+        # --- Mini Graph (moved from Appearance, 2.2 IA pass) - LAST on the page, so its fixed-scale
+        # reveal grows at the bottom and shifts nothing above it.
+        self.mini_graph_section = MiniGraphSection(self.i18n, self.on_change)
+        self.mini_graph_section.layout_changed.connect(self.layout_changed)
+        layout.addWidget(self.mini_graph_section)
+
         layout.addStretch()
+
+    # --- preferred monitor ------------------------------------------------------
+    def _populate_monitor_combo(self) -> None:
+        """Fill the preferred-monitor dropdown with detected screens.
+
+        First entry is always "Primary (auto)" mapped to None. Subsequent
+        entries are real QScreens labeled with their resolution. We store
+        the screen's name() as userData so reselection survives reboots,
+        while showing a friendlier label.
+
+        Called on construction AND on every showEvent so users who plug in
+        a monitor after the app started still see it in the dropdown.
+        """
+        # Remember the current selection so we can preserve it across refresh.
+        previous_selection = self.preferred_monitor_combo.currentData() if self.preferred_monitor_combo.count() else None
+
+        # Temporarily disconnect to avoid firing on_change during the rebuild.
+        try:
+            self.preferred_monitor_combo.currentIndexChanged.disconnect(self.on_change)
+        except (TypeError, RuntimeError):
+            pass
+
+        self.preferred_monitor_combo.clear()
+        self.preferred_monitor_combo.addItem(self.i18n.PREFERRED_MONITOR_PRIMARY, userData=None)
+
+        app = QGuiApplication.instance()
+        if app is not None:
+            primary = app.primaryScreen()
+            for i, screen in enumerate(app.screens(), start=1):
+                geom = screen.geometry()
+                tag = " (primary)" if screen is primary else ""
+                label = f"Monitor {i}: {geom.width()}x{geom.height()}{tag}"
+                self.preferred_monitor_combo.addItem(label, userData=screen.name())
+
+        # Restore previous selection if it still exists; otherwise fall back to "Primary (auto)".
+        if previous_selection is not None:
+            idx = self.preferred_monitor_combo.findData(previous_selection)
+            if idx >= 0:
+                self.preferred_monitor_combo.setCurrentIndex(idx)
+
+        # Reconnect the change signal.
+        self.preferred_monitor_combo.currentIndexChanged.connect(self.on_change)
+
+    def showEvent(self, event):  # type: ignore[override]
+        """Refresh the monitor dropdown whenever the page becomes visible.
+
+        Catches the case where a user plugs/unplugs a monitor while the app
+        is running, then opens Settings - the dropdown should reflect the
+        current monitor topology, not the topology at app launch.
+        """
+        super().showEvent(event)
+        if hasattr(self, "preferred_monitor_combo"):
+            self._populate_monitor_combo()
 
     # --- behavior ---------------------------------------------------------------
     def ensure_hardware_visible(self) -> None:
@@ -138,10 +205,20 @@ class WidgetPage(QWidget):
             if idx >= 0:
                 combo.setCurrentIndex(idx)
 
+        # Preferred monitor (#72) - match by stored screen name.
+        # If the saved monitor name doesn't match any detected screen (e.g.,
+        # monitor was disconnected since last save), the combo just stays at
+        # "Primary (auto)" and the runtime fallback in position_manager kicks in.
+        preferred_name = config.get("preferred_monitor")
+        idx = self.preferred_monitor_combo.findData(preferred_name)
+        self.preferred_monitor_combo.setCurrentIndex(idx if idx >= 0 else 0)
+
         self.free_move.setChecked(config.get("free_move", False))
         self.free_float.setChecked(config.get("free_float", True))
         self.keep_visible_fullscreen.setChecked(
             config.get("keep_visible_fullscreen", constants.config.defaults.DEFAULT_KEEP_VISIBLE_FULLSCREEN))
+
+        self.mini_graph_section.load_settings(config)
 
     def get_settings(self) -> Dict[str, Any]:
         mode = self.display_mode_combo.currentData()
@@ -150,7 +227,9 @@ class WidgetPage(QWidget):
             "widget_display_mode": "side_by_side" if mode == "side_by_stack" else mode,
             "stack_hardware_stats": mode == "side_by_stack",
             "widget_display_order": order,
+            "preferred_monitor": self.preferred_monitor_combo.currentData(),
             "free_move": self.free_move.isChecked(),
             "free_float": self.free_float.isChecked(),
             "keep_visible_fullscreen": self.keep_visible_fullscreen.isChecked(),
+            **self.mini_graph_section.get_settings(),
         }

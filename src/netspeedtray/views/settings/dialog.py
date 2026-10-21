@@ -303,8 +303,8 @@ class SettingsDialog(QDialog):
             # Add pages wrapped in scroll areas (order matches sidebar)
             for page in [
                 self.general_page,       # 0 - General
-                self.widget_page,        # 1 - Widget
-                self.appearance_page,    # 2 - Appearance (font/color/units/color-coding/graph)
+                self.widget_page,        # 1 - Widget (layout, placement, mini graph)
+                self.appearance_page,    # 2 - Appearance (font/units/color-coding/background/arrows)
                 self.hardware_page,      # 3 - Hardware
                 self.interfaces_page,    # 4 - Network
                 self.advanced_page,      # 5 - Advanced

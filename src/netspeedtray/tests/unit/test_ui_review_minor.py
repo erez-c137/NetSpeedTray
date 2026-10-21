@@ -43,8 +43,8 @@ def test_percent_falls_back_without_a_template():
 
 @pytest.mark.parametrize("lang,expected", [("tr_TR", "%10"), ("fr_FR", "10 %"), ("en_US", "10%")])
 def test_headroom_choices_use_the_locale_percent(q_app, lang, expected):
-    from netspeedtray.views.settings.pages.appearance import AppearancePage
-    page = AppearancePage(I18nStrings(lang), lambda: None, MagicMock(), MagicMock())
+    from netspeedtray.views.settings.pages.mini_graph_section import MiniGraphSection
+    page = MiniGraphSection(I18nStrings(lang), lambda: None)
     combo = page.graph_scale_headroom
     labels = [combo.itemText(i) for i in range(combo.count())]
     i = combo.findData(10)

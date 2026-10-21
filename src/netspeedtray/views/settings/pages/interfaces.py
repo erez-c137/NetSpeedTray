@@ -99,17 +99,20 @@ class InterfacesPage(QWidget):
 
         layout.addWidget(mode_card)
 
-        # Network identity (v2.1) - the Wi-Fi band / network indicator on the widget.
-        self.identity = NetworkIdentitySettings(self.on_change, self.i18n)
-        layout.addWidget(self.identity)
+        # Order (2.2 IA pass): Data usage, Connection, Network identity. Data usage has its own tray
+        # entry and was last on the page below two open expanders; identity is the most cosmetic.
+
+        # Data-usage / data-cap section (the feature's in-settings home, 2.0 IA).
+        self.datacap = DataCapSettings(self.on_change, self.i18n)
+        layout.addWidget(self.datacap)
 
         # Connection section - latency monitoring (gateway + opt-in public anchor) + advertised plan.
         self.connection = ConnectionSettings(self.on_change, self.i18n)
         layout.addWidget(self.connection)
 
-        # Data-usage / data-cap section (the feature's in-settings home, 2.0 IA).
-        self.datacap = DataCapSettings(self.on_change, self.i18n)
-        layout.addWidget(self.datacap)
+        # Network identity (v2.1) - the Wi-Fi band / network indicator on the widget.
+        self.identity = NetworkIdentitySettings(self.on_change, self.i18n)
+        layout.addWidget(self.identity)
 
         layout.addStretch()
 

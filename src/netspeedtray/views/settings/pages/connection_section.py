@@ -55,10 +55,12 @@ class ConnectionSettings(QWidget):
         root.addWidget(self._lat)
 
         # --- Advertised plan speed (drives the "% below plan" stat; 0 = off) ---
+        # Collapsed by default (2.2 IA pass): open, it showed two "Off" spin boxes to everyone and pushed
+        # the sections below it a screen down. The header's description already says what it does.
         self._plan = SettingExpander(
             self._tr("CONN_PLAN_TITLE", "Advertised plan speed"),
             self._tr("CONN_PLAN_SUB", "Flags time spent below your plan in the Statistics sheet (0 = off)."),
-            expanded=True)
+            expanded=False)
         pbody = self._plan.contentLayout()
         self._down = self._mbps_spin()
         self._up = self._mbps_spin()

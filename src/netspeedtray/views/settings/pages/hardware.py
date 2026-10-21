@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (QWidget, QLabel, QGraphicsOpacityEffect, QHBoxLayou
 from netspeedtray import constants
 from netspeedtray.utils import styles as su
 from netspeedtray.utils.components import Win11Toggle, Win11Slider, SettingCard, SettingExpander, Win11ComboBox
-from netspeedtray.views.settings.pages._fluent import page_layout
+from netspeedtray.views.settings.pages._fluent import section_header, page_layout
 
 class HardwarePage(QWidget):
     layout_changed = pyqtSignal()
@@ -86,6 +86,22 @@ class HardwarePage(QWidget):
             f"color: {su.semantic_colors()['text_secondary']}; background: transparent; padding: 0 2px;")
         layout.addWidget(temps_note)
 
+        # Throttle temperature (Statistics): flags time spent at/above this temp in the Stats-detail
+        # sheet so thermal throttling is provable (0 = off). Only meaningful when temps are collected,
+        # so it sits right after the temperature toggle and the sensor note (2.2 IA pass).
+        self.throttle_temp = Win11Slider(editable=True, suffix="°C")
+        self.throttle_temp.setRange(0, 130)
+        # 0 turns the feature off: say "Off", not "0°C" (same word as the plan-speed spinbox's 0).
+        self.throttle_temp.setSpecialValueText(str(getattr(self.i18n, "CONN_PLAN_OFF", "Off")))
+        self.throttle_temp.setMinimumWidth(260)
+        self.throttle_temp.valueChanged.connect(self.on_change)
+        layout.addWidget(SettingCard(str(getattr(self.i18n, "HW_THROTTLE_LABEL", "Throttle temp (stats)")),
+                                     control=self.throttle_temp))
+
+        # --- Appearance: how the CPU/GPU readouts look (indicator shape/colour, colour by load). Reuses
+        # the sidebar's "Appearance" string as the section caption, so it needs no new translation.
+        layout.addWidget(section_header(self.i18n.APPEARANCE_SETTINGS_GROUP))
+
         # Indicator SHAPE (icons / text) and COLOUR (brand / match text / custom) are separate choices;
         # pre-2.2 configs carried both in one three-way style and are split by the config migration.
         self.label_style = Win11ComboBox()
@@ -130,17 +146,6 @@ class HardwarePage(QWidget):
             lc_layout.addWidget(SettingCard(label, control=row))
         layout.addWidget(self.label_colors_container)
         self.label_colors_container.setVisible(False)
-
-        # Throttle temperature (Statistics): flags time spent at/above this temp in the Stats-detail
-        # sheet so thermal throttling is provable (0 = off). Only meaningful when temps are collected.
-        self.throttle_temp = Win11Slider(editable=True, suffix="°C")
-        self.throttle_temp.setRange(0, 130)
-        # 0 turns the feature off: say "Off", not "0°C" (same word as the plan-speed spinbox's 0).
-        self.throttle_temp.setSpecialValueText(str(getattr(self.i18n, "CONN_PLAN_OFF", "Off")))
-        self.throttle_temp.setMinimumWidth(260)
-        self.throttle_temp.valueChanged.connect(self.on_change)
-        layout.addWidget(SettingCard(str(getattr(self.i18n, "HW_THROTTLE_LABEL", "Throttle temp (stats)")),
-                                     control=self.throttle_temp))
 
         # NOTE (2.0 IA): "Widget Display Mode" + "Display Order" moved to the new Widget page - they're
         # about the widget's layout, not hardware monitoring. The monitor toggles here still nudge that
