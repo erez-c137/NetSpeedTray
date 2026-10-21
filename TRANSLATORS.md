@@ -46,7 +46,7 @@ Other locales (English, German, Spanish) are currently maintained by the project
 > - `GRAPH_BOOT_MARKER` - the small italic label on the Monitor graph's dashed line where the PC last started (was English "Boot" in every language). Keep it to one short word.
 
 > 🆕 **Pending native review for 2.2 (LibreHardwareMonitor web server, #187 / PR #276, see #364):** non-English values are AI-assisted.
-> - `LHM_WEB_SERVER_HINT` (new) - shown under the temperature note on Settings → Hardware and in the "turn on temperatures" explainer: current LibreHardwareMonitor is read over its web server, which the user has to switch on. Keep `{port}`, and keep `Options → Remote Web Server` in English - it is LibreHardwareMonitor's own (untranslated) menu.
+> - `LHM_WEB_SERVER_HINT` (new) - shown under the temperature note on Settings → Hardware and in the "turn on temperatures" explainer: current LibreHardwareMonitor is read over its web server, which the user has to switch on. Its last sentence asks to leave LHM's web-server authentication off and let it listen on all interfaces (otherwise LHM refuses NetSpeedTray's local request). Keep `{port}`, and keep `Options → Remote Web Server` in English - it is LibreHardwareMonitor's own (untranslated) menu.
 > - `HARDWARE_TEMPS_LIMITATION_NOTE` / `TEMP_ONBOARDING_BODY` - the "use LHM v0.9.4, later versions removed the interface" sentence is gone (no longer true). Removed from `en_US`, `hu_HU`, `it_IT` and `tr_TR`, the locales that carried it; nothing else in them changed.
 
 ## How translation works in NetSpeedTray

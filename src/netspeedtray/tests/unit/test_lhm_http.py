@@ -391,3 +391,129 @@ def test_a_failure_drops_the_last_good_reading():
         assert client.get_snapshot().cpu_power == 42.0
     with patch.object(client, "_fetch_json", side_effect=OSError("closed")):
         assert client.get_snapshot() is None
+
+
+# --------------------------------------------------------------------------------------------
+# Independent review of PR #276 (S1-S3 and follow-ups)
+# --------------------------------------------------------------------------------------------
+
+def test_connect_timeout_is_short_enough_not_to_stall_a_tick():
+    """S1: a loopback connect to a listening port is sub-millisecond; the timeout only bounds the
+    dropped-SYN case (nothing listening), which used to cost 0.35 s on the monitor thread."""
+    assert constants.lhm.CONNECT_TIMEOUT_SEC <= 0.1
+
+
+@pytest.mark.parametrize("body", [
+    b"{}",
+    b"[]",
+    b'{"Text": "Other", "Children": []}',
+    b'{"Text": "Sensor"}',
+    b'{"status": "ok"}',
+], ids=["empty-object", "list", "wrong-root-text", "no-children", "other-service"])
+def test_json_that_is_not_lhm_is_a_failure_with_backoff(serve, caplog, body):
+    """S2: any JSON on the port parsed as success - a full request every poll and a false INFO line."""
+    server = serve(lambda conn, _stop: conn.sendall(_http_ok(body)))
+    client = _client(server.port)
+    with caplog.at_level("INFO", logger="NetSpeedTray.LhmHttp"):
+        assert client.get_snapshot() is None
+        assert client.get_snapshot() is None
+    assert server.connections == 1
+    assert not [r for r in caplog.records if "reading the LibreHardwareMonitor" in r.getMessage()]
+
+
+@pytest.mark.parametrize("status,reason", [(401, "Unauthorized"), (400, "Bad Request")],
+                         ids=["auth-on", "bound-to-lan-ip"])
+def test_an_lhm_refusing_us_is_logged_once_at_info(serve, caplog, status, reason):
+    """S3: LHM with authentication on answers 401; bound to one LAN address, http.sys answers 400 for
+    127.0.0.1. Both were DEBUG-only, so a support log could not say why temps stayed blank."""
+    reply = (f"HTTP/1.1 {status} {reason}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").encode()
+    server = serve(lambda conn, _stop: conn.sendall(reply))
+    client = _client(server.port, failure_backoff_seconds=0.0)
+    with caplog.at_level("INFO", logger="NetSpeedTray.LhmHttp"):
+        for _ in range(3):
+            assert client.get_snapshot() is None
+    info = [r for r in caplog.records if r.levelname == "INFO"]
+    assert len(info) == 1
+    assert str(status) in info[0].getMessage()
+    assert "authentication" in info[0].getMessage()
+
+
+def test_raw_value_is_preferred_when_numeric():
+    """LHM's RawValue is the unformatted reading (always Celsius, no locale); Value is display text."""
+    node = sensor("CPU Package", "/intelcpu/0/temperature/0", "Temperature", "131,0 °F")
+    node["RawValue"] = 55.25
+    snapshot = parse_snapshot(tree(hardware("Intel", "/intelcpu/0", node)))
+    assert snapshot.cpu_temp == 55.25
+
+
+@pytest.mark.parametrize("raw", [None, "", float("nan"), "55", True],
+                         ids=["null", "empty", "nan", "string", "bool"])
+def test_a_non_numeric_raw_value_falls_back_to_the_display_string(raw):
+    node = sensor("CPU Package", "/intelcpu/0/temperature/0", "Temperature", "48,5 °C")
+    node["RawValue"] = raw
+    snapshot = parse_snapshot(tree(hardware("Intel", "/intelcpu/0", node)))
+    assert snapshot.cpu_temp == 48.5
+
+
+def test_intel_integrated_gpu_id_is_a_gpu():
+    snapshot = parse_snapshot(tree(hardware("Intel(R) Arc(TM) Graphics", "/gpu-intel-integrated/0",
+        sensor("GPU Core", "/gpu-intel-integrated/0/temperature/0", "Temperature", "44.0 °C"),
+        sensor("GPU Power", "/gpu-intel-integrated/0/power/0", "Power", "3.0 W"))))
+    assert snapshot.preferred_gpu.hardware_id == "/gpu-intel-integrated/0"
+    assert snapshot.preferred_gpu.temperature == 44.0
+    assert snapshot.preferred_gpu.power == 3.0
+
+
+def test_intel_integrated_gpu_id_without_hardware_id_is_a_gpu():
+    """v0.9.4-style tree: SensorIds only, no HardwareId on the hardware node."""
+    snapshot = parse_snapshot(tree(
+        sensor("GPU Core", "/gpu-intel-integrated/0/temperature/0", "Temperature", "44.0 °C")))
+    assert snapshot.preferred_gpu is not None
+    assert snapshot.preferred_gpu.temperature == 44.0
+
+
+def test_amd_gpu_power_prefers_ppt_over_core():
+    snapshot = parse_snapshot(tree(hardware("AMD Radeon RX 6800", "/gpu-amd/0",
+        sensor("GPU Core", "/gpu-amd/0/power/0", "Power", "40.0 W"),
+        sensor("GPU PPT", "/gpu-amd/0/power/1", "Power", "180.0 W"),
+        sensor("GPU SoC", "/gpu-amd/0/power/2", "Power", "10.0 W"))))
+    assert snapshot.preferred_gpu.power == 180.0
+    assert snapshot.preferred_gpu.power_sensor == "GPU PPT"
+
+
+@pytest.mark.parametrize("igpu_name", ["AMD Radeon 780M Graphics", "AMD Radeon(TM) Graphics",
+                                       "AMD Radeon Vega 8 Graphics", "AMD Radeon 890M"])
+def test_an_amd_dgpu_beats_an_amd_igpu(igpu_name):
+    snapshot = parse_snapshot(tree(
+        hardware(igpu_name, "/gpu-amd/0",
+            sensor("GPU Core", "/gpu-amd/0/temperature/0", "Temperature", "50.0 °C")),
+        hardware("AMD Radeon RX 7600S", "/gpu-amd/1",
+            sensor("GPU Core", "/gpu-amd/1/temperature/0", "Temperature", "61.0 °C"))))
+    assert snapshot.preferred_gpu.hardware_id == "/gpu-amd/1"
+
+
+def test_intel_without_a_package_sensor_reports_the_hottest_core():
+    """Not Core #1, and never a 'Distance to TjMax' reading (a headroom, not a temperature)."""
+    cores = [sensor(f"CPU Core #{i + 1}", f"/intelcpu/0/temperature/{i}", "Temperature", f"{40 + i}.0 °C")
+             for i in range(12)]
+    distances = [sensor(f"CPU Core #{i + 1} Distance to TjMax", f"/intelcpu/0/temperature/{12 + i}",
+                        "Temperature", f"{60 - i}.0 °C") for i in range(12)]
+    snapshot = parse_snapshot(tree(hardware("Intel Core i7", "/intelcpu/0", *cores, *distances)))
+    assert snapshot.cpu_temp == 51.0
+    assert snapshot.cpu_temp_sensor == "CPU Core #12"
+
+
+def test_intel_core_max_is_used_when_there_is_no_package():
+    snapshot = parse_snapshot(tree(hardware("Intel", "/intelcpu/0",
+        sensor("Core Max", "/intelcpu/0/temperature/0", "Temperature", "71.0 °C"),
+        sensor("Core Average", "/intelcpu/0/temperature/1", "Temperature", "55.0 °C"),
+        sensor("P-Core #1", "/intelcpu/0/temperature/2", "Temperature", "50.0 °C"),
+        sensor("P-Core #1 Distance to TjMax", "/intelcpu/0/temperature/3", "Temperature", "30.0 °C"))))
+    assert snapshot.cpu_temp == 71.0
+
+
+def test_package_still_beats_core_max():
+    snapshot = parse_snapshot(tree(hardware("Intel", "/intelcpu/0",
+        sensor("Core Max", "/intelcpu/0/temperature/0", "Temperature", "71.0 °C"),
+        sensor("CPU Package", "/intelcpu/0/temperature/1", "Temperature", "72.0 °C"))))
+    assert snapshot.cpu_temp == 72.0

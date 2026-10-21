@@ -52,7 +52,7 @@
     "SHOW_HARDWARE_TEMPS_LABEL": "CPU/GPU-hőmérséklet megjelenítése",
     "SHOW_HARDWARE_TEMPS_TOOLTIP": "A hőmérséklet megjelenítése a CPU/GPU-használat mellett. A legtöbb rendszeren LibreHardwareMonitor szükséges (rendszergazdaként futtatva), NVIDIA GPU-hőmérséklethez pedig az nvidia-smi is használható.",
     "HARDWARE_TEMPS_LIMITATION_NOTE": "A legtöbb CPU/GPU hőmérséklet- és teljesítményérzékelőhöz a LibreHardwareMonitor szükséges, rendszergazdaként futtatva. A NetSpeedTray automatikusan felismeri, és maga soha nem igényel rendszergazdai jogosultságot. Az NVIDIA-adatok natívan működnek az nvidia-smi segítségével. Egyes nagyon új CPU-k egyáltalán nem tesznek közzé hőmérséklet-érzékelőt.",
-    "LHM_WEB_SERVER_HINT": "LibreHardwareMonitor v0.9.5 vagy újabb: kapcsold be az Options → Remote Web Server opciót (port: {port}) – a NetSpeedTray innen olvassa az érzékelőket. A v0.9.4 enélkül is működik.",
+    "LHM_WEB_SERVER_HINT": "LibreHardwareMonitor v0.9.5 vagy újabb: kapcsold be az Options → Remote Web Server opciót (port: {port}) – a NetSpeedTray innen olvassa az érzékelőket. A v0.9.4 enélkül is működik. A hitelesítést hagyd kikapcsolva, és hagyd, hogy minden interfészen figyeljen.",
     "SHOW_HARDWARE_POWER_LABEL": "CPU/GPU-teljesítmény megjelenítése (Watt)",
     "HARDWARE_IN_HOVER_CARD_LABEL": "Hardver megjelenítése csak a widget fölé mutatva",
     "HARDWARE_IN_HOVER_CARD_DESCRIPTION": "A tálca widgetje csak a hálózati sebességet mutatja. A CPU, a GPU és a memória a kártyán jelenik meg, ha az egérmutatót fölé viszed.",

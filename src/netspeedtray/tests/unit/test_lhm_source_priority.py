@@ -118,6 +118,22 @@ def test_the_poll_loop_never_reads_http_with_temps_and_power_off(q_app):
     mt._lhm_http.get_snapshot.assert_not_called()
 
 
+def test_gpu_presence_from_lhm_is_latched_through_a_backoff(thread):
+    """With PDH unavailable, LHM's GPU is the presence evidence. During an LHM backoff window (or a
+    snapshot with the GPU asleep) the Monitor's GPU tiles must not flap out and back in."""
+    gpu = LhmSnapshot(gpus=(LhmGpu("/gpu-nvidia/0", "RTX", temperature=50.0),))
+    thread._gpu_query = None
+    thread._gpu_query_retry_after = float("inf")
+    thread._lhm_http = MagicMock()
+    thread._lhm_http.get_snapshot.side_effect = [gpu, None, LhmSnapshot()]
+    thread._nvidia_smi_path = None
+    thread._wmi_ohm = None
+    with patch.object(thread, "_init_ohm_wmi"):
+        results = [thread._poll_gpu_hybrid(include_temp=True, include_power=False) for _ in range(3)]
+    assert [r.present for r in results] == [True, True, True]
+    assert results[1].temp is None   # latched presence, never a latched reading
+
+
 def test_turning_temps_on_retries_http_at_once(thread):
     """A config change re-arms the hardware sources; the HTTP backoff is cleared with them."""
     client = LhmHttpClient(port=1)

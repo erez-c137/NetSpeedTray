@@ -26,8 +26,16 @@ logger = logging.getLogger("NetSpeedTray.LhmHttp")
 _NUMBER_RE = re.compile(r"[-+]?(?:\d+(?:[.,]\d+)?|[.,]\d+)")
 _CPU_PREFIXES = ("/amdcpu/", "/intelcpu/")
 _GPU_PREFIXES = (
-    "/gpu-nvidia/", "/gpu-amd/", "/gpu-intel/",
+    "/gpu-nvidia/", "/gpu-amd/", "/gpu-intel/", "/gpu-intel-integrated/",
     "/nvidiagpu/", "/amdgpu/", "/intelgpu/",
+)
+# AMD APU graphics: "AMD Radeon(TM) Graphics", "Radeon Vega 8 Graphics", "Radeon 780M Graphics",
+# "Radeon 890M". Discrete cards are "RX ...", "Pro ...", "VII" and never end in a model number + M.
+_AMD_IGPU_MODEL_RE = re.compile(r"\b\d{3,4}m\b")
+_AMD_DGPU_TOKENS = ("rx", "pro", "vii")
+_CPU_TEMP_PRIORITY = (
+    "Core (Tctl/Tdie)", "CPU Package", "Tctl/Tdie", "Tdie",
+    "Tctl", "Package", "Core Max", "CCD1 (Tdie)", "CCD",
 )
 
 
@@ -81,6 +89,14 @@ def parse_lhm_value(value: Any) -> Optional[float]:
     return result if math.isfinite(result) else None
 
 
+def _raw_number(value: Any) -> Optional[float]:
+    """A JSON number only (bools, strings, null and non-finite values are not readings)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    result = float(value)
+    return result if math.isfinite(result) else None
+
+
 def _is_fahrenheit(raw: str) -> bool:
     text = raw.strip().casefold()
     return text.endswith("°f") or text.endswith("℉") or text.endswith(" f")
@@ -106,13 +122,19 @@ def _iter_sensors(data: Any) -> Iterator[LhmSensor]:
     for node, hardware_id, hardware_name in _walk_nodes(data):
         sensor_id = str(node.get("SensorId") or "").strip().lower()
         sensor_type = str(node.get("Type") or "").strip().lower()
-        raw_value = node.get("Value")
-        value = parse_lhm_value(raw_value)
-        if not sensor_id or not sensor_type or value is None:
+        if not sensor_id or not sensor_type:
             continue
-        if sensor_type == "temperature" and isinstance(raw_value, str) and _is_fahrenheit(raw_value):
-            # LHM can be set to display Fahrenheit, and data.json carries the display string.
-            value = (value - 32.0) * 5.0 / 9.0
+        # Current LHM also publishes RawValue: the unformatted reading as a JSON number (always
+        # Celsius/Watts, no locale). Prefer it; older builds only have the display string.
+        value = _raw_number(node.get("RawValue"))
+        if value is None:
+            raw_value = node.get("Value")
+            value = parse_lhm_value(raw_value)
+            if value is None:
+                continue
+            if sensor_type == "temperature" and isinstance(raw_value, str) and _is_fahrenheit(raw_value):
+                # LHM can be set to display Fahrenheit, and Value carries the display string.
+                value = (value - 32.0) * 5.0 / 9.0
         yield LhmSensor(
             name=str(node.get("Text") or "").strip(),
             sensor_type=sensor_type,
@@ -127,7 +149,8 @@ def _belongs_to(sensor: LhmSensor, prefixes: Tuple[str, ...]) -> bool:
     return sensor.sensor_id.startswith(prefixes) or sensor.hardware_id.startswith(prefixes)
 
 
-def _pick(sensors: list[LhmSensor], priorities: Tuple[str, ...]) -> Optional[LhmSensor]:
+def _pick(sensors: list[LhmSensor], priorities: Tuple[str, ...],
+          require_match: bool = False) -> Optional[LhmSensor]:
     if not sensors:
         return None
     names = {name.casefold(): index for index, name in enumerate(priorities)}
@@ -142,7 +165,35 @@ def _pick(sensors: list[LhmSensor], priorities: Tuple[str, ...]) -> Optional[Lhm
                 return len(priorities) + index, sensor.sensor_id
         return len(priorities) * 2, sensor.sensor_id
 
-    return min(sensors, key=rank)
+    best = min(sensors, key=rank)
+    if require_match and rank(best)[0] >= len(priorities) * 2:
+        return None
+    return best
+
+
+def _pick_cpu_temp(sensors: list[LhmSensor]) -> Optional[LhmSensor]:
+    """Package/Tctl-style die sensor first, then Core Max, then the HOTTEST core - never Core #1 by
+    accident of ordering, and never a "Distance to TjMax" (a headroom, not a temperature)."""
+    sensors = [s for s in sensors if "distance to tjmax" not in s.name.casefold()]
+    named = _pick(sensors, _CPU_TEMP_PRIORITY, require_match=True)
+    if named is not None:
+        return named
+    cores = [s for s in sensors
+             if "core" in s.name.casefold() and "average" not in s.name.casefold()]
+    if cores:
+        return max(cores, key=lambda s: (s.value, s.sensor_id))
+    return _pick(sensors, _CPU_TEMP_PRIORITY)
+
+
+def _is_amd_igpu(name: str) -> bool:
+    if "radeon" not in name:
+        return False
+    if any(token in name for token in ("integrated", " igpu", "radeon(tm) graphics")):
+        return True
+    if _AMD_IGPU_MODEL_RE.search(name):
+        return True
+    words = set(re.findall(r"[a-z0-9]+", name))
+    return "graphics" in words and not words.intersection(_AMD_DGPU_TOKENS)
 
 
 def _gpu_rank(gpu: LhmGpu) -> Tuple[int, str]:
@@ -150,7 +201,8 @@ def _gpu_rank(gpu: LhmGpu) -> Tuple[int, str]:
     name = gpu.hardware_name.casefold()
     if "nvidia" in ident or "nvidia" in name:
         return 0, ident
-    integrated = any(token in name for token in ("integrated", " igpu", "radeon(tm) graphics"))
+    integrated = ("integrated" in ident or " igpu" in name or "integrated" in name
+                  or _is_amd_igpu(name))
     if not integrated and ("amd" in ident or "radeon" in name):
         return 1, ident
     if "intel" in ident or "intel" in name:
@@ -173,10 +225,7 @@ def parse_snapshot(data: Any) -> LhmSnapshot:
         and _belongs_to(sensor, _CPU_PREFIXES)
         and 0.0 < sensor.value < 1000.0
     ]
-    cpu_temp = _pick(cpu_temps, (
-        "Core (Tctl/Tdie)", "CPU Package", "Tctl/Tdie", "Tdie",
-        "Tctl", "Package", "CCD1 (Tdie)", "CCD", "Core",
-    ))
+    cpu_temp = _pick_cpu_temp(cpu_temps)
     cpu_power = _pick(cpu_powers, ("CPU Package", "Package", "CPU Total", "Total"))
 
     grouped: dict[Tuple[str, str], list[LhmSensor]] = {}
@@ -191,7 +240,7 @@ def parse_snapshot(data: Any) -> LhmSnapshot:
         temps = [s for s in gpu_sensors if s.sensor_type == "temperature" and 0.0 < s.value < 150.0]
         powers = [s for s in gpu_sensors if s.sensor_type == "power" and 0.0 < s.value < 1000.0]
         temp = _pick(temps, ("GPU Core", "Core", "GPU Hot Spot", "Hot Spot"))
-        power = _pick(powers, ("GPU Package", "GPU Total", "Total Board Power", "Board Power", "GPU Core"))
+        power = _pick(powers, ("GPU Package", "GPU Total", "Total Board Power", "Board Power", "GPU PPT", "GPU Core"))
         if temp is not None or power is not None:
             gpus.append(LhmGpu(
                 hardware_id=hardware_id,
@@ -209,6 +258,23 @@ def parse_snapshot(data: Any) -> LhmSnapshot:
         cpu_power_sensor=cpu_power.name if cpu_power else None,
         gpus=tuple(sorted(gpus, key=_gpu_rank)),
     )
+
+
+class LhmHttpStatusError(ValueError):
+    """The port answered HTTP, but not with data.json (LHM auth on, wrong interface, another app)."""
+
+    def __init__(self, status: int) -> None:
+        super().__init__(f"HTTP {status}")
+        self.status = status
+
+
+def _require_lhm_root(data: Any) -> Any:
+    """LHM's data.json root is {"Text": "Sensor", "Children": [...]}. Anything else on the port is
+    not LHM, and must back off like any other failure rather than parse as an empty success."""
+    if (not isinstance(data, dict) or data.get("Text") != "Sensor"
+            or not isinstance(data.get("Children"), list)):
+        raise ValueError("not a LibreHardwareMonitor data.json")
+    return data
 
 
 class _DeadlineSocket(socket.socket):
@@ -304,11 +370,11 @@ class LhmHttpClient:
             conn.request("GET", self.path, headers={"Accept": "application/json"})
             response = conn.getresponse()
             if response.status != 200:
-                raise ValueError(f"HTTP {response.status}")
+                raise LhmHttpStatusError(response.status)
             body = response.read(self.max_response_bytes + 1)
             if len(body) > self.max_response_bytes:
                 raise ValueError("response too large")
-            return json.loads(body.decode("utf-8-sig"))
+            return _require_lhm_root(json.loads(body.decode("utf-8-sig")))
         finally:
             conn.close()
 
@@ -334,8 +400,17 @@ class LhmHttpClient:
             reason = f"{type(e).__name__}: {e}"
             if reason != self._last_failure:
                 self._last_failure = reason
-                logger.debug("LHM HTTP source unavailable at %s (%s); retrying in %.0f s.",
-                             self.url, reason, self.failure_backoff_seconds)
+                if isinstance(e, LhmHttpStatusError):
+                    # Something IS serving HTTP there and refusing us - worth a line in the support
+                    # log: LHM's web server with authentication on answers 401, and one bound to a
+                    # single LAN address answers 400 (http.sys) for 127.0.0.1.
+                    logger.info(
+                        "Hardware monitor: %s answered HTTP %d. If that is LibreHardwareMonitor, "
+                        "turn its web-server authentication off and let it listen on all interfaces "
+                        "(Options > Remote Web Server).", self.url, e.status)
+                else:
+                    logger.debug("LHM HTTP source unavailable at %s (%s); retrying in %.0f s.",
+                                 self.url, reason, self.failure_backoff_seconds)
             return None
         if self._last_failure is not None or self._cached is None:
             # Once per transition to "available" - a line the support bundle should show.

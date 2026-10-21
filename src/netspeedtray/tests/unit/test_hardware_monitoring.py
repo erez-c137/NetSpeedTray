@@ -396,4 +396,3 @@ class TestHardwareMonitoring:
         temp = monitor_thread._poll_cpu_temperature()
         assert temp is None
         assert monitor_thread._wmi is None  # Should have been reset for reconnection
-

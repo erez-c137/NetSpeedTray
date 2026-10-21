@@ -18,9 +18,11 @@ class LhmConstants:
     HTTP_PORT: Final[int] = 8085
     HTTP_PATH: Final[str] = "/data.json"
 
-    # Connecting to loopback either succeeds in microseconds or never; this only bounds the
-    # dropped-SYN case.
-    CONNECT_TIMEOUT_SEC: Final[float] = 0.35
+    # Connecting to a listening loopback port takes well under a millisecond; this only bounds the
+    # dropped-SYN case (nothing listening, on machines whose loopback does not reset). That attempt
+    # runs on the monitor thread once per backoff window, so it must stay short (PR #276 review:
+    # 0.35 s here was a visible stall every 30 s).
+    CONNECT_TIMEOUT_SEC: Final[float] = 0.1
     # Hard budget for the WHOLE request (connect + status line + headers + body). Each socket read
     # gets only what is left of it, so a server that trickles bytes cannot hold a poll for longer.
     TOTAL_DEADLINE_SEC: Final[float] = 0.5

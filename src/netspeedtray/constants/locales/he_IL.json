@@ -52,7 +52,7 @@
     "SHOW_HARDWARE_TEMPS_LABEL": "הצג טמפרטורת CPU/GPU",
     "SHOW_HARDWARE_TEMPS_TOOLTIP": "הצג טמפרטורה לצד השימוש ב-CPU/GPU. דורש את LibreHardwareMonitor (הרץ כמנהל) ברוב המערכות, או את nvidia-smi עבור טמפרטורת GPU של NVIDIA.",
     "HARDWARE_TEMPS_LIMITATION_NOTE": "רוב חיישני הטמפרטורה וההספק של CPU/GPU דורשים את LibreHardwareMonitor (הרץ כמנהל) - NetSpeedTray מזהה אותו אוטומטית ולעולם אינו זקוק בעצמו להרשאות מנהל. קריאות של NVIDIA פועלות באופן מקורי דרך nvidia-smi.",
-    "LHM_WEB_SERVER_HINT": "LibreHardwareMonitor גרסה 0.9.5 ומעלה: הפעילו את Options → Remote Web Server (פורט {port}) - NetSpeedTray קורא משם את החיישנים. גרסה 0.9.4 עובדת גם בלי זה.",
+    "LHM_WEB_SERVER_HINT": "LibreHardwareMonitor גרסה 0.9.5 ומעלה: הפעילו את Options → Remote Web Server (פורט {port}) - NetSpeedTray קורא משם את החיישנים. גרסה 0.9.4 עובדת גם בלי זה. השאירו את האימות כבוי ואפשרו האזנה בכל הממשקים.",
     "SHOW_HARDWARE_POWER_LABEL": "הצג הספק CPU/GPU (וואט)",
     "HARDWARE_IN_HOVER_CARD_LABEL": "הצג חומרה רק בעת ריחוף מעל היישומון",
     "HARDWARE_IN_HOVER_CARD_DESCRIPTION": "היישומון בשורת המשימות מציג רק את מהירות הרשת. CPU, GPU וזיכרון מופיעים בכרטיס כשמעבירים את העכבר מעליו.",

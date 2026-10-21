@@ -207,6 +207,9 @@ class StatsMonitorThread(QThread):
         # evidence of a GPU - deriving "present" from it would fabricate a 0% readout on RDP
         # sessions, VMs and GPU-less boxes.
         self._gpu_engine_seen: bool = False
+        # Same latch for LHM: once its web server has shown a hardware-scoped GPU, the GPU exists -
+        # an LHM backoff window or a GPU that is asleep this tick must not flap the tiles out.
+        self._lhm_gpu_seen: bool = False
         # Set by update_config (GUI thread); the PDH handles are owned by run()'s thread, so the actual
         # cleanup/re-init is deferred to the loop (see update_config / run).
         self._hw_queries_dirty: bool = False
@@ -391,6 +394,8 @@ class StatsMonitorThread(QThread):
         # prevents the iGPU or a motherboard "CPU Socket" sensor from winning.
         lhm_snapshot = self._lhm_http.get_snapshot() if (include_temp or include_power) else None
         lhm_gpu = lhm_snapshot.preferred_gpu if lhm_snapshot else None
+        if lhm_gpu is not None:
+            self._lhm_gpu_seen = True
         if lhm_gpu:
             if include_temp and lhm_gpu.temperature is not None:
                 temp_c = lhm_gpu.temperature
@@ -523,7 +528,7 @@ class StatsMonitorThread(QThread):
         # exists. Keeping the row visible with 0% utilization is intentional when PDH is
         # unavailable: temperature/power remain useful and are not fabricated.
         return GpuPollResult(util_pct, vram_used, vram_total, temp_c, power_w,
-                             present=self._gpu_engine_seen or lhm_gpu is not None)
+                             present=self._gpu_engine_seen or self._lhm_gpu_seen)
 
     @lru_cache(maxsize=4)
     def _get_cached_path(self, binary: str) -> Optional[str]:

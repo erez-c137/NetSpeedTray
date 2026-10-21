@@ -52,7 +52,7 @@
     "SHOW_HARDWARE_TEMPS_LABEL": "Afficher la température CPU/GPU",
     "SHOW_HARDWARE_TEMPS_TOOLTIP": "Affiche la température à côté de l'utilisation CPU/GPU. Nécessite LibreHardwareMonitor (exécuté en tant qu'administrateur) sur la plupart des systèmes, ou nvidia-smi pour la température des GPU NVIDIA.",
     "HARDWARE_TEMPS_LIMITATION_NOTE": "La plupart des capteurs de température et de consommation CPU/GPU nécessitent LibreHardwareMonitor (exécuté en tant qu'administrateur) - NetSpeedTray le détecte automatiquement et n'a jamais besoin des droits d'administrateur. Les valeurs NVIDIA fonctionnent nativement via nvidia-smi.",
-    "LHM_WEB_SERVER_HINT": "LibreHardwareMonitor v0.9.5 ou plus récent : activez Options → Remote Web Server (port {port}) - NetSpeedTray y lit les capteurs. La v0.9.4 fonctionne aussi sans.",
+    "LHM_WEB_SERVER_HINT": "LibreHardwareMonitor v0.9.5 ou plus récent : activez Options → Remote Web Server (port {port}) - NetSpeedTray y lit les capteurs. La v0.9.4 fonctionne aussi sans. Laissez l'authentification désactivée et l'écoute sur toutes les interfaces.",
     "SHOW_HARDWARE_POWER_LABEL": "Afficher la puissance CPU/GPU (Watts)",
     "HARDWARE_IN_HOVER_CARD_LABEL": "Afficher le matériel uniquement au survol du widget",
     "HARDWARE_IN_HOVER_CARD_DESCRIPTION": "Le widget de la barre des tâches n'affiche que la vitesse réseau. Le CPU, le GPU et la mémoire apparaissent dans la carte au survol.",
