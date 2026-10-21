@@ -82,6 +82,15 @@ def test_toggle_layout_gpu_view_with_only_cpu_recorded(renderer):
 
 
 @pytest.mark.parametrize("stat", ["hwcombined", "hwseparate"])
+def test_cpu_monitored_but_not_recorded_points_to_the_record_switch(renderer, stat):
+    """RC M6: CPU on + Record off (GPU off) said "turn on CPU or GPU monitoring" - but CPU IS on, and
+    turning GPU on would record nothing either. The record switch is the reason."""
+    _render(renderer, stat, "TIMELINE_24_HOURS", history_off={"cpu": "record", "gpu": "monitor"})
+    texts = _texts(renderer.figure)
+    assert RECORD_OFF in texts and OFF not in texts
+
+
+@pytest.mark.parametrize("stat", ["hwcombined", "hwseparate"])
 def test_monitoring_on_or_session_view_still_says_collecting(renderer, stat):
     _render(renderer, stat, "TIMELINE_24_HOURS", history_off=RECORDING)
     assert COLLECTING in _texts(renderer.figure)

@@ -926,12 +926,14 @@ class GraphRenderer(QObject):
         reasons = [((hw_styles or {}).get("history_off") or {}).get(r) for r in roles]
         if period_key == "TIMELINE_SESSION" or not reasons or None in reasons:
             text = getattr(self.i18n, "COLLECTING_DATA_MESSAGE", "Collecting data…")
-        elif "monitor" in reasons:
-            text = getattr(self.i18n, "HARDWARE_HISTORY_OFF_MESSAGE",
-                           "Hardware history is off.\nTurn on CPU or GPU monitoring in Settings → Hardware.")
-        else:
+        elif "record" in reasons:
+            # A role IS monitored but not recorded: the record switch is the reason (M6). Turning on
+            # the other monitor - what the old "monitor"-first order said - would record nothing either.
             text = getattr(self.i18n, "HARDWARE_HISTORY_RECORD_OFF_MESSAGE",
                            "Hardware history is off.\nTurn on Record hardware history in Settings → Advanced.")
+        else:
+            text = getattr(self.i18n, "HARDWARE_HISTORY_OFF_MESSAGE",
+                           "Hardware history is off.\nTurn on CPU or GPU monitoring in Settings → Hardware.")
         ax.text(0.5, 0.5, self._lbl(text), transform=ax.transAxes, ha="center", va="center",
                 multialignment="center", color=self._current_text_color, alpha=0.55, fontsize=10)
 
