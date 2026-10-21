@@ -526,5 +526,11 @@
     "METRICS_STATUS_RUNNING": "Listening. Includes your network adapter names.",
     "METRICS_STATUS_IN_USE": "Port {port} is already in use by another app. Choose another port.",
     "METRICS_STATUS_DENIED": "Windows reserves port {port}. Choose another port.",
-    "METRICS_STATUS_ERROR": "Couldn't start on port {port}. Choose another port."
+    "METRICS_STATUS_ERROR": "Couldn't start on port {port}. Choose another port.",
+    "POWER_HOVER_CARD_LABEL": "Show battery power when hovering the widget",
+    "POWER_SECTION_TITLE": "Battery",
+    "POWER_NOW_LABEL": "Now",
+    "POWER_TODAY_AVG_LABEL": "Today avg",
+    "POWER_ON_AC_VALUE": "On AC",
+    "POWER_CHARGE_PCT_TEMPLATE": "{pct}% battery"
 }

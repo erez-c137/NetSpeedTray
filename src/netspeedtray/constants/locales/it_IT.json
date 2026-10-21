@@ -526,5 +526,11 @@
     "METRICS_STATUS_RUNNING": "In ascolto. Include i nomi delle tue schede di rete.",
     "METRICS_STATUS_IN_USE": "La porta {port} è già usata da un'altra app. Scegli un'altra porta.",
     "METRICS_STATUS_DENIED": "Windows riserva la porta {port}. Scegli un'altra porta.",
-    "METRICS_STATUS_ERROR": "Impossibile avviare sulla porta {port}. Scegli un'altra porta."
+    "METRICS_STATUS_ERROR": "Impossibile avviare sulla porta {port}. Scegli un'altra porta.",
+    "POWER_HOVER_CARD_LABEL": "Mostra il consumo della batteria passando sul widget",
+    "POWER_SECTION_TITLE": "Batteria",
+    "POWER_NOW_LABEL": "Ora",
+    "POWER_TODAY_AVG_LABEL": "Media di oggi",
+    "POWER_ON_AC_VALUE": "Alla corrente",
+    "POWER_CHARGE_PCT_TEMPLATE": "{pct}% batteria"
 }

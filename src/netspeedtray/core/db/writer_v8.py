@@ -145,6 +145,8 @@ def _unit_for(name: str) -> str:
         return "celsius"
     if name.endswith("_power"):
         return "watt"
+    if name == "battery_drain":   # the hover card's "Today avg" source, in watts (#323)
+        return "watt"
     if name in _COUNT_METRICS:
         return "count"
     if name == LINK_SPEED_METRIC:

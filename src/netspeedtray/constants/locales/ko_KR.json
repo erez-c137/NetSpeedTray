@@ -526,5 +526,11 @@
     "METRICS_STATUS_RUNNING": "수신 대기 중입니다. 네트워크 어댑터 이름이 포함됩니다.",
     "METRICS_STATUS_IN_USE": "포트 {port}을(를) 다른 앱이 이미 사용 중입니다. 다른 포트를 선택하세요.",
     "METRICS_STATUS_DENIED": "Windows에서 포트 {port}을(를) 예약해 두었습니다. 다른 포트를 선택하세요.",
-    "METRICS_STATUS_ERROR": "포트 {port}에서 시작할 수 없습니다. 다른 포트를 선택하세요."
+    "METRICS_STATUS_ERROR": "포트 {port}에서 시작할 수 없습니다. 다른 포트를 선택하세요.",
+    "POWER_HOVER_CARD_LABEL": "위젯에 마우스를 올리면 배터리 전력 표시",
+    "POWER_SECTION_TITLE": "배터리",
+    "POWER_NOW_LABEL": "현재",
+    "POWER_TODAY_AVG_LABEL": "오늘 평균",
+    "POWER_ON_AC_VALUE": "AC 전원",
+    "POWER_CHARGE_PCT_TEMPLATE": "배터리 {pct}%"
 }

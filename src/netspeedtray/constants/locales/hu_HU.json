@@ -526,5 +526,11 @@
     "METRICS_STATUS_RUNNING": "Kapcsolódásra vár. A metrikák tartalmazzák a hálózati adapterek nevét is.",
     "METRICS_STATUS_IN_USE": "A(z) {port} portot már egy másik alkalmazás használja. Válassz másik portot!",
     "METRICS_STATUS_DENIED": "A Windows számára fenntartott {port} port nem használható. Válassz másik portot!",
-    "METRICS_STATUS_ERROR": "A metrikavégpont nem indítható a(z) {port} porton. Válassz másik portot!"
+    "METRICS_STATUS_ERROR": "A metrikavégpont nem indítható a(z) {port} porton. Válassz másik portot!",
+    "POWER_HOVER_CARD_LABEL": "Akkumulátor-fogyasztás megjelenítése a widget fölé mutatva",
+    "POWER_SECTION_TITLE": "Akkumulátor",
+    "POWER_NOW_LABEL": "Most",
+    "POWER_TODAY_AVG_LABEL": "Mai átlag",
+    "POWER_ON_AC_VALUE": "Hálózaton",
+    "POWER_CHARGE_PCT_TEMPLATE": "{pct}% akku"
 }

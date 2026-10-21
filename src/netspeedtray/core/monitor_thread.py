@@ -217,6 +217,8 @@ class StatsMonitorThread(QThread):
         # WMI root\wmi. None=untried, False=unavailable, object=connected. Cached on a slow sub-cadence.
         self._wmi_battery: Any = None
         self._battery_cache: tuple = (0.0, None)         # (monotonic_ts, watts_or_None)
+        self._battery_retry_at: float = 0.0              # after a transient WMI error
+        self._battery_ac_line: Optional[int] = None      # last ACLineStatus (a change drops the cache)
         self._battery_cadence_sec: float = 8.0
 
         self.logger.info("StatsMonitorThread initialized with interval %.2fs", self.interval)
@@ -663,29 +665,105 @@ class StatsMonitorThread(QThread):
             except Exception:
                 pass
         # 2. Battery discharge (laptops on battery) - cached on a slow sub-cadence (WMI is heavy).
-        return self._poll_battery_power()
+        # system_power must stay a non-negative draw ("watts consumed"): the poll returns a
+        # SIGNED value (negative while charging), so a charge flow yields None here.
+        watts = self._poll_battery_power()
+        return watts if watts is not None and watts > 0 else None
 
     def _poll_battery_power(self) -> Optional[float]:
+        """The battery flow in watts, SIGNED: discharge positive, charge negative; None when idle
+        or unreadable. Summed over every pack (dual-battery laptops). Cached on a slow cadence
+        (WMI is heavy), except that a change in the AC line - one cheap syscall - drops the
+        cache, so unplugging flips the reading on the next poll instead of up to 8 s later."""
+        from netspeedtray.utils import power_utils
+        p = constants.hardware.power
         now = time.monotonic()
+        ac_line = power_utils.ac_line_status()
+        ac_changed = ac_line != self._battery_ac_line
+        self._battery_ac_line = ac_line
         last_ts, last_val = self._battery_cache
-        if (now - last_ts) < self._battery_cadence_sec:
+        if not ac_changed and (now - last_ts) < self._battery_cadence_sec:
             return last_val
+        if self._wmi_battery is False or now < self._battery_retry_at:
+            self._battery_cache = (now, None)
+            return None
         watts = None
         try:
             if self._wmi_battery is None:
                 import wmi  # already a dependency (LHM temps)
                 self._wmi_battery = wmi.WMI(namespace="root\\wmi")
-            if self._wmi_battery:
-                for b in self._wmi_battery.BatteryStatus():
-                    # DischargeRate (mW) is non-zero only while actually discharging on battery.
-                    rate = getattr(b, "DischargeRate", 0) or 0
-                    if getattr(b, "Discharging", False) and rate > 0:
-                        watts = float(rate) / 1000.0
-                        break
-        except Exception:
-            self._wmi_battery = False   # no battery / WMI class - stop retrying
+            discharge_mw = charge_mw = 0
+            for b in self._wmi_battery.BatteryStatus():
+                # DischargeRate / ChargeRate are mW and non-zero only while that flow is real.
+                # IMPLAUSIBLE_MW (constants/hardware.py) drops only the firmware garbage some
+                # packs emit around an AC transition; real readings stay admissible.
+                rate = getattr(b, "DischargeRate", 0) or 0
+                if getattr(b, "Discharging", False) and 0 < rate < p.IMPLAUSIBLE_MW:
+                    discharge_mw += rate
+                c_rate = getattr(b, "ChargeRate", 0) or 0
+                if getattr(b, "Charging", False) and 0 < c_rate < p.IMPLAUSIBLE_MW:
+                    charge_mw += c_rate
+            # While charging, the charge rate is reported SIGNED NEGATIVE (the hover card renders
+            # "+38.2 W"). system_power stays a non-negative draw - the clamp in _poll_system_power
+            # and the battery_power split in _collect_power_stats keep the sign out of history.
+            if discharge_mw:
+                watts = float(discharge_mw) / 1000.0
+            elif charge_mw:
+                watts = -float(charge_mw) / 1000.0
+        except (AttributeError, ImportError):
+            self._wmi_battery = False   # no wmi module / no BatteryStatus class: permanent, stop
+        except Exception as e:
+            # Transient (RPC unavailable right after resume, a WMI service restart): drop the
+            # handle and try again after a backoff - never give up on the battery until restart.
+            self.logger.debug("battery WMI poll failed, retrying in %.0f s: %s",
+                              p.BATTERY_WMI_RETRY_SEC, e)
+            self._wmi_battery = None
+            self._battery_retry_at = now + p.BATTERY_WMI_RETRY_SEC
         self._battery_cache = (now, watts)
         return watts
+
+    def _collect_power_stats(self, stats: Dict[str, Any], force_hw: bool) -> None:
+        """Whole-system / battery power for one poll, into ``stats``.
+
+        When the power tiles are on (or the Monitor forces collection): a true whole-system
+        reading (RAPL PSYS, else the battery DischargeRate) goes to ``system_power`` - distinct
+        from the CPU+GPU sum; emitted only when a real source is found. When only the hover's
+        power display is on, battery-only polling is enough - skip RAPL, whose PDH handles
+        exist for the Monitor's power tiles, not for a hover glance. The signed battery poll
+        (negative while charging) still rides along on AC so the hover's charge rate (+X W)
+        keeps working with the power tiles on too (#323 review 3): ``_poll_system_power`` is
+        discharge-only (a charge flow yields None), and the poll is cached on a slow cadence,
+        so the follow-up call is nearly free.
+
+        A machine with no battery skips the hover's WMI polls entirely (one cheap
+        GetSystemPowerStatus call says so): the section can never show there.
+        """
+        hover_battery = bool(self.config.get('power_display_enabled', False))
+        if hover_battery:
+            from netspeedtray.utils import power_utils
+            hover_battery = power_utils.has_battery()
+            if hover_battery:
+                # Warm the projection's capacity cache HERE, on the monitor thread: the hover
+                # card only reads the cache and must never run WMI on the GUI thread. A no-op
+                # once a value is cached; a failure is retried after a backoff.
+                power_utils.read_design_capacity_mwh()
+        if self.config.get('show_hardware_power', False) or force_hw:
+            sysp = self._poll_system_power()
+            if sysp is not None:
+                stats['system_power'] = sysp
+            if hover_battery:
+                bp = self._poll_battery_power()
+                if bp is not None and bp < 0:
+                    stats['battery_power'] = bp
+        elif hover_battery:
+            # Discharge lands in system_power (stat history + Monitor tile); the signed
+            # charge value rides battery_power.
+            sysp = self._poll_battery_power()
+            if sysp is not None:
+                if sysp < 0:
+                    stats['battery_power'] = sysp
+                else:
+                    stats['system_power'] = sysp
 
     def _poll_cpu_power(self) -> Optional[float]:
         """
@@ -1098,12 +1176,8 @@ class StatsMonitorThread(QThread):
                     except Exception as gpu_err:
                         self.logger.warning("GPU polling error (skipped, not counted against circuit breaker): %s", gpu_err)
 
-                # Whole-system power, when the platform actually exposes it (RAPL PSYS / battery
-                # discharge) - distinct from the CPU+GPU sum; emitted only when a real source is found.
-                if self.config.get('show_hardware_power', False) or _force_hw:
-                    sysp = self._poll_system_power()
-                    if sysp is not None:
-                        stats['system_power'] = sysp
+                # Whole-system / battery power (see _collect_power_stats).
+                self._collect_power_stats(stats, _force_hw)
 
                 if stats:
                     self.stats_ready.emit(stats)

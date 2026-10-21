@@ -526,5 +526,11 @@
     "METRICS_STATUS_RUNNING": "Dinleniyor. Ağ bağdaştırıcılarınızın adlarını içerir.",
     "METRICS_STATUS_IN_USE": "{port} numaralı bağlantı noktası başka bir uygulama tarafından kullanılıyor. Başka bir bağlantı noktası seçin.",
     "METRICS_STATUS_DENIED": "Windows {port} numaralı bağlantı noktasını ayırmış. Başka bir bağlantı noktası seçin.",
-    "METRICS_STATUS_ERROR": "{port} numaralı bağlantı noktasında başlatılamadı. Başka bir bağlantı noktası seçin."
+    "METRICS_STATUS_ERROR": "{port} numaralı bağlantı noktasında başlatılamadı. Başka bir bağlantı noktası seçin.",
+    "POWER_HOVER_CARD_LABEL": "Widget'ın üzerine gelindiğinde pil tüketimini göster",
+    "POWER_SECTION_TITLE": "Pil",
+    "POWER_NOW_LABEL": "Şimdi",
+    "POWER_TODAY_AVG_LABEL": "Bugün ort.",
+    "POWER_ON_AC_VALUE": "Şebeke gücünde",
+    "POWER_CHARGE_PCT_TEMPLATE": "Pil %{pct}"
 }

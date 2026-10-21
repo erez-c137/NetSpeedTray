@@ -71,6 +71,7 @@ def mock_i18n():
     # Click actions (PR #165) - General page reads these via getattr-with-default, so they're optional;
     # set them so the rendered combos carry readable labels.
     i18n.INTERACTION_GROUP_TITLE = "Interaction"
+    i18n.POWER_HOVER_CARD_LABEL = "Power Hover Card"
     i18n.DOUBLE_CLICK_ACTION_LABEL = "Double-click action"
     i18n.MIDDLE_CLICK_ACTION_LABEL = "Middle-click action"
     i18n.CLICK_ACTION_OPEN_MONITOR_LABEL = "Open Monitor"

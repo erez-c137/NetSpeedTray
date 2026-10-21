@@ -526,5 +526,11 @@
     "METRICS_STATUS_RUNNING": "Работает. Включает названия ваших сетевых адаптеров.",
     "METRICS_STATUS_IN_USE": "Порт {port} уже занят другим приложением. Выберите другой порт.",
     "METRICS_STATUS_DENIED": "Windows резервирует порт {port}. Выберите другой порт.",
-    "METRICS_STATUS_ERROR": "Не удалось запустить на порту {port}. Выберите другой порт."
+    "METRICS_STATUS_ERROR": "Не удалось запустить на порту {port}. Выберите другой порт.",
+    "POWER_HOVER_CARD_LABEL": "Показывать расход батареи при наведении на виджет",
+    "POWER_SECTION_TITLE": "Батарея",
+    "POWER_NOW_LABEL": "Сейчас",
+    "POWER_TODAY_AVG_LABEL": "Среднее за день",
+    "POWER_ON_AC_VALUE": "От сети",
+    "POWER_CHARGE_PCT_TEMPLATE": "{pct}% заряда"
 }

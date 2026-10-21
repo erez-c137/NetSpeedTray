@@ -526,5 +526,11 @@
     "METRICS_STATUS_RUNNING": "מאזין. כולל את שמות מתאמי הרשת שלך.",
     "METRICS_STATUS_IN_USE": "פורט {port} כבר נמצא בשימוש של אפליקציה אחרת. בחר פורט אחר.",
     "METRICS_STATUS_DENIED": "Windows שומרת את פורט {port}. בחר פורט אחר.",
-    "METRICS_STATUS_ERROR": "לא ניתן להפעיל בפורט {port}. בחר פורט אחר."
+    "METRICS_STATUS_ERROR": "לא ניתן להפעיל בפורט {port}. בחר פורט אחר.",
+    "POWER_HOVER_CARD_LABEL": "הצג צריכת סוללה בעת ריחוף מעל היישומון",
+    "POWER_SECTION_TITLE": "סוללה",
+    "POWER_NOW_LABEL": "כעת",
+    "POWER_TODAY_AVG_LABEL": "ממוצע היום",
+    "POWER_ON_AC_VALUE": "בחשמל",
+    "POWER_CHARGE_PCT_TEMPLATE": "{pct}% סוללה"
 }

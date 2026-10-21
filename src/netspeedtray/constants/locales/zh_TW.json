@@ -526,5 +526,11 @@
     "METRICS_STATUS_RUNNING": "正在接聽。包含您的網路介面卡名稱。",
     "METRICS_STATUS_IN_USE": "連接埠 {port} 已被其他應用程式使用。請選擇其他連接埠。",
     "METRICS_STATUS_DENIED": "連接埠 {port} 已被 Windows 保留。請選擇其他連接埠。",
-    "METRICS_STATUS_ERROR": "無法在連接埠 {port} 上啟動。請選擇其他連接埠。"
+    "METRICS_STATUS_ERROR": "無法在連接埠 {port} 上啟動。請選擇其他連接埠。",
+    "POWER_HOVER_CARD_LABEL": "滑鼠移到小工具上時顯示電池功耗",
+    "POWER_SECTION_TITLE": "電池",
+    "POWER_NOW_LABEL": "目前",
+    "POWER_TODAY_AVG_LABEL": "今日平均",
+    "POWER_ON_AC_VALUE": "交流電源",
+    "POWER_CHARGE_PCT_TEMPLATE": "電量 {pct}%"
 }

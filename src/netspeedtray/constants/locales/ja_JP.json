@@ -526,5 +526,11 @@
     "METRICS_STATUS_RUNNING": "待ち受け中です。ネットワーク アダプター名が含まれます。",
     "METRICS_STATUS_IN_USE": "ポート {port} は別のアプリが使用中です。別のポートを選んでください。",
     "METRICS_STATUS_DENIED": "ポート {port} は Windows によって予約されています。別のポートを選んでください。",
-    "METRICS_STATUS_ERROR": "ポート {port} で開始できませんでした。別のポートを選んでください。"
+    "METRICS_STATUS_ERROR": "ポート {port} で開始できませんでした。別のポートを選んでください。",
+    "POWER_HOVER_CARD_LABEL": "ウィジェットにカーソルを合わせるとバッテリーの消費電力を表示",
+    "POWER_SECTION_TITLE": "バッテリー",
+    "POWER_NOW_LABEL": "現在",
+    "POWER_TODAY_AVG_LABEL": "今日の平均",
+    "POWER_ON_AC_VALUE": "AC電源",
+    "POWER_CHARGE_PCT_TEMPLATE": "{pct}% バッテリー"
 }

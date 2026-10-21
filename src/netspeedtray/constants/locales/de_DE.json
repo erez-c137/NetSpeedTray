@@ -526,5 +526,11 @@
     "METRICS_STATUS_RUNNING": "Aktiv. Enthält die Namen deiner Netzwerkadapter.",
     "METRICS_STATUS_IN_USE": "Port {port} wird bereits von einer anderen App verwendet. Wähle einen anderen Port.",
     "METRICS_STATUS_DENIED": "Windows reserviert Port {port}. Wähle einen anderen Port.",
-    "METRICS_STATUS_ERROR": "Start auf Port {port} nicht möglich. Wähle einen anderen Port."
+    "METRICS_STATUS_ERROR": "Start auf Port {port} nicht möglich. Wähle einen anderen Port.",
+    "POWER_HOVER_CARD_LABEL": "Akkuverbrauch beim Überfahren des Widgets anzeigen",
+    "POWER_SECTION_TITLE": "Akku",
+    "POWER_NOW_LABEL": "Aktuell",
+    "POWER_TODAY_AVG_LABEL": "Heute ø",
+    "POWER_ON_AC_VALUE": "Am Netz",
+    "POWER_CHARGE_PCT_TEMPLATE": "{pct} % Akku"
 }

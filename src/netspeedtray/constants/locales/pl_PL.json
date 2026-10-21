@@ -526,5 +526,11 @@
     "METRICS_STATUS_RUNNING": "Nasłuchuje. Zawiera nazwy kart sieciowych.",
     "METRICS_STATUS_IN_USE": "Port {port} jest już używany przez inną aplikację. Wybierz inny port.",
     "METRICS_STATUS_DENIED": "Windows rezerwuje port {port}. Wybierz inny port.",
-    "METRICS_STATUS_ERROR": "Nie można uruchomić na porcie {port}. Wybierz inny port."
+    "METRICS_STATUS_ERROR": "Nie można uruchomić na porcie {port}. Wybierz inny port.",
+    "POWER_HOVER_CARD_LABEL": "Pokaż zużycie baterii po najechaniu na widżet",
+    "POWER_SECTION_TITLE": "Bateria",
+    "POWER_NOW_LABEL": "Teraz",
+    "POWER_TODAY_AVG_LABEL": "Śr. dzisiaj",
+    "POWER_ON_AC_VALUE": "Na zasilaczu",
+    "POWER_CHARGE_PCT_TEMPLATE": "{pct}% baterii"
 }

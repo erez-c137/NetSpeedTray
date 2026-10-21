@@ -526,5 +526,11 @@
     "METRICS_STATUS_RUNNING": "Actief. Bevat de namen van je netwerkadapters.",
     "METRICS_STATUS_IN_USE": "Poort {port} wordt al door een andere app gebruikt. Kies een andere poort.",
     "METRICS_STATUS_DENIED": "Poort {port} is gereserveerd door Windows. Kies een andere poort.",
-    "METRICS_STATUS_ERROR": "Starten op poort {port} is niet gelukt. Kies een andere poort."
+    "METRICS_STATUS_ERROR": "Starten op poort {port} is niet gelukt. Kies een andere poort.",
+    "POWER_HOVER_CARD_LABEL": "Batterijverbruik tonen bij hoveren over de widget",
+    "POWER_SECTION_TITLE": "Batterij",
+    "POWER_NOW_LABEL": "Nu",
+    "POWER_TODAY_AVG_LABEL": "Vandaag gem.",
+    "POWER_ON_AC_VALUE": "Op netspanning",
+    "POWER_CHARGE_PCT_TEMPLATE": "{pct}% batterij"
 }

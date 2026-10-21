@@ -526,5 +526,11 @@
     "METRICS_STATUS_RUNNING": "Escuchando. Incluye los nombres de tus adaptadores de red.",
     "METRICS_STATUS_IN_USE": "Otra aplicación ya está usando el puerto {port}. Elige otro puerto.",
     "METRICS_STATUS_DENIED": "Windows reserva el puerto {port}. Elige otro puerto.",
-    "METRICS_STATUS_ERROR": "No se pudo iniciar en el puerto {port}. Elige otro puerto."
+    "METRICS_STATUS_ERROR": "No se pudo iniciar en el puerto {port}. Elige otro puerto.",
+    "POWER_HOVER_CARD_LABEL": "Mostrar el consumo de batería al pasar el cursor por el widget",
+    "POWER_SECTION_TITLE": "Batería",
+    "POWER_NOW_LABEL": "Ahora",
+    "POWER_TODAY_AVG_LABEL": "Media de hoy",
+    "POWER_ON_AC_VALUE": "En corriente",
+    "POWER_CHARGE_PCT_TEMPLATE": "{pct}% de batería"
 }

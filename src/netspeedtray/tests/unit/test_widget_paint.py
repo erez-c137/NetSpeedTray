@@ -127,3 +127,16 @@ def test_a_real_zero_still_paints_as_zero(q_app):
     b = _render_to_bytes(cfg, WidgetMetrics(gpu_usage=0.0), cycle_mode="gpu_only")
     assert a == b
     assert _solid_pixels(a) > 0
+
+
+def test_side_by_side_has_no_battery_segment(q_app):
+    """Battery power is the hover card's only (General > Interaction) - the taskbar never paints a
+    watts segment: the toggle's state must not change the pixels."""
+    base = dict(upload_mbps=12.4, download_mbps=88.6)
+    toggle_on = _render_to_bytes(_base_config(widget_display_mode="side_by_side",
+                                              power_display_enabled=True),
+                                 WidgetMetrics(**base))
+    toggle_off = _render_to_bytes(_base_config(widget_display_mode="side_by_side",
+                                               power_display_enabled=False),
+                                  WidgetMetrics(**base))
+    assert toggle_on == toggle_off, "the power toggle must not change taskbar pixels"
