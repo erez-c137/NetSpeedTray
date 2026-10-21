@@ -64,6 +64,32 @@ class GraphDataWorker(QObject):
         self._cache_ttl = 30.0  # seconds
 
 
+    @staticmethod
+    def _session_volume(samples) -> Tuple[float, float]:
+        """Bytes up/down for in-memory ``(ts, up_Bps, down_Bps)`` samples: each speed times the time it
+        covers (the gap since the previous sample). Summing the B/s values counted one second per
+        sample, so at a 2/5/10 s update rate a 600 MB session read 300/120/60 MB (M5). A gap far past
+        the typical interval (sleep, pause, stall) counts as one typical interval - the controller
+        re-primes after such a gap instead of measuring across it."""
+        if not samples:
+            return 0.0, 0.0
+        from statistics import median
+        from netspeedtray import constants
+        net = constants.network.speed
+        gaps = [b[0] - a[0] for a, b in zip(samples, samples[1:]) if b[0] > a[0]]
+        typical = median(gaps) if gaps else 1.0
+        cap = max(float(net.RATE_VALIDITY_MIN_SECONDS), float(net.RATE_VALIDITY_POLL_MULTIPLE) * typical)
+        up = down = 0.0
+        prev = None
+        for ts, u, d in samples:
+            dt = typical if prev is None else ts - prev
+            if dt <= 0 or dt > cap:
+                dt = typical
+            up += float(u) * dt
+            down += float(d) * dt
+            prev = ts
+        return up, down
+
     def _period_totals(self, request: DataRequest) -> Tuple[float, float, bool]:
         """(up_bytes, down_bytes, reconstructed) for the request's window from the database.
         ``reconstructed`` (decision D5) is True when any part was estimated from stored rates."""
@@ -206,22 +232,16 @@ class GraphDataWorker(QObject):
                 start_ts = request.start_time.timestamp() if request.start_time else 0
                 end_ts = request.end_time.timestamp()
 
-                total_up = 0.0
-                total_down = 0.0
                 processed_history = []
                 for d in aggregated_data:
                     ts = float(d.timestamp.timestamp())
                     # Filter for zoom if applicable
                     if ts < start_ts or ts > end_ts:
                         continue
+                    processed_history.append((ts, float(d.upload), float(d.download)))
 
-                    up = float(d.upload)
-                    down = float(d.download)
-                    processed_history.append((ts, up, down))
-                    total_up += up
-                    total_down += down
-                
                 history_data = processed_history
+                total_up, total_down = self._session_volume(processed_history)
             else:
                 # For all other timelines, get data from the database.
                 history_data = self.widget_state.get_speed_history(

@@ -103,6 +103,35 @@ def test_overview_uptime_window_starts_at_boot(monkeypatch):
     assert end == now
 
 
+# --- M5: Session totals are speed x time, not a sum of B/s samples -----------------------------------
+
+@pytest.mark.parametrize("rate", [1.0, 2.0, 5.0, 10.0])
+def test_session_totals_do_not_depend_on_the_update_rate(q_app, rate):
+    from types import SimpleNamespace
+    from netspeedtray.views.graph.request import DataRequest
+    from netspeedtray.views.graph.worker import GraphDataWorker
+    start = datetime.now() - timedelta(minutes=10)
+    samples = [SimpleNamespace(timestamp=start + timedelta(seconds=i * rate), upload=100_000.0,
+                               download=1_000_000.0) for i in range(int(600 / rate))]
+    ws = MagicMock()
+    ws.get_aggregated_speed_history.return_value = samples
+    wk = GraphDataWorker(ws)
+    got = {}
+    wk.data_ready.connect(lambda d, up, dn, seq: got.update(up=up, dn=dn))
+    wk.process_data(DataRequest(start_time=start - timedelta(seconds=1), end_time=datetime.now(),
+                                interface_name=None, is_session_view=True, sequence_id=1,
+                                stat_type="network"))
+    assert got["dn"] == pytest.approx(600e6, rel=0.01)   # 1 MB/s for 10 minutes
+    assert got["up"] == pytest.approx(60e6, rel=0.01)
+
+
+def test_session_volume_does_not_count_a_sleep_gap():
+    from netspeedtray.views.graph.worker import GraphDataWorker
+    s = [(0.0, 0.0, 1000.0), (2.0, 0.0, 1000.0), (4.0, 0.0, 1000.0), (4004.0, 0.0, 1000.0)]
+    _, down = GraphDataWorker._session_volume(s)
+    assert down == pytest.approx(8000.0)   # four samples x 2 s typical, not 4000 s of 1000 B/s
+
+
 # --- M4: "All" then "Since boot" ---------------------------------------------------------------------
 
 def test_since_boot_after_all_uses_the_boot_time(monkeypatch):
