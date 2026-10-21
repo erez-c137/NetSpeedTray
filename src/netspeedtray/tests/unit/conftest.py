@@ -7,15 +7,8 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_SCALE_FACTOR", "1")  # pin DPI for render determinism
 
-# No test may write the maintainer's real %APPDATA%/NetSpeedTray (config, history, the update
-# records) or %LOCALAPPDATA%/NetSpeedTray. Redirected for the whole session BEFORE anything imports
-# helpers (get_app_data_path() caches its first answer): utils/styles.py once wrote its chevron PNG
-# cache there from every Settings test, and an unisolated apply_update test wrote a stray update
-# marker (#260 review). Per-test fixtures still narrow this further where a test needs to.
-import tempfile as _tempfile
-_SESSION_PROFILE = _tempfile.mkdtemp(prefix="nst-test-profile-")
-os.environ["APPDATA"] = os.path.join(_SESSION_PROFILE, "Roaming")
-os.environ["LOCALAPPDATA"] = os.path.join(_SESSION_PROFILE, "Local")
+# The real %APPDATA% / %LOCALAPPDATA% are redirected for the whole session in tests/conftest.py
+# (one level up, so it also runs before the integration tests import anything).
 
 import pytest
 from PyQt6.QtWidgets import QApplication
