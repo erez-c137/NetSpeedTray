@@ -25,6 +25,13 @@ class PowerConstants:
     DESIGN_CAPACITY_MIN_MWH: Final[int] = 10_000
     DESIGN_CAPACITY_MAX_MWH: Final[int] = 200_000
 
+    # How long a failed WMI battery read waits before trying again. A transient
+    # error (RPC unavailable right after resume) must not end battery readings
+    # until restart; a missing WMI class is permanent and is not retried at all.
+    BATTERY_WMI_RETRY_SEC: Final[float] = 180.0
+    # Same for the design-capacity read behind the runtime projection.
+    CAPACITY_RETRY_SEC: Final[float] = 600.0
+
     def __init__(self) -> None:
         self.validate()
 
@@ -33,6 +40,8 @@ class PowerConstants:
             raise ValueError("IMPLAUSIBLE_MW must be positive")
         if not (self.DESIGN_CAPACITY_MIN_MWH < self.DESIGN_CAPACITY_MAX_MWH):
             raise ValueError("design-capacity range must be increasing")
+        if self.BATTERY_WMI_RETRY_SEC <= 0 or self.CAPACITY_RETRY_SEC <= 0:
+            raise ValueError("battery retry backoffs must be positive")
 
 
 class HardwareConstants:

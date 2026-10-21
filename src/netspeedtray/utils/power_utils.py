@@ -1,16 +1,19 @@
 """Battery power helpers for the hover card.
 
-Two small concerns, both of which degrade to silence rather than raise:
+Three small concerns, all of which degrade to silence rather than raise:
 
 1. The battery's *state* (discharging / charging / on AC, and charge percent),
    read with one ``GetSystemPowerStatus`` syscall at hover time. WMI exposes
    neither reliably on every firmware - this IdeaPad-class hardware omits
    ``EstimatedChargeRemaining`` from ``root\\wmi BatteryStatus`` - while the
-   kernel API always has the number and costs microseconds.
+   kernel API always has the number and costs microseconds. The same call
+   carries Windows' own runtime estimate (``BatteryLifeTime``).
 
-2. The pack's design capacity (mWh), read once per process from
-   ``BatteryStaticData``. Needed only for the runtime projection; on machines
-   that hide the class, the projection row is simply omitted.
+2. The packs' design capacity (mWh), summed over every pack in
+   ``BatteryStaticData``. Only the fallback for the runtime projection. It is
+   a WMI query, so the monitor thread fetches it (``read_design_capacity_mwh``)
+   and the hover only reads the cache (``cached_design_capacity_mwh``) - never
+   WMI on the GUI thread.
 
 The *rate* (live watts) is NOT read here: StatsMonitorThread already polls the
 battery's ``DischargeRate`` for the whole-system power stat and stashes it on
@@ -23,8 +26,9 @@ from __future__ import annotations
 import ctypes
 import ctypes.wintypes
 import threading
+import time
 from collections import namedtuple
-from typing import Optional, Tuple
+from typing import Optional
 
 from netspeedtray.constants import hardware
 
@@ -36,15 +40,17 @@ except ImportError:  # pragma: no cover - exercised on non-Windows CI
 MODE_DISCHARGE = "discharge"
 MODE_CHARGE = "charge"
 MODE_AC = "ac"
-MODE_NONE = "none"
+MODE_UNKNOWN = "unknown"   # a battery is present, but the AC line state is unknown
+MODE_NONE = "none"         # no battery (or the state could not be read)
 
-# (mode, charge_pct). charge_pct is 0-100 or None when unknown (255 = "no battery").
+# (mode, charge_pct). charge_pct is 0-100 or None when unknown.
 PowerState = namedtuple("PowerState", "mode charge_pct")
 
 # SYSTEM_POWER_STATUS.BatteryFlag values (Win32).
 _FLAG_CHARGING = 0x08
 _FLAG_NO_BATTERY = 0x80
 _FLAG_UNKNOWN = 0xFF
+_LIFETIME_UNKNOWN = 0xFFFFFFFF
 
 
 class _SYSTEM_POWER_STATUS(ctypes.Structure):
@@ -83,23 +89,24 @@ def read_power_state() -> PowerState:
     # BatteryFlag (Win32 SYSTEM_POWER_STATUS): 1 high, 2 low, 4 critical, 8 charging,
     # 128 no system battery; 255 alone means "unknown status" and is not a bit set.
     # ACLineStatus: 0 offline, 1 online, 255 unknown. An IdeaPad charging at 72%
-    # reports flag 9 = high + charging. The charging bit outranks AC, and "no
-    # battery" is only honored when the percent ALSO reads unknown - a valid
-    # percent is proof of a battery.
+    # reports flag 9 = high + charging.
     flags = status.BatteryFlag
-    if flags == _FLAG_UNKNOWN:
-        flags = 0                       # no bits to read; fall back to the AC line
-    if flags & _FLAG_CHARGING:
+    flags_known = flags != _FLAG_UNKNOWN
+    if flags_known and flags & _FLAG_NO_BATTERY:
+        return PowerState(MODE_NONE, None)       # honored by itself, whatever the percent says
+    if flags_known and flags & _FLAG_CHARGING:
         return PowerState(MODE_CHARGE, charge_pct)
-    if charge_pct is None and (flags & _FLAG_NO_BATTERY or status.BatteryFlag == _FLAG_UNKNOWN):
+    # A known flag that is not "no battery" describes a battery; with the flag unknown, a
+    # valid percent is the proof.
+    present = flags_known or charge_pct is not None
+    if not present:
         return PowerState(MODE_NONE, None)
     if status.ACLineStatus == 1:
         return PowerState(MODE_AC, charge_pct)
     if status.ACLineStatus == 0:
-        # Offline with no no-battery flag: discharging, even when the percent
-        # itself reads "unknown" (255) on some firmware.
+        # Offline: discharging, even when the percent itself reads "unknown" on some firmware.
         return PowerState(MODE_DISCHARGE, charge_pct)
-    return PowerState(MODE_NONE, None)  # ACLineStatus unknown and not charging
+    return PowerState(MODE_UNKNOWN, charge_pct)  # AC line unknown, battery present
 
 
 def has_battery() -> bool:
@@ -110,47 +117,78 @@ def has_battery() -> bool:
     return read_power_state().mode != MODE_NONE
 
 
-# --- Design capacity (for the runtime projection) ----------------------------
+def ac_line_status() -> Optional[int]:
+    """The raw ACLineStatus (0 offline, 1 online, 255 unknown), or None if unreadable. Cheap
+    enough to ask every poll - the monitor thread uses a change in it to drop its cached
+    battery reading, so unplugging flips the card at once instead of up to 8 s later."""
+    status = _power_status_struct()
+    return None if status is None else int(status.ACLineStatus)
+
+
+def windows_runtime_hours() -> Optional[float]:
+    """Windows' own estimate of the runtime left (BatteryLifeTime), in hours - None on AC, when
+    the estimate is unknown (0xFFFFFFFF, e.g. the first seconds after unplugging), or zero."""
+    status = _power_status_struct()
+    if status is None or status.ACLineStatus != 0:
+        return None
+    secs = int(status.BatteryLifeTime)
+    if secs <= 0 or secs == _LIFETIME_UNKNOWN:
+        return None
+    return secs / 3600.0
+
+
+# --- Design capacity (the projection's fallback) ------------------------------
 
 _capacity_lock = threading.Lock()
-_design_mwh: Optional[int] = None  # None = untried; negative = known unavailable
-
-_UNAVAILABLE = -1
+_design_mwh: Optional[int] = None        # a good value, cached for the process
+_capacity_retry_at: float = 0.0          # monotonic time before which a failed read is not retried
 
 
 def read_design_capacity_mwh() -> Optional[int]:
-    """Design capacity in mWh from ``BatteryStaticData``, cached for the process.
+    """Total design capacity in mWh over every pack in ``BatteryStaticData``.
 
-    None when the class is missing or reports nothing - the projection row is
-    omitted rather than guessed.
+    Runs WMI - call it from the monitor thread, never the GUI thread (the hover reads
+    ``cached_design_capacity_mwh``). A good value is cached for the process; a failure or a
+    nonsense reading is retried after ``CAPACITY_RETRY_SEC``, so a WMI hiccup right after resume
+    does not cost the projection until restart. None when unavailable - the projection row is
+    then omitted rather than guessed.
     """
-    global _design_mwh
-    if _design_mwh is not None:
-        return None if _design_mwh == _UNAVAILABLE else _design_mwh
-    value = _UNAVAILABLE
-    try:
-        if wmi is not None:
-            root = wmi.WMI(namespace="root\\wmi")
-            for battery in root.query("SELECT DesignedCapacity FROM BatteryStaticData"):
-                capacity = int(getattr(battery, "DesignedCapacity", 0) or 0)
-                p = hardware.power
-                if p.DESIGN_CAPACITY_MIN_MWH <= capacity <= p.DESIGN_CAPACITY_MAX_MWH:
-                    value = capacity
-                    break
-    except Exception:
-        pass
+    global _design_mwh, _capacity_retry_at
+    p = hardware.power
     with _capacity_lock:
-        _design_mwh = value
-    return None if value == _UNAVAILABLE else value
+        if _design_mwh is not None:
+            return _design_mwh
+        if time.monotonic() < _capacity_retry_at:
+            return None
+        total = 0
+        try:
+            if wmi is not None:
+                root = wmi.WMI(namespace="root\\wmi")
+                for battery in root.query("SELECT DesignedCapacity FROM BatteryStaticData"):
+                    capacity = int(getattr(battery, "DesignedCapacity", 0) or 0)
+                    if p.DESIGN_CAPACITY_MIN_MWH <= capacity <= p.DESIGN_CAPACITY_MAX_MWH:
+                        total += capacity
+        except Exception:
+            total = 0
+        if total > 0:
+            _design_mwh = total
+            return total
+        _capacity_retry_at = time.monotonic() + p.CAPACITY_RETRY_SEC
+        return None
+
+
+def cached_design_capacity_mwh() -> Optional[int]:
+    """The capacity the monitor thread already read, or None - never queries WMI."""
+    return _design_mwh
 
 
 def projected_runtime_hours(live_watts: float, charge_pct: int,
                             design_mwh: Optional[int]) -> Optional[float]:
     """Hours of runtime left at the current draw, or None when uncomputable.
 
-    Uses design capacity as the pack-size estimate - the charged capacity isn't
-    exposed by any query a non-admin process can make, so the projection reads
-    a few percent optimistic on a worn pack. Good enough for a hover glance.
+    The fallback when Windows has no estimate of its own. Uses design capacity as the
+    pack-size estimate - the charged capacity isn't exposed by any query a non-admin process
+    can make, so the projection reads a few percent optimistic on a worn pack.
     """
     if live_watts is None or live_watts <= 0 or design_mwh is None:
         return None
