@@ -48,7 +48,9 @@ jobs:
           $src = "release-notes/$($env:GITHUB_REF_NAME).md"
           if (Test-Path $src) {
             $text = Get-Content -Raw -Encoding utf8 $src
-            $text = [regex]::Replace($text, '(?s)<!--.*?-->', '').Trim()
+            # Every '<!-- ... -->', and an UNCLOSED '<!--' through to the end: GitHub would hide the
+            # rest of the page, the plain-text update dialog would show the draft note verbatim.
+            $text = [regex]::Replace($text, '(?s)<!--.*?(-->|\z)', '').Trim()
             if (-not $text) { Write-Error "$src is empty once comments are removed"; exit 1 }
             $out = Join-Path $env:RUNNER_TEMP "release-body.md"
             Set-Content -Path $out -Value $text -Encoding utf8

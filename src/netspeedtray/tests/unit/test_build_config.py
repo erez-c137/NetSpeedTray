@@ -125,7 +125,7 @@ def test_release_publishes_tracked_notes_with_the_release():
     step = yml[yml.index("Resolve the release notes"):]
     step = step[:step.index("- name:")]
     assert 'release-notes/$($env:GITHUB_REF_NAME).md' in step
-    assert "<!--.*?-->" in step, "draft comments must be stripped (the update dialog is plain text)"
+    assert r"<!--.*?(-->|\z)" in step, "draft comments, closed or not, must be stripped"
     assert yml.index("Resolve the release notes") < yml.index("build.bat")
     create = yml[yml.index("- name: Create Release"):]
     assert "body_path: ${{ steps.notes.outputs.path }}" in create[:create.index("submit-to-winget")]
