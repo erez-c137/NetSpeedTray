@@ -3,7 +3,6 @@ General Settings Page.
 """
 from typing import Dict, Any, Callable, Optional
 
-from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWidgets import QWidget, QComboBox
 
 from netspeedtray import constants
@@ -85,13 +84,8 @@ class GeneralPage(QWidget):
         self.check_for_updates.toggled.connect(self.on_change)
         layout.addWidget(SettingCard(self.i18n.CHECK_FOR_UPDATES_LABEL, control=self.check_for_updates))
 
-        # Preferred Monitor (#72) - pin the widget to a specific display (default = primary).
-        self.preferred_monitor_combo = Win11ComboBox()
-        self.preferred_monitor_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-        self.preferred_monitor_combo.setMinimumWidth(220)
-        self._populate_monitor_combo()
-        self.preferred_monitor_combo.currentIndexChanged.connect(self.on_change)
-        layout.addWidget(SettingCard(self.i18n.PREFERRED_MONITOR_LABEL, control=self.preferred_monitor_combo))
+        # (Preferred Monitor moved to the Widget page's Behavior section, 2.2 IA pass: it decides which
+        # taskbar the widget docks to, and its dependent "Float on a display without a taskbar" is there.)
 
         # --- Interaction (community PR #165, @rami123) ---
         # What a double-click / middle-click on the taskbar widget does. Adapted to the 2.0 action
@@ -130,58 +124,6 @@ class GeneralPage(QWidget):
         for value, label in actions:
             combo.addItem(label, userData=value)
 
-    def _populate_monitor_combo(self) -> None:
-        """Fill the preferred-monitor dropdown with detected screens.
-
-        First entry is always "Primary (auto)" mapped to None. Subsequent
-        entries are real QScreens labeled with their resolution. We store
-        the screen's name() as userData so reselection survives reboots,
-        while showing a friendlier label.
-
-        Called on construction AND on every showEvent so users who plug in
-        a monitor after the app started still see it in the dropdown.
-        """
-        # Remember the current selection so we can preserve it across refresh.
-        previous_selection = self.preferred_monitor_combo.currentData() if self.preferred_monitor_combo.count() else None
-
-        # Temporarily disconnect to avoid firing on_change during the rebuild.
-        try:
-            self.preferred_monitor_combo.currentIndexChanged.disconnect(self.on_change)
-        except (TypeError, RuntimeError):
-            pass
-
-        self.preferred_monitor_combo.clear()
-        self.preferred_monitor_combo.addItem(self.i18n.PREFERRED_MONITOR_PRIMARY, userData=None)
-
-        app = QGuiApplication.instance()
-        if app is not None:
-            primary = app.primaryScreen()
-            for i, screen in enumerate(app.screens(), start=1):
-                geom = screen.geometry()
-                tag = " (primary)" if screen is primary else ""
-                label = f"Monitor {i}: {geom.width()}x{geom.height()}{tag}"
-                self.preferred_monitor_combo.addItem(label, userData=screen.name())
-
-        # Restore previous selection if it still exists; otherwise fall back to "Primary (auto)".
-        if previous_selection is not None:
-            idx = self.preferred_monitor_combo.findData(previous_selection)
-            if idx >= 0:
-                self.preferred_monitor_combo.setCurrentIndex(idx)
-
-        # Reconnect the change signal.
-        self.preferred_monitor_combo.currentIndexChanged.connect(self.on_change)
-
-    def showEvent(self, event):  # type: ignore[override]
-        """Refresh the monitor dropdown whenever the page becomes visible.
-
-        Catches the case where a user plugs/unplugs a monitor while the app
-        is running, then opens Settings - the dropdown should reflect the
-        current monitor topology, not the topology at app launch.
-        """
-        super().showEvent(event)
-        if hasattr(self, "preferred_monitor_combo"):
-            self._populate_monitor_combo()
-
     def load_settings(self, config: Dict[str, Any], is_startup_enabled: bool):
         # Language - None means auto-detect (the first combo row); a real code selects its own row.
         current_lang = config.get("language")
@@ -203,14 +145,7 @@ class GeneralPage(QWidget):
         self.start_with_windows.setChecked(is_startup_enabled)
         self.check_for_updates.setChecked(config.get("check_for_updates", True))
         # free_move / keep_visible_fullscreen / tray_offset_x are loaded by the Widget page now.
-
-        # Preferred monitor (#72) - match by stored screen name.
-        # If the saved monitor name doesn't match any detected screen (e.g.,
-        # monitor was disconnected since last save), the combo just stays at
-        # "Primary (auto)" and the runtime fallback in position_manager kicks in.
-        preferred_name = config.get("preferred_monitor")
-        idx = self.preferred_monitor_combo.findData(preferred_name)
-        self.preferred_monitor_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        # preferred_monitor is loaded by the Widget page now (2.2 IA pass).
 
         # Click actions (#165) - select the saved action, falling back to the first row.
         defaults = constants.config.defaults
@@ -233,10 +168,10 @@ class GeneralPage(QWidget):
             "update_rate": update_rate_value,
             "start_with_windows": self.start_with_windows.isChecked(),
             "check_for_updates": self.check_for_updates.isChecked(),
-            "preferred_monitor": self.preferred_monitor_combo.currentData(),
             "double_click_action": self.double_click_action.currentData(),
             "middle_click_action": self.middle_click_action.currentData(),
-            # free_move / keep_visible_fullscreen / tray_offset_x now live on the Widget page (2.0 IA).
+            # free_move / keep_visible_fullscreen / tray_offset_x (2.0 IA) and preferred_monitor
+            # (2.2 IA pass) now live on the Widget page.
         }
 
     def _on_update_rate_changed(self, value: int) -> None:
