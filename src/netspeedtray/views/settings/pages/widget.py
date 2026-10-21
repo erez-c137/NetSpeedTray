@@ -93,9 +93,13 @@ class WidgetPage(QWidget):
         # #188: float the widget on a preferred monitor that has no taskbar of its own.
         self.free_float = Win11Toggle(label_text="")
         self.free_float.toggled.connect(self.on_change)
-        layout.addWidget(SettingCard(
+        self._free_float_card = SettingCard(
             getattr(self.i18n, "FREE_FLOAT_LABEL", "Float on a display without a taskbar"),
-            control=self.free_float))
+            control=self.free_float)
+        layout.addWidget(self._free_float_card)
+        # Floating only ever applies to a chosen monitor (get_free_float_screen): with "Primary (auto)"
+        # the switch does nothing, so it greys out (S9) - see _on_monitor_changed.
+        self._sync_free_float_card()
 
         self.keep_visible_fullscreen = Win11Toggle(label_text="")
         self.keep_visible_fullscreen.toggled.connect(self.on_change)
@@ -131,7 +135,7 @@ class WidgetPage(QWidget):
 
         # Temporarily disconnect to avoid firing on_change during the rebuild.
         try:
-            self.preferred_monitor_combo.currentIndexChanged.disconnect(self.on_change)
+            self.preferred_monitor_combo.currentIndexChanged.disconnect(self._on_monitor_changed)
         except (TypeError, RuntimeError):
             pass
 
@@ -164,7 +168,17 @@ class WidgetPage(QWidget):
                 self.preferred_monitor_combo.setCurrentIndex(idx)
 
         # Reconnect the change signal.
-        self.preferred_monitor_combo.currentIndexChanged.connect(self.on_change)
+        self.preferred_monitor_combo.currentIndexChanged.connect(self._on_monitor_changed)
+        self._sync_free_float_card()
+
+    def _on_monitor_changed(self, _index: int = 0) -> None:
+        self._sync_free_float_card()
+        self.on_change()
+
+    def _sync_free_float_card(self) -> None:
+        if hasattr(self, "_free_float_card"):
+            MiniGraphSection._set_card_enabled(self._free_float_card,
+                                               self.preferred_monitor_combo.currentData() is not None)
 
     def showEvent(self, event):  # type: ignore[override]
         """Refresh the monitor dropdown whenever the page becomes visible.

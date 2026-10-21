@@ -256,8 +256,11 @@ class SettingsDialog(QDialog):
             _title_font.setPixelSize(24)
             _title_font.setWeight(QFont.Weight.DemiBold)
             self._page_title.setFont(_title_font)
+            # Size + weight in the stylesheet too: the dialog's QSS sets a body font-size on every QLabel,
+            # which beat setFont() and drew this H1 at 13 px (S9).
             self._page_title.setStyleSheet(
-                f"color: {style_utils.semantic_colors()['text_primary']}; background: transparent;")
+                f"color: {style_utils.semantic_colors()['text_primary']}; background: transparent;"
+                f" font-size: 24px; font-weight: 600;")
             self._page_title.setContentsMargins(0, 4, 0, 6)
             try:   # seed from the initially-selected sidebar row (set before this label existed)
                 self._page_title.setText(self.sidebar.item(max(0, self.sidebar.currentRow())).text())
@@ -462,6 +465,8 @@ class SettingsDialog(QDialog):
         self.appearance_page.layout_changed.connect(self._adjust_size_and_reposition)
         self.interfaces_page.layout_changed.connect(self._adjust_size_and_reposition)
         self.hardware_page.layout_changed.connect(self._adjust_size_and_reposition)
+        self.units_page.unit_type.currentIndexChanged.connect(
+            lambda _i: self.colors_page.set_unit_type(self.units_page.unit_type.currentData()))
         # Enabling a hardware monitor nudges the Widget page out of network-only (display-mode lives
         # there now), so the freshly-enabled stat is actually visible.
         try:

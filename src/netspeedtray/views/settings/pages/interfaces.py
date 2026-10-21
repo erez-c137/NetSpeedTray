@@ -150,7 +150,8 @@ class InterfacesPage(QWidget):
                         (self.i18n.INTERFACE_GROUP_VIRTUAL, groups.virtual))
             # A selected adapter that isn't present right now (VPN off, dongle out) keeps its row - and
             # its tick - under its own heading, so an untouched Save doesn't drop it (S7).
-            sections = sections + ((self.i18n.INTERFACE_GROUP_NOT_CONNECTED, missing),)
+            sections = sections + ((getattr(self.i18n, "INTERFACE_GROUP_NOT_CONNECTED",
+                                            "Not connected right now"), missing),)
             first = True
             for title, names in sections:
                 if not names:

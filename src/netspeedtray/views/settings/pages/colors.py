@@ -95,6 +95,13 @@ class ColorsPage(QWidget):
             threshold_spin.setSuffix(threshold_suffix)
             threshold_spin.setValue(threshold)
 
+    def set_unit_type(self, unit_type: str) -> None:
+        """The data-format unit changed in this session: relabel the thresholds (S9 - they kept the
+        unit the dialog opened with until the next open)."""
+        suffix = self._threshold_suffix({"unit_type": unit_type})
+        for key in ("high_speed", "low_speed"):
+            getattr(self, f"{key}_threshold").setSuffix(suffix)
+
     def _threshold_suffix(self, config: Dict[str, Any]) -> str:
         """The Mbps-position unit label for the active unit type (e.g. ' Mbps', ' MB/s', ' Mibps')."""
         unit_type = str(config.get("unit_type", constants.config.defaults.DEFAULT_UNIT_TYPE))

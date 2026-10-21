@@ -252,6 +252,52 @@ def test_monitor_names_are_translated(qtbot, lang):
     assert text.startswith(dlg.i18n.PREFERRED_MONITOR_ITEM.split("{")[0].strip() or text[:1])
 
 
+# --- S9: small Settings polish ------------------------------------------------------------------------
+
+def test_threshold_unit_follows_a_unit_change(qtbot):
+    dlg, _ = _make(qtbot, dict(DEFAULTS, unit_type="bits_decimal", color_coding=True))
+    before = dlg.colors_page.high_speed_threshold.suffix()
+    ut = dlg.units_page.unit_type
+    ut.setCurrentIndex(ut.findData("bytes_binary"))
+    after = dlg.colors_page.high_speed_threshold.suffix()
+    assert after != before
+    assert after == dlg.colors_page._threshold_suffix({"unit_type": "bytes_binary"})
+
+
+def test_page_title_is_drawn_at_24px(qtbot):
+    dlg, _ = _make(qtbot)
+    dlg.show()
+    dlg._page_title.ensurePolished()   # the dialog QSS is applied at polish - that's what shrank it
+    assert dlg._page_title.font().pixelSize() == 24
+
+
+def test_data_cap_accepts_decimals(qtbot):
+    dlg, _ = _make(qtbot, dict(DEFAULTS, data_cap_enabled=True, data_cap_gb=250.5))
+    assert dlg.get_settings()["data_cap_gb"] == 250.5
+
+
+def test_inert_controls_grey_out(qtbot):
+    dlg, _ = _make(qtbot, dict(DEFAULTS, graph_enabled=False, preferred_monitor=None))
+    mg = dlg.widget_page.mini_graph_section
+    assert not mg._duration_card.isEnabled() and not mg._opacity_card.isEnabled()
+    assert not mg._fixed_card.isEnabled()
+    mg.enable_graph.setChecked(True)
+    assert mg._duration_card.isEnabled() and mg._opacity_card.isEnabled() and mg._fixed_card.isEnabled()
+    assert not dlg.widget_page._free_float_card.isEnabled()   # Primary (auto): floating can't apply
+
+
+def test_no_dead_settings_doors_on_the_widget():
+    """open_hardware_settings had no caller (the tray row it served is gone); every door the widget
+    keeps must be reachable. open_data_usage_settings is the Monitor's 'Set a limit' link."""
+    import pathlib
+    from netspeedtray.views.widget.main import NetworkSpeedWidget
+    src = pathlib.Path(__file__).resolve().parents[2]
+    callers = lambda name: [p for p in src.rglob("*.py") if "tests" not in p.parts
+                            and p.name != "main.py" and name in p.read_text(encoding="utf-8")]
+    for name in [n for n in dir(NetworkSpeedWidget) if n.startswith("open_") and n.endswith("_settings")]:
+        assert callers(name), f"{name} has no caller"
+
+
 # --- S8: a half-typed hex never reaches the widget or the saved file ---------------------------------
 
 def test_half_typed_hex_keeps_the_last_valid_colour(qtbot):
