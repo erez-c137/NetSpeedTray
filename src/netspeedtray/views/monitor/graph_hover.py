@@ -93,7 +93,8 @@ class GraphHoverTooltip(QObject):
             if not rows or nearest_x is None:
                 self._hide()
                 return
-            self._label.setText(self._format(nearest_x, rows))
+            xmin, xmax = ax.get_xlim()
+            self._label.setText(self._format(nearest_x, rows, span_days=abs(xmax - xmin)))
             self._label.adjustSize()
             self._place(event)
             self._label.setVisible(True)
@@ -150,8 +151,23 @@ class GraphHoverTooltip(QObject):
         at = min(best.values(), key=lambda t: t[0])[3]                   # the reported peak's time
         return rows, at
 
-    def _format(self, x_num: float, rows: List[Tuple[str, float, str]]) -> str:
-        when = mdates.num2date(x_num).strftime("%H:%M:%S")
+    def _when(self, x_num: float, span_days: Optional[float]) -> str:
+        """The readout's timestamp. Past a day of visible range the time alone is ambiguous - Week /
+        Month / All showed "14:00:00" with no hint of which day - so the localized date leads (and the
+        year, past a year); seconds only where a sample is a second."""
+        from netspeedtray.views.graph.time_axis import localized_strftime
+        dt = mdates.num2date(x_num)
+        if not span_days or span_days < 1.0:
+            return dt.strftime("%H:%M:%S")
+        lang = getattr(self._host.i18n, "language", None)
+        date = localized_strftime(dt, "%b %d", lang, shape=False)
+        if span_days >= 365:
+            date = f"{date} {dt.year}"
+        return f"{date}  {dt.strftime('%H:%M')}"
+
+    def _format(self, x_num: float, rows: List[Tuple[str, float, str]],
+                span_days: Optional[float] = None) -> str:
+        when = self._when(x_num, span_days)
         is_net = self._host._current_stat == "network"
         parts = [f"<span style='color:{su.semantic_colors()['text_secondary']};'>{when}</span>"]
         for lbl, y, color in rows:
