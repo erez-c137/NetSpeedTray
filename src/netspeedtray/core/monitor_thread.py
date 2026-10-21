@@ -715,16 +715,23 @@ class StatsMonitorThread(QThread):
         keeps working with the power tiles on too (#323 review 3): ``_poll_system_power`` is
         discharge-only (a charge flow yields None), and the poll is cached on a slow cadence,
         so the follow-up call is nearly free.
+
+        A machine with no battery skips the hover's WMI polls entirely (one cheap
+        GetSystemPowerStatus call says so): the section can never show there.
         """
+        hover_battery = bool(self.config.get('power_display_enabled', False))
+        if hover_battery:
+            from netspeedtray.utils import power_utils
+            hover_battery = power_utils.has_battery()
         if self.config.get('show_hardware_power', False) or force_hw:
             sysp = self._poll_system_power()
             if sysp is not None:
                 stats['system_power'] = sysp
-            if self.config.get('power_display_enabled', False):
+            if hover_battery:
                 bp = self._poll_battery_power()
                 if bp is not None and bp < 0:
                     stats['battery_power'] = bp
-        elif self.config.get('power_display_enabled', False):
+        elif hover_battery:
             # Discharge lands in system_power (stat history + Monitor tile); the signed
             # charge value rides battery_power.
             sysp = self._poll_battery_power()

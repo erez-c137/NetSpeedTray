@@ -27,6 +27,14 @@ def _fake_wmi(monkeypatch, samples):
     monkeypatch.setitem(sys.modules, "wmi", fake)
 
 
+@pytest.fixture(autouse=True)
+def _a_laptop(monkeypatch):
+    """Deterministic on any machine: the split tests below model a laptop (the thread asks
+    has_battery() before its hover polls); the no-battery tests override it."""
+    from netspeedtray.utils import power_utils
+    monkeypatch.setattr(power_utils, "has_battery", lambda: True)
+
+
 def _thread():
     # Never started as a QThread: only the poll methods are under test.
     return StatsMonitorThread(interval=1.0, config={})
@@ -134,3 +142,41 @@ def test_battery_only_split_discharge_to_system_charge_to_battery(monkeypatch):
     t2._collect_power_stats(stats2, force_hw=False)
     assert stats2["battery_power"] == pytest.approx(-38.2)
     assert "system_power" not in stats2
+
+
+# --- no battery: the hover's switch costs nothing ------------------------------------
+
+def _no_battery(monkeypatch):
+    from netspeedtray.utils import power_utils
+    monkeypatch.setattr(power_utils, "has_battery", lambda: False)
+
+
+def _wmi_must_not_run(t, monkeypatch):
+    def _boom():
+        raise AssertionError("the WMI battery poll ran on a machine with no battery")
+    monkeypatch.setattr(t, "_poll_battery_power", _boom)
+
+
+def test_no_battery_skips_the_wmi_poll_hover_only(monkeypatch):
+    """A desktop with the battery switch on must not pay for a WMI BatteryStatus query every
+    8 s for a section that can never show (power tiles off)."""
+    _no_battery(monkeypatch)
+    t = _thread()
+    t.config = {"power_display_enabled": True}
+    _wmi_must_not_run(t, monkeypatch)
+    stats = {}
+    t._collect_power_stats(stats, force_hw=False)
+    assert stats == {}
+
+
+def test_no_battery_skips_the_extra_charge_poll_with_power_tiles_on(monkeypatch):
+    """With the power tiles on, the existing system_power path runs as before; only the
+    hover's extra signed poll is skipped."""
+    _no_battery(monkeypatch)
+    t = _thread()
+    t.config = {"show_hardware_power": True, "power_display_enabled": True}
+    monkeypatch.setattr(t, "_poll_system_power", lambda: 61.0)   # a desktop RAPL PSYS reading
+    _wmi_must_not_run(t, monkeypatch)
+    stats = {}
+    t._collect_power_stats(stats, force_hw=False)
+    assert stats == {"system_power": pytest.approx(61.0)}

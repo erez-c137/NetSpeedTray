@@ -41,13 +41,20 @@ MODE_NONE = "none"
 # (mode, charge_pct). charge_pct is 0-100 or None when unknown (255 = "no battery").
 PowerState = namedtuple("PowerState", "mode charge_pct")
 
+# SYSTEM_POWER_STATUS.BatteryFlag values (Win32).
+_FLAG_CHARGING = 0x08
+_FLAG_NO_BATTERY = 0x80
+_FLAG_UNKNOWN = 0xFF
+
 
 class _SYSTEM_POWER_STATUS(ctypes.Structure):
+    # Win32 declares these as BYTE (unsigned): a signed c_byte turns 128 "no system
+    # battery" into -128 and 255 "unknown" into -1, which then matched every bit test.
     _fields_ = [
-        ("ACLineStatus", ctypes.c_byte),
-        ("BatteryFlag", ctypes.c_byte),
-        ("BatteryLifePercent", ctypes.c_byte),
-        ("Reserved1", ctypes.c_byte),
+        ("ACLineStatus", ctypes.c_ubyte),
+        ("BatteryFlag", ctypes.c_ubyte),
+        ("BatteryLifePercent", ctypes.c_ubyte),
+        ("SystemStatusFlag", ctypes.c_ubyte),
         ("BatteryLifeTime", ctypes.wintypes.DWORD),
         ("BatteryFullLifeTime", ctypes.wintypes.DWORD),
     ]
@@ -73,16 +80,18 @@ def read_power_state() -> PowerState:
     percent = status.BatteryLifePercent
     charge_pct = percent if 0 <= percent <= 100 else None
 
-    # BatteryFlag bits: 1 low, 2 critical, 4 charging, 8 no battery (128 unknown).
-    # ACLineStatus: 0 offline, 1 online, 255 unknown. Every field here has been
-    # observed lying on real firmware (an IdeaPad reports flag=9 "low + no battery"
-    # while charging at 72%), so nothing is trusted unconditionally: the charging
-    # bit outranks AC, and "no battery" is only honored when the percent ALSO
-    # reads unknown - a valid percent is proof of a battery.
+    # BatteryFlag (Win32 SYSTEM_POWER_STATUS): 1 high, 2 low, 4 critical, 8 charging,
+    # 128 no system battery; 255 alone means "unknown status" and is not a bit set.
+    # ACLineStatus: 0 offline, 1 online, 255 unknown. An IdeaPad charging at 72%
+    # reports flag 9 = high + charging. The charging bit outranks AC, and "no
+    # battery" is only honored when the percent ALSO reads unknown - a valid
+    # percent is proof of a battery.
     flags = status.BatteryFlag
-    if flags & 0x4:
+    if flags == _FLAG_UNKNOWN:
+        flags = 0                       # no bits to read; fall back to the AC line
+    if flags & _FLAG_CHARGING:
         return PowerState(MODE_CHARGE, charge_pct)
-    if (flags & 0x8) and charge_pct is None:
+    if charge_pct is None and (flags & _FLAG_NO_BATTERY or status.BatteryFlag == _FLAG_UNKNOWN):
         return PowerState(MODE_NONE, None)
     if status.ACLineStatus == 1:
         return PowerState(MODE_AC, charge_pct)
@@ -91,6 +100,14 @@ def read_power_state() -> PowerState:
         # itself reads "unknown" (255) on some firmware.
         return PowerState(MODE_DISCHARGE, charge_pct)
     return PowerState(MODE_NONE, None)  # ACLineStatus unknown and not charging
+
+
+def has_battery() -> bool:
+    """Whether the machine reports a battery at all (one microsecond syscall).
+
+    The monitor thread asks before its WMI battery poll, so a desktop with the
+    hover's battery switch on never pays for a query that can only come back empty."""
+    return read_power_state().mode != MODE_NONE
 
 
 # --- Design capacity (for the runtime projection) ----------------------------
