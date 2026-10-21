@@ -1,13 +1,79 @@
-## Unreleased
+# Changelog
 
-**Battery power rows on the widget's hover card, opt-in.** Laptops can show a battery section -
-live draw in watts, today's average, projected runtime, and charge level - reusing the battery
-polling and stats history the app already collects. Off by default: Settings > General >
-"Show battery power when hovering the widget".
+What changed in each release of NetSpeedTray, newest first.
 
-**Firmware garbage no longer reaches the battery history.** Battery flow samples at or above
-500 W - above any real laptop draw and any real adapter's charge output - are dropped at the
-source before they can land in the stats history.
+Versions follow [semantic versioning](https://semver.org): a **patch** release
+(2.1.**3**) is mostly fixes, sometimes with a small opt-in addition; a **minor**
+release (2.**1**.0) adds features; a **major** one (**2**.0.0) changes how the app
+works. Every entry links the issue or PR behind it, so you can read the full story
+or the code.
+
+Downloads and signed installers: [Releases](https://github.com/erez-c137/NetSpeedTray/releases).
+
+<!--
+=============================================================================
+ HOW TO WRITE AN ENTRY  (read this before editing - human or AI)
+=============================================================================
+
+WHO READS THIS FILE
+  Users deciding whether to upgrade, people checking if their bug got fixed,
+  and developers looking for when a behavior changed. Write for the first two;
+  the link at the end of each line serves the third.
+
+THE RULE
+  One line per change. Lead with what the USER sees, not what the code does.
+  Aim for 20-30 words. If you need more, the detail belongs in the linked
+  issue or PR, not here.
+
+    GOOD  - **The app now starts in your Windows display language.** Auto-detect
+            never worked before, so most non-English users saw English. ([#234])
+    BAD   - **Auto-detect language fix.** Replaced `locale.getlocale(LC_CTYPE)`
+            with `GetUserDefaultUILanguage()` and added a zh_CHS/zh_CHT alias
+            table because the CRT returns "Korean_Korea" which matches no...
+
+  The bad example is true, useful, and belongs in the commit message. A user
+  reading it learns nothing about whether to upgrade.
+
+WHEN THE MECHANISM MATTERS
+  Some fixes are worth explaining to whoever maintains this next - a wrong
+  assumption that took a while to find, or a trap that could easily come back.
+  Add ONE indented italic line under the bullet, after a blank line:
+
+    - **The app now starts in your Windows display language.** Auto-detect
+      never worked, so most non-English users saw English. ([#234])
+
+      *Under the hood: `locale.getlocale()` returns the C-runtime name
+      ("Korean_Korea") on Windows, not "ko_KR", so every lookup missed. Now
+      reads `GetUserDefaultUILanguage()`.*
+
+  Use it sparingly - if every bullet has one, none of them stand out. Reserve
+  it for the ones where a future maintainer would otherwise repeat the mistake.
+  A user can skip the italic line; that is the point.
+
+SECTIONS - use only these, in this order, and omit any that are empty:
+    ### Added        new features
+    ### Changed      behavior that changed for existing users
+    ### Fixed        bugs
+    ### Removed      features taken away
+    ### Security     anything with a security impact
+    ### Localization translation work (project-specific; keep it, it earns its place)
+
+  Do NOT invent new section names or add emoji to them. Earlier entries in this
+  file do both - that is drift, not a pattern to copy.
+
+ALSO
+  - Start each release with ONE sentence saying what it is.
+  - Anything that changes behavior on upgrade goes in a "> **Upgrading:**"
+    callout right under that sentence, before the sections.
+  - Credit inline and compactly: ([#234], thanks [@user]).
+  - Link issues as ([#234]) using the reference-style links kept at the bottom
+    of each entry, so the prose stays readable.
+  - Never claim a fix you have not verified. If something is partially fixed,
+    say which part.
+=============================================================================
+-->
+
+---
 
 ## [2.2.0-beta.3] - October 21, 2026
 
