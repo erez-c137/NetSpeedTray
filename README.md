@@ -382,7 +382,6 @@ See [TRANSLATORS.md](TRANSLATORS.md) for how translation works and how to contri
   binaries for its series, so the shipped build moved off it.
 - [Git](https://git-scm.com/downloads/)
 - *(Optional)* [Inno Setup 6](https://jrsoftware.org/isinfo.php) for the Windows installer
-- *(Optional)* UPX - auto-downloaded by the build script into `build/tools/` if missing
 
 ### Steps
 
