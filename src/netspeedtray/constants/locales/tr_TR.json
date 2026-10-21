@@ -10,6 +10,7 @@
     "ERROR_WINDOW_TITLE": "Uygulama Hatası",
     "LANGUAGE_RESTART_TITLE": "Yeniden Başlatma Gerekli",
     "COLLECTING_DATA_MESSAGE": "Mevcut oturum için veri toplanıyor...",
+    "HARDWARE_HISTORY_OFF_MESSAGE": "Donanım geçmişi kapalı.\nAyarlar → Donanım bölümünden CPU veya GPU izlemeyi açın.",
     "SETTINGS_ERROR_MESSAGE": "Bir veya daha fazla ayar bulunamadı.",
     "EXPORT_SUCCESS_MESSAGE": "Başarıyla şuraya aktarıldı :\n{file_path}",
     "NO_HISTORY_DATA_MESSAGE": "Dışarıya aktarabilecek geçmiş verisi yok",

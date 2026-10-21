@@ -38,6 +38,9 @@ Other locales (English, German, Spanish) are currently maintained by the project
 
 > 🆕 **Pending native review for 2.2 (hover-card hardware):** `HARDWARE_IN_HOVER_CARD_LABEL` / `HARDWARE_IN_HOVER_CARD_DESCRIPTION` - the switch under Settings > Hardware > Appearance that keeps the taskbar widget to network speed and shows CPU/GPU/memory in the hover card instead - and `HOVER_CARD_DISPLAY_MODE_NOTE`, the note under Settings > Widget > Display Mode while that switch is on. Non-English values are AI-assisted and reuse each locale's existing "hover the widget" wording; feedback on #364.
 
+> 🆕 **Pending native review for 2.2 (beta.4 polish, see #364):** non-English values are AI-assisted.
+> - `HARDWARE_HISTORY_OFF_MESSAGE` - the note on an empty Monitor → Hardware graph when CPU and GPU monitoring are off (two lines; the page names match your `SETTINGS_WINDOW_TITLE` and `HARDWARE_MONITORING_GROUP`).
+
 ## How translation works in NetSpeedTray
 
 - Each locale lives in a single JSON file under [`src/netspeedtray/constants/locales/`](src/netspeedtray/constants/locales/)

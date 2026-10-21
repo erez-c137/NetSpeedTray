@@ -10,6 +10,7 @@
     "ERROR_WINDOW_TITLE": "Anwendungsfehler",
     "LANGUAGE_RESTART_TITLE": "Neustart erforderlich",
     "COLLECTING_DATA_MESSAGE": "Sammle Daten für die aktuelle Sitzung...",
+    "HARDWARE_HISTORY_OFF_MESSAGE": "Der Hardware-Verlauf ist aus.\nAktivieren Sie die CPU- oder GPU-Überwachung unter Einstellungen → Hardware.",
     "SETTINGS_ERROR_MESSAGE": "Fehler beim Übernehmen einer oder mehrerer Einstellungen.",
     "EXPORT_SUCCESS_MESSAGE": "Erfolgreich exportiert nach:\n{file_path}",
     "NO_HISTORY_DATA_MESSAGE": "Keine Verlaufsdaten zum Exportieren verfügbar.",

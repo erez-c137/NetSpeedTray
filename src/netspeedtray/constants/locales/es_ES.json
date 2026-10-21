@@ -10,6 +10,7 @@
     "ERROR_WINDOW_TITLE": "Error de la aplicación",
     "LANGUAGE_RESTART_TITLE": "Reinicio necesario",
     "COLLECTING_DATA_MESSAGE": "Recopilando datos de la sesión actual...",
+    "HARDWARE_HISTORY_OFF_MESSAGE": "El historial de hardware está desactivado.\nActiva la supervisión de CPU o GPU en Configuración → Hardware.",
     "SETTINGS_ERROR_MESSAGE": "No se pudieron aplicar uno o más ajustes.",
     "EXPORT_SUCCESS_MESSAGE": "Exportado correctamente en:\n{file_path}",
     "NO_HISTORY_DATA_MESSAGE": "No hay datos de historial disponibles para exportar.",

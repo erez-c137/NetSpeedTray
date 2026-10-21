@@ -10,6 +10,7 @@
     "ERROR_WINDOW_TITLE": "Błąd aplikacji",
     "LANGUAGE_RESTART_TITLE": "Wymagane ponowne uruchomienie",
     "COLLECTING_DATA_MESSAGE": "Zbieranie danych dla bieżącej sesji...",
+    "HARDWARE_HISTORY_OFF_MESSAGE": "Historia sprzętu jest wyłączona.\nWłącz monitorowanie CPU lub GPU w Ustawienia → Sprzęt.",
     "SETTINGS_ERROR_MESSAGE": "Nie udało się zastosować jednego lub więcej ustawień.",
     "EXPORT_SUCCESS_MESSAGE": "Pomyślnie wyeksportowano do:\n{file_path}",
     "NO_HISTORY_DATA_MESSAGE": "Brak danych historycznych do wyeksportowania.",

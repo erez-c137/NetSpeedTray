@@ -614,6 +614,8 @@ class GraphRenderer(QObject):
                     self._format_hwseparate_axes()
                 elif stat_type != "overview" and stat_type != "network":
                     self._format_hardware_axes(stat_type)
+            if stat_type in ("cpu", "gpu") and hw_styles is not None:   # the Monitor's toggle layout
+                self._draw_hw_empty_message(self.ax_download, period_key, hw_styles)
             self.canvas.draw_idle()
             return None
 
@@ -904,9 +906,7 @@ class GraphRenderer(QObject):
 
         if not handles:
             # No CPU/GPU history yet (the common fresh-session state) - say so, don't show a blank grid.
-            ax.text(0.5, 0.5, getattr(self.i18n, "COLLECTING_DATA_MESSAGE", "Collecting data…"),
-                    transform=ax.transAxes, ha="center", va="center",
-                    color=self._current_text_color, alpha=0.55, fontsize=10)
+            self._draw_hw_empty_message(ax, period_key, hw_styles)
         elif (hw_styles or {}).get("legend", True):
             # upper-RIGHT: the lines peg high (near 100%) under load, so the upper-left is the busy
             # zone; a near-opaque themed chip keeps the legend readable over pegged traces.
@@ -917,6 +917,18 @@ class GraphRenderer(QObject):
             frame.set_edgecolor(self._current_grid_color)
             for text in legend.get_texts():
                 text.set_color(self._current_text_color)
+
+    def _draw_hw_empty_message(self, ax, period_key, hw_styles=None) -> None:
+        """The centered note on an empty hardware graph. A fresh session is still collecting; but a
+        ranged view with CPU and GPU monitoring off will never fill (nothing is recorded), so it says
+        where to turn recording on instead of "Collecting data" forever."""
+        if (hw_styles or {}).get("history_off") and period_key != "TIMELINE_SESSION":
+            text = getattr(self.i18n, "HARDWARE_HISTORY_OFF_MESSAGE",
+                           "Hardware history is off.\nTurn on CPU or GPU monitoring in Settings → Hardware.")
+        else:
+            text = getattr(self.i18n, "COLLECTING_DATA_MESSAGE", "Collecting data…")
+        ax.text(0.5, 0.5, text, transform=ax.transAxes, ha="center", va="center", multialignment="center",
+                color=self._current_text_color, alpha=0.55, fontsize=10)
 
     def _configure_hardware_axes(self, start_time, end_time, period_key, timestamps, values):
         """Sets limits and formatters for hardware stats."""
@@ -1015,9 +1027,7 @@ class GraphRenderer(QObject):
             all_ts.append(ts)
 
         if not any_data:
-            self.ax_cpu.text(0.5, 0.5, getattr(self.i18n, "COLLECTING_DATA_MESSAGE", "Collecting data…"),
-                             transform=self.ax_cpu.transAxes, ha="center", va="center",
-                             color=self._current_text_color, alpha=0.55, fontsize=10)
+            self._draw_hw_empty_message(self.ax_cpu, period_key, hw_styles)
             return
         merged = np.concatenate(all_ts)
         xs, xe = self._hw_xlim(period_key, start_time, end_time, merged.min(), merged.max())

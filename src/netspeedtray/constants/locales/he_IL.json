@@ -10,6 +10,7 @@
     "ERROR_WINDOW_TITLE": "שגיאת יישום",
     "LANGUAGE_RESTART_TITLE": "נדרשת הפעלה מחדש",
     "COLLECTING_DATA_MESSAGE": "אוסף נתונים עבור ההפעלה הנוכחית...",
+    "HARDWARE_HISTORY_OFF_MESSAGE": "היסטוריית החומרה כבויה.\nהפעילו ניטור CPU או GPU בהגדרות ← חומרה.",
     "SETTINGS_ERROR_MESSAGE": "החלת הגדרה אחת או יותר נכשלה.",
     "EXPORT_SUCCESS_MESSAGE": "יוצא בהצלחה אל:\n{file_path}",
     "NO_HISTORY_DATA_MESSAGE": "אין נתוני היסטוריה זמינים לייצוא.",

@@ -10,6 +10,7 @@
     "ERROR_WINDOW_TITLE": "Erreur de l'Application",
     "LANGUAGE_RESTART_TITLE": "Redémarrage Requis",
     "COLLECTING_DATA_MESSAGE": "Collecte des données pour la session en cours...",
+    "HARDWARE_HISTORY_OFF_MESSAGE": "L'historique matériel est désactivé.\nActivez la surveillance du CPU ou du GPU dans Paramètres → Matériel.",
     "SETTINGS_ERROR_MESSAGE": "Échec de l'application d'un ou plusieurs paramètres.",
     "EXPORT_SUCCESS_MESSAGE": "Exportation réussie vers :\n{file_path}",
     "NO_HISTORY_DATA_MESSAGE": "Aucune donnée d'historique disponible pour l'exportation.",

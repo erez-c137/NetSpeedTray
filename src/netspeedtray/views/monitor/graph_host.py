@@ -359,7 +359,11 @@ class GraphHost(QObject):
                 "ram": (ram_c, "-"),   # RAM% as a green solid line (matches the Overview RAM tile)
                 "legend": bool(self.config.get("monitor_graph_legend", True)),
                 "smoothing": bool(self.config.get("monitor_graph_smoothing", False)),
-                "fixed_axis": bool(self.config.get("monitor_graph_fixed_axis", True))}
+                "fixed_axis": bool(self.config.get("monitor_graph_fixed_axis", True)),
+                # Hardware history is only recorded for the CPU/GPU stats the user monitors (2.2 item C),
+                # both off by default - so an empty ranged view will never fill, and says so.
+                "history_off": not (self.config.get("monitor_cpu_enabled", False)
+                                    or self.config.get("monitor_gpu_enabled", False))}
 
     def _time_range(self):
         from netspeedtray.views.graph.logic import GraphLogic
