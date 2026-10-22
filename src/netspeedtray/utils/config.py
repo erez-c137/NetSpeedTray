@@ -309,6 +309,9 @@ class ConfigManager:
         self.config_path = Path(config_path or self.BASE_DIR / constants.config.defaults.CONFIG_FILENAME)
         self.logger = logging.getLogger("NetSpeedTray.Config")
         self._last_config: Optional[Dict[str, Any]] = None
+        # Set once persisting a load-time migration has failed (read-only/locked file): later
+        # loads in this session do not retry it, so the failure is logged once, not every load.
+        self._migration_persist_failed = False
 
 
     def _migrate_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
@@ -764,7 +767,11 @@ class ConfigManager:
                 corrupt_path = self.config_path.with_name(f"{self.config_path.name}.corrupt")
                 os.replace(self.config_path, corrupt_path)
             except Exception:
-                self.logger.exception("Failed to back up corrupt config file.")
+                # The file is still where it was: writing defaults now would destroy the only
+                # copy of the user's settings. Run on defaults in memory and leave it alone.
+                self.logger.exception("Failed to back up corrupt config file; "
+                                      "using defaults without overwriting it.")
+                return self._defaults_in_memory()
             return self.reset_to_defaults()
         except PermissionError as e:
             # The file exists but its ACL denies us read (#307/#308: a config left writable only
@@ -777,7 +784,9 @@ class ConfigManager:
                 os.replace(self.config_path,
                            self.config_path.with_name(f"{self.config_path.name}.unreadable"))
             except OSError:
-                self.logger.exception("Failed to move the unreadable config file aside.")
+                self.logger.exception("Failed to move the unreadable config file aside; "
+                                      "using defaults without overwriting it.")
+                return self._defaults_in_memory()
             return self.reset_to_defaults()
         except OSError as e:
             msg = f"OS error reading config file {self.config_path}: {e}"
@@ -792,7 +801,40 @@ class ConfigManager:
         migrated_config = self._migrate_config(config)
         validated_config = self._validate_config(migrated_config)
         self._last_config = validated_config.copy()
+        self._persist_migration(config, migrated_config, validated_config)
         return validated_config
+
+    def _persist_migration(self, original: Dict[str, Any], migrated: Dict[str, Any],
+                           validated: Dict[str, Any]) -> None:
+        """
+        Write a load-time migration back to disk, once.
+
+        Without this the file kept its old schema until the user happened to change a setting
+        (save() skips an unchanged config), so the migration - and its log lines - re-ran on every
+        launch. Runs AFTER _backup_config_if_version_differs, so the pristine `.bak.v<old>` copy
+        already exists. Only a migration that ended on THIS build's schema version is persisted:
+        a newer (rollback) or unparseable version is left exactly as its writer left it. Never
+        raises - a read-only or locked file is logged once and the app runs on the in-memory
+        config.
+        """
+        if migrated == original or self._migration_persist_failed:
+            return
+        if migrated.get("config_version") != constants.config.defaults.CONFIG_SCHEMA_VERSION:
+            return
+        try:
+            self._write_atomic(validated)
+            self.logger.info("Saved the migrated configuration (schema %s) to %s.",
+                             constants.config.defaults.CONFIG_SCHEMA_VERSION, self.config_path.name)
+        except ConfigError as e:
+            self._migration_persist_failed = True
+            self.logger.warning("Could not save the migrated configuration (%s); running on the "
+                                "migrated settings in memory.", e)
+
+    def _defaults_in_memory(self) -> Dict[str, Any]:
+        """Factory defaults for this session WITHOUT writing them over the file on disk."""
+        defaults = constants.config.defaults.DEFAULT_CONFIG.copy()
+        self._last_config = defaults.copy()
+        return defaults
 
 
     def save(self, config: Dict[str, Any]) -> None:
@@ -814,6 +856,13 @@ class ConfigManager:
             self.logger.debug("Skipping save, configuration is unchanged.")
             return
 
+        self._write_atomic(validated_config)
+
+    def _write_atomic(self, validated_config: Dict[str, Any]) -> None:
+        """Write an already-validated config via temp file + os.replace. Raises ConfigError."""
+        known_keys = set(constants.config.defaults.VALIDATION_SCHEMA)
+        config_to_save = { key: value for key, value in validated_config.items()
+                           if value is not None or key not in known_keys }
         temp_path = None
         try:
             self.config_path.parent.mkdir(parents=True, exist_ok=True)

@@ -385,3 +385,126 @@ def test_unknown_null_key_survives_save(tmp_path):
     mgr.save(cfg)
     on_disk = json.loads(path.read_text(encoding="utf-8"))
     assert "future_null_key" in on_disk and on_disk["future_null_key"] is None
+
+
+# --- a load-time migration is persisted once (2.2.0-rc.1 checkup) --------------------------------
+
+import logging
+import os
+import stat
+
+
+def _v11_config():
+    """What a 2.1.x build left on disk: schema 1.1 with keys the 1.2 migration rewrites."""
+    return {
+        "config_version": "1.1",
+        "font_size": 10,
+        "taskbar_height": 48,                       # runtime-only state, dropped by 1.2
+        "hardware_label_style": "icons_monochrome",  # split into style + colour by 1.2
+        "update_rate": -1.0,                        # the old SMART sentinel -> 2.0 s
+    }
+
+
+def _config_records(caplog):
+    return [r for r in caplog.records if r.name == "NetSpeedTray.Config"]
+
+
+def _temp_leftovers(tmp_path):
+    return [p for p in tmp_path.iterdir() if p.name.startswith("tmp")]
+
+
+def test_migration_from_1_1_is_written_to_disk(tmp_path):
+    path = _write_config_file(tmp_path, _v11_config())
+    ConfigManager(path).load()
+
+    backup = path.with_name(f"{path.name}.bak.v1.1")
+    assert json.loads(backup.read_text(encoding="utf-8")) == _v11_config(), \
+        "the pristine pre-migration backup must hold the 1.1 file"
+
+    on_disk = json.loads(path.read_text(encoding="utf-8"))
+    assert on_disk["config_version"] == constants.config.defaults.CONFIG_SCHEMA_VERSION == "1.2"
+    assert "taskbar_height" not in on_disk
+    assert on_disk["hardware_label_style"] == "icons"
+    assert on_disk["hardware_label_color"] == "match_text"
+    assert on_disk["update_rate"] == 2.0
+    assert on_disk["font_size"] == 10
+    assert not _temp_leftovers(tmp_path), "temp file left behind"
+
+
+def test_second_load_after_migration_does_not_migrate_or_log(tmp_path, caplog):
+    path = _write_config_file(tmp_path, _v11_config())
+    first = ConfigManager(path).load()
+
+    caplog.clear()
+    mtime = path.stat().st_mtime_ns
+    with caplog.at_level(logging.INFO, logger="NetSpeedTray.Config"):
+        second = ConfigManager(path).load()
+
+    assert second == first
+    assert [r.getMessage() for r in _config_records(caplog) if r.levelno >= logging.INFO] == []
+    assert path.stat().st_mtime_ns == mtime, "an up-to-date config was rewritten on load"
+
+
+def test_up_to_date_config_is_not_rewritten_on_load(tmp_path):
+    path = _write_config_file(
+        tmp_path, {"config_version": constants.config.defaults.CONFIG_SCHEMA_VERSION, "font_size": 10})
+    before = path.read_bytes()
+    ConfigManager(path).load()
+    assert path.read_bytes() == before
+
+
+def test_newer_or_unparseable_version_is_not_rewritten_on_load(tmp_path):
+    """A rollback from a newer build, or a prerelease's unparseable version, stays as its writer
+    left it - even when a field-level migration touched the in-memory copy."""
+    for version in ("9.9", "2.0-beta"):
+        path = _write_config_file(tmp_path, {"config_version": version, "taskbar_height": 48})
+        before = path.read_bytes()
+        ConfigManager(path).load()
+        assert path.read_bytes() == before, version
+
+
+def test_corrupt_config_is_moved_aside_not_overwritten(tmp_path):
+    path = tmp_path / "NetSpeedTray_Config.json"
+    path.write_text('{"config_version": "1.1", "font_size": 1', encoding="utf-8")   # truncated
+    broken = path.read_bytes()
+    cfg = ConfigManager(path).load()
+    assert cfg == constants.config.defaults.DEFAULT_CONFIG
+    assert path.with_name(f"{path.name}.corrupt").read_bytes() == broken
+
+
+def test_corrupt_config_that_cannot_be_moved_is_left_untouched(tmp_path):
+    """If the corrupt file cannot be moved aside, writing defaults over it would destroy the only
+    copy of the user's settings."""
+    path = tmp_path / "NetSpeedTray_Config.json"
+    path.write_text('{"font_size": 1', encoding="utf-8")
+    broken = path.read_bytes()
+    real_replace = os.replace
+
+    def replace_but_not_aside(src, dst):            # only the move-aside fails; saves still work
+        if str(dst).endswith(".corrupt"):
+            raise OSError("locked")
+        return real_replace(src, dst)
+
+    with patch("netspeedtray.utils.config.os.replace", side_effect=replace_but_not_aside):
+        cfg = ConfigManager(path).load()
+    assert cfg == constants.config.defaults.DEFAULT_CONFIG
+    assert path.read_bytes() == broken
+
+
+def test_read_only_config_migration_fails_once_and_does_not_loop(tmp_path, caplog):
+    path = _write_config_file(tmp_path, _v11_config())
+    os.chmod(path, stat.S_IREAD)
+    try:
+        manager = ConfigManager(path)
+        with caplog.at_level(logging.INFO, logger="NetSpeedTray.Config"):
+            cfg = manager.load()                    # must not raise
+            assert cfg["config_version"] == "1.2"   # runs on the migrated settings in memory
+            manager.load()                          # a reload in the same session: no retry
+            manager.save(dict(cfg))                 # unchanged: the no-op shortcut, no write
+        failures = [r for r in _config_records(caplog)
+                    if "Could not save the migrated configuration" in r.getMessage()]
+        assert len(failures) == 1
+        assert json.loads(path.read_text(encoding="utf-8")) == _v11_config()
+        assert not _temp_leftovers(tmp_path), "temp file left behind"
+    finally:
+        os.chmod(path, stat.S_IREAD | stat.S_IWRITE)
