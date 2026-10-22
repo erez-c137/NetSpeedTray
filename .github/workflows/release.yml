@@ -36,16 +36,17 @@ jobs:
 
       # The release body. The release goes public (and, for a final, Latest - what every installed
       # copy's update dialog shows) the moment "Create Release" runs, so notes applied by hand
-      # afterwards leave a window with an empty body. A tracked release-notes/<tag>.md is published
-      # WITH the release instead (see release-notes/README.md). HTML comments (draft notes to self)
-      # are stripped: the update dialog shows the body as plain text. No file = the old behaviour,
-      # an empty body to fill with `gh release edit --notes-file` - resolved here, before the build,
-      # so a missing file is visible on the Summary page while there is still time to add it.
+      # afterwards leave a window with an empty body. A tracked .github/release-notes/<tag>.md is
+      # published WITH the release instead (see .github/release-notes/README.md). HTML comments
+      # (draft notes to self) are stripped: the update dialog shows the body as plain text. No file =
+      # the old behaviour, an empty body to fill with `gh release edit --notes-file` - resolved here,
+      # before the build, so a missing file is visible on the Summary page while there is still time
+      # to add it.
       - name: Resolve the release notes
         id: notes
         shell: pwsh
         run: |
-          $src = "release-notes/$($env:GITHUB_REF_NAME).md"
+          $src = ".github/release-notes/$($env:GITHUB_REF_NAME).md"
           if (Test-Path $src) {
             $text = Get-Content -Raw -Encoding utf8 $src
             # Every '<!-- ... -->', and an UNCLOSED '<!--' through to the end: GitHub would hide the
@@ -206,7 +207,7 @@ jobs:
             signed-installer/**/*
             signed-portable/**/*
             checksums.txt
-          # Empty when there is no release-notes/<tag>.md: the body is then left empty, as before.
+          # Empty without a .github/release-notes/<tag>.md: the body is then left empty, as before.
           body_path: ${{ steps.notes.outputs.path }}
           # A tag with a '-' is a prerelease (v2.2.0-beta.1). Without these two flags the
           # action defaults prerelease to false and the API defaults make_latest to true,

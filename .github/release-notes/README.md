@@ -1,8 +1,8 @@
 # Release notes
 
-`release.yml` publishes the GitHub release body from **`release-notes/<tag>.md`** - for example
-`release-notes/v2.2.0.md` or `release-notes/v2.2.0-rc.1.md` - when that file exists in the tagged
-commit.
+`release.yml` publishes the GitHub release body from **`.github/release-notes/<tag>.md`** - for
+example `.github/release-notes/v2.2.0.md` or `.github/release-notes/v2.2.0-rc.1.md` - when that file
+exists in the tagged commit.
 
 Why: the release is public the moment CI creates it, and a final one is immediately *Latest* - the
 release every installed copy's update dialog reads. Notes applied by hand afterwards left a window
@@ -11,7 +11,7 @@ in which users were offered an update with an empty description.
 How to use it:
 
 1. Write the notes (brief, user-facing - the changelog carries the technical detail).
-2. Commit them as `release-notes/v<version>.md` in the release PR, so the tag contains them.
+2. Commit them as `.github/release-notes/v<version>.md` in the release PR, so the tag contains them.
 3. Tag as usual. The run's *Resolve the release notes* step says which file it used.
 
 Notes:

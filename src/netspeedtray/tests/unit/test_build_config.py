@@ -129,12 +129,12 @@ def test_release_publishes_tracked_notes_with_the_release():
     yml = _read(".github", "workflows", "release.yml")
     step = yml[yml.index("Resolve the release notes"):]
     step = step[:step.index("- name:")]
-    assert 'release-notes/$($env:GITHUB_REF_NAME).md' in step
+    assert '.github/release-notes/$($env:GITHUB_REF_NAME).md' in step
     assert r"<!--.*?(-->|\z)" in step, "draft comments, closed or not, must be stripped"
     assert yml.index("Resolve the release notes") < yml.index("build.bat")
     create = yml[yml.index("- name: Create Release"):]
     assert "body_path: ${{ steps.notes.outputs.path }}" in create[:create.index("submit-to-winget")]
-    assert (ROOT / "release-notes" / "README.md").is_file()
+    assert (ROOT / ".github" / "release-notes" / "README.md").is_file()
 
 
 def test_setup_checks_the_session_users_own_instance_mutex():
