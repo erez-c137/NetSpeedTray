@@ -75,6 +75,373 @@ ALSO
 
 ---
 
+## [2.2.0-rc.1] - October 22, 2026
+
+*A release candidate, for testers. It's a manual download from the release page - the in-app
+updater, WinGet and the Store never offer prereleases.*
+
+The release candidate: unless something comes up, this becomes 2.2.0. It carries the fixes from a
+release-wide checkup, a hover card that can hold your hardware stats and your battery, support for
+current LibreHardwareMonitor, and the root-cause fix for Smart App Control blocking a bundled file.
+
+> **Upgrading:** from any 2.2 beta, just install over it - the running app closes itself and comes
+> back. From 2.1.x, everything in the beta.1-beta.3 notes applies (the Trend mini graph has been the
+> default since beta.3).
+>
+> - **CPU-only, GPU-only, Combined and Auto-Cycle with RAM/VRAM labels on** start at their full
+>   width from the first second. The memory value used to be clipped until the first hardware
+>   reading arrived (2.1.7 too), so the widget can look wider right after a restart than it did -
+>   it's the width it always grew to.
+> - **Reset all resets hidden settings again**, including adapter exclusions and the Monitor's graph
+>   options, as 2.1.7 did. Onboarding, window positions and app state are kept.
+> - **CSV export:** the time-series file has a new `aggregation` column and holds only stored rows,
+>   without zero padding at the window edges. A script that reads columns by position needs a look.
+> - **The Monitor's Overview:** if you had picked Session, it shows 24 h once after this upgrade.
+>   Pick Session again and it sticks.
+> - **History pruning waits about 7 days after this upgrade.** The new clock guard only trusts a
+>   clock it has seen run continuously, so every pre-rc.1 or freshly migrated history file waits ~7
+>   days before its first prune. Roll-ups run as usual; the file just doesn't shrink for a week.
+> - **One copy per Windows user.** A second user signed in on the same PC can now run their own
+>   NetSpeedTray; the same user still gets one copy, across sessions too.
+> - **Portable updates are staged in `%LOCALAPPDATA%\NetSpeedTray\updates`**, not Downloads.
+> - **Metrics endpoint:** `gpu_memory_used_bytes` / `gpu_memory_total_bytes` now carry a
+>   `kind="dedicated"` or `kind="shared"` label, which changes the series for a scraper set up on a beta.
+
+### Added
+
+- **Show hardware only when hovering the widget.** Opt-in, in Settings → Hardware → Appearance.
+  With CPU or GPU monitoring on, the taskbar shows network speed and the mini graph only -
+  Side-by-Side goes from 322 to 83 px wide - and the hover card carries live CPU/GPU %,
+  temperatures, power and RAM/VRAM. Turn it off and your previous layout is back exactly. ([#399])
+
+  *Under the hood: one `effective_display_mode()` decides what the bar shows for sizing, painting,
+  the Settings preview, the Auto-Cycle timer and scroll; the saved Display Mode is never rewritten.
+  Hardware collection is still gated only by the monitoring switches - the widget just stops
+  repainting for hardware it no longer shows. Auto-Cycle stops rotating while the switch is on.*
+
+- **A battery section in the hover card, for laptops.** Opt-in, in Settings → General →
+  Interaction. It shows the live draw (green `+W` while charging, "On AC" when idle on power),
+  today's average, projected runtime and the charge level. A row without real data is left out,
+  and desktops never see the section. ([#323], thanks [@kamal63442])
+
+  *Under the hood: the persisted `system_power` stays a non-negative draw; the signed battery
+  reading splits at the poll - discharge to `system_power`, charge to a hover-only
+  `battery_power`. Mode and charge come from `GetSystemPowerStatus`, because WMI omits
+  `EstimatedChargeRemaining` on several firmwares, and signed watts outrank its flags (an IdeaPad
+  reported "no battery" while charging). Readings above `IMPLAUSIBLE_MW` (500 W) are dropped at the
+  poll, so AC-transition garbage never reaches the history.*
+
+- **Current LibreHardwareMonitor works.** LHM 0.9.5 and newer removed the WMI interface we read, so
+  CPU/GPU temperatures and power needed the old 0.9.4. NetSpeedTray now reads LHM's own web server:
+  turn on Options → Remote Web Server (port 8085) in LHM, and Settings → Hardware says so. LHM 0.9.4
+  and OpenHardwareMonitor still work. It also gives CPUs stuck on a flat ACPI reading ([#237]) a
+  real temperature. ([#276], thanks [@emgeka]; fixes [#187])
+
+  *Under the hood: `http.client` on a numeric loopback socket (no system proxy), one 0.5 s total
+  deadline across connect, headers and body (a trickling server held a poll for 13.9 s before), a
+  0.1 s connect so the no-LHM attempt every 30 s is cheap, a size cap, and only LHM's root JSON
+  shape counts as success. Sensors are picked by `SensorId`/`HardwareId`, so a motherboard "CPU
+  Socket" reading or an APU's iGPU isn't taken for the CPU or the discrete card. Failures back off
+  for 30 s. Source order is HTTP, then WMI, then ACPI.*
+
+- **A crash log.** A crash at sign-in used to leave no trace. `NetSpeedTray_Crash.log` in
+  `%APPDATA%\NetSpeedTray` (rotated) now catches it from the first line of startup, and the support
+  bundle includes it, scrubbed like the rest. ([#408])
+- **A pause cue.** A paused widget dims its values and shows a pause mark in the arrow column; the
+  mini graph freezes with the numbers. Same size, no overlap. ([#401], [#405])
+- **Ctrl+Tab, Ctrl+Shift+Tab and Ctrl+PgUp/PgDn switch Settings pages**, and the sidebar takes
+  keyboard focus. ([#409])
+- **Monitor graph tooltips show the date** on Week, Month and All. ([#409])
+- **"Open folder" on the support-bundle message**, with the zip selected in Explorer. ([#401])
+- **Click to pin the hover card.** A click keeps a hover-opened card open; it refreshes live,
+  follows the widget, and closes on a click on the card or the widget, another app coming to the
+  front, the menu, a drag, fullscreen, or a taskbar or theme change. The card itself never takes
+  focus or passes a click through to the app behind it. Double-click still opens the Monitor.
+  "Click to keep this open" shows on the first few cards. Every taskbar edge. ([#420])
+
+  *Under the hood: an unpinned card is click-through via the native `WS_EX_TRANSPARENT` style only,
+  set before its first show and cleared on pin - Qt's `WindowTransparentForInput` never delivers
+  mouse events again once set, which a real-window test now catches.*
+
+- **Reset Position** in the right-click menu, once you've moved the widget. It also resets the tray
+  offsets. ([#420])
+- **An integrated GPU's memory use shows as VRAM.** An Intel or AMD iGPU has no dedicated memory, so
+  VRAM read 0.0; it now shows the system RAM the iGPU is using, out of its shared budget. The hover
+  card and the Monitor label it "VRAM (shared)". A discrete GPU reads exactly as before. ([#421])
+
+  *Under the hood: whether a PC has dedicated video memory is a fixed per-adapter fact from DXGI
+  `DedicatedVideoMemory` (>= 512 MiB, or nvidia-smi present), matched to PDH by adapter LUID, so an
+  idle Arc or Radeon at startup stays dedicated. Intel reports only its BIOS stolen chunk there (128
+  MiB on a UHD 770). The Basic Render adapter is ignored, so a VM keeps VRAM hidden. AMD APUs whose
+  carve-out is 512 MiB or more keep today's readout of the carve-out.*
+
+
+### Changed
+
+- **The hover and Pause toggles moved to Settings → General → Interaction**: "Add Pause/Resume to
+  the right-click menu", "Show data usage when hovering the widget" and "Show right-click /
+  double-click tips", next to the click actions they go with. Same settings, same defaults;
+  Advanced's "Reset this page" no longer touches them. ([#400])
+- **The hover card's usage rows and the Overview usage tile agree with your data cap.** With a reset
+  day other than the 1st, the row reads "This Period" over your billing period. Today and This
+  Period count only the adapters the cap counts, so a VPN or WSL isn't counted twice; with a cap
+  set, the period row is the cap's own figure and Today never exceeds it. ([#401], [#407])
+- **The first-run hover hint describes the real right-click menu** and your own double-click action.
+  ([#401])
+- **The Monitor's empty states say why.** "No history recorded yet", "History starts …" or "No
+  traffic recorded in this period"; the Hardware tab says hardware history is off and points to
+  Settings → Hardware or Settings → Advanced, instead of "Collecting data…" forever. ([#401], [#409])
+- **CSV export marks what each row is.** The time-series file gains an `aggregation` column -
+  `sample`, `minute_max`/`hour_max` for network roll-ups, `minute_avg`/`hour_avg` for hardware - and
+  holds only stored rows for the window, without zero padding at the edges. ([#409])
+- **An unplugged monitor or adapter stays selected in Settings**, shown as "not connected", instead
+  of dropping out of your selection. ([#409])
+- **One instance per Windows user.** A second user on the same PC can run their own copy; the same
+  user can't run two, across sessions too. ([#408])
+
+  *Under the hood: the mutex is `Global\NetSpeedTray_Instance_<SID>`. Older builds use the legacy
+  name, so a same-user transition checks both (with a short race poll), and a failed WTS session
+  scan falls back to psutil. Setup checks the session user's own mutex when WMI is broken.*
+
+- **Long-range graphs build their day buckets faster** - a 400-day graph over ~620k stored rows went
+  from 1.26 s to 0.54 s, with identical points. ([#411])
+  *Under the hood: one localtime call per row; the local-midnight timestamp is computed once per day
+  in Python (23/25 h days, repeated and skipped midnights handled).*
+
+### Fixed
+
+- **The data-cap count keeps going after you change the reset day.** Moving the day later froze
+  "used this period" for up to a month, so alerts never fired and the metrics endpoint froze too.
+  A regression from beta.1 ([#348]). Toggling the day back restores the exact previous count.
+  ([#407])
+
+  *Under the hood: the period is re-keyed explicitly and seeded honestly - from recorded history
+  only where history counts exactly what the cap counts, never above the cap's own count in
+  automatic mode, and never zeroed by a failed read. The previous period's count is remembered
+  across restarts.*
+
+- **A wrong system clock no longer wrecks your history or the data-cap period.** One maintenance
+  pass with the clock far ahead rolled up and pruned all history (2.1.7 too); a clock far behind hid
+  everything older than a day. A clock that ran ahead froze the cap's period, and one that was
+  behind wiped it. ([#407])
+
+  *Under the hood: watermarks move and pruning runs only while the wall clock is continuous -
+  monotonic within a session (sleep and VM suspend allowed), or within -1 h/+14 d of the last
+  trusted stamp across restarts. A new clock is accepted after 6 h of agreeing passes, pruning then
+  waits 7 days, and a watermark is never lowered below rows already rolled up. A data-cap re-key
+  needs the history writer's trusted clock stamp as evidence.*
+
+- **Smart App Control should stop blocking `_wmi.pyd` on upgrade.** The build compressed the
+  bundled Python files with UPX, which strips the Python Software Foundation's signature and gives
+  each file a hash nobody else has, so SAC couldn't vouch for it. Nothing is compressed now. A clean
+  install with SAC on already worked; an upgrade with SAC on is still to be confirmed. ([#333],
+  thanks [@Keltian] for the CodeIntegrity events; [#408])
+
+  *Under the hood: CodeIntegrity 3033/3077 named `\Program Files\NetSpeedTray\_internal\_wmi.pyd`.
+  Without UPX, bundled .pyd/.dll files keep their vendor Authenticode signatures and well-known
+  hashes - PSF-signed files go from 7 to 24, none is packed - and a post-build check fails on any
+  UPX section. Portable zip +2.2 MB, installer -0.8 MB.*
+
+- **Portable updates clean up after themselves.** The unzipped update stayed in Downloads and the
+  previous version stayed beside the new one. The new version now removes both about 10 seconds
+  after it starts, retries anything still locked on later launches, and clears the `.old-` folder
+  2.1.x left behind. Your own files in the folder are never touched. ([#260], thanks [@kiro5678];
+  [#402])
+
+  *Under the hood: a folder is deleted only if it's exactly a NetSpeedTray portable layout (exe with
+  a PE header, `portable.marker`, `_internal` with a PyInstaller fingerprint) and holds no links;
+  directories are pinned by handle without following reparse points while they're emptied, and hard
+  links are refused. The swap and its `<install>.previous-<ts>` backup are recorded in
+  `update_backups.json`, which older builds never read. An update refuses to swap a folder holding
+  your own files and falls back to the guided copy - before, those files went with the old version.*
+
+- **A refused or rolled-back portable update tells you why** and relaunches the version you had,
+  instead of the app just vanishing. `desktop.ini` and `Thumbs.db` no longer block it. ([#408])
+- **The memory column is reserved from the start.** CPU-only, GPU-only, Combined and Auto-Cycle
+  with RAM/VRAM clipped the memory value at cold start (2.1.7 too). The reserve is sized from the
+  machine's total. ([#405])
+- **The hover card never covers its widget.** It tries each side for every taskbar edge, flips when
+  there's no room, and stays on its screen and off the taskbar. ([#405])
+- **Switching Windows between light and dark re-colors the widget right away** (2.1.7 too), and
+  Settings' live preview and Cancel use the live automatic color. ([#405])
+
+  *Under the hood: event-driven from `WM_SETTINGCHANGE` "ImmersiveColorSet", no polling. The hover
+  card is mouse-transparent, so a forced overlap can't start a hover flicker loop.*
+
+- **A scaled secondary monitor below the primary no longer reads its taskbar as a top bar.** The
+  edge is decided in physical pixels against its own monitor. ([#405])
+- **At sign-in, before Explorer's taskbar is ready, the widget assumes a bottom bar**, not a left
+  side one. ([#405])
+- **Small side taskbars:** "100%" becomes "100" when the percent can't fit 32 px, and the unit row
+  steps its font down from the widest unit of its family, so its size holds as traffic crosses
+  K/M/G. Fixes Russian binary units overflowing. ([#405])
+- **The hover card closes when you start dragging the widget.** ([#405])
+- **The speed no longer reads high, then low, every 30 seconds with temperatures on.** A stall
+  between reading the counters and showing them (a WMI query, an LHM connect) inflated one tick and
+  deflated the next - measured 0.63× / 1.35×. A failed usage or history write now loses that one
+  poll's bytes instead of counting them twice. ([#276])
+
+  *Under the hood: the rate divided by the GUI thread's handling gap; it now uses the monotonic
+  sampling span the odometer already used. Sample time and counters re-baseline together in one
+  `finally`, so an exception between them can't leave them out of step.*
+
+- **Reduce motion works.** On forces reduced motion; off follows Windows. ([#401])
+- **A hand-edited decimal in config.json no longer breaks Settings.** `graph_opacity: 66.0` stopped
+  a page from loading, and Save then reset about 25 settings, history retention from 365 to 31 days
+  among them. Values are coerced on load, each page loads on its own, and a page that failed to load
+  never writes its settings. ([#409])
+- **Settings:** Esc undoes live-preview changes like Cancel; reopening Settings keeps the selected
+  adapters; a typed hex text color counts as your choice, and a half-typed one keeps the last
+  complete color; Cancel after Reset all restores your settings; Reset all covers hidden settings
+  again (a beta regression); threshold units follow bits/bytes; the data cap accepts decimals;
+  controls gray out when they'd do nothing. ([#409])
+- **Monitor periods:** a period picked on the Overview reaches the Network and Hardware tabs,
+  "System uptime" really starts at boot, "Since boot" after "All" starts at boot, and a chosen
+  Session period is remembered. ([#409])
+- **Network Session totals are time-weighted.** 600 MB showed as 300, 120 or 60 MB at 2, 5 or 10 s
+  polling. ([#409])
+- **Hour and day buckets follow local time, correct across DST.** The repeated fall-back hour stays
+  two buckets. ([#409])
+- **The Monitor:** no graph-host leak on every open, no error on quitting with the stats sheet open,
+  and the Network header no longer overlaps at narrow widths in any language. Graph messages and the
+  boot marker are shaped right-to-left in Hebrew. ([#401], [#409])
+- **Installer:** silent installs (Intune, SCCM) no longer start the app as SYSTEM; the relaunch
+  skips session 0 and Setup run as a different account (over-the-shoulder admin); an upgrade stays
+  in your custom install folder, including one on a mapped drive under over-the-shoulder elevation.
+  A missing local folder falls back to the default with a note on the Finish page. ([#408], [#410])
+
+  *Under the hood: the mapped-drive check read `HKCU\Network`, which under over-the-shoulder
+  elevation is the administrator's hive. It now reads `HKU\<session user SID>\Network\<letter>` when
+  Setup runs as another account, and logs which hive it used. Accounts are compared as
+  DOMAIN\user.*
+
+- **Quitting never hangs** on nvidia-smi, DNS or the update check. ([#408])
+- **The metrics endpoint answers on `[::1]` too**, falls back to 127.0.0.1 only when IPv6 is denied,
+  and retries a busy port. ([#408])
+- **A rare crash when the Monitor window, a data-cap alert or the hover card was cleaned up off the
+  main thread.** They're now kept alive until Qt destroys them on the main thread. ([#408])
+- **The upgrade minute shows up right after a v7 → v8 migration**, instead of hiding for up to an
+  hour until the next roll-up. ([#407])
+- **The "All interfaces" average speed is no longer overstated when several adapters carry
+  traffic.** Hour and day buckets added each adapter's average rate, so the long-period average read
+  high (0.0809 instead of 0.0770 Mbps on real data); this was in 2.1.x too. Volume, the data cap and
+  the graphs were never affected. ([#413])
+
+  *Under the hood: a rollup bucket's rate is now its bytes over the longest adapter's measured
+  seconds, weighted by those seconds, in both history readers' summary and hourly profile. Bytes
+  are `avg × min(sample_count, bucket length)`, so a minute holding a whole Modern Standby gap
+  keeps its own average instead of dividing the gap's bytes by 60 s.*
+
+- **Upgrading writes the converted settings once and keeps a backup first.** A 2.1.x or beta config
+  was converted in memory on every launch and only written on the next change. It's now saved once,
+  right after `config.json.bak.v<old>` is made, and never if that backup couldn't be made. A corrupt
+  config that can't be moved aside is copied to `.corrupt` before anything overwrites it, and a
+  config of `[]`, `null` or non-UTF-8 bytes is handled as corrupt instead of stopping the app. ([#412])
+- **A config saved by older Notepad keeps its settings.** Notepad's UTF-8 BOM made the file read as
+  corrupt, so it was set aside and every setting reset. It's read with the BOM now, and the next
+  save writes plain UTF-8. ([#415])
+- **The docked widget comes back when the taskbar buries it.**
+  Maximizing and restoring a window (Windows 10), Windows 11 reordering its taskbar band, or an
+  Explorer restart could leave the widget hidden behind the taskbar until you clicked it or
+  relaunched. It's now re-seated right away. Opening Start or Task View doesn't count as burial,
+  so closing them never leaves the widget hidden. ([#314], [#238]; [#327], thanks [@kamal63442] and
+  [@pasharm])
+
+  *Under the hood: burial is a Z-order comparison - walk `GW_HWNDPREV` from the docked taskbar (the
+  owner, so secondary bars work) - not a hit-test, so no DPI conversion and a menu over the widget
+  isn't burial. The re-seat inserts directly above the taskbar (`GetWindow(taskbar, GW_HWNDPREV)`,
+  `HWND_TOPMOST` only when the taskbar is first, `SWP_NOOWNERZORDER`), so menus, jump lists and
+  Start stay above the widget and #200 can't come back. Triggered by a process-wide
+  `EVENT_OBJECT_REORDER` hook on the desktop window plus foreground changes, coalesced, with the 1 s
+  tick as a safety net and a 1-60 s backoff as the fight guard. `TaskbarCreated` re-docks after an
+  Explorer restart. Never while hidden, mid-drag, with our menu open, under a fullscreen app, or when
+  the taskbar itself isn't topmost. Start and Task View lift the taskbar - and its owned widget -
+  into a higher Z-band (`GetWindowBand` > 1), where the walk can't verify anything: the check
+  defers without charging the backoff, and the first re-seat after the band drops back is free. A
+  taskbar raised for over 60 s falls back to the plain check.*
+
+- **After an Explorer restart the widget stays on the taskbar** instead of jumping to the far left
+  over the Widgets button for up to ~11 s. The new taskbar reports a zero-width tray until it
+  settles; the widget is placed from the last good tray geometry meanwhile. ([#419])
+
+### Localization
+
+- Hungarian reviewed by a native speaker, beta.3 and rc.1 strings both. ([#398], [#403], thanks
+  [@cscsanaki])
+- Dutch rc.1 strings reviewed by a native speaker. ([#404], [#416], thanks [@boonstraworks])
+- Turkish thousands separator and "Memory", the Hungarian Cancel accelerator, Hebrew device names in
+  the right direction, and the Monitor's labels translated. ([#409])
+- Two leftover English strings translated: the graph boot marker and the support-bundle file
+  filter. ([#401])
+- 26 new strings and 3 changed ones are AI-drafted in every language and listed for
+  review in [#364]. 19 unused strings were removed.
+
+### Security
+
+- **Pillow 13.0.0**, which matplotlib bundles. It fixes 28 advisories (3 critical: TIFF and JPEG
+  heap overflows, Ghostscript argument injection). None was reachable - NetSpeedTray only writes
+  its own graph images - but the bundle no longer carries them. ([#418])
+
+### Developer notes
+
+- **No UPX anywhere in the build**, enforced by a post-build check; Inno Setup is pinned to 6.7.1 in
+  CI. ([#408])
+- **The release body is published by CI** from `release-notes/vX.Y.Z.md` in the tagged commit, HTML
+  comments (even unclosed) stripped, and the tag must equal `v` + `__version__`. ([#408])
+- Config schema 1.2, so a 2.1.x `config.json` is backed up as `config.json.bak.v1.1` before 2.2
+  rewrites its values; the runtime-only `taskbar_height` is no longer written. A test forces every
+  new setting into either the Reset-all group or the kept group. ([#409])
+- A test fails on unused locale keys; the dead data-cap dialog is gone. ([#401])
+- [DATABASE.md](DATABASE.md) documents the reserved flag bits and the new clock metadata keys.
+  ([#407])
+- Tests redirect `APPDATA`/`LOCALAPPDATA` ([#402]); parentless test widgets are destroyed on the
+  main thread, which fixed an order-dependent access violation, and helper-process tests no longer
+  orphan children ([#408]); rate tests use a fixed monotonic baseline - `(t0 + 1.0) - t0` isn't 1.0
+  just below a power of two ([#276]).
+- 5,062 tests.
+
+[#187]: https://github.com/erez-c137/NetSpeedTray/issues/187
+[#237]: https://github.com/erez-c137/NetSpeedTray/issues/237
+[#238]: https://github.com/erez-c137/NetSpeedTray/issues/238
+[#260]: https://github.com/erez-c137/NetSpeedTray/issues/260
+[#276]: https://github.com/erez-c137/NetSpeedTray/pull/276
+[#314]: https://github.com/erez-c137/NetSpeedTray/issues/314
+[#323]: https://github.com/erez-c137/NetSpeedTray/pull/323
+[#327]: https://github.com/erez-c137/NetSpeedTray/pull/327
+[#333]: https://github.com/erez-c137/NetSpeedTray/issues/333
+[#348]: https://github.com/erez-c137/NetSpeedTray/pull/348
+[#364]: https://github.com/erez-c137/NetSpeedTray/issues/364
+[#398]: https://github.com/erez-c137/NetSpeedTray/pull/398
+[#399]: https://github.com/erez-c137/NetSpeedTray/pull/399
+[#400]: https://github.com/erez-c137/NetSpeedTray/pull/400
+[#401]: https://github.com/erez-c137/NetSpeedTray/pull/401
+[#402]: https://github.com/erez-c137/NetSpeedTray/pull/402
+[#403]: https://github.com/erez-c137/NetSpeedTray/pull/403
+[#404]: https://github.com/erez-c137/NetSpeedTray/pull/404
+[#405]: https://github.com/erez-c137/NetSpeedTray/pull/405
+[#407]: https://github.com/erez-c137/NetSpeedTray/pull/407
+[#408]: https://github.com/erez-c137/NetSpeedTray/pull/408
+[#409]: https://github.com/erez-c137/NetSpeedTray/pull/409
+[#410]: https://github.com/erez-c137/NetSpeedTray/pull/410
+[#411]: https://github.com/erez-c137/NetSpeedTray/pull/411
+[#412]: https://github.com/erez-c137/NetSpeedTray/pull/412
+[#413]: https://github.com/erez-c137/NetSpeedTray/pull/413
+[#415]: https://github.com/erez-c137/NetSpeedTray/pull/415
+[#416]: https://github.com/erez-c137/NetSpeedTray/pull/416
+[#418]: https://github.com/erez-c137/NetSpeedTray/pull/418
+[#419]: https://github.com/erez-c137/NetSpeedTray/pull/419
+[#420]: https://github.com/erez-c137/NetSpeedTray/pull/420
+[#421]: https://github.com/erez-c137/NetSpeedTray/pull/421
+[@kamal63442]: https://github.com/kamal63442
+[@pasharm]: https://github.com/pasharm
+[@emgeka]: https://github.com/emgeka
+[@kiro5678]: https://github.com/kiro5678
+[@Keltian]: https://github.com/Keltian
+[@cscsanaki]: https://github.com/cscsanaki
+[@boonstraworks]: https://github.com/boonstraworks
+
+---
+
 ## [2.2.0-beta.3] - October 21, 2026
 
 *A beta, for testers. It's a manual download from the release page - the in-app updater, WinGet
