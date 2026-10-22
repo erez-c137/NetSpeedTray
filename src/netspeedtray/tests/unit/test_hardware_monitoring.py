@@ -45,7 +45,7 @@ class TestHardwareMonitoring:
         # nvidia-smi returns: temperature, memory.total (MiB), power.draw (W)
         mock_smi_output = "52, 8192, 75.3\n"
 
-        with patch('subprocess.check_output') as mock_sub:
+        with patch.object(StatsMonitorThread, '_run_child') as mock_sub:
             mock_sub.return_value = mock_smi_output
 
             result = monitor_thread._poll_gpu_hybrid()
@@ -82,7 +82,7 @@ class TestHardwareMonitoring:
         mock_ohm.ExecQuery.return_value = [mock_sensor]
         monitor_thread._wmi_ohm = mock_ohm
 
-        with patch('subprocess.check_output') as mock_sub:
+        with patch.object(StatsMonitorThread, '_run_child') as mock_sub:
             result = monitor_thread._poll_gpu_hybrid()
 
             assert result.temp == 68.0            # From LHM, not nvidia-smi
@@ -100,7 +100,7 @@ class TestHardwareMonitoring:
 
         mock_get_val.return_value = (None, 30.0)
 
-        with patch('subprocess.check_output') as mock_sub:
+        with patch.object(StatsMonitorThread, '_run_child') as mock_sub:
             result = monitor_thread._poll_gpu_hybrid(include_temp=False)
 
             assert result.temp is None
@@ -133,7 +133,7 @@ class TestHardwareMonitoring:
 
         with patch('win32pdh.CollectQueryData'):
             with patch('win32pdh.GetFormattedCounterArray', return_value={"eng_0": 20.0}):
-                with patch('subprocess.check_output', side_effect=Exception("SMI Error")):
+                with patch.object(StatsMonitorThread, '_run_child', side_effect=Exception("SMI Error")):
                     result = monitor_thread._poll_gpu_hybrid()
                     assert result.util == 20.0
                     assert result.vram_total is None
@@ -157,7 +157,7 @@ class TestHardwareMonitoring:
         mock_get_val.return_value = (None, 50.0)
         mock_smi_output = "65, 8192, 120.5\n"
 
-        with patch('subprocess.check_output') as mock_sub:
+        with patch.object(StatsMonitorThread, '_run_child') as mock_sub:
             mock_sub.return_value = mock_smi_output
             result = monitor_thread._poll_gpu_hybrid(include_power=True)
 
@@ -198,7 +198,7 @@ class TestHardwareMonitoring:
         monitor_thread._wmi_ohm = mock_ohm
         monitor_thread._nvidia_cache_vram_total = 8192.0   # already known: not a reason to call smi
 
-        with patch('subprocess.check_output') as mock_sub:
+        with patch.object(StatsMonitorThread, '_run_child') as mock_sub:
             result = monitor_thread._poll_gpu_hybrid(include_temp=True, include_power=True)
 
             assert result.temp == 72.0
@@ -233,7 +233,7 @@ class TestHardwareMonitoring:
         mock_ohm.ExecQuery.return_value = [sensor]
         monitor_thread._wmi_ohm = mock_ohm
 
-        with patch('subprocess.check_output', return_value="68, 8192, 95.2\n") as mock_sub:
+        with patch.object(StatsMonitorThread, '_run_child', return_value="68, 8192, 95.2\n") as mock_sub:
             result = monitor_thread._poll_gpu_hybrid(include_temp=True, include_power=False)
             mock_sub.assert_called_once()                    # called for the total, not the temp
 
@@ -264,7 +264,7 @@ class TestHardwareMonitoring:
         mock_ohm.ExecQuery.return_value = [sensor]
         monitor_thread._wmi_ohm = mock_ohm
 
-        with patch('subprocess.check_output') as mock_sub:
+        with patch.object(StatsMonitorThread, '_run_child') as mock_sub:
             result = monitor_thread._poll_gpu_hybrid(include_temp=True, include_power=False)
             mock_sub.assert_not_called()
 

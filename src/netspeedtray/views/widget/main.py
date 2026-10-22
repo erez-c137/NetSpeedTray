@@ -272,6 +272,13 @@ class NetworkSpeedWidget(QWidget):
 
         except Exception as e:
             self.logger.critical("Initialization failed: %s", e, exc_info=True)
+            # Stop whatever already started (monitor thread, DB worker, probes, hooks): the caller
+            # never gets this object, so nothing else could, and a QThread still running at exit
+            # aborts the process on top of this error. Not a state to save to the config.
+            try:
+                self.cleanup(save_config=False)
+            except Exception:
+                self.logger.error("Cleanup after the failed initialization failed.", exc_info=True)
             raise RuntimeError(f"Failed to initialize NetworkSpeedWidget: {e}") from e
 
 
@@ -642,8 +649,16 @@ class NetworkSpeedWidget(QWidget):
         """GUI thread: freeze the live values into the endpoint's snapshot. The server thread only
         ever reads that frozen object - it never touches the widget, controller or WidgetState."""
         ep = self.metrics_endpoint
-        if ep is None or not ep.running:
+        if ep is None:
             return
+        if not ep.running:
+            try:
+                # A port that was busy is retried with backoff; cheap when nothing is due.
+                if not ep.retry_if_due():
+                    return
+            except Exception as e:
+                self.logger.debug("metrics endpoint retry failed: %s", e)
+                return
         try:
             from netspeedtray.core.metrics_snapshot import build_snapshot
             ep.publish(build_snapshot(self))
@@ -723,6 +738,10 @@ class NetworkSpeedWidget(QWidget):
         """Show a data-cap usage alert via the flyout (no system-tray icon needed)."""
         try:
             from netspeedtray.views.flyout import Flyout
+            from PyQt6 import sip
+            previous = getattr(self, "_usage_alert_flyout", None)
+            if previous is not None and not sip.isdeleted(previous):
+                previous.close()   # Qt-owned and self-deleting: replace it, never stack two
             self._usage_alert_flyout = Flyout(title, message, auto_dismiss_ms=auto_dismiss_ms)
             geo = self.frameGeometry()
             self._usage_alert_flyout.show_at(QPoint(geo.left(), geo.top()))
@@ -1244,6 +1263,10 @@ class NetworkSpeedWidget(QWidget):
         if card is not None:
             try:
                 card.hide()
+                # Qt deletes it on the GUI thread; dropped here, a Python-owned card could
+                # otherwise be destroyed by the cyclic GC on a worker thread (utils/qt_lifetime).
+                from netspeedtray.utils.qt_lifetime import hand_to_qt
+                hand_to_qt(card)
                 card.deleteLater()
             except Exception:
                 pass
@@ -2368,8 +2391,11 @@ class NetworkSpeedWidget(QWidget):
             except Exception as e:
                 self.logger.error("Session-end step '%s' failed: %s", name, e, exc_info=True)
 
-    def cleanup(self) -> None:
+    def cleanup(self, save_config: bool = True) -> None:
         """Performs necessary cleanup and a single, final save of the configuration.
+
+        ``save_config=False`` (after a failed startup) stops everything the same way but writes
+        nothing to the config file.
 
         Runs once. An exit reaches it twice - closeEvent calls it, then app.quit() fires aboutToQuit,
         which is connected here too - and a second pass would repeat the bounded waits (latency probe,
@@ -2424,6 +2450,14 @@ class NetworkSpeedWidget(QWidget):
                 p.stop()
             for p in probes:   # all stopped first, so the waits overlap (one in-flight echo each)
                 p.wait(1500)
+            from netspeedtray.core import thread_reaper
+            for p in probes:   # e.g. inside gethostbyname for the anchor - DNS cannot be cancelled
+                thread_reaper.outlived(p, "A latency probe")
+
+        def _update_checker() -> None:
+            # A check in flight sits in urlopen for up to 10 s; it is not waited for.
+            if getattr(self, 'update_checker', None):
+                self.update_checker.stop()
 
         def _metrics_endpoint() -> None:
             # Joins its threads; nothing is left listening.
@@ -2465,10 +2499,13 @@ class NetworkSpeedWidget(QWidget):
             ("position manager", _position_manager), ("state watcher", _state_watcher),
             ("monitor window", _monitor_window),
             ("monitor thread", _monitor_thread), ("latency probe", _latency_probe),
+            ("update checker", _update_checker),
             ("metrics endpoint", _metrics_endpoint), ("controller", _controller),
             ("position config", _position_config), ("config save", _config_save),
             ("history flush", _history_flush),
         )
+        if not save_config:
+            steps = tuple(s for s in steps if s[0] not in ("position config", "config save"))
         try:
             for name, fn in steps:
                 try:

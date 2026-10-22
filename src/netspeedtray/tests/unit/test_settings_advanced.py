@@ -11,8 +11,8 @@ from netspeedtray.views.settings.dialog import SettingsDialog
 
 
 @pytest.fixture
-def page(q_app):
-    return AdvancedPage(I18nStrings("en_US"), lambda: None)
+def page(qt_owned):
+    return qt_owned(AdvancedPage(I18nStrings("en_US"), lambda: None))
 
 
 def test_advanced_round_trips_retention_and_reduce_motion(page):

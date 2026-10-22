@@ -432,3 +432,165 @@ def test_a_partially_swept_folder_is_retried_until_gone(tmp_path, monkeypatch, m
     assert ua.sweep_staged_leftovers() == 1, "retried and removed once the lock is gone"
     assert not staged.exists()
     assert not marker.exists()
+
+
+# ------------------------------------------------- a swap that does not happen restarts the app (RC)
+#
+# The previous instance QUITS to hand the applier the swap. A refusal (exit 3) or a swap that failed
+# and put the original back (exit 4) used to exit without starting anything: the app just vanished,
+# and an older build (2.1.7, whose weaker pre-check hands off what this applier refuses) re-offered
+# the update daily - vanishing daily.
+
+@pytest.fixture
+def restart_spy(monkeypatch, tmp_path):
+    launched, told = [], []
+    monkeypatch.setattr(ua, "relaunch", lambda exe: launched.append(exe) or True)
+    monkeypatch.setattr(ua, "_notify_not_applied", raising=False, value=
+                        lambda reason, staged, install: told.append((reason, staged, install)))
+    monkeypatch.setattr(ua, "_marker_path", lambda: str(tmp_path / "appdata" / "m.json"))
+    return launched, told
+
+
+def test_a_refused_swap_restarts_the_existing_app_and_says_why(tmp_path, restart_spy):
+    launched, told = restart_spy
+    install = _make_install(tmp_path)
+    (install / "my-notes.txt").write_text("mine", encoding="utf-8")
+    staged = _make_staged(tmp_path)
+
+    assert ua.apply_update(str(install), None, str(staged)) == 3
+    assert launched == [os.path.join(str(install), ua.APP_EXE)], "the app must not just vanish"
+    assert (install / ua.APP_EXE).read_text(encoding="utf-8") == "old"
+    (reason, told_staged, told_install), = told
+    assert "my-notes.txt" in reason and told_staged == str(staged) and told_install == str(install)
+
+
+def test_a_failed_but_restored_swap_restarts_the_existing_app(tmp_path, monkeypatch, restart_spy):
+    launched, told = restart_spy
+    install = _make_install(tmp_path)
+    staged = _make_staged(tmp_path)
+
+    def boom(*a, **k):
+        raise OSError("simulated: disk full")
+    monkeypatch.setattr(ua.shutil, "copytree", boom)
+
+    assert ua.apply_update(str(install), None, str(staged)) == 4
+    assert (install / ua.APP_EXE).read_text(encoding="utf-8") == "old", "restored"
+    assert launched == [os.path.join(str(install), ua.APP_EXE)]
+    assert len(told) == 1 and "disk full" in told[0][0]
+
+
+def test_a_failed_restore_launches_nothing(tmp_path, monkeypatch, restart_spy):
+    """No complete app in the install folder: nothing there may be started."""
+    launched, told = restart_spy
+    install = _make_install(tmp_path)
+    staged = _make_staged(tmp_path)
+    monkeypatch.setattr(ua, "swap", lambda i, s: (_ for _ in ()).throw(
+        ua._RestoreFailed(str(tmp_path / "bk"), "simulated")))
+    assert ua.apply_update(str(install), None, str(staged)) == 4
+    assert launched == []
+
+
+def test_a_refusal_for_a_folder_that_is_not_ours_launches_nothing(tmp_path, restart_spy):
+    launched, told = restart_spy
+    victim = tmp_path / "Documents"
+    victim.mkdir()
+    assert ua.apply_update(str(victim), None, str(_make_staged(tmp_path))) == 3
+    assert launched == [], "never start an EXE from a folder validate() did not recognise"
+
+
+def test_the_notice_is_never_shown_outside_the_frozen_app(monkeypatch):
+    """Tests and dev runs must never block on a message box."""
+    import netspeedtray.core.update_notice as un
+    monkeypatch.delattr(ua.sys, "frozen", raising=False)
+    monkeypatch.setattr(un, "show_update_not_applied",
+                        lambda *a: pytest.fail("shown outside the frozen app"))
+    ua._notify_not_applied("r", "s", "i")
+
+
+def test_the_notice_text_is_localized_and_names_the_folders():
+    from netspeedtray.constants.i18n import I18nStrings
+    from netspeedtray.core.update_notice import build_update_not_applied
+    de = I18nStrings("de_DE")
+    title, text = build_update_not_applied(de, "because", r"C:\staged", r"D:\app", "9.9.9")
+    assert title == de.UPDATE_PORTABLE_READY_TITLE
+    assert "because" in text and r"C:\staged" in text and r"D:\app" in text and "9.9.9" in text
+    assert de.UPDATE_PORTABLE_READY_MESSAGE.split("{")[0].strip() in text
+
+
+def test_a_broken_translation_still_shows_the_message():
+    from types import SimpleNamespace
+    from netspeedtray.core.update_notice import build_update_not_applied
+    bad = SimpleNamespace(UPDATE_NOT_APPLIED_MESSAGE="{oops}", UPDATE_PORTABLE_READY_MESSAGE="{x}",
+                          UPDATE_PORTABLE_READY_TITLE="T")
+    title, text = build_update_not_applied(bad, "why", "S", "I", "1")
+    assert title == "T" and "why" in text and "S" in text and "I" in text
+
+
+# ------------------------------------------------- Explorer's folder metadata is carried, not refused
+
+@pytest.mark.parametrize("name", ["desktop.ini", "Thumbs.db", "DESKTOP.INI"])
+def test_explorer_metadata_does_not_block_the_swap(tmp_path, name):
+    install = _make_install(tmp_path)
+    (install / name).write_text("[.ShellClassInfo]", encoding="utf-8")
+    assert ua.validate(str(install), str(_make_staged(tmp_path))) is None
+
+
+def test_a_users_own_file_beside_explorer_metadata_is_still_refused(tmp_path):
+    install = _make_install(tmp_path)
+    (install / "desktop.ini").write_text("x", encoding="utf-8")
+    (install / "notes.txt").write_text("mine", encoding="utf-8")
+    reason = ua.validate(str(install), str(_make_staged(tmp_path)))
+    assert reason and "notes.txt" in reason and "desktop.ini" not in reason
+
+
+def test_the_swap_carries_explorer_metadata_and_the_backup_stays_removable(
+        tmp_path, monkeypatch, restart_spy):
+    launched, told = restart_spy
+    install = _make_install(tmp_path)
+    ini = install / "desktop.ini"
+    ini.write_text("[.ShellClassInfo]\nIconResource=x.ico,0\n", encoding="utf-8")
+    if os.name == "nt":
+        import ctypes
+        ctypes.windll.kernel32.SetFileAttributesW(str(ini), 0x2 | 0x4)       # hidden | system
+        ctypes.windll.kernel32.SetFileAttributesW(str(install), 0x10 | 0x1)   # dir | read-only
+    staged = _make_staged(tmp_path)
+
+    assert ua.apply_update(str(install), None, str(staged)) == 0
+    assert told == []
+    assert (install / ua.APP_EXE).read_text(encoding="utf-8") == "new"
+    assert ini.read_text(encoding="utf-8").startswith("[.ShellClassInfo]"), "customisation lost"
+    if os.name == "nt":
+        st = os.stat(install)
+        assert st.st_file_attributes & 0x1, "the folder's read-only flag (Explorer reads desktop.ini " \
+                                            "only then) was not carried"
+        assert os.stat(ini).st_file_attributes & 0x2, "desktop.ini lost its hidden attribute"
+    (backup,) = tmp_path.glob("*" + ua._BACKUP_SUFFIX + "*")
+    assert ua._portable_tree_refusal(str(backup), allowed_extra=os.listdir(install)) is None, (
+        "the backup must still be removable by the janitor")
+    if os.name == "nt":                              # let tmp_path clean up
+        import ctypes
+        ctypes.windll.kernel32.SetFileAttributesW(str(install), 0x10)
+
+
+def test_a_refused_staged_copy_leaves_the_marker_older_sweeps_read(tmp_path, restart_spy):
+    """The app restarted after a refusal is often an OLDER build, whose sweep deletes every folder
+    in staged_update.json ten minutes after staging - the folder the notice sends the user to."""
+    launched, told = restart_spy
+    install = _make_install(tmp_path)
+    (install / "notes.txt").write_text("mine", encoding="utf-8")
+    staged = _make_staged(tmp_path, "NetSpeedTray-9.9.9")
+    other = str(tmp_path / "NetSpeedTray-other")
+    ua.record_staged_path(str(staged))
+    marker = Path(ua._marker_path())
+    entries = json.loads(marker.read_text(encoding="utf-8"))
+    entries.append(other)                                       # an older build's bare entry
+    marker.write_text(json.dumps(entries), encoding="utf-8")
+
+    assert ua.apply_update(str(install), None, str(staged)) == 3
+    left = json.loads(marker.read_text(encoding="utf-8")) if marker.exists() else []
+    paths = [e if isinstance(e, str) else e.get("path") for e in left]
+    assert str(staged) not in paths, "an older build's sweep would delete the folder we point at"
+    assert other in paths, "other entries are kept verbatim"
+    failures = json.loads((marker.parent / ua._BACKUPS_RECORD_NAME).read_text(encoding="utf-8"))
+    assert any(r.get("kind") == "failure" and r.get("staged") == str(staged) for r in failures)
+    assert staged.is_dir() and told and told[0][1] == str(staged)

@@ -86,18 +86,8 @@ if "%VERSION_NUMERIC%"=="" (echo ERROR: Could not derive numeric version - empty
 echo Numeric version for installer metadata: %VERSION_NUMERIC%
 :: --------------------------------------------------
 
-:: --- Ensure UPX is available for compression (auto-download if missing) ---
-echo Ensuring UPX is available for compression...
-"%ROOT_DIR%\.venv\Scripts\python.exe" fetch_upx.py >> "%LOG_FILE%" 2>&1
-
-:: PyInstaller needs --upx-dir explicitly; the .spec's upx=True alone isn't enough.
-set "UPX_DIR=%BUILD_DIR%tools\upx-5.0.2-win64"
-
-if exist "%UPX_DIR%\upx.exe" (
-    pyinstaller --noconfirm --distpath "%DIST_DIR%" --upx-dir "%UPX_DIR%" NetSpeedTray.spec >> "%LOG_FILE%" 2>&1
-) else (
-    pyinstaller --noconfirm --distpath "%DIST_DIR%" NetSpeedTray.spec >> "%LOG_FILE%" 2>&1
-)
+:: No UPX since 2.2.0: packing strips the vendors' Authenticode signatures (see netspeedtray.spec).
+pyinstaller --noconfirm --distpath "%DIST_DIR%" NetSpeedTray.spec >> "%LOG_FILE%" 2>&1
 
 if errorlevel 1 (
     echo ERROR: PyInstaller build failed. Check !LOG_FILE!

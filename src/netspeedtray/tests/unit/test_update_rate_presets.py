@@ -225,10 +225,10 @@ def test_history_buffers_size_from_each_preset(rate):
 # --- the Settings slider ----------------------------------------------------------------------
 
 @pytest.fixture
-def general_page(q_app):
+def general_page(qt_owned):
     from netspeedtray.constants.i18n import I18nStrings
     from netspeedtray.views.settings.pages.general import GeneralPage
-    return GeneralPage(I18nStrings("en_US"), MagicMock())
+    return qt_owned(GeneralPage(I18nStrings("en_US"), MagicMock()))
 
 
 def test_slider_has_four_positions(general_page):

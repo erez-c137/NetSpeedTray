@@ -155,6 +155,25 @@ class UpdateChecker(QObject):
         self.config = config
         self._worker: Optional[_CheckWorker] = None
 
+    # At quit a check in flight gets this long to finish; urlopen (up to 10 s) cannot be cancelled.
+    STOP_WAIT_MS = 200
+
+    def stop(self) -> None:
+        """Quit-time: drop a check in flight without waiting out its network timeout. Its result
+        signals are disconnected so nothing reaches a widget being torn down, and a thread still
+        inside urlopen goes to the thread reaper (monitor.py then exits without destroying it)."""
+        worker = self._worker
+        if worker is None or not worker.isRunning():
+            return
+        for sig in (worker.finished, worker.failed):
+            try:
+                sig.disconnect()
+            except (TypeError, RuntimeError):
+                pass
+        worker.wait(self.STOP_WAIT_MS)
+        from netspeedtray.core import thread_reaper
+        thread_reaper.outlived(worker, "The update check")
+
     def should_check(self) -> bool:
         """Return True if enough time has passed since the last check."""
         if not self.config.get("check_for_updates", True):

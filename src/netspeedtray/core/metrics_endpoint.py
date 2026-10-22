@@ -1,8 +1,9 @@
 """
 Local metrics endpoint (2.2 scope B) - Prometheus text exposition at http://127.0.0.1:PORT/metrics.
 
-Opt-in and OFF by default. When on, a small stdlib HTTP server binds 127.0.0.1 ONLY (never 0.0.0.0,
-never ::), refuses any peer that is not loopback, refuses a Host header that is not a loopback name
+Opt-in and OFF by default. When on, a small stdlib HTTP server binds 127.0.0.1 - plus [::1] on the
+same port, exclusively, so no other program can answer a scraper that says ``localhost`` - and never
+0.0.0.0 or ::. It refuses any peer that is not loopback, refuses a Host header that is not a loopback name
 (so a web page cannot read it through DNS rebinding), answers GET /metrics and nothing else, and is
 rate- and size-limited. Nothing leaves the machine.
 
@@ -412,7 +413,9 @@ class _LoopbackHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
     block_on_close = False
 
-    def __init__(self, port: int, store: SnapshotStore) -> None:
+    def __init__(self, port: int, store: SnapshotStore, host: str = _M.HOST) -> None:
+        # TCPServer.__init__ creates the socket from this, so it must be set first.
+        self.address_family = socket.AF_INET6 if ":" in host else socket.AF_INET
         self.store = store
         self.bucket = _TokenBucket(_M.RATE_LIMIT_PER_SEC, _M.RATE_LIMIT_BURST)
         self._slots = threading.BoundedSemaphore(_M.MAX_CONCURRENT)
@@ -422,12 +425,15 @@ class _LoopbackHTTPServer(ThreadingHTTPServer):
         self.stopping = threading.Event()
         self.handler_threads: set = set()
         self._handlers_lock = threading.Lock()
-        super().__init__((_M.HOST, int(port)), _Handler)
+        super().__init__((host, int(port)), _Handler)
 
     def server_bind(self) -> None:
         excl = getattr(socket, "SO_EXCLUSIVEADDRUSE", None)
         if excl is not None:
             self.socket.setsockopt(socket.SOL_SOCKET, excl, 1)
+        if self.address_family == socket.AF_INET6:
+            # [::1] only - never a dual-stack socket.
+            self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
         super().server_bind()
 
     def verify_request(self, request, client_address) -> bool:
@@ -493,17 +499,41 @@ def bind_error_kind(exc: OSError) -> str:
 
 
 class MetricsEndpoint:
-    """Owns the store and the server. All methods are called from the GUI thread."""
+    """Owns the store and the servers. All methods are called from the GUI thread.
+
+    Two listening sockets, both exclusive (SO_EXCLUSIVEADDRUSE): 127.0.0.1, the URL Settings shows,
+    and [::1] on the same port. The second exists so nothing else can: a scraper configured with
+    ``localhost`` usually tries ::1 first, and any local process listening on [::1]:port would
+    otherwise answer it - with made-up numbers, or reading what it sends. If [::1]:port is already
+    taken the endpoint does not run (status ``in_use``) rather than share the name with a squatter;
+    if the machine has no IPv6 loopback, or the port lies in an IPv6-only excluded range (nobody can
+    listen there), 127.0.0.1 alone is fine.
+
+    A port that cannot be bound is retried with backoff (``retry_if_due``, from the GUI thread's
+    stats tick): a port busy at startup - a scraper or another app still releasing it - used to stay
+    dead until the user re-saved Settings.
+    """
 
     THREAD_NAME = "NetSpeedTray-metrics"
+    IPV6_HOST = "::1"
+    # Retry delays after a failed bind (seconds); the last one repeats.
+    RETRY_DELAYS_SEC = (5.0, 15.0, 30.0, 60.0, 120.0, 300.0)
 
-    def __init__(self, store: Optional[SnapshotStore] = None) -> None:
+    def __init__(self, store: Optional[SnapshotStore] = None,
+                 clock: Callable[[], float] = time.monotonic) -> None:
         self.store = store or SnapshotStore()
         self._server: Optional[_LoopbackHTTPServer] = None
         self._thread: Optional[threading.Thread] = None
+        self._server6: Optional[_LoopbackHTTPServer] = None
+        self._thread6: Optional[threading.Thread] = None
         self._status = EndpointStatus(_M.STATE_OFF)
-        # The last (enabled, port) that failed, so a live-preview tick does not retry and re-log it.
+        # The last (enabled, port) that failed, so a live-preview tick does not retry and re-log it;
+        # the periodic retry is retry_if_due's job.
         self._failed: Optional[Tuple[bool, int]] = None
+        self._clock = clock
+        self._retry_at: Optional[float] = None
+        self._retry_index = 0
+        self._warned: Optional[Tuple[int, str]] = None
 
     @property
     def status(self) -> EndpointStatus:
@@ -518,52 +548,109 @@ class MetricsEndpoint:
         port = int(port)
         if not enabled:
             self.stop()
-            self._failed = None
+            self._clear_failure()
             return self._status
         if self._server is not None and self._server.server_address[1] == port:
             return self._status
         if self._failed == (True, port):
             return self._status
         self.stop()
+        self._clear_failure()
         return self._start(port)
+
+    def retry_if_due(self) -> bool:
+        """Retry a failed bind once its backoff has elapsed. True if the endpoint is now running.
+        Cheap when there is nothing to do - called on every stats tick."""
+        if self._failed is None or self._server is not None or self._retry_at is None:
+            return False
+        if self._clock() < self._retry_at:
+            return False
+        port = self._failed[1]
+        self._start(port)
+        return self.running
+
+    def _clear_failure(self) -> None:
+        self._failed = None
+        self._retry_at = None
+        self._retry_index = 0
+        self._warned = None
+
+    def _fail(self, port: int, kind: str, message: str, retry: bool = True) -> EndpointStatus:
+        if self._warned != (port, kind):
+            logger.warning(message)
+            self._warned = (port, kind)
+        else:
+            logger.debug(message)
+        self._status = EndpointStatus(_M.STATE_ERROR, port, kind)
+        self._failed = (True, port)
+        if retry:
+            delay = self.RETRY_DELAYS_SEC[min(self._retry_index, len(self.RETRY_DELAYS_SEC) - 1)]
+            self._retry_index += 1
+            self._retry_at = self._clock() + delay
+        else:
+            self._retry_at = None
+        return self._status
+
+    def _serve(self, server: _LoopbackHTTPServer, name: str) -> threading.Thread:
+        thread = threading.Thread(target=server.serve_forever,
+                                  kwargs={"poll_interval": _M.POLL_INTERVAL_SEC},
+                                  name=name, daemon=True)
+        thread.start()
+        return thread
 
     def _start(self, port: int) -> EndpointStatus:
         if not (_M.MIN_PORT <= port <= _M.MAX_PORT):
-            self._status = EndpointStatus(_M.STATE_ERROR, port, "other")
-            self._failed = (True, port)
-            return self._status
+            return self._fail(port, "other", "Local metrics endpoint: port %d is out of range." % port,
+                              retry=False)
         try:
             server = _LoopbackHTTPServer(port, self.store)
         except OSError as e:
             kind = bind_error_kind(e)
-            logger.warning("Local metrics endpoint could not listen on %s:%d (%s): %s",
-                           _M.HOST, port, kind, e)
-            self._status = EndpointStatus(_M.STATE_ERROR, port, kind)
-            self._failed = (True, port)
-            return self._status
-        thread = threading.Thread(target=server.serve_forever,
-                                  kwargs={"poll_interval": _M.POLL_INTERVAL_SEC},
-                                  name=self.THREAD_NAME, daemon=True)
-        thread.start()
-        self._server, self._thread = server, thread
-        self._failed = None
+            return self._fail(port, kind, "Local metrics endpoint could not listen on %s:%d (%s): %s"
+                              % (_M.HOST, port, kind, e))
+        server6 = None
+        try:
+            server6 = _LoopbackHTTPServer(port, self.store, host=self.IPV6_HOST)
+        except OSError as e:
+            kind = bind_error_kind(e)
+            if kind == "in_use":
+                server.server_close()
+                return self._fail(port, kind, "Local metrics endpoint: [::1]:%d is taken by another "
+                                  "program, so 'localhost' would reach it instead; not serving (%s)."
+                                  % (port, e))
+            # No IPv6 loopback, or the port is in an IPv6-only excluded range (WSAEACCES; Hyper-V/
+            # WSL reserve ranges per family): nobody else can listen there either, so 127.0.0.1
+            # alone is safe.
+            logger.info("Local metrics endpoint: [::1]:%d unavailable (%s); 127.0.0.1 only.", port, e)
+        self._server, self._thread = server, self._serve(server, self.THREAD_NAME)
+        if server6 is not None:
+            self._server6, self._thread6 = server6, self._serve(server6, self.THREAD_NAME + "-v6")
+        self._clear_failure()
         self._status = EndpointStatus(_M.STATE_RUNNING, port)
-        logger.info("Local metrics endpoint listening on http://%s:%d%s", _M.HOST, port, _M.PATH)
+        logger.info("Local metrics endpoint listening on http://%s:%d%s%s", _M.HOST, port, _M.PATH,
+                    " (and [::1])" if server6 is not None else "")
         return self._status
 
     def stop(self) -> None:
         """Stop serving and join every thread. Safe to call repeatedly."""
-        server, thread = self._server, self._thread
-        self._server = self._thread = None
-        if server is not None:
-            try:
+        pairs = [(self._server, self._thread), (self._server6, self._thread6)]
+        self._server = self._thread = self._server6 = self._thread6 = None
+        for server, _thread in pairs:
+            if server is not None:
                 server.stopping.set()    # every handler gives up within POLL_INTERVAL_SEC
+        stopped = False
+        for server, thread in pairs:
+            if server is None:
+                continue
+            try:
                 server.shutdown()        # returns once serve_forever has exited
             finally:
                 server.server_close()    # closes the listening socket (handlers are joined below)
             if thread is not None:
                 thread.join(_M.STOP_JOIN_TIMEOUT_SEC)
             server.join_handlers(_M.HANDLER_JOIN_BUDGET_SEC)
+            stopped = True
+        if stopped:
             logger.info("Local metrics endpoint stopped.")
         self._status = EndpointStatus(_M.STATE_OFF)
 

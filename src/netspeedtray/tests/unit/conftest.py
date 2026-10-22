@@ -24,6 +24,37 @@ def q_app():
     return QApplication.instance() or QApplication([])
 
 
+def dispose_widget(widget) -> None:
+    """Destroy a test's top-level widget NOW, on the C++ side, instead of leaving it to Python's
+    cyclic GC. A parentless page or dialog with signal/lambda reference cycles was otherwise
+    collected at a random point in some LATER test, which crashed the run with an access violation
+    (depending on test order). Safe to call twice."""
+    from PyQt6 import sip
+    if widget is None or sip.isdeleted(widget):
+        return
+    try:
+        widget.close()
+    except RuntimeError:
+        pass
+    if not sip.isdeleted(widget):
+        sip.delete(widget)
+
+
+@pytest.fixture
+def qt_owned(q_app):
+    """``qt_owned(widget)`` -> widget, destroyed deterministically at teardown (dispose_widget)."""
+    owned = []
+
+    def own(widget):
+        owned.append(widget)
+        return widget
+    yield own
+    for w in reversed(owned):
+        dispose_widget(w)
+    from PyQt6.QtCore import QCoreApplication, QEvent
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+
+
 @pytest.fixture(autouse=True)
 def _isolate_update_marker(tmp_path, monkeypatch):
     """No test may read or write the real %APPDATA%/NetSpeedTray/staged_update.json or stage into

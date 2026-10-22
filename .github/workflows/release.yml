@@ -16,13 +16,64 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7
 
+      # First, before anything is built or sent for signing: the tag must name the version the code
+      # carries. The build, the asset names, the in-app updater and WinGet all read __version__, so a
+      # tag on the wrong commit (it has happened: a chained tag landed on the wrong one) would publish
+      # a release whose files say another version. Prerelease tags compare the same way
+      # (v2.2.0-rc.1 <-> "2.2.0-rc.1").
+      - name: Check the tag matches __version__
+        shell: pwsh
+        run: |
+          $init = Get-Content -Raw -Path src/netspeedtray/__init__.py
+          $m = [regex]::Match($init, '(?m)^__version__\s*=\s*"([^"]+)"')
+          if (-not $m.Success) { Write-Error "No __version__ in src/netspeedtray/__init__.py"; exit 1 }
+          $expected = "v" + $m.Groups[1].Value
+          if ($env:GITHUB_REF_NAME -cne $expected) {
+            Write-Error "Tag '$($env:GITHUB_REF_NAME)' does not match __version__ (expected '$expected'). Re-tag the right commit."
+            exit 1
+          }
+          Write-Host "Tag $($env:GITHUB_REF_NAME) matches __version__."
+
+      # The release body. The release goes public (and, for a final, Latest - what every installed
+      # copy's update dialog shows) the moment "Create Release" runs, so notes applied by hand
+      # afterwards leave a window with an empty body. A tracked release-notes/<tag>.md is published
+      # WITH the release instead (see release-notes/README.md). HTML comments (draft notes to self)
+      # are stripped: the update dialog shows the body as plain text. No file = the old behaviour,
+      # an empty body to fill with `gh release edit --notes-file` - resolved here, before the build,
+      # so a missing file is visible on the Summary page while there is still time to add it.
+      - name: Resolve the release notes
+        id: notes
+        shell: pwsh
+        run: |
+          $src = "release-notes/$($env:GITHUB_REF_NAME).md"
+          if (Test-Path $src) {
+            $text = Get-Content -Raw -Encoding utf8 $src
+            # Every '<!-- ... -->', and an UNCLOSED '<!--' through to the end: GitHub would hide the
+            # rest of the page, the plain-text update dialog would show the draft note verbatim.
+            $text = [regex]::Replace($text, '(?s)<!--.*?(-->|\z)', '').Trim()
+            if (-not $text) { Write-Error "$src is empty once comments are removed"; exit 1 }
+            $out = Join-Path $env:RUNNER_TEMP "release-body.md"
+            Set-Content -Path $out -Value $text -Encoding utf8
+            "path=$out" >> $env:GITHUB_OUTPUT
+            Write-Host "Release notes: $src"
+          } else {
+            "path=" >> $env:GITHUB_OUTPUT
+            $msg = "No $src - the release will publish with an EMPTY body; apply notes with gh release edit right after."
+            Write-Host "::warning::$msg"
+            "> [!WARNING]`n> $msg" >> $env:GITHUB_STEP_SUMMARY
+          }
+
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
           python-version: "3.13"
 
+      # Pinned: a new Inno Setup could change the compiled Setup under a release with nothing in
+      # this repo changing. setup.iss's [Code] also declares Win32 pointers as Longword, which is
+      # right only while Setup is a 32-bit process (Inno Setup 6). Bump deliberately, after an
+      # ISCC compile and an install test.
       - name: Install Inno Setup
-        run: choco install innosetup --no-progress
+        run: choco install innosetup --version=6.7.1 --no-progress -y
 
       - name: Install dependencies
         run: |
@@ -155,6 +206,8 @@ jobs:
             signed-installer/**/*
             signed-portable/**/*
             checksums.txt
+          # Empty when there is no release-notes/<tag>.md: the body is then left empty, as before.
+          body_path: ${{ steps.notes.outputs.path }}
           # A tag with a '-' is a prerelease (v2.2.0-beta.1). Without these two flags the
           # action defaults prerelease to false and the API defaults make_latest to true,
           # so a beta would become /releases/latest - the endpoint the in-app updater polls.

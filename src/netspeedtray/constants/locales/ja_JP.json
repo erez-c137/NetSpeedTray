@@ -240,6 +240,7 @@
     "UPDATE_FALLBACK_MESSAGE": "アプリ内更新を完了できませんでした。代わりにダウンロードページを開きます。",
     "UPDATE_PORTABLE_READY_TITLE": "更新のインストール準備完了",
     "UPDATE_PORTABLE_READY_MESSAGE": "NetSpeedTray {version} は、今開いたフォルダーに用意されています :\n{ready}\n\n更新を完了するには : NetSpeedTray を閉じ、更新フォルダーのすべてを現在のフォルダーにコピーします :\n{app_dir}\n(古いファイルの置換中). 設定は保持されます。",
+    "UPDATE_NOT_APPLIED_MESSAGE": "NetSpeedTray could not replace its folder by itself, so you are still on the version you had.\nReason: {reason}",
     "UPDATE_AVAILABLE_TEXT": "NetSpeedTray の新しいバージョンが利用可能です!\n\n現在 : v{current}\n最新 : v{latest}",
     "UPDATE_RELEASE_NOTES_LABEL": "v{latest} の新機能",
     "WELCOME_2_0_TITLE": "NetSpeedTray 2.0 へようこそ",
