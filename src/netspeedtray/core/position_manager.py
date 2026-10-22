@@ -134,6 +134,21 @@ _RESEAT_HEALTHY_S = 10.0
 _ON_TOP_MAX_GAP_S = 3.0
 
 
+class _TrayOverride:
+    """A TaskbarInfo view whose get_tray_rect() returns a substitute (or None), for placing the
+    widget while the real tray rect is not ready (see PositionManager._tray_rect_ready)."""
+
+    def __init__(self, info: Any, tray: Optional[Tuple[int, int, int, int]]) -> None:
+        self._info = info
+        self._tray = tray
+
+    def get_tray_rect(self) -> Optional[Tuple[int, int, int, int]]:
+        return self._tray
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._info, name)
+
+
 # Protocols
 @runtime_checkable
 class PositionAwareProtocol(Protocol):
@@ -572,6 +587,10 @@ class PositionManager(QObject):
         # Last time the burial check saw the taskbar raised; a re-seat soon after it drops
         # back is free (no backoff). 0.0 = no pending band return.
         self._band_return_pending_ts: float = 0.0
+        # One INFO line per stretch of a not-ready tray rect (see _tray_rect_ready).
+        self._tray_not_ready_logged: bool = False
+        # Last good tray rect per (monitor, edge), as offsets from the taskbar's right/bottom.
+        self._last_good_tray: Dict[tuple, Tuple[int, int, int, int]] = {}
         
         # Timers
         self._tray_watcher_timer = QTimer(self)
@@ -643,12 +662,99 @@ class PositionManager(QObject):
             if self._free_float_active and self._apply_free_float_position():
                 return
 
+            # A just-restarted taskbar reports a degenerate tray rect for seconds (live: the
+            # TrayNotifyWnd sat at (0,1032,0,1032) for ~11 s until TaskbarCreated); computing
+            # from it snaps the widget to the far left, over the Widgets button. Place it on the
+            # new taskbar from the last good tray geometry instead.
+            if not self._tray_rect_ready():
+                self._apply_position_with_substitute_tray()
+                return
+
             if self._apply_calculated_position():
                 pass # success
             else:
                 logger.warning("Failed to calculate position.")
         except Exception as e:
             logger.error("Error updating position: %s", e, exc_info=True)
+
+    @staticmethod
+    def _tray_memory_key(info: Any) -> Optional[tuple]:
+        """(monitor, edge) the remembered tray geometry belongs to; None if it can't be told."""
+        try:
+            return (str(info.get_screen().name()), info.get_edge_position())
+        except Exception:
+            return None
+
+    def _remember_tray(self, info: Any, tray: Tuple[int, int, int, int]) -> None:
+        """Store a good tray rect as offsets from its taskbar's right/bottom edges (the tray
+        hugs that corner on every edge), so it can be re-applied to a new taskbar rect."""
+        key = self._tray_memory_key(info)
+        if key is None or not info.hwnd:
+            return
+        tb_right, tb_bottom = int(info.rect[2]), int(info.rect[3])
+        self._last_good_tray[key] = (tb_right - int(tray[0]), tb_bottom - int(tray[1]),
+                                     tb_right - int(tray[2]), tb_bottom - int(tray[3]))
+
+    def _apply_position_with_substitute_tray(self) -> None:
+        """
+        The tray rect is not ready: position on the CURRENT taskbar as if its tray had the last
+        good geometry seen on this monitor + edge. With nothing remembered (the very first
+        launch met a not-ready rect), use the "no tray" estimate the secondary-taskbar path
+        uses (screen edge minus a clock-width reserve).
+        """
+        info = self._state.taskbar_info
+        offsets = self._last_good_tray.get(self._tray_memory_key(info))
+        tray = None
+        if offsets is not None:
+            tb_right, tb_bottom = int(info.rect[2]), int(info.rect[3])
+            tray = (tb_right - offsets[0], tb_bottom - offsets[1],
+                    tb_right - offsets[2], tb_bottom - offsets[3])
+        widget = self._state.widget
+        size = (widget.width(), widget.height())
+        if size[0] <= 0:
+            return
+        pos = self._calculator.calculate_position(_TrayOverride(info, tray), size, self._state.config)
+        if pos:
+            self._apply_geometry(pos.x, pos.y)
+
+    def _tray_rect_ready(self) -> bool:
+        """
+        False while the docked taskbar's tray rect exists but cannot be real: zero width or
+        height, or not touching the taskbar at all - what a taskbar mid-(re)creation reports
+        after an Explorer restart. No tray rect at all (a Win11 secondary taskbar, the fallback
+        taskbar) is a known layout with its own estimate, so it counts as ready. A ready rect
+        is remembered for the next not-ready stretch. Logs once per not-ready stretch.
+        """
+        info = self._state.taskbar_info
+        ready = True
+        tray = None
+        try:
+            tray = info.get_tray_rect() if info is not None else None
+            if tray is not None:
+                left, top, right, bottom = (int(v) for v in tray)
+                tb_left, tb_top, tb_right, tb_bottom = (int(v) for v in info.rect)
+                if right <= left or bottom <= top:
+                    ready = False
+                elif right <= tb_left or left >= tb_right or bottom <= tb_top or top >= tb_bottom:
+                    ready = False
+        except Exception:
+            ready = True   # can't judge it: keep the old behaviour, never strand the widget
+            tray = None
+        if ready:
+            if tray is not None:
+                try:
+                    self._remember_tray(info, tray)
+                except Exception:
+                    pass
+            if self._tray_not_ready_logged:
+                logger.debug("Taskbar tray area is ready again - repositioning.")
+            self._tray_not_ready_logged = False
+            return True
+        if not self._tray_not_ready_logged:
+            logger.info("Taskbar tray area not ready yet (rect %s) - placing the widget from the "
+                        "last known tray geometry.", tray)
+            self._tray_not_ready_logged = True
+        return False
 
     def _apply_free_float_position(self) -> bool:
         """Place the widget at a sensible default on the taskbar-less preferred display (#188). Returns
