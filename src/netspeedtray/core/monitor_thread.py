@@ -1194,7 +1194,12 @@ class StatsMonitorThread(QThread):
                 out, _ = proc.communicate(timeout=timeout)
             except subprocess.TimeoutExpired:
                 proc.kill()
-                proc.communicate()
+                try:
+                    # Bounded too: a grandchild that inherited the pipe (a launcher stub) keeps it
+                    # open after the kill, and an unbounded read would then hang this thread.
+                    proc.communicate(timeout=2)
+                except subprocess.TimeoutExpired:
+                    pass
                 raise
             if proc.returncode != 0:
                 raise subprocess.CalledProcessError(proc.returncode, argv, out)
