@@ -53,7 +53,7 @@ def test_update_speeds_calculates_and_emits_correctly(controller_instance, mock_
     
     # Manually initialize the controller's internal state to simulate
     # that a "priming read" has already occurred. This is the key fix.
-    controller.last_check_time = time.monotonic()
+    controller.last_check_time = 1000.0  # fixed clock: (t0 + 1.0) - t0 must be exactly 1.0 (a real monotonic near 2**k rounds it)
     controller.last_interface_counters = {
         "Wi-Fi": MockNetIO(bytes_sent=1000, bytes_recv=2000),
         "Ethernet": MockNetIO(bytes_sent=500, bytes_recv=800),
@@ -127,7 +127,7 @@ def test_odometer_counts_bytes_even_when_all_rates_exceed_ceiling(controller_ins
     over the ceiling at all; the bytes must reach the odometer either way."""
     controller = controller_instance
     controller.config["interface_mode"] = "all_physical"
-    controller.last_check_time = time.monotonic()
+    controller.last_check_time = 1000.0  # fixed clock: (t0 + 1.0) - t0 must be exactly 1.0 (a real monotonic near 2**k rounds it)
     controller.last_interface_counters = {"Wi-Fi": MockNetIO(bytes_sent=0, bytes_recv=0)}
     controller.primary_interface = None
     controller.set_view(MagicMock())
@@ -162,7 +162,7 @@ def test_spike_filter_lets_sustained_ramp_through_after_one_poll(controller_inst
     view = MagicMock(); controller.set_view(view)
     name = "Ethernet"
     controller.recent_speeds[name] = deque([(2_000_000, 2_000_000)] * 10, maxlen=20)  # 2 MB/s baseline
-    t0 = time.monotonic()
+    t0 = 1000.0  # fixed clock: (t0 + 1.0) - t0 must be exactly 1.0 (a real monotonic near 2**k rounds it)
     controller.last_check_time = t0
     controller.last_interface_counters = {name: MockNetIO(bytes_sent=0, bytes_recv=0)}
 
@@ -221,7 +221,7 @@ def test_update_speeds_handles_short_lag_spike(controller_instance, mock_widget_
     
     # --- Manually prime the controller state ---
     # This simulates the application having been running normally before the lag spike.
-    time_before_lag = time.monotonic()
+    time_before_lag = 1000.0  # fixed clock: (t0 + 1.0) - t0 must be exactly 1.0 (a real monotonic near 2**k rounds it)
     controller.last_check_time = time_before_lag
     controller.last_interface_counters = { "Wi-Fi": MockNetIO(bytes_sent=1000, bytes_recv=2000) }
     
@@ -468,7 +468,7 @@ def _run_all_physical(mock_config, mock_widget_state, table, first, second):
     controller.primary_interface = None
     view = MagicMock()
     controller.set_view(view)
-    controller.last_check_time = time.monotonic()
+    controller.last_check_time = 1000.0  # fixed clock: (t0 + 1.0) - t0 must be exactly 1.0 (a real monotonic near 2**k rounds it)
     controller.last_interface_counters = {n: MockNetIO(*v) for n, v in first.items()}
     with patch('time.monotonic', return_value=controller.last_check_time + 1.0):
         controller._handle_network_counters({n: MockNetIO(*v) for n, v in second.items()})

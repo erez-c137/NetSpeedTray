@@ -286,7 +286,7 @@ def test_controller_live_rates_match_display_and_zero_on_reprime():
     c = StatsController(config=cfg, widget_state=MagicMock(spec=WidgetState))
     shown = []
     c.display_speed_updated.connect(lambda u, d: shown.append((u, d)))
-    t0 = time.monotonic()
+    t0 = 1000.0  # fixed clock: (t0 + 1.0) - t0 must be exactly 1.0 (a real monotonic near 2**k rounds it)
     c.last_check_time = t0
     c.last_interface_counters = {"Wi-Fi": _IO(0, 0), "LAN": _IO(0, 0)}
     with patch("time.monotonic", return_value=t0 + 1.0):
