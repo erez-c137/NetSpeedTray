@@ -386,33 +386,49 @@ class StatsController(QObject):
         # into one tick shown too high and the next too low (PR #276 review). Without a sample time
         # (direct callers) this equals time_diff.
         rate_span = (sample_mono - last_mono) if self._last_sample_time else time_diff
-        byte_deltas = self._odometer_byte_deltas(current_counters, sample_elapsed)
-        # Same interface selection as the display, but raw deltas, not rates. Gated on byte_deltas,
-        # NOT on the display data: a rate over the ceiling is display-dropped, its bytes are real (#13).
-        if byte_deltas and self.widget_state:
-            agg_up_bytes, agg_down_bytes = self._aggregate_for_odometer(byte_deltas)
-            # The window began at the previous sample: bytes are charged to the period it began in.
-            self.widget_state.add_usage_bytes(agg_up_bytes, agg_down_bytes,
-                                              counters=current_counters, sampled_at=sample_wall,
-                                              window_start=last_wall, primary=self._odometer_primary())
-        if self.widget_state:
-            # v8 history: every interface's exact delta over the measured span (ending at this sample),
-            # gap or not - the writer flags a long interval rather than dropping its bytes.
-            self.widget_state.add_net_sample(sample_wall, sample_elapsed * 1000.0, byte_deltas,
-                                             counters=current_counters, if_stats=if_stats)
-        # --- 2. The rate display, then ONE re-baseline -----------------------------------------
-        # The odometer has counted this poll, so the sample time and the counters move on together
-        # whatever happens in the display below. They used to be re-baselined in two places (the
-        # time here, the counters at the very end): an exception in between left them out of step,
-        # and the next poll counted these bytes again and showed a 2x rate (PR #276 re-review).
         prev_counters = self.last_interface_counters
+        # From here on this poll's counters ARE the next baseline, whatever fails: the sample time,
+        # the handling time and the counters move on together, in the one finally below. Never
+        # double-count - a sink that fails loses this one poll's bytes (logged), it does not count
+        # them again next poll. They used to be re-baselined in two places (the time after the
+        # odometer, the counters at the very end), so an exception in between left them out of
+        # step and the next poll double-counted and showed a 2x rate (PR #276 re-review).
         try:
+            byte_deltas = self._odometer_byte_deltas(current_counters, sample_elapsed)
+            if self.widget_state:
+                # Same interface selection as the display, but raw deltas, not rates. Gated on
+                # byte_deltas, NOT on the display data: a rate over the ceiling is display-dropped,
+                # its bytes are real (#13). The window began at the previous sample: bytes are
+                # charged to the period it began in.
+                if byte_deltas:
+                    self._write_byte_sink(
+                        "data-usage odometer", self.widget_state.add_usage_bytes,
+                        *self._aggregate_for_odometer(byte_deltas), counters=current_counters,
+                        sampled_at=sample_wall, window_start=last_wall,
+                        primary=self._odometer_primary())
+                # v8 history: every interface's exact delta over the measured span (ending at this
+                # sample), gap or not - the writer flags a long interval rather than dropping bytes.
+                self._write_byte_sink(
+                    "network history", self.widget_state.add_net_sample,
+                    sample_wall, sample_elapsed * 1000.0, byte_deltas,
+                    counters=current_counters, if_stats=if_stats)
+
+            # --- 2. The rate display ---------------------------------------------------------
             self._update_rate_display(current_counters, prev_counters, time_diff, rate_span,
                                       update_interval)
         finally:
             self._last_sample_time = (sample_mono, sample_wall)
             self.last_check_time = current_time
             self.last_interface_counters = current_counters
+
+    def _write_byte_sink(self, sink: str, write: Any, *args: Any, **kwargs: Any) -> None:
+        """Hand one poll's bytes to one sink. A failure costs that sink this poll only - the
+        baselines still advance - and is logged, naming the sink, every time it happens."""
+        try:
+            write(*args, **kwargs)
+        except Exception as e:
+            self.logger.warning("Network bytes for this poll were not recorded in the %s: %s",
+                                sink, e, exc_info=True)
 
     def _update_rate_display(self, current_counters: Dict[str, Any], prev_counters: Dict[str, Any],
                              time_diff: float, rate_span: float, update_interval: float) -> None:

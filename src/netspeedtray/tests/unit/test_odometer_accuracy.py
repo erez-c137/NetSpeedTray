@@ -214,6 +214,61 @@ def test_a_failure_after_the_odometer_does_not_double_count_the_next_poll():
     assert view.update_display_speeds.call_args[0][0] == pytest.approx(8.0)   # 1 MB/s, not 2
 
 
+class _SinkRaisesOnce(FakeState):
+    """One of the two byte sinks (the data-usage odometer or the v8 history feed) fails once."""
+    def __init__(self, sink: str):
+        super().__init__()
+        self.sink = sink
+        self.armed = False   # armed for poll 2 only: the priming poll writes history too
+
+    def _maybe_raise(self, sink):
+        if self.sink == sink and self.armed:
+            self.armed = False
+            raise RuntimeError(f"{sink} boom")
+
+    def add_usage_bytes(self, up, down, **kwargs):
+        self._maybe_raise("usage")
+        super().add_usage_bytes(up, down, **kwargs)
+
+    def add_net_sample(self, ts, dt_ms, byte_deltas, **k):
+        self._maybe_raise("history")
+        super().add_net_sample(ts, dt_ms, byte_deltas, **k)
+
+
+def _three_polls(state):
+    c = _controller(state)
+    t0 = 1000.0
+    for i, up in enumerate((0, 1_000_000, 2_000_000)):
+        state.armed = state.armed or i == 1
+        with patch("time.monotonic", return_value=t0 + i):
+            c._handle_network_counters({"Wi-Fi": NetIO(up, 0)}, sample_time=(t0 + i, 5_000.0 + i))
+    return c
+
+
+def test_a_failed_history_write_loses_that_poll_for_history_only(caplog):
+    """Never double-count: the usage write still counts the poll once, history misses that one
+    poll, the baselines move on anyway, and the next poll is normal - with a WARNING naming the
+    sink that failed."""
+    state = _SinkRaisesOnce("history")
+    with caplog.at_level(logging.WARNING):
+        c = _three_polls(state)
+    assert state.totals() == (2_000_000, 0)
+    deltas = [s[2] for s in state.net_samples]
+    assert deltas == [{}, {"Wi-Fi": (1_000_000.0, 0.0)}]           # prime, then poll 3 only
+    assert c.view.update_display_speeds.call_args[0][0] == pytest.approx(8.0)
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING and "history" in r.getMessage()]
+    assert len(warnings) == 1
+
+
+def test_a_failed_usage_write_loses_that_poll_for_usage_only(caplog):
+    state = _SinkRaisesOnce("usage")
+    with caplog.at_level(logging.WARNING):
+        _three_polls(state)
+    assert state.totals() == (1_000_000, 0)                          # poll 2 lost, never counted twice
+    assert [s[2] for s in state.net_samples][1:] == [{"Wi-Fi": (1_000_000.0, 0.0)}] * 2
+    assert [r for r in caplog.records if r.levelno == logging.WARNING and "usage" in r.getMessage()]
+
+
 def test_cap_uses_the_sampling_span_not_the_handling_span():
     """#13's real mechanism: the GUI thread can handle two samples closer together than they were
     taken (a late delivery of the previous one). The bytes are real - the cap is measured over when
