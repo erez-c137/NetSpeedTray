@@ -398,7 +398,7 @@ current LibreHardwareMonitor, and the root-cause fix for Smart App Control block
   main thread, which fixed an order-dependent access violation, and helper-process tests no longer
   orphan children ([#408]); rate tests use a fixed monotonic baseline - `(t0 + 1.0) - t0` isn't 1.0
   just below a power of two ([#276]).
-- 4,887 tests.
+- 5,062 tests.
 
 [#187]: https://github.com/erez-c137/NetSpeedTray/issues/187
 [#237]: https://github.com/erez-c137/NetSpeedTray/issues/237
