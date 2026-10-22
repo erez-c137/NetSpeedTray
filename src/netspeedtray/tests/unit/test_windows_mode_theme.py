@@ -71,10 +71,12 @@ def test_start_installs_the_filter_and_stop_removes_it(handler):
 
 
 def test_no_theme_polling_timer(handler):
-    """Event-driven: the only timers are the taskbar-validity and fullscreen ones."""
+    """Event-driven: no theme polling - just the taskbar-validity, fullscreen and
+    z-order-trailing timers (the last from the #327 re-seat rework)."""
     from PyQt6.QtCore import QTimer
     timers = handler.findChildren(QTimer)
-    assert set(timers) == {handler._taskbar_validity_timer, handler._fullscreen_poll_timer}
+    assert set(timers) == {handler._taskbar_validity_timer, handler._fullscreen_poll_timer,
+                           handler._zorder_trailing_timer}
 
 
 def _baseline(handler, value=0):
