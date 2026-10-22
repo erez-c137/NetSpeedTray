@@ -472,23 +472,109 @@ def test_corrupt_config_is_moved_aside_not_overwritten(tmp_path):
     assert path.with_name(f"{path.name}.corrupt").read_bytes() == broken
 
 
-def test_corrupt_config_that_cannot_be_moved_is_left_untouched(tmp_path):
-    """If the corrupt file cannot be moved aside, writing defaults over it would destroy the only
-    copy of the user's settings."""
-    path = tmp_path / "NetSpeedTray_Config.json"
-    path.write_text('{"font_size": 1', encoding="utf-8")
-    broken = path.read_bytes()
+def _fail_move_aside(suffix):
+    """os.replace that fails only for the move to `<name><suffix>`; ordinary saves still work."""
     real_replace = os.replace
 
-    def replace_but_not_aside(src, dst):            # only the move-aside fails; saves still work
-        if str(dst).endswith(".corrupt"):
+    def replace(src, dst):
+        if str(dst).endswith(suffix):
             raise OSError("locked")
         return real_replace(src, dst)
+    return replace
 
-    with patch("netspeedtray.utils.config.os.replace", side_effect=replace_but_not_aside):
+
+def test_corrupt_config_that_cannot_be_moved_is_copied_before_any_save(tmp_path):
+    """The real startup flow: load() cannot move the corrupt file aside, then the widget's OWN
+    ConfigManager saves the first-run flags ~1.2 s later. The user's bytes must already be safe
+    in `.corrupt` by then - it used to be overwritten with no copy anywhere."""
+    path = tmp_path / "NetSpeedTray_Config.json"
+    path.write_text('{"font_size": 13, "language": "de_DE"', encoding="utf-8")
+    broken = path.read_bytes()
+
+    with patch("netspeedtray.utils.config.os.replace", side_effect=_fail_move_aside(".corrupt")):
         cfg = ConfigManager(path).load()
     assert cfg == constants.config.defaults.DEFAULT_CONFIG
+    assert path.read_bytes() == broken, "load() itself must not write over the original"
+
+    cfg = dict(cfg, first_run_ever=False, first_run_v2_seen=True)   # _maybe_show_welcome
+    ConfigManager(path).save(cfg)
+
+    assert path.with_name(f"{path.name}.corrupt").read_bytes() == broken
+    assert json.loads(path.read_text(encoding="utf-8"))["first_run_ever"] is False
+
+
+def test_corrupt_config_that_cannot_be_moved_or_copied_is_never_overwritten(tmp_path):
+    """No preserved copy could be made at all: any later save, from any ConfigManager, refuses."""
+    path = tmp_path / "NetSpeedTray_Config.json"
+    path.write_text('{"font_size": 13', encoding="utf-8")
+    broken = path.read_bytes()
+
+    with patch("netspeedtray.utils.config.os.replace", side_effect=_fail_move_aside(".corrupt")), \
+         patch("netspeedtray.utils.config.shutil.copy2", side_effect=OSError("disk full")):
+        cfg = ConfigManager(path).load()
+    assert cfg == constants.config.defaults.DEFAULT_CONFIG
+
+    with pytest.raises(ConfigError):
+        ConfigManager(path).save(dict(cfg, first_run_ever=False))
     assert path.read_bytes() == broken
+    assert not path.with_name(f"{path.name}.corrupt").exists()
+    assert not _temp_leftovers(tmp_path), "temp file left behind"
+
+
+@pytest.mark.parametrize("raw", [b"[]", b"null", b"42", b'"text"', b"\xff\xfe\x00garbage"],
+                         ids=["list", "null", "number", "string", "not-utf8"])
+def test_non_object_or_non_utf8_config_is_treated_as_corrupt(tmp_path, raw):
+    """Valid JSON that is not an object, and bytes that are not UTF-8, used to escape load() as
+    AttributeError / UnicodeDecodeError. Same handling as invalid JSON: moved aside, defaults."""
+    path = tmp_path / "NetSpeedTray_Config.json"
+    path.write_bytes(raw)
+    cfg = ConfigManager(path).load()
+    assert cfg == constants.config.defaults.DEFAULT_CONFIG
+    assert path.with_name(f"{path.name}.corrupt").read_bytes() == raw
+    assert json.loads(path.read_text(encoding="utf-8"))   # a fresh, valid config
+
+
+def test_migration_is_not_persisted_when_the_backup_fails(tmp_path, caplog):
+    """No `.bak.v1.1` copy -> the 1.1 original is the only record of what the user had, so the
+    migration runs in memory only; the failure is logged once, not on every load."""
+    original = dict(_v11_config(), widget_display_mode="future")   # a value 1.2 resets
+    path = _write_config_file(tmp_path, original)
+    before = path.read_bytes()
+
+    manager = ConfigManager(path)
+    with patch("netspeedtray.utils.config.shutil.copy2", side_effect=OSError("disk full")), \
+         caplog.at_level(logging.INFO, logger="NetSpeedTray.Config"):
+        cfg = manager.load()
+        manager.load()                              # a reload in the same session
+
+    assert cfg["config_version"] == "1.2" and cfg["update_rate"] == 2.0   # migrated in memory
+    assert path.read_bytes() == before
+    assert not path.with_name(f"{path.name}.bak.v1.1").exists()
+    failures = [r for r in _config_records(caplog) if "Failed to back up config" in r.getMessage()]
+    assert len(failures) == 1
+
+
+def test_same_version_field_migration_takes_its_own_backup(tmp_path):
+    """A 2.2 beta wrote `taskbar_height` into a 1.2 file. Rewriting it to drop that key is a write
+    over the user's file like any migration, so it keeps a copy first - under `.fields`, so it can
+    never pose as the `.bak.v1.2` a future 1.3 build must take of the file as it is then."""
+    original = {"config_version": "1.2", "taskbar_height": 40, "font_size": 13,
+                "widget_display_mode": "future_mode"}
+    path = _write_config_file(tmp_path, original)
+    ConfigManager(path).load()
+
+    assert json.loads(path.with_name(f"{path.name}.bak.v1.2.fields").read_text(encoding="utf-8")) \
+        == original
+    assert not path.with_name(f"{path.name}.bak.v1.2").exists()
+    assert "taskbar_height" not in json.loads(path.read_text(encoding="utf-8"))
+
+
+def test_same_version_field_migration_is_not_persisted_when_the_backup_fails(tmp_path):
+    path = _write_config_file(tmp_path, {"config_version": "1.2", "taskbar_height": 40})
+    before = path.read_bytes()
+    with patch("netspeedtray.utils.config.shutil.copy2", side_effect=OSError("disk full")):
+        ConfigManager(path).load()
+    assert path.read_bytes() == before
 
 
 def test_read_only_config_migration_fails_once_and_does_not_loop(tmp_path, caplog):
