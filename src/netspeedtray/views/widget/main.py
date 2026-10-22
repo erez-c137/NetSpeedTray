@@ -1248,6 +1248,12 @@ class NetworkSpeedWidget(QWidget):
             except Exception:
                 pass
 
+    def _usage_cap_set(self) -> bool:
+        try:
+            return bool(self.config.get("data_cap_enabled")) and float(self.config.get("data_cap_gb", 0) or 0) > 0
+        except (TypeError, ValueError):
+            return False
+
     def _usage_billing_period_start(self, month_start: datetime) -> Optional[datetime]:
         """Start of the data-cap billing period when a cap is set and the period does not begin on
         the 1st (else None - the calendar month IS the period). The "month" usage row follows it so
@@ -1280,11 +1286,24 @@ class NetworkSpeedWidget(QWidget):
             period_start = self._usage_billing_period_start(month_start)
             if period_start is not None:
                 month_start = period_start
-            vt = self.widget_state.get_history_volume_for_period(midnight, now_dt)
-            vm = self.widget_state.get_history_volume_for_period(month_start, now_dt)
-            today, month = (vt.up_bytes, vt.down_bytes), (vm.up_bytes, vm.down_bytes)
-            # D5: part of the month was estimated from speeds recorded before 2.2 -> label it.
-            reconstructed = bool(vt.reconstructed or vm.reconstructed)
+            # Only the adapters the cap's odometer meters: summing every adapter counts a VPN / WSL /
+            # Hyper-V adapter's traffic twice and could read up to 2x the cap row beneath it.
+            vt = self.widget_state.get_metered_volume_for_period(midnight, now_dt)
+            today = (vt.up_bytes, vt.down_bytes)
+            reconstructed = bool(vt.reconstructed)
+            if self._usage_cap_set():
+                # With a cap the period row IS the cap's count: the odometer, not a history read that
+                # can only approximate it (auto mode meters one routing adapter history cannot replay;
+                # the odometer also recovers bytes moved while the app was closed).
+                month = tuple(self.widget_state.get_usage_this_period())
+                # Today is history (in auto mode every physical adapter, not just the routing one the
+                # cap meters), so it can read above the period's own count: never show Today > Period.
+                today = (min(today[0], month[0]), min(today[1], month[1]))
+            else:
+                vm = self.widget_state.get_metered_volume_for_period(month_start, now_dt)
+                month = (vm.up_bytes, vm.down_bytes)
+                # D5: part of the month was estimated from speeds recorded before 2.2 -> label it.
+                reconstructed = reconstructed or bool(vm.reconstructed)
         except Exception as e:
             self.logger.debug("hover usage fetch failed: %s", e)
         self._hover_usage_reconstructed = reconstructed
