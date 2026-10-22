@@ -38,7 +38,7 @@ def _saved_language() -> Optional[str]:
         from netspeedtray import constants
         base = os.environ.get("APPDATA") or os.path.expanduser("~")
         path = os.path.join(base, constants.app.APP_NAME, constants.config.defaults.CONFIG_FILENAME)
-        with open(path, "r", encoding="utf-8") as fh:
+        with open(path, "r", encoding="utf-8-sig") as fh:   # -sig: a Notepad BOM, as in config.load()
             value = json.load(fh).get("language")
         return value if isinstance(value, str) and value else None
     except Exception:

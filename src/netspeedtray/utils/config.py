@@ -737,7 +737,9 @@ class ConfigManager:
         `same_version=True` is for a field-level migration of a file already at this schema
         (e.g. a 2.2 beta's `taskbar_height`): it is about to be rewritten too, so it gets its own
         `<name>.bak.v<version>.fields` copy - a separate name, so it can never stand in for the
-        `.bak.v<version>` a later schema bump must take of the file as it is then.
+        `.bak.v<version>` a later schema bump must take of the file as it is then. Like every
+        backup here, `.fields` keeps the FIRST copy ever made; later field migrations of the same
+        version leave it untouched.
 
         Returns True when a backup exists afterwards - none was needed, one was already there,
         or it was just copied - and False when it could not be made. A failure never blocks
@@ -776,7 +778,10 @@ class ConfigManager:
             self.logger.info("Configuration file not found. Creating with default settings.")
             return self.reset_to_defaults()
         try:
-            with self.config_path.open("r", encoding="utf-8") as f:
+            # utf-8-sig: older Notepad saves UTF-8 with a BOM, which plain utf-8 + json.load
+            # rejects - a hand-edited config would be set aside as corrupt and every setting lost.
+            # Saves still write plain UTF-8 (_write_atomic), so the BOM goes on the next save.
+            with self.config_path.open("r", encoding="utf-8-sig") as f:
                 config = json.load(f)
         except (json.JSONDecodeError, UnicodeDecodeError):
             config = None   # not JSON, or not UTF-8 text: handled with the non-object case below
@@ -818,7 +823,9 @@ class ConfigManager:
         file), the bytes are COPIED to that name instead and the defaults stay in memory: the
         widget builds its own ConfigManager and saves within seconds of startup, so leaving the
         only copy of the user's settings at the config path would let that save destroy it. If
-        the copy fails too, _write_atomic's guard refuses to overwrite the file.
+        the copy fails too: a `.corrupt` file is protected by _write_atomic's guard, but an
+        `.unreadable` one is NOT - the guard cannot read it, and the next save replaces it on
+        purpose, because that replacement is what heals a deny-write ACL (#307).
         """
         aside = self.config_path.with_name(f"{self.config_path.name}{suffix}")
         try:
@@ -829,8 +836,13 @@ class ConfigManager:
             try:
                 shutil.copy2(self.config_path, aside)
             except OSError:
-                self.logger.exception("Failed to copy the config file to %s; it will not be "
-                                      "overwritten.", aside.name)
+                if suffix == ".unreadable":
+                    self.logger.exception("Failed to copy the config file to %s; the next save "
+                                          "will replace it with these defaults (that replacement "
+                                          "is what repairs its permissions).", aside.name)
+                else:
+                    self.logger.exception("Failed to copy the config file to %s; it will not be "
+                                          "overwritten.", aside.name)
             return self._defaults_in_memory()
         return self.reset_to_defaults()
 
@@ -910,7 +922,7 @@ class ConfigManager:
         except OSError:
             return None
         try:
-            if isinstance(json.loads(raw.decode("utf-8")), dict):
+            if isinstance(json.loads(raw.decode("utf-8-sig")), dict):   # a BOM is fine, as in load()
                 return None
         except ValueError:      # JSONDecodeError and UnicodeDecodeError
             pass

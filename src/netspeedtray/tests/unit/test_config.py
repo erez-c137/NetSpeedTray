@@ -594,3 +594,82 @@ def test_read_only_config_migration_fails_once_and_does_not_loop(tmp_path, caplo
         assert not _temp_leftovers(tmp_path), "temp file left behind"
     finally:
         os.chmod(path, stat.S_IREAD | stat.S_IWRITE)
+
+
+# ============================================================================
+# A config saved with a UTF-8 BOM (older Notepad) is a valid config, not a corrupt one.
+# ============================================================================
+
+_BOM = b"\xef\xbb\xbf"
+
+
+def _write_bom_config(tmp_path, payload):
+    path = tmp_path / "NetSpeedTray_Config.json"
+    path.write_bytes(_BOM + json.dumps(payload).encode("utf-8"))
+    return path
+
+
+def test_bom_prefixed_config_loads_and_is_saved_back_without_the_bom(tmp_path):
+    current = constants.config.defaults.CONFIG_SCHEMA_VERSION
+    path = _write_bom_config(tmp_path, {"config_version": current, "font_size": 8,
+                                        "update_rate": 2.0})
+    manager = ConfigManager(path)
+
+    cfg = manager.load()
+
+    assert cfg["font_size"] == 8 and cfg["update_rate"] == 2.0   # main: reset to defaults
+    assert not path.with_name(f"{path.name}.corrupt").exists()
+    assert path.read_bytes().startswith(_BOM)                     # load alone does not rewrite
+
+    manager.save(dict(cfg, font_size=9))
+
+    raw = path.read_bytes()
+    assert not raw.startswith(_BOM)
+    saved = json.loads(raw.decode("utf-8"))
+    assert saved["font_size"] == 9 and saved["update_rate"] == 2.0
+
+
+def test_write_guard_accepts_a_bom_prefixed_config(tmp_path):
+    """A ConfigManager that never loaded the file (the widget builds its own) must not refuse to
+    save over a BOM-prefixed config as if it were an unpreserved corrupt one."""
+    current = constants.config.defaults.CONFIG_SCHEMA_VERSION
+    path = _write_bom_config(tmp_path, {"config_version": current, "font_size": 8})
+    cfg = constants.config.defaults.DEFAULT_CONFIG.copy()
+
+    ConfigManager(path).save(dict(cfg, font_size=10))             # main: ConfigError
+
+    assert json.loads(path.read_text(encoding="utf-8"))["font_size"] == 10
+
+
+def test_update_notice_reads_the_language_from_a_bom_prefixed_config(tmp_path, monkeypatch):
+    from netspeedtray.core import update_notice
+    folder = tmp_path / constants.app.APP_NAME
+    folder.mkdir()
+    (folder / constants.config.defaults.CONFIG_FILENAME).write_bytes(
+        _BOM + json.dumps({"language": "de_DE"}).encode("utf-8"))
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    assert update_notice._saved_language() == "de_DE"
+
+
+def test_unreadable_config_that_cannot_be_moved_or_copied_logs_that_a_save_replaces_it(
+        tmp_path, caplog):
+    """An unreadable file is NOT protected by the write guard (replacing it heals the ACL, #307),
+    so the log must not claim it 'will not be overwritten'."""
+    path = _write_config_file(tmp_path, {"font_size": 13})
+    real_open = Path.open
+
+    def deny_read(self, *args, **kwargs):
+        if self == path:
+            raise PermissionError(13, "denied")
+        return real_open(self, *args, **kwargs)
+
+    with patch.object(Path, "open", deny_read), \
+         patch("netspeedtray.utils.config.os.replace", side_effect=_fail_move_aside(".unreadable")), \
+         patch("netspeedtray.utils.config.shutil.copy2", side_effect=OSError("disk full")), \
+         caplog.at_level(logging.INFO, logger="NetSpeedTray.Config"):
+        ConfigManager(path).load()
+
+    messages = [r.getMessage() for r in _config_records(caplog)]
+    assert not any("will not be overwritten" in m for m in messages)
+    assert any("Failed to copy the config file to" in m and "next save will replace it" in m
+               for m in messages)
