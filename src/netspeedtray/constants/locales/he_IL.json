@@ -274,6 +274,8 @@
     "PREFERRED_MONITOR_PRIMARY": "ראשי (אוטומטי)",
     "PREFERRED_MONITOR_ITEM": "מסך {index}: {width}x{height}",
     "PREFERRED_MONITOR_PRIMARY_TAG": "(ראשי)",
+    "SHOW_ON_ALL_TASKBARS_LABEL": "הצג בכל שורות המשימות",
+    "SHOW_ON_ALL_TASKBARS_DESC": "עותק של היישומון בכל שורת משימות. דורש את \"הצג את שורת המשימות שלי בכל התצוגות\" ב-Windows.",
     "SETTINGS_NOT_CONNECTED_TAG": "(לא מחובר)",
     "UPDATE_AVAILABLE_TITLE": "עדכון זמין",
     "UPDATE_DOWNLOADING_TITLE": "הורדת עדכון",

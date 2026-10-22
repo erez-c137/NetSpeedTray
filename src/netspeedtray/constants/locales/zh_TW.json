@@ -274,6 +274,8 @@
     "PREFERRED_MONITOR_PRIMARY": "主要顯示器 (自動)",
     "PREFERRED_MONITOR_ITEM": "顯示器 {index}：{width}x{height}",
     "PREFERRED_MONITOR_PRIMARY_TAG": "（主顯示器）",
+    "SHOW_ON_ALL_TASKBARS_LABEL": "在所有工作列上顯示",
+    "SHOW_ON_ALL_TASKBARS_DESC": "在每個工作列上顯示小工具的副本。需要在 Windows 中開啟「在所有顯示器上顯示我的工作列」。",
     "SETTINGS_NOT_CONNECTED_TAG": "（未連線）",
     "UPDATE_AVAILABLE_TITLE": "有可用更新",
     "UPDATE_DOWNLOADING_TITLE": "正在下載更新",

@@ -260,6 +260,9 @@ class NetworkSpeedWidget(QWidget):
         self._no_taskbar_ticks: int = 0   # consecutive refreshes holding for a missing taskbar (W5)
         self._will_quit_app: bool = False # Flag to distinguish hide vs exit
         self._shutdown_armed_hwnd: int = 0  # HWND the --shutdown channel was armed on
+        # "Show on all taskbars" (#229): the MirrorManager while the setting is on, else None - and
+        # with it off nothing of views/widget/mirror.py is imported, built, connected or timed.
+        self._mirrors = None
         
         # Hooks for system events
         self.system_event_handler: SystemEventHandler
@@ -1156,7 +1159,9 @@ class NetworkSpeedWidget(QWidget):
 
             self.system_event_handler.start()
 
-            
+            # Last, so the mirrors' slots run after the widget's own on every shared signal.
+            self.apply_mirrors()
+
             self.logger.debug("Signal connections and WinEventHooks established successfully.")
         except Exception as e:
             self.logger.error("Error setting up signal connections: %s", e, exc_info=True)
@@ -2387,6 +2392,42 @@ class NetworkSpeedWidget(QWidget):
         self._show_notice_flyout(title, body, action_text=self.i18n.STATS_DETAIL_OPEN_FOLDER if path else None,
                                  on_action=(lambda: reveal_in_explorer(path)) if path else None)
 
+    def apply_mirrors(self) -> None:
+        """
+        "Show on all taskbars" (#229): build the MirrorManager when the setting turns on, retire it
+        when it turns off, and re-size the live mirrors on any other apply. Off (the default) is a
+        plain dict lookup - the mirror module is not even imported.
+        """
+        want = bool(self.config.get("show_on_all_taskbars",
+                                    constants.config.defaults.DEFAULT_SHOW_ON_ALL_TASKBARS))
+        mgr = getattr(self, "_mirrors", None)
+        try:
+            if want and mgr is None:
+                from netspeedtray.views.widget.mirror import MirrorManager
+                self._mirrors = MirrorManager(self)
+                self._mirrors.start()
+            elif not want and mgr is not None:
+                self._mirrors = None
+                mgr.shutdown()
+                mgr.deleteLater()
+            elif mgr is not None:
+                mgr.apply_settings()
+        except Exception as e:
+            self.logger.error("Applying 'Show on all taskbars' failed: %s", e, exc_info=True)
+
+    def docked_taskbar(self) -> Optional[Tuple[int, Optional[str]]]:
+        """(HWND, screen name) of the taskbar this widget is docked to - the one the mirrors leave
+        alone; (0, None) while it free-floats on a taskbar-less display (#188); None when unknown
+        (a fallback taskbar at logon)."""
+        pm = getattr(self, "position_manager", None)
+        if pm is None:
+            return None
+        if pm.is_free_float_active():
+            return 0, None
+        info = pm._state.taskbar_info
+        hwnd = int(info.hwnd) if info is not None and info.hwnd else 0
+        return (hwnd, info.screen_name) if hwnd else None
+
     def apply_all_settings(self) -> None:
         """Delegates to ConfigController."""
         self.config_controller.apply_all_settings()
@@ -2957,6 +2998,13 @@ class NetworkSpeedWidget(QWidget):
         self.logger.debug("Performing widget cleanup...")
         failed: List[str] = []
 
+        def _mirrors() -> None:
+            # "Show on all taskbars" (#229): close every mirror while the data they paint still exists.
+            mgr = getattr(self, "_mirrors", None)
+            if mgr is not None:
+                self._mirrors = None
+                mgr.shutdown()
+
         def _hover_card() -> None:
             # Tear down the hover usage card + its armed timer first, before the data layer
             # (widget_state / monitor thread) goes away - otherwise a pending 350ms singleShot
@@ -3048,6 +3096,7 @@ class NetworkSpeedWidget(QWidget):
         # * "config save" before "history flush": the DB step can wait DB_SHUTDOWN_WAIT_MS (15 s) for a
         #   busy database thread, and a logoff ends the process ~5 s in - the save must already be done.
         steps = (
+            ("mirrors", _mirrors),
             ("hover card", _hover_card), ("event hooks", _event_hooks),
             ("position manager", _position_manager), ("state watcher", _state_watcher),
             ("monitor window", _monitor_window), ("history backup", _history_backup),

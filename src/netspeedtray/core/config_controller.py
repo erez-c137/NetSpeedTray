@@ -233,6 +233,11 @@ class ConfigController:
             # 3. AFTER resizing, update the position.
             self.logger.debug("Updating widget position...")
             w.update_position()
+
+            # 3a. "Show on all taskbars" (#229): build / retire / re-size the mirrors after the main
+            # widget has its new size. Nothing is built or connected while the setting is off.
+            if hasattr(w, "apply_mirrors"):
+                w.apply_mirrors()
             
             # 4. Manage Cycling Timer (stopped while "Show hardware in the hover card" collapses the
             # widget to network-only - nothing to rotate; the saved Auto-Cycle comes back with it off)

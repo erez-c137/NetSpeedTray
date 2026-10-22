@@ -274,6 +274,8 @@
     "PREFERRED_MONITOR_PRIMARY": "Основной (авто)",
     "PREFERRED_MONITOR_ITEM": "Монитор {index}: {width}x{height}",
     "PREFERRED_MONITOR_PRIMARY_TAG": "(основной)",
+    "SHOW_ON_ALL_TASKBARS_LABEL": "Показывать на всех панелях задач",
+    "SHOW_ON_ALL_TASKBARS_DESC": "Копия виджета на каждой панели задач. Требуется параметр Windows «Показывать панель задач на всех дисплеях».",
     "SETTINGS_NOT_CONNECTED_TAG": "(не подключён)",
     "UPDATE_AVAILABLE_TITLE": "Доступно обновление",
     "UPDATE_DOWNLOADING_TITLE": "Загрузка обновления",

@@ -274,6 +274,8 @@
     "PREFERRED_MONITOR_PRIMARY": "Principale (automatico)",
     "PREFERRED_MONITOR_ITEM": "Monitor {index}: {width}x{height}",
     "PREFERRED_MONITOR_PRIMARY_TAG": "(principale)",
+    "SHOW_ON_ALL_TASKBARS_LABEL": "Mostra su tutte le barre delle applicazioni",
+    "SHOW_ON_ALL_TASKBARS_DESC": "Una copia del widget su ogni barra delle applicazioni. Richiede «Mostra la barra delle applicazioni su tutti gli schermi» in Windows.",
     "SETTINGS_NOT_CONNECTED_TAG": "(non connesso)",
     "UPDATE_AVAILABLE_TITLE": "Aggiornamento disponibile",
     "UPDATE_DOWNLOADING_TITLE": "Download aggiornamento",

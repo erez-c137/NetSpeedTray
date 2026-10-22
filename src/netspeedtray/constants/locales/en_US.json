@@ -274,6 +274,8 @@
     "PREFERRED_MONITOR_PRIMARY": "Primary (auto)",
     "PREFERRED_MONITOR_ITEM": "Monitor {index}: {width}x{height}",
     "PREFERRED_MONITOR_PRIMARY_TAG": "(primary)",
+    "SHOW_ON_ALL_TASKBARS_LABEL": "Show on all taskbars",
+    "SHOW_ON_ALL_TASKBARS_DESC": "A copy of the widget on every taskbar. Needs “Show my taskbar on all displays” in Windows.",
     "SETTINGS_NOT_CONNECTED_TAG": "(not connected)",
     "UPDATE_AVAILABLE_TITLE": "Update Available",
     "UPDATE_DOWNLOADING_TITLE": "Downloading update",

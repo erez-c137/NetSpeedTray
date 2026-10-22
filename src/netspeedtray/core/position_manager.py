@@ -9,6 +9,7 @@ This module consolidates all widget positioning logic, including:
 """
 
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 from collections import deque
 from typing import Optional, Tuple, List, Protocol, runtime_checkable, Dict, Any, Callable, Deque, TYPE_CHECKING
@@ -434,8 +435,9 @@ class PositionCalculator:
                 raise ValueError(f"widget_size must be a tuple of (width, height), got {widget_size}")
             if not all(isinstance(d, int) and d > 0 for d in widget_size):
                 raise ValueError(f"widget_size dimensions must be positive integers, got {widget_size}")
-            if config is None or not isinstance(config, dict):
-                raise ValueError(f"config must be a dictionary, got {config}")
+            # Any read-only mapping: a "Show on all taskbars" mirror passes its config overlay (#229).
+            if config is None or not isinstance(config, Mapping):
+                raise ValueError(f"config must be a mapping, got {config}")
             
             # Fallback for invalid taskbar
             if taskbar_info.hwnd == 0:
@@ -756,18 +758,32 @@ class PositionCalculator:
             return None
 
 
+class _TaggedLogger(logging.LoggerAdapter):
+    """Prefixes each message with ``[<tag>]`` (see PositionManager._logger)."""
+
+    def process(self, msg, kwargs):
+        return "[%s] %s" % (self.extra["tag"], msg), kwargs
+
+
 class PositionManager(QObject):
     """
     Orchestrates all positioning logic, including calculation, application,
     and active monitoring of system changes.
     """
-    
-    def __init__(self, window_state: WindowState, parent: Optional[QObject] = None, *,
-                 app_yield_enabled: bool = True) -> None:
+
+    # The logger every method writes to. An instance created with a ``log_tag`` (the "Show on all
+    # taskbars" mirrors, #229) gets an adapter that prefixes its lines, so a support bundle tells
+    # which window was buried / re-seated / re-docked. Untagged (the main widget): this module logger.
+    _logger: Any = logger
+
+    def __init__(self, window_state: WindowState, parent: Optional[QObject] = None,
+                 log_tag: str = "", *, app_yield_enabled: bool = True) -> None:
         """``app_yield_enabled=False``: no #24 app-button yield (a paint-only mirror's manager, #434 -
         mirrors don't yield in v1; the yield then never probes and never hides anything)."""
         super().__init__(parent)
         self._state = window_state
+        if log_tag:
+            self._logger = _TaggedLogger(logger, {"tag": log_tag})
         self._calculator = PositionCalculator()
         
         # Internal State
@@ -868,18 +884,18 @@ class PositionManager(QObject):
         self._tray_watcher_timer = QTimer(self)
         self._tray_watcher_timer.timeout.connect(self._check_for_tray_changes)
         
-        logger.debug("Core PositionManager initialized.")
+        self._logger.debug("Core PositionManager initialized.")
 
     def start_monitoring(self) -> None:
         """Starts the periodic tray watcher."""
         if not self._tray_watcher_timer.isActive():
             self._tray_watcher_timer.start(10000) # Check every 10s
-            logger.debug("PositionManager monitoring started.")
+            self._logger.debug("PositionManager monitoring started.")
 
     def stop_monitoring(self) -> None:
         """Stops the periodic tray watcher."""
         self._tray_watcher_timer.stop()
-        logger.debug("PositionManager monitoring stopped.")
+        self._logger.debug("PositionManager monitoring stopped.")
 
     def is_floating(self) -> bool:
         """True when the widget should ignore taskbar docking - either the user's Free Move, or the
@@ -954,9 +970,9 @@ class PositionManager(QObject):
             if self._apply_calculated_position():
                 pass # success
             else:
-                logger.warning("Failed to calculate position.")
+                self._logger.warning("Failed to calculate position.")
         except Exception as e:
-            logger.error("Error updating position: %s", e, exc_info=True)
+            self._logger.error("Error updating position: %s", e, exc_info=True)
 
     def holding_for_taskbar(self, info: Any) -> bool:
         """
@@ -973,7 +989,7 @@ class PositionManager(QObject):
         hwnd = getattr(info, "hwnd", 0) if info is not None else 0
         if hwnd:
             if self._taskbar_absent_since is not None:
-                logger.info("Taskbar is back after %.1fs.", time.monotonic() - self._taskbar_absent_since)
+                self._logger.info("Taskbar is back after %.1fs.", time.monotonic() - self._taskbar_absent_since)
             self._had_real_taskbar = True
             self._taskbar_absent_since = None
             self._taskbar_hold_expired_logged = False
@@ -983,13 +999,13 @@ class PositionManager(QObject):
         now = time.monotonic()
         if self._taskbar_absent_since is None:
             self._taskbar_absent_since = now
-            logger.info("No taskbar found (Explorer restarting?) - hiding the widget at its last "
+            self._logger.info("No taskbar found (Explorer restarting?) - hiding the widget at its last "
                         "position for up to %.0fs.", constants.timeouts.TASKBAR_ABSENT_HOLD_MS / 1000.0)
         if (now - self._taskbar_absent_since) * 1000.0 < constants.timeouts.TASKBAR_ABSENT_HOLD_MS:
             return True
         if not self._taskbar_hold_expired_logged:
             self._taskbar_hold_expired_logged = True
-            logger.warning("Still no taskbar after %.0fs - showing the widget at the fallback position.",
+            self._logger.warning("Still no taskbar after %.0fs - showing the widget at the fallback position.",
                            now - self._taskbar_absent_since)
         return False
 
@@ -1067,11 +1083,11 @@ class PositionManager(QObject):
                 except Exception:
                     pass
             if self._tray_not_ready_logged:
-                logger.debug("Taskbar tray area is ready again - repositioning.")
+                self._logger.debug("Taskbar tray area is ready again - repositioning.")
             self._tray_not_ready_logged = False
             return True
         if not self._tray_not_ready_logged:
-            logger.info("Taskbar tray area not ready yet (rect %s) - placing the widget from the "
+            self._logger.info("Taskbar tray area not ready yet (rect %s) - placing the widget from the "
                         "last known tray geometry.", tray)
             self._tray_not_ready_logged = True
         return False
@@ -1122,7 +1138,7 @@ class PositionManager(QObject):
         # Fall through to the calculated position; a follow-up update_position()
         # after layout completes will retry with valid dimensions.
         if widget_width <= 0 or widget_height <= 0:
-            logger.debug(
+            self._logger.debug(
                 "Widget size not yet known (w=%s, h=%s); deferring saved-position restore.",
                 widget_width, widget_height,
             )
@@ -1136,7 +1152,7 @@ class PositionManager(QObject):
         screen = QApplication.screenAt(center)
 
         if screen is None:
-            logger.info(
+            self._logger.info(
                 "Saved free-move position (%s,%s) is on a disconnected monitor; "
                 "falling back to calculated position.",
                 saved_x, saved_y,
@@ -1145,12 +1161,12 @@ class PositionManager(QObject):
 
         clamped = ScreenUtils.validate_position(saved_x, saved_y, widget_size, screen)
         if (clamped.x, clamped.y) != (saved_x, saved_y):
-            logger.info(
+            self._logger.info(
                 "Clamped saved free-move position (%s,%s) onto screen '%s' -> (%s,%s).",
                 saved_x, saved_y, stable_pseudonym(screen.name(), "DISPLAY"), clamped.x, clamped.y,
             )
         else:
-            logger.info(
+            self._logger.info(
                 "Restored saved free-move position (%s,%s) on screen '%s'.",
                 saved_x, saved_y, stable_pseudonym(screen.name(), "DISPLAY"),
             )
@@ -1182,7 +1198,7 @@ class PositionManager(QObject):
 
         self._state.widget.move(x, y)
         self._last_applied_geometry = new_rect
-        logger.debug("Widget geometry updated to: %s", new_rect)
+        self._logger.debug("Widget geometry updated to: %s", new_rect)
 
     def get_calculated_position(self) -> Optional[ScreenPosition]:
         """Returns the intended position without moving the widget."""
@@ -1508,12 +1524,12 @@ class PositionManager(QObject):
                 return
 
             if self._last_tray_rect != current_tray_rect:
-                logger.debug("Tray geometry changed. Triggering reposition.")
+                self._logger.debug("Tray geometry changed. Triggering reposition.")
                 self.update_position(fresh_taskbar_info=tb_info)
                 self._last_tray_rect = current_tray_rect
 
         except Exception as e:
-            logger.error("Error checking tray changes: %s", e)
+            self._logger.error("Error checking tray changes: %s", e)
 
     def constrain_drag(self, pos: QPoint) -> QPoint:
         """
@@ -1619,10 +1635,10 @@ class PositionManager(QObject):
             if (_GetWindowLongPtr(hwnd, _GWLP_HWNDPARENT) or 0) != tb_hwnd:
                 _SetWindowLongPtr(hwnd, _GWLP_HWNDPARENT, tb_hwnd)
                 self._owner_set_to = tb_hwnd
-                logger.debug("Widget docked to taskbar HWND %s (owner Z-order).", tb_hwnd)
+                self._logger.debug("Widget docked to taskbar HWND %s (owner Z-order).", tb_hwnd)
                 return True
         except Exception as e:
-            logger.error("Failed to set taskbar owner: %s", e)
+            self._logger.error("Failed to set taskbar owner: %s", e)
         return False
 
     def ensure_topmost(self) -> None:
@@ -1677,7 +1693,7 @@ class PositionManager(QObject):
             # (_recover_if_buried: menu / drag / fullscreen guards, backoff, deferral logging)
             # restores it with the safe seat. Nothing is re-seated from here (#327 review).
         except Exception as e:
-            logger.error("Failed to ensure topmost status: %s", e)
+            self._logger.error("Failed to ensure topmost status: %s", e)
 
     @pyqtSlot()
     def enforce_topmost_status(self) -> None:
@@ -1721,7 +1737,7 @@ class PositionManager(QObject):
         self._band_raised_last_ts = now
         if now - self._band_raised_since > _BAND_RAISED_FALLBACK_S:
             if not self._band_fallback_logged:
-                logger.info("Taskbar has stayed in Z-band %s for over %.0fs - checking burial "
+                self._logger.info("Taskbar has stayed in Z-band %s for over %.0fs - checking burial "
                             "as if it were in the normal band.", band, _BAND_RAISED_FALLBACK_S)
                 self._band_fallback_logged = True
             return None
@@ -1818,7 +1834,7 @@ class PositionManager(QObject):
             return True
         except Exception as e:
             self.note_on_top_unverified()
-            logger.debug("Buried-behind-taskbar check failed: %s", e)
+            self._logger.debug("Buried-behind-taskbar check failed: %s", e)
             return False
 
     def note_on_top_unverified(self) -> None:
@@ -1873,7 +1889,7 @@ class PositionManager(QObject):
                     # Faster than a person buries it: a periodic re-burier just outside the
                     # fight window, or a fight only the 1 s tick sees. Charge it from here on.
                     self._fresh_rate_capped = True
-                    logger.info("Widget buried %d times in %.0fs - treating further burials as a "
+                    self._logger.info("Widget buried %d times in %.0fs - treating further burials as a "
                                 "fight (backoff) until it stays on top.",
                                 len(times) + 1, now - times[0])
                 self._burial_fresh = fresh and not self._fresh_rate_capped
@@ -1914,7 +1930,7 @@ class PositionManager(QObject):
                     # The window above the taskbar (often a transient tooltip) was destroyed
                     # between GetWindow and SetWindowPos. Benign: no backoff charged, the
                     # next Z-order event or tick retries against the new neighbour.
-                    logger.debug("Re-seat raced a closing window (%s) - retrying on the next check.", e)
+                    self._logger.debug("Re-seat raced a closing window (%s) - retrying on the next check.", e)
                     return False
                 if not (prev and _is_access_denied(e)):
                     raise
@@ -1926,7 +1942,7 @@ class PositionManager(QObject):
             self._deferral_logged = None
             if band_return:
                 self._band_return_pending_ts = 0.0   # consumed; the backoff is untouched
-                logger.debug("Widget re-seated above the taskbar after Start / Task View closed "
+                self._logger.debug("Widget re-seated above the taskbar after Start / Task View closed "
                              "(no backoff charged).")
                 return True
             if fresh:
@@ -1940,7 +1956,7 @@ class PositionManager(QObject):
             self._log_recovery(now, "Widget re-seated above the taskbar (attempt %d).", self._reseat_attempts)
             return True
         except Exception as e:
-            logger.error("Failed to re-seat the widget above the taskbar: %s", e)
+            self._logger.error("Failed to re-seat the widget above the taskbar: %s", e)
             return False
 
     def _reseat_after_access_denied(self, hwnd: int, tb: int, prev: int,
@@ -1998,7 +2014,7 @@ class PositionManager(QObject):
                 prev_class = win32gui.GetClassName(prev)
             except Exception:
                 prev_class = "?"
-            logger.info("Re-seat refused (Access denied) inserting after window class %r, "
+            self._logger.info("Re-seat refused (Access denied) inserting after window class %r, "
                         "Z-band %s (taskbar Z-band %s): %s.",
                         prev_class, _window_band(prev), tb_band, outcome)
         return ok
@@ -2012,10 +2028,10 @@ class PositionManager(QObject):
         """
         settling = bool(self._layout_settle_ts) and now - self._layout_settle_ts < _BURIAL_LOG_SETTLE_S
         if self._first_recovery_logged or settling:
-            logger.debug(debug_msg + (" (taskbar settling after a dock / tray change)" if settling else ""),
+            self._logger.debug(debug_msg + (" (taskbar settling after a dock / tray change)" if settling else ""),
                          *args)
             return
-        logger.info("Widget recovered from taskbar burial - re-seated directly above the taskbar.")
+        self._logger.info("Widget recovered from taskbar burial - re-seated directly above the taskbar.")
         self._first_recovery_logged = True
         self._recovery_info_ts = now
 
@@ -2031,7 +2047,7 @@ class PositionManager(QObject):
         if self._first_recovery_logged and self._recovery_info_ts and \
                 now - self._recovery_info_ts < _BURIAL_LOG_SETTLE_S:
             self._first_recovery_logged = False
-            logger.debug("The last burial recovery came with a %s - the next one logs at INFO again.",
+            self._logger.debug("The last burial recovery came with a %s - the next one logs at INFO again.",
                          reason or "layout change")
 
     def _log_deferral(self, reason: str, msg: str, *args) -> None:
@@ -2039,7 +2055,7 @@ class PositionManager(QObject):
         key = (reason, self._last_reseat_ts)
         if self._deferral_logged != key:
             self._deferral_logged = key
-            logger.debug(msg, *args)
+            self._logger.debug(msg, *args)
 
     def _reseat_delay(self) -> float:
         """Seconds of quiet required before the next re-seat: 0 first, then doubling, capped."""
