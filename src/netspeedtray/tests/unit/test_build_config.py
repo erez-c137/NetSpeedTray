@@ -151,6 +151,12 @@ def test_a_network_previous_folder_is_kept_not_split():
     wiz = re.search(r"procedure InitializeWizard\(\);(.*?)\nend;", iss, re.S).group(1)
     assert wiz.index("IsNetworkLocation(Dir)") < wiz.index("WizardForm.DirEdit.Text := Fallback")
     net = re.search(r"function IsNetworkLocation\(Dir: string\): Boolean;(.*?)\nend;", iss, re.S).group(1)
-    assert r"'\\'" in net and r"RegKeyExists(HKCU, 'Network\' + Drive[1])" in net
+    assert r"'\\'" in net and "SessionUserMappedDrive(Drive[1])" in net
+    # The mapping is read from the SESSION user's hive when Setup runs as another account (an admin's
+    # HKCU under over-the-shoulder elevation doesn't hold the user's mapped drives), else its own HKCU.
+    mapped = re.search(r"function SessionUserMappedDrive\(Letter: string\): Boolean;(.*?)\nend;", iss, re.S).group(1)
+    assert "SetupRunsAsAnotherUser()" in mapped and "AccountSid(SessionAccount())" in mapped
+    assert r"RegKeyExists(HKU, Sid + '\Network\' + Letter)" in mapped
+    assert r"RegKeyExists(HKCU, 'Network\' + Letter)" in mapped
     finish = re.search(r"procedure CurPageChanged\(CurPageID: Integer\);(.*?)\nend;", iss, re.S).group(1)
     assert "wpFinished" in finish and "MovedFromDir" in finish
