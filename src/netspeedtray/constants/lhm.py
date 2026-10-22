@@ -24,8 +24,9 @@ class LhmConstants:
 
     # LHM's optional HTTP Basic authentication (Options -> Remote Web Server -> Authentication). The
     # password is kept in config.json only as a Windows DPAPI blob (CryptProtectData, current user),
-    # base64-encoded; this entropy ties the blob to this app, so another program running as the same
-    # user cannot decrypt it with a plain CryptUnprotectData call. Changing it orphans saved passwords.
+    # base64-encoded. This entropy is a public constant: it only stops a casual CryptUnprotectData of
+    # the blob without it - any program running as the same user can still decrypt it by passing this
+    # value. DPAPI's real boundary is the Windows user. Changing it orphans saved passwords.
     DPAPI_ENTROPY: Final[bytes] = b"NetSpeedTray.LhmWebServerPassword.v1"
     # The Authorization header leaves this process only for these hosts: a password must never travel
     # to another machine, even if HTTP_HOST were ever made configurable.

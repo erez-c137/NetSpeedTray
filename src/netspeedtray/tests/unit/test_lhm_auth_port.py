@@ -204,6 +204,18 @@ def test_configure_with_unchanged_settings_keeps_the_backoff(auth_server):
 
 # --- G3: the port ---------------------------------------------------------------------------------
 
+def test_the_same_failure_on_a_new_port_is_logged_again(auth_server, caplog):
+    """Review L3: the dedupe key ignored the port, so a port change that failed the same way was silent."""
+    first, second = auth_server(expected=_TOKEN), auth_server(expected=_TOKEN)
+    client = _client(first.port)
+    with caplog.at_level(logging.INFO, logger="NetSpeedTray.LhmHttp"):
+        client.get_snapshot()
+        client.configure(second.port)
+        client.get_snapshot()
+    lines = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
+    assert len(lines) == 2 and str(second.port) in lines[1]
+
+
 def test_configure_moves_the_client_to_the_new_port(auth_server):
     old, new = auth_server(), auth_server()
     client = _client(old.port)
@@ -391,11 +403,77 @@ def test_the_page_round_trips_without_re_encrypting(page, monkeypatch):
     assert page.get_settings()["lhm_password_protected"] == ""
 
 
-def test_a_blob_this_user_cannot_decrypt_is_dropped(page, monkeypatch):
+def test_a_blob_this_user_cannot_decrypt_is_kept_with_a_hint(page, monkeypatch):
+    """Review L4: an unreadable blob (other account / PC, broken DPAPI) was dropped silently on Save."""
     _fake_crypt(monkeypatch)
     page.load_settings(dict(constants.config.defaults.DEFAULT_CONFIG, lhm_password_protected="FOREIGN"))
     assert page.lhm_password.text() == ""
+    assert page.get_settings()["lhm_password_protected"] == "FOREIGN"
+    assert page._lhm_password_card._desc_label.text() == page.i18n.LHM_PASSWORD_UNREADABLE
+
+
+def test_typing_a_new_password_replaces_an_unreadable_blob(page, monkeypatch):
+    _fake_crypt(monkeypatch)
+    page.load_settings(dict(constants.config.defaults.DEFAULT_CONFIG, lhm_password_protected="FOREIGN"))
+    page.lhm_password.setText(PASSWORD)
+    page.lhm_password.textEdited.emit(PASSWORD)   # what a keystroke emits (setText does not)
+    assert page.get_settings()["lhm_password_protected"] == "B64:" + PASSWORD[::-1]
+    assert page._lhm_password_card._desc_label.text().strip() == ""
+
+
+def test_clearing_the_field_removes_an_unreadable_blob(page, monkeypatch):
+    _fake_crypt(monkeypatch)
+    page.load_settings(dict(constants.config.defaults.DEFAULT_CONFIG, lhm_password_protected="FOREIGN"))
+    page.lhm_password.textEdited.emit("")   # typed then deleted: the user cleared it
     assert page.get_settings()["lhm_password_protected"] == ""
+
+
+def test_an_unreadable_blob_logs_one_warning_and_never_the_blob(caplog):
+    secret_store._warned_unreadable.clear()
+    with caplog.at_level(logging.DEBUG, logger="NetSpeedTray.SecretStore"):
+        for _ in range(3):
+            assert secret_store.unprotect("!!not-a-blob!!") is None
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1 and "!!not-a-blob!!" not in caplog.text
+
+
+def test_the_plain_password_is_wiped_when_the_page_hides_and_restored_on_show(page, monkeypatch, qtbot):
+    """Review L1: the Settings dialog is hidden, not destroyed, so the plain text sat in memory."""
+    _fake_crypt(monkeypatch)
+    cfg = dict(constants.config.defaults.DEFAULT_CONFIG, lhm_password_protected="B64:" + PASSWORD[::-1])
+    page.load_settings(cfg)
+    page.show()
+    qtbot.waitExposed(page)
+    page.hide()
+    assert page.lhm_password.text() == "" and page._lhm_password_plain == ""
+    assert page.get_settings()["lhm_password_protected"] == cfg["lhm_password_protected"]
+    page.show()
+    assert page.lhm_password.text() == PASSWORD   # decrypted again for the user
+
+
+def test_a_pending_edit_survives_the_wipe_on_hide(page, monkeypatch, qtbot):
+    _fake_crypt(monkeypatch)
+    page.load_settings(dict(constants.config.defaults.DEFAULT_CONFIG))
+    page.show()
+    qtbot.waitExposed(page)
+    page.lhm_password.setText("typed-not-saved")
+    page.hide()   # e.g. the user switched to another Settings page before saving
+    assert page.lhm_password.text() == ""
+    assert page.get_settings()["lhm_password_protected"] == "B64:" + "typed-not-saved"[::-1]
+
+
+def test_the_status_line_is_only_touched_on_a_change(page, monkeypatch):
+    """Review L2: the 1 s timer re-set the description every tick (relayout + accessible reset)."""
+    calls = []
+    real = page._lhm_port_card.set_description
+    monkeypatch.setattr(page._lhm_port_card, "set_description", lambda t: calls.append(t) or real(t))
+    page.status["value"] = (L.STATUS_OK, 8085)
+    for _ in range(5):
+        page.refresh_lhm_status()
+    page.status["value"] = (L.STATUS_AUTH_FAILED, 8085)
+    page.refresh_lhm_status()
+    page.refresh_lhm_status()
+    assert len(calls) == 2
 
 
 def test_the_port_spin_box_is_bounded_and_drives_the_hint(page):
@@ -465,3 +543,11 @@ def test_the_english_advice_no_longer_says_to_turn_authentication_off():
     hint = _locale("en_US")["LHM_WEB_SERVER_HINT"].lower()
     assert "authentication off" not in hint and "leave its authentication" not in hint
     assert "firewall" in hint and "user name and password" in hint
+    assert "re-enter it in lhm after each lhm restart" in hint   # review L5: the 0.9.6 re-hash
+
+
+@pytest.mark.parametrize("code", sorted(constants.I18nStrings.LANGUAGE_MAP))
+def test_every_locale_warns_about_re_entering_the_password_after_an_lhm_restart(code):
+    data = _locale(code)
+    assert "0.9.6" in data["LHM_WEB_SERVER_HINT"].rsplit("127.0.0.1", 1)[1]   # in the closing part
+    assert data["LHM_PASSWORD_UNREADABLE"]

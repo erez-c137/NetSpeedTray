@@ -3,7 +3,8 @@
 ``protect`` turns a secret into a base64 string that is safe to keep in config.json: a
 CryptProtectData blob bound to the current Windows user (and to this app's entropy). Only the same
 user on the same machine can turn it back with ``unprotect`` - a config copied to another PC or
-another account decrypts to nothing, and the user simply types the password again.
+another account decrypts to nothing, and the user types the password again. Any program running as
+the same user CAN decrypt it (DPAPI's user scope); the app entropy only stops a casual decrypt.
 
 Neither function ever logs, raises or returns the secret in an error: callers get ``""`` / ``None``.
 """
@@ -12,6 +13,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import logging
 from typing import Optional
 
@@ -22,6 +24,19 @@ logger = logging.getLogger("NetSpeedTray.SecretStore")
 # CRYPTPROTECT_UI_FORBIDDEN: never show a DPAPI prompt (there is none for a plain user-scope blob,
 # but a background poll must not be able to pop one either).
 _CRYPTPROTECT_UI_FORBIDDEN = 0x1
+
+# Fingerprints (never the values) of saved blobs already reported as unreadable: the page re-reads the
+# blob on every show and the monitor thread on every settings change, and one WARNING is enough.
+_warned_unreadable: set = set()
+
+
+def _warn_unreadable_once(stored: str, why: str) -> None:
+    fingerprint = hashlib.sha256(stored.encode("utf-8", "replace")).hexdigest()
+    if fingerprint in _warned_unreadable:
+        return
+    _warned_unreadable.add(fingerprint)
+    logger.warning("The saved LibreHardwareMonitor password cannot be read for this Windows user (%s). "
+                   "It is kept until a new one is entered in Settings > Hardware.", why)
 
 
 def _win32crypt():
@@ -59,16 +74,16 @@ def unprotect(stored: str, entropy: bytes = constants.lhm.DPAPI_ENTROPY) -> Opti
     try:
         blob = base64.b64decode(stored.encode("ascii"), validate=True)
     except (binascii.Error, ValueError, UnicodeEncodeError):
-        logger.info("The saved LibreHardwareMonitor password is not a DPAPI value; ignoring it.")
+        _warn_unreadable_once(stored, "not a DPAPI value")
         return None
     crypt = _win32crypt()
     if crypt is None:
+        _warn_unreadable_once(stored, "DPAPI unavailable")
         return None
     try:
         _description, data = crypt.CryptUnprotectData(blob, entropy, None, None,
                                                       _CRYPTPROTECT_UI_FORBIDDEN)
         return bytes(data).decode("utf-8")
     except Exception as e:
-        logger.info("The saved LibreHardwareMonitor password cannot be decrypted for this Windows "
-                    "user (%s); enter it again in Settings > Hardware.", type(e).__name__)
+        _warn_unreadable_once(stored, type(e).__name__)
         return None

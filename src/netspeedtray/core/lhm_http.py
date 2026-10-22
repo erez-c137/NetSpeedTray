@@ -471,7 +471,8 @@ class LhmHttpClient:
             self._retry_after = now + self.failure_backoff_seconds
             self._cached = None
             self.status = self._status_for(e)
-            reason = f"{type(e).__name__}: {e} ({self.status})"
+            # Port in the key: moving to another port that fails the same way is a new line in the log.
+            reason = f"{type(e).__name__}: {e} ({self.status}, port {self.port})"
             if reason != self._last_failure:
                 self._last_failure = reason
                 self._log_failure(e, reason)

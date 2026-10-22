@@ -43,6 +43,12 @@ class HardwarePage(QWidget):
         # unchanged field never re-encrypts (DPAPI output differs on every call).
         self._lhm_password_blob = ""
         self._lhm_password_plain = ""
+        # True while the field holds the user's password (decrypted or typed). False after a hide (the
+        # field is wiped so the plain text does not sit in a hidden, cached dialog) and while the saved
+        # blob cannot be decrypted for this Windows user - in both cases get_settings keeps the blob.
+        self._lhm_password_loaded = True
+        self._lhm_password_unreadable = False
+        self._lhm_status_shown: Optional[str] = None
         # Last complete #RRGGBB per custom label colour - what get_settings reports while a field is mid-edit.
         self._last_valid_hex = {k: getattr(constants.config.defaults, f"DEFAULT_{k.upper()}")
                                 for k in self.LABEL_COLOR_KEYS}
@@ -267,7 +273,10 @@ class HardwarePage(QWidget):
         self.lhm_password.setMinimumWidth(200)
         self.lhm_password.setProperty("fieldStyle", "input")
         self.lhm_password.editingFinished.connect(self.on_change)
-        section.contentLayout().addWidget(SettingCard(self.i18n.LHM_PASSWORD_LABEL, control=self.lhm_password))
+        self.lhm_password.textEdited.connect(self._on_lhm_password_edited)
+        self._lhm_password_card = SettingCard(self.i18n.LHM_PASSWORD_LABEL, description=" ",
+                                              control=self.lhm_password)
+        section.contentLayout().addWidget(self._lhm_password_card)
         layout.addWidget(section)
 
         self._lhm_status_timer = QTimer(self)
@@ -276,12 +285,45 @@ class HardwarePage(QWidget):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
+        if not self._lhm_password_loaded:
+            self._restore_lhm_password()
         self.refresh_lhm_status()
         self._lhm_status_timer.start()
 
     def hideEvent(self, event) -> None:
         self._lhm_status_timer.stop()
+        self._forget_lhm_password()
         super().hideEvent(event)
+
+    def _forget_lhm_password(self) -> None:
+        """Keep the plain-text password in memory only while the page is on screen: the Settings dialog
+        is hidden, not destroyed, between uses. A pending edit is encrypted into the blob first."""
+        self._lhm_password_setting()
+        self.lhm_password.clear()
+        self._lhm_password_plain = ""
+        self._lhm_password_loaded = False
+
+    def _restore_lhm_password(self) -> None:
+        """Fill the field from the saved blob (load_settings, and every show after a hide)."""
+        blob = self._lhm_password_blob
+        plain = (secret_store.unprotect(blob) or "") if blob else ""
+        self._lhm_password_unreadable = bool(blob) and not plain
+        self._lhm_password_plain = plain
+        self._lhm_password_loaded = not self._lhm_password_unreadable
+        self.lhm_password.setText(plain)
+        self._sync_lhm_password_hint()
+
+    def _on_lhm_password_edited(self, _text: str) -> None:
+        # The user takes over: whatever is in the field now (even empty) replaces an unreadable blob.
+        self._lhm_password_loaded = True
+        if self._lhm_password_unreadable:
+            self._lhm_password_unreadable = False
+            self._lhm_password_plain = None   # force a re-encrypt (or a clear) on the next read
+            self._sync_lhm_password_hint()
+
+    def _sync_lhm_password_hint(self) -> None:
+        self._lhm_password_card.set_description(
+            self.i18n.LHM_PASSWORD_UNREADABLE if self._lhm_password_unreadable else " ")
 
     def _on_lhm_port_changed(self, _value: int = 0) -> None:
         self.lhm_web_server_hint.setText(self.i18n.LHM_WEB_SERVER_HINT.format(port=self.lhm_port.value()))
@@ -310,10 +352,19 @@ class HardwarePage(QWidget):
         except Exception:
             result = None
         status, port = result if result else (None, None)
-        self._lhm_port_card.set_description(self.lhm_status_text(status, port) or " ")
+        text = self.lhm_status_text(status, port) or " "
+        # Polled every second: touch the card only on a change (set_description relays out the card
+        # and resets its accessible description).
+        if text != self._lhm_status_shown:
+            self._lhm_status_shown = text
+            self._lhm_port_card.set_description(text)
 
     def _lhm_password_setting(self) -> str:
-        """The password field as config stores it: a DPAPI blob, re-made only when the text changed."""
+        """The password field as config stores it: a DPAPI blob, re-made only when the text changed.
+        While the field does not hold the user's password (wiped on hide, or the blob is unreadable
+        here), the saved blob is kept as it is."""
+        if not self._lhm_password_loaded:
+            return self._lhm_password_blob
         text = self.lhm_password.text()
         if text != self._lhm_password_plain:
             self._lhm_password_plain = text
@@ -373,13 +424,11 @@ class HardwarePage(QWidget):
         self.lhm_port.blockSignals(False)
         self.lhm_web_server_hint.setText(self.i18n.LHM_WEB_SERVER_HINT.format(port=self.lhm_port.value()))
         self.lhm_username.setText(str(config.get("lhm_username", "") or ""))
-        # A blob this Windows user cannot decrypt (a config copied from another account or PC) shows as
-        # an empty field and is dropped on Save - the status then says a password is needed.
-        blob = str(config.get("lhm_password_protected", "") or "")
-        plain = (secret_store.unprotect(blob) or "") if blob else ""
-        self._lhm_password_plain = plain
-        self._lhm_password_blob = blob if plain else ""
-        self.lhm_password.setText(plain)
+        # A blob this Windows user cannot decrypt (a config copied from another account or PC, DPAPI
+        # broken) shows as an empty field with a hint, and is KEPT until the user types a new password
+        # or clears the field (secret_store logs a WARNING once).
+        self._lhm_password_blob = str(config.get("lhm_password_protected", "") or "")
+        self._restore_lhm_password()
         self.refresh_lhm_status()
 
         self.monitor_cpu.blockSignals(False)
