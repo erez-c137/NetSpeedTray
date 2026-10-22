@@ -157,8 +157,8 @@
     "DEFAULT_COLOR_TOOLTIP": "Wybierz domyślny kolor tekstu",
     "HIGH_SPEED_COLOR_TOOLTIP": "Wybierz kolor dla wysokich prędkości",
     "LOW_SPEED_COLOR_TOOLTIP": "Wybierz kolor dla niskich prędkości",
-    "HIGH_SPEED_THRESHOLD_TOOLTIP": "Prędkość, przy której lub powyżej tekst używa 'Wysokiego koloru'.",
-    "LOW_SPEED_THRESHOLD_TOOLTIP": "Poniżej tej prędkości tekst używa koloru domyślnego; od tej wartości do wysokiego progu używa 'Niskiego koloru'.",
+    "HIGH_SPEED_THRESHOLD_TOOLTIP": "Prędkość, przy której lub powyżej której tekst używa koloru „Kolor dla wysokiej prędkości”.",
+    "LOW_SPEED_THRESHOLD_TOOLTIP": "Poniżej tej prędkości tekst używa koloru „Kolor domyślny”; od tej wartości do wysokiego progu – koloru „Kolor dla niskiej prędkości”.",
     "SETTINGS_MENU_ITEM": "&Ustawienia",
     "PAUSE_MENU_ITEM": "&Wstrzymaj",
     "RESUME_MENU_ITEM": "&Wznów",
@@ -571,6 +571,6 @@
     "POWER_TODAY_AVG_LABEL": "Śr. dzisiaj",
     "POWER_ON_AC_VALUE": "Na zasilaczu",
     "POWER_CHARGE_PCT_TEMPLATE": "{pct}% baterii",
-    "EXPANDER_A11Y_EXPANDED": "{title}, rozwinięty",
-    "EXPANDER_A11Y_COLLAPSED": "{title}, zwinięty"
+    "EXPANDER_A11Y_EXPANDED": "{title}, rozwinięte",
+    "EXPANDER_A11Y_COLLAPSED": "{title}, zwinięte"
 }

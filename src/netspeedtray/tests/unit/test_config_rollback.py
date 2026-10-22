@@ -72,6 +72,17 @@ def test_a_failed_apply_reapplies_the_old_config_to_every_component(setup):
     assert holder is w.config and holder["font_size"] == OLD_FONT
 
 
+def test_a_failed_live_preview_rolls_back_without_writing_the_file(setup):
+    """The preview path (save_to_disk=False) never wrote config.json; its rollback must not either -
+    the in-memory dict can hold earlier previewed values that Cancel would then fail to undo."""
+    cc, w, seen = setup
+    with pytest.raises(RuntimeError):
+        cc.handle_settings_changed({"font_size": NEW_FONT}, save_to_disk=False)
+    assert seen["save"] == [], f"a preview rollback wrote the config file: {seen['save']}"
+    assert w.config["font_size"] == OLD_FONT
+    assert seen["renderer"][-1] == OLD_FONT          # still re-applied live
+
+
 def test_a_rollback_whose_reapply_also_fails_does_not_loop_or_mask_the_error(setup):
     cc, w, _seen = setup
     w.widget_state.apply_config.side_effect = ValueError("broken either way")

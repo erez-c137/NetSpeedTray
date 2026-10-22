@@ -158,7 +158,7 @@
     "HIGH_SPEED_COLOR_TOOLTIP": "Selecciona el color para velocidades altas",
     "LOW_SPEED_COLOR_TOOLTIP": "Selecciona el color para velocidades bajas",
     "HIGH_SPEED_THRESHOLD_TOOLTIP": "Velocidad a partir de la cual el texto usa el «Color velocidad alta».",
-    "LOW_SPEED_THRESHOLD_TOOLTIP": "Por debajo de esta velocidad el texto usa el Color predeterminado; desde aquí hasta el umbral alto usa el «Color velocidad baja».",
+    "LOW_SPEED_THRESHOLD_TOOLTIP": "Por debajo de esta velocidad el texto usa el «Color predeterminado»; desde aquí hasta el umbral alto usa el «Color velocidad baja».",
     "SETTINGS_MENU_ITEM": "&Configuración",
     "PAUSE_MENU_ITEM": "&Pausar",
     "RESUME_MENU_ITEM": "&Reanudar",

@@ -417,37 +417,6 @@ def dialog_style() -> str:
     """
 
 
-def collapsible_section_style() -> str:
-    """Style for CollapsibleSection header widget."""
-    dark_mode_active = is_dark_mode()
-    text_color = style_constants.DARK_MODE_TEXT_COLOR if dark_mode_active else style_constants.LIGHT_MODE_TEXT_COLOR
-    hover_bg = "rgba(255, 255, 255, 0.05)" if dark_mode_active else "rgba(0, 0, 0, 0.03)"
-
-    return f"""
-        QWidget#collapsibleHeader {{
-            background-color: transparent;
-            border: none;
-            padding: 4px 0px;
-        }}
-        QWidget#collapsibleHeader:hover {{
-            background-color: {hover_bg};
-            border-radius: 6px;
-        }}
-        QWidget#collapsibleHeader QLabel {{
-            color: {text_color};
-            font-family: "Segoe UI Variable", "Segoe UI", sans-serif;
-            background-color: transparent;
-        }}
-        QWidget#collapsibleHeader QLabel#sectionTitle {{
-            font-size: 14px;
-            font-weight: 600;
-        }}
-        QWidget#collapsibleHeader QLabel#sectionChevron {{
-            font-size: 12px;
-        }}
-    """
-
-
 def sidebar_style() -> str:
     """Style for the sidebar (QListWidget) in the main SettingsDialog."""
     dark_mode_active = is_dark_mode()

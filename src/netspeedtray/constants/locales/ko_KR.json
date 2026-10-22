@@ -158,7 +158,7 @@
     "HIGH_SPEED_COLOR_TOOLTIP": "고속 색상 선택",
     "LOW_SPEED_COLOR_TOOLTIP": "저속 색상 선택",
     "HIGH_SPEED_THRESHOLD_TOOLTIP": "이 속도 이상에서 텍스트가 '고속 색상'을 사용합니다.",
-    "LOW_SPEED_THRESHOLD_TOOLTIP": "이 속도 미만에서는 텍스트가 기본 색상을 사용하고, 이 속도부터 고속 임계값까지는 '저속 색상'을 사용합니다.",
+    "LOW_SPEED_THRESHOLD_TOOLTIP": "이 속도 미만에서는 텍스트가 '기본 색상'을 사용하고, 이 속도부터 고속 임계값까지는 '저속 색상'을 사용합니다.",
     "SETTINGS_MENU_ITEM": "설정(&S)",
     "PAUSE_MENU_ITEM": "일시 중지(&P)",
     "RESUME_MENU_ITEM": "재개(&R)",

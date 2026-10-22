@@ -350,13 +350,31 @@ class NetworkHeader(QWidget):
         share = (note.minimumWidth() + lay.spacing()) if not note.isHidden() else 0
         return lay.minimumSize().width() - share
 
+    def _iface_shortfall(self) -> int:
+        """How much wider than its eliding floor the interface button wants to be (its whole name, up
+        to its max). The note is a secondary caption, so it yields before the NIC name truncates to
+        "All (A…" / "Ether…" (#432 review)."""
+        btn = self._iface_btn
+        preferred = min(btn.sizeHint().width(), btn.maximumWidth())
+        return max(0, preferred - btn.minimumSizeHint().width())
+
     def _fit_note(self, width: int) -> None:
-        """The D5 note takes only the room the controls leave: its full floor when there is one, less
-        down to MONITOR_HISTORY_NOTE_COMPACT_MIN_WIDTH, and below that it hides and its text moves to
-        the totals' tooltips. Holding its 160 px at the 660 px minimum squeezed the timeline and Live
+        """The D5 note takes only the room the controls leave (the NIC button counted at its full name):
+        its full floor when there is one, less down to MONITOR_HISTORY_NOTE_COMPACT_MIN_WIDTH, and below
+        that it hides and its text moves to the totals' tooltips. Holding its 160 px at the 660 px minimum squeezed the timeline and Live
         pill below their own minimums in every locale (rc.2 S7)."""
         note = self._history_note
-        room = width - self._min_without_note() - self.layout().spacing()
+        # A compact flip in this same _fit resized "Check connection", which sits in the controls
+        # sub-layout; QLayout.invalidate() on the root doesn't reach sub-layouts, so their cached
+        # minimum would be measured stale until the next activate().
+        def _invalidate(lay) -> None:
+            lay.invalidate()
+            for i in range(lay.count()):
+                sub = lay.itemAt(i).layout()
+                if sub is not None:
+                    _invalidate(sub)
+        _invalidate(self.layout())
+        room = width - self._min_without_note() - self._iface_shortfall() - self.layout().spacing()
         show = self._note_wanted and room >= constants.layout.MONITOR_HISTORY_NOTE_COMPACT_MIN_WIDTH
         if show:
             want_w = min(constants.layout.MONITOR_HISTORY_NOTE_MIN_WIDTH, room)

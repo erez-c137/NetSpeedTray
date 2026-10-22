@@ -159,8 +159,10 @@ def _header_with_note(qtbot, locale):
     return h
 
 
-@pytest.mark.parametrize("locale", ["en_US", "de_DE", "ru_RU", "hu_HU", "fr_FR", "it_IT", "ja_JP", "he_IL"])
-def test_history_note_never_pushes_the_band_past_its_width(qtbot, locale):
+@pytest.mark.parametrize("nic", ["all", "Ethernet 3 (Realtek PCIe 2.5GbE Family Controller)"])
+@pytest.mark.parametrize("locale", ["en_US", "de_DE", "ru_RU", "hu_HU", "fr_FR", "it_IT", "ja_JP", "he_IL",
+                                    "es_ES", "nl_NL", "pl_PL", "tr_TR", "sl_SI"])
+def test_history_note_never_pushes_the_band_past_its_width(qtbot, locale, nic):
     """At the Monitor's 660 px minimum the note held its 160 px floor, so the band's minimum overran
     the window and Qt squeezed the timeline ("Mu…") and the Live pill ("tempo r") below their own
     minimums in every locale (rc.2 S7). The note must give way instead: narrow, then hide - with its
@@ -169,19 +171,27 @@ def test_history_note_never_pushes_the_band_past_its_width(qtbot, locale):
     from netspeedtray import constants
     L = constants.layout
     h = _header_with_note(qtbot, locale)
+    if nic != "all":
+        h._iface_value = nic
+        h._sync_iface_text()
+    btn = h._iface_btn
+    # What the NIC button needs beyond its eliding floor to show its whole name (up to its max).
+    shortfall = max(0, min(btn.sizeHint().width(), btn.maximumWidth()) - btn.minimumSizeHint().width())
     lay, note = h.layout(), h._history_note
-    widths = list(range(300, 2600, 20))
+    widths = list(range(300, 2800, 20))
     for w in widths + widths[::-1]:
         h._fit(w)
         lay.activate()
         base = h._min_without_note()
         if not note.isHidden():
-            assert lay.minimumSize().width() <= w, f"{locale} @ {w}: the note overran the band"
+            # ... and never at the cost of the NIC name: the button still gets its full width.
+            assert lay.minimumSize().width() + shortfall <= w, \
+                f"{locale} @ {w}: the note overran the band or truncated the NIC name"
             assert note.minimumWidth() >= L.MONITOR_HISTORY_NOTE_COMPACT_MIN_WIDTH
             assert h._down[1].toolTip() == ""
         else:
             assert h._down[1].toolTip() == h._up[1].toolTip() == note.full_text() != ""
-        if w >= base + L.MONITOR_HISTORY_NOTE_MIN_WIDTH + lay.spacing():
+        if w >= base + shortfall + L.MONITOR_HISTORY_NOTE_MIN_WIDTH + lay.spacing():
             assert not note.isHidden() and note.minimumWidth() == L.MONITOR_HISTORY_NOTE_MIN_WIDTH
     # Not estimated any more: no note, no tooltip.
     h.set_totals(up_bytes=1.0, down_bytes=2.0, period_key="TIMELINE_24_HOURS", reconstructed=False)

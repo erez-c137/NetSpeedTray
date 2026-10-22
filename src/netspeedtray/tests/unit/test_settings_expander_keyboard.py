@@ -35,6 +35,36 @@ def test_header_opens_and_closes_from_the_keyboard(qtbot, key):
     assert not exp.isExpanded()
 
 
+@pytest.mark.parametrize("key", [Qt.Key.Key_Return, Qt.Key.Key_Enter])
+def test_holding_enter_never_reaches_the_dialogs_default_button(qtbot, key):
+    """Holding Enter sends one press plus auto-repeats. The header handled only the first; the repeats
+    went up to the dialog, which clicked its default Save button - saving and closing Settings."""
+    from PyQt6.QtCore import QEvent
+    from PyQt6.QtGui import QKeyEvent
+    from PyQt6.QtWidgets import QApplication, QDialog, QPushButton, QVBoxLayout
+    dlg = QDialog()
+    qtbot.addWidget(dlg)
+    lay = QVBoxLayout(dlg)
+    exp = SettingExpander("Advertised plan speed", expanded=False)
+    lay.addWidget(exp)
+    save = QPushButton("Save")
+    save.setDefault(True)
+    lay.addWidget(save)
+    saves = []
+    save.clicked.connect(lambda: saves.append(1))
+    dlg.accepted.connect(lambda: saves.append("accepted"))
+    save.clicked.connect(dlg.accept)
+    dlg.show()                      # QDialog only presses a VISIBLE default button
+    qtbot.waitExposed(dlg)
+    for repeat in (False, True, True, True):
+        ev = QKeyEvent(QEvent.Type.KeyPress, key, Qt.KeyboardModifier.NoModifier, "\r", repeat)
+        QApplication.sendEvent(exp._header, ev)
+    QApplication.sendEvent(exp._header, QKeyEvent(QEvent.Type.KeyRelease, key, Qt.KeyboardModifier.NoModifier))
+    qtbot.wait(400)                 # the dialog's press is an animateClick (fires on a timer)
+    assert exp.isExpanded(), "the first press must still toggle"
+    assert saves == [], f"the dialog's default button fired: {saves}"
+
+
 def test_header_names_its_title_and_state(qtbot):
     exp = SettingExpander("Advertised plan speed", "Flags time spent below your plan", expanded=False)
     qtbot.addWidget(exp)

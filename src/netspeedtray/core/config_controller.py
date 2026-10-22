@@ -140,17 +140,21 @@ class ConfigController:
 
         except Exception as e:
             self.logger.error(f"Failed to handle settings change: {e}", exc_info=True)
-            self.rollback_config(old_config)
+            self.rollback_config(old_config, save_to_disk=save_to_disk)
             raise
 
-    def rollback_config(self, old_config: Dict[str, Any]) -> None:
+    def rollback_config(self, old_config: Dict[str, Any], save_to_disk: bool = True) -> None:
         """Restores a previous configuration state: in memory, on disk, and in the live components.
 
         A failed apply_all_settings stops partway, so the renderer / controller / monitor thread may
         already hold the new values while the rest still run the old ones. Saving the old config
         alone left that half-applied state on screen until the next restart (rc.2 S8), so the
         restored config goes back through the same apply path. If that re-apply fails too, it is
-        logged and swallowed - the caller re-raises the original error."""
+        logged and swallowed - the caller re-raises the original error.
+
+        ``save_to_disk`` mirrors the failed call: a live-preview apply (save_to_disk=False) never wrote
+        the file, so its rollback must not either - the in-memory config it would save can hold
+        earlier previewed values that Cancel is about to revert (#432 review)."""
         self.logger.warning("Rolling back configuration changes due to apply failure.")
         restored = dict(old_config)
         cfg = self.widget.config
@@ -160,11 +164,12 @@ class ConfigController:
             cfg.update(restored)
         else:
             self.widget.config = restored
-        try:
-            self.config_manager.save(self.widget.config)
-            self.logger.info("Configuration rolled back and saved successfully.")
-        except Exception as e:
-            self.logger.error(f"CRITICAL: Error saving rolled-back configuration: {e}", exc_info=True)
+        if save_to_disk:
+            try:
+                self.config_manager.save(self.widget.config)
+                self.logger.info("Configuration rolled back and saved successfully.")
+            except Exception as e:
+                self.logger.error(f"CRITICAL: Error saving rolled-back configuration: {e}", exc_info=True)
 
         if self._rolling_back:
             return   # an apply that itself rolled back: never re-enter

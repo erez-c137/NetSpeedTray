@@ -35,10 +35,6 @@ class LayoutConstants:
     INTERFACE_SCROLL_MAX_ITEMS: Final[int] = 7
     INTERFACE_SCROLL_MIN_HEIGHT: Final[int] = 80
     
-    # --- Collapsible Section ---
-    COLLAPSIBLE_HEADER_HEIGHT: Final[int] = 36
-    COLLAPSIBLE_SECTION_SPACING: Final[int] = 8
-
     # --- Monitor Window ---
     # One fixed-height command band sits at the very top of every Monitor tab (directly under the
     # pivot strip). Identical height + top origin on all tabs is what stops the timeline/NIC controls
