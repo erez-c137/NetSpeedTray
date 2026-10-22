@@ -58,7 +58,10 @@ AppUpdatesURL={#MyAppURL}
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 ArchitecturesAllowed=x64compatible
-ArchitecturesInstallIn64BitMode=x64 
+; x64compatible, not x64 (an alias of x64os since Inno 6.3): identical on x64 Windows, and on Windows 11
+; on ARM (x64 emulation) Setup then installs in 64-bit mode - Program Files and the native uninstall
+; key - instead of 32-bit mode (Program Files (x86), WOW6432Node).
+ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=admin
 WizardStyle=modern
 Compression=lzma

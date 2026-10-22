@@ -37,6 +37,8 @@ Also on the [**Microsoft Store**](https://apps.microsoft.com/detail/XP9MHWQZJPLQ
 
 **Requirements:** Windows 10 or 11 (64-bit). The widget needs no admin rights. CPU/GPU **temperatures** on some hardware need an optional helper - [see below](#hardware-monitoring---do-i-need-librehardwaremonitor).
 
+**Deploying to several PCs?** Silent install, per-machine and per-user details, the update policy and every network connection the app makes are in [DEPLOYING.md](DEPLOYING.md).
+
 ---
 
 ## See it in action
