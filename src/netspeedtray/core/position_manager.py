@@ -10,7 +10,8 @@ This module consolidates all widget positioning logic, including:
 
 import logging
 from dataclasses import dataclass
-from typing import Optional, Tuple, List, Protocol, runtime_checkable, Dict, Any, TYPE_CHECKING
+from collections import deque
+from typing import Optional, Tuple, List, Protocol, runtime_checkable, Dict, Any, Deque, TYPE_CHECKING
 import math
 import time
 import ctypes
@@ -143,6 +144,9 @@ _RESEAT_HEALTHY_S = 10.0
 # real fight re-buries within a frame or two); a later one is fresh - immediate and free. The
 # rationale lives with the constant (constants/timeouts.py, BURIAL_FIGHT_WINDOW_MS).
 _BURIAL_FIGHT_WINDOW_S = constants.timeouts.BURIAL_FIGHT_WINDOW_MS / 1000.0
+# ... unless fresh burials come faster than a person can cause them (rationale with the constants).
+_BURIAL_FRESH_RATE_MAX = constants.timeouts.BURIAL_FRESH_RATE_MAX
+_BURIAL_FRESH_RATE_WINDOW_S = constants.timeouts.BURIAL_FRESH_RATE_WINDOW_MS / 1000.0
 _ERROR_ACCESS_DENIED = 5
 # The on-top stretch must be OBSERVED: checks run at least once a second while the widget is
 # shown, so a longer gap between two verified on-top checks (the widget was hidden, or nothing
@@ -609,6 +613,10 @@ class PositionManager(QObject):
         # None = no burial classified since our last re-seat / the last verified on-top check.
         self._last_acted_reseat_ts: float = 0.0
         self._burial_fresh: Optional[bool] = None
+        # Times of the last free (fresh) re-seats, and the rate cap they can trip - which holds
+        # until the healthy on-top stretch (or an explorer restart) resets the backoff state.
+        self._fresh_reseat_times: Deque[float] = deque(maxlen=_BURIAL_FRESH_RATE_MAX)
+        self._fresh_rate_capped: bool = False
         # One INFO line per burial episode when SetWindowPos refuses the neighbour (Win10).
         self._access_denied_logged: bool = False
         # One INFO line per stretch of a not-ready tray rect (see _tray_rect_ready).
@@ -1075,6 +1083,8 @@ class PositionManager(QObject):
         self._band_return_pending_ts = 0.0
         self._last_acted_reseat_ts = 0.0
         self._burial_fresh = None
+        self._fresh_reseat_times.clear()
+        self._fresh_rate_capped = False
         self._access_denied_logged = False
 
     def _taskbar_band_raised(self, tb: int, now: float) -> Optional[int]:
@@ -1238,8 +1248,18 @@ class PositionManager(QObject):
             # per burial: while we sit out a backoff we are not re-seating, so a later check of
             # the SAME burial must stay a fight.
             if self._burial_fresh is None:
-                self._burial_fresh = bool(self._last_acted_reseat_ts) and \
+                fresh = bool(self._last_acted_reseat_ts) and \
                     now - self._last_acted_reseat_ts > _BURIAL_FIGHT_WINDOW_S
+                times = self._fresh_reseat_times
+                if fresh and not self._fresh_rate_capped and len(times) == times.maxlen and \
+                        now - times[0] < _BURIAL_FRESH_RATE_WINDOW_S:
+                    # Faster than a person buries it: a periodic re-burier just outside the
+                    # fight window, or a fight only the 1 s tick sees. Charge it from here on.
+                    self._fresh_rate_capped = True
+                    logger.info("Widget buried %d times in %.0fs - treating further burials as a "
+                                "fight (backoff) until it stays on top.",
+                                len(times) + 1, now - times[0])
+                self._burial_fresh = fresh and not self._fresh_rate_capped
             fresh = self._burial_fresh
             delay = self._reseat_delay()
             if not (band_return or fresh) and self._last_reseat_ts and \
@@ -1293,6 +1313,7 @@ class PositionManager(QObject):
                              "(no backoff charged).")
                 return True
             if fresh:
+                self._fresh_reseat_times.append(now)
                 if self._first_recovery_logged:
                     logger.debug("Widget re-seated above the taskbar after a fresh burial "
                                  "(no backoff charged).")

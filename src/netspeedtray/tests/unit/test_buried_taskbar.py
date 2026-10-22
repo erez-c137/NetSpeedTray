@@ -774,6 +774,65 @@ def test_fight_right_after_a_fresh_reseat_is_still_charged():
         assert m.reseat_above_taskbar() is False         # now inside the 2 s window
 
 
+def test_slow_periodic_reburier_outside_the_fight_window_still_decays():
+    """#424 review: something that re-buries 260-400 ms after every re-seat is never inside the
+    fight window - 300-400 free re-seats in 120 s, ~3/s forever. The fresh-burial rate cap turns
+    it into a fight, which decays like any other."""
+    for rebury in (0.26, 0.3, 0.4):
+        with _env([TB, W]) as (m, z, _w, clock):
+            _bury(z)
+            reseats = _run_fight(m, z, clock, rebury_after_s=rebury, check_every_s=0.05,
+                                 duration_s=120)
+            assert len(reseats) <= 25, (rebury, len(reseats))
+            assert reseats[-1] - reseats[-2] >= 16 - 0.1, (rebury, _gaps(reseats[0], reseats))
+
+
+def test_one_frame_fight_seen_only_by_the_1s_tick_still_decays():
+    """No Z-order hook (it failed to attach, or our own process did the burying): every check is
+    ~1 s after our re-seat, so every burial looked fresh - 120 re-seats in 120 s, forever."""
+    with _env([TB, W]) as (m, z, _w, clock):
+        _bury(z)
+        reseats = _run_fight(m, z, clock, rebury_after_s=0.016, check_every_s=1.0, duration_s=120)
+        assert len(reseats) <= 25, len(reseats)
+        assert reseats[-1] - reseats[-2] >= 16 - 0.1, _gaps(reseats[0], reseats)
+
+
+def test_rate_capped_fight_stays_capped_until_the_widget_holds():
+    """Once capped, the next burials are charged until the widget stays on top for the healthy
+    stretch - then a user's burial is free again."""
+    with _env([TB, W]) as (m, z, _w, clock):
+        _bury(z)
+        _run_fight(m, z, clock, rebury_after_s=0.3, check_every_s=0.05, duration_s=30)
+        assert m._fresh_rate_capped
+        z.order = [W, TB]                                # the re-burier stopped
+        for _ in range(int(pm_mod._RESEAT_HEALTHY_S) + 2):
+            clock.t += 1
+            assert m.is_buried_behind_taskbar() is False
+        assert not m._fresh_rate_capped
+        _bury(z)
+        assert m.reseat_above_taskbar() is True
+        clock.t += 0.5
+        _bury(z)
+        assert m.reseat_above_taskbar() is True          # fresh and free again
+        assert m._reseat_attempts == 1
+
+
+def test_pasharm_pace_never_hits_the_rate_cap():
+    """His rc.1 runs: up to 10 burials in 90 s, bursts like 4 in 1.7 s (the debug log). A user
+    toggling maximize/restore every ~1.4 s for a whole cap window is still free."""
+    with _env([TB, W]) as (m, z, _w, clock):
+        _bury(z)
+        m.reseat_above_taskbar()
+        gaps = [0.654, 0.616, 0.461] + [9.0] * 9 + [1.4] * 10
+        for gap in gaps:
+            clock.t += gap
+            _bury(z)
+            assert m.is_buried_behind_taskbar() is True
+            assert m.reseat_above_taskbar() is True, gap
+            assert m._reseat_attempts == 1
+        assert not m._fresh_rate_capped
+
+
 def test_first_burial_ever_still_recovers_at_once():
     """Win11 forced burial (rc.1 live: back in 2 ms) - nothing to compare against, immediate."""
     with _env([TB, W]) as (m, z, *_):
