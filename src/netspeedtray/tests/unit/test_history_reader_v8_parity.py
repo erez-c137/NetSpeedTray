@@ -302,8 +302,10 @@ def test_raw_only_window_is_identical_and_exact(twin):
 
 def test_native_minutes_are_exact_where_v7_overcounts(twin):
     """The 3 h of v8-native minutes (20 x 2 s samples, 40 s of each 60 s bucket): v8 returns the stored
-    bytes, v7 bills the idle 20 s as if they moved data (x1.5), and the legacy estimate would have
-    under-counted the 2 s samples (x0.5) - which is why stored bytes beat any estimate."""
+    bytes, v7 bills the idle 20 s as if they moved data (x1.5). Their sample_count is SECONDS
+    (schema_v8.NET_TIER_UNITS), so avg x sample_count is the same bytes - the unit the all-interface
+    summary's bytes / MAX(sample_count) relies on; a per-SAMPLE count would have halved it (2 s
+    samples) - which is why the unit is pinned."""
     h, r7, r8 = twin
     now = datetime.fromtimestamp(h.now_ts)   # the fixture's clock: the module fixture predates this test
     s, e = now - timedelta(hours=28, minutes=1), now - timedelta(hours=24, minutes=30)
@@ -313,7 +315,7 @@ def test_native_minutes_are_exact_where_v7_overcounts(twin):
     vol = r8.volume(s, e, None, 1.0)
     assert vol.down_bytes == true_down and vol.exact_down_bytes == true_down and vol.reconstructed is False
     assert r7.total_bandwidth(s, e, None, 1.0)[1] == pytest.approx(true_down * 60 / 40)
-    assert sum(r[3] * r[6] for r in native) == pytest.approx(true_down / F.NATIVE_SAMPLE_SECONDS)
+    assert sum(r[3] * r[6] for r in native) == pytest.approx(true_down)
 
 
 def test_migrated_minutes_use_the_legacy_estimate_not_avg_x_60(twin):
