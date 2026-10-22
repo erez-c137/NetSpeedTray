@@ -12,6 +12,7 @@ and prevents micro-stutters during system stack latency.
 
 import logging
 import math
+import threading
 import time
 from typing import Dict, Any, Optional, List, NamedTuple, Tuple
 
@@ -52,6 +53,7 @@ import shutil
 from functools import lru_cache
 
 from netspeedtray import constants
+from netspeedtray.core.lhm_http import LhmHttpClient
 from netspeedtray.utils.rdp_utils import is_rdp_session
 from netspeedtray.utils.network_utils import get_connected_network_identity
 
@@ -124,7 +126,8 @@ class GpuPollResult(NamedTuple):
     vram_total: Optional[float] = None
     temp: Optional[float] = None
     power: Optional[float] = None
-    present: bool = False   # True only when GPU Engine util counters were actually found
+    # A PDH engine instance or a hardware-scoped LHM GPU sensor proves presence.
+    present: bool = False
 
 
 class StatsMonitorThread(QThread):
@@ -167,6 +170,10 @@ class StatsMonitorThread(QThread):
         # LibreHardwareMonitor / OpenHardwareMonitor WMI object.
         # None = not yet tried, False = tried and unavailable, object = connected.
         self._wmi_ohm: Any = None
+        # LHM 0.9.5+ removed its WMI provider; its built-in web server is the
+        # primary sensor source. The client's short cache shares one data.json
+        # response across CPU/GPU temperature and power reads in this poll.
+        self._lhm_http = LhmHttpClient()
         self._ohm_guidance_logged: bool = False  # One-time "no sensor source" guidance, logged only when NO namespace connects
         self._last_temp_source_sig: Optional[Tuple[str, str]] = None  # (source, sensor) of the last-logged CPU-temp read; re-logged only on change (#216)
         # ACPI thermal-zone placeholder detection (#237, #275): first raw value seen per zone, the
@@ -179,6 +186,9 @@ class StatsMonitorThread(QThread):
         self._last_identity_poll: float = 0.0  # monotonic ts of the last network-identity sub-poll (0 = poll immediately)
         self._last_link_stats_poll: float = 0.0  # monotonic ts of the last net_if_stats sub-poll (v8 link history)
         self._nvidia_smi_path: Optional[str] = self._get_cached_path("nvidia-smi")
+        # The helper process in flight, if any - stop() kills it (see _run_child).
+        self._child: Optional[subprocess.Popen] = None
+        self._child_lock = threading.Lock()
         # nvidia-smi is a synchronous subprocess (up to NVIDIA_SMI_TIMEOUT_SEC). Temps/power
         # change slowly, so poll it on a slow sub-cadence and cache between calls - keeps the
         # per-second network readout off the subprocess critical path.
@@ -194,11 +204,16 @@ class StatsMonitorThread(QThread):
         # per-instance handles snapshotted at startup (see _init_gpu_query for why).
         self._gpu_util_counter: Optional[int] = None
         self._gpu_vram_counter: Optional[int] = None
+        # A missing/broken PDH provider must not be re-opened on every one-second poll.
+        self._gpu_query_retry_after: float = 0.0
         # Latched: True once the wildcard has ever returned at least one GPU Engine instance.
         # AddCounter on a wildcard path succeeds whenever the counter OBJECT exists, so it is not
         # evidence of a GPU - deriving "present" from it would fabricate a 0% readout on RDP
         # sessions, VMs and GPU-less boxes.
         self._gpu_engine_seen: bool = False
+        # Same latch for LHM: once its web server has shown a hardware-scoped GPU, the GPU exists -
+        # an LHM backoff window or a GPU that is asleep this tick must not flap the tiles out.
+        self._lhm_gpu_seen: bool = False
         # Set by update_config (GUI thread); the PDH handles are owned by run()'s thread, so the actual
         # cleanup/re-init is deferred to the loop (see update_config / run).
         self._hw_queries_dirty: bool = False
@@ -217,6 +232,8 @@ class StatsMonitorThread(QThread):
         # WMI root\wmi. None=untried, False=unavailable, object=connected. Cached on a slow sub-cadence.
         self._wmi_battery: Any = None
         self._battery_cache: tuple = (0.0, None)         # (monotonic_ts, watts_or_None)
+        self._battery_retry_at: float = 0.0              # after a transient WMI error
+        self._battery_ac_line: Optional[int] = None      # last ACLineStatus (a change drops the cache)
         self._battery_cadence_sec: float = 8.0
 
         self.logger.info("StatsMonitorThread initialized with interval %.2fs", self.interval)
@@ -319,12 +336,16 @@ class StatsMonitorThread(QThread):
         """
         Collects GPU stats using a hybrid approach:
         - Utilization & VRAM via Universal PDH (all vendors)
-        - Temperature via LHM/OHM WMI if available (all vendors), else nvidia-smi (NVIDIA only)
-        - Power via LHM/OHM WMI (all vendors) → nvidia-smi (NVIDIA) → PDH RAPL PP1 (Intel iGPU)
+        - Temperature via LHM web server (v0.9.5+) → LHM v0.9.4/OHM WMI (all vendors) → nvidia-smi (NVIDIA)
+        - Power via LHM web server → LHM/OHM WMI (all vendors) → nvidia-smi (NVIDIA) → PDH RAPL PP1 (Intel iGPU)
         Returns: GpuPollResult named tuple
         """
-        if not self._gpu_query and not self._init_gpu_query():
-            return GpuPollResult()
+        now_mono = time.monotonic()
+        if not self._gpu_query and now_mono >= self._gpu_query_retry_after:
+            if self._init_gpu_query():
+                self._gpu_query_retry_after = 0.0
+            else:
+                self._gpu_query_retry_after = now_mono + constants.gpu.QUERY_RETRY_SEC
 
         util_pct = 0.0
         vram_used = None   # None = no VRAM counter available -> N/A (not a misleading "0.0 GB used")
@@ -332,53 +353,68 @@ class StatsMonitorThread(QThread):
         temp_c = None
         power_w = None
 
-        try:
-            win32pdh.CollectQueryData(self._gpu_query)
+        if self._gpu_query:
+            try:
+                win32pdh.CollectQueryData(self._gpu_query)
 
-            # 1. Utilization of the busiest engine, its processes summed (#328) - what Task Manager
-            # shows. The wildcard re-expands each collection, so processes started after us count.
-            if self._gpu_util_counter is not None:
-                try:
-                    arr = win32pdh.GetFormattedCounterArray(
-                        self._gpu_util_counter, win32pdh.PDH_FMT_DOUBLE)
-                    if arr:
-                        # A non-empty array is the only honest proof a GPU engine exists. Latched,
-                        # because the array is legitimately empty on an idle tick and we must not
-                        # flap the Monitor's GPU tiles in and out.
-                        self._gpu_engine_seen = True
-                    util_pct = aggregate_gpu_engine_utilization(arr)
-                except Exception as e:
-                    self.logger.debug("GPU utilization array read failed: %s", e)
+                # 1. Utilization of the busiest engine, its processes summed (#328) - what Task Manager
+                # shows. The wildcard re-expands each collection, so processes started after us count.
+                if self._gpu_util_counter is not None:
+                    try:
+                        arr = win32pdh.GetFormattedCounterArray(
+                            self._gpu_util_counter, win32pdh.PDH_FMT_DOUBLE)
+                        if arr:
+                            # A non-empty array is the only honest proof a GPU engine exists. Latched,
+                            # because the array is legitimately empty on an idle tick and we must not
+                            # flap the Monitor's GPU tiles in and out.
+                            self._gpu_engine_seen = True
+                        util_pct = aggregate_gpu_engine_utilization(arr)
+                    except Exception as e:
+                        self.logger.debug("GPU utilization array read failed: %s", e)
 
-            # 2. Universal VRAM (Dedicated Usage in bytes, convert to MiB). Only report a real
-            # number if at least one instance contributed - otherwise leave None (N/A).
-            if self._gpu_vram_counter is not None:
-                try:
-                    arr = win32pdh.GetFormattedCounterArray(
-                        self._gpu_vram_counter, win32pdh.PDH_FMT_DOUBLE)
-                    _vram_acc = 0.0
-                    _had_vram = False
-                    for val in arr.values():
-                        if isinstance(val, (int, float)):
-                            _vram_acc += (float(val) / (1024.0 * 1024.0))
-                            _had_vram = True
-                    if _had_vram:
-                        vram_used = _vram_acc
-                except Exception as e:
-                    self.logger.debug("GPU VRAM array read failed: %s", e)
+                # 2. Universal VRAM (Dedicated Usage in bytes, convert to MiB). Only report a real
+                # number if at least one instance contributed - otherwise leave None (N/A).
+                if self._gpu_vram_counter is not None:
+                    try:
+                        arr = win32pdh.GetFormattedCounterArray(
+                            self._gpu_vram_counter, win32pdh.PDH_FMT_DOUBLE)
+                        _vram_acc = 0.0
+                        _had_vram = False
+                        for val in arr.values():
+                            if isinstance(val, (int, float)):
+                                _vram_acc += (float(val) / (1024.0 * 1024.0))
+                                _had_vram = True
+                        if _had_vram:
+                            vram_used = _vram_acc
+                    except Exception as e:
+                        self.logger.debug("GPU VRAM array read failed: %s", e)
 
-        except Exception as e:
-            self.logger.debug("GPU PDH polling error: %s", e)
+            except Exception as e:
+                self.logger.debug("GPU PDH polling error: %s", e)
 
         # 3. Temperature & Power - prefer LHM/OHM (all vendors) over nvidia-smi (NVIDIA only)
         need_smi_temp = include_temp
         need_smi_power = include_power
 
-        if include_temp or include_power:
+        # LHM 0.9.5+ HTTP source. SensorId/HardwareId grouping in lhm_http
+        # prevents the iGPU or a motherboard "CPU Socket" sensor from winning.
+        lhm_snapshot = self._lhm_http.get_snapshot() if (include_temp or include_power) else None
+        lhm_gpu = lhm_snapshot.preferred_gpu if lhm_snapshot else None
+        if lhm_gpu is not None:
+            self._lhm_gpu_seen = True
+        if lhm_gpu:
+            if include_temp and lhm_gpu.temperature is not None:
+                temp_c = lhm_gpu.temperature
+                need_smi_temp = False
+            if include_power and lhm_gpu.power is not None:
+                power_w = lhm_gpu.power
+                need_smi_power = False
+
+        if (include_temp and temp_c is None) or (include_power and power_w is None):
             self._init_ohm_wmi()
             if self._wmi_ohm:
                 # 3a. LHM/OHM GPU temperature
-                if include_temp:
+                if include_temp and temp_c is None:
                     try:
                         sensors = self._wmi_ohm.ExecQuery(
                             "SELECT Value, Identifier, Name FROM Sensor WHERE SensorType='Temperature'"
@@ -401,7 +437,7 @@ class StatsMonitorThread(QThread):
                         self._wmi_ohm = None
 
                 # 3b. LHM/OHM GPU power (all vendors)
-                if include_power and self._wmi_ohm:
+                if include_power and power_w is None and self._wmi_ohm:
                     try:
                         sensors = self._wmi_ohm.ExecQuery(
                             "SELECT Value, Identifier, Name FROM Sensor WHERE SensorType='Power'"
@@ -438,11 +474,9 @@ class StatsMonitorThread(QThread):
                 self._nvidia_last_poll = now_mono
                 try:
                     query_fields = "temperature.gpu,memory.total,power.draw"
-                    output = subprocess.check_output(
+                    output = self._run_child(
                         [self._nvidia_smi_path, f"--query-gpu={query_fields}", "--format=csv,noheader,nounits"],
-                        encoding='utf-8', timeout=constants.timeouts.NVIDIA_SMI_TIMEOUT_SEC,
-                        creationflags=subprocess.CREATE_NO_WINDOW
-                    )
+                        constants.timeouts.NVIDIA_SMI_TIMEOUT_SEC)
                     parts = output.strip().split('\n')[0].split(',')
                     if len(parts) > 0:
                         try:
@@ -494,8 +528,11 @@ class StatsMonitorThread(QThread):
 
         # Clamp utilization to [0, 100] - a per-engine sum can momentarily read >100%.
         util_pct = max(constants.gpu.UTIL_MIN_PERCENT, min(constants.gpu.UTIL_MAX_PERCENT, util_pct))
+        # LHM's HardwareId-scoped sensor group is independent evidence that a physical GPU
+        # exists. Keeping the row visible with 0% utilization is intentional when PDH is
+        # unavailable: temperature/power remain useful and are not fabricated.
         return GpuPollResult(util_pct, vram_used, vram_total, temp_c, power_w,
-                             present=self._gpu_engine_seen)
+                             present=self._gpu_engine_seen or self._lhm_gpu_seen)
 
     @lru_cache(maxsize=4)
     def _get_cached_path(self, binary: str) -> Optional[str]:
@@ -663,37 +700,119 @@ class StatsMonitorThread(QThread):
             except Exception:
                 pass
         # 2. Battery discharge (laptops on battery) - cached on a slow sub-cadence (WMI is heavy).
-        return self._poll_battery_power()
+        # system_power must stay a non-negative draw ("watts consumed"): the poll returns a
+        # SIGNED value (negative while charging), so a charge flow yields None here.
+        watts = self._poll_battery_power()
+        return watts if watts is not None and watts > 0 else None
 
     def _poll_battery_power(self) -> Optional[float]:
+        """The battery flow in watts, SIGNED: discharge positive, charge negative; None when idle
+        or unreadable. Summed over every pack (dual-battery laptops). Cached on a slow cadence
+        (WMI is heavy), except that a change in the AC line - one cheap syscall - drops the
+        cache, so unplugging flips the reading on the next poll instead of up to 8 s later."""
+        from netspeedtray.utils import power_utils
+        p = constants.hardware.power
         now = time.monotonic()
+        ac_line = power_utils.ac_line_status()
+        ac_changed = ac_line != self._battery_ac_line
+        self._battery_ac_line = ac_line
         last_ts, last_val = self._battery_cache
-        if (now - last_ts) < self._battery_cadence_sec:
+        if not ac_changed and (now - last_ts) < self._battery_cadence_sec:
             return last_val
+        if self._wmi_battery is False or now < self._battery_retry_at:
+            self._battery_cache = (now, None)
+            return None
         watts = None
         try:
             if self._wmi_battery is None:
                 import wmi  # already a dependency (LHM temps)
                 self._wmi_battery = wmi.WMI(namespace="root\\wmi")
-            if self._wmi_battery:
-                for b in self._wmi_battery.BatteryStatus():
-                    # DischargeRate (mW) is non-zero only while actually discharging on battery.
-                    rate = getattr(b, "DischargeRate", 0) or 0
-                    if getattr(b, "Discharging", False) and rate > 0:
-                        watts = float(rate) / 1000.0
-                        break
-        except Exception:
-            self._wmi_battery = False   # no battery / WMI class - stop retrying
+            discharge_mw = charge_mw = 0
+            for b in self._wmi_battery.BatteryStatus():
+                # DischargeRate / ChargeRate are mW and non-zero only while that flow is real.
+                # IMPLAUSIBLE_MW (constants/hardware.py) drops only the firmware garbage some
+                # packs emit around an AC transition; real readings stay admissible.
+                rate = getattr(b, "DischargeRate", 0) or 0
+                if getattr(b, "Discharging", False) and 0 < rate < p.IMPLAUSIBLE_MW:
+                    discharge_mw += rate
+                c_rate = getattr(b, "ChargeRate", 0) or 0
+                if getattr(b, "Charging", False) and 0 < c_rate < p.IMPLAUSIBLE_MW:
+                    charge_mw += c_rate
+            # While charging, the charge rate is reported SIGNED NEGATIVE (the hover card renders
+            # "+38.2 W"). system_power stays a non-negative draw - the clamp in _poll_system_power
+            # and the battery_power split in _collect_power_stats keep the sign out of history.
+            if discharge_mw:
+                watts = float(discharge_mw) / 1000.0
+            elif charge_mw:
+                watts = -float(charge_mw) / 1000.0
+        except (AttributeError, ImportError):
+            self._wmi_battery = False   # no wmi module / no BatteryStatus class: permanent, stop
+        except Exception as e:
+            # Transient (RPC unavailable right after resume, a WMI service restart): drop the
+            # handle and try again after a backoff - never give up on the battery until restart.
+            self.logger.debug("battery WMI poll failed, retrying in %.0f s: %s",
+                              p.BATTERY_WMI_RETRY_SEC, e)
+            self._wmi_battery = None
+            self._battery_retry_at = now + p.BATTERY_WMI_RETRY_SEC
         self._battery_cache = (now, watts)
         return watts
+
+    def _collect_power_stats(self, stats: Dict[str, Any], force_hw: bool) -> None:
+        """Whole-system / battery power for one poll, into ``stats``.
+
+        When the power tiles are on (or the Monitor forces collection): a true whole-system
+        reading (RAPL PSYS, else the battery DischargeRate) goes to ``system_power`` - distinct
+        from the CPU+GPU sum; emitted only when a real source is found. When only the hover's
+        power display is on, battery-only polling is enough - skip RAPL, whose PDH handles
+        exist for the Monitor's power tiles, not for a hover glance. The signed battery poll
+        (negative while charging) still rides along on AC so the hover's charge rate (+X W)
+        keeps working with the power tiles on too (#323 review 3): ``_poll_system_power`` is
+        discharge-only (a charge flow yields None), and the poll is cached on a slow cadence,
+        so the follow-up call is nearly free.
+
+        A machine with no battery skips the hover's WMI polls entirely (one cheap
+        GetSystemPowerStatus call says so): the section can never show there.
+        """
+        hover_battery = bool(self.config.get('power_display_enabled', False))
+        if hover_battery:
+            from netspeedtray.utils import power_utils
+            hover_battery = power_utils.has_battery()
+            if hover_battery:
+                # Warm the projection's capacity cache HERE, on the monitor thread: the hover
+                # card only reads the cache and must never run WMI on the GUI thread. A no-op
+                # once a value is cached; a failure is retried after a backoff.
+                power_utils.read_design_capacity_mwh()
+        if self.config.get('show_hardware_power', False) or force_hw:
+            sysp = self._poll_system_power()
+            if sysp is not None:
+                stats['system_power'] = sysp
+            if hover_battery:
+                bp = self._poll_battery_power()
+                if bp is not None and bp < 0:
+                    stats['battery_power'] = bp
+        elif hover_battery:
+            # Discharge lands in system_power (stat history + Monitor tile); the signed
+            # charge value rides battery_power.
+            sysp = self._poll_battery_power()
+            if sysp is not None:
+                if sysp < 0:
+                    stats['battery_power'] = sysp
+                else:
+                    stats['system_power'] = sysp
 
     def _poll_cpu_power(self) -> Optional[float]:
         """
         Polls CPU power draw in watts, trying sources in order:
-          1. PDH RAPL PKG (Intel - milliwatts, non-admin)
-          2. LHM/OHM WMI (all vendors, requires admin)
+          1. LibreHardwareMonitor v0.9.5+ web server (all vendors, if enabled)
+          2. PDH RAPL PKG (Intel - milliwatts, non-admin)
+          3. LHM v0.9.4 / OHM WMI (all vendors, requires admin)
         """
-        # 1. PDH RAPL PKG
+        # 1. LHM 0.9.5+ HTTP source
+        snapshot = self._lhm_http.get_snapshot()
+        if snapshot and snapshot.cpu_power is not None:
+            return snapshot.cpu_power
+
+        # 2. PDH RAPL PKG
         if win32pdh:
             if not self._power_query:
                 self._init_power_query()
@@ -706,7 +825,7 @@ class StatsMonitorThread(QThread):
                 except Exception as e:
                     self.logger.debug("RAPL PKG power polling error: %s", e)
 
-        # 2. LHM/OHM WMI fallback
+        # 3. LHM 0.9.4 / OHM WMI fallback
         self._init_ohm_wmi()
         if self._wmi_ohm:
             try:
@@ -786,21 +905,23 @@ class StatsMonitorThread(QThread):
                     "Run LibreHardwareMonitor as Administrator to expose CPU/GPU temps and power."
                 )
             else:
-                # No namespace at all: tool not running, or LHM v0.9.5+ (which removed WMI).
+                # No namespace at all: tool not running, or LHM v0.9.5+ (which removed WMI and is
+                # read over HTTP instead - this probe only runs when that read found nothing).
                 self.logger.info(
-                    "Hardware monitor: no CPU/GPU sensor source found (%s). Start "
-                    "LibreHardwareMonitor if it is not running. Note: LibreHardwareMonitor "
-                    "v0.9.5+ removed its WMI provider, so temps and power need LHM v0.9.4 "
-                    "(the last WMI-capable release).", "; ".join(probe_errors)
+                    "Hardware monitor: no CPU/GPU sensor source found (%s; no LHM web server at "
+                    "%s:%d). Start LibreHardwareMonitor as Administrator; on v0.9.5+ also enable "
+                    "Options > Remote Web Server (port %d).", "; ".join(probe_errors),
+                    constants.lhm.HTTP_HOST, constants.lhm.HTTP_PORT, constants.lhm.HTTP_PORT
                 )
         # Leave _wmi_ohm as None so we retry next poll (LHM may not be running yet)
 
     def _poll_cpu_temperature(self) -> Optional[float]:
         """
         Polls CPU temperature, trying sources in order:
-          1. LibreHardwareMonitor / OpenHardwareMonitor WMI  (accurate CPU-die sensor, if running)
-          2. PDH Thermal Zone Information  (generic ACPI - often a motherboard/ambient zone)
-          3. WMI MSAcpi_ThermalZoneTemperature  (legacy ACPI fallback)
+          1. LibreHardwareMonitor v0.9.5+ web server (data.json over loopback HTTP, if enabled)
+          2. LibreHardwareMonitor v0.9.4 / OpenHardwareMonitor WMI  (accurate CPU-die sensor)
+          3. PDH Thermal Zone Information  (generic ACPI - often a motherboard/ambient zone)
+          4. WMI MSAcpi_ThermalZoneTemperature  (legacy ACPI fallback)
 
         LHM/OHM is tried FIRST because its CPU-die sensor (CPU Package / Tctl/Tdie) is
         the accurate source. The generic ACPI "Thermal Zone" is frequently a
@@ -812,7 +933,13 @@ class StatsMonitorThread(QThread):
         Note: Modern Intel/AMD CPUs often require a kernel-driver tool
         (LibreHardwareMonitor, HWiNFO64, etc.) - see the settings note.
         """
-        # 1. LibreHardwareMonitor / OpenHardwareMonitor - the accurate CPU-die source.
+        # 1. LibreHardwareMonitor 0.9.5+ HTTP source.
+        snapshot = self._lhm_http.get_snapshot()
+        if snapshot and snapshot.cpu_temp is not None:
+            return self._log_temp(
+                snapshot.cpu_temp, "LHM HTTP", snapshot.cpu_temp_sensor or "CPU")
+
+        # 2. LibreHardwareMonitor 0.9.4 / OpenHardwareMonitor WMI.
         self._init_ohm_wmi()
         if self._wmi_ohm:
             try:
@@ -1023,6 +1150,8 @@ class StatsMonitorThread(QThread):
                 if self._hw_queries_dirty:
                     self._hw_queries_dirty = False
                     self._cleanup_gpu_query()
+                    self._gpu_query_retry_after = 0.0
+                    self._lhm_http.reset_backoff()   # temps/power just switched on: look for LHM now
                     self._cleanup_thermal_query()
                     self._cleanup_power_query()
                     self._wmi_ohm = None   # re-probe LHM/OHM on the next temp poll
@@ -1098,12 +1227,8 @@ class StatsMonitorThread(QThread):
                     except Exception as gpu_err:
                         self.logger.warning("GPU polling error (skipped, not counted against circuit breaker): %s", gpu_err)
 
-                # Whole-system power, when the platform actually exposes it (RAPL PSYS / battery
-                # discharge) - distinct from the CPU+GPU sum; emitted only when a real source is found.
-                if self.config.get('show_hardware_power', False) or _force_hw:
-                    sysp = self._poll_system_power()
-                    if sysp is not None:
-                        stats['system_power'] = sysp
+                # Whole-system / battery power (see _collect_power_stats).
+                self._collect_power_stats(stats, _force_hw)
 
                 if stats:
                     self.stats_ready.emit(stats)
@@ -1176,8 +1301,53 @@ class StatsMonitorThread(QThread):
         except Exception:
             pass
 
+    def _run_child(self, argv, timeout: float) -> str:
+        """Run a short-lived helper (nvidia-smi) and return its stdout, like check_output - but the
+        process is held where ``stop()`` can kill it, so a quit never waits out (or orphans) a slow
+        one. Raises on a non-zero exit, a timeout (the child is killed), or a kill from stop()."""
+        with self._child_lock:
+            if not self._is_running:
+                raise RuntimeError("stopping")
+            proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                    stdin=subprocess.DEVNULL, encoding="utf-8",
+                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            self._child = proc
+        try:
+            try:
+                out, _ = proc.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                try:
+                    # Bounded too: a grandchild that inherited the pipe (a launcher stub) keeps it
+                    # open after the kill, and an unbounded read would then hang this thread.
+                    proc.communicate(timeout=2)
+                except subprocess.TimeoutExpired:
+                    pass
+                raise
+            if proc.returncode != 0:
+                raise subprocess.CalledProcessError(proc.returncode, argv, out)
+            return out
+        finally:
+            with self._child_lock:
+                self._child = None
+
+    def _kill_child(self) -> None:
+        with self._child_lock:
+            proc = self._child
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.kill()
+                self.logger.info("Stopped an in-flight helper process at quit.")
+            except OSError:
+                pass
+
     def stop(self) -> None:
-        """Gracefully stops the monitoring loop."""
+        """Stops the monitoring loop: kills a helper process still running (nvidia-smi can take
+        1.5 s, longer cold), waits a bounded time, and hands a thread that is still inside an
+        uninterruptible call (WMI) to the thread reaper rather than letting quit abort on it."""
         self._is_running = False
+        self._kill_child()
         self.wait(constants.timeouts.MONITOR_THREAD_STOP_WAIT_MS)
-        self.logger.info("StatsMonitorThread stopped.")
+        from netspeedtray.core import thread_reaper
+        if not thread_reaper.outlived(self, "The stats monitor thread"):
+            self.logger.info("StatsMonitorThread stopped.")

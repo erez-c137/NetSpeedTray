@@ -370,7 +370,10 @@ class ConfigManager:
             "dynamic_update_rate": "dynamic_update_enabled",
             "color_coding_enabled": "color_coding",
             "history_duration": "history_minutes",
-            "fixed_width_values": None # Explicitly drop removed field
+            "fixed_width_values": None, # Explicitly drop removed field
+            # Runtime-only state that 2.0-2.2 betas wrote into the file (C3); dropped, not preserved
+            # as an "unknown key from a newer version".
+            "taskbar_height": None,
         }
 
         migrated = config.copy()
@@ -645,6 +648,10 @@ class ConfigManager:
             if not all(isinstance(i, item_type) for i in value):
                 self.logger.warning(f"Invalid list items for {key}. Resetting to default.")
                 return default
+
+        # 6. Coercion (e.g. graph_opacity: a float on disk is stored as the int the UI expects)
+        if rules.get("coerce") is int and isinstance(value, float):
+            value = int(round(value))
 
         return value
 

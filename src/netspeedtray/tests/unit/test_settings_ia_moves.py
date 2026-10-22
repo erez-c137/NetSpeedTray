@@ -215,8 +215,13 @@ def test_preferred_monitor_saves_and_loads_the_same_key(dlg):
     assert dlg.get_settings()["preferred_monitor"] == name
     dlg.reset_with_config(dict(DEFAULTS, preferred_monitor=name), False)
     assert dlg.get_settings()["preferred_monitor"] == name
+    # A display that isn't connected right now is KEPT, listed as "(not connected)" (RC S7) - it used
+    # to fall back to "Primary (auto)", so an untouched Save erased the user's choice.
     dlg.reset_with_config(dict(DEFAULTS, preferred_monitor="NO-SUCH-DISPLAY"), False)
-    assert dlg.get_settings()["preferred_monitor"] is None   # unknown display -> "Primary (auto)"
+    assert dlg.get_settings()["preferred_monitor"] == "NO-SUCH-DISPLAY"
+    assert dlg.i18n.SETTINGS_NOT_CONNECTED_TAG in combo.currentText()
+    dlg.reset_with_config(dict(DEFAULTS, preferred_monitor=None), False)
+    assert combo.findData("NO-SUCH-DISPLAY") < 0   # gone once nothing refers to it
 
 
 def test_preferred_monitor_list_refreshes_when_the_widget_page_shows(dlg, monkeypatch):
@@ -289,9 +294,10 @@ def test_network_section_order_and_plan_collapsed(dlg):
 
 # --- change 3: hover / pause toggles -> General > Interaction ------------------------------------------
 
-INTERACTION_KEYS = {"pause_in_menu": True, "show_usage_on_hover": False, "show_hover_tips": False}  # non-defaults
+INTERACTION_KEYS = {"pause_in_menu": True, "show_usage_on_hover": False, "show_hover_tips": False,
+                    "power_display_enabled": True}  # non-defaults
 INTERACTION_ATTRS = {"pause_in_menu": "pause_in_menu", "show_usage_on_hover": "show_usage_hover",
-                     "show_hover_tips": "show_hover_tips"}
+                     "show_hover_tips": "show_hover_tips", "power_display_enabled": "power_display"}
 
 
 def test_interaction_toggles_left_advanced(dlg):
@@ -322,7 +328,8 @@ def test_interaction_toggles_load_from_config_and_keep_their_defaults(dlg):
     s = dlg.general_page.get_settings()
     assert (s["pause_in_menu"], s["show_usage_on_hover"], s["show_hover_tips"]) == (False, True, True)
     assert {k: DEFAULTS[k] for k in INTERACTION_KEYS} == {"pause_in_menu": False, "show_usage_on_hover": True,
-                                                          "show_hover_tips": True}
+                                                          "show_hover_tips": True,
+                                                          "power_display_enabled": False}
 
 
 def test_interaction_order_on_general(dlg):
@@ -333,8 +340,8 @@ def test_interaction_order_on_general(dlg):
     flat = _flatten(g.layout())
     header = flat.index(next(x for x in flat if isinstance(x, QLabel) and x.text() == i.INTERACTION_GROUP_TITLE))
     cards = [flat.index(_card_of(c)) for c in (g.double_click_action, g.middle_click_action, g.pause_in_menu,
-                                               g.show_usage_hover, g.show_hover_tips)]
-    assert cards == list(range(header + 1, header + 6))
+                                               g.show_usage_hover, g.power_display, g.show_hover_tips)]
+    assert cards == list(range(header + 1, header + 7))
     assert cards[-1] == len(flat) - 1
     assert _headers(_page(dlg, 0), {i.UPDATE_RATE_GROUP_TITLE, i.BEHAVIOR_GROUP_TITLE, i.INTERACTION_GROUP_TITLE})         == [i.UPDATE_RATE_GROUP_TITLE, i.BEHAVIOR_GROUP_TITLE, i.INTERACTION_GROUP_TITLE]
 
@@ -343,7 +350,7 @@ def test_general_tab_order(dlg):
     g = dlg.general_page
     pos = _focus_positions(dlg, [g.language_combo, g.start_with_windows, g.check_for_updates,
                                  g.double_click_action, g.middle_click_action, g.pause_in_menu,
-                                 g.show_usage_hover, g.show_hover_tips])
+                                 g.show_usage_hover, g.power_display, g.show_hover_tips])
     assert pos == sorted(pos)
 
 

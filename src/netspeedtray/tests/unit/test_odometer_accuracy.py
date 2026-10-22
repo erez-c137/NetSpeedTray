@@ -180,10 +180,100 @@ def test_the_cap_logs_once_per_session(caplog):
     assert len(warnings) == 1
 
 
+class _RaisesOnceInRateDisplay(FakeState):
+    """A failure AFTER the odometer has counted this poll (here in the rate display's session
+    feed), the way any later step - a slot, the spike filter, a widget_state call - could fail."""
+    def __init__(self):
+        super().__init__()
+        self.armed = True
+
+    def add_speed_data(self, *a, **k):
+        super().add_speed_data(*a, **k)
+        if self.armed:
+            self.armed = False
+            raise RuntimeError("boom")
+
+
+def test_a_failure_after_the_odometer_does_not_double_count_the_next_poll():
+    """PR #276 re-review: the sample time was re-baselined right after the odometer, the counters
+    only at the end - an exception in between left them out of step, and the next poll counted the
+    failed poll's bytes again (and showed a 2x rate over the 1 s sampling span)."""
+    state = _RaisesOnceInRateDisplay()
+    c = _controller(state)
+    view = c.view
+    t0 = 1000.0
+    for i, (counters, raises) in enumerate([(NetIO(0, 0), False), (NetIO(1_000_000, 0), True),
+                                            (NetIO(2_000_000, 0), False)]):
+        with patch("time.monotonic", return_value=t0 + i):
+            if raises:
+                with pytest.raises(RuntimeError):
+                    c._handle_network_counters({"Wi-Fi": counters}, sample_time=(t0 + i, 5_000.0 + i))
+            else:
+                c._handle_network_counters({"Wi-Fi": counters}, sample_time=(t0 + i, 5_000.0 + i))
+    assert state.totals() == (2_000_000, 0)                        # every byte exactly once
+    assert view.update_display_speeds.call_args[0][0] == pytest.approx(8.0)   # 1 MB/s, not 2
+
+
+class _SinkRaisesOnce(FakeState):
+    """One of the two byte sinks (the data-usage odometer or the v8 history feed) fails once."""
+    def __init__(self, sink: str):
+        super().__init__()
+        self.sink = sink
+        self.armed = False   # armed for poll 2 only: the priming poll writes history too
+
+    def _maybe_raise(self, sink):
+        if self.sink == sink and self.armed:
+            self.armed = False
+            raise RuntimeError(f"{sink} boom")
+
+    def add_usage_bytes(self, up, down, **kwargs):
+        self._maybe_raise("usage")
+        super().add_usage_bytes(up, down, **kwargs)
+
+    def add_net_sample(self, ts, dt_ms, byte_deltas, **k):
+        self._maybe_raise("history")
+        super().add_net_sample(ts, dt_ms, byte_deltas, **k)
+
+
+def _three_polls(state):
+    c = _controller(state)
+    t0 = 1000.0
+    for i, up in enumerate((0, 1_000_000, 2_000_000)):
+        state.armed = state.armed or i == 1
+        with patch("time.monotonic", return_value=t0 + i):
+            c._handle_network_counters({"Wi-Fi": NetIO(up, 0)}, sample_time=(t0 + i, 5_000.0 + i))
+    return c
+
+
+def test_a_failed_history_write_loses_that_poll_for_history_only(caplog):
+    """Never double-count: the usage write still counts the poll once, history misses that one
+    poll, the baselines move on anyway, and the next poll is normal - with a WARNING naming the
+    sink that failed."""
+    state = _SinkRaisesOnce("history")
+    with caplog.at_level(logging.WARNING):
+        c = _three_polls(state)
+    assert state.totals() == (2_000_000, 0)
+    deltas = [s[2] for s in state.net_samples]
+    assert deltas == [{}, {"Wi-Fi": (1_000_000.0, 0.0)}]           # prime, then poll 3 only
+    assert c.view.update_display_speeds.call_args[0][0] == pytest.approx(8.0)
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING and "history" in r.getMessage()]
+    assert len(warnings) == 1
+
+
+def test_a_failed_usage_write_loses_that_poll_for_usage_only(caplog):
+    state = _SinkRaisesOnce("usage")
+    with caplog.at_level(logging.WARNING):
+        _three_polls(state)
+    assert state.totals() == (1_000_000, 0)                          # poll 2 lost, never counted twice
+    assert [s[2] for s in state.net_samples][1:] == [{"Wi-Fi": (1_000_000.0, 0.0)}] * 2
+    assert [r for r in caplog.records if r.levelno == logging.WARNING and "usage" in r.getMessage()]
+
+
 def test_cap_uses_the_sampling_span_not_the_handling_span():
     """#13's real mechanism: the GUI thread can handle two samples closer together than they were
-    taken (a late delivery of the previous one). The display rate is then inflated past the ceiling
-    and dropped, but the bytes are real - the cap is measured over when the counters were SAMPLED."""
+    taken (a late delivery of the previous one). The bytes are real - the cap is measured over when
+    the counters were SAMPLED. Since PR #276's review the display rate is too, so it is no longer
+    inflated past the ceiling and dropped: it shows the honest ~10.7 GB/s over the 3 s sampled."""
     state = FakeState()
     c = _controller(state)
     t0 = 1000.0
@@ -192,7 +282,7 @@ def test_cap_uses_the_sampling_span_not_the_handling_span():
     huge = 30 * 1024**3   # 30 GiB: over the ceiling for the 1 s handling span, under it for 3 s sampled
     with patch("time.monotonic", return_value=t0 + 1.0):
         c._handle_network_counters({"Wi-Fi": NetIO(huge, 0)}, sample_time=(t0 + 1.0, 5_003.0))
-    assert state.speed_calls == 0                    # over-ceiling rate -> display-dropped
+    assert state.speed_calls == 1                    # rate over the SAMPLED span: under the ceiling
     assert state.adds[-1] == (huge, 0)                # ...but every byte counted
 
 

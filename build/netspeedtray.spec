@@ -3,19 +3,16 @@ import os
 
 block_cipher = None
 
-# Local UPX install (auto-downloaded by build.bat into build/tools/upx-<ver>/).
-# PyInstaller checks this directory; if upx.exe isn't there, it silently
-# proceeds without compression rather than failing the build.
-_spec_dir = os.path.dirname(os.path.abspath(SPEC))
-_upx_candidates = [
-    os.path.join(_spec_dir, 'tools', 'upx-5.0.2-win64'),
-    os.path.join(_spec_dir, 'tools'),
-]
-upx_dir = next((p for p in _upx_candidates if os.path.exists(os.path.join(p, 'upx.exe'))), None)
-if upx_dir:
-    print(f'[netspeedtray.spec] UPX found at: {upx_dir}')
-else:
-    print('[netspeedtray.spec] UPX not found in build/tools/ — binaries will not be compressed.')
+# NO UPX, on purpose (2.2.0). UPX rewrites a PE file, which strips its Authenticode signature: the
+# 2.2.0-beta.3 zip shipped _socket.pyd, _sqlite3.pyd, sqlite3.dll, _ctypes.pyd, libffi-8.dll and the
+# rest of CPython's own extension modules UNSIGNED although the build Python's copies carry the
+# Python Software Foundation's signature. Smart App Control evaluates every DLL the process loads,
+# and a packed binary also has a hash nobody else has ever seen (no reputation) and is a classic AV
+# heuristic. Packing had a history of breaking things here too: OpenSSL/_ssl (HTTPS) and numpy's
+# _multiarray_umath + OpenBLAS ("DLL load failed", #136) both had to be excluded. The cost is size
+# (see the PR for the measured delta); correctness and trust win, as they did for OpenSSL.
+# The guard at the end of this file fails the build if any bundled binary is UPX-packed.
+_UPX = False
 
 # Define your manual hidden imports
 my_hidden_imports = [
@@ -24,6 +21,10 @@ my_hidden_imports = [
     'PyQt6.QtWidgets',
     'psutil',
     'win32api',
+    # Imported lazily by monitor.py's single-instance check (per-user instance scan); a missing one
+    # there would fall back to psutil, then assume an instance is running - keep them bundled.
+    'win32ts',
+    'win32security',
     'win32com.shell.shell',
     'matplotlib',
     'matplotlib.pyplot',
@@ -307,30 +308,12 @@ print('[netspeedtray.spec] SSL runtime libs present: OpenSSL + _ssl/_hashlib OK.
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
-# UPX compression: roughly halves DLL sizes. Skip the items below — they
-# are either already compressed, signed by Microsoft (UPX would invalidate
-# the signature and trigger antivirus), or known to break when packed.
-upx_exclude = [
-    'vcruntime140.dll', 'vcruntime140_1.dll',
-    'msvcp140.dll', 'msvcp140_1.dll', 'msvcp140_2.dll',
-    # Globbed, not pinned: this said 'python311.dll' and would have silently stopped applying
-    # the moment the build moved to 3.13 - UPX would then pack the interpreter and pay the
-    # startup cost this line exists to avoid, with nothing to warn you.
-    'python3*.dll',           # Already heavily optimized; packing causes startup overhead.
-    'qt6webenginecore.dll',   # Excluded above but defensive.
-    'opengl32sw.dll',         # Mesa-derived, breaks if UPX-packed.
-    # OpenSSL + Python's bindings. UPX-packing these is a known cause of SSL
-    # load/handshake failures; keep them uncompressed so HTTPS keeps working.
-    'libcrypto-3.dll', 'libssl-3.dll', '_ssl.pyd', '_hashlib.pyd',
-    # numpy compiled core + its bundled OpenBLAS. UPX-packing these is a known
-    # cause of "DLL load failed while importing _multiarray_umath" (#136).
-    # upx_exclude entries are matched with pathlib.PurePath.match(), so globs
-    # work — important because the OpenBLAS DLL name carries a version hash.
-    '_multiarray_umath*.pyd', '_multiarray_tests*.pyd',
-    'libscipy_openblas*.dll', 'libopenblas*.dll',
-]
-# Note: PyInstaller already auto-disables UPX for Qt plugins (e.g. qwindows.dll)
-# and CFG-enabled binaries, so those need no manual entry here.
+# UPX is off for every target (see _UPX at the top). Should anyone ever turn it back on, the files
+# below must stay excluded whatever else is packed - each broke or lost something when packed:
+#   vcruntime140*/msvcp140* and every vendor-signed binary - packing strips the signature;
+#   python3*.dll - startup cost; opengl32sw.dll - Mesa-derived, breaks when packed;
+#   libcrypto-3.dll, libssl-3.dll, _ssl.pyd, _hashlib.pyd - SSL load/handshake failures;
+#   _multiarray_umath*.pyd, libscipy_openblas*.dll - "DLL load failed" (#136).
 
 # --- Build mode: ONEDIR (release, default) vs ONEFILE (dev/test) ---
 # ONEDIR (default): a small bootstrap exe + an `_internal/` folder that holds the
@@ -358,9 +341,7 @@ if _onefile:
         debug=False,
         bootloader_ignore_signals=False,
         strip=False,
-        upx=bool(upx_dir),
-        upx_dir=upx_dir,
-        upx_exclude=upx_exclude,
+        upx=_UPX,
         runtime_tmpdir=None,
         console=False,
         disable_windowed_traceback=False,
@@ -381,9 +362,7 @@ else:
         debug=False,
         bootloader_ignore_signals=False,
         strip=False,
-        upx=bool(upx_dir),
-        upx_dir=upx_dir,
-        upx_exclude=upx_exclude,
+        upx=_UPX,
         runtime_tmpdir=None,
         console=False,
         disable_windowed_traceback=False,
@@ -399,7 +378,20 @@ else:
         a.zipfiles,
         a.datas,
         strip=False,
-        upx=bool(upx_dir),
-        upx_exclude=upx_exclude,
+        upx=_UPX,
         name='NetSpeedTray'
     )
+    # Guard: no bundled binary may be UPX-packed (see _UPX at the top). Packing strips a vendor's
+    # Authenticode signature and nothing else would ever say so - the beta.3 zip shipped ~20
+    # PSF-signed CPython modules unsigned. A packed PE carries UPX's section names in its header.
+    _packed = []
+    for _dirpath, _dirs, _files in os.walk(os.path.join(DISTPATH, 'NetSpeedTray')):
+        for _f in _files:
+            if _f.lower().endswith(('.dll', '.pyd', '.exe')):
+                with open(os.path.join(_dirpath, _f), 'rb') as _fh:
+                    if b'UPX0' in _fh.read(4096):
+                        _packed.append(_f)
+    if _packed:
+        raise SystemExit(f"[netspeedtray.spec] FATAL: UPX-packed binaries in the bundle "
+                         f"(signatures stripped): {sorted(_packed)[:10]}")
+    print('[netspeedtray.spec] No UPX-packed binaries in the bundle; vendor signatures intact.')

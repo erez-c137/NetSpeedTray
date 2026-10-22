@@ -12,7 +12,7 @@ Slider→Segmented and QListWidget upgrades are intentionally NOT done here - th
 """
 from typing import Dict, Any, Callable, List, Optional
 
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWidgets import QWidget, QComboBox, QLabel
 
@@ -93,9 +93,13 @@ class WidgetPage(QWidget):
         # #188: float the widget on a preferred monitor that has no taskbar of its own.
         self.free_float = Win11Toggle(label_text="")
         self.free_float.toggled.connect(self.on_change)
-        layout.addWidget(SettingCard(
+        self._free_float_card = SettingCard(
             getattr(self.i18n, "FREE_FLOAT_LABEL", "Float on a display without a taskbar"),
-            control=self.free_float))
+            control=self.free_float)
+        layout.addWidget(self._free_float_card)
+        # Floating only ever applies to a chosen monitor (get_free_float_screen): with "Primary (auto)"
+        # the switch does nothing, so it greys out (S9) - see _on_monitor_changed.
+        self._sync_free_float_card()
 
         self.keep_visible_fullscreen = Win11Toggle(label_text="")
         self.keep_visible_fullscreen.toggled.connect(self.on_change)
@@ -131,7 +135,7 @@ class WidgetPage(QWidget):
 
         # Temporarily disconnect to avoid firing on_change during the rebuild.
         try:
-            self.preferred_monitor_combo.currentIndexChanged.disconnect(self.on_change)
+            self.preferred_monitor_combo.currentIndexChanged.disconnect(self._on_monitor_changed)
         except (TypeError, RuntimeError):
             pass
 
@@ -143,9 +147,27 @@ class WidgetPage(QWidget):
             primary = app.primaryScreen()
             for i, screen in enumerate(app.screens(), start=1):
                 geom = screen.geometry()
-                tag = " (primary)" if screen is primary else ""
-                label = f"Monitor {i}: {geom.width()}x{geom.height()}{tag}"
+                label = self.i18n.PREFERRED_MONITOR_ITEM.format(index=i, width=geom.width(),
+                                                                height=geom.height())
+                if screen is primary:
+                    label = f"{label} {self.i18n.PREFERRED_MONITOR_PRIMARY_TAG}"
                 self.preferred_monitor_combo.addItem(label, userData=screen.name())
+
+        # The saved monitor, while it is unplugged (S7): listed as "(not connected)" and kept, so an
+        # untouched Save doesn't silently reset the choice to Primary. The runtime already falls back
+        # to the primary display while it is away (position_manager).
+        saved = getattr(self, "_saved_monitor", None)
+        if saved and self.preferred_monitor_combo.findData(saved) < 0:
+            # The device name ("\\.\DISPLAY2") is left-to-right text whose leading "\\." are
+            # direction-neutral: in Hebrew they jumped to the far end ("2DISPLAY\.\\"). An LTR
+            # embedding (LRE ... PDF) plus an LRM after it keeps it one left-to-right unit - its
+            # trailing digit included - in any UI direction (Qt's bidi, checked with QTextLayout).
+            # In a right-to-left UI a leading RLM makes the line itself RTL (Qt picks a label's
+            # direction from its first strong character, which would otherwise be the "D").
+            rtl = QGuiApplication.layoutDirection() == Qt.LayoutDirection.RightToLeft
+            self.preferred_monitor_combo.addItem(
+                f"{chr(0x200F) if rtl else ''}\u202a{saved}\u202c\u200e {self.i18n.SETTINGS_NOT_CONNECTED_TAG}",
+                userData=saved)
 
         # Restore previous selection if it still exists; otherwise fall back to "Primary (auto)".
         if previous_selection is not None:
@@ -154,7 +176,17 @@ class WidgetPage(QWidget):
                 self.preferred_monitor_combo.setCurrentIndex(idx)
 
         # Reconnect the change signal.
-        self.preferred_monitor_combo.currentIndexChanged.connect(self.on_change)
+        self.preferred_monitor_combo.currentIndexChanged.connect(self._on_monitor_changed)
+        self._sync_free_float_card()
+
+    def _on_monitor_changed(self, _index: int = 0) -> None:
+        self._sync_free_float_card()
+        self.on_change()
+
+    def _sync_free_float_card(self) -> None:
+        if hasattr(self, "_free_float_card"):
+            MiniGraphSection._set_card_enabled(self._free_float_card,
+                                               self.preferred_monitor_combo.currentData() is not None)
 
     def showEvent(self, event):  # type: ignore[override]
         """Refresh the monitor dropdown whenever the page becomes visible.
@@ -189,7 +221,9 @@ class WidgetPage(QWidget):
         widget out of network-only so the freshly-enabled stat is actually visible. This is the
         convenience the Hardware page did itself before display-mode moved to this page."""
         if self.display_mode_combo.currentData() == "network_only":
-            idx = self.display_mode_combo.findData("side_by_side")
+            # Back to the side-by-side layout the user had: stacked if that is what they last chose.
+            target = "side_by_stack" if getattr(self, "_stack_loaded", False) else "side_by_side"
+            idx = self.display_mode_combo.findData(target)
             if idx >= 0:
                 self.display_mode_combo.setCurrentIndex(idx)   # fires on_change
 
@@ -217,6 +251,10 @@ class WidgetPage(QWidget):
     # --- config ------------------------------------------------------------------
     def load_settings(self, config: Dict[str, Any]) -> None:
         mode = config.get("widget_display_mode", "network_only")
+        # Remembered for the modes the dropdown can't express it in (network only / cycle): an
+        # untouched Save there must not flip the stored preference (review item 3).
+        self._stack_loaded = bool(config.get("stack_hardware_stats",
+                                             constants.config.defaults.DEFAULT_CONFIG.get("stack_hardware_stats", False)))
         # "side_by_stack" is the side-by-side layout with the hardware column stacked - encoded as
         # widget_display_mode="side_by_side" + stack_hardware_stats=True on disk.
         if mode == "side_by_side" and config.get("stack_hardware_stats", False):
@@ -232,11 +270,12 @@ class WidgetPage(QWidget):
             if idx >= 0:
                 combo.setCurrentIndex(idx)
 
-        # Preferred monitor (#72) - match by stored screen name.
-        # If the saved monitor name doesn't match any detected screen (e.g.,
-        # monitor was disconnected since last save), the combo just stays at
-        # "Primary (auto)" and the runtime fallback in position_manager kicks in.
+        # Preferred monitor (#72) - match by stored screen name. A saved monitor that isn't
+        # connected right now stays selectable as "(not connected)" (S7) - it used to fall to
+        # "Primary (auto)" here, and an untouched Save then erased the user's choice.
         preferred_name = config.get("preferred_monitor")
+        self._saved_monitor = preferred_name
+        self._populate_monitor_combo()
         idx = self.preferred_monitor_combo.findData(preferred_name)
         self.preferred_monitor_combo.setCurrentIndex(idx if idx >= 0 else 0)
 
@@ -252,7 +291,9 @@ class WidgetPage(QWidget):
         order = [c.currentData() for c in self.pos_combos]
         return {
             "widget_display_mode": "side_by_side" if mode == "side_by_stack" else mode,
-            "stack_hardware_stats": mode == "side_by_stack",
+            # The two side-by-side entries ARE the stack choice; every other mode keeps the stored one.
+            "stack_hardware_stats": (mode == "side_by_stack") if mode in ("side_by_side", "side_by_stack")
+                                    else getattr(self, "_stack_loaded", False),
             "widget_display_order": order,
             "preferred_monitor": self.preferred_monitor_combo.currentData(),
             "free_move": self.free_move.isChecked(),

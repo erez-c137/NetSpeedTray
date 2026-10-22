@@ -55,6 +55,25 @@ def test_hardware_hover_formats_percent():
     assert "RAM" in html and "67%" in html             # multiple series at the cursor time
 
 
+@pytest.mark.parametrize("span_days,lang,expect,absent", [
+    (7, "en_US", ["Jun 28", "14:30"], ["14:30:00", "2026"]),     # Week: the day leads
+    (30, "de_DE", ["28", "14:30"], ["14:30:00"]),                 # localized, day-first
+    (400, "en_US", ["Jun 28 2026", "14:30"], []),                  # All past a year: + the year
+    (0.5, "en_US", ["14:30:00"], ["Jun"]),                         # 12 h: time alone, as before
+])
+def test_hover_shows_the_date_on_multi_day_ranges(span_days, lang, expect, absent):
+    """RC later-list: on Week / Month / All the readout said "14:30:00" with no hint of which day."""
+    host = _host("network")
+    host.i18n = I18nStrings(lang)
+    t = GraphHoverTooltip(host)
+    x = mdates.date2num(datetime(2026, 6, 28, 14, 30, 0))
+    html = t._format(x, [("Download", 40.0, "#42B883")], span_days=span_days)
+    for s in expect:
+        assert s in html, (s, html)
+    for s in absent:
+        assert s not in html, (s, html)
+
+
 # ----------------------------------------------------------------------------- which lines are read
 
 T0 = datetime(2026, 6, 28, 12, 0, 0)

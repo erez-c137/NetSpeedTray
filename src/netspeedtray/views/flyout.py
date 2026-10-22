@@ -38,6 +38,10 @@ class Flyout(QWidget):
         # Single-use, self-dismissing toast: free it on close instead of letting the closed-but-hidden
         # parentless widget linger held by the caller's reference until the next alert replaces it (#20).
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        if parent is None:
+            # Qt destroys it (on close, on the GUI thread) - never Python's GC (utils/qt_lifetime).
+            from netspeedtray.utils.qt_lifetime import hand_to_qt
+            hand_to_qt(self)
         self._auto_dismiss_ms = auto_dismiss_ms
 
         c = su.semantic_colors()

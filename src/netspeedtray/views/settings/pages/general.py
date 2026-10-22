@@ -121,6 +121,11 @@ class GeneralPage(QWidget):
         self.show_usage_hover.toggled.connect(self.on_change)
         layout.addWidget(SettingCard(self.i18n.HOVER_USAGE_CARD_LABEL, control=self.show_usage_hover))
 
+        # Battery Hover Card (#323): the hover card's power section, opt-in.
+        self.power_display = Win11Toggle(label_text="")
+        self.power_display.toggled.connect(self.on_change)
+        layout.addWidget(SettingCard(self.i18n.POWER_HOVER_CARD_LABEL, control=self.power_display))
+
         self.show_hover_tips = Win11Toggle(label_text="")
         self.show_hover_tips.toggled.connect(self.on_change)
         layout.addWidget(SettingCard(self.i18n.HOVER_TIPS_LABEL, control=self.show_hover_tips))
@@ -170,6 +175,7 @@ class GeneralPage(QWidget):
             self.middle_click_action, config.get("middle_click_action", defaults.DEFAULT_MIDDLE_CLICK_ACTION))
         self.pause_in_menu.setChecked(bool(config.get("pause_in_menu", False)))
         self.show_usage_hover.setChecked(bool(config.get("show_usage_on_hover", True)))
+        self.power_display.setChecked(bool(config.get("power_display_enabled", False)))
         self.show_hover_tips.setChecked(bool(config.get("show_hover_tips", True)))
 
     def _select_click_action(self, combo: Win11ComboBox, value: str) -> None:
@@ -190,6 +196,7 @@ class GeneralPage(QWidget):
             "middle_click_action": self.middle_click_action.currentData(),
             "pause_in_menu": self.pause_in_menu.isChecked(),
             "show_usage_on_hover": self.show_usage_hover.isChecked(),
+            "power_display_enabled": self.power_display.isChecked(),
             "show_hover_tips": self.show_hover_tips.isChecked(),
             # free_move / keep_visible_fullscreen / tray_offset_x (2.0 IA) and preferred_monitor
             # (2.2 IA pass) now live on the Widget page.

@@ -50,11 +50,11 @@ class ConfigController:
                 set_window_always_on_top(window, on_top)
 
     def load_initial_config(self, taskbar_height: int) -> Dict[str, Any]:
-        """Loads configuration and injects taskbar height."""
+        """Loads the configuration. ``taskbar_height`` is runtime state (the widget keeps it as
+        self.taskbar_height); it used to be injected here, then written into config.json on every
+        save, and read back as an unknown "newer version?" key on every launch (C3)."""
         self.logger.debug("Loading initial configuration...")
-        config = self.config_manager.load()
-        config["taskbar_height"] = taskbar_height
-        return config
+        return self.config_manager.load()
 
     def update_config(self, updates: Dict[str, Any], save_to_disk: bool = True,
                       apply_and_repaint: bool = True) -> None:

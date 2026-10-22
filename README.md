@@ -165,13 +165,12 @@ Double-click the widget (or pick **Monitor** from the right-click menu) to open 
 | **CPU temperature** | ⚠️ only if your board exposes ACPI thermal zones | AMD Ryzen, and boards without usable zones |
 | **CPU power** | ✅ Intel (RAPL) | AMD CPUs |
 
-**In plain terms:** on a typical **NVIDIA + Intel** PC you'll see most temps and power without installing anything. If you have an **AMD CPU**, accurate CPU temperature and power realistically need LHM. To enable it, install **[LibreHardwareMonitor v0.9.4](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases/tag/v0.9.4)** (that specific version - see the note below), run it **as Administrator**, and NetSpeedTray detects it automatically - temps and power across all vendors light up.
+**In plain terms:** on a typical **NVIDIA + Intel** PC you'll see most temps and power without installing anything. If you have an **AMD CPU**, accurate CPU temperature and power realistically need LHM. To enable it, install **[LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases/latest)**, run it **as Administrator**, and turn on **Options → Remote Web Server** (v0.9.5 and newer; port 8085) - NetSpeedTray detects it automatically and temps and power across all vendors light up. Leave the web server's authentication off and let it listen on all interfaces (NetSpeedTray only ever asks `127.0.0.1`). On a PC with more than one GPU, the GPU temperature and power come from the card LHM ranks first (NVIDIA, then a discrete AMD, then Intel), while GPU usage and VRAM come from Windows' counters, which can describe a different adapter ([#236](https://github.com/erez-c137/NetSpeedTray/issues/236)).
 
 > NetSpeedTray itself **never runs as admin and never ships a kernel driver.** Reading CPU/GPU die
 > temperatures requires a driver that Windows doesn't expose to normal apps; LHM provides that driver and
-> publishes the values over WMI, which NetSpeedTray simply reads. **Use [LHM v0.9.4](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases/tag/v0.9.4):** LibreHardwareMonitor removed that WMI
-> interface in v0.9.5, so v0.9.4 is the last version NetSpeedTray can read today (support for LHM's newer
-> web-server interface is planned). Your choice, fully optional.
+> publishes the values, which NetSpeedTray simply reads - from LHM's local web server on v0.9.5 and newer
+> (`127.0.0.1` only, never through a proxy), or over WMI on v0.9.4 and older. Your choice, fully optional.
 
 ---
 
@@ -219,7 +218,7 @@ See the [Privacy Policy](privacy.md).
 2. **Right-click the widget** - open **Settings** or the **Monitor**, **Pause/Resume** monitoring, or **Exit**. The top of the menu shows your data used today / this month at a glance.
 3. **Double-click the widget** to open the **Monitor** (history, per-app activity, hardware, statistics).
 4. **Drag it to reposition** - grab the widget and drag it along the taskbar to wherever you like; it remembers the spot. Turn on **Free Move (No Snapping)** in Settings to place it anywhere, including off the taskbar.
-5. **Want temperatures?** Most NVIDIA/Intel systems show them out of the box. For full coverage (or any AMD CPU), install and run [LibreHardwareMonitor **v0.9.4**](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases/tag/v0.9.4) as Administrator (v0.9.5+ removed the interface NetSpeedTray reads).
+5. **Want temperatures?** Most NVIDIA/Intel systems show them out of the box. For full coverage (or any AMD CPU), install and run [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases/latest) as Administrator and turn on its **Options → Remote Web Server**.
 
 ---
 
@@ -232,7 +231,7 @@ Task Manager shows network speed too - but you have to *open* it, and it disappe
 Idle RAM is about **50 MB** - that's the number Windows Task Manager shows you (its *full* working set, which counts the shared Windows/Qt DLLs it maps, is ~90 MB), and CPU sits near zero between polls (~0.1%). The Monitor's Overview tab is deliberately chart-free, so glancing at it stays light; opening the Network or Hardware **charts** loads the plotting library for the session, which adds roughly **50-60 MB** while the Monitor is open - close the Monitor and it eases back down. The widget polls every ~1 second using the same Windows APIs Task Manager uses.
 
 **Do I need LibreHardwareMonitor?**
-Often no - see the [hardware table above](#hardware-monitoring---do-i-need-librehardwaremonitor). Usage stats and NVIDIA/Intel temps & power work natively; LHM (run as admin, **v0.9.4** - v0.9.5+ dropped the interface we read) is the universal fallback and the realistic way to get **AMD CPU** temperature and power. The widget never asks for admin itself.
+Often no - see the [hardware table above](#hardware-monitoring---do-i-need-librehardwaremonitor). Usage stats and NVIDIA/Intel temps & power work natively; LHM (run as admin, with its Remote Web Server on) is the universal fallback and the realistic way to get **AMD CPU** temperature and power. The widget never asks for admin itself.
 
 **Can I set a data limit and get warned?**
 Yes - **Settings → Network → Data usage**, or the tray's **Data cap…**. Set a monthly cap, a billing reset day, and opt-in 80% / 100% alerts. The alert is a quiet flyout above the widget; the tray shows live progress.
@@ -269,9 +268,9 @@ You probably grabbed an unsigned dev build. The official releases ([Setup.exe / 
 ### Hardware Monitoring
 - **CPU & GPU utilization** on the taskbar - always native (psutil + Windows PDH), all vendors, no admin
 - **RAM & VRAM** usage (VRAM shows "N/A" instead of a fake 0 when no dedicated-VRAM counter exists)
-- **Temperatures** - sourced in order: NVIDIA `nvidia-smi`, ACPI thermal zones (PDH), LibreHardwareMonitor/OpenHardwareMonitor (WMI), legacy ACPI WMI
+- **Temperatures** - CPU: LibreHardwareMonitor web server, then LHM v0.9.4/OpenHardwareMonitor (WMI), then ACPI thermal zones; GPU: LibreHardwareMonitor, then NVIDIA `nvidia-smi`
 - **Power (Watts)** - CPU (Intel RAPL → LHM) and GPU (NVIDIA → Intel iGPU RAPL → LHM); an opportunistic whole-system figure on laptops running on battery. Desktops can't read true wall power in software, so the Monitor honestly shows the CPU + GPU breakdown
-- **LibreHardwareMonitor auto-detection** - if LHM/OHM is running as admin, it's picked up automatically for temps/power across all vendors
+- **LibreHardwareMonitor auto-detection** - if LHM (web server on, v0.9.5+) or LHM v0.9.4/OHM is running as admin, it's picked up automatically for temps/power across all vendors
 
 ### The Monitor
 - **Overview** - at-a-glance tiles + adaptive sparklines, a network hero card, a context strip, a Data-usage card, and Most connections
@@ -382,7 +381,6 @@ See [TRANSLATORS.md](TRANSLATORS.md) for how translation works and how to contri
   binaries for its series, so the shipped build moved off it.
 - [Git](https://git-scm.com/downloads/)
 - *(Optional)* [Inno Setup 6](https://jrsoftware.org/isinfo.php) for the Windows installer
-- *(Optional)* UPX - auto-downloaded by the build script into `build/tools/` if missing
 
 ### Steps
 

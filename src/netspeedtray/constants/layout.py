@@ -54,6 +54,10 @@ class LayoutConstants:
     # Gap between the right-cluster command-band controls (NIC / timeline / Live). Shared by every tab
     # so the spacing around the Live pill is identical on Network and Hardware.
     MONITOR_CONTROL_SPACING: Final[int] = 10
+    # The Network header's interface dropdown: as wide as its name up to MAX, eliding down to MIN when
+    # the window is narrow (it used to be pinned at 190 px and slid under the timeline below ~800 px).
+    MONITOR_IFACE_BUTTON_MIN_WIDTH: Final[int] = 96
+    MONITOR_IFACE_BUTTON_MAX_WIDTH: Final[int] = 240
 
     # --- Main Widget Specific ---
     WIDGET_DEFAULT_RIGHT_PADDING_PX: Final[int] = 10

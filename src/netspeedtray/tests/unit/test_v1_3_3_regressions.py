@@ -71,7 +71,7 @@ def test_high_speed_sample_not_dropped_on_10gbe(controller):
     controller.config["interface_mode"] = "selected"
     controller.config["selected_interfaces"] = ["Ethernet"]
 
-    t0 = time.monotonic()
+    t0 = 1000.0  # fixed clock: (t0 + 1.0) - t0 must be exactly 1.0 (a real monotonic near 2**k rounds it)
     controller.last_check_time = t0
     controller.last_interface_counters = {"Ethernet": _MockNetIO(bytes_sent=0, bytes_recv=0)}
 
@@ -95,7 +95,7 @@ def test_absurd_speed_above_absolute_ceiling_still_dropped(controller):
     controller.config["interface_mode"] = "selected"
     controller.config["selected_interfaces"] = ["Ethernet"]
 
-    t0 = time.monotonic()
+    t0 = 1000.0  # fixed clock: (t0 + 1.0) - t0 must be exactly 1.0 (a real monotonic near 2**k rounds it)
     controller.last_check_time = t0
     controller.last_interface_counters = {"Ethernet": _MockNetIO(bytes_sent=0, bytes_recv=0)}
 

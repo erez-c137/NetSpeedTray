@@ -10,6 +10,7 @@ from PyQt6.QtCore import Qt, QSize
 import os
 import hashlib
 import winreg
+from typing import Optional
 
 # Import the design tokens (raw values) and other UI constants
 from netspeedtray.constants import styles as style_constants
@@ -200,6 +201,32 @@ def is_dark_mode() -> bool:
         return value == 0
     except Exception:
         return False
+
+
+_PERSONALIZE_KEY = r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
+
+
+def read_system_uses_light_theme() -> Optional[int]:
+    """The WINDOWS-mode (taskbar) theme flag, SystemUsesLightTheme: 1 light, 0 dark, None unreadable.
+    This, not the app mode Qt follows, is what the taskbar the widget sits on is painted in."""
+    try:
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, _PERSONALIZE_KEY)
+        try:
+            value, _ = winreg.QueryValueEx(key, "SystemUsesLightTheme")
+        finally:
+            winreg.CloseKey(key)
+        return int(value)
+    except (OSError, ValueError, TypeError):
+        return None
+
+
+def shell_theme_text_color() -> Optional[str]:
+    """The automatic widget text colour for the current Windows mode (black on a light taskbar,
+    the default white on a dark one), or None when the theme can't be read."""
+    light = read_system_uses_light_theme()
+    if light is None:
+        return None
+    return color_constants.BLACK if light == 1 else color_constants.WHITE
 
 
 def get_accent_color() -> QColor:

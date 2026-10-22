@@ -53,7 +53,7 @@ def test_update_speeds_calculates_and_emits_correctly(controller_instance, mock_
     
     # Manually initialize the controller's internal state to simulate
     # that a "priming read" has already occurred. This is the key fix.
-    controller.last_check_time = time.monotonic()
+    controller.last_check_time = 1000.0  # fixed clock: (t0 + 1.0) - t0 must be exactly 1.0 (a real monotonic near 2**k rounds it)
     controller.last_interface_counters = {
         "Wi-Fi": MockNetIO(bytes_sent=1000, bytes_recv=2000),
         "Ethernet": MockNetIO(bytes_sent=500, bytes_recv=800),
@@ -122,10 +122,12 @@ def test_update_speeds_handles_resume_from_sleep(controller_instance, mock_widge
 def test_odometer_counts_bytes_even_when_all_rates_exceed_ceiling(controller_instance, mock_widget_state):
     """#13: a counter jump whose RATE exceeds MAX_REASONABLE_SPEED_BPS is display-dropped (continue),
     but the REAL bytes must still reach the data-cap odometer (add_usage_bytes), not be lost with the
-    display. Previously the odometer feed was gated on the (now-empty) display data."""
+    display. Previously the odometer feed was gated on the (now-empty) display data. Since the display
+    rate is measured over the sampled span (PR #276 review), #13's late delivery no longer pushes it
+    over the ceiling at all; the bytes must reach the odometer either way."""
     controller = controller_instance
     controller.config["interface_mode"] = "all_physical"
-    controller.last_check_time = time.monotonic()
+    controller.last_check_time = 1000.0  # fixed clock: (t0 + 1.0) - t0 must be exactly 1.0 (a real monotonic near 2**k rounds it)
     controller.last_interface_counters = {"Wi-Fi": MockNetIO(bytes_sent=0, bytes_recv=0)}
     controller.primary_interface = None
     controller.set_view(MagicMock())
@@ -135,12 +137,15 @@ def test_odometer_counts_bytes_even_when_all_rates_exceed_ceiling(controller_ins
     # test_odometer_accuracy.py.)
     controller._last_sample_time = (controller.last_check_time - 2.0, 10_000.0)
 
-    huge = 30 * 1024**3  # 30 GiB over a 1 s handling span -> ~30 GB/s, above the ceiling -> display-dropped
+    huge = 30 * 1024**3  # 30 GiB: ~30 GB/s over the 1 s handling span, ~10.7 GB/s over the 3 s sampled
     second = {"Wi-Fi": MockNetIO(bytes_sent=huge, bytes_recv=0)}
     with patch('time.monotonic', return_value=controller.last_check_time + 1.0):
         controller._handle_network_counters(second, sample_time=(controller.last_check_time + 1.0, 10_003.0))
 
-    mock_widget_state.add_speed_data.assert_not_called()       # over-ceiling rate -> dropped from display
+    # The display rate is measured over the SAMPLED span too (PR #276 review), so the late delivery
+    # no longer inflates it past the ceiling: ~10.7 GB/s over 3 s is shown, not dropped.
+    mock_widget_state.add_speed_data.assert_called_once()
+    assert mock_widget_state.add_speed_data.call_args.kwargs["aggregated_up"] == pytest.approx(huge / 3.0, rel=1e-6)
     mock_widget_state.add_usage_bytes.assert_called_once()     # ...but the real bytes WERE counted
     up_bytes, down_bytes = mock_widget_state.add_usage_bytes.call_args[0]
     assert up_bytes == huge and down_bytes == 0
@@ -157,7 +162,7 @@ def test_spike_filter_lets_sustained_ramp_through_after_one_poll(controller_inst
     view = MagicMock(); controller.set_view(view)
     name = "Ethernet"
     controller.recent_speeds[name] = deque([(2_000_000, 2_000_000)] * 10, maxlen=20)  # 2 MB/s baseline
-    t0 = time.monotonic()
+    t0 = 1000.0  # fixed clock: (t0 + 1.0) - t0 must be exactly 1.0 (a real monotonic near 2**k rounds it)
     controller.last_check_time = t0
     controller.last_interface_counters = {name: MockNetIO(bytes_sent=0, bytes_recv=0)}
 
@@ -216,7 +221,7 @@ def test_update_speeds_handles_short_lag_spike(controller_instance, mock_widget_
     
     # --- Manually prime the controller state ---
     # This simulates the application having been running normally before the lag spike.
-    time_before_lag = time.monotonic()
+    time_before_lag = 1000.0  # fixed clock: (t0 + 1.0) - t0 must be exactly 1.0 (a real monotonic near 2**k rounds it)
     controller.last_check_time = time_before_lag
     controller.last_interface_counters = { "Wi-Fi": MockNetIO(bytes_sent=1000, bytes_recv=2000) }
     
@@ -269,6 +274,174 @@ def test_absent_temp_power_key_emits_nothing(controller_instance):
     mock_view.update_gpu_power.assert_not_called()
 
 
+# --- Battery-view stash handling (#323 review) --------------------------------
+
+
+def test_absent_power_keys_clear_stale_values(controller_instance):
+    """Neither power key this poll -> the stale discharge/charge stashes must be
+    cleared, so the hover card cannot keep saying "discharging" after the user
+    plugs the charger back in, nor keep a "+X W" after charging to full."""
+    controller = controller_instance
+    mock_view = MagicMock()
+    controller.set_view(mock_view)
+
+    controller.handle_stats({"cpu": 50.0})  # no system_power, no battery_power
+
+    assert mock_view.system_power is None
+    assert mock_view.battery_power is None
+
+
+def test_battery_power_clears_system_power_stash(controller_instance):
+    """The signed-flow branch is mutually exclusive: battery_power set this poll
+    must overwrite any stale system_power on the view."""
+    controller = controller_instance
+    mock_view = MagicMock()
+    controller.set_view(mock_view)
+
+    controller.handle_stats({"cpu": 50.0, "battery_power": -38.2})
+
+    assert mock_view.system_power is None
+    assert mock_view.battery_power == -38.2
+
+
+def test_system_power_history_universal_battery_drain_discharge_only(controller_instance, monkeypatch):
+    """system_power keeps the stat history it always had (every real reading, AC
+    included - the Stats-export "System power" column must stay meaningful on a
+    desktop with RAPL), while the mirrored battery_drain stat_type only records
+    samples while the machine is actually discharging - "not on AC" would also
+    count MODE_NONE, which is how a battery-less desktop with a RAPL PSYS sensor
+    reads (the hover omits its battery section there, so rows it can never
+    display must not be written either, 3rd #323 review)."""
+    from netspeedtray.utils import power_utils
+
+    controller = controller_instance
+    controller.config["power_display_enabled"] = True   # the mirror's own switch
+    controller.set_view(MagicMock())
+
+    for mode in (power_utils.MODE_AC, power_utils.MODE_CHARGE, power_utils.MODE_NONE):
+        monkeypatch.setattr(power_utils, "read_power_state",
+                            lambda m=mode: power_utils.PowerState(m, 100 if m != power_utils.MODE_NONE else None))
+        controller.widget_state.add_hardware_stat.reset_mock()
+        controller.handle_stats({"cpu": 50.0, "system_power": 12.0})
+        keys = [c.args[0] for c in controller.widget_state.add_hardware_stat.call_args_list]
+        assert 'system_power' in keys, f"real reading dropped from system_power history under mode={mode}"
+        assert 'battery_drain' not in keys, f"battery_drain recorded while mode={mode}"
+
+    monkeypatch.setattr(power_utils, "read_power_state",
+                        lambda: power_utils.PowerState(power_utils.MODE_DISCHARGE, 63))
+    controller.widget_state.add_hardware_stat.reset_mock()
+    controller.handle_stats({"cpu": 50.0, "system_power": 12.0})
+    keys = [c.args[0] for c in controller.widget_state.add_hardware_stat.call_args_list]
+    assert 'system_power' in keys
+    assert 'battery_drain' in keys
+    drain_calls = [c for c in controller.widget_state.add_hardware_stat.call_args_list
+                   if c.args[0] == 'battery_drain']
+    assert drain_calls[0].args[1] == 12.0
+
+    # A failed (MODE_NONE) power-state read must NOT mirror: the hover omits its
+    # battery section on an unreadable state, so the mirror would be rows it
+    # never shows. system_power's own history still records every real reading.
+    controller.widget_state.add_hardware_stat.reset_mock()
+    monkeypatch.setattr(power_utils, "read_power_state",
+                        lambda: (_ for _ in ()).throw(RuntimeError("wmi exploded")))
+    controller.handle_stats({"cpu": 50.0, "system_power": 12.0})
+    keys = [c.args[0] for c in controller.widget_state.add_hardware_stat.call_args_list]
+    assert 'system_power' in keys
+    assert 'battery_drain' not in keys
+
+
+def test_system_power_slot_survives_ac_but_clears_when_absent(controller_instance, monkeypatch):
+    """The system_power slot carries the CURRENT whole-system reading, AC included.
+
+    Clearing it on AC blanked the Monitor's "System N W" strip on a laptop with a RAPL
+    PSYS counter (that sensor reports on mains too). The hover card is the layer that
+    decides what to SHOW - it reads system_power only while the machine is discharging,
+    so a PSYS reading on AC is never shown as battery drain. An absent key still clears
+    the slot, so no stale "discharging 12 W" can outlive the reading.
+    """
+    from netspeedtray.utils import power_utils
+
+    controller = controller_instance
+    view = MagicMock()
+    controller.set_view(view)
+    monkeypatch.setattr(power_utils, "read_power_state",
+                        lambda: power_utils.PowerState(power_utils.MODE_AC, None))
+
+    controller.handle_stats({"cpu": 50.0, "system_power": 12.0})
+    assert view.system_power == 12.0, "the Monitor's system-power strip was blanked on AC"
+
+    # No reading this poll -> the slot is cleared (no stale value).
+    controller.handle_stats({"cpu": 50.0})
+    assert view.system_power is None
+
+
+def test_power_slots_reach_the_view_without_cpu_stats(controller_instance):
+    """A battery-only poll still updates the hover slots when CPU history recording is off."""
+    controller = controller_instance
+    view = MagicMock()
+    controller.set_view(view)
+
+    controller.handle_stats({"battery_power": -38.2})
+
+    assert view.battery_power == -38.2
+    assert view.system_power is None
+
+
+def test_battery_only_poll_writes_history_under_power_display_only(controller_instance, monkeypatch):
+    """The 3rd-review blocker: with CPU/GPU/power-stats off (the defaults) a battery-only
+    poll wrote NOTHING to history - the write sat inside the CPU/GPU gate, and the mirror
+    rode system_power's persist policy (show_hardware_power). The hover's "Today avg"
+    must fill from the power-display feature's own poll, out of anyone else's gate."""
+    from netspeedtray.utils import power_utils
+
+    controller = controller_instance
+    controller.config["power_display_enabled"] = True
+    controller.set_view(MagicMock())
+    monkeypatch.setattr(power_utils, "read_power_state",
+                        lambda: power_utils.PowerState(power_utils.MODE_DISCHARGE, 63))
+
+    controller.handle_stats({"system_power": 12.0})
+    persist = {c.args[0]: c.kwargs.get("persist", True)
+               for c in controller.widget_state.add_hardware_stat.call_args_list}
+    assert 'system_power' in persist
+    assert persist['system_power'] is False   # legacy policy unchanged (needs the power tiles + a CPU/GPU)
+    assert persist['battery_drain'] is True   # the hover stat, on its own power-display switch
+
+
+def test_power_state_is_not_read_with_the_battery_switch_off(controller_instance, monkeypatch):
+    """battery_drain only exists for the hover's battery section, so with that switch off the
+    controller must not resolve the power state at all (no syscall per poll for a feature the
+    user never turned on) and must not mirror anything - system_power's history is untouched."""
+    from netspeedtray.utils import power_utils
+
+    calls = []    # counted, not raised: the controller's own except would swallow an assert
+
+    def _read():
+        calls.append(1)
+        return power_utils.PowerState(power_utils.MODE_DISCHARGE, 63)
+    controller = controller_instance
+    controller.config["power_display_enabled"] = False
+    controller.set_view(MagicMock())
+    monkeypatch.setattr(power_utils, "read_power_state", _read)
+
+    controller.handle_stats({"cpu": 50.0, "system_power": 12.0})
+    assert calls == [], "power state read with power_display_enabled off"
+    keys = [c.args[0] for c in controller.widget_state.add_hardware_stat.call_args_list]
+    assert 'system_power' in keys
+    assert 'battery_drain' not in keys
+
+
+def test_power_poll_refreshes_an_open_hover_card(controller_instance):
+    """The battery rows are live while the card is open, like the hardware rows (#399): each
+    poll nudges the view, which refreshes its card (throttled and no-op without a card)."""
+    controller = controller_instance
+    view = MagicMock()
+    controller.set_view(view)
+
+    controller.handle_stats({"battery_power": -38.2})
+    view.refresh_hover_power.assert_called_once_with()
+
+
 # --- all_physical uses the shared adapter classifier (2.2 scope C, accuracy audit finding 5) -------
 
 def _classifier_for(table):
@@ -295,7 +468,7 @@ def _run_all_physical(mock_config, mock_widget_state, table, first, second):
     controller.primary_interface = None
     view = MagicMock()
     controller.set_view(view)
-    controller.last_check_time = time.monotonic()
+    controller.last_check_time = 1000.0  # fixed clock: (t0 + 1.0) - t0 must be exactly 1.0 (a real monotonic near 2**k rounds it)
     controller.last_interface_counters = {n: MockNetIO(*v) for n, v in first.items()}
     with patch('time.monotonic', return_value=controller.last_check_time + 1.0):
         controller._handle_network_counters({n: MockNetIO(*v) for n, v in second.items()})
@@ -362,3 +535,24 @@ def test_current_primary_interface_resolves_in_any_mode(mock_config, mock_widget
         assert controller.current_primary_interface() == "Wi-Fi 3"
         assert controller.current_primary_interface() == "Wi-Fi 3"
     assert g.call_count == 1   # the 15 s cache applies
+
+
+@pytest.mark.parametrize("handling_gap", [0.63, 1.35], ids=["handled-early", "handled-late"])
+def test_rate_uses_the_sampling_span_not_the_handling_span(controller_instance, handling_gap):
+    """PR #276 review S1: a stall on the monitor thread between sampling the counters and emitting
+    them (an LHM connect attempt, a WMI query) moved the HANDLING time, and dividing by it showed one
+    tick ~35% high and the next ~25% low. The counters were sampled exactly 1 s apart, so the rate
+    is the bytes over 1 s, whenever the GUI thread gets to them."""
+    controller = controller_instance
+    controller.config["interface_mode"] = "all_physical"
+    controller.primary_interface = None
+    view = MagicMock(); controller.set_view(view)
+    t0 = 1000.0
+    with patch('time.monotonic', return_value=t0):
+        controller._handle_network_counters({"Ethernet": MockNetIO(0, 0)}, sample_time=(t0, 50_000.0))
+    with patch('time.monotonic', return_value=t0 + handling_gap):
+        controller._handle_network_counters({"Ethernet": MockNetIO(1_000_000, 2_000_000)},
+                                            sample_time=(t0 + 1.0, 50_001.0))
+    up_mbps, down_mbps = view.update_display_speeds.call_args[0][:2]
+    assert up_mbps == pytest.approx(8.0)      # 1 MB over 1 s of SAMPLING = 8 Mbps
+    assert down_mbps == pytest.approx(16.0)

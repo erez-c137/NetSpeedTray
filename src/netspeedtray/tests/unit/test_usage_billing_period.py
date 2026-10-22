@@ -26,7 +26,10 @@ class _WS:
     def get_usage_period_key(self):
         return self.period_key
 
-    def get_history_volume_for_period(self, start, end):
+    def get_usage_this_period(self):
+        return (7.0, 8.0)
+
+    def get_metered_volume_for_period(self, start, end):
         self.starts.append(start)
         return SimpleNamespace(up_bytes=1.0, down_bytes=2.0, reconstructed=False)
 
@@ -36,6 +39,7 @@ class _W:
     _HOVER_USAGE_TTL_SEC = NetworkSpeedWidget._HOVER_USAGE_TTL_SEC
     _hover_usage_totals = NetworkSpeedWidget._hover_usage_totals
     _usage_billing_period_start = NetworkSpeedWidget._usage_billing_period_start
+    _usage_cap_set = NetworkSpeedWidget._usage_cap_set
 
     def __init__(self, config, period_key):
         self.config = config
@@ -55,9 +59,10 @@ def test_month_row_follows_the_billing_period_when_a_cap_is_set():
         start -= timedelta(days=1)   # keep it off the 1st, the calendar-month case
     w = _W({"data_cap_enabled": True, "data_cap_gb": 500, "data_cap_reset_day": start.day},
            start.isoformat())
-    w._hover_usage_totals()
+    _today, month = w._hover_usage_totals()
     period = datetime(start.year, start.month, start.day)
-    assert w.widget_state.starts[1] == period          # [0] is today, [1] the "month" row
+    # With a cap the period row is the odometer's own count (the cap row's figure), not history.
+    assert month == (7.0, 8.0) and len(w.widget_state.starts) == 1   # [0] is today's history read
     assert w._hover_usage_period_start == period
 
 
@@ -67,16 +72,16 @@ def test_month_row_follows_the_billing_period_when_a_cap_is_set():
 ])
 def test_month_row_stays_the_calendar_month_without_a_cap(config):
     w = _W(config, (date.today() - timedelta(days=3)).isoformat())
-    w._hover_usage_totals()
-    assert w.widget_state.starts[1] == _month_start()
+    _today, month = w._hover_usage_totals()
+    assert w.widget_state.starts[1] == _month_start() and month == (1.0, 2.0)
     assert w._hover_usage_period_start is None
 
 
 def test_reset_day_one_is_just_the_month():
     w = _W({"data_cap_enabled": True, "data_cap_gb": 500, "data_cap_reset_day": 1},
            _month_start().date().isoformat())
-    w._hover_usage_totals()
-    assert w.widget_state.starts[1] == _month_start()
+    _today, month = w._hover_usage_totals()
+    assert month == (7.0, 8.0)                          # the cap's count, over the calendar month
     assert w._hover_usage_period_start is None
 
 

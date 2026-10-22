@@ -398,3 +398,25 @@ class TestInstallerLog:
         support_bundle.build_support_bundle(dest, fake_config)
         with zipfile.ZipFile(dest, "r") as zf:
             assert "logs/update-install.log" not in zf.namelist()
+
+
+class TestCrashLog:
+    """The crash record (faulthandler + unhandled exceptions, armed before logging) is the only trace
+    a crash at logon leaves - it must ship in the bundle, scrubbed like the logs."""
+
+    _home = str(Path.home().resolve())
+
+    def test_crash_log_and_its_rotation_are_bundled_and_scrubbed(
+            self, q_app, tmp_path, fake_config, fake_log_dir):
+        from netspeedtray.crash_log import CRASH_LOG_FILENAME
+        (fake_log_dir / CRASH_LOG_FILENAME).write_text(
+            "2026-10-21 08:00:00 start pid 4242\n"
+            "Windows fatal exception: access violation\n\n"
+            f'  File "{self._home}\\AppData\\Local\\x.py", line 1 in <module>\n', encoding="utf-8")
+        (fake_log_dir / (CRASH_LOG_FILENAME + ".1")).write_text("older\n", encoding="utf-8")
+        dest = tmp_path / "bundle.zip"
+        support_bundle.build_support_bundle(dest, fake_config)
+        text = _open_zip_entry(dest, f"logs/{CRASH_LOG_FILENAME}")
+        assert "access violation" in text
+        assert self._home.lower() not in text.lower()
+        assert _open_zip_entry(dest, f"logs/{CRASH_LOG_FILENAME}.1") == "older\n"

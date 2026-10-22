@@ -59,7 +59,10 @@ copy-then-delete, it had already created a partial destination, which then broke
 A live test against real binaries caught that; the unit tests, which used dummy text files, did not.
 
 Anything unexpected is a **refusal, not a repair**: return non-zero and leave both folders intact.
-The staged copy is still on disk, so the guided "copy it yourself" path remains available.
+The staged copy is still on disk, so the guided "copy it yourself" path remains available - and
+since 2.2.0 the applier then restarts the user's unchanged app and says why, with the staged
+folder's path (``_restart_unchanged``): the previous instance quit to hand over, so a refusal used
+to leave no app running at all.
 """
 from __future__ import annotations
 
@@ -85,6 +88,14 @@ PORTABLE_MARKER = "portable.marker"
 # Everything a portable NetSpeedTray folder has at its top level (the released 2.1.7 ZIP: exactly
 # these three). Anything else at the top level is someone else's, so the folder is not deleted.
 _PORTABLE_TOP_LEVEL = frozenset({APP_EXE.lower(), "_internal", PORTABLE_MARKER})
+# Explorer's own per-folder metadata: desktop.ini (a custom icon or view settings, written as soon as
+# someone customises the folder in Explorer) and Thumbs.db (the thumbnail cache). Not the user's
+# data and nothing NetSpeedTray ships. Tolerated in the install folder and CARRIED into the new
+# install by the swap (``_carry_explorer_metadata``), so a customised folder still updates
+# hands-off. Before 2.2.0 one desktop.ini sent every update down the guided copy - or, behind an
+# older build's weaker pre-check, into a refusal that left no app running at all. Anything else
+# that is not ours is still a refusal.
+_EXPLORER_METADATA = frozenset({"desktop.ini", "thumbs.db"})
 
 # IO_REPARSE_TAG name-surrogate bit: set for junctions, symlinks and mount points - reparse points
 # that NAME another location. Cloud-file placeholders (OneDrive) are reparse points without it.
@@ -208,7 +219,8 @@ def validate(install_dir: str, staged_dir: str) -> Optional[str]:
     if not os.path.isfile(os.path.join(staged_dir, APP_EXE)):
         return "staged directory has no %s" % APP_EXE
     try:
-        known = set(_PORTABLE_TOP_LEVEL) | {n.lower() for n in os.listdir(staged_dir)}
+        known = (set(_PORTABLE_TOP_LEVEL) | _EXPLORER_METADATA
+                 | {n.lower() for n in os.listdir(staged_dir)})
         extra = sorted(n for n in os.listdir(install_dir) if n.lower() not in known)
     except OSError as e:
         return "cannot list the install directory: %s" % e
@@ -292,6 +304,7 @@ def swap(install_dir: str, staged_dir: str) -> str:
         problem = _copy_mismatch(staged_dir, install_dir)
         if problem:
             raise RuntimeError("the copied install does not match the staged copy: %s" % problem)
+        _carry_explorer_metadata(backup, install_dir)
     except Exception as e:
         logger.error("Copying the staged copy failed; restoring the original install.", exc_info=True)
         # Clear the partial destination FIRST or the rename back has nowhere to land. It is the
@@ -307,6 +320,43 @@ def swap(install_dir: str, staged_dir: str) -> str:
         raise
     logger.info("Staged copy is now the install.")
     return backup
+
+
+def _carry_explorer_metadata(backup: str, install_dir: str) -> None:
+    """Copy Explorer's folder metadata (``_EXPLORER_METADATA``) from the old install into the new
+    one, with its file attributes, plus the folder's own READONLY/SYSTEM bits - one of which
+    Explorer needs before it reads a desktop.ini at all. Regular files only, never a link; a name
+    the new install already has (a future build shipping it) is left as shipped. Best-effort and
+    never raises: a file that cannot be carried stays in the backup, which then keeps the janitor
+    from deleting that backup (logged once) - untidy, never lost."""
+    try:
+        for name in _top_level_names(backup):
+            if name.lower() not in _EXPLORER_METADATA:
+                continue
+            src = os.path.join(backup, name)
+            dst = os.path.join(install_dir, name)
+            if os.path.lexists(dst) or _is_link_like(src) or not os.path.isfile(src):
+                continue
+            try:
+                shutil.copy2(src, dst)
+                logger.info("Carried Explorer's %s into the new install.", name)
+            except OSError:
+                logger.warning("Could not carry %s into the new install; it stays in the previous "
+                               "version's folder.", name, exc_info=True)
+        if os.name != "nt":                          # pragma: no cover
+            return
+        import ctypes
+        k32 = ctypes.windll.kernel32
+        k32.GetFileAttributesW.restype = ctypes.c_uint32
+        old = k32.GetFileAttributesW(str(backup))
+        if old == 0xFFFFFFFF:
+            return
+        bits = old & (stat.FILE_ATTRIBUTE_READONLY | stat.FILE_ATTRIBUTE_SYSTEM)
+        new = k32.GetFileAttributesW(str(install_dir))
+        if bits and new != 0xFFFFFFFF:
+            k32.SetFileAttributesW(str(install_dir), ctypes.c_uint32(new | bits))
+    except Exception:
+        logger.debug("Could not carry the folder's Explorer metadata.", exc_info=True)
 
 
 def _copy_mismatch(staged_dir: str, install_dir: str) -> Optional[str]:
@@ -742,13 +792,56 @@ def relaunch(exe: str) -> bool:
             flags = (getattr(subprocess, "DETACHED_PROCESS", 0)
                      | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
         subprocess.Popen([exe], cwd=os.path.dirname(exe), creationflags=flags, close_fds=True)
-        logger.info("Relaunched the updated app.")
+        logger.info("Relaunched %s.", exe)
         return True
     except Exception:
         # The update itself already succeeded - never undo a good update because the restart failed.
         logger.error("Update applied, but the relaunch failed. The user can start it manually.",
                      exc_info=True)
         return False
+
+
+def _notify_not_applied(reason: str, staged_dir: str, install_dir: str) -> None:
+    """Tell the user the update did not happen, why, and where the new version is waiting.
+
+    Shown by THIS process (the new version's code), not left for the relaunched app to read: the
+    app relaunched after a refusal is the OLD version - 2.1.7 or a 2.2 beta, whose weaker pre-check
+    is exactly what hands off a swap this applier then refuses - and it would never read a marker.
+    Localized through ``update_notice``, which may import the rest of the app; this module stays
+    stdlib-only, so the import is lazy and any failure is only logged. Only in the frozen app:
+    tests and dev runs never block on a dialog."""
+    if not getattr(sys, "frozen", False):
+        logger.info("Not frozen; skipping the update-not-applied notice.")
+        return
+    try:
+        from netspeedtray.core.update_notice import show_update_not_applied
+        show_update_not_applied(reason, staged_dir, install_dir)
+    except Exception:
+        logger.warning("Could not tell the user the update was not applied.", exc_info=True)
+
+
+def _restart_unchanged(install_dir: str, staged_dir: str, reason: str) -> None:
+    """After a refused swap (exit 3), or one that failed and put the original back (exit 4): start
+    the user's app again - the previous instance quit to hand us the swap, so without this it just
+    vanishes (and an older build re-offers the update daily, vanishing daily) - and say why.
+
+    Launched like the post-update relaunch: a plain child of this process, at its integrity (the
+    applier is started by the unelevated app). Only an install folder that still holds our EXE is
+    ever launched from; a refusal for "not obviously ours" launches nothing."""
+    # The message below sends the user to the staged folder - but the app restarted here is often an
+    # OLDER build, whose sweep deletes every folder in the staged marker ten minutes after it was
+    # staged, whatever the entry says. So the folder leaves the marker first: the failure record in
+    # update_backups.json (which older builds never read) still names it, and this version ages
+    # unreferenced staged copies out after _FAILED_KEEP_SEC.
+    _forget_staged_record(staged_dir)
+    exe = os.path.join(install_dir, APP_EXE) if install_dir else ""
+    if exe and os.path.isfile(exe) and not _is_link_like(exe):
+        if relaunch(exe):
+            logger.info("The update was not applied; restarted the existing version.")
+    else:
+        logger.warning("The update was not applied and there is no app to restart in %s.",
+                       install_dir)
+    _notify_not_applied(reason, staged_dir, install_dir)
 
 
 def apply_update(install_dir: str, wait_pid: Optional[int], staged_dir: Optional[str] = None) -> int:
@@ -766,6 +859,7 @@ def apply_update(install_dir: str, wait_pid: Optional[int], staged_dir: Optional
     if reason:
         logger.warning("Refusing to apply the update: %s", reason)
         _note_applier_outcome(staged_dir, applied=False, install_dir=install_dir)
+        _restart_unchanged(install_dir, staged_dir, reason)
         return 3
 
     try:
@@ -781,6 +875,8 @@ def apply_update(install_dir: str, wait_pid: Optional[int], staged_dir: Optional
         logger.error("Update swap failed: %s", e, exc_info=True)
         # The staged copy (and its zip) are KEPT for a retry or a support bundle, and aged out later.
         _note_applier_outcome(staged_dir, applied=False, install_dir=install_dir)
+        # swap() raised after putting the original back, so the install is exactly as it was.
+        _restart_unchanged(install_dir, staged_dir, str(e))
         return 4
 
     # Neither the backup nor `staged_dir` is removed here. The backup is the rollback until the
@@ -1077,6 +1173,30 @@ def _note_applier_outcome(staged_dir: str, *, applied: bool, backup: Optional[st
     except Exception:
         logger.warning("Could not record the update outcome; leftovers may need a later sweep.",
                        exc_info=True)
+
+
+def _forget_staged_record(staged_dir: str) -> None:
+    """Drop ``staged_dir`` from the staged marker (any entry shape), keeping every other entry
+    verbatim. Best-effort: a failure leaves the record (and an older build may then sweep it)."""
+    try:
+        target = _norm(os.path.abspath(staged_dir))
+        with _marker_lock:
+            raw, readable = _read_list_checked(_marker_path())
+            if not readable or not raw:
+                return
+            kept = []
+            for item in raw:
+                path = item if isinstance(item, str) else (
+                    item.get("path") if isinstance(item, dict) else None)
+                if isinstance(path, str) and _norm(path) == target:
+                    continue
+                kept.append(item)
+            if len(kept) != len(raw):
+                _write_list(_marker_path(), kept)
+                logger.info("Took the staged copy out of the staged marker so no sweep removes it: %s",
+                            staged_dir)
+    except Exception:
+        logger.warning("Could not take the staged copy out of the staged marker.", exc_info=True)
 
 
 def _recent_failure(install_dir: str) -> bool:

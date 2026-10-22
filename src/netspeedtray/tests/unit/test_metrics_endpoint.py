@@ -286,7 +286,7 @@ def test_controller_live_rates_match_display_and_zero_on_reprime():
     c = StatsController(config=cfg, widget_state=MagicMock(spec=WidgetState))
     shown = []
     c.display_speed_updated.connect(lambda u, d: shown.append((u, d)))
-    t0 = time.monotonic()
+    t0 = 1000.0  # fixed clock: (t0 + 1.0) - t0 must be exactly 1.0 (a real monotonic near 2**k rounds it)
     c.last_check_time = t0
     c.last_interface_counters = {"Wi-Fi": _IO(0, 0), "LAN": _IO(0, 0)}
     with patch("time.monotonic", return_value=t0 + 1.0):
@@ -623,10 +623,10 @@ def test_server_thread_never_reads_qt_owned_state():
 
 # --- Settings ------------------------------------------------------------------------------------
 @pytest.fixture
-def page(q_app):
+def page(qt_owned):
     from netspeedtray.constants.i18n import I18nStrings
     from netspeedtray.views.settings.pages.advanced import AdvancedPage
-    return AdvancedPage(I18nStrings("en_US"), lambda: None)
+    return qt_owned(AdvancedPage(I18nStrings("en_US"), lambda: None))
 
 
 def test_settings_round_trip_and_url(page):
@@ -663,3 +663,125 @@ def test_copy_button_copies_the_url(page, q_app):
 def test_config_schema_bounds_the_port():
     rules = constants.config.defaults.VALIDATION_SCHEMA["metrics_endpoint_port"]
     assert rules["min"] == 1024 and rules["max"] == 65535 and rules["default"] == M.DEFAULT_PORT
+
+
+# --- [::1] squatting and the bind retry (RC checkup) --------------------------------------------
+
+def _has_ipv6_loopback() -> bool:
+    try:
+        with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as s:
+            s.bind(("::1", 0))
+        return True
+    except OSError:
+        return False
+
+
+needs_v6 = pytest.mark.skipif(not _has_ipv6_loopback(), reason="no IPv6 loopback on this machine")
+
+
+def _free_on_both() -> int:
+    for _ in range(50):
+        port = free_port()
+        try:
+            with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as s:
+                s.bind(("::1", port))
+            return port
+        except OSError:
+            continue
+    pytest.skip("no port free on both loopbacks")
+
+
+@needs_v6
+def test_the_ipv6_loopback_is_held_too_so_nothing_can_squat_it(endpoint):
+    port = _free_on_both()
+    assert endpoint.apply(True, port).state == M.STATE_RUNNING
+    assert endpoint._server6.socket.getsockname()[:2] == ("::1", port)
+    squatter = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+    try:
+        with pytest.raises(OSError):
+            squatter.bind(("::1", port))
+    finally:
+        squatter.close()
+    conn = http.client.HTTPConnection("::1", port, timeout=5)
+    try:
+        conn.request("GET", "/metrics", headers={"Host": f"[::1]:{port}"})
+        assert conn.getresponse().status == 200
+    finally:
+        conn.close()
+
+
+@needs_v6
+def test_a_squatter_on_ipv6_loopback_stops_the_endpoint_from_serving(endpoint):
+    port = _free_on_both()
+    squatter = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+    squatter.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+    squatter.bind(("::1", port))
+    squatter.listen(1)
+    try:
+        st = endpoint.apply(True, port)
+        assert st.state == M.STATE_ERROR and st.error == "in_use"
+        assert not endpoint.running
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        probe.bind(("127.0.0.1", port))      # our 127.0.0.1 socket was released too
+        probe.close()
+    finally:
+        squatter.close()
+
+
+def test_a_busy_port_is_retried_with_backoff_until_it_frees():
+    now = [1000.0]
+    ep = MetricsEndpoint(clock=lambda: now[0])
+    port = _free_on_both() if _has_ipv6_loopback() else free_port()
+    blocker = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    blocker.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+    blocker.bind(("127.0.0.1", port))
+    blocker.listen(1)
+    try:
+        assert ep.apply(True, port).error == "in_use"
+        assert ep.retry_if_due() is False                    # not due yet
+        now[0] += ep.RETRY_DELAYS_SEC[0]
+        assert ep.retry_if_due() is False                    # due, still busy -> next backoff
+        assert ep._retry_at == now[0] + ep.RETRY_DELAYS_SEC[1]
+        assert ep.apply(True, port).state == M.STATE_ERROR   # a settings tick does not hammer it
+    finally:
+        blocker.close()
+    try:
+        now[0] += ep.RETRY_DELAYS_SEC[1]
+        assert ep.retry_if_due() is True
+        assert ep.status.state == M.STATE_RUNNING
+    finally:
+        ep.stop()
+
+
+def test_an_out_of_range_port_is_never_retried():
+    ep = MetricsEndpoint(clock=lambda: 1e9)
+    assert ep.apply(True, 80).state == M.STATE_ERROR
+    assert ep.retry_if_due() is False
+
+
+def test_the_widget_retries_the_endpoint_on_each_stats_tick():
+    from netspeedtray.views.widget.main import NetworkSpeedWidget
+    ep = MagicMock(running=False)
+    ep.retry_if_due.return_value = False
+    stub = types.SimpleNamespace(metrics_endpoint=ep, logger=logging.getLogger("t"))
+    NetworkSpeedWidget._publish_metrics_snapshot(stub)
+    ep.retry_if_due.assert_called_once()
+    ep.publish.assert_not_called()
+
+
+def test_an_ipv6_only_excluded_port_falls_back_to_ipv4_only(endpoint, monkeypatch):
+    """WSAEACCES on [::1] (a Hyper-V/WSL IPv6-only excluded range): nobody can listen there, so the
+    endpoint runs on 127.0.0.1 like a machine without IPv6, instead of reporting the port dead."""
+    real = me._LoopbackHTTPServer
+
+    def fake(port, store, host=M.HOST):
+        if host == "::1":
+            err = OSError(13, "An attempt was made to access a socket in a way forbidden")
+            err.winerror = 10013
+            raise err
+        return real(port, store, host=host)
+    monkeypatch.setattr(me, "_LoopbackHTTPServer", fake)
+    port = free_port()
+    st = endpoint.apply(True, port)
+    assert st.state == M.STATE_RUNNING and endpoint._server6 is None
+    assert get(port)[0] == 200

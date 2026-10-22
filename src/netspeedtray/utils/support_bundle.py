@@ -228,6 +228,13 @@ def _list_log_files() -> List[Path]:
     installer_log = base / constants.logs.INSTALLER_LOG_SUBDIR / constants.logs.INSTALLER_LOG_FILENAME
     if installer_log.exists():
         files.append(installer_log)
+    # The crash record (faulthandler + unhandled exceptions, armed before logging starts) and its
+    # one rotated generation - the only trace a crash at logon leaves.
+    from netspeedtray.crash_log import CRASH_LOG_FILENAME
+    for name in (CRASH_LOG_FILENAME, CRASH_LOG_FILENAME + ".1"):
+        crash = base / name
+        if crash.exists():
+            files.append(crash)
     return files
 
 

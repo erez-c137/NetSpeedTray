@@ -24,6 +24,37 @@ def q_app():
     return QApplication.instance() or QApplication([])
 
 
+def dispose_widget(widget) -> None:
+    """Destroy a test's top-level widget NOW, on the C++ side, instead of leaving it to Python's
+    cyclic GC. A parentless page or dialog with signal/lambda reference cycles was otherwise
+    collected at a random point in some LATER test, which crashed the run with an access violation
+    (depending on test order). Safe to call twice."""
+    from PyQt6 import sip
+    if widget is None or sip.isdeleted(widget):
+        return
+    try:
+        widget.close()
+    except RuntimeError:
+        pass
+    if not sip.isdeleted(widget):
+        sip.delete(widget)
+
+
+@pytest.fixture
+def qt_owned(q_app):
+    """``qt_owned(widget)`` -> widget, destroyed deterministically at teardown (dispose_widget)."""
+    owned = []
+
+    def own(widget):
+        owned.append(widget)
+        return widget
+    yield own
+    for w in reversed(owned):
+        dispose_widget(w)
+    from PyQt6.QtCore import QCoreApplication, QEvent
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+
+
 @pytest.fixture(autouse=True)
 def _isolate_update_marker(tmp_path, monkeypatch):
     """No test may read or write the real %APPDATA%/NetSpeedTray/staged_update.json or stage into
@@ -40,3 +71,47 @@ def _isolate_update_marker(tmp_path, monkeypatch):
     # test's own Downloads stand-in (or tmp_path itself) - never the real Downloads.
     monkeypatch.setattr(update_applier, "_downloads_dirs", raising=False, value=
                         lambda: [str(tmp_path / "Downloads"), str(tmp_path)])
+
+
+class _NoLhmWebServer:
+    """Stand-in for LhmHttpClient: LibreHardwareMonitor's web server is not running."""
+
+    def __init__(self, *args, **kwargs):
+        self.calls = 0
+
+    def get_snapshot(self):
+        self.calls += 1
+        return None
+
+    def reset_backoff(self):
+        pass
+
+
+@pytest.fixture(autouse=True)
+def _no_real_lhm_web_server(monkeypatch):
+    """No StatsMonitorThread under test may read a real LibreHardwareMonitor on the developer's
+    machine (127.0.0.1:8085, #187): a live LHM would answer ahead of the WMI/ACPI sources a test
+    pins, and its absence costs a connect attempt. Tests of the HTTP source itself use
+    netspeedtray.core.lhm_http directly, against servers they start; tests that want an LHM
+    reading set ``thread._lhm_http`` themselves."""
+    from netspeedtray.core import monitor_thread
+    monkeypatch.setattr(monitor_thread, "LhmHttpClient", _NoLhmWebServer)
+
+
+@pytest.fixture(autouse=True)
+def _pin_windows_theme(monkeypatch):
+    """Pin the Windows (taskbar) theme the automatic text colour follows, so no test depends on the
+    machine running it. Settings' live preview / Save / Cancel substitute the current theme's colour
+    for an AUTOMATIC default_color (#405); on a light-mode CI runner that turned the factory white
+    into black and failed exact-config assertions that pass on a dark-mode dev PC (PR #409).
+
+    Dark (white text) by default; NST_TEST_WINDOWS_THEME=light runs the suite under a light taskbar,
+    to prove a test doesn't depend on it. A test that needs a specific theme patches these names
+    itself, which overrides this floor."""
+    import os
+    from netspeedtray import constants
+    light = os.environ.get("NST_TEST_WINDOWS_THEME", "dark").strip().lower() == "light"
+    colour = constants.color.BLACK if light else constants.color.WHITE
+    for target in ("netspeedtray.views.settings.dialog.shell_theme_text_color",
+                   "netspeedtray.views.widget.theme.shell_theme_text_color"):
+        monkeypatch.setattr(target, lambda: colour, raising=False)

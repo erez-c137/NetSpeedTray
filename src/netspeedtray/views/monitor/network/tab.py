@@ -138,6 +138,7 @@ class NetworkTab(QWidget):
         # window but the dropdown label would otherwise stay stale (#1). Mirrors the Overview/Hardware
         # showEvent re-sync. set_period_key uses emit=False, so it doesn't re-trigger the host.
         try:
+            self._host.sync_period_from_config()   # a period picked on the Overview (M1)
             pv = getattr(self._host, "_history_period_value", None)
             if pv is not None:
                 self._header.set_period_key(

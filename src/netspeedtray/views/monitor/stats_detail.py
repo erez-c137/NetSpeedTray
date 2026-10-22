@@ -365,9 +365,12 @@ class StatsDetailSheet(QDialog):
         if summ.count == 0 and not subj.get("primary") and not loss_only:
             return None
 
+        # Scoped by object name: a bare "QFrame { border }" also styled every QLabel inside (QLabel IS
+        # a QFrame), so each label drew its own bordered box and its text clipped inside it.
         card = QFrame()
+        card.setObjectName("statsCard")
         card.setStyleSheet(
-            f"QFrame {{ background: {c['card_bg']}; border: 1px solid {c['card_stroke']};"
+            f"QFrame#statsCard {{ background: {c['card_bg']}; border: 1px solid {c['card_stroke']};"
             f" border-radius: 8px; }}")
         box = QVBoxLayout(card)
         box.setContentsMargins(16, 14, 16, 14)
@@ -431,7 +434,8 @@ class StatsDetailSheet(QDialog):
 
     def _stat_cell(self, caption: str, value: str, c: Dict[str, str]) -> QFrame:
         cell = QFrame()
-        cell.setStyleSheet(f"QFrame {{ background: {c['subtle_fill']}; border-radius: 6px; }}")
+        cell.setObjectName("statCell")
+        cell.setStyleSheet(f"QFrame#statCell {{ background: {c['subtle_fill']}; border-radius: 6px; }}")
         v = QVBoxLayout(cell)
         v.setContentsMargins(12, 8, 12, 8)
         v.setSpacing(1)

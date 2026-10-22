@@ -39,7 +39,16 @@ def bind_reader_thread(thread: QThread, widget_state, on_ident=None) -> None:
     ``WidgetState.interrupt_reads`` at it."""
     direct = Qt.ConnectionType.DirectConnection
     if on_ident is not None:
-        thread.started.connect(lambda: on_ident(threading.get_ident()), direct)
+        # Hold the owner WEAKLY: a detached thread (stop_reader_thread) can outlive the window, and a
+        # lambda closing over a bound method would keep the whole tab / host alive with it (M7).
+        import weakref
+        ref = weakref.WeakMethod(on_ident) if hasattr(on_ident, "__self__") else (lambda: on_ident)
+
+        def _started() -> None:
+            fn = ref()
+            if fn is not None:
+                fn(threading.get_ident())
+        thread.started.connect(_started, direct)
     release = getattr(widget_state, "release_read_conn", None)
     if release is not None:
         thread.finished.connect(release, direct)
@@ -111,6 +120,8 @@ class _ConfigHandlerShim:
         self._host = host
 
     def queue_config_update(self, updates: Dict[str, Any]) -> None:
+        if "history_period_slider_value" in updates:
+            updates = {**updates, "history_period_chosen": True}   # a deliberate pick (M2)
         try:
             mw = self._host._main_widget
             mw.config.update(updates)
@@ -218,7 +229,9 @@ class GraphHost(QObject):
         self.worker.moveToThread(self._thread)
         self.worker.totals_provenance.connect(self._on_totals_provenance)
         self.worker.data_ready.connect(self._on_data_ready)
-        self.worker.error.connect(lambda msg: self.logger.debug("graph worker error: %s", msg))
+        # A bound method, never a lambda capturing self: PyQt keeps a lambda slot alive with the
+        # worker, and through it this host + its coordinator - one leaked pair per Monitor open (M7).
+        self.worker.error.connect(self._on_worker_error)
         self.request_data_processing.connect(self.worker.process_data)
         # The worker's read connection is opened, and closed, on its own thread.
         bind_reader_thread(self._thread, self._main_widget.widget_state, self._set_thread_ident)
@@ -238,6 +251,9 @@ class GraphHost(QObject):
 
     def _set_thread_ident(self, ident: int) -> None:
         self._thread_ident = ident   # runs on the worker thread (started, DirectConnection)
+
+    def _on_worker_error(self, msg: str) -> None:
+        self.logger.debug("graph worker error: %s", msg)
 
     # ------------------------------------------------------------------ canvas hosting
 
@@ -330,6 +346,26 @@ class GraphHost(QObject):
 
     # ------------------------------------------------------------------ host surface: refresh
 
+    def sync_period_from_config(self) -> None:
+        """Adopt the period chosen on ANOTHER tab (the Overview writes config, not the host) before a
+        chart tab shows (M1: picking Week on the Overview left Network/Hardware on 24 h). Only once
+        a period was ever chosen: a fresh install keeps each tab's own opening view."""
+        if self._is_closing or not self.config.get("history_period_chosen", False):
+            return
+        try:
+            value = int(self.config.get("history_period_slider_value", self._history_period_value))
+        except (TypeError, ValueError):
+            return
+        if value == self._history_period_value:
+            return
+        self._history_period_value = value
+        self._accept_from_seq = self._current_request_id + 1   # an older-period reply must not paint
+        try:
+            if self.renderer is not None:
+                self.renderer.reset_ylim()   # sticky y-limits belong to the old period
+        except Exception:
+            pass
+
     def update_graph(self, show_loading: bool = True) -> None:
         """Build a DataRequest for the active stat_type + dispatch to the worker thread."""
         if self._is_closing or not self._loaded:
@@ -379,7 +415,19 @@ class GraphHost(QObject):
                 "fixed_axis": bool(self.config.get("monitor_graph_fixed_axis", True)),
                 # Why each role's history isn't being recorded (None = it is), so an empty ranged view
                 # that will never fill says so instead of "Collecting data" forever.
-                "history_off": hardware_history_off_reasons(self.config)}
+                "history_off": hardware_history_off_reasons(self.config),
+                # The first stored record, so an empty range can say why it is empty (renderer).
+                "earliest": self._earliest_record()}
+
+    def _earliest_record(self):
+        """The first stored record (cached). Re-read only while there is none yet - a fresh install's
+        first rows arrive while the Monitor is open - so this is one UI-thread read in steady state."""
+        if self._cached_earliest_db is None:
+            try:
+                self._cached_earliest_db = self._main_widget.widget_state.get_earliest_data_timestamp()
+            except Exception:
+                self._cached_earliest_db = None
+        return self._cached_earliest_db
 
     def _time_range(self):
         from netspeedtray.views.graph.logic import GraphLogic
@@ -397,11 +445,16 @@ class GraphHost(QObject):
             # call per tick, forever.
             self._earliest_db_fetched = True
             try:
-                if period_key == "TIMELINE_SYSTEM_UPTIME":
-                    self._cached_boot_time = GraphLogic.get_boot_time()
                 self._cached_earliest_db = self._main_widget.widget_state.get_earliest_data_timestamp()
             except Exception:
-                self._cached_boot_time = self._cached_earliest_db = None
+                self._cached_earliest_db = None
+        # The boot time is fetched on its own (psutil, no DB). It used to ride the earliest-row latch,
+        # so "All" first and then "Since boot" never fetched it and drew the whole history (M4).
+        if period_key == "TIMELINE_SYSTEM_UPTIME" and self._cached_boot_time is None:
+            try:
+                self._cached_boot_time = GraphLogic.get_boot_time()
+            except Exception:
+                self._cached_boot_time = None
         return GraphLogic.get_time_range(self._history_period_value, self.session_start_time,
                                          self._cached_boot_time, self._cached_earliest_db)
 
@@ -475,9 +528,14 @@ class GraphHost(QObject):
         # into _on_data_ready mid-teardown.
         try:
             if self.worker is not None:
-                self.worker.data_ready.disconnect(self._on_data_ready)
-                self.worker.totals_provenance.disconnect(self._on_totals_provenance)
-                self.request_data_processing.disconnect(self.worker.process_data)
+                for sig, slot in ((self.worker.data_ready, self._on_data_ready),
+                                  (self.worker.totals_provenance, self._on_totals_provenance),
+                                  (self.worker.error, self._on_worker_error),
+                                  (self.request_data_processing, self.worker.process_data)):
+                    try:
+                        sig.disconnect(slot)
+                    except (TypeError, RuntimeError):
+                        pass
         except Exception:
             pass
 

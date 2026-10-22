@@ -58,6 +58,15 @@ def _writer(conn, poll_ms=1000, **kw):
     return w
 
 
+def _maintained(c, now=NOW):
+    """A file the app has been maintaining on a steady clock: a trusted pass an hour before ``now`` and
+    no continuity restart pending. Without it, a fixture whose newest row is weeks old looks like a
+    clock that jumped ahead (WriterV8._observe_clock) and the pass rolls up nothing."""
+    c.executemany("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+                  [(W.WriterV8.CLOCK_TRUSTED_KEY, str(now - 3600)), (W.WriterV8.CLOCK_CONTINUOUS_SINCE_KEY, "0")])
+    c.commit()
+
+
 def _wm(c, key):
     r = c.execute("SELECT value FROM metadata WHERE key = ?", (key,)).fetchone()
     return None if r is None else int(r[0])
@@ -455,6 +464,7 @@ def test_retention_prunes_hour_tiers_links_and_old_sessions_only(conn):
                  "VALUES (?, 1, 1, 1, 1, 1, 1, 1)", (old // 3600 * 3600,))
     conn.commit()
     w.start_session(NOW)
+    _maintained(conn)
     out = w.run_maintenance(NOW, retention_days=365)
     assert out["pruned"] == 3
     assert conn.execute("SELECT COUNT(*) FROM app_sessions").fetchone()[0] == 1
@@ -668,6 +678,7 @@ def test_hour_rollup_of_mixed_legacy_and_exact_minutes_keeps_each_part_once(conn
     conn.execute("INSERT INTO net_minute (ts, iface_id, up_bytes, down_bytes, up_avg, down_avg, up_max, down_max, "
                  "sample_count) VALUES (?, 1, 1234, 1234, 41.1, 41.1, 90.0, 90.0, 30)", (h + 60,))   # exact
     conn.commit()
+    _maintained(conn)
     w.run_maintenance(NOW)
     b, avg, mx, n = conn.execute("SELECT up_bytes, up_avg, up_max, sample_count FROM net_hour").fetchone()
     assert b is None and n == 70 and mx == 90.0 and avg * n == pytest.approx(400 + 1234)
@@ -716,11 +727,13 @@ def test_legacy_merge_at_any_poll_rate_keeps_volume_and_a_true_rate(conn, poll_s
     for k in range(30 // poll_s):
         w.add_net_sample(W.NetSample(b + 30 + poll_s * (k + 1) - 1, poll_s * 1000, {"e": (1000 * poll_s,) * 2}))
     assert w.flush(b + 60)
-    w.run_maintenance(b + 2 * 86400)            # raw -> minute only
+    # A 33-day step between two passes: the clock guard needs the monotonic clock to agree that the
+    # app really ran that long (a jump on the wall clock alone pauses the roll-ups).
+    w.run_maintenance(b + 2 * 86400, mono=float(b + 2 * 86400))   # raw -> minute only
     bytes_, avg, n = conn.execute("SELECT up_bytes, up_avg, sample_count FROM net_minute").fetchone()
     assert bytes_ is None and n == 60 and avg == pytest.approx(1000.0)
     assert _est(conn, "net_minute", 60) == pytest.approx(60_000)
-    w.run_maintenance(NOW)                      # minute -> hour
+    w.run_maintenance(NOW, mono=float(NOW))     # minute -> hour
     assert conn.execute("SELECT COUNT(*) FROM net_minute").fetchone()[0] == 0
     assert _est(conn, "net_hour", 3600) == pytest.approx(60_000)
     assert conn.execute("SELECT up_avg FROM net_hour").fetchone()[0] == pytest.approx(1000.0)
@@ -737,10 +750,10 @@ def test_clock_set_back_into_a_legacy_minute_keeps_both_parts_through_the_hour(c
     for k in range(30):
         w.add_net_sample(W.NetSample(b + k, 1000, {"e": (100, 100)}))
     assert w.flush(b + 60)
-    w.run_maintenance(b + 2 * 86400)
+    w.run_maintenance(b + 2 * 86400, mono=float(b + 2 * 86400))   # (see the test above: mono)
     assert _est(conn, "net_minute", 60) == pytest.approx(8000)
     assert conn.execute("SELECT sample_count FROM net_minute").fetchone()[0] == 60
-    w.run_maintenance(NOW)
+    w.run_maintenance(NOW, mono=float(NOW))
     assert _est(conn, "net_hour", 3600) == pytest.approx(8000)
 
 
@@ -854,6 +867,7 @@ def test_hour_rollup_applies_the_readers_cap_to_garbled_legacy_minutes(conn):
     for j in range(60):
         _legacy_minute(conn, h + 60 * j, 10.0, 90)
     assert _est(conn, "net_minute", 60) == pytest.approx(36_000)
+    _maintained(conn)
     _writer(conn).run_maintenance(NOW)
     assert conn.execute("SELECT sample_count FROM net_hour").fetchone()[0] == 3600
     assert _est(conn, "net_hour", 3600) == pytest.approx(36_000)

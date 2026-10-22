@@ -36,7 +36,10 @@ class ConfigConstants:
     # The migration system will use this to determine which upgrades to apply.
     # Current version history:
     #   v1.0: Initial schema with all current fields (as of 2026-02-18)
-    CONFIG_SCHEMA_VERSION: Final[str] = "1.1"
+    # 1.2 (2.2): hardware_label_style split into style + hardware_label_color, update_rate snapped to
+    # presets. The bump is what makes load() keep a `.bak.v1.1` of the 2.1.x file before migrating it;
+    # 2.1.x leaves a newer version untouched (verified against the 2.1.7 tree).
+    CONFIG_SCHEMA_VERSION: Final[str] = "1.2"
     
     # --- Default Values for Individual Settings (referencing other constants) ---
     DEFAULT_UPDATE_RATE: Final[float] = 1.0
@@ -203,6 +206,7 @@ class ConfigConstants:
         # wants the Monitor pinned while they work wants the same of Settings (#213).
         "keep_windows_on_top": False,
         "show_usage_on_hover": True,       # the hover card's data-usage rows (Today / This month)
+        "power_display_enabled": False,    # opt-in: the hover card's battery rows (live draw / projected)
         "show_hover_tips": True,           # the hover card's right-click/double-click gesture hint
         "pause_in_menu": False,            # opt-in: surface Pause/Resume in the right-click menu
         "dark_mode": DEFAULT_DARK_MODE,
@@ -248,6 +252,9 @@ class ConfigConstants:
         "monitor_graph_smoothing": False,      # smooth (monotone-cubic) vs raw lines on the hw graph
         "monitor_graph_fixed_axis": True,      # hw graph y-axis fixed 0-100% vs auto-scale to the data
         "history_period_slider_value": 0,  # UI-specific state
+        # True once the user picks a Monitor period (any tab). Until then the Overview opens on 24h
+        # rather than the stored 0 - which is also Session's index, so 0 alone can't say which (M2).
+        "history_period_chosen": False,
         "show_legend": DEFAULT_SHOW_LEGEND,
         "use_separate_arrow_font": DEFAULT_USE_SEPARATE_ARROW_FONT,
         "arrow_font_family": DEFAULT_ARROW_FONT_FAMILY,
@@ -342,7 +349,9 @@ class ConfigConstants:
         "low_speed_color": {"type": str, "default": DEFAULT_LOW_SPEED_COLOR, "regex": r"#[0-9a-fA-F]{6}"},
         "graph_enabled": {"type": bool, "default": DEFAULT_GRAPH_ENABLED},
         "history_minutes": {"type": int, "default": DEFAULT_HISTORY_MINUTES, "min": 1, "max": 1440}, # Range from manual check
-        "graph_opacity": {"type": (int, float), "default": DEFAULT_GRAPH_OPACITY, "min": ui_constants.sliders.OPACITY_MIN, "max": ui_constants.sliders.OPACITY_MAX},
+        # "coerce": accepted as int or float (older files / hand edits), stored as a rounded int - the
+        # Settings slider and every consumer treat it as a whole percent (C1).
+        "graph_opacity": {"type": (int, float), "default": DEFAULT_GRAPH_OPACITY, "min": ui_constants.sliders.OPACITY_MIN, "max": ui_constants.sliders.OPACITY_MAX, "coerce": int},
         "graph_fixed_scale": {"type": bool, "default": DEFAULT_GRAPH_FIXED_SCALE},
         "graph_scale_headroom": {"type": int, "default": DEFAULT_GRAPH_SCALE_HEADROOM, "choices": GRAPH_SCALE_HEADROOM_CHOICES},
         "graph_show_ceiling": {"type": bool, "default": DEFAULT_GRAPH_SHOW_CEILING},
@@ -355,6 +364,7 @@ class ConfigConstants:
         "reduce_motion": {"type": bool, "default": False},
         "keep_windows_on_top": {"type": bool, "default": False},
         "show_usage_on_hover": {"type": bool, "default": True},
+        "power_display_enabled": {"type": bool, "default": False},
         "show_hover_tips": {"type": bool, "default": True},
         "pause_in_menu": {"type": bool, "default": False},
         "dark_mode": {"type": bool, "default": DEFAULT_DARK_MODE},
@@ -418,6 +428,7 @@ class ConfigConstants:
         "monitor_graph_smoothing": {"type": bool, "default": False},
         "monitor_graph_fixed_axis": {"type": bool, "default": True},
         "history_period_slider_value": {"type": int, "default": 0, "min": 0, "max": len(data.history_period.PERIOD_MAP) - 1},
+        "history_period_chosen": {"type": bool, "default": False},
         "show_legend": {"type": bool, "default": DEFAULT_SHOW_LEGEND},
         "monitor_cpu_enabled": {"type": bool, "default": DEFAULT_MONITOR_CPU_ENABLED},
         "monitor_gpu_enabled": {"type": bool, "default": DEFAULT_MONITOR_GPU_ENABLED},

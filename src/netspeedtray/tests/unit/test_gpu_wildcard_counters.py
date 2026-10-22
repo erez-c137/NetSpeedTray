@@ -19,6 +19,7 @@ presence from "did AddCounter work" would report a confident 0% on RDP sessions 
 import pytest
 from unittest.mock import MagicMock, patch
 
+from netspeedtray.core.lhm_http import LhmGpu, LhmSnapshot
 from netspeedtray.core.monitor_thread import StatsMonitorThread
 
 
@@ -119,6 +120,45 @@ class TestPresenceIsEvidenceBased:
 
 
 class TestFailuresDegrade:
+
+    def test_failed_query_init_is_backed_off_and_never_collected(self, thread):
+        thread._gpu_query = None
+        with patch.object(thread, "_init_gpu_query", return_value=False) as init_query, \
+             patch("netspeedtray.core.monitor_thread.time.monotonic", side_effect=(100.0, 101.0, 131.0)), \
+             patch("win32pdh.CollectQueryData") as collect:
+            first = thread._poll_gpu_hybrid(include_temp=False, include_power=False)
+            second = thread._poll_gpu_hybrid(include_temp=False, include_power=False)
+            third = thread._poll_gpu_hybrid(include_temp=False, include_power=False)
+
+        assert first.present is False
+        assert second.present is False
+        assert third.present is False
+        assert init_query.call_count == 2
+        collect.assert_not_called()
+
+    def test_lhm_gpu_keeps_row_visible_when_pdh_is_unavailable(self, thread):
+        """LHM hardware-scoped sensors prove that a GPU exists even without a PDH engine.
+
+        Utilization remains an honest 0%, while temperature and power stay available.
+        """
+        thread._gpu_query = None
+        thread._gpu_query_retry_after = float("inf")
+        thread._lhm_http = MagicMock()
+        thread._lhm_http.get_snapshot.return_value = LhmSnapshot(gpus=(LhmGpu(
+            hardware_id="/gpu-nvidia/0",
+            hardware_name="NVIDIA GeForce RTX 5060 Ti",
+            temperature=50.3,
+            power=24.2,
+        ),))
+
+        with patch("win32pdh.CollectQueryData") as collect:
+            result = thread._poll_gpu_hybrid(include_temp=True, include_power=True)
+
+        assert result.present is True
+        assert result.util == 0.0
+        assert result.temp == 50.3
+        assert result.power == 24.2
+        collect.assert_not_called()
 
     def test_a_pdh_read_error_does_not_crash_the_poll(self, thread):
         with patch("win32pdh.CollectQueryData"), \

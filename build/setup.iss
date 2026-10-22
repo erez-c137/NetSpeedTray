@@ -4,7 +4,12 @@
 #define MyAppPublisher "Erez C137"
 #define MyAppURL "https://github.com/erez-c137/NetSpeedTray"
 #define MyAppExeName "NetSpeedTray.exe"
-#define MyAppMutex "Global\NetSpeedTray_SingleInstanceMutex"
+; constants.app.LEGACY_MUTEX_NAME - what every build before 2.2.0 holds. Since 2.2.0 the app's own
+; mutex is per user (Global\NetSpeedTray_Instance_<SID>), which Setup cannot name, so it also looks
+; for the process itself (AnyAppProcess). 2.2.0+ also holds this legacy name while it is free.
+#define MyLegacyAppMutex "Global\NetSpeedTray_SingleInstanceMutex"
+; constants.app.MUTEX_NAME_PREFIX: + the user's SID = a 2.2.0+ instance's own mutex.
+#define MyAppMutexPrefix "Global\NetSpeedTray_Instance_"
 #define MyAppId "{{D3A32B89-C533-4F2C-9F87-23B2395B5B89}}"
 ; Graceful-shutdown channel - a wire protocol with the running app. Must match
 ; constants.app.SHUTDOWN_MESSAGE_NAME / SHUTDOWN_WINDOW_PROP (a unit test pins both).
@@ -68,14 +73,21 @@ VersionInfoTextVersion={#AppVersion}
 VersionInfoProductTextVersion={#AppVersion}
 
 DisableDirPage=auto
-UsePreviousAppDir=no
+; An upgrade installs where the app already is (2.2.0). This said "no" from the per-user 1.0.6 era,
+; which sent every silent upgrade (in-app, winget, Store) of a custom-folder install to
+; {autopf}\NetSpeedTray instead, and left the old copy behind - its pinned shortcut or Run entry then
+; started the OLD version against a database the new one had already migrated. Inno reads the
+; previous folder from this AppId's HKLM uninstall key; a fresh install still offers the default
+; folder (DisableDirPage=auto shows the page then and skips it on an upgrade).
+UsePreviousAppDir=yes
 SetupLogging=yes
 UninstallDisplayName={#MyAppName}
 RestartIfNeededByRun=no
 CloseApplications=force
 CloseApplicationsFilter=*.exe,*.dll
-; Must match constants.app.MUTEX_NAME so Inno reliably detects the running app on (auto-)upgrade.
-AppMutex={#MyAppMutex}
+; Must match constants.app.LEGACY_MUTEX_NAME so Inno detects a running app on (auto-)upgrade;
+; InitializeSetup's IsAppRunning also finds 2.2.0+ instances by process.
+AppMutex={#MyLegacyAppMutex}
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -119,10 +131,15 @@ Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}
 ; started Setup", and the in-app updater (2.1.6+) starts Setup already elevated, so the app came back
 ; as admin and stayed that way until the next sign-in (found verifying 2.1.7). So the launch is handed
 ; to the running shell: explorer.exe passes it to the user's existing Explorer, which starts it at the
-; shell's own (medium) integrity whatever Setup's token is. Only when no shell is running (no
-; Shell_TrayWnd - e.g. a headless deployment) does the direct runasoriginaluser launch remain.
+; shell's own (medium) integrity whatever Setup's token is.
+;
+; There is deliberately NO direct launch when no shell is running (2.2.0). It started the installed
+; exe with Setup's own token: in an Intune/SCCM deployment that is SYSTEM in session 0, which then
+; held the Global\ mutex so every user's own launch exited quietly until a reboot; and in the in-app
+; update path that token is elevated, so a momentarily missing Shell_TrayWnd (Explorer restarting)
+; brought the app back as admin. Without a shell the app simply starts the next time the user
+; starts it or signs in (LaunchSilentViaShell logs which case applied).
 Filename: "{win}\explorer.exe"; Parameters: """{app}\{#MyAppExeName}"""; Flags: nowait runasoriginaluser; Check: LaunchSilentViaShell
-Filename: "{app}\{#MyAppExeName}"; Flags: nowait runasoriginaluser; Check: LaunchSilentDirect
 
 [UninstallDelete]
 Type: files; Name: "{autodesktop}\{#MyAppName}.lnk"
@@ -137,7 +154,9 @@ function OpenMutex(dwDesiredAccess: LongWord; bInheritHandle: Boolean; lpName: s
 function CloseHandle(hObject: THandle): Boolean;
   external 'CloseHandle@kernel32.dll stdcall';
 // Graceful-shutdown channel (see TryGracefulClose). Win-prefixed so nothing clashes with Inno's own
-// support functions. Setup is a 32-bit process, so HWND / LPARAM fit in Longint.
+// support functions. Setup is a 32-bit process, so HWND / LPARAM fit in Longint - and the
+// WTSQuerySessionInformationW buffer pointer below is a Longword for the same reason. If a future
+// Inno Setup builds a 64-bit Setup, every pointer here must widen; release.yml pins the version.
 function WinRegisterWindowMessage(lpString: string): Cardinal;
   external 'RegisterWindowMessageW@user32.dll stdcall';
 function WinEnumWindows(lpEnumFunc: Longword; lParam: Longint): Integer;
@@ -156,6 +175,29 @@ function WinWaitForSingleObject(hHandle: THandle; dwMilliseconds: Longword): Lon
   external 'WaitForSingleObject@kernel32.dll stdcall';
 function WinGetTickCount(): Longword;
   external 'GetTickCount@kernel32.dll stdcall';
+function WinGetCurrentProcessId(): Longword;
+  external 'GetCurrentProcessId@kernel32.dll stdcall';
+function WinProcessIdToSessionId(dwProcessId: Longword; var pSessionId: Longword): Integer;
+  external 'ProcessIdToSessionId@kernel32.dll stdcall';
+function WinWTSQuerySessionInformation(hServer: Longword; SessionId: Longword; InfoClass: Integer;
+  var ppBuffer: Longword; var pBytesReturned: Longword): Integer;
+  external 'WTSQuerySessionInformationW@wtsapi32.dll stdcall';
+procedure WinWTSFreeMemory(pMemory: Longword);
+  external 'WTSFreeMemory@wtsapi32.dll stdcall';
+function WinLstrcpyn(lpString1: string; lpString2: Longword; iMaxLength: Integer): Longword;
+  external 'lstrcpynW@kernel32.dll stdcall';
+function WinGetUserNameEx(NameFormat: Integer; lpNameBuffer: string; var nSize: Longword): Integer;
+  external 'GetUserNameExW@secur32.dll stdcall';
+function WinLookupAccountName(lpSystemName: Longword; lpAccountName: string; Sid: AnsiString;
+  var cbSid: Longword; ReferencedDomainName: string; var cchReferencedDomainName: Longword;
+  var peUse: Integer): Integer;
+  external 'LookupAccountNameW@advapi32.dll stdcall';
+function WinConvertSidToStringSid(Sid: AnsiString; var StringSid: Longword): Integer;
+  external 'ConvertSidToStringSidW@advapi32.dll stdcall';
+function WinLstrlen(lpString: Longword): Integer;
+  external 'lstrlenW@kernel32.dll stdcall';
+function WinLocalFree(hMem: Longword): Longword;
+  external 'LocalFree@kernel32.dll stdcall';
 
 // --- Helper Functions ---
 function ShellIsRunning(): Boolean;
@@ -163,18 +205,107 @@ begin
   Result := FindWindowByClassName('Shell_TrayWnd') <> 0;
 end;
 
-function LaunchSilentViaShell(): Boolean;
+// Setup runs where no user is: session 0 (services - Intune's and SCCM's agents run there as SYSTEM)
+// or as the SYSTEM account itself. Starting the app from there would run it as SYSTEM, holding the
+// Global\ single-instance mutex against every real user until a reboot.
+function InServiceContext(): Boolean;
+var
+  SessionId: Longword;
 begin
-  Result := WizardSilent() and ShellIsRunning();
-  if Result then
-    Log('Silent install: starting {#MyAppName} through the shell, so it runs unelevated (no Finish page to offer it).');
+  SessionId := 0;
+  Result := False;
+  if WinProcessIdToSessionId(WinGetCurrentProcessId(), SessionId) <> 0 then
+    Result := SessionId = 0;
+  if CompareText(GetUserNameString(), 'SYSTEM') = 0 then
+    Result := True;
 end;
 
-function LaunchSilentDirect(): Boolean;
+// One string of this session's information (WTSQuerySessionInformationW), or '' if unreadable.
+// WTS_CURRENT_SERVER_HANDLE = 0, WTS_CURRENT_SESSION = $FFFFFFFF; InfoClass WTSUserName = 5,
+// WTSDomainName = 7.
+function SessionInfoString(InfoClass: Integer): string;
+var
+  Buffer: Longword;
+  Bytes: Longword;
+  Text: string;
 begin
-  Result := WizardSilent() and not ShellIsRunning();
-  if Result then
-    Log('Silent install: no shell running - starting {#MyAppName} as the original user.');
+  Result := '';
+  Buffer := 0;
+  Bytes := 0;
+  if WinWTSQuerySessionInformation(0, $FFFFFFFF, InfoClass, Buffer, Bytes) = 0 then
+    Exit;
+  try
+    if (Buffer <> 0) and (Bytes > 2) then
+    begin
+      Text := StringOfChar(' ', Bytes div 2);
+      WinLstrcpyn(Text, Buffer, Bytes div 2);
+      Result := Trim(Copy(Text, 1, Pos(#0, Text + #0) - 1));
+    end;
+  finally
+    WinWTSFreeMemory(Buffer);
+  end;
+end;
+
+// DOMAIN\user signed in to this session, or '' if unreadable.
+function SessionAccount(): string;
+var
+  User: string;
+begin
+  Result := '';
+  User := SessionInfoString(5);
+  if User <> '' then
+    Result := SessionInfoString(7) + '\' + User;
+end;
+
+// DOMAIN\user Setup itself runs as (GetUserNameExW, NameSamCompatible = 2), or '' if unreadable.
+function SetupAccount(): string;
+var
+  Size: Longword;
+  Text: string;
+begin
+  Result := '';
+  Size := 512;
+  Text := StringOfChar(' ', Size);
+  if WinGetUserNameEx(2, Text, Size) <> 0 then
+    Result := Trim(Copy(Text, 1, Size));
+end;
+
+// Setup runs as a DIFFERENT account than the one signed in to this session: a standard user who
+// typed an administrator's credentials at the UAC prompt (over-the-shoulder elevation). The in-app
+// updater starts Setup already elevated, so Inno's "original user" is that administrator too, and
+// handing explorer.exe a launch from the administrator's token is not proven to come back as the
+// signed-in user. Not relaunching is the safe answer: the app returns at their next sign-in or from
+// the Start menu, never under the administrator's account (which would also write that account's
+// %APPDATA%, not theirs). Compared as DOMAIN\user, so two accounts with the same name in different
+// domains (a local and a domain "admin") are told apart; both are logged every time.
+function SetupRunsAsAnotherUser(): Boolean;
+var
+  SessionUser, SetupUser: string;
+begin
+  SessionUser := SessionAccount();
+  SetupUser := SetupAccount();
+  Log('Session user: [' + SessionUser + ']; Setup runs as: [' + SetupUser + '].');
+  Result := (SessionUser <> '') and (SetupUser <> '') and (CompareText(SessionUser, SetupUser) <> 0);
+  if (SessionUser = '') or (SetupUser = '') then
+    Log('Could not read both accounts; assuming Setup runs as the signed-in user.');
+end;
+
+function LaunchSilentViaShell(): Boolean;
+begin
+  Result := False;
+  if not WizardSilent() then
+    Exit;
+  if SetupRunsAsAnotherUser() then
+    Log('Silent install: Setup runs as ' + SetupAccount() + ', not as the user signed in to this session - not starting {#MyAppName} under that account; it starts at their next sign-in or from the Start menu.')
+  else if InServiceContext() then
+    Log('Silent install: running as SYSTEM or in session 0 - not starting {#MyAppName}; each user starts it at their next sign-in or from the Start menu.')
+  else if not ShellIsRunning() then
+    Log('Silent install: no shell running - not starting {#MyAppName}; it starts at the next sign-in or from the Start menu.')
+  else
+  begin
+    Result := True;
+    Log('Silent install: starting {#MyAppName} through the shell, so it runs unelevated (no Finish page to offer it).');
+  end;
 end;
 
 function BoolToStr(Value: Boolean): string;
@@ -185,20 +316,92 @@ begin
     Result := 'False';
 end;
 
-function IsAppRunning(): Boolean;
+function MutexExists(Name: string): Boolean;
 var
   MutexHandle: THandle;
 begin
-  MutexHandle := OpenMutex($00100000, False, '{#MyAppMutex}');
-  if MutexHandle <> 0 then
-  begin
-    CloseHandle(MutexHandle);
-    Result := True;
-  end
+  MutexHandle := OpenMutex($00100000, False, Name);
+  Result := MutexHandle <> 0;
+  if Result then
+    CloseHandle(MutexHandle)
   else
-  begin
-    Result := False;
+    // ERROR_ACCESS_DENIED: it exists, but its DACL does not admit us (an object only exists to be
+    // denied) - e.g. created by an elevated instance or another account.
+    Result := DLLGetLastError() = 5;
+end;
+
+// The string SID (S-1-5-21-...) of a DOMAIN\user account, or '' if it cannot be resolved.
+function AccountSid(Account: string): string;
+var
+  Sid: AnsiString;
+  SidSize, DomainSize: Longword;
+  Domain: string;
+  Use: Integer;
+  StringSid: Longword;
+  Len: Integer;
+  Text: string;
+begin
+  Result := '';
+  if Account = '' then
+    Exit;
+  SidSize := 68;                                  // SECURITY_MAX_SID_SIZE
+  SetLength(Sid, SidSize);
+  DomainSize := 256;
+  Domain := StringOfChar(' ', DomainSize);
+  Use := 0;
+  if WinLookupAccountName(0, Account, Sid, SidSize, Domain, DomainSize, Use) = 0 then
+    Exit;
+  StringSid := 0;
+  if WinConvertSidToStringSid(Sid, StringSid) = 0 then
+    Exit;
+  try
+    Len := WinLstrlen(StringSid);
+    if Len > 0 then
+    begin
+      Text := StringOfChar(' ', Len + 1);
+      WinLstrcpyn(Text, StringSid, Len + 1);
+      Result := Copy(Text, 1, Len);
+    end;
+  finally
+    WinLocalFree(StringSid);
   end;
+end;
+
+// The 2.2.0+ per-user instance mutex of the user signed in to Setup's session
+// (constants.app.MUTEX_NAME_PREFIX + their SID). A fallback for when WMI cannot list processes.
+function SessionUserInstanceRunning(): Boolean;
+var
+  Sid: string;
+begin
+  Result := False;
+  Sid := AccountSid(SessionAccount());
+  if Sid <> '' then
+    Result := MutexExists('{#MyAppMutexPrefix}' + Sid)
+  else
+    Log('Could not resolve the session user''s SID; relying on the process check.');
+end;
+
+// Any NetSpeedTray.exe in ANY session. Since 2.2.0 the app's mutex is per user (its name carries the
+// user's SID, which Setup cannot know), and another signed-in user's instance holds the same files
+// open. Setup is elevated, so WMI sees every process.
+function AnyAppProcess(): Boolean;
+var
+  Locator, Service, Procs: Variant;
+begin
+  Result := False;
+  try
+    Locator := CreateOleObject('WbemScripting.SWbemLocator');
+    Service := Locator.ConnectServer('.', 'root\CIMV2');
+    Procs := Service.ExecQuery('SELECT ProcessId FROM Win32_Process WHERE Name = ''{#MyAppExeName}''');
+    Result := Procs.Count > 0;
+  except
+    Log('Process check failed: ' + GetExceptionMessage);
+  end;
+end;
+
+function IsAppRunning(): Boolean;
+begin
+  Result := MutexExists('{#MyLegacyAppMutex}') or SessionUserInstanceRunning() or AnyAppProcess();
 end;
 
 // Windows marked by the running app as its shutdown target, filled by CollectShutdownTarget.
@@ -397,6 +600,93 @@ begin
     end;
   end;
   Result := True;
+end;
+
+// UsePreviousAppDir=yes upgrades in place - but the previous folder can be on a drive that is no
+// longer there (an unplugged USB disk, a removed or re-lettered volume). A silent upgrade there
+// would fail with nothing on screen, so a LOCAL drive that is gone sends it to the default folder.
+//
+// A NETWORK location is different, and is kept: a mapped drive letter belongs to the user's own
+// logon session, so the ELEVATED Setup usually cannot see it even though it is there (and a share
+// can be briefly unreachable). Falling back would split the app in two - a new copy in Program
+// Files and the old one on the share, still started by the user's pins - the very problem
+// UsePreviousAppDir=yes fixed. Keeping it fails loudly instead when the share really is
+// unreachable (Setup reports the error; the in-app updater says the update did not complete and
+// opens the download page), which the user can act on. Both cases are logged.
+// Runs in silent mode too: the wizard form exists, it is just not shown.
+var
+  MovedFromDir: string;
+
+function PreviousDriveMissing(Dir: string): Boolean;
+var
+  Drive: string;
+begin
+  Drive := ExtractFileDrive(Dir);
+  Result := (Drive = '') or not DirExists(AddBackslash(Drive));
+end;
+
+// Whether the user signed in to this session has mapped Letter (<their hive>\Network\<letter>).
+// HKCU is Setup's own account: the session user's hive when they elevated themselves, but the
+// ADMINISTRATOR's under an over-the-shoulder elevation (a standard user typing an admin's
+// credentials) - so then the session user's hive is read from HKU\<their SID>, which is loaded while
+// they are signed in. If their SID cannot be resolved, Setup's own HKCU is the fallback. The hive
+// consulted is logged.
+function SessionUserMappedDrive(Letter: string): Boolean;
+var
+  Sid: string;
+begin
+  if SetupRunsAsAnotherUser() then
+  begin
+    Sid := AccountSid(SessionAccount());
+    if Sid <> '' then
+    begin
+      Result := RegKeyExists(HKU, Sid + '\Network\' + Letter);
+      Log('Mapped-drive check: read HKU\' + Sid + '\Network\' + Letter + ' (the session user''s hive; Setup runs as another account): ' + BoolToStr(Result) + '.');
+      Exit;
+    end;
+    Log('Mapped-drive check: could not resolve the session user''s SID; falling back to Setup''s own HKCU.');
+  end;
+  Result := RegKeyExists(HKCU, 'Network\' + Letter);
+  Log('Mapped-drive check: read HKCU\Network\' + Letter + ' (Setup''s own hive): ' + BoolToStr(Result) + '.');
+end;
+
+// A UNC path, or a drive letter the session user has mapped.
+function IsNetworkLocation(Dir: string): Boolean;
+var
+  Drive: string;
+begin
+  Drive := ExtractFileDrive(Dir);
+  Result := (Copy(Drive, 1, 2) = '\\') or
+            ((Length(Drive) = 2) and (Drive[2] = ':') and SessionUserMappedDrive(Drive[1]));
+end;
+
+procedure InitializeWizard();
+var
+  Dir, Fallback: string;
+begin
+  MovedFromDir := '';
+  Dir := WizardForm.DirEdit.Text;
+  if (Dir <> '') and PreviousDriveMissing(Dir) then
+  begin
+    if IsNetworkLocation(Dir) then
+      Log('The previous install folder ' + Dir + ' is on a network location Setup cannot see right now; keeping it (installing elsewhere would leave two copies).')
+    else
+    begin
+      Fallback := ExpandConstant('{autopf}\{#MyAppName}');
+      Log('The previous install folder ' + Dir + ' is on a drive that is not available; installing to ' + Fallback + ' instead.');
+      WizardForm.DirEdit.Text := Fallback;
+      MovedFromDir := Dir;
+    end;
+  end;
+end;
+
+// Interactive installs say so on the Finish page when the folder moved.
+procedure CurPageChanged(CurPageID: Integer);
+begin
+  if (CurPageID = wpFinished) and (MovedFromDir <> '') then
+    WizardForm.FinishedLabel.Caption := WizardForm.FinishedLabel.Caption + #13#10#13#10 +
+      '{#MyAppName} was installed to ' + WizardDirValue() + ' because its previous folder (' +
+      MovedFromDir + ') is on a drive that is not connected. Shortcuts point to the new folder.';
 end;
 
 function InitializeUninstall(): Boolean;

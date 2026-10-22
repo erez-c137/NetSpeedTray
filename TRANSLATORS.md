@@ -45,6 +45,23 @@ Other locales (English, German, Spanish) are currently maintained by the project
 > - `USAGE_THIS_PERIOD_LABEL` - replaces "This Month" in the hover card and Monitor → Overview when a data cap with a reset day other than the 1st is set (the row then counts the billing period, like the data-cap row under it). Match the style of your `USAGE_THIS_MONTH_LABEL`.
 > - `GRAPH_BOOT_MARKER` - the small italic label on the Monitor graph's dashed line where the PC last started (was English "Boot" in every language). Keep it to one short word.
 
+> 🆕 **Pending native review for 2.2 (LibreHardwareMonitor web server, #187 / PR #276, see #364):** non-English values are AI-assisted.
+> - `LHM_WEB_SERVER_HINT` (new) - shown under the temperature note on Settings → Hardware and in the "turn on temperatures" explainer: current LibreHardwareMonitor is read over its web server, which the user has to switch on. Its last sentence asks to leave LHM's web-server authentication off and let it listen on all interfaces (otherwise LHM refuses NetSpeedTray's local request). Keep `{port}`, and keep `Options → Remote Web Server` in English - it is LibreHardwareMonitor's own (untranslated) menu.
+> - `HARDWARE_TEMPS_LIMITATION_NOTE` / `TEMP_ONBOARDING_BODY` - the "use LHM v0.9.4, later versions removed the interface" sentence is gone (no longer true). Removed from `en_US`, `hu_HU`, `it_IT` and `tr_TR`, the locales that carried it; nothing else in them changed.
+
+> 🆕 **Pending native review for 2.2 (battery in the hover card, #323, see #364):** non-English values are AI-assisted.
+> - `POWER_HOVER_CARD_LABEL` - the opt-in switch under Settings > General > Interaction, next to your `HOVER_USAGE_CARD_LABEL` - reuse its "hover the widget" wording.
+> - `POWER_SECTION_TITLE` - the small caption over the card's battery rows ("Battery"). One word, as on your laptop's own battery flyout.
+> - `POWER_NOW_LABEL` / `POWER_TODAY_AVG_LABEL` - row labels in the card's battery section ("Now" = the live draw in watts; "Today avg" = today's average draw on battery). Keep them short; the value sits to their right.
+> - `POWER_ON_AC_VALUE` - shown in place of the watts when the laptop is plugged in and not charging ("On AC").
+> - `POWER_CHARGE_PCT_TEMPLATE` - the charge-level line under the rows; keep `{pct}`, and write the percent the way your `PERCENT_TEMPLATE` does.
+
+> 🆕 **Pending native review for 2.2 (release-candidate checkup, see #364):** non-English values are AI-assisted.
+> - Turkish: `MEMORY_HEADER` was still English ("Memory") - now "Bellek", matching the "bellek" in your hover-card strings. `THOUSANDS_SEPARATOR` is now "." (it was "," - the same as your decimal separator, so 1,234 read as a decimal).
+> - Hungarian: `CANCEL_BUTTON` is now "Mé&gse" (Alt+G) - "&Mégse" shared Alt+M with "&Mentés". Pick another letter if G reads oddly.
+> - New, all locales: the Monitor → Network graph's empty-range notes - `NET_GRAPH_NO_HISTORY_YET` (nothing recorded yet), `NET_GRAPH_HISTORY_STARTS` (the range ends before the first record; **keep `{date}`**, e.g. "Oct 01") and `NET_GRAPH_NO_TRAFFIC` (two lines: history exists, but this period had none because the PC was off, idle or paused).
+> - New, all locales: `PREFERRED_MONITOR_ITEM` ("Monitor {index}: {width}x{height}" in Settings > Widget > Preferred Monitor - was hard-coded English; **keep `{index}`, `{width}`, `{height}`**), `PREFERRED_MONITOR_PRIMARY_TAG` ("(primary)"), `SETTINGS_NOT_CONNECTED_TAG` ("(not connected)" - after a saved monitor that is unplugged right now) and `INTERFACE_GROUP_NOT_CONNECTED` (the heading over selected network adapters that aren't present right now, in Settings > Network).
+
 ## How translation works in NetSpeedTray
 
 - Each locale lives in a single JSON file under [`src/netspeedtray/constants/locales/`](src/netspeedtray/constants/locales/)

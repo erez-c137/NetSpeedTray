@@ -39,6 +39,9 @@ _HW_PERSIST_REQUIRES: Dict[str, Tuple[str, ...]] = {
     "gpu_temp": ("monitor_gpu_enabled", "show_hardware_temps"),
     "cpu_power": ("monitor_cpu_enabled", "show_hardware_power"),
     "gpu_power": ("monitor_gpu_enabled", "show_hardware_power"),
+    # The hover's "Today avg" source (#323): the power-display switch is what the user
+    # turned on to get this stat, so it is the consent gate - not CPU/GPU monitoring.
+    "battery_drain": ("power_display_enabled",),
 }
 _HW_POWER_TOTALS = ("system_power", "total_power")
 
@@ -47,7 +50,11 @@ def hardware_persist_allowed(stat_type: str, config: Dict[str, Any]) -> bool:
     """Whether a hardware sample of ``stat_type`` may be written to the history DB (2.2 item C).
 
     ``system_power`` / ``total_power`` need the power switch and at least one of CPU/GPU on; the
-    caller additionally checks ``total_power``'s contributors (see handle_stats)."""
+    caller additionally checks ``total_power``'s contributors (see handle_stats). ``battery_drain``
+    is the hover card's own stat (the "Today avg" source, #323): it follows the power-display
+    switch, NOT system_power's - it must fill under the PR's own defaults (CPU/GPU/power-stats
+    off) or the hover never has history to average, and it must fill via the write outside the
+    CPU/GPU gate below."""
     if stat_type not in _HW_PERSIST_REQUIRES and stat_type not in _HW_POWER_TOTALS:
         return True
     if not config.get("record_hardware_history", True):
@@ -172,6 +179,26 @@ class StatsController(QObject):
         if 'network_identity' in stats:
             self.network_identity_updated.emit(stats['network_identity'])
 
+        # A whole-system reading (RAPL PSYS etc.) is battery drain only while the machine is
+        # actually discharging (#323 review): resolved ONCE per poll, only when such a reading
+        # exists, for the battery_drain mirror below. DISCHARGE specifically - "not on AC" would
+        # also count a desktop whose PSYS sensor reports with no battery in the box. And only
+        # with the battery switch on: battery_drain exists for the hover's battery section
+        # alone, so with that switch off there is nothing to decide (and no syscall).
+        system_power_discharging = False
+        if stats.get('system_power') is not None and self.config.get('power_display_enabled', False):
+            try:
+                from netspeedtray.utils import power_utils
+                system_power_discharging = (
+                    power_utils.read_power_state().mode == power_utils.MODE_DISCHARGE)
+            except Exception:
+                system_power_discharging = False
+
+        # The one persist-policy lookup, shared by every history write below (moved out
+        # of the CPU/GPU gate: battery-only polls need it too).
+        def _keep(stat_type: str) -> bool:
+            return hardware_persist_allowed(stat_type, self.config)
+
         if 'cpu' in stats or 'gpu' in stats:
             cpu = stats.get('cpu')
             gpu = stats.get('gpu')
@@ -179,10 +206,6 @@ class StatsController(QObject):
             ram_total = stats.get('ram_total')
             vram_used = stats.get('vram_used')
             vram_total = stats.get('vram_total')
-
-            # Emit signals for UI components
-            def _keep(stat_type: str) -> bool:
-                return hardware_persist_allowed(stat_type, self.config)
 
             if cpu is not None:
                 self.cpu_usage_updated.emit(cpu)
@@ -217,18 +240,12 @@ class StatsController(QObject):
             # Persist temperature + power as their own (unclamped) hardware stat_types so the Monitor's
             # pro-stats (avg/max/p95, the Stats-detail sheet, export, throttle-time) have real history.
             # Total power = CPU + GPU watts (a "CPU+GPU power" figure, not whole-system draw).
-            # Whole-system power (RAPL PSYS / battery) - a real source when present; stash it on the
-            # widget so the Monitor can show a true "System N W" distinct from the CPU+GPU sum.
-            if 'system_power' in stats and self.view is not None:
-                try:
-                    self.view.system_power = stats['system_power']
-                except Exception:
-                    pass
             if self.widget_state:
-                for key in ('cpu_temp', 'gpu_temp', 'cpu_power', 'gpu_power', 'system_power'):
+                for key in ('cpu_temp', 'gpu_temp', 'cpu_power', 'gpu_power'):
                     v = stats.get(key)
                     if v is not None and v > 0:
                         self.widget_state.add_hardware_stat(key, float(v), persist=_keep(key))
+
                 cp, gp = stats.get('cpu_power'), stats.get('gpu_power')
                 cp_on, gp_on = cp is not None and cp > 0, gp is not None and gp > 0
                 if cp_on or gp_on:
@@ -252,6 +269,57 @@ class StatsController(QObject):
                 v_total = stats.get('vram_total')
                 v_total_val = float(v_total) if v_total is not None else -1.0
                 self.vram_info_updated.emit(stats['vram_used'], v_total_val)
+
+        # Power history, OUTSIDE the CPU/GPU gate above (#323 review 3): with the PR's own
+        # defaults (CPU/GPU/power-stats off) a battery-only poll reaches this block alone,
+        # and it is the only history the hover has to average.
+        if self.widget_state and stats.get('system_power') is not None:
+            v = float(stats['system_power'])
+            if v > 0:
+                # system_power keeps the stat history it has always had - every real sensor
+                # reading lands there, on AC included, so the Stats-export "System power"
+                # column and any pro-stats consumer stay meaningful on desktops with RAPL.
+                self.widget_state.add_hardware_stat('system_power', v, persist=_keep('system_power'))
+                # The hover's "Today avg" needs discharge-only samples though: a whole-system
+                # reading is battery drain only while the machine is ACTUALLY discharging -
+                # "not on AC" above also counts MODE_NONE (e.g. a desktop whose RAPL PSYS
+                # sensor reports with no battery in the box), so a plain not-on-AC gate would
+                # write battery_drain rows that can never be shown. Discharge-only mirrors
+                # exactly what the hover can display; the mirror follows battery_drain's own
+                # policy (the power-display switch) rather than system_power's.
+                if system_power_discharging:
+                    self.widget_state.add_hardware_stat(
+                        'battery_drain', v, persist=_keep('battery_drain'))
+
+        # Whole-system / battery power, mirrored from THIS poll (#323 review). The hover card
+        # treats both slots as current truth, so each is set from the current stats and cleared
+        # when its key is absent: a stale "discharging 12 W" on AC, or a lingering "+38 W" after
+        # charging to full, is worse than no value. Charge and discharge are mutually exclusive,
+        # so a new value for one leaves the other cleared. Kept outside the cpu/gpu gate above:
+        # battery-only polls must reach the view even when CPU history recording is off.
+        if self.view is not None:
+            try:
+                # The slot carries the CURRENT whole-system reading, on AC included - the
+                # Monitor's "System N W" strip needs it even on AC (a laptop with a RAPL
+                # PSYS counter reports there, and clearing it blanked the strip). The hover
+                # card decides what to SHOW: it only reads system_power while the machine
+                # is discharging, so a PSYS reading on AC is never shown as battery drain
+                # (#323 review). Absent key -> clear the slot, so a stale "discharging
+                # 12 W" cannot outlive the reading.
+                if 'system_power' in stats:
+                    self.view.system_power = stats['system_power']
+                else:
+                    self.view.system_power = None
+
+                self.view.battery_power = (
+                    stats['battery_power'] if 'battery_power' in stats else None)
+                # An open hover card's battery rows are live, like its hardware rows (#399);
+                # the view throttles this and it is a no-op without a battery card up.
+                refresh = getattr(self.view, "refresh_hover_power", None)
+                if callable(refresh):
+                    refresh()
+            except Exception:
+                pass
 
 
     def _handle_network_counters(self, current_counters: Dict[str, Any],
@@ -311,37 +379,72 @@ class StatsController(QObject):
         # clock need not advance across sleep, the wall clock can jump - either alone could clip
         # real bytes. A too-generous span only loosens the cap for that one poll.
         sample_elapsed = max(sample_mono - last_mono, sample_wall - last_wall, 0.0)
-        byte_deltas = self._odometer_byte_deltas(current_counters, sample_elapsed)
-        # Same interface selection as the display, but raw deltas, not rates. Gated on byte_deltas,
-        # NOT on the display data: a rate over the ceiling is display-dropped, its bytes are real (#13).
-        if byte_deltas and self.widget_state:
-            agg_up_bytes, agg_down_bytes = self._aggregate_for_odometer(byte_deltas)
-            # The window began at the previous sample: bytes are charged to the period it began in.
-            self.widget_state.add_usage_bytes(agg_up_bytes, agg_down_bytes,
-                                              counters=current_counters, sampled_at=sample_wall,
-                                              window_start=last_wall, primary=self._odometer_primary())
-        if self.widget_state:
-            # v8 history: every interface's exact delta over the measured span (ending at this sample),
-            # gap or not - the writer flags a long interval rather than dropping its bytes.
-            self.widget_state.add_net_sample(sample_wall, sample_elapsed * 1000.0, byte_deltas,
-                                             counters=current_counters, if_stats=if_stats)
-        self._last_sample_time = (sample_mono, sample_wall)
+        # The rate's span is the SAMPLING span too (monotonic only - a wall-clock jump must not move
+        # a rate). The previous sample is always the rate baseline here: every path past the
+        # half-interval gate re-baselines both. Dividing by the HANDLING span instead turned any stall
+        # on the monitor thread between sampling and emitting (a WMI query, an LHM connect attempt)
+        # into one tick shown too high and the next too low (PR #276 review). Without a sample time
+        # (direct callers) this equals time_diff.
+        rate_span = (sample_mono - last_mono) if self._last_sample_time else time_diff
+        prev_counters = self.last_interface_counters
+        # From here on this poll's counters ARE the next baseline, whatever fails: the sample time,
+        # the handling time and the counters move on together, in the one finally below. Never
+        # double-count - a sink that fails loses this one poll's bytes (logged), it does not count
+        # them again next poll. They used to be re-baselined in two places (the time after the
+        # odometer, the counters at the very end), so an exception in between left them out of
+        # step and the next poll double-counted and showed a 2x rate (PR #276 re-review).
+        try:
+            byte_deltas = self._odometer_byte_deltas(current_counters, sample_elapsed)
+            if self.widget_state:
+                # Same interface selection as the display, but raw deltas, not rates. Gated on
+                # byte_deltas, NOT on the display data: a rate over the ceiling is display-dropped,
+                # its bytes are real (#13). The window began at the previous sample: bytes are
+                # charged to the period it began in.
+                if byte_deltas:
+                    self._write_byte_sink(
+                        "data-usage odometer", self.widget_state.add_usage_bytes,
+                        *self._aggregate_for_odometer(byte_deltas), counters=current_counters,
+                        sampled_at=sample_wall, window_start=last_wall,
+                        primary=self._odometer_primary())
+                # v8 history: every interface's exact delta over the measured span (ending at this
+                # sample), gap or not - the writer flags a long interval rather than dropping bytes.
+                self._write_byte_sink(
+                    "network history", self.widget_state.add_net_sample,
+                    sample_wall, sample_elapsed * 1000.0, byte_deltas,
+                    counters=current_counters, if_stats=if_stats)
 
-        # --- 2. The rate display: re-prime across gaps ------------------------------------------
+            # --- 2. The rate display ---------------------------------------------------------
+            self._update_rate_display(current_counters, prev_counters, time_diff, rate_span,
+                                      update_interval)
+        finally:
+            self._last_sample_time = (sample_mono, sample_wall)
+            self.last_check_time = current_time
+            self.last_interface_counters = current_counters
+
+    def _write_byte_sink(self, sink: str, write: Any, *args: Any, **kwargs: Any) -> None:
+        """Hand one poll's bytes to one sink. A failure costs that sink this poll only - the
+        baselines still advance - and is logged, naming the sink, every time it happens."""
+        try:
+            write(*args, **kwargs)
+        except Exception as e:
+            self.logger.warning("Network bytes for this poll were not recorded in the %s: %s",
+                                sink, e, exc_info=True)
+
+    def _update_rate_display(self, current_counters: Dict[str, Any], prev_counters: Dict[str, Any],
+                             time_diff: float, rate_span: float, update_interval: float) -> None:
+        """The rate display for one poll: re-prime across gaps, else per-interface rates over
+        ``rate_span`` (the sampling span) against ``prev_counters``. Never re-baselines - the
+        caller does, in one place, even if this raises."""
         _spd = constants.network.speed
         validity_threshold = max(_spd.RATE_VALIDITY_MIN_SECONDS, update_interval * _spd.RATE_VALIDITY_POLL_MULTIPLE)
 
         if time_diff > validity_threshold:
             self.repriming_needed = 2
-            self.last_check_time = current_time
-            self.last_interface_counters = current_counters
             self._set_live_rates_zero()
             self.display_speed_updated.emit(0.0, 0.0)
             return
 
         if self.repriming_needed > 0:
-            self.last_check_time = current_time
-            self.last_interface_counters = current_counters
             self._set_live_rates_zero()
             self.display_speed_updated.emit(0.0, 0.0)
             self.repriming_needed -= 1
@@ -355,14 +458,14 @@ class StatsController(QObject):
         measured_speed_data: Dict[str, Tuple[float, float]] = {}
 
         for name, current in current_counters.items():
-            last = self.last_interface_counters.get(name)
+            last = prev_counters.get(name)
             if last:
                 # Per-direction counter-reset/wrap guard: a reset in ONE direction must not
                 # discard the OTHER direction's real bytes - they're independent counters.
                 up_diff = max(0, current.bytes_sent - last.bytes_sent)
                 down_diff = max(0, current.bytes_recv - last.bytes_recv)
 
-                safe_time_diff = max(time_diff, constants.network.speed.MIN_TIME_DIFF)
+                safe_time_diff = max(rate_span, constants.network.speed.MIN_TIME_DIFF)
                 up_speed_bps = int(up_diff / safe_time_diff)
                 down_speed_bps = int(down_diff / safe_time_diff)
 
@@ -426,9 +529,6 @@ class StatsController(QObject):
         download_mbps = (agg_download * 8) / 1_000_000
 
         self.display_speed_updated.emit(upload_mbps, download_mbps)
-
-        self.last_check_time = current_time
-        self.last_interface_counters = current_counters
 
 
     def _set_live_rates_zero(self) -> None:

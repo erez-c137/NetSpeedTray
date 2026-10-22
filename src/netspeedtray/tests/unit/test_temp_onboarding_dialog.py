@@ -6,8 +6,8 @@ from netspeedtray.views.temp_onboarding_dialog import TempOnboardingDialog
 
 
 @pytest.fixture
-def dlg(q_app):
-    return TempOnboardingDialog(I18nStrings("en_US"))
+def dlg(qt_owned):
+    return qt_owned(TempOnboardingDialog(I18nStrings("en_US")))
 
 
 def test_default_action_is_dismiss(dlg):
@@ -28,3 +28,17 @@ def test_dont_remind_defaults_off_and_toggles(dlg):
 def test_releases_url_is_official_lhm(dlg):
     from netspeedtray.views.temp_onboarding_dialog import LHM_RELEASES_URL
     assert LHM_RELEASES_URL.startswith("https://github.com/LibreHardwareMonitor/")
+
+
+def test_releases_url_is_the_current_release(dlg):
+    """v0.9.5+ is read over LHM's web server (#187), so the button no longer pins v0.9.4."""
+    from netspeedtray.views.temp_onboarding_dialog import LHM_RELEASES_URL
+    assert LHM_RELEASES_URL.endswith("/releases/latest")
+
+
+def test_web_server_hint_names_the_lhm_option_and_port(dlg):
+    from netspeedtray import constants
+    text = dlg.web_server_hint.text()
+    assert "Remote Web Server" in text
+    assert str(constants.lhm.HTTP_PORT) in text
+    assert "{port}" not in text

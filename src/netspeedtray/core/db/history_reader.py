@@ -38,6 +38,7 @@ flush-before-read barrier, the ``db_worker`` presence guard, the poll-interval l
 the odometer's in-memory state.
 """
 
+import calendar
 import logging
 import sqlite3
 import time
@@ -64,6 +65,7 @@ class UsageRecord:
     counter snapshot, {} when there is none or it is unreadable."""
     counter_row: Optional[Tuple[Any, ...]]
     snapshot: Dict[str, Any] = field(default_factory=dict)
+    rekey_memory: Optional[str] = None      # the odometer's persisted re-key memory (raw JSON), if any
 
 
 @dataclass(frozen=True)
@@ -99,6 +101,18 @@ class Coverage:
     not_running_seconds: int
     unknown_seconds: int
     sessions: Tuple[Tuple[int, int], ...]
+
+
+@dataclass(frozen=True)
+class MeteredScope:
+    """Which adapters a usage figure covers - the odometer's selection, as history can express it.
+
+    ``names``: exactly these adapters (``WidgetState.metered_scope`` resolves every mode to names with
+    the controller's classifier, exclusions and fallback rules). ``physical_only`` (names None): the
+    stored ``interfaces.is_physical`` flag, every adapter when none is flagged - a coarser stand-in used
+    only when the adapter names cannot be read."""
+    names: Optional[Tuple[str, ...]] = None
+    physical_only: bool = True
 
 
 class HistoryReader(ABC):
@@ -146,6 +160,29 @@ class HistoryReader(ABC):
         """``total_bandwidth`` with its provenance: how much is exact, and whether any of it was
         reconstructed from rates (D5 labelling)."""
 
+    def metered_volume(self, start_time: Optional[datetime], end_time: datetime,
+                       scope: Optional["MeteredScope"], poll_interval: float) -> VolumeResult:
+        """``volume`` over only the adapters the data-usage odometer meters (``scope``; None = every
+        adapter). The usage rows next to the cap ("Today", "This Period") must count what the cap
+        counts: summing every adapter double-counts a VPN / WSL / Hyper-V adapter whose bytes also
+        ride the real NIC. A backend without adapter metadata (v7) answers for every adapter."""
+        return self.volume(start_time, end_time, None, poll_interval)
+
+    def metered_volume_strict(self, start_time: Optional[datetime], end_time: datetime,
+                              scope: Optional["MeteredScope"]) -> Optional[VolumeResult]:
+        """``metered_volume`` for decisions that move the odometer: None when history cannot answer (a
+        failed read; a backend without adapter metadata) - ``metered_volume`` turns every error into
+        zeros, which a re-key would take for "nothing moved"."""
+        return None
+
+    def interface_names(self) -> Optional[List[str]]:
+        """Every adapter name history knows (for ``WidgetState.metered_scope``), or None."""
+        return None
+
+    def clock_trusted_ts(self) -> Optional[int]:
+        """The history writer's last maintenance pass on a trusted clock (epoch s), or None."""
+        return None
+
     @abstractmethod
     def coverage(self, start_time: datetime, end_time: datetime) -> Optional[Coverage]:
         """When the app was running in [start, end], or None when this schema records no sessions.
@@ -167,6 +204,75 @@ class HistoryReader(ABC):
 
 # network_hourly_profile: (ts, rate, weight) rows from every tier -> weighted mean rate per LOCAL clock
 # hour. SQLite's 'localtime' is the C runtime's, the same conversion datetime.fromtimestamp() makes.
+def _local_bin_sql(col: str, interval: int) -> str:
+    """SQL for the start of ``col``'s ``interval``-second bucket. Hour and day buckets are aligned to
+    LOCAL time (SQLite's 'localtime' - the C runtime's, as datetime.fromtimestamp() - so DST is
+    honoured): plain ``ts / 86400`` buckets
+    started at UTC midnight - 02:00 or 03:00 in Israel, moving by an hour across a DST change - and
+    hour buckets were half an hour off in +5:30 / +9:30 zones. Minute and second buckets are the same
+    either way, so they keep the cheap integer form.
+
+    DAY buckets come back as a local DAY NUMBER (days since 1970-01-01 on the local calendar), not a
+    timestamp: one 'localtime' call per row, the same cost as an hour bucket. Every caller passes the
+    grouped value through ``_bin_start()``, which turns each day number into its local midnight once
+    per OUTPUT row. Day numbers and midnights map one to one, so GROUP BY / ORDER BY are unchanged."""
+    if interval < 3600:
+        return f"CAST({col} / {interval} AS INTEGER) * {interval}"
+    local = f"CAST(strftime('%s', {col}, 'unixepoch', 'localtime') AS INTEGER)"
+    if interval >= 86400:
+        return f"CAST({local} / {interval} AS INTEGER)"
+    # The row's own offset, applied to the row: start of its local hour as an epoch. Never later than
+    # the row, and on a fall-back night the two 01:00-02:00 hours stay two buckets.
+    return f"({col} - ({local} % {interval}))"
+
+
+def _local_epoch(ts: int) -> int:
+    """``ts`` as local wall-clock seconds since 1970 - the C runtime's localtime, as SQLite's."""
+    return calendar.timegm(time.localtime(ts))
+
+
+def _local_day_start(day: int) -> int:
+    """The first instant (epoch s) whose local date is local day number ``day``: its local midnight,
+    converted back with the MIDNIGHT's own offset - on a 23 h / 25 h day the offset at the day's
+    other rows is not the midnight's. Where midnight is repeated (a fall-back at 01:00 -> 00:00) the
+    earlier instance is taken, so a bucket never starts after its rows; where it is skipped (a
+    spring-forward at 00:00) the day starts at its first valid local time."""
+    target = day * 86400
+    try:
+        return _first_instant_at_or_after(target)
+    except (OSError, OverflowError, ValueError):   # outside the C runtime's range (pre-1970 on Windows)
+        return target
+
+
+def _first_instant_at_or_after(target: int) -> int:
+    # Every offset in force around that midnight (offsets are within +-14 h, transitions are never
+    # less than a day apart), so one of these candidates is the midnight whenever it exists.
+    offs = {_local_epoch(t) - t for t in (target - 15 * 3600, target, target + 15 * 3600)}
+    hits = [target - o for o in offs if _local_epoch(target - o) == target]
+    if hits:
+        return min(hits)
+    # Midnight skipped: the first instant whose local time is at or past it (binary search over the
+    # transition, which lies between the two candidates).
+    lo, hi = target - max(offs), target - min(offs)
+    while _local_epoch(hi) < target:   # defensive: widen until the bracket holds
+        hi += 3600
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if _local_epoch(mid) >= target:
+            hi = mid
+        else:
+            lo = mid + 1
+    return lo
+
+
+def _bin_start(value, interval: int):
+    """A ``_local_bin_sql`` column value as its bucket's start (epoch s): day numbers -> local
+    midnight; every shorter interval is already a timestamp. NULL stays NULL."""
+    if value is None or interval < 86400:
+        return value
+    return _local_day_start(int(value))
+
+
 _HOURLY_PROFILE_SQL = ("SELECT CAST(strftime('%H', ts, 'unixepoch', 'localtime') AS INTEGER) AS h, "
                        "SUM(v * w), SUM(w) FROM ({union}) WHERE v IS NOT NULL AND w > 0 GROUP BY h")
 
@@ -260,7 +366,14 @@ class _ReaderBase(HistoryReader):
             f"SELECT cumulative_up, cumulative_down, anchor_up, anchor_down, period_key "
             f"FROM {constants.data.USAGE_COUNTER_TABLE} WHERE id = 1")
         row = cur.fetchone()
-        return UsageRecord(tuple(row) if row else None, self._read_usage_snapshot(cur))
+        memory = None
+        try:
+            m = cur.execute("SELECT value FROM metadata WHERE key = ?",
+                            (constants.network.usage.REKEY_MEMORY_METADATA_KEY,)).fetchone()
+            memory = m[0] if m else None
+        except Exception as e:
+            self.logger.debug("No usage re-key memory readable: %s", e)
+        return UsageRecord(tuple(row) if row else None, self._read_usage_snapshot(cur), memory)
 
     def _read_usage_snapshot(self, cur: sqlite3.Cursor) -> Dict[str, Any]:
         """The previous session's counter snapshot (metadata row), or {} - never raises, so a
@@ -350,7 +463,7 @@ class V7HistoryReader(_ReaderBase):
             cursor = conn.cursor()
 
             # Time binning calculation
-            time_calc = f"CAST(timestamp / {target_interval} AS INTEGER) * {target_interval}"
+            time_calc = _local_bin_sql("timestamp", target_interval)   # local hour / day buckets
 
             # Build inner query. For aggregated resolutions, construct a UNION
             # and keep peak speed semantics (MAX) across tiers so timeline
@@ -443,6 +556,7 @@ class V7HistoryReader(_ReaderBase):
                     target_res
                 )
 
+            valid_rows = [(_bin_start(row[0], target_interval), row[1], row[2]) for row in valid_rows]
             data_points = []
             if return_raw:
                 data_points = [(int(row[0]), float(row[1] or 0.0), float(row[2] or 0.0)) for row in valid_rows]
@@ -742,7 +856,7 @@ class V7HistoryReader(_ReaderBase):
             HRAW = constants.data.HARDWARE_STATS_TABLE_RAW
             HMIN = constants.data.HARDWARE_STATS_TABLE_MINUTE
             HHOUR = constants.data.HARDWARE_STATS_TABLE_HOUR
-            bin_ts = f"CAST(timestamp / {interval} AS INTEGER) * {interval}"
+            bin_ts = _local_bin_sql("timestamp", interval)
             _, (min_sql, min_params), (hour_sql, hour_params) = self._bounds(self._HW_TIERS)
             cursor.execute(f"""
                 SELECT b, AVG(v) FROM (
@@ -759,7 +873,7 @@ class V7HistoryReader(_ReaderBase):
                  + (stat_type, start_ts, end_ts) + hour_params)
             rows = cursor.fetchall()
 
-            return [(datetime.fromtimestamp(row[0]), row[1]) for row in rows]
+            return [(datetime.fromtimestamp(_bin_start(row[0], interval)), row[1]) for row in rows]
         except Exception as e:
             self._log_read_failure("Error fetching hardware history", e)
             return []
@@ -972,7 +1086,7 @@ class V8HistoryReader(_ReaderBase):
         raw_up, raw_down = self._RAW_RATE.format(d="up"), self._RAW_RATE.format(d="down")
 
         def tier(k: int, up: str, down: str) -> Tuple[str, list]:
-            return (f"SELECT CAST(n.ts / {interval} AS INTEGER) * {interval} AS bin_ts, "
+            return (f"SELECT {_local_bin_sql('n.ts', interval)} AS bin_ts, "
                     f"{self._IFACE_NAME} AS interface_name, {up} AS up, {down} AS down "
                     f"FROM {self._NET[k]} n {self._IFACE_JOIN} "
                     f"WHERE n.ts BETWEEN ? AND ?{bounds[k][0]}{iface_sql}",
@@ -1001,7 +1115,7 @@ class V8HistoryReader(_ReaderBase):
             return []
         self.logger.debug("History query: target_res=%s fetched_rows=%d", target_res, len(rows))
 
-        valid = [r for r in rows if r and r[0] is not None]
+        valid = [(_bin_start(r[0], interval), r[1], r[2]) for r in rows if r and r[0] is not None]
         if len(valid) != len(rows):
             self.logger.warning("Dropping %d invalid graph rows with NULL timestamp (resolution=%s).",
                                 len(rows) - len(valid), target_res)
@@ -1121,9 +1235,19 @@ class V8HistoryReader(_ReaderBase):
                interface_name: Optional[str], poll_interval: float) -> VolumeResult:
         """``poll_interval`` is accepted for the interface and ignored: every v8 raw row carries the
         interval it was measured over (``dt_ms``), so the live poll rate has no say over stored bytes."""
+        iface_sql, iface_p = self._iface_filter(interface_name)
+        return self._volume(start_time, end_time, iface_sql, iface_p)
+
+    def _volume(self, start_time: Optional[datetime], end_time: datetime,
+                iface_sql: str, iface_p: tuple) -> VolumeResult:
+        return self._snapshot_call(
+            lambda cur: self._volume_run(cur, start_time, end_time, iface_sql, iface_p),
+            lambda: VolumeResult(0.0, 0.0, 0.0, 0.0, False))
+
+    def _volume_run(self, cur, start_time: Optional[datetime], end_time: datetime,
+                    iface_sql: str, iface_p: tuple) -> VolumeResult:
         st = int(start_time.timestamp()) if start_time else 0
         et = int(end_time.timestamp())
-        iface_sql, iface_p = self._iface_filter(interface_name)
         bounds = self._tier_bounds(self._NET, "n")
 
         def run(cur):
@@ -1149,7 +1273,50 @@ class V8HistoryReader(_ReaderBase):
                     recon += int(r[4] or 0)
             return VolumeResult(tot[0], tot[1], exact[0], exact[1], recon > 0)
 
-        return self._snapshot_call(run, lambda: VolumeResult(0.0, 0.0, 0.0, 0.0, False))
+        return run(cur)
+
+    def metered_volume(self, start_time: Optional[datetime], end_time: datetime,
+                       scope: Optional[MeteredScope], poll_interval: float) -> VolumeResult:
+        if scope is not None and scope.names is not None and not scope.names:
+            return VolumeResult(0.0, 0.0, 0.0, 0.0, False)   # nothing selected / no eligible adapter
+        return self._volume(start_time, end_time, *self._scope_filter(scope))
+
+    def metered_volume_strict(self, start_time: Optional[datetime], end_time: datetime,
+                              scope: Optional[MeteredScope]) -> Optional[VolumeResult]:
+        if scope is not None and scope.names is not None and not scope.names:
+            return VolumeResult(0.0, 0.0, 0.0, 0.0, False)
+        sql, params = self._scope_filter(scope)
+        conn, began = None, False
+        try:
+            conn = self._conn()
+            began = self._begin_snapshot(conn)
+            return self._volume_run(conn.cursor(), start_time, end_time, sql, params)
+        except Exception as e:
+            self._log_read_failure("v8 history read failed", e)
+            return None
+        finally:
+            if conn is not None:
+                self._end_snapshot(conn, began)
+
+    def interface_names(self) -> Optional[List[str]]:
+        try:
+            return [r[0] for r in self._conn().execute(f"SELECT name FROM {S8.INTERFACES}").fetchall()]
+        except sqlite3.Error as e:
+            self._log_read_failure("Error reading interface names", e)
+            return None
+
+    def clock_trusted_ts(self) -> Optional[int]:
+        row = self._conn().execute(f"SELECT value FROM {S8.METADATA} WHERE key = 'clock_trusted_ts'").fetchone()
+        return int(row[0]) if row and str(row[0]).isdigit() else None
+
+    def _scope_filter(self, scope: Optional[MeteredScope]) -> Tuple[str, tuple]:
+        if scope is None:
+            return "", ()
+        if scope.names is not None:
+            names = tuple(str(n) for n in scope.names)
+            return f" AND {self._IFACE_NAME} IN ({', '.join('?' * len(names))})", names
+        return (f" AND (COALESCE(i.is_physical, 1) = 1 OR NOT EXISTS "
+                f"(SELECT 1 FROM {S8.INTERFACES} WHERE is_physical = 1))", ())
 
     def total_bandwidth(self, start_time: Optional[datetime], end_time: datetime,
                         interface_name: Optional[str], poll_interval: float) -> Tuple[float, float]:
@@ -1219,13 +1386,13 @@ class V8HistoryReader(_ReaderBase):
         bounds = self._tier_bounds(self._HW, "h")
         parts, params = [], []
         for k, col in ((0, "h.value"), (1, "h.avg_value"), (2, "h.avg_value")):
-            parts.append(f"SELECT CAST(h.ts / {interval} AS INTEGER) * {interval} AS b, {col} AS v "
+            parts.append(f"SELECT {_local_bin_sql('h.ts', interval)} AS b, {col} AS v "
                          f"FROM {self._HW[k]} h WHERE {self._METRIC} AND h.ts BETWEEN ? AND ?{bounds[k][0]}")
             params += [stat_type, start_ts, end_ts, *bounds[k][1]]
         try:
             rows = self._conn().execute(
                 f"SELECT b, AVG(v) FROM ({' UNION ALL '.join(parts)}) GROUP BY b ORDER BY b ASC", params).fetchall()
-            return [(datetime.fromtimestamp(r[0]), r[1]) for r in rows]
+            return [(datetime.fromtimestamp(_bin_start(r[0], interval)), r[1]) for r in rows]
         except Exception as e:
             self._log_read_failure("Error fetching hardware history", e)
             return []

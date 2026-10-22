@@ -124,8 +124,10 @@ def test_persist_enqueues_when_due():
     assert s.db_worker.enqueue_task.called
     task, payload = s.db_worker.enqueue_task.call_args[0]
     assert task == "persist_usage"
-    assert len(payload) == 7  # cum_up, cum_down, anchor_up, anchor_down, period_key, ts, counter snapshot
+    # cum_up, cum_down, anchor_up, anchor_down, period_key, ts, counter snapshot, re-key memory
+    assert len(payload) == 8
     assert payload[6] is None  # no counters fed -> leave the stored snapshot untouched
+    assert payload[7] == ""    # no period left yet -> no re-key memory stored
 
 
 # --- DB persist round-trip ---------------------------------------------------

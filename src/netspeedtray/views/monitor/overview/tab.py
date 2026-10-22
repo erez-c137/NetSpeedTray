@@ -80,10 +80,35 @@ def _resolve_window(ws, key: str, now: datetime, session_start: Optional[datetim
             earliest = ws.get_earliest_data_timestamp()
         except Exception:
             earliest = None
-    start = hp.get_start_time(key, now, session_start, None, earliest)
+    # "System uptime" starts at the real boot (M3). It used to pass None here, which fell through to
+    # the "last 24 h" fallback below - and the Stats sheet and Export inherit this window.
+    boot = _boot_time() if key == "TIMELINE_SYSTEM_UPTIME" else None
+    start = hp.get_start_time(key, now, session_start, boot, earliest)
     if start is None:
         start = now - timedelta(hours=24)
     return start, now, (key == "TIMELINE_SESSION")
+
+
+def _boot_time() -> Optional[datetime]:
+    """When this PC last started (psutil; no DB, no matplotlib), or None if unreadable."""
+    try:
+        import psutil
+        return datetime.fromtimestamp(psutil.boot_time())
+    except Exception:
+        return None
+
+
+def saved_period_index(config: Dict[str, Any]) -> int:
+    """The Monitor period to open on. A CHOSEN period is honoured as stored - including Session,
+    whose index is 0. Never chosen (a fresh install stores 0 too) opens on 24 h, as it always has.
+    The old ``int(x or 2)`` could not tell the two apart and turned a chosen Session into 24 h (M2)."""
+    raw = config.get("history_period_slider_value", 2)
+    try:
+        if config.get("history_period_chosen", False):
+            return int(raw if raw is not None else 2)
+        return int(raw or 2)
+    except (TypeError, ValueError):
+        return 2
 
 
 def _read_window(ws, key: str, now: datetime, session_start: Optional[datetime],
@@ -165,7 +190,7 @@ class OverviewTab(QWidget):
 
         # The global timeline scopes every card to real DB history; default to the saved period (24h
         # if unset), so the control center opens on history, not "since the page opened".
-        self._period_index = int(config.get("history_period_slider_value", 2) or 2)
+        self._period_index = saved_period_index(config)
         self._series: Dict[str, Any] = {}     # latest per-metric sparkline series for the active window
         # Latest per-metric WindowSummary / drop events for the active window; None = not read yet
         # (the hero says "Reading history…" and the strip claims nothing, rather than showing zeros).
@@ -370,7 +395,8 @@ class OverviewTab(QWidget):
         # Persist the choice (shared with the graph's slider) without a repaint storm.
         try:
             self._main_widget.config_controller.update_config(
-                {"history_period_slider_value": self._period_index}, apply_and_repaint=False)
+                {"history_period_slider_value": self._period_index, "history_period_chosen": True},
+                apply_and_repaint=False)
         except Exception:
             pass
         self._invalidate_window()
@@ -401,7 +427,7 @@ class OverviewTab(QWidget):
         # were hidden. Without this the dropdown still showed the old window AND the sparklines/avg/peak
         # computed for the stale range (mirrors HardwareTab.showEvent).
         try:
-            idx = int(self._config.get("history_period_slider_value", self._period_index) or self._period_index)
+            idx = saved_period_index(self._config)
             if idx != self._period_index:
                 self._period_index = idx
                 self._timeline.set_period_index(idx, emit=False)
@@ -880,7 +906,10 @@ class OverviewTab(QWidget):
         finally:
             # Parented to the Monitor window, so without this every opened sheet stayed alive as its
             # child until the Monitor closed. exec() has stopped the sheet's reader thread by now.
-            if sheet is not None:
+            # Quitting the app with the sheet open closes (and deletes) the Monitor - and the sheet with
+            # it - while exec() still runs; deleteLater() on the dead wrapper then raised out of this
+            # click handler and the app logged it as CRITICAL on the way out.
+            if sheet is not None and not sip.isdeleted(sheet):
                 sheet.deleteLater()
 
     def _open_connection_check(self) -> None:

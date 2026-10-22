@@ -7,8 +7,8 @@ from netspeedtray.views.settings.pages.widget import WidgetPage
 
 
 @pytest.fixture
-def page(q_app):
-    return WidgetPage(I18nStrings("en_US"), lambda: None)
+def page(qt_owned):
+    return qt_owned(WidgetPage(I18nStrings("en_US"), lambda: None))
 
 
 def test_layout_and_behaviour_round_trip(page):

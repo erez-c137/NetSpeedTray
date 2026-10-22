@@ -65,3 +65,30 @@ def test_resume_restores_updates():
     f.is_paused = False
     NetworkSpeedWidget.update_display_speeds(f, 5.0, 6.0)
     assert (f.upload_speed, f.download_speed) == (5.0, 6.0)  # live again
+
+
+def _graph_fake():
+    """A fake whose history keeps recording, as the real widget_state does while paused."""
+    f = types.SimpleNamespace(is_paused=False, _paused_histories=None, update=lambda: None,
+                              logger=types.SimpleNamespace(info=lambda *a: None, debug=lambda *a: None))
+    f.widget_state = types.SimpleNamespace(net=[1], cpu_history=[10], gpu_history=[20])
+    f.widget_state.get_aggregated_speed_history = lambda: list(f.widget_state.net)
+    # Pre-fix there is no snapshot helper: fall back to the live read the paint path used to make.
+    live = getattr(NetworkSpeedWidget, "_live_graph_histories", None)
+    f._live_graph_histories = (lambda: live(f)) if live else (lambda: (
+        list(f.widget_state.net), list(f.widget_state.cpu_history), list(f.widget_state.gpu_history)))
+    return f
+
+
+def test_paused_freezes_the_mini_graph_too():
+    """The numbers froze but any repaint (the Auto-Cycle tick, a hover) drew the live history: the
+    graph scrolled on under frozen numbers. pause() snapshots it; resume() goes live again."""
+    f = _graph_fake()
+    graph = getattr(NetworkSpeedWidget, "_graph_histories", lambda self: self._live_graph_histories())
+    NetworkSpeedWidget.pause(f)
+    f.widget_state.net.append(2)
+    f.widget_state.cpu_history.append(11)
+    f.widget_state.gpu_history.append(21)
+    assert graph(f) == ([1], [10], [20])
+    NetworkSpeedWidget.resume(f)
+    assert graph(f) == ([1, 2], [10, 11], [20, 21])

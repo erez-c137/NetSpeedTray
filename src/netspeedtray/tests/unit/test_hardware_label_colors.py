@@ -300,6 +300,36 @@ def test_old_styles_survive_a_full_load(tmp_path, old, style, color):
     assert (loaded["hardware_label_style"], loaded["hardware_label_color"]) == (style, color)
 
 
+def test_a_2_1_config_is_backed_up_before_the_label_style_migration(tmp_path):
+    """RC C2: the label-style split rewrites a 2.1.x value, so the schema version moved past 1.1 -
+    otherwise the pre-migration backup (`.bak.v<old>`) never triggers and a rollback has no copy."""
+    path = tmp_path / "config.json"
+    original = {"config_version": "1.1", "hardware_label_style": "icons_colored"}
+    path.write_text(json.dumps(original), encoding="utf-8")
+    loaded = ConfigManager(path).load()
+    backup = path.with_name(f"{path.name}.bak.v1.1")
+    assert backup.exists()
+    assert json.loads(backup.read_text(encoding="utf-8")) == original
+    assert loaded["config_version"] == "1.2"
+
+
+def test_runtime_taskbar_height_is_neither_written_nor_preserved(tmp_path, caplog):
+    """RC C3: the runtime taskbar height was injected into the config, saved to disk, and warned
+    about on every launch as an unknown key 'written by a newer version?'."""
+    import logging
+    from unittest.mock import MagicMock
+    from netspeedtray.core.config_controller import ConfigController
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"config_version": "1.2", "taskbar_height": 48, "font_size": 10}),
+                    encoding="utf-8")
+    cm = ConfigManager(path)
+    with caplog.at_level(logging.WARNING):
+        cfg = ConfigController(MagicMock(), cm).load_initial_config(48)
+    assert "taskbar_height" not in cfg
+    assert cfg["font_size"] == 10
+    assert not [r for r in caplog.records if "taskbar_height" in r.getMessage()]
+
+
 @pytest.mark.parametrize("color", ["brand", "custom", "match_text"])
 def test_a_colour_already_on_file_wins_over_the_implied_one(manager, color):
     """Rollback round trip: 2.1.x / 2.2 beta.2 reset the unknown style "icons" to THEIR default,
@@ -352,9 +382,9 @@ def test_validation_keeps_good_values(manager):
 # --------------------------------------------------------------------------- the Settings page
 
 @pytest.fixture
-def page(q_app):
+def page(qt_owned):
     from netspeedtray.views.settings.pages.hardware import HardwarePage
-    return HardwarePage(I18nStrings("en_US"), lambda: None)
+    return qt_owned(HardwarePage(I18nStrings("en_US"), lambda: None))
 
 
 def test_page_round_trips_the_colour_settings(page):
