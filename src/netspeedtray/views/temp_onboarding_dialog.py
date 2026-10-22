@@ -40,7 +40,8 @@ class TempOnboardingDialog(QDialog):
         except Exception:
             pass
 
-    def __init__(self, i18n, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, i18n, parent: Optional[QWidget] = None,
+                 lhm_port: int = constants.lhm.HTTP_PORT) -> None:
         super().__init__(parent)
         self.i18n = i18n
         self.action = self.ACTION_DISMISS  # default if closed via X / Esc
@@ -65,7 +66,7 @@ class TempOnboardingDialog(QDialog):
 
         # Current LHM is read over its web server, which is off by default: say how to turn it on.
         self.web_server_hint = QLabel(
-            i18n.LHM_WEB_SERVER_HINT.format(port=constants.lhm.HTTP_PORT), self)
+            i18n.LHM_WEB_SERVER_HINT.format(port=lhm_port), self)
         self.web_server_hint.setWordWrap(True)
         layout.addWidget(self.web_server_hint)
 

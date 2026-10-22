@@ -77,7 +77,11 @@ class _NoLhmWebServer:
     """Stand-in for LhmHttpClient: LibreHardwareMonitor's web server is not running."""
 
     def __init__(self, *args, **kwargs):
+        from netspeedtray import constants
         self.calls = 0
+        self.host = constants.lhm.HTTP_HOST
+        self.port = constants.lhm.HTTP_PORT
+        self.status = constants.lhm.STATUS_NOT_FOUND
 
     def get_snapshot(self):
         self.calls += 1
@@ -85,6 +89,9 @@ class _NoLhmWebServer:
 
     def reset_backoff(self):
         pass
+
+    def configure(self, port, username="", password=""):
+        self.port = port
 
 
 @pytest.fixture(autouse=True)

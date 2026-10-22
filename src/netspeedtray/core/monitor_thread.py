@@ -55,6 +55,7 @@ from functools import lru_cache
 from netspeedtray import constants
 from netspeedtray.core import gpu_adapters
 from netspeedtray.core.lhm_http import LhmHttpClient
+from netspeedtray.utils import secret_store
 from netspeedtray.utils.rdp_utils import is_rdp_session
 from netspeedtray.utils.network_utils import get_connected_network_identity
 
@@ -198,6 +199,11 @@ class StatsMonitorThread(QThread):
         # primary sensor source. The client's short cache shares one data.json
         # response across CPU/GPU temperature and power reads in this poll.
         self._lhm_http = LhmHttpClient()
+        # Settings > Hardware's port and optional credentials (G2/G3). The password lives in config only
+        # as a DPAPI blob; it is decrypted here, on the polling thread, and only when the blob changes.
+        self._lhm_password_blob: Optional[str] = None
+        self._lhm_password: str = ""
+        self._apply_lhm_settings()
         self._ohm_guidance_logged: bool = False  # One-time "no sensor source" guidance, logged only when NO namespace connects
         self._last_temp_source_sig: Optional[Tuple[str, str]] = None  # (source, sensor) of the last-logged CPU-temp read; re-logged only on change (#216)
         # ACPI thermal-zone placeholder detection (#237, #275): first raw value seen per zone, the
@@ -285,6 +291,32 @@ class StatsMonitorThread(QThread):
         self._battery_cadence_sec: float = 8.0
 
         self.logger.info("StatsMonitorThread initialized with interval %.2fs", self.interval)
+
+    def _apply_lhm_settings(self) -> None:
+        """Point the LHM client at the configured port, with the configured credentials. Runs at init
+        and on run()'s thread after update_config - never concurrently with a poll."""
+        L = constants.lhm
+        try:
+            port = int(self.config.get("lhm_port", L.HTTP_PORT))
+        except (TypeError, ValueError):
+            port = L.HTTP_PORT
+        if not L.MIN_PORT <= port <= L.MAX_PORT:
+            port = L.HTTP_PORT
+        username = str(self.config.get("lhm_username", "") or "")
+        blob = str(self.config.get("lhm_password_protected", "") or "")
+        if blob != self._lhm_password_blob:
+            self._lhm_password_blob = blob
+            self._lhm_password = (secret_store.unprotect(blob) or "") if blob else ""
+        self._lhm_http.configure(port, username, self._lhm_password)
+
+    @property
+    def lhm_status(self) -> str:
+        """The LHM web-server client's last result (constants.lhm.STATUS_*), for Settings > Hardware."""
+        return self._lhm_http.status
+
+    @property
+    def lhm_port(self) -> int:
+        return self._lhm_http.port
 
     def set_interval(self, interval: float) -> None:
         """Dynamically updates the polling interval."""
@@ -1235,7 +1267,7 @@ class StatsMonitorThread(QThread):
                     "Hardware monitor: no CPU/GPU sensor source found (%s; no LHM web server at "
                     "%s:%d). Start LibreHardwareMonitor as Administrator; on v0.9.5+ also enable "
                     "Options > Remote Web Server (port %d).", "; ".join(probe_errors),
-                    constants.lhm.HTTP_HOST, constants.lhm.HTTP_PORT, constants.lhm.HTTP_PORT
+                    self._lhm_http.host, self._lhm_http.port, self._lhm_http.port
                 )
         # Leave _wmi_ohm as None so we retry next poll (LHM may not be running yet)
 
@@ -1475,6 +1507,7 @@ class StatsMonitorThread(QThread):
                     self._hw_queries_dirty = False
                     self._cleanup_gpu_query()
                     self._gpu_query_retry_after = 0.0
+                    self._apply_lhm_settings()       # a new LHM port / user name / password
                     self._lhm_http.reset_backoff()   # temps/power just switched on: look for LHM now
                     self._cleanup_thermal_query()
                     self._cleanup_power_query()

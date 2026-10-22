@@ -9,6 +9,7 @@ from netspeedtray.constants.network import network
 from netspeedtray.constants.app import app
 from netspeedtray.constants.color import color
 from netspeedtray.constants.fonts import fonts
+from netspeedtray.constants.lhm import lhm
 from netspeedtray.constants.i18n import I18nStrings
 from netspeedtray.constants.ui import ui as ui_constants
 from netspeedtray.constants.update_mode import UpdateMode
@@ -284,6 +285,13 @@ class ConfigConstants:
         "show_hardware_power": DEFAULT_SHOW_HARDWARE_POWER,
         "temperature_unit": DEFAULT_TEMPERATURE_UNIT,
         "gpu_adapter": DEFAULT_GPU_ADAPTER,
+        # LibreHardwareMonitor web server (Settings > Hardware > LibreHardwareMonitor connection, G2/G3):
+        # the port LHM listens on, and the optional Basic-auth user name and password. The password is
+        # never stored in plain text - only as a per-user DPAPI blob (utils/secret_store.py), and the
+        # support bundle redacts both credential keys.
+        "lhm_port": lhm.HTTP_PORT,
+        "lhm_username": "",
+        "lhm_password_protected": "",
         # Settings > Advanced > "Record hardware history". Persists hardware samples to the history DB,
         # but ONLY for metrics the user monitors (CPU/GPU/RAM switches, temps/power switches) - see
         # controller.hardware_persist_allowed. Off = nothing hardware is written; live display (widget,
@@ -458,6 +466,10 @@ class ConfigConstants:
         "show_hardware_power": {"type": bool, "default": DEFAULT_SHOW_HARDWARE_POWER},
         "temperature_unit": {"type": str, "default": DEFAULT_TEMPERATURE_UNIT, "choices": TEMPERATURE_UNIT_CHOICES},
         "gpu_adapter": {"type": str, "default": DEFAULT_GPU_ADAPTER},
+        "lhm_port": {"type": int, "default": lhm.HTTP_PORT, "min": lhm.MIN_PORT, "max": lhm.MAX_PORT},
+        "lhm_username": {"type": str, "default": ""},
+        # No regex on purpose: a failed format check logs the value, and this one must never be logged.
+        "lhm_password_protected": {"type": str, "default": ""},
         "stack_hardware_stats": {"type": bool, "default": DEFAULT_STACK_HARDWARE_STATS},
         "hardware_in_hover_card": {"type": bool, "default": DEFAULT_HARDWARE_IN_HOVER_CARD},
         "widget_display_mode": {"type": str, "default": DEFAULT_WIDGET_DISPLAY_MODE, "choices": ["network_only", "cycle", "side_by_side"]},
