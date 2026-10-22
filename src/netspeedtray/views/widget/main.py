@@ -2429,7 +2429,9 @@ class NetworkSpeedWidget(QWidget):
             from netspeedtray.views.temp_onboarding_dialog import (
                 TempOnboardingDialog, LHM_RELEASES_URL,
             )
-            dlg = TempOnboardingDialog(self.i18n, self)
+            # The port the user configured for LHM (Settings > Hardware), as the hint names it.
+            lhm_port = getattr(self.monitor_thread, "lhm_port", constants.lhm.HTTP_PORT)
+            dlg = TempOnboardingDialog(self.i18n, self, lhm_port=lhm_port)
             dlg.exec()
             if dlg.dismissed_forever():
                 self.update_config({"temp_onboarding_dismissed": True})

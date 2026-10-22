@@ -1,16 +1,18 @@
 """
 Hardware Monitoring Settings Page.
 """
-from typing import Dict, Any, Callable, Optional
+from typing import Dict, Any, Callable, Optional, Tuple
 
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import pyqtSignal, QTimer
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (QWidget, QLabel, QGraphicsOpacityEffect, QHBoxLayout, QVBoxLayout,
-                             QLineEdit, QPushButton)
+                             QLineEdit, QPushButton, QSpinBox)
 
 from netspeedtray import constants
 from netspeedtray.core import gpu_adapters
 from netspeedtray.utils import styles as su, helpers
+from netspeedtray.utils import secret_store
+from netspeedtray.utils import styles as su
 from netspeedtray.utils.components import Win11Toggle, Win11Slider, SettingCard, SettingExpander, Win11ComboBox
 from netspeedtray.views.settings.pages._fluent import section_header, page_layout
 
@@ -27,12 +29,26 @@ class HardwarePage(QWidget):
     LABEL_COLOR_KEYS = ("cpu_label_color", "gpu_label_color")
 
     def __init__(self, i18n, on_change: Callable[[], None],
-                 color_dialog_callback: Optional[Callable[[str], None]] = None):
+                 color_dialog_callback: Optional[Callable[[str], None]] = None,
+                 lhm_status_provider: Optional[Callable[[], Optional[Tuple[str, int]]]] = None):
         super().__init__()
         self.i18n = i18n
         self.on_change = on_change
         # SettingsDialog._open_color_dialog(key) - the same QColorDialog flow the Appearance colours use.
         self.open_color_dialog = color_dialog_callback or (lambda _key: None)
+        # () -> (status, port) of the running LHM client (constants.lhm.STATUS_*), or None. Polled while
+        # this page is visible, so a fixed password or port shows its result within a second or two.
+        self.lhm_status_provider = lhm_status_provider or (lambda: None)
+        # The LHM password as config stores it (a DPAPI blob) and the plain text it was made from, so an
+        # unchanged field never re-encrypts (DPAPI output differs on every call).
+        self._lhm_password_blob = ""
+        self._lhm_password_plain = ""
+        # True while the field holds the user's password (decrypted or typed). False after a hide (the
+        # field is wiped so the plain text does not sit in a hidden, cached dialog) and while the saved
+        # blob cannot be decrypted for this Windows user - in both cases get_settings keeps the blob.
+        self._lhm_password_loaded = True
+        self._lhm_password_unreadable = False
+        self._lhm_status_shown: Optional[str] = None
         # Last complete #RRGGBB per custom label colour - what get_settings reports while a field is mid-edit.
         self._last_valid_hex = {k: getattr(constants.config.defaults, f"DEFAULT_{k.upper()}")
                                 for k in self.LABEL_COLOR_KEYS}
@@ -118,6 +134,7 @@ class HardwarePage(QWidget):
         self.lhm_web_server_hint.setWordWrap(True)
         self.lhm_web_server_hint.setStyleSheet(temps_note.styleSheet())
         layout.addWidget(self.lhm_web_server_hint)
+        self._build_lhm_connection(layout)
 
         # Throttle temperature (Statistics): flags time spent at/above this temp in the Stats-detail
         # sheet so thermal throttling is provable (0 = off). Only meaningful when temps are collected,
@@ -223,6 +240,137 @@ class HardwarePage(QWidget):
 
         layout.addStretch()
 
+    def _build_lhm_connection(self, layout) -> None:
+        """LibreHardwareMonitor connection (G2/G3), collapsed: LHM's port, and the user name and
+        password of its optional web-server authentication. The port card's description carries the
+        live result (connected / not answering / password needed or rejected)."""
+        L = constants.lhm
+        section = SettingExpander(self.i18n.LHM_CONNECTION_SECTION, expanded=False)
+        section.expandedChanged.connect(lambda _on: self.layout_changed.emit())
+        self.lhm_connection_section = section
+
+        self.lhm_port = QSpinBox()
+        self.lhm_port.setRange(L.MIN_PORT, L.MAX_PORT)
+        self.lhm_port.setValue(L.HTTP_PORT)
+        self.lhm_port.setKeyboardTracking(False)   # apply on Enter / focus-out, not per keystroke
+        self.lhm_port.setMinimumWidth(110)
+        self.lhm_port.valueChanged.connect(self._on_lhm_port_changed)
+        self._lhm_port_card = SettingCard(self.i18n.LHM_PORT_LABEL, description=" ", control=self.lhm_port)
+        section.contentLayout().addWidget(self._lhm_port_card)
+
+        # Credentials apply on Enter / focus-out (editingFinished): applying per keystroke would send
+        # LHM one rejected half-typed password per character.
+        self.lhm_username = QLineEdit()
+        self.lhm_username.setMaxLength(256)
+        self.lhm_username.setMinimumWidth(200)
+        self.lhm_username.setProperty("fieldStyle", "input")
+        self.lhm_username.editingFinished.connect(self.on_change)
+        section.contentLayout().addWidget(SettingCard(self.i18n.LHM_USERNAME_LABEL, control=self.lhm_username))
+
+        self.lhm_password = QLineEdit()
+        self.lhm_password.setEchoMode(QLineEdit.EchoMode.Password)
+        self.lhm_password.setMaxLength(256)
+        self.lhm_password.setMinimumWidth(200)
+        self.lhm_password.setProperty("fieldStyle", "input")
+        self.lhm_password.editingFinished.connect(self.on_change)
+        self.lhm_password.textEdited.connect(self._on_lhm_password_edited)
+        self._lhm_password_card = SettingCard(self.i18n.LHM_PASSWORD_LABEL, description=" ",
+                                              control=self.lhm_password)
+        section.contentLayout().addWidget(self._lhm_password_card)
+        layout.addWidget(section)
+
+        self._lhm_status_timer = QTimer(self)
+        self._lhm_status_timer.setInterval(L.STATUS_REFRESH_MS)
+        self._lhm_status_timer.timeout.connect(self.refresh_lhm_status)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if not self._lhm_password_loaded:
+            self._restore_lhm_password()
+        self.refresh_lhm_status()
+        self._lhm_status_timer.start()
+
+    def hideEvent(self, event) -> None:
+        self._lhm_status_timer.stop()
+        self._forget_lhm_password()
+        super().hideEvent(event)
+
+    def _forget_lhm_password(self) -> None:
+        """Keep the plain-text password in memory only while the page is on screen: the Settings dialog
+        is hidden, not destroyed, between uses. A pending edit is encrypted into the blob first."""
+        self._lhm_password_setting()
+        self.lhm_password.clear()
+        self._lhm_password_plain = ""
+        self._lhm_password_loaded = False
+
+    def _restore_lhm_password(self) -> None:
+        """Fill the field from the saved blob (load_settings, and every show after a hide)."""
+        blob = self._lhm_password_blob
+        plain = (secret_store.unprotect(blob) or "") if blob else ""
+        self._lhm_password_unreadable = bool(blob) and not plain
+        self._lhm_password_plain = plain
+        self._lhm_password_loaded = not self._lhm_password_unreadable
+        self.lhm_password.setText(plain)
+        self._sync_lhm_password_hint()
+
+    def _on_lhm_password_edited(self, _text: str) -> None:
+        # The user takes over: whatever is in the field now (even empty) replaces an unreadable blob.
+        self._lhm_password_loaded = True
+        if self._lhm_password_unreadable:
+            self._lhm_password_unreadable = False
+            self._lhm_password_plain = None   # force a re-encrypt (or a clear) on the next read
+            self._sync_lhm_password_hint()
+
+    def _sync_lhm_password_hint(self) -> None:
+        self._lhm_password_card.set_description(
+            self.i18n.LHM_PASSWORD_UNREADABLE if self._lhm_password_unreadable else " ")
+
+    def _on_lhm_port_changed(self, _value: int = 0) -> None:
+        self.lhm_web_server_hint.setText(self.i18n.LHM_WEB_SERVER_HINT.format(port=self.lhm_port.value()))
+        self.refresh_lhm_status()
+        self.on_change()
+
+    def lhm_status_text(self, status: Optional[str], status_port: Optional[int]) -> str:
+        """What the LHM client's last attempt found, for the port in the field (a status for another
+        port describes the old setting, not this one)."""
+        L = constants.lhm
+        port = int(self.lhm_port.value())
+        if status is None or status_port != port:
+            return ""
+        key = {
+            L.STATUS_OK: "LHM_STATUS_CONNECTED",
+            L.STATUS_NOT_FOUND: "LHM_STATUS_NOT_FOUND",
+            L.STATUS_AUTH_REQUIRED: "LHM_STATUS_AUTH_REQUIRED",
+            L.STATUS_AUTH_FAILED: "LHM_STATUS_AUTH_FAILED",
+            L.STATUS_OTHER: "LHM_STATUS_OTHER",
+        }.get(status)
+        return getattr(self.i18n, key).format(port=port) if key else ""
+
+    def refresh_lhm_status(self) -> None:
+        try:
+            result = self.lhm_status_provider()
+        except Exception:
+            result = None
+        status, port = result if result else (None, None)
+        text = self.lhm_status_text(status, port) or " "
+        # Polled every second: touch the card only on a change (set_description relays out the card
+        # and resets its accessible description).
+        if text != self._lhm_status_shown:
+            self._lhm_status_shown = text
+            self._lhm_port_card.set_description(text)
+
+    def _lhm_password_setting(self) -> str:
+        """The password field as config stores it: a DPAPI blob, re-made only when the text changed.
+        While the field does not hold the user's password (wiped on hide, or the blob is unreadable
+        here), the saved blob is kept as it is."""
+        if not self._lhm_password_loaded:
+            return self._lhm_password_blob
+        text = self.lhm_password.text()
+        if text != self._lhm_password_plain:
+            self._lhm_password_plain = text
+            self._lhm_password_blob = secret_store.protect(text) if text else ""
+        return self._lhm_password_blob
+
     def load_settings(self, config: Dict[str, Any]):
         # Block signals to prevent setChecked from triggering _on_monitor_toggled
         # which would auto-switch the display mode dropdown unexpectedly during load.
@@ -265,6 +413,23 @@ class HardwarePage(QWidget):
         self._load_gpu_adapters(str(config.get("gpu_adapter", constants.gpu.ADAPTER_AUTO) or ""))
         self._show_throttle(float(config.get("throttle_temp_c", 0) or 0),
                             self.temperature_unit.currentData())
+
+        L = constants.lhm
+        try:
+            lhm_port = int(config.get("lhm_port", L.HTTP_PORT))
+        except (TypeError, ValueError):
+            lhm_port = L.HTTP_PORT
+        self.lhm_port.blockSignals(True)
+        self.lhm_port.setValue(lhm_port if L.MIN_PORT <= lhm_port <= L.MAX_PORT else L.HTTP_PORT)
+        self.lhm_port.blockSignals(False)
+        self.lhm_web_server_hint.setText(self.i18n.LHM_WEB_SERVER_HINT.format(port=self.lhm_port.value()))
+        self.lhm_username.setText(str(config.get("lhm_username", "") or ""))
+        # A blob this Windows user cannot decrypt (a config copied from another account or PC, DPAPI
+        # broken) shows as an empty field with a hint, and is KEPT until the user types a new password
+        # or clears the field (secret_store logs a WARNING once).
+        self._lhm_password_blob = str(config.get("lhm_password_protected", "") or "")
+        self._restore_lhm_password()
+        self.refresh_lhm_status()
 
         self.monitor_cpu.blockSignals(False)
         self.monitor_gpu.blockSignals(False)
@@ -468,4 +633,7 @@ class HardwarePage(QWidget):
             "throttle_temp_c": self._throttle_c(),
             "temperature_unit": self.temperature_unit.currentData() or constants.hardware.temperature.CELSIUS,
             "gpu_adapter": str(self.gpu_adapter.currentData() or constants.gpu.ADAPTER_AUTO),
+            "lhm_port": int(self.lhm_port.value()),
+            "lhm_username": self.lhm_username.text(),
+            "lhm_password_protected": self._lhm_password_setting(),
         }

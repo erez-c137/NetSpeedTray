@@ -308,7 +308,8 @@ class SettingsDialog(QDialog):
             self.units_page = self.appearance_page.units_section
 
             self.hardware_page = HardwarePage(self.i18n, self._schedule_settings_update,
-                                              self._open_color_dialog)
+                                              self._open_color_dialog,
+                                              lhm_status_provider=self._lhm_status)
             self.interfaces_page = InterfacesPage(
                 self.i18n,
                 self.available_interfaces,
@@ -561,6 +562,12 @@ class SettingsDialog(QDialog):
         # The emit applied the settings synchronously (incl. starting/stopping the metrics endpoint),
         # so the endpoint's status now describes what the user just chose.
         self._refresh_metrics_status()
+
+    def _lhm_status(self):
+        """(status, port) of the running LibreHardwareMonitor client, for Settings > Hardware."""
+        mt = getattr(self.parent_widget, "monitor_thread", None)
+        status, port = getattr(mt, "lhm_status", None), getattr(mt, "lhm_port", None)
+        return (status, port) if isinstance(status, str) and isinstance(port, int) else None
 
     def _refresh_metrics_status(self) -> None:
         """Show the local metrics endpoint's live status (listening / port in use) under its address."""
