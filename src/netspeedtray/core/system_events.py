@@ -228,7 +228,9 @@ class SystemEventHandler(QObject):
         quiet spell emits at once (a burial is undone within the same frame or so); changes
         inside the next ZORDER_RECHECK_MIN_INTERVAL_MS collapse into one trailing emit at the
         end of the window, so a burst - a window animating, a flyout opening - costs at most
-        a handful of checks a second and the final Z-order is always checked.
+        one check a frame and the final Z-order is always checked. The window is one frame
+        (16 ms) because a Win10 maximize / restore buries the widget 10-20 ms into its burst,
+        after the leading-edge check (PR #424, pasharm).
         """
         if self._is_paused:
             return
