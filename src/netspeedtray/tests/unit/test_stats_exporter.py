@@ -170,6 +170,34 @@ def test_rollup_window_labels_network_values_as_bucket_peaks(out):
     assert dl and {r["aggregation"] for r in dl} == {"hour_max"}
 
 
+def test_first_bucket_straddling_the_window_start_is_kept(out):
+    """Review item 8: the reader bins by floor, so a 10:37 window's first hour bucket is labelled
+    10:00 - and the time-series file dropped it (and its traffic). Kept, clipped to the window start."""
+    start, end = datetime(2026, 6, 21, 10, 37), datetime(2026, 6, 28, 10, 37)
+
+    class _Week(_WS):
+        def summarize_network(self, direction, s, e, iface, poll):
+            return summarize_rollup([1e6], [5e6], [3600], tier="hour") if direction == "download" \
+                else summarize_raw([])
+
+        def get_speed_history(self, s, e, iface, resolution='auto', **_kw):
+            first = datetime(2026, 6, 21, 10, 0)       # floor(10:37) - holds 10:37-10:59 rows only
+            return [(first, 2e6, 9e6), (first + timedelta(hours=1), 1e6, 4e6), (e, 0.0, 0.0)]   # + end pad
+
+        def get_hardware_history(self, stat, s, e):
+            return [(datetime(2026, 6, 21, 10, 0), 50.0), (datetime(2026, 6, 21, 11, 0), 60.0)] \
+                if stat == "cpu" else []
+
+    paths = SE.export_window(_Week(), start, end, "Week", out, "nst")
+    rows = _rows(paths["raw_csv"])
+    dl = [r for r in rows if r["metric"] == "download"]
+    lo = str(int(start.timestamp()))
+    assert dl[0]["timestamp_unix"] == lo and float(dl[0]["value"]) == pytest.approx(72.0)
+    assert all(float(r["value"]) > 0 for r in dl)            # the zero edge pads are gone
+    cpu = [r for r in rows if r["metric"] == "cpu"]
+    assert cpu[0]["timestamp_unix"] == lo and float(cpu[0]["value"]) == 50.0
+
+
 def test_export_never_waits_for_the_db_flush(tmp_path):
     """The interactive export runs on the GUI thread: no flush barrier per network metric
     (2.2.0-beta.1 lifecycle review)."""

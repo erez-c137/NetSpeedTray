@@ -57,7 +57,9 @@ _SUMMARY_FIELDS = [
 # keep per-bucket maxima; across all interfaces it is the sum of each one's peak, so an upper bound
 # on the combined peak); "minute_avg" / "hour_avg" = a hardware bucket's mean. For windows past
 # the raw tier the file used to hold minute peaks under a bare "value" header - with zero rows
-# padded onto both window edges - beside a summary computed from raw samples.
+# padded onto both window edges - beside a summary computed from raw samples. A bucket that starts
+# before the window but holds rows inside it (the first minute / hour of the window) is kept, with
+# its timestamp clipped to the window start; its value comes from in-window rows only.
 _RAW_FIELDS = ["timestamp_unix", "timestamp_iso", "metric", "value", "aggregation"]
 
 
@@ -88,20 +90,22 @@ def _hw_aggregation(start: datetime, end: datetime) -> str:
 
 def _net_rows(widget_state, start: datetime, end: datetime, interface: Optional[str], res: str):
     """Stored network rows for [start, end] at ``res``, WITHOUT the reader's graph padding. The reader
-    pads a bounded window with zero rows exactly at its edges (for the graph's gap detection); asking
-    for one bucket more on each side puts those pads outside the window, where _in_window drops them."""
-    from datetime import timedelta
-    pad = timedelta(seconds={"raw": 1, "minute": 60, "hour": 3600, "day": 86400}.get(res, 60))
-    return widget_state.get_speed_history(start - pad, end + pad, interface, resolution=res,
-                                          wait_for_flush=False)
+    reads only rows inside the window (so even the first bucket's value is in-window), then pads a
+    bounded window with zero rows at its edges for the graph's gap detection. The history never
+    stores an all-zero row (the v8 writer skips them), so an all-zero row here is that padding."""
+    rows = widget_state.get_speed_history(start, end, interface, resolution=res, wait_for_flush=False)
+    return [r for r in rows if (r[1] or r[2])]
 
 
 def _in_window(rows, start: datetime, end: datetime):
+    """(timestamp, row) for rows whose bucket overlaps [start, end]. The reader bins by floor, so the
+    window's first bucket can start before the window (e.g. 10:00 for a 10:37 start); it holds only
+    in-window rows and is kept, its timestamp clipped to the window start (review item 8)."""
     lo, hi = int(start.timestamp()), int(end.timestamp())
     for row in rows:
         tsec = _ts(row[0])
-        if lo <= tsec <= hi:
-            yield tsec, row
+        if tsec <= hi:
+            yield max(tsec, lo), row
 
 
 def _bps_to_mbps(v: Optional[float]) -> Optional[float]:
