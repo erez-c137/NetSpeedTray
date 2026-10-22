@@ -182,6 +182,8 @@ def fake_wts(monkeypatch):
     import win32ts
     monkeypatch.setattr(monitor, "_current_user_sid", lambda: MY_SID)
     monkeypatch.setattr(monitor, "_LEGACY_RECHECK_DELAY_S", 0.0)
+    monkeypatch.setattr(monitor, "_LEGACY_RECHECK_WINDOW_S", 0.0)
+    monkeypatch.setattr(monitor, "_any_established", lambda pids: False)   # fake PIDs may be real
     monkeypatch.setattr(win32security, "ConvertSidToStringSid", lambda sid: sid.s)
     state = {"procs": [], "cmdlines": {}}
     monkeypatch.setattr(win32ts, "WTSEnumerateProcesses",
@@ -222,17 +224,51 @@ def test_headless_runs_are_ignored_but_unreadable_ones_count(fake_wts):
 
 def test_an_old_copy_that_exits_during_the_recheck_does_not_block(fake_wts, monkeypatch):
     """Old + new launched together while another user holds the legacy name: the old one exits on
-    seeing it held; the new one must not exit too because it saw the old one for an instant."""
-    seen = []
+    seeing it held; the new one must not exit too because it saw the old one for an instant. At a
+    cold logon that exit can take seconds, so it is polled, not checked once."""
+    polls = []
 
-    def sleep(_s):
-        seen.append(_s)
-        fake_wts["procs"] = []                                         # the old copy is gone
-    monkeypatch.setattr(monitor, "_LEGACY_RECHECK_DELAY_S", 1.5)
-    monkeypatch.setattr(monitor.time, "sleep", sleep)
+    def sleep(s):
+        polls.append(s)
+        if len(polls) == 4:
+            fake_wts["procs"] = []                                     # gone on the 4th poll (2 s)
+    clock = [0.0]
+    monkeypatch.setattr(monitor, "_LEGACY_RECHECK_DELAY_S", 0.5)
+    monkeypatch.setattr(monitor, "_LEGACY_RECHECK_WINDOW_S", 5.0)
+    monkeypatch.setattr(monitor.time, "sleep", lambda s: (sleep(s), clock.__setitem__(0, clock[0] + s)))
+    monkeypatch.setattr(monitor.time, "monotonic", lambda: clock[0])
     fake_wts["procs"] = [(1, 80, "NetSpeedTray.exe", MY_SID)]
     assert monitor._legacy_instance_of_this_user() is False
-    assert seen == [1.5]
+    assert polls == [0.5] * 4
+
+
+def test_a_copy_still_there_after_the_window_blocks(fake_wts, monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr(monitor, "_LEGACY_RECHECK_DELAY_S", 0.5)
+    monkeypatch.setattr(monitor, "_LEGACY_RECHECK_WINDOW_S", 5.0)
+    monkeypatch.setattr(monitor.time, "sleep", lambda s: clock.__setitem__(0, clock[0] + s))
+    monkeypatch.setattr(monitor.time, "monotonic", lambda: clock[0])
+    fake_wts["procs"] = [(1, 81, "NetSpeedTray.exe", MY_SID)]
+    assert monitor._legacy_instance_of_this_user() is True
+    assert 5.0 <= clock[0] <= 5.5, "bounded: about the window, no longer"
+
+
+def test_an_established_old_copy_blocks_without_waiting(fake_wts, monkeypatch):
+    monkeypatch.setattr(monitor, "_any_established", lambda pids: True)
+    monkeypatch.setattr(monitor.time, "sleep", lambda s: pytest.fail("waited for an established copy"))
+    fake_wts["procs"] = [(1, 82, "NetSpeedTray.exe", MY_SID)]
+    assert monitor._legacy_instance_of_this_user() is True
+
+
+def test_established_means_started_well_before_us():
+    import psutil
+    parent = os.getppid()
+    try:
+        older = psutil.Process(parent).create_time() <= psutil.Process(os.getpid()).create_time() - 10
+    except psutil.Error:
+        pytest.skip("parent process not readable")
+    assert monitor._any_established([parent]) is older
+    assert monitor._any_established([os.getpid()]) is False
 
 
 def test_without_wts_the_psutil_scan_answers(monkeypatch):

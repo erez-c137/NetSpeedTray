@@ -82,7 +82,12 @@ _HEADLESS_FLAGS = ("--apply-update", "--shutdown", "--export-csv")
 # A legacy (pre-2.2) instance found at startup is re-checked once after this long before the launch
 # gives way to it: an old and a new copy started at the same moment (a Run key plus a pinned
 # shortcut) would otherwise each see the other and BOTH exit.
-_LEGACY_RECHECK_DELAY_S = 1.5
+_LEGACY_RECHECK_DELAY_S = 0.5      # poll interval while that copy may still be exiting
+_LEGACY_RECHECK_WINDOW_S = 5.0     # give up waiting (it is running) after this long - a cold logon
+                                   # can make an exiting old copy slow to go
+# An old copy started this much earlier than us is an established instance, not a racing one: no
+# wait at all.
+_LEGACY_ESTABLISHED_S = 10.0
 
 
 def _current_user_sid() -> str:
@@ -179,9 +184,10 @@ def _legacy_instance_of_this_user() -> bool:
     another user's (or a SYSTEM one in session 0) must not stop us.
 
     WTSEnumerateProcesses first, psutil as the fallback; only when neither can answer is an
-    instance assumed (two instances on one database is the worse failure). A hit is re-checked
-    once after ``_LEGACY_RECHECK_DELAY_S``, so an old copy launched at the same moment - which
-    exits on seeing ours - does not take this one down with it."""
+    instance assumed (two instances on one database is the worse failure). A copy that started well
+    before us (``_LEGACY_ESTABLISHED_S``) is running, full stop; a younger one may be an old copy
+    launched at the same moment, which exits on seeing ours - it is polled for up to
+    ``_LEGACY_RECHECK_WINDOW_S`` (cold logons are slow) so it does not take this one down with it."""
     log = logging.getLogger("NetSpeedTray.SingleInstanceChecker")
     try:
         my_sid = _current_user_sid()
@@ -204,9 +210,36 @@ def _legacy_instance_of_this_user() -> bool:
         return True
     if not first:
         return False
-    time.sleep(_LEGACY_RECHECK_DELAY_S)
-    again = scan()
-    return True if again is None else bool(set(first) & set(again))
+    if _any_established(first):
+        return True                                   # confirmed: it was running before we started
+    deadline = time.monotonic() + _LEGACY_RECHECK_WINDOW_S
+    remaining = set(first)
+    while True:
+        time.sleep(_LEGACY_RECHECK_DELAY_S)
+        again = scan()
+        if again is None:
+            return True
+        remaining &= set(again)
+        if not remaining:
+            return False                              # the racing copy has gone
+        if time.monotonic() >= deadline:
+            return True
+
+
+def _any_established(pids: List[int]) -> bool:
+    """Did any of ``pids`` start ``_LEGACY_ESTABLISHED_S`` or more before this process?"""
+    try:
+        import psutil
+        mine = psutil.Process(os.getpid()).create_time()
+        for pid in pids:
+            try:
+                if psutil.Process(pid).create_time() <= mine - _LEGACY_ESTABLISHED_S:
+                    return True
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return False
 
 
 class SingleInstanceChecker:
@@ -223,6 +256,13 @@ class SingleInstanceChecker:
     claimed when free (an old copy started later then exits, as it always would), and when it is
     already held, this launch exits only if a NetSpeedTray process of the same user is running
     (``_legacy_instance_of_this_user``).
+
+    Name squatting (known, accepted): any process can create these names first and so make the app
+    believe it is already running - a local denial of service, not an escalation (nothing is ever
+    read from, or trusted in, the object). The per-user name can be squatted only by that user or an
+    administrator; the legacy name by anyone, which a launch survives (only the same user's
+    NetSpeedTray process blocks it). Checking that the holder IS NetSpeedTray would need the
+    owner's process, which a mutex does not reveal.
 
     This class is designed to be used as a context manager.
 
