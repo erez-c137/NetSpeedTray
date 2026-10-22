@@ -174,6 +174,30 @@ WINDOWS = _windows()
 
 # --- 1. get_speed_history ---------------------------------------------------------------------------
 
+def _expected_local_days(ws, start, end, iface):
+    """{local-midnight epoch: (up, down)} for day resolution, from the legacy reader's hour buckets
+    (raw + minute + hour tiers, the same tiers and per-bucket peaks as day resolution). Exact when
+    the local offset is a whole number of hours, so a UTC hour lies inside one local day."""
+    import time as _time
+    if any(_time.localtime(t).tm_gmtoff % 3600 for t in (0, 15_552_000)):
+        pytest.skip("oracle needs whole-hour UTC offsets (UTC hours inside local days)")
+    names = ws.get_distinct_interfaces() if iface in (None, "all") else [iface]
+    days = {}
+    for name in names:
+        peaks = {}
+        for ts, up, down in Legacy.get_speed_history(ws, start, end, interface_name=name, return_raw=True,
+                                                     resolution="hour", wait_for_flush=False):
+            if not (up or down):
+                continue
+            day = int(datetime.fromtimestamp(int(ts)).replace(hour=0, minute=0, second=0).timestamp())
+            pu, pd = peaks.get(day, (0.0, 0.0))
+            peaks[day] = (max(pu, up), max(pd, down))
+        for day, (up, down) in peaks.items():
+            su, sd = days.get(day, (0.0, 0.0))
+            days[day] = (su + up, sd + down)
+    return days
+
+
 @pytest.mark.parametrize("resolution", ["auto", "raw", "minute", "hour", "day"])
 @pytest.mark.parametrize("return_raw", [False, True])
 def test_speed_history_matches_legacy(ws, resolution, return_raw):
@@ -191,6 +215,26 @@ def test_speed_history_matches_legacy(ws, resolution, return_raw):
             kw = dict(interface_name=iface, return_raw=return_raw, resolution=resolution, wait_for_flush=False)
             old = Legacy.get_speed_history(ws, start, end, **kw)
             new = ws.get_speed_history(start, end, **kw)
+            effective = resolution if resolution != "auto" else \
+                constants.data.history_period.get_target_resolution(start, end)
+            if effective == "day":
+                # The one intended divergence (2.2 RC): day buckets now start at LOCAL midnight, not
+                # UTC midnight (which moved by an hour across DST). Compared per day against an
+                # oracle built from the frozen legacy reader's HOUR buckets, re-binned by local
+                # midnight: each interface's peak per local day, summed across interfaces as the
+                # reader does for "all". (Zero rows are the reader's edge padding and are skipped.)
+                got = {}
+                for p in new:
+                    if p[1] or p[2]:
+                        ts = int(p[0] if return_raw else p[0].timestamp())
+                        got[ts] = (p[1], p[2])
+                want = _expected_local_days(ws, start, end, iface)
+                assert set(got) == set(want), f"day buckets ({start},{end},{iface})"
+                for day, (u, d) in want.items():
+                    assert got[day][0] == pytest.approx(u) and got[day][1] == pytest.approx(d), \
+                        (datetime.fromtimestamp(day), iface)
+                checked += len(old)
+                continue
             _same(new, old, f"speed_history({start},{end},{iface},{resolution},{return_raw})")
             checked += len(old)
     assert checked > 1000

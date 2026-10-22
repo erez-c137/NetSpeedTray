@@ -6,7 +6,7 @@ A header-toggle SettingExpander (the master toggle == data_cap_enabled) over the
 """
 from typing import Any, Callable, Dict
 
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QSpinBox
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QSpinBox, QDoubleSpinBox
 
 from netspeedtray.utils.components import SettingCard, SettingExpander, Win11Toggle, Win11Segmented
 
@@ -30,7 +30,9 @@ class DataCapSettings(QWidget):
         self._expander.toggled.connect(lambda _on: self.on_change())
         body = self._expander.contentLayout()
 
-        self._cap = QSpinBox()
+        # Decimals allowed (250.5 GB plans exist); the config has always stored a float (S9).
+        self._cap = QDoubleSpinBox()
+        self._cap.setDecimals(1)
         self._cap.setRange(0, 1_000_000)
         self._cap.setSuffix(" GB")
         self._cap.valueChanged.connect(lambda _v: self.on_change())
@@ -62,7 +64,7 @@ class DataCapSettings(QWidget):
 
     def load_settings(self, config: Dict[str, Any]) -> None:
         self._expander.setChecked(bool(config.get("data_cap_enabled", False)))
-        self._cap.setValue(int(config.get("data_cap_gb", 0) or 0))
+        self._cap.setValue(float(config.get("data_cap_gb", 0) or 0))
         self._reset.setValue(int(config.get("data_cap_reset_day", 1)))
         self._count.setValue(config.get("data_cap_count", "total"))
         self._alerts.setChecked(bool(config.get("data_cap_alert_enabled", True)))

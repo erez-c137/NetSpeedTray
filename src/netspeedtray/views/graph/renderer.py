@@ -616,6 +616,8 @@ class GraphRenderer(QObject):
                     self._format_hardware_axes(stat_type)
             if stat_type in ("cpu", "gpu") and hw_styles is not None:   # the Monitor's toggle layout
                 self._draw_hw_empty_message(self.ax_download, period_key, hw_styles, roles=(stat_type,))
+            elif stat_type == "network":
+                self._draw_net_empty_message(period_key, start_time, end_time, hw_styles)
             self.canvas.draw_idle()
             return None
 
@@ -626,6 +628,7 @@ class GraphRenderer(QObject):
         elif stat_type == "hwseparate":
             self._render_hwseparate(history_data, start_time, end_time, period_key, hw_styles)
         elif stat_type == "network":
+            self._clear_net_empty_message()
             safe_data = [
                 (ts.timestamp() if isinstance(ts, datetime) else float(ts), float(up), float(dn))
                 for ts, up, dn in history_data
@@ -641,6 +644,10 @@ class GraphRenderer(QObject):
             plotted_ts, plotted_up, plotted_down = self._plot_high_res(plot_datetimes_array, upload_mbps, download_mbps, target_end_time=end_time)
             self._configure_axes(start_time, end_time, period_key, timestamps, plotted_up, plotted_down,
                                  plotted_ts=plotted_ts)
+            if not raw_data[:, 1:].any():
+                # Nothing but the reader's zero padding (an empty database / a range before the first
+                # sample): say so, rather than draw a flat 0 line that reads as "no traffic".
+                self._draw_net_empty_message(period_key, start_time, end_time, hw_styles)
         elif stat_type in ("cpu", "gpu") and hw_styles is not None:
             # Monitor's "toggle" layout: a single CPU- or GPU-only line that must honor the same
             # display settings as combined/separate (per-role color, Smooth, fixed/auto y-axis). The
@@ -918,6 +925,44 @@ class GraphRenderer(QObject):
             for text in legend.get_texts():
                 text.set_color(self._current_text_color)
 
+    def _draw_net_empty_message(self, period_key, start_time=None, end_time=None, hw_styles=None) -> None:
+        """The centered note on a network graph with no traffic for the range, saying WHY honestly:
+        the live Session view is still collecting; nothing recorded at all yet; the range ends before
+        the first record ("History starts <date>"); or history exists before it and this period simply
+        had none - the PC was off, idle or paused (the history keeps no all-zero rows), which is not
+        "not enough history". ``hw_styles["earliest"]`` (GraphHost) is the first stored record."""
+        earliest = (hw_styles or {}).get("earliest")
+        if period_key == "TIMELINE_SESSION":
+            text = getattr(self.i18n, "COLLECTING_DATA_MESSAGE", "Collecting data…")
+        elif earliest is None:
+            text = getattr(self.i18n, "NET_GRAPH_NO_HISTORY_YET", "No history recorded yet.")
+        elif end_time is not None and earliest > end_time:
+            from netspeedtray.views.graph.time_axis import localized_strftime
+            lang = getattr(self.i18n, "language", None)
+            date = localized_strftime(earliest, "%b %d", lang, shape=False)
+            if end_time.year != earliest.year:
+                date = f"{date} {earliest.year}"
+            text = getattr(self.i18n, "NET_GRAPH_HISTORY_STARTS", "History starts {date}.").format(date=date)
+        else:
+            text = getattr(self.i18n, "NET_GRAPH_NO_TRAFFIC",
+                           "No traffic recorded in this period.\nThe PC was off, idle or paused.")
+        self._clear_net_empty_message()
+        ax = self.ax_download
+        self._net_empty_artist = ax.text(
+            0.5, 0.5, self._lbl(text), transform=ax.transAxes, ha="center", va="center",
+            multialignment="center", color=self._current_text_color, alpha=0.55, fontsize=10)
+
+    def _clear_net_empty_message(self) -> None:
+        """The network lines are updated in place between renders, so the note must be taken down
+        explicitly once real data arrives."""
+        artist = getattr(self, "_net_empty_artist", None)
+        self._net_empty_artist = None
+        if artist is not None:
+            try:
+                artist.remove()
+            except (ValueError, NotImplementedError, AttributeError):
+                pass   # already gone with a cleared figure / axes
+
     def _draw_hw_empty_message(self, ax, period_key, hw_styles=None, roles=("cpu", "gpu")) -> None:
         """The centered note on an empty hardware graph. A fresh session is still collecting; but a
         ranged view whose ``roles`` are all unrecorded will never fill, so it says where to turn
@@ -926,12 +971,14 @@ class GraphRenderer(QObject):
         reasons = [((hw_styles or {}).get("history_off") or {}).get(r) for r in roles]
         if period_key == "TIMELINE_SESSION" or not reasons or None in reasons:
             text = getattr(self.i18n, "COLLECTING_DATA_MESSAGE", "Collecting data…")
-        elif "monitor" in reasons:
-            text = getattr(self.i18n, "HARDWARE_HISTORY_OFF_MESSAGE",
-                           "Hardware history is off.\nTurn on CPU or GPU monitoring in Settings → Hardware.")
-        else:
+        elif "record" in reasons:
+            # A role IS monitored but not recorded: the record switch is the reason (M6). Turning on
+            # the other monitor - what the old "monitor"-first order said - would record nothing either.
             text = getattr(self.i18n, "HARDWARE_HISTORY_RECORD_OFF_MESSAGE",
                            "Hardware history is off.\nTurn on Record hardware history in Settings → Advanced.")
+        else:
+            text = getattr(self.i18n, "HARDWARE_HISTORY_OFF_MESSAGE",
+                           "Hardware history is off.\nTurn on CPU or GPU monitoring in Settings → Hardware.")
         ax.text(0.5, 0.5, self._lbl(text), transform=ax.transAxes, ha="center", va="center",
                 multialignment="center", color=self._current_text_color, alpha=0.55, fontsize=10)
 

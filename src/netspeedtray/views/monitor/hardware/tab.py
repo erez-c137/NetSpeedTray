@@ -170,6 +170,7 @@ class HardwareTab(QWidget):
         # The period is shared with Network - re-sync our timeline dropdown to the host's current value
         # so a change made on the Network tab is reflected here.
         try:
+            self._host.sync_period_from_config()   # a period picked on the Overview (M1)
             pv = getattr(self._host, "_history_period_value", None)
             if pv is not None:
                 key = constants.data.history_period.PERIOD_MAP.get(int(pv), self._period_key)

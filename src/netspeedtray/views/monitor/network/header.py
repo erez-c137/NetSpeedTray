@@ -10,9 +10,10 @@ from __future__ import annotations
 
 from typing import Dict, Optional, Tuple
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QActionGroup
-from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QToolButton, QMenu
+from PyQt6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QSizePolicy,
+                             QToolButton, QMenu)
 
 from netspeedtray import constants
 from netspeedtray.utils import styles as su
@@ -69,6 +70,48 @@ class _ClampedNote(QLabel):
     def resizeEvent(self, event) -> None:
         self._clamp(event.size().width())
         super().resizeEvent(event)
+
+
+class _ElidingMenuButton(QToolButton):
+    """A dropdown button whose label elides ("Ethernet 3 (Realt…  ▾") when the band is short of room,
+    instead of being squeezed under its neighbours (M9). It asks for its full label's width, but can
+    shrink to ``min_width``; the tooltip always carries the whole name."""
+
+    _CHEVRON = "    \u25be"
+    _nst_elides = True   # the label elides by design; the rc layout harness skips it in its clip check
+
+    def __init__(self, min_width: int, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._label = ""
+        self._min_w = int(min_width)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)   # may shrink to min
+
+    def set_label(self, label: str) -> None:
+        self._label = str(label)
+        self.setToolTip(self._label)
+        self.setAccessibleName(self._label)
+        self._apply()
+        self.updateGeometry()
+
+    def _chrome(self) -> int:
+        return 26 + self.fontMetrics().horizontalAdvance(self._CHEVRON)   # padding + border + chevron
+
+    def sizeHint(self) -> QSize:
+        h = super().sizeHint().height()
+        return QSize(max(self._min_w, self._chrome() + self.fontMetrics().horizontalAdvance(self._label)), h)
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(self._min_w, super().minimumSizeHint().height())
+
+    def _apply(self) -> None:
+        avail = max(10, self.width() - self._chrome())
+        text = self.fontMetrics().elidedText(self._label, Qt.TextElideMode.ElideRight, avail)
+        if text + self._CHEVRON != self.text():
+            self.setText(text + self._CHEVRON)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._apply()
 
 
 def _period_value(period_key: str) -> int:
@@ -146,7 +189,10 @@ class NetworkHeader(QWidget):
         root = QHBoxLayout(self)
         _m = constants.layout.MONITOR_BODY_MARGIN
         root.setContentsMargins(_m, 0, _m, 0)
-        root.setSpacing(32)
+        root.setSpacing(self._SPACING_WIDE)
+        self._compact = False
+        self._check_full_w: Optional[int] = None   # cached measurement (see _full_check_width)
+        self._content_w = None                     # what _refit last fitted for
 
         self._down = self._stat_block(self._tr("DOWNLOAD_LABEL", "Download"), "↓", c)
         self._up = self._stat_block(self._tr("UPLOAD_LABEL", "Upload"), "↑", c)
@@ -184,12 +230,13 @@ class NetworkHeader(QWidget):
         # arrow when styled and renders as a bare box; this also keeps the two right-side controls the
         # same height + look - the owner's consistency note).
         self._iface_value = "all"
-        self._iface_btn = QToolButton()
+        self._iface_btn = _ElidingMenuButton(constants.layout.MONITOR_IFACE_BUTTON_MIN_WIDTH)
         self._iface_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._iface_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self._iface_btn.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._iface_btn.setFont(su.font(tokens.TYPE_BODY))
-        self._iface_btn.setMinimumWidth(190)
+        # Up to its full name; past that it elides rather than overlapping the timeline (M9).
+        self._iface_btn.setMaximumWidth(constants.layout.MONITOR_IFACE_BUTTON_MAX_WIDTH)
         _r = tokens.RADIUS_CONTROL
         self._iface_btn.setStyleSheet(
             f"QToolButton {{ background: {c['subtle_fill']}; color: {c['text_primary']};"
@@ -219,6 +266,79 @@ class NetworkHeader(QWidget):
             self._live = LiveToggle(graph_host, i18n)
             controls.addWidget(self._live, 0, Qt.AlignmentFlag.AlignVCenter)
 
+    # Gap between the totals blocks: roomy normally, tighter when the window is near its minimum.
+    _SPACING_WIDE = 32
+    _SPACING_COMPACT = 16
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._fit(event.size().width())
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._fit(self.width())
+
+    def changeEvent(self, event) -> None:
+        # A font / style / language change re-measures the full "Check connection" button.
+        if event.type() in (QEvent.Type.FontChange, QEvent.Type.StyleChange, QEvent.Type.LanguageChange):
+            self._check_full_w = None
+            self._content_w = None
+            if self.isVisible():
+                self._fit(self.width())
+        super().changeEvent(event)
+
+    def _refit(self) -> None:
+        """Content changed (totals / interface name). Re-fit only if that changed the room the
+        content asks for - a totals tick that keeps the same width costs one comparison, not a
+        layout pass (review item 7)."""
+        if not self.isVisible():
+            return
+        content_w = (self._down[1].sizeHint().width(), self._up[1].sizeHint().width(),
+                     self._iface_btn.sizeHint().width(), self._timeline.sizeHint().width(),
+                     self._history_note.isVisible())
+        if content_w == self._content_w:
+            return
+        self._content_w = content_w
+        self.layout().activate()
+        self._fit(self.width())
+
+    def _full_check_width(self) -> int:
+        """The width "Check connection" asks for WITH its label - measured once (cached until a
+        font / style / language change) instead of building a throwaway button on every fit."""
+        if self._check_full_w is None:
+            if not self._compact:
+                self._check_btn.ensurePolished()   # its stylesheet padding is part of the width
+                self._check_full_w = self._check_btn.sizeHint().width()
+            else:
+                probe = QToolButton()
+                probe.setFont(self._check_btn.font())
+                probe.setStyleSheet(self._check_btn.styleSheet())
+                probe.setIcon(self._check_btn.icon())
+                probe.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+                probe.setText(self._tr("CHECK_CONN_ACTION", "Check connection"))
+                self._check_full_w = probe.sizeHint().width()
+                probe.deleteLater()
+        return self._check_full_w
+
+    def _fit(self, width: int) -> None:
+        """Below the width the full band needs, go compact: "Check connection" shows its icon only
+        (the label moves to the tooltip / accessible name) and the totals sit closer, so at the
+        Monitor's minimum width in every locale nothing overlaps or clips (M9)."""
+        check_text = self._tr("CHECK_CONN_ACTION", "Check connection")
+        lay = self.layout()
+        cur_min = lay.minimumSize().width()
+        cur_check = self._check_btn.sizeHint().width()
+        spacing_extra = (self._SPACING_WIDE - lay.spacing()) * max(0, lay.count() - 1)
+        full_needed = cur_min - cur_check + self._full_check_width() + spacing_extra
+        compact = full_needed > width
+        if compact == self._compact:
+            return
+        self._compact = compact
+        self._check_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly if compact
+                                           else Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self._check_btn.setAccessibleName(check_text)
+        lay.setSpacing(self._SPACING_COMPACT if compact else self._SPACING_WIDE)
+
     def _stat_block(self, label: str, glyph: str, c: dict) -> Tuple[QVBoxLayout, QLabel]:
         col = QVBoxLayout()
         col.setSpacing(0)
@@ -247,6 +367,7 @@ class NetworkHeader(QWidget):
         self._up[1].setText(f"↑ {self._fmt(uv)} {uu}")
         self._history_note.setVisible(bool(reconstructed) and bool(self._history_note.full_text()))
         # The timeline dropdown already names the window, so the totals no longer need a separate caption.
+        self._refit()
 
     def set_period_key(self, period_key: str) -> None:
         self._timeline.set_period_index(_period_value(period_key), emit=False)
@@ -267,6 +388,7 @@ class NetworkHeader(QWidget):
             act.triggered.connect(lambda _checked=False, d=data, l=label: self._select_iface(d, l))
             group.addAction(act)
         self._sync_iface_text()
+        self._refit()
 
     def _select_iface(self, data: str, label: str) -> None:
         if data != self._iface_value:
@@ -277,8 +399,7 @@ class NetworkHeader(QWidget):
     def _sync_iface_text(self) -> None:
         label = (self._tr("ALL_INTERFACES_AGGREGATED_LABEL", "All Interfaces")
                  if self._iface_value == "all" else str(self._iface_value))
-        self._iface_btn.setText(f"{label}    ▾")   # same chevron-in-text idiom as TimelineSelector
-        self._iface_btn.setAccessibleName(label)
+        self._iface_btn.set_label(label)   # same chevron-in-text idiom as TimelineSelector, elided
 
     def _fmt(self, value: float) -> str:
         s = f"{value:.1f}"

@@ -11,7 +11,7 @@ from netspeedtray import constants
 from netspeedtray.constants.styles import styles as tokens
 from netspeedtray.utils.components import Win11Toggle, SettingCard
 from netspeedtray.utils.helpers import get_unit_labels_for_type
-from netspeedtray.views.settings.pages._fluent import section_header, page_layout
+from netspeedtray.views.settings.pages._fluent import section_header, page_layout, LastValidHex
 
 class ColorsPage(QWidget):
     def __init__(self, i18n, on_change: Callable[[], None], color_dialog_callback: Callable[[str], None]):
@@ -20,6 +20,11 @@ class ColorsPage(QWidget):
         self.on_change = on_change
         self.open_color_dialog = color_dialog_callback
         
+        # Last complete #RRGGBB per colour field (S8): a half-typed hex is never applied or saved.
+        d = constants.config.defaults
+        self._hex = LastValidHex({"high_speed_color": d.DEFAULT_HIGH_SPEED_COLOR,
+                                  "low_speed_color": d.DEFAULT_LOW_SPEED_COLOR})
+
         self._setup_ui()
 
     def _setup_ui(self):
@@ -61,7 +66,7 @@ class ColorsPage(QWidget):
             inp = QLineEdit()
             inp.setMaxLength(7)
             inp.setFixedWidth(90)
-            inp.textChanged.connect(lambda: self.on_change())
+            inp.textChanged.connect(lambda t, k=key: self._on_hex_edited(k, t))
             setattr(self, f"{key}_color_button", btn)
             setattr(self, f"{key}_color_input", inp)
             swatch = QWidget()
@@ -90,6 +95,13 @@ class ColorsPage(QWidget):
             threshold_spin.setSuffix(threshold_suffix)
             threshold_spin.setValue(threshold)
 
+    def set_unit_type(self, unit_type: str) -> None:
+        """The data-format unit changed in this session: relabel the thresholds (S9 - they kept the
+        unit the dialog opened with until the next open)."""
+        suffix = self._threshold_suffix({"unit_type": unit_type})
+        for key in ("high_speed", "low_speed"):
+            getattr(self, f"{key}_threshold").setSuffix(suffix)
+
     def _threshold_suffix(self, config: Dict[str, Any]) -> str:
         """The Mbps-position unit label for the active unit type (e.g. ' Mbps', ' MB/s', ' Mibps')."""
         unit_type = str(config.get("unit_type", constants.config.defaults.DEFAULT_UNIT_TYPE))
@@ -101,9 +113,17 @@ class ColorsPage(QWidget):
             "color_coding": self.enable_colors.isChecked(),
             "high_speed_threshold": self.high_speed_threshold.value(),
             "low_speed_threshold": self.low_speed_threshold.value(),
-            "high_speed_color": self.high_speed_color_input.text(),
-            "low_speed_color": self.low_speed_color_input.text()
+            "high_speed_color": self._hex.get("high_speed_color", self.high_speed_color_input.text()),
+            "low_speed_color": self._hex.get("low_speed_color", self.low_speed_color_input.text()),
         }
+
+    def _on_hex_edited(self, key: str, text: str) -> None:
+        """Only a complete #RRGGBB repaints the swatch and reaches the live preview (S8)."""
+        if not self._hex.remember(f"{key}_color", text):
+            return
+        getattr(self, f"{key}_color_button").setStyleSheet(
+            f"background-color: {text.strip()}; border: 1px solid #5A5A5A; border-radius: 4px;")
+        self.on_change()
 
     def _on_color_coding_toggled(self, checked: bool):
         self.color_container.setVisible(checked)

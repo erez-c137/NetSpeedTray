@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButt
 from netspeedtray import constants
 from netspeedtray.constants.styles import styles as tokens
 from netspeedtray.utils.components import Win11Slider, Win11Toggle, ArrowStylePicker, SettingCard
-from netspeedtray.views.settings.pages._fluent import section_header, page_layout
+from netspeedtray.views.settings.pages._fluent import section_header, page_layout, LastValidHex
 from netspeedtray.views.settings.pages.units import UnitsPage
 from netspeedtray.views.settings.pages.colors import ColorsPage
 
@@ -33,6 +33,13 @@ class AppearancePage(QWidget):
         # State - Arrow Font (Active family only, weight is fixed/ignored for symbols)
         self.current_arrow_font = QFont()
         
+        # Last complete #RRGGBB per colour field (S8): a half-typed hex is never applied or saved.
+        d = constants.config.defaults
+        self._hex = LastValidHex({"default_color": d.DEFAULT_COLOR,
+                                  "background_color": d.DEFAULT_BACKGROUND_COLOR,
+                                  "arrow_up_color": d.DEFAULT_ARROW_UP_COLOR,
+                                  "arrow_down_color": d.DEFAULT_ARROW_DOWN_COLOR})
+
         self._setup_ui()
 
     def _setup_ui(self):
@@ -62,7 +69,7 @@ class AppearancePage(QWidget):
         self.default_color_input.setPlaceholderText("#FFFFFF")
         self.default_color_input.setMaxLength(7)
         self.default_color_input.setFixedWidth(90)
-        self.default_color_input.textChanged.connect(lambda: self.on_change())
+        self.default_color_input.textChanged.connect(lambda t: self._on_hex_edited("default", t))
         layout.addWidget(SettingCard(self.i18n.DEFAULT_COLOR_LABEL,
                                      control=self._row(self.default_color_button, self.default_color_input)))
 
@@ -98,7 +105,7 @@ class AppearancePage(QWidget):
         self.background_color_input = QLineEdit()
         self.background_color_input.setMaxLength(7)
         self.background_color_input.setFixedWidth(90)
-        self.background_color_input.textChanged.connect(lambda: self.on_change())
+        self.background_color_input.textChanged.connect(lambda t: self._on_hex_edited("background", t))
         layout.addWidget(SettingCard(
             self.i18n.BACKGROUND_COLOR_LABEL,
             control=self._row(self.background_color_button, self.background_color_input)))
@@ -166,7 +173,7 @@ class AppearancePage(QWidget):
             line = QLineEdit()
             line.setMaxLength(7)
             line.setFixedWidth(90)
-            line.textChanged.connect(lambda: self.on_change())
+            line.textChanged.connect(lambda t, k=key: self._on_hex_edited(k, t))
             setattr(self, f"{key}_color_button", button)
             setattr(self, f"{key}_color_input", line)
             arrow_c_layout.addWidget(SettingCard(label, control=self._row(button, line)))
@@ -233,13 +240,13 @@ class AppearancePage(QWidget):
             "font_family": self.font_family_label.text(),
             "font_size": int(self.font_size.value()),
             "font_weight": self.allowed_font_weights[self.font_weight.value()] if 0 <= self.font_weight.value() < len(self.allowed_font_weights) else 400,
-            "default_color": self.default_color_input.text(),
-            "background_color": self.background_color_input.text(),
+            "default_color": self._hex.get("default_color", self.default_color_input.text()),
+            "background_color": self._hex.get("background_color", self.background_color_input.text()),
             "background_opacity": self.bg_opacity.value(),
             # Arrow Config
             "use_custom_arrow_colors": self.use_custom_arrow_colors.isChecked(),
-            "arrow_up_color": self.arrow_up_color_input.text(),
-            "arrow_down_color": self.arrow_down_color_input.text(),
+            "arrow_up_color": self._hex.get("arrow_up_color", self.arrow_up_color_input.text()),
+            "arrow_down_color": self._hex.get("arrow_down_color", self.arrow_down_color_input.text()),
             "use_separate_arrow_font": self.use_separate_arrow_font.isChecked(),
             "arrow_font_family": self.arrow_font_family_label.text(),
             "arrow_font_size": int(self.arrow_font_size.value()),
@@ -272,6 +279,15 @@ class AppearancePage(QWidget):
             getattr(self, f"{key}_color_input").setText(hex_code)
             getattr(self, f"{key}_color_button").setStyleSheet(f"background-color: {hex_code}; border: 1px solid #5A5A5A; border-radius: 4px;")
             self.on_change()
+
+    def _on_hex_edited(self, key: str, text: str) -> None:
+        """A colour hex field changed: only a complete #RRGGBB repaints the swatch and reaches the live
+        preview; the keystrokes in between change nothing (S8)."""
+        if not self._hex.remember(f"{key}_color", text):
+            return
+        getattr(self, f"{key}_color_button").setStyleSheet(
+            f"background-color: {text.strip()}; border: 1px solid #5A5A5A; border-radius: 4px;")
+        self.on_change()
 
     def _on_font_weight_changed(self, idx: int):
         if 0 <= idx < len(self.allowed_font_weights):

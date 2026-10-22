@@ -19,7 +19,7 @@ from netspeedtray.constants.styles import styles as tokens
 from netspeedtray.utils import styles as style_utils
 from netspeedtray.utils.helpers import format_percent
 from netspeedtray.utils.components import Win11Slider, Win11Toggle, Win11ComboBox, SettingCard
-from netspeedtray.views.settings.pages._fluent import section_header, page_layout
+from netspeedtray.views.settings.pages._fluent import section_header, page_layout, as_int
 
 
 class MiniGraphSection(QWidget):
@@ -59,13 +59,15 @@ class MiniGraphSection(QWidget):
         self.history_duration.setRange(hist_min, hist_max)
         self.history_duration.setMinimumWidth(260)
         self.history_duration.valueChanged.connect(self.on_change)
-        layout.addWidget(SettingCard(self.i18n.HISTORY_DURATION_LABEL, control=self.history_duration))
+        self._duration_card = SettingCard(self.i18n.HISTORY_DURATION_LABEL, control=self.history_duration)
+        layout.addWidget(self._duration_card)
 
         self.graph_opacity = Win11Slider(editable=False)
         self.graph_opacity.setRange(constants.ui.sliders.OPACITY_MIN, constants.ui.sliders.OPACITY_MAX)
         self.graph_opacity.setMinimumWidth(260)
         self.graph_opacity.valueChanged.connect(self.on_change)
-        layout.addWidget(SettingCard(self.i18n.GRAPH_OPACITY_LABEL, control=self.graph_opacity))
+        self._opacity_card = SettingCard(self.i18n.GRAPH_OPACITY_LABEL, control=self.graph_opacity)
+        layout.addWidget(self._opacity_card)
 
         # The hardware graphs reuse the two settings right above, so the note sits under them (it used
         # to hang under Display Mode, a page away from the controls it describes).
@@ -80,14 +82,16 @@ class MiniGraphSection(QWidget):
         layout.addWidget(self._split_card)
         self.enable_graph.toggled.connect(lambda _on: self._sync_split_card())
         self.enable_graph.toggled.connect(lambda _on: self._sync_style_card())
+        self.enable_graph.toggled.connect(lambda _on: self._sync_graph_dependents())
 
         # Fixed scale (DU Meter-style): the axis tops out at the advertised plan speed instead of re-fitting
         # to the busiest recent sample. The plan speed is the one already set on the Network page, so there
         # is no second "how fast is my line" number to keep in sync. Off by default.
         self.graph_fixed_scale = Win11Toggle(label_text="")
         self.graph_fixed_scale.toggled.connect(self._on_graph_fixed_scale_toggle)
-        layout.addWidget(SettingCard(self.i18n.GRAPH_FIXED_SCALE_LABEL, self.i18n.GRAPH_FIXED_SCALE_DESC,
-                                     control=self.graph_fixed_scale))
+        self._fixed_card = SettingCard(self.i18n.GRAPH_FIXED_SCALE_LABEL, self.i18n.GRAPH_FIXED_SCALE_DESC,
+                                       control=self.graph_fixed_scale)
+        layout.addWidget(self._fixed_card)
 
         # Headroom + plan-speed line only mean something with the fixed scale on, so they sit in a
         # container shown with the toggle (same pattern as the custom arrow font/colors on Appearance).
@@ -118,8 +122,11 @@ class MiniGraphSection(QWidget):
     # --- config ------------------------------------------------------------------
     def load_settings(self, config: Dict[str, Any]) -> None:
         self.enable_graph.setChecked(config.get("graph_enabled", True))
-        self.history_duration.setValue(config.get("history_minutes", constants.config.defaults.DEFAULT_HISTORY_MINUTES))
-        self.graph_opacity.setValue(config.get("graph_opacity", constants.config.defaults.DEFAULT_GRAPH_OPACITY))
+        self.history_duration.setValue(as_int(config.get("history_minutes"),
+                                              constants.config.defaults.DEFAULT_HISTORY_MINUTES))
+        # graph_opacity may be a float on disk (schema: (int, float)); the slider takes int only.
+        self.graph_opacity.setValue(as_int(config.get("graph_opacity"),
+                                           constants.config.defaults.DEFAULT_GRAPH_OPACITY))
         d = constants.config.defaults
         self.graph_fixed_scale.setChecked(bool(config.get("graph_fixed_scale", d.DEFAULT_GRAPH_FIXED_SCALE)))
         headroom_idx = self.graph_scale_headroom.findData(
@@ -137,6 +144,7 @@ class MiniGraphSection(QWidget):
             style_idx = self.graph_style.findData(d.DEFAULT_GRAPH_STYLE)
         self.graph_style.setCurrentIndex(style_idx)
         self._sync_style_card()
+        self._sync_graph_dependents()
 
     def get_settings(self) -> Dict[str, Any]:
         return {
@@ -168,6 +176,14 @@ class MiniGraphSection(QWidget):
     def _sync_split_card(self) -> None:
         """Separate upload/download graphs split the mini graph, so gray the toggle out while it's off."""
         self._set_card_enabled(self._split_card, self.enable_graph.isChecked())
+
+    def _sync_graph_dependents(self) -> None:
+        """Timespan, opacity and the fixed scale (with its headroom / plan line) only shape the mini
+        graph, so they grey out while it is off, like the style and split cards (S9)."""
+        on = self.enable_graph.isChecked()
+        for card in (self._duration_card, self._opacity_card, self._fixed_card):
+            self._set_card_enabled(card, on)
+        self.graph_scale_container.setEnabled(on)
 
     def _sync_style_card(self) -> None:
         """The style is the mini graph's look, so it grays out while the graph is off."""

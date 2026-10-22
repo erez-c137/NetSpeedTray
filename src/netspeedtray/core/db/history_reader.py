@@ -203,6 +203,30 @@ class HistoryReader(ABC):
 
 # network_hourly_profile: (ts, rate, weight) rows from every tier -> weighted mean rate per LOCAL clock
 # hour. SQLite's 'localtime' is the C runtime's, the same conversion datetime.fromtimestamp() makes.
+def _local_bin_sql(col: str, interval: int) -> str:
+    """SQL for the start of ``col``'s ``interval``-second bucket. Hour and day buckets are aligned to
+    LOCAL time (SQLite's 'localtime' - the C runtime's, as datetime.fromtimestamp() - so DST is
+    honoured): plain ``ts / 86400`` buckets
+    started at UTC midnight - 02:00 or 03:00 in Israel, moving by an hour across a DST change - and
+    hour buckets were half an hour off in +5:30 / +9:30 zones. Minute and second buckets are the same
+    either way, so they keep the cheap integer form."""
+    if interval < 3600:
+        return f"CAST({col} / {interval} AS INTEGER) * {interval}"
+    local = f"CAST(strftime('%s', {col}, 'unixepoch', 'localtime') AS INTEGER)"
+    # The row's own offset, applied to the row: start of its local hour (or day) as an epoch. Never
+    # later than the row, and on a fall-back night the two 01:00-02:00 hours stay two buckets.
+    own = f"({col} - ({local} % {interval}))"
+    if interval < 86400:
+        return own
+    # Days: the local midnight converted back with the MIDNIGHT's offset ('utc' modifier) - on a
+    # 23 h / 25 h day the row's offset is not the midnight's, and `own` would label the day 23:00 /
+    # 01:00. The CASE keeps a bucket from ever starting after its row should a zone's midnight be the
+    # ambiguous, repeated instant (SQLite resolves those to the later one).
+    midnight = (f"CAST(strftime('%s', CAST({local} / {interval} AS INTEGER) * {interval}, "
+                f"'unixepoch', 'utc') AS INTEGER)")
+    return f"(CASE WHEN {midnight} <= {col} THEN {midnight} ELSE {own} END)"
+
+
 _HOURLY_PROFILE_SQL = ("SELECT CAST(strftime('%H', ts, 'unixepoch', 'localtime') AS INTEGER) AS h, "
                        "SUM(v * w), SUM(w) FROM ({union}) WHERE v IS NOT NULL AND w > 0 GROUP BY h")
 
@@ -393,7 +417,7 @@ class V7HistoryReader(_ReaderBase):
             cursor = conn.cursor()
 
             # Time binning calculation
-            time_calc = f"CAST(timestamp / {target_interval} AS INTEGER) * {target_interval}"
+            time_calc = _local_bin_sql("timestamp", target_interval)   # local hour / day buckets
 
             # Build inner query. For aggregated resolutions, construct a UNION
             # and keep peak speed semantics (MAX) across tiers so timeline
@@ -785,7 +809,7 @@ class V7HistoryReader(_ReaderBase):
             HRAW = constants.data.HARDWARE_STATS_TABLE_RAW
             HMIN = constants.data.HARDWARE_STATS_TABLE_MINUTE
             HHOUR = constants.data.HARDWARE_STATS_TABLE_HOUR
-            bin_ts = f"CAST(timestamp / {interval} AS INTEGER) * {interval}"
+            bin_ts = _local_bin_sql("timestamp", interval)
             _, (min_sql, min_params), (hour_sql, hour_params) = self._bounds(self._HW_TIERS)
             cursor.execute(f"""
                 SELECT b, AVG(v) FROM (
@@ -1015,7 +1039,7 @@ class V8HistoryReader(_ReaderBase):
         raw_up, raw_down = self._RAW_RATE.format(d="up"), self._RAW_RATE.format(d="down")
 
         def tier(k: int, up: str, down: str) -> Tuple[str, list]:
-            return (f"SELECT CAST(n.ts / {interval} AS INTEGER) * {interval} AS bin_ts, "
+            return (f"SELECT {_local_bin_sql('n.ts', interval)} AS bin_ts, "
                     f"{self._IFACE_NAME} AS interface_name, {up} AS up, {down} AS down "
                     f"FROM {self._NET[k]} n {self._IFACE_JOIN} "
                     f"WHERE n.ts BETWEEN ? AND ?{bounds[k][0]}{iface_sql}",
@@ -1315,7 +1339,7 @@ class V8HistoryReader(_ReaderBase):
         bounds = self._tier_bounds(self._HW, "h")
         parts, params = [], []
         for k, col in ((0, "h.value"), (1, "h.avg_value"), (2, "h.avg_value")):
-            parts.append(f"SELECT CAST(h.ts / {interval} AS INTEGER) * {interval} AS b, {col} AS v "
+            parts.append(f"SELECT {_local_bin_sql('h.ts', interval)} AS b, {col} AS v "
                          f"FROM {self._HW[k]} h WHERE {self._METRIC} AND h.ts BETWEEN ? AND ?{bounds[k][0]}")
             params += [stat_type, start_ts, end_ts, *bounds[k][1]]
         try:

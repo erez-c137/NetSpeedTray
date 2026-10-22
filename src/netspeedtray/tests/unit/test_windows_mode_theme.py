@@ -171,6 +171,11 @@ def _fake_dialog(opened_with=WHITE, automatic=True, user_chose=False):
     # Pre-fix there is no such method: an identity stand-in, so the behaviour checks below fail.
     method = SettingsDialog.__dict__.get("_with_live_auto_color", lambda self, cfg: cfg)
     fake._with_live_auto_color = types.MethodType(method, fake)
+    # The dialog surface these paths use since the RC Settings fixes: pages via _pages() (pages that
+    # failed to load are skipped, C1), and Cancel -> reject() -> _revert_live_preview() (Esc too, S1).
+    fake._pages = types.MethodType(SettingsDialog._pages, fake)
+    fake._update_timer = MagicMock()
+    fake.reject = lambda: SettingsDialog._revert_live_preview(fake)
     return fake
 
 

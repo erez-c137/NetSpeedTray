@@ -52,6 +52,62 @@ _SUMMARY_FIELDS = [
 ]
 
 
+# The time-series file. "aggregation" says what each value IS (M8): "sample" = one stored reading;
+# "minute_max" / "hour_max" = the peak of a stored network rollup bucket (the download/upload rollups
+# keep per-bucket maxima; across all interfaces it is the sum of each one's peak, so an upper bound
+# on the combined peak); "minute_avg" / "hour_avg" = a hardware bucket's mean. For windows past
+# the raw tier the file used to hold minute peaks under a bare "value" header - with zero rows
+# padded onto both window edges - beside a summary computed from raw samples. A bucket that starts
+# before the window but holds rows inside it (the first minute / hour of the window) is kept, with
+# its timestamp clipped to the window start; its value comes from in-window rows only.
+_RAW_FIELDS = ["timestamp_unix", "timestamp_iso", "metric", "value", "aggregation"]
+
+
+def _ts(ts) -> int:
+    return int(ts.timestamp()) if isinstance(ts, datetime) else int(ts)
+
+
+def _net_resolution(summary_tier: Optional[str], start: datetime, end: datetime) -> Tuple[str, str]:
+    """(read resolution, aggregation label) for a network metric: the raw samples when the window's
+    summary was computed from them, else the graph's rollup tier for that window length."""
+    if summary_tier == "raw":
+        return "raw", "sample"
+    if summary_tier in ("minute", "hour"):
+        return summary_tier, f"{summary_tier}_max"   # the same tier the summary was computed from
+    res = constants.data.history_period.get_target_resolution(start, end)
+    if res == "raw":
+        return "raw", "sample"
+    return res, f"{res}_max"
+
+
+def _hw_aggregation(start: datetime, end: datetime) -> str:
+    """The hardware reader bins by window length (raw <= 6 h, else minute / hour buckets averaged)."""
+    secs = (end - start).total_seconds()
+    if secs <= constants.data.history_period.RES_RAW_THRESHOLD:
+        return "sample"
+    return "minute_avg" if secs <= 30 * 86400 else "hour_avg"
+
+
+def _net_rows(widget_state, start: datetime, end: datetime, interface: Optional[str], res: str):
+    """Stored network rows for [start, end] at ``res``, WITHOUT the reader's graph padding. The reader
+    reads only rows inside the window (so even the first bucket's value is in-window), then pads a
+    bounded window with zero rows at its edges for the graph's gap detection. The history never
+    stores an all-zero row (the v8 writer skips them), so an all-zero row here is that padding."""
+    rows = widget_state.get_speed_history(start, end, interface, resolution=res, wait_for_flush=False)
+    return [r for r in rows if (r[1] or r[2])]
+
+
+def _in_window(rows, start: datetime, end: datetime):
+    """(timestamp, row) for rows whose bucket overlaps [start, end]. The reader bins by floor, so the
+    window's first bucket can start before the window (e.g. 10:00 for a 10:37 start); it holds only
+    in-window rows and is kept, its timestamp clipped to the window start (review item 8)."""
+    lo, hi = int(start.timestamp()), int(end.timestamp())
+    for row in rows:
+        tsec = _ts(row[0])
+        if tsec <= hi:
+            yield max(tsec, lo), row
+
+
 def _bps_to_mbps(v: Optional[float]) -> Optional[float]:
     return None if v is None else round(float(v) * 8.0 / 1_000_000.0, 3)
 
@@ -68,7 +124,7 @@ def export_window(widget_state, start: datetime, end: datetime, window_label: st
     iface_label = interface or "all"
 
     summary_rows: List[Dict[str, Any]] = []
-    raw_rows: List[Tuple[int, str, str, Any]] = []   # (ts_unix, iso, metric, value)
+    raw_rows: List[Tuple[int, str, str, Any, str]] = []   # (ts_unix, iso, metric, value, aggregation)
 
     for key, kind, unit, _label in _METRICS:
         if kind == "net_down":
@@ -101,18 +157,17 @@ def export_window(widget_state, start: datetime, end: datetime, window_label: st
             "machine_id": machine_id, "app_version": app_version, "summary_method_note": s.note,
         })
 
-        # Raw series (long format) for the same window.
+        # The time series (long format) for the same window - stored tier rows only (M8).
         if kind in ("net_down", "net_up"):
-            net = widget_state.get_speed_history(start, end, interface, resolution='auto', wait_for_flush=False)
+            res, agg = _net_resolution(s.tier, start, end)
             idx = 2 if kind == "net_down" else 1   # (ts, up, dn)
-            for row in net:
-                ts = row[0]
-                tsec = int(ts.timestamp()) if isinstance(ts, datetime) else int(ts)
-                raw_rows.append((tsec, datetime.fromtimestamp(tsec).isoformat(), key, _bps_to_mbps(row[idx])))
+            for tsec, row in _in_window(_net_rows(widget_state, start, end, interface, res), start, end):
+                raw_rows.append((tsec, datetime.fromtimestamp(tsec).isoformat(), key,
+                                 _bps_to_mbps(row[idx]), agg))
         else:
-            for ts, val in widget_state.get_hardware_history(key, start, end):
-                tsec = int(ts.timestamp()) if isinstance(ts, datetime) else int(ts)
-                raw_rows.append((tsec, datetime.fromtimestamp(tsec).isoformat(), key, _r(val)))
+            agg = _hw_aggregation(start, end)
+            for tsec, (_ts, val) in _in_window(widget_state.get_hardware_history(key, start, end), start, end):
+                raw_rows.append((tsec, datetime.fromtimestamp(tsec).isoformat(), key, _r(val), agg))
 
     paths: Dict[str, str] = {}
     sp = os.path.join(out_dir, f"{basename}.summary.csv")
@@ -133,7 +188,7 @@ def export_window(widget_state, start: datetime, end: datetime, window_label: st
     raw_rows.sort(key=lambda r: (r[0], r[2]))
     with open(rp, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
-        w.writerow(["timestamp_unix", "timestamp_iso", "metric", "value"])
+        w.writerow(_RAW_FIELDS)
         w.writerows(raw_rows)
     paths["raw_csv"] = rp
 

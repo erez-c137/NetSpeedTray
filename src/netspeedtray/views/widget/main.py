@@ -1854,15 +1854,6 @@ class NetworkSpeedWidget(QWidget):
         self.config_controller.handle_settings_changed(updated_config, save_to_disk)
 
 
-    def open_hardware_settings(self) -> None:
-        """Open Settings straight on the Hardware page (the tray 'Hardware monitor' row's door)."""
-        try:
-            self.show_settings()
-            if self.settings_dialog is not None:
-                self.settings_dialog.navigate_to_page(self.settings_dialog.PAGE_HARDWARE)
-        except Exception as e:
-            self.logger.error("Error opening hardware settings: %s", e, exc_info=True)
-
     def open_data_usage_settings(self) -> None:
         """Open Settings straight on the Network page, where the data-cap 'Data usage' section lives -
         the Monitor's 'Set a monthly limit' hint's door (was dropping the user on General)."""

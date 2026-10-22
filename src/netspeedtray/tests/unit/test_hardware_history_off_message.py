@@ -81,6 +81,52 @@ def test_toggle_layout_gpu_view_with_only_cpu_recorded(renderer):
     assert COLLECTING in _texts(renderer.figure)
 
 
+NO_HISTORY = I18N.NET_GRAPH_NO_HISTORY_YET
+NO_TRAFFIC = I18N.NET_GRAPH_NO_TRAFFIC
+
+
+def test_empty_network_range_says_so_instead_of_a_flat_zero_line(renderer):
+    """RC later-list: with nothing stored for the range the reader returns only zero padding, and the
+    Network graph drew a flat 0 line - read as "no traffic" - with no note."""
+    end = datetime.now()
+    start = end - timedelta(hours=24)
+    pad = [(start + timedelta(hours=h), 0.0, 0.0) for h in range(0, 25, 3)]
+    nothing = {"earliest": None}
+    renderer.render(pad, start, end, "TIMELINE_24_HOURS", stat_type="network", hw_styles=nothing)
+    assert NO_HISTORY in _texts(renderer.figure)
+    renderer.render([], start, end, "TIMELINE_24_HOURS", stat_type="network", hw_styles=nothing)
+    assert NO_HISTORY in _texts(renderer.figure)
+    real = [(start + timedelta(hours=h), 1e5, 2e6) for h in range(0, 25, 3)]
+    renderer.render(real, start, end, "TIMELINE_24_HOURS", stat_type="network", hw_styles=nothing)
+    assert not [t for t in _texts(renderer.figure) if t in (NO_HISTORY, NO_TRAFFIC)]   # taken down
+
+
+def test_empty_network_range_says_why(renderer):
+    """Review item 6: "Not enough history" was wrong for a past window where the PC was simply off or
+    idle (the history keeps no all-zero rows): history exists before it, so say no traffic was
+    recorded; a range that ends before the first record says when history starts."""
+    end = datetime(2026, 9, 10, 12)
+    start = end - timedelta(days=7)
+    pad = [(start, 0.0, 0.0), (end, 0.0, 0.0)]
+    renderer.render(pad, start, end, "TIMELINE_WEEK", stat_type="network",
+                    hw_styles={"earliest": start - timedelta(days=30)})
+    assert NO_TRAFFIC in _texts(renderer.figure)
+    renderer.render(pad, start, end, "TIMELINE_WEEK", stat_type="network",
+                    hw_styles={"earliest": datetime(2026, 10, 1, 8)})
+    texts = _texts(renderer.figure)
+    assert any(t.startswith("History starts") and "Oct" in t and "01" in t for t in texts), texts
+    assert NO_TRAFFIC not in texts
+
+
+@pytest.mark.parametrize("stat", ["hwcombined", "hwseparate"])
+def test_cpu_monitored_but_not_recorded_points_to_the_record_switch(renderer, stat):
+    """RC M6: CPU on + Record off (GPU off) said "turn on CPU or GPU monitoring" - but CPU IS on, and
+    turning GPU on would record nothing either. The record switch is the reason."""
+    _render(renderer, stat, "TIMELINE_24_HOURS", history_off={"cpu": "record", "gpu": "monitor"})
+    texts = _texts(renderer.figure)
+    assert RECORD_OFF in texts and OFF not in texts
+
+
 @pytest.mark.parametrize("stat", ["hwcombined", "hwseparate"])
 def test_monitoring_on_or_session_view_still_says_collecting(renderer, stat):
     _render(renderer, stat, "TIMELINE_24_HOURS", history_off=RECORDING)

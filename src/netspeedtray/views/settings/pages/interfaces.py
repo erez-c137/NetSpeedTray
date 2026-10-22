@@ -136,7 +136,9 @@ class InterfacesPage(QWidget):
 
         self.interface_checkboxes.clear()
 
-        if self.available_interfaces:
+        listed = set(self.available_interfaces or [])
+        missing = [n for n in getattr(self, "_missing_selected", []) if n not in listed]
+        if self.available_interfaces or missing:
             # Two sections - real adapters, then virtual ones (VPNs, WSL/Hyper-V, VM host-only,
             # Wi-Fi Direct) - with the routing connection first in its section and marked, so the
             # user can tell which entry is their actual connection (2.2 scope C).
@@ -146,6 +148,10 @@ class InterfacesPage(QWidget):
                 self.primary_interface)
             sections = ((self.i18n.INTERFACE_GROUP_PHYSICAL, groups.physical),
                         (self.i18n.INTERFACE_GROUP_VIRTUAL, groups.virtual))
+            # A selected adapter that isn't present right now (VPN off, dongle out) keeps its row - and
+            # its tick - under its own heading, so an untouched Save doesn't drop it (S7).
+            sections = sections + ((getattr(self.i18n, "INTERFACE_GROUP_NOT_CONNECTED",
+                                            "Not connected right now"), missing),)
             first = True
             for title, names in sections:
                 if not names:
@@ -228,7 +234,11 @@ class InterfacesPage(QWidget):
         
         self._update_visibility()
         
-        selected_list = config.get("selected_interfaces", [])
+        selected_list = list(config.get("selected_interfaces", []) or [])
+        missing = [n for n in selected_list if n not in set(self.available_interfaces or [])]
+        if missing != getattr(self, "_missing_selected", []):
+            self._missing_selected = missing
+            self._populate_interface_list()
         for iface, checkbox in self.interface_checkboxes.items():
             if iface in selected_list:
                 checkbox.setChecked(True)

@@ -215,8 +215,13 @@ def test_preferred_monitor_saves_and_loads_the_same_key(dlg):
     assert dlg.get_settings()["preferred_monitor"] == name
     dlg.reset_with_config(dict(DEFAULTS, preferred_monitor=name), False)
     assert dlg.get_settings()["preferred_monitor"] == name
+    # A display that isn't connected right now is KEPT, listed as "(not connected)" (RC S7) - it used
+    # to fall back to "Primary (auto)", so an untouched Save erased the user's choice.
     dlg.reset_with_config(dict(DEFAULTS, preferred_monitor="NO-SUCH-DISPLAY"), False)
-    assert dlg.get_settings()["preferred_monitor"] is None   # unknown display -> "Primary (auto)"
+    assert dlg.get_settings()["preferred_monitor"] == "NO-SUCH-DISPLAY"
+    assert dlg.i18n.SETTINGS_NOT_CONNECTED_TAG in combo.currentText()
+    dlg.reset_with_config(dict(DEFAULTS, preferred_monitor=None), False)
+    assert combo.findData("NO-SUCH-DISPLAY") < 0   # gone once nothing refers to it
 
 
 def test_preferred_monitor_list_refreshes_when_the_widget_page_shows(dlg, monkeypatch):
