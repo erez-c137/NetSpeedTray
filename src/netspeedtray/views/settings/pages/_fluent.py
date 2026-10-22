@@ -22,6 +22,7 @@ def section_header(text: str) -> QLabel:
     (Net spacing also gets the page layout's inter-widget gap added on each side.)"""
     c = su.semantic_colors()
     lbl = QLabel(text)
+    lbl.setObjectName("settingsSectionHeader")   # found by the sentence-case test (rc.2 S6)
     lbl.setFont(su.font(tokens.TYPE_BODY_STRONG))
     lbl.setStyleSheet(f"color: {c['text_primary']}; background: transparent; padding: 20px 2px 4px 16px;")
     return lbl
