@@ -2,8 +2,13 @@
 Release-build configuration that no runtime test can see: what PyInstaller packs, what the
 installer runs, what CI checks before it publishes. Each of these failed silently once.
 """
+import os
 import re
+import subprocess
+import sys
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[4]
 
@@ -171,13 +176,50 @@ def test_the_build_scripts_take_the_venv_from_nst_venv_else_root_venv():
     for bat in ("build.bat", "build-exe-only.bat"):
         text = _read("build", bat)
         assert re.search(r'^set "VENV_DIR=%ROOT_DIR%\\\.venv"$', text, re.M), bat
-        assert re.search(r'^if defined NST_VENV set "VENV_DIR=%NST_VENV%"$', text, re.M), bat
+        assert re.search(r'^if defined NST_VENV set "VENV_DIR=%NST_VENV:"=%"$', text, re.M), bat
         assert re.search(r"^if defined NST_VENV \(echo Using venv from NST_VENV:.*\) else "
                          r"\(echo Using venv:", text, re.M), f"{bat} does not say which venv it uses"
         assert "%ROOT_DIR%\\.venv\\" not in text, f"{bat} still hard-codes ROOT\\.venv somewhere"
         default = text.index(r'set "VENV_DIR=%ROOT_DIR%\.venv"')
         first_use = text.index(r'"%VENV_DIR%\Scripts\python.exe" -c')
         assert default < text.index("if defined NST_VENV set") < first_use, bat
+
+
+def _run_venv_block(bat, tmp_path, nst_venv):
+    """Run the scripts' own venv-resolution block under cmd (delayed expansion on, as in the
+    scripts) with ROOT_DIR at tmp_path/root, and return (exit code, resolved VENV_DIR)."""
+    text = _read("build", bat).replace("\r\n", "\n")
+    start = text.index('set "VENV_DIR=%ROOT_DIR%\\.venv"')
+    end = text.index("\n", text.index("echo Resolving Python from:", start)) + 1
+    probe = tmp_path / f"probe-{bat}"
+    body = ("@echo off\nsetlocal EnableDelayedExpansion\n"
+            f'set "ROOT_DIR={tmp_path / "root"}"\n' + text[start:end]
+            + "echo VENV_DIR=[%VENV_DIR%]\n")
+    probe.write_bytes(body.replace("\n", "\r\n").encode("ascii"))
+    env = {k: v for k, v in os.environ.items() if k.upper() != "NST_VENV"}
+    if nst_venv is not None:
+        env["NST_VENV"] = nst_venv
+    result = subprocess.run(["cmd", "/d", "/v:on", "/c", str(probe)],
+                            capture_output=True, text=True, env=env, timeout=30)
+    found = re.search(r"^VENV_DIR=\[(.*)\]$", result.stdout, re.M)
+    return result.returncode, found.group(1) if found else result.stdout + result.stderr
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="runs the batch block under cmd.exe")
+@pytest.mark.parametrize("bat", ["build.bat", "build-exe-only.bat"])
+def test_the_venv_block_resolves_nst_venv_with_quotes_and_trailing_backslash(tmp_path, bat):
+    r"""`set NST_VENV="C:\some path\.venv"` is how a path with spaces is usually written; the quotes
+    used to end up inside VENV_DIR and break every "%VENV_DIR%\Scripts\..." that follows."""
+    venv = tmp_path / "my venv"
+    for scripts in (venv / "Scripts", tmp_path / "root" / ".venv" / "Scripts"):
+        scripts.mkdir(parents=True)
+        (scripts / "python.exe").write_bytes(b"")
+
+    assert _run_venv_block(bat, tmp_path, None) == (0, str(tmp_path / "root" / ".venv"))
+    for value in (str(venv), str(venv) + "\\", f'"{venv}"', f'"{venv}\\"'):
+        assert _run_venv_block(bat, tmp_path, value) == (0, str(venv)), value
+    code, _ = _run_venv_block(bat, tmp_path, f'"{tmp_path / "missing"}"')
+    assert code == 1, "a venv without python.exe must stop the build"
 
 
 def test_the_release_build_step_does_not_set_nst_venv():

@@ -11,8 +11,9 @@ popd
 :: --- Configuration ---
 :: NST_VENV overrides the virtualenv, e.g. a worktree building with the main checkout's .venv.
 :: Unset - CI and every normal local build - it is ROOT\.venv, exactly as before.
+:: Quotes are stripped, so NST_VENV="C:\path with spaces\.venv" works; then a trailing backslash.
 set "VENV_DIR=%ROOT_DIR%\.venv"
-if defined NST_VENV set "VENV_DIR=%NST_VENV%"
+if defined NST_VENV set "VENV_DIR=%NST_VENV:"=%"
 if "%VENV_DIR:~-1%"=="\" set "VENV_DIR=%VENV_DIR:~0,-1%"
 if defined NST_VENV (echo Using venv from NST_VENV: "%VENV_DIR%") else (echo Using venv: "%VENV_DIR%")
 if not exist "%VENV_DIR%\Scripts\python.exe" (echo ERROR: No python.exe in "%VENV_DIR%\Scripts" - create the venv or set NST_VENV & exit /b 1)
