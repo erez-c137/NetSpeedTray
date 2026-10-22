@@ -104,6 +104,8 @@ current LibreHardwareMonitor, and the root-cause fix for Smart App Control block
 > - **One copy per Windows user.** A second user signed in on the same PC can now run their own
 >   NetSpeedTray; the same user still gets one copy, across sessions too.
 > - **Portable updates are staged in `%LOCALAPPDATA%\NetSpeedTray\updates`**, not Downloads.
+> - **Metrics endpoint:** `gpu_memory_used_bytes` / `gpu_memory_total_bytes` now carry a
+>   `kind="dedicated"` or `kind="shared"` label, which changes the series for a scraper set up on a beta.
 
 ### Added
 
@@ -163,6 +165,16 @@ current LibreHardwareMonitor, and the root-cause fix for Smart App Control block
 
 - **Reset Position** in the right-click menu, once you've moved the widget. It also resets the tray
   offsets. ([#420])
+- **An integrated GPU's memory use shows as VRAM.** An Intel or AMD iGPU has no dedicated memory, so
+  VRAM read 0.0; it now shows the system RAM the iGPU is using, out of its shared budget. The hover
+  card and the Monitor label it "VRAM (shared)". A discrete GPU reads exactly as before. ([#421])
+
+  *Under the hood: whether a PC has dedicated video memory is a fixed per-adapter fact from DXGI
+  `DedicatedVideoMemory` (>= 512 MiB, or nvidia-smi present), matched to PDH by adapter LUID, so an
+  idle Arc or Radeon at startup stays dedicated. Intel reports only its BIOS stolen chunk there (128
+  MiB on a UHD 770). The Basic Render adapter is ignored, so a VM keeps VRAM hidden. AMD APUs whose
+  carve-out is 512 MiB or more keep today's readout of the carve-out.*
+
 
 ### Changed
 
@@ -361,7 +373,7 @@ current LibreHardwareMonitor, and the root-cause fix for Smart App Control block
   the right direction, and the Monitor's labels translated. ([#409])
 - Two leftover English strings translated: the graph boot marker and the support-bundle file
   filter. ([#401])
-- 25 new strings and 3 changed ones are AI-drafted in every language and listed for
+- 26 new strings and 3 changed ones are AI-drafted in every language and listed for
   review in [#364]. 19 unused strings were removed.
 
 ### Security
@@ -419,6 +431,7 @@ current LibreHardwareMonitor, and the root-cause fix for Smart App Control block
 [#418]: https://github.com/erez-c137/NetSpeedTray/pull/418
 [#419]: https://github.com/erez-c137/NetSpeedTray/pull/419
 [#420]: https://github.com/erez-c137/NetSpeedTray/pull/420
+[#421]: https://github.com/erez-c137/NetSpeedTray/pull/421
 [@kamal63442]: https://github.com/kamal63442
 [@pasharm]: https://github.com/pasharm
 [@emgeka]: https://github.com/emgeka
