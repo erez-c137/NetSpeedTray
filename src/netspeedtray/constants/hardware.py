@@ -44,10 +44,36 @@ class PowerConstants:
             raise ValueError("battery retry backoffs must be positive")
 
 
+class TemperatureConstants:
+    """Display unit for temperatures (rc.2 F8). Every reading and every stored value is Celsius;
+    only the formatter (utils.helpers.format_temperature) converts."""
+    CELSIUS: Final[str] = "celsius"
+    FAHRENHEIT: Final[str] = "fahrenheit"
+    SYMBOLS: Final[dict] = {CELSIUS: "°C", FAHRENHEIT: "°F"}
+    # Widest number each unit's readout reserves room for. The widget is sized ONCE from reference
+    # strings, never from live values (CLAUDE.md), so these must cover a real reading: in Celsius
+    # two digits (99°C, as before - 100°C+ is past every CPU's throttle point); in Fahrenheit every
+    # reading from 38°C up is three digits (100°F), up to 301°F at the 150°C sanity ceiling the
+    # sensor paths enforce. All 9s: UI fonts draw digits at one width, so "999" costs nothing over
+    # "301", and in a proportional font a 9 is among the widest digits.
+    WIDGET_REFERENCE_NUMBER: Final[dict] = {CELSIUS: "99", FAHRENHEIT: "999"}
+    # The hover card's fixed-width column (it already reserved three digits for Celsius).
+    HOVER_REFERENCE_NUMBER: Final[dict] = {CELSIUS: "100", FAHRENHEIT: "999"}
+
+    def __init__(self) -> None:
+        self.validate()
+
+    def validate(self) -> None:
+        for table in (self.SYMBOLS, self.WIDGET_REFERENCE_NUMBER, self.HOVER_REFERENCE_NUMBER):
+            if set(table) != {self.CELSIUS, self.FAHRENHEIT}:
+                raise ValueError("temperature tables must cover exactly celsius and fahrenheit")
+
+
 class HardwareConstants:
     """Container for hardware-related constant groups."""
     def __init__(self) -> None:
         self.power = PowerConstants()
+        self.temperature = TemperatureConstants()
 
 # Singleton instance for easy access
 hardware = HardwareConstants()

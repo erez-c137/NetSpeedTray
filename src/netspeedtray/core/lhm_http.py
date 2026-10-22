@@ -71,6 +71,22 @@ class LhmSnapshot:
     def preferred_gpu(self) -> Optional[LhmGpu]:
         return min(self.gpus, key=_gpu_rank) if self.gpus else None
 
+    def gpu_for(self, vendor_id: int, name: str = "") -> Optional[LhmGpu]:
+        """The GPU group for the adapter the user picked (#236): same maker only (by hardware id or
+        name), the one whose name matches the DXGI Description when there are several, else None.
+        None means "no sensor of this GPU" - never another maker's card."""
+        from netspeedtray.core.gpu_adapters import sensor_matches_vendor
+        same = [g for g in self.gpus
+                if sensor_matches_vendor(g.hardware_id, vendor_id)
+                or sensor_matches_vendor(g.hardware_name, vendor_id)]
+        if not same:
+            return None
+        wanted = (name or "").strip().casefold()
+        for g in same:
+            if wanted and g.hardware_name.strip().casefold() == wanted:
+                return g
+        return min(same, key=_gpu_rank)
+
 
 def parse_lhm_value(value: Any) -> Optional[float]:
     """Parse values such as ``58,9 °C`` and ``56.8 W`` safely."""

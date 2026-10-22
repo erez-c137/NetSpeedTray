@@ -468,6 +468,12 @@ class Win11Slider(QWidget):
             return self._special_value_text
         return f"{value}{self._suffix}"
 
+    def setSuffix(self, suffix: str) -> None:
+        """Change the unit shown after the number (e.g. "°C" -> "°F" when the temperature unit flips)."""
+        self._suffix = suffix or ""
+        if self._auto_update_label:
+            self.setValueText(self._format_value(self.slider.value()))
+
     def setSpecialValueText(self, text: str) -> None:
         """Show ``text`` instead of the number at the minimum - e.g. "Off" for a 0 that disables the
         feature, rather than a misleading "0°C". Same contract as QAbstractSpinBox.setSpecialValueText."""

@@ -471,7 +471,7 @@ class StatsDetailSheet(QDialog):
             if thr > 0 and pairs:
                 secs = S.time_above([v for _, v in pairs], thr, self._poll)
                 if secs > 0:
-                    text = (f"{self._tr('STATS_DETAIL_ABOVE', 'Above')} {thr:.0f}°C "
+                    text = (f"{self._tr('STATS_DETAIL_ABOVE', 'Above')} {fmt(thr)} "
                             f"{self._tr('STATS_DETAIL_FOR', 'for')} {self._dur(secs)}")
         elif key in _LOSS_SERIES_FOR:
             # Loss and drops come from the SAME hop as the block's RTTs: the anchor's series when the
@@ -553,7 +553,11 @@ class StatsDetailSheet(QDialog):
         if unit == "%":
             return lambda v: "-" if v is None else f"{float(v):.0f}%"
         if unit == "°C":
-            return lambda v: "-" if v is None else f"{float(v):.0f}°C"
+            # Stored and summarised in Celsius; shown in the user's unit (rc.2 F8). Every figure
+            # here (avg, peak, median, percentiles, min) survives the affine conversion exactly.
+            from netspeedtray.utils.helpers import format_temperature, temperature_unit
+            t_unit = temperature_unit(self._config)
+            return lambda v: "-" if v is None else format_temperature(float(v), t_unit)
         if unit == "ms":
             return lambda v: "-" if v is None else f"{float(v):.0f} ms"
         if unit == "W":

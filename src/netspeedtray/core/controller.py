@@ -199,7 +199,9 @@ class StatsController(QObject):
         def _keep(stat_type: str) -> bool:
             return hardware_persist_allowed(stat_type, self.config)
 
-        if 'cpu' in stats or 'gpu' in stats:
+        # RAM / VRAM can arrive without a CPU / GPU reading (their own switches, rc.2 G5), and so
+        # can the GPU-presence latch from a VRAM-only poll.
+        if any(k in stats for k in ('cpu', 'gpu', 'ram_used', 'vram_used', 'gpu_present')):
             cpu = stats.get('cpu')
             gpu = stats.get('gpu')
             ram_used = stats.get('ram_used')

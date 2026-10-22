@@ -61,6 +61,27 @@ class GpuConstants:
     # Task Manager shows (and what DXGI reports: 7.839 GiB of 15.68 GiB on the probe PC).
     SHARED_BUDGET_FRACTION_OF_RAM: Final[float] = 0.5
 
+    # GPU picker (#236). "" = Automatic: the busiest engine on ANY adapter, VRAM summed across all of
+    # them - exactly the pre-picker readout. Otherwise the DXGI adapter Description the user picked;
+    # stored as the NAME, never the LUID, because LUIDs are reassigned on every boot.
+    ADAPTER_AUTO: Final[str] = ""
+    # PCI vendor ids (DXGI_ADAPTER_DESC1.VendorId). A picked adapter's temperature / power are only
+    # taken from a sensor of the SAME maker: LibreHardwareMonitor's GPU groups and its WMI identifiers
+    # name the vendor (/gpu-nvidia/, /gpu-amd/, /gpu-intel-integrated/), nvidia-smi is NVIDIA-only and
+    # Intel RAPL PP1 is the Intel iGPU's. A sensor of another maker belongs to the other GPU, so the
+    # reading is N/A rather than the wrong card's.
+    VENDOR_NVIDIA: Final[int] = 0x10DE
+    VENDOR_AMD: Final[int] = 0x1002
+    VENDOR_AMD_ALT: Final[int] = 0x1022
+    VENDOR_INTEL: Final[int] = 0x8086
+    # Lower-case tokens that identify each maker in an LHM hardware id / name or a WMI identifier.
+    VENDOR_SENSOR_TOKENS: Final[dict] = {
+        VENDOR_NVIDIA: ("nvidia",),
+        VENDOR_AMD: ("amd", "radeon"),
+        VENDOR_AMD_ALT: ("amd", "radeon"),
+        VENDOR_INTEL: ("intel",),
+    }
+
     def __init__(self) -> None:
         self.validate()
 

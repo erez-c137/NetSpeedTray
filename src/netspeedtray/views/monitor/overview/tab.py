@@ -930,7 +930,8 @@ class OverviewTab(QWidget):
         """CPU/GPU sub-line: temperature and (when collected) power, e.g. "62°C  ·  35 W"."""
         parts = []
         if temp is not None and float(temp) >= 1:
-            parts.append(f"{float(temp):.0f}°C")
+            from netspeedtray.utils.helpers import format_temperature, temperature_unit
+            parts.append(format_temperature(float(temp), temperature_unit(self._config)))
         # >= 0.5 W, not > 0: a flaky iGPU power reading of 0.3 W rounds to "0 W" and then vanishes,
         # which would make the sub-line flicker - only show power that actually displays as >= 1 W.
         if power is not None and float(power) >= 0.5:
