@@ -570,5 +570,7 @@
     "POWER_NOW_LABEL": "現在",
     "POWER_TODAY_AVG_LABEL": "今日の平均",
     "POWER_ON_AC_VALUE": "AC電源",
-    "POWER_CHARGE_PCT_TEMPLATE": "{pct}% バッテリー"
+    "POWER_CHARGE_PCT_TEMPLATE": "{pct}% バッテリー",
+    "EXPANDER_A11Y_EXPANDED": "{title}、展開",
+    "EXPANDER_A11Y_COLLAPSED": "{title}、折りたたみ"
 }

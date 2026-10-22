@@ -570,5 +570,7 @@
     "POWER_NOW_LABEL": "Teraz",
     "POWER_TODAY_AVG_LABEL": "Śr. dzisiaj",
     "POWER_ON_AC_VALUE": "Na zasilaczu",
-    "POWER_CHARGE_PCT_TEMPLATE": "{pct}% baterii"
+    "POWER_CHARGE_PCT_TEMPLATE": "{pct}% baterii",
+    "EXPANDER_A11Y_EXPANDED": "{title}, rozwinięty",
+    "EXPANDER_A11Y_COLLAPSED": "{title}, zwinięty"
 }

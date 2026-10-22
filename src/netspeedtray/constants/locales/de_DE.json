@@ -570,5 +570,7 @@
     "POWER_NOW_LABEL": "Aktuell",
     "POWER_TODAY_AVG_LABEL": "Heute ø",
     "POWER_ON_AC_VALUE": "Am Netz",
-    "POWER_CHARGE_PCT_TEMPLATE": "{pct} % Akku"
+    "POWER_CHARGE_PCT_TEMPLATE": "{pct} % Akku",
+    "EXPANDER_A11Y_EXPANDED": "{title}, erweitert",
+    "EXPANDER_A11Y_COLLAPSED": "{title}, reduziert"
 }

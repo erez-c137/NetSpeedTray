@@ -570,5 +570,7 @@
     "POWER_NOW_LABEL": "目前",
     "POWER_TODAY_AVG_LABEL": "今日平均",
     "POWER_ON_AC_VALUE": "交流電源",
-    "POWER_CHARGE_PCT_TEMPLATE": "電量 {pct}%"
+    "POWER_CHARGE_PCT_TEMPLATE": "電量 {pct}%",
+    "EXPANDER_A11Y_EXPANDED": "{title}，已展開",
+    "EXPANDER_A11Y_COLLAPSED": "{title}，已摺疊"
 }

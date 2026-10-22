@@ -570,5 +570,7 @@
     "POWER_NOW_LABEL": "현재",
     "POWER_TODAY_AVG_LABEL": "오늘 평균",
     "POWER_ON_AC_VALUE": "AC 전원",
-    "POWER_CHARGE_PCT_TEMPLATE": "배터리 {pct}%"
+    "POWER_CHARGE_PCT_TEMPLATE": "배터리 {pct}%",
+    "EXPANDER_A11Y_EXPANDED": "{title}, 확장됨",
+    "EXPANDER_A11Y_COLLAPSED": "{title}, 축소됨"
 }

@@ -33,7 +33,7 @@ class ConnectionSettings(QWidget):
         self._lat = SettingExpander(
             self._tr("CONN_LATENCY_TITLE", "Connection latency"),
             self._latency_description(False),
-            header_toggle=True, initial_on=True)
+            header_toggle=True, initial_on=True, i18n=self._i18n)
         self._lat.toggled.connect(lambda _on: self.on_change())
         body = self._lat.contentLayout()
 
@@ -60,7 +60,7 @@ class ConnectionSettings(QWidget):
         self._plan = SettingExpander(
             self._tr("CONN_PLAN_TITLE", "Advertised plan speed"),
             self._tr("CONN_PLAN_SUB", "Flags time spent below your plan in the Statistics sheet (0 = off)."),
-            expanded=False)
+            expanded=False, i18n=self._i18n)
         pbody = self._plan.contentLayout()
         self._down = self._mbps_spin()
         self._up = self._mbps_spin()

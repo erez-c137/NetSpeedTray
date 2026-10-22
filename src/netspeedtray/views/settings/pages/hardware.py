@@ -198,7 +198,7 @@ class HardwarePage(QWidget):
         # layout via the hardware_enabled signal (see _on_monitor_toggled).
 
         # --- Color-code by load (advanced - collapsible): thresholds for tinting CPU/GPU % by load.
-        load_section = SettingExpander(self.i18n.HARDWARE_LOAD_COLOR_SECTION, expanded=False)
+        load_section = SettingExpander(self.i18n.HARDWARE_LOAD_COLOR_SECTION, expanded=False, i18n=self.i18n)
         load_section.expandedChanged.connect(lambda _on: self.layout_changed.emit())
 
         def _make_load_slider() -> Win11Slider:

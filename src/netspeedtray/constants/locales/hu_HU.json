@@ -570,5 +570,7 @@
     "POWER_NOW_LABEL": "Most",
     "POWER_TODAY_AVG_LABEL": "Mai átlag",
     "POWER_ON_AC_VALUE": "Hálózati tápellátás",
-    "POWER_CHARGE_PCT_TEMPLATE": "{pct}% akkumulátortöltöttség"
+    "POWER_CHARGE_PCT_TEMPLATE": "{pct}% akkumulátortöltöttség",
+    "EXPANDER_A11Y_EXPANDED": "{title}, kibontva",
+    "EXPANDER_A11Y_COLLAPSED": "{title}, összecsukva"
 }
