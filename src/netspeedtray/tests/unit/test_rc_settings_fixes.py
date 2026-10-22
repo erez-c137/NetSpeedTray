@@ -328,6 +328,22 @@ def test_inert_controls_grey_out(qtbot):
     assert not dlg.widget_page._free_float_card.isEnabled()   # Primary (auto): floating can't apply
 
 
+@pytest.mark.parametrize("mode", ["network_only", "cycle"])
+@pytest.mark.parametrize("stack", [True, False])
+def test_untouched_save_keeps_stack_hardware_stats(qtbot, mode, stack):
+    """Review item 3: the dropdown wrote stack_hardware_stats = (mode == side_by_stack) for every
+    mode, so an untouched Save in network-only / cycle flipped the factory True to False."""
+    dlg, _ = _make(qtbot, dict(DEFAULTS, widget_display_mode=mode, stack_hardware_stats=stack))
+    assert dlg.get_settings()["stack_hardware_stats"] is stack
+
+
+def test_enabling_hardware_returns_to_the_stacked_layout(qtbot):
+    dlg, _ = _make(qtbot, dict(DEFAULTS, widget_display_mode="network_only", stack_hardware_stats=True))
+    dlg.widget_page.ensure_hardware_visible()
+    s = dlg.get_settings()
+    assert (s["widget_display_mode"], s["stack_hardware_stats"]) == ("side_by_side", True)
+
+
 def test_no_dead_settings_doors_on_the_widget():
     """open_hardware_settings had no caller (the tray row it served is gone); every door the widget
     keeps must be reachable. open_data_usage_settings is the Monitor's 'Set a limit' link."""

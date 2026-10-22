@@ -213,7 +213,9 @@ class WidgetPage(QWidget):
         widget out of network-only so the freshly-enabled stat is actually visible. This is the
         convenience the Hardware page did itself before display-mode moved to this page."""
         if self.display_mode_combo.currentData() == "network_only":
-            idx = self.display_mode_combo.findData("side_by_side")
+            # Back to the side-by-side layout the user had: stacked if that is what they last chose.
+            target = "side_by_stack" if getattr(self, "_stack_loaded", False) else "side_by_side"
+            idx = self.display_mode_combo.findData(target)
             if idx >= 0:
                 self.display_mode_combo.setCurrentIndex(idx)   # fires on_change
 
@@ -241,6 +243,10 @@ class WidgetPage(QWidget):
     # --- config ------------------------------------------------------------------
     def load_settings(self, config: Dict[str, Any]) -> None:
         mode = config.get("widget_display_mode", "network_only")
+        # Remembered for the modes the dropdown can't express it in (network only / cycle): an
+        # untouched Save there must not flip the stored preference (review item 3).
+        self._stack_loaded = bool(config.get("stack_hardware_stats",
+                                             constants.config.defaults.DEFAULT_CONFIG.get("stack_hardware_stats", False)))
         # "side_by_stack" is the side-by-side layout with the hardware column stacked - encoded as
         # widget_display_mode="side_by_side" + stack_hardware_stats=True on disk.
         if mode == "side_by_side" and config.get("stack_hardware_stats", False):
@@ -277,7 +283,9 @@ class WidgetPage(QWidget):
         order = [c.currentData() for c in self.pos_combos]
         return {
             "widget_display_mode": "side_by_side" if mode == "side_by_stack" else mode,
-            "stack_hardware_stats": mode == "side_by_stack",
+            # The two side-by-side entries ARE the stack choice; every other mode keeps the stored one.
+            "stack_hardware_stats": (mode == "side_by_stack") if mode in ("side_by_side", "side_by_stack")
+                                    else getattr(self, "_stack_loaded", False),
             "widget_display_order": order,
             "preferred_monitor": self.preferred_monitor_combo.currentData(),
             "free_move": self.free_move.isChecked(),
