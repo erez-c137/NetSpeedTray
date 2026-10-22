@@ -8,6 +8,8 @@
 ; mutex is per user (Global\NetSpeedTray_Instance_<SID>), which Setup cannot name, so it also looks
 ; for the process itself (AnyAppProcess). 2.2.0+ also holds this legacy name while it is free.
 #define MyLegacyAppMutex "Global\NetSpeedTray_SingleInstanceMutex"
+; constants.app.MUTEX_NAME_PREFIX: + the user's SID = a 2.2.0+ instance's own mutex.
+#define MyAppMutexPrefix "Global\NetSpeedTray_Instance_"
 #define MyAppId "{{D3A32B89-C533-4F2C-9F87-23B2395B5B89}}"
 ; Graceful-shutdown channel - a wire protocol with the running app. Must match
 ; constants.app.SHUTDOWN_MESSAGE_NAME / SHUTDOWN_WINDOW_PROP (a unit test pins both).
@@ -186,6 +188,16 @@ function WinLstrcpyn(lpString1: string; lpString2: Longword; iMaxLength: Integer
   external 'lstrcpynW@kernel32.dll stdcall';
 function WinGetUserNameEx(NameFormat: Integer; lpNameBuffer: string; var nSize: Longword): Integer;
   external 'GetUserNameExW@secur32.dll stdcall';
+function WinLookupAccountName(lpSystemName: Longword; lpAccountName: string; Sid: AnsiString;
+  var cbSid: Longword; ReferencedDomainName: string; var cchReferencedDomainName: Longword;
+  var peUse: Integer): Integer;
+  external 'LookupAccountNameW@advapi32.dll stdcall';
+function WinConvertSidToStringSid(Sid: AnsiString; var StringSid: Longword): Integer;
+  external 'ConvertSidToStringSidW@advapi32.dll stdcall';
+function WinLstrlen(lpString: Longword): Integer;
+  external 'lstrlenW@kernel32.dll stdcall';
+function WinLocalFree(hMem: Longword): Longword;
+  external 'LocalFree@kernel32.dll stdcall';
 
 // --- Helper Functions ---
 function ShellIsRunning(): Boolean;
@@ -311,7 +323,62 @@ begin
   MutexHandle := OpenMutex($00100000, False, Name);
   Result := MutexHandle <> 0;
   if Result then
-    CloseHandle(MutexHandle);
+    CloseHandle(MutexHandle)
+  else
+    // ERROR_ACCESS_DENIED: it exists, but its DACL does not admit us (an object only exists to be
+    // denied) - e.g. created by an elevated instance or another account.
+    Result := DLLGetLastError() = 5;
+end;
+
+// The string SID (S-1-5-21-...) of a DOMAIN\user account, or '' if it cannot be resolved.
+function AccountSid(Account: string): string;
+var
+  Sid: AnsiString;
+  SidSize, DomainSize: Longword;
+  Domain: string;
+  Use: Integer;
+  StringSid: Longword;
+  Len: Integer;
+  Text: string;
+begin
+  Result := '';
+  if Account = '' then
+    Exit;
+  SidSize := 68;                                  // SECURITY_MAX_SID_SIZE
+  SetLength(Sid, SidSize);
+  DomainSize := 256;
+  Domain := StringOfChar(' ', DomainSize);
+  Use := 0;
+  if WinLookupAccountName(0, Account, Sid, SidSize, Domain, DomainSize, Use) = 0 then
+    Exit;
+  StringSid := 0;
+  if WinConvertSidToStringSid(Sid, StringSid) = 0 then
+    Exit;
+  try
+    Len := WinLstrlen(StringSid);
+    if Len > 0 then
+    begin
+      Text := StringOfChar(' ', Len + 1);
+      WinLstrcpyn(Text, StringSid, Len + 1);
+      Result := Copy(Text, 1, Len);
+    end;
+  finally
+    WinLocalFree(StringSid);
+  end;
+end;
+
+// The 2.2.0+ per-user instance mutex of the user signed in to Setup's session
+// (constants.app.MUTEX_NAME_PREFIX + their SID). A fallback for when WMI cannot list processes.
+function SessionUserInstanceRunning(): Boolean;
+var
+  Sid: string;
+begin
+  Result := False;
+  Sid := AccountSid(SessionAccount());
+  if Sid <> '' then
+    Result := MutexExists('{#MyAppMutexPrefix}' + Sid)
+  else
+    Log('Could not resolve the session user''s SID; relying on the process check.');
 end;
 
 // Any NetSpeedTray.exe in ANY session. Since 2.2.0 the app's mutex is per user (its name carries the
@@ -334,7 +401,7 @@ end;
 
 function IsAppRunning(): Boolean;
 begin
-  Result := MutexExists('{#MyLegacyAppMutex}') or AnyAppProcess();
+  Result := MutexExists('{#MyLegacyAppMutex}') or SessionUserInstanceRunning() or AnyAppProcess();
 end;
 
 // Windows marked by the running app as its shutdown target, filled by CollectShutdownTarget.
@@ -536,9 +603,20 @@ begin
 end;
 
 // UsePreviousAppDir=yes upgrades in place - but the previous folder can be on a drive that is no
-// longer there (an unplugged USB disk, a removed or re-lettered volume, an unreachable share). A
-// silent upgrade there would fail with nothing on screen, so it goes to the default folder instead.
+// longer there (an unplugged USB disk, a removed or re-lettered volume). A silent upgrade there
+// would fail with nothing on screen, so a LOCAL drive that is gone sends it to the default folder.
+//
+// A NETWORK location is different, and is kept: a mapped drive letter belongs to the user's own
+// logon session, so the ELEVATED Setup usually cannot see it even though it is there (and a share
+// can be briefly unreachable). Falling back would split the app in two - a new copy in Program
+// Files and the old one on the share, still started by the user's pins - the very problem
+// UsePreviousAppDir=yes fixed. Keeping it fails loudly instead when the share really is
+// unreachable (Setup reports the error; the in-app updater says the update did not complete and
+// opens the download page), which the user can act on. Both cases are logged.
 // Runs in silent mode too: the wizard form exists, it is just not shown.
+var
+  MovedFromDir: string;
+
 function PreviousDriveMissing(Dir: string): Boolean;
 var
   Drive: string;
@@ -547,17 +625,44 @@ begin
   Result := (Drive = '') or not DirExists(AddBackslash(Drive));
 end;
 
+// A UNC path, or a drive letter the user has mapped (HKCU\Network\<letter> - in an elevated Setup
+// started by the same user this is still their hive).
+function IsNetworkLocation(Dir: string): Boolean;
+var
+  Drive: string;
+begin
+  Drive := ExtractFileDrive(Dir);
+  Result := (Copy(Drive, 1, 2) = '\\') or
+            ((Length(Drive) = 2) and (Drive[2] = ':') and RegKeyExists(HKCU, 'Network\' + Drive[1]));
+end;
+
 procedure InitializeWizard();
 var
   Dir, Fallback: string;
 begin
+  MovedFromDir := '';
   Dir := WizardForm.DirEdit.Text;
   if (Dir <> '') and PreviousDriveMissing(Dir) then
   begin
-    Fallback := ExpandConstant('{autopf}\{#MyAppName}');
-    Log('The previous install folder ' + Dir + ' is on a drive that is not available; installing to ' + Fallback + ' instead.');
-    WizardForm.DirEdit.Text := Fallback;
+    if IsNetworkLocation(Dir) then
+      Log('The previous install folder ' + Dir + ' is on a network location Setup cannot see right now; keeping it (installing elsewhere would leave two copies).')
+    else
+    begin
+      Fallback := ExpandConstant('{autopf}\{#MyAppName}');
+      Log('The previous install folder ' + Dir + ' is on a drive that is not available; installing to ' + Fallback + ' instead.');
+      WizardForm.DirEdit.Text := Fallback;
+      MovedFromDir := Dir;
+    end;
   end;
+end;
+
+// Interactive installs say so on the Finish page when the folder moved.
+procedure CurPageChanged(CurPageID: Integer);
+begin
+  if (CurPageID = wpFinished) and (MovedFromDir <> '') then
+    WizardForm.FinishedLabel.Caption := WizardForm.FinishedLabel.Caption + #13#10#13#10 +
+      '{#MyAppName} was installed to ' + WizardDirValue() + ' because its previous folder (' +
+      MovedFromDir + ') is on a drive that is not connected. Shortcuts point to the new folder.';
 end;
 
 function InitializeUninstall(): Boolean;

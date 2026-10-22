@@ -130,3 +130,27 @@ def test_release_publishes_tracked_notes_with_the_release():
     create = yml[yml.index("- name: Create Release"):]
     assert "body_path: ${{ steps.notes.outputs.path }}" in create[:create.index("submit-to-winget")]
     assert (ROOT / "release-notes" / "README.md").is_file()
+
+
+def test_setup_checks_the_session_users_own_instance_mutex():
+    """If WMI cannot list processes and another user holds the legacy name, Setup must still see
+    THIS user's 2.2.0+ instance - by its per-user mutex name."""
+    iss = _read("build", "setup.iss")
+    assert r'#define MyAppMutexPrefix "Global\NetSpeedTray_Instance_"' in iss
+    import netspeedtray.constants as c
+    assert c.app.MUTEX_NAME_PREFIX == r"Global\NetSpeedTray_Instance_"
+    running = re.search(r"function IsAppRunning\(\): Boolean;(.*?)\nend;", iss, re.S).group(1)
+    assert "SessionUserInstanceRunning()" in running
+    exists = re.search(r"function MutexExists\(Name: string\): Boolean;(.*?)\nend;", iss, re.S).group(1)
+    assert "DLLGetLastError() = 5" in exists, "access denied means it exists"
+    assert "LookupAccountNameW@advapi32.dll" in iss and "ConvertSidToStringSidW@advapi32.dll" in iss
+
+
+def test_a_network_previous_folder_is_kept_not_split():
+    iss = _read("build", "setup.iss")
+    wiz = re.search(r"procedure InitializeWizard\(\);(.*?)\nend;", iss, re.S).group(1)
+    assert wiz.index("IsNetworkLocation(Dir)") < wiz.index("WizardForm.DirEdit.Text := Fallback")
+    net = re.search(r"function IsNetworkLocation\(Dir: string\): Boolean;(.*?)\nend;", iss, re.S).group(1)
+    assert r"'\\'" in net and r"RegKeyExists(HKCU, 'Network\' + Drive[1])" in net
+    finish = re.search(r"procedure CurPageChanged\(CurPageID: Integer\);(.*?)\nend;", iss, re.S).group(1)
+    assert "wpFinished" in finish and "MovedFromDir" in finish
