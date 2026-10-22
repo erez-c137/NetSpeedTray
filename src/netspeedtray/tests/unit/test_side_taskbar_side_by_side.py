@@ -193,7 +193,8 @@ def test_side_taskbar_places_a_tall_stacked_widget_above_the_tray(q_app):
 
     height = constants.ui.widget.MAX_WIDGET_HEIGHT_PX + 37
     pos = PositionCalculator().calculate_position(taskbar, (TB_WIDTH, height), {"tray_offset_y": 3})
-    assert pos.y + height == 900 - 3, pos
+    # Phase B: a native side bar keeps the #161 tray gap (it was the 3 px default offset).
+    assert pos.y + height == 900 - constants.layout.TRAY_EDGE_MIN_GAP_PX, pos
 
 
 @pytest.mark.parametrize("overrides", [

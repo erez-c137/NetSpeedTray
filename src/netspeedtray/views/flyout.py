@@ -31,8 +31,12 @@ class Flyout(QWidget):
 
     def __init__(self, title: str, message: str, action_text: Optional[str] = None,
                  auto_dismiss_ms: int = 12000, parent: Optional[QWidget] = None) -> None:
+        # WindowDoesNotAcceptFocus (native WS_EX_NOACTIVATE): neither showing it nor clicking its
+        # buttons takes the keyboard from the app the user is typing in - it can appear at any time
+        # (a data-cap alert, the side-bar no-room notice, rc.2 W4). WA_ShowWithoutActivating alone
+        # only covers the show.
         super().__init__(parent, Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool
-                         | Qt.WindowType.WindowStaysOnTopHint)
+                         | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.WindowDoesNotAcceptFocus)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)  # never steal focus
         # Single-use, self-dismissing toast: free it on close instead of letting the closed-but-hidden

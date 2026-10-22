@@ -551,6 +551,8 @@
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray se superpone al panel de widgets",
     "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray está encima del panel de widgets o de El tiempo de Windows en la barra de tareas. Puedes arrastrarlo a donde quieras y recordará la posición. (Este mensaje no volverá a aparecer.)",
     "RESET_POSITION_MENU_ITEM": "Res&tablecer posición",
+    "SIDE_BAR_NO_ROOM_TITLE": "No hay hueco libre en la barra de tareas",
+    "SIDE_BAR_NO_ROOM_BODY": "Los botones de las aplicaciones llenan la barra de tareas, así que NetSpeedTray se coloca junto a la bandeja del sistema y puede tapar algunos. Puedes arrastrarlo a cualquier punto de la barra de tareas y recordará la posición. Para deshacerlo, haz clic derecho sobre él y elige «Restablecer posición». (Este mensaje no volverá a aparecer.)",
     "HOVER_CARD_PIN_HINT": "Haz clic en el widget para mantenerla abierta",
     "INTEGRATIONS_GROUP": "Integraciones",
     "METRICS_ENDPOINT_LABEL": "Punto de conexión local de métricas",

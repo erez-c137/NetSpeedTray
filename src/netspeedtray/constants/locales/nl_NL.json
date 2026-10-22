@@ -551,6 +551,8 @@
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray overlapt het Widgets-paneel",
     "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray staat over het Widgets-/weerpaneel van Windows op je taakbalk. Je kunt het overal naartoe slepen - de plek wordt onthouden. (Dit bericht verschijnt niet meer.)",
     "RESET_POSITION_MENU_ITEM": "P&ositie herstellen",
+    "SIDE_BAR_NO_ROOM_TITLE": "Geen vrije plek op de taakbalk",
+    "SIDE_BAR_NO_ROOM_BODY": "De app-knoppen vullen je taakbalk, dus NetSpeedTray staat naast het systeemvak en kan er enkele bedekken. Je kunt het overal langs de taakbalk slepen - de plek wordt onthouden. Om dat ongedaan te maken, klik je er met de rechtermuisknop op en kies je 'Positie herstellen'. (Dit bericht verschijnt niet meer.)",
     "HOVER_CARD_PIN_HINT": "Klik op de widget om dit open te houden",
     "INTEGRATIONS_GROUP": "Integraties",
     "METRICS_ENDPOINT_LABEL": "Lokaal metrics-eindpunt",

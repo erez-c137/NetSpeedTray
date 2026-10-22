@@ -409,6 +409,7 @@ class NetworkSpeedWidget(QWidget):
                 font_metrics=self.current_metrics
             )
             self.position_manager = PositionManager(window_state, parent=self)
+            self.position_manager.on_side_no_room = self._maybe_show_side_no_room_notice
             # Note: InputHandler is initialized in _init_ui_components() after tray_manager is created
             
             self.logger.debug("Managers initialized successfully.")
@@ -503,6 +504,8 @@ class NetworkSpeedWidget(QWidget):
                     # _float_refreshed=True: we already called refresh_float_state() above for the
                     # visibility check this tick, so don't re-enumerate taskbars inside (#188).
                     self.position_manager.update_position(fresh_taskbar_info=taskbar_info, _float_refreshed=True)
+                    # Side bars: the icon alignment and the bounded "apps near the widget" re-check.
+                    self.position_manager.side_bar_tick()
                 
                 # Always re-assert topmost status when visible to prevent falling behind taskbar (#77)
                 self._ensure_win32_topmost()
@@ -963,6 +966,28 @@ class NetworkSpeedWidget(QWidget):
     # _load_initial_config removed as it is now handled by ConfigController class
 
 
+    def _on_taskbar_alignment_changed(self) -> None:
+        """WM_SETTINGCHANGE saw TaskbarAl flip (rc.1 B3). On build 26200 this broadcast never arrives,
+        so the side-bar watcher also reads the value on its own hook and on the 1 s tick; this is
+        one more hint. The watcher re-decides once the re-laid bar has settled."""
+        pm = getattr(self, "position_manager", None)
+        if pm is None:
+            return
+        try:
+            pm.note_taskbar_alignment_hint()
+        except Exception as e:
+            self.logger.debug("alignment change handling failed: %s", e)
+
+    def _on_foreground_for_side_bar(self, _hwnd: int = 0) -> None:
+        """A new foreground window often means a new app button on the taskbar (side-bar watcher)."""
+        pm = getattr(self, "position_manager", None)
+        if pm is None or self.config.get("free_move", False):
+            return
+        try:
+            pm.note_foreground_change()
+        except Exception as e:
+            self.logger.debug("side-bar foreground hint failed: %s", e)
+
     def _on_theme_changed(self) -> None:
         """Delegates theme change handling."""
         # An open card (pinned ones last for minutes) keeps the old theme's colours: close it; the
@@ -1043,9 +1068,11 @@ class NetworkSpeedWidget(QWidget):
             # 1. System Event Handler (replaces manual WinEventHooks)
             self.system_event_handler.foreground_app_changed.connect(self._execute_refresh)
             self.system_event_handler.foreground_app_changed.connect(self._on_foreground_for_hover_card)
+            self.system_event_handler.foreground_app_changed.connect(self._on_foreground_for_side_bar)
             self.system_event_handler.taskbar_changed.connect(self.update_position)
             self._refresh_cached_layout_mode()
             self.system_event_handler.theme_changed.connect(self._on_theme_changed)
+            self.system_event_handler.taskbar_alignment_changed.connect(self._on_taskbar_alignment_changed)
             
             # Emergency-hide on unambiguous fullscreen - but honor the user's
             # "keep visible over fullscreen" choice (issue #107). Without this guard
@@ -2115,8 +2142,8 @@ class NetworkSpeedWidget(QWidget):
         self.position_manager.enforce_topmost_status()
 
     def reset_to_default_position(self) -> None:
-        """Right-click > Reset position: back to the automatic spot by the tray - clears the
-        free-move spot AND the docked drag offsets, then re-places."""
+        """Right-click > Reset position: back to the automatic spot by the tray (or the side bar's
+        chosen gap) - clears the free-move spot AND the docked drag offsets, then re-places."""
         self.logger.info("Resetting widget position to default.")
         self._hide_usage_hover_card()
         defaults = constants.config.defaults
@@ -2134,6 +2161,42 @@ class NetworkSpeedWidget(QWidget):
         return (cfg.get('position_x') is not None or cfg.get('position_y') is not None
                 or cfg.get('tray_offset_x', defaults.DEFAULT_TRAY_OFFSET_X) != defaults.DEFAULT_TRAY_OFFSET_X
                 or cfg.get('tray_offset_y', defaults.DEFAULT_TRAY_OFFSET_Y) != defaults.DEFAULT_TRAY_OFFSET_Y)
+
+    def _maybe_show_side_no_room_notice(self) -> None:
+        """One-time heads-up (ever): a side taskbar's app buttons leave no free spot, so the widget sits
+        by the tray and may cover some of them - it can be dragged anywhere along the bar. Called by
+        PositionManager when its placement ends in "tray_no_room" (never while the user's own drag
+        is in force)."""
+        try:
+            if getattr(self, "_side_no_room_shown", False) or self.config.get("side_bar_no_room_notice_shown", False):
+                return
+            self._side_no_room_shown = True
+            self.update_config({"side_bar_no_room_notice_shown": True})
+            title = self.i18n.SIDE_BAR_NO_ROOM_TITLE
+            body = self.i18n.SIDE_BAR_NO_ROOM_BODY
+            # Deferred out of the reposition. A non-activating flyout, NOT a QMessageBox: this can fire
+            # while the user types in another app (apps opened after placement, rc.2 W1), and a modal
+            # message box took the keyboard away from it (rc.1 live test, W4).
+            QTimer.singleShot(0, lambda: self._show_notice_flyout(title, body))
+        except Exception as e:
+            self.logger.debug("side-bar no-room notice failed: %s", e)
+
+    # The no-room notice is longer than a usage alert: give it time to be read.
+    _NOTICE_FLYOUT_DISMISS_MS = 30000
+
+    def _show_notice_flyout(self, title: str, body: str) -> None:
+        """A one-time notice next to the widget that never takes focus (the data-cap alerts' flyout)."""
+        try:
+            from netspeedtray.views.flyout import Flyout
+            from PyQt6 import sip
+            previous = getattr(self, "_notice_flyout", None)
+            if previous is not None and not sip.isdeleted(previous):
+                previous.close()
+            self._notice_flyout = Flyout(title, body, auto_dismiss_ms=self._NOTICE_FLYOUT_DISMISS_MS)
+            geo = self.frameGeometry()
+            self._notice_flyout.show_at(QPoint(geo.left(), geo.top()))
+        except Exception as e:
+            self.logger.error("Error showing a notice: %s", e, exc_info=True)
 
 
     def apply_all_settings(self) -> None:
@@ -2719,6 +2782,7 @@ class NetworkSpeedWidget(QWidget):
         def _position_manager() -> None:
             if getattr(self, 'position_manager', None):
                 self.position_manager.stop_monitoring()
+                self.position_manager.stop_side_watcher()
 
         def _state_watcher() -> None:
             timer = getattr(self, '_state_watcher_timer', None)

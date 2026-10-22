@@ -32,6 +32,26 @@ from netspeedtray.utils.win_event_hook import (
 _WM_SETTINGCHANGE = 0x001A
 # lParam of the WM_SETTINGCHANGE Windows broadcasts when the Light/Dark (or accent) theme changes.
 _IMMERSIVE_COLOR_SET = "ImmersiveColorSet"
+# Taskbar icon alignment (Settings > Personalization > Taskbar > Taskbar behaviors): 0 left/top,
+# 1 center (Win11's default when the value is absent).
+_EXPLORER_ADVANCED_KEY = r"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
+
+
+def read_taskbar_alignment() -> Optional[int]:
+    """``TaskbarAl`` under HKCU's Explorer "Advanced" key: 0 = left/top, 1 = center (also when
+    absent - the Win11 default), None when the key itself can't be read."""
+    try:
+        import winreg
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, _EXPLORER_ADVANCED_KEY)
+        try:
+            value, _ = winreg.QueryValueEx(key, "TaskbarAl")
+            return int(value)
+        except FileNotFoundError:
+            return 1
+        finally:
+            winreg.CloseKey(key)
+    except (OSError, ValueError, TypeError):
+        return None
 
 
 class _NativeMSG(ctypes.Structure):
@@ -47,17 +67,22 @@ class _ImmersiveColorSetFilter(QAbstractNativeEventFilter):
     any of the app's windows. Observe only - never consumes a message. (The pre-#62 filter compared
     the event type to the str "windows_generic_MSG"; PyQt6 passes bytes, so it never matched.)"""
 
-    def __init__(self, on_change) -> None:
+    def __init__(self, on_change, on_any_setting=None) -> None:
         super().__init__()
         self._on_change = on_change
+        # Called for EVERY WM_SETTINGCHANGE (the taskbar-alignment check: Explorer's broadcast for a
+        # taskbar setting carries no documented lParam, so the callee compares one registry value).
+        self._on_any_setting = on_any_setting
 
     def nativeEventFilter(self, eventType, message):
         try:
             if eventType in (b"windows_generic_MSG", "windows_generic_MSG") and message is not None:
                 msg = _NativeMSG.from_address(int(message))
-                if msg.message == _WM_SETTINGCHANGE and msg.lParam:
-                    if ctypes.wstring_at(msg.lParam, len(_IMMERSIVE_COLOR_SET) + 1) == _IMMERSIVE_COLOR_SET + "\0":
+                if msg.message == _WM_SETTINGCHANGE:
+                    if msg.lParam and ctypes.wstring_at(msg.lParam, len(_IMMERSIVE_COLOR_SET) + 1) == _IMMERSIVE_COLOR_SET + "\0":
                         self._on_change()
+                    if self._on_any_setting is not None:
+                        self._on_any_setting()
         except Exception:
             pass
         return False, 0
@@ -90,6 +115,9 @@ class SystemEventHandler(QObject):
     taskbar_restarted = pyqtSignal()
     events_paused = pyqtSignal(bool)
     theme_changed = pyqtSignal() # New signal
+    # The taskbar's icon alignment (TaskbarAl) flipped - on a side bar that moves the Widgets button
+    # and the app group, so the widget's side-bar placement must be decided again (rc.1 B3).
+    taskbar_alignment_changed = pyqtSignal()
 
     def __init__(self, parent: Optional[QObject] = None):
         super().__init__(parent)
@@ -119,6 +147,7 @@ class SystemEventHandler(QObject):
         self._was_fullscreen = False  # last polled fullscreen state (edge detection)
         self._last_shell_light: Optional[int] = None  # last seen SystemUsesLightTheme (edge detection)
         self._theme_filter: Optional[_ImmersiveColorSetFilter] = None
+        self._last_taskbar_alignment: Optional[int] = None  # last seen TaskbarAl (edge detection)
 
     def start(self) -> None:
         """Starts all hooks and monitoring timers."""
@@ -128,6 +157,8 @@ class SystemEventHandler(QObject):
         self._connect_color_scheme_signal()
         if self._last_shell_light is None:   # the baseline survives Explorer-restart stop()/start()
             self._last_shell_light = read_system_uses_light_theme()
+        if self._last_taskbar_alignment is None:
+            self._last_taskbar_alignment = read_taskbar_alignment()
         self._install_theme_filter()
         self.logger.debug("SystemEventHandler started.")
 
@@ -401,6 +432,7 @@ class SystemEventHandler(QObject):
         self._is_paused = False
         self.events_paused.emit(False)
         self.check_shell_theme()
+        self.check_taskbar_alignment()
 
     def is_fullscreen_active(self) -> bool:
         """True when the most recent poll saw a fullscreen obstruction. Lets the widget suppress
@@ -448,7 +480,8 @@ class SystemEventHandler(QObject):
         if app is None:
             return
         try:
-            self._theme_filter = _ImmersiveColorSetFilter(self.check_shell_theme)
+            self._theme_filter = _ImmersiveColorSetFilter(self.check_shell_theme,
+                                                          self.check_taskbar_alignment)
             app.installNativeEventFilter(self._theme_filter)
         except Exception as e:
             self._theme_filter = None
@@ -489,6 +522,23 @@ class SystemEventHandler(QObject):
             return
         self.logger.info("Windows-mode theme changed (SystemUsesLightTheme=%s); emitting theme_changed.", value)
         self.theme_changed.emit()
+
+    def check_taskbar_alignment(self) -> None:
+        """Emit taskbar_alignment_changed when TaskbarAl differs from the last value seen. Called for
+        every WM_SETTINGCHANGE (one registry read; they are rare), deduped like check_shell_theme so
+        the broadcast reaching several of our windows emits once."""
+        if self._is_paused:
+            return
+        value = read_taskbar_alignment()
+        if value is None or value == self._last_taskbar_alignment:
+            return
+        first = self._last_taskbar_alignment is None
+        self._last_taskbar_alignment = value
+        if first:
+            return
+        self.logger.info("Taskbar icon alignment changed (TaskbarAl=%s); emitting taskbar_alignment_changed.",
+                         value)
+        self.taskbar_alignment_changed.emit()
 
     def _on_color_scheme_changed(self, _scheme) -> None:
         """Qt saw a colour-scheme change: re-check the Windows-mode theme the widget follows (the

@@ -551,6 +551,8 @@
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray 與小工具面板重疊",
     "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray 目前壓在工作列上的 Windows 小工具/天氣面板上方。您可以將它拖曳到任何喜歡的位置，它會記住這個位置。（此訊息不會再次顯示。）",
     "RESET_POSITION_MENU_ITEM": "重設位置(&O)",
+    "SIDE_BAR_NO_ROOM_TITLE": "工作列上沒有空位",
+    "SIDE_BAR_NO_ROOM_BODY": "應用程式按鈕已佔滿工作列，因此 NetSpeedTray 位於通知區域旁，可能會遮住其中一些按鈕。您可以將它拖曳到工作列上的任何位置，它會記住這個位置。若要復原，請以滑鼠右鍵按一下它，然後選擇「重設位置」。（此訊息不會再次顯示。）",
     "HOVER_CARD_PIN_HINT": "按一下小工具以保持開啟",
     "INTEGRATIONS_GROUP": "整合",
     "METRICS_ENDPOINT_LABEL": "本機指標端點",

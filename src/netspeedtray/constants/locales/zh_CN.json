@@ -551,6 +551,8 @@
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray 遮挡了系统小组件",
     "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray 遮挡了任务栏上的小组件/天气。你可以拖动它到喜欢的位置，设置会自动保存。（此消息仅显示一次）",
     "RESET_POSITION_MENU_ITEM": "重置位置(&O)",
+    "SIDE_BAR_NO_ROOM_TITLE": "任务栏上没有空余位置",
+    "SIDE_BAR_NO_ROOM_BODY": "应用按钮已占满任务栏，因此 NetSpeedTray 位于通知区域旁，可能会遮住其中一些按钮。你可以把它拖动到任务栏上的任意位置，位置会自动保存。若要撤消，请右键单击它并选择“重置位置”。（此消息仅显示一次）",
     "HOVER_CARD_PIN_HINT": "单击小部件以保持打开",
     "//TRANSLATION_VERSION": "2.2.0-zh_CN-260921",
     "INTEGRATIONS_GROUP": "集成",

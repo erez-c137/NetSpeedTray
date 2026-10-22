@@ -551,6 +551,8 @@
     "WIDGETS_OVERLAP_NUDGE_TITLE": "NetSpeedTray がウィジェット パネルに重なっています",
     "WIDGETS_OVERLAP_NUDGE_BODY": "NetSpeedTray がタスクバーの Windows ウィジェット (天気) パネルの上に表示されています。好きな場所へドラッグして移動でき、その位置は記憶されます。(このメッセージは次回以降表示されません。)",
     "RESET_POSITION_MENU_ITEM": "位置をリセット(&O)",
+    "SIDE_BAR_NO_ROOM_TITLE": "タスクバーに空きがありません",
+    "SIDE_BAR_NO_ROOM_BODY": "アプリのボタンでタスクバーが埋まっているため、NetSpeedTray は通知領域の隣に表示され、一部のボタンを隠すことがあります。タスクバー上の好きな場所へドラッグでき、その位置は記憶されます。元に戻すには、右クリックして [位置をリセット] を選択してください。(このメッセージは次回以降表示されません。)",
     "HOVER_CARD_PIN_HINT": "ウィジェットをクリックすると開いたままになります",
     "INTEGRATIONS_GROUP": "連携",
     "METRICS_ENDPOINT_LABEL": "ローカル メトリック エンドポイント",

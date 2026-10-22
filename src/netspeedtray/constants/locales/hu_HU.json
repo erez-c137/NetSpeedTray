@@ -551,6 +551,8 @@
     "WIDGETS_OVERLAP_NUDGE_TITLE": "A NetSpeedTray átfedi a Widgetek panelt",
     "WIDGETS_OVERLAP_NUDGE_BODY": "A NetSpeedTray a Windows Widgetek/időjárás panelje fölött helyezkedik el a tálcán. Bárhová áthúzhatod – megjegyzi a helyét. (Ez az üzenet nem jelenik meg újra.)",
     "RESET_POSITION_MENU_ITEM": "&Pozíció visszaállítása",
+    "SIDE_BAR_NO_ROOM_TITLE": "Nincs szabad hely a tálcán",
+    "SIDE_BAR_NO_ROOM_BODY": "Az alkalmazásgombok kitöltik a tálcát, ezért a NetSpeedTray az értesítési terület mellett van, és eltakarhat közülük néhányat. Bárhová áthúzhatod a tálcán – megjegyzi a helyét. A visszavonáshoz kattints rá jobb gombbal, és válaszd a „Pozíció visszaállítása” lehetőséget. (Ez az üzenet nem jelenik meg újra.)",
     "HOVER_CARD_PIN_HINT": "Kattints a widgetre, hogy nyitva maradjon",
     "INTEGRATIONS_GROUP": "Integrációk",
     "METRICS_ENDPOINT_LABEL": "Helyi metrikavégpont",
