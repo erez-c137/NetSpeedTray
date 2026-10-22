@@ -292,7 +292,9 @@ def _bucket_rate_sql(avg: str, bytes_: str, sc: str) -> Tuple[str, str]:
     more than one interface moved data (Wi-Fi 1000 B/s + vEthernet 1 B/s over one minute weighed as
     1001 B/s for 120 s), overstating every multi-interface "all" average. MAX(sc) is the longest
     interface's span - the bucket's measured time, short of the true union only when the interfaces
-    were active in disjoint seconds. A single-row bucket (one interface selected, or only one moved
+    were active in disjoint seconds, which reads that bucket high by the union / MAX ratio (about 3%
+    for a Wi-Fi active 90% of seconds beside a vEthernet active 30%,
+    test_history_multi_interface_average); the rollup tiers keep no per-second union. A single-row bucket (one interface selected, or only one moved
     data) keeps its stored avg and sc exactly. (``* 1.0``: v8 bytes and sample_count are INTEGER, and
     SQLite divides two integers as integers.)"""
     rate = (f"CASE WHEN COUNT(*) = 1 THEN MAX({avg}) "
@@ -1032,9 +1034,15 @@ class V8HistoryReader(_ReaderBase):
 
     @classmethod
     def _bucket_rate(cls, d: str, k: int) -> Tuple[str, str]:
-        """(rate, weight) of one net rollup bucket across interfaces (``_bucket_rate_sql``): its bytes
-        over its measured seconds (sample_count is SECONDS on the net tiers)."""
-        return _bucket_rate_sql(f"n.{d}_avg", cls._tier_bytes(d, k), "n.sample_count")
+        """(rate, weight) of one net rollup bucket across interfaces (``_bucket_rate_sql``): each row
+        contributes avg x MIN(sample_count, bucket) - its rate over its (capped) measured seconds -
+        NOT its stored bytes. writer_v8 rolls a FLAG_GAP raw row (an interval spanning standby) into
+        its minute: the row keeps the whole gap's bytes, its avg = bytes / the gap's seconds, and its
+        sample_count is capped at the bucket. Stored bytes / MAX(sample_count) would then bill hours
+        of bytes to one minute (500 MB over a 2 h gap -> 4 MB/s); the avg-based figure keeps that row
+        at its own average, as a one-row bucket reads. Stored bytes stay volume()'s (_tier_bytes)."""
+        sc = f"MIN(n.sample_count, {cls._BUCKET_SECONDS[k]})"
+        return _bucket_rate_sql(f"n.{d}_avg", f"n.{d}_avg * {sc}", "n.sample_count")
 
     # --- tier precedence by watermark --------------------------------------------------------------
 

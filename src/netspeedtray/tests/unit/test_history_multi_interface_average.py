@@ -108,14 +108,45 @@ def test_a_single_interface_is_unchanged(two_buckets, which):
     assert r.network_hourly_profile("download", *WINDOW, "Wi-Fi") == {datetime.fromtimestamp(H0).hour: 2000.0}
 
 
-def test_a_single_v8_row_keeps_its_stored_avg_not_bytes_over_seconds(tmp_path, q_app):
+def test_v8_rows_read_their_stored_avg_not_bytes_over_seconds(tmp_path, q_app):
     """A v8 row's sample_count is ROUND(seconds) and its avg the exact time-weighted rate, so bytes /
-    sample_count can drift from avg by the rounding. A one-row bucket keeps the stored avg."""
+    sample_count can drift from avg by the rounding. Every row - alone or beside another interface -
+    reads its stored avg; stored bytes are volume()'s."""
     _, r8, conns = _write(tmp_path, ROWS, exact=True, bytes_drift=17)
     try:
         assert r8.summarize_network("download", *WINDOW, "Wi-Fi").avg == 2000.0
-        # Bucket A (two rows) reads its bytes: (60000 + 17 + 60 + 17) / 60; bucket B (one row) its avg.
-        assert r8.summarize_network("download", *WINDOW, None).avg == pytest.approx(TRUE_AVG + 2 * 17 / 120)
+        assert r8.summarize_network("download", *WINDOW, None).avg == pytest.approx(TRUE_AVG)
+    finally:
+        for c in conns:
+            c.close()
+
+
+def test_a_standby_gap_minute_shared_by_two_interfaces_stays_at_its_average(tmp_path, q_app):
+    """writer_v8 rolls a FLAG_GAP raw row (Modern Standby: 500 MB over a 7259 s interval) into its
+    minute with ALL the gap's bytes, avg = bytes / 7259 s and sample_count capped at 60. Beside a
+    second interface (vEthernet, 60 B) that minute must read the gap row's own average, as Wi-Fi alone
+    does - not 500 MB / 60 s (review of #413: 'all' read 4,168,167 B/s against 35,940 for Wi-Fi)."""
+    gap, dt = 500_000_000, 7259
+    rows = [(A, "Wi-Fi", 0.0, gap / dt, 0.0, gap / dt, 60, 0, gap),
+            (A, "vEthernet", 0.0, 1.0, 0.0, 1.0, 60, 0, 60),
+            (B, "Wi-Fi", 0.0, 3000.0, 0.0, 3000.0, 60, 0, 180000)]
+    h = F.History(now_ts=NOW_TS, minute=rows)
+    h.snapshot = None
+    F.write_v7(tmp_path / "v7.db", h)
+    w = F.V8Writer(tmp_path / "v8.db")
+    w.net_tier(S8.NET_MINUTE, h.minute)
+    w.watermarks((NOW_TS - 3600) // 60 * 60, (NOW_TS - 10 * DAY) // 3600 * 3600)
+    w.close()
+    r7, r8, conns = F.readers(tmp_path / "v7.db", tmp_path / "v8.db", now=NOW)
+    try:
+        expected = ((gap / dt + 1.0) * 60 + 3000.0 * 60) / 120
+        for r in (r7, r8):
+            assert r.summarize_network("download", *WINDOW, None).avg == pytest.approx(expected)
+            prof = r.network_hourly_profile("download", *WINDOW, None)
+            assert prof == {datetime.fromtimestamp(H0).hour: pytest.approx(expected)}
+        wifi = r8.summarize_network("download", *WINDOW, "Wi-Fi").avg
+        assert wifi == pytest.approx((gap / dt + 3000.0) / 2)
+        assert r8.volume(*WINDOW, None, 1.0).down_bytes == gap + 60 + 180000   # volume keeps the bytes
     finally:
         for c in conns:
             c.close()
