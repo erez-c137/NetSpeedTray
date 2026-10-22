@@ -229,6 +229,9 @@ class NetworkSpeedWidget(QWidget):
         self.ram_total: Optional[float] = None
         self.vram_used: Optional[float] = None
         self.vram_total: Optional[float] = None
+        # True when vram_used/vram_total are an integrated GPU's shared system memory (set by the
+        # controller from the stats dict's 'vram_is_shared').
+        self.vram_is_shared: bool = False
         
         # Cycling State
         self._cycle_index: int = 0
@@ -1673,6 +1676,8 @@ class NetworkSpeedWidget(QWidget):
                 hw["ram"] = (self.ram_used, self.ram_total)
             if "GPU" in stats and cfg.get("monitor_vram_enabled", False):
                 hw["vram"] = (self.vram_used, self.vram_total)
+                if getattr(self, "vram_is_shared", False):
+                    hw["vram_shared"] = True
         if fit is not None and fit.hides_identity:
             band, _color, _solid = self._identity_presentation()
             parts = [p for p in (self._identity_ssid_text(), band) if p]

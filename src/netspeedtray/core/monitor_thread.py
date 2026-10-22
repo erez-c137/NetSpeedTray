@@ -53,6 +53,7 @@ import shutil
 from functools import lru_cache
 
 from netspeedtray import constants
+from netspeedtray.core import gpu_adapters
 from netspeedtray.core.lhm_http import LhmHttpClient
 from netspeedtray.utils.rdp_utils import is_rdp_session
 from netspeedtray.utils.network_utils import get_connected_network_identity
@@ -126,6 +127,9 @@ class GpuPollResult(NamedTuple):
     vram_total: Optional[float] = None
     temp: Optional[float] = None
     power: Optional[float] = None
+    # True when vram_used/vram_total are an integrated GPU's SHARED system memory (no adapter has
+    # dedicated memory - see _poll_gpu_hybrid), not dedicated video memory.
+    vram_is_shared: bool = False
     # A PDH engine instance or a hardware-scoped LHM GPU sensor proves presence.
     present: bool = False
 
@@ -204,6 +208,14 @@ class StatsMonitorThread(QThread):
         # per-instance handles snapshotted at startup (see _init_gpu_query for why).
         self._gpu_util_counter: Optional[int] = None
         self._gpu_vram_counter: Optional[int] = None
+        self._gpu_shared_counter: Optional[int] = None
+        # Static DXGI adapter facts (gpu_adapters.enumerate_adapters), re-read on every query
+        # (re)build; None = DXGI unavailable, which falls back to the usage latch below.
+        self._gpu_adapters: Optional[List[gpu_adapters.AdapterInfo]] = None
+        # FALLBACK ONLY (no DXGI): True once any adapter has reported dedicated usage at or above
+        # constants.gpu.DEDICATED_USAGE_FALLBACK_MIB. From then on VRAM is the dedicated figure.
+        # Not reset on a query rebuild, like _gpu_engine_seen.
+        self._gpu_dedicated_seen: bool = False
         # A missing/broken PDH provider must not be re-opened on every one-second poll.
         self._gpu_query_retry_after: float = 0.0
         # Latched: True once the wildcard has ever returned at least one GPU Engine instance.
@@ -289,9 +301,18 @@ class StatsMonitorThread(QThread):
             if self._gpu_query:
                 return True
 
+            # Static per-adapter facts first (does any GPU have real dedicated memory?) - re-read
+            # on every rebuild, so an eGPU plugged in or a driver reset is picked up on resume.
+            self._gpu_adapters = gpu_adapters.enumerate_adapters()
+            if self._gpu_adapters is not None:
+                self.logger.debug("DXGI adapters: %s", [
+                    (a.name, hex(a.vendor_id), round(a.dedicated_video_bytes / 2 ** 20), a.software)
+                    for a in self._gpu_adapters])
+
             self._gpu_query = win32pdh.OpenQuery()
             self._gpu_util_counter = None
             self._gpu_vram_counter = None
+            self._gpu_shared_counter = None
 
             # 1. Utilization: every engine of every adapter, all processes.
             # Deliberately NOT filtered by engtype: a large share of instances report a blank
@@ -309,6 +330,14 @@ class StatsMonitorThread(QThread):
                     self._gpu_query, r"\GPU Adapter Memory(*)\Dedicated Usage")
             except Exception as e:
                 self.logger.debug("Failed to add GPU Adapter Memory wildcard counter: %s", e)
+
+            # 3. Shared GPU memory (\\GPU Adapter Memory(*)\\Shared Usage) - what an integrated GPU
+            # actually uses, since it has no dedicated memory. Only consulted when no adapter has any.
+            try:
+                self._gpu_shared_counter = win32pdh.AddCounter(
+                    self._gpu_query, r"\GPU Adapter Memory(*)\Shared Usage")
+            except Exception as e:
+                self.logger.debug("Failed to add GPU Adapter Memory Shared Usage counter: %s", e)
 
             # Initial collection to prime
             win32pdh.CollectQueryData(self._gpu_query)
@@ -328,6 +357,7 @@ class StatsMonitorThread(QThread):
             self._gpu_query = None
             self._gpu_util_counter = None
             self._gpu_vram_counter = None
+            self._gpu_shared_counter = None
             # _gpu_engine_seen is deliberately NOT reset: a settings change or a resume rebuilds
             # the query, and forgetting that this machine has a GPU would blink the Monitor's GPU
             # tiles out until the next non-idle tick.
@@ -350,6 +380,11 @@ class StatsMonitorThread(QThread):
         util_pct = 0.0
         vram_used = None   # None = no VRAM counter available -> N/A (not a misleading "0.0 GB used")
         vram_total = None
+        vram_is_shared = False
+        # Shared Usage per PDH adapter instance, MiB (empty = counter unavailable / no instance), and
+        # whether the dedicated read succeeded - a failed one never falls into shared mode.
+        shared_mib: Dict[str, float] = {}
+        dedicated_read_ok = False
         temp_c = None
         power_w = None
 
@@ -382,12 +417,29 @@ class StatsMonitorThread(QThread):
                         _had_vram = False
                         for val in arr.values():
                             if isinstance(val, (int, float)):
-                                _vram_acc += (float(val) / (1024.0 * 1024.0))
+                                _mib = float(val) / (1024.0 * 1024.0)
+                                _vram_acc += _mib
                                 _had_vram = True
+                                if _mib >= constants.gpu.DEDICATED_USAGE_FALLBACK_MIB:
+                                    self._gpu_dedicated_seen = True
                         if _had_vram:
                             vram_used = _vram_acc
+                            dedicated_read_ok = True
                     except Exception as e:
                         self.logger.debug("GPU VRAM array read failed: %s", e)
+
+                # 2b. Shared Usage per adapter (bytes -> MiB). Read every poll but only USED below,
+                # when no adapter has dedicated memory - a discrete GPU's readout never changes.
+                if self._gpu_shared_counter is not None:
+                    try:
+                        arr = win32pdh.GetFormattedCounterArray(
+                            self._gpu_shared_counter, win32pdh.PDH_FMT_DOUBLE)
+                        for inst, val in arr.items():
+                            if (isinstance(val, (int, float)) and not isinstance(val, bool)
+                                    and math.isfinite(float(val)) and float(val) >= 0.0):
+                                shared_mib[str(inst)] = float(val) / (1024.0 * 1024.0)
+                    except Exception as e:
+                        self.logger.debug("GPU shared memory array read failed: %s", e)
 
             except Exception as e:
                 self.logger.debug("GPU PDH polling error: %s", e)
@@ -512,6 +564,13 @@ class StatsMonitorThread(QThread):
         if vram_total is None and self._nvidia_cache_vram_total is not None:
             vram_total = self._nvidia_cache_vram_total
 
+        # 4b. Integrated GPU: no adapter has dedicated memory, so "VRAM 0.0 GB" says nothing. Report
+        # the shared system memory the iGPU actually uses instead (see _shared_vram_reading).
+        shared = self._shared_vram_reading(shared_mib, dedicated_read_ok)
+        if shared is not None:
+            vram_used, vram_total = shared
+            vram_is_shared = True
+
         # 5. RAPL PP1 fallback for Intel iGPU power (if no LHM/nvidia-smi power).
         # Init the PDH query FIRST (it's idempotent and sets _power_pp1_counter on first call) -
         # the old guard checked the counter before anything could ever set it, so this whole
@@ -532,7 +591,56 @@ class StatsMonitorThread(QThread):
         # exists. Keeping the row visible with 0% utilization is intentional when PDH is
         # unavailable: temperature/power remain useful and are not fabricated.
         return GpuPollResult(util_pct, vram_used, vram_total, temp_c, power_w,
+                             vram_is_shared=vram_is_shared,
                              present=self._gpu_engine_seen or self._lhm_gpu_seen)
+
+    def _shared_vram_reading(self, shared_mib: Dict[str, float],
+                             dedicated_read_ok: bool) -> Optional[Tuple[float, Optional[float]]]:
+        """(used_mib, total_mib) of an integrated GPU's shared memory, or None to keep the dedicated
+        readout exactly as before.
+
+        None whenever there is any sign of dedicated memory or any doubt: the dedicated read failed,
+        no shared reading, an NVIDIA driver (nvidia-smi), or - from the static DXGI facts - any real
+        adapter with DedicatedVideoMemory >= DEDICATED_VIDEO_MEMORY_MIN_MIB, or no real adapter at
+        all (Microsoft Basic Render only: VMs, servers, broken drivers keep today's hidden VRAM).
+        Otherwise the real adapter (matched by LUID) using the most shared memory, against its DXGI
+        SharedSystemMemory budget. Without DXGI: the usage latch and a 1 MiB floor (fallback).
+        """
+        if not dedicated_read_ok or not shared_mib or self._nvidia_smi_path:
+            return None
+        mib = 1024.0 * 1024.0
+        adapters = self._gpu_adapters
+        if adapters is not None:
+            real = gpu_adapters.hardware_adapters(adapters)
+            if not real or any(a.dedicated_video_bytes / mib >= constants.gpu.DEDICATED_VIDEO_MEMORY_MIN_MIB
+                               for a in real):
+                return None
+            by_luid = {a.luid: a for a in real}
+            best: Optional[Tuple[float, Optional[float]]] = None
+            for inst, used in shared_mib.items():
+                a = by_luid.get(gpu_adapters.pdh_instance_luid(inst))
+                if a is not None and (best is None or used > best[0]):
+                    best = (used, a.shared_system_bytes / mib if a.shared_system_bytes > 0 else None)
+            if best is None:
+                return None
+            return best[0], best[1] if best[1] else self._half_ram_mib()
+        # Fallback (no DXGI): usage latch + a floor that rules out a Basic-Render-only machine.
+        if self._gpu_dedicated_seen:
+            return None
+        used = max(shared_mib.values())
+        if used < constants.gpu.SHARED_USAGE_FALLBACK_MIN_MIB:
+            return None
+        return used, self._half_ram_mib()
+
+    @staticmethod
+    def _half_ram_mib() -> Optional[float]:
+        """Windows' default shared GPU memory budget: half of physical RAM, in MiB (None if unknown)."""
+        try:
+            budget = (psutil.virtual_memory().total / (1024.0 * 1024.0)
+                      * constants.gpu.SHARED_BUDGET_FRACTION_OF_RAM)
+        except Exception:
+            return None
+        return budget if budget > 0 else None
 
     @lru_cache(maxsize=4)
     def _get_cached_path(self, binary: str) -> Optional[str]:
@@ -1224,6 +1332,9 @@ class StatsMonitorThread(QThread):
                             stats['vram_used'] = gpu.vram_used / 1024.0  # MiB to GiB
                         if gpu.vram_total is not None:
                             stats['vram_total'] = gpu.vram_total / 1024.0  # MiB to GiB
+                        if gpu.vram_is_shared and gpu.vram_used is not None:
+                            # Only set for an iGPU, so a discrete GPU's stats dict is unchanged.
+                            stats['vram_is_shared'] = True
                     except Exception as gpu_err:
                         self.logger.warning("GPU polling error (skipped, not counted against circuit breaker): %s", gpu_err)
 

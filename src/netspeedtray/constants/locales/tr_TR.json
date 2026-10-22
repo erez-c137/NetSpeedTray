@@ -366,6 +366,7 @@
     "SHOW_MONITOR_MENU_ITEM": "İzleyiciyi Göster",
     "MONITOR_TILE_RAM": "RAM",
     "MONITOR_TILE_VRAM": "VRAM",
+    "VRAM_SHARED_LABEL": "VRAM (paylaşılan)",
     "MEMORY_HEADER": "Bellek",
     "HARDWARE_SUMMARY_TEMPLATE": "{procs} işlem · CPU %{cpu} · RAM {ram} {ram_unit} · Güncelleme {updated_at}",
     "HARDWARE_LOADING_MESSAGE": "İşlemler okunuyor…",

@@ -366,6 +366,7 @@
     "SHOW_MONITOR_MENU_ITEM": "Monitor tonen",
     "MONITOR_TILE_RAM": "RAM",
     "MONITOR_TILE_VRAM": "VRAM",
+    "VRAM_SHARED_LABEL": "VRAM (gedeeld)",
     "MEMORY_HEADER": "Geheugen",
     "HARDWARE_SUMMARY_TEMPLATE": "{procs} processen · CPU {cpu}% · RAM {ram} {ram_unit} · Bijgewerkt {updated_at}",
     "HARDWARE_LOADING_MESSAGE": "Processen lezen…",

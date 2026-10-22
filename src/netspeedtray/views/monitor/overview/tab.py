@@ -625,7 +625,8 @@ class OverviewTab(QWidget):
 
             # A discrete GPU has dedicated VRAM; an integrated one shares system RAM -> "iGPU".
             vu, vt = getattr(mw, "vram_used", None), getattr(mw, "vram_total", None)
-            integrated = vu is None and vt is None
+            vram_shared = bool(getattr(mw, "vram_is_shared", False))
+            integrated = (vu is None and vt is None) or vram_shared
 
             # Each utilization sparkline auto-zooms to its own active band (dynamic_range), so a
             # low-but-varying metric (e.g. CPU mostly 5-20%) reads in detail instead of as a flat
@@ -656,7 +657,13 @@ class OverviewTab(QWidget):
 
             # VRAM is session-only for now (not persisted) - keeps its own rolling buffer. There's no
             # dedicated VRAM reading when it's None OR ~0 (an iGPU reports 0 dedicated VRAM).
-            vram_reading = vu is not None and float(vu) >= 0.05
+            # An integrated GPU's shared-memory reading (vram_shared) is real however small.
+            vram_reading = vu is not None and (vram_shared or float(vu) >= 0.05)
+            self._tiles["vram"].set_label(self._tr("VRAM_SHARED_LABEL", "VRAM (shared)") if vram_shared
+                                          else self._tr("MONITOR_TILE_VRAM", "VRAM"))
+            if vram_shared != getattr(self, "_vram_series_shared", vram_shared):
+                self._vram_series.clear()   # never mix shared-budget and dedicated percentages
+            self._vram_series_shared = vram_shared
             if vram_reading:
                 vpct = self._pct(vu, vt)
                 self._vram_series.append(vpct)
@@ -879,7 +886,9 @@ class OverviewTab(QWidget):
             return [{"key": "ram", "label": self._tr("MONITOR_TILE_RAM", "RAM"),
                      "unit": "%", "kind": "hw", "primary": True}]
         if metric == "vram":
-            return [{"key": "vram", "label": self._tr("MONITOR_TILE_VRAM", "VRAM"),
+            shared = bool(getattr(self._main_widget, "vram_is_shared", False))
+            return [{"key": "vram", "label": (self._tr("VRAM_SHARED_LABEL", "VRAM (shared)") if shared
+                                              else self._tr("MONITOR_TILE_VRAM", "VRAM")),
                      "unit": "%", "kind": "hw", "primary": True}]
         return []
 

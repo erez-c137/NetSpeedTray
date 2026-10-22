@@ -79,6 +79,8 @@ class MetricsSnapshot:
     ram_total_bytes: Optional[float] = None
     vram_used_bytes: Optional[float] = None
     vram_total_bytes: Optional[float] = None
+    # "dedicated" video memory, or "shared" system memory an integrated GPU uses (no dedicated VRAM).
+    vram_kind: str = "dedicated"
 
 
 class SnapshotStore:
@@ -233,10 +235,14 @@ def render_metrics(snap: MetricsSnapshot, scrape_time: Optional[float] = None) -
     fam("memory_used_bytes", "gauge", "RAM in use (only while RAM monitoring is on).").add(snap.ram_used_bytes)
     fam("memory_total_bytes", "gauge", "Installed RAM (only while RAM monitoring is on)."
         ).add(snap.ram_total_bytes)
-    fam("gpu_memory_used_bytes", "gauge", "Video memory in use (only while VRAM monitoring is on)."
-        ).add(snap.vram_used_bytes)
-    fam("gpu_memory_total_bytes", "gauge", "Total video memory (only while VRAM monitoring is on)."
-        ).add(snap.vram_total_bytes)
+    fam("gpu_memory_used_bytes", "gauge",
+        "GPU memory in use (only while VRAM monitoring is on). kind=\"dedicated\" is video memory; "
+        "kind=\"shared\" is the system RAM an integrated GPU with no dedicated memory is using."
+        ).add(snap.vram_used_bytes, kind=snap.vram_kind)
+    fam("gpu_memory_total_bytes", "gauge",
+        "Total GPU memory (only while VRAM monitoring is on). kind=\"dedicated\" is the card's video "
+        "memory; kind=\"shared\" is the shared GPU memory budget Windows allows an integrated GPU."
+        ).add(snap.vram_total_bytes, kind=snap.vram_kind)
 
     lines: List[str] = []
     for f in fams:

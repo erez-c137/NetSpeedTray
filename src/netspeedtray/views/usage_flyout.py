@@ -317,7 +317,14 @@ class UsageFlyout(QWidget):
         for key, label in self._HW_ROWS:
             if key not in hardware:
                 continue
-            grid.addWidget(self._label(label, tokens.TYPE_BODY_STRONG, self._c["text_primary"]), row, 0)
+            if key == "vram" and hardware.get("vram_shared"):
+                # An integrated GPU's "VRAM" is shared system memory - say so here, where there is
+                # room (the taskbar keeps the short "VRAM"). update_hardware keeps it current.
+                label = self._tr("VRAM_SHARED_LABEL", "VRAM (shared)")
+            row_label = self._label(label, tokens.TYPE_BODY_STRONG, self._c["text_primary"])
+            if key == "vram":
+                self._hw_values[("vram", "label")] = row_label
+            grid.addWidget(row_label, row, 0)
             cols = stat_cols if key in ("cpu", "gpu") else ["mem"]
             for i, col in enumerate(cols):
                 lbl = self._label("", tokens.TYPE_BODY, self._c["text_primary"], Qt.AlignmentFlag.AlignRight)
@@ -343,8 +350,8 @@ class UsageFlyout(QWidget):
 
     def update_hardware(self, hardware: Optional[dict]) -> None:
         """Refresh the hardware rows in place (the card stays up while the pointer rests on the widget).
-        Keys: cpu/gpu -> {usage, temp, power}; ram/vram -> (used_gb, total_gb); identity -> str. A
-        missing reading shows an em dash, never a made-up 0."""
+        Keys: cpu/gpu -> {usage, temp, power}; ram/vram -> (used_gb, total_gb); vram_shared -> True
+        when the VRAM is an integrated GPU's shared memory; identity -> str. A missing reading shows an em dash, never a made-up 0."""
         if not hardware or not self._hw_values:
             return
         dash = "—"
@@ -383,6 +390,10 @@ class UsageFlyout(QWidget):
             else:
                 text = f"{helpers.format_decimal(used, self._i18n, 1)} {gb}"
             self._hw_values[(key, "mem")].setText(text)
+        if ("vram", "label") in self._hw_values and "vram" in hardware:
+            # The card can stay up across a poll that changes what the VRAM reading is.
+            self._hw_values[("vram", "label")].setText(
+                self._tr("VRAM_SHARED_LABEL", "VRAM (shared)") if hardware.get("vram_shared") else "VRAM")
         if ("identity", "text") in self._hw_values:
             self._hw_values[("identity", "text")].setText(str(hardware.get("identity") or dash))
 

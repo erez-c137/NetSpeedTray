@@ -366,6 +366,7 @@
     "SHOW_MONITOR_MENU_ITEM": "Monitor megjelenítése",
     "MONITOR_TILE_RAM": "RAM",
     "MONITOR_TILE_VRAM": "VRAM",
+    "VRAM_SHARED_LABEL": "VRAM (megosztott)",
     "MEMORY_HEADER": "Memória",
     "HARDWARE_SUMMARY_TEMPLATE": "{procs} folyamat · CPU {cpu}% · RAM {ram} {ram_unit} · Frissítve: {updated_at}",
     "HARDWARE_LOADING_MESSAGE": "Folyamatok beolvasása…",

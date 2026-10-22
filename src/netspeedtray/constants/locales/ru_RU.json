@@ -366,6 +366,7 @@
     "SHOW_MONITOR_MENU_ITEM": "Показать монитор",
     "MONITOR_TILE_RAM": "RAM",
     "MONITOR_TILE_VRAM": "VRAM",
+    "VRAM_SHARED_LABEL": "VRAM (общая)",
     "MEMORY_HEADER": "Память",
     "HARDWARE_SUMMARY_TEMPLATE": "{procs} процессов · ЦП {cpu}% · RAM {ram} {ram_unit} · Обновлено {updated_at}",
     "HARDWARE_LOADING_MESSAGE": "Чтение процессов…",
