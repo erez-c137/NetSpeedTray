@@ -35,6 +35,7 @@ class ConfigController:
         # commit path - SettingsDialog re-emits on a 250ms throttle while you drag a slider - so a
         # native SetWindowPos here would fire several times a second. Only act on an actual change.
         self._last_keep_on_top: Optional[bool] = None
+        self._rolling_back = False   # re-entrancy guard for rollback_config's re-apply
 
     def _apply_keep_on_top(self, on_top: bool) -> None:
         """Push the always-on-top preference to the open auxiliary windows, once per change."""
@@ -143,17 +144,38 @@ class ConfigController:
             raise
 
     def rollback_config(self, old_config: Dict[str, Any]) -> None:
-        """Restores a previous configuration state."""
+        """Restores a previous configuration state: in memory, on disk, and in the live components.
+
+        A failed apply_all_settings stops partway, so the renderer / controller / monitor thread may
+        already hold the new values while the rest still run the old ones. Saving the old config
+        alone left that half-applied state on screen until the next restart (rc.2 S8), so the
+        restored config goes back through the same apply path. If that re-apply fails too, it is
+        logged and swallowed - the caller re-raises the original error."""
         self.logger.warning("Rolling back configuration changes due to apply failure.")
-        self.widget.config = old_config
+        restored = dict(old_config)
+        cfg = self.widget.config
+        if isinstance(cfg, dict):
+            # In place, so anything holding the widget's config dict sees the restored values too.
+            cfg.clear()
+            cfg.update(restored)
+        else:
+            self.widget.config = restored
         try:
             self.config_manager.save(self.widget.config)
-            # Re-apply old settings to ensure consistency? 
-            # Ideally yes, but if apply failed, re-applying old might also fail or be redundant.
-            # For now, just saving state.
             self.logger.info("Configuration rolled back and saved successfully.")
         except Exception as e:
             self.logger.error(f"CRITICAL: Error saving rolled-back configuration: {e}", exc_info=True)
+
+        if self._rolling_back:
+            return   # an apply that itself rolled back: never re-enter
+        self._rolling_back = True
+        try:
+            self.apply_all_settings()
+            self.logger.info("Rolled-back configuration re-applied.")
+        except Exception as e:
+            self.logger.error(f"CRITICAL: Re-applying the rolled-back configuration failed: {e}", exc_info=True)
+        finally:
+            self._rolling_back = False
 
     def apply_all_settings(self) -> None:
         """
