@@ -104,9 +104,6 @@ current LibreHardwareMonitor, and the root-cause fix for Smart App Control block
 > - **One copy per Windows user.** A second user signed in on the same PC can now run their own
 >   NetSpeedTray; the same user still gets one copy, across sessions too.
 > - **Portable updates are staged in `%LOCALAPPDATA%\NetSpeedTray\updates`**, not Downloads.
-> - **On a side taskbar, the widget's default spot moves up 5 px**
->   (8 px above the tray instead of 3). A position you dragged is kept, pulled back inside the bar if
->   it no longer fits.
 
 ### Added
 
@@ -154,13 +151,18 @@ current LibreHardwareMonitor, and the root-cause fix for Smart App Control block
   keyboard focus. ([#409])
 - **Monitor graph tooltips show the date** on Week, Month and All. ([#409])
 - **"Open folder" on the support-bundle message**, with the zip selected in Explorer. ([#401])
-- **Click to pin the hover card.** A click keeps a hover-opened
-  card open; it refreshes live, follows the widget, never takes focus, and closes on a second
-  click, another app coming to the front, the menu, a drag, fullscreen, or a taskbar or theme
-  change. Double-click still opens the Monitor. "Click to keep this open" shows on the first few
-  cards. Every taskbar edge. ([#406])
-- **Reset position** in the right-click menu, once you've moved
-  the widget. It also resets the tray offsets. ([#406])
+- **Click to pin the hover card.** A click keeps a hover-opened card open; it refreshes live,
+  follows the widget, and closes on a click on the card or the widget, another app coming to the
+  front, the menu, a drag, fullscreen, or a taskbar or theme change. The card itself never takes
+  focus or passes a click through to the app behind it. Double-click still opens the Monitor.
+  "Click to keep this open" shows on the first few cards. Every taskbar edge. ([#420])
+
+  *Under the hood: an unpinned card is click-through via the native `WS_EX_TRANSPARENT` style only,
+  set before its first show and cleared on pin - Qt's `WindowTransparentForInput` never delivers
+  mouse events again once set, which a real-window test now catches.*
+
+- **Reset Position** in the right-click menu, once you've moved the widget. It also resets the tray
+  offsets. ([#420])
 
 ### Changed
 
@@ -188,16 +190,6 @@ current LibreHardwareMonitor, and the root-cause fix for Smart App Control block
   *Under the hood: the mutex is `Global\NetSpeedTray_Instance_<SID>`. Older builds use the legacy
   name, so a same-user transition checks both (with a short race poll), and a failed WTS session
   scan falls back to psutil. Setup checks the session user's own mutex when WMI is broken.*
-
-- **Side taskbars: the widget stays clear of your app buttons.**
-  It sits by the tray when the gap fits, else centered between Widgets and Start, else by the tray
-  with a one-time "you can drag it" note. Opening and closing apps never moves it, a drag always
-  wins, and dragging keeps it inside the bar. Top and bottom taskbars are unchanged. ([#406])
-
-  *Under the hood: `TaskbarInfo.apps_extent` comes from UI Automation, scoped to the taskbar's XAML
-  host - the window rect lags (it stopped at app 10 of 12 on a real PC). It's probed on one
-  background worker at startup, dock change and Reset only, with a 5 s timeout, never per app
-  launch (#200). Top/bottom positions are byte-identical across 160 cases.*
 
 - **Long-range graphs build their day buckets faster** - a 400-day graph over ~620k stored rows went
   from 1.26 s to 0.54 s, with identical points. ([#411])
@@ -339,7 +331,8 @@ current LibreHardwareMonitor, and the root-cause fix for Smart App Control block
 - **The docked widget comes back when the taskbar buries it.**
   Maximizing and restoring a window (Windows 10), Windows 11 reordering its taskbar band, or an
   Explorer restart could leave the widget hidden behind the taskbar until you clicked it or
-  relaunched. It's now re-seated right away. ([#314], [#238]; [#327], thanks [@kamal63442] and
+  relaunched. It's now re-seated right away. Opening Start or Task View doesn't count as burial,
+  so closing them never leaves the widget hidden. ([#314], [#238]; [#327], thanks [@kamal63442] and
   [@pasharm])
 
   *Under the hood: burial is a Z-order comparison - walk `GW_HWNDPREV` from the docked taskbar (the
@@ -350,7 +343,14 @@ current LibreHardwareMonitor, and the root-cause fix for Smart App Control block
   `EVENT_OBJECT_REORDER` hook on the desktop window plus foreground changes, coalesced, with the 1 s
   tick as a safety net and a 1-60 s backoff as the fight guard. `TaskbarCreated` re-docks after an
   Explorer restart. Never while hidden, mid-drag, with our menu open, under a fullscreen app, or when
-  the taskbar itself isn't topmost.*
+  the taskbar itself isn't topmost. Start and Task View lift the taskbar - and its owned widget -
+  into a higher Z-band (`GetWindowBand` > 1), where the walk can't verify anything: the check
+  defers without charging the backoff, and the first re-seat after the band drops back is free. A
+  taskbar raised for over 60 s falls back to the plain check.*
+
+- **After an Explorer restart the widget stays on the taskbar** instead of jumping to the far left
+  over the Widgets button for up to ~11 s. The new taskbar reports a zero-width tray until it
+  settles; the widget is placed from the last good tray geometry meanwhile. ([#419])
 
 ### Localization
 
@@ -361,7 +361,7 @@ current LibreHardwareMonitor, and the root-cause fix for Smart App Control block
   the right direction, and the Monitor's labels translated. ([#409])
 - Two leftover English strings translated: the graph boot marker and the support-bundle file
   filter. ([#401])
-- 27 new strings and 3 changed ones are AI-drafted in every language and listed for
+- 25 new strings and 3 changed ones are AI-drafted in every language and listed for
   review in [#364]. 19 unused strings were removed.
 
 ### Security
@@ -407,7 +407,6 @@ current LibreHardwareMonitor, and the root-cause fix for Smart App Control block
 [#403]: https://github.com/erez-c137/NetSpeedTray/pull/403
 [#404]: https://github.com/erez-c137/NetSpeedTray/pull/404
 [#405]: https://github.com/erez-c137/NetSpeedTray/pull/405
-[#406]: https://github.com/erez-c137/NetSpeedTray/pull/406
 [#407]: https://github.com/erez-c137/NetSpeedTray/pull/407
 [#408]: https://github.com/erez-c137/NetSpeedTray/pull/408
 [#409]: https://github.com/erez-c137/NetSpeedTray/pull/409
@@ -418,6 +417,8 @@ current LibreHardwareMonitor, and the root-cause fix for Smart App Control block
 [#415]: https://github.com/erez-c137/NetSpeedTray/pull/415
 [#416]: https://github.com/erez-c137/NetSpeedTray/pull/416
 [#418]: https://github.com/erez-c137/NetSpeedTray/pull/418
+[#419]: https://github.com/erez-c137/NetSpeedTray/pull/419
+[#420]: https://github.com/erez-c137/NetSpeedTray/pull/420
 [@kamal63442]: https://github.com/kamal63442
 [@pasharm]: https://github.com/pasharm
 [@emgeka]: https://github.com/emgeka
