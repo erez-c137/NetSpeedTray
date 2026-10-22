@@ -8,6 +8,7 @@ It abstracts the raw win32 API calls and exposes clean Qt signals to the applica
 
 import ctypes
 import logging
+import time
 import win32api
 import win32gui
 from ctypes import wintypes
@@ -22,6 +23,7 @@ from netspeedtray.utils.taskbar_utils import (
 )
 from netspeedtray.utils.styles import read_system_uses_light_theme
 from netspeedtray.utils.win_event_hook import (
+    EVENT_OBJECT_REORDER,
     EVENT_SYSTEM_FOREGROUND,
     EVENT_SYSTEM_MOVESIZEEND,
     WinEventHook
@@ -72,6 +74,10 @@ class SystemEventHandler(QObject):
             gains focus, so the widget can re-assert topmost before the activating taskbar
             visibly occludes it.
         taskbar_changed (void): Emitted when the taskbar moves or resizes.
+        zorder_changed (void): Top-level Z-order may have changed (EVENT_OBJECT_REORDER on the
+            desktop, or a foreground change) - the widget may have been buried under its
+            taskbar. Coalesced: leading edge at once, then at most one per
+            ZORDER_RECHECK_MIN_INTERVAL_MS, with a trailing emit so the last change is seen.
         taskbar_restarted (void): Emitted when explorer.exe restart is detected.
         events_paused (bool): Emitted when event monitoring is paused/resumed.
     """
@@ -80,6 +86,7 @@ class SystemEventHandler(QObject):
     immediate_hide_requested = pyqtSignal()
     taskbar_focused = pyqtSignal()
     taskbar_changed = pyqtSignal()
+    zorder_changed = pyqtSignal()
     taskbar_restarted = pyqtSignal()
     events_paused = pyqtSignal(bool)
     theme_changed = pyqtSignal() # New signal
@@ -91,6 +98,7 @@ class SystemEventHandler(QObject):
         # Hooks
         self.foreground_hook: Optional[WinEventHook] = None
         self.movesize_hook: Optional[WinEventHook] = None
+        self.reorder_hook: Optional[WinEventHook] = None
         
         # Timers - connect the timeout slots ONCE here (not in _setup_timers), so the repeated
         # start()/stop() cycles on every Explorer restart can't accumulate duplicate connections that
@@ -99,6 +107,11 @@ class SystemEventHandler(QObject):
         self._taskbar_validity_timer.timeout.connect(self._check_taskbar_validity)
         self._fullscreen_poll_timer = QTimer(self)
         self._fullscreen_poll_timer.timeout.connect(self._poll_fullscreen)
+        # Trailing edge of the zorder_changed coalescer (see _note_zorder_change).
+        self._zorder_trailing_timer = QTimer(self)
+        self._zorder_trailing_timer.setSingleShot(True)
+        self._zorder_trailing_timer.timeout.connect(self._emit_zorder_changed)
+        self._last_zorder_emit: float = 0.0
 
         # State
         self._is_paused = False
@@ -125,6 +138,9 @@ class SystemEventHandler(QObject):
             self.foreground_hook.stop()
         if self.movesize_hook:
             self.movesize_hook.stop()
+        if self.reorder_hook:
+            self.reorder_hook.stop()
+        self._zorder_trailing_timer.stop()
         self._taskbar_validity_timer.stop()
         self._fullscreen_poll_timer.stop()
         self._disconnect_color_scheme_signal()
@@ -142,6 +158,13 @@ class SystemEventHandler(QObject):
             # 2. Taskbar move/size hook - only when a real taskbar handle exists
             # (see _attach_movesize_hook for why a 0 handle must be skipped).
             self._attach_movesize_hook()
+
+            # 3. Top-level Z-order hook (#314, #238). System-wide on purpose: pasharm traced
+            # the burial to explorer firing EVENT_OBJECT_REORDER on the desktop window, and
+            # not from the taskbar's thread, so a per-thread hook misses it. Only desktop-
+            # sourced events cross into Qt (filtered on the hook thread), and the widget's
+            # handler is a short Z-order walk that re-seats only when actually buried.
+            self._attach_reorder_hook()
 
         except Exception as e:
             self.logger.error("Error setting up hooks: %s", e, exc_info=True)
@@ -171,6 +194,56 @@ class SystemEventHandler(QObject):
         self.movesize_hook.start()
         self.logger.debug("Move/size hook attached to taskbar HWND %s.", hwnd)
         return True
+
+    def _attach_reorder_hook(self) -> None:
+        """(Re)create the desktop EVENT_OBJECT_REORDER hook. A failure only costs speed: the
+        widget's 1 s safety-net tick still catches a burial."""
+        if self.reorder_hook is not None:
+            try:
+                self.reorder_hook.stop()
+            except Exception:
+                pass
+            self.reorder_hook = None
+        try:
+            desktop = int(win32gui.GetDesktopWindow() or 0)
+            if not desktop:
+                return
+            # skip_own_process: our own re-seat echoes back as a reorder; dropping it saves a
+            # pointless check (anything our own UI does is still caught by the 1 s tick).
+            self.reorder_hook = WinEventHook(EVENT_OBJECT_REORDER, source_hwnd_filter=desktop,
+                                             skip_own_process=True)
+            self.reorder_hook.event_triggered.connect(self._on_zorder_event)
+            self.reorder_hook.start()
+        except Exception as e:
+            self.logger.warning("Z-order hook unavailable (%s); burial recovery falls back to the 1 s check.", e)
+            self.reorder_hook = None
+
+    def _on_zorder_event(self, _hwnd: int = 0) -> None:
+        """Raw EVENT_OBJECT_REORDER on the desktop."""
+        self._note_zorder_change()
+
+    def _note_zorder_change(self) -> None:
+        """
+        Coalesce Z-order change notifications into zorder_changed. The first change after a
+        quiet spell emits at once (a burial is undone within the same frame or so); changes
+        inside the next ZORDER_RECHECK_MIN_INTERVAL_MS collapse into one trailing emit at the
+        end of the window, so a burst - a window animating, a flyout opening - costs at most
+        a handful of checks a second and the final Z-order is always checked.
+        """
+        if self._is_paused:
+            return
+        interval_ms = timeouts.ZORDER_RECHECK_MIN_INTERVAL_MS
+        elapsed_ms = (time.monotonic() - self._last_zorder_emit) * 1000.0
+        if elapsed_ms >= interval_ms:
+            self._zorder_trailing_timer.stop()
+            self._emit_zorder_changed()
+        elif not self._zorder_trailing_timer.isActive():
+            self._zorder_trailing_timer.start(max(1, int(interval_ms - elapsed_ms)))
+
+    def _emit_zorder_changed(self) -> None:
+        self._last_zorder_emit = time.monotonic()
+        if not self._is_paused:
+            self.zorder_changed.emit()
 
     def _setup_timers(self) -> None:
         """Start the taskbar-validity + fast fullscreen-hide timers. The timeout slots are connected
@@ -261,6 +334,10 @@ class SystemEventHandler(QObject):
         try:
             if not hwnd or not win32gui.IsWindow(hwnd):
                 return
+
+            # Any activation can reorder the topmost band (and #238's grouped-preview hover
+            # raises the taskbar): let the widget check it is still above its taskbar.
+            self._note_zorder_change()
 
             if win32gui.GetClassName(hwnd) in ("Shell_TrayWnd", "Shell_SecondaryTrayWnd"):
                 self.taskbar_focused.emit()

@@ -44,7 +44,7 @@ from netspeedtray.utils.widget_paint import WidgetMetrics, render_widget, split_
 from netspeedtray.core.system_events import SystemEventHandler
 from netspeedtray.views.widget.layout import WidgetLayoutManager
 from netspeedtray.views.widget.theme import WidgetThemeManager
-from netspeedtray.core.startup_manager import StartupManager
+from netspeedtray.core.startup_manager import StartupManager, is_process_elevated
 from netspeedtray.core.config_controller import ConfigController
 from netspeedtray.core.update_checker import UpdateChecker
 from netspeedtray.core import shutdown_channel
@@ -81,6 +81,29 @@ _WM_ENDSESSION = 0x0016
 _SESSION_END_DB_WAIT_S = 2.0
 _PBT_APMRESUMESUSPEND = 0x0007
 _PBT_APMRESUMEAUTOMATIC = 0x0012
+
+# "TaskbarCreated" is broadcast by explorer whenever the taskbar window is
+# (re)created - the canonical re-attach signal for tray-docked windows, and the
+# instant alternative to waiting out the 3s validity poll after an explorer
+# restart. RegisterWindowMessageW returns one system-wide atom for the string, so
+# resolving it once at import is correct for the process lifetime. 0 means
+# registration failed, in which case nativeEvent skips the branch and the
+# validity poll remains the only (slower) recovery path.
+try:
+    _WM_TASKBARCREATED = int(ctypes.windll.user32.RegisterWindowMessageW("TaskbarCreated"))
+except Exception:
+    _WM_TASKBARCREATED = 0
+
+# UIPI: a process running elevated silently drops messages broadcast by the
+# non-elevated shell, so without MSGFLT_ALLOW on our window the TaskbarCreated
+# re-dock never fires there. Per-window API, resolved once at import.
+_MSGFLT_ALLOW = 1
+try:
+    _ChangeWindowMessageFilterEx = ctypes.windll.user32.ChangeWindowMessageFilterEx
+    _ChangeWindowMessageFilterEx.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.DWORD, ctypes.c_void_p]
+    _ChangeWindowMessageFilterEx.restype = wintypes.BOOL
+except AttributeError:  # pre-Win7, unlikely
+    _ChangeWindowMessageFilterEx = None
 
 # The installer's graceful-close request (setup.iss [Code], or `--shutdown`; core/shutdown_channel.py). A registered
 # message: one system-wide atom per string, so resolving it once at import is correct. 0 = failed,
@@ -242,6 +265,8 @@ class NetworkSpeedWidget(QWidget):
         self._hover_card_timer.timeout.connect(self._show_usage_hover_card)
         self._hover_usage_cache: Optional[Tuple[Tuple[float, float], Tuple[float, float]]] = None
         self._hover_usage_cache_ts: float = 0.0
+        # HWND the TaskbarCreated UIPI filter was last applied to (see _allow_taskbar_created).
+        self._taskbar_created_allowed: int = 0
         self._hover_battery_avg_cache: Optional[float] = None
         self._hover_battery_avg_cache_ts: float = 0.0
         self._hover_usage_period_start: Optional[datetime] = None   # set by _hover_usage_totals
@@ -471,6 +496,9 @@ class NetworkSpeedWidget(QWidget):
                 
                 # Always re-assert topmost status when visible to prevent falling behind taskbar (#77)
                 self._ensure_win32_topmost()
+
+                # (_ensure_win32_topmost also runs _recover_if_buried: the 1 s safety net behind
+                # the event-driven burial recovery.)
 
                 # One-time heads-up if we're sitting over the Win11 Widgets/weather panel (#200).
                 self._maybe_nudge_widgets_overlap(taskbar_info)
@@ -1020,8 +1048,14 @@ class NetworkSpeedWidget(QWidget):
             # slow and shows as a "hide and return"). Restores a410aae's _handle_taskbar_focus.
             self.system_event_handler.taskbar_focused.connect(self._ensure_win32_topmost)
 
-            # Handle taskbar restarts
-            self.system_event_handler.taskbar_restarted.connect(lambda: [QTimer.singleShot(i * constants.timeouts.TASKBAR_RESTART_RECOVERY_DELAY_MS, self._execute_refresh) for i in range(constants.timeouts.TASKBAR_RESTART_RETRIES)])
+            # Handle taskbar restarts - both the 3s validity poll and the instant
+            # TaskbarCreated broadcast (nativeEvent) land in _recover_taskbar_restarted.
+            self.system_event_handler.taskbar_restarted.connect(self._recover_taskbar_restarted)
+
+            # Burial recovery, event-driven (#314, #238): the shell raised a window - possibly
+            # the taskbar over the widget. Coalesced in SystemEventHandler; the check itself is
+            # a short Z-order walk, and it re-seats only when the widget really is buried.
+            self.system_event_handler.zorder_changed.connect(self._recover_if_buried)
 
             # React to monitor topology changes (add/remove/primary swap, KVM, dock/undock):
             # re-validate the position + re-assert the widget. A set-and-forget app must follow
@@ -1757,8 +1791,51 @@ class NetworkSpeedWidget(QWidget):
     def _ensure_win32_topmost(self) -> None:
         """Delegates to PositionManager. No-op while hidden (e.g. over a fullscreen app)."""
         if not self.isVisible():
+            pm = getattr(self, "position_manager", None)
+            if pm is not None:
+                pm.note_on_top_unverified()   # hidden time never counts as "held" on top
             return
+        self._allow_taskbar_created()
         self.position_manager.ensure_topmost()
+        # Burial / lost-topmost recovery, through the one guarded path (#327 review).
+        self._recover_if_buried()
+
+    def _allow_taskbar_created(self) -> None:
+        """
+        Allow "TaskbarCreated" through UIPI on our native window (ChangeWindowMessageFilterEx).
+
+        Without this, a process running elevated silences the shell's broadcast and the
+        instant re-dock only ever fires from the 3 s validity poll (the insta-recover
+        from TaskbarCreated goes off). Idempotent per native window: re-applied when Qt
+        hands us a fresh HWND after a native-window recreation.
+        """
+        if not _WM_TASKBARCREATED or _ChangeWindowMessageFilterEx is None:
+            return
+        try:
+            hwnd = int(self.winId())
+        except Exception:
+            return
+        if not hwnd or hwnd == getattr(self, "_taskbar_created_allowed", 0):
+            return
+        try:
+            # Four arguments: the prototype declares a (nullable) FILTER_STATUS
+            # pointer slot, so a 3-arg call raises TypeError and the ctypes
+            # try/except would silently swallow it - leaving the UIPI filter
+            # never applied (#327 review).
+            ok = _ChangeWindowMessageFilterEx(hwnd, _WM_TASKBARCREATED, _MSGFLT_ALLOW, None)
+            if not ok:
+                # TRUE=1 on success. Do not cache: a later call retries.
+                self.logger.debug(
+                    "ChangeWindowMessageFilterEx(TaskbarCreated) returned FALSE on HWND %s (elevated=%s) - will retry.",
+                    hwnd, is_process_elevated()
+                )
+                return
+            self._taskbar_created_allowed = hwnd
+            self.logger.debug(
+                "TaskbarCreated allowed through UIPI on HWND %s (elevated=%s).", hwnd, is_process_elevated()
+            )
+        except Exception as e:
+            self.logger.debug("ChangeWindowMessageFilterEx(TaskbarCreated) failed: %s", e)
 
     def _on_environment_changed(self, reason: str = "") -> None:
         """
@@ -1816,7 +1893,10 @@ class NetworkSpeedWidget(QWidget):
                     self._save_session_essentials(
                         "query-end-session" if msg.message == _WM_QUERYENDSESSION else "end-session")
                     return False, 0
-                if msg.message == _WM_POWERBROADCAST and msg.wParam in (
+                if _WM_TASKBARCREATED and msg.message == _WM_TASKBARCREATED:
+                    self.logger.info("TaskbarCreated received - re-docking to the new taskbar.")
+                    self._recover_taskbar_restarted()
+                elif msg.message == _WM_POWERBROADCAST and msg.wParam in (
                     _PBT_APMRESUMESUSPEND, _PBT_APMRESUMEAUTOMATIC
                 ):
                     self.logger.info("Resume from sleep detected - re-asserting widget.")
@@ -1828,6 +1908,53 @@ class NetworkSpeedWidget(QWidget):
         except Exception as e:
             self.logger.debug("nativeEvent power handling failed: %s", e)
         return False, 0
+
+    def _recover_if_buried(self) -> None:
+        """
+        Put the widget back on top of its taskbar if the shell buried it (#314, #238).
+
+        Ownership keeps the widget above the taskbar in theory, but the shell can raise the
+        taskbar over it without breaking the owner link, and steady-state ensure_topmost()
+        deliberately never touches Z-order (#200). Runs on every coalesced Z-order change
+        (EVENT_OBJECT_REORDER / foreground) and on the 1 s safety-net tick; re-seats the
+        widget directly above the taskbar only when it really is below it.
+
+        Skipped while hidden, while our own menu is open or a drag is under way, and while a
+        fullscreen app owns the screen - with Keep visible in fullscreen on, the widget's
+        place over the video stays exactly as it was before this recovery existed.
+        """
+        try:
+            pm = getattr(self, "position_manager", None)
+            if pm is None:
+                return
+            handler = getattr(self, "system_event_handler", None)
+            if (not self.isVisible() or self._is_context_menu_visible or self._dragging
+                    or (handler is not None and handler.is_fullscreen_active())):
+                pm.note_on_top_unverified()   # not a verified on-top tick (backoff stretch)
+                return
+            if pm.is_buried_behind_taskbar():
+                pm.reseat_above_taskbar()
+        except Exception as e:
+            self.logger.debug("Burial recovery check failed: %s", e)
+
+    def _recover_taskbar_restarted(self) -> None:
+        """
+        Explorer is (re)building the taskbar. Ride out the shell's startup with the
+        established staggered refreshes: each pass re-detects the taskbar, re-docks
+        the owner link and seats the widget back in the topmost band once detection
+        succeeds. Fired by the 3s validity poll and - via nativeEvent - by the
+        TaskbarCreated broadcast, which arrives the moment the new taskbar window
+        exists instead of up to a poll interval later.
+        """
+        try:
+            pm = getattr(self, "position_manager", None)
+            if pm is not None:
+                pm.reset_reseat_state()   # a new taskbar starts a new burial history
+            for i in range(constants.timeouts.TASKBAR_RESTART_RETRIES):
+                QTimer.singleShot(i * constants.timeouts.TASKBAR_RESTART_RECOVERY_DELAY_MS,
+                                  self._execute_refresh)
+        except Exception as e:
+            self.logger.error("Error recovering from taskbar restart: %s", e, exc_info=True)
 
     def _enforce_topmost_status(self) -> None:
         """Delegates to PositionManager."""

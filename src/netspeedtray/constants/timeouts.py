@@ -43,6 +43,10 @@ class TimeoutConstants:
     # for the 1s state-watcher tick (a visible ~1s lag). Cheap: short-circuits
     # before any taskbar query unless the foreground window is actually fullscreen.
     FULLSCREEN_POLL_INTERVAL_MS: Final[int] = 250
+    # Burial recovery (#314, #238): the minimum spacing of the widget's Z-order checks when
+    # EVENT_OBJECT_REORDER / foreground changes arrive in a burst. The first change is checked
+    # at once; the rest of a burst collapses into one check at the end of the window.
+    ZORDER_RECHECK_MIN_INTERVAL_MS: Final[int] = 100
     TASKBAR_RESTART_RECOVERY_DELAY_MS: Final[int] = 1000
     TASKBAR_RESTART_RETRIES: Final[int] = 5
 
