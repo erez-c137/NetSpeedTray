@@ -400,23 +400,35 @@ class StatsController(QObject):
             # gap or not - the writer flags a long interval rather than dropping its bytes.
             self.widget_state.add_net_sample(sample_wall, sample_elapsed * 1000.0, byte_deltas,
                                              counters=current_counters, if_stats=if_stats)
-        self._last_sample_time = (sample_mono, sample_wall)
+        # --- 2. The rate display, then ONE re-baseline -----------------------------------------
+        # The odometer has counted this poll, so the sample time and the counters move on together
+        # whatever happens in the display below. They used to be re-baselined in two places (the
+        # time here, the counters at the very end): an exception in between left them out of step,
+        # and the next poll counted these bytes again and showed a 2x rate (PR #276 re-review).
+        prev_counters = self.last_interface_counters
+        try:
+            self._update_rate_display(current_counters, prev_counters, time_diff, rate_span,
+                                      update_interval)
+        finally:
+            self._last_sample_time = (sample_mono, sample_wall)
+            self.last_check_time = current_time
+            self.last_interface_counters = current_counters
 
-        # --- 2. The rate display: re-prime across gaps ------------------------------------------
+    def _update_rate_display(self, current_counters: Dict[str, Any], prev_counters: Dict[str, Any],
+                             time_diff: float, rate_span: float, update_interval: float) -> None:
+        """The rate display for one poll: re-prime across gaps, else per-interface rates over
+        ``rate_span`` (the sampling span) against ``prev_counters``. Never re-baselines - the
+        caller does, in one place, even if this raises."""
         _spd = constants.network.speed
         validity_threshold = max(_spd.RATE_VALIDITY_MIN_SECONDS, update_interval * _spd.RATE_VALIDITY_POLL_MULTIPLE)
 
         if time_diff > validity_threshold:
             self.repriming_needed = 2
-            self.last_check_time = current_time
-            self.last_interface_counters = current_counters
             self._set_live_rates_zero()
             self.display_speed_updated.emit(0.0, 0.0)
             return
 
         if self.repriming_needed > 0:
-            self.last_check_time = current_time
-            self.last_interface_counters = current_counters
             self._set_live_rates_zero()
             self.display_speed_updated.emit(0.0, 0.0)
             self.repriming_needed -= 1
@@ -430,7 +442,7 @@ class StatsController(QObject):
         measured_speed_data: Dict[str, Tuple[float, float]] = {}
 
         for name, current in current_counters.items():
-            last = self.last_interface_counters.get(name)
+            last = prev_counters.get(name)
             if last:
                 # Per-direction counter-reset/wrap guard: a reset in ONE direction must not
                 # discard the OTHER direction's real bytes - they're independent counters.
@@ -501,9 +513,6 @@ class StatsController(QObject):
         download_mbps = (agg_download * 8) / 1_000_000
 
         self.display_speed_updated.emit(upload_mbps, download_mbps)
-
-        self.last_check_time = current_time
-        self.last_interface_counters = current_counters
 
 
     def _set_live_rates_zero(self) -> None:

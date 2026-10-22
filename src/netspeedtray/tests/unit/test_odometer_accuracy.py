@@ -180,6 +180,40 @@ def test_the_cap_logs_once_per_session(caplog):
     assert len(warnings) == 1
 
 
+class _RaisesOnceInRateDisplay(FakeState):
+    """A failure AFTER the odometer has counted this poll (here in the rate display's session
+    feed), the way any later step - a slot, the spike filter, a widget_state call - could fail."""
+    def __init__(self):
+        super().__init__()
+        self.armed = True
+
+    def add_speed_data(self, *a, **k):
+        super().add_speed_data(*a, **k)
+        if self.armed:
+            self.armed = False
+            raise RuntimeError("boom")
+
+
+def test_a_failure_after_the_odometer_does_not_double_count_the_next_poll():
+    """PR #276 re-review: the sample time was re-baselined right after the odometer, the counters
+    only at the end - an exception in between left them out of step, and the next poll counted the
+    failed poll's bytes again (and showed a 2x rate over the 1 s sampling span)."""
+    state = _RaisesOnceInRateDisplay()
+    c = _controller(state)
+    view = c.view
+    t0 = 1000.0
+    for i, (counters, raises) in enumerate([(NetIO(0, 0), False), (NetIO(1_000_000, 0), True),
+                                            (NetIO(2_000_000, 0), False)]):
+        with patch("time.monotonic", return_value=t0 + i):
+            if raises:
+                with pytest.raises(RuntimeError):
+                    c._handle_network_counters({"Wi-Fi": counters}, sample_time=(t0 + i, 5_000.0 + i))
+            else:
+                c._handle_network_counters({"Wi-Fi": counters}, sample_time=(t0 + i, 5_000.0 + i))
+    assert state.totals() == (2_000_000, 0)                        # every byte exactly once
+    assert view.update_display_speeds.call_args[0][0] == pytest.approx(8.0)   # 1 MB/s, not 2
+
+
 def test_cap_uses_the_sampling_span_not_the_handling_span():
     """#13's real mechanism: the GUI thread can handle two samples closer together than they were
     taken (a late delivery of the previous one). The bytes are real - the cap is measured over when
