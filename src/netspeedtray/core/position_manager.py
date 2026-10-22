@@ -572,6 +572,8 @@ class PositionManager(QObject):
         # Last time the burial check saw the taskbar raised; a re-seat soon after it drops
         # back is free (no backoff). 0.0 = no pending band return.
         self._band_return_pending_ts: float = 0.0
+        # One INFO line per stretch of a not-ready tray rect (see _tray_rect_ready).
+        self._tray_not_ready_logged: bool = False
         
         # Timers
         self._tray_watcher_timer = QTimer(self)
@@ -643,12 +645,50 @@ class PositionManager(QObject):
             if self._free_float_active and self._apply_free_float_position():
                 return
 
+            # A just-restarted taskbar reports a degenerate tray rect for seconds (live: the
+            # TrayNotifyWnd sat at (0,1032,0,1032) for ~11 s until TaskbarCreated); computing
+            # from it snaps the widget to the far left, over the Widgets button. Hold still.
+            if not self._tray_rect_ready():
+                return
+
             if self._apply_calculated_position():
                 pass # success
             else:
                 logger.warning("Failed to calculate position.")
         except Exception as e:
             logger.error("Error updating position: %s", e, exc_info=True)
+
+    def _tray_rect_ready(self) -> bool:
+        """
+        False while the docked taskbar's tray rect exists but cannot be real: zero width or
+        height, or not touching the taskbar at all - what a taskbar mid-(re)creation reports
+        after an Explorer restart. No tray rect at all (a Win11 secondary taskbar, the fallback
+        taskbar) is a known layout with its own estimate, so it counts as ready. Logs once per
+        not-ready stretch.
+        """
+        info = self._state.taskbar_info
+        ready = True
+        tray = None
+        try:
+            tray = info.get_tray_rect() if info is not None else None
+            if tray is not None:
+                left, top, right, bottom = (int(v) for v in tray)
+                tb_left, tb_top, tb_right, tb_bottom = (int(v) for v in info.rect)
+                if right <= left or bottom <= top:
+                    ready = False
+                elif right <= tb_left or left >= tb_right or bottom <= tb_top or top >= tb_bottom:
+                    ready = False
+        except Exception:
+            ready = True   # can't judge it: keep the old behaviour, never strand the widget
+        if ready:
+            if self._tray_not_ready_logged:
+                logger.debug("Taskbar tray area is ready again - repositioning.")
+            self._tray_not_ready_logged = False
+            return True
+        if not self._tray_not_ready_logged:
+            logger.info("Taskbar tray area not ready yet (rect %s) - holding the widget's position.", tray)
+            self._tray_not_ready_logged = True
+        return False
 
     def _apply_free_float_position(self) -> bool:
         """Place the widget at a sensible default on the taskbar-less preferred display (#188). Returns
