@@ -190,10 +190,14 @@ def _is_amd_igpu(name: str) -> bool:
         return False
     if any(token in name for token in ("integrated", " igpu", "radeon(tm) graphics")):
         return True
+    # Discrete words win over the model-number pattern: laptop dGPUs carry an "M" model too
+    # ("RX 6800M", "RX 7600M XT", "Pro W6600M").
+    words = set(re.findall(r"[a-z0-9]+", name))
+    if words.intersection(_AMD_DGPU_TOKENS):
+        return False
     if _AMD_IGPU_MODEL_RE.search(name):
         return True
-    words = set(re.findall(r"[a-z0-9]+", name))
-    return "graphics" in words and not words.intersection(_AMD_DGPU_TOKENS)
+    return "graphics" in words
 
 
 def _gpu_rank(gpu: LhmGpu) -> Tuple[int, str]:

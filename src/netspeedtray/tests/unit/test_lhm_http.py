@@ -492,6 +492,21 @@ def test_an_amd_dgpu_beats_an_amd_igpu(igpu_name):
     assert snapshot.preferred_gpu.hardware_id == "/gpu-amd/1"
 
 
+@pytest.mark.parametrize("dgpu_name", ["AMD Radeon RX 6800M", "AMD Radeon RX 7600M XT",
+                                       "AMD Radeon RX 6850M XT", "AMD Radeon Pro W6600M",
+                                       "AMD Radeon RX 7600S"])
+def test_an_amd_laptop_dgpu_with_an_m_model_is_not_integrated(dgpu_name):
+    """Laptop discrete cards carry an "M" model number too: RX / Pro must win over the APU-model
+    pattern, or an APU at /gpu-amd/0 supplies the widget's GPU temp/power."""
+    snapshot = parse_snapshot(tree(
+        hardware("AMD Radeon 780M Graphics", "/gpu-amd/0",
+            sensor("GPU Core", "/gpu-amd/0/temperature/0", "Temperature", "50.0 °C")),
+        hardware(dgpu_name, "/gpu-amd/1",
+            sensor("GPU Core", "/gpu-amd/1/temperature/0", "Temperature", "61.0 °C"))))
+    assert snapshot.preferred_gpu.hardware_id == "/gpu-amd/1"
+    assert snapshot.preferred_gpu.temperature == 61.0
+
+
 def test_intel_without_a_package_sensor_reports_the_hottest_core():
     """Not Core #1, and never a 'Distance to TjMax' reading (a headroom, not a temperature)."""
     cores = [sensor(f"CPU Core #{i + 1}", f"/intelcpu/0/temperature/{i}", "Temperature", f"{40 + i}.0 °C")
