@@ -625,15 +625,39 @@ begin
   Result := (Drive = '') or not DirExists(AddBackslash(Drive));
 end;
 
-// A UNC path, or a drive letter the user has mapped (HKCU\Network\<letter> - in an elevated Setup
-// started by the same user this is still their hive).
+// Whether the user signed in to this session has mapped Letter (<their hive>\Network\<letter>).
+// HKCU is Setup's own account: the session user's hive when they elevated themselves, but the
+// ADMINISTRATOR's under an over-the-shoulder elevation (a standard user typing an admin's
+// credentials) - so then the session user's hive is read from HKU\<their SID>, which is loaded while
+// they are signed in. If their SID cannot be resolved, Setup's own HKCU is the fallback. The hive
+// consulted is logged.
+function SessionUserMappedDrive(Letter: string): Boolean;
+var
+  Sid: string;
+begin
+  if SetupRunsAsAnotherUser() then
+  begin
+    Sid := AccountSid(SessionAccount());
+    if Sid <> '' then
+    begin
+      Result := RegKeyExists(HKU, Sid + '\Network\' + Letter);
+      Log('Mapped-drive check: read HKU\' + Sid + '\Network\' + Letter + ' (the session user''s hive; Setup runs as another account): ' + BoolToStr(Result) + '.');
+      Exit;
+    end;
+    Log('Mapped-drive check: could not resolve the session user''s SID; falling back to Setup''s own HKCU.');
+  end;
+  Result := RegKeyExists(HKCU, 'Network\' + Letter);
+  Log('Mapped-drive check: read HKCU\Network\' + Letter + ' (Setup''s own hive): ' + BoolToStr(Result) + '.');
+end;
+
+// A UNC path, or a drive letter the session user has mapped.
 function IsNetworkLocation(Dir: string): Boolean;
 var
   Drive: string;
 begin
   Drive := ExtractFileDrive(Dir);
   Result := (Copy(Drive, 1, 2) = '\\') or
-            ((Length(Drive) = 2) and (Drive[2] = ':') and RegKeyExists(HKCU, 'Network\' + Drive[1]));
+            ((Length(Drive) = 2) and (Drive[2] = ':') and SessionUserMappedDrive(Drive[1]));
 end;
 
 procedure InitializeWizard();
